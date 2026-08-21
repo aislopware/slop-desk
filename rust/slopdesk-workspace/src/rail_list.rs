@@ -20,8 +20,9 @@
 //! are one rule, and a second copy is how the row list and the header list start disagreeing about
 //! which `myapp` you are looking at.
 
-use crate::rail_title::parent_qualified_title;
-use crate::tab_ordering::bucketed_by_project;
+use crate::rail_title::{TitleShape, parent_qualified_title, titles_by_process};
+use crate::session::PaneKind;
+use crate::tab_ordering::{bucketed_by_project, project_key_of};
 
 /// The fields the search field reads on one row.
 ///
@@ -133,6 +134,68 @@ pub fn disambiguated_label(items: &[Label<'_>], index: usize) -> Option<String> 
         return None;
     }
     parent_qualified_title(subject.source, subject.text)
+}
+
+/// One pane as the rail's structural FINGERPRINT reads it.
+///
+/// The fingerprint is what a row-model cache compares to decide whether to rebuild, so it is
+/// evaluated on every render pass whether it hits or misses — which is why the whole list crosses
+/// at once and not a pane at a time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StructurePane<'a> {
+    /// What kind of pane it is.
+    pub kind: PaneKind,
+    /// The title on the pane's spec, `None` for a pane with no spec at all.
+    pub spec_title: Option<&'a str>,
+    /// Whether that title was typed by the user.
+    pub user_renamed: bool,
+    /// Where the shell is (`pane/cwd`).
+    pub cwd: Option<&'a str>,
+    /// The HOST-pushed project key (`pane/projectKey`), before the precedence runs.
+    pub host_project_key: Option<&'a str>,
+}
+
+/// The two answers a pane's fingerprint needs that it cannot read off a cell.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StructureKey {
+    /// The pane's resolved By-Project key — the section it buckets into. `None` for a keyless or
+    /// non-terminal pane, which is the "Other" bucket.
+    pub project_key: Option<String>,
+    /// Whether this pane's TITLE would come off its foreground process — see
+    /// [`titles_by_process`](crate::rail_title::titles_by_process). The near side reads the
+    /// volatile process dictionary only where this is true.
+    pub titles_by_process: bool,
+}
+
+/// Both answers for every pane, in the caller's order.
+///
+/// A rail fingerprint asks two questions per pane and each one is several rules deep — the project
+/// key's transient-plugin guard, the title chain's rung — so a pane at a time is five or six
+/// crossings times the pane count, on a walk that runs on every evaluation of the cache it is the
+/// key for. The whole list has one shape and one answer per member, so it takes one.
+///
+/// The kind gate is the sidebar's own: only a terminal is filed under a project, and a video pane's
+/// title never came off a process to begin with.
+#[must_use]
+pub fn structure_keys(panes: &[StructurePane<'_>]) -> Vec<StructureKey> {
+    panes
+        .iter()
+        .map(|pane| {
+            let project_key = (pane.kind == PaneKind::Terminal)
+                .then(|| project_key_of(pane.host_project_key, pane.cwd))
+                .flatten();
+            StructureKey {
+                titles_by_process: titles_by_process(TitleShape {
+                    kind: pane.kind,
+                    spec_title: pane.spec_title,
+                    user_renamed: pane.user_renamed,
+                    cwd: pane.cwd,
+                    project_key: project_key.as_deref(),
+                }),
+                project_key,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

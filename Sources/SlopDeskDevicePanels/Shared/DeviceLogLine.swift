@@ -80,23 +80,34 @@ package struct DeviceLogLine: Identifiable, Equatable {
     ///
     /// A door that refuses — a line longer than a `UInt32` offset can name, which no source writes
     /// — leaves the row verbatim rather than half-filled, so the console still shows the text.
+    ///
+    /// ## The line is BORROWED, not copied
+    ///
+    /// It used to be `Array(text.utf8)` — a fresh heap buffer per row, on a path a booting device
+    /// drives at hundreds of rows a second, holding a copy of bytes the `String` was already
+    /// storing contiguously. `withUTF8` lends the storage instead, which is what the whole
+    /// offsets-not-strings shape of this door was for: nothing crosses, nothing is copied, and the
+    /// three slices are cut out of the row's own bytes. The one crossing PER ROW stays, and is the
+    /// right unit — a row is what the grammar parses, the argument is one short span and the answer
+    /// is six numbers and a severity, which `docs/55` §4c names as the shape the boundary is
+    /// cheapest in. Measured: the parse behind it is ~56 ns a row against ~5 ns for the call.
     private static func parse(
         _ text: String,
         through door: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<SlopDeskDeviceLogLine>?)
             -> Bool,
     ) -> Self {
-        let bytes = Array(text.utf8)
+        var text = text
         var record = SlopDeskDeviceLogLine()
-        let parsed = bytes.withUnsafeBufferPointer { line in
-            door(line.baseAddress, line.count, &record)
+        let row = text.withUTF8 { line -> Self? in
+            guard door(line.baseAddress, line.count, &record) else { return nil }
+            return Self(
+                time: slice(line, record.time_offset, record.time_len),
+                name: slice(line, record.name_offset, record.name_len),
+                message: slice(line, record.message_offset, record.message_len),
+                severity: DeviceLogSeverity(rawValue: record.severity) ?? .plain,
+            )
         }
-        guard parsed else { return Self(message: text) }
-        return Self(
-            time: slice(bytes, record.time_offset, record.time_len),
-            name: slice(bytes, record.name_offset, record.name_len),
-            message: slice(bytes, record.message_offset, record.message_len),
-            severity: DeviceLogSeverity(rawValue: record.severity) ?? .plain,
-        )
+        return row ?? Self(message: text)
     }
 
     /// A span the door named, cut out of the buffer it was measured against.
@@ -104,7 +115,9 @@ package struct DeviceLogLine: Identifiable, Equatable {
     /// Clamped rather than trusted: the offsets cross a C ABI, and a range past the end would be a
     /// trap in the caller rather than a wrong row. The Rust suite pins that every span it answers
     /// is already inside the line.
-    private static func slice(_ bytes: [UInt8], _ offset: UInt32, _ length: UInt32) -> String {
+    private static func slice(
+        _ bytes: UnsafeBufferPointer<UInt8>, _ offset: UInt32, _ length: UInt32,
+    ) -> String {
         let start = Swift.min(Int(offset), bytes.count)
         let end = Swift.min(start + Int(length), bytes.count)
         // Lossy on purpose, and the rule's failable alternative is wrong here: a device writes

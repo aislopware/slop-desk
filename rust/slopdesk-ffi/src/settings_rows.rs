@@ -21,7 +21,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::settings_rows::{self, Bucket, Persistence, SettingRow};
+use slopdesk_workspace::settings_rows::{self, Persistence, SettingRow};
 
 use crate::{borrow, deliver};
 
@@ -52,127 +52,12 @@ pub unsafe extern "C" fn slopdesk_settings_row_key(index: usize, out: *mut c_uch
     unsafe { row_field(index, out, cap, |row| row.key) }
 }
 
-/// The label a settings PAGE shows for a row — the page register where it has one, the index
-/// register otherwise, so the near side never has to know which rows carry an override.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_row_page_label(
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
-    unsafe { row_field(index, out, cap, SettingRow::page_label) }
-}
-
-/// A row's human label, as the flat INDEX shows it.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_row_label(index: usize, out: *mut c_uchar, cap: usize) -> usize {
-    // SAFETY: as above.
-    unsafe { row_field(index, out, cap, |row| row.label) }
-}
-
-/// A row's one-line description.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_row_description(
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: as above.
-    unsafe { row_field(index, out, cap, |row| row.description) }
-}
-
-/// What a row's default reads as.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_row_default_text(
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: as above.
-    unsafe { row_field(index, out, cap, |row| row.default_text) }
-}
-
-/// The extra searchable text a row carries. `0` for a row that needs none.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_row_keywords(
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: as above.
-    unsafe { row_field(index, out, cap, |row| row.keywords) }
-}
-
-/// The section a row jumps to, or `0` for one edited in place.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_row_target_section(
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: as above.
-    unsafe { row_field(index, out, cap, |row| row.target_section) }
-}
-
-/// How a row is edited: `0` inline, `1` on a dedicated section. `0` for an index no row has, which
-/// is safe because a caller that got here learned the row exists from the count.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_settings_row_bucket(index: usize) -> u8 {
-    settings_rows::row_at(index).map_or_else(|| Bucket::AdvancedOnly.index(), |row| row.bucket.index())
-}
-
 /// WHERE the row's value lives: `0` `UserDefaults`, `1` device-local, `2` model-backed.
 ///
-/// The reset question, not the render one — [`slopdesk_settings_row_bucket`] is that. `0` for an
-/// index no row has, which is the safe answer twice over: a caller that got here learned the row
-/// exists from the count, and `UserDefaults` is the arm a global reset already reaches.
+/// The reset question, not the render one — the bucket byte in front of
+/// [`slopdesk_settings_row_fields`]'s delivery is that. `0` for an index no row has, which is the
+/// safe answer twice over: a caller that got here learned the row exists from the count, and
+/// `UserDefaults` is the arm a global reset already reaches.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -211,18 +96,21 @@ pub extern "C" fn slopdesk_settings_row_shown(index: usize, mac: bool) -> bool {
 
 /// The seven strings and the bucket byte, in ONE delivery.
 ///
-/// ## Why this exists next to seven perfectly good field doors
+/// ## Why a row crosses whole
 ///
 /// The module header already argues the principle for the MATCH — positions rather than rows, so a
 /// filter is one crossing and not one per field per row — and then the near side turned each
 /// position back into eight calls. Settings search reads every matched row on every keystroke, so
-/// the field doors were costing roughly `8 × matches` crossings per character typed, and each
-/// string door can retry, so the real figure was higher. Whole-row is the same argument applied one
-/// level out: the caller wants the row, so the row is what crosses.
+/// the seven per-field doors this one replaced were costing roughly `8 × matches` crossings per
+/// character typed, and each string door could retry, so the real figure was higher. Whole-row is
+/// the same argument applied one level out: the caller wants the row, so the row is what crosses.
 ///
-/// The field doors stay. They are the right shape for the callers that want ONE field — the key
-/// lookup, the shown gate, the reset walk over `persistence` — and this door is not a replacement
-/// for them, it is the answer to a different question.
+/// They were deleted rather than kept beside it. Once the near side read rows through here, nothing
+/// called them — and an exported door with no caller is a second way to ask what a live door
+/// already answers, which is the drift `docs/55` §8 is about. The doors that survive are the ones a
+/// caller still asks a SINGLE question through: [`slopdesk_settings_row_key`] for the key lookup,
+/// [`slopdesk_settings_row_shown`] for the platform gate, [`slopdesk_settings_row_persistence`] for
+/// the reset walk.
 ///
 /// ## The layout
 ///
@@ -232,8 +120,8 @@ pub extern "C" fn slopdesk_settings_row_shown(index: usize, mac: bool) -> bool {
 /// `usize`-native, because the layout is read by a decoder on the other side of a C boundary and a
 /// width that changes with the target is a bug waiting for a 32-bit build.
 ///
-/// An empty field is a zero length, which is how `target_section` says "edited in place" — the same
-/// meaning the single-field door gives it, so the two readings cannot diverge.
+/// An empty field is a zero length, which is how `target_section` says "edited in place". There is
+/// one delivery and therefore one reading, so nothing can diverge from it.
 ///
 /// A return larger than `cap` means nothing was written; ask again at that size. An index no row
 /// has delivers nothing at all, which the caller distinguishes from a real row by the count it
@@ -276,7 +164,7 @@ pub unsafe extern "C" fn slopdesk_settings_row_fields(index: usize, out: *mut c_
 /// `(out, cap)` must be writable for `cap` bytes.
 #[expect(
     unsafe_code,
-    reason = "the delivery is the marshalling; every door above restates the same obligation"
+    reason = "the delivery is the marshalling; the door that calls it restates the same obligation"
 )]
 unsafe fn row_field(
     index: usize,
@@ -375,56 +263,114 @@ mod tests {
         unsafe { slopdesk_settings_row_index(key.as_ptr(), key.len()) }
     }
 
-    #[test]
-    fn a_row_crosses_field_by_field() {
-        let index = index_of("controls.copyOnSelect");
-        assert_ne!(index, SLOPDESK_SETTINGS_ROW_NONE);
-        // SAFETY: the buffer inside `read` is a live local.
-        let label = read(|out, cap| unsafe { slopdesk_settings_row_label(index, out, cap) });
-        assert_eq!(label.as_deref(), Some("Copy on Select"));
-        // SAFETY: as above.
-        let key = read(|out, cap| unsafe { slopdesk_settings_row_key(index, out, cap) });
-        assert_eq!(key.as_deref(), Some("controls.copyOnSelect"));
-        // SAFETY: as above.
-        let default = read(|out, cap| unsafe { slopdesk_settings_row_default_text(index, out, cap) });
-        assert_eq!(default.as_deref(), Some("Off"));
-        // SAFETY: as above.
-        let target = read(|out, cap| unsafe { slopdesk_settings_row_target_section(index, out, cap) });
-        assert_eq!(target, None, "an inline row jumps nowhere");
-        assert_eq!(slopdesk_settings_row_bucket(index), 0);
-        assert!(slopdesk_settings_row_is_inline_editable(index));
+    /// The slots of the one delivery, in the order the door's doc comment declares them. Named
+    /// rather than spelled as bare numbers, because a reader indexing the wrong slot is exactly the
+    /// silent shift the near side pads against.
+    const KEY: usize = 0;
+    const LABEL: usize = 1;
+    const PAGE_LABEL: usize = 2;
+    const DESCRIPTION: usize = 3;
+    const DEFAULT_TEXT: usize = 4;
+    const TARGET_SECTION: usize = 5;
+    const KEYWORDS: usize = 6;
+
+    /// The bucket byte and the seven fields of one row, read the way the near side reads them.
+    /// `None` for an index no row has, which is the door delivering nothing at all.
+    fn row(index: usize) -> Option<(u8, Vec<String>)> {
+        // SAFETY: the buffer inside `read_bytes` is a live local.
+        let blob = read_bytes(|out, cap| unsafe { slopdesk_settings_row_fields(index, out, cap) });
+        (!blob.is_empty()).then(|| split_row_blob(&blob))
     }
 
-    /// The whole-row door and the seven field doors answer the same row.
-    ///
-    /// This is the load-bearing test for the new door, because the near side reads rows through it
-    /// now and through the field doors only for single-field questions. If the two ever disagreed
-    /// the settings list would render one thing and the key lookup resolve another, with nothing to
-    /// say which was right. Walking EVERY row rather than a sample is what makes a field appended
-    /// to `SettingRow` and forgotten here fail immediately.
+    /// One slot of a delivery. A slot that is not THERE is the failure report rather than an empty
+    /// field: an absent slot shifts every field behind it, which is the silent mis-render the near
+    /// side's own padding exists to refuse.
+    fn at(fields: &[String], slot: usize) -> &str {
+        fields
+            .get(slot)
+            .expect("the delivery carries every slot")
+            .as_str()
+    }
+
+    /// One field out of the whole-row delivery. An empty field answers `None`, because "this row
+    /// jumps nowhere" and "this row jumps to the empty section" are not two states.
+    fn field(index: usize, slot: usize) -> Option<String> {
+        let (_, fields) = row(index)?;
+        Some(at(&fields, slot))
+            .filter(|text| !text.is_empty())
+            .map(String::from)
+    }
+
     #[test]
-    fn the_whole_row_door_agrees_with_every_field_door_on_every_row() {
+    fn a_row_crosses_whole() {
+        let index = index_of("controls.copyOnSelect");
+        assert_ne!(index, SLOPDESK_SETTINGS_ROW_NONE);
+        let (bucket, fields) = row(index).expect("a key the index resolved names a row");
+        assert_eq!(at(&fields, LABEL), "Copy on Select");
+        assert_eq!(at(&fields, KEY), "controls.copyOnSelect");
+        assert_eq!(at(&fields, DEFAULT_TEXT), "Off");
+        assert_eq!(field(index, TARGET_SECTION), None, "an inline row jumps nowhere");
+        assert_eq!(bucket, 0);
+        assert!(slopdesk_settings_row_is_inline_editable(index));
+        // The one string door that survived the widening answers the same key the delivery carries,
+        // because the near side resolves a key through it and reads the row through the other.
+        // SAFETY: the buffer inside `read` is a live local.
+        let key = read(|out, cap| unsafe { slopdesk_settings_row_key(index, out, cap) });
+        assert_eq!(key.as_deref(), Some("controls.copyOnSelect"));
+    }
+
+    /// The delivery carries every field of the row the rules hold, on every row.
+    ///
+    /// This is the load-bearing test for the door, because it is now the ONLY way a row reaches the
+    /// near side: seven per-field doors used to stand beside it and cross-check it, and they were
+    /// deleted when nothing called them. So the cross-check is against `slopdesk_workspace`'s own
+    /// row — the rules themselves — rather than against a second marshalling of them, which is the
+    /// stronger of the two comparisons and the one that survives having a single door. Walking
+    /// EVERY row rather than a sample is what makes a field appended to `SettingRow` and forgotten
+    /// here fail immediately.
+    #[test]
+    fn the_whole_row_door_carries_every_field_of_every_row() {
         for index in 0..slopdesk_settings_row_count() {
-            // SAFETY: the buffer inside `read` is a live local.
-            let blob = read_bytes(|out, cap| unsafe { slopdesk_settings_row_fields(index, out, cap) });
-            let (bucket, fields) = split_row_blob(&blob);
-            assert_eq!(bucket, slopdesk_settings_row_bucket(index), "row {index} bucket");
-            let expected: [Option<String>; 7] = [
-                // SAFETY: as above, once per field.
-                read(|out, cap| unsafe { slopdesk_settings_row_key(index, out, cap) }),
-                read(|out, cap| unsafe { slopdesk_settings_row_label(index, out, cap) }),
-                read(|out, cap| unsafe { slopdesk_settings_row_page_label(index, out, cap) }),
-                read(|out, cap| unsafe { slopdesk_settings_row_description(index, out, cap) }),
-                read(|out, cap| unsafe { slopdesk_settings_row_default_text(index, out, cap) }),
-                read(|out, cap| unsafe { slopdesk_settings_row_target_section(index, out, cap) }),
-                read(|out, cap| unsafe { slopdesk_settings_row_keywords(index, out, cap) }),
+            let (bucket, fields) = row(index).expect("every index below the count names a row");
+            let source = settings_rows::row_at(index).expect("the rules hold the row the count promised");
+            assert_eq!(bucket, source.bucket.index(), "row {index} bucket");
+            // Paired with its slot rather than positionally, so the ORDER the near side decodes by
+            // is pinned here too — a field swapped with its neighbour would otherwise still pass.
+            let expected = [
+                (KEY, source.key),
+                (LABEL, source.label),
+                (PAGE_LABEL, source.page_label()),
+                (DESCRIPTION, source.description),
+                (DEFAULT_TEXT, source.default_text),
+                (TARGET_SECTION, source.target_section),
+                (KEYWORDS, source.keywords),
             ];
             assert_eq!(fields.len(), expected.len(), "row {index} field count");
-            for (got, want) in fields.iter().zip(expected.iter()) {
-                // A field door answers `None` for an empty field; the blob spells it as a zero
-                // length. Same meaning, two shapes, and this is where they are reconciled.
-                assert_eq!(got.as_str(), want.as_deref().unwrap_or(""), "row {index}");
+            for (slot, want) in expected {
+                assert_eq!(at(&fields, slot), want, "row {index} slot {slot}");
             }
+            // The key the delivery carries is the key the lookup resolves, so a caller that walks
+            // the list and a caller that arrives by key cannot land on different rows.
+            assert_eq!(index_of(at(&fields, KEY)), index, "row {index} key round trip");
+        }
+    }
+
+    /// The page register overrides the index register where a row carries one, and falls back to
+    /// the label where it does not — so the near side never has to know which rows have an
+    /// override.
+    #[test]
+    fn a_page_label_falls_back_to_the_index_label() {
+        let overridden = (0..slopdesk_settings_row_count())
+            .filter_map(row)
+            .filter(|(_, fields)| at(fields, PAGE_LABEL) != at(fields, LABEL))
+            .count();
+        assert!(overridden > 0, "some row carries a page-register override");
+        for index in 0..slopdesk_settings_row_count() {
+            let (_, fields) = row(index).expect("every index below the count names a row");
+            assert!(
+                !at(&fields, PAGE_LABEL).is_empty(),
+                "row {index} delivers no page label, so a page would draw a nameless row",
+            );
         }
     }
 
@@ -474,10 +420,9 @@ mod tests {
     #[test]
     fn a_jump_row_names_its_section() {
         let index = index_of("font-family");
-        // SAFETY: the buffer inside `read` is a live local.
-        let target = read(|out, cap| unsafe { slopdesk_settings_row_target_section(index, out, cap) });
-        assert_eq!(target.as_deref(), Some("appearance"));
-        assert_eq!(slopdesk_settings_row_bucket(index), 1);
+        assert_eq!(field(index, TARGET_SECTION).as_deref(), Some("appearance"));
+        let (bucket, _) = row(index).expect("a key the index resolved names a row");
+        assert_eq!(bucket, 1);
         assert!(!slopdesk_settings_row_is_inline_editable(index));
     }
 
@@ -492,9 +437,10 @@ mod tests {
         );
         // SAFETY: the buffer inside `read` is a live local.
         assert_eq!(
-            read(|out, cap| unsafe { slopdesk_settings_row_label(9999, out, cap) }),
+            read(|out, cap| unsafe { slopdesk_settings_row_key(9999, out, cap) }),
             None
         );
+        assert_eq!(row(9999), None, "and the whole-row door delivers nothing either");
     }
 
     #[test]
@@ -509,8 +455,7 @@ mod tests {
         let named = out
             .iter()
             .take(found)
-            // SAFETY: the buffer inside `read` is a live local.
-            .filter_map(|index| read(|out, cap| unsafe { slopdesk_settings_row_label(*index, out, cap) }))
+            .filter_map(|index| field(*index, LABEL))
             .count();
         assert_eq!(named, found, "every reported position must name a row");
 

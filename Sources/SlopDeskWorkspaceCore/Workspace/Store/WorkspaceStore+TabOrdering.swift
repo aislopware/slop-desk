@@ -43,16 +43,13 @@ public extension WorkspaceStore {
     /// reason at tab granularity). Section collapse and the search filter are view state and
     /// deliberately do NOT move numbers — a number moves only when a pane opens, closes, moves, or
     /// changes project.
+    /// Memoized against ``WorkspaceStore/workspaceMirrorRevision``, because the rail asks for it once
+    /// per ROW while ⌘ is held (``shortcutNumber(for:)`` below) and the walk is a project-key lookup
+    /// per pane — so an un-memoized read is quadratic in pane count, per render pass. Every input is
+    /// the mirror's (the tree, each pane's spec kind, each pane's project key), which is what makes
+    /// that revision the right key rather than merely a cheap one.
     func displayOrderedPaneIDs() -> [PaneID] {
-        guard let session = tree.activeSession else { return [] }
-        let keyed = session.tabs.flatMap { tab in
-            tab.allPaneIDs().map { id -> (id: PaneID, key: String?) in
-                let kind = session.specs[id]?.kind ?? .terminal
-                return (id, kind == .terminal ? paneProjectKey(id) : nil)
-            }
-        }
-        return TabOrderingEngine.bucketedByProject(keyed, projectKey: \.key)
-            .flatMap { $0.elements.map(\.id) }
+        displayOrder().order
     }
 
     /// The ⌘-digit that focuses pane `id`, or `nil` when it has none (only the first NINE panes of
@@ -60,8 +57,38 @@ public extension WorkspaceStore {
     /// this, so the digit a row shows and the pane ``selectPaneNumber(_:)`` lands on can never
     /// disagree.
     func shortcutNumber(for id: PaneID) -> Int? {
-        guard let index = displayOrderedPaneIDs().firstIndex(of: id), index < 9 else { return nil }
-        return index + 1
+        displayOrder().shortcuts[id]
+    }
+
+    /// The drawn order and the digits it mints, resolved once per mirror revision.
+    ///
+    /// The digit map is built WITH the order rather than searched out of it per row: the ⌘-held rail
+    /// asks `P` times for an index into a list of `P`, and a linear scan there is the same quadratic
+    /// the memo exists to remove, one register down.
+    private func displayOrder() -> (order: [PaneID], shortcuts: [PaneID: Int]) {
+        if let cached = displayOrderProjection, cached.revision == workspaceMirrorRevision {
+            return (cached.order, cached.shortcuts)
+        }
+        guard let session = tree.activeSession else {
+            displayOrderProjection = (workspaceMirrorRevision, [], [:])
+            return ([], [:])
+        }
+        let keyed = session.tabs.flatMap { tab in
+            tab.allPaneIDs().map { id -> (id: PaneID, key: String?) in
+                let kind = session.specs[id]?.kind ?? .terminal
+                return (id, kind == .terminal ? paneProjectKey(id) : nil)
+            }
+        }
+        let order = TabOrderingEngine.bucketedByProject(keyed, projectKey: \.key)
+            .flatMap { $0.elements.map(\.id) }
+        // First occurrence wins, so a duplicate id in a malformed tree cannot renumber the pane that
+        // is actually drawn first — the same reading `firstIndex(of:)` had.
+        var shortcuts: [PaneID: Int] = [:]
+        for (index, id) in order.prefix(9).enumerated() where shortcuts[id] == nil {
+            shortcuts[id] = index + 1
+        }
+        displayOrderProjection = (workspaceMirrorRevision, order, shortcuts)
+        return (order, shortcuts)
     }
 
     /// This store's reading of ``TabOrderingEngine/paneProjectKey(_:projectKey:cwd:)`` — pane `id`'s
@@ -87,7 +114,7 @@ public extension WorkspaceStore {
     /// fall through to the project-section rule.
     var tabFocusMRU: [TabID] {
         observeWorkspaceMirror()
-        guard let topology = workspaceMirror.topology, let session = topology.tree.activeSessionID
+        guard let topology = mirroredTopology, let session = topology.tree.activeSessionID
         else { return [] }
         return topology.focusMRU[session] ?? []
     }

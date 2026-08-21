@@ -56,7 +56,29 @@ public enum CheatSheetContent {
 
     /// Every section, in the registry's declared display order (panes, tabs, focus, view), with the
     /// nine ⌘1…⌘9 select-tab chords already collapsed into one representative row.
-    public static var sections: [CheatSheetSection] {
+    ///
+    /// A `let`, and the distinction is load-bearing rather than stylistic. Everything read below is
+    /// a constant — `WorkspaceBindingRegistry.bindings` is a `static let`, so is
+    /// ``WorkspaceBindingRegistry/selectPaneRepresentative``, and `glyph(for:)` renders a DEFAULT
+    /// chord (a user override lives in `WorkspaceBindingOverrides`, which nothing here consults). So
+    /// the answer cannot change between two reads, and as a computed `static var` it was recomputed
+    /// on every one: 54 chord-bearing rows × one `slopdesk_keybind_glyph` each, plus a linear scan of
+    /// the 85-element `allBindings` per row — an array this rebuilds each call — for ~4 600 element
+    /// comparisons. The phone reads it from a `body`
+    /// (`SlopDeskPhoneUI/Overlays/KeyboardCheatSheetView`), so that was per render pass.
+    ///
+    /// Measured with `swiftc -O` against the shipped `SlopDeskFFI.xcframework`: `glyph(_:)` is 254 ns
+    /// (the door itself is ~1 ns of that — the rest is a `withUTF8`, a 32-byte `[UInt8]` and a
+    /// `String`), and `binding(for:)` is **1.43 µs**, because it rebuilds the 85-element `allBindings`
+    /// array before it scans it. Fifty-four rows of both is **~86 µs per read**, and the phone was
+    /// paying it per render pass. As a `let` it is one 86 µs build at first use and an array read
+    /// thereafter.
+    ///
+    /// A door would not have helped, which is why this finding is memoised rather than ported: the
+    /// expensive half is on the near side and the whole answer is a pure function of two `static let`
+    /// tables. `docs/55` §8's rule cuts the other way here — a door with nothing new to answer is a
+    /// second way to ask.
+    public static let sections: [CheatSheetSection] =
         WorkspaceBindingRegistry.groupedForDisplay.map { group in
             CheatSheetSection(
                 id: group.category.rawValue,
@@ -73,7 +95,6 @@ public enum CheatSheetContent {
                 },
             )
         }
-    }
 
     /// `sections`, dealt into `columns` columns and returned column-major — one array per column, in
     /// the order they should be laid left to right. Always exactly `max(1, columns)` arrays, so a

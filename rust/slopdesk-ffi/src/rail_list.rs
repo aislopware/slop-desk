@@ -150,14 +150,16 @@ pub unsafe extern "C" fn slopdesk_ws_rail_plan(
 /// zero length is "keep the label you have" — a qualified label is never empty, so the two cannot
 /// collide. A return larger than `cap` means nothing was written; ask again at that size.
 ///
-/// ## Why this is not just [`slopdesk_ws_rail_disambiguated_label`] in a loop
+/// ## Why one answer at a time was never on offer
 ///
-/// That door's own note says the repeated walk is cheap at rail lengths, and it is — but the walk
-/// was never the expensive half. A collision is a fact about the LIST, so the whole list has to be
-/// in hand to answer for one member, and the near side was rebuilding it from scratch on every
-/// index: `n` label arrays and `n` copies of every title's bytes, per rail rebuild, to answer `n`
-/// questions that share one input. Passing the list once and getting `n` answers back is the shape
-/// the module header already argues for everything else here.
+/// A collision is a fact about the LIST, not about one member, so the whole list has to be in hand
+/// to answer for one row. A per-index door would therefore take the same array and the same blob
+/// this one takes and differ only in how much of the answer it threw away — and the near side paid
+/// for that difference on every index, rebuilding the list from scratch each time: `n` label arrays
+/// and `n` copies of every title's bytes, per rail rebuild, to answer `n` questions that share one
+/// input. The repeated WALK is cheap at rail lengths; the walk was never the expensive half.
+/// Passing the list once and getting `n` answers back is the shape the module header already argues
+/// for everything else here.
 ///
 /// # Safety
 /// `items` must be null or point to `count` live [`CRailLabel`]s; `strings` null or `strings_len`
@@ -198,50 +200,6 @@ pub unsafe extern "C" fn slopdesk_ws_rail_disambiguated_labels(
     }
 }
 
-/// What `items[index]` should be CALLED once identical labels have been told apart.
-///
-/// `0` is "keep the label you have" — a qualified label is never empty, so the two cannot collide.
-/// The whole list is passed on every call because a collision is a fact about the list, not about
-/// one member. Kept beside the list door for the caller that genuinely wants ONE answer; a caller
-/// relabelling a whole rail wants [`slopdesk_ws_rail_disambiguated_labels`], which re-marshals the
-/// list once instead of once per row.
-///
-/// # Safety
-/// `items` must be null or point to `count` live [`CRailLabel`]s; `strings` null or `strings_len`
-/// initialised bytes; `out` null or writable for `cap` bytes. All live for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_ws_rail_disambiguated_label(
-    items: *const CRailLabel,
-    count: usize,
-    strings: *const c_uchar,
-    strings_len: usize,
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; the helpers state their own.
-    unsafe {
-        let blob = crate::borrow(strings, strings_len);
-        let held: Vec<Label<'_>> = borrow_array(items, count)
-            .iter()
-            .map(|item| {
-                Label {
-                    text: text_of(item.text, blob).unwrap_or_default(),
-                    source: text_of(item.source, blob),
-                }
-            })
-            .collect();
-        let Some(label) = rail_list::disambiguated_label(&held, index) else {
-            return 0;
-        };
-        deliver(label.as_bytes(), out, cap)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
@@ -253,8 +211,8 @@ mod tests {
     )]
 
     use super::{
-        CRailLabel, CRailPlacement, CRailPlanRow, CRailRowFields, slopdesk_ws_rail_disambiguated_label,
-        slopdesk_ws_rail_disambiguated_labels, slopdesk_ws_rail_plan, slopdesk_ws_rail_row_matches,
+        CRailLabel, CRailPlacement, CRailPlanRow, CRailRowFields, slopdesk_ws_rail_disambiguated_labels,
+        slopdesk_ws_rail_plan, slopdesk_ws_rail_row_matches,
     };
     use crate::workspace::Span;
 
@@ -379,29 +337,8 @@ mod tests {
                 source: blob.span(Some("/w/api/docs")),
             },
         ];
-        let label = |index: usize| {
-            let mut out = [0_u8; 64];
-            // SAFETY: three live local buffers, borrowed for the duration of the call.
-            let written = unsafe {
-                slopdesk_ws_rail_disambiguated_label(
-                    items.as_ptr(),
-                    items.len(),
-                    blob.bytes.as_ptr(),
-                    blob.bytes.len(),
-                    index,
-                    out.as_mut_ptr(),
-                    out.len(),
-                )
-            };
-            String::from_utf8_lossy(out.get(..written).unwrap_or_default()).into_owned()
-        };
-        assert_eq!(label(0), "api/src");
-        assert_eq!(label(1), "web/src");
-        assert_eq!(label(2), "", "nothing else is called docs");
-
-        // The list door answers the same three, in order, from one crossing. Asserting AGREEMENT
-        // rather than the words again is what makes the two impossible to drift: the day someone
-        // changes the collision rule, either both move or this fails.
+        // One crossing answers for all three, in list order. Walking the length prefixes back out
+        // is the near side's own job, so the walk is part of what is pinned here.
         let mut whole = [0_u8; 256];
         // SAFETY: three live local buffers, borrowed for the duration of the call.
         let written = unsafe {
@@ -415,14 +352,22 @@ mod tests {
             )
         };
         let mut rest = whole.get(..written).unwrap_or_default();
-        for index in 0..items.len() {
+        let mut labels: Vec<String> = Vec::with_capacity(items.len());
+        for _ in 0..items.len() {
             let (header, tail) = rest.split_at(4);
             let len = u32::from_be_bytes(header.try_into().expect("four bytes")) as usize;
             let (body, tail) = tail.split_at(len);
-            assert_eq!(String::from_utf8_lossy(body), label(index), "row {index}");
+            labels.push(String::from_utf8_lossy(body).into_owned());
             rest = tail;
         }
         assert!(rest.is_empty(), "the delivery is exactly as long as the list");
+        assert_eq!(labels.first().map(String::as_str), Some("api/src"));
+        assert_eq!(labels.get(1).map(String::as_str), Some("web/src"));
+        assert_eq!(
+            labels.get(2).map(String::as_str),
+            Some(""),
+            "nothing else is called docs"
+        );
     }
 
     /// An overflow reports its size and leaves the caller's buffer alone — §4's retry, on the list.

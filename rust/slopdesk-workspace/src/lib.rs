@@ -73,6 +73,7 @@
 //!   Nothing here indexes, unwraps or panics — the lint table denies all three.
 
 pub mod binding_rows;
+pub mod binding_search;
 pub mod cheat_sheet;
 pub mod chrome;
 pub mod drop_action;

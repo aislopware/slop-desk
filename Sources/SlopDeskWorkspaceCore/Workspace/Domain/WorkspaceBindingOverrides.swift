@@ -20,7 +20,18 @@ public extension WorkspaceBindingRegistry {
     /// change. EMPTY by default ⇒ every binding resolves to its registry default ⇒ behaviour-identical
     /// to the no-override registry. `nonisolated(unsafe)` for the same write-once-then-read-many contract
     /// as ``EnvConfig/overlay``: the store sets it on the main actor; the dispatcher reads it.
-    nonisolated(unsafe) static var activeOverrides = KeybindingPreferences()
+    nonisolated(unsafe) static var activeOverrides = KeybindingPreferences() {
+        didSet { liveChordTable = nil }
+    }
+
+    /// ``resolvedChordTable``'s answer, held until ``activeOverrides`` is written again.
+    ///
+    /// The table is a pure function of the registry (a `let`) and the overrides (write-once-then-read-
+    /// many), so rebuilding it per key event was recomputing a constant: 85 rows resolved, 85 chords
+    /// hashed and a dictionary allocated, on every keystroke the app sees, plus one crossing per
+    /// override to re-map a chord that had not changed. The invalidation is the SETTER's rather than a
+    /// revision compare, because the setter is the only thing that can make the answer stale.
+    private nonisolated(unsafe) static var liveChordTable: [KeyChord: WorkspaceAction]?
 
     /// The chord that should fire `action` RIGHT NOW: the user override (if one is set for the action's
     /// binding id) else the registry default. The keyboard dispatcher + the menu-shortcut derivation use
@@ -46,17 +57,27 @@ public extension WorkspaceBindingRegistry {
     /// override collides with another binding's chord is last-writer-wins in the map (the UI surfaces the
     /// collision via ``KeybindingPreferences/conflicts()`` so the user resolves it).
     static var resolvedChordTable: [KeyChord: WorkspaceAction] {
-        resolvedChordTable(overrides: activeOverrides)
+        if let liveChordTable { return liveChordTable }
+        let built = resolvedChordTable(overrides: activeOverrides)
+        liveChordTable = built
+        return built
     }
 
     /// The override-aware chord table against an explicit override set (pure, testable). Folds in
     /// ``aliasChords`` (the ⌘+ font-increase alias, etc.) AFTER the resolved bindings — but only onto a chord
     /// the user has not rebound onto, so an override always wins (the alias is a free second chord, never a
     /// squatter). This is the table the live dispatcher reads, so the aliases fire at runtime too.
+    ///
+    /// Resolves each row against the row it is ALREADY holding rather than through
+    /// ``resolvedChord(for:overrides:)``, which would look the same binding up again by action — the
+    /// same fold, one line shorter, and 85 lookups per build cheaper. The override arm is
+    /// ``resolvedChord(for:overrides:)``'s, spelled once: an override that maps wins, one that does not
+    /// falls back to the row's own chord (validate-then-default).
     static func resolvedChordTable(overrides: KeybindingPreferences) -> [KeyChord: WorkspaceAction] {
         var map: [KeyChord: WorkspaceAction] = [:]
+        map.reserveCapacity(allBindings.count + aliasChords.count)
         for binding in allBindings {
-            if let chord = resolvedChord(for: binding.action, overrides: overrides) {
+            if let chord = overrides.chord(for: binding.id)?.asRegistryChord ?? binding.chord {
                 map[chord] = binding.action
             }
         }

@@ -972,12 +972,33 @@ public enum WorkspaceBindingRegistry {
 
     /// Every binding the registry knows — the main table plus the nine ⌘-digit select-pane chords. The
     /// chord-table guards (uniqueness, ⌘/⌥-prefix) run over this full set.
-    public static var allBindings: [WorkspaceBinding] { bindings + selectPaneBindings }
+    ///
+    /// `let`, and the `let` is load-bearing. As a computed `var` this concatenation ran on every read,
+    /// and its readers are the keyboard's: `resolvedChordTable` walks it once per key event and called
+    /// ``binding(for:)`` per row, which read it AGAIN — 86 fresh 85-element arrays per keystroke, each
+    /// retaining four strings per element. Measured at 210µs of allocation per key event on an M-series
+    /// Mac, all of it to rebuild a table whose inputs cannot change. `scripts/check-supervisor.sh` pins
+    /// the `let` because a `var` here costs nothing a test can see.
+    public static let allBindings: [WorkspaceBinding] = bindings + selectPaneBindings
 
     /// The binding for `action`, or `nil` if unregistered.
+    ///
+    /// A hash lookup rather than the linear scan it was, and FIRST-WINS the way `first(where:)` was:
+    /// nothing in the table repeats an action today, but the collapsed ⌘1…⌘9 representative shares
+    /// `.selectPane(1)` with the generated row, so "the first row that claims it" is the rule this
+    /// answers by rather than a coincidence it relies on.
     public static func binding(for action: WorkspaceAction) -> WorkspaceBinding? {
-        allBindings.first { $0.action == action }
+        byAction[action]
     }
+
+    /// ``binding(for:)``'s index, built once. Private because the ORDER is the registry's, and a
+    /// caller that wanted the mapping would be asking for the array.
+    private static let byAction: [WorkspaceAction: WorkspaceBinding] = {
+        var index: [WorkspaceAction: WorkspaceBinding] = [:]
+        index.reserveCapacity(allBindings.count)
+        for binding in allBindings where index[binding.action] == nil { index[binding.action] = binding }
+        return index
+    }()
 
     /// Extra chord → action ALIASES that fire an existing action from a SECOND chord WITHOUT minting a
     /// display row (so the cheat sheet / palette / menu still show the ONE canonical binding). Folded into
@@ -1023,28 +1044,46 @@ public enum WorkspaceBindingRegistry {
     /// module that writes the chord's canonical config text, so the menu, the palette and the cheat
     /// sheet all print what one rule says a chord is called. `nonisolated` (no view / actor) so it
     /// composes from any context.
+    /// The retry is not ceremony. ``glyphCapacity`` is a GUESS, and the door's contract (docs/55 §4)
+    /// is that an answer larger than the buffer leaves it UNTOUCHED and reports the size. This used
+    /// to read `out.prefix(max(0, written))` off that untouched buffer, so a glyph that overflowed
+    /// came back as thirty-two zero bytes — an empty string, in the one place a chord is shown to
+    /// the user, with no error anywhere. Asking again at the size the door named is the whole fix,
+    /// and it costs nothing on any chord that fits.
     public nonisolated static func glyph(_ chord: KeyChord) -> String {
         var token = chord.key.canonicalToken
-        var out = [UInt8](repeating: 0, count: glyphCapacity)
-        let written = token.withUTF8 { key in
-            out.withUnsafeMutableBufferPointer { rendered in
-                slopdesk_keybind_glyph(
-                    key.baseAddress,
-                    key.count,
-                    chord.modifiers.contains(.command),
-                    chord.modifiers.contains(.shift),
-                    chord.modifiers.contains(.option),
-                    chord.modifiers.contains(.control),
-                    rendered.baseAddress,
-                    rendered.count,
-                )
+        return token.withUTF8 { key -> String in
+            func render(into out: inout [UInt8]) -> Int {
+                out.withUnsafeMutableBufferPointer { rendered in
+                    slopdesk_keybind_glyph(
+                        key.baseAddress,
+                        key.count,
+                        chord.modifiers.contains(.command),
+                        chord.modifiers.contains(.shift),
+                        chord.modifiers.contains(.option),
+                        chord.modifiers.contains(.control),
+                        rendered.baseAddress,
+                        rendered.count,
+                    )
+                }
             }
+            var out = [UInt8](repeating: 0, count: glyphCapacity)
+            var written = render(into: &out)
+            if written > out.count {
+                out = [UInt8](repeating: 0, count: written)
+                written = render(into: &out)
+                // The second answer cannot disagree with the first — the door is pure — so a short
+                // fill here means the two calls saw different memory, and none of it is readable.
+                guard written == out.count else { return "" }
+            }
+            guard written > 0 else { return "" }
+            return String(bytes: out.prefix(written), encoding: .utf8) ?? ""
         }
-        return String(bytes: out.prefix(max(0, written)), encoding: .utf8) ?? ""
     }
 
-    /// Four modifier glyphs at three bytes each plus a key: a token that needed more than this is
-    /// not a chord anyone typed, and the door reports the size rather than writing a torn one.
+    /// Four modifier glyphs at three bytes each plus a key — enough for every chord the platform
+    /// delivers, which is why it is the FIRST guess and not a limit. A key name longer than this
+    /// costs a second call, not a truncated glyph.
     private nonisolated static let glyphCapacity = 32
 
     /// The display glyph for `action`'s default binding, or `nil` when it has none. `public` so the

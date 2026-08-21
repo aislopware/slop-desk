@@ -122,8 +122,7 @@ struct WorkspaceCommands: Commands {
     /// A category with no bindings yields an EMPTY menu body — harmless, and a future epic that adds the first
     /// binding to a now-empty section lights it up with no further wiring here.
     private func commandMenu(for category: WorkspaceAction.Category) -> some Commands {
-        let rows = WorkspaceBindingRegistry.groupedForDisplay
-            .first { $0.category == category }?.bindings ?? []
+        let rows = Self.rowsByCategory[category] ?? []
         return CommandMenu(category.rawValue) {
             ForEach(rows, id: \.id) { binding in
                 menuItem(for: binding)
@@ -193,13 +192,58 @@ struct WorkspaceCommands: Commands {
     /// The row title, with the chord glyph appended as a plain-text hint when the binding has one. We do
     /// NOT use `.keyboardShortcut`, so the glyph would otherwise be invisible — appending it keeps the menu
     /// a faithful cheat sheet (e.g. "Split Right  ⌘D") without binding the key.
+    ///
+    /// Read out of ``titlesByID``, so a body pass crosses nothing. Falls back to the bare title, which is
+    /// what a binding with no chord reads as anyway.
     private func menuTitle(for binding: WorkspaceBinding) -> String {
-        guard let glyph = WorkspaceBindingRegistry.glyph(for: binding.action) else { return binding.title }
-        return "\(binding.title)  \(glyph)"
+        Self.titlesByID[binding.id] ?? binding.title
     }
 
     /// The active pane id (drives item enablement). `nil` when no pane is focused.
     private var activePaneID: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
     }
+
+    // MARK: - The tables, read once
+
+    /// Each display category's rows, in the registry's order.
+    ///
+    /// `CommandsBuilder` has no `ForEach`, so ``body`` names the four categories one line each — and
+    /// each of those lines used to walk `groupedForDisplay`, which rebuilds the whole grouped table
+    /// (four `filter` passes over the 76-row array, plus the appended select-pane representative) to
+    /// take one entry out of it. Four times per body pass, and SwiftUI re-evaluates a `Commands` body
+    /// on any observed store change.
+    private static let rowsByCategory: [WorkspaceAction.Category: [WorkspaceBinding]] = Dictionary(
+        uniqueKeysWithValues: WorkspaceBindingRegistry.groupedForDisplay.map { ($0.category, $0.bindings) },
+    )
+
+    /// Every menu row's rendered title — the binding's own words with its default chord's glyph
+    /// appended — by binding id.
+    ///
+    /// The glyph is a crossing, and `WorkspaceBindingRegistry.glyph(for:)` pays a linear scan of
+    /// `allBindings` (an array it rebuilds per call) to find the binding before it renders one. That
+    /// ran per menu ROW per body pass: ~54 chord-bearing rows plus the nine ⌘1…⌘9 submenu rows the
+    /// Select Pane menu draws, so 54–110 crossings and thousands of element comparisons on every
+    /// re-evaluation.
+    ///
+    /// Measured with `swiftc -O` against the shipped `SlopDeskFFI.xcframework`: the glyph door and its
+    /// marshalling are 254 ns, and the `binding(for:)` lookup in front of it is **1.43 µs** — the
+    /// array rebuild, not the boundary. So a menu-bar body pass was spending **~90–190 µs** rendering
+    /// titles that had not changed since launch. It is now a dictionary read.
+    ///
+    /// It is a `let` because the answer cannot change: `WorkspaceBindingRegistry.bindings` is itself
+    /// a `static let`, and `glyph(for:)` renders the DEFAULT chord — a user override lives in
+    /// `WorkspaceBindingOverrides`, which this menu has never consulted (the glyph here is a
+    /// discoverability hint, not the chord that fires; the `NSEvent` dispatcher owns that, per the
+    /// file header). Memoising therefore changes no answer, only how often it is computed.
+    private static let titlesByID: [String: String] = {
+        let rows = WorkspaceBindingRegistry.groupedForDisplay.flatMap(\.bindings)
+            + WorkspaceBindingRegistry.selectPaneBindings
+        return Dictionary(rows.map { binding in
+            guard let glyph = WorkspaceBindingRegistry.glyph(for: binding.action) else {
+                return (binding.id, binding.title)
+            }
+            return (binding.id, "\(binding.title)  \(glyph)")
+        }, uniquingKeysWith: { first, _ in first })
+    }()
 }

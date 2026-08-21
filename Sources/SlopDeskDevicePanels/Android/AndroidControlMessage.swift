@@ -212,7 +212,30 @@ package enum AndroidControlMessage {
         return encode(request, body: package)
     }
 
-    /// The measure-then-fill retry every encoder crosses under.
+    /// First guess at a message's size, in the shape `AltScreenCutScanner` is `docs/55` §6's
+    /// reference for: the retry below exists to be CORRECT, not to be travelled.
+    ///
+    /// Every message that carries no body is at most 32 bytes — `INJECT_TOUCH_EVENT`, the largest —
+    /// so this is generous by a factor of two for the whole gesture path, which is the only part of
+    /// this file that runs at 60–120 Hz. It is a guess and not a shared constant: nothing is wrong
+    /// if the door outgrows it, because the door writes NOTHING when the answer does not fit.
+    private static let firstGuessBytes = 64
+
+    /// The one crossing every encoder goes through, and the retry that keeps it correct.
+    ///
+    /// It used to MEASURE and then FILL, unconditionally — two crossings and two encodes for an
+    /// answer whose size the first one already knew was constant, into a scratch `[UInt8]` that was
+    /// then COPIED into the returned `Data`. `docs/55` §4's convention is that a short buffer leaves
+    /// the output untouched and reports the true length, so a caller may simply try: the six
+    /// messages that carry no body now cross ONCE, straight into the `Data` they become, and the
+    /// three that carry a string (`INJECT_TEXT`, `SET_CLIPBOARD`, `START_APP`) take the retry rather
+    /// than a guess sized off an untrusted string the door is going to truncate anyway. None of
+    /// those three is on a gesture.
+    ///
+    /// The crossing COUNT was never the point. Measured against the shipped archive, a door costs
+    /// ~1 ns and the allocations around it cost hundreds; what this shape drops is one whole
+    /// re-encode and one buffer copy, and it lands at **205 ns a message against 320** — over the
+    /// scroll path's 60–120 Hz, times the two to four messages a re-grip emits.
     ///
     /// `nil` is REFUSED, not "did not fit": a real message is never zero bytes, since every one is
     /// at least its type byte. The refusals are an empty body and a message the door will not send.
@@ -220,16 +243,32 @@ package enum AndroidControlMessage {
         var request = request
         let bytes = Array(body.utf8)
         return bytes.withUnsafeBufferPointer { text -> Data? in
-            let needed = slopdesk_android_control_encode(&request, text.baseAddress, text.count, nil, 0)
+            var out = Data(count: firstGuessBytes)
+            var needed = call(&request, text, into: &out)
             guard needed > 0 else { return nil }
-            var out = [UInt8](repeating: 0, count: needed)
-            let written = out.withUnsafeMutableBufferPointer { room in
-                slopdesk_android_control_encode(
-                    &request, text.baseAddress, text.count, room.baseAddress, room.count,
-                )
+            if needed > out.count {
+                // Nothing was written, so this is a clean retry; the door is pure, so the second
+                // call cannot disagree with the first.
+                out = Data(count: needed)
+                needed = call(&request, text, into: &out)
+                guard needed > 0, needed <= out.count else { return nil }
             }
-            guard written == needed else { return nil }
-            return Data(out)
+            // The guess was the buffer, so the tail of it is slack rather than message.
+            out.removeSubrange(needed...)
+            return out
+        }
+    }
+
+    /// One invocation of the door. Answers how many bytes the message NEEDS, whether or not it fit.
+    private static func call(
+        _ request: inout SlopDeskAndroidControl,
+        _ text: UnsafeBufferPointer<UInt8>,
+        into out: inout Data,
+    ) -> Int {
+        out.withUnsafeMutableBytes { room in
+            slopdesk_android_control_encode(
+                &request, text.baseAddress, text.count, room.baseAddress, room.count,
+            )
         }
     }
 }

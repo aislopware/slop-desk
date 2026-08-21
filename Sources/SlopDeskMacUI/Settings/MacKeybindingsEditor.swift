@@ -167,8 +167,11 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
     private func drawList() {
         empty(list)
         let conflicting = Set(store.keybindingConflicts().values.flatMap(\.self))
+        // One crossing for the whole table, not one per category sweep: the filter does not depend
+        // on the category, so asking it four times asks the same question four times.
+        let kept = surviving()
         for category in WorkspaceAction.Category.allCases {
-            let rows = bindings(in: category)
+            let rows = bindings(in: category, surviving: kept)
             guard !rows.isEmpty else { continue }
             list.addArrangedSubview(sectionHeader(category.rawValue))
             for entry in rows {
@@ -240,16 +243,27 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
 
     // MARK: - Reading the registry
 
+    /// Which rows of `WorkspaceBindingRegistry.allBindings` the search query keeps, in that order —
+    /// asked once per keystroke and read by every category.
+    private func surviving() -> [Bool] {
+        KeybindingsEditorModel.surviving(
+            WorkspaceBindingRegistry.allBindings,
+            effectiveChord: { effectiveChord(for: $0) },
+            query: searchQuery,
+        )
+    }
+
     /// The bindings in `category` that survive the search, minus the synthetic ⌘1…⌘9 representative —
     /// it has no single chord to rebind, and the real per-digit chords are an implementation detail.
-    private func bindings(in category: WorkspaceAction.Category) -> [WorkspaceBinding] {
-        WorkspaceBindingRegistry.allBindings.filter {
-            $0.category == category
-                && $0.id != WorkspaceBindingRegistry.selectPaneRepresentative.id
-                && KeybindingsEditorModel.matches(
-                    $0, effectiveChord: effectiveChord(for: $0), query: searchQuery,
-                )
-        }
+    /// `surviving` is positional against `allBindings`, so this walks the same array it was built from.
+    private func bindings(
+        in category: WorkspaceAction.Category, surviving: [Bool],
+    ) -> [WorkspaceBinding] {
+        zip(WorkspaceBindingRegistry.allBindings, surviving).filter { binding, kept in
+            kept
+                && binding.category == category
+                && binding.id != WorkspaceBindingRegistry.selectPaneRepresentative.id
+        }.map(\.0)
     }
 
     private func binding(forID id: String) -> WorkspaceBinding? {
@@ -261,11 +275,13 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
     }
 
     /// What the chip shows: the override if it maps, else the registry default, else nothing bound.
+    /// Through the spelling memo, so a default chord — which is every chord until the user rebinds one
+    /// — is a dictionary read rather than the two doors and four allocations rendering it costs.
     private func effectiveGlyph(for binding: WorkspaceBinding) -> String {
         if let override = store.keybindings.chord(for: binding.id), let mapped = override.asRegistryChord {
-            return WorkspaceBindingRegistry.glyph(mapped)
+            return KeybindingsEditorModel.spelling(of: mapped).glyph
         }
-        if let chord = binding.chord { return WorkspaceBindingRegistry.glyph(chord) }
+        if let chord = binding.chord { return KeybindingsEditorModel.spelling(of: chord).glyph }
         return "—"
     }
 

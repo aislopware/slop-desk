@@ -1841,9 +1841,10 @@ public final class TerminalViewModel {
     @ObservationIgnored public private(set) var paneLatencyMS: Double?
     /// Client-side `TerminalModeTracker` (DECSET/DECRST 1049/47/1047 + OSC-133) fed UNCONDITIONALLY in
     /// ``ingestPass`` — backs BOTH the glitch-caret alt-screen gate and the public ``isAlternateScreen``
-    /// accessor the paste / backspace / scroll-past gates read. Its `memchr` skim fast path makes a pass
-    /// while every feature is off one `memchr` per chunk; tracking always keeps the alt-screen truth fresh even
-    /// with the glitch caret disabled (its default).
+    /// accessor the paste / backspace / scroll-past gates read. Its word-at-a-time skim makes a pass while
+    /// every feature is off ONE scan for the next `ESC` — 0.172 µs over a 3 KiB chunk, measured (docs/55 §4c)
+    /// — so tracking always keeps the alt-screen truth fresh even with the glitch caret disabled (its
+    /// default).
     @ObservationIgnored private let modeTracker = TerminalModeTracker()
 
     /// TRUE while the host terminal is on the ALTERNATE screen — a full-screen TUI (vim, htop, less, a
@@ -2187,7 +2188,14 @@ public final class TerminalViewModel {
         }
         // Alt-screen tracking is fed UNCONDITIONALLY: the public `isAlternateScreen` accessor (read by the
         // paste / backspace / scroll-past gates) must be fresh even when the glitch caret is off (its default).
-        // The tracker's `memchr` skim makes a ground-content pass one `memchr` per chunk.
+        // A ground-content chunk carries no `ESC` at all, so the tracker's word-at-a-time skim decides that in
+        // ONE pass at a measured 18 GB/s and reaches the transition table for nothing.
+        //
+        // ONE crossing per chunk, and the `_ =` costs none of them: `consume` answers a COUNT, and the Swift
+        // face reads a parked event only when that count is non-zero. Marks are OSC 133 boundaries — a handful
+        // per COMMAND, not per chunk — so the discarded array is empty (and allocation-free) on the hot path,
+        // and 4 extra crossings cost a measured 0.5% of the one call that produced them on the rare chunk that
+        // brackets a command. It is the skim that this loop costs, not the boundary.
         for chunk in chunks {
             _ = modeTracker.consume(chunk)
         }

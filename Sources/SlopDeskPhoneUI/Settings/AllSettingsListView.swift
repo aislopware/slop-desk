@@ -121,10 +121,17 @@ struct AllSettingsListView: View {
     @Default(.titleShellControlled) private var titleShellControlled
     @Default(.clipboardShellControlled) private var clipboardShellControlled
 
+    /// The rows the live query leaves, computed ONCE per body pass.
+    ///
+    /// It was a computed `private var` read twice — `filtered.isEmpty` and then `ForEach(filtered)`
+    /// — and `AllSettingsCatalog.filter` is a crossing per matched row plus two for the match
+    /// itself, so an empty query cost 188 doors and the body paid it 376 times over before a single
+    /// row was built. The `let` is not a cache; it is the second evaluation deleted.
     private var filtered: [AllSettingsCatalog.SettingEntry] { AllSettingsCatalog.filter(query) }
 
     var body: some View {
-        Group {
+        let rows = filtered
+        return Group {
             Section {
                 HStack(spacing: Slate.Metric.space2) {
                     Button(SettingsIndexPresentation.resetAllTitle) { confirmResetAll = true }
@@ -133,12 +140,12 @@ struct AllSettingsListView: View {
                 }
                 .buttonStyle(.bordered)
 
-                if filtered.isEmpty {
+                if rows.isEmpty {
                     Text(SettingsIndexPresentation.noMatches(query))
                         .font(SettingsType.subtitle)
                         .foregroundStyle(SettingsInk.tertiary)
                 } else {
-                    ForEach(filtered) { entry in row(for: entry) }
+                    ForEach(rows) { entry in row(for: entry) }
                 }
             } header: {
                 HStack {

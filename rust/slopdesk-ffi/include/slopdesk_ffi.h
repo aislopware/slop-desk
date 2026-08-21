@@ -1020,20 +1020,75 @@ bool slopdesk_ws_rail_row_matches(SlopDeskWsRailRowFields fields, const uint8_t 
 size_t slopdesk_ws_rail_plan(const SlopDeskWsRailPlanRow *rows, size_t count,
                              const uint8_t *strings, size_t strings_len,
                              SlopDeskWsRailPlacement *out, size_t cap);
-// `0` = keep the label you have. A qualified label is never empty, so the two never collide.
-size_t slopdesk_ws_rail_disambiguated_label(const SlopDeskWsRailLabel *items, size_t count,
-                                            const uint8_t *strings, size_t strings_len,
-                                            size_t index, uint8_t *out, size_t cap);
-// The same rule for the WHOLE list in one delivery: `count` entries in order, each a four-byte
-// big-endian length then that many UTF-8 bytes, a zero length meaning "keep the label you have".
+// What every item should be CALLED once identical labels have been told apart, for the WHOLE list
+// in one delivery: `count` entries in list order, each a four-byte big-endian length then that many
+// UTF-8 bytes. A zero length is "keep the label you have" — a qualified label is never empty, so
+// the two never collide. A return larger than `cap` means nothing was written; ask again at that
+// size.
 //
-// A collision is a fact about the list, so answering for one member needs the whole list in hand —
-// and the caller was rebuilding it per index, marshalling `n` label arrays and `n` copies of every
-// title's bytes to answer `n` questions that share one input. The single-label door stays for the
-// caller that wants one answer; a whole-rail relabelling wants this.
+// A collision is a fact about the LIST, so answering for one member needs the whole list in hand: a
+// per-index face would take this same array and this same blob and throw the rest of the answer
+// away, which is what the caller used to pay for, rebuilding the list on every index — `n` label
+// arrays and `n` copies of every title's bytes to answer `n` questions that share one input.
 size_t slopdesk_ws_rail_disambiguated_labels(const SlopDeskWsRailLabel *items, size_t count,
                                              const uint8_t *strings, size_t strings_len,
                                              uint8_t *out, size_t cap);
+// ---- The rail's structural FINGERPRINT ----
+//
+// The sidebar memoizes its row model against a fingerprint of the workspace's structure, and the
+// fingerprint is evaluated on EVERY render pass and every keystroke — hit or miss, because
+// comparing it is what decides which. So its walk is the walk the memo pays for itself, and per
+// pane it asked two questions that are each several rules deep: the By-Project key's
+// transient-plugin guard, and whether the title chain would come off the pane's foreground process.
+//
+// The crossings were never the cost — a bare door is about a nanosecond. The MARSHALLING was:
+// asking per pane meant a heap allocation per string per question, the cwd lent twice to two
+// different doors and each answer copied out through a scratch buffer into a `String` nobody keeps.
+// The list door lends every string once, out of one blob, and answers all of it in one buffer.
+
+// The fields that pick a pane's title RUNG, with the project key ALREADY RESOLVED.
+//
+// Deliberately not `SlopDeskWsRailStructurePane` though the layout matches: that one carries the
+// key the HOST pushed, before the precedence runs, and this one carries the key the pane was FILED
+// under. A surface with no section headers passes none at all and gets the folder name, which is
+// the same rule with nothing to subtract — and a struct that let the two be passed for each other
+// would make an at-root pane out of every pane on that surface, with nothing but a comment to
+// catch it.
+typedef struct {
+    uint8_t        kind;
+    SlopDeskWsSpan spec_title;
+    bool           user_renamed;
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan project_key;
+} SlopDeskWsRailTitleShape;
+
+// One pane as the fingerprint reads it. `host_project_key` is what the host pushed, BEFORE the
+// precedence runs; `spec_title` absent is a pane with no spec at all, which is a different fact
+// from a spec whose title is blank.
+typedef struct {
+    uint8_t        kind;
+    SlopDeskWsSpan spec_title;
+    bool           user_renamed;
+    SlopDeskWsSpan cwd;
+    SlopDeskWsSpan host_project_key;
+} SlopDeskWsRailStructurePane;
+
+// Whether this pane's structural title would come off its foreground PROCESS. The near side reads
+// its volatile process dictionary only where this is true, so the answer decides an Observation
+// dependency and not just a string. Kept for the three callers that genuinely want ONE answer —
+// the window title and the two Open-Quickly pickers, which ask about the pane under the cursor.
+bool slopdesk_ws_rail_titles_by_process(SlopDeskWsRailTitleShape shape, const uint8_t *strings,
+                                        size_t strings_len);
+// Both fingerprint answers for every pane, in one delivery: `count` entries in the caller's order,
+// each a titles-by-process flag byte, a key-PRESENCE byte, a four-byte big-endian length and that
+// many UTF-8 bytes. A return larger than `cap` means nothing was written; ask again at that size.
+//
+// The presence byte is §4b's rule and it is load-bearing here — a pane whose cwd is the empty
+// string resolves to a project key that is present and blank, which buckets differently from a
+// pane with no key at all, and a length alone could not say which.
+size_t slopdesk_ws_rail_structure_keys(const SlopDeskWsRailStructurePane *panes, size_t count,
+                                       const uint8_t *strings, size_t strings_len,
+                                       uint8_t *out, size_t cap);
 
 // The minimum flex weight a divider may take, from the crate that enforces it — `repaired()`
 // clamps to this number, so a transcribed copy would describe a rule the client does not share.
@@ -1171,8 +1226,17 @@ uint8_t slopdesk_ws_workdir_source(uint8_t kind, bool active_cwd_known);
 // what does the number read as" — which is the same on a phone as on a Mac and is not a view at
 // all. Every door here is the second thing.
 //
-// The list idiom is a COUNT plus indexed accessors. A page renders once per open, so the call count
-// is not what to optimise; being able to add an option without touching a struct layout is.
+// An option GROUP crosses whole, because a group is what every caller asked for. It used to be a
+// count plus four indexed field accessors, and the near side's only reader of any of them built the
+// whole group — so naming one token cost `1 + 4n` crossings, and the phone's all-settings list paid
+// that inside a `ForEach` on every keystroke and on every settings write. Twenty-three groups
+// holding sixty-seven options came to 291 crossings for a table that is `&'static` over there. The
+// five doors are DELETED rather than kept beside the new one: a door nothing calls is a second way
+// to ask what a live door already answers.
+//
+// What kept an indexed door is the answer that is genuinely ONE string — a density token by name,
+// an apply-timing chip's words, a ladder stop's label — each of which a caller reads once into a
+// `static let`.
 //
 // EVERY OPTION CROSSES AS THE VALUE THE STORE PERSISTS, never as a case index. The near side
 // rebuilds its own enum from the token with the `RawRepresentable` init it already has, so
@@ -1199,17 +1263,28 @@ uint8_t slopdesk_ws_workdir_source(uint8_t kind, bool active_cwd_known);
 #define SLOPDESK_SETTINGS_TIMING_LIVE      ((uint8_t)0)
 #define SLOPDESK_SETTINGS_TIMING_RECONNECT ((uint8_t)1)
 
-// How many choices a group offers; `0` for a group index no group has.
-size_t slopdesk_settings_option_count(uint8_t group);
-// One choice's three strings. The token is what the store PERSISTS; the caption is the honesty
-// channel and is `0` for a choice that needs no caveat — which reads the same as a missing row,
-// deliberately, since a caller that got here already learned the row exists from the count.
-size_t slopdesk_settings_option_token(uint8_t group, size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_option_label(uint8_t group, size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_option_caption(uint8_t group, size_t index, uint8_t *out, size_t cap);
-// The one-line form a MENU shows: the label with the caveat folded in after an en dash. Its own door
-// because the fold is a rule, and a rule re-concatenated on the near side is two rules.
-size_t slopdesk_settings_option_menu_label(uint8_t group, size_t index, uint8_t *out, size_t cap);
+// ONE option group's choices, in render order, in ONE delivery. `0` is "there is no such group" —
+// a group index no group has — and a group with no options would still deliver its two-byte header,
+// so §4's `0` keeps its literal meaning. All lengths are big-endian, because this is read across a
+// C boundary where a width that followed the target would be a bug waiting for a 32-bit build.
+//
+//   [u16 option_count]
+//   option_count x 4 x [u32 length][UTF-8 bytes]
+//
+// The four fields per option are `token`, `label`, `caption`, `menu_label`, in that order. The
+// token is what the store PERSISTS. The caption is the honesty channel and a ZERO LENGTH IS NO
+// CAPTION — not an empty one — which is the reading the deleted per-field door already had, since a
+// choice with an empty caveat and a choice with none render identically. `menu_label` is the
+// one-line form a MENU shows, the label with the caveat folded in after an en dash: the fold is a
+// rule, and a rule re-concatenated on the near side is two rules, so it is composed over here and
+// rides the same delivery.
+//
+// Their number is derivable from the header, which is what lets the near side cut them with the
+// length-prefixed splitter the settings-layout page already uses and PAD to the promised count: a
+// short delivery is a layout disagreement between the two sides, and padding is what stops it
+// becoming a silent off-by-one where every option after the gap wears its neighbour's words.
+size_t slopdesk_settings_option_group(uint8_t group, uint8_t *out, size_t cap);
+
 // The DENSITY group's two tokens, by name. It is the one group the store persists as a bare string
 // rather than through an enum, so without this the near side would spell `"compact"` itself.
 size_t slopdesk_settings_density_token(bool compact, uint8_t *out, size_t cap);
@@ -1278,13 +1353,6 @@ size_t slopdesk_settings_stepper_readout(uint8_t stepper, double value, uint8_t 
 
 size_t slopdesk_settings_row_count(void);
 size_t slopdesk_settings_row_key(size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_row_label(size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_row_description(size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_row_default_text(size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_row_keywords(size_t index, uint8_t *out, size_t cap);
-// The section a row jumps to, or `0` for one edited in place.
-size_t slopdesk_settings_row_target_section(size_t index, uint8_t *out, size_t cap);
-uint8_t slopdesk_settings_row_bucket(size_t index);
 bool slopdesk_settings_row_is_inline_editable(size_t index);
 // WHERE a row's value lives, and so what restores it: `0` a `UserDefaults` key a global reset
 // reaches, `1` a device-local fact in `device-prefs.json`, `2` a typed render field (or the density
@@ -1311,14 +1379,18 @@ size_t slopdesk_settings_row_matches(const uint8_t *query, size_t query_len, siz
 // length followed by that many UTF-8 bytes — key, label, page label, description, default text,
 // target section, keywords. The same retry protocol; `0` for an index no row has.
 //
+// A zero-length field is an ABSENT one. That is how target section says "edited in place" and how
+// keywords says the row needs no extra searchable text. The page label is the page register where
+// the row carries an override and the index register otherwise, so a caller never has to know which
+// rows have one. The bucket byte takes the values the two BUCKET macros above name.
+//
 // It exists because the match already crosses as positions to keep a filter one crossing rather
 // than one per field per row, and the reader then turned each position back into eight calls. On
-// every settings-search keystroke. The field doors below stay: they are the right shape for a
-// caller that wants ONE field, and this is the answer to a different question.
+// every settings-search keystroke. The seven per-field doors it replaced were DELETED rather than
+// left standing beside it: once the reader had this one, nothing called them, and an exported door
+// with no caller is a second way to ask what a live door already answers — the drift docs/55 §8 is
+// about.
 size_t slopdesk_settings_row_fields(size_t index, uint8_t *out, size_t cap);
-// The label a settings PAGE shows — the page register where the row has one, the index register
-// otherwise, so a caller never has to know which rows carry an override.
-size_t slopdesk_settings_row_page_label(size_t index, uint8_t *out, size_t cap);
 
 // ---- Which half lists a command-palette VERB ----
 //
@@ -1357,6 +1429,34 @@ size_t slopdesk_palette_row_id(size_t index, uint8_t *out, size_t cap);
 bool slopdesk_binding_row_shown(const uint8_t *id, size_t len, bool mac);
 size_t slopdesk_binding_row_count(void);
 size_t slopdesk_binding_row_id(size_t index, uint8_t *out, size_t cap);
+
+// ---- The keybindings editor's search filter ----
+//
+// The editor filters the whole registry on every keystroke, and until this entry existed it did so
+// with `lowercased().contains(_:)` per field per row. That is the wrong primitive and Swift has no
+// cheap one: measured against the shipped xcframework, `lowercased()` is 94ns and the `contains`
+// over its result is 825ns for a 35-byte title and 1,652ns for a 70-byte keyword run — grapheme-
+// aware search over text that is ASCII. The same containment as a byte scan is 29ns and 53ns.
+// Four spellings across eighty-five rows came to 415us per keystroke.
+//
+// The ROWS are lent rather than held on the far side, which is the one thing here that is not the
+// settings table's shape. A binding's title and keywords are written beside the `WorkspaceAction`
+// case the row routes to; moving them across would put a crossing in front of every cheat-sheet,
+// menu and palette row that reads a title today. So the caller marshals its four spellings per row
+// into one blob and this answers which rows a query keeps.
+//
+// `records` is `[u32 count]`, then `count` records, each `[u8 field_count]` then that many
+// `[u32 len][len bytes]` fields, little-endian. A binding lends four: title, keyword run, chord
+// glyph, chord canonical — the last two empty for a row with no chord. The answer is POSITIONS in
+// that list, the way the settings filter answers positions in its own table.
+//
+// `needed > cap` means nothing was written; ask again at that size. `0` is no row matched, which is
+// also what a non-UTF-8 query and a torn record list answer — all three end at an empty list, and
+// the near side writes the list itself, so a fourth reading would be a distinction no caller could
+// act on.
+size_t slopdesk_ws_binding_row_matches(const uint8_t *query, size_t query_len,
+                                       const uint8_t *records, size_t records_len,
+                                       size_t *out, size_t cap);
 
 // ---- The SHAPE of a settings page ----
 //

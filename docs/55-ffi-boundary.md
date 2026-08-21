@@ -651,6 +651,39 @@ the side that can see it.
 
 ## 4c. What the boundary costs, measured
 
+### What ONE crossing costs — the number to price everything else against
+
+**A crossing is about a nanosecond. What costs is the marshalling.** Measured from Swift against the
+real shipped `SlopDeskFFI.xcframework/macos-arm64` — scratch harness, NOT in the tree, `swiftc -O`,
+two runs agreeing to 0.02 ns:
+
+| what is called | ns per call, from Swift |
+| --- | --- |
+| a bare scalar door — **the floor** | **1.0** |
+| a door returning a small struct by value | **1.0** |
+| a door taking a flags word | 3.5 |
+| a door + two `Array(String.utf8)` allocations | 100.8 |
+| a door + a `Data` allocation | 227.5 |
+
+Two hundred times between the first row and the last, and **none of that spread is the boundary** —
+it is allocation, `String`→`[UInt8]` conversion and buffer copying on the near side. The C call
+itself never leaves the first row.
+
+⚠️ **So a crossing COUNT is not, by itself, a reason to build a door.** `n` crossings of a scalar
+door is `n` nanoseconds: an audit finding of "1,700 crossings per keystroke" is 1.7 µs and refutes
+itself, while "one string door per log line at 400 lines/s" is 40 µs/s and is real. When a
+whole-answer door is worth building, what it buys is the per-member **allocation** or
+**re-derivation** it deletes — never the crossings on their own. The settings-page port earned its
+keep on ~166 re-filters and ~330 allocations, not on its 166 crossings.
+
+This is why the 2026-08-22 sweep's own top-ranked finding did not survive contact with a benchmark:
+a reassembler drain probe pair, ranked #1 at ~3,600 "wasted" crossings a second, prices at 4.98 ns
+per datagram against the 190–204 ns `ingest` on the *same* datagram — 2.5% of the call before it, and
+9 µs/s in total, or 0.0009% of a core. The ranking was by crossing count; the crossing count was the
+wrong unit. **Rank by allocations.**
+
+### The ring buffer, measured against the Swift it replaced
+
 A/B against the deleted Swift implementation, release build, 32 KiB chunks, 64 MiB ring
 (the benchmark was scratch and is NOT in the tree — it would have been a second implementation):
 
@@ -672,6 +705,64 @@ is `rust/slopdesk-screend`'s library function; linking it into the shim removes 
 64 MiB AF_UNIX round trip that BOTH implementations pay today, which would put the cold path well
 ahead of the Swift original. It is not in this change because it also removes screend's
 absent-engine identity policy and grows the artifact — a decision of its own.
+
+### The two terminal loops that a crossing COUNT accused, and the number that acquitted them
+
+A ranked audit of every loop-shaped call site in `Sources/` put the terminal-mode tracker and the
+⌘-link scan near the top, on the shape of their call pattern: `1 + n` crossings per PTY chunk for an
+array the caller discards, and `4 + n` per link scan inside a body that re-runs on output. Both were
+measured before anything was built, and **both refute**. The entry exists because the refutations
+are the same refutation, and it is the one this section is for.
+
+Priced by the rule two subsections up. Scratch release benchmarks, M-series host, NOT in the tree —
+the door pipeline timed in Rust against the same corpus the in-tree `TerminalLinkScanBenchTests`
+uses, and the Swift marshalling timed under `swiftc -O` with no door in the loop at all, because
+marshalling is what was on trial:
+
+| link scan, 50-row viewport | µs | share |
+| --- | --- | --- |
+| the scan itself (`link_scan` + free) | 152.2 | 98.2% |
+| `flatten(rows)` — the `[String]` → blob the boundary takes | 0.64 | 0.4% |
+| 50 × `String(decoding:)` out of the arena | 2.09 | 1.3% |
+| `_counts` + `_take_arena` | 0.05 | 0.03% |
+| **50 × `link_scan_link` — the `n` the audit named** | **0.13** | **0.08%** |
+
+The ratio holds at every size: over 2 000 scrollback rows the record reads are 5.3 µs of 6 000. So
+batching them into one whole-answer door — the idiom `slopdesk_ws_rail_disambiguated_labels` and
+`slopdesk_block_statuses` exist to demonstrate — would remove **0.08% of the call**, and add a fifth
+entry point to a family that already has four. It is not worth doing, and the reason generalises: a
+record door earns its place when each per-member crossing RE-DERIVES or RE-ALLOCATES something, the
+way the settings-page port did. Here each one copies a nine-field `#[repr(C)]` value out of a `Vec`
+the scan already built.
+
+The tracker's discarded array is the same finding one register cheaper. `slopdesk_mode_tracker_consume`
+answers a COUNT, and the Swift face reads a parked event only when that count is non-zero — so the
+`_ =` at the call site pays for nothing at all on the hot path:
+
+| `consume` on a 3 177-byte chunk | marks | door | the discarded `[TerminalModeEvent]` |
+| --- | --- | --- | --- |
+| ground content (the overwhelming case) | 0 | 0.172 µs | **0 ns** — an empty Swift array allocates nothing |
+| a chunk bracketing one command | 4 | 0.455 µs | 142 ns, once per COMMAND |
+
+So there is no silent-consume entry point, because the shipped one already is silent whenever it has
+nothing to say. **A `1 + n` that short-circuits at `n = 0` is a `1`.**
+
+What the measurement DID find is next door to where the audit pointed, and it is worth more than
+either port would have been. Ground-state chunks carry no `ESC` at all, so deciding that *is* what
+`consume` costs — and the skim that three comments across two languages called a `memchr` was
+`window.iter().position(…)`, which does not vectorise, because its early exit is per element. It ran
+the hot path at **3.0 GB/s**. Testing sixteen lanes at a time with the classic zero-byte identity —
+safe Rust, no dependency, in a crate that forbids `unsafe` — runs at **18.2 GB/s**, and takes the
+whole door from **1.12 µs to 0.172 µs per chunk, a measured 6.5×**, on what the audit correctly
+called the hottest terminal path in the repo. `slopdesk-terminal`'s `tracker::skim` carries the
+differential that pins it against the byte loop it replaced, at every length across the lane
+boundary and every needle position within each.
+
+**The lesson for the next audit: rank by the WORK a loop repeats, not by the crossings it makes.**
+Every entry above this one bought something a crossing count could not see — a whole table
+re-filtered, a title re-scored, a document re-encoded. A loop whose per-iteration crossing is a
+scalar or a small `#[repr(C)]` record read out of storage the call already built is not a finding,
+however many times it goes round.
 
 ### The scorer, measured against the Swift it replaced
 
@@ -716,6 +807,75 @@ One caller-side note the numbers do not show: `wsBytes` probes with a 4 KiB buff
 24-pane answer is 16 KiB, so the MOVED path runs the door twice. That is the §4 retry working as
 designed and it is still ~170 µs, but it is the first place to look if this ever shows up in a
 trace.
+
+### The loop-shaped crossing — a cost class, and mostly a false alarm
+
+A door asked once per member of a collection the far side already holds contiguous is a defect no
+test can be red about: every answer is correct, both sides are self-consistent, and the only trace is
+the frame rate. A sweep on 2026-08-22 found thirty-seven of them and none had ever been reported.
+
+**Then they were priced, and most of them evaporated.** Read §4c's first table before this list: at
+1 ns for a scalar door, a loop of `n` scalar crossings costs `n` nanoseconds and is not a defect at
+all. What survives pricing is a loop whose body **allocates** or **re-derives**:
+
+1. **The positional walk that re-derives.** The settings page crossed as a group count, then a title,
+   a timing and a row count per group, then six doors per row: `1 + 3G + 6R`. The crossings were
+   never the problem — each of those doors re-derived the *whole page* to reach one member, filtering
+   the flat table into a fresh list and then that group's rows into a second, so laying out Appearance
+   did ~166 filters and ~330 allocations to read 23 `&'static` rows. **If the near side wants the
+   whole thing, the whole thing is what crosses.**
+2. **The repeated marshalling of one unchanged answer.** A held-modifier key-up encoded the same
+   `InputEvent` three times to send it three times: three `Data` allocations at ~227 ns each where
+   one would do. Read the gate once, encode once, send the same bytes N times — ~455 ns a gesture,
+   and the code now does what its own comment already claimed.
+3. **The answer nobody reads.** `for chunk in chunks { _ = tracker.consume(chunk) }` pays an
+   allocation per chunk for a return value assigned to `_`. The fix is a side-effect-only entry
+   point, not a batched door.
+
+And the counter-rule, which did most of the work here: **a loop is not worth a door until the
+arithmetic says so.** Of the sweep's top-ranked cluster, four of five findings were refuted on
+measurement and every refutation held. The #1-ranked site cost 4.98 ns against a 190 ns call on the
+same datagram. The blob chunker caps at 42 chunks and its whole achievable win was ~15 µs against a
+*deliberate* 42 ms inter-chunk pace. Each of those doors would have bought a rounding error and a
+permanent second way to ask one question, which `check-ffi-doors.py` penalises for the reason §8
+gives. When the far side does keep both forms, say in the header which one a row asks and which one a
+list asks — `slopdesk_block_statuses` sits beside `slopdesk_block_status` on exactly that basis.
+
+What does NOT flatten, even when the pricing says widen: bytes that have to land in a buffer of their
+own on the near side regardless. A retained replay history runs to 256 MiB, so folding every
+message's payload into one delivery buys `n` saved crossings with a whole extra copy of the history.
+The metadata crosses whole (`n + 2` from `3n + 1`); the payloads stay per-message.
+
+### Where the sweep's real defects turned out to be: NOT at the boundary
+
+Worth recording plainly, because the sweep was a *crossing* audit and its three biggest findings were
+not crossings at all. All three are the same shape — **a value that reads like a field and is in fact
+a projection** — and all three sat behind a `var` or a computed property, so nothing in the type
+system, the tests or `make lint` could see them.
+
+1. **`HostWorkspaceMirror.topology`, read once per sidebar ROW.** It copies the entire entry map and
+   re-runs `WorkspaceTopology.init(entries:)` over every cell. Measured in a scratch `swiftc -O`
+   harness, the dictionary copy alone is 6.4 µs at 12 panes and 23.9 µs at 48; the per-cell walk takes
+   those to 10.3 µs and 37.9 µs, which is a FLOOR — the real projection also rebuilds every split
+   tree, spec, MRU and closed tab. `SidebarRowPresentation.reading(...)` reached it through
+   `store.syncInputArmed` once per row, so a sidebar of R rows paid R projections per render pass:
+   ~126 µs at 12 rows, ~1.8 ms at 48. **O(P²), and the largest number in the whole audit.** The fix is
+   `WorkspaceStore.mirroredTopology`, memoized on `workspaceMirrorRevision` — the key `tree` already
+   trusted. No door would have helped; the crossings inside it are nanoseconds.
+2. **`WorkspaceBindingRegistry.allBindings` as a computed `var`.** `resolvedChordTable` walked it
+   once per key event and called `binding(for:)` per row, each of which read it again: **86 fresh
+   85-element arrays per keystroke**, each retaining four strings per element. 128 µs of pure
+   allocation per key event, on the global `.keyDown` monitor and on `TerminalKeyInterceptor`'s
+   default resolver — every key typed into any pane. A stored `let`, a `byAction` index and a held
+   chord table take it to 5.0 ns.
+3. **The settings catalog rebuilt per query.** Same shape one register down: the filter re-marshalled
+   every row's strings to answer a question about which rows survive.
+
+The lesson for this document is not "memoize things". It is that **the pricing table cuts both
+ways**: it refuted two-thirds of the sweep's crossing-count findings, and the budget those findings
+would have spent went to three defects that a crossing count could never have surfaced. Rank by
+allocations and re-derivations, and the ranking finds the same defect whichever side of the boundary
+it happens to be on.
 
 ## 4d. The descriptor convention, tried and rejected
 
@@ -904,6 +1064,13 @@ the same defect this section is about, one register up.)
 | `TreeWorkspaceDefaults` vs the seeded pane names | — | a fresh-workspace shape test passing against a default the crate stopped producing — **ported 2026-08-22** |
 | `TerminalPreferences.CursorStyle.displayName` vs `settings_catalog` | — | one setting, two words ("Hollow" / "Block (hollow)"), a scroll apart on one page — **ported 2026-08-22** |
 | `CodeSidebarPageDressing`'s `@font-face` vs `codeseed`'s seeded stack | — | agrees today; a disagreement falls silently through to the system mono — **ratcheted 2026-08-22** |
+| `NewTabPosition.insertionIndex` vs `session::NewTabPosition` | Rust | the Swift copy answered only its own four test cases; ⌘T has always gone through `tree_ops` — **ported 2026-08-22** |
+| `PaneKind.canReceiveText` vs `PaneKind::can_receive_text` | — | half a classification asked through a door and half transcribed: a third kind splits the broadcast recipient set from the restore filter, both suites green — **ported 2026-08-22** |
+| `PortValidation.port` vs `listen::port` | — | a range predicate in Rust and the cast in Swift, agreeing only because `u16`'s range happens to BE the accepted range — **ported 2026-08-22** |
+| `session::VideoPaneModes` vs `PaneSpec`'s latched modes | Swift | five public fields with no methods, no callers, no tests and no re-export, beside a Swift comment asserting no counterpart existed — **deleted 2026-08-22** |
+| `WorkspaceStateCodec.decodeBool`/`encodeI32` vs `state_codec`'s | — | `!= 0` and `UInt32(bitPattern:)` composed on the near side from doors written for exactly that and left uncalled for a month — **ported 2026-08-22** |
+| `CommandCompletionNotifier`'s bucket defaults vs `notify::RateLimiter` | — | the anti-flood burst and refill rate as a Swift default argument, of which the looser spelling is always the one that runs — **ported 2026-08-22** |
+| `RailRowsMemo.titledByProcess` vs `rail_title::title_rung` | — | a Swift transcription of the title chain's escape order whose own doc comment said "Mirrors `RailRowsBuilder.rowTitle`" — a comment as the only thing holding two implementations together — **ported 2026-08-22** |
 
 **The template row was stale in both directions, and how it was stale is itself the lesson.** It
 named a *security* rule — the literal `cd` line that must never reach the token parser — and that
@@ -947,10 +1114,34 @@ same bytes via `to_be_bytes` against the `u32` cast; `encode_uuid_list` via `try
 against `.min()`), with one already-divergent shape: `encode_string` clamps by two different
 implementations, `clamp_utf8` against a hand-rolled boundary walk-back.
 
-Found 2026-08-22, not yet resolved. It is in this section because **every argument above applies
-unchanged when both copies are Rust** — the drift class is "one decision, two implementations,
-nobody diffs them", and the language boundary was only ever the most common place for that to
-happen, never the cause. A reader who takes this section to be about Swift will not look here.
+Found 2026-08-22 and **pinned the same day** by `rust/slopdesk-ffi/tests/scalar_codec_parity.rs`:
+every leaf that exists on both sides, in both directions — identical bytes out of the two encoders,
+and each decoder reading the other's bytes to the same value. Three arms are worth naming because a
+round-trip test could not have reached them:
+
+- **the refusal widths.** Two codecs can agree perfectly on well-formed input and still disagree
+  about a truncated field — which is exactly what a peer of another version writes. Every leaf is
+  swept at every width from 0 to 20 and both sides must refuse the same ones.
+- **the non-canonical bool.** Both must read "any non-zero byte is true". A side spelling it `== 1`
+  answers false for every byte a peer sends that is neither 0 nor 1, while the other answers true,
+  and *no decode fails on either side*. All 256 bytes are compared. This is the arm the break-test
+  used, and it is the only one that fired.
+- **the two clamps.** `encode_string` still has two implementations — the wire half walks forward
+  through `char_indices`, the workspace half walks backward from the limit — held against each other
+  at every limit from 0 to past the end, over strings whose multi-byte scalars straddle every offset
+  in that range, plus an assertion that whatever they agree on is still valid UTF-8. Agreement alone
+  would not catch a clamp that cut mid-scalar on *both* sides at once.
+
+The pair is not collapsed to one implementation, and that is the honest state rather than the
+finished one: the arrow points wire → workspace and `state_codec` is below the fork, so neither can
+`use` the other without a cycle, and merging them is a crate-graph change with its own argument to
+make. `slopdesk-ffi` is the only crate that depends on both, which is why the differential lives
+there and can only live there.
+
+It is in this section because **every argument above applies unchanged when both copies are Rust** —
+the drift class is "one decision, two implementations, nobody diffs them", and the language boundary
+was only ever the most common place for that to happen, never the cause. A reader who takes this
+section to be about Swift will not look here.
 
 ### The argument that let two of these live for a year: "a name, not a policy"
 

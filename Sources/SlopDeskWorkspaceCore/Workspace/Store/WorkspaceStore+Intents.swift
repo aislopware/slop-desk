@@ -22,7 +22,7 @@ public extension WorkspaceStore {
     /// states every mutator below is a silent no-op — and with no topology ``WorkspaceStore/tree``
     /// renders nothing, which is exactly what a client whose host refuses `channelClass 1` looks
     /// like.
-    var canMutate: Bool { workspaceChannel?.isLive == true && workspaceMirror.topology != nil }
+    var canMutate: Bool { workspaceChannel?.isLive == true && mirroredTopology != nil }
 
     /// Asks the document for one change. `true` when it was staged and sent.
     ///
@@ -39,7 +39,7 @@ public extension WorkspaceStore {
         let focusBefore = stagedFocusProbe()
         guard workspaceChannel.send(intent: op, args: args, intentID: intentID) else {
             let live = workspaceChannel.isLive
-            let reachable = live && workspaceMirror.topology != nil
+            let reachable = live && mirroredTopology != nil
             logIntentRefusal(op, live ? (reachable ? "refused locally" : "no topology") : "channel not live")
             // A refusal ON THE MERITS is the document doing its job (a re-tile of a lone leaf, a
             // reopen with an empty ring) and says nothing about reachability. Only the states where
@@ -70,7 +70,7 @@ public extension WorkspaceStore {
     /// projection already shows host truth there, so there is nothing to correct and no reason to pay
     /// for resolving the mirror twice per gesture.
     private func stagedFocusProbe() -> StagedFocusProbe? {
-        guard let focus = deviceFocus, let tree = workspaceMirror.topology?.tree else { return nil }
+        guard let focus = deviceFocus, let tree = mirroredTopology?.tree else { return nil }
         let hostTab = tree.activeSession?.activeTab
         let ownTab = tree.sessions.compactMap { session in
             session.tabs.first { $0.id == focus.tab }
@@ -93,7 +93,7 @@ public extension WorkspaceStore {
     /// overlay entirely rather than keeping a dead ``TabID`` — ⇧⌘T restores a tab under its ORIGINAL
     /// id, so a stale overlay would silently come back to life with it.
     private func adoptStagedFocus(after before: StagedFocusProbe?) {
-        guard let before, let focus = deviceFocus, let topology = workspaceMirror.topology,
+        guard let before, let focus = deviceFocus, let topology = mirroredTopology,
               let after = stagedFocusProbe() else { return }
         if after.hostTab != before.hostTab || after.hostPane != before.hostPane {
             guard let tab = after.hostTab else { return }
@@ -120,9 +120,9 @@ public extension WorkspaceStore {
     /// from that moment on would lose its ⇧⌘T cue for good.
     @discardableResult
     func stageClose(_ op: WorkspaceIntentOp, _ args: Data) -> Bool {
-        let before = workspaceMirror.topology?.closedTabs.last?.tab.id
+        let before = mirroredTopology?.closedTabs.last?.tab.id
         guard stage(op, args) else { return false }
-        let after = workspaceMirror.topology?.closedTabs.last?.tab.id
+        let after = mirroredTopology?.closedTabs.last?.tab.id
         if let after, after != before { onTabCloseRecorded?() }
         return true
     }

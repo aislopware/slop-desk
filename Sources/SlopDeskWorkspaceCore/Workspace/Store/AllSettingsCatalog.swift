@@ -163,13 +163,30 @@ public enum AllSettingsCatalog {
         #endif
     }()
 
+    /// Every row the door has, read ONCE, indexed by the position the door numbers it with.
+    ///
+    /// The table on the far side is `&'static` and this side's reading of it cannot change between
+    /// two calls, so every reader below indexes this rather than crossing again. It used to be the
+    /// other way round: ``filter`` re-derived each match through ``entry(at:)``, which is a row blob
+    /// plus seven `String`s per row, and the phone's search field calls ``filter`` on every
+    /// keystroke — measured at 78.1 µs for an empty query, of which the match and the platform gate
+    /// were 2.6-3.3 µs. The remaining ~96% was re-marshalling rows this array already held.
+    ///
+    /// Indexed by POSITION and not filtered, because position is the door's own numbering: the
+    /// match answers positions, and both platform halves have to be readable from either (see
+    /// ``isMac``). Filtering here would make the index mean something different to each caller.
+    private static let entriesByPosition: [SettingEntry] =
+        (0..<slopdesk_settings_row_count()).map(entry(at:))
+
     /// Every client-side configuration key THIS half advertises, in the reading order the list
     /// renders.
     public static let entries: [SettingEntry] = entries(mac: isMac)
 
     /// The same list as a named half sees it — what a test on one platform uses to read the other's.
     public static func entries(mac: Bool) -> [SettingEntry] {
-        (0..<slopdesk_settings_row_count()).filter { slopdesk_settings_row_shown($0, mac) }.map(entry(at:))
+        (0..<slopdesk_settings_row_count())
+            .filter { slopdesk_settings_row_shown($0, mac) }
+            .map { entriesByPosition[$0] }
     }
 
     /// The `.advancedOnly` keys the list renders with a real INLINE editor — the contract
@@ -197,7 +214,7 @@ public enum AllSettingsCatalog {
     /// The same search as a named half sees it. The platform gate runs AFTER the match, so a query
     /// that names a macOS-only key on a phone returns nothing rather than a row it cannot edit.
     public static func filter(_ query: String, mac: Bool) -> [SettingEntry] {
-        matchedPositions(query).filter { slopdesk_settings_row_shown($0, mac) }.map(entry(at:))
+        matchedPositions(query).filter { slopdesk_settings_row_shown($0, mac) }.map { entriesByPosition[$0] }
     }
 
     // MARK: The crossing

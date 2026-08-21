@@ -492,6 +492,24 @@ for revived in maxFrontierJump resyncStreak resyncClusterWindow frontierJumpCand
   fi
 done
 
+# The loss-resilient input burst encodes ONCE. `sendMouseUp` and a held-modifier key-up put the
+# same datagram on the wire three times, so a lost release cannot stick a button or latch a
+# modifier; both call sites have always SAID the bytes are built once, and for a while the code
+# looped over the single-event `sendInput(_:)` instead, which re-ran the input codec and allocated
+# a fresh `Data` per repeat (measured 2026-08-22: 227 ns a call, 3 per gesture). Nothing was
+# WRONG — the encode is pure, so the repeats were always identical bytes — and that is exactly why
+# nothing could catch it: it costs allocations and contradicts its own comment, and neither is
+# visible to a test. So the SHAPE is banned rather than the behaviour asserted.
+SWIFT_VIDEO_CLIENT_SESSION=Sources/SlopDeskVideoClient/SlopDeskVideoClientSession.swift
+if ! grep -q 'func sendInput(_ event: InputEvent, times: Int)' "${SWIFT_VIDEO_CLIENT_SESSION}"; then
+  fail "${SWIFT_VIDEO_CLIENT_SESSION} lost sendInput(_:times:) — the ban below would read a file the rule is not about (docs/55 §4)"
+fi
+for looped in redundantUpCount keySendCount; do
+  if grep -q "for .* in 0\..<Self\.${looped}" "${SWIFT_VIDEO_CLIENT_SESSION}"; then
+    fail "${SWIFT_VIDEO_CLIENT_SESSION} loops the single-event sendInput over ${looped} again — the burst encodes once, see sendInput(_:times:)"
+  fi
+done
+
 # The datagram CODEC — the 19-byte header both paths meet at — is the same crate's, reached from
 # the one Swift file that still names the layout. It is the smallest of the three and the easiest to
 # rewrite by accident: nineteen bytes of big-endian appends look like something a reader "fixes"
@@ -2734,7 +2752,23 @@ done
 printf 'check-supervisor: every ABI enum maps the same case to the same byte in both languages\n'
 compare_abi_enum() {
   local label="$1" swift_file="$2" swift_marker="$3" rust_file="$4" rust_marker="$5"
-  local swift_map rust_map
+  local swift_map rust_map swift_marks rust_marks
+  # THE MARKER'S UNIQUENESS IS NOW CHECKED RATHER THAN ASKED FOR. The prose below this function has
+  # said "it must be unique within its file" since the day a second `RepairPass` marker in
+  # `tree_ops.rs` turned two gates red — but nothing enforced it, and the quiet case is the one that
+  # matters: a `sed` range whose opening address matches TWICE appends the second block to the first,
+  # so the gate holds one enum's cases against two enums' rows. Red is the LUCKY outcome. The unlucky
+  # one was live here on 2026-08-22: `NewTabPosition::as_byte` in `session.rs` carries a
+  # byte-identical signature to `PaneKind`'s, and the gate stayed green only because that body is
+  # `self as u8` and contributes no `Self::X => n` row at all. Giving it the explicit match its
+  # sibling has — which is what the gate ASKS every ABI enum for — would have poisoned PaneKind's
+  # comparison with `NewTabPosition`'s numbering, silently.
+  swift_marks=$(grep -c -- "${swift_marker}" "${swift_file}") || true
+  rust_marks=$(grep -c -- "${rust_marker}" "${rust_file}") || true
+  if [[ "${swift_marks}" != "1" || "${rust_marks}" != "1" ]]; then
+    fail "${label}: a marker is not unique in its file (swift ${swift_marks}x, rust ${rust_marks}x) — a sed range restarts on every match and APPENDS a second enum's rows to the first (docs/55)"
+    return
+  fi
   # `|| true` on both: under `set -euo pipefail` a `grep` that matches nothing exits 1 and would
   # kill the script HERE, silently, taking every check below it with it — the same trap the
   # build-ffi call above is commented for. An empty map must reach the guard, not the exit.
@@ -2758,9 +2792,12 @@ compare_abi_enum() {
 compare_abi_enum "FocusDirection" \
   Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension FocusDirection' \
   rust/slopdesk-workspace/src/focus.rs 'pub const fn index(self) -> u8'
+# The Rust marker is the DOC LINE, not the signature: `session.rs` holds two `as_byte` bodies with
+# identical signatures — PaneKind's and NewTabPosition's — and the uniqueness check above now refuses
+# the signature outright.
 compare_abi_enum "PaneKind" \
   Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension PaneKind' \
-  rust/slopdesk-workspace/src/session.rs 'pub const fn as_byte(self) -> u8'
+  rust/slopdesk-workspace/src/session.rs 'The on-wire byte, and the byte a client'
 compare_abi_enum "LayoutPreset/TileLayout" \
   Sources/SlopDeskWorkspaceModel/Domain/Tree/WorkspaceTreeOps.swift 'var ffiByte: UInt8' \
   rust/slopdesk-workspace/src/tree_ops.rs 'pub const fn index(self) -> u8'
@@ -4744,6 +4781,30 @@ fi
 if ! spells 'enum AndroidBodilessMessage: UInt8' "${SWIFT_ANDROID_CONTROL}" > /dev/null; then
   fail "${SWIFT_ANDROID_CONTROL}: the bodiless messages stopped being a closed enum"
 fi
+# ── A. The scrcpy control encoder does not MEASURE before it FILLS ─────────────────────────────
+# It used to call the door twice for every message — once with a null output to learn the length,
+# once to fill — which ran the far-side encode twice for an answer that is a CONSTANT on the six
+# arms that carry no body. docs/55 §4 is explicit that a short buffer leaves the output untouched
+# and still reports the true length, so the guess-then-retry shape is the supported one and the
+# probe was pure loss. Measured against a stand-in door carrying the real encoder's work
+# (24 ns/message, measured in slopdesk-androidd): 320 ns/message before, 205 ns after — on the
+# path `AndroidScreenNSView.scrollWheel` drives at 60–120 Hz, two to four messages per re-grip.
+#
+# BREAK-TEST 2026-08-22: clean on the live tree; FIRES when a
+#   `slopdesk_android_control_encode(&request, text.baseAddress, text.count, nil, 0)` line is
+#   appended to the file. Verified with the real `spells` semantics.
+if hit=$(spells ', nil, 0\)' "${SWIFT_ANDROID_CONTROL}"); then
+  fail "${hit} probes the control encoder with a null output again — docs/55 §4 says a short buffer writes NOTHING, so guess and retry"
+fi
+
+# ── B. …and the guess it tries first is named ──────────────────────────────────────────────────
+# Not a shared constant — nothing is wrong if the door outgrows it — but a named one is what stops
+# the retry quietly becoming the common path when somebody sizes it at 8.
+#
+# BREAK-TEST 2026-08-22: present on the live tree; FIRES when the declaration is renamed.
+if ! spells 'private static let firstGuessBytes' "${SWIFT_ANDROID_CONTROL}" > /dev/null; then
+  fail "${SWIFT_ANDROID_CONTROL}: the first-guess buffer stopped being a named constant"
+fi
 printf 'check-supervisor: one writer for the scrcpy control channel, and no reply-bearing type.\n'
 
 # ── And ONE grammar per device console, neither of them in Swift ───────────────────────────────
@@ -4762,6 +4823,21 @@ for entry in 'slopdesk_logcat_parse' 'slopdesk_unified_log_parse'; do
     fail "${SWIFT_DEVICE_LOG} no longer asks ${entry} — the console grammars are one implementation"
   fi
 done
+# ── C. A device log line is BORROWED by the door, never copied for it ──────────────────────────
+# The two console doors answer byte offsets INTO THE CALLER'S OWN LINE — that is the whole reason
+# nothing crosses back but six numbers and a severity. Copying the line into a fresh [UInt8] first
+# threw that away: a heap buffer per row, on a path a booting device drives at hundreds of rows a
+# second, holding bytes the String was already storing contiguously. Measured (swiftc -O, stand-in
+# door): 154 ns/row before, 94 ns after — 39% of the marshalling, and the parse behind it is 56 ns.
+#
+# BREAK-TEST 2026-08-22: clean on the live tree; the ban FIRES when `let bytes = Array(text.utf8)`
+#   is appended, and the presence check FIRES when `text.withUTF8` is renamed.
+if hit=$(spells 'Array\(text\.utf8\)' "${SWIFT_DEVICE_LOG}"); then
+  fail "${hit} copies a log line to lend it to a door that answers offsets into that same line — withUTF8 lends the storage"
+fi
+if ! spells 'text\.withUTF8' "${SWIFT_DEVICE_LOG}" > /dev/null; then
+  fail "${SWIFT_DEVICE_LOG}: the line stopped being lent to the door — see the parse's own comment"
+fi
 # The two structs are gone and must stay gone: they were one type spelled twice, and a second one
 # would immediately grow a second parse to fill it.
 for revived in 'struct AndroidLogLine' 'struct SimulatorLogLine'; do
@@ -6150,8 +6226,7 @@ if [[ ! -e "${catalog_swift}" ]]; then
 fi
 # The marshaller must actually call the doors. A `SettingsCatalog` that answered from a Swift array
 # again would pass every test above, because the tests read it rather than the boundary.
-for door in slopdesk_settings_option_count slopdesk_settings_option_token slopdesk_settings_option_label \
-  slopdesk_settings_option_caption slopdesk_settings_option_menu_label slopdesk_settings_density_token \
+for door in slopdesk_settings_option_group slopdesk_settings_density_token \
   slopdesk_settings_section_count slopdesk_settings_section_id slopdesk_settings_section_title \
   slopdesk_settings_section_symbol slopdesk_settings_timing_label \
   slopdesk_settings_timing_symbol slopdesk_settings_ladder slopdesk_settings_ladder_preset_count \
@@ -6163,6 +6238,77 @@ for door in slopdesk_settings_option_count slopdesk_settings_option_token slopde
     fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
   fi
 done
+
+catalog_swift=Sources/SlopDeskClientCore/Settings/SettingsCatalog.swift
+
+# ═════════════════════════════════════════════════════════════════════════════════════════
+# HUNK B — the option groups cross WHOLE, and they cross ONCE.
+#
+# `SettingsCatalog.tokens(_:)` is what `options(_:as:)`, `stringOptions(_:)` and `label(_:for:)`
+# all forward to, so naming one token used to rebuild the whole group: `1 + 4n` doors, each
+# answering a STRING, which on the near side is a 64-byte `[UInt8]` and a `String` per field.
+# Measured at 51.3 µs for the twenty-three groups, and every reader above it sits in a SwiftUI
+# `body` or an `NSView` rebuild — the phone's all-settings list paid it per keystroke.
+#
+# TWO properties, and the second is the one a future edit is likely to lose. The group must
+# cross in one delivery, AND the delivery must be read into a `static let`: a `tokens(_:)` that
+# went back to calling the door per read would still be one crossing and still be 10 µs of
+# allocation on every render pass, with nothing on either side saying so.
+#
+# BREAK-TESTED, both arms, against the real tree:
+#   · deleting `private static let groupRows` from the catalog ⇒ FAIL (the memo rule fires)
+#   · rewriting `tokens(_:)` to call `rows(of: group)` directly ⇒ FAIL (same rule; the
+#     `groupRows[` read is what the ban looks for, so the door coming back is visible)
+# Both restored from /tmp copies, never `git checkout`.
+if ! grep -qF 'private static let groupRows' "${catalog_swift}"; then
+  fail "${catalog_swift} stopped memoising the option groups — ${catalog_swift}'s tokens(_:) is what every settings face forwards to, and a per-read crossing there is 51 µs of marshalling per render pass (docs/55 §4)"
+fi
+if ! grep -qF 'groupRows[Int(group.rawValue)]' "${catalog_swift}"; then
+  fail "${catalog_swift}'s tokens(_:) no longer reads groupRows — a face that asks the door again is the loop this port deleted"
+fi
+
+# And no settings RENDERER may open the option-group door itself. The catalog face is the one
+# reader, the same way neither settings renderer opens the layout-page door: a second reader is
+# a second memo that is not one, and it would cross per render for a table that cannot change.
+#
+# BREAK-TESTED: adding `slopdesk_settings_option_group(0, nil, 0)` to
+# Sources/SlopDeskPhoneUI/Settings/SettingsPages.swift ⇒ FAIL, naming that file. Restored from
+# a /tmp copy.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+if renderer=$(spells 'slopdesk_settings_option_group' \
+  $(repo_files 'Sources/SlopDeskPhoneUI/**/*.swift') $(repo_files 'Sources/SlopDeskMacUI/**/*.swift') \
+  2> /dev/null); then
+  fail "${renderer} opens the option-group door itself — the choices are ${catalog_swift}'s to read once, not a renderer's to re-read per body"
+fi
+
+# ═════════════════════════════════════════════════════════════════════════════════════════
+# HUNK C — the cheat sheet's rows are a CONSTANT, and must stay declared as one.
+#
+# `CheatSheetContent.sections` reads two `static let` registry tables and renders each row's
+# DEFAULT chord, so its answer cannot change between two reads. As a computed `static var` it
+# was rebuilt on every one: 54 chord-bearing rows, each paying a `binding(for:)` that rebuilds
+# the 85-element `allBindings` array before scanning it (measured 1.43 µs) plus a glyph door and
+# its marshalling (254 ns) — ~86 µs, and the phone reads it from a `body`.
+#
+# A `var` is the whole defect and it is one keyword, which is exactly the edit a pattern ban can
+# see. `WorkspaceCommands` is the same shape in the menu bar and gets the same treatment.
+#
+# BREAK-TESTED, both arms:
+#   · `static let sections` → `static var sections` in CheatSheetContent.swift ⇒ FAIL
+#   · `titlesByID` deleted from WorkspaceCommands.swift ⇒ FAIL
+# Both restored from /tmp copies.
+cheat_sheet=Sources/SlopDeskClientCore/Overlays/CheatSheetContent.swift
+if [[ ! -e "${cheat_sheet}" ]]; then
+  fail "${cheat_sheet} is gone — the ⌘/ sheet's rows are the registry's, below both renderers"
+fi
+if grep -qE '^[[:space:]]*public static var sections' "${cheat_sheet}"; then
+  fail "${cheat_sheet} made sections a computed var again — it renders DEFAULT chords off two static tables, so every read rebuilt an 86 µs answer that cannot have changed"
+fi
+menu_commands=Sources/SlopDeskMacUI/Commands/WorkspaceCommands.swift
+if [[ -e "${menu_commands}" ]] && ! grep -qF 'titlesByID' "${menu_commands}"; then
+  fail "${menu_commands} stopped memoising its row titles — a Commands body re-evaluates on any observed store change, and the glyph lookup in front of each title is an 85-element array rebuild"
+fi
+printf 'check-supervisor: the settings option groups cross whole and are read once; the cheat sheet and the menu bar hold their constants.\n'
 # And no settings VIEW may spell a choice's own words. A label typed into a card is the second table:
 # it renders, it looks right, and it is unreachable from the pin that would have caught it.
 # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
@@ -7679,6 +7825,116 @@ done
 printf 'check-supervisor: a keybinding names its platform once — %s rows, no gate in the registry or its routing.\n' \
   "$(printf '%s\n' "${binding_rust_ids}" | wc -l | tr -d ' ')"
 
+# ── …and the chord table is a CONSTANT, held rather than rebuilt ────────────────────────────────
+# The registry's table is 85 rows and its readers are the keyboard's. `resolvedChordTable` walked it
+# once per key event, and `binding(for:)` — which the walk called per row — read `allBindings` again,
+# so a computed `allBindings` meant 86 fresh 85-element arrays per keystroke, each retaining four
+# strings per element. Measured at 128µs of pure allocation per key event on an M-series Mac, on the
+# GLOBAL `.keyDown` monitor and on `TerminalKeyInterceptor`'s default resolver — which is to say on
+# every key typed into any pane.
+#
+# THIS IS THE DRIFT CLASS docs/55 §8 NAMES, one register down: nothing a test can see changes when
+# `let` goes back to `var`. Every assertion still passes, every chord still resolves, and the only
+# symptom is input latency nobody attributes to a keyword. So the three shapes that make it a
+# constant are pinned by spelling.
+#
+# BREAK-TESTED against the real tree, 2026-08-22: reverting `allBindings` to
+# `public static var allBindings: [WorkspaceBinding] { bindings + selectPaneBindings }` fails rule 1;
+# restoring `allBindings.first { $0.action == action }` in `binding(for:)` fails rule 2; deleting the
+# `liveChordTable` memo from WorkspaceBindingOverrides.swift fails rules 3 and 4. All four pass on
+# the tree as it stands.
+BINDING_OVERRIDES=Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingOverrides.swift
+# 1. The table is built once.
+if ! spells 'static let allBindings: \[WorkspaceBinding\] = bindings \+ selectPaneBindings' \
+  "${SWIFT_BINDINGS}" > /dev/null; then
+  fail "${SWIFT_BINDINGS}: allBindings is not a stored \`let\` — a computed one re-concatenates 85 rows per READ, and the chord table reads it 86 times per key event"
+fi
+# 2. And the lookup is a hash, not a scan of it.
+if hit=$(spells 'allBindings\.first \{ [$]0\.action ==' "${SWIFT_BINDINGS}"); then
+  fail "${hit} scans the whole table for one action again — that is the O(n) half of the O(n²) per key event; byAction is the index"
+fi
+# 3-4. And the live table is HELD, with the setter as the only thing that can stale it.
+if ! spells 'if let liveChordTable \{ return liveChordTable \}' "${BINDING_OVERRIDES}" > /dev/null; then
+  fail "${BINDING_OVERRIDES}: resolvedChordTable no longer reads its memo — it is a pure function of a \`let\` and a write-once var, rebuilt on every keystroke the app sees"
+fi
+if ! spells 'didSet \{ liveChordTable = nil \}' "${BINDING_OVERRIDES}" > /dev/null; then
+  fail "${BINDING_OVERRIDES}: activeOverrides no longer invalidates the memo on write — a rebind would not take effect until relaunch"
+fi
+printf 'check-supervisor: the chord table is built once and held; the key event reads it, not rebuilds it.\n'
+
+# ── The keybindings search filters through the door, not through `contains` ─────────────────────
+# `String.contains(_: String)` is grapheme-aware search. Measured against the shipped xcframework:
+# 825ns over a 35-byte title, 1,652ns over a 70-byte keyword run, against 29ns and 53ns for the same
+# containment as bytes. Four spellings across 85 rows is 415µs on every keystroke typed into the
+# editor's search field, and the whole of it is that one call. `slopdesk_ws_binding_row_matches`
+# takes the table in one blob and answers positions.
+#
+# The ban is on the FOLD coming back, not on the door going away: a reader that re-derives a row's
+# glyph or canonical per keystroke is the same defect with the door still declared.
+#
+# BREAK-TESTED against the real tree, 2026-08-22: restoring
+# `if binding.title.lowercased().contains(q) { return true }` in `matches` fails the first rule;
+# removing the `surviving` batch face fails the second. Both pass on the tree as it stands.
+BINDING_SEARCH=Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift
+if hit=$(spells 'lowercased\(\)\.contains\(' "${BINDING_SEARCH}"); then
+  fail "${hit} folds and searches a binding row in Swift again — the filter crosses once for the whole table (slopdesk_ffi::binding_search)"
+fi
+if ! spells 'func surviving\(' "${BINDING_SEARCH}" > /dev/null; then
+  fail "${BINDING_SEARCH}: the whole-table filter face is gone — a per-row door is 85 crossings and 85 blobs where one of each will do"
+fi
+printf 'check-supervisor: the keybindings search crosses once for the whole table.\n'
+# ── The mirror's whole topology is projected ONCE per revision ──────────────────────────────────
+# `HostWorkspaceMirror.topology` is a computed property: every read copies the entire entry map and
+# re-runs `WorkspaceTopology.init(entries:)` over every cell in the document. Measured in a scratch
+# harness (`swiftc -O`), the dictionary copy alone is 6.4µs at 12 panes and 23.9µs at 48, and the
+# per-cell decode walk on top of it takes those to 10.3µs and 37.9µs — a FLOOR, since the real
+# projection also rebuilds every split tree, spec, MRU and closed tab.
+#
+# `SidebarRowPresentation.reading(...)` reached it once per ROW through `store.syncInputArmed`, so a
+# sidebar of R rows paid R projections per render pass: ~126µs at 12 rows, ~1.8ms at 48. It is now
+# memoized against `workspaceMirrorRevision`, the key `tree` already trusted, and the ONE remaining
+# direct read is the memo's own miss path. A second direct read anywhere puts the whole projection
+# back on that caller's path with green tests and no compile error — docs/55 §8's drift class.
+#
+# BREAK-TESTED 2026-08-22: adding `let t = workspaceMirror.topology` to `WorkspaceStore+Intents.swift`
+# failed rule 1; removing it passed. Deleting one of the memo's two reads failed rule 2.
+MIRROR_MEMO=Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore.swift
+mapfile -t mirror_topology_readers < <(repo_files 'Sources/*.swift' | grep -v "^${MIRROR_MEMO}$" || true)
+if ((${#mirror_topology_readers[@]} == 0)); then
+  fail "check-supervisor: no Swift sources outside ${MIRROR_MEMO} — the topology-memo ban would pass on an empty haystack"
+fi
+if hit=$(spells 'workspaceMirror\.topology' "${mirror_topology_readers[@]}"); then
+  fail "${hit} re-derives the WHOLE topology — the entry-map copy plus a walk of every cell, 10µs at 12 panes and 38µs at 48. Read \`mirroredTopology\` instead; it answers from the memo keyed on \`workspaceMirrorRevision\`"
+fi
+mirror_topology_inside=$(spells 'workspaceMirror\.topology' "${MIRROR_MEMO}" | wc -l | tr -d ' ' || true)
+if ((mirror_topology_inside > 2)); then
+  fail "${MIRROR_MEMO} reads workspaceMirror.topology ${mirror_topology_inside} times; the memo has ONE miss path. A second read belongs inside \`mirroredTopology\` or it is not memoized"
+fi
+printf 'check-supervisor: the mirror topology is projected once per revision, not once per sidebar row.\n'
+
+# ── …and the rail's title RUNG is asked, never transcribed ──────────────────────────────────────
+# `titledByProcess` is `slopdesk_workspace::rail_title::title_rung` asked without composing the
+# string. It used to be transcribed into Swift, and its own doc comment said "Mirrors
+# RailRowsBuilder.rowTitle's escape order" — docs/55 §8's named anti-pattern, a comment describing
+# another language's behaviour as the only thing holding two implementations together.
+#
+# The transcription is deleted. The two helpers banned below are the pieces the Swift copy was built
+# from, so their reappearance in the memo IS the transcription growing back; the two doors are
+# pinned because an unreached port is worse than an unported one.
+#
+# BREAK-TESTED 2026-08-22: restoring `if RailRowsBuilder.cwdFolderName(cwd) == nil` in
+# RailRowsMemo.swift failed rule 1; deleting either door call failed its own rule. All three pass.
+RAIL_MEMO=Sources/SlopDeskClientCore/Rail/RailRowsMemo.swift
+if hit=$(spells 'cwdFolderName|normalizedProjectKey' "${RAIL_MEMO}"); then
+  fail "${hit} re-derives the rail's title rung in Swift — the rung lives in slopdesk_workspace::rail_title::title_rung and \`row_title\` composes its string from the SAME function, so the two cannot drift"
+fi
+for rail_memo_door in slopdesk_ws_rail_titles_by_process slopdesk_ws_rail_structure_keys; do
+  if ! spells "${rail_memo_door}" "${RAIL_MEMO}" > /dev/null; then
+    fail "${RAIL_MEMO} no longer asks ${rail_memo_door} — docs/55 §8: an unreached port is worse than an unported one, and the Swift answering it would be a second implementation"
+  fi
+done
+printf 'check-supervisor: the rail fingerprint asks for its rung and its keys; it does not re-derive them.\n'
+
 printf 'check-supervisor: the UI split holds — views only, no dead gates, no ancestor between the halves, no palette row that lies.\n'
 
 # ── A pane's master is decided once, and it is OWNED ────────────────────────────────────────────
@@ -8102,6 +8358,11 @@ fi
 # than rows, so a filter is one crossing and not one per field per row — and the reader then turned
 # each position back into eight calls, on every settings-search keystroke. `slopdesk_settings_row_fields`
 # is that argument applied one level out. This stops `entry(at:)` sliding back to the field doors.
+#
+# The seven named below were DELETED on 2026-08-22, so this loop now bans symbols that do not exist
+# — deliberately. `check-ffi-doors.py` is what found them exported and uncalled, and the reason they
+# could never acquire a caller was this ban; keeping it outliving them stops the next reader from
+# re-declaring one as the obvious fix for a one-field question.
 catalog="Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift"
 entry_body="$(sed -n '/private static func entry(at index: Int)/,/^    }/p' "${catalog}")"
 for field_door in slopdesk_settings_row_label slopdesk_settings_row_page_label \
@@ -8116,9 +8377,11 @@ if ! grep -q 'slopdesk_settings_row_fields' "${catalog}"; then
   fail "${catalog} stopped calling slopdesk_settings_row_fields — reading a row costs 8 crossings again"
 fi
 
-# The field doors themselves stay. They are the right shape for a caller that wants ONE field — the
-# key lookup, the shown gate, the reset walk over `persistence` — and deleting them because the row
-# door exists would push those callers into decoding a whole row to read one string.
+# THREE field doors stay, and only three, because three callers really do want one field: the key
+# lookup, the shown gate, and the reset walk over `persistence`. Each asks a question about a row it
+# is not otherwise reading, so routing it through the whole-row door would decode seven fields to
+# use one. The other seven had no such caller left, which is why they are gone rather than kept
+# "for symmetry" — docs/55 §8: an unreached port is worse than an unported one.
 if ! grep -q 'slopdesk_settings_row_key' "${catalog}"; then
   fail "${catalog} lost the single-field key door — a key lookup should not decode a whole row"
 fi
@@ -8127,9 +8390,14 @@ fi
 # The collision rule needs the WHOLE list in hand to answer for any one member, so asking per index
 # meant rebuilding the label array and every title's bytes `n` times to answer `n` questions off one
 # input — quadratic in marshalling, on a list rebuilt whenever anything in it ticks.
+#
+# The per-index door was DELETED on 2026-08-22, so this first rule now bans a symbol that does not
+# exist — deliberately. `check-ffi-doors.py` is what caught the door sitting there exported and
+# uncalled, and the reason it could never acquire a caller was this ban; the ban outliving the door
+# is what keeps the next reader from re-declaring it as the obvious fix for a one-row question.
 rail="Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift"
 if grep -q 'slopdesk_ws_rail_disambiguated_label(' "${rail}"; then
-  fail "${rail} went back to the per-index label door — a whole rail wants slopdesk_ws_rail_disambiguated_labels"
+  fail "${rail} asks for a per-index label door — there is none, and there is none because a collision is a fact about the whole list: ask slopdesk_ws_rail_disambiguated_labels and read the member you want"
 fi
 if ! grep -q 'slopdesk_ws_rail_disambiguated_labels(' "${rail}"; then
   fail "${rail} stopped calling slopdesk_ws_rail_disambiguated_labels — the relabelling is quadratic again"

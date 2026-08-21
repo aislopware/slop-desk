@@ -423,4 +423,50 @@ final class RailRowsMemoTests: XCTestCase {
             "a spec-less pane has no title chain to resolve, structural or otherwise",
         )
     }
+
+    /// The fingerprint asks the WHOLE rail in one crossing and walks a length-prefixed answer back;
+    /// this pins every member of that walk against the per-pane answers it replaced.
+    ///
+    /// The failure it exists to catch is silent and specific: a walk off by one record hands row `i`
+    /// row `j`'s project key, which re-sections the sidebar and mis-fires the at-root title rung
+    /// without a crash, a log or a compile error. Both halves are checked per pane — the key against
+    /// ``WorkspaceStore/paneProjectKey(_:)``, which the port did not touch, and the process fallback
+    /// against the single-pane door on the same inputs.
+    func testFingerprintWalkAgreesWithThePerPaneAnswers() throws {
+        let store = makeRichStore()
+        // One pane AT its project root, so the corpus carries the at-root rung as well as the
+        // strayed and cwd-less shapes `makeRichStore` already lays out.
+        let rows = RailRowsBuilder.rows(for: store)
+        let atRoot = try XCTUnwrap(rows.last).id
+        store.setLastKnownCwd("/Users/me/gamma", for: atRoot)
+        store.setProjectKey("/Users/me/gamma", for: atRoot)
+        store.setForegroundProcess("vim", for: atRoot)
+
+        let key = RailStructureKey(store: store)
+        let session = try XCTUnwrap(store.tree.activeSession)
+        XCTAssertEqual(key.tabs.map(\.id), session.tabs.map(\.id), "one entry per tab, in drawn order")
+
+        var seen = 0
+        for (tab, expected) in zip(key.tabs, session.tabs) {
+            XCTAssertEqual(tab.panes.map(\.id), expected.allPaneIDs(), "one entry per pane, in order")
+            for pane in tab.panes {
+                seen += 1
+                let spec = session.specs[pane.id]
+                let kind = spec?.kind ?? .terminal
+                XCTAssertEqual(
+                    pane.projectKey, kind == .terminal ? store.paneProjectKey(pane.id) : nil,
+                    "pane \(seen): the walked key is the pane's own By-Project key",
+                )
+                let titled = RailStructureKey.titledByProcess(
+                    kind: kind, spec: spec, cwd: pane.cwd, projectKey: pane.projectKey,
+                )
+                XCTAssertEqual(
+                    pane.titleProcessFallback,
+                    titled ? store.paneForegroundProcess[pane.id] : nil,
+                    "pane \(seen): the process is fingerprinted exactly where it is a title input",
+                )
+            }
+        }
+        XCTAssertGreaterThanOrEqual(seen, 4, "the corpus still spans at-root, strayed and cwd-less panes")
+    }
 }

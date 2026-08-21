@@ -65,6 +65,6 @@ public extension WorkspaceStore {
     /// a tab the host never heard of, which the next document frame would then delete.
     var closedTabRecords: [WorkspaceTopology.ClosedTab] {
         observeWorkspaceMirror()
-        return (workspaceMirror.topology?.closedTabs ?? []).reversed()
+        return (mirroredTopology?.closedTabs ?? []).reversed()
     }
 }

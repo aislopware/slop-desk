@@ -31,7 +31,8 @@ package struct SettingsOption<Value: Hashable & Sendable>: Identifiable, Sendabl
 
     /// The one-line form a `.menu` `Picker` shows — the label with the caveat folded in. It is a
     /// CROSSED field, not a local concat: where the en dash goes and what a captionless row reads as
-    /// are rules, and `slopdesk_settings_option_menu_label` is where they live.
+    /// are rules, and `settings_catalog::OptionRow::menu_label` is where they live — it rides the same
+    /// delivery as the label it folds.
     package let menuLabel: String
 
     package var id: Value { value }
@@ -94,17 +95,125 @@ package enum SettingsCatalog {
     }
 
     /// One group's rows exactly as the catalog holds them.
+    ///
+    /// Read out of ``groupRows``, so this is ZERO crossings after the first touch of the catalog —
+    /// see that property for why memoising is honest here and what it is worth.
     package static func tokens(
         _ group: Group,
     ) -> [(token: String, label: String, caption: String?, menuLabel: String)] {
-        (0..<slopdesk_settings_option_count(group.rawValue)).map { index in
-            (
-                token: string { slopdesk_settings_option_token(group.rawValue, index, $0, $1) } ?? "",
-                label: string { slopdesk_settings_option_label(group.rawValue, index, $0, $1) } ?? "",
-                caption: string { slopdesk_settings_option_caption(group.rawValue, index, $0, $1) },
-                menuLabel: string { slopdesk_settings_option_menu_label(group.rawValue, index, $0, $1) } ?? "",
+        groupRows[Int(group.rawValue)]
+    }
+
+    /// Every group's rows, read once.
+    ///
+    /// The catalog is twenty-three `&'static` tables on the far side and this is what they look like
+    /// on this one — a pure function of a constant, with no store, no defaults and no platform in
+    /// it. ``sections`` has been a `static let` for exactly that reason since it was written; this is
+    /// the same argument for the bigger table.
+    ///
+    /// It is worth stating what it cost NOT to be one. ``tokens(_:)`` is what ``options(_:as:)``,
+    /// ``stringOptions(_:)`` and ``label(_:for:)`` all forward to, so naming ONE token rebuilt the
+    /// whole group — and every reader above them sits in a `SwiftUI` `body` or an `NSView` rebuild:
+    /// `AllSettingsListView`'s token picker (per keystroke in its search field, and again on every
+    /// one of its ~55 `@Default` writes), `MacAllSettingsIndex.refill` (per keystroke, explicitly —
+    /// `sendsWholeSearchString` is off), and every phone settings page's `control(_:)` (per render
+    /// pass). Against the tables that is 23 groups, 67 options, `1 + 4n` per group ⇒ **291 doors**,
+    /// paid again on every one of those events.
+    ///
+    /// The crossings were the cheap half, which is the same thing `slopdesk_settings_layout_page`
+    /// found one register up. A door costs ~1 ns; a door that answers a STRING costs what the near
+    /// side spends around it — a 64-byte `[UInt8]` and a `String` per field. Measured with `swiftc -O`
+    /// against the shipped `SlopDeskFFI.xcframework` (two runs agreeing inside 1%):
+    ///
+    /// | | old | new |
+    /// | --- | --- | --- |
+    /// | one group (`cursorStyle`, 4 options) | 2.71 µs | 0.46 µs |
+    /// | one group (`rightClickAction`, 5) | 3.30 µs | 0.54 µs |
+    /// | all 23 groups | **51.3 µs** | 10.4 µs |
+    /// | a memoised read | — | **0 ns** (an array subscript) |
+    ///
+    /// So the port itself is ~5× on the marshalling, and the `let` is what turns the remaining 10 µs
+    /// into a once-per-process cost. Every reader listed above now pays an array subscript.
+    ///
+    /// Indexed by ``Group`` raw value, and `Group` is `CaseIterable` with contiguous raw values from
+    /// zero, so the subscript in ``tokens(_:)`` is total.
+    private static let groupRows: [[(token: String, label: String, caption: String?, menuLabel: String)]] =
+        Group.allCases.sorted { $0.rawValue < $1.rawValue }.map(rows(of:))
+
+    /// One group, in ONE crossing.
+    ///
+    /// The layout is `slopdesk_ffi::settings_options`'s: a big-endian option count, then four
+    /// length-prefixed strings per option — token, label, caption, menu label, in render order.
+    ///
+    /// A zero-length caption is NO caption, which is what the deleted per-field door answered too:
+    /// it delivered nothing for a choice with no caveat AND for a choice whose caveat was empty, and
+    /// this side read both back as `nil`. Keeping the conflation is what makes this a marshalling
+    /// change rather than a behaviour one.
+    private static func rows(
+        of group: Group,
+    ) -> [(token: String, label: String, caption: String?, menuLabel: String)] {
+        let blob = delivered(group)
+        guard blob.count >= countBytes else { return [] }
+        let count = Int(blob[0]) << 8 | Int(blob[1])
+        let text = splitLengthPrefixed(Array(blob[countBytes...]), count: count * optionFieldCount)
+        return (0..<count).map { index in
+            let field = index * optionFieldCount
+            let caption = text[field + 2]
+            return (
+                token: text[field],
+                label: text[field + 1],
+                caption: caption.isEmpty ? nil : caption,
+                menuLabel: text[field + 3],
             )
         }
+    }
+
+    /// The group's bytes, retrying at the size the door named.
+    ///
+    /// There is no pointer scope to put the retry inside — the only argument is a scalar, so the one
+    /// borrowed buffer is the one being resized, and reallocating `out` inside its own
+    /// `withUnsafeMutableBufferPointer` is what that rule forbids rather than what it asks for. The
+    /// wrapped table is pure, so the second call cannot disagree with the first.
+    private static func delivered(_ group: Group) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: groupInlineCapacity)
+        var written = out.withUnsafeMutableBufferPointer {
+            slopdesk_settings_option_group(group.rawValue, $0.baseAddress, $0.count)
+        }
+        guard written > 0 else { return [] }
+        if written > out.count {
+            out = [UInt8](repeating: 0, count: written)
+            written = out.withUnsafeMutableBufferPointer {
+                slopdesk_settings_option_group(group.rawValue, $0.baseAddress, $0.count)
+            }
+            guard written > 0, written <= out.count else { return [] }
+        }
+        return Array(out.prefix(written))
+    }
+
+    /// The delivery's `count` length-prefixed strings, padded with empties if it came up short.
+    ///
+    /// Padding rather than trusting the length, for `SettingsLayout`'s reason: a short delivery means
+    /// the door and this reader disagree about the layout, and the alternative to padding is a silent
+    /// off-by-one where every option after the gap wears its neighbour's words.
+    private static func splitLengthPrefixed(_ blob: [UInt8], count: Int) -> [String] {
+        var fields: [String] = []
+        fields.reserveCapacity(count)
+        var cursor = blob.startIndex
+        while fields.count < count, blob.distance(from: cursor, to: blob.endIndex) >= 4 {
+            var length = 0
+            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
+            cursor += 4
+            guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
+            // The producer is `slopdesk_workspace::settings_catalog`, so these bytes are a Rust
+            // `&'static str`'s — or a `format!` over two of them — and cannot be invalid UTF-8. A
+            // failable init would add a branch meaning "this option has no label", which is a wrong
+            // answer rather than a cautious one.
+            // swiftlint:disable:next optional_data_string_conversion
+            fields.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
+            cursor += length
+        }
+        while fields.count < count { fields.append("") }
+        return fields
     }
 
     /// What one persisted token is CALLED — for a readout that shows the current choice without
@@ -117,13 +226,14 @@ package enum SettingsCatalog {
     /// The `density` tokens the store persists, named rather than spelled. Density is the one group
     /// with no Swift enum behind it, so these are what keep the picker, the two `?? comfortable`
     /// fallbacks and the card art's compact test on one spelling.
-    package static var densityComfortable: String {
+    /// `let` rather than a computed `var` for ``groupRows``' reason: the answer is a Rust `const`, and
+    /// the two of these are read from `SettingsIndexPresentation.dedicatedValue` and from the theme
+    /// card's is-this-the-compact-one test — both per render.
+    package static let densityComfortable: String =
         string { slopdesk_settings_density_token(false, $0, $1) } ?? ""
-    }
 
-    package static var densityCompact: String {
+    package static let densityCompact: String =
         string { slopdesk_settings_density_token(true, $0, $1) } ?? ""
-    }
 
     // MARK: The taxonomy
 
@@ -159,13 +269,21 @@ package enum SettingsCatalog {
         /// A HOST-read flag shipped over the sidecar, which applies on the next host connection.
         case reconnect = 1
 
-        package var label: String {
-            SettingsCatalog.string { slopdesk_settings_timing_label(rawValue, $0, $1) } ?? ""
-        }
+        package var label: String { Self.chips[Int(rawValue)].label }
 
-        package var symbol: String {
-            SettingsCatalog.string { slopdesk_settings_timing_symbol(rawValue, $0, $1) } ?? ""
-        }
+        package var symbol: String { Self.chips[Int(rawValue)].symbol }
+
+        /// Both chips, read once. `SettingsControls.timingFooter` draws one per GROUP per render —
+        /// ~10 per settings page per pass, for two pairs of words that are `&'static` on the far side.
+        private static let chips: [(label: String, symbol: String)] = allCases
+            .sorted { $0.rawValue < $1.rawValue }
+            .map { timing in
+                (
+                    label: SettingsCatalog.string { slopdesk_settings_timing_label(timing.rawValue, $0, $1) } ?? "",
+                    symbol: SettingsCatalog
+                        .string { slopdesk_settings_timing_symbol(timing.rawValue, $0, $1) } ?? "",
+                )
+            }
     }
 
     // MARK: The ladders
@@ -178,18 +296,39 @@ package enum SettingsCatalog {
         case videoSharpen = 3
 
         /// The settable range. Empty for a ladder the boundary does not know, which no case is.
-        package var range: ClosedRange<Double> {
-            let bounds = slopdesk_settings_ladder(rawValue)
-            guard bounds.known, bounds.min <= bounds.max else { return 0...0 }
-            return bounds.min...bounds.max
-        }
+        package var range: ClosedRange<Double> { Self.shapes[Int(rawValue)].range }
 
         /// The slider's granularity.
-        package var step: Double { slopdesk_settings_ladder(rawValue).step }
+        package var step: Double { Self.shapes[Int(rawValue)].step }
 
         /// The magnitude stops, in order — the values a user actually picks, so "back to normal" is
         /// one tap rather than a drag hunt.
-        package var presets: [(label: String, value: Double)] {
+        package var presets: [(label: String, value: Double)] { Self.shapes[Int(rawValue)].presets }
+
+        /// Every ladder's shape, read once.
+        ///
+        /// Each of the three above was a door per read, and a slider row reads all three — so a page
+        /// carrying `busyDelay` crossed 11 times per render pass just to draw its stops, and the Mac's
+        /// row builder read `range` TWICE. None of it can change: the ladder table is `&'static`. What
+        /// stays a per-call door is ``readout(_:)``, which takes the live value and so has a different
+        /// answer every frame of a drag — that one is the crossing this port has no quarrel with.
+        private typealias Shape = (
+            range: ClosedRange<Double>, step: Double, presets: [(label: String, value: Double)],
+        )
+
+        private static let shapes: [Shape] =
+            allCases.sorted { $0.rawValue < $1.rawValue }.map { ladder in
+                let bounds = slopdesk_settings_ladder(ladder.rawValue)
+                let known = bounds.known && bounds.min <= bounds.max
+                return (
+                    range: known ? bounds.min...bounds.max : 0...0,
+                    step: bounds.step,
+                    presets: ladder.crossedPresets,
+                )
+            }
+
+        /// The stops as the boundary hands them over — `1 + 2n` crossings, paid once by ``shapes``.
+        private var crossedPresets: [(label: String, value: Double)] {
             (0..<slopdesk_settings_ladder_preset_count(rawValue)).compactMap { index in
                 let value = slopdesk_settings_ladder_preset_value(rawValue, index)
                 // NaN is the door's "no such stop" — zero would be indistinguishable from the busy
@@ -227,20 +366,27 @@ package enum SettingsCatalog {
         case videoFecGroup = 5
 
         /// The settable range. Empty for a range the boundary does not know, which no case is.
-        package var range: ClosedRange<Int> {
-            let bounds = slopdesk_settings_stepper(rawValue)
-            guard bounds.known, bounds.min <= bounds.max else { return 0...0 }
-            return Int(bounds.min)...Int(bounds.max)
-        }
+        package var range: ClosedRange<Int> { Self.shapes[Int(rawValue)].range }
 
         /// The same range for a field the model holds as a `Double`.
-        package var doubleRange: ClosedRange<Double> {
-            let whole = range
-            return Double(whole.lowerBound)...Double(whole.upperBound)
-        }
+        package var doubleRange: ClosedRange<Double> { Self.shapes[Int(rawValue)].doubleRange }
 
         /// How far one click moves it.
-        package var step: Int { Int(slopdesk_settings_stepper(rawValue).step) }
+        package var step: Int { Self.shapes[Int(rawValue)].step }
+
+        /// Every range's shape, read once — ``Ladder/shapes``' argument at the stepper. A stepper row
+        /// reads `range` (or `doubleRange`) and `step`, and the Mac's builder reads the range twice.
+        private static let shapes: [(range: ClosedRange<Int>, doubleRange: ClosedRange<Double>, step: Int)] =
+            allCases.sorted { $0.rawValue < $1.rawValue }.map { stepper in
+                let bounds = slopdesk_settings_stepper(stepper.rawValue)
+                let known = bounds.known && bounds.min <= bounds.max
+                let whole = known ? Int(bounds.min)...Int(bounds.max) : 0...0
+                return (
+                    range: whole,
+                    doubleRange: Double(whole.lowerBound)...Double(whole.upperBound),
+                    step: Int(bounds.step),
+                )
+            }
 
         /// What the value reads as after the row's own label.
         package func readout(_ value: Int) -> String { readout(Double(value)) }
@@ -268,4 +414,15 @@ package enum SettingsCatalog {
     /// Long enough for every label and readout the catalog holds; a longer one makes the door report
     /// its size and the reader ask again.
     private static let inlineCapacity = 64
+
+    /// The delivery's option count, in front of the strings.
+    private static let countBytes = 2
+    /// Per option, in the flat string run: token, label, caption, menu label.
+    private static let optionFieldCount = 4
+
+    /// Past the widest group — Font → Style & Rendering, measured at 240 bytes — so the retry in
+    /// ``delivered(_:)`` is a correctness property rather than a second crossing.
+    /// `every_group_fits_the_near_sides_first_guess` in `rust/slopdesk-ffi/src/settings_options.rs`
+    /// is what fails if a new option ever pushes past it, on the side that can measure it.
+    private static let groupInlineCapacity = 1024
 }

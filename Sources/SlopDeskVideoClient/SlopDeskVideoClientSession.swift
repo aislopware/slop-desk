@@ -1803,8 +1803,25 @@ public actor SlopDeskVideoClientSession {
     /// The view layer builds events via ``InputEventEncoder`` (normalised coords) and
     /// hands them here; sent fire-and-forget (UDP).
     public func sendInput(_ event: InputEvent) {
-        guard stateMachine.mediaFlowing else { return }
-        transport.send(event.encode(), on: .input)
+        sendInput(event, times: 1)
+    }
+
+    /// The loss-resilience send: `times` copies of ONE event, encoded once.
+    ///
+    /// The two redundant paths (``sendMouseUp(button:viewPoint:clickCount:modifiers:)`` and a
+    /// held-modifier key-up) already say the bytes are built once and put on the wire unchanged —
+    /// that is what makes the host's ``InputButtonBalance`` able to suppress the duplicates. Sending
+    /// through ``sendInput(_:)`` per repeat re-ran `slopdesk_input_event_encode` and allocated a
+    /// fresh `Data` each time (measured: 227 ns a call), so the comment was true of the intent and
+    /// not of the code. Encoding is pure, so the repeats were never DIFFERENT bytes — this makes
+    /// them the SAME bytes.
+    ///
+    /// Actor-isolated with no suspension in the loop, so the gate cannot change between repeats:
+    /// reading it once is the same answer the per-send read gave.
+    private func sendInput(_ event: InputEvent, times: Int) {
+        guard times > 0, stateMachine.mediaFlowing else { return }
+        let bytes = event.encode()
+        for _ in 0..<times { transport.send(bytes, on: .input) }
     }
 
     /// Convenience: normalise + send a pointer move in the layer's view space. The
@@ -1863,7 +1880,7 @@ public actor SlopDeskVideoClientSession {
             mode: contentMode,
             viewportCrop: viewportCrop,
         )
-        for _ in 0..<Self.redundantUpCount { sendInput(up) }
+        sendInput(up, times: Self.redundantUpCount)
     }
 
     /// A drag move while a button is held (view `mouseDragged`/`rightMouseDragged`). Sent as an
@@ -1923,7 +1940,7 @@ public actor SlopDeskVideoClientSession {
         // the redundancy never becomes a spurious extra modifier edge. Everything else stays a
         // single datagram (an ordinary key-up loss is a visible, self-healing miss).
         let event = inputEncoder.key(keyCode: keyCode, down: down, modifiers: modifiers)
-        for _ in 0..<Self.keySendCount(keyCode: keyCode, down: down) { sendInput(event) }
+        sendInput(event, times: Self.keySendCount(keyCode: keyCode, down: down))
     }
 
     /// Pure send-count policy for one key event: `redundantUpCount` for a HELD-modifier key-UP

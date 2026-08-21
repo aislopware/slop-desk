@@ -1,18 +1,19 @@
-//! What Settings offers, in C.
+//! What Settings offers, in C: the taxonomy, the apply timings and the scalar ladders.
 //!
-//! The rules are `slopdesk_workspace::settings_catalog`; what is here is the marshalling. Every
-//! door is a COUNT plus indexed accessors, which is this boundary's idiom for a list — the near
-//! side asks how many rows a group has, then asks each row for its three strings. A settings page
-//! renders once per open, so the call count is not the thing to optimise; being able to add an
-//! option without touching a struct layout is.
+//! The rules are `slopdesk_workspace::settings_catalog`; what is here is the marshalling.
 //!
-//! ## An empty string and a missing one say different things
+//! ## Where the OPTION GROUPS went
 //!
-//! A caption is genuinely optional — most choices have none — and
-//! [`slopdesk_settings_option_caption`] answers `0` for both "this row has no caption" and "this
-//! index has no row". That is deliberate and safe: a caller that asked for row `i` already learned
-//! from the count that row `i` exists, and a caption of zero length and no caption at all render
-//! identically. Nothing downstream branches on the difference.
+//! They used to be here too, as a count plus four indexed field accessors — this boundary's older
+//! idiom for a list. The near side's only reader of any of them built the whole group, so naming
+//! one token cost `1 + 4n` crossings and every settings face above it paid that to read one field.
+//! [`crate::settings_options`] answers with the group instead, in one delivery, and the five doors
+//! are gone rather than left beside it: a door nothing calls is a second way to ask what a live
+//! door already answers.
+//!
+//! The three doors that stayed are the ones whose answer is genuinely ONE string — a density token
+//! by name, a timing chip's words, a ladder stop's label — and a caller reads each of those once
+//! into a `static let`.
 //!
 //! ## The token is the contract, not the index
 //!
@@ -22,7 +23,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::settings_catalog::{self, ApplyTiming, Group, Ladder, Section, Stepper};
+use slopdesk_workspace::settings_catalog::{self, ApplyTiming, Ladder, Section, Stepper};
 
 use crate::deliver;
 
@@ -52,122 +53,6 @@ pub struct SlopDeskSettingsStepper {
     pub step: i64,
     /// Whether `stepper` named a range at all. `false` leaves the three above at zero.
     pub known: bool,
-}
-
-/// How many choices a group offers. `0` for a group index no group has.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_settings_option_count(group: u8) -> usize {
-    Group::from_index(group).map_or(0, |id| settings_catalog::group(id).len())
-}
-
-/// The value a choice PERSISTS — the Swift enum's `rawValue`.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_option_token(
-    group: u8,
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
-    unsafe { option_field(group, index, out, cap, |row| row.token) }
-}
-
-/// What a choice is called.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_option_label(
-    group: u8,
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: as above.
-    unsafe { option_field(group, index, out, cap, |row| row.label) }
-}
-
-/// A choice's caveat, or `0` for one that has none.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_option_caption(
-    group: u8,
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: as above.
-    unsafe { option_field(group, index, out, cap, |row| row.caption) }
-}
-
-/// One field of one option row, delivered.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[expect(
-    unsafe_code,
-    reason = "the delivery is the marshalling; every door above restates the same obligation"
-)]
-unsafe fn option_field(
-    group: u8,
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-    field: impl Fn(&settings_catalog::OptionRow) -> &'static str,
-) -> usize {
-    let Some(row) = Group::from_index(group).and_then(|id| settings_catalog::option(id, index)) else {
-        return 0;
-    };
-    // SAFETY: the caller's obligation, restated above.
-    unsafe { deliver(field(row).as_bytes(), out, cap) }
-}
-
-/// The one-line form a `.menu` picker shows: the label with the caveat folded in after an en dash.
-///
-/// A menu item has no second line to hang a caption on, so the fold is what keeps the honesty a
-/// caption carries from vanishing when a group renders as a dropdown instead of as cards. It
-/// crosses as its own door rather than being re-concatenated on the near side — the en dash and the
-/// no-caption case are a rule, and a rule spelled in two languages is two rules.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_settings_option_menu_label(
-    group: u8,
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    let Some(row) = Group::from_index(group).and_then(|id| settings_catalog::option(id, index)) else {
-        return 0;
-    };
-    // SAFETY: the caller's obligation, restated above.
-    unsafe { deliver(row.menu_label().as_bytes(), out, cap) }
 }
 
 /// A `density` token by NAME rather than by position.
@@ -482,61 +367,6 @@ mod tests {
     }
 
     #[test]
-    fn a_group_crosses_row_by_row() {
-        let group = Group::CursorStyle.index();
-        assert_eq!(slopdesk_settings_option_count(group), 4);
-        // SAFETY: the buffer inside `read` is a live local.
-        let token = read(|out, cap| unsafe { slopdesk_settings_option_token(group, 0, out, cap) });
-        assert_eq!(token.as_deref(), Some("block"));
-        // SAFETY: as above.
-        let label = read(|out, cap| unsafe { slopdesk_settings_option_label(group, 0, out, cap) });
-        assert_eq!(label.as_deref(), Some("Block"));
-        // SAFETY: as above.
-        let caption = read(|out, cap| unsafe { slopdesk_settings_option_caption(group, 0, out, cap) });
-        assert_eq!(caption, None, "a cursor style needs no caveat");
-    }
-
-    #[test]
-    fn a_caveat_crosses_when_there_is_one() {
-        let group = Group::NewTabPosition.index();
-        // SAFETY: the buffer inside `read` is a live local.
-        let caption = read(|out, cap| unsafe { slopdesk_settings_option_caption(group, 0, out, cap) });
-        assert_eq!(caption.as_deref(), Some("Appends, like End"));
-    }
-
-    #[test]
-    fn an_unknown_group_or_index_is_an_answer_rather_than_a_crash() {
-        assert_eq!(slopdesk_settings_option_count(200), 0);
-        // SAFETY: the buffer inside `read` is a live local.
-        assert_eq!(
-            read(|out, cap| unsafe { slopdesk_settings_option_token(200, 0, out, cap) }),
-            None
-        );
-        // SAFETY: as above.
-        assert_eq!(
-            read(|out, cap| unsafe { slopdesk_settings_option_token(Group::Density.index(), 99, out, cap) }),
-            None,
-        );
-        // SAFETY: a null buffer with a zero capacity is what `deliver` is written against.
-        assert_eq!(
-            unsafe { slopdesk_settings_option_token(Group::Density.index(), 0, core::ptr::null_mut(), 0) },
-            "comfortable".len(),
-            "an overflow reports the size it needs and writes nothing",
-        );
-    }
-
-    #[test]
-    fn a_menu_label_crosses_folded() {
-        let group = Group::NewTabPosition.index();
-        // SAFETY: the buffer inside `read` is a live local.
-        let folded = read(|out, cap| unsafe { slopdesk_settings_option_menu_label(group, 0, out, cap) });
-        assert_eq!(folded.as_deref(), Some("Automatic — Appends, like End"));
-        // SAFETY: as above.
-        let plain = read(|out, cap| unsafe { slopdesk_settings_option_menu_label(group, 1, out, cap) });
-        assert_eq!(plain.as_deref(), Some("End"), "no caveat, no dangling dash");
-    }
-
-    #[test]
     fn the_density_tokens_cross_by_name() {
         // SAFETY: the buffer inside `read` is a live local.
         let compact = read(|out, cap| unsafe { slopdesk_settings_density_token(true, out, cap) });
@@ -544,7 +374,7 @@ mod tests {
         // SAFETY: as above.
         let comfortable = read(|out, cap| unsafe { slopdesk_settings_density_token(false, out, cap) });
         assert_eq!(comfortable.as_deref(), Some("comfortable"));
-        let tokens: Vec<&str> = settings_catalog::group(Group::Density)
+        let tokens: Vec<&str> = settings_catalog::group(settings_catalog::Group::Density)
             .iter()
             .map(|row| row.token)
             .collect();

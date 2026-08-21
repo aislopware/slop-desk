@@ -202,25 +202,115 @@ pub struct RowTitle<'a> {
 #[must_use]
 pub fn row_title(inputs: RowTitle<'_>) -> String {
     let fallback = inputs.live_title.or(inputs.spec_title).unwrap_or_default();
-    let Some(spec_title) = inputs.spec_title else {
-        return fallback.to_owned();
+    match title_rung(inputs.shape()) {
+        TitleRung::Fallback => fallback.to_owned(),
+        TitleRung::SpecTitle => inputs.spec_title.unwrap_or_default().to_owned(),
+        TitleRung::AtRootProgram => {
+            process_display_name(inputs.process_label)
+                .unwrap_or_default()
+                .to_owned()
+        },
+        TitleRung::CwdFolder => PaneSpec::cwd_display_name(inputs.cwd).unwrap_or_default(),
+        TitleRung::ProgramElseFallback => {
+            process_display_name(inputs.process_label).map_or_else(|| fallback.to_owned(), str::to_owned)
+        },
+    }
+}
+
+/// The fields that decide WHICH rung [`row_title`] takes, and nothing that decides what it says.
+///
+/// Split off [`RowTitle`] rather than reusing it so the one caller that wants the rung without the
+/// string cannot pass a placeholder for a field the rule turns out to read. The live title and the
+/// process label are absent here because the chain never consults either to CHOOSE — only to
+/// answer — and that is a property worth stating in a type rather than in a comment that could stop
+/// being true.
+#[derive(Clone, Copy, Debug)]
+pub struct TitleShape<'a> {
+    /// What kind of pane it is. Only a terminal titles itself by where it is.
+    pub kind: PaneKind,
+    /// The title on the pane's spec, or `None` for a pane with no spec at all.
+    pub spec_title: Option<&'a str>,
+    /// Whether that title was typed by the user.
+    pub user_renamed: bool,
+    /// The pane's working directory.
+    pub cwd: Option<&'a str>,
+    /// The project section this pane is drawn under, where a header already names it.
+    pub project_key: Option<&'a str>,
+}
+
+impl<'a> RowTitle<'a> {
+    /// The half of these inputs that picks the rung.
+    #[must_use]
+    pub const fn shape(&self) -> TitleShape<'a> {
+        TitleShape {
+            kind: self.kind,
+            spec_title: self.spec_title,
+            user_renamed: self.user_renamed,
+            cwd: self.cwd,
+            project_key: self.project_key,
+        }
+    }
+}
+
+/// Which rung of [`row_title`]'s chain a pane's structural title comes off.
+///
+/// Named rather than inlined because ONE caller needs the rung without the string:
+/// [`titles_by_process`] below. The two program rungs stay apart because their EMPTY answers
+/// differ — an at-root idle shell yields `""` on purpose, so the live chain can speak for it, while
+/// a pane with no folder name and no program falls back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TitleRung {
+    /// The live title, else the spec's — a pane with no spec, and every non-terminal.
+    Fallback,
+    /// A name the user typed.
+    SpecTitle,
+    /// The foreground program, because the folder name would restate the section header.
+    AtRootProgram,
+    /// The working directory's folder name.
+    CwdFolder,
+    /// The foreground program, because the directory is not known yet.
+    ProgramElseFallback,
+}
+
+fn title_rung(shape: TitleShape<'_>) -> TitleRung {
+    let Some(spec_title) = shape.spec_title else {
+        return TitleRung::Fallback;
     };
-    if inputs.kind != PaneKind::Terminal {
-        return fallback.to_owned();
+    if shape.kind != PaneKind::Terminal {
+        return TitleRung::Fallback;
     }
-    if inputs.user_renamed && !spec_title.is_empty() {
-        return spec_title.to_owned();
+    if shape.user_renamed && !spec_title.is_empty() {
+        return TitleRung::SpecTitle;
     }
-    if let Some(key) = tab_ordering::normalized_project_key(inputs.project_key)
-        && tab_ordering::normalized_project_key(inputs.cwd).as_deref() == Some(key.as_str())
+    if let Some(key) = tab_ordering::normalized_project_key(shape.project_key)
+        && tab_ordering::normalized_project_key(shape.cwd).as_deref() == Some(key.as_str())
     {
-        return process_display_name(inputs.process_label)
-            .unwrap_or_default()
-            .to_owned();
+        return TitleRung::AtRootProgram;
     }
-    PaneSpec::cwd_display_name(inputs.cwd)
-        .or_else(|| process_display_name(inputs.process_label).map(str::to_owned))
-        .unwrap_or_else(|| fallback.to_owned())
+    if PaneSpec::cwd_display_name(shape.cwd).is_some() {
+        TitleRung::CwdFolder
+    } else {
+        TitleRung::ProgramElseFallback
+    }
+}
+
+/// Whether [`row_title`] would read this pane's foreground PROCESS to name it.
+///
+/// The sidebar's row-model cache fingerprints the process ONLY for a pane that would retitle by it,
+/// so a background pane's process tick stays a cache HIT rather than a rebuild of the whole rail —
+/// and on Apple's Observation, reading one key of a dictionary depends on the WHOLE dictionary, so
+/// this guard decides whether the rail is subscribed to every pane's process at all.
+///
+/// It is the same question [`row_title`] answers on its way to a string, which is why it is one
+/// function and not a predicate written alongside it: a guard that drifted from the chain would
+/// either freeze a title the rail had stopped watching for, or subscribe the rail to a dictionary
+/// that cannot change what it draws.
+#[must_use]
+pub fn titles_by_process(shape: TitleShape<'_>) -> bool {
+    matches!(
+        title_rung(shape),
+        TitleRung::AtRootProgram | TitleRung::ProgramElseFallback
+    )
 }
 
 /// The streamed host window behind a video pane, in the two fields a subtitle reads.

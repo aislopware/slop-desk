@@ -218,7 +218,7 @@ extension WorkspaceStore {
     /// leaves would tear down every live pane and rebuild it from the snapshot a moment later, so a
     /// reconnect would dismantle every terminal on screen and replay it back.
     func reconcileTreeFromDocument() {
-        guard !isReconcilingTree, workspaceMirror.topology != nil else { return }
+        guard !isReconcilingTree, mirroredTopology != nil else { return }
         // …and so does an ARMED BOOTSTRAP. That is a layout this client was told at launch to publish
         // and has not yet had a channel to say it on, and the frame that arrives first is the host's
         // own first-run default. Materializing it would tear down the pane the window is already

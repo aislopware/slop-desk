@@ -159,13 +159,25 @@ pub fn pane_project_key(
     project_key: impl Fn(PaneId) -> Option<String>,
     cwd: impl Fn(PaneId) -> Option<String>,
 ) -> Option<String> {
-    if let Some(key) = project_key(pane)
+    project_key_of(project_key(pane).as_deref(), cwd(pane).as_deref())
+}
+
+/// The same precedence over the two VALUES, for a caller that already has both in hand.
+///
+/// [`pane_project_key`] takes lookups because its callers hold a store, a session or a document and
+/// resolving every pane's cells up front would be the wasteful half. A caller resolving a whole
+/// LIST at once has already paid that, and threading an id back through a closure to reach a value
+/// it is holding would be ceremony. The precedence itself is here and only here.
+#[must_use]
+pub fn project_key_of(project_key: Option<&str>, cwd: Option<&str>) -> Option<String> {
+    if let Some(key) = project_key
         && !key.is_empty()
-        && !PaneSpec::looks_like_transient_plugin_cwd(&key)
+        && !PaneSpec::looks_like_transient_plugin_cwd(key)
     {
-        return Some(key);
+        return Some(key.to_owned());
     }
-    cwd(pane).filter(|cwd| !PaneSpec::looks_like_transient_plugin_cwd(cwd))
+    cwd.filter(|cwd| !PaneSpec::looks_like_transient_plugin_cwd(cwd))
+        .map(str::to_owned)
 }
 
 /// A TAB's key for close-selection purposes: its ACTIVE pane's, else its first pane's.

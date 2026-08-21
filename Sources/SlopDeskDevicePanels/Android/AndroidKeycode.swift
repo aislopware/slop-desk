@@ -120,6 +120,10 @@ package enum AndroidKeyMap {
         )
     }
 
+    /// The first buffer the resolution is asked for, before any retry. Named rather than inline so
+    /// that sizing it down to where the retry becomes the common path is a visible edit.
+    private static let firstGuessBytes = 32
+
     /// The crossing. One call answers the whole question, TAGGED — the near side cannot know which
     /// of the three shapes it will get until the rule has run, so asking twice would be a window in
     /// which the two answers could disagree.
@@ -138,14 +142,25 @@ package enum AndroidKeyMap {
                         bare.baseAddress, bare.count, barePresent, modifiers.rawValue, out, cap,
                     )
                 }
-                let needed = call(nil, 0)
-                guard needed > 0 else { return .none }
-                var out = [UInt8](repeating: 0, count: needed)
-                let written = out.withUnsafeMutableBufferPointer { room in
+                // GUESS, then retry — never probe. A null-output call runs the whole far-side rule
+                // (the modifier fold, the HID lookup, the printable test) and throws the answer
+                // away, so the probe doubled the work of a door on the per-KEYSTROKE path. docs/55
+                // §4 makes the retry the supported shape: a short buffer writes nothing and still
+                // reports the true length. The guess covers every answer this door has — a keycode
+                // is 9 bytes, `.none` is 1, and the text arm carries one keystroke's characters.
+                var out = [UInt8](repeating: 0, count: firstGuessBytes)
+                var needed = out.withUnsafeMutableBufferPointer { room in
                     call(room.baseAddress, room.count)
                 }
-                guard written == needed else { return .none }
-                return decode(out)
+                guard needed > 0 else { return .none }
+                if needed > firstGuessBytes {
+                    out = [UInt8](repeating: 0, count: needed)
+                    needed = out.withUnsafeMutableBufferPointer { room in
+                        call(room.baseAddress, room.count)
+                    }
+                    guard needed > 0, needed <= out.count else { return .none }
+                }
+                return decode(Array(out.prefix(needed)))
             }
         }
     }

@@ -46,6 +46,9 @@ struct KeybindingsEditorView: View {
         let conflicts = store.keybindingConflicts()
         // The set of binding ids that collide with at least one other id on the same chord (for the badge).
         let conflictingIDs = Set(conflicts.values.flatMap(\.self))
+        // One crossing for the whole table, hoisted out of the `ForEach` for the same reason
+        // `conflictingIDs` is: the answer does not vary by category.
+        let kept = surviving()
 
         VStack(alignment: .leading, spacing: Slate.Metric.space3) {
             header
@@ -56,7 +59,7 @@ struct KeybindingsEditorView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: Slate.Metric.space3, pinnedViews: [.sectionHeaders]) {
                     ForEach(WorkspaceAction.Category.allCases, id: \.self) { category in
-                        let rows = bindings(in: category)
+                        let rows = bindings(in: category, surviving: kept)
                         if !rows.isEmpty {
                             Section {
                                 ForEach(rows, id: \.id) { binding in
@@ -248,14 +251,25 @@ struct KeybindingsEditorView: View {
     /// rebind and the real per-digit chords are an implementation detail) and any row filtered OUT by the live
     /// search query. Reads `allBindings` so the generated select-tab chords are present but the display-only
     /// representative is filtered out.
-    private func bindings(in category: WorkspaceAction.Category) -> [WorkspaceBinding] {
-        WorkspaceBindingRegistry.allBindings.filter {
-            $0.category == category
-                && $0.id != WorkspaceBindingRegistry.selectPaneRepresentative.id
-                && KeybindingsEditorModel.matches(
-                    $0, effectiveChord: effectiveChord(for: $0), query: searchQuery,
-                )
-        }
+    /// `surviving` is positional against `allBindings`, so this walks the same array it was built from.
+    private func bindings(
+        in category: WorkspaceAction.Category, surviving: [Bool],
+    ) -> [WorkspaceBinding] {
+        zip(WorkspaceBindingRegistry.allBindings, surviving).filter { binding, kept in
+            kept
+                && binding.category == category
+                && binding.id != WorkspaceBindingRegistry.selectPaneRepresentative.id
+        }.map(\.0)
+    }
+
+    /// Which rows of `WorkspaceBindingRegistry.allBindings` the search query keeps, in that order —
+    /// asked once per keystroke and read by every category.
+    private func surviving() -> [Bool] {
+        KeybindingsEditorModel.surviving(
+            WorkspaceBindingRegistry.allBindings,
+            effectiveChord: { effectiveChord(for: $0) },
+            query: searchQuery,
+        )
     }
 
     private func binding(forID id: String) -> WorkspaceBinding? {
@@ -270,12 +284,14 @@ struct KeybindingsEditorView: View {
 
     /// The glyph for the binding's EFFECTIVE chord: the user override (if it maps) else the registry
     /// default. Mirrors `WorkspaceBindingRegistry.resolvedChord(for:)` so the chip shows what actually fires.
+    /// Through the spelling memo, so a default chord — which is every chord until the user rebinds one —
+    /// is a dictionary read rather than the two doors and four allocations rendering it costs.
     private func effectiveGlyph(for binding: WorkspaceBinding) -> String {
         if let override = store.keybindings.chord(for: binding.id), let mapped = override.asRegistryChord {
-            return WorkspaceBindingRegistry.glyph(mapped)
+            return KeybindingsEditorModel.spelling(of: mapped).glyph
         }
         if let chord = binding.chord {
-            return WorkspaceBindingRegistry.glyph(chord)
+            return KeybindingsEditorModel.spelling(of: chord).glyph
         }
         return "—"
     }

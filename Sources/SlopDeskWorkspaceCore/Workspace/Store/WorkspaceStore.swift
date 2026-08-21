@@ -52,7 +52,7 @@ public final class WorkspaceStore {
     public var tree: TreeWorkspace {
         observeWorkspaceMirror()
         if let cached = treeProjection, cached.revision == workspaceMirrorRevision { return cached.tree }
-        var projected = workspaceMirror.topology?.tree ?? TreeWorkspace(sessions: [], activeSessionID: nil)
+        var projected = mirroredTopology?.tree ?? TreeWorkspace(sessions: [], activeSessionID: nil)
         // A device that does not follow the host's focus rides its own on top (docs/45 §8.2) — which is
         // what lets a phone look at one tab while the Studio works in another.
         if let focus = deviceFocus {
@@ -72,6 +72,51 @@ public final class WorkspaceStore {
     /// The last projection and the mirror revision it was built from.
     @ObservationIgnored
     private var treeProjection: (revision: UInt, tree: TreeWorkspace)?
+
+    /// The mirror's WHOLE topology — the tree, the sync-input set, the focus MRU, the closed-tab ring
+    /// and the `spawnCwd` map — memoized against ``workspaceMirrorRevision``, exactly as ``tree`` is.
+    ///
+    /// ``HostWorkspaceMirror/topology`` is a plain computed property over
+    /// ``HostWorkspaceMirror/resolved``, so every read of it copies the entire entry map and then
+    /// re-runs ``WorkspaceTopology/init(entries:)`` over every cell in the document. ``tree`` had a
+    /// memo and the OTHER halves did not, which made ``syncInputTabs`` — read once per keystroke by
+    /// ``fanSyncInput(from:_:)`` and once per SIDEBAR ROW by
+    /// `SidebarRowPresentation.reading(for:store:fallbackTitle:)` — pay for the whole projection to
+    /// answer whether one tab is in a `Set`. On a sidebar of `R` rows that is `R` full projections per
+    /// render pass: quadratic in pane count, for a set membership test.
+    ///
+    /// The key is the one ``tree`` already trusts, and it inherits ``tree``'s correctness exactly:
+    /// every writer that can move the mirror goes through ``WorkspaceMirrorBox/onChange``, which bumps
+    /// the counter, and the two LOCAL overlays that never touch the mirror (the divider preview and
+    /// this device's own focus) bump it themselves for this reason. A revision that over-invalidates
+    /// costs one projection; one that under-invalidates would freeze the layout, so the counter is
+    /// deliberately the coarser of the two.
+    var mirroredTopology: WorkspaceTopology? {
+        observeWorkspaceMirror()
+        if let cached = topologyProjection, cached.revision == workspaceMirrorRevision {
+            return cached.topology
+        }
+        let projected = workspaceMirror.topology
+        topologyProjection = (workspaceMirrorRevision, projected)
+        return projected
+    }
+
+    /// The last whole-topology projection and the mirror revision it was built from. A cached `nil`
+    /// is an ANSWER — "this mirror holds no workspace" is the state a client spends every
+    /// re-subscribe in, and re-deriving it per read would leave the one case with no document the one
+    /// case that still walks the document.
+    @ObservationIgnored
+    private var topologyProjection: (revision: UInt, topology: WorkspaceTopology?)?
+
+    /// ``displayOrderedPaneIDs()``'s answer and the ⌘-digit map derived from it, against the same
+    /// revision. Storage lives here because an extension cannot hold it; the derivation is in
+    /// `WorkspaceStore+TabOrdering.swift` beside the walk it caches.
+    ///
+    /// Every input that walk reads is the mirror's: the tree, each pane's spec kind, and each pane's
+    /// project key (`pane/projectKey` else `pane/cwd`). So the revision is a sound key for it for the
+    /// same reason it is one for ``tree``, and the ⌘-held rail asks for it once per ROW.
+    @ObservationIgnored
+    var displayOrderProjection: (revision: UInt, order: [PaneID], shortcuts: [PaneID: Int])?
 
     /// The in-flight divider drag's weight, overlaid onto the projection until
     /// ``commitDividerResize()`` stages it. `nil` between drags.
@@ -806,7 +851,7 @@ public final class WorkspaceStore {
     /// another client's keystrokes silently do not fan.
     var syncInputTabs: Set<TabID> {
         observeWorkspaceMirror()
-        return workspaceMirror.topology?.syncInputTabs ?? []
+        return mirroredTopology?.syncInputTabs ?? []
     }
 
     /// Reentrancy guard for ``fanSyncInput(from:_:)``: when a fan-out mirrors bytes into a SIBLING
@@ -2817,7 +2862,7 @@ public final class WorkspaceStore {
     /// (``WorkspaceChannelClient/stop()`` resets the mirror before ``start()``) and for as long as a host
     /// that does not serve the channel keeps refusing it.
     private func persistableSnapshot() -> TreeWorkspace? {
-        workspaceMirror.topology == nil ? nil : tree
+        mirroredTopology == nil ? nil : tree
     }
 
     /// Schedules a debounced save of the value tree (docs/22 §6): cancels any pending save and starts a
@@ -2908,7 +2953,7 @@ public final class WorkspaceStore {
         // The facts are scoped to the live leaves, and those come from the projection — so with no
         // document there are no facts to write, only the absence of them. Same rule as
         // ``persistableSnapshot()``, for the same window.
-        guard workspaceMirror.topology != nil else { return }
+        guard mirroredTopology != nil else { return }
         try? documentCache.save(documentFactsSnapshot(), hostKey: documentCacheHostKey)
     }
 
