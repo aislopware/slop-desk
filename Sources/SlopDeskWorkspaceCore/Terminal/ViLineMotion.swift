@@ -7,7 +7,7 @@ import Foundation
 /// ## This is a call, not an implementation
 /// The motions are `slopdesk_terminal::vimotion`, reached through the nine `slopdesk_vi_*` doors
 /// (docs/55). What used to be here was a second cell walk: a `Character`-by-`Character` scan asking
-/// ``TerminalLinkDetector/displayCellWidth(of:)`` per column, sitting beside the clustering
+/// `TerminalLinkDetector.displayCellWidth(of:)` per column, sitting beside the clustering
 /// `slopdesk_terminal::link` already ran over the same row for the link and hint overlays. Two
 /// clusterings over one row is how a cursor lands half a glyph away from the badge that claims to
 /// be on it — on a CJK row, which nobody checks by hand.

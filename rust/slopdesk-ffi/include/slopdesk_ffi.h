@@ -2739,6 +2739,36 @@ size_t slopdesk_terminal_config_string(SlopDeskTerminalConfig config, const uint
  * numbers by, at the limit an env value reaches. The limit is not a thing the near side spells. */
 size_t slopdesk_settings_env_number_text(double value, uint8_t *out, size_t cap);
 
+/* ---------------------------------------------------------------------------- *
+ * The caret colour, both ways — the value a `cursor-color` line carries and the channels the two
+ * colour wells show.
+ *
+ * The parse answers a PACKED int32_t rather than three channels and a presence flag, and it is the
+ * `slopdesk_fuzzy_rank` exception rather than a break with §4b's "an Option crosses as a value plus
+ * a flag". The three bytes occupy the low 24 bits, so every colour this door can name lies in
+ * 0x000000..0xFFFFFF and nothing the packing does can set the sign bit: -1 is outside the answer's
+ * range BY CONSTRUCTION, not by a convention a caller has to remember. A uint32_t beside a
+ * `bool *found` was the alternative and it buys a second pointer and a second lifetime in order to
+ * separate two states one signed word already separates.
+ *
+ * Every reason there is no colour collapses into that one refusal — the empty "follow the theme"
+ * spelling, the wrong length, a non-hex character, bytes that are not UTF-8 — because the caller
+ * does the same thing for all of them, which is show the effective default.
+ *
+ * The format side is an ordinary (out, cap) delivery at a fixed six bytes, so its §4 retry is
+ * unreachable. It stays §4-shaped anyway: "nothing is written unless it fits" is what makes a short
+ * buffer safe, and a door that opted out because its answer happens to be a constant size is a door
+ * that stops being safe the day that stops being true.
+ * ---------------------------------------------------------------------------- */
+
+/* (red << 16) | (green << 8) | blue, or -1 for a string that names no colour. */
+int32_t slopdesk_cursor_color_rgb(const uint8_t *hex, size_t hex_len);
+
+/* Three unit-RGB doubles as six UPPERCASE ASCII hex digits, no leading `#`. Always 6. Each channel
+ * is clamped to 0…1 with NaN answering 0, and the clamp order and the rounding rule are the wrapped
+ * crate's — a second rounding rule is exactly the drift one codec exists to prevent. */
+size_t slopdesk_cursor_color_hex(double red, double green, double blue, uint8_t *out, size_t cap);
+
 int64_t slopdesk_cli_default_timeout_ms(void);
 size_t slopdesk_cli_config_env_key(uint8_t *out, size_t cap);
 size_t slopdesk_cli_build_hash_env_key(uint8_t *out, size_t cap);
@@ -3222,8 +3252,48 @@ void   slopdesk_link_scan_free(SlopDeskLinkScan *handle);
 SlopDeskLinkCounts slopdesk_link_scan_counts(SlopDeskLinkScan *handle);
 SlopDeskDetectedLink slopdesk_link_scan_link(SlopDeskLinkScan *handle, size_t index);
 size_t slopdesk_link_scan_take_arena(SlopDeskLinkScan *handle, uint8_t *out, size_t cap);
-size_t slopdesk_link_scalar_cells(uint32_t scalar);
-size_t slopdesk_link_text_cells(const uint8_t *bytes, size_t len);
+
+/* ---- which of those spans a point landed ON ----------------------------------------------
+ * The scan above says what a span IS and the table below says what happens to it; this is the
+ * question between them, asked once for a cursor and for a fingertip. It is the shortest trip in
+ * this header, because the thing being asked about never travels: the caller is holding the
+ * DetectedLinks the scan just handed it, so what crosses is the three numbers per span the rule
+ * measures — row, first cell, one past the last — and what comes back is an INDEX into the array
+ * the caller already has. No record is rebuilt and no string is copied.
+ *
+ * Spans arrive as one flat array of size_t triples, (row, col_start, col_end) in that order, for
+ * the scan's own reason: the caller has to build something contiguous either way, so one buffer is
+ * one pointer, one lifetime and one bounds rule. span_count counts SPANS rather than values — the
+ * door reads exactly three times as many and never the tail of a longer buffer, and a count whose
+ * triples would wrap is refused before anything is read.
+ *
+ * Only ONE of the two answers gets a sentinel, and which one is not a style choice. An index into
+ * the caller's own array is 0..span_count by construction, so -1 cannot collide with one, the way
+ * an fzf score's -1 cannot. A CELL cannot borrow that argument: (0, 0) is the most ordinary landing
+ * a point has, so 0 is a real answer on both axes and the pair crosses with a FLAG beside it. `hit`
+ * is read first; `row` and `column` are untouched when it is false.
+ *
+ * slop is how far off a span the point may be and still count, in points. 0 is the exact cell
+ * hit-test a pointer wants and is what the Mac passes; the phone passes its own touch number,
+ * because a fingertip is a contact patch and gets one shot at the question. The exact pass runs
+ * first whatever the slop, so a slop can only ever ADD an answer where there was none.       */
+
+typedef struct {
+  size_t row;                /* 0-based, down from the viewport's top edge; read only when hit */
+  size_t column;             /* 0-based display CELL, right from the viewport's left edge */
+  bool   hit;                /* false for a zero cell size, a point before the origin, or a
+                                non-finite ratio — three refusals a caller treats as one */
+} SlopDeskLinkCell;
+
+#define SLOPDESK_LINK_HIT_NONE ((intptr_t)-1)
+
+SlopDeskLinkCell slopdesk_link_hit_cell(double cell_width, double cell_height,
+                                        double origin_x, double origin_y,
+                                        double point_x, double point_y);
+intptr_t slopdesk_link_hit_span(const size_t *spans, size_t span_count,
+                                double cell_width, double cell_height,
+                                double origin_x, double origin_y,
+                                double point_x, double point_y, double slop);
 
 /* ---- What a gesture DOES to a link ------------------------------------------------------
  * The scan above says what a span IS; this says what happens to it. One table for all four
@@ -3418,6 +3488,34 @@ size_t slopdesk_find_matches(const uint8_t *rows, size_t rows_len,
                              bool case_sensitive, bool is_regex, bool whole_word,
                              uint8_t *out, size_t cap);
 
+/* ---- and where to SCROLL to a match: a logical line's physical grid row ------------------
+ * The scan above finds a match at a LOGICAL line — an index into the unwrapped scrollback mirror,
+ * where a soft-wrapped line spanning four grid rows is one entry. libghostty's `scroll_to_row:`
+ * addresses PHYSICAL rows, where every continuation counts for itself. Feeding one into the other
+ * lands the viewport N rows too high, N being the continuation rows above the target, which reads
+ * as the search simply not working. This sums each preceding line's `ceil(cells / columns)` and
+ * answers the row the target STARTS on.
+ *
+ * The mirror crosses ONCE, in the flat-blob shape the link and hint scans take their rows in. That
+ * is the entire reason this is a door: the Swift loop it replaced asked a per-string width door for
+ * a width per line, so a match at logical line N cost N crossings to run one loop. That door has
+ * since been deleted for want of a caller. Widths come from the same cell table those columns do,
+ * reached without crossing at all, so the scroll target and the link underline cannot disagree
+ * about a CJK row.
+ *
+ * Both counts are intptr_t rather than size_t because a negative one MEANS something on the near
+ * side: `columns <= 0` is the caller saying it could not resolve the grid width — headless, or
+ * before first layout — and the answer degrades to the identity so it still scrolls where the
+ * un-mapped code did. As size_t that -1 would arrive as SIZE_MAX and be answered as a real grid.
+ *
+ * No (out, cap) and no refusal: the answer is one row, and §4's "0 means no answer" is unavailable
+ * because row 0 — the top of the scrollback — is the most common answer this gives. It does not
+ * need the sentinel. Every input has a row, including a bogus index (zero) and one past the
+ * mirror's end (one phantom row each, for a snapshot of a buffer that has since shrunk).       */
+size_t slopdesk_scrollback_physical_row(const uint8_t *lines, size_t lines_len,
+                                        const size_t *line_lengths, size_t line_count,
+                                        intptr_t logical_line, intptr_t columns);
+
 /* ---- `wait --until`: the same engine, over a stream that has not finished -----------------
  * A handle, because this scan IS state: raw bytes held back mid-escape, a fixed overlap window so
  * a marker split across chunks still matches, and a capped accumulation. Fed one PTY chunk at a
@@ -3548,6 +3646,30 @@ bool   slopdesk_block_store_time_out(SlopDeskBlockStore *handle, uint32_t index,
                                      bool has_generation, uint64_t generation);
 size_t slopdesk_block_store_reset(SlopDeskBlockStore *handle);
 size_t slopdesk_block_store_take_stranded(SlopDeskBlockStore *handle, uint32_t *out, size_t cap);
+
+/* ---------------------------------------------------------------------------- *
+ * Re-running a captured command: the exact bytes to inject into the pane's shell so the host sees a
+ * person typing (wire type 3, `.input`). No host and no wire change.
+ *
+ * The command crosses VERBATIM as its own UTF-8 and comes back as bytes, and that is the security
+ * rule rather than a convenience. A captured command may literally contain the substring `<Enter>`
+ * — `echo "<Enter>"` is a command a person runs — so routing it through the send-keys token parser
+ * the way a user-authored launch preset is routed would turn that text into a control byte and
+ * replay something other than what ran. The text is also downstream of host output, therefore
+ * attacker-influenced. Nothing is parsed, nothing is escaped, nothing is interpreted.
+ *
+ * A return of 0 means SEND NOTHING — the command was empty or whitespace-only, and a bare newline
+ * at a prompt only redraws the prompt. §4's "0 is no answer" is admissible here for a property of
+ * the rule rather than a convention: a command that IS encoded always ends in the 0x0A that
+ * executes it, so a real answer can never be empty and can never be mistaken for the refusal. The
+ * wrapped crate's suite pins that over a corpus, on the side that can see it.
+ *
+ * Sizing is arithmetic rather than a guess: the answer is the command minus its trailing CR/LF run
+ * plus one newline, so `command_len + 1` is an upper bound and the §4 retry never runs.
+ * ---------------------------------------------------------------------------- */
+
+size_t slopdesk_block_rerun_bytes(const uint8_t *command, size_t command_len, uint8_t *out,
+                                  size_t cap);
 
 /* ---------------------------------------------------------------------------- *
  * The host's two admission laws: what quantiser the encoder runs at, and whether a client's

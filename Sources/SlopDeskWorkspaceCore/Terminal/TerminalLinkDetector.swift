@@ -19,13 +19,14 @@
 // free function they always did: the handle never escapes ``detect(rows:cwd:schemes:maxScanColumns:)``,
 // so two overlays scanning at once share nothing.
 //
-// ## Why there are two width entries behind one overload set
+// ## The width entries this file used to publish are gone
 //
-// ``displayCellWidth(of:)`` for a `Character` reaches the scalar entry, not the string one. The
-// callers that walk a line cell by cell — `HintLabelAssigner`, `ScrollbackWrapMapper` — would
-// otherwise build a one-character `String` per column, allocating once per cell to ask a question
-// about a scalar they were already holding. `ViLineMotion` used to be the third; its walk moved
-// wholesale to `slopdesk_terminal::vimotion`, which reads the same widths without crossing at all.
+// Two overloads of `displayCellWidth(of:)` stood here so that a caller walking a line cell by cell
+// did not have to build a one-character `String` per column. All three such callers moved to Rust
+// — `ViLineMotion` to `slopdesk_terminal::vimotion`, `HintLabelAssigner` to the hint scan, and
+// `ScrollbackWrapMapper` to `slopdesk_terminal::wrap_map` — and each of them now reads the widths
+// in-crate with no crossing at all. The overloads outlived their last caller, so they and both
+// doors behind them were deleted rather than left as a face nobody dials.
 
 import CSlopDeskFFI
 import SlopDeskArena
@@ -260,27 +261,5 @@ public enum TerminalLinkDetector {
     /// the one it reaches for.
     static func text(_ arena: UnsafeRawBufferPointer, _ offset: Int, _ length: Int) -> String {
         ArenaText.text(arena, offset, length)
-    }
-}
-
-// MARK: - Cell widths (the same table the scan's columns come from)
-
-public extension TerminalLinkDetector {
-    /// Display width of `character` in terminal cells — `0` for a zero-width/default-ignorable base,
-    /// `2` for East-Asian-wide/fullwidth/emoji, else `1`.
-    ///
-    /// Reaches the scalar entry, so walking a line cell by cell costs no allocation per column.
-    static func displayCellWidth(of character: Character) -> Int {
-        guard let scalar = character.unicodeScalars.first else { return 0 }
-        return slopdesk_link_scalar_cells(scalar.value)
-    }
-
-    /// Display width of `text` in terminal cells — the sum over its grapheme clusters.
-    ///
-    /// `withUTF8` rather than `Array(text.utf8)`: a native Swift string already holds contiguous
-    /// UTF-8, so the bytes are lent, not copied. The mutation is on this function's own copy.
-    static func displayCellWidth(of text: String) -> Int {
-        var text = text
-        return text.withUTF8 { slopdesk_link_text_cells($0.baseAddress, $0.count) }
     }
 }

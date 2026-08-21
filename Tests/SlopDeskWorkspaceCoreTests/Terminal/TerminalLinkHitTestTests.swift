@@ -8,12 +8,22 @@ import XCTest
 /// was retargeted the copy production ran was the one inside the embedder's `#if os(macOS)`, which nothing
 /// here could call. The math is pinned HERE now, once, for both.
 ///
+/// ## What this suite is, since the rule moved
+///
+/// The rule is `rust/slopdesk-terminal`'s `link_hit` and has its own cases there. This file did not follow
+/// it and is not a mirror of it: what it drives is the whole path a caller actually travels — detect the
+/// rows through one door, hand the spans to another, and read the record the index names — so it is the
+/// BOUNDARY's own test in the sense `docs/55` §4b's `apply_intent` paragraph means. Several of its cases
+/// (the cwd resolution, the URL's missing `resolvedAbsolute`, the scheme policy) are about which link came
+/// back rather than about which span was nearest, and have no counterpart on the Rust side at all.
+///
 /// None of these is tautological: each expected path is hand-written, and each probe point is hand-computed
 /// from `column = (pointX − originX) / cellWidth`, `row = (pointY − originY) / cellHeight` against the detector's
 /// known column span — NOT re-derived from the method under test. Specific regressions each fail a specific
 /// case: an inclusive `colEnd` (`<=` instead of `<`) fails ``testColumnEndIsExclusive``; a row/column axis swap
 /// fails ``testWrongRowIsNotAHit``; dropping the cwd resolution fails ``testRelativePathResolvesAgainstCwd``;
-/// returning `resolvedAbsolute` for a URL (which has none) fails ``testUrlFallsBackToRawText``.
+/// returning `resolvedAbsolute` for a URL (which has none) fails ``testUrlFallsBackToRawText``; a span list
+/// marshalled out of step with the array it indexes fails ``testTheAnswerIndexesTheCallersOwnArray``.
 ///
 /// The SLOP cases are the phone's half of it — a fingertip is not a cursor — and each one is written so a
 /// slop that leaked into the pointer's reading (`slop: 0` is the default and must stay exact) fails
@@ -198,5 +208,41 @@ final class TerminalLinkHitTestTests: XCTestCase {
         let rows = ["/tmp/a /tmp/b"]
         XCTAssertEqual(hover(rows, x: 25, y: 5, slop: 40), "/tmp/a", "cell 2 is inside /tmp/a")
         XCTAssertEqual(hover(rows, x: 75, y: 5, slop: 40), "/tmp/b", "cell 7 is inside /tmp/b")
+    }
+
+    // MARK: - The marshalling half (what this file owns now that the rule is Rust's)
+
+    /// The cell entry answers a PAIR plus a presence flag, never a sentinel row: `(0, 0)` is the most
+    /// ordinary landing a point has, so a door that encoded "no cell" as a number would have to pick a
+    /// magic one. A flag lost on the way back would make every refusal read as the viewport's first cell.
+    func testTheCellEntryAnswersAPairAndAFlagRatherThanAMagicRow() {
+        let live = metrics()
+        XCTAssertEqual(TerminalLinkHitTest.cell(metrics: live, pointX: 65, pointY: 25)?.row, 1)
+        XCTAssertEqual(TerminalLinkHitTest.cell(metrics: live, pointX: 65, pointY: 25)?.column, 6)
+        XCTAssertEqual(TerminalLinkHitTest.cell(metrics: live, pointX: 0, pointY: 0)?.row, 0)
+        XCTAssertEqual(TerminalLinkHitTest.cell(metrics: live, pointX: 0, pointY: 0)?.column, 0)
+        XCTAssertNil(TerminalLinkHitTest.cell(metrics: live, pointX: -1, pointY: 5), "left of the origin")
+        let zero = TerminalCellMetrics(cellWidth: 0, cellHeight: 0, cols: 80, rows: 24)
+        XCTAssertNil(TerminalLinkHitTest.cell(metrics: zero, pointX: 65, pointY: 5), "nothing can divide")
+    }
+
+    /// What comes back across the boundary is an INDEX, and this side subscripts the array it already
+    /// holds — so the record returned is the caller's OWN, `nil` `resolvedAbsolute` and all, not one
+    /// rebuilt on the far side. Spans marshalled out of step with the array (a triple dropped, a field
+    /// transposed) would answer with a neighbouring link rather than with nothing.
+    func testTheAnswerIndexesTheCallersOwnArray() {
+        let links = [
+            DetectedLink(row: 0, colStart: 0, colEnd: 3, kind: .absolutePath, raw: "/a", resolvedAbsolute: "/a"),
+            DetectedLink(row: 1, colStart: 0, colEnd: 3, kind: .absolutePath, raw: "/b", resolvedAbsolute: "/b"),
+            DetectedLink(row: 2, colStart: 4, colEnd: 9, kind: .url, raw: "ssh://c", resolvedAbsolute: nil),
+        ]
+        // Row 2 → y ∈ [40,60); cells 4..<9 → x ∈ [40,90).
+        let hit = TerminalLinkHitTest.link(in: links, metrics: metrics(), pointX: 45, pointY: 45)
+        XCTAssertEqual(hit?.raw, "ssh://c")
+        XCTAssertNil(hit?.resolvedAbsolute, "a URL has none, and nothing on the way back could invent one")
+        XCTAssertNil(
+            TerminalLinkHitTest.link(in: [], metrics: metrics(), pointX: 45, pointY: 45, slop: 40),
+            "an empty list lends no buffer at all, at any slop",
+        )
     }
 }

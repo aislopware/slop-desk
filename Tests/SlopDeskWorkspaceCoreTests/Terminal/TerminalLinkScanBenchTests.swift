@@ -23,6 +23,11 @@ import XCTest
 /// | `displayCellWidth(of: String)` | 2.81 µs | ~0.76 µs |
 /// | `displayCellWidth(of: Character)` | ~60–68 ns/char | ~92 ns/char |
 ///
+/// The last two rows are a RECORD, not a live measurement: both width overloads have since been
+/// deleted along with the doors behind them, because every caller that walked a line cell by cell
+/// moved into Rust and now reads the widths in-crate. What that regression measured was the cost of
+/// a crossing per column, and there is no longer a crossing to pay for.
+///
 /// The scan is 4.2–4.3× faster at every size — Swift's per-`Character` grapheme breaking is what
 /// made the old one cost most of a 120 Hz frame on a plain viewport — and the string width entry is
 /// 3.7× faster because its bytes are lent rather than copied.
@@ -81,33 +86,11 @@ final class TerminalLinkScanBenchTests: XCTestCase {
             XCTAssertFalse(links.isEmpty, "\(shape.name): the sample rows carry links to find")
         }
 
-        // Both alphabets, because the per-column entry is the one the port made slower and an
-        // ASCII row is what a terminal mostly holds.
-        var perCharacter = 0.0
-        for (name, line) in [("ascii", Self.templates[1]), ("cjk", Self.templates[3])] {
-            let characters = Array(line)
-            let perLine = BenchClock.usPerOp(20000) {
-                var total = 0
-                for character in characters { total += TerminalLinkDetector.displayCellWidth(of: character) }
-                sink &+= total
-            }
-            let perString = BenchClock.usPerOp(20000) { sink &+= TerminalLinkDetector.displayCellWidth(of: line) }
-            print(
-                "width " + name.padding(toLength: 6, withPad: " ", startingAt: 0)
-                    + String(
-                        format: " %3d chars: %7.3f µs/line (%5.1f ns/char), whole string %6.3f µs",
-                        characters.count, perLine,
-                        perLine * 1000.0 / Double(characters.count), perString,
-                    ),
-            )
-            perCharacter = Swift.max(perCharacter, perLine)
-        }
         print("one 120 Hz frame is 8333 µs; one 60 Hz frame is 16666 µs (sink: \(sink))\n")
 
         // Deliberately loose: this catches an order-of-magnitude change, not jitter. The old Swift
         // scan cost 33910 µs on the scrollback shape, so a ceiling of 20000 µs is already a fail if
         // the port ever slid back to it.
         XCTAssertLessThan(worst, 20000.0, "the link scan has regressed by an order of magnitude")
-        XCTAssertLessThan(perCharacter, 50.0, "the per-column width call has regressed")
     }
 }

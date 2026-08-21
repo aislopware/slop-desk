@@ -395,11 +395,78 @@ impl OutputRequests {
     }
 }
 
+/// The bytes that RE-RUN a captured command, or `None` for one with nothing in it.
+///
+/// A block's `command_text` is what the shell already ran, and "Re-run Command" replays it by
+/// injecting these bytes as ordinary keystrokes (wire type 3, `.input`). Nothing on the host or the
+/// wire changes: the host sees a person typing.
+///
+/// ## Why this is deliberately not the send-keys path
+///
+/// A user-authored launch preset goes through the send-keys token parser, because macro text is
+/// what that field IS. A captured command must not, and the difference is security-critical in both
+/// directions. A command may literally contain the substrings `<Enter>` or `<cr>` — `echo
+/// "<Enter>"` is a command a person runs — and routing it through the parser would turn that
+/// literal text into a control byte, so the replay would not be the thing that ran. It is also an
+/// injection hazard, because a block's text is downstream of host output and therefore
+/// attacker-influenced. So the command crosses VERBATIM as its own UTF-8 and nothing in it is
+/// interpreted.
+///
+/// ## The three rules about newlines
+///
+/// **Exactly one trailing `0x0A`.** Whatever trailing CR/LF run the host's segmenter left on the
+/// text is stripped first and a single newline is appended, so a command captured with its newline
+/// already attached executes once instead of twice.
+///
+/// **Middle newlines survive.** A multi-line command is one the user typed as one; replaying it
+/// with the interior newlines rewritten would replay a different command.
+///
+/// **Empty or whitespace-only answers `None`.** A bare newline at a prompt only redraws the prompt,
+/// which is a confusing no-op rather than a re-run, so nothing is sent at all.
+///
+/// ## Two traps this inherited, one of which does not exist in Rust
+///
+/// The Swift this replaces trimmed the trailing run at the BYTE level and said so in a comment,
+/// because Swift clusters `"\r\n"` into ONE `Character`: a `Character`-based trim would strip that
+/// cluster as a unit against a `"\n"` pattern and miss it, so `"make\r\n"` came out with a double
+/// newline and ran twice. Rust has no such trap — `char` is a scalar, `\r` and `\n` are two of
+/// them, and both are ASCII so a scalar trim and a byte trim cannot disagree inside UTF-8. The
+/// reason is recorded because the Swift comment explaining it goes away with the Swift, and the
+/// next person to simplify this needs to know which language the hazard belonged to.
+///
+/// The whitespace SET is the trap that does survive, and it does not survive as a match. Swift's
+/// `.whitespacesAndNewlines` is Foundation's own set, and it contains U+200B ZERO WIDTH SPACE,
+/// which Unicode does not give the `White_Space` property and which Rust's `char::is_whitespace`
+/// therefore does not report. Left to `str::trim` a command of nothing but zero-width spaces would
+/// stop being a no-op and start injecting an invisible line into the shell. So the predicate below
+/// names Foundation's set explicitly rather than assuming the two agree.
+#[must_use]
+pub fn rerun_bytes(command_text: &str) -> Option<Vec<u8>> {
+    // `all` over an empty iterator is `true`, so the empty command falls out here with the
+    // whitespace-only ones — which is right, and is what the Swift's `.isEmpty` on a trimmed string
+    // did by a longer route.
+    if command_text.chars().all(is_foundation_whitespace) {
+        return None;
+    }
+    let mut bytes = command_text.trim_end_matches(['\r', '\n']).as_bytes().to_vec();
+    bytes.push(b'\n');
+    Some(bytes)
+}
+
+/// Whether a scalar is one Foundation's `.whitespacesAndNewlines` contains.
+///
+/// That is Unicode's `White_Space` property — which is what [`char::is_whitespace`] answers — plus
+/// U+200B, which Foundation includes and Unicode does not. See [`rerun_bytes`] for why the one
+/// scalar of difference is worth naming rather than rounding off.
+const fn is_foundation_whitespace(scalar: char) -> bool {
+    scalar.is_whitespace() || scalar == '\u{200B}'
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, MAX_BLOCKS, MAX_BOOKMARKS, OutputRequest,
-        OutputRequests, adjacent_failed,
+        OutputRequests, adjacent_failed, rerun_bytes,
     };
 
     fn block(index: u32, exit_code: Option<i32>, complete: bool) -> CommandBlock {
@@ -653,5 +720,82 @@ mod tests {
         assert!(reopened > armed);
         assert!(!requests.time_out(3, Some(armed)));
         assert!(requests.is_pending(3));
+    }
+
+    /// The bytes of a re-run, as a string, for cases where reading UTF-8 is clearer than reading a
+    /// byte array. Lossy so a malformed answer shows up as replacement characters in the failure
+    /// message rather than as a panic inside the assertion's own autoclosure.
+    fn rerun_text(command: &str) -> Option<String> {
+        rerun_bytes(command).map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[test]
+    fn a_plain_command_gets_exactly_one_trailing_newline_and_nothing_else() {
+        assert_eq!(rerun_text("ls -la").as_deref(), Some("ls -la\n"));
+    }
+
+    #[test]
+    fn a_literal_enter_token_crosses_verbatim_rather_than_becoming_a_control_byte() {
+        // The load-bearing difference from a launch preset's user-authored macro text. If this ever
+        // routed through the send-keys parser the answer would carry a 0x0D and not the text.
+        let answer = rerun_bytes(r#"echo "<Enter>""#);
+        assert_eq!(answer.as_deref(), Some(b"echo \"<Enter>\"\n".as_slice()));
+        assert!(
+            !answer.unwrap_or_default().contains(&0x0D),
+            "no carriage return was synthesised from the token"
+        );
+    }
+
+    #[test]
+    fn a_trailing_newline_run_collapses_to_one_so_the_command_cannot_execute_twice() {
+        assert_eq!(rerun_text("make\n").as_deref(), Some("make\n"));
+        assert_eq!(
+            rerun_text("make\r\n").as_deref(),
+            Some("make\n"),
+            "the CRLF the Swift's `Character` trim used to miss whole"
+        );
+        assert_eq!(rerun_text("make\n\n").as_deref(), Some("make\n"));
+        assert_eq!(rerun_text("make\r\n\r\n").as_deref(), Some("make\n"));
+    }
+
+    #[test]
+    fn an_empty_or_whitespace_only_command_sends_nothing_at_all() {
+        assert_eq!(rerun_bytes(""), None);
+        assert_eq!(rerun_bytes("   "), None);
+        assert_eq!(rerun_bytes("\n"), None);
+        assert_eq!(rerun_bytes(" \t\r\n "), None);
+    }
+
+    #[test]
+    fn a_zero_width_space_only_command_is_blank_the_way_foundation_reads_it() {
+        // The one scalar where `char::is_whitespace` and `.whitespacesAndNewlines` part company.
+        // Reading it as printable would inject an invisible line at a prompt.
+        assert_eq!(rerun_bytes("\u{200B}"), None);
+        assert_eq!(rerun_bytes(" \u{200B}\t"), None);
+        assert_eq!(
+            rerun_text("a\u{200B}b").as_deref(),
+            Some("a\u{200B}b\n"),
+            "and one INSIDE a command is still part of the command"
+        );
+    }
+
+    #[test]
+    fn newlines_in_the_middle_are_the_command_and_survive_the_replay() {
+        assert_eq!(
+            rerun_text("for i in 1 2\ndo echo $i\ndone").as_deref(),
+            Some("for i in 1 2\ndo echo $i\ndone\n"),
+        );
+        assert_eq!(rerun_text("a\nb\n").as_deref(), Some("a\nb\n"));
+    }
+
+    #[test]
+    fn every_answer_ends_in_a_newline_so_an_empty_one_is_impossible() {
+        // This is what lets the door spell "no answer" as a length of zero: a non-`None` answer is
+        // never shorter than the single newline it always ends with.
+        for command in ["ls", "a\nb", " x ", "\u{200B}x", "make\r\n"] {
+            let answer = rerun_bytes(command).unwrap_or_default();
+            assert_eq!(answer.last(), Some(&b'\n'), "{command:?} lost its newline");
+            assert!(!answer.is_empty(), "{command:?} answered empty");
+        }
     }
 }

@@ -731,15 +731,63 @@ if [[ -n "${dedup_revived}" ]]; then
 fi
 printf 'check-supervisor: the input surface is Rust too — the dedup ring crosses as the model'"'"'s interior.\n'
 
+# ---------------------------------------------------------------------------
+# ONE GRID GEOMETRY, SPELLED ON BOTH SIDES BECAUSE ONE SIDE CANNOT REACH THE OTHER.
+#
+# `TerminalCellMetrics.rect` turns a detector span into the rect the underline and the hint labels
+# are DRAWN in; `slopdesk_terminal::link_hit::span_rect` turns the same span into the rect a point is
+# measured against. They must agree exactly or a link underlines in one place and answers a click in
+# another — a mismatch nobody reports as a bug, because both halves look right on their own.
+#
+# This is a genuine cross-language pair (docs/55 §8) and it is NOT closed by a door. `rect` lives in
+# the `SlopDeskTerminal` target, whose whole dependency list is `SlopDeskProtocol`; making it a face
+# would put `CSlopDeskFFI` into a target that links nothing today, and widen the graph for two
+# multiplies and two adds on the per-drawn-span path. So the pair stays, and this is what holds it:
+# each side must spell all four expressions, and anyone editing one has to come here and edit the
+# other. Whitespace-insensitive, because the two languages punctuate differently and neither
+# formatter is ours to argue with.
+swift_rect="$(sed -n '/func rect(row:/,/^    }/p' Sources/SlopDeskTerminal/TerminalSurface.swift | tr -d ' ')"
+rust_rect="$(sed -n '/fn span_rect(/,/^}/p' rust/slopdesk-terminal/src/link_hit.rs | tr -d ' ')"
+[[ -n "${swift_rect}" ]] || fail "TerminalCellMetrics.rect is gone — its Rust twin still measures a hit"
+[[ -n "${rust_rect}" ]] || fail "link_hit::span_rect is gone — the drawn rect has nothing left to agree with"
+for shape in \
+  'originX+cellWidth*|origin_x+metrics.cell_width*' \
+  'originY+cellHeight*|origin_y+metrics.cell_height*' \
+  'cellWidth*CGFloat(colEnd-colStart)|metrics.cell_width*(col_end-col_start)'; do
+  if ! printf '%s' "${swift_rect}" | grep -qF "${shape%%|*}"; then
+    fail "TerminalCellMetrics.rect no longer spells '${shape%%|*}' — link_hit::span_rect still does"
+  fi
+  if ! printf '%s' "${rust_rect}" | grep -qF "${shape##*|}"; then
+    fail "link_hit::span_rect no longer spells '${shape##*|}' — TerminalCellMetrics.rect still does"
+  fi
+done
+# Neither may reach for `fma`/`addingProduct`: CLAUDE.md keeps `a * b + c` separate so the two sides
+# round identically, and a fused multiply-add on ONE of them is a half-cell disagreement on a wide
+# grid that no test with small numbers in it can see.
+if printf '%s%s' "${swift_rect}" "${rust_rect}" | grep -qE 'addingProduct|mul_add'; then
+  fail "the grid geometry fused a multiply-add — the two sides must round the same way"
+fi
+printf 'check-supervisor: the drawn cell rect and the measured one spell the same geometry.\n'
+
 # The LINK SCAN: paths, `path:line:col` diagnostics and URLs in the rows of the grid — the one scan
 # behind the ⌘-hold underline, Jump-To and Hint Mode. `rust/slopdesk-terminal`'s `link`, reached
 # through an arena door because the answer is a list of records each carrying up to two strings.
 SWIFT_LINKS=Sources/SlopDeskWorkspaceCore/Terminal/TerminalLinkDetector.swift
 for entry in slopdesk_link_scan slopdesk_link_scan_free slopdesk_link_scan_counts \
-  slopdesk_link_scan_link slopdesk_link_scan_take_arena slopdesk_link_scalar_cells \
-  slopdesk_link_text_cells; do
+  slopdesk_link_scan_link slopdesk_link_scan_take_arena; do
   if ! grep -q "${entry}(" "${SWIFT_LINKS}"; then
     fail "${SWIFT_LINKS} no longer calls ${entry} — the link scan is rust/slopdesk-terminal's"
+  fi
+done
+# The two WIDTH doors used to be pinned here beside the scan, and they are gone rather than
+# unpinned. Every Swift caller that walked a line cell by cell moved into the crate — vi-style line
+# motion, the hint assigner's column mapping, the scrollback wrap map — so each reads
+# `slopdesk_terminal::link::{scalar_cells, text_cells}` in-crate with no crossing at all, and the
+# doors outlived their last caller. What replaces the pin is the ban below: the TABLE may not grow
+# back in Swift, which is the fact the pin was standing in for.
+for width_door in slopdesk_link_scalar_cells slopdesk_link_text_cells; do
+  if grep -q "${width_door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "${width_door} is back in the header — its last Swift caller moved into the crate"
   fi
 done
 # The scan itself, in the shapes it had in Swift. The last two alternatives are the East-Asian width

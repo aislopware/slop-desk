@@ -1,37 +1,64 @@
-// TerminalLinkHitTest — which detected link a point lands on, answered once for a cursor and for a
-// fingertip.
+// TerminalLinkHitTest — which detected link a point lands on, as the Swift face of
+// `rust/slopdesk-terminal`'s `link_hit`, reached through `rust/slopdesk-ffi`'s `link_hit` door.
+//
+// ## What is not here any more
+//
+// The rule. The cell division, the exclusive `colEnd`, the two-pass order that lets a slop only ever
+// ADD an answer, the span rect the widened pass measures against, and the two-key `(dy, dx)`
+// tie-break that keeps the earlier span. All Rust's, in a crate that forbids `unsafe`, beside the
+// `link` scan that mints the very records this function is asked about.
+//
+// That adjacency is the whole argument for the port rather than a nicety. A ``DetectedLink`` is
+// already a Rust record: `slopdesk_terminal::link` produces it and ``TerminalLinkDetector``
+// reassembles it here through `slopdesk_link_scan_*`. So the hit-test was arithmetic over data Rust
+// had handed across the boundary one call earlier, written in the language that merely received it —
+// and `colEnd`'s exclusivity, which is the scan's own convention, was a fact two languages had to
+// keep agreeing about. Now one of them knows it.
+//
+// ## Why the spans go over and only an INDEX comes back
+//
+// The caller is holding the `[DetectedLink]` it just detected, and the rule reads three numbers out
+// of each — row, first cell, one past the last — and none of the text. So the door takes those
+// triples packed into one `[Int]` and answers the index of the winner, `-1` for none, which is
+// outside `0 ..< links.count` by construction. This side then subscripts the array it already has:
+// no record is marshalled back, no string is copied, and the callers that want a path still read
+// `resolvedAbsolute ?? raw` off a value that never left.
 //
 // ## Why this is not two functions any more
 //
-// The question "what link is under this point" was asked twice, in two places, by two spellings of the
-// same six lines. `TerminalViewModel.hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)` asked it
-// and answered with a PATH; the embedder's `detectedLink(at:)` asked it inside a whole-file
-// `#if os(macOS)` and answered with the LINK — and the second one's doc comment said, in as many words,
-// that it "mirrors" the first. A mirror is a second implementation wearing a citation, and this one had
-// the worse property of the two: the copy that production actually ran was the one no test could reach,
-// because it lived in a file no `Package.swift` target compiles and behind a gate the phone never sees.
-//
-// So the cell math is HERE, once, in the shape the callers actually want — the link itself, from which a
-// path is `resolvedAbsolute ?? raw` at the one call site that still wants a path. The Mac's hover, the
-// Mac's ⌘click, the Mac's right-click menu and the phone's long-press menu are now four callers of one
-// function instead of two functions serving three-and-a-half callers.
+// (Kept, because it is the reason the file exists at all.) The question "what link is under this
+// point" was once asked twice, in two places, by two spellings of the same six lines.
+// `TerminalViewModel.hoveredLinkPath(…)` asked it and answered with a PATH; the embedder's
+// `detectedLink(at:)` asked it inside a whole-file `#if os(macOS)` and answered with the LINK — and
+// the second one's doc comment said, in as many words, that it "mirrors" the first. A mirror is a
+// second implementation wearing a citation, and this one had the worse property of the two: the copy
+// production actually ran was the one no test could reach, because it lived in a file no
+// `Package.swift` target compiles and behind a gate the phone never sees. The Mac's hover, the Mac's
+// ⌘click, the Mac's right-click menu and the phone's long-press menu are four callers of one
+// function now — and as of this port, of one implementation.
 //
 // ## The slop, and why a parameter rather than a constant
 //
-// A pointer is one pixel and lands where it is aimed; a fingertip is a contact patch tens of points wide
-// whose reported centre is a guess. A cell at the default face is about 8 × 17 points, so a touch that a
-// person would swear landed on a path can resolve two cells off it — and the phone gets ONE shot at the
-// question, on the release of a long press, with no hover to correct it. The Mac keeps its exact reading
-// (`slop: 0` is bit-for-bit the old cell hit-test, and the exact-cell pass runs FIRST for every caller,
-// so a slop can only ever add an answer where there was none). The phone passes
-// ``TerminalTouchSelection/linkHitSlop``, which is a touch number and lives with the other touch numbers.
+// A pointer is one pixel and lands where it is aimed; a fingertip is a contact patch tens of points
+// wide whose reported centre is a guess. A cell at the default face is about 8 × 17 points, so a
+// touch that a person would swear landed on a path can resolve two cells off it — and the phone gets
+// ONE shot at the question, on the release of a long press, with no hover to correct it. The Mac
+// keeps its exact reading (`slop: 0` is bit-for-bit the old cell hit-test, and the exact-cell pass
+// runs FIRST for every caller, so a slop can only ever add an answer where there was none). The
+// phone passes ``TerminalTouchSelection/linkHitSlop``, which is a touch number and lives with the
+// other touch numbers.
 //
-// Plain separate `*`/`+`/`/` and `CGFloat.maximum`, never `addingProduct` / a `<` ternary (CLAUDE.md's
-// bit-exact habit — view geometry keeps it too), and the widened pass measures against
-// ``TerminalCellMetrics/rect(row:colStart:colEnd:)`` rather than re-deriving a span's edges, so there is
-// no third copy of the grid geometry either.
+// ## The one thing the rule could not take with it
+//
+// The widened pass used to measure against ``TerminalCellMetrics/rect(row:colStart:colEnd:)`` so the
+// grid geometry would not be written a third time; `link_hit.rs` derives those edges itself, and
+// that module's docs record the resulting cross-language pair and why the drawing half cannot follow
+// it today (`TerminalCellMetrics` lives in `SlopDeskTerminal`, which links nothing). What holds the
+// two together meanwhile is that the slop cases in this module's tests are hand-computed from the
+// rect's own numbers, so an edge that moved on either side fails a named case.
 
 import CoreGraphics
+import CSlopDeskFFI
 import SlopDeskTerminal
 
 /// The PURE point → detected-link hit-test both halves of the terminal renderer run.
@@ -41,18 +68,23 @@ public enum TerminalLinkHitTest {
     /// degenerate geometry (a zero cell size — nothing can divide) or a point above / left of the
     /// viewport origin, which is dropped rather than force-floored to cell 0.
     ///
-    /// `Int(_:)` of a guaranteed-non-negative ratio truncates toward zero, i.e. floors.
+    /// Cell `(0, 0)` is the most ordinary landing a point has, so the door cannot spend a value on "no
+    /// cell": the answer crosses as a pair plus a flag, and the flag is read first.
     public static func cell(
         metrics: TerminalCellMetrics,
         pointX: CGFloat,
         pointY: CGFloat,
     ) -> (row: Int, column: Int)? {
-        guard metrics.cellWidth > 0, metrics.cellHeight > 0 else { return nil }
-        guard pointX >= metrics.originX, pointY >= metrics.originY else { return nil }
-        let column = Int((pointX - metrics.originX) / metrics.cellWidth)
-        let row = Int((pointY - metrics.originY) / metrics.cellHeight)
-        guard row >= 0, column >= 0 else { return nil }
-        return (row, column)
+        let answer = slopdesk_link_hit_cell(
+            Double(metrics.cellWidth),
+            Double(metrics.cellHeight),
+            Double(metrics.originX),
+            Double(metrics.originY),
+            Double(pointX),
+            Double(pointY),
+        )
+        guard answer.hit else { return nil }
+        return (answer.row, answer.column)
     }
 
     /// The link in `links` under a top-left-origin point, or `nil` when the point is over none.
@@ -80,23 +112,32 @@ public enum TerminalLinkHitTest {
         pointY: CGFloat,
         slop: CGFloat = 0,
     ) -> DetectedLink? {
-        if let hit = cell(metrics: metrics, pointX: pointX, pointY: pointY) {
-            let exact = links.first { $0.row == hit.row && hit.column >= $0.colStart && hit.column < $0.colEnd }
-            if let exact { return exact }
+        var spans: [Int] = []
+        spans.reserveCapacity(links.count * 3)
+        for link in links {
+            spans.append(link.row)
+            spans.append(link.colStart)
+            spans.append(link.colEnd)
         }
-        guard slop > 0, metrics.cellWidth > 0, metrics.cellHeight > 0 else { return nil }
-        // The candidate's distance is a pair, not a scalar: collapsing it to one number would need a
-        // weighting nobody can defend, and a pair orders the two mistakes in the order a finger makes
-        // them. `<=` on the running best keeps the EARLIER span (row-major, like pass 1) on a tie.
-        var best: (link: DetectedLink, dy: CGFloat, dx: CGFloat)?
-        for candidate in links {
-            let rect = metrics.rect(row: candidate.row, colStart: candidate.colStart, colEnd: candidate.colEnd)
-            let dx = CGFloat.maximum(CGFloat.maximum(rect.minX - pointX, pointX - rect.maxX), 0)
-            let dy = CGFloat.maximum(CGFloat.maximum(rect.minY - pointY, pointY - rect.maxY), 0)
-            guard dx <= slop, dy <= slop else { continue }
-            if let current = best, (current.dy, current.dx) <= (dy, dx) { continue }
-            best = (candidate, dy, dx)
+        // One borrow for the whole list: the door reads `links.count` triples and nothing past them, so
+        // the buffer's scope IS the safety contract and there is nothing between the two.
+        let index = spans.withUnsafeBufferPointer { buffer in
+            slopdesk_link_hit_span(
+                buffer.baseAddress,
+                links.count,
+                Double(metrics.cellWidth),
+                Double(metrics.cellHeight),
+                Double(metrics.originX),
+                Double(metrics.originY),
+                Double(pointX),
+                Double(pointY),
+                Double(slop),
+            )
         }
-        return best?.link
+        // `-1` is the refusal. The upper bound is checked as well rather than trusted: an index this
+        // side cannot subscript is a boundary disagreement, and answering `nil` is what the caller
+        // would have got anyway.
+        guard index >= 0, index < links.count else { return nil }
+        return links[index]
     }
 }

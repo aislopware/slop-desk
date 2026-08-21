@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - BlockReRunEncoder (re-inject a captured command verbatim)
@@ -7,37 +8,44 @@ import Foundation
 /// ``TerminalViewModel/sendInput(_:)`` (wire type 3 `.input`) — there is NO host / wire change; the host
 /// sees ordinary keystrokes.
 ///
-/// SECURITY + CORRECTNESS — why this DELIBERATELY differs from ``LaunchPreset``'s user-authored command:
-///   - **Verbatim literal UTF-8, never `SendKeysParser`.** A captured command may literally CONTAIN the
-///     substrings `"<Enter>"` / `"<cr>"` (e.g. `echo "<Enter>"`); routing it through the send-keys parser
-///     would CORRUPT it (turning the literal text into a control byte) AND is an injection hazard (host
-///     output is attacker-influenced). ``LaunchPreset`` parses its command field because THAT is
-///     user-authored macro text; a re-run replays exactly what was already executed, so it stays literal.
-///   - **Exactly ONE trailing newline.** Any trailing CR/LF the host segmented into `commandText` is
-///     stripped, then a single `0x0A` is appended to EXECUTE — preventing a double-execute when the
-///     captured text already ended in a newline.
-///   - **Embedded MIDDLE newlines are preserved** — the user typed a multi-line command; replay it as-is.
-///   - **Empty / whitespace-only → `nil`** — never send a bare newline (which would just re-draw the
-///     prompt and is a confusing no-op).
+/// THE RULE IS NOT HERE. It is `slopdesk_terminal::blocks::rerun_bytes`, beside the command-block ring the
+/// text comes out of, and its module comment carries the whole argument: why a captured command is verbatim
+/// literal UTF-8 and never `SendKeysParser` (a command may CONTAIN `"<Enter>"`, and the host output it was
+/// segmented from is attacker-influenced), why exactly one trailing `0x0A` is appended and any run of CR/LF
+/// stripped first (a double-execute otherwise), why MIDDLE newlines survive, and why empty or
+/// whitespace-only sends nothing at all rather than a bare newline.
+///
+/// One trap belongs to this side of the boundary and is recorded because the code that used to embody it is
+/// gone: the Swift this replaces trimmed the trailing run at the BYTE level on purpose, because Swift
+/// clusters `"\r\n"` into ONE `Character` and a `Character`-based trim therefore missed `"make\r\n"` and
+/// double-executed it. Rust has no such trap — a `Character` there is a scalar — so nothing downstream needs
+/// to know this, but the next person to wonder why the rule reads at the byte level does.
 enum BlockReRunEncoder {
     /// The bytes to inject to re-run `commandText`, or `nil` for an empty / whitespace-only command.
-    ///
-    /// The command is encoded as VERBATIM literal UTF-8 (never `SendKeysParser`), with any trailing CR/LF
-    /// removed and exactly one `0x0A` appended to execute it.
     static func bytes(for commandText: String) -> Data? {
-        // Whitespace-only (or empty) → no-op: never send a bare newline.
-        guard !commandText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-
-        // Strip ANY trailing CR/LF run (a captured command may end in "\n" or "\r\n"); MIDDLE newlines
-        // stay — the user typed them. Trim at the BYTE level, NOT by `Character`: Swift clusters "\r\n"
-        // into ONE grapheme, so a `Character`-based trim would miss "make\r\n" → double newline.
-        var bytes = [UInt8](commandText.utf8)
-        while let last = bytes.last, last == 0x0A || last == 0x0D {
-            bytes.removeLast()
+        let input = Array(commandText.utf8)
+        return input.withUnsafeBufferPointer { source -> Data? in
+            let call = { (buffer: inout [UInt8]) -> Int in
+                buffer.withUnsafeMutableBufferPointer { out in
+                    slopdesk_block_rerun_bytes(source.baseAddress, source.count, out.baseAddress, out.count)
+                }
+            }
+            // An ARITHMETIC bound, not a guess: the answer is the command minus its trailing CR/LF run plus
+            // one newline, so it can never exceed the input by more than a byte.
+            var out = [UInt8](repeating: 0, count: input.count + 1)
+            var needed = call(&out)
+            if needed > out.count {
+                // Unreachable under the bound above. It stays because `docs/55` §4's retry is what makes a
+                // short buffer SAFE — the door writes nothing when the answer does not fit — and a bound
+                // that silently stopped holding must become a second call rather than a truncated command
+                // reaching a shell.
+                out = [UInt8](repeating: 0, count: needed)
+                needed = call(&out)
+            }
+            // `0` is "send nothing", and it cannot mean a short answer: every command the door does encode
+            // ends in the newline that executes it, so a real answer is never empty.
+            guard needed > 0, needed <= out.count else { return nil }
+            return Data(out.prefix(needed))
         }
-
-        // VERBATIM literal UTF-8 of the (suffix-trimmed) command + EXACTLY one newline to execute.
-        bytes.append(0x0A)
-        return Data(bytes)
     }
 }

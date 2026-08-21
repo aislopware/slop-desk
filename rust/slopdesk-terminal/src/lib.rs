@@ -39,17 +39,20 @@
 
 pub mod blocks;
 pub mod config;
+pub mod cursor_color;
 pub mod dedup;
 pub mod inputbox;
 pub mod keybind;
 pub mod link;
 pub mod link_action;
+pub mod link_hit;
 pub mod mode;
 pub mod paste;
 pub mod pointer;
 pub mod surface;
 pub mod tracker;
 pub mod vimotion;
+pub mod wrap_map;
 
 pub use blocks::{BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, OutputRequests};
 pub use dedup::InputDedupRing;

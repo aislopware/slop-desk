@@ -17,17 +17,18 @@
 //! the caller already has to build something contiguous for the boundary, and one buffer means one
 //! allocation and one bounds rule instead of `row_count` of each.
 //!
-//! ## Why the two width entries are separate
+//! ## The width entries used to be doors, and are not any more
 //!
-//! [`slopdesk_link_text_cells`] answers for a string; [`slopdesk_link_scalar_cells`] answers for
-//! one Unicode scalar the caller is already holding. The callers that walk a line cell by cell —
-//! vi-style line motion, the hint assigner's column mapping — would otherwise have to build a
-//! one-character string per cell, allocating once per column to ask about a scalar in hand. Same
-//! law, spelled once in `slopdesk_terminal`, reached two ways.
+//! Two of them stood here — one for a string, one for a scalar the caller was already holding —
+//! because three Swift callers walked a line cell by cell. All three moved: vi-style line motion
+//! to `slopdesk_terminal::vimotion`, the hint assigner's column mapping to the hint scan, and the
+//! scrollback wrap map to `slopdesk_terminal::wrap_map`. What is left of them is
+//! `slopdesk_terminal::link::{scalar_cells, text_cells}`, which those modules call in-crate with
+//! no crossing at all — so the doors were deleted rather than kept as a face nobody dials.
 
 use core::ffi::c_uchar;
 
-use slopdesk_terminal::link::{DetectedLinkKind, LinkSchemePolicy, detect, scalar_cells, text_cells};
+use slopdesk_terminal::link::{DetectedLinkKind, LinkSchemePolicy, detect};
 
 use crate::{borrow, deliver, records_of};
 
@@ -357,47 +358,14 @@ pub unsafe extern "C" fn slopdesk_link_scan_take_arena(
     unsafe { deliver(&scan.arena, out, cap) }
 }
 
-/// Display width of one Unicode scalar in terminal cells.
-///
-/// A value that is not a scalar — a surrogate, or past U+10FFFF — is not a cluster and answers `0`,
-/// exactly as the empty cluster does. Unreachable from Swift, whose `Unicode.Scalar` is valid by
-/// construction.
-///
-/// # Safety
-/// Nothing is borrowed. The function is `unsafe` only because an exported C entry point is, in
-/// edition 2024.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_link_scalar_cells(scalar: u32) -> usize {
-    char::from_u32(scalar).map_or(0, scalar_cells)
-}
-
-/// Display width of a UTF-8 string in terminal cells — the sum over its grapheme clusters.
-///
-/// # Safety
-/// `(bytes, len)` must be null or describe live memory for the whole call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_link_text_cells(bytes: *const c_uchar, len: usize) -> usize {
-    // SAFETY: the pair is live for the call or null, which borrows as empty.
-    text_cells(&String::from_utf8_lossy(unsafe { borrow(bytes, len) }))
-}
-
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the door is the only way to test the door")]
 mod tests {
     use super::{
         SLOPDESK_LINK_KIND_ABSOLUTE_PATH, SLOPDESK_LINK_KIND_NONE, SLOPDESK_LINK_KIND_PATH_LINE_COL,
         SLOPDESK_LINK_KIND_URL, SLOPDESK_LINK_SCHEMES_ALL, SLOPDESK_LINK_SCHEMES_CUSTOM,
-        SlopDeskDetectedLink, slopdesk_link_scalar_cells, slopdesk_link_scan, slopdesk_link_scan_counts,
-        slopdesk_link_scan_free, slopdesk_link_scan_link, slopdesk_link_scan_take_arena,
-        slopdesk_link_text_cells,
+        SlopDeskDetectedLink, slopdesk_link_scan, slopdesk_link_scan_counts, slopdesk_link_scan_free,
+        slopdesk_link_scan_link, slopdesk_link_scan_take_arena,
     };
     use crate::saturating_u32;
 
@@ -569,30 +537,6 @@ mod tests {
             4096,
         );
         assert_eq!(found.iter().map(|link| link.row).collect::<Vec<_>>(), vec![1, 3]);
-    }
-
-    #[test]
-    fn the_cell_width_entries_agree_with_each_other_and_with_the_scan() {
-        assert_eq!(unsafe { slopdesk_link_scalar_cells(u32::from('a')) }, 1);
-        assert_eq!(unsafe { slopdesk_link_scalar_cells(u32::from('日')) }, 2);
-        assert_eq!(
-            unsafe { slopdesk_link_scalar_cells(0x115F) },
-            2,
-            "the leading jamo carries the cell",
-        );
-        assert_eq!(
-            unsafe { slopdesk_link_scalar_cells(0x1160) },
-            0,
-            "the medial filler composes onto it",
-        );
-        assert_eq!(
-            unsafe { slopdesk_link_scalar_cells(0xD800) },
-            0,
-            "a surrogate is not a scalar, so it is not a cluster",
-        );
-        let text = "日本a";
-        assert_eq!(unsafe { slopdesk_link_text_cells(text.as_ptr(), text.len()) }, 5);
-        assert_eq!(unsafe { slopdesk_link_text_cells(std::ptr::null(), 0) }, 0);
     }
 
     #[test]
