@@ -212,40 +212,52 @@ final class SessionTemplateRepairDifferentialTests: XCTestCase {
         }
     }
 
-    // MARK: - The shipped tables, which are constants written twice
+    // MARK: - The shipped tables, which are constants NO LONGER written twice
 
-    func testTheShippedSessionTemplatesAreTheSameRowsInBothLanguages() throws {
-        // A built-in's id is FIXED rather than minted so that re-seeding a workspace or resetting
-        // the settings matches the existing row instead of appending a second copy of it. That makes
-        // the table a set of constants in two languages, and a drift of one byte in sixteen surfaces
-        // as a duplicated menu row weeks later with nothing in any log. Nothing else in this repo
-        // could see it: `check-supervisor.sh` pins names and numbers it was told about, and nobody
-        // told it about these.
-        let crate = try XCTUnwrap(SessionTemplateCrossing.builtInTemplatesFromTheCrate())
-        XCTAssertEqual(
-            crate.count, SessionTemplate.builtIns.count,
-            "the two languages ship a different NUMBER of templates",
+    /// A built-in's id is FIXED rather than minted so that re-seeding a workspace or resetting the
+    /// settings matches the existing row instead of appending a second copy of it. That used to make
+    /// the table a set of constants in TWO languages, and this pair of tests asserted the two agreed
+    /// — a drift of one byte in sixteen would otherwise surface as a duplicated menu row weeks later
+    /// with nothing in any log, and nothing else in the repo could have seen it
+    /// (`check-supervisor.sh` pins names and numbers it was told about, and nobody told it about
+    /// these).
+    ///
+    /// Since 2026-08-22 there is one table. ``SessionTemplate/builtIns`` IS this crossing, so an
+    /// equality assertion between them would compare a value to itself. What is left worth asserting
+    /// is what the seed has to BE, and that is asserted on the shipped names and ids by
+    /// `SessionTemplateEngineTests`/`LaunchPresetEngineTests` — which now, for free, pin the crate's
+    /// table rather than a literal beside it. This keeps only the part those cannot see: that the
+    /// crossing yields a non-empty table at all (an empty seed is how a grammar disagreement would
+    /// present), that the ids are distinct, and that every shipped layout is already sound.
+    func testTheShippedSessionTemplatesArriveSoundAndDistinct() throws {
+        let shipped = SessionTemplate.builtIns
+        XCTAssertFalse(
+            shipped.isEmpty,
+            "the crossing answered nothing — a fresh device would seed with no templates at all",
         )
-        XCTAssertEqual(crate, SessionTemplate.builtIns)
-        XCTAssertEqual(Set(crate.map(\.id)).count, crate.count, "a re-seed must match a row, not append one")
-        XCTAssertTrue(crate.allSatisfy(\.isBuiltIn))
-        // And every shipped layout is already sound — a default a fresh workspace has to repair
-        // would mean the table itself is the corrupt file.
-        for template in crate {
+        XCTAssertEqual(Set(shipped.map(\.id)).count, shipped.count, "a re-seed must match a row, not append one")
+        XCTAssertTrue(shipped.allSatisfy(\.isBuiltIn))
+        // Every shipped layout is already sound — a default a fresh workspace has to repair would
+        // mean the table itself is the corrupt file. Asked of BOTH repairs, because that is still a
+        // rule written in two languages.
+        for template in shipped {
             XCTAssertEqual(try repairedThere(template.layout), template.layout)
             XCTAssertEqual(try repairedHere(template.layout), template.layout)
         }
     }
 
-    func testTheShippedLaunchPresetsAreTheSameRowsInBothLanguages() throws {
-        let crate = try XCTUnwrap(SessionTemplateCrossing.builtInLaunchPresetsFromTheCrate())
-        XCTAssertEqual(
-            crate.count, LaunchPreset.builtIns.count,
-            "the two languages ship a different NUMBER of presets",
+    func testTheShippedLaunchPresetsArriveSoundAndDistinct() {
+        let shipped = LaunchPreset.builtIns
+        XCTAssertFalse(
+            shipped.isEmpty,
+            "the crossing answered nothing — a fresh device would seed with no launch presets at all",
         )
-        XCTAssertEqual(crate, LaunchPreset.builtIns)
-        XCTAssertEqual(Set(crate.map(\.id)).count, crate.count, "a re-seed must match a row, not append one")
-        XCTAssertTrue(crate.allSatisfy(\.isBuiltIn))
+        XCTAssertEqual(Set(shipped.map(\.id)).count, shipped.count, "a re-seed must match a row, not append one")
+        XCTAssertTrue(shipped.allSatisfy(\.isBuiltIn))
+        XCTAssertTrue(
+            shipped.allSatisfy { !$0.command.isEmpty },
+            "a built-in preset with no command opens a bare shell the menu row promised would run something",
+        )
     }
 
     // MARK: - The crossing itself, which must not be where a difference comes from

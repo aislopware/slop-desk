@@ -230,4 +230,59 @@ final class VideoSendLaneTests: XCTestCase {
         )
         XCTAssertEqual(recorder.count, 0)
     }
+
+    // MARK: - The schedule both drains read
+
+    /// ``VideoSendLane/plan(for:)`` is now asked by TWO drains — the lane's consumer and, when
+    /// `SLOPDESK_SEND_LANE=0`, `SlopDeskVideoHostSession.sendPaced` on the session actor. The second
+    /// one used to carry its own copy of this arithmetic. Pinned here rather than left to the two
+    /// timing tests above, because a schedule is a fact about indices and deadlines and asserting it
+    /// through wall-clock arrival times can only ever be approximate.
+    func testThePlanChunksEveryDatagramExactlyOnceOnAbsoluteDeadlines() {
+        let gap: UInt64 = 700_000
+        let plan = VideoSendLane.plan(for: VideoSendLane.Job(
+            outgoings: outgoings(1, count: 10), gapNanos: gap, chunkFragments: 4,
+        ))
+        XCTAssertEqual(plan.count, 3)
+        XCTAssertEqual(plan.map(\.range), [0..<4, 4..<8, 8..<10])
+        // ABSOLUTE, not cumulative-from-the-previous-chunk: an oversleep eats the next gap instead of
+        // pushing the whole schedule right, which is the entire reason the deadlines cross at all.
+        XCTAssertEqual(plan.map(\.dueNanos), [0, gap, gap * 2])
+    }
+
+    /// The single-shot cases, which are what the lane-off path's old `count > chunkFragments` test and
+    /// its `paceSend` gate each decided for themselves.
+    func testASmallOrGaplessJobPlansAsOneChunkDueAtOnce() {
+        let small = VideoSendLane.plan(for: VideoSendLane.Job(
+            outgoings: outgoings(2, count: 3), gapNanos: 700_000, chunkFragments: 4,
+        ))
+        XCTAssertEqual(small.count, 1)
+        XCTAssertEqual(small.first?.dueNanos, 0)
+        XCTAssertEqual(small.first?.range, 0..<3)
+        // `gapNanos: 0` is how BOTH drains spell "send this in one shot whatever its size" — the NACK
+        // retransmit, and every frame under `SLOPDESK_PACE=0`.
+        let gapless = VideoSendLane.plan(for: VideoSendLane.Job(
+            outgoings: outgoings(3, count: 40), gapNanos: 0, chunkFragments: 4,
+        ))
+        XCTAssertEqual(gapless.count, 1)
+        XCTAssertEqual(gapless.first?.range, 0..<40)
+        XCTAssertTrue(
+            VideoSendLane.plan(for: VideoSendLane.Job(outgoings: [], gapNanos: 700_000, chunkFragments: 4)).isEmpty,
+            "an empty job is no chunks — neither drain may sleep for datagrams that do not exist",
+        )
+    }
+
+    /// The duplicate copy is the SAME frame, so it must pace the same; only its start moves. Four call
+    /// sites across the two drains build it, and they build it by deriving it from the original.
+    func testTheDuplicateCopyMovesOnlyItsStart() {
+        let original = VideoSendLane.Job(outgoings: outgoings(4, count: 10), gapNanos: 700_000, chunkFragments: 4)
+        let dup = original.delayed(by: 5_000_000)
+        XCTAssertEqual(dup.leadingDelayNanos, 5_000_000)
+        XCTAssertEqual(original.leadingDelayNanos, 0, "deriving the copy must not disturb the original")
+        XCTAssertEqual(dup.gapNanos, original.gapNanos)
+        XCTAssertEqual(dup.chunkFragments, original.chunkFragments)
+        XCTAssertEqual(dup.outgoings.map(\.bytes), original.outgoings.map(\.bytes))
+        // The deadlines are measured from AFTER the leading delay, so the copy is not paced twice.
+        XCTAssertEqual(VideoSendLane.plan(for: dup), VideoSendLane.plan(for: original))
+    }
 }

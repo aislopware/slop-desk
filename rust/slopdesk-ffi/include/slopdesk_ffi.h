@@ -2231,6 +2231,12 @@ bool slopdesk_recovery_loss_window_observing(double window_seconds, size_t min_e
  * `constant(index)` vends the ladder's numbers so neither end writes one the other also writes:
  * 0 default tier · 1/2/3 the parity tiers CLEAN/NORMAL/BURST · 4 relax dwell reports · 5 the
  * sticky-relax window · 6 the multi-loss default k · 7/8 the m bounds · 9/10 the k bounds.
+ *
+ * `multi_loss_active(m)` is the THRESHOLD rather than a bound — `m >= 2` is what changes the
+ * parity count per group on the wire, selects the true [k + m, k] code over the XOR-equivalent
+ * default, and is what `wire_tier`'s `multi_loss_active` argument is asking about. It is a door of
+ * its own because the two bounds cannot stand in for it: `M_MIN` is 1, so a caller composing the
+ * threshold out of `constant(7)`/`constant(8)` would answer "always active".
  * ---------------------------------------------------------------------------- */
 
 typedef struct {
@@ -2254,6 +2260,7 @@ SlopDeskFecTierState slopdesk_adaptive_fec_next_parity_tier_state(double loss,
 size_t slopdesk_adaptive_fec_resolve_parity_count(const uint8_t *raw, size_t len);
 size_t slopdesk_adaptive_fec_resolve_group_size(const uint8_t *raw_k, size_t len_k,
                                                 const uint8_t *raw_m, size_t len_m);
+bool slopdesk_adaptive_fec_multi_loss_active(size_t parity_count);
 
 /* ---------------------------------------------------------------------------- *
  * The video datagram codec: the 19-byte header, both directions.
@@ -6458,6 +6465,18 @@ uint32_t slopdesk_metadata_decode_code_open_disposition(const unsigned char *pay
 
 size_t slopdesk_metadata_encode_code_open_disposition(uint8_t disposition, unsigned char *out,
                                                       size_t cap);
+
+/* The two vitals/endpoint bytes that are LEVELS rather than numbers cross RAW, because the field is
+ * the wire's and a re-encode has to put back exactly what came in. What each byte MEANS — which
+ * value is which level, and what an unrecognised one is — is a decision, and these two doors are
+ * where it is asked. Both are TOTAL over every uint8_t and answer only a byte the corresponding
+ * table names, so no caller needs a fallback of its own: an uninterpretable pressure level reads
+ * NORMAL (never light an alarm ink this build cannot justify) and an uninterpretable service state
+ * reads STARTING (keep polling; the install hint is the one surface no further poll would correct).
+ * Contrast `decode_code_open_disposition` just above, which normalises inside the decode because
+ * that byte has no raw field to preserve. */
+uint8_t slopdesk_metadata_memory_pressure(uint8_t pressure_byte);
+uint8_t slopdesk_metadata_service_state(uint8_t state_byte);
 
 uint32_t slopdesk_metadata_decode_code_font_spec(const unsigned char *payload, size_t payload_len,
                                                  SlopDeskMetadataFontSpec *out,

@@ -64,33 +64,17 @@ public struct LaunchPreset: Codable, Sendable, Equatable, Identifiable {
 
 public extension LaunchPreset {
     /// The shipped defaults seeded into a fresh workspace (the W14 brief's "a couple of sensible
-    /// built-ins"): Claude Code, htop, Git log. Stable UUIDs so a re-seed / settings reset is idempotent
-    /// (matching the same row instead of duplicating). The `claude` preset's curated env is applied by the
-    /// session launch, not here (docs/42 §4.4 retired the daemon mode → env-per-session) — the preset only
-    /// runs the command.
-    static let builtIns: [LaunchPreset] = [
-        LaunchPreset(
-            id: builtInID("11111111-0000-4000-8000-000000000001"),
-            name: "Claude Code", command: "claude",
-            symbol: "sparkles", isBuiltIn: true,
-        ),
-        LaunchPreset(
-            id: builtInID("11111111-0000-4000-8000-000000000002"),
-            name: "htop", command: "htop",
-            symbol: "chart.bar.xaxis", isBuiltIn: true,
-        ),
-        LaunchPreset(
-            id: builtInID("11111111-0000-4000-8000-000000000003"),
-            name: "Git log", command: "git log --oneline --graph --decorate -30",
-            symbol: "arrow.triangle.branch", isBuiltIn: true,
-        ),
-    ]
-
-    /// Parses a compile-time-constant built-in UUID literal; the `?? UUID()` is a never-taken safety net
-    /// (the literals are valid) that keeps the seed force-unwrap-free (the untrusted-input contract / lint).
-    private static func builtInID(_ string: String) -> UUID {
-        UUID(uuidString: string) ?? UUID()
-    }
+    /// built-ins"): Claude Code, htop, Git log — as `slopdesk-workspace` ships them.
+    ///
+    /// Stable UUIDs so a re-seed / settings reset is idempotent (matching the same row instead of
+    /// duplicating). The `claude` preset's curated env is applied by the session launch, not here
+    /// (docs/42 §4.4 retired the daemon mode → env-per-session) — the preset only runs the command.
+    ///
+    /// The same reasoning as ``SessionTemplate/builtIns``, and it applies with one extra edge: a
+    /// preset's `command` is what gets TYPED into a live PTY, and `keystrokes` — the rule that turns
+    /// it into bytes — already crosses. Keeping the command's text on this side while the rule that
+    /// reads it lives on that one is a split nobody would choose deliberately.
+    static let builtIns: [LaunchPreset] = SessionTemplateCrossing.builtInLaunchPresetsFromTheCrate() ?? []
 }
 
 // MARK: - LaunchPresetEngine (pure apply → pane spec + keystrokes)

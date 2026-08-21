@@ -48,6 +48,19 @@ public final class VideoSendLane: @unchecked Sendable {
             self.leadingDelayNanos = leadingDelayNanos
         }
 
+        /// The same datagrams, paced the same way, with a wait in front — the DUPLICATE copy.
+        ///
+        /// The duplicate has to match the original in every respect but its time separation (it is
+        /// the same frame; a copy paced differently would be a different frame's worth of wire
+        /// behaviour), and it is built at four call sites across the two drains. Deriving it removes
+        /// the only way those four could disagree.
+        public func delayed(by nanos: UInt64) -> Self {
+            Self(
+                outgoings: outgoings, gapNanos: gapNanos, chunkFragments: chunkFragments,
+                leadingDelayNanos: nanos,
+            )
+        }
+
         /// The job as the schedule reads it — the parameters, never the datagrams. The floor on
         /// the chunk size is applied over there too, so a zero can never stall the drain.
         var wire: SlopDeskSendJob {
@@ -56,6 +69,14 @@ public final class VideoSendLane: @unchecked Sendable {
                 outgoing_count: outgoings.count, chunk_fragments: chunkFragments,
             )
         }
+    }
+
+    /// One chunk of a drained job: which of the job's datagrams, and how long after the job's start
+    /// they are due. The deadline is measured from AFTER any leading delay, so a duplicate copy waits
+    /// for its time separation once rather than twice.
+    struct Chunk: Sendable, Equatable {
+        let dueNanos: UInt64
+        let range: Range<Int>
     }
 
     private let lock = NSLock()
@@ -200,11 +221,11 @@ public final class VideoSendLane: @unchecked Sendable {
         let clock = ContinuousClock()
         let start = clock.now
         for (index, chunk) in plan.enumerated() {
-            for slot in chunk.start..<chunk.end { send(outgoings[slot].bytes, outgoings[slot].channel) }
+            for slot in chunk.range { send(outgoings[slot].bytes, outgoings[slot].channel) }
             guard index + 1 < plan.count else { return }
             // The NEXT chunk's deadline is absolute, so an oversleep eats into its gap instead of
             // pushing the rest of the schedule right, and a chunk already past due sends at once.
-            let deadline = start + .nanoseconds(Int64(plan[index + 1].due_nanos))
+            let deadline = start + .nanoseconds(Int64(plan[index + 1].dueNanos))
             if deadline > clock.now {
                 try? await clock.sleep(until: deadline)
             }
@@ -213,7 +234,19 @@ public final class VideoSendLane: @unchecked Sendable {
     }
 
     /// The job's chunk boundaries and deadlines, measured by the door and then filled by it.
-    private static func plan(for job: Job) -> [SlopDeskPacedChunk] {
+    ///
+    /// Internal rather than private because the lane is not the only thing that drains a job:
+    /// `SLOPDESK_SEND_LANE=0` runs the same schedule inline on the session actor, and that path used
+    /// to carry its own copy of the chunk/deadline arithmetic. Two drains are fine — they abort on
+    /// different signals (this one on the flush generation, the session's on `mediaFlowing`), and
+    /// `rust/slopdesk-ffi/src/send_pacing.rs` says as much: the sleeps are Swift structured
+    /// concurrency and stay here, while WHAT is due WHEN is answered once, over there. Two copies of
+    /// the arithmetic are not fine, so both drains ask this.
+    ///
+    /// The C struct is unpacked into ``Chunk`` here rather than handed on, so the door's shape stops
+    /// at this file — the second drain and the tests read a Swift range and never learn that the
+    /// schedule crossed a boundary at all. That is the whole job of a face.
+    static func plan(for job: Job) -> [Chunk] {
         let record = job.wire
         let needed = slopdesk_send_pace_plan(record, nil, 0)
         guard needed > 0 else { return [] }
@@ -221,6 +254,7 @@ public final class VideoSendLane: @unchecked Sendable {
         let written = room.withUnsafeMutableBufferPointer { slots in
             slopdesk_send_pace_plan(record, slots.baseAddress, slots.count)
         }
-        return written == needed ? room : []
+        guard written == needed else { return [] }
+        return room.map { Chunk(dueNanos: $0.due_nanos, range: $0.start..<$0.end) }
     }
 }

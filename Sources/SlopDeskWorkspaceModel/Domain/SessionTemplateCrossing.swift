@@ -5,14 +5,24 @@ import Foundation
 
 /// The one place a ``TemplateNode`` becomes bytes `rust/slopdesk-workspace` can read.
 ///
-/// **This is not the shipping repair path, and that is the whole point.** Every other port in
-/// `docs/55` deleted its Swift original in the same change, so the door became the only
-/// implementation. This family could not: ``SessionTemplate`` is `Codable` and is the currency of
-/// the device-preferences file, so ``TemplateNode/init(from:)`` is how a person's saved layouts
-/// actually come back, and deleting it would delete the store's ability to read its own file.
-/// `docs/55` §7 step 6 names exactly that case and says what is owed instead — **pin it**: same
-/// inputs to both sides, assert the same output. `SessionTemplateRepairDifferentialTests` is that
-/// pin and this is what it drives the far side through.
+/// **The REPAIR here is not the shipping path; the two TABLES are.** The distinction is the whole
+/// point of this file, and it took a second reading to get right.
+///
+/// Every other port in `docs/55` deleted its Swift original in the same change, so the door became
+/// the only implementation. ``TemplateNode/repaired`` could not: ``SessionTemplate`` is `Codable`
+/// and is the currency of the device-preferences file, so ``TemplateNode/init(from:)`` is how a
+/// person's saved layouts actually come back, and deleting it would delete the store's ability to
+/// read its own file. `docs/55` §7 step 6 names exactly that case and says what is owed instead —
+/// **pin it**: same inputs to both sides, assert the same output.
+/// `SessionTemplateRepairDifferentialTests` is that pin and ``repairedByTheCrate(_:)`` is what it
+/// drives the far side through.
+///
+/// ``builtInTemplatesFromTheCrate()`` and ``builtInLaunchPresetsFromTheCrate()`` were built for that
+/// same pin and then read the same way, which was the error: what `Codable` forces to stay Swift is
+/// the TYPE, and a table of three shipped rows is not a type. Since 2026-08-22 they ARE
+/// ``SessionTemplate/builtIns`` and ``LaunchPreset/builtIns`` — the seed a fresh device gets — and
+/// the Swift literals they used to be compared against are deleted. A `nil` from either is this
+/// file disagreeing with the grammar below, never the crate declining to ship a table.
 ///
 /// So nothing here decides anything. It encodes, calls, and decodes, against the grammar written
 /// down once in `rust/slopdesk-ffi/include/slopdesk_ffi.h` and once in the module that answers it —

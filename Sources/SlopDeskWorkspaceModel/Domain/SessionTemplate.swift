@@ -190,43 +190,33 @@ extension TemplateNode {
 // MARK: - Built-in session templates
 
 public extension SessionTemplate {
-    /// The shipped default templates seeded into a fresh workspace. Stable hardcoded UUIDs so a re-seed /
-    /// settings reset is idempotent (matching the same row instead of duplicating). Built-in panes are
-    /// `.terminal`, with no `cwd` (the user's shell default) — only #2's Git pane + #3's Claude pane carry
-    /// a startup command.
-    static let builtIns: [SessionTemplate] = [
-        SessionTemplate(
-            id: builtInID("22222222-0000-4000-8000-000000000001"),
-            name: "Editor + Terminal", symbol: "rectangle.split.2x1", isBuiltIn: true,
-            layout: .split(axis: .horizontal, children: [
-                .pane(TemplatePane(title: "Editor")),
-                .pane(TemplatePane(title: "Terminal")),
-            ]),
-        ),
-        SessionTemplate(
-            id: builtInID("22222222-0000-4000-8000-000000000002"),
-            name: "Editor · Server · Git", symbol: "rectangle.split.3x1", isBuiltIn: true,
-            layout: .split(axis: .horizontal, children: [
-                .pane(TemplatePane(title: "Editor")),
-                .split(axis: .vertical, children: [
-                    .pane(TemplatePane(title: "Server")),
-                    .pane(TemplatePane(title: "Git", command: "git status")),
-                ]),
-            ]),
-        ),
-        SessionTemplate(
-            id: builtInID("22222222-0000-4000-8000-000000000003"),
-            name: "Claude + Terminal", symbol: "sparkles", isBuiltIn: true,
-            layout: .split(axis: .horizontal, children: [
-                .pane(TemplatePane(title: "Claude", command: "claude")),
-                .pane(TemplatePane(title: "Terminal")),
-            ]),
-        ),
-    ]
-
-    /// Parses a compile-time-constant built-in UUID literal; the `?? UUID()` is a never-taken safety net
-    /// (the literals are valid) that keeps the seed force-unwrap-free (the untrusted-input contract / lint).
-    private static func builtInID(_ string: String) -> UUID {
-        UUID(uuidString: string) ?? UUID()
-    }
+    /// The shipped default templates seeded into a fresh workspace, as `slopdesk-workspace` ships them.
+    ///
+    /// Stable UUIDs so a re-seed / settings reset is idempotent (matching the same row instead of
+    /// duplicating). Built-in panes are `.terminal`, with no `cwd` (the user's shell default) — only
+    /// #2's Git pane and #3's Claude pane carry a startup command.
+    ///
+    /// ## Why this reads a door instead of listing three templates
+    ///
+    /// It listed them until 2026-08-22, and `templates::built_in_session_templates` listed the same
+    /// three, and a differential test asserted the two lists were equal. That is the arrangement
+    /// CLAUDE.md names outright — a cross-language mirror fixture — and the argument for it did not
+    /// survive being read: what `Codable` forces to stay Swift is the TYPE, because a device-
+    /// preferences file is made of it, and this is not a type. It is three rows of data, and the
+    /// differential proved the crossing already yields them exactly.
+    ///
+    /// What a mirror costs here is specific. The ids are fixed precisely so a re-seed MATCHES a row
+    /// rather than appending one; a fourth template added to one side only would hand every device a
+    /// different set depending on which side seeded it, and one changed byte in sixteen would surface
+    /// weeks later as a duplicated menu row with nothing in any log. `check-supervisor.sh` pins names
+    /// and numbers it was told about, and nobody told it about these.
+    ///
+    /// `[]` is the crossing FAILING, never the crate declining to ship a table: the door writes a
+    /// fixed list, so a `nil` means this file's reader disagrees with the crate's grammar, which is a
+    /// build-time contract violation rather than a runtime condition. A client that seeds no built-ins
+    /// still opens, still loads the user's own templates, and still lets them make one; aborting a
+    /// remote-desktop session over a seed table would be the worse of the two answers. The tests in
+    /// `SessionTemplateEngineTests` pin the three names and the three ids, so an empty answer is a
+    /// red suite rather than a quiet shrug.
+    static let builtIns: [SessionTemplate] = SessionTemplateCrossing.builtInTemplatesFromTheCrate() ?? []
 }

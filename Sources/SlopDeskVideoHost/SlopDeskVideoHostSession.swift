@@ -1513,11 +1513,17 @@ public actor SlopDeskVideoHostSession {
                     chunkFragments: Self.paceChunkFragments,
                 ))
             } else {
-                // SLOPDESK_SEND_LANE=0 (inline-pacing path): no lane to enqueue on — mirror the primary
-                // frame-send path's own fallback (`sendPaced`) so a NACK hit is never silently dropped
-                // just because the lane is disabled.
+                // SLOPDESK_SEND_LANE=0 (inline-pacing path): no lane to enqueue on — drain the SAME job
+                // the lane arm just built, on this actor, so a NACK hit is never silently dropped just
+                // because the lane is disabled. `gapNanos: 0` is load-bearing and used to be lost here:
+                // a retransmit answers a client already waiting on a repair deadline, so it goes out in
+                // one shot, and the old inline call re-derived a gap and paced it instead.
                 dbg("NACK frame=\(frameID): retransmitting \(resend.count)/\(fragIndices.count) frags (inline)")
-                await sendPaced(resend)
+                await sendPaced(VideoSendLane.Job(
+                    outgoings: resend,
+                    gapNanos: 0,
+                    chunkFragments: Self.paceChunkFragments,
+                ))
             }
         case let .drop(reason):
             log.error("dropping recovery datagram: \(reason)")
@@ -2826,29 +2832,44 @@ public actor SlopDeskVideoHostSession {
             }
             dbgLastFrameSendAt = now
         }
+        // The frame's pacing parameters, decided ONCE for both drains. They used to be computed inside
+        // the `if let sendLane` arm and then a second, different way inside `sendPaced` — which is how
+        // the lane-off path came to pace a KEYFRAME at the delta floor: it had no `keyframe` to read.
+        // A recovery IDR paced off a post-backoff ABR serializes for hundreds of ms, which is the exact
+        // stall the floor exists to prevent, so the gate that was meant to be a byte-identical fallback
+        // was quietly the slower path. One computation cannot drift from itself.
+        //
+        // Keyframes pace at ≥ kfPaceFloorBps — IDR delivery time IS recovery time, and the measured
+        // path carries 30Mbps at the same weather-loss as 5Mbps (rate-independent). Deltas floor at
+        // deltaPaceFloorBps (0 = off ⇒ raw ABR, byte-identical) — lifts a stale-low scroll-onset delta
+        // off a 4Mbps crawl so its send-span (⇒ depth-1 present jitter) shrinks, without un-pacing.
+        let paceTargetBps = Self.paceTargetBps(
+            keyframe: keyframe, abr: lastActuatedBitrate,
+            kfFloorBps: Self.kfPaceFloorBps, deltaFloorBps: Self.deltaPaceFloorBps,
+        )
+        let gapNanos: UInt64 = !Self.paceSend ? 0 : (Self.pacingAdaptive
+            ? Self.adaptivePaceGapNanos(
+                targetBps: paceTargetBps,
+                fallbackBps: Self.pacingFallbackBps,
+                chunkFragments: Self.paceChunkFragments,
+                datagramSize: VideoPacketizer.maxDatagramSize,
+                floorNanos: Self.pacingGapFloorNanos,
+                ceilNanos: Self.pacingGapCeilNanos,
+                rateMultiplier: Self.paceRateMultiplier,
+            )
+            : Self.paceGapNanos)
+        // ONE job for both drains: the same datagrams, the same gap, the same chunk size, whichever of
+        // the two below actually sends it. `VideoSendLane.Job` is the shape `slopdesk_send_pace_plan`
+        // reads, so building it here is also what routes the lane-off path through the same schedule.
+        let job = VideoSendLane.Job(
+            outgoings: outgoings,
+            gapNanos: gapNanos,
+            chunkFragments: Self.paceChunkFragments,
+        )
         // Hand the frame to the paced-send lane and RETURN — the encoder-output pump must never sleep
         // on pacing (pacing frame N inline delays frames N+1..k → measured 28–179ms send gaps = the
         // stutter). Wire order is preserved (one lane consumer).
         if let sendLane {
-            // Keyframes pace at ≥ kfPaceFloorBps — IDR delivery time IS recovery time, and the measured
-            // path carries 30Mbps at the same weather-loss as 5Mbps (rate-independent). Deltas floor at
-            // deltaPaceFloorBps (0 = off ⇒ raw ABR, byte-identical) — lifts a stale-low scroll-onset delta
-            // off a 4Mbps crawl so its send-span (⇒ depth-1 present jitter) shrinks, without un-pacing.
-            let paceTargetBps = Self.paceTargetBps(
-                keyframe: keyframe, abr: lastActuatedBitrate,
-                kfFloorBps: Self.kfPaceFloorBps, deltaFloorBps: Self.deltaPaceFloorBps,
-            )
-            let gapNanos: UInt64 = !Self.paceSend ? 0 : (Self.pacingAdaptive
-                ? Self.adaptivePaceGapNanos(
-                    targetBps: paceTargetBps,
-                    fallbackBps: Self.pacingFallbackBps,
-                    chunkFragments: Self.paceChunkFragments,
-                    datagramSize: VideoPacketizer.maxDatagramSize,
-                    floorNanos: Self.pacingGapFloorNanos,
-                    ceilNanos: Self.pacingGapCeilNanos,
-                    rateMultiplier: Self.paceRateMultiplier,
-                )
-                : Self.paceGapNanos)
             // Inline fast path (input latency): a tiny single-shot DELTA that produces NO second (dup)
             // copy can skip the lane's Task-wakeup hop when the wire is idle — the typing-idle
             // keystroke case, where shaving ~0.1–1 ms off input→photon is felt.
@@ -2858,11 +2879,6 @@ public actor SlopDeskVideoHostSession {
             // primary+dup must stay ordered on the one consumer. `trySendInline` returns false (→
             // enqueue) whenever the lane is busy, so a keystroke can never overtake an earlier,
             // still-draining frame.
-            let job = VideoSendLane.Job(
-                outgoings: outgoings,
-                gapNanos: gapNanos,
-                chunkFragments: Self.paceChunkFragments,
-            )
             let willSmallDup = Self.smallDup && !keyframe && avcc.count <= Self.smallDupMaxBytes
                 && Self.adaptiveMEnabled && fecTierState.tier != AdaptiveFECPolicy.parityTierClean
             let inlined = !keyframe && !willSmallDup && sendLane.trySendInline(job)
@@ -2884,12 +2900,7 @@ public actor SlopDeskVideoHostSession {
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                     lastKeyframeDupTime = now
-                    sendLane.enqueue(VideoSendLane.Job(
-                        outgoings: outgoings,
-                        gapNanos: gapNanos,
-                        chunkFragments: Self.paceChunkFragments,
-                        leadingDelayNanos: Self.paceGapNanos,
-                    ))
+                    sendLane.enqueue(job.delayed(by: Self.paceGapNanos))
                 }
             }
             // SMALL-FRAME DUP (see `smallDup`): a changed small DELTA during active loss — enqueue a
@@ -2899,16 +2910,11 @@ public actor SlopDeskVideoHostSession {
             if Self.smallDup, !keyframe, avcc.count <= Self.smallDupMaxBytes,
                Self.adaptiveMEnabled, fecTierState.tier != AdaptiveFECPolicy.parityTierClean
             {
-                sendLane.enqueue(VideoSendLane.Job(
-                    outgoings: outgoings,
-                    gapNanos: gapNanos,
-                    chunkFragments: Self.paceChunkFragments,
-                    leadingDelayNanos: Self.paceGapNanos,
-                ))
+                sendLane.enqueue(job.delayed(by: Self.paceGapNanos))
             }
             return
         }
-        await sendPaced(outgoings)
+        await sendPaced(job)
         // Keyframe DUPLICATE-SEND (inline path). A heartbeat/recovery IDR is a large multi-datagram
         // burst; even paced, a time-correlated loss in one XOR group is unrecoverable → corrupt IDR →
         // flicker. Re-send the SAME ordered list a second time (paced + time-separated) so the IDR
@@ -2927,8 +2933,10 @@ public actor SlopDeskVideoHostSession {
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                 lastKeyframeDupTime = now
-                try? await Task.sleep(nanoseconds: Self.paceGapNanos) // time-separate the two copies
-                if stateMachine.mediaFlowing { await sendPaced(outgoings) }
+                // The time separation is the job's own leading delay, exactly as on the lane — and
+                // `sendPaced` re-checks `mediaFlowing` on the far side of it, so a teardown racing the
+                // gap still aborts before a byte of the second copy goes out.
+                await sendPaced(job.delayed(by: Self.paceGapNanos))
             }
         }
         // SMALL-FRAME DUP (non-lane path): mirror of the lane-path gate above.
@@ -2936,59 +2944,46 @@ public actor SlopDeskVideoHostSession {
            Self.adaptiveMEnabled, fecTierState.tier != AdaptiveFECPolicy.parityTierClean,
            stateMachine.mediaFlowing
         {
-            try? await Task.sleep(nanoseconds: Self.paceGapNanos)
-            if stateMachine.mediaFlowing { await sendPaced(outgoings) }
+            await sendPaced(job.delayed(by: Self.paceGapNanos))
         }
     }
 
-    /// Sends one frame's datagrams, PACED (see `paceSend`) when large so a big IDR / scroll-delta does not
-    /// blast as one instant burst → no receive-buffer overflow → no burst loss → no flicker. Small frames
-    /// send in one shot. Reorder-free + wire-identical, so zero white-screen risk. Re-checks `mediaFlowing`
-    /// after each gap so a bye/stop teardown racing the pacing aborts cleanly.
-    private func sendPaced(_ outgoings: [VideoSendScheduler.Outgoing]) async {
-        if Self.paceSend, outgoings.count > Self.paceChunkFragments {
-            // Rate-proportional gap (drain a chunk at ≈ the live link rate) rather than the fixed 0.5ms
-            // burst. Computed once per frame from the current ABR target.
-            let gapNanos: UInt64 = Self.pacingAdaptive
-                ? Self.adaptivePaceGapNanos(
-                    // SLOPDESK_SEND_LANE=0 parity: floor the delta pace target the same as the lane path
-                    // (0 = off ⇒ raw ABR, byte-identical). This path is not keyframe-aware, so the floor
-                    // lifts both — strictly ≥ the raw-ABR gap, never slower.
-                    targetBps: max(lastActuatedBitrate, Self.deltaPaceFloorBps),
-                    fallbackBps: Self.pacingFallbackBps,
-                    chunkFragments: Self.paceChunkFragments,
-                    datagramSize: VideoPacketizer.maxDatagramSize,
-                    floorNanos: Self.pacingGapFloorNanos,
-                    ceilNanos: Self.pacingGapCeilNanos,
-                    rateMultiplier: Self.paceRateMultiplier,
-                )
-                : Self.paceGapNanos
-            // ABSOLUTE-DEADLINE schedule (same rationale as VideoSendLane.transmit): a relative
-            // sub-ms Task.sleep oversleeps by Darwin's ~1ms quantum and the overshoot accumulates
-            // per chunk; deadlines anchored at `start` self-correct and a behind-schedule chunk
-            // sends immediately.
-            let clock = ContinuousClock()
-            let start = clock.now
-            var chunk = 0
-            var i = 0
-            while i < outgoings.count {
-                let end = min(i + Self.paceChunkFragments, outgoings.count)
-                var j = i
-                while j < end { transport.send(outgoings[j].bytes, on: outgoings[j].channel)
-                    j += 1
-                }
-                i = end
-                chunk += 1
-                if i < outgoings.count {
-                    let deadline = start + .nanoseconds(Int64(gapNanos) * Int64(chunk))
-                    if deadline > clock.now {
-                        try? await clock.sleep(until: deadline)
-                    }
-                    guard stateMachine.mediaFlowing else { return } // a bye/stop teardown raced the gap
-                }
+    /// Drains one job on THIS actor — the `SLOPDESK_SEND_LANE=0` path, which is
+    /// ``VideoSendLane/transmit(_:generation:)`` with the session's own abort signal in place of the
+    /// lane's flush generation.
+    ///
+    /// PACED (see `paceSend`) when the job is large, so a big IDR / scroll-delta does not blast as one
+    /// instant burst → no receive-buffer overflow → no burst loss → no flicker; small and gapless jobs
+    /// go out in one shot. Reorder-free + wire-identical, so zero white-screen risk. `mediaFlowing` is
+    /// re-checked at every boundary a sleep could have been raced across, so a bye/stop teardown aborts
+    /// cleanly rather than paving a dead client's socket.
+    ///
+    /// WHICH datagrams go in which chunk and WHEN each chunk is due is `slopdesk_send_pace_plan`'s
+    /// answer, asked through ``VideoSendLane/plan(for:)``. It used to be arithmetic written out again
+    /// right here, and the two copies had already parted: this one had no `keyframe` to read, so it
+    /// floored a recovery IDR at the DELTA pace floor and serialized the one frame whose delivery time
+    /// is the client's recovery time. The gap now arrives in the job, decided once by the caller.
+    private func sendPaced(_ job: VideoSendLane.Job) async {
+        if job.leadingDelayNanos > 0 {
+            try? await Task.sleep(nanoseconds: job.leadingDelayNanos) // time-separate the two copies
+            guard stateMachine.mediaFlowing else { return }
+        }
+        let outgoings = job.outgoings
+        // ABSOLUTE-DEADLINE schedule (same rationale as VideoSendLane.transmit, and the same numbers,
+        // because it is the same plan): a relative sub-ms Task.sleep oversleeps by Darwin's ~1ms
+        // quantum and the overshoot accumulates per chunk; deadlines anchored at `start` self-correct
+        // and a behind-schedule chunk sends immediately.
+        let plan = VideoSendLane.plan(for: job)
+        let clock = ContinuousClock()
+        let start = clock.now
+        for (index, chunk) in plan.enumerated() {
+            for slot in chunk.range { transport.send(outgoings[slot].bytes, on: outgoings[slot].channel) }
+            guard index + 1 < plan.count else { return }
+            let deadline = start + .nanoseconds(Int64(plan[index + 1].dueNanos))
+            if deadline > clock.now {
+                try? await clock.sleep(until: deadline)
             }
-        } else {
-            for outgoing in outgoings { transport.send(outgoing.bytes, on: outgoing.channel) }
+            guard stateMachine.mediaFlowing else { return } // a bye/stop teardown raced the gap
         }
     }
 
