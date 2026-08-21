@@ -467,8 +467,11 @@ public enum WorkspaceStateCodec {
     /// codebase uses for bytes that crossed a language or network boundary.
     public static func encodeBool(_ value: Bool) -> Data { encodeU8(value ? 1 : 0) }
 
+    /// Asked for rather than composed. This was `decodeU8(data).map { $0 != 0 }` — one line, and
+    /// still the READING of every non-canonical byte a peer can send: a side that spelled it `== 1`
+    /// would answer `false` where this one answers `true`, on bytes no decode would refuse.
     public static func decodeBool(_ data: Data) -> Bool? {
-        decodeU8(data).map { $0 != 0 }
+        wsScalar(data, false) { bytes, len, out in slopdesk_ws_decode_bool(bytes, len, out) }
     }
 
     /// A two-byte pair — `agentState` (`[state][kind]`) and `progress` (`[state][percent]`).
@@ -497,7 +500,13 @@ public enum WorkspaceStateCodec {
 
     /// `pane/lastExitCode`. Rides as the `UInt32` bit pattern so a negative code (a signal-killed
     /// child) survives without a sign convention to get wrong on either end.
-    public static func encodeI32(_ value: Int32) -> Data { encodeU32(UInt32(bitPattern: value)) }
+    ///
+    /// Its own door rather than `encodeU32(UInt32(bitPattern:))`: the bit pattern IS the convention,
+    /// and composing it here put the encode half of one round trip in this language while
+    /// ``decodeI32`` asked the crate for the other.
+    public static func encodeI32(_ value: Int32) -> Data {
+        wsFixed(4) { out, cap in slopdesk_ws_encode_i32(value, out, cap) }
+    }
 
     public static func decodeI32(_ data: Data) -> Int32? {
         wsScalar(data, Int32(0)) { bytes, len, out in slopdesk_ws_decode_i32(bytes, len, out) }

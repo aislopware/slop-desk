@@ -365,13 +365,24 @@ pub struct RateLimiter {
     pub last_refill: f64,
 }
 
+/// How many explicit notifications a shell may post back to back before the bucket empties.
+///
+/// A burst is what a legitimate build script produces — a handful of OSC 9s as it finishes stages —
+/// so the bound has to let that through and still stop a loop. Five is that line.
+pub const EXPLICIT_BURST: f64 = 5.0;
+
+/// How fast the burst comes back: one notification every two seconds.
+pub const EXPLICIT_REFILL_PER_SECOND: f64 = 0.5;
+
 impl RateLimiter {
-    /// A full bucket. About five in a burst, then one every two seconds.
+    /// A full bucket at the burst and refill rate the caller names.
     ///
-    /// No caller yet: only `slopdesk_ws_notify_rate_limit_allow` has a door, so the near side fills
-    /// the four fields itself — and spells the burst and the refill rate itself with them. A
-    /// resting-bucket door, the way [`crate::chrome`]'s dwell gate has one, is what would stop
-    /// that.
+    /// Resting means FULL: the tokens start at the capacity rather than at zero, so the first
+    /// notification after a fresh attach is delivered rather than swallowed while the bucket fills.
+    /// That is the half of this constructor which is a rule and not an assignment, and it crosses
+    /// as `slopdesk_ws_notify_rate_limiter` for exactly that reason — the near side used to fill
+    /// the four fields itself, which meant one side of the boundary decided what "a new bucket"
+    /// starts with.
     #[must_use]
     pub const fn new(capacity: f64, refill_per_second: f64, now: f64) -> Self {
         Self {
@@ -380,6 +391,17 @@ impl RateLimiter {
             tokens: capacity,
             last_refill: now,
         }
+    }
+
+    /// The bucket the explicit (OSC 9/777) path ships with, at [`EXPLICIT_BURST`] and
+    /// [`EXPLICIT_REFILL_PER_SECOND`].
+    ///
+    /// The numbers live here rather than in a caller's default argument, the way
+    /// [`crate::chrome`]'s dwell gate does: they are the anti-flood POLICY, and a second spelling
+    /// of them would be a second opinion about how much a hostile shell may post.
+    #[must_use]
+    pub const fn explicit(now: f64) -> Self {
+        Self::new(EXPLICIT_BURST, EXPLICIT_REFILL_PER_SECOND, now)
     }
 
     /// Refills by elapsed time, then spends a token if there is one.
@@ -403,9 +425,10 @@ impl RateLimiter {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentSound, Badge, Event, Flavour, ForegroundPolicy, LONG_RUNNING_THRESHOLD_MS, RateLimiter,
-        Settings, Speaker, agent_sound, badge, explicit_content, is_long_running, should_beep_on_error,
-        should_deliver, should_notify_completion, should_ring_bell, toast_headline,
+        AgentSound, Badge, EXPLICIT_BURST, EXPLICIT_REFILL_PER_SECOND, Event, Flavour, ForegroundPolicy,
+        LONG_RUNNING_THRESHOLD_MS, RateLimiter, Settings, Speaker, agent_sound, badge, explicit_content,
+        is_long_running, should_beep_on_error, should_deliver, should_notify_completion, should_ring_bell,
+        toast_headline,
     };
 
     #[test]
@@ -665,5 +688,43 @@ mod tests {
             toast_headline(Speaker::Command, Flavour::Notice, "  ").is_empty(),
             "no noun can be invented for a message that was supposed to carry its own"
         );
+    }
+
+    /// A new bucket is FULL, not empty. Starting it at zero would swallow the first explicit
+    /// notification of every attach while it filled, which is the one nobody would suspect a rate
+    /// limiter of.
+    #[test]
+    fn a_fresh_bucket_rests_full_and_spends_exactly_its_burst() {
+        let mut bucket = RateLimiter::new(3.0, 1.0, 100.0);
+        assert_eq!(
+            bucket.tokens.to_bits(),
+            3.0_f64.to_bits(),
+            "a resting bucket starts at its capacity"
+        );
+        assert_eq!(bucket.last_refill.to_bits(), 100.0_f64.to_bits());
+        assert!(bucket.allow(100.0));
+        assert!(bucket.allow(100.0));
+        assert!(bucket.allow(100.0));
+        assert!(!bucket.allow(100.0), "the burst IS the capacity");
+        assert!(bucket.allow(101.0), "a second buys one back at this rate");
+    }
+
+    /// Two separate claims. That the constructor wires the two constants to the two fields — which
+    /// is asserted against the constants, not against literals, so a retune moves the test with it.
+    /// And that those values still describe a bucket a build script gets through and a loop does
+    /// not, which is the only thing the numbers were chosen for; a retune that broke THAT should
+    /// have to say so here.
+    #[test]
+    fn the_explicit_bucket_lets_a_build_script_through_and_stops_a_loop() {
+        let mut bucket = RateLimiter::explicit(0.0);
+        assert_eq!(bucket.capacity.to_bits(), EXPLICIT_BURST.to_bits());
+        assert_eq!(
+            bucket.refill_per_second.to_bits(),
+            EXPLICIT_REFILL_PER_SECOND.to_bits()
+        );
+        let burst = (0..6).filter(|_| bucket.allow(0.0)).count();
+        assert_eq!(burst, 5, "five back to back, and the sixth is dropped");
+        assert!(!bucket.allow(1.9), "under two seconds buys nothing back");
+        assert!(bucket.allow(2.0), "two seconds buys exactly one");
     }
 }

@@ -27,12 +27,25 @@
 //!
 //! | slot | filled by | read with |
 //! | --- | --- | --- |
-//! | messages | `messages`, `replay`, `rechunk_snapshot` | `result_count` / `result_seq` / `result_len` / `result_copy` |
+//! | messages | `messages`, `replay`, `rechunk_snapshot` | `result_headers` / `result_copy` |
 //! | blob | `snapshot_source`, `ring_fold_source` | `blob_len` / `blob_copy` |
 //! | seqs | `snapshot_source`, `ring_fold_source`, `ring_seqs` | `seqs_count` / `seqs_copy` |
 //!
 //! A slot holds its contents until the next producer overwrites it. Reading a slot never mutates
 //! it, so a caller may take the length, allocate, and copy without a lock in between.
+//!
+//! ## The METADATA is one crossing; the PAYLOAD is per message
+//!
+//! The message slot used to be read three doors at a time — a seq, a length, then the copy — which
+//! is `3n + 1` crossings to answer one question about `n` messages that share one input. Two of
+//! those three ask about the same eight-plus-eight bytes, and a whole reattach's worth of them fits
+//! in one delivery, so [`slopdesk_replay_result_headers`] hands the caller every `(seq, len)` pair
+//! at once and the loop that follows is one [`slopdesk_replay_result_copy`] per message: `n + 2`.
+//!
+//! The payload deliberately did NOT join it. A history is up to 256 MiB and each message has to
+//! land in its own buffer on the near side anyway, so flattening the lot into one answer would add
+//! a whole extra copy of the retained history to save the crossings it already saved — the same
+//! trade the staging slot below refuses in the other direction.
 //!
 //! ## The distiller
 //! The cold-replay scrollback cleaner is [`slopdesk_sanitize::sanitize`], called directly. It used
@@ -62,6 +75,21 @@ pub struct SlopDeskReplay {
     seqs: Vec<i64>,
     /// Messages staged by `input_push`, consumed by `adopt_snapshot_replay`.
     staged: Vec<WireMessage>,
+}
+
+/// One message's metadata: which seq it carries and how many bytes its payload is.
+///
+/// Two words and no padding, so the hand-written header has nothing to transcribe. It is the whole
+/// answer to "what is in the slot" — the bytes themselves stay behind
+/// [`slopdesk_replay_result_copy`], because they are the one part of a message the caller has to
+/// take one at a time.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct SlopDeskReplayHeader {
+    /// The message's monotonic output seq.
+    pub seq: i64,
+    /// Its payload length in bytes.
+    pub len: usize,
 }
 
 impl SlopDeskReplay {
@@ -659,37 +687,55 @@ pub unsafe extern "C" fn slopdesk_replay_adopt_folded_ring(
 // caller already holds it before it can index anything. A second door answering the same question
 // is a second source of truth for how many slots are live, and the two can only ever agree or be a
 // bug; Swift never called it.
+//
+// There is no `slopdesk_replay_result_seq` or `slopdesk_replay_result_len` either, for the same
+// reason one register up: both answered ABOUT ONE MEMBER a question the whole slot can answer in
+// one delivery, and the only caller either ever had was a Swift `for` loop rebuilding the metadata
+// of a whole reattach an index at a time. `slopdesk_replay_result_headers` is the one way to ask.
 
-/// The seq of message `index`, or `-1` when out of range — a valid seq is always positive.
+/// Every staged message's `(seq, len)`, in slot order, in ONE delivery.
+///
+/// Answers the count the slot holds — which is what the producer already returned — and writes
+/// nothing unless all of it fits, so a short `cap` is §4's retry rather than a half-filled array.
+/// In practice the retry is unreachable: the caller sizes at the count the producer handed it.
+///
+/// A message's BYTES are not here. They are the one part that has to be taken one at a time, since
+/// each lands in a buffer of its own on the near side, and a 256 MiB history flattened into a
+/// single answer would cost a whole extra copy of itself to save the crossings this door already
+/// saves.
 ///
 /// # Safety
-/// `handle` must be null, or a live handle with no other call on it in flight.
+/// `out` must be null or writable for `cap` [`SlopDeskReplayHeader`]s; `handle` must be null, or a
+/// live handle with no other call on it in flight.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_replay_result_seq(handle: *mut SlopDeskReplay, index: usize) -> i64 {
+pub unsafe extern "C" fn slopdesk_replay_result_headers(
+    handle: *mut SlopDeskReplay,
+    out: *mut SlopDeskReplayHeader,
+    cap: usize,
+) -> usize {
     // SAFETY: the caller's obligation, restated above.
-    unsafe { held(handle) }
-        .and_then(|held| held.results.get(index))
-        .map_or(-1, |entry| entry.0)
-}
-
-/// The payload length of message `index`, or 0 when out of range.
-///
-/// # Safety
-/// `handle` must be null, or a live handle with no other call on it in flight.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_replay_result_len(handle: *mut SlopDeskReplay, index: usize) -> usize {
-    // SAFETY: the caller's obligation, restated above.
-    unsafe { held(handle) }
-        .and_then(|held| held.results.get(index))
-        .map_or(0, |entry| entry.1.len())
+    let Some(held) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let needed = held.results.len();
+    if needed == 0 || needed > cap || out.is_null() {
+        return needed;
+    }
+    for (index, entry) in held.results.iter().enumerate() {
+        // SAFETY: `index < needed <= cap`, and `out` is writable for `cap` records by the caller's
+        // obligation. The source is the handle's own vector, which the caller may not alias.
+        unsafe {
+            out.add(index).write(SlopDeskReplayHeader {
+                seq: entry.0,
+                len: entry.1.len(),
+            });
+        }
+    }
+    needed
 }
 
 /// Copies message `index` out, reporting its length.
@@ -800,12 +846,11 @@ pub unsafe extern "C" fn slopdesk_replay_seqs_copy(
 mod tests {
 
     use super::{
-        ReplayBuffer, SlopDeskReplay, slopdesk_replay_ack, slopdesk_replay_acked_seq, slopdesk_replay_append,
-        slopdesk_replay_constant, slopdesk_replay_free, slopdesk_replay_highest_seq,
+        ReplayBuffer, SlopDeskReplay, SlopDeskReplayHeader, slopdesk_replay_ack, slopdesk_replay_acked_seq,
+        slopdesk_replay_append, slopdesk_replay_constant, slopdesk_replay_free, slopdesk_replay_highest_seq,
         slopdesk_replay_messages, slopdesk_replay_new, slopdesk_replay_replay, slopdesk_replay_result_copy,
-        slopdesk_replay_result_len, slopdesk_replay_result_seq, slopdesk_replay_retained_bytes,
-        slopdesk_replay_ring_bytes, slopdesk_replay_ring_len, slopdesk_replay_set_client_online,
-        slopdesk_replay_should_pause_drain,
+        slopdesk_replay_result_headers, slopdesk_replay_retained_bytes, slopdesk_replay_ring_bytes,
+        slopdesk_replay_ring_len, slopdesk_replay_set_client_online, slopdesk_replay_should_pause_drain,
     };
 
     /// A handle at tiny caps, so the gates are reachable without allocating 256 MiB.
@@ -819,19 +864,30 @@ mod tests {
         unsafe { slopdesk_replay_append(handle, bytes.as_ptr(), bytes.len()) }
     }
 
+    /// Every staged message's metadata in one crossing, the way the Swift wrapper takes it.
+    fn headers(handle: *mut SlopDeskReplay, staged: usize) -> Vec<SlopDeskReplayHeader> {
+        let mut room = vec![SlopDeskReplayHeader::default(); staged];
+        // SAFETY: the handle is this test's and `room` is a live local sized at `staged`.
+        let written = unsafe { slopdesk_replay_result_headers(handle, room.as_mut_ptr(), room.len()) };
+        assert_eq!(written, staged, "the slot answered a count it would not fill");
+        room
+    }
+
     /// Reads the message slot the way the Swift wrapper does: the PRODUCER's return is the count
-    /// (there is no separate count door — see the note above the reading section), then length,
-    /// then copy.
+    /// (there is no separate count door — see the note above the reading section), then ONE
+    /// headers crossing, then one copy per message.
     fn results(handle: *mut SlopDeskReplay, staged: usize) -> Vec<(i64, Vec<u8>)> {
         // SAFETY: the handle is this test's and every buffer below is a live local.
         unsafe {
-            (0..staged)
-                .map(|index| {
-                    let mut payload = vec![0_u8; slopdesk_replay_result_len(handle, index)];
+            headers(handle, staged)
+                .into_iter()
+                .enumerate()
+                .map(|(index, header)| {
+                    let mut payload = vec![0_u8; header.len];
                     let copied =
                         slopdesk_replay_result_copy(handle, index, payload.as_mut_ptr(), payload.len());
                     assert_eq!(copied, payload.len(), "the length and the copy must agree");
-                    (slopdesk_replay_result_seq(handle, index), payload)
+                    (header.seq, payload)
                 })
                 .collect()
         }
@@ -881,7 +937,7 @@ mod tests {
     }
 
     /// A slot survives until the next producer overwrites it — the property that lets the caller
-    /// take a length, allocate, and copy without holding anything in between.
+    /// take the headers, allocate, and copy without holding anything in between.
     #[test]
     fn a_result_slot_holds_until_the_next_producer_runs() {
         let handle = handle();
@@ -890,20 +946,71 @@ mod tests {
         // SAFETY: the handle is this test's, unshared.
         unsafe {
             assert_eq!(slopdesk_replay_messages(handle, 0), 2);
-            // Out-of-range reads `-1`, so the slot's extent is observable through the doors Swift
-            // actually uses rather than through a second door that only says the same thing.
-            assert_ne!(slopdesk_replay_result_seq(handle, 1), -1, "still there, unread");
-            assert_eq!(slopdesk_replay_result_seq(handle, 2), -1, "and no further");
+            // The slot's extent is observable through the door Swift actually uses: a sizing call
+            // answers the count without writing, which is how "still there, unread" is asked now.
+            assert_eq!(
+                slopdesk_replay_result_headers(handle, core::ptr::null_mut(), 0),
+                2,
+                "still there, unread"
+            );
             assert_eq!(
                 slopdesk_replay_replay(handle, 1),
                 1,
                 "a producer replaces the slot"
             );
-            assert_ne!(slopdesk_replay_result_seq(handle, 0), -1);
             assert_eq!(
-                slopdesk_replay_result_seq(handle, 1),
-                -1,
+                slopdesk_replay_result_headers(handle, core::ptr::null_mut(), 0),
+                1,
                 "the slot shrank to one"
+            );
+            slopdesk_replay_free(handle);
+        }
+    }
+
+    /// The whole-slot metadata door agrees with the per-message copy door on EVERY member, which is
+    /// the property that let the two per-index metadata doors go.
+    #[test]
+    fn the_headers_agree_with_the_copy_door_on_every_message() {
+        let handle = handle();
+        let payloads: [&[u8]; 4] = [b"a\n", b"bb\n", b"", b"dddd\n"];
+        let mut want: Vec<(i64, Vec<u8>)> = Vec::new();
+        for bytes in payloads {
+            want.push((append(handle, bytes), bytes.to_vec()));
+        }
+        // SAFETY: the handle is this test's and every buffer below is a live local.
+        unsafe {
+            let staged = slopdesk_replay_messages(handle, 0);
+            assert_eq!(staged, payloads.len());
+            let mut walked: Vec<(i64, Vec<u8>)> = Vec::new();
+            for (index, header) in headers(handle, staged).into_iter().enumerate() {
+                let mut room = vec![0_u8; header.len.max(1)];
+                let copied = slopdesk_replay_result_copy(handle, index, room.as_mut_ptr(), room.len());
+                assert_eq!(copied, header.len, "the header's length IS the copy's answer");
+                room.truncate(copied);
+                walked.push((header.seq, room));
+            }
+            assert_eq!(walked, want, "every member, seq and payload, from the two doors");
+            slopdesk_replay_free(handle);
+        }
+    }
+
+    /// A short buffer leaves it untouched and still reports the count — §4's retry, at record
+    /// width.
+    #[test]
+    fn undersized_headers_write_nothing_and_report_the_count() {
+        let handle = handle();
+        append(handle, b"one\n");
+        append(handle, b"two\n");
+        // SAFETY: the handle is this test's and `tiny` is a live local.
+        unsafe {
+            assert_eq!(slopdesk_replay_messages(handle, 0), 2);
+            let mut tiny = [SlopDeskReplayHeader { seq: -7, len: 99 }; 1];
+            let needed = slopdesk_replay_result_headers(handle, tiny.as_mut_ptr(), tiny.len());
+            assert_eq!(needed, 2);
+            assert_eq!(
+                tiny.first(),
+                Some(&SlopDeskReplayHeader { seq: -7, len: 99 }),
+                "an undersized call must not write a partial answer"
             );
             slopdesk_replay_free(handle);
         }
@@ -939,7 +1046,7 @@ mod tests {
             assert_eq!(slopdesk_replay_append(null, b"x".as_ptr(), 1), 0);
             assert_eq!(slopdesk_replay_highest_seq(null), 0);
             assert_eq!(slopdesk_replay_messages(null, 0), 0);
-            assert_eq!(slopdesk_replay_result_seq(null, 0), -1);
+            assert_eq!(slopdesk_replay_result_headers(null, core::ptr::null_mut(), 0), 0);
             slopdesk_replay_ack(null, 5);
             slopdesk_replay_free(null);
         }

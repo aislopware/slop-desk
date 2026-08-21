@@ -130,24 +130,21 @@ pub struct VideoEndpoint {
     pub display_id: Option<u32>,
 }
 
-/// The latched modes of a video pane.
-///
-/// Device-local and keyed by the stream TARGET rather than by the pane, so closing a tab and
-/// reopening the same target restores them — a reopened target mints a brand-new pane, and keying
-/// by pane would lose the setting exactly when the person expected it to persist.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct VideoPaneModes {
-    /// Immersive system-key capture: the system chords go to the host.
-    pub immersive: bool,
-    /// Host app audio streamed into this pane.
-    pub audio_enabled: bool,
-    /// The viewport position lock — edge-hover auto-pan frozen.
-    pub viewport_locked: bool,
-    /// A live encode-rate cap. Zero is automatic.
-    pub fps_cap: u32,
-    /// A live bitrate ceiling. Zero is automatic.
-    pub bitrate_ceiling_bps: u64,
-}
+// THE LATCHED VIDEO MODES ARE NOT HERE, AND THAT IS THE PORT RATHER THAN A GAP.
+//
+// A `VideoPaneModes` of five public fields sat here until 2026-08-22: no methods, no callers, no
+// tests, and not even re-exported from `lib.rs`. Nothing in this crate or any other read it, and
+// nothing ever had — it was the far half of a port that never happened, which `docs/55` §8 rules on
+// directly: "'Do not port this' and 'keep an unreachable copy of it' are different instructions".
+// An unreached copy is WORSE than none, because no input ever reaches both halves, so the pair
+// cannot be caught disagreeing.
+//
+// The modes are device-local. They live in the client's own `device-prefs.json`, keyed by the
+// stream TARGET rather than by the pane so that closing a tab and reopening the same target
+// restores them, and the only decoder that has ever read them is Foundation's — a
+// `Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift` `init(from:)` whose whole rule is that
+// every one of the five fields FILLS rather than throws. This crate persists no part of it and has
+// no reader that could disagree, so Swift is the one implementation.
 
 /// The full value description of a leaf.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -486,6 +483,18 @@ impl NewTabPosition {
         Self::ALL.into_iter().find(|position| position.raw() == raw)
     }
 
+    /// The policy a config string names, falling back to the default for one that names nothing.
+    ///
+    /// The setting is a free-form string in a preferences store a person can edit, and a spelling
+    /// nobody recognises is not a reason to refuse to open a tab. [`Auto`](Self::Auto) is the same
+    /// answer the client's own settings bridge repairs a stale value to, so the fallback lives here
+    /// once rather than at each reader — a reader that picked its own would be a second policy for
+    /// the input class no test covers.
+    #[must_use]
+    pub fn from_raw_or_default(raw: &str) -> Self {
+        Self::from_raw(raw).unwrap_or_default()
+    }
+
     /// Where to insert into a list of `tab_count` tabs whose active one sits at `active_index`.
     ///
     /// Always a VALID insertion index — at most the count. A stale active index, which a restore or
@@ -507,6 +516,29 @@ impl NewTabPosition {
                 clamped + 1
             },
         }
+    }
+
+    /// The same placement, for a caller whose two counts are SIGNED.
+    ///
+    /// [`insertion_index`](Self::insertion_index) cannot be handed a negative, because a `usize`
+    /// has none. A client's index arithmetic is signed all the way down, so the impossible inputs
+    /// are reachable there and one of them is not even hostile: a tab list is counted from a
+    /// restored document, and an active index read out of a file that has since lost tabs is an
+    /// ordinary consequence of a crash.
+    ///
+    /// So both are clamped into the range the arithmetic above is defined on — a negative count is
+    /// NO tabs, a negative active index is the FIRST one — and the answer is the one insertion
+    /// index this type has, never a second spelling of it. Always a valid insertion index for the
+    /// clamped list: at least `0` and at most `max(tab_count, 0)`.
+    #[must_use]
+    pub fn insertion_index_signed(self, active_index: i64, tab_count: i64) -> i64 {
+        let count = usize::try_from(tab_count).unwrap_or(0);
+        let active = usize::try_from(active_index).unwrap_or(0);
+        let index = self.insertion_index(active, count);
+        // `index` is at most `count`, and `count` came from an `i64`, so the conversion back cannot
+        // fail. The fallback is the end of the list rather than its start, so that an arithmetic
+        // this comment is wrong about still appends instead of inserting at the front.
+        i64::try_from(index).unwrap_or_else(|_| tab_count.max(0))
     }
 }
 
@@ -717,6 +749,46 @@ mod tests {
             assert_eq!(NewTabPosition::from_raw(position.raw()), Some(position));
         }
         assert_eq!(NewTabPosition::from_raw("afterCurrent"), None);
+    }
+
+    #[test]
+    fn a_spelling_nobody_recognises_reads_as_the_default_rather_than_refusing() {
+        for position in NewTabPosition::ALL {
+            assert_eq!(NewTabPosition::from_raw_or_default(position.raw()), position);
+        }
+        assert_eq!(
+            NewTabPosition::from_raw_or_default("afterCurrent"),
+            NewTabPosition::Auto
+        );
+        assert_eq!(NewTabPosition::from_raw_or_default(""), NewTabPosition::Auto);
+    }
+
+    /// The signed face answers exactly what the unsigned one does wherever both are defined, and
+    /// clamps rather than inventing an answer where only the signed one is.
+    #[test]
+    fn a_signed_caller_gets_the_same_index_and_its_negatives_clamp() {
+        for position in NewTabPosition::ALL {
+            for active in 0..4_u8 {
+                for count in 0..4_u8 {
+                    let signed = position.insertion_index_signed(i64::from(active), i64::from(count));
+                    assert_eq!(
+                        usize::try_from(signed).unwrap_or(usize::MAX),
+                        position.insertion_index(usize::from(active), usize::from(count)),
+                        "{position:?} disagreed with itself at {active}/{count}",
+                    );
+                }
+            }
+            assert_eq!(position.insertion_index_signed(3, -1), 0, "no tabs is no tabs");
+            assert_eq!(position.insertion_index_signed(-5, 0), 0);
+            assert_eq!(position.insertion_index_signed(i64::MIN, i64::MIN), 0);
+        }
+        assert_eq!(
+            NewTabPosition::AfterCurrent.insertion_index_signed(-5, 3),
+            1,
+            "a negative active index is the first tab, so the new one lands after it",
+        );
+        assert_eq!(NewTabPosition::AfterCurrent.insertion_index_signed(99, 3), 3);
+        assert_eq!(NewTabPosition::End.insertion_index_signed(-5, 3), 3);
     }
 
     #[test]

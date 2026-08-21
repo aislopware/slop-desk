@@ -1,9 +1,13 @@
-//! Which pane kind a persisted DISCRIMINATOR names, in C.
+//! What a pane KIND is — the discriminator that names one, and what one can be sent — in C.
 //!
-//! One door over [`slopdesk_workspace::session::PaneKind::from_raw`], which is where the retired
-//! vocabulary lives: `claudeCode`, `web`, `chooser`, `remoteGUI` and `systemDialog` are the five
-//! kinds this project has removed, and each of them names a pane that is still a pane — a plain
-//! terminal — rather than a file that must be refused.
+//! Two doors over [`slopdesk_workspace::session::PaneKind`], reached by two different callers. The
+//! first reads a persisted discriminator; the second asks a kind byte whether text can be typed
+//! into it. They are together because they are one vocabulary, not because they share a caller.
+//!
+//! The first is a door over [`slopdesk_workspace::session::PaneKind::from_raw`], which is where the
+//! retired vocabulary lives: `claudeCode`, `web`, `chooser`, `remoteGUI` and `systemDialog` are the
+//! five kinds this project has removed, and each of them names a pane that is still a pane — a
+//! plain terminal — rather than a file that must be refused.
 //!
 //! ## Why the STRING side needs a door at all when the byte side already has one
 //! A `PaneKind` reaches this boundary as a byte nearly everywhere
@@ -26,9 +30,24 @@
 //! ## What is NOT here
 //! Which names are retired, and what each of them folds to. That list is `PaneKind::from_raw`'s, in
 //! a crate that forbids `unsafe`; this module reads a `(ptr, len)` and hands the answer back as a
-//! number. It is one entry point rather than a family: the retired set does not need to be WALKABLE
-//! from Swift, because after this port the Swift side holds no copy of it to keep in step, and a
-//! door nothing calls is the second way to ask a question a live door already answers.
+//! number. The retired set does not need to be WALKABLE from Swift, because after this port the
+//! Swift side holds no copy of it to keep in step, and a door nothing calls is the second way to
+//! ask a question a live door already answers.
+//!
+//! ## The second door, and why a one-line predicate is worth one
+//! `docs/55` §6 says a one-line identity predicate stays in Swift — routing `self == .terminal`
+//! through C only restates the case list. What that carve-out is about is a predicate over a
+//! vocabulary NOBODY ELSE CLASSIFIES. `PaneKind` is not that: this crate already asks
+//! `slopdesk_ws_pane_kind_is_video` on every restore, because the tree repair drops video panes,
+//! and `check-supervisor.sh` fails if the Swift face stops asking for it.
+//!
+//! `can_receive_text` is the same classification's other half — which input funnel a kind has, a
+//! PTY's or the cursor-and-key side channel — and it was `self == .terminal` in Swift beside a
+//! `PaneKind::can_receive_text` in the crate that no Rust caller had ever reached. That pairing is
+//! `docs/55` §8's `MIN_WEIGHT`/`MAX_DEPTH` anti-pattern exactly: two halves of one rule, one asked
+//! through a door and one transcribed beside it, and one of the two is always wrong. A third kind
+//! that streams a display AND takes typed text would have split them, with the broadcast recipient
+//! set and the restore filter disagreeing about the same pane and both suites green.
 
 use core::ffi::c_uchar;
 
@@ -67,12 +86,32 @@ pub unsafe extern "C" fn slopdesk_ws_pane_kind_from_raw(raw: *const c_uchar, len
     PaneKind::from_raw(name).map_or(-1, |kind| i32::from(kind.as_byte()))
 }
 
+/// Whether a `pane/kind` byte names a pane text can be TYPED into — the recipient set for
+/// broadcast, or synchronized, input.
+///
+/// A predicate rather than a case list, for the reason [`crate::workspace`]'s video door gives one
+/// section up in the module header: the two select complementary halves of the same vocabulary, and
+/// a kind spelled out on one side of the boundary agrees with the crate right up until it does not.
+///
+/// A byte this build has no kind for reads as a terminal, which is where the whole boundary
+/// degrades a `pane/kind` it does not recognise. Failing OPEN is right here for the same reason it
+/// is right there: the worst case is a broadcast line delivered to a pane that renders it, against
+/// a keystroke silently dropped for a pane the person is looking at.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_pane_kind_can_receive_text(kind: c_uchar) -> bool {
+    PaneKind::from_byte(kind).can_receive_text()
+}
+
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 mod tests {
     use slopdesk_workspace::session::PaneKind;
 
-    use super::slopdesk_ws_pane_kind_from_raw;
+    use super::{slopdesk_ws_pane_kind_can_receive_text, slopdesk_ws_pane_kind_from_raw};
 
     fn from_raw(name: &str) -> i32 {
         // SAFETY: the pointer names a live local for the duration of the call.
@@ -117,6 +156,29 @@ mod tests {
         );
         // SAFETY: a null pointer with a zero length is what `borrow` documents.
         assert_eq!(unsafe { slopdesk_ws_pane_kind_from_raw(std::ptr::null(), 0) }, -1);
+    }
+
+    /// Walked for the third time, and for the sharpest of the three reasons: a kind added on one
+    /// side only is precisely what makes a transcribed `self == .terminal` stop selecting the same
+    /// panes as the crate does.
+    #[test]
+    fn every_kind_crosses_with_the_input_funnel_its_own_case_has() {
+        for kind in PaneKind::ALL {
+            assert_eq!(
+                slopdesk_ws_pane_kind_can_receive_text(kind.as_byte()),
+                kind.can_receive_text(),
+                "{} crossed with an input funnel its case does not have",
+                kind.raw(),
+            );
+        }
+    }
+
+    #[test]
+    fn a_byte_this_build_has_no_kind_for_takes_typed_text_the_way_a_terminal_does() {
+        assert!(
+            slopdesk_ws_pane_kind_can_receive_text(200),
+            "an unrecognised kind degrades to a terminal, and a terminal takes text",
+        );
     }
 
     #[test]

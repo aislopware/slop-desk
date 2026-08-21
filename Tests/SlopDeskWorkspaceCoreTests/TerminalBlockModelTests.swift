@@ -316,6 +316,27 @@ final class TerminalBlockModelTests: XCTestCase {
         XCTAssertEqual(fail.statusLabel, "exit 2")
     }
 
+    /// The list door and the single door are the same rule asked two ways, so they have to answer the
+    /// same thing on every member — including the shapes that only differ in one field (a completed
+    /// block with no exit code, a negative code, a running block that already has a duration).
+    func testWholeListStatusesAgreeWithEachBlock() {
+        let blocks = [
+            CommandBlock(index: 0, commandText: "a", complete: false),
+            CommandBlock(index: 1, commandText: "b", exitCode: 0, durationMS: 250, complete: true),
+            CommandBlock(index: 2, commandText: "c", exitCode: nil, complete: true),
+            CommandBlock(index: 3, commandText: "d", exitCode: 137, complete: true),
+            CommandBlock(index: 4, commandText: "e", exitCode: -1, durationMS: 9, complete: true),
+            CommandBlock(index: 5, commandText: "", durationMS: 4, complete: false),
+        ]
+        XCTAssertEqual(CommandBlock.statuses(of: blocks), blocks.map(\.status))
+        XCTAssertEqual(CommandBlock.statusLabels(of: blocks), blocks.map(\.statusLabel))
+    }
+
+    func testWholeListStatusesOfNothingIsNothing() {
+        XCTAssertEqual(CommandBlock.statuses(of: []), [])
+        XCTAssertEqual(CommandBlock.statusLabels(of: []), [])
+    }
+
     func testDurationLabelFormatting() {
         XCTAssertNil(CommandBlock(index: 0, commandText: "x").durationLabel, "no duration while running/unknown")
         XCTAssertEqual(

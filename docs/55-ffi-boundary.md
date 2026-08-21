@@ -937,6 +937,21 @@ its Swift counterpart takes a directory in order to write. All four were deleted
 **"Do not port this" and "keep an unreachable copy of it" are different instructions**, and the
 second is never what the first meant.
 
+### The pair that is not cross-LANGUAGE at all
+
+⚠️ **The scalar field codec is written twice in RUST.** `slopdesk_wire::document::codec` and
+`slopdesk_workspace::state_codec` are two implementations of the same encoding, in two crates that do
+not depend on each other, and `rust/slopdesk-ffi/tests/snapshot_codec_parity.rs` pins only the
+snapshot GRAMMAR — it never touches the scalar leaves. They agree today (`encode_i32` reaches the
+same bytes via `to_be_bytes` against the `u32` cast; `encode_uuid_list` via `try_from().unwrap_or`
+against `.min()`), with one already-divergent shape: `encode_string` clamps by two different
+implementations, `clamp_utf8` against a hand-rolled boundary walk-back.
+
+Found 2026-08-22, not yet resolved. It is in this section because **every argument above applies
+unchanged when both copies are Rust** — the drift class is "one decision, two implementations,
+nobody diffs them", and the language boundary was only ever the most common place for that to
+happen, never the cause. A reader who takes this section to be about Swift will not look here.
+
 ### The argument that let two of these live for a year: "a name, not a policy"
 
 Both rendezvous addresses carried the same note above the copy, and it was a good argument: a client

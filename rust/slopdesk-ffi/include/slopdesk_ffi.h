@@ -233,9 +233,28 @@ bool slopdesk_replay_adopt_folded_ring(SlopDeskReplay *handle,
                                        const uint8_t *rendered, size_t rendered_len,
                                        const int64_t *seqs, size_t seqs_len, uint64_t generation);
 
-// Reading the slots. result_seq answers -1 out of range; a valid seq is always positive.
-int64_t slopdesk_replay_result_seq(SlopDeskReplay *handle, size_t index);
-size_t  slopdesk_replay_result_len(SlopDeskReplay *handle, size_t index);
+// Reading the slots.
+//
+// One message's metadata. Two words and no padding, so there is nothing here to transcribe.
+typedef struct {
+  int64_t seq;                // the message's monotonic output seq
+  size_t  len;                // its payload length in bytes
+} SlopDeskReplayHeader;
+
+// Every staged message's seq and length, in slot order, in ONE delivery.
+//
+// Answers the count the slot holds — which is what the producer that filled it already returned —
+// and writes nothing unless all of it fits, so a short `cap` is §4's retry at record width. The
+// retry is unreachable in practice: the caller sizes at the count it was handed.
+//
+// The metadata used to be two more doors asked per message, which made reading a slot of n cost
+// 3n + 1 crossings to answer one question about a collection the handle already holds contiguous.
+// It is n + 2 now, and the two per-index metadata doors are gone rather than kept beside this one.
+//
+// A message's BYTES are not in here, deliberately. Each has to land in a buffer of its own on the
+// near side anyway, and a retained history runs to 256 MiB, so flattening the lot into one answer
+// would buy the saved crossings with a whole extra copy of the history.
+size_t  slopdesk_replay_result_headers(SlopDeskReplay *handle, SlopDeskReplayHeader *out, size_t cap);
 size_t  slopdesk_replay_result_copy(SlopDeskReplay *handle, size_t index, uint8_t *out, size_t cap);
 size_t  slopdesk_replay_blob_len(SlopDeskReplay *handle);
 size_t  slopdesk_replay_blob_copy(SlopDeskReplay *handle, uint8_t *out, size_t cap);
@@ -653,6 +672,16 @@ size_t slopdesk_ws_launch_keystrokes(const uint8_t *command, size_t command_len,
 // and means "OS-assigned"; the two errno questions are here because a bind conflict can arrive as
 // a FAILURE or hide inside the framework's retryable waiting state, and both spell it in text.
 bool    slopdesk_ws_listen_port_is_valid(int64_t raw);
+// `raw` as a bindable port, or `-1` for one out of range. Signed rather than §4-shaped because 0 is
+// a REAL answer here — it is the OS-assigned port — and a port is unsigned, so -1 is outside the
+// answer's range by construction the way slopdesk_fuzzy_rank's refusal is. The refusal is never a
+// coercion: clamping mapped -5 to 0, an OS-assigned port nobody asked for and then persisted, and
+// 99999 to 65535 while the field on screen still read 99999. The predicate above is what the text
+// field asks per keystroke to decide whether Start is dark, where there is no port to carry back;
+// this is what the bind asks once, where there is. Composing the two on the near side was the pair
+// this door closes — the refusal was decided in Rust and the cast in Swift, agreeing only because
+// `u16`'s range happens to be the accepted range.
+int32_t slopdesk_ws_listen_port(int64_t raw);
 bool    slopdesk_ws_listen_detail_is_address_in_use(const uint8_t *bytes, size_t len);
 bool    slopdesk_ws_listen_waiting_errno_is_fatal(int32_t posix_errno);
 
@@ -677,6 +706,22 @@ bool slopdesk_ws_successor_after_close(SlopDeskWsUuid closing,
                                        const uint8_t *strings, size_t strings_len,
                                        const SlopDeskWsUuid *history, size_t history_count,
                                        SlopDeskWsUuid *answer);
+
+// Where a newly opened tab lands in the tab bar, under the `new-tab-position` policy `position`
+// names: `auto`, `end` or `after-current`. Those spellings are the client's persisted setting and
+// the settings catalog's own option tokens for this group, so both sides were already holding them
+// — which is why the policy crosses as its spelling rather than as the intent wire's byte, a byte
+// here being a third map from the same three cases to the same three numbers. A spelling this build
+// has never had places the tab where the DEFAULT does rather than refusing, and that fallback is the
+// crate's, so it is one answer and not one per reader.
+//
+// Both counts are signed because the caller's are: a tab list is counted in `Int`, and an active
+// index read out of a restored document can name a tab that has since closed. A negative count is
+// no tabs, a negative active index is the first one, and the answer is always a valid insertion
+// index in 0..=max(tab_count, 0). There is no refusal in it — every policy places every list — and 0
+// is a real answer, being where a tab lands in an empty bar, which is why this is not §4-shaped.
+int64_t slopdesk_ws_new_tab_index(const uint8_t *position, size_t position_len,
+                                  int64_t active_index, int64_t tab_count);
 
 // What a pane is CALLED, in the one precedence every surface that names one shares — the rail row,
 // the tab strip, the pane switcher, the window title. Each `0` below is documented per door: for
@@ -855,6 +900,18 @@ size_t   slopdesk_ws_notify_toast_headline(uint8_t speaker, uint8_t flavour,
                                            uint8_t *out, size_t cap);
 // Spends a token if there is one, writing the refilled bucket back through `limiter`.
 bool     slopdesk_ws_notify_rate_limit_allow(SlopDeskWsNotifyRateLimiter *limiter, double now);
+// Where a bucket comes FROM. The spend door above hands the bucket back by value, so the caller
+// owns the four doubles between calls — which left one thing on this side of the boundary that
+// is not an assignment: what a NEW bucket holds. A bucket that rests FULL delivers the first
+// explicit notification after an attach; one that rests empty swallows it while it fills, which
+// is a rate limiter behaving like a defect. `now` starts its clock.
+SlopDeskWsNotifyRateLimiter slopdesk_ws_notify_rate_limiter(double capacity,
+                                                            double refill_per_second, double now);
+// The bucket the explicit OSC 9/777 path ships with. Its burst and its refill rate are the
+// crate's, not a caller's default argument: those two numbers ARE the anti-flood policy, and a
+// second spelling of them is a second opinion about how much a hostile shell may post — of which
+// the looser one is always the one that runs.
+SlopDeskWsNotifyRateLimiter slopdesk_ws_notify_explicit_rate_limiter(double now);
 
 // ---- What the window's CHROME shows around the panes ----
 //
@@ -1311,11 +1368,43 @@ size_t slopdesk_binding_row_id(size_t index, uint8_t *out, size_t cap);
 // slice, so the table could have been filtered by `cfg!` — but then "which groups does the phone
 // show" would be unanswerable on a Mac, and that is exactly what the tests on both sides ask.
 //
-// Addressing is POSITIONAL WITHIN THE FILTER: a group index selects within the page's filtered
-// list, a row index within that group's filtered rows. A phone asking for group 4 of General gets
-// its own fourth group, never a hole where a macOS-only group was.
+// A PAGE crosses whole, in one delivery. It used to cross positionally — a group count, then a
+// title, a timing and a row count per group, then six more doors per row — which cost `1 + 3G + 6R`
+// crossings to answer one question, and both renderers ask it from inside a body they re-evaluate
+// whenever a setting on the page changes. Worse, every one of those calls re-derived the whole
+// page to reach one member: the row accessor filters the flat table into a fresh list and then
+// filters that group's rows into a second one, so Appearance's ~166 crossings did ~166 filters and
+// ~330 allocations to read 23 rows. The near side wanted the page, so the page is what crosses.
 //
-// Control kinds, as `slopdesk_settings_layout_row_control` returns them.
+// The rows and groups are still filtered to the asking half before anything is written, so a phone
+// reading the fourth group of General gets its own fourth group, never a hole where a macOS-only
+// group was. The near side never sees the unfiltered table and cannot render from it.
+//
+// The answer, all lengths big-endian because this is read across a C boundary where a width that
+// followed the target would be a bug waiting for a 32-bit build:
+//
+//     [uint16 group_count][uint16 row_total]
+//     group_count x [uint8 timing][uint16 row_count]
+//     row_total   x [uint8 control_kind][uint8 control_argument]
+//     (group_count + 4 * row_total) x [uint32 length][UTF-8 bytes]
+//
+// The strings ride BEHIND the fixed records rather than interleaved with them, and how many there
+// are follows from the header — group titles in group order, then key, subtitle, glyph and bespoke
+// id per row, rows in page order. That is what lets the reader cut them with the same
+// length-prefixed splitter the rail's disambiguated labels use and PAD to the promised count: a
+// short delivery is a layout disagreement between the two sides, and padding is what stops it
+// becoming a silent off-by-one where every row after the gap renders its neighbour's words.
+//
+// A zero length is NO string, not an empty one — a row with no glyph and a row with an empty one
+// draw identically, so a presence flag would name a distinction nothing downstream can act on. The
+// ten doors this replaced already conflated them, which is what keeps this a marshalling change.
+//
+// `0` means there is no such page: a section index no section has. A return larger than `cap` means
+// nothing was written — ask again at that size. Every page fits 4096 bytes today (the widest is
+// Controls on a Mac at 3676), and a Rust test fails if one ever stops fitting, so the retry is a
+// correctness property rather than a second crossing every settings render pays.
+//
+// Control kinds, as the `control_kind` byte of each row record carries them.
 #define SLOPDESK_SETTINGS_CONTROL_TOGGLE  0
 #define SLOPDESK_SETTINGS_CONTROL_MENU    1
 #define SLOPDESK_SETTINGS_CONTROL_CARDS   2
@@ -1325,27 +1414,10 @@ size_t slopdesk_binding_row_id(size_t index, uint8_t *out, size_t cap);
 // Prose belonging to the group rather than to a setting; its words are the row's subtitle.
 #define SLOPDESK_SETTINGS_CONTROL_NOTE    6
 #define SLOPDESK_SETTINGS_CONTROL_BESPOKE 7
-// What every `uint8_t` door here answers for a position that names nothing.
+// What a row's `control_argument` byte reads as where its kind draws over neither an option group
+// nor a scalar ladder.
 #define SLOPDESK_SETTINGS_LAYOUT_NONE ((uint8_t)0xFF)
-size_t slopdesk_settings_layout_group_count(uint8_t section_index, bool mac);
-size_t slopdesk_settings_layout_group_title(uint8_t section_index, bool mac, size_t group_index,
-                                            uint8_t *out, size_t cap);
-uint8_t slopdesk_settings_layout_group_timing(uint8_t section_index, bool mac, size_t group_index);
-size_t slopdesk_settings_layout_row_count(uint8_t section_index, bool mac, size_t group_index);
-size_t slopdesk_settings_layout_row_key(uint8_t section_index, bool mac, size_t group_index,
-                                        size_t row_index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_layout_row_subtitle(uint8_t section_index, bool mac, size_t group_index,
-                                             size_t row_index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_layout_row_glyph(uint8_t section_index, bool mac, size_t group_index,
-                                          size_t row_index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_layout_row_bespoke_id(uint8_t section_index, bool mac, size_t group_index,
-                                               size_t row_index, uint8_t *out, size_t cap);
-uint8_t slopdesk_settings_layout_row_control(uint8_t section_index, bool mac, size_t group_index,
-                                             size_t row_index);
-// The option group, scalar ladder or stepper range the control draws over; which of the three
-// follows from the kind the caller has necessarily already read.
-uint8_t slopdesk_settings_layout_row_control_argument(uint8_t section_index, bool mac,
-                                                      size_t group_index, size_t row_index);
+size_t slopdesk_settings_layout_page(uint8_t section_index, bool mac, uint8_t *out, size_t cap);
 
 // ---- What the phone's keyboard sends ----
 //
@@ -1580,6 +1652,11 @@ size_t slopdesk_ws_retile(const SlopDeskWsUuid *leaves, size_t count, uint8_t la
 // bytes are not a value of this kind" without a sentinel that could also be data: a lastExitCode of
 // -1 is a real exit code, and 0xFFFFFFFF is its encoding.
 
+// A one-byte field, and the same byte read as a BOOL. The bool reading is a door of its own
+// rather than a `!= 0` composed by the caller: both of a bool's values are real answers, so the
+// width refusal has to ride the return, and a side that read the byte as `== 1` instead would
+// answer false for every non-canonical byte a peer sends without either side failing a decode.
+bool slopdesk_ws_decode_bool(const uint8_t *bytes, size_t len, bool *out);
 bool slopdesk_ws_decode_u8(const uint8_t *bytes, size_t len, uint8_t *out);
 bool slopdesk_ws_decode_u8_pair(const uint8_t *bytes, size_t len, uint8_t *first, uint8_t *second);
 bool slopdesk_ws_decode_u16_pair(const uint8_t *bytes, size_t len, uint16_t *first,
@@ -1855,6 +1932,19 @@ bool slopdesk_ws_pane_kind_is_video(uint8_t kind);
 // How many pane kinds there are, so a caller can WALK the vocabulary rather than name its members.
 size_t slopdesk_ws_pane_kind_count(void);
 
+// Whether a `pane/kind` byte names a pane text can be TYPED into — the recipient set for broadcast,
+// or synchronized, input. It is the other half of the classification the video predicate above
+// makes, and it is a door for that predicate's reason one register up: asking for one of a pair and
+// transcribing the other is the shape docs/55 §8 catalogues, and it had already happened here — the
+// Swift side spelled `self == .terminal` beside a `PaneKind::can_receive_text` in the crate that no
+// Rust caller had ever reached. A third kind that both streams a display and takes typed text would
+// have split the broadcast recipient set from the restore filter with both suites green.
+//
+// An unknown byte reads as a terminal and so DOES take text. Failing OPEN, the way the video
+// predicate does: a broadcast line delivered to a pane that renders it is a better worst case than a
+// keystroke silently dropped for the pane the person is looking at.
+bool slopdesk_ws_pane_kind_can_receive_text(uint8_t kind);
+
 // Which pane kind a persisted DISCRIMINATOR names. The workspace FILE's string form is read on the
 // Rust side of its own door; the one file whose decoder is still Foundation's is `device-prefs.json`,
 // whose captured session templates carry a `PaneKind` per leaf. The five retired names — claudeCode,
@@ -2064,6 +2154,11 @@ bool slopdesk_ws_decode_uuid(const uint8_t *bytes, size_t len, SlopDeskWsUuid *o
 size_t slopdesk_ws_encode_key(uint8_t kind, SlopDeskWsUuid object, uint8_t field_tag, uint8_t *out,
                               size_t cap);
 size_t slopdesk_ws_encode_u32(uint32_t value, uint8_t *out, size_t cap);
+// pane/lastExitCode, four bytes big-endian carrying the u32 bit pattern — so a signal-killed
+// child's negative code survives with no sign convention for either end to get wrong. Beside the
+// unsigned door rather than composed from it: the bit pattern IS the convention, and the decode
+// half of that round trip was already being chosen on this side of the boundary.
+size_t slopdesk_ws_encode_i32(int32_t value, uint8_t *out, size_t cap);
 size_t slopdesk_ws_encode_u16_pair(uint16_t first, uint16_t second, uint8_t *out, size_t cap);
 size_t slopdesk_ws_encode_i64(int64_t value, uint8_t *out, size_t cap);
 
@@ -3763,6 +3858,19 @@ typedef struct {
 } SlopDeskBlockFirstSeen;
 
 SlopDeskBlockStatus slopdesk_block_status(SlopDeskBlockFields fields);
+
+// The status of EVERY block in one crossing, in the order given.
+//
+// Answers how many statuses there ARE, which is always `count`, and writes nothing unless all of
+// them fit — §4's retry, at record width. The caller sizes at the length of the list it just handed
+// over, so the retry is unreachable rather than merely rare.
+//
+// The single-field door above stays and is the one a ROW asks: it is about itself. This is for a
+// caller holding the whole ring contiguous — the peek overlay's transcript derived every block's
+// status inside a map, on every render pass of the overlay, and then flattened the strings it built
+// back into a blob for the very next crossing. Same rule behind both; one of them is not a loop.
+size_t slopdesk_block_statuses(const SlopDeskBlockFields *blocks, size_t count,
+                               SlopDeskBlockStatus *out, size_t cap);
 size_t slopdesk_block_duration_label(SlopDeskBlockFields fields, uint8_t *out, size_t cap);
 bool   slopdesk_block_adjacent_failed(const SlopDeskBlockFields *newest_first, size_t count,
                                       bool has_from, uint32_t from_index, bool forward,

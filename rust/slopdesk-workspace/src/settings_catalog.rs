@@ -761,6 +761,24 @@ pub enum Stepper {
 }
 
 impl Stepper {
+    /// Every range, in case-index order — for the tests that must cover all of them.
+    ///
+    /// `cfg(test)` for [`Ladder::ALL`]'s reason: [`index`](Self::index) and
+    /// [`from_index`](Self::from_index) are hand-written matches that never read this table, and a
+    /// door for a count nothing outside a test would call is a door with no caller. What the table
+    /// buys is that the round trip below is not a list of cases someone has to remember to extend —
+    /// a seventh range that nobody gives an index fails here rather than in a settings pane, where
+    /// it would read as a stepper stuck at zero with no range at all.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 6] = [
+        Self::WindowCells,
+        Self::WindowPixels,
+        Self::FontPoints,
+        Self::VideoQp,
+        Self::VideoFecParity,
+        Self::VideoFecGroup,
+    ];
+
     /// The case index a range crosses as.
     #[must_use]
     pub const fn index(self) -> u8 {
@@ -1155,6 +1173,38 @@ mod tests {
         assert_eq!(Ladder::Scrollback.readout(f64::NAN), "0 lines");
         assert_eq!(Ladder::Scrollback.readout(f64::INFINITY), "0 lines");
         assert_eq!(Stepper::WindowPixels.readout(f64::NAN), "0 px");
+    }
+
+    /// The `Ladder` round trip had a test and the `Stepper` one did not, which is the asymmetry
+    /// this covers. The index is what crosses `slopdesk_settings_stepper` and
+    /// `slopdesk_settings_stepper_readout`, so a case that gained an index without a `from_index`
+    /// arm — or two cases that both claim 3 — would answer a NEIGHBOUR's bounds: a font size field
+    /// offering 1…51, silently, with nothing on either side of the boundary able to notice.
+    #[test]
+    fn every_stepper_survives_the_index_it_crosses_as() {
+        for stepper in Stepper::ALL {
+            assert_eq!(
+                Stepper::from_index(stepper.index()),
+                Some(stepper),
+                "{stepper:?} does not come back from its own index"
+            );
+            let bounds = stepper.bounds();
+            assert!(bounds.min < bounds.max, "{stepper:?} has an empty range");
+            assert!(bounds.step > 0, "{stepper:?} has no granularity");
+        }
+        // Each index is claimed ONCE. A duplicate passes the round trip above — both cases map to
+        // whichever arm `from_index` lists first only if they also map back — so the collision has
+        // to be asked about separately.
+        let mut indices: Vec<u8> = Stepper::ALL.iter().map(|stepper| stepper.index()).collect();
+        indices.sort_unstable();
+        indices.dedup();
+        assert_eq!(indices.len(), Stepper::ALL.len(), "two ranges share one index");
+        // Past the end, derived rather than spelled, so adding a range does not need this line
+        // rewritten to keep asserting the same thing. `None` is the documented fallback, and the
+        // doors turn it into `found: false` and an empty readout rather than a panic.
+        let past_the_end = u8::try_from(Stepper::ALL.len()).ok();
+        assert_eq!(past_the_end.and_then(Stepper::from_index), None);
+        assert_eq!(Stepper::from_index(u8::MAX), None);
     }
 
     /// A stepper's readout keeps its unit AND drops a fraction nobody typed. Both halves were

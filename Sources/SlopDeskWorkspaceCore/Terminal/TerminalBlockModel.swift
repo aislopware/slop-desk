@@ -137,11 +137,39 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
     /// the C→interrupt time). "Has a duration" therefore counts as FINISHED so the row doesn't spin
     /// `running…` forever — and that rule lives in the door, not here.
     public var status: Status {
-        let answer = slopdesk_block_status(fields)
+        Self.status(from: slopdesk_block_status(fields))
+    }
+
+    /// Every block's ``Status`` in ONE crossing, in the order given — the form a caller holding the
+    /// whole ring asks for.
+    ///
+    /// The rule is the same door's; what changes is how often the boundary is crossed to run it. The
+    /// peek transcript derives a status per block inside a `map`, on every render pass of the
+    /// overlay, and then hands the strings it built back across this boundary in the very next call,
+    /// so `n` crossings became one. ``status`` stays for the row that is asking about itself.
+    public static func statuses(of blocks: [Self]) -> [Status] {
+        guard !blocks.isEmpty else { return [] }
+        let held = blocks.map(\.fields)
+        var answers = [SlopDeskBlockStatus](repeating: SlopDeskBlockStatus(), count: held.count)
+        let written = held.withUnsafeBufferPointer { input in
+            answers.withUnsafeMutableBufferPointer { room in
+                slopdesk_block_statuses(input.baseAddress, input.count, room.baseAddress, room.count)
+            }
+        }
+        // The buffer is sized at the list just handed over and the door writes all or nothing, so a
+        // short write is unreachable — which is what makes this a precondition rather than a second
+        // path that would quietly answer a transcript one status short.
+        precondition(written == held.count, "the status door answered a count it would not fill")
+        return answers.map(Self.status(from:))
+    }
+
+    /// The tagged answer as this side's case. One speller, so the single door and the list door
+    /// cannot decode the same byte differently.
+    private static func status(from answer: SlopDeskBlockStatus) -> Status {
         switch answer.kind {
-        case UInt32(SLOPDESK_BLOCK_STATUS_RUNNING): return .running
-        case UInt32(SLOPDESK_BLOCK_STATUS_FAILED): return .failed(code: answer.code)
-        default: return .succeeded
+        case UInt32(SLOPDESK_BLOCK_STATUS_RUNNING): .running
+        case UInt32(SLOPDESK_BLOCK_STATUS_FAILED): .failed(code: answer.code)
+        default: .succeeded
         }
     }
 
@@ -156,6 +184,21 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
 
     /// A short, human status label ("running…", "exit 0", "exit 137").
     public var statusLabel: String {
+        Self.label(for: status, exitCode: exitCode)
+    }
+
+    /// Every block's ``statusLabel``, over ONE ``statuses(of:)`` crossing — the whole-list form the
+    /// peek transcript reads, satisfying `PeekBlockLine`'s requirement of the same name.
+    public static func statusLabels(of lines: [Self]) -> [String] {
+        zip(lines, statuses(of: lines)).map { block, status in
+            label(for: status, exitCode: block.exitCode)
+        }
+    }
+
+    /// The words a status reads as. The surface's vocabulary, deliberately on this side (the door's
+    /// module says so), and spelled ONCE so a row and a transcript cannot print different words for
+    /// the same block.
+    private static func label(for status: Status, exitCode: Int32?) -> String {
         switch status {
         case .running: "running…"
         case .succeeded: "exit \(exitCode ?? 0)"

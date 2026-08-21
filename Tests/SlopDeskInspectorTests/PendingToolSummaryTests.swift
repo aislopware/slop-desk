@@ -115,9 +115,11 @@ final class PendingToolSummaryTests: XCTestCase {
         XCTAssertEqual(JSONValue.number(-0.5).displayString, "-0.5")
         XCTAssertEqual(JSONValue.number(0).displayString, "0")
         // The `1e15` guard: below it a whole number is re-derived through `Int64`, at and above it
-        // the `Double`'s own spelling stands. Rust prints the first of these exactly.
-        XCTAssertEqual(JSONValue.number(1e15).displayString, "1e+15")
+        // the `Double`'s own spelling stands — which is NOT exponent notation until 1e16. Measured,
+        // not reasoned: `String(1e15)` is "1000000000000000.0" and `String(1e16)` is "1e+16".
         XCTAssertEqual(JSONValue.number(999_999_999_999_999).displayString, "999999999999999")
+        XCTAssertEqual(JSONValue.number(1e15).displayString, "1000000000000000.0")
+        XCTAssertEqual(JSONValue.number(1e16).displayString, "1e+16")
     }
 
     /// Absence, booleans and the two container joins — the rest of the table `display_string` has to

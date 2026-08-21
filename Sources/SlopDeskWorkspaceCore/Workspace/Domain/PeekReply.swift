@@ -32,9 +32,14 @@ public struct PeekContent: Equatable, Sendable {
     /// the two fields become two PARALLEL flat blobs under one count, and the lines come back the same
     /// way. Generic over ``PeekBlockLine`` so the caller can hand over any block shape without this file
     /// importing `SlopDeskTerminal`.
-    public static func recentLines(from blocks: [some PeekBlockLine], limit: Int) -> [String] {
+    ///
+    /// The status labels are asked for as a LIST, through ``PeekBlockLine/statusLabels(of:)``. Read
+    /// one at a time they were a door crossing per block — and this runs inside the peek overlay's
+    /// `body`, so it is once per block per render pass, to build strings that are flattened straight
+    /// back across the same boundary on the next line.
+    public static func recentLines<Line: PeekBlockLine>(from blocks: [Line], limit: Int) -> [String] {
         let (commandBlob, commandLengths) = TerminalLinkDetector.flatten(blocks.map(\.commandText))
-        let (statusBlob, statusLengths) = TerminalLinkDetector.flatten(blocks.map(\.statusLabel))
+        let (statusBlob, statusLengths) = TerminalLinkDetector.flatten(Line.statusLabels(of: blocks))
         // A negative limit is clamped rather than rejected: the door's `limit` is a `size_t`, and a
         // negative `Int` reinterpreted there would be an enormous window instead of an empty one.
         // Zero is a real answer the rule already gives, so nothing here decides anything.
@@ -113,6 +118,19 @@ public protocol PeekBlockLine {
     var commandText: String { get }
     /// A short, human status label ("running…", "exit 0", "exit 137").
     var statusLabel: String { get }
+    /// Every line's ``statusLabel``, in order — the form a caller holding the whole list asks for.
+    ///
+    /// A REQUIREMENT rather than only an extension, so the witness table dispatches to a conformer
+    /// that can answer the list in one go: `CommandBlock`'s label is derived through the block-status
+    /// door, and asking it per member is a crossing per block per render of the peek overlay. The
+    /// default below is the honest loop, which is what a stand-in whose label is just a stored
+    /// string wants.
+    static func statusLabels(of lines: [Self]) -> [String]
+}
+
+public extension PeekBlockLine {
+    /// One at a time, for a conformer whose label costs nothing to read.
+    static func statusLabels(of lines: [Self]) -> [String] { lines.map(\.statusLabel) }
 }
 
 // MARK: - PeekReplyTarget (the pure "which blocked pane does ⌘⌥J answer" selection)

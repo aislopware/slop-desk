@@ -151,11 +151,18 @@ public struct NotificationRateLimiter: Sendable {
     public var capacity: Double { bucket.capacity }
     public var refillPerSecond: Double { bucket.refill_per_second }
 
-    public init(capacity: Double = 5, refillPerSecond: Double = 0.5, now: TimeInterval) {
-        bucket = SlopDeskWsNotifyRateLimiter(
-            capacity: capacity, refill_per_second: refillPerSecond, tokens: capacity,
-            last_refill: now,
-        )
+    /// A full bucket at the burst and refill rate given. "Full" is the crate's answer, not this
+    /// side's: filling the four fields here made one language decide what a NEW bucket starts with,
+    /// and a bucket that rested empty would swallow the first notification of every attach.
+    public init(capacity: Double, refillPerSecond: Double, now: TimeInterval) {
+        bucket = slopdesk_ws_notify_rate_limiter(capacity, refillPerSecond, now)
+    }
+
+    /// The bucket the explicit (OSC 9/777) path ships with. Its burst and refill rate are the
+    /// crate's — they are the anti-flood policy, and a default argument spelling them here was a
+    /// second opinion about how much a hostile shell may post.
+    public init(now: TimeInterval) {
+        bucket = slopdesk_ws_notify_explicit_rate_limiter(now)
     }
 
     /// Refills by elapsed time then consumes a token if one is available. Returns whether the
@@ -193,8 +200,10 @@ public final class CommandCompletionNotifier {
     private var granted: Bool?
 
     /// Anti-flood limiter for EXPLICIT (OSC 9/777) notifications — a hostile remote process could
-    /// otherwise post unboundedly. ~5 burst, then ~1 per 2s. (The long-command path is naturally
-    /// rate-limited by the ~10s threshold, so it is not gated.)
+    /// otherwise post unboundedly. The burst and the refill rate are the crate's and are not
+    /// restated here; a comment naming them is a claim with nothing behind it the day they are
+    /// retuned. (The long-command path is naturally rate-limited by its own duration threshold, so
+    /// it is not gated.)
     private var explicitLimiter = NotificationRateLimiter(now: ProcessInfo.processInfo.systemUptime)
 
     /// The dock-bounce seam: called when a notification is DELIVERED while the app is not

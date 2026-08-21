@@ -29,8 +29,14 @@ pub const fn is_valid_port(raw: i64) -> bool {
 /// The UI starts ONLY on a `Some`, which is what keeps the displayed value and the bound value the
 /// same number.
 ///
-/// No caller yet: only [`is_valid_port`] has a door, so `PortValidation.port` composes that door
-/// with its own cast instead of asking for this answer.
+/// This had no caller for a while, and the comment that said so recorded the arrangement rather
+/// than the defect in it: `PortValidation.port` composed [`is_valid_port`]'s door with a cast of
+/// its own, so the REFUSAL was decided here and the CONVERSION there, in two languages that could
+/// only agree by inspection. Both halves cross as one answer now.
+///
+/// Deliberately NOT `is_valid_port(raw).then(…)`. The range and the conversion are the same claim,
+/// and spelling it twice inside one function is the shape this whole module is about, one register
+/// down: `u16`'s own range IS `VALID_PORT_RANGE`, so a try-from cannot disagree with it.
 #[must_use]
 pub fn port(raw: i64) -> Option<u16> {
     u16::try_from(raw).ok()

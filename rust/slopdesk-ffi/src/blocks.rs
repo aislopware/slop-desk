@@ -21,6 +21,15 @@
 //! projection in production, a hand-written list in a test. None of the three needs the store, and
 //! making them need it would mean a test could not ask the question without building one.
 //!
+//! ## Why the status rule has a LIST door beside the single one
+//!
+//! A row asks about itself, which is what [`slopdesk_block_status`] is for and why it stays. A
+//! caller holding the whole ring was asking `n` times over an array it already had contiguous —
+//! the peek overlay's transcript derives every block's status inside a `map`, on every render pass,
+//! and then flattens the strings it built back into a blob for the very next crossing. So
+//! [`slopdesk_block_statuses`] answers the array in one delivery, and both doors run
+//! [`status_of`], which is the rule written once.
+//!
 //! ## Why the projection is one call
 //!
 //! [`slopdesk_block_store_project`] writes every row and the single arena their command texts live
@@ -290,6 +299,11 @@ unsafe fn held<'a>(handle: *mut SlopDeskBlockStore) -> Option<&'a mut SlopDeskBl
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
 pub unsafe extern "C" fn slopdesk_block_status(fields: SlopDeskBlockFields) -> SlopDeskBlockStatus {
+    status_of(fields)
+}
+
+/// The status rule, once, so the single door and the list door cannot answer differently.
+fn status_of(fields: SlopDeskBlockFields) -> SlopDeskBlockStatus {
     match fields.block("").status() {
         BlockStatus::Running => {
             SlopDeskBlockStatus {
@@ -310,6 +324,50 @@ pub unsafe extern "C" fn slopdesk_block_status(fields: SlopDeskBlockFields) -> S
             }
         },
     }
+}
+
+/// The status of EVERY block in one crossing, in the order given.
+///
+/// Answers how many statuses there ARE, which is always `count`, and writes nothing unless all of
+/// them fit — so a short `cap` is §4's retry rather than a half-filled array. In practice the retry
+/// is unreachable: the caller sizes at the length of the list it just handed over.
+///
+/// ## Why this is not just [`slopdesk_block_status`] in a loop
+///
+/// It is the same rule, and the single door stays for the reason its own note gives: a row asks
+/// about itself. But a caller with a LIST was asking `n` times for `n` answers that ride one
+/// contiguous array it already holds — the peek overlay's transcript re-derives every block's
+/// status inside a `map`, on every render pass, and then hands the strings it built back across
+/// this boundary in the very next call. One crossing over the array the caller already has costs
+/// eight bytes an answer and removes the loop.
+///
+/// # Safety
+/// `blocks` must be null or point to `count` live [`SlopDeskBlockFields`], and `out` null or
+/// writable for `cap` [`SlopDeskBlockStatus`]s. Both live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_block_statuses(
+    blocks: *const SlopDeskBlockFields,
+    count: usize,
+    out: *mut SlopDeskBlockStatus,
+    cap: usize,
+) -> usize {
+    // SAFETY: the pair is live for the call or null, which borrows as empty.
+    let fields = unsafe { records_of(blocks, count) };
+    let needed = fields.len();
+    if needed == 0 || needed > cap || out.is_null() {
+        return needed;
+    }
+    for (index, entry) in fields.iter().enumerate() {
+        let status = status_of(*entry);
+        // SAFETY: `index < needed <= cap`, and `out` is writable for `cap` records by the caller's
+        // obligation. The source is a local, so it cannot alias the caller's buffer.
+        unsafe { out.add(index).write(status) };
+    }
+    needed
 }
 
 /// Writes the compact duration label — `"340ms"`, `"1.3s"` — and answers the bytes NEEDED.
@@ -879,9 +937,9 @@ mod tests {
     use super::{
         SLOPDESK_BLOCK_FILTER_BOOKMARKED, SLOPDESK_BLOCK_FILTER_FAILED, SLOPDESK_BLOCK_STATUS_FAILED,
         SLOPDESK_BLOCK_STATUS_RUNNING, SLOPDESK_BLOCK_STATUS_SUCCEEDED, SlopDeskBlockCounts,
-        SlopDeskBlockFields, SlopDeskBlockRow, SlopDeskBlockStore, SlopDeskBlockUpsert,
+        SlopDeskBlockFields, SlopDeskBlockRow, SlopDeskBlockStatus, SlopDeskBlockStore, SlopDeskBlockUpsert,
         slopdesk_block_adjacent_failed, slopdesk_block_duration_label, slopdesk_block_status,
-        slopdesk_block_store_bookmarks, slopdesk_block_store_current_generation,
+        slopdesk_block_statuses, slopdesk_block_store_bookmarks, slopdesk_block_store_current_generation,
         slopdesk_block_store_filtered, slopdesk_block_store_first_seen, slopdesk_block_store_free,
         slopdesk_block_store_is_bookmarked, slopdesk_block_store_is_pending, slopdesk_block_store_new,
         slopdesk_block_store_project, slopdesk_block_store_request, slopdesk_block_store_reset,
@@ -902,6 +960,70 @@ mod tests {
             output_len: 0,
             prompt_ordinal: index + 1,
         }
+    }
+
+    /// The list door agrees with the single door on EVERY member, which is what lets a caller with
+    /// a whole ring stop asking one at a time.
+    #[test]
+    fn the_list_door_agrees_with_the_single_door_on_every_block() {
+        let held = [
+            fields(0, Some(0), true),
+            fields(1, Some(137), true),
+            fields(2, None, false),
+            fields(3, None, true),
+            fields(4, Some(-1), true),
+        ];
+        let mut answers = vec![SlopDeskBlockStatus { kind: 9, code: 9 }; held.len()];
+        // SAFETY: both arrays are live locals and they do not overlap.
+        let written = unsafe {
+            slopdesk_block_statuses(held.as_ptr(), held.len(), answers.as_mut_ptr(), answers.len())
+        };
+        assert_eq!(written, held.len());
+        for (index, (one, listed)) in held.iter().zip(answers.iter()).enumerate() {
+            // SAFETY: nothing is borrowed by the single door.
+            assert_eq!(*listed, unsafe { slopdesk_block_status(*one) }, "block {index}");
+        }
+        let shape: Vec<(u32, i32)> = answers.iter().map(|answer| (answer.kind, answer.code)).collect();
+        assert_eq!(shape, vec![
+            (SLOPDESK_BLOCK_STATUS_SUCCEEDED, 0),
+            (SLOPDESK_BLOCK_STATUS_FAILED, 137),
+            (SLOPDESK_BLOCK_STATUS_RUNNING, 0),
+            // An interrupted block has a duration and no `D`, so it reads as finished.
+            (SLOPDESK_BLOCK_STATUS_SUCCEEDED, 0),
+            (SLOPDESK_BLOCK_STATUS_FAILED, -1),
+        ],);
+    }
+
+    /// A short buffer leaves it untouched and still reports the count — §4's retry, at record
+    /// width.
+    #[test]
+    fn undersized_statuses_write_nothing_and_report_the_count() {
+        let held = [fields(0, Some(0), true), fields(1, Some(1), true)];
+        let untouched = SlopDeskBlockStatus { kind: 9, code: 9 };
+        let mut tiny = [untouched; 1];
+        // SAFETY: both arrays are live locals and they do not overlap.
+        let needed =
+            unsafe { slopdesk_block_statuses(held.as_ptr(), held.len(), tiny.as_mut_ptr(), tiny.len()) };
+        assert_eq!(needed, 2);
+        assert_eq!(
+            tiny.first(),
+            Some(&untouched),
+            "an undersized call must not write a partial answer"
+        );
+        // A sizing call is how a caller asks the count before allocating.
+        // SAFETY: a null output with a zero cap is the supported sizing form.
+        let sized = unsafe { slopdesk_block_statuses(held.as_ptr(), held.len(), core::ptr::null_mut(), 0) };
+        assert_eq!(sized, 2);
+    }
+
+    /// An empty list answers `0` and touches nothing, which is the only answer it could have.
+    #[test]
+    fn an_empty_list_of_blocks_answers_nothing() {
+        let mut room = [SlopDeskBlockStatus { kind: 9, code: 9 }; 1];
+        // SAFETY: a null input pair borrows as empty; the output is a live local.
+        let needed = unsafe { slopdesk_block_statuses(core::ptr::null(), 0, room.as_mut_ptr(), room.len()) };
+        assert_eq!(needed, 0);
+        assert_eq!(room.first(), Some(&SlopDeskBlockStatus { kind: 9, code: 9 }));
     }
 
     /// Upserts through the door, the way the Swift face does.

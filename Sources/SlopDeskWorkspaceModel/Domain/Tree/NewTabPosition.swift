@@ -1,3 +1,5 @@
+import CSlopDeskFFI
+
 // MARK: - NewTabPosition (`new-tab-position` policy)
 
 /// Where a newly opened tab is inserted into the active session's tab bar — the `new-tab-position`
@@ -9,9 +11,15 @@
 /// - ``end``: always append to the end of the tab list.
 /// - ``afterCurrent``: insert immediately after the active tab (its raw value is `after-current`).
 ///
-/// A pure value type: the placement math lives in ``insertionIndex(activeTabIndex:tabCount:)`` so it is
-/// unit-testable apart from the `WorkspaceTreeOps` op that consumes it. `String`-raw + `CaseIterable` so it
-/// bridges to `Defaults` (see `SettingsKey`) and a future settings picker can enumerate it.
+/// The CASE LIST is a vocabulary in two type systems (docs/55 §6) and stays: a settings picker
+/// switches on it, ``WorkspaceIntent`` writes its byte onto the wire, and the `Defaults` bridge
+/// stores its `rawValue`. The PLACEMENT is not part of the vocabulary and no longer lives here —
+/// ``insertionIndex(activeTabIndex:tabCount:)`` asks `slopdesk_workspace`'s `NewTabPosition`.
+///
+/// `String`-raw + `CaseIterable` so it bridges to `Defaults` (see `SettingsKey`) and the settings
+/// card grid can enumerate it. Those raw values are also the catalog TOKENS the same crate vends
+/// for this group, which is what lets the placement door take a spelling rather than a fourth copy
+/// of the byte map.
 public enum NewTabPosition: String, Codable, Sendable, CaseIterable {
     case auto
     case end
@@ -20,24 +28,32 @@ public enum NewTabPosition: String, Codable, Sendable, CaseIterable {
     case afterCurrent = "after-current"
 
     /// The index at which a new tab should be inserted into a tab list of `tabCount` tabs whose active tab
-    /// sits at `activeTabIndex`. Pure integer index arithmetic.
+    /// sits at `activeTabIndex`.
     ///
     /// - ``auto`` / ``end`` → `tabCount` (the end index = an append, byte-identical to `tabs.append`).
-    /// - ``afterCurrent`` → `activeTabIndex + 1`, with `activeTabIndex` clamped into `0..<tabCount` first so
-    ///   a stale / out-of-range active index can never produce an invalid `Array.insert(at:)` index. An
-    ///   empty list always yields `0`.
+    /// - ``afterCurrent`` → the slot after the active tab, with a stale / out-of-range active index and a
+    ///   nonsense count both clamped first, so the answer can never be an invalid `Array.insert(at:)`
+    ///   index. An empty list always yields `0`.
     ///
-    /// The result is always a valid insertion index in `0...tabCount`.
+    /// The result is always a valid insertion index in `0...max(tabCount, 0)`.
+    ///
+    /// **This body used to be the arithmetic, and that was the more dangerous half of a pair.** The
+    /// same three cases and the same two clamps live in `slopdesk_workspace::session`, and the copy
+    /// that decides where a tab ACTUALLY lands is that one: every ⌘T and ⇧⌘T sends the policy as a
+    /// byte inside a workspace intent and `tree_ops` places the tab on the far side. So this method
+    /// had no production caller at all — it answered its own tests and nothing else, which is the
+    /// one arrangement in which a divergence cannot show up as a red anything (docs/55 §8). It is a
+    /// marshaller now, and the tests written against it exercise the rule that runs.
     public func insertionIndex(activeTabIndex: Int, tabCount: Int) -> Int {
-        let count = max(tabCount, 0)
-        switch self {
-        case .auto,
-             .end:
-            return count
-        case .afterCurrent:
-            guard count > 0 else { return 0 }
-            let clampedActive = min(max(activeTabIndex, 0), count - 1)
-            return min(clampedActive + 1, count)
+        var spelling = rawValue
+        let answer = spelling.withUTF8 { position in
+            slopdesk_ws_new_tab_index(
+                position.baseAddress, position.count, Int64(activeTabIndex), Int64(tabCount),
+            )
         }
+        // `clamping:` rather than a trapping conversion: the door's answer is bounded by a count
+        // this caller supplied, so nothing reachable needs it — and a boundary disagreement should
+        // land the tab somewhere legal rather than kill the app mid-⌘T.
+        return Int(clamping: answer)
     }
 }

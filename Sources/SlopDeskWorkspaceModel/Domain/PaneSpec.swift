@@ -106,7 +106,15 @@ public extension PaneKind {
     /// Whether this pane has a shell input funnel that text can be typed into — the recipient set for
     /// broadcast/synchronized input (tmux `synchronize-panes`). Only the PTY-backed `.terminal` kind; the
     /// video `.desktop` takes input through the cursor/key side-channel, not a text bar.
-    var canReceiveText: Bool { self == .terminal }
+    ///
+    /// This ASKS, for the reason ``isVideo`` above does, and the two are the same argument because
+    /// they are the same classification: which input path a kind has. It was `self == .terminal`
+    /// beside a `PaneKind::can_receive_text` in the crate that nothing in Rust had ever called —
+    /// two halves of one rule, one asked through a door and one transcribed, which is the
+    /// `MIN_WEIGHT`/`MAX_DEPTH` shape docs/55 §8 names and rules on. A third kind that both streams
+    /// a display and takes typed text would have split the broadcast recipient set from the crate's
+    /// answer with every test on both sides green.
+    var canReceiveText: Bool { slopdesk_ws_pane_kind_can_receive_text(WorkspacePaneKindTag.byte(for: self)) }
 }
 
 /// Which remote target a video pane streams. The host + UDP ports are no longer here — they live ONCE
@@ -207,6 +215,14 @@ public struct VideoPaneModes: Codable, Sendable, Equatable {
     /// has to agree that each of these five is independently repairable, which is exactly what
     /// makes them safe to fill: every one is a toggle or a `0`-means-auto override that the user can
     /// re-assert in one click, and none of them names a pane.
+    ///
+    /// ⚠️ **That sentence was false when it was written, which is the point of docs/55 §8's warning
+    /// about a comment naming the other language's behaviour.** `slopdesk_workspace::session` did
+    /// carry a `VideoPaneModes` — five public fields, no methods, no callers, no tests and not even
+    /// re-exported — for as long as this comment claimed otherwise. It had no rule in it and nothing
+    /// reached it, so the pair could never be caught disagreeing; it was deleted on 2026-08-22 on
+    /// the rule that an unreached copy is worse than none, and `check-supervisor.sh` now fails if
+    /// one comes back. The sentence above is true today because the code was changed to match it.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         immersive = (try? c.decode(Bool.self, forKey: .immersive)) ?? false

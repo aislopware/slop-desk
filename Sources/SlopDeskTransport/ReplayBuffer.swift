@@ -221,10 +221,7 @@ public final class ReplayBuffer: @unchecked Sendable {
     /// Retained output payloads with `seq > lastReceivedSeq`, ascending, RAW — the primitive behind
     /// control-channel snapshots. Never distilled.
     public func messages(after lastReceivedSeq: Int64) -> [(seq: Int64, bytes: Data)] {
-        let count = slopdesk_replay_messages(handle, lastReceivedSeq)
-        return (0..<count).map { index in
-            (seq: slopdesk_replay_result_seq(handle, index), bytes: resultBytes(at: index))
-        }
+        messageSlot(slopdesk_replay_messages(handle, lastReceivedSeq))
     }
 
     // MARK: Snapshot-replay source (state-transfer cold reattach)
@@ -355,14 +352,35 @@ public final class ReplayBuffer: @unchecked Sendable {
 
     /// The message slot as `.output` wire messages.
     private func outputs(_ count: Int) -> [WireMessage] {
-        (0..<count).map { index in
-            .output(seq: slopdesk_replay_result_seq(handle, index), bytes: resultBytes(at: index))
+        messageSlot(count).map { .output(seq: $0.seq, bytes: $0.bytes) }
+    }
+
+    /// The whole message slot: ONE crossing for every message's `(seq, len)`, then one copy each.
+    ///
+    /// The metadata used to be two more doors asked per message, so reading a slot of `n` cost
+    /// `3n + 1` crossings to answer one question about a collection the handle already holds
+    /// contiguous. It is `n + 2` now. The PAYLOADS deliberately stay per message: each has to land
+    /// in a `Data` of its own on this side anyway, and a reattach's history is up to 256 MiB, so
+    /// delivering the lot as one answer would buy the saved crossings with a whole extra copy of it.
+    ///
+    /// No retry: the producer that filled the slot already returned `count`, so the buffer is sized
+    /// at the exact answer and a short-write is unreachable rather than merely unlikely. The
+    /// disagreement arm is the same one every other slot reader here takes — nothing, rather than a
+    /// partial history.
+    private func messageSlot(_ count: Int) -> [(seq: Int64, bytes: Data)] {
+        guard count > 0 else { return [] }
+        var headers = [SlopDeskReplayHeader](repeating: SlopDeskReplayHeader(), count: count)
+        let written = headers.withUnsafeMutableBufferPointer { room in
+            slopdesk_replay_result_headers(handle, room.baseAddress, room.count)
+        }
+        guard written == count else { return [] }
+        return headers.enumerated().map { index, header in
+            (seq: header.seq, bytes: resultBytes(at: index, length: header.len))
         }
     }
 
-    /// One message payload. Length first, then one copy — the slot is stable between the two.
-    private func resultBytes(at index: Int) -> Data {
-        let length = slopdesk_replay_result_len(handle, index)
+    /// One message payload, at the length its header already reported — one copy, no sizing call.
+    private func resultBytes(at index: Int, length: Int) -> Data {
         guard length > 0 else { return Data() }
         var payload = Data(count: length)
         let copied = payload.withUnsafeMutableBytes { raw in

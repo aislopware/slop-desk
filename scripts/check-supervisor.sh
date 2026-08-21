@@ -162,7 +162,12 @@ if ! grep -q 'slopdesk_supervisor_control_socket' "${SWIFT_PATHS}"; then
 fi
 # Comments stripped: the prose above the resolution NAMES `NSTemporaryDirectory()` and the socket on
 # purpose, to record which two things drifted and why they are gone. This is about the CODE.
-swift_paths_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_PATHS}")
+swift_paths_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_PATHS}") || true
+# An empty haystack passes the ban below at once, so it is named rather than assumed: a file that
+# became all comment, or a stripper that started eating code, would read as the healthiest result.
+if [[ -z "${swift_paths_code}" ]]; then
+  fail "${SWIFT_PATHS} stripped to nothing — the ban below reads an empty haystack and passes (docs/51 §1)"
+fi
 if grep -qE 'NSTemporaryDirectory|slopdesk-superd\.sock' <<< "${swift_paths_code}"; then
   fail "${SWIFT_PATHS} builds the control address itself again — that resolution is slopdesk_superwire's (docs/51 §1)"
 fi
@@ -376,7 +381,12 @@ fi
 # Comments stripped: the prose above the resolution NAMES `NSTemporaryDirectory()` on purpose, to
 # record why it is gone — on Darwin that call IGNORES $TMPDIR, so the client dialled a path screend
 # never bound and the daemon simply looked absent (measured, 2026-08-22, docs/52).
-screen_paths_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_SCREEN_PATHS}")
+screen_paths_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_SCREEN_PATHS}") || true
+# Named rather than assumed, for the reason the superd haystack one section up is: both bans below
+# pass on an empty string, so a stripper that started eating code would look like agreement.
+if [[ -z "${screen_paths_code}" ]]; then
+  fail "${SWIFT_SCREEN_PATHS} stripped to nothing — the two bans below read an empty haystack and pass (docs/52)"
+fi
 if grep -qE '(getpid|processIdentifier)' <<< "${screen_paths_code}"; then
   fail "a pid reached screend's rendezvous address — see docs/51 §1"
 fi
@@ -2536,7 +2546,12 @@ if [[ "$(grep -c 'import CSlopDeskFFI' "${codec_swift}")" -eq 0 ]]; then
 fi
 # The wrong-width DROP is the codec's safety property. A decoder that stopped asking the crate would
 # be a lenient prefix read nobody notices until a mis-numbered field renders as a plausible value.
+# `decode_bool` and `encode_i32` join the list for a different reason from the rest: they are not
+# decodes the compiler could miss, they are COMPOSITIONS the near side was making for itself —
+# `decodeU8(data).map { $0 != 0 }` and `encodeU32(UInt32(bitPattern: value))` — beside two crate
+# functions that sat without a caller for a month waiting for exactly them.
 for decoder in slopdesk_ws_decode_u8 slopdesk_ws_decode_u32 slopdesk_ws_decode_i64 \
+  slopdesk_ws_decode_bool slopdesk_ws_encode_i32 \
   slopdesk_ws_decode_uuid_list slopdesk_ws_decode_snapshot slopdesk_ws_decode_diff \
   slopdesk_ws_decode_layout slopdesk_ws_decode_weights slopdesk_ws_decode_uuid \
   slopdesk_ws_decode_detached_panes slopdesk_ws_decode_video_target; do
@@ -3613,9 +3628,11 @@ ready_verbs=$(
 # Only the top-level dispatch switch's labels: `case "x":` at the start of a line (column 0), which
 # is what a top-level `switch` in a main.swift script file produces. Nested per-subcommand switches
 # are indented, so they cannot be picked up here.
+# `|| true` rather than a `-z` guard: an empty result cannot pass, because it is compared against a
+# NON-empty `ready_verbs` one line down and the diff is what prints.
 dispatched_verbs=$(
   grep -E '^case "' "${SWIFT_CLI_MAIN}" | sed -E 's/^case "([^"]+)":?.*/\1/' | sort -u
-)
+) || true
 if [[ "${ready_verbs}" != "${dispatched_verbs}" ]]; then
   fail "$(printf '%s dispatches a different set than vocabulary.rs calls Ready:\n%s' \
     "${SWIFT_CLI_MAIN}" "$(diff <(echo "${ready_verbs}") <(echo "${dispatched_verbs}") |
@@ -5979,6 +5996,140 @@ if ! grep -qF 'withTheDocumentsBlindSpotsClosed' "${repair_file}"; then
 fi
 printf 'check-supervisor: one tree repair, in Rust, and Swift restates neither its predicate nor its seeds.\n'
 
+# ── FOUR CROSS-LANGUAGE TWINS, AND WHAT GROWS EACH ONE BACK ──────────────────────────────────────
+# Ported 2026-08-22. Each of these was one rule implemented in both languages. In three of the four
+# the two copies were not even reached by the same inputs — one side had the callers and the other
+# had the tests — which is the arrangement in which a divergence can never show up as a red
+# anything. What regrows a pair is not a whole function reappearing; it is one predicate, one cast or
+# one line of index arithmetic written by hand beside a door that already answers it.
+
+# 1. THE NEW-TAB PLACEMENT. `NewTabPosition.insertionIndex` was the three-case arithmetic and the two
+#    clamps a second time, and it had NO production caller: ⌘T and ⇧⌘T send the policy as a byte
+#    inside a workspace intent, and `slopdesk_workspace::tree_ops` places the tab on the far side. So
+#    the Swift copy answered only its own four test cases while the crate's decided where every tab
+#    actually went. Catches: the marshaller being replaced by the arithmetic again.
+new_tab_file=Sources/SlopDeskWorkspaceModel/Domain/Tree/NewTabPosition.swift
+if [[ ! -e "${new_tab_file}" ]]; then
+  fail "${new_tab_file} is gone — the case list is a vocabulary that a settings picker, the Defaults bridge and the intent wire all read, so the Swift half is a marshaller, not nothing (docs/55 §6)"
+elif ! spells 'slopdesk_ws_new_tab_index\(' "${new_tab_file}" > /dev/null; then
+  fail "${new_tab_file} stopped asking slopdesk_ws_new_tab_index — the placement is rust/slopdesk-workspace's NewTabPosition, and a Swift copy of it answers only its own tests (docs/55 §8)"
+fi
+# And the arithmetic itself, in case a copy lands BESIDE the door rather than replacing it — the way
+# the isVideo divergence started. Comment-stripped, so the doc comment may go on naming the clamps
+# this method no longer performs.
+new_tab_ghosts=$(spells 'max\(tabCount|min\(max\(|clampedActive|activeTabIndex \+ 1' "${new_tab_file}" 2> /dev/null || true)
+if [[ -n "${new_tab_ghosts}" ]]; then
+  printf '%s\n' "${new_tab_ghosts}" >&2
+  fail "${new_tab_file} restated the insertion arithmetic — the two clamps and the after-current slot are the crate's; ask the door (docs/55 §8)"
+fi
+
+# 2. THE OTHER HALF OF THE PANE-KIND CLASSIFICATION. `PaneKind.isVideo` is already gated above to ask
+#    its door. `canReceiveText` was `self == .terminal` beside a `PaneKind::can_receive_text` that no
+#    Rust caller had ever reached — one classification, one half asked through a door and one half
+#    transcribed, which is precisely the MIN_WEIGHT/MAX_DEPTH anti-pattern docs/55 §8 names and says
+#    one of the two is always wrong. Catches: the broadcast recipient set and the launch restore
+#    selecting different panes the day a third kind lands on one side only.
+if ! spells 'slopdesk_ws_pane_kind_can_receive_text\(' Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift > /dev/null; then
+  fail "PaneKind.canReceiveText stopped asking slopdesk_ws_pane_kind_can_receive_text — half a classification asked and half transcribed is how the two halves come apart, with both suites green (docs/55 §8)"
+fi
+
+# 3. THE BINDABLE PORT. `PortValidation.port` asked the RANGE door and then made its own `UInt16`
+#    conversion, while `listen::port` — which does both — had no caller and said so in its own doc
+#    comment. The two agree only because `u16`'s range happens to BE the accepted range: that is a
+#    fact about today's rule, not a rule. A range that stopped being it — a reserved floor, a refusal
+#    of 0 — moves the predicate and leaves the near-side cast agreeing with nothing. Catches: the
+#    composition growing back.
+port_file=Sources/SlopDeskTransport/PortValidation.swift
+if [[ ! -e "${port_file}" ]]; then
+  fail "${port_file} is gone — the listen-port doors have a Swift face and it is a marshaller (docs/55 §6)"
+elif ! spells 'slopdesk_ws_listen_port\(' "${port_file}" > /dev/null; then
+  fail "${port_file} stopped asking slopdesk_ws_listen_port — a range predicate plus a cast of one's own is the same rule twice, and the cast is the copy nothing tests (docs/55 §8)"
+fi
+port_ghost=$(spells 'UInt16\(raw\)' "${port_file}" 2> /dev/null || true)
+if [[ -n "${port_ghost}" ]]; then
+  printf '%s\n' "${port_ghost}" >&2
+  fail "${port_file} re-derived the port from the range predicate — the refusal and the conversion are one answer, and slopdesk_ws_listen_port is where it lives (docs/55 §8)"
+fi
+
+# 4. THE UNREACHED HALF THAT WAS DELETED RATHER THAN PORTED. `slopdesk_workspace::session` carried a
+#    `VideoPaneModes` of five public fields with no methods, no callers, no tests and no re-export,
+#    while `PaneSpec.swift`'s comment said in so many words that no Rust counterpart existed. Both
+#    halves of that were the defect. An unreached copy cannot be caught disagreeing, because no input
+#    ever reaches both — docs/55 §8's ruling on `templates::plan`, that "do not port this" and "keep
+#    an unreachable copy of it" are different instructions — and a comment asserting a cross-language
+#    fact is a claim with no gate behind it. The modes are device-local, decoded by Foundation out of
+#    `device-prefs.json`, and Swift is the one implementation. Catches: the empty shape being re-added
+#    because the Swift struct has fields that look like they ought to have a home in the crate.
+modes_corpus_count=$(repo_files 'rust/slopdesk-workspace/src/*.rs' | wc -l | tr -d '[:space:]')
+if ((modes_corpus_count < 20)); then
+  fail "rust/slopdesk-workspace/src read as ${modes_corpus_count} files — the crate moved, so the ban below stopped checking anything (docs/55 §8)"
+else
+  # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+  modes_ghost=$(spells 'VideoPaneModes' $(repo_files 'rust/slopdesk-workspace/src/*.rs') 2> /dev/null || true)
+  if [[ -n "${modes_ghost}" ]]; then
+    printf '%s\n' "${modes_ghost}" >&2
+    fail "rust/slopdesk-workspace grew VideoPaneModes back — the latched video modes are device-local and Swift decodes them; an unreached Rust shape is worse than none, because no input reaches both halves (docs/55 §8)"
+  fi
+fi
+
+printf 'check-supervisor: four cross-language twins, one implementation each — the tab placement, the text funnel, the bindable port, the latched modes.\n'
+
+# ── The loop-shaped crossings: a whole-collection door, not a door per member ───────────────────
+# Both pairs below are one rule asked about `n` members. Read one at a time they were a crossing
+# per member on a path that runs per reattach and per render, which is the shape
+# `slopdesk_settings_row_fields` and `slopdesk_ws_rail_disambiguated_labels` were widened out of.
+# Nothing in the type system stops a caller sliding back to `entry(at: index)` inside a `for`, and
+# no test would fail if it did — the answers are identical, only the crossing count moves.
+
+SWIFT_REPLAY_BUFFER=Sources/SlopDeskTransport/ReplayBuffer.swift
+
+# The message slot's METADATA crosses once for the whole slot. Losing this call means the file went
+# back to asking per index, at `3n + 1` crossings for a slot of `n` — on a cold reattach that is a
+# whole retained history's worth.
+if ! spells 'slopdesk_replay_result_headers' "${SWIFT_REPLAY_BUFFER}" > /dev/null; then
+  fail "${SWIFT_REPLAY_BUFFER} no longer calls slopdesk_replay_result_headers — read the WHOLE message slot in one crossing, then one slopdesk_replay_result_copy per message"
+fi
+
+# The two per-index metadata doors were DELETED, not kept beside the list door, because
+# scripts/check-ffi-doors.py would have called them dead the moment Swift stopped asking. A name
+# reappearing anywhere in Swift means someone re-cut a second way to ask what the headers door
+# answers — which is the case that file's own guidance names.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+if hit=$(spells 'slopdesk_replay_result_seq|slopdesk_replay_result_len' $(repo_files 'Sources/**/*.swift') $(repo_files 'Tests/**/*.swift')); then
+  fail "${hit} asks for one message's seq or length — those doors are gone; slopdesk_replay_result_headers answers the whole slot at once"
+fi
+
+# The SHAPE, not just the names: an index range mapped over the slot is how the per-member loop
+# comes back even under different door names. The live reader walks the headers it was handed.
+if hit=$(spells '\(0\.\.<count\)\.map|for index in 0\.\.<count' "${SWIFT_REPLAY_BUFFER}"); then
+  fail "${hit} walks the message slot by index again — take the headers in one crossing and enumerate those"
+fi
+
+SWIFT_BLOCK_MODEL=Sources/SlopDeskWorkspaceCore/Terminal/TerminalBlockModel.swift
+SWIFT_PEEK_REPLY=Sources/SlopDeskWorkspaceCore/Workspace/Domain/PeekReply.swift
+
+# `CommandBlock.statuses(of:)` is the whole-list form. `slopdesk_block_status` stays for the row
+# asking about itself, so the ban below is deliberately on the LOOP and not on the single door.
+if ! spells 'slopdesk_block_statuses' "${SWIFT_BLOCK_MODEL}" > /dev/null; then
+  fail "${SWIFT_BLOCK_MODEL} no longer calls slopdesk_block_statuses — CommandBlock.statuses(of:) answers a whole list in one crossing; the single door is for one row"
+fi
+
+# The peek transcript builds inside the overlay's `body`, so a status per block is a crossing per
+# block PER RENDER — and the strings it builds are flattened straight back across the same boundary
+# on the very next line. It asks through `PeekBlockLine.statusLabels(of:)`, whose `CommandBlock`
+# witness runs the list door once.
+#
+# Scoped to the fold's own parameter, `blocks`: the protocol's DEFAULT witness one screen down is
+# `lines.map(\.statusLabel)` and has to stay — it is the honest loop for a stand-in whose label is a
+# stored string. Banning the map outright would ban the default with it.
+if hit=$(spells 'blocks\.map\(\\\.statusLabel\)' "${SWIFT_PEEK_REPLY}"); then
+  fail "${hit} maps statusLabel over its blocks again — that is one block-status door crossing per block per render; ask Line.statusLabels(of:) once"
+fi
+if ! spells 'statusLabels\(of:' "${SWIFT_PEEK_REPLY}" > /dev/null; then
+  fail "${SWIFT_PEEK_REPLY} no longer asks PeekBlockLine.statusLabels(of:) — the whole-list form is what keeps the transcript off a per-block crossing"
+fi
+printf 'check-supervisor: the loop-shaped crossings are whole-collection doors — the message slot and the block ring.\n'
+
 # ── What Settings OFFERS is one table, not one per framework ──────────────────────────────────
 # The choices, their labels, their honest captions, the taxonomy and the ladders' stops and readouts
 # are `slopdesk_workspace::settings_catalog`. They were already lifted once, out of view bodies into
@@ -6175,25 +6326,85 @@ fi
 printf 'check-supervisor: %s config-bridge arms, every one of them a key settings_rows advertises.\n' \
   "$(printf '%s\n' "${bridge_keys}" | grep -c .)"
 
-# ── A platform gate on a settings page is DATA ────────────────────────────────────────────────
+# ── A platform gate on a settings page is DATA, and a PAGE crosses whole ────────────────────────
 # Which groups a page shows, in what order, and which platform each belongs to is
-# `slopdesk_workspace::settings_layout`. `SettingsLayout.swift` is the near side.
+# `slopdesk_workspace::settings_layout`. `SettingsLayout.swift` is the near side and
+# `rust/slopdesk-ffi/src/settings_layout.rs` is the marshalling.
+#
+# Both sides are read below, so both are established first: a gate that greps a file that is not
+# there prints `grep: No such file` and then keeps going, which buries the one message that says
+# what actually happened.
 layout_swift=Sources/SlopDeskClientCore/Settings/SettingsLayout.swift
+layout_ffi=rust/slopdesk-ffi/src/settings_layout.rs
+layout_header=rust/slopdesk-ffi/include/slopdesk_ffi.h
 if [[ ! -e "${layout_swift}" ]]; then
   fail "${layout_swift} is gone — a settings page would have to spell its own shape again (docs/56)"
+elif [[ ! -e "${layout_ffi}" ]]; then
+  fail "${layout_ffi} is gone — the settings page shape has no marshalling left (docs/55 §2)"
+else
+  # The ONE door, on both sides. It used to be TEN, addressed positionally — a group count, then a
+  # title, a timing and a row count per group, then six more per row — which is `1 + 3G + 6R`
+  # crossings to answer one question, asked from inside a body both renderers re-evaluate whenever a
+  # `@Default` on the page changes.
+  #
+  # `-E` with a word boundary rather than `-F`: a plain substring passes on a door RENAMED to
+  # `…_pagev2`, which is exactly the shape a "just one more door" change takes, and the gate would
+  # then be checking nothing. Break-tested both ways — renamed, and removed outright.
+  if ! grep -qE 'slopdesk_settings_layout_page\b' "${layout_swift}"; then
+    fail "${layout_swift} stopped calling slopdesk_settings_layout_page — a page shape it holds itself is a table written twice (docs/56)"
+  fi
+  # Matched WITH its opening parenthesis, which is what `build-ffi.sh` greps the header for when it
+  # builds the symbol list every slice must carry — so this gate and that one cannot disagree about
+  # what counts as a declaration.
+  if ! grep -qE 'slopdesk_settings_layout_page\(' "${layout_header}"; then
+    fail "slopdesk_settings_layout_page is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name (docs/55 §2)"
+  fi
+  # And the positional walk must not grow back. This is not a style rule. Each of those doors
+  # RE-DERIVED the whole page to reach one member — `settings_layout::row_at` filters the flat
+  # 42-entry table into a fresh list, then filters that group's rows into a second — so laying out
+  # Appearance made ~166 crossings that did ~166 filters and ~330 allocations to read 23 `&'static`
+  # rows. Nothing failed while it did, because every answer was RIGHT; the only trace was the frame
+  # rate under a slider drag on that page. A door is born in the header and in the shim, so that is
+  # where this is caught, and it is caught in both because either alone can be edited on its own.
+  layout_positional='slopdesk_settings_layout_(group_count|group_title|group_timing|row_count|row_key|row_subtitle|row_glyph|row_bespoke_id|row_control)'
+  if grep -qE "${layout_positional}" "${layout_header}"; then
+    fail "slopdesk_ffi.h declares a per-index settings-layout door again — a page crosses WHOLE, and a positional door rebuilds the page once per member (docs/55 §4)"
+  fi
+  if grep -qE "extern \"C\" fn ${layout_positional}" "${layout_ffi}"; then
+    fail "${layout_ffi} exported a per-index settings-layout door again — a page crosses WHOLE (docs/55 §4)"
+  fi
+  # The page crosses ONCE, and it crosses through `SettingsLayout.swift`. A renderer that opens the
+  # door itself is a second delivery per body evaluation, and the Mac and phone settings faces are
+  # exactly where that is convenient, because both already hold a `SettingsLayout.Group`. Through
+  # `spells` so a file that merely NAMES the door in a comment is not a finding — break-tested in
+  # both directions, a real call fires and a `//` mention does not.
+  mapfile -t layout_renderers < <(repo_files 'Sources/SlopDeskMacUI/**/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift')
+  if ((${#layout_renderers[@]} < 20)); then
+    fail "the settings renderer corpus read as fewer than 20 files — this ban has gone vacuous and is checking nothing"
+  else
+    if found=$(spells 'slopdesk_settings_layout' "${layout_renderers[@]}"); then
+      printf '%s\n' "${found}" >&2
+      fail "${found} opens the settings-layout door itself — the page crosses once, through ${layout_swift}, and a renderer that asks again pays a delivery per body evaluation (docs/55 §4)"
+    fi
+  fi
+  # The near side's first guess at a page's size, and the Rust test that proves no page outgrew it.
+  # One number, two spellings. A page that stopped fitting would still be CORRECT — §4's retry
+  # fetches it — and would silently cost every settings render TWO crossings instead of the one this
+  # port exists to deliver, with nothing on either side saying so. Break-tested at a drifted value
+  # and at a renamed constant, where `same`'s empty-side arm is what fires.
+  same 'the settings page first-guess buffer' \
+    "$(sed -nE 's/^ *private static let inlineCapacity = ([0-9]+)$/\1/p' "${layout_swift}")" \
+    "$(sed -nE 's/^ *const SWIFT_FIRST_GUESS: usize = ([0-9]+);$/\1/p' "${layout_ffi}")"
+  # The two tests that make the delivery checkable at all: one walks EVERY row of EVERY page on BOTH
+  # halves against the table the deleted index doors read, the other measures every page against the
+  # buffer above. Delete either and the suite stays green over a layout nothing pins.
+  for layout_test in every_row_of_every_page_matches_the_table_the_index_doors_read \
+    every_page_fits_the_near_sides_first_guess; do
+    if ! grep -qF "${layout_test}" "${layout_ffi}"; then
+      fail "${layout_ffi} dropped ${layout_test} — the page delivery is then pinned by nothing (docs/55 §4)"
+    fi
+  done
 fi
-for door in slopdesk_settings_layout_group_count slopdesk_settings_layout_group_title \
-  slopdesk_settings_layout_group_timing slopdesk_settings_layout_row_count \
-  slopdesk_settings_layout_row_key slopdesk_settings_layout_row_subtitle \
-  slopdesk_settings_layout_row_glyph slopdesk_settings_layout_row_bespoke_id \
-  slopdesk_settings_layout_row_control slopdesk_settings_layout_row_control_argument; do
-  if ! grep -qF "${door}" "${layout_swift}"; then
-    fail "${layout_swift} stopped calling ${door} — a page shape it holds itself is a table written twice"
-  fi
-  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
-    fail "${door} is missing from slopdesk_ffi.h — Swift cannot reach a door the header does not name"
-  fi
-done
 # The point of the table is that a gate became a VALUE, so the gate must not grow back. `Half.current`
 # was that gate's last hiding place: a `#if os(macOS)` inside an otherwise shared file, answering
 # "which half am I" at COMPILE time in a target that compiled for both. Increment 63 split the halves,
@@ -7796,16 +8007,25 @@ fi
 # a default the crate had stopped producing. The face was built and the callers were never moved;
 # this is what stops them drifting back. Comments are stripped first, because the prose around these
 # call sites quotes the words on purpose.
+#
+# This is a BAN, so an empty result passes it — which is exactly what a renamed file would produce.
+# The corpus is established first, the way the gate one register down says a ban list has to be.
+seeded_corpus=(
+  Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspacePersistence.swift
+  Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Desktop.swift
+  Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift
+  Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift
+  Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift
+)
+for file in "${seeded_corpus[@]}"; do
+  [[ -e "${file}" ]] || fail "${file} is gone — the seeded-name ban below reads an empty corpus, which passes it (docs/55 §8)"
+done
 for seeded in Terminal Desktop Local; do
   hits="$(
-    for file in Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspacePersistence.swift \
-      Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Desktop.swift \
-      Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift \
-      Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift \
-      Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift; do
+    for file in "${seeded_corpus[@]}"; do
       sed -E 's#^[[:space:]]*//.*##' "${file}" | grep -Fq "\"${seeded}\"" && printf '%s ' "${file}"
     done
-  )"
+  )" || true
   if [[ -n "${hits}" ]]; then
     fail "the seeded name \"${seeded}\" is spelled in Swift again (${hits}) — ask TreeWorkspaceDefaults (docs/55 §8)"
   fi
@@ -8226,6 +8446,72 @@ for table in built_in_session_templates built_in_launch_presets; do
     fail "rust/slopdesk-workspace/src/templates.rs lost ${table} — Swift seeds a fresh device from it"
   fi
 done
+
+# ── B. …and the two compositions staying gone ───────────────────────────────────────────────────
+# CATCHES: the door call surviving beside a hand-rolled second reading. `!= 0` on a decoded byte and
+# `UInt32(bitPattern:` are the two exact spellings that were here; a ban on the SHAPE is what stops
+# the door from becoming decorative while the composition below it is what actually runs.
+if spells 'decodeU8\(.*\)\.map|UInt32\(bitPattern:' "${codec_swift}" > /dev/null; then
+  fail "${codec_swift} composes a scalar field again — ask slopdesk_ws_decode_bool / slopdesk_ws_encode_i32 instead of re-deriving the byte rule here (docs/55 §6)"
+fi
+
+# ── C. Where an anti-flood bucket comes from ────────────────────────────────────────────────────
+# The spend door hands the bucket back BY VALUE, so the near side owns the four doubles between
+# calls — and for a year it also decided what a NEW one holds. That is not an assignment: a bucket
+# that rests empty rather than full swallows the first explicit notification of every attach, and a
+# rate limiter is the last place anyone looks for a missing banner.
+NOTIFIER_SWIFT=Sources/SlopDeskWorkspaceCore/Connection/CommandCompletionNotifier.swift
+if [[ ! -e "${NOTIFIER_SWIFT}" ]]; then
+  fail "${NOTIFIER_SWIFT} is gone — the bucket's Swift face moved, so the bans below stopped checking anything (docs/55 §6)"
+fi
+# CATCHES: either constructor door being dropped, which can only mean the four fields are being
+# filled on this side again.
+for door in slopdesk_ws_notify_rate_limiter slopdesk_ws_notify_explicit_rate_limiter; do
+  if ! grep -qF "${door}" "${NOTIFIER_SWIFT}"; then
+    fail "${NOTIFIER_SWIFT} stopped calling ${door} — a resting bucket is RateLimiter::new / ::explicit in rust/slopdesk-workspace's notify (docs/55 §6)"
+  fi
+done
+
+# ── D. …and the burst that must not be spelled twice ────────────────────────────────────────────
+# CATCHES two drifts in one pattern. `SlopDeskWsNotifyRateLimiter(` is the memberwise construction
+# that decided `tokens: capacity` on this side; a `= 5` / `= 0.5` default argument on the initialiser
+# is the anti-flood POLICY spelled in Swift, and the looser of two spellings is always the one that
+# runs. Both are gone; neither would fail a test if it came back.
+if spells 'SlopDeskWsNotifyRateLimiter\(|refillPerSecond: Double = |capacity: Double = ' "${NOTIFIER_SWIFT}" > /dev/null; then
+  fail "${NOTIFIER_SWIFT} builds or defaults a bucket again — the burst, the refill rate and 'a new bucket rests full' are notify.rs's EXPLICIT_BURST / EXPLICIT_REFILL_PER_SECOND / RateLimiter::new (docs/55 §4, §8)"
+fi
+
+# ── E. A vocabulary pin needs a COUNT as well as a map ──────────────────────────────────────────
+# `Stepper::ALL` is what the round-trip test walks, and it is hand-maintained. The test already
+# catches a seventh case added to `from_index` but not to `ALL` — `from_index(ALL.len())` would
+# answer `Some` where it asserts `None`. What NOTHING catches is the other order: a case added to
+# the enum and to `index` (which is an exhaustive match, so the compiler forces it) but left out of
+# both `from_index` and `ALL`. Then the suite walks six of seven and passes, and the seventh
+# stepper's door answers `found: false` — a settings field rendered with no range at all.
+#
+# CATCHES: exactly that. The enum's variant count against the length `ALL` declares.
+STEPPER_RS=rust/slopdesk-workspace/src/settings_catalog.rs
+stepper_variants=$(awk '
+  /^pub enum Stepper \{/ { inside = 1; next }
+  inside && /^\}/ { exit }
+  inside && /^    [A-Z][A-Za-z]*,$/ { n++ }
+  END { print n + 0 }
+' "${STEPPER_RS}")
+stepper_all=$(awk '
+  /^impl Stepper \{/ { inside = 1 }
+  inside && /const ALL: \[Self; / {
+    match($0, /\[Self; [0-9]+\]/)
+    print substr($0, RSTART + 7, RLENGTH - 8)
+    exit
+  }
+' "${STEPPER_RS}")
+# EMPTY is not agreement, for `same`'s reason one register up: both sides here are extractions, and
+# a rename that broke either would leave "" == "" looking like the healthiest result this can print.
+if [[ -z "${stepper_variants}" || -z "${stepper_all}" || "${stepper_variants}" == "0" ]]; then
+  fail "the Stepper count gate read one side as EMPTY — its awk extraction over ${STEPPER_RS} has gone stale and stopped comparing anything (docs/55 §8)"
+elif [[ "${stepper_variants}" != "${stepper_all}" ]]; then
+  fail "${STEPPER_RS} has ${stepper_variants} Stepper cases but ALL declares ${stepper_all} — add the case to ALL and to from_index, or the round-trip test walks a vocabulary it no longer covers (docs/55 §8)"
+fi
 
 # ── Every path this file names still exists ───────────────────────────────────────────────────
 # Forty `SWIFT_*` / `RUST_*` constants name the files the contracts above are read out of, and a

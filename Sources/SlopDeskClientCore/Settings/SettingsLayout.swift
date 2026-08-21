@@ -119,20 +119,7 @@ package enum SettingsLayout {
     /// for every section-keyed door.
     public static func groups(_ section: String, for half: Half) -> [Group] {
         guard let position = SettingsCatalog.sections.firstIndex(where: { $0.id == section }) else { return [] }
-        let index = UInt8(position)
-        let mac = half.isMac
-        return (0..<slopdesk_settings_layout_group_count(index, mac)).compactMap { position in
-            guard let timing = SettingsCatalog.ApplyTiming(
-                rawValue: slopdesk_settings_layout_group_timing(index, mac, position),
-            ) else { return nil }
-            // An absent title is a real answer here, not a marshalling slip: a self-drawing group
-            // has none. The TIMING is what says the position resolved to a group at all.
-            return Group(
-                title: string { slopdesk_settings_layout_group_title(index, mac, position, $0, $1) } ?? "",
-                rows: rows(index, mac, position),
-                timing: timing,
-            )
-        }
+        return page(UInt8(position), half.isMac)
     }
 
     /// What a setting is CALLED on a page, by its key.
@@ -151,29 +138,88 @@ package enum SettingsLayout {
 
     // MARK: The crossing
 
-    /// The rows of one group, read position by position.
-    private static func rows(_ section: UInt8, _ mac: Bool, _ group: Int) -> [Row] {
-        (0..<slopdesk_settings_layout_row_count(section, mac, group)).compactMap { position in
-            guard let control = control(section, mac, group, position) else { return nil }
-            let key = string { slopdesk_settings_layout_row_key(section, mac, group, position, $0, $1) } ?? ""
-            return Row(
-                key: key,
-                label: label(for: key),
-                subtitle: string { slopdesk_settings_layout_row_subtitle(section, mac, group, position, $0, $1) } ?? "",
-                control: control,
-            )
+    /// One page, in ONE crossing.
+    ///
+    /// It used to read position by position: a group count, then a timing, a title and a row count per
+    /// group, then six more doors per row — `1 + 3G + 6R` calls for one question, and Appearance is
+    /// nine groups and twenty-three rows. Both renderers call ``groups(_:for:)`` from inside a body
+    /// they re-evaluate whenever a `@Default` on the page changes, so that walk ran again on every
+    /// toggle flip and on every frame of a slider drag. Worse, the far side re-derived the whole page
+    /// to answer each of those calls — `row_at` filters the flat table into a fresh array and then
+    /// filters that group's rows into a second one — so ~166 crossings did ~166 filters of the table
+    /// and ~330 allocations to read 23 rows. `slopdesk_settings_layout_page` answers with the page.
+    ///
+    /// Empty for a section index no section has, which is what §4's `0` means and what the caller
+    /// already got from the group-count door.
+    private static func page(_ section: UInt8, _ mac: Bool) -> [Group] {
+        let blob = delivered(section, mac)
+        guard blob.count >= headerBytes else { return [] }
+        let groupCount = be16(blob, 0)
+        let rowTotal = be16(blob, 2)
+        let rowBase = headerBytes + groupCount * groupRecordBytes
+        let stringBase = rowBase + rowTotal * rowRecordBytes
+        // The fixed records are read by arithmetic, so a delivery that does not carry all of them is
+        // refused whole rather than walked into. The strings after them are padded instead — see
+        // ``splitLengthPrefixed(_:count:)`` for why the two truncations are handled differently.
+        guard blob.count >= stringBase else { return [] }
+        let text = splitLengthPrefixed(
+            Array(blob[stringBase...]), count: groupCount + rowTotal * rowFieldCount,
+        )
+        var out: [Group] = []
+        out.reserveCapacity(groupCount)
+        var row = 0
+        for index in 0..<groupCount {
+            let record = headerBytes + index * groupRecordBytes
+            let first = row
+            // Clamped to the total the header promised. One pass on the far side writes both counts,
+            // so they cannot disagree — but this is the one place where "cannot happen" is read out
+            // of a buffer instead of out of a type, and a reader that trusted the per-group sum would
+            // index past the fixed records rather than draw a short page.
+            row = min(row + be16(blob, record + 1), rowTotal)
+            // A timing this build has no case for drops the group — but only AFTER its rows have been
+            // stepped over, or every group below it would take its neighbour's rows.
+            guard let timing = SettingsCatalog.ApplyTiming(rawValue: blob[record]) else { continue }
+            // An absent title is a real answer here, not a marshalling slip: a self-drawing group has
+            // none. The TIMING is what says the position resolved to a group at all.
+            out.append(Group(
+                title: text[index],
+                rows: rows(blob, text, groupCount: groupCount, rowBase: rowBase, from: first, upTo: row),
+                timing: timing,
+            ))
+        }
+        return out
+    }
+
+    /// The rows a group owns, read out of the one delivery the page arrived in.
+    private static func rows(
+        _ blob: [UInt8], _ text: [String],
+        groupCount: Int, rowBase: Int, from first: Int, upTo end: Int,
+    ) -> [Row] {
+        (first..<end).compactMap { position in
+            let record = rowBase + position * rowRecordBytes
+            let field = groupCount + position * rowFieldCount
+            guard let control = control(
+                kind: blob[record], argument: blob[record + 1],
+                glyph: text[field + 2], bespoke: text[field + 3],
+            ) else { return nil }
+            let key = text[field]
+            return Row(key: key, label: label(for: key), subtitle: text[field + 1], control: control)
         }
     }
 
     /// One row's control: a kind, plus at most one numeric and one string payload.
-    private static func control(_ section: UInt8, _ mac: Bool, _ group: Int, _ row: Int) -> Control? {
-        let glyph = string { slopdesk_settings_layout_row_glyph(section, mac, group, row, $0, $1) }
-        let argument = slopdesk_settings_layout_row_control_argument(section, mac, group, row)
-        switch slopdesk_settings_layout_row_control(section, mac, group, row) {
+    ///
+    /// A zero-length string is NO string, which is the reading the ten field doors this replaced
+    /// already had — they answered an absent glyph and an empty one with the same zero-length
+    /// delivery, so keeping the conflation is what makes this a marshalling change and not a
+    /// behaviour one.
+    private static func control(kind: UInt8, argument: UInt8, glyph: String, bespoke: String) -> Control? {
+        let symbol = glyph.isEmpty ? nil : glyph
+        switch kind {
         case UInt8(SLOPDESK_SETTINGS_CONTROL_TOGGLE):
-            return glyph.map(Control.toggle(glyph:))
+            return symbol.map(Control.toggle(glyph:))
         case UInt8(SLOPDESK_SETTINGS_CONTROL_MENU):
-            return SettingsCatalog.Group(rawValue: argument).map { .menu(group: $0, glyph: glyph) }
+            return SettingsCatalog.Group(rawValue: argument).map { .menu(group: $0, glyph: symbol) }
         case UInt8(SLOPDESK_SETTINGS_CONTROL_CARDS):
             return SettingsCatalog.Group(rawValue: argument).map { .cards(group: $0) }
         case UInt8(SLOPDESK_SETTINGS_CONTROL_SLIDER):
@@ -181,12 +227,11 @@ package enum SettingsLayout {
         case UInt8(SLOPDESK_SETTINGS_CONTROL_STEPPER):
             return SettingsCatalog.Stepper(rawValue: argument).map { .stepper(range: $0) }
         case UInt8(SLOPDESK_SETTINGS_CONTROL_TEXT):
-            return .text(glyph: glyph)
+            return .text(glyph: symbol)
         case UInt8(SLOPDESK_SETTINGS_CONTROL_NOTE):
             return .note
         case UInt8(SLOPDESK_SETTINGS_CONTROL_BESPOKE):
-            return string { slopdesk_settings_layout_row_bespoke_id(section, mac, group, row, $0, $1) }
-                .map(Control.bespoke(id:))
+            return bespoke.isEmpty ? nil : .bespoke(id: bespoke)
         default:
             // `SLOPDESK_SETTINGS_LAYOUT_NONE`, or a kind this build predates. Dropping the row is the
             // honest answer: a renderer cannot invent a widget it has no case for.
@@ -194,21 +239,70 @@ package enum SettingsLayout {
         }
     }
 
-    /// Reads one delivered string, retrying at the size the door named. `nil` for a zero length, which
-    /// every door uses for "there is nothing here" — a row with no glyph, a control with no bespoke id.
-    private static func string(_ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String? {
+    /// The page's bytes, retrying at the size the door named.
+    ///
+    /// There is no pointer scope to put the retry inside, unlike `RailRowsBuilder`'s: every input here
+    /// is a scalar, so the only borrowed buffer is the one being resized — and reallocating `out`
+    /// inside its own `withUnsafeMutableBufferPointer` is what that rule forbids, not what it asks
+    /// for. The wrapped table is pure, so the second call cannot disagree with the first.
+    private static func delivered(_ section: UInt8, _ mac: Bool) -> [UInt8] {
         var out = [UInt8](repeating: 0, count: inlineCapacity)
-        var written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
-        guard written > 0 else { return nil }
+        var written = out.withUnsafeMutableBufferPointer {
+            slopdesk_settings_layout_page(section, mac, $0.baseAddress, $0.count)
+        }
+        guard written > 0 else { return [] }
         if written > out.count {
             out = [UInt8](repeating: 0, count: written)
-            written = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
-            guard written > 0, written <= out.count else { return nil }
+            written = out.withUnsafeMutableBufferPointer {
+                slopdesk_settings_layout_page(section, mac, $0.baseAddress, $0.count)
+            }
+            guard written > 0, written <= out.count else { return [] }
         }
-        return String(bytes: out.prefix(written), encoding: .utf8)
+        return Array(out.prefix(written))
     }
 
-    /// Long enough for every group title and glyph; a subtitle is a sentence and overflows it, which
-    /// makes the door report its size so the reader asks again.
-    private static let inlineCapacity = 64
+    /// The delivery's `count` length-prefixed strings, padded with empties if it came up short.
+    ///
+    /// Padding rather than trusting the length: a short delivery means the door and this reader
+    /// disagree about the layout, and the alternative to padding is a silent off-by-one where every
+    /// row after the gap renders its neighbour's words.
+    private static func splitLengthPrefixed(_ blob: [UInt8], count: Int) -> [String] {
+        var fields: [String] = []
+        fields.reserveCapacity(count)
+        var cursor = blob.startIndex
+        while fields.count < count, blob.distance(from: cursor, to: blob.endIndex) >= 4 {
+            var length = 0
+            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
+            cursor += 4
+            guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
+            // The producer is `slopdesk_workspace::settings_layout`, so these bytes are a Rust
+            // `&'static str`'s and cannot be invalid UTF-8. A failable init would add a branch meaning
+            // "this row has no label", which is a wrong answer rather than a cautious one.
+            // swiftlint:disable:next optional_data_string_conversion
+            fields.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
+            cursor += length
+        }
+        while fields.count < count { fields.append("") }
+        return fields
+    }
+
+    /// One big-endian pair of bytes at `offset` — every count in the delivery is one.
+    private static func be16(_ blob: [UInt8], _ offset: Int) -> Int {
+        Int(blob[offset]) << 8 | Int(blob[offset + 1])
+    }
+
+    /// The delivery's two counts: how many groups, then how many rows across all of them.
+    private static let headerBytes = 4
+    /// Per group: a timing byte and its row count.
+    private static let groupRecordBytes = 3
+    /// Per row: a control kind and its numeric argument.
+    private static let rowRecordBytes = 2
+    /// Per row, in the flat string run: key, subtitle, glyph, bespoke id.
+    private static let rowFieldCount = 4
+
+    /// Past the widest page — Controls on a Mac, measured at 3676 bytes — so the retry above is a
+    /// correctness property rather than a second crossing every settings render pays.
+    /// `every_page_fits_the_near_sides_first_guess` in `rust/slopdesk-ffi/src/settings_layout.rs` is
+    /// what fails if a new group ever pushes past it, on the side that can measure it.
+    private static let inlineCapacity = 4096
 }

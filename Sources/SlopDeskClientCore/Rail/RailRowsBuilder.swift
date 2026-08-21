@@ -336,10 +336,13 @@ package enum RailRowsBuilder {
         // pointer whose lifetime had already ended.
         let delivered: [UInt8] = blob.withUnsafeMutableBufferPointer { text in
             labels.withUnsafeMutableBufferPointer { held in
+                // The two borrows are read out as plain values first: a closure that captured the
+                // buffer bindings themselves would be capturing `inout` parameters, which Swift
+                // refuses even where the closure never outlives the scope.
+                let (rows, rowCount) = (held.baseAddress, held.count)
+                let (bytes, byteCount) = (text.baseAddress, text.count)
                 let door = { (out: UnsafeMutablePointer<UInt8>?, cap: Int) -> Int in
-                    slopdesk_ws_rail_disambiguated_labels(
-                        held.baseAddress, held.count, text.baseAddress, text.count, out, cap,
-                    )
+                    slopdesk_ws_rail_disambiguated_labels(rows, rowCount, bytes, byteCount, out, cap)
                 }
                 // Four bytes of prefix per answer, and most answers are empty — a list that fits is
                 // the common case, and one that does not says how much it needs.
@@ -762,7 +765,7 @@ package enum RailRowsBuilder {
         return groups.enumerated().map { index, group in
             guard group.header != nil, !qualified[index].isEmpty
             else { return group }
-            return RailRowGroup(header: name, projectKey: group.projectKey, rows: group.rows)
+            return RailRowGroup(header: qualified[index], projectKey: group.projectKey, rows: group.rows)
         }
     }
 }

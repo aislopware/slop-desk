@@ -65,8 +65,10 @@ pub const fn decode_u8(bytes: &[u8]) -> Option<u8> {
 ///
 /// `None` on any length but exactly one; otherwise non-zero is true.
 ///
-/// No caller yet: only [`decode_u8`] has a door, so the near side composes that door with its own
-/// `!= 0` — which is where the discipline above ends up being stated a second time.
+/// It has its own door (`slopdesk_ws_decode_bool`) rather than leaving the near side to compose
+/// [`decode_u8`] with a `!= 0` of its own. That composition is one line and it is still a rule: a
+/// side that spelled it `== 1` would read every non-canonical byte a peer sends as `false` while
+/// this one reads it as `true`, and nothing between them could say so.
 #[must_use]
 pub fn decode_bool(bytes: &[u8]) -> Option<bool> {
     decode_u8(bytes).map(|byte| byte != 0)
@@ -114,8 +116,9 @@ pub fn decode_u32(bytes: &[u8]) -> Option<u32> {
 /// `pane/lastExitCode`. Rides as the `u32` bit pattern so a negative code — a signal-killed child —
 /// survives without a sign convention for either end to get wrong.
 ///
-/// No caller yet: [`decode_i32`] has a door and this does not, so the near side reaches for the
-/// `u32` door and restates the bit-pattern choice on its own side of the boundary.
+/// It has its own door (`slopdesk_ws_encode_i32`), so the bit pattern is chosen HERE. The near side
+/// used to reach for the `u32` door and cast on its own side, which put the encoder's convention in
+/// one language and the decoder's in the other — the two halves of one round trip, a module apart.
 #[must_use]
 pub const fn encode_i32(value: i32) -> [u8; 4] {
     encode_u32(value.cast_unsigned())
