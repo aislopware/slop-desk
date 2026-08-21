@@ -122,7 +122,7 @@ impl GitRun {
     /// Whether this run is part of the READOUT rather than the line's identity — everything the
     /// compact form keeps and the ladder is allowed to shed.
     #[must_use]
-    pub const fn is_status(self) -> bool {
+    const fn is_status(self) -> bool {
         self.sigil.is_some()
     }
 }
@@ -227,7 +227,7 @@ impl GitRuns {
 /// worth nothing when there isn't. What survives is the WORKTREE: `+staged`, `!modified`,
 /// `~conflicted` — uncommitted work and broken merges, the states that decide whether this project
 /// is safe to leave.
-pub const SHED_LADDER: [GitInk; 6] = [
+const SHED_LADDER: [GitInk; 6] = [
     GitInk::Stash,
     GitInk::Divergence,
     GitInk::Untracked,

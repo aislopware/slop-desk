@@ -14,7 +14,7 @@
 ///
 /// This layer is about BYTES, so an identity is its bytes: the crate's own `PaneId`/`TabId` and the
 /// caller's `UUID` both convert in one field copy, and neither has to be named here.
-pub type RawUuid = [u8; 16];
+type RawUuid = [u8; 16];
 
 /// The longest a string field may be. Longer values are clamped, not rejected: a 70 KiB title is a
 /// misbehaving program, not a reason to drop the pane's whole record.
@@ -50,11 +50,7 @@ pub fn decode_string(bytes: &[u8]) -> Option<&str> {
 }
 
 /// A one-byte field (`titleFresh`, `commandRunning`, `liveness`, `syncInputArmed`, `userRenamed`).
-#[must_use]
-pub const fn encode_u8(value: u8) -> [u8; 1] {
-    [value]
-}
-
+///
 /// `None` on any length but exactly one.
 #[must_use]
 pub const fn decode_u8(bytes: &[u8]) -> Option<u8> {
@@ -66,23 +62,18 @@ pub const fn decode_u8(bytes: &[u8]) -> Option<u8> {
 
 /// C-style bool discipline: any non-zero byte is true, which is the rule the rest of the codebase
 /// uses for bytes that crossed a language or a network boundary.
-#[must_use]
-pub const fn encode_bool(value: bool) -> [u8; 1] {
-    [value as u8]
-}
-
+///
 /// `None` on any length but exactly one; otherwise non-zero is true.
+///
+/// No caller yet: only [`decode_u8`] has a door, so the near side composes that door with its own
+/// `!= 0` — which is where the discipline above ends up being stated a second time.
 #[must_use]
 pub fn decode_bool(bytes: &[u8]) -> Option<bool> {
     decode_u8(bytes).map(|byte| byte != 0)
 }
 
 /// A two-byte pair — `agentState` is `[state][kind]`, `progress` is `[state][percent]`.
-#[must_use]
-pub const fn encode_u8_pair(first: u8, second: u8) -> [u8; 2] {
-    [first, second]
-}
-
+///
 /// `None` on any length but exactly two.
 #[must_use]
 pub const fn decode_u8_pair(bytes: &[u8]) -> Option<(u8, u8)> {
@@ -122,6 +113,9 @@ pub fn decode_u32(bytes: &[u8]) -> Option<u32> {
 
 /// `pane/lastExitCode`. Rides as the `u32` bit pattern so a negative code — a signal-killed child —
 /// survives without a sign convention for either end to get wrong.
+///
+/// No caller yet: [`decode_i32`] has a door and this does not, so the near side reaches for the
+/// `u32` door and restates the bit-pattern choice on its own side of the boundary.
 #[must_use]
 pub const fn encode_i32(value: i32) -> [u8; 4] {
     encode_u32(value.cast_unsigned())
@@ -763,7 +757,7 @@ pub fn decode_diff(bytes: &[u8]) -> Option<(Vec<Entry<'_>>, Vec<Key>)> {
 /// Twelve is far past any arrangement a person builds and far short of what would trouble a stack —
 /// but see [`decode_layout`]: the cap here is a FORMAT rule, not the thing keeping the decoder
 /// safe.
-pub const MAX_LAYOUT_DEPTH: usize = 12;
+const MAX_LAYOUT_DEPTH: usize = 12;
 
 /// One node of the layout structure, in a PRE-ORDER walk.
 ///
@@ -901,7 +895,7 @@ pub fn decode_layout(bytes: &[u8]) -> Result<Vec<LayoutNode>, LayoutError> {
 /// The double rides as its raw BIT PATTERN, never a re-parsed decimal — `CLAUDE.md` pins these
 /// bit-exactly, and a decimal round trip is exactly the drift that rule exists to forbid.
 #[must_use]
-pub fn encode_weight(is_fixed: bool, value: f64) -> [u8; 9] {
+fn encode_weight(is_fixed: bool, value: f64) -> [u8; 9] {
     let bits = value.to_bits().to_be_bytes();
     [
         u8::from(is_fixed),
@@ -918,7 +912,7 @@ pub fn encode_weight(is_fixed: bool, value: f64) -> [u8; 9] {
 
 /// A weight's `(is_fixed, value)`, or `None` on any length but exactly nine.
 #[must_use]
-pub fn decode_weight(bytes: &[u8]) -> Option<(bool, f64)> {
+fn decode_weight(bytes: &[u8]) -> Option<(bool, f64)> {
     let (kind, rest) = bytes.split_first()?;
     let bits = <[u8; 8]>::try_from(rest).ok()?;
     Some((*kind != 0, f64::from_bits(u64::from_be_bytes(bits))))

@@ -166,7 +166,7 @@ pub const ROWS: [BindingRow; 77] = [
 
 /// The row `id` is filed under, if this table declares one.
 #[must_use]
-pub fn row_at(id: &str) -> Option<BindingRow> {
+fn row_at(id: &str) -> Option<BindingRow> {
     ROWS.iter().copied().find(|row| row.id == id)
 }
 

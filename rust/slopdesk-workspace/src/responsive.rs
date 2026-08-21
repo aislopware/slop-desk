@@ -17,14 +17,14 @@
 /// At the 720pt macOS window floor the detail is about 500pt (720 minus the ~220 ideal sidebar), so
 /// this sits a hair below that: the floor window resolves REGULAR, and only a truly phone-narrow
 /// detail falls back.
-pub const COMPACT_WIDTH_THRESHOLD: f64 = 460.0;
+const COMPACT_WIDTH_THRESHOLD: f64 = 460.0;
 
 /// The OUTER-WINDOW width below which a regular layout collapses to compact.
 ///
 /// Just below the 720pt macOS minimum-window floor, so that floor resolves regular and only a
 /// genuinely sub-floor window — a future smaller-minimum platform, or a transient pre-constraint
 /// frame — falls back.
-pub const COMPACT_WINDOW_WIDTH_THRESHOLD: f64 = 680.0;
+const COMPACT_WINDOW_WIDTH_THRESHOLD: f64 = 680.0;
 
 /// Whether to use the compact projection: one leaf at a time rather than the full split tree.
 ///
@@ -55,11 +55,11 @@ pub enum DeviceClass {
 }
 
 /// A phone decodes one live video window at a time.
-pub const PHONE_CAP: usize = 1;
+const PHONE_CAP: usize = 1;
 /// An iPad in a regular projection, two.
-pub const PAD_CAP: usize = 2;
+const PAD_CAP: usize = 2;
 /// A Mac, three.
-pub const MAC_CAP: usize = 3;
+const MAC_CAP: usize = 3;
 
 /// The concurrent live-video ceiling for a device class.
 ///

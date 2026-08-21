@@ -35,12 +35,6 @@ macro_rules! identity {
                 self.0
             }
 
-            #[doc = concat!("This ", $what, " in the canonical hyphenated UUID text.")]
-            #[must_use]
-            pub fn text(self) -> String {
-                uuid_text(self.0)
-            }
-
         }
     };
 }
@@ -163,13 +157,11 @@ mod tests {
     use super::{PaneId, SplitNodeId, parse_uuid, uuid_text};
 
     #[test]
-    fn an_id_round_trips_through_its_text_in_either_case() {
+    fn sixteen_bytes_become_the_canonical_uppercase_text() {
         let raw = [
             0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0, 1, 2, 3, 4, 5, 6, 7,
         ];
-        let text = uuid_text(raw);
-        assert_eq!(text, "01234567-89AB-CDEF-0001-020304050607");
-        assert_eq!(PaneId::from_bytes(raw).text(), text);
+        assert_eq!(uuid_text(raw), "01234567-89AB-CDEF-0001-020304050607");
     }
 
     #[test]

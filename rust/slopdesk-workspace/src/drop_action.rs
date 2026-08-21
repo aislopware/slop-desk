@@ -75,8 +75,13 @@ pub enum DropAction {
     },
 }
 
-/// Every zone, in the order the overlay lays them out.
-pub const ZONES: [DropZone; 5] = [
+/// Every zone, in the order the overlay lays them out — which is also the DRAW and HIT order
+/// [`crate::drop_zone`] walks: the central column top-to-bottom, then the two edges.
+///
+/// One array rather than one per module. The hit test resolves overlaps by depth, not by position
+/// in this list, but a second copy that drifted would still change which blob the overlay paints
+/// over which.
+pub(crate) const ZONES: [DropZone; 5] = [
     DropZone::NewTab,
     DropZone::InsertPath,
     DropZone::OpenInPlace,

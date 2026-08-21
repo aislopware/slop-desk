@@ -5,12 +5,12 @@
 //! needs a socket, which is why both are here rather than in the code that opens one.
 
 /// The inclusive range a listen port field accepts. `0` means "OS-assigned".
-pub const VALID_PORT_RANGE: core::ops::RangeInclusive<i64> = 0..=65_535;
+const VALID_PORT_RANGE: core::ops::RangeInclusive<i64> = 0..=65_535;
 
 /// `EADDRINUSE` on Darwin and the BSDs. The host is macOS-only, so this is the errno the framework
 /// reports; naming it here keeps the number out of the two call sites that would otherwise spell
 /// it.
-pub const EADDRINUSE: i32 = 48;
+const EADDRINUSE: i32 = 48;
 
 /// Whether `raw` is a usable listen port.
 ///
@@ -28,6 +28,9 @@ pub const fn is_valid_port(raw: i64) -> bool {
 ///
 /// The UI starts ONLY on a `Some`, which is what keeps the displayed value and the bound value the
 /// same number.
+///
+/// No caller yet: only [`is_valid_port`] has a door, so `PortValidation.port` composes that door
+/// with its own cast instead of asking for this answer.
 #[must_use]
 pub fn port(raw: i64) -> Option<u16> {
     u16::try_from(raw).ok()

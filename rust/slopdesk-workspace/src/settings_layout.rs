@@ -45,19 +45,9 @@ pub enum Platform {
 }
 
 impl Platform {
-    /// The case index a platform crosses as.
-    #[must_use]
-    pub const fn index(self) -> u8 {
-        match self {
-            Self::Both => 0,
-            Self::Mac => 1,
-            Self::Phone => 2,
-        }
-    }
-
     /// Whether a half that identifies as `mac` draws this.
     #[must_use]
-    pub const fn shown_on(self, mac: bool) -> bool {
+    pub(crate) const fn shown_on(self, mac: bool) -> bool {
         match self {
             Self::Both => true,
             Self::Mac => mac,
@@ -230,7 +220,7 @@ pub struct LayoutGroup {
 ///
 /// Order here IS the rendered order, which is why this is one flat slice rather than a map: a map
 /// would need a second list to say the order, and the two would drift.
-pub const GROUPS: &[LayoutGroup] = &[
+pub(crate) const GROUPS: &[LayoutGroup] = &[
     // ── General ────────────────────────────────────────────────────────────────────────────────
     LayoutGroup {
         section: Section::General,
@@ -1819,17 +1809,10 @@ mod tests {
         }
     }
 
-    /// A platform crosses as its own index, and `shown_on` is the only reading of it.
+    /// A platform never crosses the FFI — the header sends the ANSWER, `shown`, not the gate — so
+    /// `shown_on` is the only reading of it there is.
     #[test]
-    fn a_platform_crosses_by_index_and_answers_one_question() {
-        assert_eq!(
-            [
-                Platform::Both.index(),
-                Platform::Mac.index(),
-                Platform::Phone.index()
-            ],
-            [0, 1, 2]
-        );
+    fn a_platform_answers_exactly_one_question() {
         assert!(Platform::Both.shown_on(true) && Platform::Both.shown_on(false));
         assert!(Platform::Mac.shown_on(true) && !Platform::Mac.shown_on(false));
         assert!(!Platform::Phone.shown_on(true) && Platform::Phone.shown_on(false));

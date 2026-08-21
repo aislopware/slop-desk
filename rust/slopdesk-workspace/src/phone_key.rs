@@ -159,7 +159,12 @@ pub enum SpecialKey {
 
 impl SpecialKey {
     /// Every special key, for the tests that must cover all of them.
-    pub const ALL: [Self; 26] = [
+    ///
+    /// `cfg(test)` because that is the whole truth of it: nothing in a shipped build enumerates the
+    /// keys, and leaving it compiled in was only hiding [`token_name`](Self::token_name) from the
+    /// dead-code lint alongside it.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 26] = [
         Self::Escape,
         Self::Tab,
         Self::Return,
@@ -190,9 +195,10 @@ impl SpecialKey {
 
     /// The [`crate::send_keys`] token name for this key — the spelling a preset or `--key` would
     /// use. Only the agreement test reads it, and that is the point: it is the join column between
-    /// the two tables.
+    /// the two tables — so it is compiled only for that test.
+    #[cfg(test)]
     #[must_use]
-    pub const fn token_name(self) -> &'static str {
+    pub(crate) const fn token_name(self) -> &'static str {
         match self {
             Self::Escape => "escape",
             Self::Tab => "tab",
@@ -230,7 +236,7 @@ impl SpecialKey {
 /// byte for it. The function block is contiguous in the HID page, so it is one range rather than
 /// twelve rows.
 #[must_use]
-pub const fn special_key(hid_usage: u16) -> Option<SpecialKey> {
+const fn special_key(hid_usage: u16) -> Option<SpecialKey> {
     let key = match hid_usage {
         HID_ESCAPE => SpecialKey::Escape,
         HID_TAB => SpecialKey::Tab,
@@ -293,8 +299,9 @@ pub enum ModalKey {
 }
 
 impl ModalKey {
-    /// Every modal key, in case-index order.
-    pub const ALL: [Self; 7] = [
+    /// Every modal key, in case-index order — for the tests that must cover all of them.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 7] = [
         Self::Escape,
         Self::Enter,
         Self::Backspace,
@@ -352,31 +359,31 @@ pub const HID_TAB: u16 = 43;
 /// `UIKeyboardHIDUsage.keyboardSpacebar`.
 pub const HID_SPACE: u16 = 44;
 /// `UIKeyboardHIDUsage.keyboardF1`. F1 to F12 are contiguous from here.
-pub const HID_F1: u16 = 58;
+const HID_F1: u16 = 58;
 /// `UIKeyboardHIDUsage.keyboardF2`.
-pub const HID_F2: u16 = 59;
+const HID_F2: u16 = 59;
 /// `UIKeyboardHIDUsage.keyboardF3`.
-pub const HID_F3: u16 = 60;
+const HID_F3: u16 = 60;
 /// `UIKeyboardHIDUsage.keyboardF4`.
-pub const HID_F4: u16 = 61;
+const HID_F4: u16 = 61;
 /// `UIKeyboardHIDUsage.keyboardF5`.
-pub const HID_F5: u16 = 62;
+const HID_F5: u16 = 62;
 /// `UIKeyboardHIDUsage.keyboardF6`.
-pub const HID_F6: u16 = 63;
+const HID_F6: u16 = 63;
 /// `UIKeyboardHIDUsage.keyboardF7`.
-pub const HID_F7: u16 = 64;
+const HID_F7: u16 = 64;
 /// `UIKeyboardHIDUsage.keyboardF8`.
-pub const HID_F8: u16 = 65;
+const HID_F8: u16 = 65;
 /// `UIKeyboardHIDUsage.keyboardF9`.
-pub const HID_F9: u16 = 66;
+const HID_F9: u16 = 66;
 /// `UIKeyboardHIDUsage.keyboardF10`.
-pub const HID_F10: u16 = 67;
+const HID_F10: u16 = 67;
 /// `UIKeyboardHIDUsage.keyboardF11`.
-pub const HID_F11: u16 = 68;
+const HID_F11: u16 = 68;
 /// `UIKeyboardHIDUsage.keyboardF12`.
-pub const HID_F12: u16 = 69;
+const HID_F12: u16 = 69;
 /// `UIKeyboardHIDUsage.keyboardInsert`.
-pub const HID_INSERT: u16 = 73;
+const HID_INSERT: u16 = 73;
 /// `UIKeyboardHIDUsage.keyboardHome`.
 pub const HID_HOME: u16 = 74;
 /// `UIKeyboardHIDUsage.keyboardPageUp`.
@@ -427,7 +434,7 @@ pub const fn route(press: &KeyPress<'_>) -> Route {
 /// `⌃?` is DEL. Folding only the letters and passing everything else through would send `⌃[` as a
 /// literal `[`, which is Escape not working at all.
 #[must_use]
-pub fn control_code(scalar: char) -> u8 {
+fn control_code(scalar: char) -> u8 {
     let value = u32::from(scalar);
     // The mask leaves seven bits, so the narrowing is exact for every scalar.
     let low = (value & 0x7F) as u8;
@@ -476,7 +483,7 @@ const fn introducer(application_cursor_keys: bool) -> u8 {
 /// `shift` is read by exactly one key. `UIKit` reports Tab's usage with and without it, so the flag
 /// is the only thing that separates a back-tab (`CBT`) from a forward one.
 #[must_use]
-pub fn special_bytes(key: SpecialKey, shift: bool, application_cursor_keys: bool) -> Vec<u8> {
+fn special_bytes(key: SpecialKey, shift: bool, application_cursor_keys: bool) -> Vec<u8> {
     let cursor = |final_byte: u8| vec![ESC, introducer(application_cursor_keys), final_byte];
     let tilde = |digits: &str| {
         let mut bytes = vec![ESC, CSI];
@@ -682,7 +689,7 @@ pub enum CaptureVerdict {
 /// a key that cannot be spelled back is refused at capture time rather than stored as a chord
 /// nobody can type.
 #[must_use]
-pub fn capture_chord(press: &KeyPress<'_>) -> Option<Chord> {
+fn capture_chord(press: &KeyPress<'_>) -> Option<Chord> {
     let chord = key_chord(press)?;
     match chord.key {
         ChordKey::Named(NamedChordKey::Space) => None,
@@ -752,11 +759,11 @@ pub const FLOATING_CURSOR_THRESHOLD: f64 = 5.0;
 /// A real drag is bounded by the screen, so this sits far above any gesture a finger can make. What
 /// it bounds is a degenerate `UITextInput` point: an enormous-but-finite coordinate whose travel
 /// would otherwise be worth more arrows than the process has time to send.
-pub const MAX_FLOATING_CURSOR_ARROWS: usize = 256;
+const MAX_FLOATING_CURSOR_ARROWS: usize = 256;
 
 /// The bytes one arrow sends — the width of [`floating_cursor_bytes`]' answer, which is declared in
 /// terms of this so the two cannot disagree.
-pub const FLOATING_CURSOR_ARROW_BYTES: usize = 3;
+const FLOATING_CURSOR_ARROW_BYTES: usize = 3;
 
 /// The most bytes one [`FloatingCursor::feed`] can be worth.
 ///
@@ -796,7 +803,7 @@ impl FloatingCursor {
     /// An accumulator at rest. A non-positive `threshold` would make every delta an infinite run,
     /// so it falls back to the verified default rather than trapping.
     #[must_use]
-    pub fn new(threshold: f64) -> Self {
+    fn new(threshold: f64) -> Self {
         let threshold = if threshold > 0.0 {
             threshold
         } else {
@@ -856,16 +863,11 @@ impl FloatingCursor {
         let count = steps.abs() as usize;
         vec![if steps < 0.0 { Arrow::Left } else { Arrow::Right }; count]
     }
-
-    /// Clears the carried remainder — the drag ended.
-    pub const fn reset(&mut self) {
-        self.accumulated = 0.0;
-    }
 }
 
 /// The bytes one floating-cursor arrow sends, under the live cursor-key mode.
 #[must_use]
-pub const fn floating_cursor_bytes(
+const fn floating_cursor_bytes(
     arrow: Arrow,
     application_cursor_keys: bool,
 ) -> [u8; FLOATING_CURSOR_ARROW_BYTES] {
@@ -1317,8 +1319,6 @@ mod tests {
         assert_eq!(cursor.feed(2.0), vec![Arrow::Right]);
         assert!((cursor.accumulated() - 1.0).abs() < 1e-9);
         assert_eq!(cursor.feed(-12.0), vec![Arrow::Left, Arrow::Left]);
-        cursor.reset();
-        assert!((cursor.accumulated()).abs() < 1e-9);
     }
 
     #[test]

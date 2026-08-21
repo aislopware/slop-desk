@@ -34,13 +34,6 @@ use crate::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab, VideoEndpoi
 use crate::split_tree::{SplitAxis, SplitNode, SplitWeight, WeightedChild};
 use crate::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
 
-/// The retired pane-kind discriminators an older file may still carry.
-///
-/// Every one of them named a pane that was a terminal underneath, so folding them to `terminal` is
-/// exactly what the build that retired the kind already did in memory. Any OTHER unknown value is
-/// still a fault — that is genuine corruption, and the loader's reset path handles it.
-const RETIRED_PANE_KINDS: [&str; 5] = ["claudeCode", "web", "chooser", "remoteGUI", "systemDialog"];
-
 const fn malformed(hint: &'static str) -> JsonError {
     JsonError::from_hint(hint)
 }
@@ -105,26 +98,17 @@ fn decode_optional_id(value: &Json, key: &str) -> Option<[u8; 16]> {
 // Pane kind, video endpoint, spec
 // ---------------------------------------------------------------------------------------------- //
 
-/// The kind's stable, human-readable discriminator.
-#[must_use]
-pub const fn pane_kind_name(kind: PaneKind) -> &'static str {
-    match kind {
-        PaneKind::Terminal => "terminal",
-        PaneKind::Desktop => "desktop",
-    }
-}
-
-/// A kind from its discriminator, folding every retired one to a terminal.
+/// A kind from its persisted discriminator, folding every retired one to a terminal.
+///
+/// The name and the fold are [`PaneKind::raw`] and [`PaneKind::from_raw`], not a pair spelled again
+/// here. They WERE spelled again here, under different names, and the copy is the exact shape that
+/// rots: a kind retired in the vocabulary is a kind this file keeps rejecting, and the failure is a
+/// workspace that refuses to load rather than a test that goes red.
 ///
 /// # Errors
 /// [`JsonError`] for a discriminator this build has never had — corruption rather than age.
-pub fn decode_pane_kind(raw: &str) -> Result<PaneKind> {
-    match raw {
-        "terminal" => Ok(PaneKind::Terminal),
-        "desktop" => Ok(PaneKind::Desktop),
-        retired if RETIRED_PANE_KINDS.contains(&retired) => Ok(PaneKind::Terminal),
-        _ => Err(malformed("unknown pane kind")),
-    }
+fn decode_pane_kind(raw: &str) -> Result<PaneKind> {
+    PaneKind::from_raw(raw).ok_or_else(|| malformed("unknown pane kind"))
 }
 
 fn encode_video(endpoint: &VideoEndpoint) -> Json {
@@ -170,12 +154,9 @@ fn decode_video(value: &Json) -> Result<VideoEndpoint> {
 
 /// One pane's intent as JSON.
 #[must_use]
-pub fn encode_spec(spec: &PaneSpec) -> Json {
+pub(crate) fn encode_spec(spec: &PaneSpec) -> Json {
     let mut members = vec![
-        (
-            "kind".to_owned(),
-            Json::String(pane_kind_name(spec.kind).to_owned()),
-        ),
+        ("kind".to_owned(), Json::String(spec.kind.raw().to_owned())),
         ("title".to_owned(), Json::String(spec.title.clone())),
     ];
     if let Some(video) = spec.video.as_ref() {
@@ -193,7 +174,7 @@ pub fn encode_spec(spec: &PaneSpec) -> Json {
 ///
 /// # Errors
 /// [`JsonError`] for a missing kind or title, or a kind this build has never had.
-pub fn decode_spec(value: &Json) -> Result<PaneSpec> {
+pub(crate) fn decode_spec(value: &Json) -> Result<PaneSpec> {
     let kind = decode_pane_kind(&text(value, "kind")?)?;
     let video = match value.get("video") {
         Some(Json::Null) | None => None,
@@ -217,7 +198,7 @@ pub fn decode_spec(value: &Json) -> Result<PaneSpec> {
 /// it is — a reviewer reading `{"fixed": 100}` knows it is a hundred points, where `100` alone
 /// could be either.
 #[must_use]
-pub fn encode_weight(weight: SplitWeight) -> Json {
+fn encode_weight(weight: SplitWeight) -> Json {
     match weight {
         SplitWeight::Flex(share) => object([("flex", Json::Number(share))]),
         SplitWeight::Fixed(points) => object([("fixed", Json::Number(points))]),
@@ -230,7 +211,7 @@ pub fn encode_weight(weight: SplitWeight) -> Json {
 /// equal-share default rather than failing the load: one bad divider position is not worth losing
 /// the whole layout, and the repair puts it exactly where a fresh split would have.
 #[must_use]
-pub fn decode_weight(value: &Json) -> SplitWeight {
+fn decode_weight(value: &Json) -> SplitWeight {
     if value.get("flex").is_some() {
         return SplitWeight::Flex(number_or(value, "flex", f64::NAN)).repaired();
     }
@@ -242,7 +223,7 @@ pub fn decode_weight(value: &Json) -> SplitWeight {
 
 /// A split tree as the one-key discriminator shape — `{"leaf": …}` or `{"split": {…}}`.
 #[must_use]
-pub fn encode_split_node(node: &SplitNode) -> Json {
+pub(crate) fn encode_split_node(node: &SplitNode) -> Json {
     match node {
         SplitNode::Leaf(id) => object([("leaf", encode_id(id.bytes()))]),
         SplitNode::Split { id, axis, children } => {
@@ -295,7 +276,7 @@ pub fn encode_split_node(node: &SplitNode) -> Json {
 /// # Errors
 /// [`JsonError`] for a node with neither discriminator, an id that is not a uuid, or nesting past
 /// [`crate::json::MAX_DEPTH`] — the parser refuses that before a value ever exists.
-pub fn decode_split_node(value: &Json, mint: &mut impl FnMut() -> PaneId) -> Result<SplitNode> {
+pub(crate) fn decode_split_node(value: &Json, mint: &mut impl FnMut() -> PaneId) -> Result<SplitNode> {
     let raw = decode_raw_node(value, ROOT_PATH)?;
     Ok(raw.normalized(mint).unwrap_or_else(|| SplitNode::Leaf(mint())))
 }
@@ -1024,7 +1005,7 @@ mod tests {
 
     #[test]
     fn every_retired_pane_kind_comes_back_as_a_terminal() {
-        for retired in ["claudeCode", "web", "chooser", "remoteGUI", "systemDialog"] {
+        for retired in PaneKind::RETIRED_RAW_VALUES {
             assert_eq!(
                 decode_pane_kind(retired),
                 Ok(PaneKind::Terminal),

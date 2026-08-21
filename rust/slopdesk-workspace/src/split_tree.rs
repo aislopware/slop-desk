@@ -178,7 +178,7 @@ impl SplitWeight {
 
     /// The flex share, or `None` for a fixed child.
     #[must_use]
-    pub const fn flex(self) -> Option<f64> {
+    pub(crate) const fn flex(self) -> Option<f64> {
         match self {
             Self::Flex(weight) => Some(weight),
             Self::Fixed(_) => None,
@@ -221,7 +221,7 @@ impl WeightedChild {
 
     /// A leaf child at an equal share.
     #[must_use]
-    pub const fn leaf(id: PaneId) -> Self {
+    pub(crate) const fn leaf(id: PaneId) -> Self {
         Self {
             weight: SplitWeight::Flex(1.0),
             node: SplitNode::Leaf(id),
@@ -301,7 +301,7 @@ impl SplitNode {
 
     /// Whether a pane is a leaf anywhere in the tree.
     #[must_use]
-    pub fn contains(&self, id: PaneId) -> bool {
+    pub(crate) fn contains(&self, id: PaneId) -> bool {
         match self {
             Self::Leaf(leaf) => *leaf == id,
             Self::Split { children, .. } => children.iter().any(|child| child.node.contains(id)),
@@ -651,7 +651,7 @@ impl SplitNode {
 
     /// Every leaf id passed through a transform. The shape and the weights are untouched.
     #[must_use]
-    pub fn map_leaves(&self, transform: &impl Fn(PaneId) -> PaneId) -> Self {
+    fn map_leaves(&self, transform: &impl Fn(PaneId) -> PaneId) -> Self {
         match self {
             Self::Leaf(id) => Self::Leaf(transform(*id)),
             Self::Split { id, axis, children } => {
@@ -725,7 +725,7 @@ impl SplitNode {
     /// the parser has to have survived the file before this can run at all. That is the
     /// parser's job, and it is why a hostile deep file fails cleanly there rather than here.
     #[must_use]
-    pub fn normalized(&self, mint: &mut impl FnMut() -> PaneId) -> Option<Self> {
+    pub(crate) fn normalized(&self, mint: &mut impl FnMut() -> PaneId) -> Option<Self> {
         let mut seen = BTreeSet::new();
         self.normalize_impl(0, &mut seen, mint)
     }

@@ -113,7 +113,7 @@ pub const fn should_deliver(
 
 /// Stage one — the per-event toggle.
 #[must_use]
-pub const fn event_enabled(event: Event, settings: Settings) -> bool {
+const fn event_enabled(event: Event, settings: Settings) -> bool {
     match event {
         Event::ExplicitOsc => settings.app_notifications_enabled,
         Event::CommandFinish { exit } => {
@@ -131,7 +131,7 @@ pub const fn event_enabled(event: Event, settings: Settings) -> bool {
 
 /// Stage two — the foreground gate, a pass whenever the app is not frontmost.
 #[must_use]
-pub const fn foreground_gate(app_active: bool, source_pane_visible: bool, policy: ForegroundPolicy) -> bool {
+const fn foreground_gate(app_active: bool, source_pane_visible: bool, policy: ForegroundPolicy) -> bool {
     if !app_active {
         return true;
     }
@@ -367,6 +367,11 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     /// A full bucket. About five in a burst, then one every two seconds.
+    ///
+    /// No caller yet: only `slopdesk_ws_notify_rate_limit_allow` has a door, so the near side fills
+    /// the four fields itself — and spells the burst and the refill rate itself with them. A
+    /// resting-bucket door, the way [`crate::chrome`]'s dwell gate has one, is what would stop
+    /// that.
     #[must_use]
     pub const fn new(capacity: f64, refill_per_second: f64, now: f64) -> Self {
         Self {

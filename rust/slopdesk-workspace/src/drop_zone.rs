@@ -24,17 +24,8 @@
 //! the smallest normalised distance — which is deterministic and makes a zone's own centre
 //! (distance `0`) always resolve to that zone. So the middle of a drawn blob always hits it.
 
-use crate::drop_action::DropZone;
+use crate::drop_action::{DropZone, ZONES};
 use crate::geometry::{Point, Size};
-
-/// The draw and hit order: the central column top-to-bottom, then the two edges.
-pub const ZONES: [DropZone; 5] = [
-    DropZone::NewTab,
-    DropZone::InsertPath,
-    DropZone::OpenInPlace,
-    DropZone::SplitLeft,
-    DropZone::SplitRight,
-];
 
 /// Where each central circle sits down the pane, as a fraction of its height.
 const NEW_TAB_Y: f64 = 0.18;
@@ -79,15 +70,21 @@ impl ZoneShape {
     /// The two squares are separate multiplies and a separate add. Never fused: the wire and the
     /// golden vectors round twice, and an `mul_add` here would round once.
     #[must_use]
-    pub fn normalized_distance(&self, point: Point) -> f64 {
+    fn normalized_distance(&self, point: Point) -> f64 {
         let dx = (point.x - self.center.x) / self.radius_x;
         let dy = (point.y - self.center.y) / self.radius_y;
         (dx * dx + dy * dy).sqrt()
     }
 
     /// Whether `point` lies within, or exactly on, this zone's ellipse.
+    ///
+    /// `cfg(test)` because production never asks the yes/no question: [`zone_at`] needs the depth
+    /// to resolve an overlap, so it keeps the distance it already computed and spells the same
+    /// `<= 1.0` inline rather than paying for it twice. This is the assertion form of that one
+    /// comparison, and it exists so the boundary tests can read.
+    #[cfg(test)]
     #[must_use]
-    pub fn contains(&self, point: Point) -> bool {
+    fn contains(&self, point: Point) -> bool {
         self.normalized_distance(point) <= 1.0
     }
 }

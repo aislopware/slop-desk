@@ -58,25 +58,6 @@ impl Policy {
             Self::Path(_) => Kind::Path,
         }
     }
-
-    /// The initial cwd for a new pane, given the active pane's last-known one.
-    ///
-    /// `None` means "send no change" — which [`Inherit`](Self::Inherit) also answers when the
-    /// active pane has no known cwd yet, because inheriting an unknown directory is inheriting
-    /// nothing.
-    #[must_use]
-    pub fn resolve<'a>(&'a self, active_pane_cwd: Option<&'a str>) -> Option<&'a str> {
-        match source(self.kind(), active_pane_cwd.is_some()) {
-            Source::None => None,
-            Source::ConfiguredPath => {
-                match self {
-                    Self::Path(path) => Some(path),
-                    Self::Inherit | Self::Home => None,
-                }
-            },
-            Source::ActivePaneCwd => active_pane_cwd,
-        }
-    }
 }
 
 /// A policy without its payload — what a caller that holds the strings itself needs to name.
@@ -144,26 +125,17 @@ mod tests {
         assert_eq!(Policy::parse("~/home"), Policy::Path("~/home".to_owned()));
     }
 
+    /// Including the one rule a caller could get wrong on its own: inheriting an UNKNOWN directory
+    /// inherits nothing, rather than falling through to the configured path.
     #[test]
     fn the_source_names_the_string_rather_than_copying_it() {
         assert_eq!(source(Kind::Inherit, true), Source::ActivePaneCwd);
         assert_eq!(source(Kind::Inherit, false), Source::None);
-        assert_eq!(source(Kind::Home, true), Source::None);
+        assert_eq!(source(Kind::Home, true), Source::None, "home names no directory");
         assert_eq!(source(Kind::Path, false), Source::ConfiguredPath);
-    }
-
-    #[test]
-    fn inheriting_an_unknown_directory_inherits_nothing() {
-        assert_eq!(Policy::Inherit.resolve(Some("/tmp")), Some("/tmp"));
-        assert_eq!(Policy::Inherit.resolve(None), None);
         assert_eq!(
-            Policy::Home.resolve(Some("/tmp")),
-            None,
-            "home names no directory"
-        );
-        assert_eq!(
-            Policy::Path("/srv".to_owned()).resolve(Some("/tmp")),
-            Some("/srv")
+            source(Policy::Path("/srv".to_owned()).kind(), true),
+            Source::ConfiguredPath
         );
     }
 }

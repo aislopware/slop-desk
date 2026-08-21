@@ -156,15 +156,15 @@ pub fn dock_tile(
 }
 
 /// How long the pointer must hold the top edge before the local menu bar reveals.
-pub const DWELL_SECONDS: f64 = 0.5;
+const DWELL_SECONDS: f64 = 0.5;
 /// The arming zone: distance from the top edge, in points, that counts as "pressed against it".
 /// Tight on purpose — remote work near the top of the screen must not arm the gate.
-pub const REVEAL_ZONE_POINTS: f64 = 2.0;
+const REVEAL_ZONE_POINTS: f64 = 2.0;
 /// The conceal threshold: how far DOWN a revealed gate's pointer must travel to re-hide.
 ///
 /// Wider than the arming zone — hysteresis — so using the revealed menu bar, whose items sit
 /// ~12–24 pt down, does not flicker the gate shut.
-pub const CONCEAL_ZONE_POINTS: f64 = 36.0;
+const CONCEAL_ZONE_POINTS: f64 = 36.0;
 
 /// Who owns the top edge of a borderless-fullscreen window.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -264,8 +264,13 @@ impl DwellGate {
     }
 
     /// Whether the local menu bar may show.
+    ///
+    /// `cfg(test)` because the PHASE is what crosses — `slopdesk_ws_dwell_update` answers a
+    /// `CDwellGate` and the near side reads its code — so nothing outside these tests ever asks the
+    /// question in this shape.
+    #[cfg(test)]
     #[must_use]
-    pub const fn is_revealed(&self) -> bool {
+    const fn is_revealed(&self) -> bool {
         matches!(self.phase, DwellPhase::Revealed)
     }
 }

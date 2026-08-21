@@ -76,7 +76,7 @@ pub fn locate(ws: &TreeWorkspace, pane: PaneId) -> Option<(usize, usize)> {
 
 /// The session and tab index of a tab.
 #[must_use]
-pub fn locate_tab(ws: &TreeWorkspace, tab: TabId) -> Option<(usize, usize)> {
+fn locate_tab(ws: &TreeWorkspace, tab: TabId) -> Option<(usize, usize)> {
     ws.sessions.iter().enumerate().find_map(|(index, session)| {
         session
             .tabs
@@ -335,7 +335,7 @@ pub fn swap_panes(ws: &TreeWorkspace, a: PaneId, b: PaneId) -> TreeWorkspace {
 /// truncate loses a leaf, which is a live surface — and declines a drop that reproduces the
 /// arrangement it started from, which would otherwise churn a save under a freshly minted split id.
 #[must_use]
-pub fn move_leaf(
+fn move_leaf(
     ws: &TreeWorkspace,
     source: PaneId,
     target: PaneId,
@@ -376,7 +376,7 @@ pub fn move_leaf(
 ///
 /// A lone-leaf tab has nothing to dock against, and wrapping it would duplicate the id.
 #[must_use]
-pub fn move_leaf_to_root_edge(
+fn move_leaf_to_root_edge(
     ws: &TreeWorkspace,
     source: PaneId,
     edge: PaneDropEdge,
@@ -563,7 +563,7 @@ pub enum TileLayout {
 
 impl TileLayout {
     /// Every layout, in cycle order.
-    pub const ALL: [Self; 5] = [
+    const ALL: [Self; 5] = [
         Self::EvenHorizontal,
         Self::EvenVertical,
         Self::MainVertical,
@@ -571,29 +571,10 @@ impl TileLayout {
         Self::Tiled,
     ];
 
-    /// The persisted spelling.
-    #[must_use]
-    pub const fn raw(self) -> &'static str {
-        match self {
-            Self::EvenHorizontal => "evenHorizontal",
-            Self::EvenVertical => "evenVertical",
-            Self::MainVertical => "mainVertical",
-            Self::MainHorizontal => "mainHorizontal",
-            Self::Tiled => "tiled",
-        }
-    }
-
-    /// The layout a persisted spelling names.
-    #[must_use]
-    pub fn from_raw(raw: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|layout| layout.raw() == raw)
-    }
-
     /// The byte for this layout — [`Self::ALL`]'s position, which is what crosses the ABI.
     ///
-    /// The persisted spelling above and this byte are two different encodings of the same enum, and
-    /// only the spelling had an inverse. The shim restated the byte map by hand and fell back to
-    /// `EvenHorizontal`, so a sixth layout would have silently re-tiled as a single row.
+    /// The one encoding, with an inverse. The shim used to restate the byte map by hand and fall
+    /// back to `EvenHorizontal`, so a sixth layout would have silently re-tiled as a single row.
     #[must_use]
     pub const fn index(self) -> u8 {
         match self {
@@ -609,16 +590,6 @@ impl TileLayout {
     #[must_use]
     pub fn from_index(index: u8) -> Option<Self> {
         Self::ALL.get(usize::from(index)).copied()
-    }
-
-    /// The next layout in cycle order, wrapping.
-    #[must_use]
-    pub fn next(self) -> Self {
-        let index = Self::ALL.iter().position(|layout| *layout == self).unwrap_or(0);
-        Self::ALL
-            .get((index + 1) % Self::ALL.len())
-            .copied()
-            .unwrap_or(Self::EvenHorizontal)
     }
 }
 
@@ -765,7 +736,7 @@ pub fn new_tab(
         return ws.clone();
     };
     editing_session(ws, session_index, |session| {
-        let index = position.insertion_index(session.active_tab_index, session.tabs.len());
+        let index = session.new_tab_index(position);
         session.tabs.insert(index, Tab::new(tab, SplitNode::Leaf(pane)));
         session.active_tab_index = index;
         session.specs.insert(pane, spec);
@@ -789,7 +760,7 @@ pub fn insert_tab(
         return ws.clone();
     };
     editing_session(ws, session_index, |session| {
-        let index = position.insertion_index(session.active_tab_index, session.tabs.len());
+        let index = session.new_tab_index(position);
         for id in tab.all_pane_ids() {
             if let Some(spec) = specs.get(&id) {
                 session.specs.insert(id, spec.clone());
@@ -843,19 +814,12 @@ pub fn rename_tab(ws: &TreeWorkspace, tab: TabId, title: impl Into<String>) -> T
 // Sessions
 // ---------------------------------------------------------------------------------------------- //
 
-/// Adds a session holding one tab and one pane, and selects it.
-#[must_use]
-pub fn new_session(
-    ws: &TreeWorkspace,
-    name: impl Into<String>,
-    spec: PaneSpec,
-    ids: &mut impl IdSource,
-) -> TreeWorkspace {
-    let session = Session::single_pane(ids.session(), name, ids.tab(), ids.pane(), spec);
-    insert_session(ws, session, true)
-}
-
-/// Appends a PRE-BUILT session — a template expansion — leaving every other session untouched.
+/// Appends a PRE-BUILT session — a template expansion, or a `newSession` intent carrying the ids
+/// the far end already minted — leaving every other session untouched.
+///
+/// Pre-built rather than minted here: every caller arrives holding the session, because the ids
+/// came off the wire or out of a template expansion. A minting variant beside this one had no
+/// caller at all, and [`Session::single_pane`] is the one line it would have saved them.
 #[must_use]
 pub fn insert_session(ws: &TreeWorkspace, session: Session, make_active: bool) -> TreeWorkspace {
     let mut next = ws.clone();
@@ -1146,7 +1110,7 @@ pub fn break_pane_to_tab(ws: &TreeWorkspace, target: PaneId, tab: TabId) -> Tree
 /// a tree a reconcile can be handed straight away: dropping the video panes can empty a tab, and a
 /// file broken enough to need a re-dock is broken enough to have an orphan spec in it too.
 #[must_use]
-pub fn redocking_detached_panes(ws: &TreeWorkspace, mint: &mut impl IdSource) -> TreeWorkspace {
+fn redocking_detached_panes(ws: &TreeWorkspace, mint: &mut impl IdSource) -> TreeWorkspace {
     // The remote desktop NEVER restores across a relaunch, so a persisted video pane is DROPPED
     // here rather than re-docked — a detached one whose window is gone, or a stale tree leaf from a
     // file written when the desktop was a tab. Its spec goes with it, so nothing downstream opens a
@@ -1278,12 +1242,12 @@ mod tests {
     use super::{
         RepairPass, TileLayout, break_pane_to_tab, close_detached_pane, close_pane, close_session, close_tab,
         detach_pane, focus_pane, insert_session, insert_tab, locate, mint_detached_pane, move_leaf,
-        move_leaf_across_tabs, move_leaf_to_root_edge, move_leaf_to_tab_root_edge, new_session, new_tab,
-        reattach_pane, redocking_detached_panes, rename_session, rename_tab, repaired, select_session,
-        set_divider_weight, split_pane, swap_panes, updating_spec,
+        move_leaf_across_tabs, move_leaf_to_root_edge, move_leaf_to_tab_root_edge, new_tab, reattach_pane,
+        redocking_detached_panes, rename_session, rename_tab, repaired, select_session, set_divider_weight,
+        split_pane, swap_panes, updating_spec,
     };
     use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
-    use crate::session::{NewTabPosition, PaneKind, PaneSpec, Tab};
+    use crate::session::{NewTabPosition, PaneKind, PaneSpec, Session, Tab};
     use crate::split_tree::{PaneDropEdge, SplitAxis, SplitNode};
     use crate::workspace::TreeWorkspace;
 
@@ -1337,6 +1301,11 @@ mod tests {
 
     fn one_pane() -> TreeWorkspace {
         TreeWorkspace::single_pane(session_id(1), tab_id(1), pane(1), spec("One"))
+    }
+
+    /// A second single-pane session, built the way [`insert_session`]'s real callers build one.
+    fn other_session(ids: &mut impl IdSource) -> Session {
+        Session::single_pane(ids.session(), "Other", ids.tab(), ids.pane(), spec("Elsewhere"))
     }
 
     /// Two panes side by side in one tab, split horizontally.
@@ -1769,8 +1738,8 @@ mod tests {
     }
 
     #[test]
-    fn a_new_session_is_appended_and_selected() {
-        let after = new_session(&one_pane(), "Other", spec("Elsewhere"), &mut ids());
+    fn an_inserted_session_is_appended_and_takes_the_selection() {
+        let after = insert_session(&one_pane(), other_session(&mut ids()), true);
         assert_eq!(after.sessions.len(), 2);
         assert_eq!(
             after.active_session_id,
@@ -1781,14 +1750,7 @@ mod tests {
 
     #[test]
     fn an_inserted_session_need_not_take_the_selection() {
-        let Some(session) = new_session(&one_pane(), "Other", spec("Elsewhere"), &mut ids())
-            .sessions
-            .get(1)
-            .cloned()
-        else {
-            panic!("two sessions");
-        };
-        let after = insert_session(&one_pane(), session, false);
+        let after = insert_session(&one_pane(), other_session(&mut ids()), false);
         assert_eq!(after.active_session_id, Some(session_id(1)));
         assert_eq!(after.sessions.len(), 2);
     }
@@ -1804,7 +1766,7 @@ mod tests {
     #[test]
     fn closing_a_session_takes_its_detached_panes_with_it() {
         let floating = detach_pane(&two_panes(), pane(2), &mut ids());
-        let with_other = new_session(&floating, "Other", spec("Elsewhere"), &mut ids());
+        let with_other = insert_session(&floating, other_session(&mut ids()), true);
         let after = close_session(&with_other, session_id(1), &mut ids());
         assert!(after.detached_pane_ids().is_empty());
         assert!(after.spec_for(pane(2)).is_none());
@@ -2029,7 +1991,7 @@ mod tests {
 
         let mut hostile = insert_session(
             &two_panes(),
-            crate::session::Session::single_pane(session_id(2), "Other", tab_id(2), pane(20), spec("Two")),
+            Session::single_pane(session_id(2), "Other", tab_id(2), pane(20), spec("Two")),
             false,
         );
         for session in &mut hostile.sessions {

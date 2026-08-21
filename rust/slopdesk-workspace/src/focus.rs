@@ -53,7 +53,7 @@ impl FocusDirection {
     /// on each side. A count cannot see a seventh direction added everywhere except that
     /// decoder — and this decoder's fallback was `Next`, so the new direction would not have
     /// failed, it would have CYCLED.
-    pub const ALL: [Self; 6] = [
+    const ALL: [Self; 6] = [
         Self::Left,
         Self::Right,
         Self::Up,
@@ -83,7 +83,7 @@ impl FocusDirection {
 
     /// Whether this is a cardinal move rather than a cycle.
     #[must_use]
-    pub const fn is_directional(self) -> bool {
+    const fn is_directional(self) -> bool {
         matches!(self, Self::Left | Self::Right | Self::Up | Self::Down)
     }
 }

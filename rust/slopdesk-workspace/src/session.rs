@@ -40,11 +40,19 @@ pub enum PaneKind {
 /// stream identity is dropped, which is what the no-backcompat rule asks for — tolerate the old
 /// discriminator, keep none of its meaning. Anything ELSE unknown is genuine corruption and is
 /// rejected, so the loader's reset path still has something to catch.
-const RETIRED_KIND_RAW_VALUES: [&str; 5] = ["claudeCode", "web", "chooser", "remoteGUI", "systemDialog"];
-
 impl PaneKind {
     /// Every kind, in wire order.
     pub const ALL: [Self; 2] = [Self::Terminal, Self::Desktop];
+
+    /// The retired discriminators an older file may still carry, tolerated by [`Self::from_raw`].
+    ///
+    /// An associated const rather than a module-private array because `persist` reads it too — it
+    /// used to hold its own copy under another name, and the two never disagreed only because
+    /// nobody edited either. A retired kind is exactly the fact that gets added years after the
+    /// code that folds it, so the list has to be somewhere both the vocabulary and the file codec
+    /// can name.
+    pub const RETIRED_RAW_VALUES: [&'static str; 5] =
+        ["claudeCode", "web", "chooser", "remoteGUI", "systemDialog"];
 
     /// The kind a byte names.
     ///
@@ -85,7 +93,7 @@ impl PaneKind {
         match raw {
             "terminal" => Some(Self::Terminal),
             "desktop" => Some(Self::Desktop),
-            other if RETIRED_KIND_RAW_VALUES.contains(&other) => Some(Self::Terminal),
+            other if Self::RETIRED_RAW_VALUES.contains(&other) => Some(Self::Terminal),
             _ => None,
         }
     }
@@ -372,31 +380,31 @@ impl Session {
 
     /// Every pane across every tab, in tab order then pre-order.
     #[must_use]
-    pub fn all_pane_ids(&self) -> Vec<PaneId> {
+    pub(crate) fn all_pane_ids(&self) -> Vec<PaneId> {
         self.tabs.iter().flat_map(Tab::all_pane_ids).collect()
     }
 
     /// The leaves of every tab, as a set.
     #[must_use]
-    pub fn leaf_id_set(&self) -> BTreeSet<PaneId> {
+    pub(crate) fn leaf_id_set(&self) -> BTreeSet<PaneId> {
         self.all_pane_ids().into_iter().collect()
     }
 
     /// The panes detached into their own windows, as a set.
     #[must_use]
-    pub fn detached_id_set(&self) -> BTreeSet<PaneId> {
+    pub(crate) fn detached_id_set(&self) -> BTreeSet<PaneId> {
         self.detached.iter().map(|entry| entry.pane).collect()
     }
 
     /// Whether a pane is detached into its own window here.
     #[must_use]
-    pub fn is_detached(&self, id: PaneId) -> bool {
+    pub(crate) fn is_detached(&self, id: PaneId) -> bool {
         self.detached.iter().any(|entry| entry.pane == id)
     }
 
     /// Whether a pane is a leaf anywhere in this session.
     #[must_use]
-    pub fn contains(&self, id: PaneId) -> bool {
+    pub(crate) fn contains(&self, id: PaneId) -> bool {
         self.tabs.iter().any(|tab| tab.contains(id))
     }
 
@@ -405,7 +413,7 @@ impl Session {
     /// `None` when this session does not own the pane, which is a different answer from "owns it
     /// and has no spec" and is why the membership is checked first.
     #[must_use]
-    pub fn spec_for(&self, id: PaneId) -> Option<&PaneSpec> {
+    pub(crate) fn spec_for(&self, id: PaneId) -> Option<&PaneSpec> {
         (self.contains(id) || self.is_detached(id))
             .then(|| self.specs.get(&id))
             .flatten()
@@ -413,7 +421,7 @@ impl Session {
 
     /// The index of the tab whose tree holds a pane.
     #[must_use]
-    pub fn tab_index_containing(&self, id: PaneId) -> Option<usize> {
+    pub(crate) fn tab_index_containing(&self, id: PaneId) -> Option<usize> {
         self.tabs.iter().position(|tab| tab.contains(id))
     }
 
@@ -484,7 +492,7 @@ impl NewTabPosition {
     /// a race can easily produce, is clamped rather than trusted: an out-of-range insert would be a
     /// panic in the caller, and landing the tab at the end is a far better answer than that.
     #[must_use]
-    pub const fn insertion_index(self, active_index: usize, tab_count: usize) -> usize {
+    pub(crate) const fn insertion_index(self, active_index: usize, tab_count: usize) -> usize {
         match self {
             Self::Auto | Self::End => tab_count,
             Self::AfterCurrent => {
@@ -526,7 +534,7 @@ mod tests {
 
     #[test]
     fn every_retired_kind_folds_to_a_terminal_rather_than_trapping() {
-        for raw in ["claudeCode", "web", "chooser", "remoteGUI", "systemDialog"] {
+        for raw in PaneKind::RETIRED_RAW_VALUES {
             assert_eq!(
                 PaneKind::from_raw(raw),
                 Some(PaneKind::Terminal),
@@ -542,7 +550,7 @@ mod tests {
 
     #[test]
     fn a_kind_round_trips_through_its_persisted_form() {
-        for kind in [PaneKind::Terminal, PaneKind::Desktop] {
+        for kind in PaneKind::ALL {
             assert_eq!(PaneKind::from_raw(kind.raw()), Some(kind));
         }
     }

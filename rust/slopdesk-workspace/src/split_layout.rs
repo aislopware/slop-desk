@@ -40,7 +40,7 @@ use crate::split_tree::{MIN_WEIGHT, SplitAxis, SplitNode, SplitWeight, WeightedC
 /// `SplitLayoutSolver.defaultMinLeaf` — so a literal here would be the floor the solver clamps by
 /// drifting away from the floor its caller sizes by, and both would look right in isolation. Two
 /// derivations of one number is exactly how they come to differ.
-pub const DEFAULT_MIN_LEAF: Size = crate::geometry::MIN_ITEM_SIZE;
+const DEFAULT_MIN_LEAF: Size = crate::geometry::MIN_ITEM_SIZE;
 
 /// Every pane's exact rectangle.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -58,14 +58,8 @@ impl SolvedLayout {
 
     /// One pane's frame.
     #[must_use]
-    pub fn frame_of(&self, pane: PaneId) -> Option<Rect> {
+    pub(crate) fn frame_of(&self, pane: PaneId) -> Option<Rect> {
         self.frames.get(&pane).copied()
-    }
-
-    /// Whether anything was solved.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.frames.is_empty()
     }
 }
 
@@ -83,7 +77,7 @@ pub fn solve(root: &SplitNode, rect: Rect, min_leaf: Size) -> SolvedLayout {
 /// The same solve at the standard floor.
 #[must_use]
 #[cfg(test)]
-pub fn solve_default(root: &SplitNode, rect: Rect) -> SolvedLayout {
+fn solve_default(root: &SplitNode, rect: Rect) -> SolvedLayout {
     solve(root, rect, DEFAULT_MIN_LEAF)
 }
 
@@ -111,7 +105,7 @@ fn place(node: &SplitNode, rect: Rect, min_leaf: Size, into: &mut BTreeMap<PaneI
 /// The ONE partition: the tiles [`solve`] places and the seams [`dividers`] places both come from
 /// it, so a handle can never end up a pixel off the edge it is supposed to drag.
 #[must_use]
-pub fn extents(children: &[WeightedChild], total: f64) -> Vec<f64> {
+fn extents(children: &[WeightedChild], total: f64) -> Vec<f64> {
     // Pass one reserves the fixed bands against a running remainder and records each one.
     let mut fixed_total = 0.0;
     let mut flex_sum = 0.0;
@@ -205,7 +199,7 @@ impl Divider {
     /// a row seam. One source of truth with the solver's own floor, which is what keeps a dragged
     /// pane from being floored at render time and painted over by its neighbour.
     #[must_use]
-    pub const fn axis_min_extent(self) -> f64 {
+    const fn axis_min_extent(self) -> f64 {
         match self.axis {
             SplitAxis::Horizontal => DEFAULT_MIN_LEAF.width,
             SplitAxis::Vertical => DEFAULT_MIN_LEAF.height,

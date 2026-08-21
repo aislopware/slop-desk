@@ -48,17 +48,6 @@ pub struct SplitConfig {
     pub secondary_command: String,
 }
 
-impl SplitConfig {
-    /// A second pane along an axis.
-    #[must_use]
-    pub const fn new(axis: SplitAxis, secondary_command: String) -> Self {
-        Self {
-            axis,
-            secondary_command,
-        }
-    }
-}
-
 /// A named launch configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchPreset {
@@ -81,7 +70,7 @@ pub struct LaunchPreset {
 impl LaunchPreset {
     /// A preset that runs a command in one pane.
     #[must_use]
-    pub fn new(id: LaunchPresetId, name: impl Into<String>, command: impl Into<String>) -> Self {
+    fn new(id: LaunchPresetId, name: impl Into<String>, command: impl Into<String>) -> Self {
         Self {
             id,
             name: name.into(),
@@ -235,7 +224,7 @@ impl TemplatePane {
 
     /// The same leaf running a command.
     #[must_use]
-    pub fn running(mut self, command: impl Into<String>) -> Self {
+    fn running(mut self, command: impl Into<String>) -> Self {
         self.command = Some(command.into());
         self
     }
@@ -298,7 +287,7 @@ impl TemplateNode {
 
     /// The first leaf in depth-first order.
     #[must_use]
-    pub fn first_pane(&self) -> TemplatePane {
+    fn first_pane(&self) -> TemplatePane {
         match self {
             Self::Pane(pane) => pane.clone(),
             Self::Split { children, .. } => {
@@ -382,7 +371,7 @@ pub struct SessionTemplate {
 impl SessionTemplate {
     /// A template over a layout.
     #[must_use]
-    pub fn new(id: SessionTemplateId, name: impl Into<String>, layout: TemplateNode) -> Self {
+    fn new(id: SessionTemplateId, name: impl Into<String>, layout: TemplateNode) -> Self {
         Self {
             id,
             name: name.into(),
@@ -477,7 +466,10 @@ mod tests {
     fn a_two_pane_preset_carries_the_axis_and_the_shared_directory() {
         let mut two = preset();
         two.working_directory = Some("/tmp/work".to_owned());
-        two.split = Some(SplitConfig::new(SplitAxis::Vertical, "watch ls".to_owned()));
+        two.split = Some(SplitConfig {
+            axis: SplitAxis::Vertical,
+            secondary_command: "watch ls".to_owned(),
+        });
         let expanded = plan(&two);
         assert_eq!(expanded.split_axis, Some(SplitAxis::Vertical));
         assert_eq!(expanded.panes.len(), 2);

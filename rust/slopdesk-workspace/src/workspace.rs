@@ -72,7 +72,7 @@ impl TreeWorkspace {
 
     /// The default workspace: one session holding a single terminal.
     #[must_use]
-    pub fn default_workspace(session: SessionId, tab: TabId, pane: PaneId) -> Self {
+    pub(crate) fn default_workspace(session: SessionId, tab: TabId, pane: PaneId) -> Self {
         Self::single_pane(
             session,
             tab,
@@ -169,7 +169,7 @@ impl TreeWorkspace {
     /// spec-less detached record is unrecoverable, unlike a spec-less LEAF, whose place in the tree
     /// is itself the demand for a re-seeded default.
     #[must_use]
-    pub fn normalizing_specs(&self) -> Self {
+    pub(crate) fn normalizing_specs(&self) -> Self {
         let mut next = self.clone();
         for session in &mut next.sessions {
             let leaves = session.leaf_id_set();
@@ -198,7 +198,7 @@ impl TreeWorkspace {
     /// actually holds. `mint` supplies the ids a re-seed needs — this crate has no entropy —
     /// and is called only when a session has no tab at all.
     #[must_use]
-    pub fn normalizing_active(&self, mint: &mut impl IdSource) -> Self {
+    pub(crate) fn normalizing_active(&self, mint: &mut impl IdSource) -> Self {
         if self.sessions.is_empty() {
             return Self::default_workspace(mint.session(), mint.tab(), mint.pane());
         }
@@ -240,7 +240,7 @@ impl TreeWorkspace {
     /// folding a re-dock in would instantly undo a detach the person just performed — re-docking is
     /// a LAUNCH-only step.
     #[must_use]
-    pub fn normalized(&self, mint: &mut impl IdSource) -> Self {
+    pub(crate) fn normalized(&self, mint: &mut impl IdSource) -> Self {
         self.normalizing_specs().normalizing_active(mint)
     }
 
@@ -251,7 +251,7 @@ impl TreeWorkspace {
     /// DROPPED rather than re-docked. Its spec goes with it, so nothing later opens a stream for a
     /// pane no window will show.
     #[must_use]
-    pub fn dropping_video_panes(&self) -> Self {
+    pub(crate) fn dropping_video_panes(&self) -> Self {
         let mut next = self.clone();
         for session in &mut next.sessions {
             let video: Vec<PaneId> = session

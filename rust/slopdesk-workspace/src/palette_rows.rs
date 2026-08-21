@@ -110,7 +110,7 @@ pub const ROWS: [PaletteRow; 33] = [
 
 /// The row `id` is filed under, if this table declares one.
 #[must_use]
-pub fn row_at(id: &str) -> Option<PaletteRow> {
+fn row_at(id: &str) -> Option<PaletteRow> {
     ROWS.iter().copied().find(|row| row.id == id)
 }
 

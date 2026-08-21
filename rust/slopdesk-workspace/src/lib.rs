@@ -120,14 +120,11 @@ pub use geometry::{Point, Rect, Size};
 pub use identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId, parse_uuid, uuid_text};
 pub use json::{Json, JsonError};
 pub use jump::JumpResolution;
-pub use persist::{
-    FileError, MAX_PANES, NO_REFUSAL, decode_file, decode_spec, decode_split_node, encode_file, encode_spec,
-    encode_split_node, minted_ids_for,
-};
+pub use persist::{FileError, MAX_PANES, NO_REFUSAL, decode_file, encode_file, minted_ids_for};
 pub use session::{DetachedPane, NewTabPosition, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
 pub use split_layout::{Divider, SolvedLayout, dividers, solve};
 pub use split_tree::{PaneDropEdge, SplitAxis, SplitNode, SplitWeight, WeightedChild};
-pub use tab_ordering::{bucketed_by_project, successor_after_close};
+pub use tab_ordering::successor_after_close;
 pub use templates::{LaunchPreset, SessionTemplate, TemplateNode, TemplatePane};
 pub use tree_ops::TileLayout;
 pub use workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};

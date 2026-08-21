@@ -143,7 +143,7 @@ pub enum Group {
 
 impl Group {
     /// Every group, in case-index order — the numbering the boundary carries.
-    pub const ALL: [Self; 23] = [
+    const ALL: [Self; 23] = [
         Self::CursorStyle,
         Self::NewTabPosition,
         Self::Density,
@@ -617,8 +617,12 @@ pub enum Ladder {
 }
 
 impl Ladder {
-    /// Every ladder, in case-index order.
-    pub const ALL: [Self; 4] = [
+    /// Every ladder, in case-index order — for the tests that must cover all of them.
+    ///
+    /// `cfg(test)` because [`index`](Self::index) and [`from_index`](Self::from_index) are
+    /// hand-written matches that never read this table; only the round-trip test does.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 4] = [
         Self::Scrollback,
         Self::ScrollMultiplier,
         Self::BusyDelay,
@@ -757,16 +761,6 @@ pub enum Stepper {
 }
 
 impl Stepper {
-    /// Every range, in case-index order.
-    pub const ALL: [Self; 6] = [
-        Self::WindowCells,
-        Self::WindowPixels,
-        Self::FontPoints,
-        Self::VideoQp,
-        Self::VideoFecParity,
-        Self::VideoFecGroup,
-    ];
-
     /// The case index a range crosses as.
     #[must_use]
     pub const fn index(self) -> u8 {
@@ -862,7 +856,7 @@ impl Stepper {
     /// and the near side's composition grew a rule this one did not have (a whole value prints
     /// without its fraction). Handing over a `f64` costs nothing and leaves one composition.
     #[must_use]
-    pub const fn unit(self) -> &'static str {
+    const fn unit(self) -> &'static str {
         match self {
             Self::WindowCells
             | Self::FontPoints
@@ -1008,7 +1002,7 @@ fn round_to_i64(value: f64) -> i64 {
 /// decimal point in half the world. A negative value keeps its sign outside the grouping, which no
 /// ladder here produces but which a shared helper should not get wrong.
 #[must_use]
-pub fn grouped(value: i64) -> String {
+fn grouped(value: i64) -> String {
     let negative = value.is_negative();
     let digits = value.unsigned_abs().to_string();
     // One separator per group of three, plus the sign — an upper bound, not an exact count.

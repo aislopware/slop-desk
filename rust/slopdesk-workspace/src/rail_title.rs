@@ -51,7 +51,7 @@ const LOGIN_SHELL_NAMES: [&str; 9] = ["zsh", "bash", "sh", "fish", "tcsh", "csh"
 ///
 /// A pane fronted by one of these is an agent session before any status verdict has landed, which
 /// is what keeps a row's height from changing the moment the first verdict arrives.
-pub const AGENT_PROCESS_NAMES: [&str; 7] = ["claude", "codex", "gemini", "opencode", "aider", "goose", "amp"];
+const AGENT_PROCESS_NAMES: [&str; 7] = ["claude", "codex", "gemini", "opencode", "aider", "goose", "amp"];
 
 /// The foreground process as the metadata SLOT shows it: basenamed, with a login shell's leading
 /// `-` dropped.
@@ -154,7 +154,7 @@ pub fn normalized_program_title(title: Option<&str>) -> Option<String> {
 /// only on a title that IS the folder name: an explicit rename is a name the user chose, and a path
 /// with no parent above the leaf has nothing to qualify with.
 #[must_use]
-pub fn parent_qualified_title(cwd: Option<&str>, title: &str) -> Option<String> {
+pub(crate) fn parent_qualified_title(cwd: Option<&str>, title: &str) -> Option<String> {
     let path = cwd?;
     if PaneSpec::cwd_display_name(Some(path)).as_deref() != Some(title) {
         return None;

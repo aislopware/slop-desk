@@ -72,7 +72,7 @@ pub struct JsonError {
 impl JsonError {
     /// A fault under a short reason.
     #[must_use]
-    pub const fn from_hint(hint: &'static str) -> Self {
+    pub(crate) const fn from_hint(hint: &'static str) -> Self {
         Self { hint }
     }
 }
@@ -86,13 +86,13 @@ impl fmt::Display for JsonError {
 impl std::error::Error for JsonError {}
 
 /// Result alias for this module.
-pub type Result<T> = core::result::Result<T, JsonError>;
+pub(crate) type Result<T> = core::result::Result<T, JsonError>;
 
 /// The deepest nesting a parsed document may carry.
 ///
 /// Far above any shape this crate writes — the state file is three levels — and far below what
 /// would trouble the parser's own recursion.
-pub const MAX_DEPTH: usize = 64;
+const MAX_DEPTH: usize = 64;
 
 /// One JSON value.
 ///
@@ -120,7 +120,7 @@ pub enum Json {
 impl Json {
     /// The object's entries, if this is an object.
     #[must_use]
-    pub const fn object(&self) -> Option<&BTreeMap<String, Self>> {
+    const fn object(&self) -> Option<&BTreeMap<String, Self>> {
         match self {
             Self::Object(map) => Some(map),
             _ => None,

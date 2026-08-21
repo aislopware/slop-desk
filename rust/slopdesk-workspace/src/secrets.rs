@@ -338,7 +338,7 @@ fn char_class_count(text: &str) -> usize {
 /// map — so the last bits of the answer do not depend on iteration order, and the comparison
 /// against the floor is reproducible across builds.
 #[must_use]
-pub fn shannon_entropy_per_char(text: &str) -> f64 {
+fn shannon_entropy_per_char(text: &str) -> f64 {
     let mut characters: Vec<char> = text.chars().collect();
     if characters.is_empty() {
         return 0.0;

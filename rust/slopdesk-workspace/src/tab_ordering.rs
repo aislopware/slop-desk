@@ -32,7 +32,7 @@ use crate::identity::{PaneId, TabId};
 use crate::session::{PaneSpec, Session};
 
 /// The bucket a keyless element lands in.
-pub const OTHER_SECTION_HEADER: &str = "Other";
+const OTHER_SECTION_HEADER: &str = "Other";
 
 /// Normalizes a raw project key for BUCKETING: trimmed, trailing slashes stripped, blank treated as
 /// absent.
@@ -70,7 +70,7 @@ pub fn project_section_header(key: Option<&str>) -> String {
 /// `app2` precedes `app10` because the digits are read as quantities rather than as text.
 /// Diacritics are NOT folded — see the module docs.
 #[must_use]
-pub fn natural_compare(lhs: &str, rhs: &str) -> Ordering {
+fn natural_compare(lhs: &str, rhs: &str) -> Ordering {
     let mut left = lhs.chars().peekable();
     let mut right = rhs.chars().peekable();
     loop {
@@ -126,7 +126,7 @@ fn compare_digit_runs(lhs: &str, rhs: &str) -> Ordering {
 /// Last, because the list used to follow first appearance — which made where a project sat a fact
 /// about when you happened to open it rather than about what it was called.
 #[must_use]
-pub fn section_ordering(lhs: Option<&str>, rhs: Option<&str>) -> Ordering {
+fn section_ordering(lhs: Option<&str>, rhs: Option<&str>) -> Ordering {
     match (lhs, rhs) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => Ordering::Greater,
@@ -193,7 +193,7 @@ pub fn tab_project_key(
 /// Sections are PAIRS keyed on an optional string rather than a map behind a sentinel: a stand-in
 /// string for the keyless case would merely look coupled to the rail's own collapse key while
 /// answering a different question. Absent is its own section, natively.
-pub fn bucketed_by_project<Element>(
+pub(crate) fn bucketed_by_project<Element>(
     elements: Vec<Element>,
     project_key: impl Fn(&Element) -> Option<String>,
 ) -> Vec<(Option<String>, Vec<Element>)> {
