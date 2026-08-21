@@ -1,16 +1,17 @@
-// SimulatorKeyMapTests — the three halves of the simulator's key path: the two key-numbering tables,
-// the vocabulary they agree on, and the modifier names.
+// SimulatorKeyMapTests — the simulator's key path from THIS side of the boundary: the numbers a Mac
+// reports, the names that come back, and the modifiers that ride along.
 //
-// The first suite is a PIN, not a restatement. ``SimulatorKeyMap`` spells its macOS virtual key codes
-// as literals so the table compiles for the iOS triple too (`Carbon.HIToolbox` is macOS-only), and a
-// literal table is exactly the kind that rots silently. So each row is asserted against the SDK's own
-// `kVK_` constant here, where Carbon IS available — a typo in the shared floor fails a build rather
-// than swallowing an arrow key on a device someone is typing into.
+// The table moved to `slopdesk_devicepanel::panel_key`, so what these tests are for moved with it.
+// The rule — which keys have no character, and what each server calls them — is proved there. What
+// only this side can check is that the numbers reach the door and the names come back, which is why
+// every assertion below now goes through `code(for:)`/`code(hidUsage:)` rather than reading a map.
 //
-// The HID table cannot be pinned the same way: `UIKeyboardHIDUsage` is a UIKit type, and the shared
-// floor is not allowed to name it. What IS asserted is the invariant that actually matters — the two
-// tables cover the same SET of functional keys, so a Mac and an iPad can never disagree about which
-// keys have no character.
+// The first suite is still a PIN, and it is the reason this file is worth its length. `panel_key`
+// spells its macOS virtual key codes as literals, because `kVK_*` lives in `Carbon.HIToolbox` and
+// the iOS triple has no such framework — and a literal table is exactly the kind that rots silently.
+// So each row is asserted against the SDK's own constant HERE, on the half where Carbon exists. A
+// typo in the shared floor fails a build rather than swallowing an arrow key on a device someone is
+// typing into.
 
 import SlopDeskVideoProtocol
 import Testing
@@ -47,11 +48,19 @@ struct SimulatorKeyMapCodeTests {
         }
     }
 
-    /// The pin only holds while it covers the whole table — a row added to the map and not to the
-    /// list above would be unpinned and nothing would say so.
+    /// The pin only holds while it covers the whole table — a key added to the far side and not to
+    /// the list above would be unpinned and nothing would say so. Swept rather than counted, now
+    /// that the table is Rust's: every keycode a Mac can report is asked, and every one that answers
+    /// must be a row here.
     @Test
-    func `the pin covers every row of the map`() {
-        #expect(SimulatorKeyMap.byVirtualKey.count == Self.rows.count)
+    func `the pin covers every key the door answers for`() {
+        let answered = (UInt16(0)...255).compactMap { keyCode in
+            SimulatorKeyMap.code(for: keyCode).map { (Int(keyCode), $0) }
+        }
+        #expect(answered.count == Self.rows.count)
+        for (keyCode, name) in answered {
+            #expect(Self.rows.contains { $0 == keyCode && $1 == name }, "kVK \(keyCode) is unpinned")
+        }
     }
 
     /// The table is a whitelist: a printable key must fall through so the caller sends it as TEXT,
@@ -77,10 +86,16 @@ struct SimulatorKeyMapCodeTests {
 struct SimulatorKeyMapDomainTests {
     /// The load-bearing invariant of the two-domain split: a Mac and an iPad must never disagree
     /// about WHICH keys have no character of their own. Only the numbering may differ.
+    ///
+    /// Swept through the two doors, because there is only one table now and the HID side is derived
+    /// from it — so what this can still catch is a MARSHALLING fault, which is the half this suite
+    /// owns. That the tables agree is `slopdesk_devicepanel::panel_key`'s to prove, and it does.
     @Test
-    func `both numberings reach the same set of keys`() {
-        #expect(Set(SimulatorKeyMap.byVirtualKey.values) == Set(SimulatorKeyMap.byHIDUsage.values))
-        #expect(Set(SimulatorKeyMap.byVirtualKey.values) == Set(SimulatorKeyMap.FunctionalKey.allCases))
+    func `both numberings reach the same set of names`() {
+        let fromKeyCode = Set((UInt16(0)...255).compactMap { SimulatorKeyMap.code(for: $0) })
+        let fromHID = Set((UInt16(0)...255).compactMap { SimulatorKeyMap.code(hidUsage: $0) })
+        #expect(fromKeyCode == fromHID)
+        #expect(fromKeyCode.count == 14, "the whole run that has no character of its own")
     }
 
     /// The two Enters are one name in BOTH numberings. The server's HID table has no keypad variant,
@@ -93,12 +108,14 @@ struct SimulatorKeyMapDomainTests {
         #expect(SimulatorKeyMap.code(hidUsage: 88) == "Enter")
     }
 
-    /// The raw value IS the wire name — there is no second spelling for the map to drift from.
+    /// The names the server expects, arriving as bytes rather than as a Swift enum's raw value.
+    /// `Delete` for forward-delete is the one that looks like a typo and is not — it is the server's
+    /// own spelling, and `Backspace` is what macOS calls Delete.
     @Test
     func `the vocabulary is the wire's own names`() {
-        #expect(SimulatorKeyMap.FunctionalKey.arrowLeft.rawValue == "ArrowLeft")
-        #expect(SimulatorKeyMap.FunctionalKey.backspace.rawValue == "Backspace")
-        #expect(SimulatorKeyMap.FunctionalKey.forwardDelete.rawValue == "Delete")
+        #expect(SimulatorKeyMap.code(for: 123) == "ArrowLeft")
+        #expect(SimulatorKeyMap.code(for: 51) == "Backspace")
+        #expect(SimulatorKeyMap.code(for: 117) == "Delete")
     }
 
     /// A HID usage outside the table is a printable key and rides the `type` path. 4 is `a`.

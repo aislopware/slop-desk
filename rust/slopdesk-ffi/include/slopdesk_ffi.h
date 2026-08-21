@@ -547,6 +547,51 @@ SlopDeskHidVirtualKey slopdesk_hid_virtual_key(uint16_t hid_usage);
 // release can synthesize the missing key-up.
 bool                  slopdesk_hid_is_modifier(uint16_t hid_usage);
 
+// ---- A device panel's hardware key -------------------------------------------
+//
+// The Android panel and the simulator panel ask one question in one order — does this key have a
+// character of its own? — and differ only at the last step, where one wants a `KeyEvent` keycode
+// and the other a `KeyboardEvent.code` string. `hid` picks the NUMBERING: a Mac reports a virtual
+// keycode, an iPad a USB HID usage. That is one bit, so it rides as one rather than doubling every
+// door, the way `slopdesk_settings_row_shown(index, mac)` carries which half is asking.
+//
+// The HID side is DERIVED from `slopdesk_hid_virtual_key` above, not tabulated. Four Swift maps
+// became two here, because two of them were that composition written out — and a written-out join
+// drifts from the thing it joins.
+
+// The simulator server's `KeyboardEvent.code`, or `0` for a key that types text and belongs on the
+// `type` envelope instead. `0` is safe as "no code" where it was not for the keycode door above:
+// every name this vocabulary answers is non-empty, so an empty delivery is outside the answer's
+// range rather than colliding with a real one.
+size_t slopdesk_panel_simulator_key_code(uint16_t code, bool hid, uint8_t *out, size_t cap);
+
+// What the Android panel should do about one key-down, TAGGED by its first byte.
+#define SLOPDESK_ANDROID_KEY_NOTHING 0
+#define SLOPDESK_ANDROID_KEY_KEYCODE 1
+#define SLOPDESK_ANDROID_KEY_TEXT    2
+// `NOTHING` is the whole answer. `KEYCODE` is followed by the `KeyEvent` keycode and the meta state
+// as four big-endian bytes each. `TEXT` is followed by the UTF-8 to type. A return larger than
+// `cap` means nothing was written — ask again at that size.
+//
+// One blob rather than a "which case" door plus a conditional second call: the caller cannot know
+// the shape until the rule has run, and two crossings for one question is a window in which they
+// could disagree.
+//
+// `characters` is what the near side's layout produced; `bare` is the same press with the layout's
+// modifier handling stripped. Each carries a PRESENT flag beside its pair, because absent and empty
+// are different answers here — absent falls back to `bare`, empty means the press produced nothing
+// — and a null pointer standing for both would silently turn the second into the first.
+size_t slopdesk_panel_android_key_resolve(uint16_t code, bool hid, const uint8_t *characters,
+                                          size_t characters_len, bool characters_present,
+                                          const uint8_t *bare, size_t bare_len, bool bare_present,
+                                          uint8_t modifiers, uint8_t *out, size_t cap);
+
+// Android's `META_*` bitmask for a set of held modifiers. SHIFT is deliberately not in it: the near
+// side has already applied it — the characters arriving with the event are already upper case — so
+// folding it in would ask the device to apply it twice. Exported beside the door above because the
+// panel's toolbar presses a keycode with no key event behind it.
+uint32_t slopdesk_panel_android_meta_state(uint8_t modifiers);
+
 // ---- Peek & Reply: what the card sends, and the tail it shows -------------------
 //
 // Which PANE it answers is `slopdesk_agent_peek_*` above. Every reply carries its own single

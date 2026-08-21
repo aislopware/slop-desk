@@ -12,23 +12,74 @@ import SlopDeskVideoProtocol
 import Testing
 @testable import SlopDeskDevicePanels
 
+private typealias Resolution = AndroidKeyMap.Resolution
+
 @Suite("AndroidKeyMap key numbering")
 struct AndroidKeyMapDomainTests {
     /// The load-bearing invariant of the two-domain split: a Mac and an iPad must never disagree
     /// about WHICH keys have no character of their own. Only the numbering may differ.
+    ///
+    /// Asserted through the two ENTRY POINTS rather than over two tables, because there is only one
+    /// table now — the HID side is derived from it, so a pair that disagreed here would be a
+    /// marshalling fault, which is the half this suite still owns. The tables' own agreement is
+    /// `slopdesk_devicepanel::panel_key`'s to prove, and it does.
     @Test
-    func `both numberings reach the same set of keycodes`() {
-        #expect(Set(AndroidKeyMap.functionalKeys.values) == Set(AndroidKeyMap.hidFunctionalKeys.values))
-        #expect(AndroidKeyMap.functionalKeys.count == AndroidKeyMap.hidFunctionalKeys.count)
+    func `both numberings reach the same keycode for every functional key`() {
+        // (macOS virtual key code, USB HID usage) for the whole run that has no character.
+        let pairs: [(UInt16, UInt16)] = [
+            (36, 40), (76, 88), (48, 43), (51, 42), (117, 76), (53, 41),
+            (126, 82), (125, 81), (123, 80), (124, 79),
+            (115, 74), (119, 77), (116, 75), (121, 78),
+        ]
+        for (keyCode, hidUsage) in pairs {
+            let fromMac = AndroidKeyMap.resolve(
+                keyCode: keyCode, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+            )
+            let fromPhone = AndroidKeyMap.resolve(
+                hidUsage: hidUsage, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+            )
+            #expect(fromMac == fromPhone, "kVK \(keyCode) and HID \(hidUsage) are one key")
+            #expect(fromMac != .none, "kVK \(keyCode) has no character, so it must travel")
+        }
     }
 
     /// Both Returns are one keycode in both numberings — Android has no keypad-Enter of its own.
     @Test
     func `the keypad Enter is the same keycode as Return on both`() {
-        #expect(AndroidKeyMap.functionalKeys[36] == .enter)
-        #expect(AndroidKeyMap.functionalKeys[76] == .enter)
-        #expect(AndroidKeyMap.hidFunctionalKeys[40] == .enter)
-        #expect(AndroidKeyMap.hidFunctionalKeys[88] == .enter)
+        let expected = Resolution.keycode(.enter, [])
+        #expect(AndroidKeyMap.resolve(
+            keyCode: 36, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+        ) == expected)
+        #expect(AndroidKeyMap.resolve(
+            keyCode: 76, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+        ) == expected)
+        #expect(AndroidKeyMap.resolve(
+            hidUsage: 40, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+        ) == expected)
+        #expect(AndroidKeyMap.resolve(
+            hidUsage: 88, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+        ) == expected)
+    }
+
+    /// A space is the one key in the shared run that Android wants as TEXT — it has a character, and
+    /// taking it off the text path would take it away from the layout that produced it.
+    @Test
+    func `a space stays on the text path Android wants it on`() {
+        #expect(AndroidKeyMap.resolve(
+            keyCode: 49, characters: " ", charactersIgnoringModifiers: " ", modifiers: [],
+        ) == .text(" "))
+    }
+
+    /// An absent `characters` falls back to the stripped spelling; an EMPTY one does not. The two
+    /// cross the boundary as a flag beside the buffer for exactly this reason.
+    @Test
+    func `an absent character is not an empty one across the door`() {
+        #expect(AndroidKeyMap.resolve(
+            keyCode: 0, characters: nil, charactersIgnoringModifiers: "e", modifiers: [],
+        ) == .text("e"))
+        #expect(AndroidKeyMap.resolve(
+            keyCode: 0, characters: "", charactersIgnoringModifiers: "e", modifiers: [],
+        ) == .none)
     }
 
     /// A backspace has a character (`\u{8}`) and must NOT ride the text path — it would insert a

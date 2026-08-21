@@ -39,6 +39,14 @@ path = "src/lib.rs"
 # the header: taking the type is what keeps this from being a second copy of the mapping.
 slopdesk-wire = { path = "../slopdesk-wire" }
 
+# The HID usage → macOS keycode map the remote-desktop path already carries. Taking it is what
+# lets `panel_key` hold ONE keycode table instead of a second one keyed by HID usage, which is the
+# join the two deleted Swift tables were spelling out. The edge points the way the header above
+# says the others do: `slopdesk-wire` above already depends on this crate, so nothing new is
+# reversed by naming it directly — Rust simply does not let a crate reach through a dependency's
+# dependency.
+slopdesk-workspace = { path = "../slopdesk-workspace" }
+
 # The aspect-fit law, and the point/size/rect vocabulary it is written in. A panel that fitted its
 # own frame would be a third answer to a question the renderer, the input encoder and the cursor
 # overlay already agree on — which is how a click ends up beside the pixel it was drawn for.

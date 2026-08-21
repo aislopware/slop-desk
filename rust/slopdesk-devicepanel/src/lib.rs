@@ -25,8 +25,15 @@
 //!
 //! [`geometry`] is the other half that was written twice: where a device's frame sits in a sidebar,
 //! what a point in that sidebar means, and where a synthetic finger may be planted.
+//!
+//! ## And which key was pressed
+//!
+//! [`panel_key`] is the third: which keys have no character of their own, what each server calls
+//! them, and what to do with the ones that do. It replaced FOUR Swift tables with two, because two
+//! of the four were a join `slopdesk-workspace` could already perform.
 
 pub mod geometry;
+pub mod panel_key;
 
 use slopdesk_wire::metadata::{ServiceEndpoint, ServiceState};
 

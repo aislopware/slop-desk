@@ -65,6 +65,7 @@ version = "0.1.0"
 dependencies = [
  "slopdesk-video",
  "slopdesk-wire",
+ "slopdesk-workspace",
 ]
 
 [[package]]

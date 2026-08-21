@@ -5378,11 +5378,41 @@ for stage in Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift \
   fi
 done
 # ONE VOCABULARY, TWO NUMBERINGS. A Mac reports a virtual key code and an iPad a USB HID usage; the
-# NAMES they resolve to, and every rule about what to do with them, are cut once in the shared floor.
-# A UI half that grew its own name table would be the same product implemented twice.
-for domain in byHIDUsage hidFunctionalKeys; do
-  if ! grep -rq "${domain}" Sources/SlopDeskDevicePanels/; then
-    fail "the ${domain} table is gone — an iPad keyboard numbers its keys as HID usages"
+# NAMES they resolve to, and every rule about what to do with them, are cut once — in
+# `slopdesk_devicepanel::panel_key`, which both panels reach through one door apiece.
+#
+# What this used to check was that the two HID TABLES existed in Swift. They are gone: the numbering
+# now rides as the door's `hid` flag, and the HID side is derived from the remote-desktop path's own
+# usage → keycode map rather than written a second time. So the check inverts. The tables must stay
+# DELETED — a reappearance is the drift the port removed, and it would compile and pass its own
+# tests — and the two ENTRY POINTS that carry the iPad's numbering must stay reachable, because a
+# port that quietly dropped the HID half would leave an iPad keyboard typing nothing.
+for gone in byVirtualKey byHIDUsage functionalKeys hidFunctionalKeys; do
+  if grep -rq "${gone}" Sources/; then
+    fail "the ${gone} table is back in Swift — panel_key.rs is the one table (docs/55 §8)"
+  fi
+done
+if ! grep -q 'code(hidUsage:' Sources/SlopDeskDevicePanels/Simulator/SimulatorKeyMap.swift; then
+  fail "SimulatorKeyMap lost its HID entry point — an iPad numbers its keys as HID usages"
+fi
+if ! grep -q 'hidUsage: UInt16' Sources/SlopDeskDevicePanels/Android/AndroidKeycode.swift; then
+  fail "AndroidKeyMap lost its HID entry point — an iPad numbers its keys as HID usages"
+fi
+if ! grep -q 'hid_virtual_key::virtual_key' rust/slopdesk-devicepanel/src/panel_key.rs; then
+  fail "panel_key stopped deriving its HID side — that is how the two numberings cannot drift"
+fi
+
+# The map panel_key derives FROM, and the gesture plan beside it, went the same way in `47eeea22`.
+# Both are faces now: a door call per answer and not one number of their own. The tables they lost
+# were `private`, so nothing outside would notice them growing back — a reader would see a plausible
+# Swift constant and no reason to doubt it. So the shape is pinned instead of the names: neither file
+# may hold a collection literal or a numeric constant, because in a face there is nothing for one to
+# be. Comments stripped first; both files explain at length what they no longer contain.
+for face in Sources/SlopDeskVideoClient/HIDVirtualKeyMap.swift \
+  Sources/SlopDeskVideoClient/TouchPointerPlan.swift; do
+  body="$(sed -E 's#^[[:space:]]*///?.*##' "${face}")"
+  if printf '%s' "${body}" | grep -qE 'static let [A-Za-z]+(: [A-Za-z<>:, ]+)? = [-0-9[]'; then
+    fail "${face} grew a constant of its own — it is a face, and the numbers are Rust's (docs/55 §6)"
   fi
 done
 # Comments stripped first — the tables' docs NAME the UIKit type they exist to stay away from.

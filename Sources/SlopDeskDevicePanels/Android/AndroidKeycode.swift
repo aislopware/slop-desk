@@ -21,6 +21,7 @@
 // string to the device's input method in ONE message with no acknowledgement, so a paste is a single
 // write rather than a per-character round trip.
 
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -82,50 +83,6 @@ package enum AndroidKeyMap {
         case none
     }
 
-    /// The macOS virtual key codes that have no character and must travel as keycodes.
-    ///
-    /// Keyed on `keyCode` rather than on the event's characters because several of these DO produce
-    /// characters — Return gives `\r`, Tab gives `\t`, Escape gives `\u{1b}` — and sending those as
-    /// text inserts a control character into the field instead of dismissing the keyboard or moving
-    /// focus.
-    package static let functionalKeys: [UInt16: AndroidKeycode] = [
-        36: .enter, // Return
-        76: .enter, // Enter (keypad)
-        48: .tab,
-        51: .del, // Delete (backspace)
-        117: .forwardDel, // Forward delete
-        53: .escape,
-        126: .dpadUp,
-        125: .dpadDown,
-        123: .dpadLeft,
-        124: .dpadRight,
-        115: .moveHome,
-        119: .moveEnd,
-        116: .pageUp,
-        121: .pageDown,
-    ]
-
-    /// The same keys, numbered the way an iPad numbers them: USB HID keyboard usages, which is what a
-    /// `UIKey` reports. Only the NUMBERING differs — the keycodes it maps to, and every rule below,
-    /// are the ones above (``resolve(functional:characters:charactersIgnoringModifiers:modifiers:)``
-    /// is where both domains meet). `AndroidKeycodeTests` asserts the two tables name the same set.
-    package static let hidFunctionalKeys: [UInt16: AndroidKeycode] = [
-        40: .enter, // Return / Enter
-        88: .enter, // Keypad Enter
-        43: .tab,
-        42: .del, // Delete or Backspace
-        76: .forwardDel, // Delete Forward
-        41: .escape,
-        82: .dpadUp,
-        81: .dpadDown,
-        80: .dpadLeft,
-        79: .dpadRight,
-        74: .moveHome,
-        77: .moveEnd,
-        75: .pageUp,
-        78: .pageDown,
-    ]
-
     /// Resolves one key-down event, described without naming a platform's event type.
     ///
     /// `characters` is what the client's own layout produced (option-composed output, dead-key
@@ -145,7 +102,7 @@ package enum AndroidKeyMap {
         modifiers: InputModifiers,
     ) -> Resolution {
         resolve(
-            functional: functionalKeys[keyCode], characters: characters,
+            keyCode, hid: false, characters: characters,
             charactersIgnoringModifiers: charactersIgnoringModifiers, modifiers: modifiers,
         )
     }
@@ -158,46 +115,89 @@ package enum AndroidKeyMap {
         modifiers: InputModifiers,
     ) -> Resolution {
         resolve(
-            functional: hidFunctionalKeys[hidUsage], characters: characters,
+            hidUsage, hid: true, characters: characters,
             charactersIgnoringModifiers: charactersIgnoringModifiers, modifiers: modifiers,
         )
     }
 
-    /// The rule itself, once, after the platform's numbering has been resolved away. `functional` is
-    /// non-nil for a key that has no character of its own.
-    package static func resolve(
-        functional: AndroidKeycode?,
+    /// The crossing. One call answers the whole question, TAGGED — the near side cannot know which
+    /// of the three shapes it will get until the rule has run, so asking twice would be a window in
+    /// which the two answers could disagree.
+    private static func resolve(
+        _ code: UInt16,
+        hid: Bool,
         characters: String?,
         charactersIgnoringModifiers: String?,
         modifiers: InputModifiers,
     ) -> Resolution {
-        if let keycode = functional {
-            return .keycode(keycode, metaState(from: modifiers))
+        withOptionalBytes(characters) { typed, typedPresent in
+            withOptionalBytes(charactersIgnoringModifiers) { bare, barePresent in
+                let call = { (out: UnsafeMutablePointer<UInt8>?, cap: Int) -> Int in
+                    slopdesk_panel_android_key_resolve(
+                        code, hid, typed.baseAddress, typed.count, typedPresent,
+                        bare.baseAddress, bare.count, barePresent, modifiers.rawValue, out, cap,
+                    )
+                }
+                let needed = call(nil, 0)
+                guard needed > 0 else { return .none }
+                var out = [UInt8](repeating: 0, count: needed)
+                let written = out.withUnsafeMutableBufferPointer { room in
+                    call(room.baseAddress, room.count)
+                }
+                guard written == needed else { return .none }
+                return decode(out)
+            }
         }
-        // A chord with a real modifier has to reach the device AS a chord, so it goes as a keycode;
-        // but the panel cannot know the device's layout, so only the chords with an unambiguous
-        // keycode are forwarded and the rest are dropped rather than typed as stray letters.
-        if modifiers.contains(.command) || modifiers.contains(.control) {
+    }
+
+    /// The tagged answer, read back. An unknown tag is `.none` — the honest reading of a byte this
+    /// build does not know is "send nothing", never a guess at which of the other two it meant.
+    private static func decode(_ blob: [UInt8]) -> Resolution {
+        guard let tag = blob.first else { return .none }
+        let payload = blob.dropFirst()
+        switch UInt32(tag) {
+        case UInt32(SLOPDESK_ANDROID_KEY_KEYCODE):
+            guard payload.count == 8 else { return .none }
+            let words = Array(payload)
+            return .keycode(
+                AndroidKeycode(bigEndian(words, at: 0)),
+                AndroidMetaState(rawValue: bigEndian(words, at: 4)),
+            )
+        case UInt32(SLOPDESK_ANDROID_KEY_TEXT):
+            // The producer is `slopdesk_devicepanel::panel_key`, so the payload is a Rust `String`'s
+            // bytes and cannot be invalid UTF-8. A failable init would add a `nil` branch with no
+            // failure mode behind it, and this side would have to invent a meaning for it.
+            // swiftlint:disable:next optional_data_string_conversion
+            return .text(String(decoding: payload, as: UTF8.self))
+        default:
             return .none
         }
-        guard let bare = charactersIgnoringModifiers, !bare.isEmpty else {
-            return .none
+    }
+
+    /// Four big-endian bytes at `offset`, which the door writes and nobody else does.
+    private static func bigEndian(_ bytes: [UInt8], at offset: Int) -> UInt32 {
+        var value: UInt32 = 0
+        for index in offset..<(offset + 4) {
+            value = value << 8 | UInt32(bytes[index])
         }
-        // `characters` (not `charactersIgnoringModifiers`) is what carries the layout's own
-        // resolution, including option-composed and dead-key output.
-        let typed = characters ?? bare
-        // Control characters would be inserted literally; there is nothing useful to type.
-        let printable = typed.unicodeScalars.filter { !($0.value < 0x20 || $0.value == 0x7F) }
-        guard !printable.isEmpty else { return .none }
-        return .text(String(String.UnicodeScalarView(printable)))
+        return value
+    }
+
+    /// A `String?` as the `(pointer, length, present)` triple the door reads.
+    ///
+    /// The PRESENT flag is not ceremony: absent means "fall back to the stripped spelling" and empty
+    /// means "this press produced nothing", and a null pointer standing in for both would silently
+    /// turn the second into the first.
+    private static func withOptionalBytes<T>(
+        _ text: String?,
+        _ body: (UnsafeBufferPointer<UInt8>, Bool) -> T,
+    ) -> T {
+        guard let text else { return body(UnsafeBufferPointer(start: nil, count: 0), false) }
+        return Array(text.utf8).withUnsafeBufferPointer { body($0, true) }
     }
 
     /// The meta state for a set of held modifiers, minus shift (see ``resolve(keyCode:characters:charactersIgnoringModifiers:modifiers:)``).
     package static func metaState(from modifiers: InputModifiers) -> AndroidMetaState {
-        var state: AndroidMetaState = []
-        if modifiers.contains(.option) { state.insert(.alt) }
-        if modifiers.contains(.control) { state.insert(.control) }
-        if modifiers.contains(.command) { state.insert(.meta) }
-        return state
+        AndroidMetaState(rawValue: slopdesk_panel_android_meta_state(modifiers.rawValue))
     }
 }
