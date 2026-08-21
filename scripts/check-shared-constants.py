@@ -148,12 +148,12 @@ SWIFT_SCOPE = re.compile(r"^public enum ([A-Za-z]+) \{$", re.MULTILINE)
 # reads neither of them, which is how four `slopdesk-screenwire` flags stayed unwatched.
 NUMBER = r"(0[xX][0-9a-fA-F_]+|0b[01_]+|[0-9][0-9_]*(?:\.[0-9]+)?)"
 
-# A size is rarely written as its digits. `256 * 1024 * 1024` and `15 * 1024 * 1024` are how a cap is
-# spelled where a reader has to see the megabytes, and a literal-only pattern reads NEITHER of them —
-# so the loudest constants in the tree, the ones a comment calls "the 15 MiB cap", were the ones this
-# gate could not see at all. The evaluator below is deliberately tiny: `int` literals, `*`, `+` and
-# `<<`, no names, no parentheses, no `eval`. Anything else answers "not a number I can compare",
-# which costs a pair this gate never had.
+# A size is rarely written as its digits. `256 * 1024 * 1024` and `15 * 1024 * 1024` are how a
+# cap is spelled where a reader has to see the megabytes, and a literal-only pattern reads NEITHER
+# of them — so the loudest constants in the tree, the ones a comment calls "the 15 MiB cap", were
+# the ones this gate could not see at all. The evaluator below is deliberately tiny: `int`
+# literals, `*`, `+` and `<<`, no names, no parentheses, no `eval`. Anything else answers "not a
+# number I can compare", which costs a pair this gate never had.
 EXPRESSION = (
     r"("
     + NUMBER.replace("(", "(?:", 1)
@@ -216,16 +216,16 @@ def literal(text: str) -> float:
 def numeric(text: str) -> float | None:
     """What a constant's right-hand side is WORTH, or `None` when this evaluator cannot say.
 
-    `int` literals joined by `*`, `+` and `<<`, folded left to right with `*` before `+`. Not `eval`:
-    this reads files nobody reviewed as code, and a gate that executes its input to compare two
-    numbers has traded the bug it catches for a worse one.
+    `int` literals joined by `*`, `+` and `<<`, folded left to right with `*` before `+`. Not
+    `eval`: this reads files nobody reviewed as code, and a gate that executes its input to compare
+    two numbers has traded the bug it catches for a worse one.
 
-    A `<<` mixed with either arithmetic operator answers `None` rather than a value, and that refusal
-    is the one judgement in here. Rust binds `*` and `+` TIGHTER than `<<`; Swift binds `<<` tighter
-    than both. So `1 << 2 + 3` is 32 in Rust and 7 in Swift, and any answer this function gave would
-    be right about one language and wrong about the other — which is the exact class of silent
-    disagreement it exists to report. No constant in the tree is written that way; the day one is,
-    the honest reading is that it should not be.
+    A `<<` mixed with either arithmetic operator answers `None` rather than a value, and that
+    refusal is the one judgement in here. Rust binds `*` and `+` TIGHTER than `<<`; Swift binds
+    `<<` tighter than both. So `1 << 2 + 3` is 32 in Rust and 7 in Swift, and any answer this
+    function gave would be right about one language and wrong about the other — which is the exact
+    class of silent disagreement it exists to report. No constant in the tree is written that way;
+    the day one is, the honest reading is that it should not be.
     """
     parts = re.split(r"[ \t]*(\*|\+|<<)[ \t]*", text.strip())
     operators = parts[1::2]
@@ -258,13 +258,13 @@ def numeric(text: str) -> float | None:
 # differently, so a door counted a caller in `Apps/` that this gate could not see a constant in. The
 # roots agree now.
 #
-# A TEST is deliberately not audited, and that is a different question from the doors'. A door called
-# only from a test is still a door somebody reaches; a NUMBER spelled in a test is usually the pin
-# itself — the whole point of `XCTAssertEqual(field, 7)` is that 7 is written down where a refactor
-# cannot move it. Auditing those would report every golden expectation in the tree as a transcription
-# of the constant it exists to hold still. That is why the exclusion is a `Tests` PATH COMPONENT and
-# not the single top-level `Tests/` root: the iOS suite lives at `Apps/ClientApp-iOS/Tests/`, inside
-# a root this gate does audit.
+# A TEST is deliberately not audited, and that is a different question from the doors'. A door
+# called only from a test is still a door somebody reaches; a NUMBER spelled in a test is usually
+# the pin itself — the whole point of `XCTAssertEqual(field, 7)` is that 7 is written down where a
+# refactor cannot move it. Auditing those would report every golden expectation in the tree as a
+# transcription of the constant it exists to hold still. That is why the exclusion is a `Tests`
+# PATH COMPONENT and not the single top-level `Tests/` root: the iOS suite lives at
+# `Apps/ClientApp-iOS/Tests/`, inside a root this gate does audit.
 SWIFT_TREE = ("Sources/*.swift", "Apps/*.swift", "ThirdParty/ghostty/integration/*.swift")
 
 
