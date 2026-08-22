@@ -2,6 +2,7 @@
 // finishing coat (nerd-font @font-face + slopcat letterpress). The WKUserScript wiring itself is
 // WebKit-only and deliberately unreachable here (hang-safety: no WKWebView in unit tests).
 
+import SlopDeskFontFaces
 import XCTest
 @testable import SlopDeskClientCore
 

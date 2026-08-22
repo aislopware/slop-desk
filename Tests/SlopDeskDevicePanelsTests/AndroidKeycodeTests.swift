@@ -14,6 +14,17 @@ import Testing
 
 private typealias Resolution = AndroidKeyMap.Resolution
 
+/// Whether a resolution took the keycode path at all.
+///
+/// Asserted instead of the NUMBER on purpose. Which Android keycode a functional key is belongs to
+/// `slopdesk_devicepanel::panel_key` and to its own suite; naming it again on this side would pin the
+/// copy rather than the rule, and this side's half of the rule is *which path the key takes* and
+/// *that both numberings take the same one*.
+private func isKeycode(_ resolution: Resolution) -> Bool {
+    if case .keycode = resolution { return true }
+    return false
+}
+
 @Suite("AndroidKeyMap key numbering")
 struct AndroidKeyMapDomainTests {
     /// The load-bearing invariant of the two-domain split: a Mac and an iPad must never disagree
@@ -46,19 +57,24 @@ struct AndroidKeyMapDomainTests {
     /// Both Returns are one keycode in both numberings — Android has no keypad-Enter of its own.
     @Test
     func `the keypad Enter is the same keycode as Return on both`() {
-        let expected = Resolution.keycode(.enter, [])
-        #expect(AndroidKeyMap.resolve(
-            keyCode: 36, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
-        ) == expected)
-        #expect(AndroidKeyMap.resolve(
-            keyCode: 76, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
-        ) == expected)
-        #expect(AndroidKeyMap.resolve(
-            hidUsage: 40, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
-        ) == expected)
-        #expect(AndroidKeyMap.resolve(
-            hidUsage: 88, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
-        ) == expected)
+        let spellings = [
+            AndroidKeyMap.resolve(
+                keyCode: 36, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+            ),
+            AndroidKeyMap.resolve(
+                keyCode: 76, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+            ),
+            AndroidKeyMap.resolve(
+                hidUsage: 40, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+            ),
+            AndroidKeyMap.resolve(
+                hidUsage: 88, characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+            ),
+        ]
+        #expect(isKeycode(spellings[0]), "Return has no character of its own, so it travels")
+        for spelling in spellings.dropFirst() {
+            #expect(spelling == spellings[0], "all four spellings of Return are one keycode")
+        }
     }
 
     /// A space is the one key in the shared run that Android wants as TEXT — it has a character, and
@@ -93,8 +109,8 @@ struct AndroidKeyMapDomainTests {
         let fromPhone = AndroidKeyMap.resolve(
             hidUsage: 42, characters: "\u{8}", charactersIgnoringModifiers: "\u{8}", modifiers: [],
         )
-        #expect(fromMac == .keycode(.del, []))
-        #expect(fromPhone == .keycode(.del, []))
+        #expect(isKeycode(fromMac), "a backspace must not ride the text path it has a character for")
+        #expect(fromMac == fromPhone, "kVK 51 and HID 42 are one key")
     }
 
     /// A printable key falls through to the text path on both, which is what keeps every non-US

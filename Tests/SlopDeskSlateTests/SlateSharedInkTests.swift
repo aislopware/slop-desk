@@ -18,9 +18,9 @@
 // ``Slate/agentInk(_:)`` / ``Slate/Native/agentInk(_:)`` already used — the drift is now a type the compiler
 // forbids rather than a review someone has to remember to do.
 
+import SlopDeskWorkspaceModel
 import SwiftUI
 import XCTest
-@testable import SlopDeskClientCore
 @testable import SlopDeskSlate
 
 @MainActor

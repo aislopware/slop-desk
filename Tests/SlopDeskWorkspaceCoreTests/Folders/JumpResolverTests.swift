@@ -1,6 +1,6 @@
-import SlopDeskCLICore
-import SlopDeskWorkspaceCore
+import Foundation
 import XCTest
+@testable import SlopDeskWorkspaceCore
 
 // `JumpResolver` tests.
 //

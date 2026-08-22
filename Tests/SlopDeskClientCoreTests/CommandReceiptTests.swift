@@ -7,6 +7,7 @@
 // word. Headless VALUE assertions over the pure resolver — no view, no store.
 
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
 

@@ -160,7 +160,16 @@ final class GuiGateLaunchContractTests: XCTestCase {
     private func openLaunchLines(of script: String) throws -> [String] {
         let values = try resolvedValues(of: script)
         return try codeLines(of: script).filter { line in
-            guard let verb = line.firstRange(of: /\bopen[ \t]+/) else { return false }
+            // `open` must be in COMMAND POSITION — line start, or straight after a shell operator or
+            // one of the keywords a command can follow. A bare `\bopen[ \t]+` also matched the word
+            // inside a QUOTED STRING, and on 2026-08-22 that misread a new ratchet rule in
+            // `check-supervisor.sh` whose label is `"open block keys"` (OSC-133 command blocks — no
+            // relation to the launcher) as a launch of the app. That pulled the whole script into the
+            // subject set, where six further contracts then failed it for not exec'ing a bundle it
+            // never mentions: eight red assertions, none of them about a real defect. A predicate that
+            // recognises a command has to look where a command can be.
+            guard let verb = line.firstRange(of: /(?:^|[;&|(]|\b(?:then|else|do))[ \t]*\bopen[ \t]+/)
+            else { return false }
             return shellWords(String(line[verb.upperBound...]))
                 .filter { $0.contains("$") || $0.contains("/") || $0.contains(".app") }
                 .contains { argument in

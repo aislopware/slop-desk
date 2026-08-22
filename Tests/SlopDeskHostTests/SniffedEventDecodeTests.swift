@@ -46,6 +46,47 @@ final class SniffedEventDecodeTests: XCTestCase {
         )
     }
 
+    /// The state discriminator, pinned as the two literals superd writes rather than as "idle and
+    /// everything else". This decode used to `guard … == "idle" else { return .commandRunning }`,
+    /// so ANY other string — a rename, a third state from a newer superd, a typo, a missing key —
+    /// read as a command still running: the spinner would never come down, and both suites stayed
+    /// green because each end only ever tested itself.
+    func testAnUnknownStateIsNeverSilentlyReadAsRunning() {
+        // The two superd actually writes still mean exactly what they meant.
+        XCTAssertEqual(decode(#"{"events":[{"kind":"status","state":"running"}]}"#), [.commandRunning])
+        XCTAssertEqual(
+            decode(#"{"events":[{"kind":"status","state":"idle","exitCode":0,"durationMS":1}]}"#),
+            [.commandIdle(exitCode: 0, durationMS: 1)],
+        )
+        // Everything else asserts NOTHING. `kind: "status"` is unambiguous — `status` is a kind this
+        // build knows, so it can only mean the state was the part it could not read.
+        for state in [#""stalled""#, #""finished""#, #""IDLE""#, "null", "7"] {
+            XCTAssertEqual(
+                decode(#"{"events":[{"kind":"status","state":\#(state)}]}"#),
+                [.unknown(kind: "status")],
+                "state \(state) must not be guessed at",
+            )
+        }
+        // A missing `state` is the same answer, and used to be the worst of them: it read as a
+        // command running that no shell had ever reported starting.
+        XCTAssertEqual(decode(#"{"events":[{"kind":"status"}]}"#), [.unknown(kind: "status")])
+        // And it costs its neighbours nothing, exactly as an unknown KIND does not.
+        XCTAssertEqual(
+            decode(#"{"events":[{"kind":"status","state":"stalled"},{"kind":"bell"}]}"#),
+            [.unknown(kind: "status"), .bell],
+        )
+    }
+
+    /// An unreadable state reaches the wire the way any other skew does — as nothing at all. The
+    /// client keeps the state it already had, which for the rename this test exists for means a
+    /// finished command sits there spinning rather than being quietly marked done.
+    func testAnUnknownStateProducesNoWireMessage() {
+        XCTAssertEqual(
+            MuxChannelSession.wireMessagesForTesting([.unknown(kind: "status"), .bell]),
+            [.bell],
+        )
+    }
+
     /// Version skew, and the reason this decodes by hand: a kind a NEWER superd knows must not take
     /// the whole batch — every title and exit code in it — down with the one member this build
     /// cannot read.

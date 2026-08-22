@@ -115,7 +115,6 @@ final class EnvConfigTests: XCTestCase {
         XCTAssertNil(EnvConfig.string(key)) // unset everywhere
         EnvConfig.overlay[key] = "42"
         XCTAssertEqual(EnvConfig.string(key), "42") // overlay fills the gap
-        XCTAssertEqual(EnvConfig.int(key, default: 0), 42)
     }
 
     /// PRECEDENCE (decision #16, P2): a real `ProcessInfo` env var WINS over the settings overlay —
@@ -131,33 +130,15 @@ final class EnvConfigTests: XCTestCase {
         XCTAssertEqual(EnvConfig.string("PATH"), real) // real env var STILL wins — overlay ignored
     }
 
-    // MARK: Typed accessors (validate-then-default)
+    // MARK: Typed accessors
 
-    func testIntAccessor() {
-        let key = "SLOPDESK_TEST_INT"
-        XCTAssertEqual(EnvConfig.int(key, default: 7), 7) // unset ⇒ default
-        EnvConfig.overlay[key] = "13"
-        XCTAssertEqual(EnvConfig.int(key, default: 7), 13)
-        EnvConfig.overlay[key] = "notanumber"
-        XCTAssertEqual(EnvConfig.int(key, default: 7), 7) // garbage ⇒ default
-        EnvConfig.overlay[key] = "100"
-        XCTAssertEqual(EnvConfig.int(key, default: 7, min: 1, max: 10), 7) // out of range REJECTED ⇒ default
-        EnvConfig.overlay[key] = "5"
-        XCTAssertEqual(EnvConfig.int(key, default: 7, min: 1, max: 10), 5)
-    }
-
-    func testDoubleAccessor() {
-        let key = "SLOPDESK_TEST_DOUBLE"
-        XCTAssertEqual(EnvConfig.double(key, default: 0.5), 0.5)
-        EnvConfig.overlay[key] = "0.85"
-        XCTAssertEqual(EnvConfig.double(key, default: 0.5), 0.85)
-        EnvConfig.overlay[key] = "nan"
-        XCTAssertEqual(EnvConfig.double(key, default: 0.5), 0.5) // non-finite REJECTED
-        EnvConfig.overlay[key] = "inf"
-        XCTAssertEqual(EnvConfig.double(key, default: 0.5), 0.5)
-        EnvConfig.overlay[key] = "9.0"
-        XCTAssertEqual(EnvConfig.double(key, default: 0.5, min: 0, max: 1), 0.5) // out of range ⇒ default
-    }
+    // `testIntAccessor` and `testDoubleAccessor` were deleted with the two accessors they covered
+    // (2026-08-22). They were the ONLY callers of `EnvConfig.int` / `.double` in the tree, which is
+    // the shape `docs/55` §8 warns about at its sharpest: a rule with a test and no production
+    // caller, beside two private copies of the same rule that had no test at all. The rule now has
+    // one implementation — `slopdesk_abr_validated_int` / `_double` — and its differential lives in
+    // `rust/slopdesk-ffi`'s `abr` module, where it is held against the CLAMPING reading on the same
+    // input rather than checked against itself.
 
     func testEnumAccessor() {
         let key = "SLOPDESK_TEST_ENUM"

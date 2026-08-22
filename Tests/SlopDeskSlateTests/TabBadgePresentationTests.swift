@@ -7,7 +7,7 @@
 // deliberately NOT asserted against tokens — `Color` equality is provider-fragile; the ink/glyph/nil
 // CLASS of each kind is the load-bearing spec.)
 
-import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskSlate
 

@@ -88,5 +88,41 @@ final class SimulatorScreenLayoutTests: XCTestCase {
             ),
         )
     }
+
+    /// The boundary this lane used to get wrong, pinned as a NUMBER rather than as "it asks the
+    /// door".
+    ///
+    /// Until 2026-08-22 the simulator surface clamped a runaway drag to the fitted rect's SIZE while
+    /// the shared rule clamps to the last addressable point inside it, so a drag off the right edge
+    /// of a 200-point frame reported `x = 200` into a surface whose columns are `0..<200`. Nothing
+    /// could fail: both numbers are plausible, both round-trip, and the host scales whatever it is
+    /// sent — the only trace is a swipe that lands one row off at the very edge. The Android lane
+    /// answered 199 for the same drag, from the same door, the whole time.
+    ///
+    /// An inset rect on purpose: an origin at zero makes the subtraction inert, which is exactly the
+    /// case a wrong implementation still passes.
+    func testADragOffTheEdgeLandsOnTheLastAddressablePointNotOnTheSize() {
+        let inset = CGRect(x: 50, y: 20, width: 200, height: 400)
+        XCTAssertEqual(
+            SimulatorScreenLayout.clampedDevicePoint(from: CGPoint(x: 9999, y: 9999), fitted: inset),
+            CGPoint(x: 199, y: 399),
+            "the last addressable point, never the size — 200 is off the end of `0..<200`",
+        )
+        XCTAssertEqual(
+            SimulatorScreenLayout.clampedDevicePoint(from: CGPoint(x: 250, y: 420), fitted: inset),
+            CGPoint(x: 199, y: 399),
+            "the far edge itself is already outside the frame, the way `devicePoint` reads it",
+        )
+        XCTAssertEqual(
+            SimulatorScreenLayout.clampedDevicePoint(from: CGPoint(x: -100, y: 60), fitted: inset),
+            CGPoint(x: 0, y: 40),
+            "the near edges are inclusive and the origin is subtracted, not ignored",
+        )
+        XCTAssertEqual(
+            SimulatorScreenLayout.clampedDevicePoint(from: CGPoint(x: 9, y: 9), fitted: .zero),
+            .zero,
+            "a frame with no area has no point to clamp into",
+        )
+    }
 }
 #endif

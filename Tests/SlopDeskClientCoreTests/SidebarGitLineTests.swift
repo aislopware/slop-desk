@@ -11,6 +11,7 @@
 // kind until docs/56 stage D — it was private to a SwiftUI view, and the squeeze ladder could only
 // ever be judged by looking at `MacChromeSnapshotRender`'s render.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore

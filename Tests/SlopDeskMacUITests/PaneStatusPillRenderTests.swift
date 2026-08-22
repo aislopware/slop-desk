@@ -29,6 +29,7 @@
 import AppKit
 import SlopDeskClientCore
 import SlopDeskSlate
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskMacUI
 

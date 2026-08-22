@@ -15,9 +15,8 @@
 // presentation maps (never absolute colour values — `Color` equality is provider-fragile).
 
 import SlopDeskAgentDetect
-import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClientCore
 @testable import SlopDeskSlate
 
 final class StatusDotTests: XCTestCase {
@@ -252,35 +251,11 @@ final class StatusDotTests: XCTestCase {
         XCTAssertEqual(StatusPresentation.slotNameWeight, .bold)
     }
 
-    /// ⚠️ A clean exit is NOT a brightness step any more (round 25, user-directed). The running
-    /// command already reads bold on the primary ink, so the succeeded receipt is byte-for-byte the
-    /// same register — this is the pin that says so, and the reason ``outcomeSymbol`` has to exist:
-    /// if these two ever diverge again, the tick has become decoration on a signal that is already
-    /// being sent, and the round is undone. Since round 26 the succeeded receipt is the TICK, and
-    /// this ink is what the tick reads in — the register is still inherited, not re-picked.
-    @MainActor
-    func testAFinishDoesNotRestyleTheCommandName() {
-        XCTAssertEqual(
-            StatusPresentation.outcomeInk(.succeeded),
-            StatusPresentation.slotNameInk(isCommand: true),
-            "a clean exit must read in the same ink the command wore while it ran",
-        )
-        // A bare login shell is the one slot label that stays quiet — bolding every idle `zsh` on
-        // the rail spends exactly the step this round reserves for work.
-        XCTAssertEqual(StatusPresentation.slotNameInk(isCommand: false), Slate.Text.tertiary)
-        XCTAssertNotEqual(
-            StatusPresentation.slotNameInk(isCommand: true),
-            StatusPresentation.slotNameInk(isCommand: false),
-        )
-        XCTAssertTrue(RailRowsBuilder.slotLabelIsCommand("make"))
-        XCTAssertTrue(RailRowsBuilder.slotLabelIsCommand("/usr/bin/vim"))
-        for shell in ["zsh", "-zsh", "bash", "fish"] {
-            XCTAssertFalse(
-                RailRowsBuilder.slotLabelIsCommand(shell), "\(shell) is the pane at rest, not work",
-            )
-        }
-        XCTAssertFalse(RailRowsBuilder.slotLabelIsCommand(nil))
-    }
+    // `testAFinishDoesNotRestyleTheCommandName` moved to
+    // `SlopDeskClientCoreTests/StatusSeamTests.swift` on 2026-08-22. It paired a `StatusPresentation`
+    // ink fact with `RailRowsBuilder.slotLabelIsCommand`, and that predicate is `package` in
+    // `SlopDeskClientCore` — one storey above this suite, whose dependencies were narrowed to what
+    // `SlopDeskSlate` itself names. The pairing is the test's point, so it went up rather than apart.
 
     /// The completion GLYPH: a bare tick for a clean exit, NOTHING for a failure — and every way it
     /// is kept quieter than the agent's own finish.
@@ -408,44 +383,10 @@ final class StatusDotTests: XCTestCase {
         XCTAssertTrue(OttyIcon.coffee.outlines.isEmpty, "a filled icon strokes nothing")
     }
 
-    /// The finish's OWNER comes from one shared predicate: a live agent `.done` or the client's
-    /// unread latch, and ONLY on a finish badge. The same call gates the row's agent FINAL LINE, so
-    /// the row that shows the agent's last words is exactly the row that fills its check — a
-    /// command's exit can neither borrow the agent's line nor its weight.
-    @MainActor
-    func testTheFinishOwnerIsOnePredicateForLineAndMark() {
-        for status: ClaudeStatus in [.done, .idle] {
-            for unseen in [true, false] {
-                let agents = RailRowsBuilder.finishIsAgents(
-                    badge: .finished, status: status, unseenDone: unseen,
-                )
-                XCTAssertEqual(
-                    agents, status == .done || unseen,
-                    "a live `.done` OR the unread latch owns the finish (\(status), unseen=\(unseen))",
-                )
-                // Whatever the predicate says, the VOICE must follow it — never diverge: the
-                // agent's finish is the check, a command's is the slot's receipt.
-                XCTAssertEqual(
-                    StatusPresentation.statusDot(
-                        working: false, badge: .finished, agentFinish: agents,
-                    )?.mark,
-                    agents ? .agentFinish : nil,
-                )
-                XCTAssertEqual(
-                    StatusPresentation.commandOutcome(badge: .finished, agentFinish: agents),
-                    agents ? nil : .succeeded,
-                )
-            }
-        }
-        // A NON-finish badge is never the agent's finish, however done the agent looks — an error or
-        // a busy tier must not be read as a completed turn.
-        for kind: TabBadgeKind? in [.error, .commandBusy, .awaitingInput, .running, nil] {
-            XCTAssertFalse(
-                RailRowsBuilder.finishIsAgents(badge: kind, status: .done, unseenDone: true),
-                "\(String(describing: kind)) is not a finish badge",
-            )
-        }
-    }
+    // `testTheFinishOwnerIsOnePredicateForLineAndMark` moved to
+    // `SlopDeskClientCoreTests/StatusSeamTests.swift` on 2026-08-22, for the same reason: it pins
+    // `RailRowsBuilder.finishIsAgents` against the voice that must follow it, and only a suite that
+    // sees both layers can fail when the two diverge.
 
     // MARK: - Geometry
 

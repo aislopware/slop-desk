@@ -107,4 +107,37 @@ final class PanelTabsTests: XCTestCase {
         XCTAssertFalse(PanelTabs.names(files, at: .none, selected: .code))
         XCTAssertFalse(PanelTabs.names(simulators, at: .none, selected: .code))
     }
+
+    // MARK: What a screen reader hears
+
+    /// The label is the WORD. A tab is focused far more often than it is explained, and a label is
+    /// what gets read on every focus change — so the sentence is a hint, not an identity. (The phone
+    /// read `help` as its label until this reading existed; the Mac read `label`. One answer now.)
+    func testAccessibilityLabelIsTheWord() {
+        XCTAssertEqual(
+            PanelTabs.all.map(\.accessibilityLabel), ["Files", "Simulators", "Emulators", "Desktop"],
+        )
+    }
+
+    /// The hint drops the name the help text opens with — the reader has just heard it as the label.
+    func testAccessibilityHintDropsTheLeadingName() {
+        XCTAssertEqual(
+            PanelTabs.all.map(\.accessibilityHint),
+            [
+                "the project's embedded editor",
+                "the host's iOS Simulator devices",
+                "the host's Android emulators and attached devices",
+                "the host's window surface",
+            ],
+        )
+    }
+
+    /// A help string with no `Name — ` opening is already a bare sentence and is offered whole,
+    /// rather than being truncated by a split that did not find its separator.
+    func testAccessibilityHintToleratesAHelpWithNoDash() {
+        let tab = PanelTabReading(
+            surface: .desktop, mark: .symbol("display"), label: "Desktop", help: "No dash here",
+        )
+        XCTAssertEqual(tab.accessibilityHint, "No dash here")
+    }
 }

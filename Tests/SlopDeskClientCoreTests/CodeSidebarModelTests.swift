@@ -173,6 +173,72 @@ final class CodeSidebarModelTests: XCTestCase {
         XCTAssertEqual(model.generation, 1)
     }
 
+    // MARK: Re-entry (the phone's cover is dismissed and re-opened)
+
+    /// The phone mounts the panel in a `.fullScreenCover`, so a dismissal cancels the column's
+    /// `.task` and every re-open re-enters `poll`. A settled model must answer that re-entry with
+    /// SILENCE: no ensure round, and — the visible half — no drop back to `.starting`, which is the
+    /// spinner flashing over a workbench that is already loaded.
+    func testPollOnASettledRootIsANoOp() async {
+        let model = CodeSidebarModel()
+        await model.poll(
+            projectRoot: "/p", host: { "h" },
+            ensure: { _ in .init(state: .ready, port: 6000) }, interval: .zero,
+        )
+        let settled = model.phase
+        let reEntry = Counter()
+        await model.poll(
+            projectRoot: "/p", host: { "h" },
+            ensure: { _ in
+                _ = reEntry.next()
+                return .init(state: .starting, port: 0)
+            },
+            interval: .zero,
+        )
+        XCTAssertEqual(model.phase, settled)
+        XCTAssertEqual(reEntry.value, 0, "a settled root must not ensure again")
+    }
+
+    /// The guard is ROOT-scoped. A `.ready` left over from the previous project is the stale phase
+    /// ``CodeSidebarPhase/ready(projectRoot:url:)`` warns about, so switching projects must re-ensure
+    /// and land on the NEW root's URL rather than re-showing the old workbench.
+    func testPollOnADifferentRootReEnsures() async throws {
+        let model = CodeSidebarModel()
+        await model.poll(
+            projectRoot: "/old", host: { "h" },
+            ensure: { _ in .init(state: .ready, port: 6000) }, interval: .zero,
+        )
+        await model.poll(
+            projectRoot: "/new", host: { "h" },
+            ensure: { _ in .init(state: .ready, port: 6100) }, interval: .zero,
+        )
+        try XCTAssertEqual(
+            model.phase,
+            .ready(projectRoot: "/new", url: XCTUnwrap(URL(string: "http://h:6100/?folder=/new"))),
+        )
+    }
+
+    /// The reload button's two halves are one act: the bump restarts the task, and the unsettle is
+    /// what lets the restarted loop do any work. Without it the button would cancel a finished loop
+    /// and start one that returns on its first line.
+    func testRequestReloadUnsettlesSoTheNextPollRuns() async throws {
+        let model = CodeSidebarModel()
+        await model.poll(
+            projectRoot: "/p", host: { "h" },
+            ensure: { _ in .init(state: .ready, port: 6000) }, interval: .zero,
+        )
+        model.requestReload()
+        XCTAssertEqual(model.phase, .starting)
+        await model.poll(
+            projectRoot: "/p", host: { "h" },
+            ensure: { _ in .init(state: .ready, port: 6200) }, interval: .zero,
+        )
+        try XCTAssertEqual(
+            model.phase,
+            .ready(projectRoot: "/p", url: XCTUnwrap(URL(string: "http://h:6200/?folder=/p"))),
+        )
+    }
+
     /// A tiny call counter usable from the `@Sendable`-ish ensure closure (the poll loop is
     /// main-actor bound, so plain state behind a class is safe here).
     private final class Counter: @unchecked Sendable {

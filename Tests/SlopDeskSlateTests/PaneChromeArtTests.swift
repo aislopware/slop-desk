@@ -19,8 +19,8 @@
 // reporting one mode with another's symbol after a fourth case is added below.
 
 import SFSafeSymbols
+import SlopDeskWorkspaceModel
 import XCTest
-@testable import SlopDeskClientCore
 @testable import SlopDeskSlate
 
 final class PaneChromeArtTests: XCTestCase {

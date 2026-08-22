@@ -8,6 +8,7 @@
 // both read.
 
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
 

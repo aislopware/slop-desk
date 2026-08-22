@@ -71,21 +71,43 @@ final class ConnectionReadingTests: XCTestCase {
         XCTAssertEqual(ConnectionReading.ledState(status: .failed("refused"), pingMS: nil), .dim)
     }
 
-    func testFooterDetailLinePingWhenConnectedElseStatusWord() {
+    func testTrailingDetailLinePingWhenConnectedElseStatusWord() {
         // Connected with a sample: the mono ping metric.
-        let ping = ConnectionReading.footerDetail(status: .connected, pingMS: 11.4)
+        let ping = ConnectionReading.trailingDetail(status: .connected, pingMS: 11.4, mount: .bedded)
         XCTAssertEqual(ping?.text, "11 ms")
         XCTAssertEqual(ping?.isMetric, true)
         // Connected before the first sample: the status word, not a blank slot.
-        let fresh = ConnectionReading.footerDetail(status: .connected, pingMS: nil)
+        let fresh = ConnectionReading.trailingDetail(status: .connected, pingMS: nil, mount: .bedded)
         XCTAssertEqual(fresh?.text, "connected")
         XCTAssertEqual(fresh?.isMetric, false)
         // Not connected: the short status word (campaign progress included), never a stale ping.
-        let retry = ConnectionReading.footerDetail(
-            status: .reconnecting(attempt: 3, nextRetry: nil), pingMS: 12,
+        let retry = ConnectionReading.trailingDetail(
+            status: .reconnecting(attempt: 3, nextRetry: nil), pingMS: 12, mount: .bedded,
         )
         XCTAssertEqual(retry?.text, "reconnecting 3/20")
         XCTAssertEqual(retry?.isMetric, false)
+    }
+
+    /// The ONE branch the mount decides, and the only one — everything else about the slot is the same
+    /// answer at both mounts, which is what makes this a parameter rather than a second function.
+    func testOnlyTheUnsampledSlotDependsOnTheMount() {
+        // Connected, no sample yet: the bed speaks, the bedless pill stays silent.
+        XCTAssertEqual(
+            ConnectionReading.trailingDetail(status: .connected, pingMS: nil, mount: .bedded)?.text,
+            "connected",
+        )
+        XCTAssertNil(ConnectionReading.trailingDetail(status: .connected, pingMS: nil, mount: .compact))
+        // Every other reading is mount-independent.
+        for mount in [ConnectionReading.ConnectionMount.bedded, .compact] {
+            XCTAssertEqual(
+                ConnectionReading.trailingDetail(status: .connected, pingMS: 11.4, mount: mount)?.text,
+                "11 ms",
+            )
+            XCTAssertEqual(
+                ConnectionReading.trailingDetail(status: .disconnected, pingMS: 11.4, mount: mount)?.text,
+                "disconnected",
+            )
+        }
     }
 
     /// The trailing slot climbs only when it holds DIGITS. Prose that has already said "disconnected"

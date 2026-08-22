@@ -10,6 +10,7 @@
 // this pane's siblings rather than about this pane's own gate — a "tidy" gate added to it would hide the
 // one chip whose absence a user cannot explain.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
 

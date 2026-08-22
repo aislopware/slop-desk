@@ -6,6 +6,7 @@
 // it (AppKit rows, SwiftUI rows, the collapsed strip), and a word spelled twice is a state read two
 // ways on two devices.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
 @testable import SlopDeskWorkspaceCore

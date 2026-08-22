@@ -2,6 +2,7 @@
 // module bundle, registration succeeds process-wide, and the PURE run splitter classifies exactly the
 // private-use runs (what `Text.nerdAware` splices into the symbols face). Headless — no view, no window.
 
+import SlopDeskFontFaces
 import XCTest
 @testable import SlopDeskClientCore
 
@@ -9,12 +10,17 @@ final class NerdSymbolFontTests: XCTestCase {
     /// The TTF ships in the module bundle (Package.swift `resources: [.copy("Resources/Fonts")]`) and
     /// registers with Core Text. REVERT-TO-CONFIRM-FAIL: drop the resource declaration (or the file)
     /// and both assertions trip — `nerdAware` would then silently degrade to plain Text forever.
+    ///
+    /// Asked of ``NerdSymbolFont/bundledFontURL`` rather than spelled here. This test used to build the
+    /// URL itself with `Bundle.module.url(forResource:withExtension:subdirectory:)`, which worked only
+    /// while the face lived in `SlopDeskClientCore` — `Bundle.module` is each module's OWN bundle, so
+    /// once the payload moved to `SlopDeskFontFaces` the call resolved to this TEST target's bundle,
+    /// which has no resources and therefore no synthesised `Bundle.module` at all. Two spellings of one
+    /// resource path is the drift; asking the owner is the fix, and it is now the only spelling.
     func testBundledFontRegisters() {
         XCTAssertNotNil(
-            Bundle.module.url(
-                forResource: "SymbolsNerdFont-Regular", withExtension: "ttf", subdirectory: "Fonts",
-            ),
-            "the Symbols Nerd Font TTF ships in the SlopDeskClientCore resource bundle",
+            NerdSymbolFont.bundledFontURL,
+            "the Symbols Nerd Font TTF ships in the SlopDeskFontFaces resource bundle",
         )
         XCTAssertTrue(NerdSymbolFont.registered, "the bundled face registers (or already was) with Core Text")
     }
