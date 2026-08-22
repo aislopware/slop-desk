@@ -79,37 +79,37 @@ impl Rect {
 
     /// The left edge.
     #[must_use]
-    pub(crate) const fn min_x(self) -> f64 {
+    pub const fn min_x(self) -> f64 {
         self.origin.x
     }
 
     /// The top edge.
     #[must_use]
-    pub(crate) const fn min_y(self) -> f64 {
+    pub const fn min_y(self) -> f64 {
         self.origin.y
     }
 
     /// The right edge.
     #[must_use]
-    pub(crate) const fn max_x(self) -> f64 {
+    pub const fn max_x(self) -> f64 {
         self.origin.x + self.size.width
     }
 
     /// The bottom edge.
     #[must_use]
-    pub(crate) const fn max_y(self) -> f64 {
+    pub const fn max_y(self) -> f64 {
         self.origin.y + self.size.height
     }
 
     /// The horizontal centre.
     #[must_use]
-    pub(crate) const fn mid_x(self) -> f64 {
+    pub const fn mid_x(self) -> f64 {
         self.origin.x + self.size.width / 2.0
     }
 
     /// The vertical centre.
     #[must_use]
-    pub(crate) const fn mid_y(self) -> f64 {
+    pub const fn mid_y(self) -> f64 {
         self.origin.y + self.size.height / 2.0
     }
 }

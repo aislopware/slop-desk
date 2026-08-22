@@ -3625,6 +3625,54 @@ only entry — it is `#if os(macOS)` in the pipeline itself because it carries a
 not a subscription the phone is missing but a sink that is macOS-shaped all the way down. Rule N.15
 pins all four capabilities positively, which is the half of a ledger that catches a fix.
 
+### Increment 82 — two frameworks, each with its own reading of "pure rect math"
+
+`PaneDropGeometry` was the shared file that stopped the pane-move drop from having two answers, and it
+worked: the canvas's live in-tab resolution and `PaneDragResolver`'s cross-window INSERT resolution
+both read one gutter and one edge band. What it did NOT stop is the other half of the round trip. The
+preview's rects — `slabRect`, `seamSize`, `seamCenter`, `railRect` — are drawn by `SlopDeskMacUI` in
+AppKit and by `SlopDeskPhoneUI` in SwiftUI, and both files had arrived at the shared file *later*,
+having each first written the math themselves under a banner that called it pure. §3's rule is that
+layout may diverge and capability may not; a slab is neither. It is an **assertion about what the
+commit will do**, and two renderers deriving it independently is how one half draws a promise the
+resolver never keeps.
+
+**So the rules left Swift entirely** (`slopdesk_workspace::pane_drop`, 8 doors in
+`slopdesk-ffi/src/pane_drop.rs`). This is the shape the repo's Rust rule was written for and the file
+is close to its ideal case: `f64`s in, a point/size/rect/edge-code out, no buffer, no handle, no
+allocation. The vocabulary is the video path's `SlopDeskVideoPoint`/`Size`/`Rect`, which the device
+panel already borrows — a second rect struct with the same four fields would only mean a Swift face
+converting between two shapes for nothing.
+
+**One rule did not go, and the reason is the boundary's own charter.** `leaf(at:in:excluding:)` takes
+`SplitTreeRenderModel.PlacedLeaf`s and answers a `PaneID`. Porting it would carry an IDENTITY across
+the ABI and straight back — `rust/slopdesk-devicepanel`'s "answers, not identities": a copy made only
+to be compared with the one it came from. It is also a linear scan with no arithmetic in it, so there
+is no rule for two callers to disagree about, only an order, and the order is already the caller's.
+
+**An edge crosses as a CODE, not as the wire's byte.** `PaneDropEdge` has an on-wire byte and it is
+total by design — every value names an edge, `from_byte` defaults unknowns to the leading one, because
+a peer that garbles a dock should still leave the pane on screen. This door carries a fifth answer the
+wire never does: `EDGE_NONE`, the cursor in no gutter at all. Folding that into the byte space would
+make "no dock" indistinguishable from a corrupt "dock left".
+
+**The six tuned numbers come through a door too**, rather than becoming six `#define`s in the header.
+A literal in the header is a SECOND place the affordance is written down, free to drift from the Rust
+the resolver runs, and nothing fails when it does.
+
+`PaneDropGeometryTests` shrank from 508 lines to what Rust cannot see, on the `SettingsOptionCatalog`
+precedent: a mirror fixture in a second language is two sources, which is the thing the port removed.
+What stayed is exactly the failure the port INTRODUCED — an edge that crosses as one code and returns
+as another, a metric bound to the wrong index (silently wrong affordance, every rule still right), a
+rect whose fields traded places (invisible in a square, so the fixtures are asymmetric) — plus `leaf`,
+whose rules are still Swift's. The 62 unmodified assertions passing before the trim is the port's
+differential evidence; the trim is what stops them becoming a second implementation of the answer.
+
+One assertion moved the other way and got *better* for it: two relationships between constants — that
+the bands leave a centre box, and that the drawn rail is wider than the gutter that resolved it — are
+now `const { assert!(…) }`, checked where constants are, at compile time rather than one `cargo test`
+after the edit that broke them.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

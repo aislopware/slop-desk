@@ -30,6 +30,8 @@
 //! - [`keystroke_replay`] — a clipboard as the KEY EVENTS that type it, for the one field that
 //!   refuses everything else, and the grapheme rule that keeps an accent from becoming its base
 //!   letter in a password.
+//! - [`pane_drop`] — where a dragged PANE lands over another one, and the rectangles the preview
+//!   draws to promise it, so the two UI halves cannot preview one drop and commit another.
 //! - [`peek_reply`] — what the Peek & Reply card sends down another pane's PTY, and the transcript
 //!   tail it shows above the field.
 //! - [`phone_key`] — the other end of the same PTY: a live phone key press, split between the two
@@ -69,6 +71,7 @@ pub mod list_nav;
 pub mod listen;
 pub mod notify;
 pub mod palette_rows;
+pub mod pane_drop;
 pub mod peek_reply;
 pub mod persist;
 pub mod phone_key;

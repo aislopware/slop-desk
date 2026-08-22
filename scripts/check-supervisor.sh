@@ -11776,6 +11776,62 @@ if [[ -f "${phone_video}" ]]; then
   fi
 fi
 
+# N.16 — THE PANE-MOVE DROP IS ONE RULE, AND BOTH UI HALVES ONLY DRAW WHAT IT ANSWERS.
+#
+# `PaneDropGeometry` already stopped the RESOLUTION from having two answers — the canvas's live
+# in-tab hit test and the cross-window INSERT resolution read one gutter. What it did not stop is the
+# other half of the round trip: the preview's rects were `static func`s on a `View`, and BOTH halves
+# had written that math themselves before arriving at the shared file, each under a banner calling it
+# pure. A slab is not layout. It is an assertion about what the commit will do, and two renderers
+# deriving it independently is how one half draws a promise the resolver never keeps.
+#
+# So the rules are `slopdesk_workspace::pane_drop` and the Swift is a face over 8 doors. Three things
+# are pinned, because each is a different way for the port to come undone:
+#   • the doors exist    — a face over a deleted door does not compile, but a face that quietly grew
+#                          its own arithmetic beside them does.
+#   • the metrics cross  — six numbers behind `slopdesk_pane_drop_metric`, never re-declared as Swift
+#                          literals. A `static let 0.30` here is a SECOND place the affordance lives,
+#                          free to drift from the Rust the resolver runs, silently.
+#   • both halves read   — the Mac's AppKit affordance and the phone's SwiftUI one each call the face
+#                          for the slab and the rail. A half that computes `rect.width / 2` itself is
+#                          the original bug returning in one framework only, invisible from the other.
+#
+# `leaf(at:in:excluding:)` is deliberately NOT pinned as ported: it answers a `PaneID` from
+# `PlacedLeaf`s, so porting it would carry an identity across the ABI only to compare it with the one
+# it came from — `rust/slopdesk-devicepanel`'s charter, and the reason it stayed Swift.
+#
+# BREAK-TEST: re-declared `edgeBandFraction` as `0.30` in the Swift face ⇒ FAIL "writes a drop metric
+# down a second time". Separately replaced the phone affordance's `slabRect` call with `rect.width /
+# 2` ⇒ FAIL "…draws a re-split preview it computed itself". Separately deleted the Rust module ⇒ FAIL
+# "…has no Rust behind it". All restored from /tmp; PASS.
+pane_drop_rules=rust/slopdesk-workspace/src/pane_drop.rs
+pane_drop_door=rust/slopdesk-ffi/src/pane_drop.rs
+pane_drop_face=Sources/SlopDeskClientCore/Pane/PaneDropGeometry.swift
+for required in "${pane_drop_rules}" "${pane_drop_door}"; do
+  if [[ ! -f "${required}" ]]; then
+    fail "${pane_drop_face} has no Rust behind it — ${required} is missing, and the pane-move drop is one rule shared by two resolvers and two renderers (docs/56 increment 82)"
+  fi
+done
+if [[ -f "${pane_drop_face}" ]]; then
+  # A tuned number written as a Swift literal is the affordance living in two places at once.
+  if grep -Eq '(let|var) +(edgeBandFraction|containerGutterFraction|containerGutterMax|dockRailFraction|dockRailMax|resplitSeamThickness)[^=]*= *[0-9]' "${pane_drop_face}"; then
+    fail "${pane_drop_face} writes a drop metric down a second time — the six tuned numbers come through slopdesk_pane_drop_metric, so a literal here is free to drift from the Rust the resolver runs (docs/56 increment 82)"
+  fi
+  if ! grep -q 'slopdesk_pane_drop_metric' "${pane_drop_face}"; then
+    fail "${pane_drop_face} stopped reading the metrics through their door (docs/56 increment 82)"
+  fi
+fi
+# Both renderers ask the face for the preview; neither re-derives a half or a band.
+for affordance in Sources/SlopDeskMacUI/Pane/MacPaneMoveAffordance.swift \
+  Sources/SlopDeskPhoneUI/Pane/PaneMoveAffordance.swift; do
+  [[ -f "${affordance}" ]] || continue
+  for verb in slabRect railRect; do
+    if ! grep -q "PaneDropGeometry.${verb}" "${affordance}"; then
+      fail "${affordance} draws a re-split preview it computed itself — PaneDropGeometry.${verb} is the shared answer, and a half that derives its own is the two-frameworks bug returning in one of them only (docs/56 increment 82)"
+    fi
+  done
+done
+
 if [[ "${1:-}" != "--tests" ]]; then
   exit 0
 fi

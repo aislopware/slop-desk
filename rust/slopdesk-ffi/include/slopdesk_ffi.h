@@ -3858,6 +3858,58 @@ typedef struct { SlopDeskWsPoint center; double radius_x, radius_y; } SlopDeskDr
 SlopDeskDropZoneShape slopdesk_drop_zone_shape(uint8_t zone, double width, double height);
 bool slopdesk_drop_zone_at(SlopDeskWsPoint point, double width, double height, uint8_t *out);
 
+/* ---- The OTHER drop: a dragged PANE over another pane ------------------------------------
+ * The five blobs above resolve a FILE. These resolve a pane: a central swap box, four edge bands,
+ * and an outer dock gutter around the whole container. Different shapes because they are different
+ * questions, so they are separate rules rather than one parameterised one.
+ *
+ * Four callers and none may disagree. The point-to-answer half is asked by the canvas's live in-tab
+ * resolution (which excludes the dragged pane's own rect) and by the cross-window INSERT resolution
+ * (which has no pane in this tab to exclude). The answer-to-rects half — slab, seam, rail — is
+ * asked by SlopDeskMacUI in AppKit and by SlopDeskPhoneUI in SwiftUI, and that pair is what forced
+ * the move: two frameworks re-deriving a slab's half by eye is how one half draws a promise the
+ * shared resolver never commits.
+ *
+ * The vocabulary is the video path's point/size/rect above, the same words the device panel already
+ * borrows. A second rect struct with identical fields would only mean a Swift face converting
+ * between two shapes for no reason.
+ *
+ * An edge is a CODE here and not the wire's own byte. That byte is total — every value names an
+ * edge — because a peer that garbles a dock should still leave the pane on screen. This door has to
+ * carry a fifth answer the wire never does: EDGE_NONE, the cursor being in no gutter at all.
+ * Folding that into the byte space would make "no dock" indistinguishable from a corrupt one.
+ *
+ * The six tuned numbers come through a door too. They could have been six #defines here, and that
+ * is exactly the failure this avoids: a literal in the header is a SECOND place the affordance is
+ * written down, free to drift from the Rust the resolver runs.                                   */
+#define SLOPDESK_PANE_DROP_EDGE_LEFT   0u
+#define SLOPDESK_PANE_DROP_EDGE_RIGHT  1u
+#define SLOPDESK_PANE_DROP_EDGE_TOP    2u
+#define SLOPDESK_PANE_DROP_EDGE_BOTTOM 3u
+#define SLOPDESK_PANE_DROP_EDGE_NONE   4u
+
+#define SLOPDESK_PANE_DROP_METRIC_EDGE_BAND_FRACTION        0u
+#define SLOPDESK_PANE_DROP_METRIC_CONTAINER_GUTTER_FRACTION 1u
+#define SLOPDESK_PANE_DROP_METRIC_CONTAINER_GUTTER_MAX      2u
+#define SLOPDESK_PANE_DROP_METRIC_DOCK_RAIL_FRACTION        3u
+#define SLOPDESK_PANE_DROP_METRIC_DOCK_RAIL_MAX             4u
+#define SLOPDESK_PANE_DROP_METRIC_RESPLIT_SEAM_THICKNESS    5u
+
+double slopdesk_pane_drop_metric(uint32_t metric);
+/* `source` is read only when `has_source`: the live drag passes the dragged pane's own rect so an
+ * edge it already fully spans is skipped (docking there is a no-op), and the INSERT drag passes
+ * false because every edge is meaningful when the pane is not in this tab yet. */
+uint32_t slopdesk_pane_drop_container_edge(SlopDeskVideoPoint location, SlopDeskVideoRect container,
+                                           SlopDeskVideoRect source, bool has_source);
+bool slopdesk_pane_drop_source_spans(SlopDeskVideoRect rect, uint32_t edge,
+                                     SlopDeskVideoRect container);
+/* Always an edge — this one never answers EDGE_NONE. */
+uint32_t slopdesk_pane_drop_dominant_edge(double u, double v, double band);
+SlopDeskVideoRect slopdesk_pane_drop_slab_rect(SlopDeskVideoRect rect, uint32_t edge);
+SlopDeskVideoSize slopdesk_pane_drop_seam_size(SlopDeskVideoRect slab, uint32_t edge);
+SlopDeskVideoPoint slopdesk_pane_drop_seam_center(SlopDeskVideoRect slab, uint32_t edge);
+SlopDeskVideoRect slopdesk_pane_drop_rail_rect(SlopDeskVideoRect container, uint32_t edge);
+
 /* ---- The keyboard reference sheet: which column each run of shortcuts belongs in ----------
  * Balanced by RENDERED HEIGHT (a section costs its rows plus its own header line), not by section
  * count — three short categories beside one long one is the case that makes a halve-the-list split

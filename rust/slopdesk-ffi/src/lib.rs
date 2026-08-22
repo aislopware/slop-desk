@@ -113,6 +113,7 @@ pub mod notify;
 pub mod notify_rate_limit;
 pub mod pacer_depth;
 pub mod palette_rows;
+pub mod pane_drop;
 pub mod pane_kind;
 pub mod panel_key;
 pub mod paste_safety;
