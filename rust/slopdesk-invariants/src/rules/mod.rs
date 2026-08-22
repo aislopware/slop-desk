@@ -13,6 +13,7 @@ pub mod video_client;
 pub mod video_control;
 pub mod video_host;
 pub mod video_wire;
+pub mod wire_codecs;
 
 use crate::Rule;
 
@@ -238,6 +239,41 @@ pub fn registry() -> Vec<Rule> {
             name: "video-geometry",
             origin: "docs/55 §4b",
             check: video_host::geometry,
+        },
+        Rule {
+            name: "video-control-channel",
+            origin: "docs/20 §9",
+            check: wire_codecs::video_control_channel,
+        },
+        Rule {
+            name: "terminal-wire",
+            origin: "docs/20 §2",
+            check: wire_codecs::terminal_wire,
+        },
+        Rule {
+            name: "mux-layer",
+            origin: "docs/20 §4",
+            check: wire_codecs::mux_layer,
+        },
+        Rule {
+            name: "git-dialect",
+            origin: "docs/56 inc. 45",
+            check: wire_codecs::git_dialect,
+        },
+        Rule {
+            name: "payload-channels",
+            origin: "docs/20 §7, docs/45 §5.2",
+            check: wire_codecs::payload_channels,
+        },
+        Rule {
+            name: "wire-vocabularies",
+            origin: "docs/20 §7, docs/45 §5.2",
+            check: wire_codecs::wire_vocabularies,
+        },
+        Rule {
+            name: "big-endian-helpers",
+            origin: "docs/20 §2",
+            check: wire_codecs::big_endian_helpers,
         },
     ]
 }

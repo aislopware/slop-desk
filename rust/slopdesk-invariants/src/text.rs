@@ -102,6 +102,37 @@ pub fn capture_set(haystack: &str, pattern: &str) -> BTreeSet<String> {
         .collect()
 }
 
+/// Whether any single LINE matches — `grep -qE`, exactly.
+///
+/// [`matches`] runs the pattern over the whole haystack, and a negated class like `[^=]*` happily
+/// crosses a newline there: `protocolVersion:` on one line and `= 1` on the next read as a match
+/// that `grep` would never make. Every ban in this crate ports a line-oriented tool, so every ban
+/// asks this.
+///
+/// The whole-haystack match runs first as a filter. It cannot be narrower than the line-wise one —
+/// a pattern that matches some line matches the join of every line — so a `false` there is a
+/// conclusive `false` here, which is the answer a passing ban gives.
+#[must_use]
+pub fn matches_line(haystack: &str, pattern: &str) -> bool {
+    matches(haystack, pattern) && haystack.lines().any(|line| matches(line, pattern))
+}
+
+/// Both capture groups of every match, in file order — a `NAME = NUMBER` table read as pairs.
+///
+/// Separate from [`capture_set`] because a name table's two halves have to travel TOGETHER: reading
+/// the names alone and the numbers alone gives two sets that both agree while the wire disagrees,
+/// which is precisely the drift these tables are pinned against.
+#[must_use]
+pub fn capture_pairs(haystack: &str, pattern: &str) -> Vec<(String, String)> {
+    cached(pattern)
+        .captures_iter(haystack)
+        .filter_map(|caps| {
+            let (first, second) = (caps.get(1)?, caps.get(2)?);
+            Some((first.as_str().to_owned(), second.as_str().to_owned()))
+        })
+        .collect()
+}
+
 /// The lines from the first match of `start` through the first following match of `end`, inclusive
 /// — `awk '/start/, /end/'`.
 ///
@@ -162,7 +193,7 @@ pub fn join(set: &BTreeSet<String>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{before, capture_all, capture_first, capture_set, count_lines, range};
+    use super::{before, capture_all, capture_first, capture_set, count_lines, matches, matches_line, range};
 
     /// The reason `cached` forces multi-line. Every pattern here ports a line-oriented tool, and
     /// `$` meaning end-of-FILE turns a live extraction into a stale-looking empty one.
@@ -173,6 +204,20 @@ mod tests {
             capture_first(text, r"readChunkSize = (.*)$").as_deref(),
             Some("32 * 1024"),
         );
+    }
+
+    /// The live drift this caught: `WireMessageCodec.swift` names `protocolVersion:` on one line
+    /// and `= 1` several lines later, and a negated class read straight across the newline.
+    /// `grep` cannot do that, and every ban in this crate ports a `grep`.
+    #[test]
+    fn a_negated_class_may_not_cross_a_newline_the_way_grep_cannot() {
+        let text = "case let .hello(protocolVersion, id):\n    flat.version = 1\n";
+        assert!(matches(text, r"protocolVersion[^=]*= *[0-9]"));
+        assert!(!matches_line(text, r"protocolVersion[^=]*= *[0-9]"));
+        assert!(matches_line(
+            "let protocolVersion = 1\n",
+            r"protocolVersion[^=]*= *[0-9]"
+        ));
     }
 
     #[test]

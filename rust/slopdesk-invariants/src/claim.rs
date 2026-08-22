@@ -221,6 +221,20 @@ pub enum Claim {
         /// The sentence, with `{entry}` where the door's name goes.
         message: &'static str,
     },
+    /// A file must MENTION every one of these names — the same shape as [`Claim::Doors`] without
+    /// the call parenthesis.
+    ///
+    /// Half the metadata and workspace doors cross as a function REFERENCE into a shared helper
+    /// (`decode: slopdesk_metadata_decode_ports`), so demanding a `(` after the name would report
+    /// every one of them as gone.
+    Mentions {
+        /// Repo-relative path.
+        path: &'static str,
+        /// Each name, as a literal.
+        names: &'static [&'static str],
+        /// The sentence, with `{entry}` where the name goes.
+        message: &'static str,
+    },
     /// A file must match a pattern at least `minimum` times.
     ///
     /// For a rule that cannot name what it is looking for: "every tunable falls back to a field of
@@ -387,6 +401,13 @@ impl Claim {
                     }
                 }
             },
+            Self::Mentions { path, names, message } => {
+                if let Some(source) = report.source(tree, path, message) {
+                    for name in *names {
+                        report.fail_if(!source.text.contains(*name), fill(message, "entry", name));
+                    }
+                }
+            },
             Self::AtLeast {
                 path,
                 pattern,
@@ -434,7 +455,7 @@ impl Claim {
                             "{path} stripped to nothing — the ban below reads an empty haystack and passes",
                         ),
                     );
-                    report.fail_if(text::matches(&haystack, pattern), (*message).to_owned());
+                    report.fail_if(text::matches_line(&haystack, pattern), (*message).to_owned());
                 }
             },
             Self::NoneOf {
@@ -456,7 +477,7 @@ impl Claim {
                                  passes",
                             ),
                         );
-                        if text::matches(&haystack, pattern) {
+                        if text::matches_line(&haystack, pattern) {
                             offenders.push(*path);
                         }
                     }
