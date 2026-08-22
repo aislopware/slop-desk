@@ -1,0 +1,482 @@
+//! Which crates may write `unsafe`, and which lints every workspace must refuse.
+//!
+//! Ported from `scripts/check-supervisor.sh`. Both rules read MANIFESTS rather than source, and for
+//! the same reason: rustc already enforces `unsafe_code = "forbid"` inside a crate that states it,
+//! and clippy already enforces a lint level a crate configures. What neither can notice is the
+//! POLICY drifting — a new crate that quietly says `deny` instead of `forbid`, or one that says
+//! nothing and inherits nothing, or a workspace that never opted out of a lint whose only offered
+//! fix breaks a repo invariant. Those are manifest facts, and a manifest is what this file reads.
+
+use std::collections::BTreeSet;
+
+use crate::report::Report;
+use crate::tree::Tree;
+
+const ROOT_MANIFEST: &str = "rust/Cargo.toml";
+
+/// The three crates that may HAND-WRITE `unsafe`, each about one narrow obligation.
+///
+/// `slopdesk-posix` argues about syscalls; `slopdesk-ffi` argues about one thing repeated, whether
+/// a `(ptr, len)` from Swift is live for the call; `slopdesk-gfsimd` argues about one thing
+/// narrower still, whether a 16-byte load stays inside its chunk — which does not name a language
+/// boundary at all. The third was bought with a MEASUREMENT rather than an argument
+/// (`docs/DECISIONS.md`), and that is the bar a fourth would have to clear.
+const HAND_WRITTEN: [&str; 3] = [
+    "rust/slopdesk-posix/Cargo.toml",
+    "rust/slopdesk-ffi/Cargo.toml",
+    "rust/slopdesk-gfsimd/Cargo.toml",
+];
+
+/// Every crate is `unsafe_code = "forbid"` except two named families.
+///
+/// rustc enforces the level a crate states. What it cannot notice is the SHAPE drifting back: a new
+/// crate that quietly says "deny", or a manifest that says nothing at all and inherits nothing.
+/// Both reopen the hole stage 28 closed — `deny` is liftable by one `#[allow]`, and a missing
+/// policy is `allow` by default. So the manifests are gated, not the source.
+///
+/// The exemption is not a blank cheque. Each exempt crate must state `deny`, the level the doc
+/// argues for, and nothing else: `allow` there would take every per-site `#[expect]` with it, since
+/// a lint nobody fires cannot expire. A missing FILE is the same failure wearing a different hat —
+/// an entry naming a crate that has been renamed or folded away protects nothing, and reads for
+/// years like it does.
+///
+/// `workspace = true` is only an answer for a crate that INHERITS from the root, and only because
+/// the root is checked here too and must state `forbid` itself. Almost every crate under `rust/` is
+/// its OWN `[workspace]` root, and for one of those the same two lines say nothing at all: a
+/// manifest can carry `[workspace.lints.rust] unsafe_code = "allow"` and `[lints] workspace = true`
+/// together and inherit permission. So inheritance is accepted only from the root, and the member
+/// list is read OUT of the root rather than kept beside it.
+#[must_use]
+pub fn unsafe_policy(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let exempt = exempt_manifests(tree);
+
+    // A stated `allow`/`warn` anywhere in a manifest is decisive, whatever else it also says: the
+    // narrower `[lints.rust]` table wins over `[workspace.lints.rust]`, so a `forbid` above one of
+    // these is not protection, it is camouflage.
+    let members = root_members(tree, &mut report);
+    let mut offenders = Vec::new();
+    for manifest in manifests(tree) {
+        if exempt.contains(&manifest) {
+            continue;
+        }
+        let Some(source) = tree.get(&manifest) else {
+            continue;
+        };
+        if states(&source.text, r#"unsafe_code = "allow""#) || states(&source.text, r#"unsafe_code = "warn""#)
+        {
+            offenders.push(format!("{manifest} (states allow/warn)"));
+            continue;
+        }
+        if states(&source.text, r#"unsafe_code = "forbid""#) {
+            continue;
+        }
+        let crate_name = crate_name_of(&manifest);
+        if states(&source.text, "workspace = true") && members.contains(&crate_name) {
+            continue;
+        }
+        offenders.push(manifest);
+    }
+    report.fail_if(
+        !offenders.is_empty(),
+        format!(
+            "a crate is not unsafe_code = \"forbid\" ({}) — the exempt crates are the three hand-written \
+             ones plus the slopdesk-apple-* objc2 family, and a fourth hand-written one is a design change \
+             (docs/51 §6.15, docs/55 §5, docs/57)",
+            offenders.join(", "),
+        ),
+    );
+
+    for allowed in &exempt {
+        let Some(source) = tree.get(allowed) else {
+            report.fail(format!(
+                "{allowed} is exempt from the unsafe-code policy and does not exist — the exemption list \
+                 has gone stale (docs/55 §5)",
+            ));
+            continue;
+        };
+        report.fail_if(
+            !states(&source.text, r#"unsafe_code = "deny""#),
+            format!(
+                "{allowed} is allowed to write unsafe and does not state unsafe_code = \"deny\" — the \
+                 per-site #[expect] audit depends on that exact level (docs/51 §6.15, docs/55 §5)",
+            ),
+        );
+    }
+    report
+}
+
+/// The `slopdesk-apple-*` family, and the three extra conditions its permission costs.
+///
+/// This is a different permission rather than three more seats at the same table. A crate here
+/// wraps ONE Apple framework area, reaches it only through `objc2`'s generated bindings, and may
+/// write `unsafe` only to call a binding that is itself `unsafe` — never to dereference a pointer
+/// it made. That is what makes the family bounded where a fourth hand-written crate would not be:
+/// the obligation each block carries is the FRAMEWORK's rule, which the framework documents, not a
+/// Rust rule about memory nobody else can check.
+///
+/// A raw-pointer operation here is not a framework obligation — it is a Rust one, and `docs/57` §2
+/// says it belongs in `slopdesk-posix` or `slopdesk-ffi`, where a reviewer already holds that
+/// question. Read over CODE only: a crate in this family has to EXPLAIN, in prose, which Rust
+/// obligations it is not carrying — that sentence is the argument for its own existence — and a
+/// gate that could not tell `transmute` in a doc comment from a call to one would force the
+/// argument out of the crate to keep the crate green.
+#[must_use]
+pub fn apple_family(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let family = apple_manifests(tree);
+    report.fail_if(
+        family.is_empty(),
+        "no slopdesk-apple-* crate exists — this gate reads nothing and would pass (docs/57)".to_owned(),
+    );
+
+    for manifest in family {
+        let Some(source) = tree.get(&manifest) else {
+            continue;
+        };
+        report.fail_if(
+            !states(&source.text, r#"unsafe_op_in_unsafe_fn = "deny""#),
+            format!(
+                "{manifest} is in the objc2 family and does not state unsafe_op_in_unsafe_fn = \"deny\" — \
+                 the family's permission is 'call an unsafe binding', which means every such call must be \
+                 inside a block that named its obligation (docs/57 §3)",
+            ),
+        );
+        report.fail_if(
+            !source.text.contains("objc2"),
+            format!(
+                "{manifest} is named slopdesk-apple-* and depends on no objc2 crate — the family exists \
+                 BECAUSE the bindings are generated from SDK metadata; a hand-rolled extern block wearing \
+                 this name has the permission without the reason for it (docs/57 §1)",
+            ),
+        );
+
+        let crate_dir = manifest.trim_end_matches("/Cargo.toml");
+        let src = format!("{crate_dir}/src");
+        let mut read_any = false;
+        let mut hand_written = false;
+        for (path, file) in tree.under(&src) {
+            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            read_any = true;
+            hand_written |= crate::text::matches_line(
+                file.code(),
+                r"transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)",
+            );
+        }
+        report.fail_if(
+            !read_any,
+            format!("{src} holds no Rust source — the ban below reads nothing and would pass"),
+        );
+        report.fail_if(
+            hand_written,
+            format!(
+                "{crate_dir} hand-writes a raw-pointer operation — the objc2 family may write unsafe only \
+                 to CALL an unsafe binding; a transmute or a from_raw is a Rust obligation and belongs in \
+                 slopdesk-posix or slopdesk-ffi (docs/57 §2)",
+            ),
+        );
+    }
+    report
+}
+
+/// The two lints that would talk you out of bit-exact floats.
+///
+/// `CLAUDE.md` forbids the fused multiply-add: `a * b + c` stays two roundings because that is what
+/// `golden/golden_vectors.json` pins. Clippy's `suboptimal_flops` and `imprecise_flops` argue the
+/// opposite, both live in `nursery`, and every workspace here denies the whole nursery group — so
+/// in any crate that does not opt out, the FIRST float expression to land is a hard clippy error
+/// whose only offered fix is `f64::mul_add`. That is a lint teaching the opposite of an invariant,
+/// and it teaches it at the moment nobody is reading a manifest.
+///
+/// Four crates carried the opt-out because four crates had float math. The rest were one expression
+/// away from the trap; they all carry it now, and this keeps the next one honest.
+#[must_use]
+pub fn flops_opt_out(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let mut unguarded = Vec::new();
+    let mut seen = 0usize;
+    for manifest in manifests(tree) {
+        let Some(source) = tree.get(&manifest) else {
+            continue;
+        };
+        if manifest != ROOT_MANIFEST && !states(&source.text, "[workspace]") {
+            continue;
+        }
+        seen += 1;
+        for lint in ["suboptimal_flops", "imprecise_flops"] {
+            if !states(&source.text, &format!("{lint} = \"allow\"")) {
+                unguarded.push(format!("{manifest} ({lint})"));
+            }
+        }
+    }
+    report.fail_if(
+        seen == 0,
+        "no Rust workspace root was found — this gate reads nothing and would pass".to_owned(),
+    );
+    report.fail_if(
+        !unguarded.is_empty(),
+        format!(
+            "a Rust workspace does not allow the FMA-suggesting nursery lints ({}) — clippy would demand \
+             mul_add and break the bit-exact floats CLAUDE.md pins",
+            unguarded.join(", "),
+        ),
+    );
+    report
+}
+
+/// Whether a manifest STATES something, at the start of a line — the shell's `grep -q '^…'`.
+///
+/// Anchored, because a `#`-commented copy of a lint level is prose about the policy and not the
+/// policy. Everything read here is TOML, where a setting at column 0 is the setting.
+fn states(text: &str, needle: &str) -> bool {
+    text.lines().any(|line| line.starts_with(needle))
+}
+
+/// `rust/Cargo.toml` and every `rust/*/Cargo.toml`, in sorted order.
+fn manifests(tree: &Tree) -> Vec<String> {
+    let mut found: Vec<String> = tree
+        .paths()
+        .filter_map(|path| {
+            let display = path.to_string_lossy().into_owned();
+            let is_crate_manifest = display.starts_with("rust/")
+                && display.ends_with("/Cargo.toml")
+                && display.matches('/').count() == 2;
+            (display == ROOT_MANIFEST || is_crate_manifest).then_some(display)
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+fn apple_manifests(tree: &Tree) -> Vec<String> {
+    manifests(tree)
+        .into_iter()
+        .filter(|path| path.starts_with("rust/slopdesk-apple-"))
+        .collect()
+}
+
+/// The three hand-written crates plus every `slopdesk-apple-*` one.
+///
+/// Membership of the second family is by NAME, so adding one is visible in the diff of the crate
+/// that adds it — and the three extra conditions [`apple_family`] checks are checked per crate
+/// rather than trusted.
+fn exempt_manifests(tree: &Tree) -> BTreeSet<String> {
+    HAND_WRITTEN
+        .iter()
+        .map(|path| (*path).to_owned())
+        .chain(apple_manifests(tree))
+        .collect()
+}
+
+fn crate_name_of(manifest: &str) -> String {
+    manifest
+        .trim_start_matches("rust/")
+        .trim_end_matches("/Cargo.toml")
+        .to_owned()
+}
+
+/// The root workspace's member list, read out of the root rather than kept beside it.
+fn root_members(tree: &Tree, report: &mut Report) -> BTreeSet<String> {
+    let Some(source) = tree.get(ROOT_MANIFEST) else {
+        report.fail(format!(
+            "{ROOT_MANIFEST} is gone — the root workspace defines the inheritance"
+        ));
+        return BTreeSet::new();
+    };
+    let members: BTreeSet<String> = source
+        .text
+        .lines()
+        .filter(|line| line.starts_with("members = "))
+        .flat_map(|line| crate::text::capture_all(line, r#""([a-z0-9-]+)""#))
+        .collect();
+    report.fail_if(
+        members.is_empty(),
+        "the root workspace's members list did not parse — the unsafe-policy gate would accept any \
+         'workspace = true' (docs/55 §5)"
+            .to_owned(),
+    );
+    members
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tests::Fixture;
+
+    /// A new crate that says nothing at all inherits `allow` — the hole stage 28 closed. rustc
+    /// cannot notice it, because there is no crate stating a level for rustc to enforce.
+    #[test]
+    fn a_crate_with_no_stated_policy_is_caught() {
+        let fixture = policy_fixture("policy-silent");
+        assert!(super::unsafe_policy(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-new/Cargo.toml",
+            "[workspace]\n[package]\nname = \"x\"\n",
+        );
+        let report = super::unsafe_policy(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("rust/slopdesk-new/Cargo.toml")),
+            "{report:?}",
+        );
+    }
+
+    /// A `forbid` above a narrower `allow` is camouflage, not protection: the `[lints.rust]` table
+    /// wins over `[workspace.lints.rust]`, so the stated `allow` is what the crate gets.
+    #[test]
+    fn a_forbid_above_a_narrower_allow_does_not_count() {
+        let fixture = policy_fixture("policy-camouflage");
+        fixture.write(
+            "rust/slopdesk-new/Cargo.toml",
+            "[workspace]\n[workspace.lints.rust]\nunsafe_code = \"forbid\"\n[lints.rust]\nunsafe_code = \
+             \"allow\"\n",
+        );
+        let report = super::unsafe_policy(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("states allow/warn")),
+            "{report:?}"
+        );
+    }
+
+    /// `workspace = true` is an answer only for a crate the ROOT lists. Every other crate under
+    /// `rust/` is its own workspace root, where the same line inherits from itself.
+    #[test]
+    fn inheritance_is_accepted_only_from_the_root() {
+        let fixture = policy_fixture("policy-inherit");
+        fixture.write("rust/slopdesk-member/Cargo.toml", "[lints]\nworkspace = true\n");
+        let report = super::unsafe_policy(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("rust/slopdesk-member/Cargo.toml")),
+            "{report:?}",
+        );
+
+        fixture.write(
+            "rust/Cargo.toml",
+            "[workspace]\nmembers = [\"slopdesk-member\"]\n[workspace.lints.rust]\nunsafe_code = \
+             \"forbid\"\n[workspace.lints.clippy]\nsuboptimal_flops = \"allow\"\nimprecise_flops = \
+             \"allow\"\n",
+        );
+        assert!(super::unsafe_policy(&fixture.tree()).is_clean());
+    }
+
+    /// An exemption naming a crate that was renamed away protects nothing, and reads for years like
+    /// it does.
+    #[test]
+    fn a_stale_exemption_entry_is_caught() {
+        let fixture = policy_fixture("policy-stale");
+        assert!(super::unsafe_policy(&fixture.tree()).is_clean());
+
+        std::fs::remove_file(fixture.tree().root().join("rust/slopdesk-gfsimd/Cargo.toml"))
+            .expect("remove the exempt manifest");
+        let report = super::unsafe_policy(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("has gone stale")),
+            "{report:?}"
+        );
+    }
+
+    /// The line that separates the objc2 family from the three hand-written crates: a raw-pointer
+    /// operation is a RUST obligation, and belongs where a reviewer already holds that question.
+    #[test]
+    fn a_raw_pointer_operation_in_the_apple_family_is_caught() {
+        let fixture = policy_fixture("apple-raw");
+        assert!(super::apple_family(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            "pub fn f() { let _ = unsafe { std::mem::transmute::<u32, i32>(0) }; }\n",
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("raw-pointer operation")),
+            "{report:?}"
+        );
+    }
+
+    /// And the prose that ARGUES for the crate's existence must be able to name the thing it is not
+    /// doing — a gate that could not tell a doc comment from a call would force that sentence out.
+    #[test]
+    fn prose_naming_a_transmute_does_not_trip_the_family_ban() {
+        let fixture = policy_fixture("apple-prose");
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            "//! This crate never writes a transmute or a from_raw: those are Rust obligations.\npub fn f() \
+             {}\n",
+        );
+        assert!(super::apple_family(&fixture.tree()).is_clean());
+    }
+
+    /// A workspace one float expression away from a hard clippy error whose only offered fix breaks
+    /// the golden corpus.
+    #[test]
+    fn a_workspace_without_the_flops_opt_out_is_caught() {
+        let fixture = policy_fixture("flops");
+        assert!(super::flops_opt_out(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-new/Cargo.toml",
+            "[workspace]\n[lints.rust]\nunsafe_code = \"forbid\"\n",
+        );
+        let report = super::flops_opt_out(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("suboptimal_flops")),
+            "{report:?}"
+        );
+    }
+
+    /// A tree with the whole `rust/` directory renamed away must FAIL rather than report that every
+    /// workspace is compliant — there being none is not the same as all of them passing.
+    #[test]
+    fn an_empty_workspace_set_says_so_instead_of_passing() {
+        let fixture = Fixture::new("flops-empty");
+        fixture.write("Sources/A.swift", "let x = 1\n");
+        let report = super::flops_opt_out(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("reads nothing")),
+            "{report:?}"
+        );
+    }
+
+    /// A compliant tree: the root, one exempt hand-written crate, one apple crate and one ordinary
+    /// one. Every rule here should be silent on it.
+    fn policy_fixture(name: &str) -> Fixture {
+        const CLEAN: &str = "[workspace]\n[lints.rust]\nunsafe_code = \
+                             \"forbid\"\n[lints.clippy]\nsuboptimal_flops = \"allow\"\nimprecise_flops = \
+                             \"allow\"\n";
+        const EXEMPT: &str = "[workspace]\n[lints.rust]\nunsafe_code = \
+                              \"deny\"\n[lints.clippy]\nsuboptimal_flops = \"allow\"\nimprecise_flops = \
+                              \"allow\"\n";
+        const APPLE: &str = "[workspace]\n[dependencies]\nobjc2 = \"0.6\"\n[lints.rust]\nunsafe_code = \
+                             \"deny\"\nunsafe_op_in_unsafe_fn = \"deny\"\n[lints.clippy]\nsuboptimal_flops \
+                             = \"allow\"\nimprecise_flops = \"allow\"\n";
+
+        let fixture = Fixture::new(name);
+        // The root carries a members list because the inheritance rule is read out of it: a
+        // fixture without one would fail every case for the wrong reason.
+        fixture
+            .write(
+                "rust/Cargo.toml",
+                &format!("members = [\"slopdesk-hook\"]\n{CLEAN}"),
+            )
+            .write("rust/slopdesk-posix/Cargo.toml", EXEMPT)
+            .write("rust/slopdesk-ffi/Cargo.toml", EXEMPT)
+            .write("rust/slopdesk-gfsimd/Cargo.toml", EXEMPT)
+            .write("rust/slopdesk-apple-cgevent/Cargo.toml", APPLE)
+            .write("rust/slopdesk-apple-cgevent/src/lib.rs", "pub fn f() {}\n")
+            .write("rust/slopdesk-wire/Cargo.toml", CLEAN);
+        fixture
+    }
+}

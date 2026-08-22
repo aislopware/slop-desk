@@ -43,10 +43,12 @@ python3 scripts/check-invariants.py > "${INVARIANTS_LOG}" 2>&1 &
 INVARIANTS_PID=$!
 
 # ── ONE tree walk for every "this Swift must stay deleted" ban in this file ────────────────────
-# Twenty-one bans below each asked `grep -r … Sources/` for a list that is EMPTY every time the gate
-# passes, so the script walked the whole Swift tree twenty-one times per inner loop to be told
-# nothing twenty-one times. The union walks it ONCE, here; each ban then re-greps only the
-# candidates, which is no files at all in the passing case.
+# The bans below each asked `grep -r … Sources/` for a list that is EMPTY every time the gate
+# passes, so the script walked the whole Swift tree once per ban per inner loop to be told nothing
+# that many times. The union walks it ONCE, here; each ban then re-greps only the candidates, which
+# is no files at all in the passing case. Five alternatives left with the bans that used them when
+# those bans became `deleted-screen-swift` in `rust/slopdesk-invariants` — the union is a filter, so
+# a departing ban takes its own alternative and nothing else.
 #
 # Semantics are unchanged and the reason is the same one `spells` gives: a file that matches none of
 # the alternatives cannot match one of them. Every ban keeps its own pattern and its own message —
@@ -54,7 +56,7 @@ INVARIANTS_PID=$!
 #
 # The union is BUILT from the bans, not maintained beside them: `make lint` runs
 # `scripts/check-ban-union.py`, which fails if any ban's pattern is missing from it.
-DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|((enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|(enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer)|((enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b)|(func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=])|((enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b)|((createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$))|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)|(static let persistedPaneFields\b|(struct|private struct) Row: Codable\b)|((struct|private struct) (RawWeightedChild|SpecEntry)\b|func (decodeRaw|decodeChildren|rawNode)\()|(\b(SplitNode|WeightedChild|SplitWeight|TreeWorkspace|DetachedPane|PaneSpec|VideoEndpoint|Session|Tab)\b *: *(any )?(Codable|Decodable|Encodable)\b)'
+DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b)|((enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b)|((enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b)|((static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b)|((enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b)|((struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b)|("/usr/bin/(git|infocmp)")|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|((enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)|(static let persistedPaneFields\b|(struct|private struct) Row: Codable\b)|((struct|private struct) (RawWeightedChild|SpecEntry)\b|func (decodeRaw|decodeChildren|rawNode)\()|(\b(SplitNode|WeightedChild|SplitWeight|TreeWorkspace|DetachedPane|PaneSpec|VideoEndpoint|Session|Tab)\b *: *(any )?(Codable|Decodable|Encodable)\b)'
 DELETED_SWIFT_CANDIDATES=$(grep -rlE "${DELETED_SWIFT_UNION}" Sources/ 2> /dev/null || true)
 # The candidates matching ONE ban, or nothing. An empty candidate list answers without a grep.
 among_deleted() {
@@ -67,8 +69,6 @@ SWIFT_PROTOCOL="Sources/SlopDeskSupervisor/SupervisorProtocol.swift"
 SWIFT_FRAME="Sources/SlopDeskSupervisor/SupervisorFrame.swift"
 RUST_PROTOCOL="rust/slopdesk-superd/src/protocol.rs"
 RUST_FRAME="rust/slopdesk-superd/src/frame.rs"
-SWIFT_SCREEN_PROTOCOL="Sources/SlopDeskScreen/ScreenProtocol.swift"
-RUST_SCREEN_SERVER="rust/slopdesk-screend/src/server.rs"
 # The wire left screend for its own crate, for `slopdesk-sanitize`'s reason: two callers, one
 # implementation. hostd is the other caller, and while the layouts lived inside the daemon the only
 # way to reach them was to BE the daemon — so hostd hand-wrote a second copy in Swift.
@@ -158,341 +158,21 @@ same() {
 # `= 1` several lines below it. Every ban in the crate is line-oriented now, with a test that pins
 # exactly that.
 
-# Statuses by NUMBER only — the two ends name the failure differently on purpose (`internalError`
-# reads as a case, `Internal` is a keyword-adjacent Rust variant), and it is the byte that travels.
-swift_screen_status=$(
-  awk '/public enum ScreenStatus/, /^\}/' "${SWIFT_SCREEN_PROTOCOL}" |
-    sed -n 's/^ *case [a-zA-Z]* = \([0-9][0-9]*\)$/\1/p' | sort -n | tr '\n' ' '
-)
-rust_screen_status=$(
-  awk '/pub enum Status/, /^\}/' "${RUST_SCREEN_PROTOCOL}" |
-    sed -n 's/^ *[A-Z][a-zA-Z]* = \([0-9][0-9]*\),$/\1/p' | sort -n | tr '\n' ' '
-)
-same "screend status bytes" "${swift_screen_status}" "${rust_screen_status}"
+# ── screend's hello, its status alphabet, the reset flags and the frame ceiling ───────────────
+# PORTED to `rust/slopdesk-invariants`: screend-hello-and-status, screend-reset-flags-and-ceiling.
+# The ceiling's two halves — the door is still asked, the literal has not come back — are one rule
+# with a break-test that seeds the literal, which is what the BREAK-TESTED note here could only
+# record as prose.
 
-swift_banner=$(sed -n 's/.*helloBanner = "\(.*\)"$/\1/p' "${SWIFT_SCREEN_PROTOCOL}" | head -1)
-if ! grep -q "HELLO_BANNER: &\[u8\] = b\"${swift_banner}\"" "${RUST_SCREEN_PROTOCOL}"; then
-  fail "screend hello banner '${swift_banner}' is not what ${RUST_SCREEN_PROTOCOL} answers"
-fi
+# ── The 15 MiB opaque budget, and the Swift that must stay deleted ────────────────────────────
+# PORTED to `rust/slopdesk-invariants`: opaque-budget, deleted-screen-swift. The four bans that
+# read through `among_deleted` are `NoneUnder { roots: ["Sources"] }` there — the union was only
+# ever a FILTER, so scoping to the root is the same question asked without the pre-walk.
 
-# The banner is the PROTOCOL identity; the RUNNING BUILD's version follows it as a third field
-# (`docs/49`). screend is a LaunchAgent that outlives hostd's build, so an upgrade leaves the old
-# process serving — this field is the only thing that tells hostd so. Two halves are ratcheted here
-# because a skew in either is silent: a Swift side reading a field Rust stopped appending answers
-# `nil`, which the audit reports as "unknown" forever, and a Rust side that appended it somewhere
-# else would be read as a version that never matches.
-if ! grep -q 'pub fn hello_payload' "${RUST_SCREEN_PROTOCOL}"; then
-  fail "${RUST_SCREEN_PROTOCOL} no longer builds the hello payload — hostd cannot learn screend's build version (docs/49)"
-fi
-if ! grep -q 'hello_payload(env!("CARGO_PKG_VERSION"))' "${RUST_SCREEN_SERVER}"; then
-  fail "screend's hello no longer answers with its OWN compile-time version — see ${RUST_SCREEN_SERVER}"
-fi
-if ! grep -q 'func buildVersion(fromHello' "${SWIFT_SCREEN_PROTOCOL}"; then
-  fail "${SWIFT_SCREEN_PROTOCOL} no longer parses screend's build version out of hello (docs/49)"
-fi
-
-# The RESET frame's flag bits. Each is one bit of a byte hostd sets and screend reads, so a bit
-# claimed on one side and not the other does not fail to parse: a rebuild-replay flag read as
-# agent-changed rebuilds nothing and reports an agent that did not change. DERIVED both ways, so a
-# fifth flag added to either side without the other fails here rather than at a running daemon.
-# `scripts/check-shared-constants.py` sends the pair here — a socket cannot link the other's const.
-swift_screen_flags=$(
-  sed -n 's/^ *public static let flag\([A-Za-z]*\): UInt8 = \(0x[0-9a-fA-F]*\)$/\1 \2/p' \
-    "${SWIFT_SCREEN_PROTOCOL}" | tr '[:upper:]' '[:lower:]' | sort | tr '\n' ' '
-)
-rust_screen_flags=$(
-  sed -n 's/^pub const FLAG_\([A-Z_]*\): u8 = \(0x[0-9a-fA-F]*\);$/\1 \2/p' \
-    "${RUST_SCREEN_PROTOCOL}" | tr -d '_' | tr '[:upper:]' '[:lower:]' | sort | tr '\n' ' '
-)
-if [[ -z "${swift_screen_flags}" ]]; then
-  fail "${SWIFT_SCREEN_PROTOCOL} names no reset flags — this gate reads nothing and would pass"
-fi
-same "screend reset flags" "${swift_screen_flags}" "${rust_screen_flags}"
-
-# The frame CEILING — one byte count that used to be spelled twice, `ScreenWire.maximumFrameBytes`
-# against `screenwire::MAX_FRAME`, and is now spelled once and asked for.
-#
-# This gate used to `same`-compare the two expressions, and the comment it carried argued that a
-# ratchet was the only instrument available because screend is a separately-shipped BINARY, so no
-# door reaches it. That argument was true of the DAEMON and was never true of hostd's end: the
-# client half is linked Swift calling `rust/slopdesk-screenwire` through `CSlopDeskFFI` already —
-# it encodes its requests through a door six lines up. So the ceiling became a door too, and what
-# is ratcheted changes shape with it: not "do the two numbers agree" but "is there still only one".
-#
-# The Rust side of the pair is now pinned by a cargo test in `rust/slopdesk-ffi/src/screen.rs`
-# (`the_size_constants_are_vended_and_an_unknown_index_is_not_a_size`), which is a stronger check
-# than this file could make — it compares the door's answer to `MAX_FRAME` itself rather than to a
-# `sed` of its source line. What is left for a ratchet is the SWIFT side: that it keeps asking.
-#
-# Which way this would drift decides how it fails, and that has not changed: a client ceiling above
-# screend's makes screend kill the connection mid-stream on a frame the client thought legal; below
-# it makes the client reject a frame screend was entitled to send. Neither reports a size.
-#
-# BREAK-TESTED 2026-08-22: putting `= 64 * 1024 * 1024` back on the `maximumFrameBytes` line fires
-# both halves —
-#   check-supervisor: FAIL — Sources/SlopDeskScreen/ScreenProtocol.swift spells the screend frame ceiling as a literal again — it is slopdesk_screen_constant(0), and screend's copy is pinned by a cargo test
-#   check-supervisor: FAIL — Sources/SlopDeskScreen/ScreenProtocol.swift stopped asking the door for the frame ceiling — a second spelling of 64 MiB is how the two ends drift apart
-# — and the shipped tree is silent on both.
-# Both halves read the file with its COMMENTS STRIPPED, and both do the strip here rather than
-# through `spells`, because **`spells` is defined ~1,600 lines BELOW this gate** and a shell function
-# does not exist before its definition is executed. That is not a style note — it was a live bug in
-# this block for one run, and it failed in both directions at once: the presence check called a
-# missing command, got 127, and reported that the door was gone from a file that calls it; the ban
-# called the same missing command, got 127, read it as "no match", and passed on a file it had not
-# opened. **A gate that moved above its helper reports a defect it invented and misses the one it
-# was written for.** It was caught by running the real script in place; a spliced copy with the
-# helpers hoisted to the top had shown both halves green.
-#
-# Stripped into a variable and matched from a here-string, never down a pipe — `grep -q` exits at
-# the first match, `sed` then dies of SIGPIPE, and under `pipefail` a FOUND spell reads as not found.
-# Same reasoning `spells` carries; this is the two-line form of it, for a gate that cannot call it.
-screen_protocol_stripped=$(sed -E 's,//.*,,' "${SWIFT_SCREEN_PROTOCOL}")
-# The door, asked for by name. Comment-stripped because the doc comment on this very constant
-# discusses the ratchet that used to read it: a `grep` here would be reading the explanation rather
-# than the code, and would stay green through a deletion that left the paragraph behind.
-if ! grep -qE 'slopdesk_screen_constant\(' <<< "${screen_protocol_stripped}"; then
-  fail "${SWIFT_SCREEN_PROTOCOL} stopped asking the door for the frame ceiling — a second spelling of 64 MiB is how the two ends drift apart"
-fi
-# The literal itself, banned in the file that used to hold it. Matched as the MEGABYTE EXPRESSION
-# rather than as a digit run: `64 * 1024 * 1024` is how a reader is meant to see it, and it is also
-# the only shape anyone regrows — nobody types `67108864`. The strip means the paragraph above,
-# which says "64 MiB" in prose, cannot trip it.
-if grep -qE '= *[0-9]+ *\* *1024 *\* *1024' <<< "${screen_protocol_stripped}"; then
-  fail "${SWIFT_SCREEN_PROTOCOL} spells the screend frame ceiling as a literal again — it is slopdesk_screen_constant(0), and screend's copy is pinned by a cargo test"
-fi
-
-# The reply STATUS byte, which is the last of screend's three alphabets and the one nothing watched.
-# `ScreenStatus` and `screenwire::Status` are the same three values in the same order, and the enum
-# pass in `check-shared-constants.py` deliberately does not pair them: the third case is spelled
-# `internalError` on one side and `Internal` on the other, so a name-for-name comparison would
-# report a naming choice as a drift and get itself deleted. The NUMBERS are the contract, so the
-# numbers are what is compared, in declaration order, with the count riding along — an inserted case
-# shifts the sequence and a renumbered one changes it. A status byte read as the wrong status is a
-# refusal reported as a success, or the reverse.
-swift_screen_status=$(sed -nE 's/^ *case [A-Za-z]+ = ([0-9]+)$/\1/p' \
-  <(sed -n '/^public enum ScreenStatus/,/^}/p' "${SWIFT_SCREEN_PROTOCOL}") | tr '\n' ' ')
-rust_screen_status=$(sed -nE 's/^ *[A-Z][A-Za-z]* = ([0-9]+),$/\1/p' \
-  <(sed -n '/^pub enum Status/,/^}/p' "${RUST_SCREEN_PROTOCOL}") | tr '\n' ' ')
-same "the screend status alphabet" "${swift_screen_status}" "${rust_screen_status}"
-
-# ── The 15 MiB opaque budget, which is one cap spelled THREE times ─────────────────────────────
-# A metadata `read` verb answers a file, and the ceiling on how much of one it will carry back is
-# written in three places: `MetadataResponseBuilder.defaultMaxOpaquePayloadBytes` (what hostd will
-# put in a reply), `HostMetadataProbe.maxCaptureBytes` (what hostd will accumulate from the child)
-# and `slopdesk_probe::run::MAX_OPAQUE_READ_BYTES` (what the child will read before truncating).
-# Three names, one number, and `docs/55` §8 has carried the pair as outstanding since it was found.
-#
-# `slopdesk-probe` is a `[[bin]]` hostd SPAWNS — it links nothing of hostd's and hostd links nothing
-# of its — so the third spelling cannot become a door however the first two are settled, and the
-# ratchet is the answer the lifetime picks rather than a compromise. The two Swift halves are a
-# genuine second finding, reported rather than folded: they live in one target and could be one
-# constant, which is a `Sources/` change and not this script's to make.
-#
-# A skew here is silent in the worst direction. The probe truncates at ITS ceiling and marks the
-# payload truncated; hostd's builder refuses at ITS ceiling by dropping the payload. Raise only the
-# probe's and hostd silently drops replies the probe worked to produce; raise only hostd's and the
-# extra capacity is unreachable, because the bytes were already thrown away one process upstream.
-SWIFT_METADATA_BUILDER=Sources/SlopDeskHost/MetadataResponseBuilder.swift
-SWIFT_METADATA_PROBE=Sources/SlopDeskHost/HostMetadataProbe.swift
-RUST_PROBE_RUN=rust/slopdesk-probe/src/run.rs
-swift_opaque_cap=$(sed -nE 's/^ *static let defaultMaxOpaquePayloadBytes = (.*)$/\1/p' \
-  "${SWIFT_METADATA_BUILDER}" | tr -d ' ')
-swift_capture_cap=$(sed -nE 's/^ *private static let maxCaptureBytes = (.*)$/\1/p' \
-  "${SWIFT_METADATA_PROBE}" | tr -d ' ')
-rust_opaque_cap=$(sed -nE 's/^pub const MAX_OPAQUE_READ_BYTES: usize = (.*);$/\1/p' \
-  "${RUST_PROBE_RUN}" | tr -d ' ')
-same "the opaque payload budget hostd will REPLY with" "${swift_opaque_cap}" "${rust_opaque_cap}"
-same "the opaque payload budget hostd will CAPTURE" "${swift_capture_cap}" "${rust_opaque_cap}"
-
-# No SWIFT screen engine. The parser, the renderer and the overprint collapser were DELETED when
-# they moved to Rust, and a re-added Swift copy is the cross-language mirror the tree forbids —
-# which is exactly the shape a "just a small fallback" commit takes (`CLAUDE.md`, `docs/52` §4).
-revived=$(among_deleted 'enum TerminalScreenModel|struct TerminalScreenModel|enum LineOverprintCollapser|enum TerminalSnapshotRenderer')
-if [[ -n "${revived}" ]]; then
-  printf '%s\n' "${revived}" >&2
-  fail "a Swift screen engine is back in Sources/ — screend owns the parse and the render (docs/52)"
-fi
-
-# No SWIFT replay passes either. The six byte machines of the scrollback replay transform moved into
-# screend's `sanitize` verb and were DELETED here in the same change. They are the likeliest of all
-# the moved code to grow a "tiny local fallback" — each is small, pure and framework-free, and an
-# absent screend now means a RAW replay rather than a partly-cleaned one, which is the documented
-# passthrough policy and not an invitation (`docs/52` §4, `ScrollbackReplayTransform`).
-# `ScrollbackReplayTransform` itself is NOT named: it stayed, as the caller that picks the options.
-# Scoped to DECLARATIONS so prose explaining where the passes went does not fail its gate.
-passes_revived=$(among_deleted '(enum|struct|final class|class|actor) (TerminalInputModeStripper|InputModeFinalState|AltScreenSegmentStripper|SyncUpdateFrameCollapser|ScrollbackDistiller|TerminalQueryStripper|PromptEOLMarkStripper)\b')
-if [[ -n "${passes_revived}" ]]; then
-  printf '%s\n' "${passes_revived}" >&2
-  fail "a Swift replay pass is back in Sources/ — screend's sanitize verb owns the chain (docs/52)"
-fi
-
-# Nor the CHUNK BOUNDARY. Holding back the trailing half of a cut escape sequence or UTF-8 scalar was
-# the last byte machine hostd kept, on the theory that the ring boundary is the host's bookkeeping —
-# it is not, every rule is read out of the bytes (stage 26, `docs/52` §4). Keeping it here also made
-# "the reassert lands BEFORE the dangling half" a convention two call sites had to remember instead
-# of an invariant of screend's reply, and `compose` vs `transcript` disagree about whether the
-# dangling half survives at all. Function names, not types: these were static methods.
-boundary_revived=$(among_deleted 'func (splitTrailingIncompleteEscape|splitTrailingIncompleteUTF8)\b|trailingEscapeScanBytes *[:=]')
-if [[ -n "${boundary_revived}" ]]; then
-  printf '%s\n' "${boundary_revived}" >&2
-  fail "a Swift chunk-boundary splitter is back in Sources/ — screend splits its own input (docs/52 §4)"
-fi
-
-# Nor the disk JOURNAL. superd owns the PTY read, so it numbers the pane's stream; a second process
-# journaling a stream it does not number is what produced the `.resume` sidecar, its pane-life stamp
-# and the rate-limited re-claim, all of which went with it (stage 27, `docs/51` §6.8). What hostd
-# kept is `ScrollbackTranscripts` — directory, cap, which end of life deletes, what the bytes mean —
-# and it holds no file descriptor. Two shapes are gated: the deleted types, and any Swift that opens
-# a `.scrollback`/`.resume` path for WRITING. The read side is deliberately not gated: hostd opens
-# the path `journal_info` hands back, which is the whole point of returning a path.
-journal_revived=$(among_deleted '(enum|struct|final class|class|actor) (ScrollbackJournal|ScrollbackJournalStore)\b')
-if [[ -n "${journal_revived}" ]]; then
-  printf '%s\n' "${journal_revived}" >&2
-  fail "a Swift scrollback journal is back in Sources/ — superd writes the transcript (docs/51 §6.8)"
-fi
-journal_writer=$(among_deleted '(createFile|forWritingTo|\.write\(to:).*\.(scrollback|resume)("|\)|$)')
-if [[ -n "${journal_writer}" ]]; then
-  printf '%s\n' "${journal_writer}" >&2
-  fail "Swift is writing a journal file — superd owns every write under the scrollback dir (docs/51 §6.8)"
-fi
-
-# ── Two families may write `unsafe`, and this is not one of them ────────────────────────────────
-# Every crate under `rust/` except those three carries `unsafe_code = "forbid"`, which rustc already
-# enforces per crate. What rustc cannot notice is the shape drifting back: a new crate that quietly
-# says "deny", or a manifest that says nothing at all and inherits nothing. Both would reopen the
-# hole stage 28 closed — `deny` is liftable by one `#[allow]`, and a missing policy is `allow` by
-# default. So the MANIFESTS are gated, not the source.
-#
-# THREE crates are exempt, each with ONE narrow kind of obligation — that is the isolation, and a
-# fourth would dissolve it. `slopdesk-posix` argues about syscalls; `slopdesk-ffi` argues about one
-# thing repeated, whether a `(ptr, len)` from Swift is live for the call; `slopdesk-gfsimd` argues
-# about one thing narrower still, whether a 16-byte load stays inside its chunk, which does not name
-# a language boundary at all. The third was bought with a measurement rather than an argument —
-# `docs/DECISIONS.md` carries it — and that is the bar a fourth would have to clear. `forbid` in any
-# of them would make the per-site `#[expect]` impossible, and those self-expiring exemptions are what
-# keeps the surfaces auditable. Root-workspace MEMBERS (`slopdesk-hook`, `-ctl`, `-cli`, `-probe`)
-# state `[lints] workspace = true` and inherit the root's `forbid`, so they are accepted that way.
-#
-# The SECOND family is `slopdesk-apple-*`, opened by `docs/57-apple-frameworks-in-rust.md`, and it is
-# a different permission rather than three more seats at the same table. A crate there wraps ONE
-# Apple framework area, reaches it only through `objc2`'s generated bindings, and may write `unsafe`
-# only to call a binding that is itself `unsafe` — never to dereference a pointer it made. That is
-# what makes the family bounded where a fourth hand-written crate would not be: the obligation each
-# block carries is the FRAMEWORK's rule, which the framework documents, not a Rust rule about memory
-# nobody else can check. Membership is by NAME, so adding one is visible in this file's diff, and
-# the three extra conditions below are checked per crate rather than trusted.
-UNSAFE_EXEMPT=(
-  rust/slopdesk-posix/Cargo.toml
-  rust/slopdesk-ffi/Cargo.toml
-  rust/slopdesk-gfsimd/Cargo.toml
-)
-APPLE_FAMILY=()
-for manifest in rust/slopdesk-apple-*/Cargo.toml; do
-  [[ -f "${manifest}" ]] || continue
-  APPLE_FAMILY+=("${manifest}")
-  UNSAFE_EXEMPT+=("${manifest}")
-done
-# What the family costs, per crate. `deny` alone is the same level the three hand-written crates
-# carry; these three add what `docs/57` §3 asks and what makes the permission narrower rather than
-# wider.
-for manifest in "${APPLE_FAMILY[@]}"; do
-  crate_dir=$(dirname "${manifest}")
-  if ! grep -q '^unsafe_op_in_unsafe_fn = "deny"' "${manifest}"; then
-    fail "${manifest} is in the objc2 family and does not state unsafe_op_in_unsafe_fn = \"deny\" — the family's permission is 'call an unsafe binding', which means every such call must be inside a block that named its obligation (docs/57 §3)"
-  fi
-  if ! grep -q 'objc2' "${manifest}"; then
-    fail "${manifest} is named slopdesk-apple-* and depends on no objc2 crate — the family exists BECAUSE the bindings are generated from SDK metadata; a hand-rolled extern block wearing this name has the permission without the reason for it (docs/57 §1)"
-  fi
-  # The line that separates this family from the three hand-written crates. A raw-pointer operation
-  # here is not a framework obligation — it is a Rust one, and `docs/57` §2 says it belongs in
-  # `slopdesk-posix` or `slopdesk-ffi`, where a reviewer already holds that question.
-  #
-  # CODE only, for N.18's reason. A crate in this family has to EXPLAIN, in prose, which Rust
-  # obligations it is not carrying — that sentence is the argument for its own existence — and a
-  # gate that could not tell `transmute` in a doc comment from a call to one would force the
-  # argument out of the crate to keep the crate green.
-  family_code=$(grep -rhvE '^[[:space:]]*(///|//!|//)' --include='*.rs' "${crate_dir}/src" || true)
-  if grep -Eq 'transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)' <<< "${family_code}"; then
-    fail "${crate_dir} hand-writes a raw-pointer operation — the objc2 family may write unsafe only to CALL an unsafe binding; a transmute or a from_raw is a Rust obligation and belongs in slopdesk-posix or slopdesk-ffi (docs/57 §2)"
-  fi
-done
-# The exemption is not a blank cheque, and this is the half the gate was missing: each of the three
-# must state `deny`, the level the comment above argues for, and nothing else. `allow` there would
-# pass the loop below untouched — an exempt manifest is `continue`d before the allow/warn check ever
-# runs — and it would take every per-site `#[expect]` with it, since a lint nobody fires cannot
-# expire. A missing file is the same failure wearing a different hat: an entry naming a crate that
-# has been renamed or folded away protects nothing, and reads for years like it does.
-for allowed in "${UNSAFE_EXEMPT[@]}"; do
-  if [[ ! -f "${allowed}" ]]; then
-    fail "${allowed} is exempt from the unsafe-code policy and does not exist — the exemption list has gone stale (docs/55 §5)"
-    continue
-  fi
-  if ! grep -q '^unsafe_code = "deny"' "${allowed}"; then
-    fail "${allowed} is allowed to write unsafe and does not state unsafe_code = \"deny\" — the per-site #[expect] audit depends on that exact level (docs/51 §6.15, docs/55 §5)"
-  fi
-done
-# `workspace = true` is only an answer for a crate that INHERITS from the root, and only because the
-# root is checked here too and must state `forbid` itself. Almost every crate under `rust/` is its
-# OWN `[workspace]` root, and for one of those the same two lines say nothing at all: a manifest can
-# carry `[workspace.lints.rust] unsafe_code = "allow"` and `[lints] workspace = true` together and
-# inherit permission. So inheritance is accepted only from the root, and the member list is read out
-# of the root rather than kept beside it.
-root_members=$(grep -E '^members = ' rust/Cargo.toml | grep -oE '"[a-z0-9-]+"' | tr -d '"' || true)
-if [[ -z "${root_members}" ]]; then
-  fail "the root workspace's members list did not parse — the unsafe-policy gate below would accept any 'workspace = true' (docs/55 §5)"
-fi
-unsafe_policy_missing=""
-for manifest in rust/Cargo.toml rust/*/Cargo.toml; do
-  exempt=""
-  for allowed in "${UNSAFE_EXEMPT[@]}"; do
-    [[ "${manifest}" == "${allowed}" ]] && exempt="yes"
-  done
-  if [[ -n "${exempt}" ]]; then
-    continue
-  fi
-  # A stated `allow`/`warn` anywhere in the manifest is decisive, whatever else it also says: the
-  # narrower `[lints.rust]` table wins over `[workspace.lints.rust]`, so a `forbid` above one of
-  # these is not protection, it is camouflage.
-  if grep -qE '^unsafe_code = "(allow|warn)"' "${manifest}"; then
-    unsafe_policy_missing="${unsafe_policy_missing}${manifest} (states allow/warn)"$'\n'
-    continue
-  fi
-  if grep -q '^unsafe_code = "forbid"' "${manifest}"; then
-    continue
-  fi
-  crate=$(basename "$(dirname "${manifest}")")
-  if grep -q '^workspace = true' "${manifest}" && grep -qxF "${crate}" <<< "${root_members}"; then
-    continue
-  fi
-  unsafe_policy_missing="${unsafe_policy_missing}${manifest}"$'\n'
-done
-if [[ -n "${unsafe_policy_missing}" ]]; then
-  printf '%s' "${unsafe_policy_missing}" >&2
-  fail "a crate is not unsafe_code = \"forbid\" — the exempt crates are named above (three hand-written, plus the slopdesk-apple-* objc2 family), and a fourth hand-written one is a design change (docs/51 §6.15, docs/55 §5, docs/57)"
-fi
-
-# ── The two lints that would talk you out of bit-exact floats ────────────────────────────────────
-# `CLAUDE.md` forbids the fused multiply-add: `a * b + c` stays two roundings because that is what
-# `golden/golden_vectors.json` pins. Clippy's `suboptimal_flops` and `imprecise_flops` argue the
-# opposite, both live in `nursery`, and every workspace here denies the whole nursery group — so in
-# any crate that does not opt out, the FIRST float expression to land is a hard clippy error whose
-# only offered fix is `f64::mul_add`. That is a lint teaching the opposite of an invariant, and it
-# teaches it at the moment nobody is reading a manifest.
-#
-# Four crates carried the opt-out because four crates had float math. The other thirteen were one
-# expression away from the trap; they all carry it now, and this keeps the seventeenth honest.
-flops_unguarded=""
-for manifest in rust/Cargo.toml rust/*/Cargo.toml; do
-  grep -q '^\[workspace\]' "${manifest}" || [[ "${manifest}" == rust/Cargo.toml ]] || continue
-  for lint in suboptimal_flops imprecise_flops; do
-    grep -q "^${lint} = \"allow\"" "${manifest}" ||
-      flops_unguarded="${flops_unguarded}${manifest} (${lint})"$'\n'
-  done
-done
-if [[ -n "${flops_unguarded}" ]]; then
-  printf '%s' "${flops_unguarded}" >&2
-  fail "a Rust workspace does not allow the FMA-suggesting nursery lints — clippy would demand mul_add and break the bit-exact floats CLAUDE.md pins"
-fi
+# ── The crate policies: who may write `unsafe`, and the two lints that argue with the floats ────
+# PORTED to `rust/slopdesk-invariants`: unsafe-policy, apple-family, flops-opt-out. All three read
+# MANIFESTS rather than source, and each carries a break-test — a crate that states `allow` under a
+# `forbid`, an apple crate that hand-writes a `from_raw`, a workspace root missing the opt-out.
 
 # `make lint-rust` runs clippy once per WORKSPACE, and cargo will not cross a workspace boundary for
 # you: almost every crate under `rust/` is its own root, so each needs its own invocation.
@@ -9195,10 +8875,9 @@ if [[ "${failures}" -ne 0 ]]; then
   exit 1
 fi
 
-# The socket name and the verb bytes moved to `rust/slopdesk-invariants` (screend-address,
-# screend-verbs). What is left here is the banner and the four absences.
-printf 'check-supervisor: screend agrees too — banner "%s", no Swift engine, ladder, manifest, boundary split or journal.\n' \
-  "${swift_banner}"
+# screend's whole share of this file is now `rust/slopdesk-invariants` — the address and the verbs
+# first, then the banner, the status alphabet, the reset flags, the frame ceiling and the four
+# absences. Nothing is left here to announce.
 printf 'check-supervisor: dropd agrees too — version %s, types (%s→ %s), %s-byte frames, 8 door entries, announce line, no Swift receiver or codec.\n' \
   "${drop_version}" \
   "$(printf '%s\n' "${client_request_types}" | tr '\n' ' ' | sed 's/ $//')" \

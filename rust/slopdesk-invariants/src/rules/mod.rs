@@ -5,7 +5,9 @@
 //! the whole enforced set in one screen. A rule that is written but not registered is a rule that
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
+pub mod crate_policy;
 pub mod screend;
+pub mod screend_wire;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
 pub mod terminal_surface;
@@ -89,6 +91,26 @@ pub fn registry() -> Vec<Rule> {
             name: "screend-verbs",
             origin: "docs/52",
             check: screend::verbs,
+        },
+        Rule {
+            name: "screend-hello-and-status",
+            origin: "docs/52, docs/49",
+            check: screend_wire::hello_and_status,
+        },
+        Rule {
+            name: "screend-reset-flags-and-ceiling",
+            origin: "docs/52 §4",
+            check: screend_wire::reset_flags_and_ceiling,
+        },
+        Rule {
+            name: "opaque-budget",
+            origin: "docs/20 §7",
+            check: screend_wire::opaque_budget,
+        },
+        Rule {
+            name: "deleted-screen-swift",
+            origin: "docs/52 §4, docs/51 §6.8",
+            check: screend_wire::deleted_screen_swift,
         },
         Rule {
             name: "video-send-path",
@@ -269,6 +291,21 @@ pub fn registry() -> Vec<Rule> {
             name: "wire-vocabularies",
             origin: "docs/20 §7, docs/45 §5.2",
             check: wire_codecs::wire_vocabularies,
+        },
+        Rule {
+            name: "unsafe-policy",
+            origin: "docs/51 §6.15, docs/55 §5, docs/57",
+            check: crate_policy::unsafe_policy,
+        },
+        Rule {
+            name: "apple-family",
+            origin: "docs/57 §1-3",
+            check: crate_policy::apple_family,
+        },
+        Rule {
+            name: "flops-opt-out",
+            origin: "CLAUDE.md, golden/",
+            check: crate_policy::flops_opt_out,
         },
         Rule {
             name: "big-endian-helpers",

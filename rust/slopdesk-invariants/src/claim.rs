@@ -512,6 +512,15 @@ impl Claim {
                             continue;
                         }
                         let haystack = view.of(source);
+                        // The whole-file match first, as a filter. It cannot be narrower than the
+                        // line-wise scan — a pattern matching some line matches the join of every
+                        // line — so a `false` here is a conclusive `false`, which is the answer
+                        // every file gives in the passing case. It is the same argument
+                        // `text::matches_line` makes, spent the other way: there to be CORRECT,
+                        // here to skip a per-line regex over the whole Swift tree per ban.
+                        if !text::matches(&haystack, pattern) {
+                            continue;
+                        }
                         for line in haystack.lines() {
                             if !text::matches(line, pattern) {
                                 continue;
