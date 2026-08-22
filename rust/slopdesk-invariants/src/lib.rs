@@ -24,6 +24,7 @@ pub mod report;
 pub mod rules;
 pub mod text;
 pub mod tree;
+pub mod vocabulary;
 
 pub use report::Report;
 pub use tree::{Source, Tree};

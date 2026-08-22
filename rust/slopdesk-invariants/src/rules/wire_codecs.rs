@@ -9,8 +9,8 @@
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
-use crate::text;
 use crate::tree::Tree;
+use crate::vocabulary::{Vocabulary, agrees};
 
 const SWIFT_METADATA: &str = "Sources/SlopDeskProtocol/Metadata/MetadataCodec.swift";
 const SWIFT_WS_CHANNEL: &str = "Sources/SlopDeskProtocol/WorkspaceChannelCodec.swift";
@@ -427,77 +427,33 @@ pub fn payload_channels(tree: &Tree) -> Report {
 #[must_use]
 pub fn wire_vocabularies(tree: &Tree) -> Report {
     let mut report = Report::new();
-    vocabulary_agrees(tree, &mut report, &Vocabulary {
+    agrees(tree, &mut report, &Vocabulary {
         label: "metadata verbs",
         swift: "Sources/SlopDeskProtocol/Metadata/MetadataVerb.swift",
+        swift_pattern: SWIFT_ENTRY,
         rust: "rust/slopdesk-wire/src/metadata/verb.rs",
+        rust_pattern: RUST_ENTRY,
         minimum: 26,
         doc: "docs/20 §7",
     });
-    vocabulary_agrees(tree, &mut report, &Vocabulary {
+    agrees(tree, &mut report, &Vocabulary {
         label: "workspace channel names",
         swift: SWIFT_WS_CHANNEL,
+        swift_pattern: SWIFT_ENTRY,
         rust: "rust/slopdesk-wire/src/workspace.rs",
+        rust_pattern: RUST_ENTRY,
         minimum: 14,
         doc: "docs/45 §5.2",
     });
     report
 }
 
-/// One `NAME = NUMBER` table, spelled on both sides.
-struct Vocabulary {
-    label: &'static str,
-    swift: &'static str,
-    rust: &'static str,
-    minimum: usize,
-    doc: &'static str,
-}
-
-/// Compares the two spellings of one vocabulary, upper-casing both so the capitalisation
-/// conventions cancel and only the byte is left.
-fn vocabulary_agrees(tree: &Tree, report: &mut Report, vocab: &Vocabulary) {
-    let Vocabulary {
-        label,
-        swift,
-        rust,
-        minimum,
-        doc,
-    } = *vocab;
-    let (Some(swift_source), Some(rust_source)) = (
-        report.source(tree, swift, "one side of a vocabulary lives there"),
-        report.source(tree, rust, "one side of a vocabulary lives there"),
-    ) else {
-        return;
-    };
-
-    let upper = |pairs: Vec<(String, String)>| -> std::collections::BTreeSet<String> {
-        pairs
-            .into_iter()
-            .map(|(name, number)| format!("{}={number}", name.to_uppercase()))
-            .collect()
-    };
-    let swift_set = upper(text::capture_pairs(
-        &swift_source.text,
-        r"case ([a-zA-Z]+) = ([0-9]+)",
-    ));
-    let rust_set = upper(text::capture_pairs(
-        &rust_source.text,
-        r"(?m)^\s+([A-Z][A-Za-z]+) = ([0-9]+),",
-    ));
-
-    report.fail_if(
-        swift_set.len() < minimum,
-        format!(
-            "only {} {label} found in {swift} — the extraction in this gate has gone stale",
-            swift_set.len(),
-        ),
-    );
-    if swift_set != rust_set {
-        report.fail(format!(
-            "{swift} and {rust} disagree — the verb byte is the whole of the request ({doc})",
-        ));
-    }
-}
+/// How each language spells one entry of a `NAME = NUMBER` table.
+///
+/// Named here rather than per call because both vocabularies below are the same two declarations
+/// wearing different file names, and a pattern typed twice is one that can be edited once.
+const SWIFT_ENTRY: &str = r"case ([a-zA-Z]+) = ([0-9]+)";
+const RUST_ENTRY: &str = r"^\s+([A-Z][A-Za-z]+) = ([0-9]+),";
 
 /// The last hand-rolled big-endian helper left `Sources/` when its final production caller did.
 ///

@@ -321,6 +321,12 @@ pub enum Claim {
         /// Which view to read.
         view: View,
         /// Paths that may match, each because somebody decided so.
+        ///
+        /// An entry ending in `/` exempts a DIRECTORY. That is not a glob smuggled back in: the
+        /// bans that need it say "this operation lives in one crate", and a crate is a directory —
+        /// naming its files instead would mean the exemption stops covering the crate the moment
+        /// somebody splits a module out of it, which is the widening this list exists to prevent,
+        /// arriving from the other side.
         exempt: &'static [&'static str],
         /// The sentence, with `{files}` where the offenders go.
         message: &'static str,
@@ -501,7 +507,10 @@ impl Claim {
                 for root in *roots {
                     for (path, source) in tree.under(root) {
                         let display = path.to_string_lossy().into_owned();
-                        if exempt.contains(&display.as_str()) {
+                        let excused = exempt.iter().any(|entry| {
+                            *entry == display || (entry.ends_with('/') && display.starts_with(*entry))
+                        });
+                        if excused {
                             continue;
                         }
                         let matching_extension = path

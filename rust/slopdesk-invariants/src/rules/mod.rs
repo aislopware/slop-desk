@@ -6,6 +6,7 @@
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
 pub mod crate_policy;
+pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
 pub mod superd_bodies;
@@ -16,6 +17,7 @@ pub mod video_control;
 pub mod video_host;
 pub mod video_wire;
 pub mod wire_codecs;
+pub mod workspace_document;
 
 use crate::Rule;
 
@@ -306,6 +308,56 @@ pub fn registry() -> Vec<Rule> {
             name: "flops-opt-out",
             origin: "CLAUDE.md, golden/",
             check: crate_policy::flops_opt_out,
+        },
+        Rule {
+            name: "one-home-per-operation",
+            origin: "docs/51 §6.15, docs/55",
+            check: rust_boundaries::one_home_per_operation,
+        },
+        Rule {
+            name: "replay-buffer",
+            origin: "docs/55 §6",
+            check: rust_boundaries::replay_buffer,
+        },
+        Rule {
+            name: "agent-detection",
+            origin: "docs/50, docs/55 §6",
+            check: rust_boundaries::agent_detection,
+        },
+        Rule {
+            name: "agent-vocabularies",
+            origin: "docs/55",
+            check: rust_boundaries::agent_vocabularies,
+        },
+        Rule {
+            name: "document-field-vocabulary",
+            origin: "docs/45 §5.3",
+            check: workspace_document::field_vocabulary,
+        },
+        Rule {
+            name: "intent-verbs",
+            origin: "docs/45 §5.3, docs/55 §8",
+            check: workspace_document::intent_verbs,
+        },
+        Rule {
+            name: "topology-and-reaping",
+            origin: "docs/45 §5.3",
+            check: workspace_document::topology_and_reaping,
+        },
+        Rule {
+            name: "workspace-scalar-codec",
+            origin: "docs/55 §6",
+            check: workspace_document::scalar_codec,
+        },
+        Rule {
+            name: "workspace-state-file",
+            origin: "docs/55 §6",
+            check: workspace_document::state_file,
+        },
+        Rule {
+            name: "optional-fills",
+            origin: "docs/55 §8",
+            check: workspace_document::optional_fills,
         },
         Rule {
             name: "big-endian-helpers",

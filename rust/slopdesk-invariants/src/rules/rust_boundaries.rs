@@ -1,0 +1,349 @@
+//! The two operations that live in exactly one crate, and the three Swift modules that became
+//! faces over Rust rather than second copies of it.
+//!
+//! Ported from `scripts/check-supervisor.sh`. What the first pair have in common is that the
+//! guarantee is attached to the LOCATION rather than to the code: a disassembly pin can only guard
+//! a symbol compiled beside it, and a C entry point next to the logic it marshals is a pointer bug
+//! one edit away from being a terminal bug. The rest are `import CSlopDeskFFI` plus a ban list,
+//! because unlike the ported daemons these files legitimately still exist — so "is it still a face"
+//! is a question about CONTENT, and the answer is: it calls the door, and it does not hold the
+//! table.
+
+use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::report::Report;
+use crate::tree::Tree;
+
+/// `fork`, `openpty` and `extern "C"`, each allowed in exactly one crate.
+///
+/// The fork-to-exec contract is pinned by disassembly in
+/// `rust/slopdesk-posix/src/fork_window_contract.rs`, and a pin guards a symbol it is compiled
+/// beside — a second `fork` anywhere else is unguarded BY CONSTRUCTION, not merely unreviewed.
+///
+/// `#[unsafe(no_mangle)] extern "C"` in a domain crate would put argument marshalling next to the
+/// logic it marshals, which is how a pointer bug becomes a terminal bug, and it would force that
+/// crate off `forbid` — so the ABI is a crate, not an attribute (`docs/55`).
+///
+/// Both exemptions are DIRECTORIES, because both say "this operation lives in one crate" and a
+/// crate is a directory.
+///
+/// ## Why the two patterns are assembled rather than spelled
+/// These are the first bans in this crate whose haystack CONTAINS THE GATE. The shell's copies
+/// scanned `rust/**/*.rs` from a file that was not one; now the gate is Rust, so a pattern typed as
+/// a literal here is a match this rule finds in its own source — and the honest fix is not to
+/// exempt the crate, which would leave a real one unnoticed, but to stop spelling it. `concat!`
+/// builds the pattern at compile time from halves that are each harmless, so the source never
+/// carries the byte sequence and the ban stays universal.
+///
+/// The prose above and the break-tests below still name them, and both are read out: comment lines
+/// by [`View::CodeBeforeTests`]'s strip, and the fixtures by its stop at `#[cfg(test)]`. A ban
+/// whose proof has to spell the banned thing is exactly what that view exists for.
+#[must_use]
+pub fn one_home_per_operation(tree: &Tree) -> Report {
+    const FORK: &str = concat!("libc::", "fork", "|libc::", "openpty");
+    const C_ABI: &str = concat!("extern ", r#""C""#);
+
+    let claims = [
+        Claim::NoneUnder {
+            roots: &["rust"],
+            extensions: RUST,
+            pattern: FORK,
+            all: &[],
+            unless: &[],
+            view: View::CodeBeforeTests,
+            exempt: &["rust/slopdesk-posix/"],
+            message: "a fork/openpty is outside rust/slopdesk-posix ({files}) — the disassembly pin cannot \
+                      guard it (docs/51 §6.15)",
+        },
+        Claim::NoneUnder {
+            roots: &["rust"],
+            extensions: RUST,
+            pattern: C_ABI,
+            all: &[],
+            unless: &[],
+            view: View::CodeBeforeTests,
+            exempt: &["rust/slopdesk-ffi/"],
+            message: "a C entry point is outside rust/slopdesk-ffi ({files}) — the ABI is a crate, not an \
+                      attribute (docs/55)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
+/// The replay buffer is `slopdesk_wire::replay`, and the Swift file is a handle owner.
+///
+/// The two banned strings are what a re-implementation would need and a wrapper cannot have: the
+/// ring storage, and the per-entry eviction walk. Checked as CONTENT rather than as a deleted path,
+/// because unlike the ported daemons this file legitimately still exists.
+#[must_use]
+pub fn replay_buffer(tree: &Tree) -> Report {
+    const REPLAY: &str = "Sources/SlopDeskTransport/ReplayBuffer.swift";
+
+    let claims = [
+        Claim::Names {
+            path: REPLAY,
+            needle: "import CSlopDeskFFI",
+            message: "Sources/SlopDeskTransport/ReplayBuffer.swift no longer calls the Rust buffer — the \
+                      port was undone (docs/55 §6)",
+        },
+        Claim::Lacks {
+            path: REPLAY,
+            pattern: "private var scrollbackRing",
+            view: View::Code,
+            message: "Sources/SlopDeskTransport/ReplayBuffer.swift grew the ring storage back — the buffer \
+                      lives in rust/slopdesk-wire (docs/55 §6)",
+        },
+        Claim::Lacks {
+            path: REPLAY,
+            pattern: "func evictScrollbackToFit",
+            view: View::Code,
+            message: "Sources/SlopDeskTransport/ReplayBuffer.swift grew the eviction walk back — the buffer \
+                      lives in rust/slopdesk-wire (docs/55 §6)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
+/// Agent detection is `rust/slopdesk-agent`, and the Swift module is vocabulary plus marshalling.
+///
+/// Four files stay as faces and must each still call the crate. The four that used to be on that
+/// list are GONE rather than thin: once the fusion moved, nothing in `Sources/` had a reason to
+/// name a machine, a signal, a process matcher or an input classifier — the detector's doors take
+/// the raw input and answer the fold. A wrapper that only forwards is still a file another wrapper
+/// can be written next to, so the check for those is that they stay deleted.
+///
+/// The six banned strings are the tables and the walks a re-implementation would need and a wrapper
+/// cannot have.
+#[must_use]
+pub fn agent_detection(tree: &Tree) -> Report {
+    const FACES: &[&str] = &[
+        "Sources/SlopDeskAgentDetect/AgentKind.swift",
+        "Sources/SlopDeskAgentDetect/ClaudeStatus.swift",
+        "Sources/SlopDeskAgentDetect/AgentDetectionHold.swift",
+        "Sources/SlopDeskAgentDetect/AgentJobIdentifier.swift",
+    ];
+    const GHOSTS: &str = r#"case "claude-code"|wrapperBasenames|cancelOnly|pendingIdleStartedAt|private var blockLedger|func wrappedAgentName"#;
+
+    let mut report = Report::new();
+    for face in FACES {
+        Claim::Names {
+            path: face,
+            needle: "import CSlopDeskFFI",
+            // The sentence names the path itself, since a table cannot carry a placeholder the
+            // claim does not fill.
+            message: "a Sources/SlopDeskAgentDetect face no longer calls the Rust crate — the port was \
+                      undone (docs/55 §6)",
+        }
+        .check(tree, &mut report);
+    }
+    report.absorb(check_all(tree, &[
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(enum|struct|final class|class|actor) (ClaudeStatusMachine|ClaudeProcessMatcher|PaneInputClassifier)\b|enum ClaudeSignal\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift machine/signal wrapper is back in {files} — the detector's doors take \
+                      the raw input (docs/50)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources/SlopDeskAgentDetect"],
+            extensions: SWIFT,
+            pattern: GHOSTS,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "Sources/SlopDeskAgentDetect grew a detection table back ({files}) — the rules \
+                      live in rust/slopdesk-agent (docs/55 §6)",
+        },
+    ]));
+    report
+}
+
+/// The two agent vocabularies, compared by CASE COUNT across the boundary.
+///
+/// The Swift enums declare the cases and the crate answers every question about them by
+/// DISCRIMINANT, so a reordered Swift enum would quietly report `working` for `blocked`. What
+/// crosses the ABI is an index, and an index is only meaningful against a length both sides agree
+/// on — which is exactly what `pub const ALL: [Self; N]` states on the Rust side.
+///
+/// Counted rather than name-compared on purpose: the two languages spell several of these
+/// differently and always have, so a name pin would report a naming choice as a drift and get
+/// itself deleted. The count is the part that is load-bearing.
+#[must_use]
+pub fn agent_vocabularies(tree: &Tree) -> Report {
+    const PAIRS: &[Vocabulary] = &[
+        Vocabulary {
+            label: "AgentKind",
+            swift: "Sources/SlopDeskAgentDetect/AgentKind.swift",
+            swift_enum: r"^public enum AgentKind",
+            rust: "rust/slopdesk-agent/src/kind.rs",
+        },
+        Vocabulary {
+            label: "ClaudeStatus",
+            swift: "Sources/SlopDeskAgentDetect/ClaudeStatus.swift",
+            swift_enum: r"^public enum ClaudeStatus",
+            rust: "rust/slopdesk-agent/src/status.rs",
+        },
+    ];
+
+    let mut report = Report::new();
+    for pair in PAIRS {
+        let (Some(swift), Some(rust)) = (
+            report.source(tree, pair.swift, "one side of the vocabulary lives there"),
+            report.source(tree, pair.rust, "one side of the vocabulary lives there"),
+        ) else {
+            continue;
+        };
+        let cases = crate::text::count_lines(
+            &crate::text::range(swift.code(), pair.swift_enum, r"^\}"),
+            r"^    case ",
+        );
+        let declared = crate::text::capture_first(rust.code(), r"pub const ALL: \[Self; ([0-9]+)\]");
+        // A zero on the Swift side is the vacuous case: the enum was renamed and the range read
+        // nothing, which would otherwise compare against a Rust length nobody changed.
+        report.fail_if(
+            cases == 0,
+            format!(
+                "{} declares no cases in {} — the extraction in this gate has gone stale",
+                pair.label, pair.swift,
+            ),
+        );
+        report.same(
+            &format!("{} case count", pair.label),
+            (cases > 0).then(|| cases.to_string()).as_deref(),
+            declared.as_deref(),
+        );
+    }
+    report
+}
+
+/// One vocabulary whose two ends are compared by length rather than by name.
+struct Vocabulary {
+    label: &'static str,
+    swift: &'static str,
+    swift_enum: &'static str,
+    rust: &'static str,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::tests::Fixture;
+
+    /// A pin can only guard a symbol compiled beside it, so the ban is about LOCATION.
+    #[test]
+    fn a_fork_outside_its_crate_is_caught_and_inside_it_is_not() {
+        let fixture = Fixture::new("stray-fork");
+        fixture
+            .write("rust/slopdesk-posix/src/window.rs", "let pid = libc::fork();\n")
+            .write("rust/slopdesk-ffi/src/lib.rs", "extern \"C\" fn door() {}\n");
+        assert!(super::one_home_per_operation(&fixture.tree()).is_clean());
+
+        fixture.write("rust/slopdesk-superd/src/pty.rs", "let pid = libc::fork();\n");
+        let report = super::one_home_per_operation(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("rust/slopdesk-superd/src/pty.rs")),
+            "{report:?}"
+        );
+    }
+
+    /// The directory exemption has to cover a module split out of the crate, which is the widening
+    /// a file list would suffer from the other side.
+    #[test]
+    fn the_exemption_covers_a_new_module_inside_the_crate() {
+        let fixture = Fixture::new("exempt-dir");
+        fixture
+            .write("rust/slopdesk-posix/src/deep/nested.rs", "libc::openpty();\n")
+            .write("rust/slopdesk-ffi/src/screen.rs", "extern \"C\" fn a() {}\n");
+        assert!(super::one_home_per_operation(&fixture.tree()).is_clean());
+    }
+
+    /// A wrapper that stopped calling its door is an implementation that came back.
+    #[test]
+    fn a_replay_buffer_that_regrew_its_ring_is_caught() {
+        let fixture = Fixture::new("replay-ring");
+        fixture.write(
+            "Sources/SlopDeskTransport/ReplayBuffer.swift",
+            "import CSlopDeskFFI\nfinal class ReplayBuffer {}\n",
+        );
+        assert!(super::replay_buffer(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "Sources/SlopDeskTransport/ReplayBuffer.swift",
+            "import CSlopDeskFFI\nprivate var scrollbackRing: [Entry] = []\n",
+        );
+        let report = super::replay_buffer(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("ring storage")),
+            "{report:?}"
+        );
+    }
+
+    /// What crosses the ABI is an INDEX, so a Swift case added without the Rust length is a
+    /// `working` reported for a `blocked`.
+    #[test]
+    fn a_case_added_on_one_side_only_is_caught() {
+        let fixture = vocabulary_fixture("agent-vocab", 3);
+        assert!(super::agent_vocabularies(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "Sources/SlopDeskAgentDetect/AgentKind.swift",
+            "public enum AgentKind {\n    case a\n    case b\n    case c\n    case d\n}\n",
+        );
+        let report = super::agent_vocabularies(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("AgentKind case count")),
+            "{report:?}"
+        );
+    }
+
+    /// The vacuous half: a renamed enum reads zero cases, which must not compare against a Rust
+    /// length nobody touched.
+    #[test]
+    fn a_renamed_swift_enum_says_so_rather_than_comparing_nothing() {
+        let fixture = vocabulary_fixture("agent-vocab-stale", 3);
+        fixture.write(
+            "Sources/SlopDeskAgentDetect/AgentKind.swift",
+            "public enum AgentFlavour {\n    case a\n    case b\n    case c\n}\n",
+        );
+        let report = super::agent_vocabularies(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("gone stale")),
+            "{report:?}"
+        );
+    }
+
+    fn vocabulary_fixture(name: &str, cases: usize) -> Fixture {
+        let fixture = Fixture::new(name);
+        let body = (0..cases).fold(String::new(), |mut acc, index| {
+            use std::fmt::Write as _;
+            let _ = writeln!(acc, "    case c{index}");
+            acc
+        });
+        for (swift, rust, enum_name) in [
+            (
+                "Sources/SlopDeskAgentDetect/AgentKind.swift",
+                "rust/slopdesk-agent/src/kind.rs",
+                "AgentKind",
+            ),
+            (
+                "Sources/SlopDeskAgentDetect/ClaudeStatus.swift",
+                "rust/slopdesk-agent/src/status.rs",
+                "ClaudeStatus",
+            ),
+        ] {
+            fixture
+                .write(swift, &format!("public enum {enum_name} {{\n{body}}}\n"))
+                .write(rust, &format!("pub const ALL: [Self; {cases}] = [Self::A];\n"));
+        }
+        fixture
+    }
+}
