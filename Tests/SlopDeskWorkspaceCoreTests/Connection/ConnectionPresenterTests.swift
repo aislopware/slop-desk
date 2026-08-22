@@ -4,19 +4,28 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins ``ConnectionPresenter`` (raw transport payloads → actionable copy) and the gate's recent-hosts
-/// MRU on ``AppConnection``:
+/// Pins the CROSSING behind ``ConnectionPresenter`` and the gate's recent-hosts MRU on
+/// ``AppConnection``.
 ///
-/// - ``ConnectionPresenter/friendlyFailure(_:)`` maps the known POSIX/NW payload shapes to messages
-///   that say what to DO; unknown payloads pass through verbatim.
-/// - ``ConnectionPresenter/headline(for:)`` distinguishes a first "Connecting…" from the campaign's
-///   "Reconnecting — attempt N of 20"; ``rawDetail(for:)`` is non-nil only when the mapping rewrote.
-/// - ``AppConnection/pushingRecent(_:into:limit:)`` dedupes by host:port (ports are settings, not
-///   identity), fronts the newest, caps the list; failures never enter the MRU; the MRU round-trips
-///   through an injected scratch `UserDefaults` suite.
+/// What each failure payload MAPS to, how the campaign phrases itself and what a menu-bar label may
+/// dump are `slopdesk_workspace::connection`'s, tested there (`every_failure_shape_gets_its_own_remedy`,
+/// `an_unrecognised_payload_passes_through_verbatim`, `the_campaign_reads_honestly_in_both_registers`,
+/// `a_failure_never_dumps_its_payload_into_a_menu_bar_label`). Restating them here would be the
+/// cross-language mirror fixture `CLAUDE.md` forbids: two copies of one table, free to disagree, with
+/// the Swift one able to stay green while the rule underneath it changed.
+///
+/// What is left is what only THIS side can get wrong:
+///
+/// - the reconnect ceiling is `ReconnectManager`'s, and it actually REACHES the door;
+/// - the three registers come back from ONE crossing, in their own places;
+/// - ``ConnectionStatus/terms`` names six states with six codes, and carries the two payloads the
+///   cases hold;
+/// - ``ConnectionPresenter/rawDetail(for:)`` answers with the caller's OWN string, never a copy that
+///   made the trip;
+/// - the MRU, which is not a port at all.
 @MainActor
 final class ConnectionPresenterTests: XCTestCase {
-    // MARK: - Reconnect cap is a single source of truth
+    // MARK: - The ceiling is one number, and it travels
 
     func testReconnectCapMirrorsTheOneConstant() {
         // The displayed "attempt N of M" cap and the per-pane transport campaign length must be the SAME
@@ -28,59 +37,61 @@ final class ConnectionPresenterTests: XCTestCase {
         )
     }
 
-    // MARK: - friendlyFailure mapping
-
-    func testFriendlyFailureMapsKnownPayloads() {
-        XCTAssertTrue(ConnectionPresenter
-            .friendlyFailure("POSIXErrorCode(rawValue: 61): Connection refused")
-            .contains("slopdesk-hostd"))
-        XCTAssertTrue(ConnectionPresenter
-            .friendlyFailure("No route to host")
-            .contains("network or VPN"))
-        XCTAssertTrue(ConnectionPresenter
-            .friendlyFailure("timedOut(\"dial tcp: i/o timeout\")")
-            .contains("didn't answer"))
-        XCTAssertTrue(ConnectionPresenter
-            .friendlyFailure("Network is down")
-            .contains("Wi-Fi"))
-        XCTAssertTrue(ConnectionPresenter
-            .friendlyFailure("dns resolution failed: NoSuchRecord")
-            .contains("host name"))
-        XCTAssertTrue(ConnectionPresenter
-            .friendlyFailure("Connection reset by peer")
-            .contains("Restart slopdesk-hostd"))
-        // Handshake / version mismatch (SlopDeskTransportError.handshakeFailed's errorDescription).
-        XCTAssertTrue(ConnectionPresenter
-            .friendlyFailure("Handshake failed — is this an slopdesk host?")
-            .contains("versions match"))
-        // A clean mid-session drop (receiveFailed → "Connection lost") and EOF/closed/pipe variants.
-        XCTAssertTrue(ConnectionPresenter.friendlyFailure("Connection lost").contains("dropped"))
-        XCTAssertTrue(ConnectionPresenter.friendlyFailure("read: EOF").contains("dropped"))
-        XCTAssertTrue(ConnectionPresenter.friendlyFailure("Broken pipe").contains("dropped"))
-        // A bare transport "Connection failed" is enriched with what to check.
-        XCTAssertTrue(ConnectionPresenter.friendlyFailure("Connection failed").contains("slopdesk-hostd"))
+    /// The ceiling is an ARGUMENT to the door, and this is the failure that would prove it stopped
+    /// being one: a rule crate holding its own copy would still print a number, just not this one.
+    func testTheCeilingReachesBothRegistersOfTheCampaign() {
+        let ceiling = ConnectionPresenter.maxReconnectAttempts
+        let words = ConnectionPresenter.words(for: .reconnecting(attempt: 3, nextRetry: nil))
+        XCTAssertEqual(words.headline, "Reconnecting — attempt 3 of \(ceiling)")
+        XCTAssertEqual(words.shortLabel, "reconnecting 3/\(ceiling)")
     }
 
-    func testFriendlyFailurePassesUnknownPayloadsThrough() {
-        let raw = "some exotic failure we cannot improve"
-        XCTAssertEqual(ConnectionPresenter.friendlyFailure(raw), raw)
+    // MARK: - One crossing, three registers
+
+    func testTheThreeRegistersComeBackInTheirOwnPlaces() {
+        // A delivery read in the wrong order is the port's own failure mode: three plausible strings,
+        // each in the wrong slot, and every one of them a real answer to a different question.
+        let words = ConnectionPresenter.words(for: .failed("Connection refused"))
+        XCTAssertTrue(words.headline.contains("slopdesk-hostd"), "the gate card's actionable copy")
+        XCTAssertEqual(words.shortLabel, "failed", "the toolbar's compact form")
+        XCTAssertEqual(words.statusLabel, "failed: Connection refused", "the plain state name")
+        XCTAssertEqual(ConnectionPresenter.headline(for: .failed("Connection refused")), words.headline)
+        XCTAssertEqual(ConnectionPresenter.shortLabel(for: .failed("Connection refused")), words.shortLabel)
     }
 
-    // MARK: - headline / rawDetail / shortLabel
+    /// ``ConnectionStatus/label`` IS the third run — not a switch that happens to agree with it. The
+    /// break this catches is the one the port exists to remove: a state named one thing by the enum
+    /// and another by the door.
+    func testTheStatusLabelIsTheDoorsThirdRunAndNotASecondSwitch() {
+        for status in Self.everyStatus {
+            XCTAssertEqual(status.label, ConnectionPresenter.statusLabel(for: status))
+        }
+    }
 
-    func testHeadlineDistinguishesConnectingFromReconnectCampaign() {
-        XCTAssertEqual(ConnectionPresenter.headline(for: .connecting), "Connecting…")
+    // MARK: - The vocabulary
+
+    func testEveryStateNamesItsOwnCodeAndCarriesItsOwnPayload() {
         XCTAssertEqual(
-            ConnectionPresenter.headline(for: .reconnecting(attempt: 3, nextRetry: nil)),
-            "Reconnecting — attempt 3 of \(ConnectionPresenter.maxReconnectAttempts)",
+            Set(Self.everyStatus.map(\.terms.code)).count, Self.everyStatus.count,
+            "six states, six codes — a collision would make two of them the same reading",
         )
         XCTAssertEqual(
-            ConnectionPresenter.headline(for: .reconnecting(attempt: 0, nextRetry: nil)),
-            "Reconnecting…",
+            ConnectionStatus.reconnecting(attempt: 7, nextRetry: nil).terms.attempt, 7,
+            "the campaign's progress crosses",
+        )
+        XCTAssertEqual(
+            ConnectionStatus.failed("a raw dump").terms.raw, "a raw dump",
+            "and so does the transport's payload",
+        )
+        XCTAssertEqual(
+            ConnectionStatus.reconnecting(attempt: -1, nextRetry: nil).terms.attempt, 0,
+            "a negative attempt is clamped rather than wrapped into a huge one",
         )
     }
 
-    func testRawDetailOnlyWhenMappingRewrote() {
+    // MARK: - The payload never makes a round trip
+
+    func testRawDetailAnswersWithTheCallersOwnString() {
         XCTAssertEqual(
             ConnectionPresenter.rawDetail(for: .failed("Connection refused")),
             "Connection refused",
@@ -91,20 +102,17 @@ final class ConnectionPresenterTests: XCTestCase {
             "a passthrough message would duplicate the headline",
         )
         XCTAssertNil(ConnectionPresenter.rawDetail(for: .connected))
+        XCTAssertNil(ConnectionPresenter.rawDetail(for: .failed("")), "an empty payload rewrites nothing")
     }
 
-    func testShortLabelCompactsCampaignAndFailure() {
-        XCTAssertEqual(
-            ConnectionPresenter.shortLabel(for: .reconnecting(attempt: 7, nextRetry: nil)),
-            "reconnecting 7/\(ConnectionPresenter.maxReconnectAttempts)",
-        )
-        XCTAssertEqual(
-            ConnectionPresenter.shortLabel(for: .failed("huge raw NWError dump")),
-            "failed",
-            "the toolbar label never dumps a raw payload",
-        )
-        XCTAssertEqual(ConnectionPresenter.shortLabel(for: .connected), "connected")
-    }
+    private static let everyStatus: [ConnectionStatus] = [
+        .disconnected,
+        .connecting,
+        .connected,
+        .reconnecting(attempt: 3, nextRetry: nil),
+        .unreachable,
+        .failed("Connection refused"),
+    ]
 
     // MARK: - Recent-hosts MRU
 

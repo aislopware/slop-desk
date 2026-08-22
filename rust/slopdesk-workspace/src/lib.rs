@@ -30,6 +30,9 @@
 //! - [`keystroke_replay`] — a clipboard as the KEY EVENTS that type it, for the one field that
 //!   refuses everything else, and the grapheme rule that keeps an accent from becoming its base
 //!   letter in a password.
+//! - [`connection`] — the link island's whole reading: which state the link is in, what each run
+//!   says, which of them may climb, and what a raw transport failure means in words a person can
+//!   act on.
 //! - [`pane_drop`] — where a dragged PANE lands over another one, and the rectangles the preview
 //!   draws to promise it, so the two UI halves cannot preview one drop and commit another.
 //! - [`peek_reply`] — what the Peek & Reply card sends down another pane's PTY, and the transcript
@@ -59,6 +62,7 @@
 pub mod binding_rows;
 pub mod binding_search;
 pub mod cheat_sheet;
+pub mod connection;
 pub mod drop_action;
 pub mod drop_zone;
 pub mod frecency;

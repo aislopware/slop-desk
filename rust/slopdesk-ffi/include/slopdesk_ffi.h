@@ -3910,6 +3910,116 @@ SlopDeskVideoSize slopdesk_pane_drop_seam_size(SlopDeskVideoRect slab, uint32_t 
 SlopDeskVideoPoint slopdesk_pane_drop_seam_center(SlopDeskVideoRect slab, uint32_t edge);
 SlopDeskVideoRect slopdesk_pane_drop_rail_rect(SlopDeskVideoRect container, uint32_t edge);
 
+/* ---- The link island: one reading of the connection, drawn by two chromes ------------------
+ * What the status dot, its figures and its prose SAY, for every mount that draws them: the Mac's
+ * titlebar island, the phone's compact bar, the gate card that appears when the link is down, and
+ * the toolbar's one-word form. Four surfaces reading one state is what forced the move — the ping
+ * threshold, the disk floor and the "Reconnecting 2/5" phrasing had each been written twice.
+ *
+ * Two classifications feed everything else and are asked FIRST, because every other door takes one
+ * of their codes back: `health` (the round trip alone) and `led` (the link's state FUSED with that
+ * round trip, so a stale sample can never brighten a link that is down). The alarm doors then read
+ * the LED code, not the raw status — an alarm is about what is drawn, not about what the socket is
+ * doing.
+ *
+ * MEMORY's alarm is the one reading that does not come from a number. It comes from the kernel's own
+ * verdict byte, which arrives on the wire; the percent beside it is a FIGURE, and classifying it
+ * here would be this side inventing a threshold the kernel already decided. The byte's four values
+ * are the wire's, restated in `SlopDeskHostPulse` rather than shared, because the rules crate sits
+ * below the wire crate and an edge upward would invert the layering.
+ *
+ * Three doors deliver GROUPS, and each is one crossing for a set of strings that are always wanted
+ * together: `words` (headline, compact label, plain state name), `pulse_prose` (spoken, tooltip),
+ * and `metric_runs` (the drawn rows). The alternative — a door per string — was measured too
+ * expensive inside a SwiftUI body, which is the same retreat the Settings catalogue already made.
+ *
+ * `max_attempts` is an ARGUMENT to every door that phrases a retry. The ceiling belongs to the
+ * client's reconnect supervisor; a copy of it here would be a second place to change it.
+ *
+ * `has_raw_detail` answers a yes/no about the payload the caller passed IN, and never hands it
+ * back. The caller is holding that string already; a copy made only to be compared with the one it
+ * came from is the crossing the device panel's charter names.                                    */
+#define SLOPDESK_CONNECTION_STATUS_DISCONNECTED 0u
+#define SLOPDESK_CONNECTION_STATUS_CONNECTING   1u
+#define SLOPDESK_CONNECTION_STATUS_CONNECTED    2u
+#define SLOPDESK_CONNECTION_STATUS_RECONNECTING 3u
+#define SLOPDESK_CONNECTION_STATUS_UNREACHABLE  4u
+#define SLOPDESK_CONNECTION_STATUS_FAILED       5u
+
+#define SLOPDESK_CONNECTION_HEALTH_OFFLINE 0u
+#define SLOPDESK_CONNECTION_HEALTH_GOOD    1u
+#define SLOPDESK_CONNECTION_HEALTH_SLOW    2u
+#define SLOPDESK_CONNECTION_HEALTH_BAD     3u
+
+#define SLOPDESK_CONNECTION_LED_DIM     0u
+#define SLOPDESK_CONNECTION_LED_DIALING 1u
+#define SLOPDESK_CONNECTION_LED_GOOD    2u
+#define SLOPDESK_CONNECTION_LED_SLOW    3u
+#define SLOPDESK_CONNECTION_LED_BAD     4u
+
+#define SLOPDESK_CONNECTION_ALARM_QUIET  0u
+#define SLOPDESK_CONNECTION_ALARM_RAISED 1u
+#define SLOPDESK_CONNECTION_ALARM_LOUD   2u
+
+/* Where the reading is drawn: the bedded island has room for a figure, the compact bar does not. */
+#define SLOPDESK_CONNECTION_MOUNT_BEDDED  0u
+#define SLOPDESK_CONNECTION_MOUNT_COMPACT 1u
+
+/* A SOURCE, not the text: the two sources want different payloads and the caller holds both. */
+#define SLOPDESK_CONNECTION_TRAILING_ABSENT      0u
+#define SLOPDESK_CONNECTION_TRAILING_PING        1u
+#define SLOPDESK_CONNECTION_TRAILING_STATUS_WORD 2u
+
+#define SLOPDESK_CONNECTION_METRIC_CPU    0u
+#define SLOPDESK_CONNECTION_METRIC_MEMORY 1u
+#define SLOPDESK_CONNECTION_METRIC_DISK   2u
+
+/* One host sample. `memory_pressure` is the kernel's verdict byte, not a percent; `disk_free_mib`
+ * is read only when `has_disk`, because an unreadable volume is silence and not zero bytes left. */
+typedef struct {
+  uint32_t cpu_percent;
+  uint32_t memory_percent;
+  uint8_t  memory_pressure;
+  uint32_t disk_free_mib;
+  bool     has_disk;
+} SlopDeskHostPulse;
+
+/* `ping_ms` is read only when `has_ping`. Connected-with-no-sample is GOOD, not a fourth state. */
+uint32_t slopdesk_connection_health(bool is_connected, bool has_ping, double ping_ms);
+uint32_t slopdesk_connection_led(uint32_t status, bool has_ping, double ping_ms);
+uint32_t slopdesk_connection_link_alarm(uint32_t led);
+uint32_t slopdesk_connection_memory_alarm(uint8_t pressure);
+uint32_t slopdesk_connection_disk_alarm(bool has_disk, uint32_t free_mib);
+uint32_t slopdesk_connection_detail_alarm(uint32_t trailing_slot, uint32_t led);
+bool     slopdesk_connection_shows_retry(uint32_t status);
+uint32_t slopdesk_connection_trailing_slot(uint32_t status, bool has_ping, uint32_t mount);
+
+/* Figures. Each is §4's plain shape: the return is the byte count the answer NEEDS. */
+size_t slopdesk_connection_ping_label(double ping_ms, unsigned char *out, size_t cap);
+size_t slopdesk_connection_bitrate_label(int64_t kbps, unsigned char *out, size_t cap);
+size_t slopdesk_connection_disk_label(uint32_t free_mib, unsigned char *out, size_t cap);
+size_t slopdesk_connection_tooltip_detail(bool has_fps, int64_t fps, bool has_kbps, int64_t kbps,
+                                          unsigned char *out, size_t cap);
+
+/* Three runs — headline, compact label, plain state name — as
+ * `[uint32_t big-endian length][UTF-8 bytes]` each, in that order. `raw` is the transport's own
+ * failure payload, read only for the failed status. */
+size_t slopdesk_connection_words(uint32_t status, uint32_t attempt, uint32_t max_attempts,
+                                 const unsigned char *raw, size_t raw_len,
+                                 unsigned char *out, size_t cap);
+bool slopdesk_connection_has_raw_detail(uint32_t status, const unsigned char *raw, size_t raw_len);
+
+/* `[uint16_t big-endian count]` then count × `[uint8_t metric][uint8_t alarm][uint32_t big-endian
+ * length][UTF-8 value]`. `promoted_only` is the compact mount's gate: it keeps only the runs that
+ * have earned a place, and says nothing at all while the host is calm. A pulse with no runs still
+ * delivers its two-byte header, so a `0` return keeps §4's literal meaning. */
+size_t slopdesk_connection_metric_runs(SlopDeskHostPulse pulse, bool promoted_only,
+                                       unsigned char *out, size_t cap);
+/* Two runs, length-prefixed as above: spoken, then tooltip. */
+size_t slopdesk_connection_pulse_prose(SlopDeskHostPulse pulse, unsigned char *out, size_t cap);
+/* An SF Symbol NAME, so each framework resolves it through its own image type. */
+size_t slopdesk_connection_metric_symbol(uint32_t metric, unsigned char *out, size_t cap);
+
 /* ---- The keyboard reference sheet: which column each run of shortcuts belongs in ----------
  * Balanced by RENDERED HEIGHT (a section costs its rows plus its own header line), not by section
  * count — three short categories beside one long one is the case that makes a halve-the-list split

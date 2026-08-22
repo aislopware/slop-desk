@@ -197,6 +197,39 @@ package func wsAnswerBytes(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -
     return Array(out[0..<needed])
 }
 
+/// The `count` `[UInt32 big-endian length][UTF-8 bytes]` runs in a group delivery, padded with
+/// empties if it came up short.
+///
+/// The one reader for the group-delivery idiom every catalogue door now uses: one crossing for a
+/// set of strings that are always wanted together, because a door per string was measured too
+/// expensive inside a SwiftUI body. Four faces had each written this loop out — the settings
+/// catalogue, the settings layout, the rail rows and the link island — and four copies of a cursor
+/// walk is four places for an off-by-one to live.
+///
+/// PADDING rather than trusting the length: a short delivery means the door and the reader disagree
+/// about the layout, and the alternative is a silent off-by-one where every run after the gap wears
+/// its neighbour's words.
+///
+/// The producers are all `slopdesk_workspace`, so these bytes are a Rust `String`'s or a `format!`
+/// over two of them and cannot be invalid UTF-8. A failable decode would add a branch meaning "this
+/// run has no text", which is a wrong answer rather than a cautious one.
+package func wsRuns(_ blob: [UInt8], count: Int) -> [String] {
+    var runs: [String] = []
+    runs.reserveCapacity(count)
+    var cursor = blob.startIndex
+    while runs.count < count, blob.distance(from: cursor, to: blob.endIndex) >= 4 {
+        var length = 0
+        for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
+        cursor += 4
+        guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
+        // swiftlint:disable:next optional_data_string_conversion
+        runs.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
+        cursor += length
+    }
+    while runs.count < count { runs.append("") }
+    return runs
+}
+
 /// The sidebar's draw order for a list of things that each belong to a project — where each one
 /// lands, and in which section. `slopdesk_workspace::rail_list::plan`.
 ///

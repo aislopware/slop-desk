@@ -3673,6 +3673,52 @@ the bands leave a centre box, and that the drawn rail is wider than the gutter t
 now `const { assert!(…) }`, checked where constants are, at compile time rather than one `cargo test`
 after the edit that broke them.
 
+### Increment 83 — the link island, and the difference between one copy and one home
+
+`ConnectionReading` and `ConnectionPresenter` were already the good outcome of an earlier round: two
+`nonisolated enum`s of pure functions, below both shells, so the Mac's titlebar island, the phone's
+navigation pill and the connect-gate card all read one classification. There was no duplicate to
+delete. The reason they moved anyway is that **one copy in the wrong layer is not the same as one
+home**: the thresholds they classified with — 80 ms, 180 ms, 15 GiB, 5 GiB, the megabit switch — sat
+above `slopdesk-workspace`, where every other reading in the client had already gone, and three of
+them had been written a second time in the surfaces that drew them before the enums existed. A rule
+that only *happens* to have one caller is one refactor away from having two.
+
+**The split at the boundary is the shape of the reading itself.** The classifiers — health, the LED,
+the three alarms, the retry gate, the trailing slot — are a handful of numbers in and one code out,
+so they cross as scalars: no buffer, no allocation, a call and no more, which matters because the
+island recomputes all of them on every pulse, three times a second, inside a SwiftUI body and an
+AppKit `layout()`. The WORDS cross as GROUPS, on `settings_options`' precedent and for its measured
+reason: a door per string would have been `1 + n` crossings to draw one line. Three registers of a
+status (headline, compact label, plain state name) come back in one delivery; the pulse's two prose
+registers in another; the drawn runs — role, rung, figure — in a third.
+
+**Two things deliberately do not make the trip.** The raw failure payload: `has_raw_detail` answers a
+yes/no about the string the caller just passed in, because handing it back would be a copy made only
+to be compared with the one it came from. And the host name: the help line is `"Connection: {host} — "`
+plus what the doors answer, so an identity Swift is already holding stays where it is. Both are
+`rust/slopdesk-devicepanel`'s charter — *answers, not identities* — applied to a reading rather than
+to a panel.
+
+**The reconnect ceiling is an ARGUMENT, not a const.** `ReconnectManager` owns it, in the module that
+runs the campaign. A `pub const MAX_ATTEMPTS` in the rules crate would have been the "showing *of 20*
+while the campaign runs to 30" bug with a new place to hide, and it would have hidden better: the
+Swift constant was at least in the same language as the supervisor.
+
+`ConnectionStatus.label` went through the same door rather than keeping its own switch. It is the
+delivery's third run, which is what the compact form falls back to — two switches over one enum is
+exactly how a state comes to be named one thing by the model and another by the toolbar.
+
+Four Swift `splitLengthPrefixed` copies collapsed into `wsRuns` beside `wsAnswerBytes` on the way
+past. The group-delivery idiom now has one reader, which is the same argument one layer down: four
+hand-written cursor walks over one byte layout is four places for an off-by-one to live.
+
+Both test files shrank to what only the near side can get wrong — optionality (a `nil` ping, a `nil`
+pulse, and the presence flag that keeps a *full* volume distinguishable from an *unreadable* one),
+the code round trips, the blob's three-field-per-run cursor, and the help line's host name. The
+tables of failure payloads and the ladder's thresholds stayed on the Rust side alone: a Swift copy of
+a Rust table can stay green for a release after the rule under it moved.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

@@ -22,15 +22,8 @@ public enum ConnectionStatus: Sendable, Equatable {
     case unreachable
     case failed(String)
 
-    public var label: String {
-        switch self {
-        case .disconnected: "disconnected"
-        case .connecting: "connecting"
-        case .connected: "connected"
-        case let .reconnecting(attempt, _):
-            attempt > 0 ? "reconnecting (\(attempt))" : "reconnecting"
-        case .unreachable: "unreachable"
-        case let .failed(m): "failed: \(m)"
-        }
-    }
+    /// The plain state name. `slopdesk_workspace::connection::status_label`, reached through
+    /// ``ConnectionPresenter/statusLabel(for:)`` — the same run the compact toolbar form falls back
+    /// to, so a state cannot be named one thing here and another there.
+    public var label: String { ConnectionPresenter.statusLabel(for: self) }
 }

@@ -13,7 +13,7 @@
 /// How loud one reading is allowed to be — the island's whole state axis, and the only one it has.
 /// `quiet` is the metadata grey every healthy reading rests in, `raised` is worth knowing about,
 /// `loud` is worth acting on.
-package enum ConnectionAlarm: Equatable, Sendable {
+package enum ConnectionAlarm: Equatable, Sendable, CaseIterable {
     case quiet
     case raised
     case loud

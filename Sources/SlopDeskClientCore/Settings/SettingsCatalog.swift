@@ -155,7 +155,7 @@ package enum SettingsCatalog {
         let blob = delivered(group)
         guard blob.count >= countBytes else { return [] }
         let count = Int(blob[0]) << 8 | Int(blob[1])
-        let text = splitLengthPrefixed(Array(blob[countBytes...]), count: count * optionFieldCount)
+        let text = wsRuns(Array(blob[countBytes...]), count: count * optionFieldCount)
         return (0..<count).map { index in
             let field = index * optionFieldCount
             let caption = text[field + 2]
@@ -188,32 +188,6 @@ package enum SettingsCatalog {
             guard written > 0, written <= out.count else { return [] }
         }
         return Array(out.prefix(written))
-    }
-
-    /// The delivery's `count` length-prefixed strings, padded with empties if it came up short.
-    ///
-    /// Padding rather than trusting the length, for `SettingsLayout`'s reason: a short delivery means
-    /// the door and this reader disagree about the layout, and the alternative to padding is a silent
-    /// off-by-one where every option after the gap wears its neighbour's words.
-    private static func splitLengthPrefixed(_ blob: [UInt8], count: Int) -> [String] {
-        var fields: [String] = []
-        fields.reserveCapacity(count)
-        var cursor = blob.startIndex
-        while fields.count < count, blob.distance(from: cursor, to: blob.endIndex) >= 4 {
-            var length = 0
-            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
-            cursor += 4
-            guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
-            // The producer is `slopdesk_workspace::settings_catalog`, so these bytes are a Rust
-            // `&'static str`'s — or a `format!` over two of them — and cannot be invalid UTF-8. A
-            // failable init would add a branch meaning "this option has no label", which is a wrong
-            // answer rather than a cautious one.
-            // swiftlint:disable:next optional_data_string_conversion
-            fields.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
-            cursor += length
-        }
-        while fields.count < count { fields.append("") }
-        return fields
     }
 
     /// What one persisted token is CALLED — for a readout that shows the current choice without

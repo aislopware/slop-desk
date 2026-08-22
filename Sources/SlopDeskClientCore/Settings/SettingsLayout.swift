@@ -1,6 +1,7 @@
 import CSlopDeskFFI
 import Foundation
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 // MARK: - SettingsLayout (the near side of a settings page's SHAPE)
 
@@ -160,9 +161,9 @@ package enum SettingsLayout {
         let stringBase = rowBase + rowTotal * rowRecordBytes
         // The fixed records are read by arithmetic, so a delivery that does not carry all of them is
         // refused whole rather than walked into. The strings after them are padded instead — see
-        // ``splitLengthPrefixed(_:count:)`` for why the two truncations are handled differently.
+        // ``wsRuns(_:count:)`` for why the two truncations are handled differently.
         guard blob.count >= stringBase else { return [] }
-        let text = splitLengthPrefixed(
+        let text = wsRuns(
             Array(blob[stringBase...]), count: groupCount + rowTotal * rowFieldCount,
         )
         var out: [Group] = []
@@ -259,31 +260,6 @@ package enum SettingsLayout {
             guard written > 0, written <= out.count else { return [] }
         }
         return Array(out.prefix(written))
-    }
-
-    /// The delivery's `count` length-prefixed strings, padded with empties if it came up short.
-    ///
-    /// Padding rather than trusting the length: a short delivery means the door and this reader
-    /// disagree about the layout, and the alternative to padding is a silent off-by-one where every
-    /// row after the gap renders its neighbour's words.
-    private static func splitLengthPrefixed(_ blob: [UInt8], count: Int) -> [String] {
-        var fields: [String] = []
-        fields.reserveCapacity(count)
-        var cursor = blob.startIndex
-        while fields.count < count, blob.distance(from: cursor, to: blob.endIndex) >= 4 {
-            var length = 0
-            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
-            cursor += 4
-            guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
-            // The producer is `slopdesk_workspace::settings_layout`, so these bytes are a Rust
-            // `&'static str`'s and cannot be invalid UTF-8. A failable init would add a branch meaning
-            // "this row has no label", which is a wrong answer rather than a cautious one.
-            // swiftlint:disable:next optional_data_string_conversion
-            fields.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
-            cursor += length
-        }
-        while fields.count < count { fields.append("") }
-        return fields
     }
 
     /// One big-endian pair of bytes at `offset` — every count in the delivery is one.

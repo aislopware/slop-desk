@@ -11832,6 +11832,79 @@ for affordance in Sources/SlopDeskMacUI/Pane/MacPaneMoveAffordance.swift \
   done
 done
 
+# N.17 — THE LINK ISLAND IS ONE READING, AND NOBODY KEEPS A SECOND COPY OF IT.
+#
+# Four surfaces draw the connection: the Mac's navigator foot and titlebar band (AppKit), the phone's
+# navigation toolbar (SwiftUI), and the gate card that appears when the link is down. Before this they
+# read a Swift `enum ConnectionReading` and a Swift `enum ConnectionPresenter`, which is one copy — but
+# the copy sat ABOVE the rules crate every other reading had already moved into, and three of the
+# numbers in it (the two ping thresholds, the disk floor) had been written twice already.
+#
+# So the rules are `slopdesk_workspace::connection` and both Swift enums are faces. What is pinned is
+# what would let a second copy back in:
+#   • the doors exist       — a face over a deleted door does not compile; a face that grew its own
+#                             arithmetic beside them does.
+#   • no threshold literal  — the ping bounds, the disk floor and the megabit switch are `pub const`s
+#                             in the rules crate. A `static let 80` in either face is a SECOND place
+#                             the ladder lives, free to drift from the Rust that classifies with it.
+#   • the ceiling ARGUES    — `slopdesk_connection_words` takes `max_attempts`. `ReconnectManager` owns
+#                             that number in the module that runs the campaign; a Rust `const` beside
+#                             it would be the "of 20 while the campaign runs to 30" bug with a new
+#                             place to hide.
+#   • the words are ONE run — `ConnectionStatus.label` reads the door's third register rather than
+#                             switching over the same six states again. Two switches over one enum is
+#                             how a state comes to be named one thing by the model and another by the
+#                             toolbar.
+#   • both halves read      — the Mac island and the phone pill each call the face. A half that
+#                             formats `"\(ms) ms"` itself is the two-frameworks bug in one of them
+#                             only, invisible from the other.
+#
+# The HOST NAME and the raw failure payload deliberately never cross: the help line is
+# `"Connection: {host} — "` plus what the doors answer, and `has_raw_detail` is a yes/no about the
+# string the caller is already holding — `rust/slopdesk-devicepanel`'s charter, "answers, not
+# identities".
+#
+# BREAK-TEST: re-declared `pingGoodMS = 80` in ConnectionReading ⇒ FAIL "writes a link threshold down
+# a second time". Separately restored ConnectionStatus.label's own switch ⇒ FAIL "names its states a
+# second time". Separately deleted the Rust module ⇒ FAIL "has no Rust behind it". Separately renamed
+# the `maxReconnectAttempts` argument away ⇒ FAIL "stopped handing the door the supervisor's ceiling".
+# Separately wrote `"\(ms) ms"` into the Mac island ⇒ FAIL "formats a link figure itself". All five
+# restored from /tmp; PASS.
+connection_rules=rust/slopdesk-workspace/src/connection.rs
+connection_door=rust/slopdesk-ffi/src/connection.rs
+connection_reading=Sources/SlopDeskClientCore/Chrome/ConnectionReading.swift
+connection_presenter=Sources/SlopDeskWorkspaceCore/Connection/ConnectionPresenter.swift
+connection_status=Sources/SlopDeskWorkspaceCore/Connection/ConnectionStatus.swift
+for required in "${connection_rules}" "${connection_door}"; do
+  if [[ ! -f "${required}" ]]; then
+    fail "${connection_reading} has no Rust behind it — ${required} is missing, and the link island is one reading drawn by four surfaces (docs/56 increment 83)"
+  fi
+done
+for face in "${connection_reading}" "${connection_presenter}"; do
+  [[ -f "${face}" ]] || fail "${face} is missing — the link island's face is where the two shells meet one reading (docs/56 increment 83)"
+  # A threshold written as a Swift literal is the ladder living in two places at once.
+  if grep -Eq '(let|var) +(pingGoodMS|pingSlowMS|diskWarnMiB|diskCriticalMiB|mbpsThreshold[A-Za-z]*)[^=]*= *[0-9]' "${face}"; then
+    fail "${face} writes a link threshold down a second time — the ping bounds, the disk floor and the megabit switch are consts in slopdesk_workspace::connection, so a literal here is free to drift from the Rust that classifies with it (docs/56 increment 83)"
+  fi
+done
+if ! grep -q 'maxReconnectAttempts' "${connection_presenter}"; then
+  fail "${connection_presenter} stopped handing the door the supervisor's ceiling — ReconnectManager owns that number, and a Rust const beside it is the \"of 20 while the campaign runs to 30\" bug with a new place to hide (docs/56 increment 83)"
+fi
+if [[ -f "${connection_status}" ]] && grep -q 'case .connecting: "connecting"' "${connection_status}"; then
+  fail "${connection_status} names its states a second time — .label is slopdesk_connection_words' third register, and two switches over one enum is how a state gets named one thing by the model and another by the toolbar (docs/56 increment 83)"
+fi
+# Both shells read the island through the face; neither formats a reading itself.
+for island in Sources/SlopDeskMacUI/Chrome/MacConnectionIsland.swift \
+  Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift; do
+  [[ -f "${island}" ]] || continue
+  if ! grep -q 'ConnectionReading\.' "${island}"; then
+    fail "${island} stopped reading the link through ConnectionReading — a shell that formats its own ping or status word is the two-frameworks bug in one of them only (docs/56 increment 83)"
+  fi
+  if grep -Eq '"\\\(.*\) ms"|Mbps"' "${island}"; then
+    fail "${island} formats a link figure itself — the ping and the bitrate are slopdesk_workspace::connection's, so one shell writing its own is a reading the other cannot see change (docs/56 increment 83)"
+  fi
+done
+
 if [[ "${1:-}" != "--tests" ]]; then
   exit 0
 fi

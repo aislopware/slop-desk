@@ -400,32 +400,7 @@ package enum RailRowsBuilder {
                 return Array(out.prefix(written))
             }
         }
-        return splitLengthPrefixed(delivered, count: items.count)
-    }
-
-    /// The delivery's `count` length-prefixed answers, padded with empties if it came up short.
-    ///
-    /// Padding rather than trusting the length: a short delivery means the door and this reader
-    /// disagree about the layout, and the alternative to padding is a silent off-by-one where every
-    /// row after the first missing answer takes its neighbour's name.
-    private static func splitLengthPrefixed(_ blob: [UInt8], count: Int) -> [String] {
-        var answers: [String] = []
-        answers.reserveCapacity(count)
-        var cursor = blob.startIndex
-        while answers.count < count, blob.distance(from: cursor, to: blob.endIndex) >= 4 {
-            var length = 0
-            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
-            cursor += 4
-            guard blob.distance(from: cursor, to: blob.endIndex) >= length else { break }
-            // The producer is `slopdesk_workspace::rail_list`, so these bytes are a Rust `String`'s
-            // and cannot be invalid UTF-8. A failable init would add a branch meaning "this row
-            // keeps its title", which is a wrong answer rather than a cautious one.
-            // swiftlint:disable:next optional_data_string_conversion
-            answers.append(String(decoding: blob[cursor..<(cursor + length)], as: UTF8.self))
-            cursor += length
-        }
-        while answers.count < count { answers.append("") }
-        return answers
+        return wsRuns(delivered, count: items.count)
     }
 
     /// The row's LINE-1 STRUCTURAL title — the identity a pane keeps between events.
