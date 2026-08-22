@@ -264,8 +264,19 @@ final class MacMetalLayerBackedView: NSView {
         for keyCode in InputModifierKeys.heldModifierKeyCodes.sorted() {
             pipeline.key(keyCode: keyCode, down: false, modifiers: [])
         }
-        // The release position is immaterial to un-sticking (the target app just ends its tracking);
-        // the pane centre keeps it inside the captured window.
+        liftAllButtons()
+    }
+
+    /// A mouse-UP for every button, unconditionally. Its own method because ``deactivate()`` needs the
+    /// same thing and a second copy of a three-line loop is how two teardown paths stop agreeing.
+    ///
+    /// LEDGER-FREE on purpose: this half tracks no held-button set, and does not need one, because the
+    /// host suppresses a `MouseUp` for a button it is not holding — nothing is posted, so a blind lift
+    /// on a healthy session is a no-op on the far side. The release POSITION is immaterial to
+    /// un-sticking (the target app just ends its tracking); the pane centre keeps it inside the
+    /// captured window. A ledger would buy only releasing at the last drag point, which is the thing
+    /// that comment already rules immaterial.
+    private func liftAllButtons() {
         let centre = VideoPoint(x: Double(bounds.midX), y: Double(bounds.midY))
         for button in [MouseButton.left, .right, .other] {
             pipeline.mouseUp(button, centre, 1, [])
@@ -503,6 +514,9 @@ final class MacMetalLayerBackedView: NSView {
         if pointerInside { NSCursor.arrow.set() } // restore the arrow before the pipeline tears down
         pointerInside = false
         abandonSwipePeel() // never strand a mid-gesture chip across a teardown
+        // …nor a 60 Hz timer. `viewWillMove(toWindow: nil)` says the same thing and is not the whole
+        // cover: `MacVideoSurfaceHost.detachSurface()` arrives here with no window change.
+        stopEdgePan()
         // Forget the host's eligibility across a teardown: a remounted surface must stay dark
         // until the NEXT status push (≤2 s heartbeat) instead of trusting a stale operating
         // point from a possibly-restarted host (audit: stale-eligible window).
@@ -512,6 +526,16 @@ final class MacMetalLayerBackedView: NSView {
         // detach/reattach the SAME model is re-bound by a replacement view in ANOTHER hosting root, and
         // SwiftUI may dismantle THIS view AFTER that view already published fresh sinks — an
         // unconditional nil-publish here would silently kill the new surface's input.
+        //
+        // NEVER STRAND A BUTTON OR A MODIFIER ON THE HOST. Its event source is process-global, so a
+        // left button left down by a pane dismantled mid-drag outlives the pane and every later click
+        // arrives as a drag. This half used to release neither, and `viewWillMove(toWindow:)` is not
+        // the cover it looks like: it fires only on a window CHANGE, covers modifiers only, and
+        // `MacVideoSurfaceHost.detachSurface()` reaches here with no window change at all. The phone's
+        // `deactivate()` has taken this bargain since it shipped; this is the same bargain, and it is
+        // best-effort by nature — the outbound FIFO stops inside `pipeline.deactivate()` below.
+        releaseLatchedModifiers()
+        if inputEnabled { liftAllButtons() }
         pipeline.deactivate()
     }
 

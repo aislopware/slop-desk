@@ -19,11 +19,16 @@ import SlopDeskVideoClient
 import SlopDeskVideoProtocol
 import SwiftUI
 
-/// Bridges the SwiftUI control overlay (fit/fill toggle + zoom reset) to the backing view's
-/// pipeline: the view sets the `onToggle*` closures on `activate` and publishes `mode`/`zoomed`
-/// for the overlay icons. Deliberately a SwiftUI overlay — NOT AppKit/UIKit subviews of the Metal
-/// view: subviews + gesture recognizers on the layer-backed Metal view perturbed its geometry and
-/// swallowed the `mouseUp` of a trackpad three-finger-drag (→ a stuck remote button).
+/// Bridges the SwiftUI overlay to the backing view's pipeline. Deliberately a SwiftUI overlay — NOT
+/// AppKit/UIKit subviews of the Metal view: subviews + gesture recognizers on the layer-backed Metal
+/// view perturbed its geometry and swallowed the `mouseUp` of a trackpad three-finger-drag (→ a stuck
+/// remote button).
+///
+/// It used to advertise a "fit/fill toggle", and there was never anything on the other end: the
+/// closure was declared on both halves, assigned on one, and INVOKED by nothing. Fit is reachable —
+/// through the `ViewportCommand` byte, like every other footer verb — and fill is reachable from
+/// neither platform. The dead closure is gone; adding fill for real means a new command case and an
+/// arm in each `handleViewportCommand`, which is a feature rather than a repair.
 @preconcurrency
 @MainActor
 public final class MacVideoPaneControls: ObservableObject {
@@ -34,7 +39,6 @@ public final class MacVideoPaneControls: ObservableObject {
     /// mirror, already quantized so the 120 Hz gesture stream re-renders the chip at most a
     /// few dozen times per gesture. Never set on iOS (no trackpad scroll phases).
     @Published public var swipePeel: SwipePeelChipState?
-    var onToggleFill: () -> Void = {}
     var onResetZoom: () -> Void = {}
     public init() {}
 }

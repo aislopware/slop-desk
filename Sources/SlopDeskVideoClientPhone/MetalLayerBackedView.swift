@@ -22,15 +22,21 @@
 //    composites for a touch-only device (`VideoWindowPipeline`, the `#if !os(macOS)` sublayer add).
 //    Tracked as a tree-wide input-modality gap, not a video-pane one.
 //
-// 2. MODIFIER RESYNC ON REFOCUS. The Mac re-establishes a still-held modifier when a pane REGAINS
-//    focus (`resyncModifiersFromCurrentFlags`); this half only releases on blur, so an iPad with a
-//    hardware keyboard refocusing a pane with ⇧ or ⌘ physically down leaves the host unaware and the
-//    next chord starts a key short. The blocker was believed to be that UIKit has no
-//    `NSEvent.modifierFlags` global read — it is not: `GCKeyboard.coalesced` answers without waiting
-//    for a keystroke, GameController is ALREADY linked into the phone tree, and
-//    `SlopDeskPhoneUI/Pane/PaneMoveEscapeResponder.swift:206` is the in-tree idiom to copy.
+// 2. MODIFIER RESYNC ON REFOCUS IS CLOSED, and the note stays because the shape is worth keeping.
+//    The Mac re-establishes a still-held modifier when a pane REGAINS focus; this half only released
+//    on blur, so an iPad with a hardware keyboard refocusing a pane with ⇧ or ⌘ physically down left
+//    the host unaware and the next chord started a key short. The blocker was believed to be that
+//    UIKit has no `NSEvent.modifierFlags` global read. It is not: `GCKeyboard.coalesced` answers
+//    without waiting for a keystroke, and it answers per KEY rather than per flag, which is why
+//    `hardwareModifiers()` below reads eight codes and folds them into the four the wire carries.
+//    What is NOT rewritten here is which keycodes a held mask implies — that is
+//    `LocalInputPolicy.heldModifierKeyCodes`, shared, already unit-tested, and the reason both halves
+//    are now identically imperfect (a physical RIGHT-⇧ resyncs as the left code) rather than
+//    divergent. Caps Lock stays out of it on both halves: it is a toggle, and re-forwarding it on
+//    every focus change would flip the remote's once per focus change.
 #if os(iOS)
 import CSlopDeskFFI
+import GameController
 import QuartzCore
 import SlopDeskVideoClient
 import SlopDeskVideoProtocol
@@ -95,6 +101,7 @@ final class MetalLayerBackedView: UIView {
             guard isActive != oldValue else { return }
             if isActive {
                 claimKeyboardFocus()
+                resyncModifiersFromHardwareKeyboard()
             } else {
                 // The release `pressesEnded` for a modifier held across a focus move goes to the NEW
                 // responder, so the host would keep it latched (and a later scroll would ride ⌘).
@@ -193,7 +200,6 @@ final class MetalLayerBackedView: UIView {
         // moves the pane off a dead black surface and onto the picker/error state.
         pipeline.onSessionRejected = { [weak self] in self?.onSessionRejectedReady?() }
         if connection != nil, let controls {
-            controls.onToggleFill = { [weak self] in self?.applyToggleFill() }
             controls.onResetZoom = { [weak self] in self?.applyResetZoom() }
             controls.mode = pipeline.contentMode
         }
@@ -316,12 +322,6 @@ final class MetalLayerBackedView: UIView {
         pan.x = CGFloat(TouchPointerPlan.clampPan(Double(pan.x), zoom: next))
         pan.y = CGFloat(TouchPointerPlan.clampPan(Double(pan.y), zoom: next))
         commitViewport()
-    }
-
-    private func applyToggleFill() {
-        let next: VideoContentMode = (pipeline.contentMode == .fit) ? .fill : .fit
-        pipeline.setContentMode(next)
-        controls?.mode = next
     }
 
     private func applyResetZoom() {
@@ -782,6 +782,45 @@ final class MetalLayerBackedView: UIView {
         guard !stuck.isEmpty else { return }
         for keyCode in stuck {
             pipeline.key(keyCode: keyCode, down: false, modifiers: [])
+        }
+    }
+
+    /// The modifiers a hardware keyboard is PHYSICALLY holding right now, or `[]` when none is
+    /// attached. UIKit has no `NSEvent.modifierFlags` — a `UIKeyModifierFlags` arrives only attached to
+    /// a press event, and a refocus is not one — so the answer comes from GameController, which reports
+    /// per KEY. Left and right fold into one flag because that is what the wire carries.
+    ///
+    /// Caps Lock is deliberately absent, matching ``LocalInputPolicy/heldModifierKeyCodes(_:)``: it is a
+    /// toggle rather than a held modifier, and re-forwarding it would flip the remote's Caps once per
+    /// focus change. `fn` likewise has no `GCKeyCode`, which costs nothing — ``modifiers(_:)`` cannot
+    /// produce `.function` from `UIKeyModifierFlags` either.
+    private static func hardwareModifiers() -> InputModifiers {
+        guard let keys = GCKeyboard.coalesced?.keyboardInput else { return [] }
+        func held(_ codes: GCKeyCode...) -> Bool {
+            codes.contains { keys.button(forKeyCode: $0)?.isPressed == true }
+        }
+        var modifiers: InputModifiers = []
+        if held(.leftShift, .rightShift) { modifiers.insert(.shift) }
+        if held(.leftControl, .rightControl) { modifiers.insert(.control) }
+        if held(.leftAlt, .rightAlt) { modifiers.insert(.option) }
+        if held(.leftGUI, .rightGUI) { modifiers.insert(.command) }
+        return modifiers
+    }
+
+    /// MODIFIER RESYNC — the Mac's ``MacMetalLayerBackedView`` rule, off a hardware-keyboard poll
+    /// instead of a global flags read. On regaining focus, re-establish any modifier still physically
+    /// held: its down `pressesBegan` went to the PREVIOUSLY focused responder, so without this the host
+    /// does not know the modifier is down and the next chord starts a key short.
+    ///
+    /// The sends are idempotent end to end — the host suppresses a modifier-down for a code it already
+    /// holds, naming this case in as many words — so a resync against a still-latched host flag costs a
+    /// datagram and changes nothing. The local latch is checked anyway, because it is cheaper.
+    private func resyncModifiersFromHardwareKeyboard() {
+        guard isActive, inputEnabled else { return }
+        let modifiers = Self.hardwareModifiers()
+        for keyCode in LocalInputPolicy.heldModifierKeyCodes(modifiers) where !modifierLatch.isDown(keyCode) {
+            modifierLatch.note(keyCode: keyCode, down: true)
+            pipeline.key(keyCode: keyCode, down: true, modifiers: modifiers)
         }
     }
 
