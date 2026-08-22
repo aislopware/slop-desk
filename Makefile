@@ -125,8 +125,8 @@ fix: fmt ## Format + apply all safe lint autofixes
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-shared-constants lint-supervisor
-LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-shared-constants lint-supervisor
+.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-shared-constants lint-supervisor lint-invariants
+LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-ffi-doors lint-ban-union lint-shared-constants lint-supervisor lint-invariants
 
 # The seven linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
 # and serially they were the inner loop's largest fixed cost: 55 s, of which `lint-supervisor` alone
@@ -197,6 +197,14 @@ lint-shared-constants: ## No number is spelled in both languages unless it is as
 # internally consistent. `scripts/check-supervisor.sh --tests` adds the runs that need a toolchain.
 lint-supervisor: ## hostd/superd cross-language contract ratchet
 	bash scripts/check-supervisor.sh
+
+# The same ratchets, as a program. Sections migrate here one at a time and the shell section is
+# DELETED in the commit that ports it, so there is never a period where both enforce the same rule.
+# It reads the tree once instead of spawning a grep per question — half a second against the shell's
+# two and a half minutes — and every rule carries a unit test that seeds the breakage and asserts
+# the rule fires, which is the one thing a shell section could not have.
+lint-invariants: ## the ported cross-language ratchets, in Rust
+	@cd rust/slopdesk-invariants && cargo run --release --quiet -- --root ../..
 
 # The `if` form is load-bearing. A `[ -n … ] && cmd` chain exits nonzero on an EMPTY file
 # list, and the `|| true` that silences THAT silences every real diagnostic with it: the tool

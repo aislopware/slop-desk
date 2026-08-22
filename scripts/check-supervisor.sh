@@ -63,12 +63,9 @@ among_deleted() {
   grep -lE "$1" ${DELETED_SWIFT_CANDIDATES} 2> /dev/null || true
 }
 
-SWIFT_PATHS="Sources/SlopDeskSupervisor/SupervisorPaths.swift"
 SWIFT_PROTOCOL="Sources/SlopDeskSupervisor/SupervisorProtocol.swift"
 SWIFT_FRAME="Sources/SlopDeskSupervisor/SupervisorFrame.swift"
 SWIFT_STREAM="Sources/SlopDeskHost/PaneOutputStream.swift"
-RUST_PATHS="rust/slopdesk-superd/src/paths.rs"
-RUST_SUPERWIRE="rust/slopdesk-superwire/src/lib.rs"
 RUST_PROTOCOL="rust/slopdesk-superd/src/protocol.rs"
 RUST_SUPERD_SERVER="rust/slopdesk-superd/src/server.rs"
 RUST_FRAME="rust/slopdesk-superd/src/frame.rs"
@@ -132,226 +129,11 @@ same() {
   fi
 }
 
-# ── 1. The rendezvous address: ONE rule, and neither end re-derives it ──────────────────────────
-# Exactly one path used to be spelled in both languages, and the argument for it was that it had to
-# be: hostd must FIND the control socket before it can ask superd anything, so that one name cannot
-# be learned from the thing it names. A mismatch in it is SILENCE rather than an error — hostd
-# connects to a name nobody bound and reports only that no daemon is running.
-#
-# Half of that argument was true. The NAME is shared by construction. Which DIRECTORY the name sits
-# in is a policy, it was written out on both sides, and the two spellings were not the same policy:
-# superd resolved `$SLOPDESK_SUPERD_SOCKET` → `$SLOPDESK_SUPERD_DIR` → `$TMPDIR` → `/tmp`, and hostd
-# resolved the override and then `NSTemporaryDirectory()` — which on Darwin does not read `$TMPDIR`
-# at all, and had never heard of the directory override. Two silent divergences, both wearing the
-# symptom above, so this section now pins the rule's SHAPE rather than comparing two copies of it:
-# the name and both keys belong to `slopdesk_superwire`, both ends reach them, and neither end
-# spells a resolution of its own.
-for literal in 'slopdesk-superd.sock' '"SLOPDESK_SUPERD_SOCKET"' '"SLOPDESK_SUPERD_DIR"'; do
-  if ! grep -q -- "${literal}" "${RUST_SUPERWIRE}"; then
-    fail "${RUST_SUPERWIRE} no longer names ${literal} — the shared control-socket rule lost part of itself (docs/51 §1)"
-  fi
-done
-if ! grep -q 'control_socket_path' "${RUST_SUPERWIRE}"; then
-  fail "${RUST_SUPERWIRE} no longer owns the control-socket resolution — both ends would answer it and only one can be right"
-fi
-if ! grep -q 'slopdesk_superwire::control_socket_path' "${RUST_PATHS}"; then
-  fail "${RUST_PATHS} resolves superd's own control address again instead of the shared rule (docs/51 §1)"
-fi
-if ! grep -q 'slopdesk_supervisor_control_socket' "${SWIFT_PATHS}"; then
-  fail "${SWIFT_PATHS} no longer resolves through the door — hostd would dial an address superd did not bind (docs/51 §1)"
-fi
-# Comments stripped: the prose above the resolution NAMES `NSTemporaryDirectory()` and the socket on
-# purpose, to record which two things drifted and why they are gone. This is about the CODE.
-swift_paths_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_PATHS}") || true
-# An empty haystack passes the ban below at once, so it is named rather than assumed: a file that
-# became all comment, or a stripper that started eating code, would read as the healthiest result.
-if [[ -z "${swift_paths_code}" ]]; then
-  fail "${SWIFT_PATHS} stripped to nothing — the ban below reads an empty haystack and passes (docs/51 §1)"
-fi
-if grep -qE 'NSTemporaryDirectory|slopdesk-superd\.sock' <<< "${swift_paths_code}"; then
-  fail "${SWIFT_PATHS} builds the control address itself again — that resolution is slopdesk_superwire's (docs/51 §1)"
-fi
-# Both override keys still reach the door, though: the lookup is hostd's, only the RULE crossed.
-for key in '"SLOPDESK_SUPERD_SOCKET"' '"SLOPDESK_SUPERD_DIR"'; do
-  if ! grep -q -- "${key}" "${SWIFT_PATHS}"; then
-    fail "${SWIFT_PATHS} stopped reading ${key} — a rung superd honours would go unspoken, and the daemon would just look absent"
-  fi
-done
-
-# The agent-control address, on the same footing. hostd EXPORTS it into every PTY's environment and
-# `slopdesk-ctl` — a separate binary an agent shells out to — READS it to find the socket. A rename
-# on one side is the quietest failure of the three: every `slopdesk-ctl` invocation simply reports
-# no host, which reads as "the control listener is off" and is the documented default.
-if ! grep -q '"SLOPDESK_CONTROL_SOCKET"' "Sources/SlopDeskHost/HostEnvironment.swift"; then
-  fail "Sources/SlopDeskHost/HostEnvironment.swift no longer exports SLOPDESK_CONTROL_SOCKET — slopdesk-ctl would find no host (docs/51 §1)"
-fi
-if ! grep -q '"SLOPDESK_CONTROL_SOCKET"' "rust/slopdesk-ctl/src/lib.rs"; then
-  fail "rust/slopdesk-ctl/src/lib.rs no longer reads SLOPDESK_CONTROL_SOCKET"
-fi
-
-# The shell-integration opt-outs, on the same footing and quieter than any of them. superd reads
-# `SLOPDESK_SHELL_INTEGRATION` from the environment hostd hands it and decides whether to generate
-# the shim AT ALL; the other two are read by the generated `.zshrc` inside the spawned zsh
-# (`${SLOPDESK_OSC133:-1}`, `${SLOPDESK_SHELL_CURSOR:-1}`), so — as `shellintegration.rs` states in
-# the comment above the constant — each "must survive hostd's curated env allowlist for a
-# daemon-side setting to take effect". hostd's curation is an ALLOWLIST: a key it does not name is
-# not forwarded, and a key that is not forwarded reads to superd exactly like a key that was never
-# set. So a rename on either side turns the setting off and nothing anywhere says so — no prompt
-# marks, no cwd tracking, no error (docs/51 §6.4).
-#
-# Both sides are whole SETS, and the Rust side is not a list typed out here. Every `*_ENV_KEY` the
-# module declares must be forwarded EXCEPT the ones it writes itself: `REAL_ZDOTDIR_ENV_KEY` goes
-# into the child's environment through `Shim::overrides`, so it travels superd→child and hostd has
-# no business carrying it. That exclusion is read out of how the module USES the constant, not out
-# of a name written here — which is what makes a fourth opt-out visible instead of invisible. Add
-# one and it is a key with no `overrides.insert`, so it lands in this set, and Swift must list it or
-# this fails. Add a key superd WRITES by some other mechanism and this over-demands rather than
-# under-checking: a loud, wrong verdict a reader resolves, never a quiet pass.
-swift_shell_env_keys=$(
-  awk '/shellIntegrationEnvKeys = \[/, /\]/' Sources/SlopDeskHost/HostEnvironment.swift |
-    sed -n 's/^ *"\([A-Z0-9_]*\)",.*/\1/p' | sort -u
-)
-RUST_SHELLINT=rust/slopdesk-superd/src/shellintegration.rs
-rust_shell_env_keys=$(
-  sed -n 's/^pub const \([A-Z0-9_]*_ENV_KEY\): &str = "\([A-Z0-9_]*\)".*/\1 \2/p' "${RUST_SHELLINT}" |
-    while read -r const value; do
-      grep -q "overrides.insert(${const}" "${RUST_SHELLINT}" || printf '%s\n' "${value}"
-    done | sort -u
-) || true
-same "shell-integration env keys" \
-  "$(echo "${swift_shell_env_keys}" | tr '\n' ' ')" "$(echo "${rust_shell_env_keys}" | tr '\n' ' ')"
-# ──────────────────────────────────────────────────────────────────────────────────────────────
-# BLOCK 3 — Gap G.2, screend's socket override key.
-#
-
-# The OTHER three are superd's alone, and Swift must not learn them. hostd is told the hook and
-# agent-control paths in the `hello` reply, which is the whole reason that reply carries them; the
-# lock file is none of its business. A Swift constant for any of them would be a second answer to
-# "where is the hook socket", which is precisely the drift that pid-keyed paths caused once
-# (`docs/51` §1). So this asserts an ABSENCE — the regression is a copy appearing, not a rename.
-for name in slopdesk-agent.sock slopdesk-ctl.sock slopdesk-superd.lock; do
-  if grep -rq -- "${name}" Sources/; then
-    fail "'${name}' is spelled in Sources/ — superd owns that path and tells hostd at hello, see docs/51 §1"
-  fi
-done
-
-# No pid in any of them. This is the bug the whole daemon exists to fix (`docs/51` §1): a restarted
-# hostd binding a pid-suffixed path leaves every running agent holding an address with nothing
-# behind it. CODE only: the prose above `#[cfg(test)]` explains the bug by naming `getpid()`, and
-# the test below asserts the absence BY spelling `process::id()`. Matching either would be the gate
-# failing on its own documentation and its own proof.
-rust_paths_code=$(awk '/#\[cfg\(test\)\]/ { exit } !/^ *(\/\/|\*)/ { print }' "${RUST_PATHS}")
-if grep -qE '(getpid|process::id)' <<< "${rust_paths_code}"; then
-  fail "a pid reached superd's stable socket paths — see docs/51 §1"
-fi
-if grep -qE '(getpid|processIdentifier)' <<< "$(grep -vE '^ *(///|//|\*)' "${SWIFT_PATHS}")"; then
-  fail "a pid reached hostd's rendezvous address — see docs/51 §1"
-fi
-
-# ── 2. Protocol version ─────────────────────────────────────────────────────────────────────────
-# MAJOR gates the handshake, so a skew is at least loud. MINOR is capability negotiation and a skew
-# is quiet: hostd would send a verb this superd does not know, or withhold one it does.
-swift_major=$(sed -n 's/.*versionMajor = \([0-9][0-9]*\).*/\1/p' "${SWIFT_PROTOCOL}" | head -1)
-swift_minor=$(sed -n 's/.*versionMinor = \([0-9][0-9]*\).*/\1/p' "${SWIFT_PROTOCOL}" | head -1)
-rust_major=$(sed -n 's/.*VERSION_MAJOR: i32 = \([0-9][0-9]*\).*/\1/p' "${RUST_PROTOCOL}" | head -1)
-rust_minor=$(sed -n 's/.*VERSION_MINOR: i32 = \([0-9][0-9]*\).*/\1/p' "${RUST_PROTOCOL}" | head -1)
-same "protocol major" "${swift_major}" "${rust_major}"
-same "protocol minor" "${swift_minor}" "${rust_minor}"
-
-# The minor above says what superd can SPEAK. It cannot say which BUILD is speaking — it moves only
-# on a wire change, so a superd rebuilt with a fixed reaper reports the minor it always did. superd
-# outlives hostd's build, so after an upgrade the binary on disk and the process on this socket are
-# routinely different code, and restarting it takes every live pane. `buildVersion` on the hello
-# reply is the one handle hostd has on which (`docs/49`); dropped on either side it reads as absent,
-# which the audit reports as "unknown" forever rather than failing.
-if ! grep -q 'rename = "buildVersion"' "${RUST_PROTOCOL}"; then
-  fail "superd's hello no longer carries buildVersion — hostd cannot tell a stale superd from a current one (docs/49)"
-fi
-if ! grep -q 'build_version: Some(env!("CARGO_PKG_VERSION")' "${RUST_SUPERD_SERVER}"; then
-  fail "superd's hello no longer answers with its OWN compile-time version — see ${RUST_SUPERD_SERVER}"
-fi
-if ! grep -q 'var buildVersion: String?' "${SWIFT_PROTOCOL}"; then
-  fail "${SWIFT_PROTOCOL}'s HelloReply no longer decodes buildVersion (docs/49)"
-fi
-
-# The reserved `id` that marks a reply as an unsolicited NOTIFICATION rather than an answer. Same
-# ratchet, and quieter than either version: a skew makes hostd read every notification as the answer
-# to whichever request happens to carry that id, and reply to a verb nobody sent.
-swift_notification=$(sed -n 's/.*notificationID: UInt64 = \([0-9][0-9]*\).*/\1/p' "${SWIFT_PROTOCOL}" | head -1)
-rust_notification=$(sed -n 's/.*NOTIFICATION_ID: u64 = \([0-9][0-9]*\).*/\1/p' "${RUST_PROTOCOL}" | head -1)
-same "notification id" "${swift_notification}" "${rust_notification}"
-
-# ── 3. Verbs and events ─────────────────────────────────────────────────────────────────────────
-# Every verb Swift can SEND must be one Rust can dispatch. Not the converse: superd is allowed to
-# know a verb no hostd sends yet, which is how a minor bump lands in two commits.
-# camelCase in the capture, not just lowercase: `forgetTitle` is a verb, and a pattern that could
-# not see it would have passed this gate while hostd sent a verb superd never dispatched.
-swift_verbs=$(sed -n 's/^ *public static let [a-zA-Z]* = "\([a-zA-Z]*\)"$/\1/p' "${SWIFT_PROTOCOL}" | sort -u)
-# An empty list is not "every verb crosses" — it is a loop that runs zero times, and `sed` returns
-# it without complaint. The gate below only ever reports what it iterates, so the liveness of the
-# extraction has to be asserted here or not at all.
-if [[ -z "${swift_verbs}" ]]; then
-  fail "no sendable verb found in ${SWIFT_PROTOCOL} — the extraction in this gate has gone stale"
-fi
-for verb in ${swift_verbs}; do
-  if ! grep -q "= \"${verb}\";" "${RUST_PROTOCOL}"; then
-    fail "verb '${verb}' is sendable from Swift but has no constant in ${RUST_PROTOCOL}"
-  fi
-done
-
-# ── 3b. Listener kinds ──────────────────────────────────────────────────────────────────────────
-# The names hostd `listen`s for and superd binds and advertises. Equal in BOTH directions here,
-# unlike the verbs above, because each side's extra is silent in a different way: a kind only Swift
-# knows is a claim superd refuses, and a kind only Rust knows is a socket nobody ever claims — and
-# an unclaimed socket is never advertised into a child's environment (`listeners.rs`), so a `claude`
-# would simply come up with no hook path and fall back to the screen engine. Nothing logs an error.
-swift_kinds=$(
-  awk '/public enum ListenerKind \{/, /^    \}/' "${SWIFT_PROTOCOL}" |
-    sed -n 's/.*public static let [a-zA-Z]* = "\([a-z]*\)".*/\1/p' | sort -u
-)
-rust_kinds=$(
-  awk '/pub mod listener_kind \{/, /^\}/' "${RUST_PROTOCOL}" |
-    sed -n 's/.*: &str = "\([a-z]*\)";.*/\1/p' | sort -u
-)
-if [[ -z "${swift_kinds}" ]]; then
-  fail "no listener kinds found in ${SWIFT_PROTOCOL} — the extraction in this gate has gone stale"
-fi
-same "listener kinds" "$(echo "${swift_kinds}" | tr '\n' ' ')" "$(echo "${rust_kinds}" | tr '\n' ' ')"
-
-# ── 4. Frame tags and the body cap ──────────────────────────────────────────────────────────────
-# This gate used to COMPARE two spellings — `SupervisorFrame.swift`'s constants against superd's
-# `frame.rs` ones — because there were two. There is one now (`slopdesk-superwire`), which superd
-# re-exports and hostd reads through a door, so skew between the two ends is no longer expressible
-# and there is nothing left to compare. What is still worth pinning, and is now the only thing that
-# can go wrong, is the NUMBERING itself: it is the wire, every deployed peer of every version reads
-# it, and a shifted constant desynchronises all of them at once. So this is a one-sided pin.
-#
-# The quietest skew this socket ever had: superd writes a tag hostd does not know, hostd answers
-# `unknownTag` and drops the CONNECTION — every pane at once, on the first title anybody's shell
-# writes. An absent constant reads as an empty string here and fails the same way a wrong one does.
-SUPERWIRE=rust/slopdesk-superwire/src/lib.rs
-declare -a frame_tags=(
-  "plain:TAG_PLAIN:0x01"
-  "with descriptor:TAG_WITH_DESCRIPTOR:0x02"
-  "output:TAG_OUTPUT:0x03"
-  "sniff:TAG_SNIFF:0x04"
-  # The block tap has its own tag rather than sharing the sniffer's batch because the two answer to
-  # DIFFERENT gates (shellIntegration vs blocks), and what keeps a new tag inside the append-only
-  # rule is that each tag has exactly one thing to ask for.
-  "blocks:TAG_BLOCKS:0x05"
-)
-for entry in "${frame_tags[@]}"; do
-  label="${entry%%:*}"
-  rest="${entry#*:}"
-  found=$(sed -n "s/.*${rest%%:*}: u8 = \(0x[0-9a-fA-F]*\).*/\1/p" "${SUPERWIRE}" | head -1)
-  same "frame tag (${label})" "${found}" "${rest#*:}"
-done
-
-# The cap is a refusal on both sides, so the LOWER one governs — and one declaration is how they
-# stay equal, which is the only setting where neither side can produce a frame the other will not
-# take. Pinned to the number rather than to another copy of it, for the same reason as the tags.
-super_cap=$(sed -n 's/.*MAX_BODY_BYTES: usize = \(.*\);$/\1/p' "${SUPERWIRE}" | head -1 | tr -d ' ')
-same "maximum body bytes" "${super_cap}" "4*1024*1024"
+# ── 1–4. superd's rendezvous, version, verbs, listener kinds and frame envelope ───────────────
+# PORTED. These four sections are now rules in `rust/slopdesk-invariants`, which reads the tree
+# once instead of spawning a grep per question, and — the part a shell section could never have —
+# carries a unit test per rule that seeds the breakage and asserts the rule fires. Run
+# `slopdesk-invariants --list` for the names; `make lint-invariants` runs them.
 
 # ── 4b. The two batch BODIES ────────────────────────────────────────────────────────────────────
 # §3 and §4 pin superd's ENVELOPE — the verbs, the listener kinds, the frame tags, the cap. Inside
@@ -11121,8 +10903,15 @@ if [[ "${failures}" -ne 0 ]]; then
   exit 1
 fi
 
-printf 'check-supervisor: Swift and Rust agree — paths, protocol %s.%s, listeners (%s), frame tags, %s-byte cap, %s read chunk.\n' \
-  "${swift_major}" "${swift_minor}" "$(echo "${swift_kinds}" | tr '\n' ' ' | sed 's/ $//')" "${super_cap}" "${swift_chunk}"
+# The paths, the protocol version, the listener kinds and the frame envelope moved to
+# `rust/slopdesk-invariants` and print their own line there. This one kept the read chunk, which is
+# the only part of §1–4 still checked here.
+#
+# The line this replaces also printed `${swift_kinds}` as "listeners" — and had been printing the
+# AGENT kinds for as long as the AgentKind section existed, because a later `swift_kinds=` in the
+# same flat namespace overwrote the listener extraction 2 000 lines before this ran. Nothing in a
+# shell script can notice that; a rule that owns its own values cannot express it.
+printf 'check-supervisor: Swift and Rust agree — %s read chunk.\n' "${swift_chunk}"
 printf 'check-supervisor: screend agrees too — socket name, %s verbs, banner "%s", no Swift engine, ladder, manifest, boundary split or journal.\n' \
   "$(printf '%s\n' "${swift_screen_verbs}" | grep -c .)" "${swift_banner}"
 printf 'check-supervisor: dropd agrees too — version %s, types (%s→ %s), %s-byte frames, 8 door entries, announce line, no Swift receiver or codec.\n' \
@@ -12056,12 +11845,13 @@ window_readers=""
 while IFS= read -r candidate; do
   case "${candidate}" in
     Sources/slopdesk-videohostd/WindowFeedGlue.swift | Sources/SlopDeskVideoHost/VirtualDisplay.swift) continue ;;
+    *) ;;
   esac
   if grep -vE '^[[:space:]]*(///|//)' "${candidate}" |
     grep -q 'CGWindowListCopyWindowInfo\|CGGetActiveDisplayList\|CGGetOnlineDisplayList\|CGGetDisplaysWithPoint'; then
     window_readers+="${candidate}"$'\n'
   fi
-done < <(grep -rln 'CGWindowListCopyWindowInfo\|CGGetActiveDisplayList\|CGGetOnlineDisplayList\|CGGetDisplaysWithPoint' Sources 2>/dev/null || true)
+done < <(grep -rln 'CGWindowListCopyWindowInfo\|CGGetActiveDisplayList\|CGGetOnlineDisplayList\|CGGetDisplaysWithPoint' Sources 2> /dev/null || true)
 window_readers=${window_readers%$'\n'}
 if [[ -n "${window_readers}" ]]; then
   fail "these decode a window record themselves: ${window_readers//$'\n'/, } — the CGWindowList and display-list reads are slopdesk-apple-cgwindow's and slopdesk-apple-cgdisplay's, and a second decode is where 'a missing field means Int.min' comes back (docs/57 §5)"
@@ -12074,7 +11864,7 @@ while IFS= read -r candidate; do
     grep -q 'NSWorkspace\.shared\.frontmostApplication\|NSWorkspace\.shared\.menuBarOwningApplication'; then
     frozen_frontmost+="${candidate}"$'\n'
   fi
-done < <(grep -rln 'NSWorkspace\.shared\.frontmostApplication\|NSWorkspace\.shared\.menuBarOwningApplication' Sources 2>/dev/null || true)
+done < <(grep -rln 'NSWorkspace\.shared\.frontmostApplication\|NSWorkspace\.shared\.menuBarOwningApplication' Sources 2> /dev/null || true)
 frozen_frontmost=${frozen_frontmost%$'\n'}
 if [[ -n "${frozen_frontmost}" ]]; then
   fail "these read a frozen frontmost: ${frozen_frontmost//$'\n'/, } — NSWorkspace's snapshot populates on first access and then never updates in a daemon that pumps no AppKit run loop, so the read answers the launching app for the process's whole life. HostFrontmostApp elects from the window list (docs/57 §5)"
@@ -12133,7 +11923,7 @@ while IFS= read -r candidate; do
     grep -q 'enum CaptureRegionMath\|enum WindowDisplayResolver\|CaptureRegionMath\.\|WindowDisplayResolver\.'; then
     region_deciders+="${candidate}"$'\n'
   fi
-done < <(grep -rln 'CaptureRegionMath\|WindowDisplayResolver' Sources Tests 2>/dev/null || true)
+done < <(grep -rln 'CaptureRegionMath\|WindowDisplayResolver' Sources Tests 2> /dev/null || true)
 region_deciders=${region_deciders%$'\n'}
 if [[ -n "${region_deciders}" ]]; then
   fail "these decide a capture region themselves: ${region_deciders//$'\n'/, } — the union, the content rects, the hysteresis gate and the display pick are slopdesk_video::capture_region's and ::window_list's, and a second copy is a predicate that drifts one ulp under a green suite (docs/56 increment 86)"

@@ -1,0 +1,61 @@
+# `slopdesk-invariants` — the cross-language ratchets, as a program rather than a shell script.
+#
+# ## What it replaces, and why the shape was the problem
+# `scripts/check-supervisor.sh` was 12 178 lines — 6 471 of code, 5 240 of comment — asserting about
+# 1 100 invariants through 891 `grep`, 172 `sed` and 72 `awk` invocations. It took 2 m 29 s wall for
+# 92 s of user time at 87 % CPU: almost none of that was WORK. It was process spawn, and the same
+# source files being read off disk a thousand times over.
+#
+# This reads the tree ONCE into memory and runs every rule over it, in parallel. The comments come
+# with it verbatim — they are the reason each rule exists, and half the file by line count.
+#
+# ## The thing a shell gate cannot have
+# A break-test. Every invariant in the shell recorded its break-test as PROSE: copy the file to
+# /tmp, edit it, run the gate, restore. Nobody re-ran them. Here a rule is a function over an
+# in-memory tree, so its break-test is a unit test with an inline fixture that MUST fail — checked
+# by `cargo test` on every commit instead of by a sentence.
+#
+# ## Its own workspace, for the reason every big crate here has one
+# Profiles are workspace-global and this one wants `opt-level = 3` in release: it is on the inner
+# loop through `make quick`, and a debug build of a regex-heavy tree walk is not a gate anybody
+# leaves in front of their edits.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-invariants"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The cross-language contract ratchets for slopdesk, run over one in-memory tree"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[[bin]]
+name = "slopdesk-invariants"
+path = "src/main.rs"
+
+[lib]
+name = "slopdesk_invariants"
+path = "src/lib.rs"
+
+[dependencies]
+# The rules are regex-shaped because the thing they read is source text. `regex` is the only crate
+# in the tree's dependency graph that is both DFA-backed — so a rule cannot blow up on a pattern —
+# and free of the backtracking the shell's `grep -E` never had either.
+regex = "1"
+# Rules are independent by construction: each reads the tree and writes only its own verdict. Rayon
+# is what turns that into wall clock, and it is the same crate the FEC path already vendors.
+rayon = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+[profile.release]
+opt-level = 3
