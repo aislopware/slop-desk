@@ -1,5 +1,11 @@
 # Theme Format
 
+> ⛔ **REMOVED — this page is history, not the product.** Nothing reads `.slopdesktheme` files and there
+> is no `theme` key in the config. The whole theme system was deleted on 2026-08-08 by user ruling
+> (`docs/DECISIONS.md` §"ONE appearance — the theme picker is deleted, not defaulted"); see
+> [`customization__themes.md`](customization__themes.md). This page documents a file format the app no
+> longer has a reader for. Do not implement it.
+
 ## Summary
 
 Theme files live at `~/.config/slopdesk/themes/<name>.slopdesktheme` and use **real TOML** (unlike the main config's custom flat format). Only `[terminal]` is required; all other sections are optional. Themes can `inherit` to allow partial overrides. Activate by setting `theme = <name>` in the main config.

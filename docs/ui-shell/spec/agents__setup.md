@@ -1,5 +1,15 @@
 # Setup
 
+> ⚠️ **TWO STALE ITEMS.** The section checklist names a **Recipes** settings section — there is none;
+> Recipes were deleted 2026-07-03 (`d63e1274`), and Settings has eight sections
+> (`Sources/SlopDeskClientCore/Settings/SettingsTaxonomy.swift:33-41`). And the "Branch / fork actions"
+> follow-on names the History panel and Composer as "not yet built": the Composer was built and then
+> **deleted** 2026-07-03 (`92472b0a`), and the slopdesk-side fork actions went with it. The history
+> viewer really is unbuilt, and unlike its neighbours carries **no ruling** — see
+> [`agents__history.md`](agents__history.md).
+>
+> The hook install flow this page's core is about is live (`rust/slopdesk-hook`).
+
 ## Summary
 
 SlopDesk does NOT run agents — users keep using Claude Code, Codex, or OpenCode as normal. This one-time per-agent setup (one click) teaches each agent to report runtime state back to SlopDesk, enabling live tab badges, system notifications, session resume, and history.

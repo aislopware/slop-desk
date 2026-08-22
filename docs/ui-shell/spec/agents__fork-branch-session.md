@@ -1,5 +1,15 @@
 # Fork / Branch Session
 
+> ⛔ **THE SLOPDESK HALF IS DELETED; THE AGENT HALF WAS NEVER OURS.** The three "Fork in Split / Fork in
+> Tab" actions were built and then deleted on 2026-07-03 in `92472b0a` (`docs/DECISIONS.md` §"Agent input
+> surfaces REMOVED"), along with the session-fork detector and resume router. What remains is a
+> pass-through: `/branch` runs inside the Claude Code process, and slopdesk neither drives it nor routes
+> the resulting session to a new pane. Do not implement the slopdesk-side routing this page describes.
+>
+> What DOES ship, and is the nearest live thing: **resume** an existing agent session from Open Quickly's
+> Agents pill — `cd` into the project then `claude --resume <id>`
+> (`Sources/SlopDeskClientCore/Overlays/OpenQuicklyPresentation.swift:374-383`).
+
 ## Summary
 
 Fork copies a session's history up to a chosen point into a fresh session, letting you explore an alternative without disturbing the original. Each agent has its own command — `/branch` in Claude Code, `/fork` in Codex and OpenCode. The fork lands on a new tab or split view; both threads stay live, so directions can be chased **in parallel**.

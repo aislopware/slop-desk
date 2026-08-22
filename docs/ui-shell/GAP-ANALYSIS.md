@@ -1,6 +1,8 @@
 # SlopDesk UI-Shell — Design Gap Analysis
 
-> **STATUS: HISTORICAL snapshot.** Written as the planning matrix before / during E1–E21. Many rows marked **missing** / **partial** are now **done** — see [COVERAGE.md](COVERAGE.md) and [current-state/](current-state/). Do not treat this file as live status; re-verify against code before implementing “gaps.”
+> **STATUS: HISTORICAL snapshot. Frozen at planning time; NOT maintained.** Written as the planning matrix before / during E1–E21. It is wrong in BOTH directions now: many rows marked **missing** / **partial** are **done**, and a number of rows this file drove to completion were subsequently **DELETED** — the Details/Inspector panel, the Composer and prompt queue, recipes and snippets, floating panes, the web pane, the theme system, the multi-session switcher, remote-window mode. Several rows below also cite symbols that no longer exist (`SlateTabRow`, `BlockHistoryView`, `InspectorColumn`) and describe the agent status dot as "never rendered", which it no longer is.
+>
+> Live status lives in [COVERAGE.md](COVERAGE.md) §A–§C, the state markers in [USER-STORIES.md](USER-STORIES.md), and [current-state/](current-state/). Do not treat this file as status in either direction; re-verify against code before implementing a “gap” **or** before assuming a “done” row still ships.
 
 Feature matrix: slopdesk's UI-shell design spec (UI + behavior) vs. the current client, extended with the user's **remote window** feature.
 

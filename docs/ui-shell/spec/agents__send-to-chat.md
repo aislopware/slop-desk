@@ -1,5 +1,9 @@
 # Send to Chat
 
+> ⛔ **REMOVED — this page is history, not the product.** The Send to Chat dialog (⌘⌃↩) went with the
+> Composer on 2026-07-03 in `92472b0a` (`docs/DECISIONS.md` §"Agent input surfaces REMOVED"). `⌘⌃↩` is
+> unbound and no context-capture dialog exists. Do not implement this page.
+
 ## Summary
 
 Pull terminal output, file-pane selections, or shell context into an agent conversation without copy-pasting. "Send to Chat" attaches the source as context to the active (or a new) agent session.

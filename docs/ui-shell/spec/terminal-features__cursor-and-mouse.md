@@ -1,5 +1,15 @@
 # Cursor and Mouse
 
+> ⚠️ **THERE IS NO "Theme" SETTINGS PAGE AND NO THEME EDITOR.** Cursor colour and text-under-cursor are
+> set under **Appearance ▸ Cursor** only (`Sources/SlopDeskClientCore/Settings/CursorColorHex.swift`,
+> `MacCursorPreviewSurface.swift` / `CursorPreviewView.swift`); the theme system that the other half of
+> each sentence names was deleted 2026-08-08 (`docs/DECISIONS.md` §"ONE appearance"). "(theme default)"
+> in the key table now means the single shipped appearance.
+>
+> The left-nav list at the foot of the page is also stale: the eight sections are General, Shell,
+> Controls, Editor, Agents, Appearance, Key Bindings, Advanced — **no Recipes** (deleted 2026-07-03,
+> `d63e1274`).
+
 ## Summary
 
 How slopdesk styles the text cursor and handles mouse/pointer input. All GUI-configured — no config file. Cursor: shape, blink, smooth animation, color, opacity. Mouse: hover-to-focus, right-click action, hide-on-type, shift-bypass for captured mouse, click-to-move, mouse-capture permission. Mouse reporting delegates events (clicks, drags, wheel, bare motion) to programs via DECSET modes with SGR coordinate encoding. OSC 22 lets programs set the system pointer shape dynamically.

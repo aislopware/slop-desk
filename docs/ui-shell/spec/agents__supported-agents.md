@@ -1,5 +1,11 @@
 # Supported Code Agents
 
+> ⚠️ **CLAUDE CODE ONLY.** Non-Claude agents (Codex, OpenCode) are a standing product exclusion — see
+> [`../README.md`](../README.md) and [COVERAGE.md](../COVERAGE.md) §D. Detection, the hook channel, the
+> status machine (`rust/slopdesk-agent`) and the ctl socket's self-report verb are all built around
+> Claude Code; nothing routes the other two. Read their rows below as the design that was surveyed, not
+> as support that ships.
+
 ## Summary
 
 SlopDesk integrates with three coding-agent CLIs: Claude Code (`claude`), Codex (`codex`), and OpenCode (`opencode`). Users run the agent as in any terminal; SlopDesk plugs in via each agent's own hook/plugin mechanism to surface tab badges, notifications, session history, resume, and fork. The in-app experience is identical across all three. Install is one-click: the first time it's needed, SlopDesk asks permission and installs the hook/plugin — touching no other settings.

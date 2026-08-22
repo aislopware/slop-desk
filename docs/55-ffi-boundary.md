@@ -1122,6 +1122,40 @@ the same defect this section is about, one register up.)
 | `RailRowsMemo.titledByProcess` vs `rail_title::title_rung` | — | a Swift transcription of the title chain's escape order whose own doc comment said "Mirrors `RailRowsBuilder.rowTitle`" — a comment as the only thing holding two implementations together — **ported 2026-08-22** |
 | `HostServiceProcess.searchDirectories` vs `toolchain::locate_tool` | Rust | the two agreed on the ORDER and had quietly stopped agreeing on what makes a candidate executable: `FileManager.isExecutableFile` is `access(X_OK)`, which is TRUE for a DIRECTORY, so a directory wearing a tool's name on `PATH` reached `posix_spawn`; `docs/46` had named the Swift copy canonical and the Rust one "mirrored" — **ported 2026-08-22** |
 | the device panels' row predicate, spelled **six** times | — | `localizedCaseInsensitiveContains` over "does any field of this row hold what was typed", in `AndroidPresentation` twice and once in each of the four simulator views — only ONE of the six was ever reached by a test, which is this class in its purest form: the copy a test holds is not the copy the other shell runs — **ported 2026-08-22** onto the door the keybindings editor already had |
+| `StaticIDRDecider.shouldReencode` vs `recovery_routing::StaticIdrDecider::should_reencode` | — | the quiet window, the recovery override and the synthetic-only heartbeat, written twice, with the Swift copy the one on the host's per-timer-tick path — **ported 2026-08-22**; the four anchors are the whole state, so they cross as scalars and the Rust half stopped being unreachable |
+| `AgentBadgeGates.allOn` / `CommandBadgeGates.allOn` vs `badge::Gates::ALL_ON` | — | one all-on baseline asserted independently by two Swift structs and never consulted by the ungated ladder, so no input could reach both — **ported 2026-08-22** |
+| `AudioJitterBuffer.pull(frameCount:)` vs `audio_jitter::pull_frames` | — | **UNREACHED PORT — the Rust half has no caller.** See below; it has already drifted |
+| `VideoClientSessionLogic.route(channel:data:mediaFlowing:)` vs `client_session::route_datagram` | — | **UNREACHED PORT — the Rust half has no caller.** The six-way table and the drop-vs-ignore split, written twice |
+| `SimulatorScreenLayout`'s hand-rolled clamp vs `slopdesk_panel_clamped_device_point` | Rust | a drag off the right edge of a 200-point frame reported `x = 200` into a surface whose columns are `0..<200`, so the host scaled it off the far side of the framebuffer; the Android lane had gone through the door since the door existed and the simulator lane spelled it TWICE — **ported 2026-08-22**, confirmed by probe before anything was touched: `(9999, 9999)` answered `(200.0, 400.0)` by hand and `(199, 399)` by the rule |
+| `VideoPreferences`' four QP/FEC defaults vs `qp_control` and `adaptive_fec` | — | `26`, `40`, `1`, `5` as literals directly beneath the doc comment forbidding literals there, against doors that already vended every one; a retune leaves Settings SHOWING the old number, and "reset to default" then WRITES it into the overlay as an explicit override — the gesture meant to get out of the daemon's way is the one that pins it to a value nobody chose — **ported 2026-08-22** |
+| `EnvConfig.int`/`.double` and two private copies vs the reject rule | — | the same validate-then-default written three times, of which the generic pair had ZERO production callers; `FPSGovernor`'s copy also read `ProcessInfo.processInfo.environment` directly, bypassing the settings overlay, so every governor tunable set in Settings was written, persisted, shown as active and never read — **ported 2026-08-22** to `slopdesk_abr_validated_int`/`_double`, which is the REJECT reading and deliberately not the quantiser CLAMP |
+| `AudioStreamDecoder.decodePCM` vs `audio_wire::decode_pcm_s16le` | — | the same loop byte for byte, down to the same ragged-tail drop, with the Rust half reached by nothing but its own tests; the pair cannot be caught disagreeing, because a full-scale sample is `-1.0` either way and a drifted normalisation is just audio slightly quieter than it should be — **ported 2026-08-22**, the Vec-returning Rust form deleted rather than kept beside the in-place one |
+| `ScreenClient.exchange`'s length prefix vs `screenwire::encode_reply` | — | four untrusted bytes shifted together by hand, checked against a 64 MiB ceiling re-spelled one file over, deciding how much this process allocates on a peer's say-so, while the encoder for that exact layout was already Rust's — **ported 2026-08-22**, and `ScreenWire.maximumFrameBytes` stopped being the second spelling of the ceiling with it |
+| `SupervisorFrame.read`'s `count != .max` vs `slopdesk_supervisor_body_length`'s refusal | — | **a live ONE-language defect, not a drift**: the door refused correctly and the guard never fired, in any build, for any input — **fixed 2026-08-22**, and it is in this table because it was found while porting the row above it and because it is the reason that row's door refuses the way it does |
+
+**A correction to "the far side is a separately-shipped binary, so a door is not available."** That
+sentence appears twice in this section, and it is only half a rule. It is a claim about the FAR side,
+and it says nothing whatever about the near one.
+
+It is right about the opaque cap: hostd **forks** `slopdesk-probe`, so both ends of that pair are
+processes, no linked artifact is involved, and a ratchet really is the only instrument. It was wrong
+about the screend frame ceiling, where the same words were used to justify spelling 64 MiB in Swift.
+screend is a separately-shipped binary, yes — and hostd's client end is *linked Swift over the same
+wire crate*, encoding its requests through a door a few lines above the line that spelled the ceiling
+by hand. The ceiling, the length-prefix width and the header width are `slopdesk_screen_constant`
+now, and screend's copies are pinned by a cargo test inside `slopdesk-screenwire` rather than by a
+`sed` of its source line.
+
+**The rule, stated so it cannot be misread again: a door is available whenever the side that is
+DOUBLING the rule can link the crate. Ask it of that side, per boundary, never of the pair.** A wire
+crate shared by a daemon and a linked client has two boundaries, not one, and they take different
+instruments: the daemon's copy is held by the crate's own tests, and the client's copy stops existing.
+"Both ends must be able to link it" is a much stronger condition than anything the port needed, and it
+is the condition that sentence was silently being read as.
+
+What is left for the ratchet changes shape with it, and that is the tell that the port was the right
+call: the gate no longer asks *"do the two numbers agree"* — a question that only has an answer while
+there are two numbers — but *"is there still only one"*.
 
 **The template row was stale in both directions, and how it was stale is itself the lesson.** It
 named a *security* rule — the literal `cd` line that must never reach the token parser — and that
@@ -1154,6 +1188,30 @@ drifted — `TemplatePane::keystrokes` hardcoded `None` for the cwd and so could
 its Swift counterpart takes a directory in order to write. All four were deleted on 2026-08-22.
 **"Do not port this" and "keep an unreachable copy of it" are different instructions**, and the
 second is never what the first meant.
+
+### The two unreached ports left open, and the hazard one of them is already carrying
+
+Two rows above are marked UNREACHED PORT rather than ported. Both are left that way deliberately —
+neither is on a path where the cost has been measured — but an unreached port is a debt, not a
+resting state, so what the next person needs is written here rather than rediscovered.
+
+⚠️ **`pull_frames` has already drifted, and the drift is an overflow.** Swift allocates
+`max(0, frameCount) * channels`; Rust takes `frame_count: usize` and writes `vec![0.0; frame_count *
+self.channels]`. A negative frame count is a benign empty array on one side and, converted at a
+boundary that does not exist yet, a wrapped `usize` on the other — an allocation the machine cannot
+serve, from an argument the Swift copy was written to absorb. **Neither side can catch the other**:
+no input reaches both, both suites are green, and the clamp is not a rule either half states out
+loud, it is a `max` inside an allocation. Whoever builds `slopdesk_audio_stage_pull_frames` under §4's
+length-then-fill starts by deciding whose clamp is the rule — and the answer has to be one of them,
+not "the caller will pass a sane number", because the caller is the diagnostic surface and the
+diagnostic surface is where a negative number comes from.
+
+`route_datagram` wants §6's arena treatment and not a scalar door, which is why it is still open:
+its `RoutedDatagram` carries decoded payloads, so the shape that crosses is a variable list of
+records with bytes hanging off them — `slopdesk_link_scan`'s handle-over-arena, not
+`slopdesk_recovery_should_escalate_to_idr`'s seven scalars. A scalar door for the six-way tag would
+be the wrong half: the tag is the cheap part, and porting only the cheap part is how a pair ends up
+agreeing about the routing and disagreeing about the payload.
 
 ### The pair that is not cross-LANGUAGE at all
 
@@ -1287,13 +1345,87 @@ why `VideoEncoder.envQP` is not `private` — there is no version of "one rule" 
 gets its own copy for living in another file, and a helper's access level is a weaker constraint
 than that.
 
-What was **not** folded, named so the next reader finds it: `EnvConfig`'s generic
-`guard let v = Int(s), v >= lo, v <= hi else { return def }` is this same reject rule for roughly a
-dozen knobs across several targets, and it is the real second implementation of
-`clamped_int_from_env`. It should go the same way. But flipping it is a tree-wide *behaviour* change
-with a per-knob argument to make each time rather than a port, so it is its own change and not a
-rider on this one. Scoping that out is a decision, which is why it is written down rather than
-merely not done.
+**What was not folded then is folded now, and both premises of the paragraph that scoped it out were
+wrong.** It said `EnvConfig`'s generic `guard let v = Int(s), v >= lo, v <= hi else { return def }`
+was "this same reject rule for roughly a dozen knobs across several targets", and therefore that
+flipping it to the clamp was a tree-wide *behaviour* change too big to ride along.
+
+The count was not a dozen. It was **zero**: the generic pair had no production caller anywhere in
+`Sources/`, only two tests of its own. There was nothing to flip, no behaviour to change, and the
+scope-out was protecting a cost that did not exist. Both accessors are deleted.
+
+And the reject rule it named is not a second implementation of `clamped_int_from_env` at all — it is
+the second READING, and both readings are wanted. The real surface was two private copies, in
+`LiveCongestionController` and `FPSGovernor`, and those knobs are rates and fractions rather than
+quantiser ordinals. The whole argument for flipping the encoder's three is that a quantiser ordinal
+has a meaningful nearest legal value; a malformed rate does not. `SLOPDESK_ABR_LOSS=900` clamped is a
+controller that treats every frame as catastrophic loss forever. Rejected, it is the default and a
+knob that did nothing, which is the answer a user can act on.
+
+So the tree carries both, each with exactly one author:
+
+* **CLAMP** — `slopdesk_qp_clamped_int`, `qp_control.rs`, for the `[1, 51]` quantiser ordinals.
+* **REJECT** — `slopdesk_abr_validated_int` / `_double`, `congestion.rs`, for rates and fractions.
+
+The `_double` form also rejects the non-finite, which no clamp can express: NaN compares false
+against both bounds, so a clamp passes it straight through into the controller's arithmetic.
+
+`FPSGovernor`'s copy carried a second defect on top of the duplication, and it is the one a user
+would have reported as "the setting does nothing": it read `ProcessInfo.processInfo.environment`
+directly rather than through `EnvConfig`, so it never saw the settings overlay. Every governor
+tunable set in the settings sheet was written, persisted, displayed as active — and never read.
+`LiveCongestionController`'s copy went through `EnvConfig` and so was merely duplicated, not deaf.
+Both now resolve the same way and parse through the same door.
+
+**The generalisation, because this is the second scope-out in this section to have been wrong about
+its own size:** a scope-out is a claim with no gate behind it, exactly like a row in the table above,
+and it decays the same way — except that it decays *faster*, because it is written at the one moment
+nobody is going to check it, and its whole function is to stop the next reader from looking. This one
+asserted a caller count it had never counted. **When a decision to defer rests on a NUMBER, count it
+before writing the paragraph.** A scope-out that names its evidence can be re-checked in a minute; one
+that names an impression buys the pair a year.
+
+### The refusal that could not be heard: `size_t`, and the guard that never fired
+
+`SupervisorFrame.read` asks `slopdesk_supervisor_body_length` for its body length and guarded the
+door's refusal with `guard count != .max`. That guard has never fired, in any build, for any input.
+
+Swift's ClangImporter maps `size_t` onto the **signed** `Int`, not onto `UInt`. So the door's
+`usize::MAX` refusal arrives as `-1`, while `.max` in that position infers `Int.max`. The two are
+different values and always were, and an over-cap header therefore fell straight through to
+`readExactly(socket:count: -1)`.
+
+Measured rather than reasoned about, with a scratch SwiftPM target on 2026-08-22 — a C function
+returning `(size_t)-1`, called from Swift, printing its static type and its value:
+
+```
+static type: Int   value: -1
+v == .max ? false
+```
+
+The guard is `guard count >= 0` now, and `check-supervisor.sh` bans the other spelling in both files
+that read a `size_t` off a door.
+
+**Neither language could have caught this, and that is the part worth carrying.** The Rust half
+refused correctly and has a test proving it. The Swift half has tests proving it reads a well-formed
+frame. Both suites are green, in perpetuity, because the defect lives in the TYPE MAPPING between
+them — the one place neither suite has a fixture for. This is the drift class with the two
+implementations removed: one implementation, one caller, and a disagreement about what a value means
+that only appears at the boundary.
+
+**The rule for anyone adding a door that answers a size.** `0` and "greater than `cap`" are the two
+refusals §4 gives you, and both survive the signedness change, because both are meaningful as
+non-negative numbers. An all-ones sentinel does not: it is the one refusal whose meaning depends on
+how the callee's type was imported, and the caller's obvious guard against it compiles, reads
+correctly, and is dead code. **Prefer a refusal the type system cannot silently reinterpret.**
+
+This is why `slopdesk_screen_body_length`, added the same day for the identical question one lane
+over, refuses with **`0`** instead. It can afford to: a reply of zero bytes is not a thing on the
+screend wire, so `0` is unrepresentable as a real length and `> 0` is the whole check a caller needs.
+The supervisor lane cannot take the same refusal — an empty body IS legal there — which is why it
+keeps the sentinel and gets a ratchet on the guard instead. **The asymmetry is deliberate: where a
+door can pick the refusal that needs no knowledge of the crossing, it should, and where it cannot,
+the guard is the thing that gets pinned.**
 
 ### The argument that let two of these live for a year: "a name, not a policy"
 

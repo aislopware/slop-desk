@@ -1,5 +1,20 @@
 # Window, Tab and Split
 
+> ⚠️ **THE HIERARCHY SHIPS; FOUR CLAIMS IN THE SUMMARY DO NOT.** Corrections, in the order the Summary
+> makes them:
+> - **"tabs group/sort"** — grouping and sorting were removed 2026-07-10. `TabOrdering.swift:6-9` states
+>   the absence: "there is no grouping/sort hamburger, `.byDate` buckets, `.updated` recency sort, or
+>   manual drag-reorder." Naming, badging and cycling do ship.
+> - **"Picture-in-Picture"** — never built. Remote desktop is a DEDICATED OS WINDOW as of 2026-07-22
+>   (`docs/DECISIONS.md` §"Remote desktop is a DEDICATED OS WINDOW — remote-window mode is REMOVED").
+> - **"Layouts save/restore as Recipes"** — Recipes were deleted 2026-07-03 (`d63e1274`); see
+>   [`customization__custom-commands.md`](customization__custom-commands.md).
+> - **Pane kinds** — `PaneKind` is now exactly `.terminal` and `.desktop`. The file / folder / URL pane
+>   kinds are gone; legacy raw kinds (`claudeCode`, `web`, `remoteGUI`, `chooser`) fold to `.terminal`
+>   through decode bridges. The web pane went in `65da3c0d`, floating panes in `231f1398`.
+>
+> Pin-above, split, resize, zoom and persistent size/restore are real.
+
 ## Summary
 
 SlopDesk's workspace is a three-level hierarchy: **Window → Tab → Pane**. Window = top-level macOS container; Tab = an independent terminal session in a window; Pane = the leaf content (terminal, file, folder, or URL). Panes split arbitrarily; tabs group/sort/name/badge; windows support pin-above, Picture-in-Picture, and persistent size/restore. Layouts save/restore as "Recipes."

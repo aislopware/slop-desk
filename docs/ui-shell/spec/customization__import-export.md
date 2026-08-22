@@ -1,5 +1,14 @@
 # Import / Export
 
+> ⚠️ **NOT BUILT — `slopdesk import` and `slopdesk export` are `Availability::Planned`**
+> (`rust/slopdesk-cli/src/vocabulary.rs:346-362`); both exit as PLANNED verbs rather than running.
+> Two further corrections to the Summary below: the theme half of this page is **deleted, not planned**
+> (the theme system went 2026-08-08, `docs/DECISIONS.md` §"ONE appearance"), and Settings ▸ Advanced ▸
+> Config File does exist but its two action rows are **Open Config File** and **Reload Config**
+> (`Sources/SlopDeskMacUI/Settings/MacAdvancedSurfaces.swift:155,158`) — not import and export.
+> Separately, the WORKSPACE export/import codec this page's neighbours referred to was built and then
+> deleted on 2026-07-03 in `0166057c`.
+
 ## Summary
 
 SlopDesk reads configs from other terminals (Ghostty, Kitty, Alacritty) and writes the current SlopDesk config back out in any of those formats — for trying SlopDesk alongside an existing setup, or sharing a config with someone who hasn't switched. Access: Settings → Advanced → Config File (two action rows), or CLI (`slopdesk import` / `slopdesk export`).

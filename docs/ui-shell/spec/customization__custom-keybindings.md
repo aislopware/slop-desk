@@ -1,5 +1,25 @@
 # Keybindings
 
+> ⚠️ **THE MAIN LIST SHIPS; THE THREE-SUB-SECTION CLAIM DOES NOT HOLD.** Corrections:
+> - **Main bindable-action list** — ships on BOTH halves, from one registry:
+>   `Sources/SlopDeskMacUI/Settings/MacKeybindingsEditor.swift` (AppKit) and
+>   `Sources/SlopDeskPhoneUI/Settings/KeybindingsEditorView.swift` (SwiftUI). The Rust layout table calls
+>   the group `Platform::Both`.
+> - **Text / Sequence** — split. Literal-byte bindings (`text:` / `csi:` / `esc:`) and general `unbind:`
+>   are honoured **on macOS only**: `WorkspaceBindingOverrides.textBinding(for:)` / `.isUnbound(_:)` are
+>   read at `Sources/SlopDeskMacUI/Input/WorkspaceKeyDispatcher.swift:368,376`, while iOS reads
+>   `isUnbound` for exactly one chord (⌃⇥, `Sources/SlopDeskWorkspaceCore/iOS/PhoneKey.swift:237`) and
+>   never reads `textBinding`. **No ruling explains this** — it is an open parity gap, not a design
+>   decision. Multi-key SEQUENCES are gone outright: `prefixKey` and `sequenceOverrides` are recorded as
+>   removed fields "simply not read" at
+>   `Sources/SlopDeskVideoProtocol/Settings/KeybindingPreferences.swift:132-134`.
+> - **Commands / Recipe** — does not exist. Recipes were deleted 2026-07-03 (`d63e1274`); see
+>   [`customization__custom-commands.md`](customization__custom-commands.md).
+> - **`config.toml`** — real, and read: `KeybindConfigLoader` parses its `keybind = <chord>:<action>`
+>   lines (`Sources/SlopDeskCLICore/CLIConfig.swift:77`). But GUI edits persist as
+>   `KeybindingPreferences.overrides` in `UserDefaults`, not by writing the file back; the editor's job
+>   around config.toml is to PRESERVE its literal-byte bindings, not to author them.
+
 ## Summary
 
 SlopDesk rebinds almost any action from a **Key Bindings** settings pane or by editing `~/.config/slopdesk/config.toml` directly. GUI and config stay in sync — GUI changes are written back to `config.toml` automatically. Three sub-sections: the main bindable-action list (grouped by category), **Text / Sequence** (send literal byte sequences to the terminal), and **Commands / Recipe** (mirrors recipe shortcuts).

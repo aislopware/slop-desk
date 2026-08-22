@@ -205,10 +205,23 @@
   Warp's Hack+Roboto to kill family drift — residual is glyph-edge AA only, since SwiftUI/CoreText ≠ Warp's GPU
   rasterizer); PTY/agent content + the agent status-hint line are EXCLUDED (they bleed through from libghostty/the CLI
   agent, not our chrome). → [REBUILD-PLAN §5]
-- ⏸️/❓ **NOT wired today (greenfield, render chrome only):** `/remote-control`, File-explorer, and Rich-Input bottom-bar
+- 🔁 **DEAD — the bottom bar these pills lived on was deleted whole (`92472b0a`, 2026-07-03).** `AgentInputFooter`,
+  `AgentInputFooterCoordinator`, `SuggestionPill`, `FileExplorerModel` and `toggleRichMode` all return zero files. One
+  fact outlived the surface and is worth keeping: the OSC notification gate the green pill re-enabled is now default-ON
+  (`SettingsKey.oscNotifications`, `SettingsKey.swift:145`), so the pill had nothing left to offer. Entry kept as history.
+- ⏸️/❓ *(as decided, 2026-06-23)* **NOT wired today (greenfield, render chrome only):** `/remote-control`, File-explorer, and Rich-Input bottom-bar
   pills have NO existing logic subsystem; the green "Enable … notifications" suggestion pill has no host wire (dismissal
   persisted client-side). Build the pills as feature-flag stubs; treat real backing as later feature work. → [REBUILD-PLAN §4.3], [logic-api-surface §5.4]
-- ✅ **FINAL theme = `#1D2022` default + `PureBlackDark` alternate.** The shipping default is `WarpTheme.dark`
+- 🔁 **DEAD — superseded twice, and every symbol below returns ZERO files today.** Kept as history, not as fact. The
+  entry carried a ✅ until 2026-08-22, so a reader landing here before the section below read a demolished theme as the
+  shipping one. What actually superseded it: the design-system rebuild in the next section (2026-06-24), then ONE ISLAND
+  (`Sources/SlopDeskSlate/SlateDesign.swift:9-32`) — the theme picker itself was deleted 2026-08-08 and `Slate.theme` is
+  a constant, ground cream `#FFFBEB` with a Dracula purple accent. Verified empty: `SlopDeskDesignSystem`, `WarpTheme`,
+  `DesignTokens`, `PureBlackDark`, `warpDark`, `pureBlack`, and the hexes `1D2022`/`19AAD8`/`E8704E`/`D97757`. The
+  closing pointer was dead too — docs/30 no longer describes a 3-module split, and the odiff harness is gone from the
+  tree entirely (no invocation in any script, Makefile or test; `≈ 3.64%` diffed against a Warp reference that no longer
+  exists). docs/30 was corrected 2026-08-22 and is accurate again; what it now documents is a seven-target stack.
+- ✅ *(as decided, 2026-06-23)* **FINAL theme = `#1D2022` default + `PureBlackDark` alternate.** The shipping default is `WarpTheme.dark`
   (`DesignTokens.warpDark`), background seed **#1D2022** — the live-Warp bundled chrome surface
   (`ColorU::from_u32(0x1D2022FF)`), so the slate the user actually SEES is reproduced exactly by the seed+derive model;
   the theme/terminal accent is teal #19AAD8 and the agentic brand orange (#E8704E / footer-brand #D97757) is a SEPARATE
@@ -227,7 +240,10 @@
 - ✅ **First external SPM dependencies — attached ONLY to `SlopDeskClientUI`** (the headless core + codec/controller targets stay dependency-free; `swift test`/golden never fetch). swiftui-introspect 26.0.1 (clear the navigator NSScrollView bg for the sidebar vibrancy), SFSafeSymbols 7.0.0 (type-safe icons), Pow 1.0.6 (status-dot glow), KeyboardShortcuts 3.0.1 (macOS-gated, recorder/global-hotkey wiring deferred to the Settings layer). Trade-off: this RETIRES the "clean checkout builds with no prerequisite" property (SPM network resolution); versions pinned in `Package.resolved`.
 - ✅ **iOS navigator = `List(selection:)`, macOS = custom `SlateSidebarRow` list.** The custom sidebar list gives macOS neutral-gray selection + full control (3 columns always visible in the split controller), but on a compact iPhone a button list does NOT drive `NavigationSplitView`'s push-to-content — so iOS keeps a system `List(selection:)` (matching the same visual style) whose selection navigates.
 - ✅ **VERIFIED (macStudio): headless `make check` (3163 tests + golden byte-identical) · `check-ios.sh` BUILD SUCCEEDED · real macOS app via cua-driver (Paper chrome + live "+" add-tab) · real iOS app on iPhone-17-Pro sim via agent-device (Paper sidebar + push-to-card navigation).** Build arc L5–L10 (token layer → apply → sidebar/card → adopt libs → component kit → verify), each layer committed atomically.
-- ⏸️ **OPEN — terminal CONTENT theme.** The terminal viewport (libghostty / placeholder) renders the dark terminal theme on both platforms, while the Paper chrome theme is light. This is the `PreferencesStore`/`TerminalConfigBuilder` axis (separately pinned warm-dark historically), NOT the chrome token layer — a deliberate follow-up decision, not changed here. → [30-ui-architecture]
+- ⏸️ **OPEN — terminal CONTENT theme.** The terminal viewport (libghostty / placeholder) renders the dark terminal theme on both platforms, while the Paper chrome theme is light. This is the `PreferencesStore`/`TerminalConfigBuilder` axis (separately pinned warm-dark historically), NOT the chrome token layer — a deliberate follow-up decision, not changed here.
+  The `→ [30-ui-architecture]` pointer this entry used to carry was dropped 2026-08-22: docs/30 never covered the content
+  theme, so the arrow sent a reader to a page that does not answer it. The axis is `PreferencesStore`/`TerminalConfigBuilder`,
+  named above; the question itself is still open.
 
 ## E1 default-keymap parity (2026-06-25) — epic E1, plan in [ui-shell/plans/E1.md](ui-shell/plans/E1.md)
 - 🔁 **RE-SCOPE — tab cycling moves to `⌘⇧]`/`⌘⇧[`; plain `⌘]`/`⌘[` now drive sequential PANE cycling.** The old Muxy-parity pins bound `⌘]`/`⌘[` to `nextTab`/`prevTab`. The standard reference table lists `⌘⇧]`/`⌘⇧[` = next/prev TAB and `⌘]`/`⌘[` = focus next/prev PANE, and stories ES-E1-2/ES-E1-3 want sequential pane cycle on the bare bracket. **Decision: standardize on this layout.** `tab.next`→`⌘⇧]`, `tab.prev`→`⌘⇧[`; two NEW actions `cyclePaneNext` (`focus.cycleNext`, `⌘]`) / `cyclePanePrev` (`focus.cyclePrev`, `⌘[`) walk the active tab's panes in DFS order with wrap (`WorkspaceStore.cyclePaneFocusTree(forward:)`, no-op when <2 panes). These default-chord pins were ours to re-scope (they encoded the retired Muxy parity, NOT a wire/golden constant — no wire delta, no golden key); `TreeCommandRoutingTests.testDefaultChordsMatchTheDocumentedTable` is re-pinned to `⌘⇧]`/`⌘⇧[` with a code comment recording the move. Distinct from `⌃⌘]`/`⌃⌘[` (OSC-133 block jump) and `⌃⌘⇧]`/`⌃⌘⇧[` (jump-to-failed). → [ui-shell/plans/E1.md ES-E1-2]
@@ -16633,3 +16649,120 @@ a `TARGET_OS_OSX` region of `slopdesk_ffi.h`, and `build-ffi.sh` reads that regi
 symbol is REQUIRED on the macOS slice and REQUIRED ABSENT on the other two. A client on either
 platform RECEIVES the git status as a metadata reply and never computes it, so there was never a
 phone caller to serve — and now the three spellings of that fact cannot drift apart quietly.
+
+## The domain crate was four crates wearing one name (2026-08-22)
+
+`rust/slopdesk-workspace` had grown to 25,342 lines across 44 modules, and `slopdesk-wire` — the
+crate holding the golden-pinned protocol — depended on all of it. That is the inversion the split
+was meant to remove: a wire format sitting underneath the Settings catalogue, the phone keyboard,
+the git status line, the notification policy and the rail titles, none of which it serialises.
+
+**The first module graph was wrong, and the way it was wrong is worth writing down.** `grep 'crate::'`
+counts rustdoc intra-doc links as dependencies. That phantom graph shows six cycles — `drop_action ↔
+drop_zone`, `hid_virtual_key ↔ keystroke_replay`, `settings_rows → binding_rows`, `settings_catalog →
+session`, `binding_search → settings_rows`, `notify → chrome` — and **not one of them exists in the
+code**. Stripping comments first leaves exactly one real 2-cycle in the whole crate,
+`settings_layout ↔ settings_rows`, and it falls inside a single new crate. A carve planned against
+the phantom graph would have been built around cycles that were never there.
+
+**The carve as designed was also wrong, and measuring said so.** The plan was two leaves. But the
+wire does not merely borrow identity and JSON: `document/apply.rs` alone calls **25 distinct
+`tree_ops` entry points**, and the wire's transitive need is ten modules — 7,692 lines. Two leaves
+would have left the `wire → workspace` edge fully intact, just pointed at an 18.8k-line crate
+instead of a 25.3k one. The third crate is what actually cuts the edge.
+
+| | before | after |
+| --- | --- | --- |
+| `slopdesk-workspace` | 25,342 / 44 files | 11,978 / 28 |
+| `slopdesk-ids` (leaf, no deps) | — | 1,060 / 4 — `identity`, `json`, `shell_quoting` |
+| `slopdesk-tree` (over ids) | — | 6,851 / 9 — the document proper |
+| `slopdesk-settings` (leaf, no deps) | — | 5,571 / 6 — the catalogue, its layout, its rows |
+
+`slopdesk-wire` now names `slopdesk_workspace` nowhere, and neither does `slopdesk-terminal`. No
+re-export shims: every module has exactly one path, because a shim is how a carve grows a second
+spelling of where something lives. Golden vectors are byte-identical.
+
+**`secrets` did NOT go to the leaf, though it looks like it should.** The two mentions of
+`slopdesk_workspace` in `slopdesk-terminal` beyond its one real import are prose — a doc comment
+*contrasting* `secrets::assess` with what paste does, and a code comment. The single real edge is
+`shell_quoting`. Sinking `secrets` would have dragged `regex` into both `slopdesk-wire`'s and
+`slopdesk-terminal`'s dependency trees to serve a caller that does not exist.
+
+**The residual `wire → tree` edge stays, and that is the line.** `apply.rs` is 2,076 lines and *is*
+a domain applier; the honest fix is moving it into the domain crate, which changes public paths that
+`slopdesk-ffi` and `slopdesk-superd` name — a separate change, not a free one. A protocol depending
+on the model it serialises is not an inversion. A protocol depending on the settings catalogue is.
+
+**Owed: the residual crate no longer contains `workspace.rs`.** `slopdesk-workspace` is now the
+client's remaining *surfaces*, not the document, and the name says otherwise. Renaming it touches
+`slopdesk-devicepanel`'s manifest and 34 `slopdesk-ffi` files — mechanical, and deferred rather than
+declined.
+
+## The last shared view target becomes two, and the seam is why it is not three (2026-08-22)
+
+`Sources/SlopDeskVideoClient` was the one view target the docs/56 UI split never reached — outside
+`scripts/check-supervisor.sh`'s ratchet entirely. Thirty-three files, and ONE of them,
+`VideoWindowView.swift`, was 2,898 lines of which the middle 2,514 were a single
+`#if os(macOS)` / `#elseif os(iOS)` two-armed conditional: an AppKit implementation and a UIKit one
+in the same file, linked by both app shells. Two implementations is the standing directive; two
+implementations *inside one `#if`* is the shape the directive exists to abolish, and it hid a live
+parity gap for a release — the swipe-peel chip was MOUNTED on both platforms and DRIVEN on one, so a
+two-finger swipe on the phone navigated the remote app with no chip and no haptic while the shared
+overlay sat permanently dark. The doc comment that caused it ("never set on iOS — no trackpad scroll
+phases") had been false since the phone started sending phase-carrying scroll.
+
+**Option B: two sibling view targets, `SlopDeskVideoClientMac` and `SlopDeskVideoClientPhone`**, each
+depending on the now view-free `SlopDeskVideoClient`, each linked by exactly one app shell.
+
+**Option A — fold the two arms into `SlopDeskMacUI` / `SlopDeskPhoneUI` — was rejected, and stays
+available.** It is the tidier graph on paper: two targets instead of four, and the halves would sit
+beside the UI files that mount them. What it costs is the `VideoWindowFactory` seam. That seam is not
+incidental plumbing — it exists so the view layer never NAMES a VideoToolbox or Metal type, which is
+the only reason the headless `swift build` and the whole test graph do not pull those frameworks in.
+Folding the halves into the UI targets spends that property to buy target-count tidiness. If the day
+comes that the headless graph is allowed to link VideoToolbox, A becomes correct and cheap; until
+then B is the one that keeps the invariant.
+
+The starting position was also not what it looked like: **neither UI target imports
+`SlopDeskVideoClient` at all.** Only the two `AppMain.swift` shells, three CLI tools and the test
+target do. That is what forced the choice — there was no existing edge for A to reuse.
+
+**What actually moved, and what deliberately did not.** The two arms became seven files (four Mac,
+1,986 lines; three phone, 1,213). `VideoWindowConnection` was the only piece of the old common head
+that stayed shared, and it now imports `SlopDeskVideoProtocol` and nothing else. `VideoWindowPipeline`
+went `package`, not `public` — 33 members, and `package` is the narrowest width that reaches a sibling
+target in the same package. Nothing was raised to `public`.
+
+**The zoom ladder shipped first, alone, and the framing that scheduled it was wrong.** `ViewportZoom`
+was extracted before any file moved, because the clamp/snap/step arithmetic was spelled inline at five
+call sites. It was NOT a merge of the two platforms' ladders: the Mac floors at 0.25× and the phone at
+1×, and `TouchPointerPlan` already said in as many words that these are two viewport models rather
+than one policy. Merging them would have been a regression dressed as deduplication. `bounded` (clamp
+only) and `clamped` (clamp then snap to unity inside a 0.06 band) stay two functions, because `fitted`
+must not snap a genuine 0.97 fit away.
+
+**`LocalInputPolicy` came out of the Mac half for the same reason, one step later.** Three pure
+statics — modifier-edge direction, which modifiers a refocus resync re-forwards, and the click-count
+clamp — were about to be duplicated by the carve. Layout diverges, capability does not: arrangement is
+duplicated, a rule never is. They now live once in the engine over `InputModifiers`, which deleted an
+`#if os(macOS)` from the test file: the rule is exercised on the phone triple too, where the
+modifier-resync path it governs is still unbuilt.
+
+**The naming follows the house.** Mac takes the `Mac` prefix, phone takes the bare name — sixty such
+pairs already exist across `SlopDeskMacUI` and `SlopDeskPhoneUI` (`MacGuiLeafView` / `GuiLeafView`).
+
+**Five ratchet rules, two of them ledgers that fail both ways.** Rule A bans a view declaration in the
+engine; Rule B asserts `VideoWindowView.swift` stays deleted BY PATH (a `DELETED_SWIFT_UNION` entry
+would false-positive forever on the phone half's legitimate bare type names); Rule C names the five
+files that legitimately keep an `#if os(macOS)` — actuators picking an API, not surfaces drawn twice —
+and fails if one loses the arm it was excused for. Rules D and E compare the two halves: D the seam
+sinks each takes, E the pipeline callbacks each subscribes. Both carry named exceptions, and both fail
+when an exception stops being true. **One of Rule E's three entries is a known BUG, not a platform
+floor**: the swipe-peel chip. The day it is built, Rule E goes red until its entry is deleted — which
+is the whole mechanism by which a fixed bug stops being filed as an accepted difference.
+
+**Two of Rule E's entries stop being floors if iPad pointer support lands.**
+`onRemoteCursorChanged` and `onServerCursorVisibilityChanged` are excused because iOS has no hardware
+cursor to swap or hide. The app ships `TARGETED_DEVICE_FAMILY "1,2"` and has zero
+`UIPointerInteraction` anywhere in the tree; when that is built, these two are the first thing the
+phone half must subscribe.

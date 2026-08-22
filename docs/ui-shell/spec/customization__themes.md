@@ -1,5 +1,14 @@
 # Themes
 
+> ⛔ **REMOVED — this page is history, not the product.** The theme picker, the built-in catalogue, the
+> two `theme` / `theme-dark` slots, "Use separated theme for dark mode", `.slopdesktheme` import and the
+> `theme` config key were **deleted, not defaulted**, on 2026-08-08 by user ruling
+> (`docs/DECISIONS.md` §"ONE appearance — the theme picker is deleted, not defaulted"). The app ships one
+> appearance: a cream ground carrying a dark terminal. `AppearancePreferences.swift:9-13` states it in the
+> type; the only surviving field on that model is `density`. The `slopdesk theme` CLI verb is
+> `Availability::Planned` against a surface that would have to come back first
+> (`rust/slopdesk-cli/src/vocabulary.rs:391-411`). Do not implement this page.
+
 ## Summary
 
 Pick, switch, and write themes. SlopDesk ships a light/dark theme pair that follows OS appearance, supports custom `.slopdesktheme` TOML files, and imports from five terminal formats (SlopDesk, iTerm2, Kitty, Alacritty, Ghostty). Switching is live — no restart. Built-in defaults: Paper (light), Nord (dark).

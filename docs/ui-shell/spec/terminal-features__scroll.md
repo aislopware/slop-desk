@@ -1,5 +1,14 @@
 # Scroll
 
+> ⚠️ **SCROLL PAST FIRST/LAST LINE WAS NEVER BUILT.** No setting, no clamp, no enum — the whole
+> feature has zero occurrences: `grep -rIn -i scrollpast Sources rust/slopdesk-*/src` returns nothing.
+> The screenshots and `.mp4` clips referenced below are otty-era reference captures of the target
+> behaviour, not recordings of slopdesk. The "Implementation notes" at the foot of the page are a
+> design sketch that was never taken up.
+>
+> The rest of the page — scrollback limit, smooth scroll, scroll multiplier, alternate-screen
+> behaviour — is live.
+
 ## Summary
 
 Scrollback and scroll-gesture handling. Configured entirely in the GUI (Settings → Controls → Scroll) — no config file. Three knobs: bottom overscroll, top overscroll, pixel-smooth vs. row-snap. Separate keyboard shortcuts cover page/line/command-jump navigation. New output or any typing snaps the viewport back to the bottom.

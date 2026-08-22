@@ -1,5 +1,18 @@
 # Configuration Reference
 
+> ⚠️ **THE FILE AND MOST KEYS ARE REAL; THE THEME KEYS ARE NOT.** `~/.config/slopdesk/config.toml` is
+> honoured (`Sources/SlopDeskCLICore/CLIConfig.swift:6,50`), and the "unknown keys are silently ignored"
+> leniency is what makes the stale rows below harmless rather than fatal. But `theme`, `theme-dark`,
+> `auto-theme-dark-mode`, the `~/.config/slopdesk/themes/` discovery and the built-in theme-name list
+> were **deleted, not defaulted**, on 2026-08-08 by user ruling (`docs/DECISIONS.md` §"ONE appearance —
+> the theme picker is deleted, not defaulted"). Setting one is a no-op. Colour rows marked "(theme)"
+> resolve against the single shipped appearance.
+>
+> The live key table is `rust/slopdesk-settings/src/settings_rows.rs`, surfaced through
+> `AllSettingsCatalog`. `slopdesk config set` refuses a key with no live binding rather than reporting a
+> silent success (`PreferencesStore+ConfigBridge.swift:10-12`), so that command is the fastest way to
+> tell a live row below from a dead one.
+
 ## Summary
 
 SlopDesk stores config in `~/.config/slopdesk/config.toml` as flat TOML `key = value` pairs (one per line, `#` comments). The reader is lenient: quotes around simple strings are optional and unknown keys are silently ignored (so a newer config loads on an older build). Most keys are also editable in-app via Settings, which writes the same file. This page lists every config key grouped by domain, built-in theme names, and the default palette. Pure text reference — no screenshots.

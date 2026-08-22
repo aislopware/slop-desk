@@ -1,6 +1,6 @@
 # UI-Shell Design — Implementation Backlog (Epics)
 
-> **STATUS: HISTORICAL.** Epics E1–E21 are **shipped** (see [COVERAGE.md](COVERAGE.md) and git history). This file is the pre-implementation plan, not an open backlog. New UI work starts from product request + current code, not by re-opening these rows.
+> **STATUS: HISTORICAL.** Epics E1–E21 were all built. Four of them — **E9** (Details/Inspector panel), **E12** (Composer + prompt queue), **E16** (recipes + snippets) and **E21** (remote-window mode) — were subsequently **DELETED**, and several others lost rows the same way; see [COVERAGE.md](COVERAGE.md) §B and the state markers in [USER-STORIES.md](USER-STORIES.md). This file is the pre-implementation plan, not an open backlog and not a claim about what ships. New UI work starts from product request + current code, not by re-opening these rows — and an epic below being "done" is not evidence the feature still exists.
 
 Gaps from `GAP-ANALYSIS.md` clustered into shippable epics, topologically ordered by dependency: foundational epics (keybinding routing, overlay host, theming/settings, host RPC) precede the leaf features that consume them. Each epic sizes to one focused pass.
 

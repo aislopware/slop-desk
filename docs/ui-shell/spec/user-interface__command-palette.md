@@ -1,5 +1,18 @@
 # Command Palette
 
+> ⚠️ **THE PALETTE IS ⌘⇧P, AND TWO OF ITS LISTED CATEGORIES NO LONGER EXIST.**
+> - The chord is **⌘⇧P**, not ⌘K (`docs/DECISIONS.md:236`; ⌘K is picker-local now, `:341`).
+> - **Theme: Switch Theme / Reload Theme / Open Theme File** — gone. The theme system was deleted
+>   2026-08-08 by user ruling (`docs/DECISIONS.md` §"ONE appearance").
+> - **Recipes: Save Recipe / Export Recipe / Open Recipe** — gone. Recipes deleted 2026-07-03
+>   (`d63e1274`); there is no command-sequence capture.
+> - The example keycap chip **⇧⌘R "Toggle Details Panel"** now reads **Toggle Code Panel** — the Details
+>   Panel was deleted 2026-07-02 (`6de70aae`) and the chord was re-taken.
+>
+> The palette itself, its sources, fuzzy ranking, section headers and keycap chips are all live
+> (`Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift`; the matcher is now a marshaller over
+> `rust/slopdesk-fuzzy`).
+
 ## Summary
 
 VSCode-style palette for _running an action_ (counterpart to Open Quickly, which _jumps to a thing_). ⌘⇧P from anywhere exposes every SlopDesk action — including ones without keyboard shortcuts — in a searchable, categorised list. Each action is tagged with its scope (pane, window, or app).

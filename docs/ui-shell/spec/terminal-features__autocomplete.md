@@ -1,5 +1,10 @@
 # Autocomplete / Inline Suggest
 
+> ⛔ **NEVER BUILT, and intentionally so.** No ghost-text, no candidate panel, no Fig spec database —
+> `grep -rIli 'autocomplete|ghostText|inlineSuggest' Sources rust/slopdesk-*/src` returns nothing. This
+> is a standing "do NOT auto-build" item; see [COVERAGE.md](../COVERAGE.md) §E. The page is kept as the
+> design that was considered, not as work in progress.
+
 ## Summary
 
 Two surfaces — inline ghost-text and a candidate panel — driven by a Fig-compatible spec database (715+ CLI tools bundled) plus on-device learning from command history, `--help` probes, and project READMEs. Always-on and passive: no summon key. After a typing pause the most likely continuation shows as dim ghost text; when multiple completions are plausible, a candidate panel opens beneath the cursor. Fully offline — no keystrokes or history leave the machine.

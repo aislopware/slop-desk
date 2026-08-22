@@ -1,5 +1,15 @@
 # Outline / Jump To
 
+> ⚠️ **HALF OF THIS PAGE SHIPS.** The **Jump To** overlay is live: `view.jumpTo` on **⌘J**
+> (`WorkspaceBindingRegistry.swift:842`), routed as an overlay toggle
+> (`WorkspaceBindingRouting.swift:169`) over `JumpToModel` / `JumpToItem`
+> (`Sources/SlopDeskClientCore/Overlays/OpenQuicklySources.swift:50-86`). Note the chord: **⌘J**, not the
+> ⌘⇧O this page names — ⌘⇧O is Open Quickly, a different overlay.
+>
+> The **Outline sidebar panel** does NOT ship. It was a tab of the Details Panel, and was retired on
+> 2026-07-02 (`e483ec75`; `docs/DECISIONS.md` §"Outline tab RETIRED") before the whole Details Panel went
+> the same day (`6de70aae`). Read every "Outline sidebar / right sidebar" sentence below as history.
+
 ## Summary
 
 Jump between user-run commands, prompts, and files in the scrollback, powered by the OSC 133 prompt marks the shell emits under Shell Integration. SlopDesk uses those marks to build a per-pane index of user commands with exit status, surfaced in two places: (1) the Jump To panel (⌘J / ⌘⇧O), a floating quick-switcher overlay with a "Current" filter tab, and (2) the Outline sidebar panel in the Details Panel (right sidebar).

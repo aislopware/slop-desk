@@ -1,5 +1,14 @@
 # Custom Commands / Layouts / Snippets (Recipes)
 
+> ⛔ **REMOVED — this page is history, not the product.** Recipes and Snippets were built and then
+> deleted on 2026-07-03 in `d63e1274` (`docs/DECISIONS.md` §"Recipes + Snippets REMOVED"). `Snippet`,
+> `SnippetExpander` and the recipe store have zero occurrences in `Sources`, `Tests` or
+> `rust/slopdesk-*/src`; there is no Recipes pill in Open Quickly — the cut is structural, and
+> `Sources/SlopDeskWorkspaceCore/Workspace/Domain/OpenQuicklyModel.swift:12-15` states it ("no `ssh` /
+> `recipes` case exists on this enum, so nothing can route to either"). `slopdesk open <recipe>` is a
+> `Availability::Planned` CLI verb against a surface that no longer exists.
+> What was KEPT: `SendKeysParser`, moved verbatim to `Domain/SendKeysParser.swift`. Do not implement this page.
+
 > slopdesk implements custom commands, layouts, and snippets as one unified
 > feature: **Recipes**.
 

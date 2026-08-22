@@ -2,68 +2,165 @@
 
 > **Live status for UI-shell.** Prefer this over [GAP-ANALYSIS.md](GAP-ANALYSIS.md) / [BACKLOG.md](BACKLOG.md) (both historical). Index: [README.md](README.md).
 
-**Source of truth:** `docs/ui-shell/spec/` + `docs/ui-shell/screenshots/`. This matrix is a **docs-driven coverage audit** (2026-06-29): every in-scope spec page vs implementation.
+**Source of truth:** the tree, checked against `docs/ui-shell/spec/` + `docs/ui-shell/screenshots/`.
+Re-verified against code on **2026-08-22**; the previous revision was a docs-driven audit dated 2026-06-29
+and it had gone badly stale — see §0. SlopDesk's terminal **emulation** is the embedded **libghostty**
+engine (the real ghostty), so the entire VT/Terminal-API section (C0/ESC/CSI/OSC *parsing*) comes from
+libghostty, not reimplemented — only the **app-level** OSC behaviours (7/8/9/52/133/9;4/1337) are
+slopdesk's own. Note that the embedder Swift lives under `ThirdParty/ghostty/integration/`, not `Sources/`:
+a `Sources/`-only search calls the whole paste/clipboard/selection cluster dead.
 
-Method: lean per-section sonnet agents read each spec page, cross-checked the reference screenshot, and reported only self-verified gaps. SlopDesk's terminal **emulation** is the embedded **libghostty** engine (the real ghostty), so the entire VT/Terminal-API section (C0/ESC/CSI/OSC *parsing*) comes from libghostty, not reimplemented — only the **app-level** OSC behaviours (7/8/9/52/133/9;4/1337) are slopdesk's own.
-
-Spec sections audited: Getting Started, User Interface (9), Workflows (6), Terminal Features (16), Working with Agents (9), Customization (7), Terminal API/VT (~65, = libghostty), Reference (7), About. **All 47 spec pages in `docs/ui-shell/spec/` are covered.**
+Spec sections: Getting Started, User Interface (9), Workflows (6), Terminal Features (16), Working with
+Agents (9), Customization (7), Terminal API/VT (~65, = libghostty), Reference (7), About. All 47 spec pages
+in `docs/ui-shell/spec/` are still present as DESIGN material; several of them now describe features the
+app deliberately does not have (§B).
 
 ---
 
+## 0. Why this file was wrong
+
+The 2026-06-29 matrix was accurate the day it was written. Five later waves invalidated it and nobody
+re-ran the audit, so it kept asserting shipped features that had been deleted:
+
+| Wave | When | What it took out |
+|---|---|---|
+| **Feature prune** | 2026-07-02 / 07-03 | Details/Inspector panel · web pane · multi-session switcher · Composer + Prompt Queue + Send-to-Chat + Fork + agent input footer · Recipes + Snippets · floating panes · theme editor/import · workspace export/import |
+| **Re-scopes** | 2026-07-10 / 07-22 | sidebar grouping+sort options · per-pane status bar · tab drag-reorder · `PaneKind.remoteGUI` (remote-window mode) |
+| **Settings shipped ahead of their renderer** | 2026-07-30 | Scroll-Past-First/Last-Line and Smooth Scroll, with `ScrollPastPolicy` — see §F |
+| **ONE APPEARANCE** | 2026-08-08 | the theme picker itself, the built-in catalogue, the dual light/dark slots, per-theme font scopes, the `theme` config key |
+| **The canvas is deleted** | 2026-08-17 | the second layout model and everything downstream: `Canvas*`, `PaneGroup`, the canvas `Workspace`, `CompactLayoutResolver`, `CommandInterpreter`, the `liveModel` switch, ~40 store members, 22 suites, 27 FFI doors — plus layout save/restore (⌘S), which was canvas-only |
+
+A row here that names a feature is a claim about the tree. If you cannot find the symbol, believe the tree.
+
+⚠️ **Two search traps produce false "deleted" verdicts here.** (1) The terminal embedder's Swift lives under
+`ThirdParty/`, not `Sources/` — a `Sources/`-only grep calls the whole live paste / clipboard / selection /
+copy-mode cluster dead, and it is how the scroll-past row in §F was first mis-filed as never-built. (2) Much
+of the domain moved to Rust; a Swift symbol's absence often means it is now in `rust/slopdesk-tree`,
+`rust/slopdesk-settings`, `rust/slopdesk-terminal` or `rust/slopdesk-workspace`, not that the feature went.
+
+The old revision also carried a table of five gaps the 2026-06-29 pass fixed in `c9ac552`. Three still
+hold and have been folded into §A: `WorkspaceStore.selectTab` clears the focused tab's agent badges; the
+zsh shim emits OSC 133 `B` via `PROMPT+=` (`rust/slopdesk-superd/src/shellintegration.rs:528`) so command
+blocks carry `commandText` and auto-progress fires; Settings ▸ Advanced has a CONFIG FILE section (macOS
+only — see §C). The other two — the Open-Quickly Recipes pill and Send-to-Chat in the transcript context
+menu — were deleted four days later in the feature prune, along with the features behind them (§B).
+
 ## A. Covered (slopdesk implements the documented feature)
 
-Most of every spec page is implemented (epics E1–E21 + audit batches 1–5c). Representative: Window/Tab/Split (vertical tabs, groups, splits, float card, pin, window-size modes), Details Panel (Info/Outline/Git/Files), Status Bar, Find + Global Search (Aa/ab/.* + search-all-tabs), Open Quickly (+ Recipes pill, §B), Command Palette (full catalog + cwd pill), Jump-To/Hint-Mode, Selection/Copy/Paste/Scroll/Input (gated by Controls settings), Progress State + Notifications, Vi-Mode + Read-Only + Secure Input, Themes/Fonts/Keybindings/Config-File/Advanced/Import-Export settings, Agents (Composer + Prompt Queue + Send-to-Chat + Fork + History — Claude Code), CLI + watch:claude + first-launch, drag-and-drop + web pane, OSC 7/52/133/9;4 app behaviours, TERM identity. Per-epic detail: `BACKLOG.md` / `GAP-ANALYSIS.md` / git history.
+Verified present, both platforms unless a row in §C says otherwise:
 
-## B. Fixed in the docs-coverage pass — commit `c9ac552`
+Window/Tab/Split (vertical sidebar rail, By-Project sections, splits, pin, window-size modes), Command
+Palette (full catalog + cwd pill) and cheat sheet, Find + Global Search (`Aa`/`ab`/`.*` + search-all-tabs),
+Open Quickly (six pills: All/Opened/Recent/Folders/Agents/Current) with the `⌘K` Actions popover, Jump-To
+and Hint Mode, Selection/Copy/Paste/Scroll/Input gated by the Controls settings, drag-and-drop onto a pane
+(five zones), Progress State + Notifications + the Dock tile, Vi-Mode + Read-Only + Secure Input,
+Settings (eight sections on both platforms, searchable All-Settings, Config-File, Keybindings editor incl.
+the phone's recorder), Fonts (family picker, specimens, fallback list, ligature/line-height/style/blending),
+Agent supervision for Claude Code (hook install card, status badges, attention jump `⌘⇧U`, Peek & Reply
+`⌘⌥J`, prevent-sleep, resume-on-recovery), CLI + `watch:claude` + first-launch, host metadata RPC
+(processes/ports/git/dir/agent-sessions), OSC 7/52/133/9;4 app behaviours, TERM identity, the CODE panel.
 
-Genuine gaps/bugs the audit surfaced, fixed immediately:
+Per-story detail with file:line evidence: [USER-STORIES.md](USER-STORIES.md).
 
-| Doc page | Gap | Fix |
+## B. REMOVED AFTER SHIPPING — do NOT "restore" as a coverage gap ⛔
+
+These are the rows the old §A claimed. Each was built, shipped, and then deleted on purpose. A spec page
+under `spec/` still designs most of them; that page is now historical.
+
+| Feature | Epic | Removed | Ruling |
+|---|---|---|---|
+| **Details / Inspector panel** (Info · Outline · Git · Files) | E9 | 2026-07-02 `6de70aae` | "remove the right sidebar (inspector / Details panel) — keyboard-centric". Outline had merged into Info ▸ Commands (`e483ec75`) and Git into a summary row + popup (`c930f050`) the same day. Pinned negatively in `OverlayCoordinatorMountTests`. **The removal has no `DECISIONS.md` entry of its own** — it is only referenced retroactively there ("the chord the removed Details panel freed"). |
+| **Web pane** (`PaneKind.web`, local WKWebView) | E18 | 2026-07-02 `65da3c0d` | `DECISIONS.md` §Web pane REMOVED. A dragged URL now only pastes. The WKWebView that DOES ship is the CODE panel (2026-08-02), a different feature. |
+| **Multi-session switcher** | E19 | 2026-07-02 `d1d4398b` | `DECISIONS.md` §Multi-session switcher UI REMOVED. The `Session` domain type and the store's multi-session internals STAY. |
+| **Composer · Prompt Queue · Send-to-Chat · Fork-in · agent input footer** | E12, E13 | 2026-07-03 `92472b0a` | `DECISIONS.md` §Agent input surfaces REMOVED — they "duplicated typing straight into the terminal". KEPT: `InputBarModel`/`InputBoxModel`/`InputDedupRing`. |
+| **Recipes · Snippets** | E16 | 2026-07-03 `d63e1274` | `DECISIONS.md` §Recipes + Snippets REMOVED. KEPT: `SendKeysParser`, which backs launch presets, templates, block re-run, drops and `pane send-keys`. |
+| **Floating panes** | E12, E21 | 2026-07-03 `231f1398` | `DECISIONS.md` §Floating panes REMOVED. The tiled split tree is the only pane layout. |
+| **Theme editor / import · workspace export-import** | E15, E7 | 2026-07-03 `0166057c` | `DECISIONS.md` §Theme editor/import + workspace export/import REMOVED. |
+| **Sidebar grouping + sort options · tab drag-reorder** | E6, E18 | 2026-07-10 | `DECISIONS.md` §Sidebar grouping … group/sort options REMOVED. Always By-Project; sections A→Z (2026-08-10); rows in creation order. `reorderTabs` (wire type 8) survives as a dormant verb. |
+| **Per-pane status bar** (cwd · exit code · pane kind · host) | E10 | 2026-07 | A USER ruling recorded in code, not in `DECISIONS.md`: `TerminalLeafView.swift:98-102` — "the user judged the terminal pane footer low-value and asked to drop it … host + connection status now live ONCE in the connection island". The ⌘-hover full-path seam is marked DORMANT with it. |
+| **Remote-window mode** (`PaneKind.remoteGUI`) | E21 | 2026-07-22 | `DECISIONS.md` §Remote desktop is a DEDICATED OS WINDOW. Full-desktop is the only remote-viewing mode and it opens as its own OS window. The wire types go dormant, not deleted — golden byte-identical. |
+| **Themes, entirely** (picker, catalogue, light/dark slots, per-theme fonts, `theme` config key) | E15 | 2026-08-08 | `DECISIONS.md` §"ONE appearance — the theme picker is deleted, not defaulted (user-directed)". Stated in the type at `AppearancePreferences.swift:9-13`. |
+
+## C. Platform splits — macOS only
+
+Per `docs/56-client-ui-split.md:144` ("Layout diverges; capability does not. A feature landing on one
+platform is owed to the other"), each row is either a platform fact or an open gap. Both kinds are listed.
+
+⚠️ This section was established on 2026-08-22 against the **working tree**, which several agents were
+editing at the time. Two rows moved while it was being written: Config File turned out to be a ruled
+platform fact rather than a gap, and the literal-byte keybinding gap was being closed as it was
+recorded. Re-check a GAP row before planning against it.
+
+| Feature | Why | Verdict |
 |---|---|---|
-| agents (overview/parallel-tasks) | **Bug:** tab badge did not auto-clear on tab focus (docs say it does) | `WorkspaceStore.selectTab` now clears the focused tab's agent badges (⌘1-9 + click) |
-| user-interface/open-quickly | Recipes filter pill missing (store existed since E16) | added `.recipes` pill + `recipeItems` builder + ⌘E chord |
-| agents/history | Send-to-Chat absent from transcript context menu | added `.contextMenu` (Copy + Send to Chat) wired to existing `openSendToChat` |
-| vt/osc/osc-133 | OSC 133 **B** mark not emitted → command blocks had empty commandText, auto-progress never fired | zsh shim emits 133;B via `PROMPT+=`; sniffer surfaces a prompt-ready idle signal |
-| customization/config-file | No CONFIG FILE section in Settings → Advanced | added path row + Open Config File + Reload Config (reusing the existing reload action) |
-
-## C. Documented ceilings — surface/persist but don't fully actuate (libghostty ABI / renderer limits)
-
-Pre-documented (`DECISIONS.md` + source comments). The setting/UI exists; full actuation awaits a libghostty hook the pinned fork doesn't expose. NOT bugs — the UI labels them "preference saved / not yet functional".
-
-- Scroll-Past-Last/First-Line **rendering** (blank overscroll region) — no viewport hook
-- Backspace-Deletes-Selection — no set-selection / cursor-geometry C API
-- Smooth-Scroll **OFF** (row-snap) — no row-snap viewport hook
-- Cursor Animation **Smooth** (gliding caret) — no cursor-animation hook
-- Title-Report toggle (XTWINOPS) — libghostty owns XTWINOPS, no enable/disable hook
-- Vi motion set: h/l, w/b/e, 0/$/^, H/M/L, visual anchor-swap `o`, Mark Mode — no programmatic cursor-move / set-selection action
-- OSC-8 hyperlink runs not in Hint/Jump — C ABI exposes no per-cell hyperlink read
-- Recipe **scrollback** capture — no libghostty scrollback-read seam
-- Box-drawing arrow/triangle **stem-joining** (analytical glyph-join refinement) — deferred, not yet built
+| Dock progress / error tint (`DockProgressController`) | iOS has no Dock | platform fact |
+| Pin Window (`NSWindow.level = .floating`) | iOS has no window level; the registry says so in place | platform fact |
+| Window-size modes grid/frame/remember | iOS has no resizable app window; the keys round-trip inert | platform fact |
+| Secure Keyboard Entry + SECURE-INPUT pill | `EnableSecureEventInput` is a macOS-only API; the detection half (wire type 31) is cross-platform | platform fact |
+| ⌘-hold link underline | no ⌘ modifier on iOS; the iOS affordance is tap / long-press | platform fact |
+| Detach pane into its own window (⌥⌘P) + drag `tearOff` to a satellite | it produces an `NSWindow`; the enum case says so in place — "macOS only — a no-op routing on iOS (no NSWindow)" (`WorkspaceBindingRegistry.swift:23-24`) | platform fact |
+| Horizontal titlebar tab strip (`MacTabStrip`) | AppKit titlebar band | needs a phone answer |
+| Settings ▸ Advanced ▸ CONFIG FILE (path row, Open Config File, Reload Config) | gated `Platform::Mac` by the settings layout table, reason stated at `Sources/SlopDeskClientCore/Settings/SettingsConfigFile.swift:4-5` — "`~/.config` is a path iOS has none of" | platform fact (corrected 2026-08-22 — first filed as a GAP) |
+| Settings ▸ Advanced ▸ raw `SLOPDESK_*` editor, and the Video host-flag group | gated `Platform::Mac` as data; they edit flags the phone's device never reads (`SettingsSheet.swift:22-24`) | platform fact |
+| `text:` / `csi:` / `esc:` literal-byte keybindings, and general `unbind:` | — | **GAP, being closed.** At `HEAD` this is macOS-only: `textBinding(for:)` / `isUnbound(_:)` are read by `WorkspaceKeyDispatcher.swift:368,376` and iOS honours `unbind:` for exactly one chord (⌃⇥). A fix is **in the working tree, uncommitted** — `Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift:359-368` now answers `textBinding` on the pane rung, and its own docstring states the defect: "the config file is shared between the two shells, so `keybind = cmd+shift+h=text:hello` typed on a Mac and typed on the phone were one line producing two behaviours — bytes there, silence here." Re-check before citing this row |
+| Sidebar `#N` shortcut number | — | **GAP** — `SidebarRowReading.shortcutHint` is produced in SHARED code (`Sources/SlopDeskClientCore/Rail/SidebarRowReading.swift:62,220`) and consumed by `MacSidebarRow` only; no `SlopDeskPhoneUI` file reads it. ⌘1…⌘9 fires on an iPad with a hardware keyboard, but nothing on screen says which pane is which number. The ⌘-HOLD trigger is a platform fact (no ⌘ on a touch-only device); the missing readout is not |
 
 ## D. Intentional exclusions (per the user's directive + the remote model)
 
-- **Cloud/sync features:** Data Sync and third-party SSH/Remote-Development tooling are out of scope — slopdesk has its own remote model (host + client over a trusted WireGuard mesh). *(Recipes, Session-Recovery, CLI, and Frequent-Folders WERE implemented under other epics.)*
-- **Agents other than Claude Code:** Codex / OpenCode hook cards, `watch:codex`/`watch:opencode`, OSC-88 third-party resume — agents scoped to Claude Code only (`AgentKind.codex` is documented-dead, never rendered).
-- **Editor settings section** — needs a full file-editor; deferred (Task #14). Couples to the File/Folder panes in §E.
+- **Cloud/sync features:** Data Sync and third-party SSH/Remote-Development tooling are out of scope — slopdesk has its own remote model (host + client over a trusted WireGuard mesh).
+- **The Open-Quickly SSH pill:** a deliberate product cut (user reduction 2026-06-26). No `~/.ssh/config` parse, no `⌘S` chord, no SSH Actions row; there is no `.ssh` enum case, so nothing can route to a dead pill.
+- **Agents other than Claude Code:** Codex / OpenCode hook cards, `watch:codex`/`watch:opencode`, OSC-88 third-party resume — agents scoped to Claude Code only.
+- **Editor settings section:** the section EXISTS and is reachable on both platforms, but it is deliberately empty — `settings_catalog.rs:451`, "Editor — reserved, deferred". It needs a file editor, which §E rules out.
 - **VT sequence emulation** (C0/ESC/CSI/OSC parsing) — provided by libghostty, not reimplemented.
 - **App-store / marketing content** (installation, pricing, credits, performance pages) — N/A to a remote client tool.
-- **`ipc` / `state:<agent>` CLI**, config `include` directive, multi-key `>` chord sequences, env-var expansion in config values — deferred in source (E20 backlog).
+- **`open` / `import` / `export` / `features` / `state:claude` / `ipc` / `theme` CLI verbs** — `Availability::Planned` in `rust/slopdesk-cli/src/vocabulary.rs`: `--help` lists them, no shell completes them, typing one exits 2 as designed-but-unbuilt. Also deferred in source: config `include`, multi-key `>` chord sequences, env-var expansion in config values.
 
 ## E. INTENTIONALLY NOT BUILT — do NOT implement in future sessions ⛔
 
-**Binding scope decision (user, 2026-06-29):** the large features below are **deliberately excluded**. They are documented-but-not-built ON PURPOSE — slopdesk's UI shell is the *foundation*; these are the user's own extension surface, to be built later **only on the user's explicit request**. **Future sessions / agents MUST NOT implement, scaffold, or "fix" these as coverage gaps** — each is a substantial subsystem; auto-building them is unwanted scope + cost. Treat them like §D.
+**Binding scope decision (user, 2026-06-29):** the large features below are **deliberately excluded**. They
+are documented-but-not-built ON PURPOSE — slopdesk's UI shell is the *foundation*; these are the user's own
+extension surface, to be built later **only on the user's explicit request**. **Future sessions / agents
+MUST NOT implement, scaffold, or "fix" these as coverage gaps.** Treat them like §B and §D.
 
 | Feature | Doc page(s) | Size | Remote-model note |
 |---|---|---|---|
 | **Autocomplete** — inline ghost text + candidate panel + Fig spec DB (715+ tools) + frecency + auto-correction + `learn` pinning | terminal-features/autocomplete | **High** | needs host-side history + a bundled spec DB |
-| **File pane / Folder pane** — built-in editor (syntax highlight, Markdown/SVG/HTML/image/PDF/hex/diff preview) + standalone folder browser | user-interface/files-and-links | **High** | needs host file read/write over the wire; overlaps the deferred Editor (§D) |
+| **File pane / Folder pane** — built-in editor (syntax highlight, Markdown/SVG/HTML/image/PDF/hex/diff preview) + standalone folder browser | user-interface/files-and-links | **High** | needs host file read/write over the wire; overlaps the reserved Editor section (§D). The CODE panel covers the *editing* use case a different way. |
 | **Quick Terminal** — system-wide global-hotkey drop-down terminal (`quick-terminal-*` config keys) | reference/configuration | Med-High | a host-connected dropdown in the remote model |
-| **Cross-terminal config import/export** — ghostty/kitty/alacritty classification + preview/conflict dialog + `slopdesk import`/`export` CLI | customization/import-export, reference/cli | Med | slopdesk currently does only its own workspace-JSON transfer |
-| **Theme catalog** — a wider built-in catalog including Nord (slopdesk ships 8: 6 Monokai Pro + Paper + Dark, vs. a ~24-theme target) | customization/themes | Med | slopdesk defaults to Monokai Pro; catalog breadth is the gap |
-| **bash / fish shell integration** — OSC-133 injection for `~/.bashrc` + fish `vendor_conf.d` (slopdesk is zsh-only) | terminal-features/shell-integration | Med | bash/fish users currently get no blocks/badges/notify/auto-progress |
+| **Cross-terminal config import/export** — ghostty/kitty/alacritty classification + preview/conflict dialog + `slopdesk import`/`export` CLI | customization/import-export, reference/cli | Med | slopdesk now transfers NOTHING — its own workspace-JSON transfer was removed 2026-07-03 (§B) |
+| **Theme catalog** | customization/themes | — | superseded: there is no catalog and no picker at all (§B, 2026-08-08). The app ships ONE appearance by user directive. |
+| **bash / fish shell integration** — OSC-133 injection for `~/.bashrc` + fish `vendor_conf.d` (slopdesk is zsh-only: `rust/slopdesk-superd/src/shellintegration.rs`) | terminal-features/shell-integration | Med | bash/fish users currently get no blocks/badges/notify/auto-progress |
 
-Smaller deferred niceties — **also intentionally not built (do NOT auto-implement)**, low priority: tab labeled dividers, tear-off pane → new window / cross-tab merge, agent-history standalone pane + Resume button, token/cost/LSP session sidebar (Claude Code doesn't emit cost over the wire), composer status-info strip, Restart-Agent button, GUI Provide-Shell-Integration toggle, Debug section, config hot-reload (FS watcher), zoxide history import, Manage-Jump-Folders editor, KKP user toggle, macOS Services menu, Insert-from-Device menu, custom CLI aliases, Privileges menu bar.
+Smaller deferred niceties — **also intentionally not built (do NOT auto-implement)**, low priority: tab
+labeled dividers, tear-off pane → new window / cross-tab merge, token/cost/LSP session sidebar (Claude Code
+doesn't emit cost over the wire), Restart-Agent button, GUI Provide-Shell-Integration toggle, Debug section,
+config hot-reload (FS watcher), zoxide history import, Manage-Jump-Folders editor, KKP user toggle, macOS
+Services menu, Insert-from-Device menu, custom CLI aliases, Privileges menu bar.
+
+## F. Claims the old matrix made that were never true
+
+Rows the 2026-06-29 audit listed as "documented ceilings — the setting/UI exists but doesn't fully
+actuate". Re-checked against the tree: for these there is no setting and no UI, so they are not ceilings.
+Two turned out to be **removals** rather than absences, and the distinction matters — a removal comes with
+a reason, and the reason is the condition for bringing it back.
+
+| Old ceiling row | Now |
+|---|---|
+| Scroll-Past-Last/First-Line rendering | **REMOVED 2026-07-30**, not absent. They shipped ahead of a renderer that could actuate them; `ScrollPastPolicy` was deleted with them. The reason and the condition for return are recorded at `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift:2161-2165`: "the fork exposes no row-snap hook and no overscroll-margin API … Add the settings back with the viewport hook that actuates them, not before." **A `Sources/` + `rust/` grep finds nothing here — the evidence is under `ThirdParty/`** |
+| Backspace-Deletes-Selection | no `backspaceDeletesSelection` key anywhere — **superseded**, not merely dropped: Cut (⌘X) is the shipped verb (`Sources/SlopDeskWorkspaceCore/Terminal/CutSelectionPolicy.swift`) |
+| Smooth-Scroll OFF (row-snap) | **REMOVED 2026-07-30** with scroll-past, same commit and same reason — `smoothScroll` OFF rendered exactly like ON |
+| Cursor Animation Smooth | no animation field on `TerminalPreferences` |
+| Title-Report toggle (XTWINOPS) | does not exist. The toggle that DOES ship is `controls.titleShellControlled` — "may the shell SET the title" — which is a different privilege |
+| Recipe scrollback capture | moot; Recipes deleted 2026-07-03 (§B) |
+| Vi motion set (h/l, w/b/e, 0/$/^, visual anchor-swap `o`) | ceiling **LIFTED** 2026-07-14 once the fork exposed `ghostty_surface_set_selection` — these are real motions now. The table is `TerminalViewModel.handleCopyModeKey(_:)` (`Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:769-885`): count digits, `h j k l`, `0 ^ $`, `w b e`, `⌃d ⌃u`, `⌃f ⌃b`, `g G`, `[ ]`, `v V ⌃v o`, `f`, `/ ?`, `n N`, `y Y`, `q`. **`H`/`M`/`L` and Mark Mode are NOT in it** — settled 2026-08-22, they do not exist |
+
+Genuinely still ceilings: **OSC-8 hyperlink runs are not Hint/Jump targets** (the C ABI exposes no per-cell
+hyperlink read) and **box-drawing arrow/triangle stem-joining** (deferred, never built — that row made no
+existence claim).
 
 ---
 
-*Generated from the 2026-06-29 docs-coverage audit (lean sonnet, run `wj7db1mx1`). Cheap real gaps fixed in `c9ac552`. **§C/§D/§E are all INTENTIONAL non-builds — a future session must NOT treat them as gaps to close.** Build a §E feature only when the user explicitly asks for it by name.*
+*Re-verified against the tree on 2026-08-22, story by story, after an audit found the previous revision
+asserting five whole epics that do not exist. **§B, §D and §E are all INTENTIONAL non-builds — a future
+session must NOT treat them as gaps to close.** Build a §E feature only when the user explicitly asks for it
+by name. The three rows marked **GAP** in §C are the only real capability gaps this pass found.*

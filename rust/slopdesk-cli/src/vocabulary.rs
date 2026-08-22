@@ -349,7 +349,7 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
         forms: &[Form {
             group: Group::App,
             invocation: "import <path>",
-            summary: "Import a ghostty/kitty/alacritty config. (Theme import already ships in the app.)",
+            summary: "Import a ghostty/kitty/alacritty config.",
         }],
     },
     Subcommand {
@@ -391,8 +391,11 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
     // `theme` was the one verb `spec/reference__cli.md` designs and this table forgot, so it exited 2
     // as MISSPELLED while its five siblings above exited 2 as PLANNED. The distinction is the whole
     // point of `Availability`, and a designed verb reported as a typo is the worst of the three
-    // answers. Switching the ACTIVE theme is not here on purpose — that is `config set theme <name>`,
-    // which ships today.
+    // answers. Switching the ACTIVE theme is not here on purpose, and the reason CHANGED under this
+    // comment: it used to be `config set theme <name>`, which shipped. The theme picker, the `theme`
+    // config key and the built-in catalogue were all deleted 2026-08-08 by user ruling — the app has
+    // ONE appearance now (`docs/DECISIONS.md`, "the theme picker is deleted, not defaulted"). So the
+    // verb stays PLANNED against a surface that would have to come back first.
     Subcommand {
         name: "theme",
         availability: Availability::Planned,
@@ -405,8 +408,7 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
             Form {
                 group: Group::App,
                 invocation: "theme import <path-or-url> [--activate] [--overwrite]",
-                summary: "Import a SlopDesk/iTerm2/kitty/alacritty/ghostty theme. (Already ships in the \
-                          app.)",
+                summary: "Import a SlopDesk/iTerm2/kitty/alacritty/ghostty theme.",
             },
         ],
     },

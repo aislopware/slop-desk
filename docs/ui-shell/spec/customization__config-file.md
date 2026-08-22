@@ -1,5 +1,19 @@
 # Config File
 
+> ⚠️ **THE FILE IS REAL; THE `### Theme` SECTION IS NOT.** `~/.config/slopdesk/config.toml` exists and
+> is honoured, with a `SLOPDESK_CONFIG_FILE` override
+> (`Sources/SlopDeskCLICore/CLIConfig.swift:6,29,50,77`), and Settings ▸ Advanced ▸ Config File shows the
+> resolved path with Open and Reload buttons (macOS only — `~/.config` is a path iOS has none of).
+>
+> But the **`theme` / `theme-dark` / `auto-theme-dark-mode` keys and the 24-name built-in theme list
+> below do not exist.** The theme system was deleted, not defaulted, on 2026-08-08 by user ruling
+> (`docs/DECISIONS.md` §"ONE appearance — the theme picker is deleted, not defaulted"); the `theme`
+> config key went with it (`PreferencesStore+ConfigBridge.swift:9-10` — "The `theme` key is gone with the
+> picker"). Setting one of those keys does nothing. Colour keys documented as "(from theme)" now resolve
+> against the single shipped appearance.
+>
+> Also stale: any row referring to recipes or snippets (deleted 2026-07-03, `d63e1274`).
+
 ## Summary
 
 SlopDesk stores all settings in `~/.config/slopdesk/config.toml` — a lenient TOML file (flat `key = value` pairs, one per line, `#` comments). The Settings panel writes this same file, so panel and manual edits stay in sync. Editing directly suits version-control, cross-machine copying, commenting choices, or file-only keys not in the GUI. The file is optional; SlopDesk runs on compiled defaults until created. Saving triggers immediate hot-reload across every open window — no restart.

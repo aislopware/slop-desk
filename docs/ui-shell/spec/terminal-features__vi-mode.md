@@ -1,5 +1,18 @@
 # Vi Mode
 
+> ⚠️ **MARK MODE DOES NOT EXIST, AND NEITHER DO `H` / `M` / `L`.** Settled 2026-08-22 by reading the key
+> table itself. The authority is `TerminalViewModel.handleCopyModeKey(_:)`
+> (`Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:769-885`), and its complete case list
+> is: count digits, `h j k l`, `0 ^ $`, `w b e`, `⌃d ⌃u`, `⌃f ⌃b`, `g G`, `[ ]`, `v V ⌃v o`, `f`, `/ ?`,
+> `n N`, `y Y`, `q`. The hint bar
+> (`Sources/SlopDeskClientCore/Pane/ViKeyHintPresentation.swift:91-118`) lists exactly that set, so the
+> two agree. There is no `Mark Mode` action in `WorkspaceBindingRegistry` and no arrow-key/Shift-select
+> interpretation layer.
+>
+> Everything else on this page is live — the mode pill, the repeat count, `⌘/` key hints, visual /
+> visual-line / visual-block, search and yank. The char-selection ceiling this page was written under
+> was LIFTED on 2026-07-14 (`docs/DECISIONS.md` §"Copy-mode ceiling LIFTED").
+
 ## Summary
 
 Vi Mode makes the terminal pane a read-only, vi-style navigator of scrollback. While active, keystrokes drive the vi cursor instead of the shell: move, select in three visual modes (character, line, block), search forward/backward, and yank to clipboard. A pill UI shows the current mode and pending repeat count. Exiting restores normal input.

@@ -50,7 +50,7 @@ Four capabilities:
 
 - Queue one or more commands, dispatched at the next idle shell prompt, in insertion order.
 - Requires shell integration (prompt detection); won't fire into an active/non-idle prompt.
-- See also: `/agents/prompt-queue` for queuing from the composer, reordering, and editing pending entries.
+- ~~See also: `/agents/prompt-queue` for queuing from the composer, reordering, and editing pending entries.~~ **Both the prompt queue and the composer were deleted 2026-07-03 (`92472b0a`, `docs/DECISIONS.md` §"Agent input surfaces REMOVED").** The rest of this page ships: the badge gates, the per-pane override on the sidebar row context menu, and prevent-sleep as a real `IOPMAssertion`.
 
 ## Keybindings
 

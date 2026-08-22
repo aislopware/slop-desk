@@ -1,5 +1,17 @@
 # Keybindings Reference
 
+> ⚠️ **SEVERAL CHORDS IN THIS TABLE ARE DEAD OR RE-POINTED.** The authority is
+> `Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift` — a chord absent from
+> that enum cannot fire. Corrections:
+> - **⌘⇧E Composer, ⌘⇧M Prompt Queue** — unbound; both features deleted 2026-07-03 (`92472b0a`).
+> - **⌘S / ⌘⇧S save-or-export a recipe** — unbound; Recipes deleted 2026-07-03 (`d63e1274`).
+> - **⌘⇧R "Toggle Details Panel"** — the Details Panel was deleted 2026-07-02 (`6de70aae`). The chord is
+>   live but now means **Toggle Code Panel**, deliberately re-taken (`docs/DECISIONS.md:770`).
+> - **⌃B prefix mode** — removed; `prefixKey` and `sequenceOverrides` are recorded as removed fields
+>   "simply not read" (`Sources/SlopDeskVideoProtocol/Settings/KeybindingPreferences.swift:132-134`).
+> - **⌘1…⌘9** selects a **pane** in drawn order, not a tab (`WorkspaceBindingRegistry.swift:967`).
+> - The command palette is **⌘⇧P**, not ⌘K (`docs/DECISIONS.md:236`).
+
 ## Summary
 
 Default key map for SlopDesk's terminal client. Every action is re-bindable via Settings → Key Bindings GUI or `~/.config/slopdesk/config.toml`; many actions ship unbound. This page lists all default bindings by category, the notation legend, and a "See also" pointer to the customization guide.

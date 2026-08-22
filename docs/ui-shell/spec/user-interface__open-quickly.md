@@ -1,5 +1,14 @@
 # Open Quickly
 
+> ⚠️ **SIX PILLS, NOT EIGHT.** The ring is **All / Opened / Recent / Folders / Agents / Current**.
+> **SSH** and **Recipes** are not pills, and the cut is structural — no `ssh` or `recipes` case exists
+> on the enum, so nothing can route to either
+> (`Sources/SlopDeskWorkspaceCore/Workspace/Domain/OpenQuicklyModel.swift:12-15`). SSH was a stated
+> product scope cut (`docs/DECISIONS.md` §E11): no `~/.ssh/config` parse, no ⌘S chord, no SSH Actions
+> row, so ignore every "connect SSH" sentence below. Recipes were deleted 2026-07-03 (`d63e1274`).
+> Everything else on this page — the ⌘⇧O field, ranking, group headings, ↩ default actions, the
+> **Agents** pill and `claude --resume` — is real.
+
 ## Summary
 
 The Xcode-style `⌘⇧O` picker. One fuzzy field across everything you might jump to: open tabs, recent sessions, frequent folders, SSH hosts, agent sessions, the focused pane's commands and links, and saved recipes.

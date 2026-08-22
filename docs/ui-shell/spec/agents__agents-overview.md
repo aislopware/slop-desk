@@ -1,5 +1,17 @@
 # Working with Code Agents
 
+> ⚠️ **THREE OF THE FEATURES THIS PAGE OVERVIEWS WERE DELETED.** The **Composer** (⌘⇧E), the
+> **Prompt Queue** (⌘⇧M) and **Send to Chat** (⌘⌃↩) were built and then removed end-to-end on
+> 2026-07-03 in `92472b0a` — `docs/DECISIONS.md` §"Agent input surfaces REMOVED": they duplicated typing
+> straight into the terminal, which is what the user actually does. All three chords are unbound. The
+> **conversation-history viewer** was never built either (see [`agents__history.md`](agents__history.md)),
+> and the slopdesk-side **Fork** actions went in the same commit.
+>
+> What DOES ship, and is most of the value: the hook/plugin state channel (working / done / waiting), live
+> tab badges, notifications, per-pane and per-tab badge gates, prevent-sleep, agent detection fused in
+> `rust/slopdesk-agent`, and session discovery + `claude --resume` from Open Quickly's Agents pill.
+> Also note the scope: **Claude Code only** — Codex and OpenCode are a standing product exclusion.
+
 ## Summary
 
 SlopDesk integrates with coding agents (Claude Code, Codex, OpenCode) rather than replacing their CLIs, via a small hook/plugin that lets the agent report state (working / done / waiting). This unlocks live tab badges, system notifications, conversation history, prompt queuing, a multi-line Composer input, and Send-to-Chat context injection. The agent runs in a first-class pane; the client adds the supervisory UI on top.

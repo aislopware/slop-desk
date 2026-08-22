@@ -1,8 +1,17 @@
 # Status Bar
 
+> ⛔ **RULED OUT — this is no longer "not yet", it is "not going to be".** The per-pane status strip was
+> judged low-value by the user and dropped; the ruling is carried in code rather than in
+> `docs/DECISIONS.md`, at `Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift:98-102` and mirrored at
+> `Sources/SlopDeskMacUI/Pane/MacTerminalLeafView.swift:6`: "NO per-pane status strip on a TERMINAL pane
+> … The cwd / exit / progress cues are low-value; host + connection status now live ONCE in the
+> connection island." The `hideStatusBar` settings key that used to gate it has zero occurrences left in
+> the tree. Do not build a bottom status bar.
+
 ## Summary
 
-**Not yet implemented** (as of 2026-06-25). No screenshots, config keys, keybindings, or behavioral spec finalized.
+**Not implemented, and ruled out** (see the banner above; the original note read "not yet implemented as
+of 2026-06-25"). No screenshots, config keys, keybindings, or behavioral spec finalized.
 
 Planned placement in the sidebar (between Details Panel and Files/Links) implies a persistent horizontal strip — likely below the tab/title bar or at the window bottom — showing per-pane/per-window context (standard terminal UX pattern).
 

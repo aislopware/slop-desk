@@ -1,5 +1,14 @@
 # First Launch
 
+> ⚠️ **STEP 4 "CHANGE THEME" NO LONGER EXISTS.** There is no theme palette flow, no
+> Settings ▸ Appearance ▸ Theme grid of thumbnails, and no theme list to arrow through: the picker, the
+> catalogue and the `theme` config key were deleted on 2026-08-08 by user ruling
+> (`docs/DECISIONS.md` §"ONE appearance — the theme picker is deleted, not defaulted"). The app ships one
+> appearance — a cream ground carrying a dark terminal — so the step it replaced is nothing. Skip step 4
+> and its keycap table; the surviving Appearance controls are density, fonts and cursor.
+>
+> The rest of the first-launch flow is live (`Sources/SlopDeskClientCore/FirstLaunch/`).
+
 ## Summary
 
 Worth setting up the first time you open SlopDesk. All live in **Settings** (`⌘,`) — no config files:

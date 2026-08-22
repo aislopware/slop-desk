@@ -1,5 +1,17 @@
 # Agent History
 
+> ⚠️ **THE TRANSCRIPT VIEWER DOES NOT EXIST.** No JSONL renderer ever landed, and the panel that would
+> have hosted one — the Details Panel, with its `AgentSessionHistoryView` — was deleted on 2026-07-02 in
+> `6de70aae`. Unlike its neighbours in this directory, **no ruling scopes this out**: I grepped
+> `docs/DECISIONS.md` and the 2026-07-03 prune strikes Composer / Prompt Queue / Send-to-Chat / Fork /
+> the agent footer but never mentions history. So this is an open design question, not a settled "no".
+>
+> What DOES ship: session DISCOVERY and RESUME. Open Quickly's **Agents** pill lists Claude sessions and
+> resumes one in the focused pane — `cd` into its project, then `claude --resume <id>`
+> (`Sources/SlopDeskClientCore/Overlays/OpenQuicklyPresentation.swift:374-383`,
+> `OpenQuicklyItem.Act.resumeAgent(sessionID:cwd:)`). Reading the transcript is what is missing, not
+> finding it.
+
 ## Summary
 
 Every agent conversation is captured and searchable: resume a thread days later or fork a new task off old context. SlopDesk recognizes three agents by session-file path and auto-opens matching files as rendered transcripts instead of raw JSONL.

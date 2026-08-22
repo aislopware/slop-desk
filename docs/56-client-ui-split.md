@@ -728,7 +728,7 @@ directory, and it is named here so it does not become another `TerminalInputHost
 
 ### Increment 17 — what Settings offers, once
 
-`rust/slopdesk-workspace/src/settings_catalog.rs` now holds what a settings page can be set TO: the
+`rust/slopdesk-settings/src/settings_catalog.rs` now holds what a settings page can be set TO: the
 eight-section taxonomy with its titles, glyphs, order and the one row that needs a Mac; ten option
 groups with their labels and their honesty captions; and the three scalar ladders with their bounds,
 their magnitude stops and their readouts. `rust/slopdesk-ffi/src/settings_catalog.rs` marshals it as
@@ -781,7 +781,7 @@ spells a choice's own words.
 Increment 17 moved what Settings OFFERS (the choices behind each control). This one moves what
 Settings CONTAINS: the 57-row table behind the All Settings list — each key with its label, its
 one-line description, its default, whether it is edited inline or jumps to a section, and the
-keyword blob the search field also matches. It is `rust/slopdesk-workspace/src/settings_rows.rs`,
+keyword blob the search field also matches. It is `rust/slopdesk-settings/src/settings_rows.rs`,
 crossed by eleven doors in `rust/slopdesk-ffi/src/settings_rows.rs`.
 `Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift` keeps its name and its whole
 public API — every caller compiles untouched, and all eighteen of its existing tests pass unchanged —
@@ -829,7 +829,7 @@ answer, because a preprocessor directive has no runtime form. Nobody could ask h
 which groups they hid, or whether the phone was missing something it should have had.
 
 Every one of them was a FACT ABOUT A GROUP wearing a compiler directive's clothes: there is no Dock
-on iOS, no `LaunchServices` deep-link, no `NSSound`. `rust/slopdesk-workspace/src/settings_layout.rs`
+on iOS, no `LaunchServices` deep-link, no `NSSound`. `rust/slopdesk-settings/src/settings_layout.rs`
 makes that fact a `Platform` field. `groups(section, mac)` filters by the half that asked, so the Mac
 renderer asks with `mac = true`, the phone with `mac = false`, and **neither carries a gate**. The
 table also holds what a page IS — the group headers, their order, each group's apply-timing footer,
@@ -977,7 +977,7 @@ has, which is one door fewer as well as one lie fewer.
 ### Increment 24 — the Mac's Settings window is AppKit
 
 The four increments above finished the SHAPE port: every page in the navigator now comes back from
-`slopdesk_workspace::settings_layout`, described down to which platform sees which group. That was
+`slopdesk_settings::settings_layout`, described down to which platform sees which group. That was
 the blocker, because `SlopDeskMacUI` may not carry an `#if os(…)` and Settings was where most of
 them lived. With the shape a value, the Mac can draw its own page.
 
@@ -1963,7 +1963,7 @@ key's storage — it holds the binding — so what descends is the three things 
 which OPTION GROUP a token picks from, which LADDER a number steps along, and which key is shown
 read-only. The alternative was measured rather than imagined: `AllSettingsListView` spelled thirteen
 option lists inline as `Text(…).tag(…)`, and **four had already drifted** from
-`slopdesk_workspace::settings_catalog`, which has held the same lists all along — "Context Menu" vs
+`slopdesk_settings::settings_catalog`, which has held the same lists all along — "Context Menu" vs
 "Context menu", "Copy or Paste" vs "Copy or paste", "Home" vs "Home Directory". Naming the group is
 what makes a fourteenth list impossible to type. The scroll multiplier was the same shape in
 numbers: its range, granularity and `%.2f×` readout are `Ladder::ScrollMultiplier`'s, and both halves
@@ -3012,7 +3012,7 @@ as a number at all, and a HOMONYM allowlist re-keyed from the bare name to `(fil
 That re-keying is the finding, not the tidying. A name-keyed entry exempts every pair sharing that
 name in every file, forever — so `currentSchemaVersion`, written for three unrelated stores whose
 versions are 1, 1 and 3, was silently covering a FOURTH pair that was the real thing:
-`TreeWorkspace.currentSchemaVersion = 12` against `slopdesk_workspace::CURRENT_SCHEMA_VERSION = 12`,
+`TreeWorkspace.currentSchemaVersion = 12` against `slopdesk_tree::CURRENT_SCHEMA_VERSION = 12`,
 the two halves of the comparison that decides whether a saved workspace loads or is set aside.
 
 Seven doors were what the pairs it could finally see turned into: `slopdesk_ws_schema_version`,
@@ -3426,7 +3426,7 @@ itself is pinned three times, once per layer —
 seam ids), and `SplitNodeDecodeRepairTests.testTheSameFileNamesTheSameDividersOnEveryLoad`.
 
 Two things are owed rather than done. **The first save after this lands rewrites the whole file**:
-Foundation escaped `/` as `\/` and wrote no trailing newline, and `slopdesk_workspace::json` does
+Foundation escaped `/` as `\/` and wrote no trailing newline, and `slopdesk_ids::json` does
 the opposite — the same one-time diff the state-file port took, and it changes no value. And the
 decode is now **sharper** than the code it replaces in one place: a detached entry with no spec is
 dropped rather than carried, so a file holding one loses that satellite instead of loading a pane

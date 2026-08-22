@@ -1,5 +1,17 @@
 # Fonts and Text Rendering
 
+> ⚠️ **TWO SCOPE TABS, NOT FIVE.** The Font Family group is **Global / Fallback**. The *Computed*,
+> *Light Theme* and *Dark Theme* tabs went with the theme picker on 2026-08-08 (user-directed;
+> `docs/DECISIONS.md` §"ONE appearance"), and the reason is stated in the surface itself
+> (`Sources/SlopDeskPhoneUI/Settings/FontSettingsView.swift:12-14`): "with one appearance there is one
+> font slot, so Global IS the computed family and there is no per-theme map for it to lose against."
+> There is no per-theme TOML to write to. Read every "per-theme" and "theme TOML" sentence below as
+> history; `FontScopeResolver` no longer exists.
+>
+> The rest of the page holds: family selection with live specimens, the fallback list, size, line
+> height, ligatures, bold/italic/underline/blink, and the five blending modes all ship on both halves
+> (`MacFontFamilySurface.swift`, `FontSettingsView.swift`).
+
 ## Summary
 
 Font configuration in slopdesk: install without Font Book, family selection (global / per-theme / fallback), size, line height (cell height), ligatures, bold/italic/underline/blink modes, sub-pixel glyph blending. Default bundled font: JetBrains Mono. Fonts load from `~/.config/slopdesk/fonts/` via CoreText at launch — no system install. Settings scope to Computed / Global / Light Theme / Dark Theme / Fallback tabs, written to global `config.toml` or per-theme TOML.

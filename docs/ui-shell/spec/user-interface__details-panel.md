@@ -1,5 +1,13 @@
 # Details Panel
 
+> ⛔ **REMOVED — this page is history, not the product.** The right-side Details/Inspector panel and all
+> four of its tabs were deleted on 2026-07-02 in `6de70aae` ("remove the right sidebar (inspector /
+> Details panel) — keyboard-centric"); the Outline and Git tabs had already been retired the same day
+> (`e483ec75`, `c930f050`; `docs/DECISIONS.md` §"Outline tab RETIRED", §"Git tab RETIRED").
+> `SlopDeskSplitViewController.swift:1-7` now states it: "There is no Details column."
+> ⌘⇧R was later re-used — the right sidebar came back on 2026-08-02 as the **CODE panel**, a different
+> feature (`docs/DECISIONS.md` §"The right sidebar returns as the CODE panel"). Do not implement this page.
+
 ## Summary
 
 A right-side sidebar giving context about the focused pane without leaving the terminal: working directory, running processes, git status, content outline, and file tree. Always reflects the focused pane, updating on pane/tab switch. Docks right, mirroring the tabs panel on the left. Four tabs — Info, Outline, Git, Files — switched by click or bindable commands (unbound by default).

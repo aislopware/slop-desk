@@ -1,5 +1,22 @@
 # CLI Reference
 
+> ⚠️ **THE THEME AND IMPORT/EXPORT VERBS DO NOT RUN.** `theme`, `import` and `export` are all
+> `Availability::Planned` in the vocabulary table (`rust/slopdesk-cli/src/vocabulary.rs:346-411`) — they
+> exit as planned verbs rather than doing anything. Worse, the surface `theme` would drive no longer
+> exists: the theme picker, catalogue and the `theme` **config key** were deleted 2026-08-08 by user
+> ruling (`docs/DECISIONS.md` §"ONE appearance"). So `slopdesk config set theme <name>`, which this page
+> gives twice as the way to switch themes, is a key the config bridge now refuses
+> (`PreferencesStore+ConfigBridge.swift:9-12`). `ThemeStore`, named in the implementation notes, was
+> deleted with it.
+>
+> `--json` is real but narrower than "structured output" suggests: one shared `render()`
+> (`rust/slopdesk-cli/src/formatting.rs:113-125`) serves exactly six row-producing formatters —
+> `windows`, `tabs`, `panes`, `font list`, `keybind list`, `config show`. Action verbs emit no rows, so
+> `--json` is inert on them; and after `-e` or `--`, option parsing has stopped and a trailing `--json`
+> is captured as payload (`rust/slopdesk-cli/src/args.rs:375-380,395`).
+>
+> The `config path/edit/validate` split described at the foot of the page is accurate and still holds.
+
 ## Summary
 
 Reference for the `slopdesk` command-line tool. Bare `slopdesk` (or `slopdesk -e <cmd>`) launches the GUI, like `xterm`/`alacritty`/`ghostty`. UI-driving subcommands (`window`, `tab`, `pane`, `view`, `edit`, `jump`, …) require a running SlopDesk app.

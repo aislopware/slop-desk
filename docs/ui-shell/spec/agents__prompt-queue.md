@@ -1,5 +1,10 @@
 # Prompt Queue
 
+> ⛔ **REMOVED — this page is history, not the product.** The Prompt Queue (⌘⇧M) went with the Composer
+> on 2026-07-03 in `92472b0a` (`docs/DECISIONS.md` §"Agent input surfaces REMOVED"): the agent input
+> surfaces duplicated typing straight into the terminal. There is no `PromptQueueStore` and no queue
+> strip; `⌘⇧M` is unbound. Do not implement this page.
+
 ## Summary
 
 Line up several prompts while an agent is still working. SlopDesk queues them and feeds the next one when the current turn finishes.

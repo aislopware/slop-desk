@@ -189,6 +189,41 @@ if ! grep -q '"SLOPDESK_CONTROL_SOCKET"' "rust/slopdesk-ctl/src/lib.rs"; then
   fail "rust/slopdesk-ctl/src/lib.rs no longer reads SLOPDESK_CONTROL_SOCKET"
 fi
 
+# The shell-integration opt-outs, on the same footing and quieter than any of them. superd reads
+# `SLOPDESK_SHELL_INTEGRATION` from the environment hostd hands it and decides whether to generate
+# the shim AT ALL; the other two are read by the generated `.zshrc` inside the spawned zsh
+# (`${SLOPDESK_OSC133:-1}`, `${SLOPDESK_SHELL_CURSOR:-1}`), so — as `shellintegration.rs` states in
+# the comment above the constant — each "must survive hostd's curated env allowlist for a
+# daemon-side setting to take effect". hostd's curation is an ALLOWLIST: a key it does not name is
+# not forwarded, and a key that is not forwarded reads to superd exactly like a key that was never
+# set. So a rename on either side turns the setting off and nothing anywhere says so — no prompt
+# marks, no cwd tracking, no error (docs/51 §6.4).
+#
+# Both sides are whole SETS, and the Rust side is not a list typed out here. Every `*_ENV_KEY` the
+# module declares must be forwarded EXCEPT the ones it writes itself: `REAL_ZDOTDIR_ENV_KEY` goes
+# into the child's environment through `Shim::overrides`, so it travels superd→child and hostd has
+# no business carrying it. That exclusion is read out of how the module USES the constant, not out
+# of a name written here — which is what makes a fourth opt-out visible instead of invisible. Add
+# one and it is a key with no `overrides.insert`, so it lands in this set, and Swift must list it or
+# this fails. Add a key superd WRITES by some other mechanism and this over-demands rather than
+# under-checking: a loud, wrong verdict a reader resolves, never a quiet pass.
+swift_shell_env_keys=$(
+  awk '/shellIntegrationEnvKeys = \[/, /\]/' Sources/SlopDeskHost/HostEnvironment.swift |
+    sed -n 's/^ *"\([A-Z0-9_]*\)",.*/\1/p' | sort -u
+)
+RUST_SHELLINT=rust/slopdesk-superd/src/shellintegration.rs
+rust_shell_env_keys=$(
+  sed -n 's/^pub const \([A-Z0-9_]*_ENV_KEY\): &str = "\([A-Z0-9_]*\)".*/\1 \2/p' "${RUST_SHELLINT}" |
+    while read -r const value; do
+      grep -q "overrides.insert(${const}" "${RUST_SHELLINT}" || printf '%s\n' "${value}"
+    done | sort -u
+) || true
+same "shell-integration env keys" \
+  "$(echo "${swift_shell_env_keys}" | tr '\n' ' ')" "$(echo "${rust_shell_env_keys}" | tr '\n' ' ')"
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+# BLOCK 3 — Gap G.2, screend's socket override key.
+#
+
 # The OTHER three are superd's alone, and Swift must not learn them. hostd is told the hook and
 # agent-control paths in the `hello` reply, which is the whole reason that reply carries them; the
 # lock file is none of its business. A Swift constant for any of them would be a second answer to
@@ -318,6 +353,159 @@ done
 super_cap=$(sed -n 's/.*MAX_BODY_BYTES: usize = \(.*\);$/\1/p' "${SUPERWIRE}" | head -1 | tr -d ' ')
 same "maximum body bytes" "${super_cap}" "4*1024*1024"
 
+# ── 4b. The two batch BODIES ────────────────────────────────────────────────────────────────────
+# §3 and §4 pin superd's ENVELOPE — the verbs, the listener kinds, the frame tags, the cap. Inside
+# a `0x04` or a `0x05` frame is a JSON body neither of them can see, and that body is the one part
+# of this protocol written by hand at BOTH ends: superd hand-writes `serialize_entry` per key
+# (`sniffer.rs`, `blocks.rs` — serde cannot internally-tag a newtype variant, and the failure would
+# be a run-time one on the hot path), and hostd re-spells every key as a subscript or a synthesised
+# `CodingKey`. Nothing compares the two spellings, and nothing can: each end's suite reads only its
+# own end, so a rename passes both suites green.
+#
+# The failure is silent in the worst available way. `guard member["state"] as? String == "idle"`
+# is a decode with a DEFAULT — rename `state` on the Rust side and every finished command reads as
+# still running, so the spinner never stops and nothing is logged (`docs/51` §6.13). The block half
+# is the same shape one section down: a renamed `commandText` fills the Commands panel with blank
+# rows (`docs/51` §6.14).
+#
+# So this compares the ALPHABETS, both ways, derived from each side rather than listed here. A key
+# gained, lost or renamed on one side and not the other is a set difference, and `same` prints both
+# sets. Comments are stripped from the Swift, exactly as `spells()` does it: the doc comments on
+# both files NAME the keys on purpose — that prose is why the shape is written by hand at all — and
+# matching it would make this gate pass on its own documentation.
+RUST_SNIFFER=rust/slopdesk-superd/src/sniffer.rs
+RUST_SUPERD_BLOCKS=rust/slopdesk-superd/src/blocks.rs
+SWIFT_SNIFFED=Sources/SlopDeskSupervisor/SniffedEvent.swift
+SWIFT_BLOCK_EVENT=Sources/SlopDeskSupervisor/BlockEvent.swift
+
+sniffed_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_SNIFFED}") || true
+block_event_code=$(grep -vE '^ *(///|//|\*)' "${SWIFT_BLOCK_EVENT}") || true
+# Named rather than assumed, for the reason §1's haystack is: every comparison below reads these,
+# and `same` would report an empty side as a stale extraction without saying which of the two went.
+if [[ -z "${sniffed_code}" || -z "${block_event_code}" ]]; then
+  fail "a superd body decoder stripped to nothing — every alphabet below compares an empty set (docs/51 §6.13)"
+fi
+
+# The two envelope keys, `{"events": […]}` and `{"blocks": […]}`. One word each, and the whole batch
+# is lost if it moves: `decodeBatch` returns nil, hostd drops the frame, and a pane simply stops
+# reporting. Rust spells them as the field names of the two batch structs in `server.rs`.
+swift_sniff_envelope=$(grep -oE 'root\["[a-zA-Z_]+"\]' <<< "${sniffed_code}" | sed -E 's/root\["(.*)"\]/\1/' | sort -u) || true
+rust_sniff_envelope=$(awk '/struct SniffBatch/, /^\}/' "${RUST_SUPERD_SERVER}" | sed -n 's/^ *\([a-z_]*\): .*/\1/p')
+same "sniff batch envelope key" "${swift_sniff_envelope}" "${rust_sniff_envelope}"
+swift_blocks_envelope=$(awk '/private struct BlockBatch/, /^\}/' "${SWIFT_BLOCK_EVENT}" | sed -n 's/^ *var \([a-zA-Z_]*\):.*/\1/p')
+rust_blocks_envelope=$(awk '/struct BlockBatch/, /^\}/' "${RUST_SUPERD_SERVER}" | sed -n 's/^ *\([a-z_]*\): .*/\1/p')
+same "blocks batch envelope key" "${swift_blocks_envelope}" "${rust_blocks_envelope}"
+
+# ── The sniff body: `sniffer.rs`'s hand-written map against `SniffedEvent`'s subscripts.
+swift_sniff_keys=$(grep -oE 'member\["[a-zA-Z_]+"\]' <<< "${sniffed_code}" | sed -E 's/member\["(.*)"\]/\1/' | sort -u) || true
+rust_sniff_keys=$(sed -n 's/.*serialize_entry("\([a-zA-Z_]*\)".*/\1/p' "${RUST_SNIFFER}" | sort -u)
+same "sniff body keys" "$(echo "${swift_sniff_keys}" | tr '\n' ' ')" "$(echo "${rust_sniff_keys}" | tr '\n' ' ')"
+
+# The `kind` VALUES, which are the tag: an unrecognised one decodes to `.unknown` and is dropped
+# silently by design, so a rename here loses a whole event class with nothing to see. Rust writes
+# three of them through the shared `value_of` helper and three inline.
+swift_sniff_kinds=$(sed -n 's/^ *case "\([a-zA-Z_]*\)".*/\1/p' <<< "${sniffed_code}" | sort -u)
+rust_sniff_kinds=$(
+  sed -n -e 's/.*value_of(serializer, "\([a-zA-Z_]*\)".*/\1/p' \
+    -e 's/.*serialize_entry("kind", "\([a-zA-Z_]*\)").*/\1/p' "${RUST_SNIFFER}" | sort -u
+)
+same "sniff kind values" "$(echo "${swift_sniff_kinds}" | tr '\n' ' ')" "$(echo "${rust_sniff_kinds}" | tr '\n' ' ')"
+
+# The `state` values — a plain set comparison, like every other row here, and it only became one
+# when the SOURCE was fixed. `SniffedEvent` used to read `guard … == "idle" else { .commandRunning }`,
+# spelling one literal and inferring the other from its absence, so there was no Swift set to
+# compare and this gate had to stand a cardinality pin up in its place. It spells both now, and an
+# unrecognised state decodes to `.unknown(kind: "status")` rather than to a guess, so a third state
+# from a newer superd is a set difference here instead of a silent `.commandRunning` there.
+#
+# The gate pins the ALPHABET; it cannot pin the MEANING — nothing textual can tell that Swift has
+# not swapped the two arms. `testAnUnknownStateIsNeverSilentlyReadAsRunning` pins that, and the two
+# are the pair: the test proves the mapping for the strings that exist, this proves the strings
+# still exist.
+swift_sniff_states=$(sed -n 's/.*state == "\([a-zA-Z_]*\)".*/\1/p' <<< "${sniffed_code}" | sort -u)
+rust_sniff_states=$(sed -n 's/.*serialize_entry("state", "\([a-zA-Z_]*\)").*/\1/p' "${RUST_SNIFFER}" | sort -u)
+same "sniff status states" "$(echo "${swift_sniff_states}" | tr '\n' ' ')" "$(echo "${rust_sniff_states}" | tr '\n' ' ')"
+
+# ── The block body: `blocks.rs`'s three hand-written maps against `BlockEvent.swift`'s types.
+# `BlockMeta` is the one that rides the `0x05` batch AND the reattach snapshot, which is why it is
+# tagged `kind` at all; Swift reads that tag through its own `Tag` enum rather than as a stored
+# property, so the two are unioned here to make one comparable alphabet.
+swift_block_meta_keys=$(
+  {
+    awk '/^public struct BlockMetadata/, /public init\(/' "${SWIFT_BLOCK_EVENT}" |
+      sed -n 's/^ *public var \([a-zA-Z_]*\):.*/\1/p'
+    sed -n 's/.*enum Tag: String, CodingKey { case \([a-zA-Z_]*\).*/\1/p' "${SWIFT_BLOCK_EVENT}"
+  } | sort -u
+)
+rust_block_meta_keys=$(
+  awk '/impl serde::Serialize for BlockMeta/, /^\}/' "${RUST_SUPERD_BLOCKS}" |
+    sed -n 's/.*serialize_entry("\([a-zA-Z_]*\)".*/\1/p' | sort -u
+)
+same "block metadata keys" "$(echo "${swift_block_meta_keys}" | tr '\n' ' ')" "$(echo "${rust_block_meta_keys}" | tr '\n' ' ')"
+
+swift_block_kinds=$(sed -n 's/^ *case "\([a-zA-Z_]*\)".*/\1/p' <<< "${block_event_code}" | sort -u)
+rust_block_kinds=$(sed -n 's/.*serialize_entry("kind", "\([a-zA-Z_]*\)").*/\1/p' "${RUST_SUPERD_BLOCKS}" | sort -u)
+same "block kind values" "$(echo "${swift_block_kinds}" | tr '\n' ' ')" "$(echo "${rust_block_kinds}" | tr '\n' ' ')"
+
+# The badge states. Swift decodes these as a `String`-raw-value enum, so the case NAMES are the
+# wire; Rust writes them as literals in a `match`. An unknown one is kept as a skew on purpose
+# (`BlockEvent.swift`), so a rename here leaves a spinner up forever rather than failing.
+swift_progress_states=$(
+  awk '/public enum SyntheticProgress/, /^\}/' "${SWIFT_BLOCK_EVENT}" |
+    sed -n 's/^ *case \([a-zA-Z_]*\)$/\1/p' | sort -u
+)
+rust_progress_states=$(
+  awk '/impl serde::Serialize for BlockEvent/, /^\}/' "${RUST_SUPERD_BLOCKS}" |
+    sed -n 's/.*SyntheticProgress::[A-Za-z]* => "\([a-zA-Z_]*\)".*/\1/p' | sort -u
+)
+same "block progress states" "$(echo "${swift_progress_states}" | tr '\n' ' ')" "$(echo "${rust_progress_states}" | tr '\n' ' ')"
+
+# `ControlBlock` is the third hand-written map in `blocks.rs` — a finished block with its bytes,
+# what the agent-control verbs read. Swift spells it as an explicit `CodingKey` enum, which is the
+# only one of these types where the key list is written out rather than synthesised.
+swift_block_record_keys=$(
+  awk '/private enum Key: String, CodingKey/, /^ *\}/' "${SWIFT_BLOCK_EVENT}" |
+    sed -n 's/^ *case \([a-zA-Z_]*\)$/\1/p' | sort -u
+)
+rust_control_block_keys=$(
+  awk '/impl serde::Serialize for ControlBlock/, /^\}/' "${RUST_SUPERD_BLOCKS}" |
+    sed -n 's/.*serialize_entry("\([a-zA-Z_]*\)".*/\1/p' | sort -u
+)
+same "control block keys" "$(echo "${swift_block_record_keys}" | tr '\n' ' ')" "$(echo "${rust_control_block_keys}" | tr '\n' ' ')"
+
+# The reply that CARRIES those two — derived, not hand-written, but decoded by the same file and
+# skewed the same way: `nextIndex` is the `run --wait` baseline, and an absent one makes the wait
+# start counting from zero. The Rust side is read rename-first, so a `#[serde(rename)]` is what
+# crosses and the snake-case field name never is.
+swift_blocks_reply_keys=$(
+  awk '/^public struct BlocksReply/, /^\}/' "${SWIFT_BLOCK_EVENT}" |
+    sed -n 's/^ *public var \([a-zA-Z_]*\):.*[^{]$/\1/p' | sort -u
+)
+rust_blocks_reply_keys=$(
+  awk '/^pub struct BlocksReply/, /^\}/' "${RUST_PROTOCOL}" |
+    awk 'match($0, /rename = "[a-zA-Z_]+"/) { renamed = substr($0, RSTART + 10, RLENGTH - 11) }
+         match($0, /^ *pub [a-z_]+:/) {
+           name = substr($0, RSTART, RLENGTH); sub(/^ *pub /, "", name); sub(/:$/, "", name)
+           print (renamed == "" ? name : renamed); renamed = ""
+         }' | sort -u
+)
+same "blocks reply keys" "$(echo "${swift_blocks_reply_keys}" | tr '\n' ' ')" "$(echo "${rust_blocks_reply_keys}" | tr '\n' ' ')"
+
+swift_open_block_keys=$(
+  awk '/^public struct OpenBlock/, /^\}/' "${SWIFT_BLOCK_EVENT}" |
+    sed -n 's/^ *public var \([a-zA-Z_]*\):.*/\1/p' | sort -u
+)
+rust_open_block_keys=$(
+  awk '/^pub struct OpenBlock/, /^\}/' "${RUST_PROTOCOL}" |
+    sed -n 's/.*rename = "\([a-zA-Z_]*\)".*/\1/p' | sort -u
+)
+same "open block keys" "$(echo "${swift_open_block_keys}" | tr '\n' ' ')" "$(echo "${rust_open_block_keys}" | tr '\n' ' ')"
+
+printf 'check-supervisor: superd writes and hostd reads one key alphabet, in both batch bodies.\n'
+# ──────────────────────────────────────────────────────────────────────────────────────────────
+# BLOCK 2 — Gap G.1, the shell-integration env keys.
+#
+
 # ── 5. The read chunk ───────────────────────────────────────────────────────────────────────────
 # Not a wire constant — superd alone reads with it — but a JOINT decision, and the Swift copy is
 # what the bounded-queue sizing is reasoned against. 32 KiB is half `hostQueueCapacityBytes`, so the
@@ -393,6 +581,17 @@ fi
 if grep -qE 'NSTemporaryDirectory|slopdesk-screend\.sock' <<< "${screen_paths_code}"; then
   fail "${SWIFT_SCREEN_PATHS} builds the address itself again — that resolution is slopdesk_screenwire's (docs/52)"
 fi
+
+# §1 pins superd's two override keys because the RULE crossing to `slopdesk_superwire` left the
+# lookup behind on each side: the crate is handed values, so it cannot notice that one end read a
+# different variable. screend's address went the same way and the same block was never written for
+# it — `slopdesk_screenwire::socket_path` takes the override as an argument, so a key renamed on
+# one side only means the client reads an unset variable, resolves the default, and dials a socket
+# a daemon started with the override never bound. The symptom is §9's exactly: screend appears not
+# to be running (docs/52).
+swift_screen_socket_key=$(sed -n 's/.*socketEnvKey = "\([A-Z0-9_]*\)".*/\1/p' "${SWIFT_SCREEN_PATHS}" | head -1)
+rust_screen_socket_key=$(sed -n 's/^pub const SOCKET_ENV_KEY: &str = "\([A-Z0-9_]*\)".*/\1/p' "${RUST_SCREEN_PROTOCOL}" | head -1)
+same "screend socket override key" "${swift_screen_socket_key}" "${rust_screen_socket_key}"
 
 # Verb NUMBERS, not names: the wire carries the byte, and a reordered enum on one side is a
 # `compose` answered with a `transcript` — same status, same framing, silently the wrong bytes.
@@ -1937,24 +2136,57 @@ if [[ -z "${swift_screen_flags}" ]]; then
 fi
 same "screend reset flags" "${swift_screen_flags}" "${rust_screen_flags}"
 
-# The frame CEILING, which is the same byte count under two names — `ScreenWire.maximumFrameBytes`
-# and `screenwire::MAX_FRAME`, 64 MiB each. `check-shared-constants.py` pairs by NAME and these two
-# were never given the same one, so it has never seen the pair; `docs/55` §8 has recorded it as
-# outstanding since the pair was written. It is ratcheted here rather than taught to that gate as an
-# alias, for the reason the gate's own doctrine gives: screend is a separately-shipped BINARY, so a
-# door is not available to it and a socket pair's answer is a ratchet. An alias table over there
-# would have made two places to look for one rule.
+# The frame CEILING — one byte count that used to be spelled twice, `ScreenWire.maximumFrameBytes`
+# against `screenwire::MAX_FRAME`, and is now spelled once and asked for.
 #
-# Both sides are read as an EXPRESSION, not a literal — `64 * 1024 * 1024` is how a reader is meant
-# to see the megabytes, and a digits-only pattern would read neither side and compare "" to "".
-# Which way this drifts decides how it fails: a client ceiling raised above screend's makes screend
-# kill the connection mid-stream on a frame the client thought was legal, and lowered below it makes
-# the client reject a frame screend was entitled to send. Neither reports a size.
-swift_frame_cap=$(sed -nE 's/^ *public static let maximumFrameBytes = (.*)$/\1/p' \
-  "${SWIFT_SCREEN_PROTOCOL}" | tr -d ' ')
-rust_frame_cap=$(sed -nE 's/^pub const MAX_FRAME: usize = (.*);$/\1/p' \
-  "${RUST_SCREEN_PROTOCOL}" | tr -d ' ')
-same "the screend frame ceiling" "${swift_frame_cap}" "${rust_frame_cap}"
+# This gate used to `same`-compare the two expressions, and the comment it carried argued that a
+# ratchet was the only instrument available because screend is a separately-shipped BINARY, so no
+# door reaches it. That argument was true of the DAEMON and was never true of hostd's end: the
+# client half is linked Swift calling `rust/slopdesk-screenwire` through `CSlopDeskFFI` already —
+# it encodes its requests through a door six lines up. So the ceiling became a door too, and what
+# is ratcheted changes shape with it: not "do the two numbers agree" but "is there still only one".
+#
+# The Rust side of the pair is now pinned by a cargo test in `rust/slopdesk-ffi/src/screen.rs`
+# (`the_size_constants_are_vended_and_an_unknown_index_is_not_a_size`), which is a stronger check
+# than this file could make — it compares the door's answer to `MAX_FRAME` itself rather than to a
+# `sed` of its source line. What is left for a ratchet is the SWIFT side: that it keeps asking.
+#
+# Which way this would drift decides how it fails, and that has not changed: a client ceiling above
+# screend's makes screend kill the connection mid-stream on a frame the client thought legal; below
+# it makes the client reject a frame screend was entitled to send. Neither reports a size.
+#
+# BREAK-TESTED 2026-08-22: putting `= 64 * 1024 * 1024` back on the `maximumFrameBytes` line fires
+# both halves —
+#   check-supervisor: FAIL — Sources/SlopDeskScreen/ScreenProtocol.swift spells the screend frame ceiling as a literal again — it is slopdesk_screen_constant(0), and screend's copy is pinned by a cargo test
+#   check-supervisor: FAIL — Sources/SlopDeskScreen/ScreenProtocol.swift stopped asking the door for the frame ceiling — a second spelling of 64 MiB is how the two ends drift apart
+# — and the shipped tree is silent on both.
+# Both halves read the file with its COMMENTS STRIPPED, and both do the strip here rather than
+# through `spells`, because **`spells` is defined ~1,600 lines BELOW this gate** and a shell function
+# does not exist before its definition is executed. That is not a style note — it was a live bug in
+# this block for one run, and it failed in both directions at once: the presence check called a
+# missing command, got 127, and reported that the door was gone from a file that calls it; the ban
+# called the same missing command, got 127, read it as "no match", and passed on a file it had not
+# opened. **A gate that moved above its helper reports a defect it invented and misses the one it
+# was written for.** It was caught by running the real script in place; a spliced copy with the
+# helpers hoisted to the top had shown both halves green.
+#
+# Stripped into a variable and matched from a here-string, never down a pipe — `grep -q` exits at
+# the first match, `sed` then dies of SIGPIPE, and under `pipefail` a FOUND spell reads as not found.
+# Same reasoning `spells` carries; this is the two-line form of it, for a gate that cannot call it.
+screen_protocol_stripped=$(sed -E 's,//.*,,' "${SWIFT_SCREEN_PROTOCOL}")
+# The door, asked for by name. Comment-stripped because the doc comment on this very constant
+# discusses the ratchet that used to read it: a `grep` here would be reading the explanation rather
+# than the code, and would stay green through a deletion that left the paragraph behind.
+if ! grep -qE 'slopdesk_screen_constant\(' <<< "${screen_protocol_stripped}"; then
+  fail "${SWIFT_SCREEN_PROTOCOL} stopped asking the door for the frame ceiling — a second spelling of 64 MiB is how the two ends drift apart"
+fi
+# The literal itself, banned in the file that used to hold it. Matched as the MEGABYTE EXPRESSION
+# rather than as a digit run: `64 * 1024 * 1024` is how a reader is meant to see it, and it is also
+# the only shape anyone regrows — nobody types `67108864`. The strip means the paragraph above,
+# which says "64 MiB" in prose, cannot trip it.
+if grep -qE '= *[0-9]+ *\* *1024 *\* *1024' <<< "${screen_protocol_stripped}"; then
+  fail "${SWIFT_SCREEN_PROTOCOL} spells the screend frame ceiling as a literal again — it is slopdesk_screen_constant(0), and screend's copy is pinned by a cargo test"
+fi
 
 # The reply STATUS byte, which is the last of screend's three alphabets and the one nothing watched.
 # `ScreenStatus` and `screenwire::Status` are the same three values in the same order, and the enum
@@ -2791,16 +3023,16 @@ compare_abi_enum() {
 }
 compare_abi_enum "FocusDirection" \
   Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension FocusDirection' \
-  rust/slopdesk-workspace/src/focus.rs 'pub const fn index(self) -> u8'
+  rust/slopdesk-tree/src/focus.rs 'pub const fn index(self) -> u8'
 # The Rust marker is the DOC LINE, not the signature: `session.rs` holds two `as_byte` bodies with
 # identical signatures — PaneKind's and NewTabPosition's — and the uniqueness check above now refuses
 # the signature outright.
 compare_abi_enum "PaneKind" \
   Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension PaneKind' \
-  rust/slopdesk-workspace/src/session.rs 'The on-wire byte, and the byte a client'
+  rust/slopdesk-tree/src/session.rs 'The on-wire byte, and the byte a client'
 compare_abi_enum "LayoutPreset/TileLayout" \
   Sources/SlopDeskWorkspaceModel/Domain/Tree/WorkspaceTreeOps.swift 'var ffiByte: UInt8' \
-  rust/slopdesk-workspace/src/tree_ops.rs 'pub const fn index(self) -> u8'
+  rust/slopdesk-tree/src/tree_ops.rs 'pub const fn index(self) -> u8'
 # THE MARKER IS A `sed` ADDRESS, SO IT MUST BE UNIQUE WITHIN ITS FILE. A range restarts every time
 # its opening address matches again, so a SECOND occurrence below the first — including one inside a
 # doc comment, which `sed` reads as prose it cannot tell from code — APPENDS a second map to the
@@ -2809,7 +3041,7 @@ compare_abi_enum "LayoutPreset/TileLayout" \
 # `TileLayout`. Name a new marker for the case it belongs to, and do not spell it again in prose.
 compare_abi_enum "RepairPass" \
   Sources/SlopDeskWorkspaceModel/Domain/Tree/TreeWorkspace.swift 'var ffiByte: UInt8' \
-  rust/slopdesk-workspace/src/tree_ops.rs 'pub const fn ffi_byte(self) -> u8'
+  rust/slopdesk-tree/src/tree_ops.rs 'pub const fn ffi_byte(self) -> u8'
 # The PRIMARY wire's type byte, and the one this list should have started with. Swift writes the
 # tag onto the flat struct itself (`flat.message_type = messageType`), so its map is what goes out
 # on the wire, and Rust's `message_type()` is the same claim spelled a second time. A case numbered
@@ -3897,25 +4129,50 @@ for doc in "${UI_SHELL_BACKLOG}" "${UI_SHELL_STORIES}"; do
   # exit 2. 7c is the direction that goes stale on the day a verb SHIPS: a `Planned` entry promoted
   # to `Ready` leaves a doc line still filing it under "not yet". The marker is one literal,
   # `NOT YET IMPLEMENTED`, so a doc cannot half-say it.
+  # THE TWO HALVES TAKE DIFFERENT UNITS, and the asymmetry is the rule, not a concession.
+  #
+  # 7b asks "is the reader WARNED?" — so the unit is the BULLET. Both docs wrap a story entry across
+  # several lines and the marker can only be written once; judging line-by-line failed seven times on
+  # one honest entry (ES-E20-6), whose continuation lines each name `theme`/`import` while the marker
+  # sits on a line above them. That is not a doc presenting a Planned verb as working, it is a doc
+  # explaining that the verb is Planned, wrapped at 110 columns. A warning anywhere in the entry that
+  # names the verb IS a warning to the reader who reads the entry.
+  #
+  # 7c asks "is a SHIPPED verb wrongly filed as unbuilt?" — so the unit stays the LINE. Widening it to
+  # the bullet would break it: a legitimate entry that says "X is not implemented, but Y ships" puts
+  # the marker and the shipped verb in one bullet, and every such entry would fail. The filing is done
+  # by the line that does it.
+  #
+  # A bullet starts at `- ` in column 1; anything else continues the one above.
+  section_bullets=$(printf '%s\n' "${section}" | awk '
+    /^- / { if (buf != "") print buf; buf = $0; next }
+    { if (buf == "") buf = $0; else buf = buf " " $0 }
+    END { if (buf != "") print buf }
+  ')
+  # 7c — per LINE.
   while IFS= read -r line; do
+    [[ "${line}" == *"${E20_UNBUILT}"* ]] || continue
     line_tokens=$(printf '%s\n' "${line}" | cli_tokens) || true
     [[ -z "${line_tokens}" ]] && continue
-    if [[ "${line}" == *"${E20_UNBUILT}"* ]]; then
-      shipped=$(comm -12 <(printf '%s\n' "${line_tokens}") <(printf '%s\n' "${ready_names}")) || true
-      if [[ -n "${shipped}" ]]; then
-        fail "$(printf '%s §E20 files verbs under %s that dispatch today:\n%s\n  on: %s' \
-          "${doc}" "${E20_UNBUILT}" "$(printf '%s\n' "${shipped}" | sed 's/^/    /')" \
-          "$(printf '%.120s' "${line}")")"
-      fi
-    else
-      promised=$(comm -12 <(printf '%s\n' "${line_tokens}") <(printf '%s\n' "${planned_names}")) || true
-      if [[ -n "${promised}" ]]; then
-        fail "$(printf '%s §E20 presents Planned verbs as working (no "%s" on the line):\n%s\n  on: %s' \
-          "${doc}" "${E20_UNBUILT}" "$(printf '%s\n' "${promised}" | sed 's/^/    /')" \
-          "$(printf '%.120s' "${line}")")"
-      fi
+    shipped=$(comm -12 <(printf '%s\n' "${line_tokens}") <(printf '%s\n' "${ready_names}")) || true
+    if [[ -n "${shipped}" ]]; then
+      fail "$(printf '%s §E20 files verbs under %s that dispatch today:\n%s\n  on: %s' \
+        "${doc}" "${E20_UNBUILT}" "$(printf '%s\n' "${shipped}" | sed 's/^/    /')" \
+        "$(printf '%.120s' "${line}")")"
     fi
   done <<< "${section}"
+  # 7b — per BULLET.
+  while IFS= read -r bullet; do
+    [[ "${bullet}" == *"${E20_UNBUILT}"* ]] && continue
+    bullet_tokens=$(printf '%s\n' "${bullet}" | cli_tokens) || true
+    [[ -z "${bullet_tokens}" ]] && continue
+    promised=$(comm -12 <(printf '%s\n' "${bullet_tokens}") <(printf '%s\n' "${planned_names}")) || true
+    if [[ -n "${promised}" ]]; then
+      fail "$(printf '%s §E20 presents Planned verbs as working (no "%s" in the entry):\n%s\n  on: %s' \
+        "${doc}" "${E20_UNBUILT}" "$(printf '%s\n' "${promised}" | sed 's/^/    /')" \
+        "$(printf '%.120s' "${bullet}")")"
+    fi
+  done <<< "${section_bullets}"
 
   # ---- 7d. A flag the docs name is a flag the CLI parses. ------------------------------------
   # CATCHES a doc promising `--colour` or a renamed `--kind`. The universe is `GLOBAL_FLAGS`'
@@ -3985,7 +4242,7 @@ printf 'check-supervisor: the ui-shell docs describe the CLI the crate actually 
 # One scorer rather than three sorts, because the folder rail, the open-quickly overlay, the store's
 # own cap and `slopdesk jump` all order the same set and a second ordering would rank them apart.
 SWIFT_FRECENCY=Sources/SlopDeskWorkspaceCore/Folders/FolderFrecency.swift
-SWIFT_JUMP=Sources/SlopDeskCLICore/JumpResolver.swift
+SWIFT_JUMP=Sources/SlopDeskWorkspaceCore/Folders/JumpResolver.swift
 for pair in \
   "${SWIFT_FRECENCY}:slopdesk_folder_weight" \
   "${SWIFT_FRECENCY}:slopdesk_folder_recency_weight" \
@@ -4614,8 +4871,8 @@ fi
 if hit=$(spells 'private static func isShellSafe|allSatisfy' Sources/SlopDeskWorkspaceCore/Terminal/PasteTransform.swift); then
   fail "${hit} spells the shlex safe set again — bare-if-safe is a reading of the same door"
 fi
-if ! spells 'pub fn shlex_quoted' rust/slopdesk-workspace/src/shell_quoting.rs > /dev/null; then
-  fail "rust/slopdesk-workspace/src/shell_quoting.rs lost shlex_quoted — the paste's bare reading is the same rule"
+if ! spells 'pub fn shlex_quoted' rust/slopdesk-ids/src/shell_quoting.rs > /dev/null; then
+  fail "rust/slopdesk-ids/src/shell_quoting.rs lost shlex_quoted — the paste's bare reading is the same rule"
 fi
 if hit=$(spells "fn shell_quoted" rust/slopdesk-workspace/src/templates.rs); then
   fail "${hit} is the emitter's private copy again — it asks shell_quoting like everyone else"
@@ -4649,14 +4906,28 @@ printf 'check-supervisor: one vocabulary for a foreground process name.\n'
 # it is a rule: the AGENT finish above the busy tiers (claude holds the OSC-133 block open for its
 # whole lifetime), a COMMAND's exit below them. It was pure Swift with no Rust twin at all.
 SWIFT_BADGE=Sources/SlopDeskWorkspaceCore/Workspace/Tabs/TabBadge.swift
+# The KIND is a second file now: `TabBadgeResolver` needs the store's badge gates and stayed, the
+# discriminant does not and descended to the value model, where `SlopDeskSlate` can name it without
+# naming a store.
+SWIFT_BADGE_KIND=Sources/SlopDeskWorkspaceModel/Reading/TabBadgeKind.swift
+if [[ ! -e "${SWIFT_BADGE_KIND}" ]]; then
+  fail "${SWIFT_BADGE_KIND} is gone — the case list this gate counts moved, and a missing file counts ZERO cases"
+fi
 if hit=$(spells 'sudoBasenames|caffeinateBasenames|privilegeBadge|agent == .needsPermission' "${SWIFT_BADGE}"); then
   fail "${hit} walks the badge ladder in Swift — slopdesk-agent::badge resolves it"
 fi
 if ! spells 'slopdesk_agent_tab_badge' "${SWIFT_BADGE}" > /dev/null; then
   fail "${SWIFT_BADGE} stopped asking the door — it is a face over the ladder, not a second one"
 fi
-swift_badges=$(sed -n '/^public enum TabBadgeKind/,/^}/p' "${SWIFT_BADGE}" | grep -cE '^    case ') || true
+# Bounded by `[:[:space:]{]` for the same reason the pill-ink arm below is: an OPEN address also
+# matches `TabBadgeKindRung`, so the enum renamed out from under the gate would keep counting nine.
+swift_badges=$(sed -n '/^public enum TabBadgeKind[:[:space:]{]/,/^}/p' "${SWIFT_BADGE_KIND}" | grep -cE '^    case ') || true
 rust_badges=$(grep -oE 'pub const ALL: \[Self; [0-9]+\]' rust/slopdesk-agent/src/badge.rs | grep -oE '[0-9]+') || true
+# A zero on either side means the EXTRACTION broke, not that the lists agree — without this the two
+# could both read 0 after a rename and the gate would pass having compared nothing.
+if [[ "${swift_badges}" == "0" || -z "${rust_badges}" ]]; then
+  fail "the TabBadgeKind/TabBadge::ALL census read EMPTY (swift=${swift_badges} rust=${rust_badges}) — this gate has stopped checking anything"
+fi
 if [[ "${swift_badges}" != "${rust_badges}" ]]; then
   fail "TabBadgeKind has ${swift_badges} Swift cases and ${rust_badges} Rust ones — the discriminant that crosses the ABI is now wrong (docs/55)"
 fi
@@ -5451,7 +5722,7 @@ if ! grep -q 'slopdesk_ws_dwell_update' Sources/SlopDeskClientCore/App/Borderles
   fail "BorderlessDwellGate stopped calling slopdesk_ws_dwell_update — the top edge has two owners"
 fi
 if spells 'dwellSeconds *[:=] *0\.5|revealZonePoints *[:=] *2\b' Sources/SlopDeskClientCore/App/BorderlessDwellGate.swift > /dev/null 2>&1; then
-  fail "a dwell distance grew back in Swift — rust/slopdesk-workspace/src/chrome.rs owns them"
+  fail "a dwell distance grew back in Swift — rust/slopdesk-settings/src/chrome.rs owns them"
 fi
 printf 'check-supervisor: one dwell decides who owns the top edge.\n'
 
@@ -6396,12 +6667,15 @@ fi
 #    fact is a claim with no gate behind it. The modes are device-local, decoded by Foundation out of
 #    `device-prefs.json`, and Swift is the one implementation. Catches: the empty shape being re-added
 #    because the Swift struct has fields that look like they ought to have a home in the crate.
-modes_corpus_count=$(repo_files 'rust/slopdesk-workspace/src/*.rs' | wc -l | tr -d '[:space:]')
+# BOTH CRATES, because `session` moved: `slopdesk-workspace` was carved into four, and the shape
+# this bans lived in the half that left. Globbing only the old name would scan 27 files that never
+# held it and report green forever.
+modes_corpus_count=$(repo_files 'rust/slopdesk-workspace/src/*.rs' 'rust/slopdesk-tree/src/*.rs' | wc -l | tr -d '[:space:]')
 if ((modes_corpus_count < 20)); then
-  fail "rust/slopdesk-workspace/src read as ${modes_corpus_count} files — the crate moved, so the ban below stopped checking anything (docs/55 §8)"
+  fail "rust/slopdesk-{workspace,tree}/src read as ${modes_corpus_count} files — the crate moved, so the ban below stopped checking anything (docs/55 §8)"
 else
   # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-  modes_ghost=$(spells 'VideoPaneModes' $(repo_files 'rust/slopdesk-workspace/src/*.rs') 2> /dev/null || true)
+  modes_ghost=$(spells 'VideoPaneModes' $(repo_files 'rust/slopdesk-workspace/src/*.rs' 'rust/slopdesk-tree/src/*.rs') 2> /dev/null || true)
   if [[ -n "${modes_ghost}" ]]; then
     printf '%s\n' "${modes_ghost}" >&2
     fail "rust/slopdesk-workspace grew VideoPaneModes back — the latched video modes are device-local and Swift decodes them; an unreached Rust shape is worse than none, because no input reaches both halves (docs/55 §8)"
@@ -6610,7 +6884,7 @@ done
 # "…Completion"). The labels are read out of the Rust table here and grepped for verbatim, so a
 # re-typed one fails by its own text. The DESCRIPTION is deliberately not covered: an index blurb and
 # an in-context subtitle are two registers, and docs/56 §18 says so.
-row_labels=$(sed -n 's/^        label: "\(.*\)",$/\1/p' rust/slopdesk-workspace/src/settings_rows.rs)
+row_labels=$(sed -n 's/^        label: "\(.*\)",$/\1/p' rust/slopdesk-settings/src/settings_rows.rs)
 if [[ -z "${row_labels}" ]]; then
   fail "no row labels parsed out of settings_rows.rs — the ratchet below would pass by reading nothing"
 fi
@@ -6641,7 +6915,7 @@ printf 'check-supervisor: a setting is named once — %s rows, and no view spell
 # that does not exist, which renders as nothing and fails no test.
 render_keys=$(sed -n '/public enum RenderKey {/,/^    }$/p' "${rows_swift}" |
   sed -n 's/^        public static let [A-Za-z]* = "\(.*\)"$/\1/p' | sort -u) || true
-row_keys=$(sed -n 's/^        key: "\(.*\)",$/\1/p' rust/slopdesk-workspace/src/settings_rows.rs |
+row_keys=$(sed -n 's/^        key: "\(.*\)",$/\1/p' rust/slopdesk-settings/src/settings_rows.rs |
   sort -u) || true
 if [[ -z "${render_keys}" || -z "${row_keys}" ]]; then
   fail "RenderKey or the row keys read as EMPTY — the comparison below would pass by comparing nothing"
@@ -6829,7 +7103,7 @@ if grep -q '#if' <<< "${half_current}"; then
   fail "SettingsLayout.Half.current forked on a platform again — it is one half's constant now (docs/56)"
 fi
 # A ported page renders from the table, so it may not name a group header it draws.
-layout_titles=$(sed -n 's/^        title: "\(.*\)",$/\1/p' rust/slopdesk-workspace/src/settings_layout.rs)
+layout_titles=$(sed -n 's/^        title: "\(.*\)",$/\1/p' rust/slopdesk-settings/src/settings_layout.rs)
 if [[ -z "${layout_titles}" ]]; then
   fail "no group titles parsed out of settings_layout.rs — the ratchet below would pass by reading nothing"
 fi
@@ -7164,6 +7438,66 @@ fi
 if ! grep -q 'displayed_video_rect' rust/slopdesk-devicepanel/src/geometry.rs; then
   fail "slopdesk-devicepanel stopped using geometry::displayed_video_rect — a click lands where it is drawn"
 fi
+
+# The clamp that a DRAG off the edge lands on — one rule, and the simulator lane did not have it.
+#
+# `DevicePanelGeometry.clampedDevicePoint` asks `slopdesk_panel_clamped_device_point`, which clamps
+# to the LAST ADDRESSABLE POINT inside the fitted rect. The Android views have gone through it since
+# it existed. Both simulator views spelled the clamp themselves, and both copies clamped to the
+# fitted rect's SIZE instead — one point past the end on each axis. A drag to the right edge of a
+# 200-point frame reported `x = 200` into a surface whose columns are `0..<200`, and the host scales
+# that straight off the far side of the framebuffer.
+#
+# Confirmed by PROBE rather than by reading, before anything was touched: same point, same rect
+# `CGRect(x: 50, y: 20, width: 200, height: 400)`, hand-rolled Swift answered `(200.0, 400.0)` and
+# the shared rule answered `(199, 399)`.
+#
+# The ban is on the frame-relative subtraction inside a clamp, which is the whole shape and is
+# specific enough not to catch the pinch-spread clamp two files over. `Shared/` is excluded because
+# that is where the one legal caller of the door lives.
+#
+# BREAK-TESTED 2026-08-22 — it fired on the shipped tree, which is how the second copy was found:
+#   check-supervisor: FAIL — Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift clamps a dragged point to the fitted rect by hand again — the shared rule clamps to the last ADDRESSABLE point, one less on each axis
+# With the views.md edit applied to a scratch copy it is silent, and reverting the Mac half
+# (`SimulatorScreenSurface.swift`) to its own old copy fires it again naming that file.
+# `Shared/` is dropped from the FILE LIST rather than exempted after the fact, and that is the whole
+# difference between this gate working and not. `spells` returns the FIRST file it matches and stops,
+# so a rule written as `if [[ "${hit}" != ".../Shared/DevicePanelGeometry.swift" ]]` would go silent
+# for the entire corpus the moment the exempt file happened to be the first hit. An exemption belongs
+# in the corpus, never in the comparison.
+#
+# With a vacuity floor, because `spells` returns 1 on an empty list: a renamed target would drain the
+# glob and this gate would report a clean tree while reading nothing.
+# `|| true` because that `grep -v` exits 1 when it filters everything away, and under `set -e` an
+# assignment from a failing pipeline kills the whole run mid-way — silently, since the script has
+# already printed a screenful of passes by the time it gets here. `check-supervisor.sh` ratchets
+# exactly this shape against itself (docs/DECISIONS.md, 2026-08-16), and that self-gate is what
+# caught this line.
+panel_clamp_corpus=$(repo_files 'Sources/SlopDeskPhoneUI/**/*.swift' 'Sources/SlopDeskDevicePanels/**/*.swift' |
+  grep -v 'SlopDeskDevicePanels/Shared/' || true)
+if (($(printf '%s\n' "${panel_clamp_corpus}" | grep -c .) < 20)); then
+  fail "the device-panel corpus read as almost nothing — the hand-rolled clamp ban is passing vacuously"
+fi
+# shellcheck disable=SC2046 # `${panel_clamp_corpus}` expands to a FILE LIST on purpose
+# shellcheck disable=SC2086 # the corpus is a FILE LIST on purpose
+if hit=$(spells 'max\((point|location)\.[xy] *- *fitted\.min[XY]' ${panel_clamp_corpus}); then
+  fail "${hit} clamps a dragged point to the fitted rect by hand again — the shared rule clamps to the last ADDRESSABLE point, one less on each axis"
+fi
+# And the four views that need the clamp keep ASKING for it. A ban alone would be satisfied by a
+# view that stopped clamping altogether, which is the other half of the same bug: a drag that leaves
+# the frame would then be dropped, and the gesture would freeze at the boundary with the button
+# still held.
+declare -a panel_clamp_callers=(
+  "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift:SimulatorScreenLayout.clampedDevicePoint"
+  "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift:SimulatorScreenLayout.clampedDevicePoint"
+  "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift:AndroidScreenLayout.clampedDevicePoint"
+  "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift:AndroidScreenLayout.clampedDevicePoint"
+)
+for caller in "${panel_clamp_callers[@]}"; do
+  if ! spells "${caller#*:}" "${caller%%:*}" > /dev/null; then
+    fail "${caller%%:*} stopped asking ${caller#*:} — a drag off the edge is clamped by one rule or by none"
+  fi
+done
 # The same holds for what the panels DRAW. The empty stage, its caption, the empty-list notice and
 # the loading-veil asymmetry are one design decision each, recorded in the singular in
 # docs/DECISIONS.md and written down twice. The measured veil DELAYS stay per panel (400 ms vs
@@ -7268,7 +7602,11 @@ printf 'check-supervisor: the small rules are spelled once — control line, sam
 # model ends up written twice (the failure `CLAUDE.md` bans by name and this whole split exists to
 # prevent). The test is textual and deliberately blunt: import SwiftUI, AppKit or UIKit, or belong
 # in `SlopDeskClientCore`.
-ui_targets=(SlopDeskMacUI SlopDeskPhoneUI)
+# FOUR TARGETS, NOT TWO, since the video carve (docs/56 §3). `SlopDeskVideoClientMac` and
+# `SlopDeskVideoClientPhone` are the two arms of what was `VideoWindowView.swift`, and they are UI
+# targets in exactly the sense this section means, so listing them here buys the frameworkless rule —
+# and the two gate rules below — for free.
+ui_targets=(SlopDeskMacUI SlopDeskPhoneUI SlopDeskVideoClientMac SlopDeskVideoClientPhone)
 frameworkless=""
 for target in "${ui_targets[@]}"; do
   while IFS= read -r file; do
@@ -7281,23 +7619,37 @@ if [[ -n "${frameworkless}" ]]; then
   fail "a UI target holds views only — a frameworkless file belongs in SlopDeskClientCore (docs/56 §3)"
 fi
 
-# A PLATFORM GATE IN A PLATFORM TARGET means the file is in the wrong target. `SlopDeskMacUI` is the
-# Mac's and nothing else builds it, so every `#if os(...)` in it is dead text that reads as a live
-# rule. The ONE allowed gate is `SlopDeskPhoneUI`'s whole-file `#if os(iOS)`, which is how an
-# iOS-only view declares itself to `swift build` (SwiftPM compiles every target on the host triple).
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-mac_gates=$(spells '#if os\(' \
-  $(repo_files 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift') 2> /dev/null || true)
+# A PLATFORM GATE IN A PLATFORM TARGET means the file is in the wrong target. These targets are the
+# Mac's and nothing else builds them, so every `#if os(...)` in one is dead text that reads as a live
+# rule. The ONE allowed gate is a phone target's whole-file `#if os(iOS)`, which is how an iOS-only
+# view declares itself to `swift build` (SwiftPM compiles every target on the host triple).
+#
+# ⚠️ TWO PATHS PER SIDE, NOT ONE, since the video carve. `SlopDeskVideoClientMac` is the AppKit half
+# of a surface that until the carve WAS an `#if os(macOS)` arm — the single most likely place in the
+# tree for the gate to grow back is the file that used to be one.
+declare -a mac_view_targets=(SlopDeskMacUI SlopDeskVideoClientMac)
+mac_gates=""
+for target in "${mac_view_targets[@]}"; do
+  # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+  found=$(spells '#if os\(' \
+    $(repo_files "Sources/${target}/*.swift" "Sources/${target}/**/*.swift") 2> /dev/null || true)
+  [[ -n "${found}" ]] && mac_gates+="${found}"$'\n'
+done
 if [[ -n "${mac_gates}" ]]; then
   printf '%s\n' "${mac_gates}" >&2
-  fail "a platform gate in the macOS UI target — the file is in the wrong target (docs/56 §3)"
+  fail "a platform gate in a macOS UI target — the file is in the wrong target (docs/56 §3)"
 fi
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-phone_gates=$(spells '#if (os\((macOS|watchOS|tvOS)\)|canImport\(AppKit\))' \
-  $(repo_files 'Sources/SlopDeskPhoneUI/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift') 2> /dev/null || true)
+declare -a phone_view_targets=(SlopDeskPhoneUI SlopDeskVideoClientPhone)
+phone_gates=""
+for target in "${phone_view_targets[@]}"; do
+  # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+  found=$(spells '#if (os\((macOS|watchOS|tvOS)\)|canImport\(AppKit\))' \
+    $(repo_files "Sources/${target}/*.swift" "Sources/${target}/**/*.swift") 2> /dev/null || true)
+  [[ -n "${found}" ]] && phone_gates+="${found}"$'\n'
+done
 if [[ -n "${phone_gates}" ]]; then
   printf '%s\n' "${phone_gates}" >&2
-  fail "the phone UI target gates on a platform it never builds for (docs/56 §3)"
+  fail "a phone UI target gates on a platform it never builds for (docs/56 §3)"
 fi
 # …AND THAT IS THE ONLY DIRECTIVE ANY FILE IN IT MAY CARRY. The ban above names the platforms the
 # phone does not build for, which leaves an inner `#if os(iOS)` — a gate that is always TRUE in this
@@ -7311,22 +7663,34 @@ fi
 # constant now — and the count STILL READ 1, because the whole-file guard had taken the slot. The
 # ratchet went on passing about a different fact than the one it was written for. A rule stated as a
 # COUNT of a thing cannot tell you WHICH thing it counted; this one names the shape it wants.
+#
+# ⚠️ THE VACUITY FLOOR IS PER-TARGET, and that is not tidiness. This walks two targets now, and ONE
+# combined `-lt 50` would stay green if `Sources/SlopDeskVideoClientPhone` globbed to zero files,
+# because `SlopDeskPhoneUI` alone clears it — a gate that passes by reading nothing, which is the exact
+# failure the floor exists to prevent. The video half's floor is small because the half IS small.
+declare -A phone_target_floor=(
+  [SlopDeskPhoneUI]=50
+  [SlopDeskVideoClientPhone]=2
+)
 phone_directives=""
-phone_file_count=0
-while IFS= read -r file; do
-  [[ -z "${file}" ]] && continue
-  phone_file_count=$((phone_file_count + 1))
-  stripped=$(sed -E 's,//.*,,' "${file}")
-  total=$(grep -cE '^[[:space:]]*#(if|elseif|else|endif)' <<< "${stripped}" || true)
-  opens=$(grep -cE '^#if os\(iOS\)$' <<< "${stripped}" || true)
-  ends=$(grep -cE '^#endif$' <<< "${stripped}" || true)
-  if [[ "${total}" -ne 2 || "${opens}" -ne 1 || "${ends}" -ne 1 ]]; then
-    phone_directives+="${file}: ${total} directive(s), ${opens} whole-file '#if os(iOS)', ${ends} '#endif'"$'\n'
+for target in "${phone_view_targets[@]}"; do
+  phone_file_count=0
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    phone_file_count=$((phone_file_count + 1))
+    stripped=$(sed -E 's,//.*,,' "${file}")
+    total=$(grep -cE '^[[:space:]]*#(if|elseif|else|endif)' <<< "${stripped}" || true)
+    opens=$(grep -cE '^#if os\(iOS\)$' <<< "${stripped}" || true)
+    ends=$(grep -cE '^#endif$' <<< "${stripped}" || true)
+    if [[ "${total}" -ne 2 || "${opens}" -ne 1 || "${ends}" -ne 1 ]]; then
+      phone_directives+="${file}: ${total} directive(s), ${opens} whole-file '#if os(iOS)', ${ends} '#endif'"$'\n'
+    fi
+  done < <(repo_files "Sources/${target}/*.swift" "Sources/${target}/**/*.swift")
+  floor="${phone_target_floor[${target}]}"
+  if [[ "${phone_file_count}" -lt "${floor}" ]]; then
+    fail "only ${phone_file_count} files globbed under Sources/${target} (floor ${floor}) — this gate would pass by reading nothing"
   fi
-done < <(repo_files 'Sources/SlopDeskPhoneUI/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift')
-if [[ "${phone_file_count}" -lt 50 ]]; then
-  fail "only ${phone_file_count} files globbed under Sources/SlopDeskPhoneUI — this gate would pass by reading nothing"
-fi
+done
 if [[ -n "${phone_directives}" ]]; then
   printf '%s' "${phone_directives}" >&2
   fail "a phone UI file carries more than the one whole-file '#if os(iOS)' — every other arm is always-true scaffolding (docs/56 §3)"
@@ -7353,6 +7717,222 @@ for edge in "${ui_edges[@]}"; do
     fail "${edge%%:*} reached for ${edge#*import }: the two halves share no view ancestor (docs/56 §3)"
   fi
 done
+
+# ── AND THE VIDEO SURFACE STAYS SPLIT TOO (docs/56 §3) ───────────────────────────────────────────
+# `SlopDeskVideoClient` was the one view target the split never reached. Thirty-three files, and ONE of
+# them — `VideoWindowView.swift` — carried a 2,514-line `#if os(macOS)` / `#elseif os(iOS)` two-armed
+# conditional: an AppKit implementation and a UIKit one in the same file, linked by both shells. That is
+# the exact shape this whole section exists to abolish, and it hid a live parity gap for a release. The
+# swipe-peel chip was MOUNTED on both platforms and DRIVEN on one, so a two-finger swipe on the phone
+# navigated the remote app with no chip and no haptic while the shared overlay sat permanently dark —
+# and the stale doc comment that caused it ("never set on iOS, no trackpad scroll phases") had been
+# false since the phone started sending phase-carrying scroll.
+#
+# The carve left this a DECODE + PACE + TRANSPORT target with no views in it. The two arms became
+# `SlopDeskVideoClientMac` (AppKit) and `SlopDeskVideoClientPhone` (UIKit), which are `ui_targets`
+# above and inherit its three boundaries. What THIS adds is the floor those two stand on: the engine
+# target may not grow a view back, because the moment it does there is somewhere for a third
+# implementation to hide again.
+
+# RULE A — THE ENGINE HOLDS NO VIEWS.
+#
+# THE SHAPE, NOT A COUNT — the lesson recorded above at "⚠️ THIS REPLACED A PER-FILE COUNT". Five files
+# here legitimately carry `#if os(macOS)` and are named in Rule C below; each is docs/56 §3's second
+# bullet, "a framework call is not a view; a `some View` is" — an ACTUATOR picking an API, not a surface
+# drawn twice. Counting their directives would pin a number that cannot say which fact it counted. What
+# is banned is the thing they are not: a view DECLARATION.
+#
+# ⚠️ THE PATTERN MATCHES A DECLARATION, NOT A MENTION, and the difference is not pedantry. This rule
+# was first written with a bare `: *NSView\b`, and its very first finding was `FramePacer.swift` — on
+# `start(view: NSView)`, a PARAMETER, which is the exact "a framework call is not a view" case Rule C
+# excuses `FramePacer` for. Two rules disagreeing about the same file is how an allowlist grows an
+# entry that hides a real violation later: the cheap fix is to widen Rule C, and a Rule C wide enough
+# to satisfy Rule A no longer says anything. So the match is anchored on the
+# `struct`/`class`/`enum`/`extension` keyword with a conformance colon after the type name, and Rule C
+# keeps naming only the five files that genuinely pick an API.
+video_view_decl='^[[:space:]]*[@A-Za-z ]*\b(struct|class|enum|extension) [A-Za-z_][A-Za-z0-9_.]*[^{]*:[^{]*\b(View|NSViewRepresentable|UIViewRepresentable|NSView|UIView|NSHostingView)\b'
+video_engine_views=""
+video_engine_count=0
+while IFS= read -r file; do
+  [[ -z "${file}" ]] && continue
+  video_engine_count=$((video_engine_count + 1))
+  stripped=$(sed -E 's,//.*,,' "${file}")
+  grep -qE '^import SwiftUI$' <<< "${stripped}" &&
+    video_engine_views+="${file}: imports SwiftUI"$'\n'
+  grep -qE "${video_view_decl}" <<< "${stripped}" &&
+    video_engine_views+="${file}: declares a view type"$'\n'
+done < <(repo_files 'Sources/SlopDeskVideoClient/*.swift' 'Sources/SlopDeskVideoClient/**/*.swift')
+if [[ "${video_engine_count}" -lt 25 ]]; then
+  fail "only ${video_engine_count} files globbed under Sources/SlopDeskVideoClient — this gate would pass by reading nothing"
+fi
+if [[ -n "${video_engine_views}" ]]; then
+  printf '%s' "${video_engine_views}" >&2
+  fail "a view grew back in the video engine target — it belongs in SlopDeskVideoClientMac or …Phone (docs/56 §3)"
+fi
+
+# RULE B — THE TWO-ARMED FILE STAYS GONE.
+#
+# Deliberately NOT routed through `DELETED_SWIFT_UNION`: that union's patterns are grepped across all of
+# `Sources/`, and `VideoLayerView` / `MetalLayerBackedView` / `VideoWindowView` are the LEGITIMATE type
+# names in the phone half (the house convention gives the Mac the `Mac` prefix and the phone the bare
+# name — `MacGuiLeafView` vs `GuiLeafView`, sixty such pairs across the two UI targets). A union entry
+# would false-positive forever, which is how a ban gets deleted for being noisy. The file path is the
+# unambiguous fact, so the path is what this checks.
+if [[ -e Sources/SlopDeskVideoClient/VideoWindowView.swift ]]; then
+  fail "Sources/SlopDeskVideoClient/VideoWindowView.swift is back — its two arms are two targets now (docs/56 §3)"
+fi
+
+# RULE C — THE CARVE-OUT, NAMED, WITH ITS REASON, AND SELF-INVALIDATING.
+#
+# `FramePacer` (NSView vs UIView display link), `VideoWindowPipeline` (the `HostView` typealias +
+# NSScreen), `ClientCursorCompositor` (NSCursor vs the position-overlay sublayer), `MetalVideoRenderer`
+# (`displaySyncEnabled`, which iOS has no spelling for) and `AudioPlaybackEngine` (AUHAL vs RemoteIO).
+# Five actuators, five different APIs, no drawing in any of them.
+#
+# ⚠️ IT FAILS BOTH WAYS ON PURPOSE. An entry that no longer carries the arm this carve-out exists for is
+# a gate that has quietly stopped checking anything — the same stale-ledger failure `ui_test_edges`
+# guards against below, and the reason that one stopped saying `|| continue`. An allowlist nobody
+# re-validates is worse than no allowlist, because it reads as a decision that was made.
+declare -a video_actuators=(
+  "Sources/SlopDeskVideoClient/FramePacer.swift"
+  "Sources/SlopDeskVideoClient/VideoWindowPipeline.swift"
+  "Sources/SlopDeskVideoClient/ClientCursorCompositor.swift"
+  "Sources/SlopDeskVideoClient/MetalVideoRenderer.swift"
+  "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift"
+)
+for actuator in "${video_actuators[@]}"; do
+  if [[ ! -e "${actuator}" ]]; then
+    fail "video_actuators names ${actuator}, which does not exist — the file moved and this ledger did not (docs/56 §3)"
+  fi
+  if ! grep -qE '^[[:space:]]*#if.*os\(macOS\)' "${actuator}"; then
+    fail "${actuator} no longer carries the platform arm this carve-out exists for — drop it from video_actuators (docs/56 §3)"
+  fi
+done
+video_stray=""
+while IFS= read -r file; do
+  [[ -z "${file}" ]] && continue
+  printf '%s\n' "${video_actuators[@]}" | grep -qxF "${file}" && continue
+  grep -qE '^[[:space:]]*#if.*os\((macOS|iOS)\)' "${file}" && video_stray+="${file}"$'\n'
+done < <(repo_files 'Sources/SlopDeskVideoClient/*.swift' 'Sources/SlopDeskVideoClient/**/*.swift')
+if [[ -n "${video_stray}" ]]; then
+  printf '%s' "${video_stray}" >&2
+  fail "a platform arm outside the five named actuators — if the file draws, it belongs in a half (docs/56 §3)"
+fi
+
+# RULE D — THE TWO HALVES ACCEPT THE SAME SEAM SINKS.
+#
+# The one real cost of duplicating the pane adapter: two lists of a dozen-odd closures that can drift,
+# and a sink wired on one half and forgotten on the other is invisible until someone uses the feature on
+# the platform that lost it. `RemotePaneContext` (SlopDeskWorkspaceCore) is the single source both halves
+# transcribe; this asserts the transcriptions agree.
+#
+# ⚠️ THE EXTRACTION IS THE STORED SEAM PROPERTIES, not every `on…Ready|Changed` token in the target. A
+# token grep also scoops up the `VideoWindowPipeline` callbacks each half subscribes to, which are a
+# DIFFERENT contract with a different asymmetry — Rule E below owns those. Written the broad way this
+# rule failed on three symbols that were none of its business while saying nothing about the one that
+# was: a gate that conflates two ledgers reports each one's exceptions as the other's noise, and gets
+# relaxed until it means nothing. Narrowing it to the thing its own comment claims to compare is a
+# correctness fix, not a softening — a rule that compares the wrong set is not strict, it is off-topic.
+#
+# ⚠️ THE EXCEPTION IS THE FEATURE. `onSystemKeyInjectorReady` is genuinely absent from the phone half and
+# should be: its argument is a raw `NSEvent.ModifierFlags` bit pattern whose only producer is
+# `SystemKeyCaptureController`'s `CGEventTap`, and neither exists in the iOS SDK —
+# `PaneImmersiveCapture.isSupported` is already false there
+# (`Sources/SlopDeskClientCore/Input/PaneImmersiveCapture.swift`), so publishing a sink would light
+# `RemoteWindowModel.canInjectSystemKeys` for a capture that can never run. It is named here WITH that
+# reason rather than silently tolerated, which is what lets this rule catch the second one. Adding a
+# name to this array must cost a sentence saying why.
+#
+# ⚠️ AND IT FAILS BOTH WAYS. An exception the phone has since GROWN is a line that has stopped excusing
+# anything, so it must be deleted rather than left to read as a standing decision.
+declare -a video_sink_exceptions=(
+  onSystemKeyInjectorReady
+)
+video_sinks() {
+  grep -ohE '^ +(public )?let (on[A-Za-z]+):' "$1"/*.swift 2> /dev/null |
+    grep -oE 'on[A-Za-z]+' | sort -u
+}
+mac_sinks=$(video_sinks Sources/SlopDeskVideoClientMac)
+phone_sinks=$(video_sinks Sources/SlopDeskVideoClientPhone)
+mac_sink_count=$(printf '%s\n' "${mac_sinks}" | grep -c . || true)
+if [[ "${mac_sink_count}" -lt 14 ]]; then
+  fail "only ${mac_sink_count} seam sinks found in SlopDeskVideoClientMac — this gate's extraction has gone stale and it is now checking nothing"
+fi
+for excused in "${video_sink_exceptions[@]}"; do
+  if ! grep -qxF "${excused}" <<< "${mac_sinks}"; then
+    fail "video_sink_exceptions names ${excused}, which the MAC half no longer takes either — the asymmetry is gone, so delete the entry (docs/56 §3)"
+  fi
+  if grep -qxF "${excused}" <<< "${phone_sinks}"; then
+    fail "video_sink_exceptions excuses ${excused}, but the phone half now takes it — delete the entry (docs/56 §3)"
+  fi
+done
+mac_sinks_less=$(grep -vxF -f <(printf '%s\n' "${video_sink_exceptions[@]}") <<< "${mac_sinks}" || true)
+if [[ "${mac_sinks_less}" != "${phone_sinks}" ]]; then
+  diff <(printf '%s\n' "${mac_sinks_less}") <(printf '%s\n' "${phone_sinks}") >&2 || true
+  fail "the two video halves accept different seam sinks — layout diverges, capability does not (docs/56 §3)"
+fi
+
+# RULE E — AND THEY SUBSCRIBE TO THE SAME PIPELINE CALLBACKS, WITH THREE NAMED HOLES.
+#
+# `VideoWindowPipeline` publishes its own `on…` callbacks, distinct from the seam sinks Rule D compares:
+# these are the ENGINE talking back to whichever half mounted it. Three of them are subscribed by the Mac
+# half and not the phone, and unlike Rule D's one exception they are NOT all platform floors:
+#
+#   onRemoteCursorChanged            FLOOR. Drives `applyLocalCursor()` → `NSCursor`. iOS has no hardware
+#   onServerCursorVisibilityChanged  FLOOR. cursor to swap or hide, so there is nothing to subscribe.
+#
+#                                    ⚠️ BOTH STOP BEING FLOORS THE DAY iPad POINTER SUPPORT LANDS, and
+#                                    that work is being scoped now. The app already ships
+#                                    `TARGETED_DEVICE_FAMILY "1,2"` and has ZERO `UIPointerInteraction`
+#                                    or `UIHoverGestureRecognizer` anywhere in the tree — a whole input
+#                                    modality missing on a first-class device, not a layout difference.
+#                                    When it is built, these two are the first thing the phone half must
+#                                    subscribe (it will want the Mac's `applyLocalCursor` /
+#                                    `cursorUpdate` model), and BOTH entries come out of this array. If
+#                                    you are here because you are building that: this is the ledger you
+#                                    were looking for.
+#
+#   onSwipeNavStatusChanged          ⚠️ NOT A FLOOR — A KNOWN BUG. The Mac routes it to the swipe-peel
+#                                    chip; the phone mounts the overlay and drives nothing, so a
+#                                    two-finger swipe navigates the remote app with no chip and no
+#                                    haptic. The planner (`SwipePeelPlanner`) is already shared and
+#                                    Rust-backed — only the DRAWING is missing. Owned by phone parity.
+#
+# Failing both ways matters more here than anywhere else in this section: the day the swipe-peel chip is
+# built, this gate goes RED and stays red until its entry is deleted. That is the entire mechanism by
+# which a fixed bug stops being recorded as an accepted difference. A ledger that only fails on
+# regression is half a ledger.
+declare -a phone_absent_pipeline_sinks=(
+  onRemoteCursorChanged
+  onServerCursorVisibilityChanged
+  onSwipeNavStatusChanged
+)
+video_pipeline_sinks() {
+  grep -ohE 'pipeline\.(on[A-Za-z]+) *=' "$1"/*.swift 2> /dev/null |
+    grep -oE 'on[A-Za-z]+' | sort -u
+}
+mac_pipe=$(video_pipeline_sinks Sources/SlopDeskVideoClientMac)
+phone_pipe=$(video_pipeline_sinks Sources/SlopDeskVideoClientPhone)
+mac_pipe_count=$(printf '%s\n' "${mac_pipe}" | grep -c . || true)
+if [[ "${mac_pipe_count}" -lt 8 ]]; then
+  fail "only ${mac_pipe_count} pipeline callbacks subscribed in SlopDeskVideoClientMac — this gate's extraction has gone stale and it is now checking nothing"
+fi
+for absent in "${phone_absent_pipeline_sinks[@]}"; do
+  if grep -qxF "${absent}" <<< "${phone_pipe}"; then
+    fail "phone_absent_pipeline_sinks names ${absent}, but the phone half now subscribes it — delete the entry; if it was the swipe-peel chip, that bug is fixed (docs/56 §3)"
+  fi
+  if ! grep -qxF "${absent}" <<< "${mac_pipe}"; then
+    fail "phone_absent_pipeline_sinks names ${absent}, which the MAC half no longer subscribes either — this is no longer a divergence, so delete the entry (docs/56 §3)"
+  fi
+done
+mac_pipe_less=$(grep -vxF -f <(printf '%s\n' "${phone_absent_pipeline_sinks[@]}") <<< "${mac_pipe}" || true)
+if [[ "${mac_pipe_less}" != "${phone_pipe}" ]]; then
+  diff <(printf '%s\n' "${mac_pipe_less}") <(printf '%s\n' "${phone_pipe}") >&2 || true
+  fail "the two video halves subscribe different pipeline callbacks, and the difference is not one of the three named holes (docs/56 §3)"
+fi
+
+printf 'check-supervisor: the video surface is two halves, and the engine under them holds no views.\n'
+
 # ── …AND A TEST TARGET IS THE SAME EDGE WEARING A `Tests/` PREFIX (docs/56 §3.5 step 5) ─────────
 # The loop above globs `Sources/` and nothing else, so `Tests/` was unopposed — and the fold is
 # blocked by a Mac test target naming the draining floor exactly as hard as by a Mac source file
@@ -7372,9 +7952,16 @@ done
 # the iOS bundle that can run them, so that is the directory this edge now watches. Leaving either
 # stale path in place would have been the exact failure F5 exists to catch: a gate that stays green
 # because the thing it greps for can no longer be spelled.
+#
+# ⚠️ AND THE VIDEO HALVES RIDE THE SAME EDGE. The carve gave each platform its own video view target,
+# so a Mac suite naming `SlopDeskVideoClientPhone` is the same violation as one naming
+# `SlopDeskPhoneUI` — the two arms of the file this replaced were reachable from everywhere precisely
+# because they lived in a target both sides linked.
 declare -a ui_test_edges=(
   "Tests/SlopDeskMacUITests:SlopDeskPhoneUI"
   "Apps/ClientApp-iOS/Tests:SlopDeskMacUI"
+  "Tests/SlopDeskMacUITests:SlopDeskVideoClientPhone"
+  "Apps/ClientApp-iOS/Tests:SlopDeskVideoClientMac"
 )
 # ⚠️ THE ALLOWLIST IS GONE AND THIS IS A FLAT BAN NOW (increment 62). It carried two snapshot rigs —
 # `MacChromeSnapshotRender` and `MacRailStatusRollupRender` — under a comment claiming they mounted
@@ -7562,18 +8149,24 @@ if [[ "${seam_registrars}" != "${GHOSTTY_SEAM}" ]]; then
 fi
 # THE VIDEO PAIR COMES FROM ONE BUILDER. Its two registrations DO live in the app target (the video
 # module never imports `SlopDeskWorkspaceCore`, so the app is the only place both halves can be
-# named), and they are fed by one `-> VideoWindowView` function on purpose: the pane threads twelve
+# named), and they are fed by one `-> MacVideoWindowView` function on purpose: the pane threads twelve
 # injector callbacks, and two closures built side by side is how eleven of them end up on one path.
-# `AnyView(VideoWindowView(` is the shape of that re-inlining, so it is the thing banned.
+# `AnyView(MacVideoWindowView(` is the shape of that re-inlining, so it is the thing banned.
+#
+# ⚠️ THE TYPE IS `MacVideoWindowView` SINCE THE VIDEO CARVE (docs/56 §3). It was `VideoWindowView` while
+# one two-armed file served both platforms; the Mac half took the `Mac` prefix and the phone kept the
+# bare name, per the house convention. This gate is spelled against the MAC app main and so it names the
+# MAC type — a needle left reading `-> VideoWindowView` would still match nothing here and go red for
+# the rename rather than for the re-inlining it exists to catch.
 MAC_APP_MAIN=Apps/ClientApp-macOS/AppMain.swift
-for half in '-> VideoWindowView' 'VideoWindowFactory.shared =' 'VideoWindowFactory.nativeShared ='; do
+for half in '-> MacVideoWindowView' 'VideoWindowFactory.shared =' 'VideoWindowFactory.nativeShared ='; do
   # `-e`, because the first needle STARTS WITH `-` and grep reads it as a flag bundle otherwise —
   # which fails open in the worst way here: the gate goes red while the code is right.
   if ! grep -qF -e "${half}" "${MAC_APP_MAIN}"; then
     fail "${MAC_APP_MAIN} stopped spelling \`${half}\` — the video seam's two mounts must be one builder's value (docs/56 stage F, P4)"
   fi
 done
-video_reinlined=$(spells 'AnyView\(VideoWindowView\(' "${MAC_APP_MAIN}" 2> /dev/null || true)
+video_reinlined=$(spells 'AnyView\(MacVideoWindowView\(' "${MAC_APP_MAIN}" 2> /dev/null || true)
 if [[ -n "${video_reinlined}" ]]; then
   printf '%s\n' "${video_reinlined}" >&2
   fail "the video pane is built inside the \`shared\` closure again — the AppKit mount then carries whatever callbacks that copy happens to thread (docs/56 stage F, P4)"
@@ -7811,13 +8404,17 @@ done
 # — which is what a shared switch here is too. `Slate.paneStatusPillFill` / `Slate.Native.paneStatusPillFill`
 # now hold the ONE switch (`SlateDesign.swift`); each renderer only CALLS it, so a case dropped from
 # either resolution is a Swift compile error at the switch itself, not a bash regex someone has to run.
-PILL_INK_SRC=Sources/SlopDeskClientCore/Pane/PaneStatusPillPresentation.swift
+PILL_INK_SRC=Sources/SlopDeskWorkspaceModel/Reading/PaneStatusPillPresentation.swift
 if [[ ! -e "${PILL_INK_SRC}" ]]; then
   fail "${PILL_INK_SRC} is gone — PaneStatusPillInk is the name Slate's one switch reads (docs/56 §3.5)"
 fi
 # `|| true`: a grep miss exits 1, and under `set -e` that would kill the run instead of reporting —
 # the empty result is caught explicitly below, which is the reportable failure.
-pill_inks="$(sed -n '/^package enum PaneStatusPillInk/,/^}/p' "${PILL_INK_SRC}" |
+# The name is bounded by `[:[:space:]{]` for the reason the `named_ink_tables` loop below states and
+# this arm did not carry: an OPEN `/^package enum PaneStatusPillInk/` also matches
+# `PaneStatusPillInkRung`, so an enum renamed out from under the gate keeps parsing and the gate keeps
+# passing against a table nothing declares. Found by break-test — renaming the enum did not fire it.
+pill_inks="$(sed -n '/^package enum PaneStatusPillInk[:[:space:]{]/,/^}/p' "${PILL_INK_SRC}" |
   grep -oE '^[[:space:]]*case [a-zA-Z]+' | awk '{print $2}' || true)"
 if [[ -z "${pill_inks}" ]]; then
   fail "no ink cases parsed out of ${PILL_INK_SRC} — this gate would pass vacuously (docs/56 §3.5)"
@@ -7905,7 +8502,7 @@ declare -a named_ink_tables=(
   "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift:DropZoneInk:Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift:Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift"
   "Sources/SlopDeskClientCore/Pane/GuiPaneReadout.swift:GuiUploadTint:Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift:Sources/SlopDeskMacUI/Pane/MacGuiPaneOverlays.swift"
   "Sources/SlopDeskClientCore/Pane/FindBarPresentation.swift:FindTogglePillAppearance:Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift:Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift"
-  "Sources/SlopDeskClientCore/Pane/PaneStatusPillPresentation.swift:PaneStatusPillFill:Sources/SlopDeskPhoneUI/Pane/PaneStatusPills.swift:Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift"
+  "Sources/SlopDeskWorkspaceModel/Reading/PaneStatusPillPresentation.swift:PaneStatusPillFill:Sources/SlopDeskPhoneUI/Pane/PaneStatusPills.swift:Sources/SlopDeskMacUI/Pane/MacPaneStatusPills.swift"
   "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift:DropZoneLabelInk:Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift:Sources/SlopDeskMacUI/Pane/MacPaneDropOverlay.swift"
 )
 for table in "${named_ink_tables[@]}"; do
@@ -8518,7 +9115,16 @@ if ! grep -qE 'blobs\.lazy\.map' "${SWIFT_VIDEO_FEC}"; then
 fi
 printf 'check-supervisor: the video path lends what it holds — no re-encode, no re-ask, no second array.\n'
 
-SWIFT_VIDEO_WINDOW_VIEW=Sources/SlopDeskVideoClient/VideoWindowView.swift
+# THE MAC HALF, since the video carve (docs/56 §3). This was
+# `Sources/SlopDeskVideoClient/VideoWindowView.swift` — one file whose middle 2,514 lines were an
+# `#if os(macOS)` / `#elseif os(iOS)` two-armed conditional — and the two phase encodings below are
+# `NSEvent.Phase`, so they went to the AppKit arm and nowhere else. The path is the Mac half's backing
+# view now. The "every path this file names still exists" sweep near the end catches this variable
+# going stale again — it derives its list from `${!SWIFT_@}`, so this constant is covered by being
+# named `SWIFT_*` and needs no ledger entry of its own. That sweep is exactly what caught the carve:
+# the file was deleted, the two `grep -q` pairs below silently found nothing in a haystack that was
+# not there, and only the derived sweep said why.
+SWIFT_VIDEO_WINDOW_VIEW=Sources/SlopDeskVideoClientMac/MacMetalLayerBackedView.swift
 RUST_CLIENT_GESTURES=rust/slopdesk-video/src/client_gestures.rs
 RUST_SCROLL_REPROJECT=rust/slopdesk-video/src/scroll_reproject.rs
 
@@ -8590,12 +9196,28 @@ fi
 # 178 and the presence check FIRED with it — two rules on one edit, which is correct here because
 # either half alone is the whole regression. Restored, both silent and `diff -q` identical.
 #
-# NOT covered, and deliberately: `Sources/SlopDeskVideoProtocol/Settings/EnvConfig.swift`'s generic
-# `guard let v = Int(s), v >= lo, v <= hi else { return def }` is the same reject rule for roughly a
-# dozen knobs across several targets, most of them outside the quantiser question. It is a real
-# second implementation of `clamped_int_from_env` and it should go the same way — but flipping it is
-# a tree-wide BEHAVIOUR change with a per-knob argument to make each time, not a port, so it is its
-# own change rather than a rider on this one. Recorded here so the next reader finds it named.
+# SETTLED 2026-08-22, and both halves of the paragraph that used to stand here were wrong.
+#
+# It said `EnvConfig.int`/`.double` were "the same reject rule for roughly a dozen knobs across
+# several targets", and that flipping them to the clamp was therefore a tree-wide behaviour change
+# too big to ride along. The count was not a dozen. It was ZERO: the generic pair had no production
+# caller anywhere in `Sources/`, only two tests of its own, so there was nothing to flip and no
+# behaviour to change. They are deleted.
+#
+# The reject rule itself is real, though, and it lives in the two files the paragraph never named:
+# `LiveCongestionController` and `FPSGovernor` each carried a PRIVATE copy of the same parse. Those
+# are not quantiser knobs and they must NOT be clamped — a quantiser ordinal has a meaningful
+# nearest legal value, which is the whole argument for section 6's flip, and a malformed rate or
+# fraction does not. `SLOPDESK_ABR_LOSS=900` clamped is a controller that treats every frame as
+# catastrophic loss forever; rejected, it is the default and a knob that did nothing.
+#
+# So the tree now carries BOTH readings deliberately, each with exactly one implementation:
+#   * CLAMP  — `slopdesk_qp_clamped_int`, `qp_control.rs`, for the [1, 51] quantiser ordinals.
+#   * REJECT — `slopdesk_abr_validated_int` / `_double`, `congestion.rs`, for rates and fractions.
+# The `_double` form also rejects the non-finite, which no clamp can express: NaN compares false
+# against both bounds, so a clamp would pass it straight through into the controller's arithmetic.
+#
+# Block C below ratchets the second of those. Section 6 continues to ratchet the first.
 if ! grep -q 'slopdesk_qp_clamped_int(' "${SWIFT_VIDEO_ENCODER}"; then
   fail "${SWIFT_VIDEO_ENCODER} parses its quantiser knobs itself again — the parse and the clamp are the door's"
 fi
@@ -8627,6 +9249,191 @@ if ! grep -qE 'handleControl\(datagram: message\.encode\(\)\)' "${SWIFT_VIDEO_SE
   fail "${SWIFT_VIDEO_SESSION_LOGIC}'s message-shaped handleControl stopped delegating — a test-only face that decides"
 fi
 printf 'check-supervisor: the scroll phases, the quantiser knobs and the control face each decide in one place.\n'
+
+# ── The four defaults the SETTINGS SHEET shows, against the ones the encoder runs ────────────────
+# `VideoPreferences` names what each surfaced field resolves to while it is `nil`, under a doc
+# comment that forbids literals there in as many words — and four of them were literals anyway:
+# `26`, `40`, `1`, `5`, against `qp_control.rs`'s sharp/coarse and `adaptive_fec.rs`'s default m
+# and k. Every one of those already had a door.
+#
+# The failure mode is quiet and ASYMMETRIC, which is why it is worth a gate rather than a comment.
+# A retune moves the encoder's operating point; Settings goes on showing the old number, which is
+# merely wrong. But "reset to default" WRITES the shown number into the env overlay as an explicit
+# override — so the gesture whose entire purpose is to get out of the daemon's way is the one that
+# pins the daemon to a value nobody ever chose, and it stays pinned across restarts.
+#
+# Index 11 is the multi-loss default m and is deliberately not index 7, which is `M_MIN`. They are
+# both 1 today and that coincidence is exactly how this one regrew: a reader who sees the floor
+# answer the same number stops looking for the door that answers the question actually being asked.
+#
+# BREAK-TESTED 2026-08-22 by pasting `public static let fecMDefault = 1` back (`cp` to /tmp,
+# restore from the copy):
+#   check-supervisor: FAIL — Sources/SlopDeskVideoProtocol/Settings/VideoPreferences.swift spells a QP or FEC default as a literal again — those four numbers are the encoder's, and "reset to default" writes whatever this file shows
+# Deleting the `slopdesk_adaptive_fec_constant` calls fires the presence rule instead. Shipped tree
+# silent on both; `diff -q` identical after restore.
+SWIFT_VIDEO_PREFERENCES=Sources/SlopDeskVideoProtocol/Settings/VideoPreferences.swift
+for door in slopdesk_qp_config_default slopdesk_adaptive_fec_constant; do
+  if ! spells "${door}\\(" "${SWIFT_VIDEO_PREFERENCES}" > /dev/null; then
+    fail "${SWIFT_VIDEO_PREFERENCES} no longer asks ${door} — the settings sheet's defaults are the encoder's"
+  fi
+done
+# The four fields by NAME, each banned from being assigned a bare number. Named individually rather
+# than matched as "any `= <digit>` in this file" because the file legitimately holds other numeric
+# defaults that are its own; only these four mirror a door.
+if hit=$(spells '(qpSharpDefault|qpCoarseDefault|fecMDefault|fecKDefault)[^=]*= *[0-9]' \
+  "${SWIFT_VIDEO_PREFERENCES}"); then
+  fail "${hit} spells a QP or FEC default as a literal again — those four numbers are the encoder's, and \"reset to default\" writes whatever this file shows"
+fi
+
+# ── The REJECT reading of an env knob: one rule, and it is Rust's ────────────────────────────────
+# Section 6 above settled the CLAMP reading for the quantiser ordinals. This is the other reading,
+# for the rates and fractions, and it had three implementations: a generic pair in `EnvConfig` with
+# no callers at all, and a private copy inside each of these two files. See the note in section 6
+# for why the two readings do not converge.
+#
+# `FPSGovernor`'s copy carried a second bug on top of the duplication, and it is the one that would
+# have been reported as "the setting does nothing": it read `ProcessInfo.processInfo.environment`
+# DIRECTLY, bypassing `EnvConfig`'s overlay, so every governor tunable set through the settings
+# sheet was written, persisted, shown as active — and never read. `LiveCongestionController`'s copy
+# went through `EnvConfig` and was therefore only duplicated, not deaf. Both now resolve the same
+# way and parse through the same door.
+#
+# The ban is on the PARSE-THEN-COMPARE shape all three copies had, `Int(s), v >= lo`, rather than on
+# a door's absence — a file can keep calling the door and grow a second private parse beside it,
+# which is how the third copy appeared in the first place.
+#
+# BREAK-TESTED 2026-08-22, each rule separately (`cp` to /tmp, break, run, restore from the copy):
+#   * dropping the door call from FPSGovernor.swift —
+#     check-supervisor: FAIL — Sources/SlopDeskVideoHost/FPSGovernor.swift no longer asks slopdesk_abr_validated_int — the reject rule is congestion.rs's
+#   * restoring the raw `ProcessInfo.processInfo.environment[key]` read —
+#     check-supervisor: FAIL — Sources/SlopDeskVideoHost/FPSGovernor.swift reads the process environment directly again — that bypasses the settings overlay, which is how a governor tunable set in Settings came to do nothing
+#   * pasting `guard let v = Int(s), v >= lo, v <= hi else { return def }` back into EnvConfig.swift —
+#     check-supervisor: FAIL — Sources/SlopDeskVideoProtocol/Settings/EnvConfig.swift parses a numeric env knob by hand again — the reject rule is slopdesk_abr_validated_int/_double and the clamp rule is slopdesk_qp_clamped_int
+# Shipped tree silent on all three.
+SWIFT_ABR_CONTROLLER=Sources/SlopDeskVideoHost/LiveCongestionController.swift
+SWIFT_FPS_GOVERNOR=Sources/SlopDeskVideoHost/FPSGovernor.swift
+SWIFT_ENV_CONFIG=Sources/SlopDeskVideoProtocol/Settings/EnvConfig.swift
+for numeric_env_caller in "${SWIFT_ABR_CONTROLLER}" "${SWIFT_FPS_GOVERNOR}"; do
+  for door in slopdesk_abr_validated_int slopdesk_abr_validated_double; do
+    if ! spells "${door}\\(" "${numeric_env_caller}" > /dev/null; then
+      fail "${numeric_env_caller} no longer asks ${door} — the reject rule is congestion.rs's"
+    fi
+  done
+done
+# The overlay, not the process environment. `EnvConfig.string` is the only legal reader here: it is
+# real env FIRST, then the settings overlay, then the compile-time default, and a knob that skips it
+# can be set but never takes effect.
+if hit=$(spells 'ProcessInfo\.processInfo\.environment' "${SWIFT_FPS_GOVERNOR}"); then
+  fail "${hit} reads the process environment directly again — that bypasses the settings overlay, which is how a governor tunable set in Settings came to do nothing"
+fi
+# The parse itself, banned in all three files that have held a copy of it.
+if hit=$(spells '(Int|Double)\([a-zA-Z_]+\), *[a-zA-Z_]+ *(>=|<=|>|<) ' \
+  "${SWIFT_ABR_CONTROLLER}" "${SWIFT_FPS_GOVERNOR}" "${SWIFT_ENV_CONFIG}"); then
+  fail "${hit} parses a numeric env knob by hand again — the reject rule is slopdesk_abr_validated_int/_double and the clamp rule is slopdesk_qp_clamped_int"
+fi
+# And the generic pair stays deleted, tree-wide. It is spelled as a CALL rather than as a
+# declaration so that re-adding it anywhere — a helper, an extension, a test fake — is caught by its
+# first user rather than by its author.
+#
+# With a VACUITY FLOOR, because `spells` returns 1 on an empty file list and an empty corpus is
+# indistinguishable from a clean one at the call site. This corpus is the whole Swift tree, so if it
+# ever reads as fewer than 200 files the glob has gone stale and this gate is passing on nothing.
+env_config_corpus=$(repo_files 'Sources/**/*.swift' 'Tests/**/*.swift')
+if (($(printf '%s\n' "${env_config_corpus}" | grep -c .) < 200)); then
+  fail "the tree-wide Swift corpus read as almost nothing — the EnvConfig ban below is passing vacuously"
+fi
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+# shellcheck disable=SC2086 # the corpus is a FILE LIST on purpose
+if hit=$(spells 'EnvConfig\.(int|double)\(' ${env_config_corpus}); then
+  fail "${hit} calls EnvConfig.int/.double again — that generic reject pair had zero callers and is deleted; ask a door"
+fi
+
+# ── The s16le → Float32 convert, which was written out twice and compared never ──────────────────
+# `AudioStreamDecoder.decodePCM` and `slopdesk_video::audio_wire::decode_pcm_s16le` were the same
+# loop byte for byte, down to the same validate-then-DROP rule for a ragged tail — and the Rust half
+# had no caller outside its own tests. That is `docs/55` §8's exact shape, and the reason it needed
+# a gate rather than a note is that this pair CANNOT be caught disagreeing: a full-scale sample is
+# `-1.0` either way, and a drifted normalisation is just audio that is slightly quieter than it
+# should be. Nobody files that.
+#
+# The door writes in place into the caller's buffer and answers a SAMPLE count. The Vec-returning
+# Rust form was deleted rather than kept beside it: at one call per 10 ms frame the allocation, not
+# the crossing, was the entire cost.
+#
+# The ban is on the hand-assembled sample — the little-endian pair, the sign reinterpretation, and
+# the full-scale divisor — because those three are what a re-implementation is made of, and any one
+# of them appearing in this file means the loop has grown back.
+#
+# BREAK-TESTED 2026-08-22 (`cp` to /tmp, restore from the copy): pasting
+# `Int16(bitPattern: UInt16(lo) | UInt16(hi) << 8)` back fires
+#   check-supervisor: FAIL — Sources/SlopDeskVideoClient/AudioStreamDecoder.swift widens a PCM sample by hand again — the convert and its ragged-tail drop are audio_wire.rs's
+# and deleting the door call fires the presence rule. Shipped tree silent on both.
+SWIFT_AUDIO_DECODER=Sources/SlopDeskVideoClient/AudioStreamDecoder.swift
+if ! spells 'slopdesk_audio_decode_pcm_s16le\(' "${SWIFT_AUDIO_DECODER}" > /dev/null; then
+  fail "${SWIFT_AUDIO_DECODER} stopped asking the door to widen its samples — that loop lives in audio_wire.rs"
+fi
+if hit=$(spells 'bitPattern:|<< 8|32768|32767' "${SWIFT_AUDIO_DECODER}"); then
+  fail "${hit} widens a PCM sample by hand again — the convert and its ragged-tail drop are audio_wire.rs's"
+fi
+
+# ── The two length prefixes, and the sentinel that a signed `Int` swallowed ──────────────────────
+# `ScreenClient.exchange` shifted four untrusted bytes together by hand, checked them against a
+# 64 MiB ceiling re-spelled one file over, and then allocated that much. It is the highest-risk
+# hand-written parse either lane had: the one field on this wire a peer fully controls, deciding how
+# much memory this process commits. `rust/slopdesk-screenwire` owned the ENCODER for it the whole
+# time. It asks now.
+#
+# The second half of this gate is the trap that made the first half worth doing properly.
+# `SupervisorFrame.read` already asked its door — `slopdesk_supervisor_body_length` — and then
+# guarded the refusal with `count != .max`, which NEVER FIRED. Swift's ClangImporter maps `size_t`
+# onto the SIGNED `Int`, so the door's all-ones refusal arrives as `-1` while `.max` infers
+# `Int.max`; the two never met, and an over-cap header fell through to `readExactly(count: -1)`.
+# Measured with a scratch C target on 2026-08-22 rather than reasoned about: a function returning
+# `(size_t)-1` types as `Int`, prints `-1`, and `== .max` is `false`. The guard is `>= 0` now.
+#
+# So the screen door refuses with `0` instead, deliberately, and that asymmetry is the design: a
+# reply of zero bytes is not a thing on this wire, `0` is unrepresentable as a real length, and `> 0`
+# is a check that needs no knowledge of how `size_t` crosses. The supervisor lane cannot take the
+# same refusal — an empty body IS legal there — which is why it keeps the sentinel and gets a
+# ratchet on the guard instead.
+#
+# BREAK-TESTED 2026-08-22, each separately (`cp` to /tmp, restore from the copy):
+#   * restoring the hand-shifted prefix in ScreenClient.swift —
+#     check-supervisor: FAIL — Sources/SlopDeskScreen/ScreenClient.swift shifts a length prefix together by hand again — an untrusted length decides an allocation, and screenwire owns that layout
+#   * putting `guard count != .max` back in SupervisorFrame.swift —
+#     check-supervisor: FAIL — Sources/SlopDeskSupervisor/SupervisorFrame.swift compares a door's size_t answer against .max again — size_t reaches Swift as the SIGNED Int, so an all-ones refusal arrives as -1 and that guard never fires
+#   * returning `usize::MAX` from the screen door —
+#     check-supervisor: FAIL — rust/slopdesk-ffi/src/screen.rs refuses with usize::MAX again — that sentinel reaches Swift as -1; this door refuses with 0
+# Shipped tree silent on all three.
+SWIFT_SCREEN_CLIENT=Sources/SlopDeskScreen/ScreenClient.swift
+SWIFT_SUPERVISOR_FRAME=Sources/SlopDeskSupervisor/SupervisorFrame.swift
+RUST_SCREEN_FFI=rust/slopdesk-ffi/src/screen.rs
+if ! spells 'slopdesk_screen_body_length\(' "${SWIFT_SCREEN_CLIENT}" > /dev/null; then
+  fail "${SWIFT_SCREEN_CLIENT} stopped asking the door for the reply length — that prefix is untrusted and screenwire owns its layout"
+fi
+# The hand-rolled decode: a byte-shift ladder, or `bigEndian`/`UInt32` reassembly off the header.
+if hit=$(spells '<< *24|<< *16|bigEndian|UInt32\(header' "${SWIFT_SCREEN_CLIENT}"); then
+  fail "${hit} shifts a length prefix together by hand again — an untrusted length decides an allocation, and screenwire owns that layout"
+fi
+# The sentinel comparison, in both files that read a `size_t` answer off a door. `>= 0` is the
+# spelling that works; `!= .max` is the spelling that compiles, reads correctly, and does nothing.
+if hit=$(spells '(!=|==) *\.max' "${SWIFT_SUPERVISOR_FRAME}" "${SWIFT_SCREEN_CLIENT}"); then
+  fail "${hit} compares a door's size_t answer against .max again — size_t reaches Swift as the SIGNED Int, so an all-ones refusal arrives as -1 and that guard never fires"
+fi
+# Also through `spells`: the paragraph above this guard, in the Swift, spells out the wrong version
+# and why it was wrong. A `grep` here would be reading the explanation, not the code.
+if ! spells 'count >= 0' "${SWIFT_SUPERVISOR_FRAME}" > /dev/null; then
+  fail "${SWIFT_SUPERVISOR_FRAME} stopped guarding its body length with >= 0 — the door's refusal arrives as a negative Int, not as .max"
+fi
+# And the Rust end of the screen lane keeps refusing with a value that survives the crossing.
+# Through `spells` rather than `grep`, because the doc comment on this very door EXPLAINS why it
+# does not use that sentinel, in those words. A gate that could not tell the explanation from the
+# thing explained would have to be deleted the first time anyone read it.
+if hit=$(spells 'usize::MAX' "${RUST_SCREEN_FFI}"); then
+  fail "${hit} refuses with usize::MAX again — that sentinel reaches Swift as -1; this door refuses with 0"
+fi
+
+printf 'check-supervisor: the settings defaults, the two env readings, the PCM convert and both length prefixes each decide in one place.\n'
 
 # ── ClientCore / WorkspaceModel: the projections that must stay ASKED and stay MEMOIZED ─────────
 #
@@ -8747,7 +9554,7 @@ printf 'check-supervisor: the palette catalog is indexed once, not filtered per 
 #    what stops the two splice sites' `registered` guard ORDER from mattering.
 #    BREAK-TESTED twice: restoring the `out.last` accumulator fires the shape ban, and deleting the
 #    `unicodeScalars.contains` line fires the pre-scan arm.
-SWIFT_NERD=Sources/SlopDeskClientCore/Support/NerdSymbolFont.swift
+SWIFT_NERD=Sources/SlopDeskFontFaces/NerdSymbolFont.swift
 if ! grep -q 'guard text.unicodeScalars.contains(where: isPrivateUse)' "${SWIFT_NERD}"; then
   fail "${SWIFT_NERD}: runs(of:) lost its scalar pre-scan — every ordinary title pays a per-Character walk and a String per run again"
 fi
@@ -10060,7 +10867,7 @@ fi
 # stepper's door answers `found: false` — a settings field rendered with no range at all.
 #
 # CATCHES: exactly that. The enum's variant count against the length `ALL` declares.
-STEPPER_RS=rust/slopdesk-workspace/src/settings_catalog.rs
+STEPPER_RS=rust/slopdesk-settings/src/settings_catalog.rs
 stepper_variants=$(awk '
   /^pub enum Stepper \{/ { inside = 1; next }
   inside && /^\}/ { exit }
@@ -10326,6 +11133,520 @@ fi
 printf 'check-supervisor: slopdesk-probe agrees too — %s subcommands both ways, empty is still an answer, opaque cap %s >= %s, no Swift porcelain, git or infocmp.\n' \
   "$(printf '%s\n' "${swift_probe_verbs}" | grep -c .)" "$((probe_cap_rust))" "$((probe_cap_swift))"
 
+# ── THE ANDROID KEYCODE TABLE ONLY EVER SHRINKS ────────────────────────────────────────────────
+#
+# `FunctionalKey::android_keycode` in `rust/slopdesk-devicepanel/src/panel_key.rs` is the one table
+# that says what Android number a functional key is. `AndroidKeycode.swift` used to spell thirteen
+# of those numbers a second time, and every one of them was reached by nothing: the panel's live
+# path gets its keycode from the door (`AndroidKeycode(bigEndian(...))`), and the only named
+# constants anything presses are `.home` and `.appSwitch`, which the Rust table does not carry.
+#
+# A dead duplicate of a live number is worse than a live one — it reads as authoritative and it can
+# never be caught disagreeing, because no input ever reaches both copies (docs/55 §8). So the shape
+# is pinned rather than the names: this counts how many literals `AndroidKeycode.swift` spells that
+# `panel_key.rs` already answers, and fails if that count goes UP.
+#
+# The count is now ZERO and the mark is set there, so the ratchet has reached its floor: the `-gt`
+# arm is the whole gate, and it fires the moment one comes back. The `-lt` arm below is unreachable
+# at zero by construction — a count cannot be negative — and it is kept rather than deleted because
+# the mark is the thing that moves, and the arm is what makes lowering it mandatory rather than
+# optional if this ever has to be raised for a real reason and walked back down again.
+#
+# Both sides are DERIVED. A list of banned numbers maintained here would drift from the Rust table
+# the first time a key was added, which is the same defect one register up.
+ANDROID_KEYCODE_SWIFT=Sources/SlopDeskDevicePanels/Android/AndroidKeycode.swift
+ANDROID_KEYCODE_RUST=rust/slopdesk-devicepanel/src/panel_key.rs
+# The high-water mark, and the floor. Lower it whenever one goes; never raise it.
+ANDROID_KEYCODE_DUPES_MAX=0
+
+if [[ ! -f "${ANDROID_KEYCODE_SWIFT}" ]] || [[ ! -f "${ANDROID_KEYCODE_RUST}" ]]; then
+  fail "the Android keycode ratchet lost a path it reads — a gate that reads nothing agrees with nothing"
+else
+  # `|| true` on both: a `grep` that matches nothing exits 1, and under `set -e` that kills the run
+  # before the emptiness check below ever executes — so the guard that exists to catch a broken
+  # extraction could never see one. The `|| true` is what LETS the vacuity check do its job; it does
+  # not weaken it.
+  android_keycode_rust_answers=$(
+    grep -oE 'Some\([0-9]+\)' "${ANDROID_KEYCODE_RUST}" | grep -oE '[0-9]+' | sort -u || true
+  )
+  android_keycode_swift_literals=$(
+    grep -oE 'Self\([0-9]+\)' "${ANDROID_KEYCODE_SWIFT}" | grep -oE '[0-9]+' | sort -u || true
+  )
+  # A gate that would pass vacuously is not a gate. At a mark of zero an EMPTY intersection is the
+  # expected answer, so an extraction that broke (a refactor to `Self(rawValue:)`, a match arm
+  # rewritten) would read exactly like success. Both sides are therefore required to parse to
+  # something before the comparison is believed.
+  if [[ -z "${android_keycode_rust_answers}" ]]; then
+    fail "no keycodes parsed out of ${ANDROID_KEYCODE_RUST} — this gate would pass vacuously"
+  elif [[ -z "${android_keycode_swift_literals}" ]]; then
+    fail "no keycodes parsed out of ${ANDROID_KEYCODE_SWIFT} — this gate would pass vacuously"
+  else
+    android_keycode_dupes=$(
+      comm -12 <(printf '%s\n' "${android_keycode_rust_answers}") \
+        <(printf '%s\n' "${android_keycode_swift_literals}")
+    )
+    android_keycode_dupe_count=$(printf '%s' "${android_keycode_dupes}" | grep -c '[0-9]' || true)
+    if [[ "${android_keycode_dupe_count}" -gt "${ANDROID_KEYCODE_DUPES_MAX}" ]]; then
+      fail "$(
+        printf '%s spells %s keycode(s) panel_key.rs already answers (%s), was %s — the table only shrinks (docs/55 §8)' \
+          "${ANDROID_KEYCODE_SWIFT}" "${android_keycode_dupe_count}" \
+          "$(printf '%s' "${android_keycode_dupes}" | tr '\n' ' ')" "${ANDROID_KEYCODE_DUPES_MAX}"
+      )"
+    elif [[ "${android_keycode_dupe_count}" -lt "${ANDROID_KEYCODE_DUPES_MAX}" ]]; then
+      fail "$(
+        printf 'the Android keycode duplicates are down to %s from %s — lower ANDROID_KEYCODE_DUPES_MAX to %s so the ground gained is held' \
+          "${android_keycode_dupe_count}" "${ANDROID_KEYCODE_DUPES_MAX}" "${android_keycode_dupe_count}"
+      )"
+    fi
+  fi
+fi
+printf 'check-supervisor: the Android keycode table spells no number panel_key.rs has not already lost.\n'
+
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#  SPLICE POINT: anywhere AFTER `repo_files` / `spells` are defined (scripts/check-supervisor.sh
+#  line 3527). These three read the two UI targets and the floor between them; nothing above 3527
+#  is needed and nothing below depends on them.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+# ── The two shells do not write the same code twice (docs/56 §3) ────────────────────────────────
+# The gates already here catch a file in the WRONG TARGET — frameworkless, or platform-gated. They
+# cannot catch the thing that actually happened nine times over: a helper, a copy string or a
+# constant that is in the RIGHT target on both sides and spelled twice. `ensureEndpoint` sat in both
+# panel files with a static dedupe key each, pointed at ONE host-global settings file. The Open
+# Quickly picker assembled the same five corpora and snapshotted the same eighteen lines of focused
+# pane in both halves. Every label on the Connect form was typed twice — including three port
+# prompts that were one slot off the real defaults on BOTH sides, which is precisely how a duplicate
+# hides a bug: the two copies agreed, so nothing disagreed with them.
+#
+# So these three ask a different question from every rule above. Not "is this import missing" — a
+# duplicated helper imports fine — but "does this body / this sentence / this number appear on both
+# sides of a split whose whole purpose is that it does not".
+
+# RULE 1 · NO CROSS-TARGET CLONE. Eight consecutive substantive lines that appear, normalised, in
+# both `SlopDeskMacUI` and `SlopDeskPhoneUI`. Normalising strips `//` comments, indentation and
+# lines that are only punctuation, so a reformat or a re-worded comment cannot hide a clone and a
+# lone `}` cannot manufacture one. `import`, `@attribute` and `#if` lines are dropped: two view
+# files legitimately import the same six modules, and that is a coincidence of the split rather than
+# a duplicated decision.
+#
+# EIGHT, not four, and the reason is in the ALLOWLIST's absence rather than its contents. At six the
+# rule fired on thin forwarders — three one-line bodies that each call the SAME shared floor type,
+# which is the FIX rendering as a violation. At eight only real blocks survive.
+#
+# ⚠️ THE ALLOWLIST IS A DEBT LIST, NOT A CARVE-OUT. Each pair below is a clone that is still in the
+# tree, named so this rule can be green about everything else; a line leaves this list by being
+# deduplicated, never by being tolerated. Two of them (`CodePanelSurfaces`, `SlopDeskPhoneApp`) have
+# their floor types written already — `CodeServerEnsure` and `ClientNotificationSinks` — and are
+# waiting only on the phone-side edit.
+#
+# BREAK-TEST (2026-08-22): copied `Sources/SlopDeskClientCore/Settings/KeybindingsEditorReading.swift`'s
+# `conflictLines(_:)` body back into BOTH `MacKeybindingsEditor.swift` and `KeybindingsEditorView.swift`
+# as private methods — the exact shape this change removed. Rule FIRED, naming both sites. Restored
+# both files by `cp` from /tmp; rule green. Also verified the inverse: with the tree as it stands the
+# rule prints only the allowlisted pairs, i.e. it is not passing by finding nothing.
+ui_clone_allow=(
+  # GUI/video pane leaf — the largest remaining pair, and the next one worth a floor file.
+  "Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift"
+  "Sources/SlopDeskMacUI/Pane/MacTerminalFindBar.swift Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift"
+  "Sources/SlopDeskMacUI/Pane/MacTerminalLeafView.swift Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift"
+  "Sources/SlopDeskMacUI/Pane/MacPromptJumpFlashOverlay.swift Sources/SlopDeskPhoneUI/Pane/PromptJumpFlashOverlay.swift"
+  # Waiting on `CodeServerEnsure` being called from the phone half.
+  "Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift"
+  "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift Sources/SlopDeskPhoneUI/WorkspaceRootView.swift"
+  # Waiting on `ClientNotificationSinks` being called from the phone half.
+  "Sources/SlopDeskMacUI/SlopDeskMacApp.swift Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift"
+)
+
+ui_clone_shingles() {
+  local tag="$1"
+  shift
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    awk -v f="${file}" -v tag="${tag}" -v n=8 '
+      { line = $0
+        sub(/\/\/.*/, "", line)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+        if (line ~ /^([[:punct:]]|[[:space:]])*$/) next
+        if (line ~ /^(import|@|#(if|else|elseif|endif))/) next
+        k++; buf[k] = line; ln[k] = NR }
+      END {
+        for (i = 1; i + n - 1 <= k; i++) {
+          s = buf[i]
+          for (j = 1; j < n; j++) s = s " ~ " buf[i + j]
+          printf "%s\t%s\t%s:%d\n", s, tag, f, ln[i]
+        } }' "${file}"
+  done < <(repo_files "$@")
+}
+
+ui_mac_files=$(repo_files 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift' | wc -l)
+ui_phone_files=$(repo_files 'Sources/SlopDeskPhoneUI/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift' | wc -l)
+if ((ui_mac_files < 50 || ui_phone_files < 50)); then
+  fail "only ${ui_mac_files}/${ui_phone_files} files globbed under the two UI targets — this gate would pass by reading nothing"
+fi
+
+ui_clones=$(
+  {
+    ui_clone_shingles mac 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift'
+    ui_clone_shingles phone 'Sources/SlopDeskPhoneUI/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift'
+  } | sort -t$'\t' -k1,1 -k2,2 | awk -F'\t' '
+      { if ($1 != prev) { prev = $1; seen = $2; site = $3; next }
+        if ($2 != seen) { print site "\t" $3; prev = "" } }' | sort -u
+)
+ui_clone_hits=""
+while IFS=$'\t' read -r mac_site phone_site; do
+  [[ -z "${mac_site}" ]] && continue
+  pair="${mac_site%%:*} ${phone_site%%:*}"
+  allowed=""
+  for known in "${ui_clone_allow[@]}"; do
+    [[ "${pair}" == "${known}" ]] && allowed=1 && break
+  done
+  [[ -n "${allowed}" ]] || ui_clone_hits+="${mac_site}  ==  ${phone_site}"$'\n'
+done <<< "${ui_clones}"
+if [[ -n "${ui_clone_hits}" ]]; then
+  printf '%s' "${ui_clone_hits}" >&2
+  fail "eight identical lines in both UI targets — one implementation, never two (docs/56 §3, CLAUDE.md)"
+fi
+
+# RULE 2 · A NAMED SENTENCE HAS ONE SPELLER. Every literal below was typed once per shell and now
+# lives in the shared logic target; a UI target that spells one raw again has re-forked it. Named
+# individually rather than counted, because the failure message can then say WHERE the sentence
+# lives, and because the ban is what makes the floor symbol the only way to reach the words.
+#
+# This is not a style rule. A user-facing string spelled twice is a translation bug that has already
+# happened — the day one half is reworded the two platforms ship different copy for the same control
+# and nothing notices. The keybindings editor alone had ten, including a destructive confirmation
+# whose title, body and both buttons were duplicated.
+#
+# BREAK-TEST (2026-08-22): reverted `MacConnectSheet.swift`'s title to the literal `"Connect to Host"`
+# and `KeybindingsEditorView.swift`'s dialog title to `"Reset all key bindings?"`. Rule FIRED on both,
+# each naming its floor symbol. Restored by `cp` from /tmp; rule green. Confirmed non-vacuous by
+# checking that each pattern below matches inside the floor file that owns it.
+ui_owned_copy=(
+  "Connect to Host|ConnectForm.title"
+  "host.local or 10.0.0.7|ConnectForm.hostPrompt"
+  "Video ports|ConnectForm.videoPortsLabel"
+  "Media port|ConnectForm.mediaPortLabel"
+  "Cursor port|ConnectForm.cursorPortLabel"
+  "Keyboard Shortcuts|KeybindingsEditorCopy.title"
+  "Click a shortcut to record a replacement|KeybindingsEditorCopy.subtitle"
+  "Search key bindings|KeybindingsEditorCopy.searchPrompt"
+  "Reset to Default|KeybindingsEditorCopy.resetAction"
+  "Reset every customized shortcut to its default|KeybindingsEditorCopy.resetHelp"
+  "Reset all key bindings\?|KeybindingsEditorCopy.resetConfirmTitle"
+  "This clears every customized shortcut|KeybindingsEditorCopy.resetConfirmBody"
+  "Shortcut conflicts|KeybindingsEditorCopy.conflictsTitle"
+  "This shortcut conflicts with another command|KeybindingsEditorCopy.conflictHelp"
+  "Dismiss notification|ToastPresentation.dismissLabel"
+  "Jump to the pane this notification came from|ToastPresentation.jumpHint"
+  "Search across all tabs…|GlobalSearchPresentation.queryPrompt"
+  "Search for commands…|PalettePresentation.queryPrompt"
+)
+for entry in "${ui_owned_copy[@]}"; do
+  phrase="${entry%%|*}"
+  owner="${entry##*|}"
+  # shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+  leak=$(spells "\"${phrase}" \
+    $(repo_files 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift' \
+      'Sources/SlopDeskPhoneUI/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift') 2> /dev/null || true)
+  if [[ -n "${leak}" ]]; then
+    printf '%s\n' "${leak}" >&2
+    fail "a UI target respells copy that ${owner} owns — a sentence typed twice is a translation bug (docs/56 §3)"
+  fi
+done
+
+# RULE 3 · THE SHARED-VOCABULARY CEILING, so the rule above does not only catch what it already
+# knows. A COUNT rather than a presence: how many distinct capitalised phrase literals are spelled
+# in BOTH UI targets. It may go DOWN freely and never up, which makes every new duplicate a failure
+# without anyone having to predict which sentence it will be.
+#
+# Capitalised and ≥4 characters is the user-facing filter: an SF Symbol name, a defaults key and a
+# JSON field are lowercase or dotted, and a bare `"OK"` is the platform's word rather than ours.
+#
+# ⚠️ RE-PIN AFTER A DELIBERATE MERGE, never raise to make a change fit. The remaining 33 are the GUI
+# pane control block (ten of them, the next floor file worth writing), the panel strip's three
+# reload tooltips, the `SLOPDESK_AUTOCONNECT_HOST` gate name spelled in three places (docs/46 says
+# one accessor), and the bare system verbs — Done / Cancel / Close / Back / Next / Settings — which
+# are deliberately NOT merged: those are the platform's words for the platform's buttons, and one
+# constant behind them would buy an indirection and no agreement.
+#
+# BREAK-TEST (2026-08-22), both directions.
+#   UP: replaced `ConnectForm.videoPortsLabel` with the literal `"Advanced Transport Options"` in
+#   BOTH `MacConnectSheet.swift` and `ConnectHostView.swift` — a phrase rule 2 has never heard of,
+#   so only the ceiling can see it. Count read 34, rule FIRED naming both numbers and printing the
+#   whole shared set. Restored by `cp` from /tmp; count read 33, green.
+#   DOWN: renamed ONE side of an existing pair (`"FPS cap"` → `"Frames per second cap"` in
+#   `MacGuiPaneControls.swift`). Count fell to 32 and the rule stayed green — it bites upward only,
+#   which is what makes it a ratchet rather than a pin. Restored by `cp`.
+ui_shared_copy_ceiling=33
+ui_shared_literals() {
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    sed -E 's,//.*,,' "${file}" | grep -oE '"[A-Z][^"\\]{3,}"' || true
+  done < <(repo_files "$@") | sort -u
+}
+ui_shared_copy=$(comm -12 \
+  <(ui_shared_literals 'Sources/SlopDeskMacUI/*.swift' 'Sources/SlopDeskMacUI/**/*.swift') \
+  <(ui_shared_literals 'Sources/SlopDeskPhoneUI/*.swift' 'Sources/SlopDeskPhoneUI/**/*.swift'))
+ui_shared_copy_count=$(printf '%s\n' "${ui_shared_copy}" | grep -c . || true)
+if ((ui_shared_copy_count > ui_shared_copy_ceiling)); then
+  printf '%s\n' "${ui_shared_copy}" >&2
+  fail "${ui_shared_copy_count} phrases are spelled in BOTH UI targets, ceiling ${ui_shared_copy_ceiling} — a new one belongs in SlopDeskClientCore (docs/56 §3)"
+fi
+
+printf 'check-supervisor: the two shells share a floor, not a clipboard — no cross-target clone, %d shared phrases (ceiling %d).\n' \
+  "${ui_shared_copy_count}" "${ui_shared_copy_ceiling}"
+
+# ── N. THE PHONE'S CAPABILITIES, which are not allowed to be the Mac's minus a few ───────────────
+#
+# The user's rule for this app is one sentence: the iOS app differs from the macOS app in LAYOUT and
+# in nothing else. Every rule in this block pins one capability that was Mac-only until it was
+# closed, and each of them was Mac-only in the same way — not by a decision, but because the phone's
+# renderer was written later and something did not get carried across. That is precisely the failure
+# a ratchet catches and a review does not: nobody deletes a capability, it just fails to be added
+# back the next time a file is rewritten.
+#
+# Every rule below was BREAK-TESTED against the real tree — the file was edited back to the banned
+# shape, the rule was run, and the verdict is recorded in the rule's own comment.
+
+mapfile -t phone_panel_files < <(
+  repo_files 'Sources/SlopDeskPhoneUI/Panel/*.swift' 'Sources/SlopDeskPhoneUI/Panel/*/*.swift'
+)
+
+# N.1 — THE PHONE HAS A ROOT KEY RUNG.
+#
+# The phone's whole chord dispatcher used to be the focused TERMINAL pane's responder, so ⌘⇧P, ⌘T,
+# ⌘D, ⌘1–9, ⌃⇥ and ⌘⇧O were dead over a desktop/GUI pane, dead with no pane focused, and dead under
+# the panel's cover — every one of them live on the Mac, whose `NSEvent` monitor is application-wide.
+# The rung that fixed it can only be at the END of the responder chain, and on this platform the app
+# DELEGATE is the only object that is there for every window: a `UIView` mounted by a SwiftUI
+# `.background` is a SIBLING of the content, absent from the chain a focused terminal walks. So the
+# adaptor is the rule. Losing it is silent — no build error, no test failure, just chords that stop
+# working outside a terminal, which is exactly the state this replaced.
+#
+# BREAK-TEST: `UIApplicationDelegateAdaptor(PhoneRootKeyResponder.self)` → `(SomeOtherDelegate.self)`
+# in SlopDeskPhoneApp.swift ⇒ FAIL "the phone's root key rung is not mounted". Restored; PASS.
+if [[ -f Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift ]] &&
+  ! grep -qE 'UIApplicationDelegateAdaptor\(PhoneRootKeyResponder\.self\)' \
+    Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift; then
+  fail "the phone's root key rung is not mounted — SlopDeskPhoneApp must carry @UIApplicationDelegateAdaptor(PhoneRootKeyResponder.self), or every workspace chord dies outside a terminal pane (docs/56 §3)"
+fi
+
+# N.2 — THE ROOT RUNG ASKS THE SHARED POLICY, and does not re-spell the decision in the view target.
+#
+# Which rung a press lands on (workspace / panel-escape / yield) is a DECISION, and the split's rule
+# is that a decision lives below the UI targets. `PhoneRootKeyPolicy` is that decision; the responder
+# is allowed to know UIKit and nothing else.
+#
+# BREAK-TEST: replaced the `PhoneRootKeyPolicy.rung(...)` call with an inline `if panelPresented …`
+# chain ⇒ FAIL "the phone's root key rung re-spells its own precedence". Restored; PASS.
+if [[ -f Sources/SlopDeskPhoneUI/Pane/PhoneRootKeyResponder.swift ]] &&
+  ! grep -qE 'PhoneRootKeyPolicy\.rung' Sources/SlopDeskPhoneUI/Pane/PhoneRootKeyResponder.swift; then
+  fail "the phone's root key rung re-spells its own precedence — it must ask PhoneRootKeyPolicy.rung, which is the shared decision (docs/56 §3)"
+fi
+
+# N.3 — ⌘C / ⌘X / ⌘V / ⌘A REACH THE PHONE'S TERMINAL.
+#
+# The binding table deliberately does not claim C/X/V/A ("handled by the terminal's own copy
+# responder"), which is true on a Mac — AppKit's standard editing selectors land on the terminal view
+# because it IS the window's first responder. On the phone the pane's first responder is a zero-sized
+# sibling of the renderer, so the four chords resolved to nothing at all and a ⌘ combination encodes
+# to no bytes: they died in silence. `keyCommands` is what puts them back, and it must stay in the
+# pane's responder rather than becoming a second implementation of copy and paste somewhere.
+#
+# BREAK-TEST: deleted the `override var keyCommands` block from TerminalInputHost.swift ⇒ FAIL "the
+# phone's terminal has no editing chords". Restored from /tmp; PASS.
+if [[ -f Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift ]] &&
+  ! grep -qE 'override var keyCommands' Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift; then
+  fail "the phone's terminal has no editing chords — TerminalInputHost must declare keyCommands for ⌘C/⌘X/⌘V/⌘A, which no other rung can carry (the table leaves C/X/V/A to the terminal)"
+fi
+
+# N.4 — A LITERAL-BYTE BINDING FIRES ON BOTH SHELLS.
+#
+# `keybind = cmd+shift+h=text:hello` is ONE config file read by both clients. It sent bytes on the
+# Mac (`WorkspaceKeyDispatcher`) and did nothing whatever on the phone, which is one config producing
+# two behaviours — the worst shape a shared setting can take, because the user has no way to tell
+# that the phone even read the line. The phone answers it on the PANE's rung, where the keyboard
+# actually is.
+#
+# BREAK-TEST: removed the `WorkspaceBindingRegistry.textBinding(for: chord)` arm from
+# `swallowsAsWorkspaceChord` ⇒ FAIL "a text:/csi:/esc: binding is Mac-only again". Restored; PASS.
+if [[ -f Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift ]] &&
+  ! grep -qE 'WorkspaceBindingRegistry\.textBinding' Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift; then
+  fail "a text:/csi:/esc: binding is Mac-only again — the phone's pane responder must consult WorkspaceBindingRegistry.textBinding, or one shared config file produces two behaviours"
+fi
+
+# N.5 — AN `unbind:` TARGET LOSES ITS ACTION ON EVERY RUNG.
+#
+# The Mac's dispatcher has always honoured `unbind:`; the shared interceptor did not, so an unbound
+# chord still fired its default action wherever the interceptor is the resolver — both of the phone's
+# rungs, and the Mac's own terminal surface whenever a press reached it rather than the monitor.
+# Asked inside `makeKeyInterceptor`, which is the one resolve all of them share.
+#
+# BREAK-TEST: deleted the `!WorkspaceBindingRegistry.isUnbound(chord)` clause from the factory's
+# `resolveChord` ⇒ FAIL "the shared key interceptor ignores unbind:". Restored; PASS.
+if [[ -f Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Keybinding.swift ]] &&
+  ! grep -qE 'WorkspaceBindingRegistry\.isUnbound' \
+    Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Keybinding.swift; then
+  fail "the shared key interceptor ignores unbind: — makeKeyInterceptor must drop an unbound chord's action, or the same config file unbinds a chord on one shell only"
+fi
+
+# N.6 — THE CODE PANEL DOES NOT RE-ENSURE A PROJECT IT HAS ALREADY SETTLED.
+#
+# The Mac's panel is faded when collapsed, so its poll task is never cancelled and never re-entered.
+# The phone's is a `.fullScreenCover`, so every dismissal cancels it and every re-open re-enters —
+# and an unguarded `poll` opens by writing `.starting`, which flashed the spinner over a workbench
+# that was already loaded and re-ensured a project the host had long since brought up. The guard is
+# what makes the two shells one behaviour; `requestReload()` unsettling is its other half, without
+# which the reload button would cancel a finished loop and start one that returns immediately.
+#
+# BREAK-TEST: deleted the `if case let .ready(settledRoot, _) = phase` guard ⇒ FAIL "the code panel
+# re-ensures a settled project". Separately deleted `phase = .starting` from `requestReload()` ⇒ FAIL
+# "the code panel's reload cannot unsettle". Both restored; PASS.
+if [[ -f Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarModel.swift ]]; then
+  if ! grep -qE 'case let \.ready\(settledRoot, _\) = phase' \
+    Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarModel.swift; then
+    fail "the code panel re-ensures a settled project — CodeSidebarModel.poll must return early on a root it has already settled, or the phone's cover flashes its spinner on every re-open"
+  fi
+  if ! grep -qE 'func requestReload\(\) \{' Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarModel.swift ||
+    ! sed -n '/func requestReload() {/,/^    }/p' \
+      Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarModel.swift | grep -qE 'phase = \.starting'; then
+    fail "the code panel's reload cannot unsettle — requestReload() must clear the settled phase, or the reload button restarts a loop that returns on its first line"
+  fi
+fi
+
+# N.7 — THE PHONE CAN OPEN THE PANEL ON A NAMED SURFACE.
+#
+# The Mac's collapsed panel leaves a RAIL: four named plates, any of which opens the panel ON that
+# surface in one click. The phone had a bare toggle that reopened on whatever was last selected, so
+# reaching Emulators from closed was two taps with nothing on screen naming the second. The phone's
+# answer is a menu over the same four readings — same words, same order, one gesture — and it has to
+# be over `PanelTabs.all` rather than a list written out here, which is the whole reason that reading
+# exists.
+#
+# BREAK-TEST: replaced the `ForEach(PanelTabs.all…)` menu with the old bare `Button { toggle() }` ⇒
+# FAIL "the phone cannot open the panel on a named surface". Restored; PASS.
+if [[ -f Sources/SlopDeskPhoneUI/WorkspaceRootView.swift ]] &&
+  ! grep -qE 'ForEach\(PanelTabs\.all' Sources/SlopDeskPhoneUI/WorkspaceRootView.swift; then
+  fail "the phone cannot open the panel on a named surface — the toolbar's panel control must offer PanelTabs.all, which is the Mac rail's capability on a device with no rail"
+fi
+
+# N.8 — A PANEL TAB IS CALLED BY ITS NAME, not read out as a sentence.
+#
+# The two shells had drifted to opposite answers: the Mac's plate set its accessibility label from
+# `tab.label` and the phone's from `tab.help`, so a screen-reader user on the phone heard a whole
+# explanatory sentence every time focus moved across four tabs. The label/hint split is cut once in
+# `PanelTabReading`; a renderer reaching for `help` as a LABEL is the drift coming back.
+#
+# BREAK-TEST: `.accessibilityLabel(tab.accessibilityLabel)` → `.accessibilityLabel(tab.help)` in
+# PhonePanelSheet.swift ⇒ FAIL "a panel tab reads its help text as its name". Restored; PASS.
+if leak=$(spells 'accessibilityLabel\(tab\.help\)' "${phone_panel_files[@]}"); then
+  fail "a panel tab reads its help text as its name (${leak}) — the label is the WORD (PanelTabReading.accessibilityLabel); the sentence is the HINT"
+fi
+
+# N.9 — ONE CLEAR KEY FOR EVERY FILTER FIELD IN THE DEVICE PANELS.
+#
+# `SlateSearchField` hands the plate — and with it the trailing clear affordance — to its caller, and
+# four callers took that four different distances: both device LISTS drew the key and neither CONSOLE
+# drew anything, so a typed filter over a log could only be undone by backspacing it. Cut once into
+# `DevicePanelChrome.clearKey`. The ban is on drawing it inline again, which is how the four copies
+# happened the first time.
+#
+# The one place allowed to spell it is filtered OUT OF THE CORPUS rather than compared against
+# `spells`'s answer. `spells` returns the FIRST file that matches and stops, so an exemption written
+# as `if [[ "$leak" != "…/DevicePanelChrome.swift" ]]` passes for every corpus that contains the
+# exempt file — it is the first hit, and the real leak behind it is never looked at. That is not a
+# hypothetical: the first draft of this rule was written that way and its break-test PASSED the
+# banned shape (verified: inline key pasted back into SimulatorDeviceList.swift ⇒ FAILURES=0).
+#
+# BREAK-TEST: pasted the old inline `Button { query = "" } label: { Image(systemSymbol:
+# .xmarkCircleFill) … }` back into SimulatorDeviceList.swift ⇒ FAIL "a device panel spells its own
+# clear key (…/SimulatorDeviceList.swift)". Restored from /tmp; PASS.
+clear_key_corpus=()
+for file in "${phone_panel_files[@]}"; do
+  [[ "${file}" == */DevicePanelChrome.swift ]] && continue
+  clear_key_corpus+=("${file}")
+done
+if leak=$(spells 'Image\(systemSymbol: \.xmarkCircleFill\)' "${clear_key_corpus[@]}"); then
+  fail "a device panel spells its own clear key (${leak}) — DevicePanelChrome.clearKey is the one affordance, and four copies of it is how two of them ended up missing"
+fi
+# …and both consoles must actually draw one. A list that clears in a tap beside a console that does
+# not is the inconsistency this closed, and it is invisible until someone types in the console.
+for console in Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift \
+  Sources/SlopDeskPhoneUI/Panel/Android/AndroidConsoleView.swift; do
+  if [[ -f "${console}" ]] && ! grep -qE 'DevicePanelChrome\.clearKey' "${console}"; then
+    fail "${console} has no way to clear its filter — its own device list clears in a tap, and the two sit one scroll apart"
+  fi
+done
+
+# N.10 — A MIRRORED DEVICE CAN BE TYPED INTO WITHOUT A HARDWARE KEYBOARD.
+#
+# Both mirrors have always typed from a `UIKey`, which is the whole story on a Mac because a Mac has
+# a keyboard. The phone this ships on most often has none, and on that phone the mirrored device
+# could be tapped, swiped, rotated and screenshotted while remaining impossible to put one character
+# into. The soft-keyboard host is the capability; the stage's plate is how it is reached. Both halves
+# are pinned, because either one alone is dead code.
+#
+# BREAK-TEST: deleted the `DeviceSoftKeyboard.shared.register(self)` call from
+# AndroidScreenView.swift ⇒ FAIL "the Android mirror cannot take typed text". Separately deleted the
+# `keyboard` plate from SimulatorStageView.swift ⇒ FAIL "…has no way to raise the keyboard". Both
+# restored from /tmp; PASS.
+for mirror in Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift \
+  Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift; do
+  if [[ -f "${mirror}" ]] && ! grep -qE 'DeviceSoftKeyboard\.shared\.register' "${mirror}"; then
+    fail "${mirror} cannot take typed text — a mirror must register with DeviceSoftKeyboard, or a phone with no keys cannot type into the device at all"
+  fi
+done
+for stage in Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorStageView.swift \
+  Sources/SlopDeskPhoneUI/Panel/Android/AndroidStageView.swift; do
+  if [[ -f "${stage}" ]] && ! grep -qE 'DeviceSoftKeyboard\.shared\.toggle' "${stage}"; then
+    fail "${stage} has no way to raise the keyboard — the soft-keyboard host is unreachable without the stage's plate"
+  fi
+done
+
+# N.11 — A MIRROR FORWARDS THE PRESS IT DOES NOT WANT.
+#
+# Both mirrors take first responder on TOUCH, so that a hardware keyboard follows the last device
+# tapped. That makes them the first rung for every subsequent press — and both used to DROP the ones
+# they could not use (`case .none: break`; a ⌘-chord with no device mapping), which meant every
+# workspace chord died the moment anyone tapped the picture. The shared rule already calls those
+# presses "a chord the client keeps for itself"; keeping one means walking it up the chain, not
+# eating it.
+#
+# BREAK-TEST: `super.pressesBegan(presses, with: event)` → `break` in the `.none` arm of
+# AndroidScreenView.swift ⇒ FAIL "the Android mirror eats the chords it cannot use". Restored; PASS.
+# (Counted, not merely present: each mirror has one forward in its early guard and one in the arm
+# that used to drop the press, so a rule that only asked for the string would have passed the bug.)
+for mirror in Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift \
+  Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift; do
+  if [[ -f "${mirror}" ]] &&
+    (($(grep -cE 'super\.pressesBegan\(presses, with: event\)' "${mirror}") < 2)); then
+    fail "${mirror} eats the chords it cannot use — an unmapped press must reach super, or tapping the mirror kills every workspace chord until focus moves"
+  fi
+done
+
+# N.12 — A REGISTERED CHORD REACHES SOMETHING.
+#
+# The general shape, and it bit this very change: `keyCommands` declared ⌘C/⌘X/⌘V/⌘A, the phone
+# swallowed all four, and the sink they were handed to — `TerminalViewModel.onRequestMenuItem` — was
+# bound by nobody, so the four chords went from "fall through to the system" to "consumed and
+# dropped". A registered chord that reaches nothing is worse than an absent one, because the absent
+# one at least lets the default behaviour happen. Two halves, both pinned: the PRODUCER must exist,
+# and the registration must be gated on it so the runtime cannot get ahead of the wiring either.
+#
+# BREAK-TEST: deleted the `model.onRequestMenuItem = { … }` line from GhosttyTerminalView.swift's iOS
+# `attach(model:)` ⇒ FAIL "the phone's editing chords are handed to nobody". Separately changed the
+# guard back to `live?.terminalModel != nil` ⇒ FAIL "…registers its editing chords unconditionally".
+# Both restored from /tmp; PASS.
+if [[ -f ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift ]] &&
+  ! grep -qE 'onRequestMenuItem = \{' \
+    ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift; then
+  fail "the phone's editing chords are handed to nobody — the renderer must bind TerminalViewModel.onRequestMenuItem when it attaches, or ⌘C/⌘X/⌘V/⌘A are swallowed and dropped"
+fi
+if [[ -f Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift ]] &&
+  ! grep -qE 'guard live\?\.terminalModel\?\.onRequestMenuItem != nil' \
+    Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift; then
+  fail "TerminalInputHost registers its editing chords unconditionally — a UIKeyCommand swallows its chord, so it must be offered only while its sink is bound"
+fi
 if [[ "${1:-}" != "--tests" ]]; then
   exit 0
 fi

@@ -1,5 +1,13 @@
 # Input
 
+> ⚠️ **THE COMPOSER AND PROMPT QUEUE SECTIONS ARE HISTORY.** Both were deleted on 2026-07-03 in
+> `92472b0a` (`docs/DECISIONS.md` §"Agent input surfaces REMOVED"); `⌘⇧E` and `⌘⇧M` are unbound and
+> there is no `PromptQueueStore`. Skip the "Composer" and "Prompt Queue" sections below and their
+> keycap tables.
+>
+> The rest of the page is live: native macOS editing chords, IME, the Kitty keyboard protocol, and
+> Secure Keyboard Entry (macOS only by API — `SecureKeyboardEntryController.swift:16-19`).
+
 ## Summary
 
 SlopDesk treats a shell prompt like a native macOS text field, so muscle memory from other Mac apps carries over. This page covers keyboard handling: native macOS editing chords, IME, the Kitty keyboard protocol, Secure Keyboard Entry (automatic and manual), the Composer multi-line editor, and the Prompt Queue batch runner. Everything is GUI-configured; every shortcut below is a factory default, re-bindable in Settings → Key Bindings.

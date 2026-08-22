@@ -1,5 +1,13 @@
 # Composer
 
+> ⛔ **REMOVED — this page is history, not the product.** The Composer (⌘⇧E) was built and then deleted
+> end-to-end on 2026-07-03 in `92472b0a`, together with the Prompt Queue, Send to Chat, the three "Fork
+> in Split/Tab" actions and the Claude bottom bar. Reason of record (`docs/DECISIONS.md` §"Agent input
+> surfaces REMOVED"): they duplicated typing straight into the terminal, which is what the user actually
+> does. `⌘⇧E` is unbound. The floating-panel mode went separately in `231f1398` (floating panes).
+> Do not implement this page. What was KEPT: `InputBarModel`, `InputBoxModel`, the dedup ring
+> (now `rust/slopdesk-terminal/src/dedup.rs`).
+
 ## Summary
 
 The primary input affordance for agent (code-agent) sessions in slopdesk: a multi-line text editor floating at the bottom of the agent pane, with cursor operations, undo/redo, rich paste, pinning (stay visible across tab switches), a floating Spotlight-style detached panel mode, and prompt-queue routing. Also available in ordinary terminal panes as a GUI-quality input overlay. Core principle: Return alone never sends — accidental sends are impossible by design.

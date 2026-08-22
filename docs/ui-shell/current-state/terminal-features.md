@@ -1,22 +1,47 @@
 # Terminal Features — Current Implementation State
 
 > Area: Terminal features via libghostty surface
-> Date: 2026-06-25 (E8 interaction-parity rows added 2026-06-26)
-> Auditor: Ariadne (Sonnet 4.6); E8 housekeeping per [ui-shell/plans/E8.md](../plans/E8.md)
+> Originally surveyed 2026-06-25 (E8 interaction-parity rows added 2026-06-26). Re-verified against
+> the tree 2026-08-22: every row re-checked at a named `file:line`, and every row whose verdict
+> changed says what changed it. Paths are repo-relative.
 
 ## Overview
 
-SlopDesk uses **libghostty** (vendored fork, SHA `21c717340b62349d67124446c2447bf38796540b`, pinned
-Ghostty v1.3.1) as its sole terminal renderer — no SwiftTerm fallback. The seam is the
-`TerminalSurface` protocol (`Sources/SlopDeskTerminal/TerminalSurface.swift`); live conformer
-`GhosttySurface` (`ThirdParty/ghostty/integration/GhosttySurface/GhosttySurface.swift`) compiles only
-inside the GUI app targets (macOS + iOS). Optional capability extension `TerminalSurfaceActions`
-exposes selection, clipboard actions, and scrollback text to the workspace layer without importing
-CGhostty.
+SlopDesk renders the terminal with **libghostty** — no SwiftTerm fallback. The pin is no longer a
+fork SHA: since the 2026-07-11 SLIM delta the tree carries **upstream `ghostty-org/ghostty` @ `v1.3.1`
+plus one consolidated patch**, `ThirdParty/ghostty/slopdesk-libghostty-on-v1.3.1.patch` (17 files,
++1155/−341), built by `ThirdParty/ghostty/build-libghostty.sh` against Zig 0.15.2. The old
+`21c717340b…` daiimus SHA survives only as historical provenance for the External-IO backend
+(`ThirdParty/ghostty/README.md:92-96`). tmux control-mode and the iOS sync-search C API were dropped
+from the delta in the same pass.
 
-libghostty is a full VT engine (it powers upstream Ghostty), so most text-rendering below is handled
-transparently. This audit covers what the **embedder** wired up, what is delegated to libghostty, and
-what is genuinely absent.
+The seam is the `TerminalSurface` protocol (`Sources/SlopDeskTerminal/TerminalSurface.swift:21`);
+the live conformer `GhosttySurface`
+(`ThirdParty/ghostty/integration/GhosttySurface/GhosttySurface.swift`) compiles only inside the GUI
+app targets (macOS + iOS). **The embedder Swift lives under `ThirdParty/ghostty/`, not `Sources/`** —
+a `Sources/`-only search reports the whole live paste / clipboard / selection cluster as deleted.
+
+The optional capability extension `TerminalSurfaceActions` (`TerminalSurface.swift:68`) still carries
+selection + clipboard + scrollback text, and **two further optional protocols joined it**:
+`TerminalViewportSnapshotting` (`:184` — `viewportTextRows()`, `cellMetrics()`) and
+`TerminalSelectionControl` (`:252` — `viewportInfo()`, `setSelection(anchor:head:rectangle:)`,
+`clearSelection()`, `readScreenRow(_:)`, `lineRange(_:)`). The second is the Swift face of the fork
+ABI extension that **lifted the copy-mode ceiling on 2026-07-14** (`docs/DECISIONS.md` ~line 815).
+
+Two further structural shifts since the original survey:
+
+- **Config emission moved to Rust.** `TerminalConfigBuilder` is now a marshalling shim
+  (`Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift`, 241 lines, all record-packing);
+  every libghostty `key = value` line is spelled once, in `rust/slopdesk-terminal/src/config.rs`
+  (`docs/DECISIONS.md` "The terminal config text is emitted once, in Rust", 2026-08-15). Rows below
+  cite the Rust line, because that is where the key lives.
+- **Host-side OSC sniffing moved to superd.** `Sources/SlopDeskHost/HostOutputSniffer.swift` and
+  `Sources/SlopDeskHost/CommandBlockSegmenter.swift` are **deleted**; the one pass over the outbound
+  PTY stream is `rust/slopdesk-superd/src/sniffer.rs` (+ `commandblocks.rs`, `autoprogress.rs`).
+  superd owns `read` on every PTY master, so there is exactly one reader.
+
+libghostty is a full VT engine, so most text rendering below is handled transparently. This audit
+covers what the **embedder** wired up, what is delegated to libghostty, and what is genuinely absent.
 
 ---
 
@@ -24,146 +49,193 @@ what is genuinely absent.
 
 | Feature | Status | Evidence file(s)/symbol(s) |
 |---|---|---|
-| **Selection** (mouse drag) | done | `GhosttySurface.sendMouseButton/sendMousePos` forward AppKit events; libghostty owns selection. `mouseCaptured` gates drag-vs-select. `GhosttySurface.swift:564-611` |
-| **Selection clipboard** (copy-on-select, SELECTION pasteboard) | done | `slopdeskPasteboard(for:)` maps `GHOSTTY_CLIPBOARD_SELECTION` to a private pasteboard so drag-select does NOT clobber the system clipboard. `GhosttyTerminalView.swift:92-97`, `write_clipboard_cb:293-325` |
-| **Copy** (Cmd-C / context menu) | done | `performBindingAction("copy_to_clipboard")` via `TerminalSurfaceActions`; `TerminalContextMenu.Item.copy` in `GhosttyLayerBackedView.menu(for:)`. `GhosttySurface.swift:662-675`, `TerminalContextMenu.swift:15-38` |
-| **Paste** (Cmd-V / context menu) | done | `performBindingAction("paste_from_clipboard")` + bracketed-paste (DECSET 2004) applied by libghostty. `GhosttyTerminalView.swift:257-275`, `TerminalContextMenu.swift:18` |
-| **Paste as keystrokes** (context menu) | done | `TerminalContextMenu.Item.pasteAsKeystrokes` → `surface.text(_:)`, bypassing bracketed-paste. `TerminalContextMenu.swift:18`, `GhosttySurface.swift:543-551` |
-| **OSC 52 clipboard read/write** | done | `read_clipboard_cb` / `confirm_read_clipboard_cb` / `write_clipboard_cb` wired in `GhosttyApp.init`. **E8 replaces the blanket auto-approve.** READ honours live `clipboard-read` access (Allow/Ask/Deny, default **Ask**) via `slopdeskConfirmClipboardRead` → `PasteProtectionSheet`; every completion uses `confirmed:true` (deny = empty reply) to dodge read-gate recursion. WRITE now honours `clipboard-write`: `write_clipboard_cb` reads the libghostty `confirm` flag (set for `clipboard-write = ask`) and routes through pure `ClipboardWritePolicy` → `PasteProtectionSheet(kind: .clipboardWrite)`, writing only on approve (was: ignored `confirm`, wrote unconditionally, so "Ask" behaved like "Allow"). `GhosttyTerminalView.swift` (`write_clipboard_cb`, `slopdeskWriteClipboard`), `ClipboardWritePolicy.swift` |
-| **Select All** | done | `performBindingAction("select_all")` in context menu. `TerminalContextMenu.swift:19` |
-| **Scroll (wheel / trackpad)** | done | `GhosttySurface.sendMouseScroll(deltaX:deltaY:mods:)` → `ghostty_surface_mouse_scroll`; momentum bits packed per upstream. `GhosttySurface.swift:596-604` |
-| **Scroll to top / bottom** | done | `performBindingAction("scroll_to_top")` / `scroll_to_bottom"` via copy-mode + context menu. `TerminalViewModel.swift:330-333` |
-| **Scrollback buffer** | done | `scrollback-limit` via `TerminalConfigBuilder`; default 10,000 lines (×256 B estimate); live-reload via `ghostty_app_update_config`. `TerminalPreferences.swift:39`, `TerminalConfigBuilder.swift:24-31` |
-| **Cursor shape / blink** | done | `cursor-style` (block/bar/underline) + `cursor-style-blink` emitted by `TerminalConfigBuilder`, applied live. `TerminalPreferences.swift:28-37`, `TerminalConfigBuilder.swift:73-74` |
-| **Mouse modes (X10/1000/1002/1003/SGR)** | done | libghostty owns mouse-reporting mode; `mouseCaptured` gates embedder drag. `GhosttySurface.swift:564-570` |
-| **Mouse pressure / force-click** | done | `sendMousePressure(stage:pressure:)` → `ghostty_surface_mouse_pressure`. `GhosttySurface.swift:606-611` |
-| **Kitty keyboard protocol** | done | Keys via `ghostty_surface_key` (libghostty encodes kitty/DECCKM). Ctrl+C0 fast-path in `GhosttyLayerBackedView.keyDown` sends raw byte to preserve Ctrl-C/Z/D for non-kitty-aware remote programs. `GhosttyTerminalView.swift:832-853` |
-| **IME / CJK input (macOS)** | done | `ghostty_surface_text` for composed text; keys via `ghostty_surface_key`. `GhosttySurface.swift:538-551` |
-| **IME / CJK input (iOS)** | done | Hidden `UITextView` proxy funnels committed text; physical Ctrl/Alt bypass via `ghostty_surface_key`. `Sources/SlopDeskWorkspaceCore/iOS/InputRouting.swift:3-61`, `GhosttyTerminalView.swift:1361-1563` |
-| **Unicode / text styles** (bold, italic, dim, etc.) | done | libghostty renders all standard SGR attributes; no embedder involvement. |
-| **True colour / 256-colour** | done | `COLORTERM=truecolor` in `HostEnvironment.curated()`; libghostty renders all depths. `HostEnvironment.swift:73` |
+| **Selection** (mouse drag) | done | `GhosttySurface.sendMouseButton` / `sendMousePos` forward AppKit events; libghostty owns selection; `mouseCaptured` gates drag-vs-select. `GhosttySurface.swift:657,666,680` |
+| **Selection clipboard** (copy-on-select, SELECTION pasteboard) | done | `slopdeskPasteboard(for:)` maps `GHOSTTY_CLIPBOARD_SELECTION` to a private pasteboard so drag-select never clobbers the system clipboard. `GhosttyTerminalView.swift:96-97`, `write_clipboard_cb:570` |
+| **Copy** (⌘C / context menu) | done | `performBindingAction("copy_to_clipboard")`; `TerminalContextMenu.Item.copy`. `GhosttyTerminalView.swift:2320,2549`, `Sources/SlopDeskWorkspaceCore/Terminal/TerminalContextMenu.swift:14` |
+| **Cut** (⌘X / context menu) | done — NEW since the survey | Pure `CutSelectionPolicy` decides `.none` / `.copyOnly` / `.copyAndDelete` from selection + screen state (alt-screen and read-only both force copy-only). `Sources/SlopDeskWorkspaceCore/Terminal/CutSelectionPolicy.swift:12-20`, `TerminalContextMenu.swift:15`, `GhosttyTerminalView.swift:2326-2351` |
+| **Copy receipt chip** | done — NEW since the survey | Pure `CopyReceipt` counts lines vs. characters and formats the transient confirmation chip. `Sources/SlopDeskWorkspaceCore/Terminal/CopyReceipt.swift:1-14` |
+| **Paste** (⌘V / context menu) | done | `performBindingAction("paste_from_clipboard")` + bracketed paste (DECSET 2004) applied by libghostty. `GhosttyTerminalView.swift:2380,3573`, `TerminalContextMenu.swift:16` |
+| **Paste as keystrokes** | done | `TerminalContextMenu.Item.pasteAsKeystrokes` → `surface.text(_:)`, bypassing bracketed paste. `TerminalContextMenu.swift:17`, `GhosttySurface.swift:597` |
+| **OSC 52 clipboard read/write** | done | READ honours live `clipboard-read` (Allow/Ask/Deny, default **Ask**) via `slopdeskConfirmClipboardRead` → `PasteProtectionSheet`; every completion uses `confirmed:true` (deny = empty reply) to dodge read-gate recursion. WRITE honours `clipboard-write` through pure `ClipboardWritePolicy`. `GhosttyTerminalView.swift:482` (`read_clipboard_cb`), `:538` (`confirm_read_clipboard_cb`), `:570` (`write_clipboard_cb`), `:243` (`slopdeskWriteClipboard`); `Sources/SlopDeskWorkspaceCore/Terminal/ClipboardWritePolicy.swift` |
+| **Select All** | done | `performBindingAction("select_all")`. `TerminalContextMenu.swift:24`, `GhosttyTerminalView.swift:2439,2571` |
+| **Scroll (wheel / trackpad)** | done | `sendMouseScroll(deltaX:deltaY:mods:)` → `ghostty_surface_mouse_scroll`; momentum bits packed per upstream. `GhosttySurface.swift:690`, `GhosttyTerminalView.swift:2143-2146` |
+| **Scroll to top / bottom** | done | `performBindingAction("scroll_to_top" / "scroll_to_bottom")` from copy-mode + context menu. `Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:1198` |
+| **Scrollback buffer** | done — moved to Rust | `scrollback-limit` emitted from the line count × a per-line byte estimate; factory default 10,000 lines. `rust/slopdesk-terminal/src/config.rs:240` (`FACTORY_SCROLLBACK_LINES`), `:253-256`, `:279` (`scrollback_limit_bytes`); pref at `Sources/SlopDeskVideoProtocol/Settings/TerminalPreferences.swift:96` |
+| **Cursor shape / blink** | done — moved to Rust | `cursor-style` (block / block_hollow / bar / underline) + a blink tri-state where `default` emits NO line and leaves DEC mode 12 in charge. `config.rs:413-422`, `TerminalPreferences.swift:69-94` |
+| **Mouse modes (X10/1000/1002/1003/SGR)** | done | libghostty owns mouse-reporting mode; `mouseCaptured` gates the embedder drag. `GhosttySurface.swift:657` |
+| **Mouse pressure / force-click** | done | `sendMousePressure(stage:pressure:)` → `ghostty_surface_mouse_pressure`. `GhosttySurface.swift:697`, `GhosttyTerminalView.swift:2168` |
+| **Kitty keyboard protocol** | done | Keys via `ghostty_surface_key` (libghostty encodes kitty/DECCKM). A Ctrl+C0 fast path sends the raw control byte so Ctrl-C/Z/D reach non-kitty-aware remote programs. `GhosttySurface.swift:575`, `GhosttyTerminalView.swift:1414-1423` |
+| **IME / CJK input (macOS)** | done | Full `NSTextInputClient` conformance (marked text, candidate anchoring, input-source-switch guard); `ghostty_surface_text` commits, `preedit` publishes the composing run. `GhosttyTerminalView.swift:1267-1280,2809`, `GhosttySurface.swift:597,617` |
+| **IME / CJK input (iOS)** | done — **path moved** | `Sources/SlopDeskWorkspaceCore/iOS/InputRouting.swift` **no longer exists**. The phone's responder is `Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift:1-35`, which reads a `UIKey` into a `PhoneKey.Press` and asks `rust/slopdesk-workspace/src/phone_key.rs` which of two paths it takes (raw encoder vs. the UIKit text-system proxy that composes and commits through `insertText`). Copy Mode / Hint Mode are asked ABOVE that split, via `TerminalViewModel.takeModalKey` (`TerminalViewModel.swift:711`). |
+| **Unicode / text styles** (bold, italic, dim…) | done | libghostty renders all standard SGR attributes; no embedder involvement. Unicode 17 width tables ride the fork delta (`ThirdParty/ghostty/README.md:62-64`). |
+| **True colour / 256-colour** | done | `COLORTERM=truecolor`. `Sources/SlopDeskHost/HostEnvironment.swift:96` |
 | **Box-drawing / powerline glyphs** | done | libghostty handles natively (own glyph rasteriser/atlas). |
-| **Font family, size, weight** | done | `font-family`, `font-size`, `font-style` in `TerminalConfigBuilder`; live-reload. `TerminalPreferences.swift:12-18`, `TerminalConfigBuilder.swift:58-62` |
-| **Theme / palette** | done | `theme` + explicit `background`/`foreground` override (Monokai Pro flat). `TerminalConfigBuilder.swift:63-71`, `TerminalPreferences.swift:19-26` |
-| **$TERM** | done | Default `TERM=xterm-ghostty` (native ghostty terminfo); fallback `xterm-256color` toggle (#54700). `HostEnvironment.swift:19`, `ClaudeCodeProfile.swift:20-25` |
-| **TERMINFO propagation** | done | `TERMINFO` / `TERMINFO_DIRS` forwarded to child so ncurses finds the ghostty entry in a non-standard dir. `HostEnvironment.swift:55-67` |
-| **OSC 0/2 window title** | done | `HostOutputSniffer` parses OSC 0/2 → `WireMessage.title`; dedup on identical titles. `HostOutputSniffer.swift:351-366` |
-| **BEL / bell** | done | `HostOutputSniffer` emits `WireMessage.bell` on ground-state BEL. `HostOutputSniffer.swift:215-217` |
-| **Shell integration (OSC 133)** | done | A/B/C/D parsed. Host sniffer emits `commandStatus(.running/.idle(exitCode:durationMS:))`. Client `TerminalModeTracker` also parses A-D. `HostOutputSniffer.swift:368-395`, `TerminalModeTracker.swift:321-344` |
-| **OSC 133 prompt jump** | done | `performBindingAction("jump_to_prompt:-1")` / `jump_to_prompt:1"` in copy-mode + context-menu find. `TerminalViewModel.swift:335-337` |
-| **Notifications (OSC 9 / OSC 777)** | done | Parsed in `HostOutputSniffer`; wired to `UNUserNotificationCenter` via `PaneNotificationRouter`; Settings toggle. `HostOutputSniffer.swift:397-424`, `SettingsView.swift:159` |
-| **Long-command completion notifications** | done | `CommandNotificationPolicy` + `longCommandNotifications` Setting. `SettingsKey.swift:22,45-46` |
-| **OSC 9;4 progress state** | missing (by design) | `HostOutputSniffer.swift:406-411` filters out `9;4` (progress-bar) payloads to avoid flooding alerts with raw winget/build output. No badge/progress-bar in client UI. |
-| **In-terminal search (⌘F)** | done | `TerminalSearchController` pure engine (literal + regex, case toggle, next/prev/wrap), driven by libghostty `start_search:<needle>` binding. `TerminalSearchController.swift:1-194` |
-| **Copy-mode** (vi-like keyboard scrollback nav) | done | `TerminalViewModel.isCopyMode`, `handleCopyModeKey(_:)` dispatches j/k/d/u/g/G/[/]/n/N/y/Enter/q/Esc to libghostty binding actions. `TerminalViewModel.swift:221-389` |
-| **Vi visual-char selection in copy-mode** | missing (documented ceiling) | `TerminalViewModel.swift:303-308`: libghostty fork exposes NO programmatic cursor-move/set-selection action. `y`/Enter copies the mouse-made selection or full scrollback. |
-| **Right-click context menu** | done | `TerminalContextMenu` model (copy/paste/paste-as-keystrokes/select-all/clear/copy-output/split/find **+ E8 Paste-as items**) with enablement rules; built as `NSMenu` in `GhosttyLayerBackedView.menu(for:)`. `TerminalContextMenu.swift:12-123`, `GhosttyTerminalView.swift:1174-1203` |
-| **Right-click action** (H7/H8, E8) | done | `rightMouseDown` branches on pure `RightClickAction.effect(controlHeld:hasSelection:)` (contextMenu/copy/paste/copyOrPaste/ignore); ⌃-right always shows menu. Read live off `Defaults`. `GhosttyTerminalView.swift:1242` |
-| **Copy-on-Select** (I4, E8) | done | `copy-on-select = clipboard/false` passthrough; ON writes drag-select to private SELECTION pasteboard (system clipboard untouched until ⌘C). Default off. `TerminalConfigBuilder.swift:110`, `TerminalControls.swift` |
-| **Trim trailing spaces on copy** (I5, E8) | done | `clipboard-trim-trailing-spaces` passthrough (default on). `TerminalConfigBuilder.swift:111` |
-| **Clear selection on typing / on copy** (I6, E8) | done | `selection-clear-on-typing` (default on) / `selection-clear-on-copy` (default off) passthrough. `TerminalConfigBuilder.swift:112-113` |
-| **Shift+Arrow select** (I2, E8) | done | ON emits four `shift+<dir>=adjust_selection:<dir>` keybinds; OFF emits `unbind` (⇧+arrow forwards to program). `TerminalConfigBuilder.swift:136-141` |
-| **Paste Protection sheet** (I9, E8) | done | Pure `PasteSafetyAnalyzer` (multi-line / trailing-newline / `sudo`/`su` / control-char) gates `PasteProtectionSheet` in `slopdeskConfirmUnsafePaste`, replacing auto-approve. Cancel completes with EMPTY data (no gate re-trip). `clipboard-paste-protection` / `clipboard-paste-bracketed-safe` keys. `GhosttyTerminalView.swift:99-155`, `PasteSafetyAnalyzer.swift` |
-| **Paste as…** (I10, E8) | done | Pure `PasteTransform` (`.bracketed` / `.shellEscaped` / `.base64(ofFileBytes:)`) + `TerminalContextMenu` items (pasteSelection / pasteFileBase64 / pasteEscaped / pasteBracketed / pasteToComposer) routed in `contextMenuAction` via `surface.text(_:)` / `NSOpenPanel` / `model.onPasteToComposer`. `PasteTransform.swift`, `GhosttyTerminalView.swift:1561,1627` |
-| **Hide mouse while typing** (H9, E8) | done | `mouse-hide-while-typing` passthrough (libghostty DECIDES) **+ embedder ACTUATION**: `action_cb` `GHOSTTY_ACTION_MOUSE_VISIBILITY` → pure `MouseVisibilityMapping.isVisible(forRawValue:)` ({0,1}-guarded; unknown int fails safe to visible) → `applyMouseVisibility` → `NSCursor.setHiddenUntilMouseMoves(!visible)` (mirrors ghostty `setCursorVisibility`; auto-shows on next move). Config alone is inert — libghostty delegates the hide to this action. `TerminalConfigBuilder.swift:121`, `GhosttyTerminalView.swift:356,1508`, `MouseVisibilityMapping.swift` |
-| **Allow-shift-with-click / mouse-reporting / click-to-move** (E8) | done | `mouse-shift-capture` / `mouse-reporting` (allow-mouse-capture) / `cursor-click-to-move` passthrough. `TerminalConfigBuilder.swift:122-124` |
-| **Scroll multiplier** (E8) | done | `mouse-scroll-multiplier = precision:<m>,discrete:<m>` passthrough. `TerminalConfigBuilder.swift:128` |
-| **Mouse-over-to-focus** (H6, E8) | done | `mouseEntered`/`mouseMoved` call `model.onRequestFocus` gated by pure `FocusFollowsMousePolicy` + live `Defaults` (slopdesk panes are separate surfaces; libghostty's own `focus-follows-mouse` covers only its internal split tree). `GhosttyTerminalView.swift:1296-1312`, `FocusFollowsMousePolicy.swift` |
-| **OSC-22 pointer shape** (H14, E8) | done | `action_cb` `GHOSTTY_ACTION_MOUSE_SHAPE` → pure `PointerShapeMapping.token(forRawValue:)` (validate-then-drop on unknown raw int) → `NSCursor`; reset to arrow on `default`. `GhosttyTerminalView.swift:333,1453`, `PointerShapeMapping.swift` |
-| **Cursor color / opacity / text** (H4/H5, E8) | done | `cursor-color` / `cursor-text` / `cursor-opacity` from `TerminalPreferences` (empty colours skipped); live preview in `CursorPreviewView` (Appearance → Cursor). `TerminalConfigBuilder.swift:132-135`, `TerminalPreferences.swift:57-93` |
-| **Cursor smooth animation** (H3, E8) | omitted (no fork hook) | Pinned fork exposes no cursor-animation key. `TerminalPreferences.cursorAnimation` (off/smooth) persists + surfaces for forward-compat but emits no config line. `TerminalPreferences.swift:42-93` |
-| **Scroll-past-last / first** (I14/I15, E8) | **partial (rendering deferred)** | Settings persist + pure `ScrollPastPolicy.targetTopRow(...)` anchor + alt-screen suppression gate exist, BUT the policy is NOT yet called from `Sources/` (dormant anchor) and blank-overscroll RENDERING is deferred (no libghostty viewport hook). Settings rows relabelled "Preference saved; overscroll rendering deferred" so the UI does not imply an absent behavior. `ScrollPastPolicy.swift`, `GhosttyTerminalView.swift` (scrollWheel) |
-| **Smooth scroll** (I15, E8) | **partial (rendering deferred)** | `smoothScroll` persists; scrolling already runs at pixel granularity, but the whole-row snap when OFF is deferred (pinned fork has no `smooth-scroll` / row-snap hook). Settings row relabelled accordingly. `SettingsKey.swift` |
-| **Backspace-deletes-selection** (I7, E8) | **not yet functional (default OFF)** | Pure `BackspaceSelectionPolicy` exists, but the pinned fork exposes no set-selection / cursor-geometry C API, so a faithful whole-run delete is impossible (a blind DEL run deletes the WRONG chars = data loss). With toggle ON the effect is indistinguishable from OFF (one char deleted), so `Defaults` default is now **OFF** and Settings rows relabelled "not yet functional" — behavior is ABSENT, not degraded. Policy stays wired for a future geometry API. `BackspaceSelectionPolicy.swift`, `SettingsKey.swift` |
-| **Undo at prompt** (I18, E8) | done (redo omitted) | Pure `PromptEditPolicy` maps ⌘Z at an editable prompt → readline UNDO `0x1F`; ⌘⇧Z/⌘Y returns nil + falls through (no portable readline redo). `PromptEditPolicy.swift`, `GhosttyTerminalView.swift:1072-1101` |
-| **Hyperlinks (OSC 8)** | done | libghostty owns OSC 8 hit-testing + click; `action_cb` `GHOSTTY_ACTION_OPEN_URL` forwards resolved URLs to `NSWorkspace.open` / `UIApplication.open`. `GhosttyTerminalView.swift:214-231` |
-| **Bracketed paste (DECSET 2004)** | done | Applied by libghostty inside `paste_from_clipboard`. `GhosttySurface.swift:665-666` |
-| **Resize / SIGWINCH propagation** | done | `resize_callback` → `onResize` → `sendResize(cols:rows:)` → `WireMessage.resize` → host `TIOCSWINSZ`. `GhosttySurface.swift:279-292`, `GhosttyTerminalView.swift:718-778` |
-| **Live grid reflow on font change** | done | `ghostty_app_update_config` triggers reflow; `resize_callback` fires; host PTY grid tracks new metrics. `GhosttyTerminalView.swift:387-394`, `GhosttyApp.applyTerminalConfig:143-155` |
-| **Focus state** | done | `surface.setFocus(true)` for ALL visible panes (unfocused siblings kept alive); keyboard first-responder gated by `isFocusedPane`. `GhosttyTerminalView.swift:456-483`, `attach:618` |
-| **Kitty image protocol (inline images)** | na-remote | Handled inside libghostty if the host program emits it. No embedder code; no evidence it is disabled. |
-| **iTerm2 inline images** | na-remote | Same: libghostty handles if present. |
-| **Sixel graphics** | na-remote | libghostty renders sixel natively if enabled. No embedder code toggles it off. |
-| **Hint-mode** (URL / path hints keyboard nav) | missing | No hint-mode overlay or keyboard-driven URL-picking. OSC 8 links open on click only; no hint-mode binding action wired. `GhosttyTerminalView.swift:214-231` |
-| **Vi-mode** (libghostty native vi-mode) | missing | `GHOSTTY_READONLY_OFF/ON` enum in `ghostty.h:643-647` but never called in the embedder; no binding action wires `toggle_readonly`. |
-| **Read-only mode** (block all input to PTY) | missing | Same: `ghostty_action_readonly_e` declared in the C header but never called. |
-| **Autocomplete** (shell completion overlay) | missing | No `CompletionProvider`, no autocomplete overlay in `Sources/`. Spec doc `docs/ui-shell/spec/terminal-features__autocomplete.md` exists as a gap placeholder. |
+| **Font family, size, weight** | done — moved to Rust, and widened | Beyond family/size/style: fallback families, per-face bold/italic/bold-italic, synthetic-style suppression, an always-emitted `font-feature` line (so "ligatures off" actually says `-calt,-liga,-dlig`), blending and a cell-height percent. `config.rs:308-372`, `TerminalPreferences.swift:45-51,120-145` |
+| **Theme / palette** | done for the SURFACE; the app-level theme picker is **removed by ruling** | The libghostty passthrough is intact: `theme` (empty ⇒ no line), explicit `background`/`foreground`, a 16-entry ANSI palette emitted whole-or-not-at-all, and `selection-background`. `config.rs:386-408`, `TerminalPreferences.swift:52-57`. What went is the CHOOSER: ONE APPEARANCE (user-directed 2026-08-08, `docs/DECISIONS.md` ~line 7393) deleted `ThemeStore`, `ThemeChoice`, the dual light/dark slots and the per-theme font map — `Sources/SlopDeskVideoProtocol/Settings/AppearancePreferences.swift:9-13` states it, and `density` is the only surviving field. |
+| **$TERM** | done | Default `TERM=xterm-ghostty` shared by the plain-shell and Claude paths; `xterm-256color` fallback toggle (#54700). `HostEnvironment.swift:10-17,95`, `Sources/SlopDeskHost/ClaudeCodeProfile.swift:20-23` |
+| **TERMINFO propagation** | done | `TERMINFO` / `TERMINFO_DIRS` mirrored to the child so ncurses finds the ghostty entry in a non-standard dir. `HostEnvironment.swift:68-88` |
+| **OSC 0/2 window title** | done — **moved to Rust** | `SniffEvent::Title`. Swift `HostOutputSniffer.swift` is deleted. `rust/slopdesk-superd/src/sniffer.rs:82`; OSC 1 (icon name) is deliberately ignored (`sniffer.rs:9`). |
+| **BEL / bell** | done — **moved to Rust** | `SniffEvent::Bell`, ground-state only (a DCS/SOS/PM/APC body emits nothing, so no program can embed a phantom bell). `sniffer.rs:84`, bounded-parser rules at `:21-27` |
+| **Shell integration (OSC 133)** | done — **moved to Rust, both ends** | Host: `sniffer.rs:11` (`C` and `D[;exit]` with the measured duration) + `rust/slopdesk-superd/src/commandblocks.rs`. Client: `Sources/SlopDeskClaudeCode/TerminalModeTracker.swift` is now a 102-line handle over `rust/slopdesk-terminal/src/tracker.rs` (`slopdesk_mode_tracker_*`, `TerminalModeTracker.swift:47-94`). |
+| **OSC 7 working directory** | done — **NEW since the survey** | `SniffEvent::Cwd` (`sniffer.rs:12,88`), promoted to wire type 33 `cwd` and type 34 `projectKey` with a warm-up gate, a dedupe latch and a `proc_pidinfo` fallback for OSC-7-less shells (`docs/DECISIONS.md` ~lines 726,747). The original survey called this unwired; it is the backbone of cwd inheritance and By-Project bucketing now. |
+| **OSC 133 prompt jump** | done | `performBindingAction("jump_to_prompt:±count")`, count-scalable from copy-mode, plus a landing flash overlay on both platforms. `TerminalViewModel.swift:1208-1214`, `GhosttyTerminalView.swift:2451-2458`, `Sources/SlopDeskMacUI/Pane/MacPromptJumpFlashOverlay.swift`, `Sources/SlopDeskPhoneUI/Pane/PromptJumpFlashOverlay.swift` |
+| **Notifications (OSC 9 / 777 / 99)** | done — **moved to Rust**; OSC 99 is new | `sniffer.rs:13,90` parses all three; delivery is `PaneNotificationRouter` (`Sources/SlopDeskWorkspaceCore/Connection/CommandCompletionNotifier.swift:377`) wired from both app roots (`Sources/SlopDeskMacUI/SlopDeskMacApp.swift`, `Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift`) through `Sources/SlopDeskClientCore/App/ClientNotificationSinks.swift`. Settings keys at `Sources/SlopDeskWorkspaceCore/Workspace/Store/SettingsKey.swift:145-177`. |
+| **Long-command completion notifications** | done | `CommandNotificationPolicy` (`Sources/SlopDeskWorkspaceCore/Connection/CommandCompletionNotifier.swift`) + the `notifications.longCommand` key. `SettingsKey.swift:146,471-472` |
+| **OSC 9;4 progress state** | **done** — was "missing (by design)"; the filter is GONE | The sniffer now tells notification from progress by SHAPE (`9;4` and `9;4;…` are progress, `9;42 tests passed` is a notification) and hands the body up unparsed. `sniffer.rs:96-102,537-541`. It rides CONTROL wire type 32, is re-validated client-side by `Sources/SlopDeskProtocol/ProgressState.swift:13-21` (unknown discriminants dropped), mirrored per-pane in `Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Progress.swift`, and drawn as a tab badge + macOS Dock aggregate. `rust/slopdesk-superd/src/autoprogress.rs` also synthesises an indeterminate badge for known long commands. States 4 (paused) and 5 (finished) are deliberately not carried — 5 folds onto the existing `commandStatus(.idle(exitCode:))` path (`ProgressState.swift:23-26`). |
+| **In-terminal search (⌘F)** | done — engine moved to Rust, and widened | `TerminalSearchController` now calls `slopdesk_find_matches` (`Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift:213`); the regex dialect is the `regex` crate's, so no pattern can hang the find bar (`docs/DECISIONS.md` "⌘F was the same hazard as Hint Mode", 2026-08-17). A **whole-word** toggle joined literal/regex/case. The bar is real on both platforms: `Sources/SlopDeskMacUI/Pane/MacTerminalFindBar.swift`, `Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift`, over shared `Sources/SlopDeskClientCore/Pane/TerminalFindBarModel.swift`. A global (cross-pane) variant exists at `Sources/SlopDeskWorkspaceCore/Terminal/GlobalSearchController.swift`. |
+| **Copy-mode** (vi-like keyboard scrollback nav) | done — substantially expanded | `TerminalViewModel.enterCopyMode()` (`:1311`) / `exitCopyMode()` (`:1326`) / `handleCopyModeKey(_:)` (`:753`), with a repeat-count, `⌘/` key hints (`:590`), and a `takeModalKey` seam (`:711`) so the Mac `keyDown` and the phone's `TerminalInputHost` drive ONE engine. Badge/overlay on both platforms (`MacViModeOverlay.swift`, `ViModeOverlay.swift`). |
+| **Vi visual-char selection in copy-mode** | **done — the documented ceiling was LIFTED 2026-07-14** | The fork gained `ghostty_surface_set_selection` / `_clear_selection` / `_viewport_info` / `_padding` / `_line_range` (`ThirdParty/ghostty/README.md:65-81`), surfaced as `TerminalSurface.setSelection(anchor:head:rectangle:)` (`Sources/SlopDeskTerminal/TerminalSurface.swift:261`) and implemented at `GhosttySurface.swift:914`. Copy-mode now carries a REAL cursor in screen coordinates re-clamped against fresh `viewportInfo()` on every key, `VisualMode {none,char,line,block}` (`TerminalViewModel.swift:471-475`, `setVisualMode` `:1273`), a yank that copies the vi selection (`yankCursorLine` `:1242`), and a cursor overlay on both platforms (`MacViCursorOverlay.swift`, `ViCursorOverlay.swift`). Word/column motions are `rust/slopdesk-terminal/src/vimotion.rs` over the SAME grapheme clustering the link scanner uses, so cursor and hint badge name the same column on a CJK row (`docs/DECISIONS.md` 2026-08-17, "The cursor and the badge disagreed on a CJK row"). **Any row calling this impossible is stale.** |
+| **Right-click context menu** | done — item list changed | 14 items: copy, cut, paste, paste-as-keystrokes, paste-selection, paste-file-base64, paste-escaped, paste-bracketed, select-all, clear, copy-output, split-right, split-down, find. `TerminalContextMenu.swift:13-47`. **`pasteToComposer` is gone** — the Composer / Prompt-Queue / Send-to-Chat vertical was deleted 2026-07-03 (`92472b0a`). |
+| **Right-click action** | done — now a libghostty passthrough | The Swift `RightClickAction.effect(...)` dispatcher is gone; the token is emitted as libghostty's own `right-click-action` (`ignore`/`paste`/`copy`/`copy-or-paste`/`context-menu`, default `context-menu`) and the library dispatches. `config.rs:459`, `Sources/SlopDeskWorkspaceCore/Terminal/TerminalControls.swift:60`. The embedder keeps only the ⌃-right-always-menu override plus `Sources/SlopDeskWorkspaceCore/Terminal/RightClickPasteInterceptPolicy.swift` (the paste-safety pre-check on the bare-right-click paste arm). |
+| **Copy-on-Select** | done | `copy-on-select = clipboard` / `false`; ON writes drag-select to the private SELECTION pasteboard only. Default off. `config.rs:426-434`, `TerminalControls.swift:290` |
+| **Trim trailing spaces on copy** | done | `clipboard-trim-trailing-spaces`, default on. `config.rs:436`, `TerminalControls.swift:293` |
+| **Clear selection on typing / on copy** | done | `selection-clear-on-typing` (default on) / `selection-clear-on-copy` (default off). `config.rs:437-438` |
+| **Shift+Arrow select** | done | ON emits four `shift+<dir>=adjust_selection:<dir>` keybinds; OFF must emit `unbind`, because the vendored fork binds them by default. `config.rs:483-489` |
+| **Paste Protection sheet** | done — analyzer moved to Rust | `PasteSafetyAnalyzer` is a face over `slopdesk_paste_dangers` / `slopdesk_paste_should_warn`, and every WORD the sheet prints comes from the same crate. `Sources/SlopDeskWorkspaceCore/Terminal/PasteSafetyAnalyzer.swift:15,61,80,120-129`; pre-check at `Sources/SlopDeskWorkspaceCore/Terminal/PastePrecheck.swift`. The surface is per-platform by LAYOUT only: `Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift` (Mac) and `Sources/SlopDeskPhoneUI/Overlays/ClipboardConfirmCard.swift` (phone), over shared `Sources/SlopDeskClientCore/Overlays/ClipboardConfirmPresentation.swift`. |
+| **Paste as…** | done — minus one item | Pure `PasteTransform` (`.bracketed` / `.shellEscaped` / `.base64(ofFileBytes:)`) + the four `paste*` context-menu items. `Sources/SlopDeskWorkspaceCore/Terminal/PasteTransform.swift`, `TerminalContextMenu.swift:20-23`. The fifth route, `pasteToComposer`, died with the Composer (`92472b0a`, 2026-07-03). |
+| **Hide mouse while typing** | done | `mouse-hide-while-typing` passthrough **+ embedder actuation**: `GHOSTTY_ACTION_MOUSE_VISIBILITY` → `MouseVisibilityMapping.isVisible(forRawValue:)` (a face over `slopdesk_pointer_mouse_visible`) → `NSCursor.setHiddenUntilMouseMoves(!visible)`. Config alone is inert. `config.rs:446-449`, `Sources/SlopDeskWorkspaceCore/Terminal/MouseVisibilityMapping.swift:20`, `GhosttyTerminalView.swift:418,2274` |
+| **Allow-shift-with-click / mouse-reporting / click-to-move** | done | `mouse-shift-capture` / `mouse-reporting` / `cursor-click-to-move`. `config.rs:450-458` |
+| **Scroll multiplier** | done | `mouse-scroll-multiplier = precision:<m>,discrete:<m×3>` — libghostty's own 1:3 ratio preserved, and a plain multiply, never fused. `config.rs:460-467` |
+| **Option-as-Alt** | done — NEW since the survey | `macos-option-as-alt` (`false`/`true`/`left`/`right`). `config.rs:468`, `TerminalControls.swift:165` |
+| **Mouse-over-to-focus** | done | `mouseEntered`/`mouseMoved` call `model.onRequestFocus` gated by `FocusFollowsMousePolicy` (a face over `slopdesk_term_focus_follows_mouse`) — slopdesk panes are separate surfaces, so libghostty's own `focus-follows-mouse` covers only its internal split tree. `Sources/SlopDeskWorkspaceCore/Terminal/FocusFollowsMousePolicy.swift:20`, `GhosttyTerminalView.swift:2070,2103` |
+| **OSC-22 pointer shape** | done | `GHOSTTY_ACTION_MOUSE_SHAPE` → `PointerShapeMapping.token(forRawValue:)` (validate-then-drop over `slopdesk_pointer_shape_token`) → `NSCursor`. `Sources/SlopDeskWorkspaceCore/Terminal/PointerShapeMapping.swift:55`, `GhosttyTerminalView.swift:401,2230` |
+| **Cursor colour / opacity / text** | done | `cursor-color` / `cursor-text` (empty ⇒ follow the theme) / `cursor-opacity` (a number, so always emitted). `config.rs:472-480`, `TerminalPreferences.swift:104-109`. Live preview on both platforms: `Sources/SlopDeskMacUI/Settings/MacCursorPreviewSurface.swift`, `Sources/SlopDeskPhoneUI/Settings/CursorPreviewView.swift`. |
+| **Cursor smooth animation** | **removed** (was "omitted, no fork hook") | The forward-compat preference is gone too: `cursorAnimation` is a RETIRED key that decodes and is ignored — `Tests/SlopDeskVideoProtocolTests/Settings/TerminalPreferencesDecodeTests.swift:29-32` pins that. There is no `cursorAnimation` field in `TerminalPreferences` and no setting row. |
+| **Scroll-past-last / first** | **removed 2026-07-30** (was "partial — rendering deferred") | Settings, `ScrollPastPolicy` and the alt-screen suppression gate were all deleted: "they were shipped ahead of their renderer — the fork exposes no overscroll-margin API, so the anchors computed a float nothing could draw." `GhosttyTerminalView.swift:2161-2165`. A repo-wide `grep -rIn -i scrollpast Sources rust/slopdesk-*/src` returns nothing. |
+| **Smooth scroll** | **removed 2026-07-30** (was "partial") | Same ruling, same comment: no row-snap hook, so `smoothScroll` OFF rendered exactly like ON. `GhosttyTerminalView.swift:2161-2165`. `smoothScroll` appears nowhere in `Sources`, `Tests` or `rust/slopdesk-*/src`. |
+| **Backspace-deletes-selection** | **removed — superseded** (was "not yet functional, default OFF") | `BackspaceSelectionPolicy` no longer exists anywhere in the tree. The capability it was a placeholder for is real now and reached by a better gesture: **Cut** (⌘X) via `CutSelectionPolicy`, which can only delete at an editable prompt and copies-only otherwise. |
+| **Undo at prompt** | done (redo still omitted) — rule moved to Rust | `PromptEditPolicy.bytes(forUndo:redo:inPromptZone:)` is a face over `slopdesk_term_prompt_edit_byte`; the readline UNDO byte itself lives in `rust/slopdesk-terminal/src/surface.rs`. ⌘⇧Z/⌘Y still returns nil and falls through — there is no portable readline redo keystroke. `Sources/SlopDeskWorkspaceCore/Terminal/PromptEditPolicy.swift:8,23`, `GhosttyTerminalView.swift:1456-1478` |
+| **Hyperlinks (OSC 8)** | done | libghostty owns OSC 8 hit-testing + click; `GHOSTTY_ACTION_OPEN_URL` forwards resolved URLs. `GhosttyTerminalView.swift:380-400` |
+| **Plain-text link/path detection, ⌘-click, ⌘-hold highlight** | done — NEW since the survey | A regex detector independent of OSC 8, hit-tested per cell and actuated through one pure policy shared by ⌘-click, the context menu, Hint Mode and Jump-To. `Sources/SlopDeskWorkspaceCore/Terminal/TerminalLinkDetector.swift`, `TerminalLinkHitTest.swift`, `Sources/SlopDeskWorkspaceCore/Workspace/Domain/LinkActionPolicy.swift`, `GhosttyTerminalView.swift:817,1734,1868`; overlays `Sources/SlopDeskMacUI/Pane/MacLinkHighlightOverlay.swift`, `Sources/SlopDeskPhoneUI/Pane/LinkHighlightOverlay.swift`. libghostty's own regex matcher is disabled (`link-url = false`, `config.rs:260`) so only one underline is drawn. |
+| **Bracketed paste (DECSET 2004)** | done | Applied by libghostty inside `paste_from_clipboard`; forced by the `pasteBracketed` menu item. `GhosttyTerminalView.swift:3573`, `TerminalContextMenu.swift:23` |
+| **Resize / SIGWINCH propagation** | done | `resize_callback` → `onResize` → `WireMessage.resize` → host `TIOCSWINSZ`; the host receives cols/rows, never pixels. `GhosttySurface.swift:276-292,496,531` |
+| **Live grid reflow on font change** | done | `ghostty_app_update_config` triggers reflow; `resize_callback` fires; the host PTY grid tracks the new metrics. `GhosttySurface.swift:279-292` |
+| **Focus state** | done — behaviour CHANGED since the survey | The survey said `setFocus(true)` for every visible pane. It is now forwarded faithfully: an unfocused pane gets `setFocus(false)` so libghostty draws its HOLLOW non-blinking cursor exactly like ghostty's own splits, and idles its render thread. Unfocus does NOT freeze the pane — repaint runs on the content-driven path. The forward is COALESCED one runloop hop (last-writer-wins) because an unfocus+refocus landing in one mailbox drain strands the blink timer with the cursor invisible. `GhosttyTerminalView.swift:889-938`, `GhosttySurface.swift:1076` |
+| **Kitty image protocol (inline images)** | na-remote | Handled inside libghostty if the host program emits it. No embedder code; nothing disables it. |
+| **iTerm2 inline images** | na-remote | Same. |
+| **Sixel graphics** | na-remote | libghostty renders sixel natively. No embedder toggle turns it off. |
+| **Hint-mode** (URL / path hints, keyboard nav) | **done** — was "missing" | Three intents (open / copy / reveal) with stable per-session 2-letter Vimium labels. Scan is `slopdesk_hint_scan` (`Sources/SlopDeskWorkspaceCore/Terminal/HintLabelAssigner.swift:111,215`); state is `TerminalViewModel.beginHint` (`:1596`) / `handleHintKey` (`:1660`) / `confirmHintTarget` (`:1684`) / `cancelHintMode` (`:1691`); actuation reuses `LinkActionPolicy` via `Sources/SlopDeskClientCore/Pane/TerminalHintActuator.swift`. Overlay on both platforms: `Sources/SlopDeskMacUI/Pane/MacHintModeOverlay.swift`, `Sources/SlopDeskPhoneUI/Pane/HintModeOverlay.swift` (the phone resolves a label by TAP as well as by key). **Ceiling:** OSC 8 hyperlink RUNS are not hintable — see Notes §2. |
+| **Read-only mode** (block input to the PTY) | **done — client-side** — was "missing" | Per-pane LOCK: `TerminalViewModel.isReadOnly` (`:1350`) with an observable badge twin (`:1357`), `enterReadOnly()` / `exitReadOnly()` (`:1410`, `:1417`), a rate-limited beep on a blocked keystroke (`:1396-1403`), and `onReadOnlyChanged` keeping `WorkspaceStore.paneReadOnly` in sync (`Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+ReadOnly.swift`). Pill on both platforms (`MacPaneStatusPills.swift`, `PaneStatusPills.swift`). Note this is **not** libghostty's toggle — see Notes §3. |
+| **Vi-mode** (libghostty NATIVE vi-mode) | still not used | `ghostty_action_readonly_e` (`ThirdParty/ghostty/integration/CGhostty/ghostty.h:668-670`, `GHOSTTY_ACTION_READONLY` at `:961`) is declared and never called. slopdesk implements both vi-navigation and read-only itself, above the library — see Notes §3. |
+| **Autocomplete** (shell completion overlay) | missing | No `CompletionProvider`, no autocomplete overlay, no inline-suggestion surface anywhere in `Sources`, `Tests`, `rust/slopdesk-*/src` or `ThirdParty/ghostty/integration`. The only hits for the word are shell-emitted noise the block segmenter filters out (`rust/slopdesk-superd/src/commandblocks.rs:142`). Spec doc `docs/ui-shell/spec/terminal-features__autocomplete.md` remains a gap placeholder. |
 
 ---
 
 ## Key Files
 
-- `/Users/dev/slop-desk/Sources/SlopDeskTerminal/TerminalSurface.swift` — seam protocol + `TerminalSurfaceActions` + `FeedBackpressuring`
-- `/Users/dev/slop-desk/ThirdParty/ghostty/integration/GhosttySurface/GhosttySurface.swift` — `GhosttySurface` (@MainActor conformer, all C ABI wrapping)
-- `/Users/dev/slop-desk/ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` — `GhosttyTerminalView` (SwiftUI/AppKit view, key/mouse forwarding, clipboard callbacks)
-- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift` — copy-mode logic, `TerminalSurfaceActions` consumer, pasteboard write
-- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Terminal/TerminalContextMenu.swift` — right-click menu model + enablement rules
-- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift` — pure ⌘F find engine (literal + regex)
-- `/Users/dev/slop-desk/Sources/SlopDeskHost/HostOutputSniffer.swift` — OSC 0/2/9/133/777 + BEL sniffer (host-side)
-- `/Users/dev/slop-desk/Sources/SlopDeskClaudeCode/TerminalModeTracker.swift` — OSC 133 A/B/C/D + CSI 1049h/l mode tracker (client-side)
-- `/Users/dev/slop-desk/Sources/SlopDeskHost/CommandBlockSegmenter.swift` — OSC 133 A→D block segmenter for Blocks feature
-- `/Users/dev/slop-desk/Sources/SlopDeskVideoProtocol/Settings/TerminalPreferences.swift` — user-facing terminal render preferences
-- `/Users/dev/slop-desk/Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift` — `TerminalPreferences` → libghostty config string builder
-- `/Users/dev/slop-desk/Sources/SlopDeskHost/HostEnvironment.swift` — `$TERM` / `TERMINFO` / `COLORTERM` for spawned PTY
-- `/Users/dev/slop-desk/Sources/SlopDeskHost/ClaudeCodeProfile.swift` — `TERM` enum (xterm-ghostty vs xterm-256color)
-- `/Users/dev/slop-desk/Sources/SlopDeskWorkspaceCore/iOS/InputRouting.swift` — iOS IME routing decision
-- `/Users/dev/slop-desk/ThirdParty/ghostty/integration/CGhostty/ghostty.h` — C ABI header (line refs cited throughout)
+- `Sources/SlopDeskTerminal/TerminalSurface.swift` — the seam: `TerminalSurface`, `TerminalSurfaceActions`, `TerminalSelectionControl` (setSelection / viewportInfo / lineRange / readScreenRow), `FeedBackpressuring`
+- `ThirdParty/ghostty/integration/GhosttySurface/GhosttySurface.swift` — `GhosttySurface` (@MainActor conformer, all C ABI wrapping)
+- `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` — the AppKit/UIKit view: key + mouse forwarding, clipboard callbacks, IME, link hit-testing (~3,990 lines)
+- `ThirdParty/ghostty/integration/CGhostty/ghostty.h` — the vendored C ABI header (line refs cited throughout)
+- `ThirdParty/ghostty/README.md` — the pin, the slim delta, the copy-mode ABI extension, the build recipe
+- `Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift` — copy-mode + vi cursor, hint mode, read-only, `TerminalSurfaceActions` consumer
+- `Sources/SlopDeskWorkspaceCore/Terminal/TerminalContextMenu.swift` — right-click menu model + enablement rules
+- `Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift` — the ⌘F engine's Swift face over `slopdesk_find_matches`
+- `Sources/SlopDeskWorkspaceCore/Terminal/HintLabelAssigner.swift` — Hint Mode labels over `slopdesk_hint_scan`
+- `Sources/SlopDeskWorkspaceCore/Terminal/` — the pure policies: `CutSelectionPolicy`, `CopyReceipt`, `PasteSafetyAnalyzer`, `PastePrecheck`, `PasteTransform`, `ClipboardWritePolicy`, `PromptEditPolicy`, `PointerShapeMapping`, `MouseVisibilityMapping`, `FocusFollowsMousePolicy`, `RightClickPasteInterceptPolicy`, `TerminalLinkDetector`, `TerminalLinkHitTest`, `ViLineMotion`, `ScrollbackWrapMapper`
+- `Sources/SlopDeskVideoProtocol/Settings/TerminalPreferences.swift` — the user-facing render preferences (the value)
+- `Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift` — the marshalling shim only
+- `rust/slopdesk-terminal/src/config.rs` — **where every libghostty config key is spelled**
+- `rust/slopdesk-terminal/src/` — `paste`, `pointer`, `surface`, `tracker`, `mode`, `link`, `link_hit`, `link_action`, `vimotion`, `wrap_map`, `blocks`, `keybind`, `inputbox`, `cursor_color`, `dedup`
+- `rust/slopdesk-superd/src/sniffer.rs` — the ONE pass over the outbound PTY stream (title, bell, OSC 133, OSC 7, OSC 9/777/99, OSC 9;4)
+- `rust/slopdesk-superd/src/commandblocks.rs`, `blocks.rs`, `autoprogress.rs`, `shellintegration.rs` — command blocks + the synthetic progress badge
+- `Sources/SlopDeskClaudeCode/TerminalModeTracker.swift` — the client-side OSC 133 / CSI 1049 handle over `slopdesk_mode_tracker_*`
+- `Sources/SlopDeskHost/HostEnvironment.swift` — `$TERM` / `TERMINFO` / `COLORTERM` for the spawned PTY
+- `Sources/SlopDeskHost/ClaudeCodeProfile.swift` — the `TERM` enum (`xterm-ghostty` vs `xterm-256color`)
+- `Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift` — the phone's key responder (replaces the deleted `SlopDeskWorkspaceCore/iOS/InputRouting.swift`)
+- Per-platform terminal chrome — Mac: `Sources/SlopDeskMacUI/Pane/{MacTerminalLeafView,MacTerminalFindBar,MacHintModeOverlay,MacViCursorOverlay,MacViModeOverlay,MacLinkHighlightOverlay,MacPromptJumpFlashOverlay,MacPaneStatusPills}.swift`; phone: `Sources/SlopDeskPhoneUI/Pane/{TerminalLeafView,TerminalFindBar,HintModeOverlay,ViCursorOverlay,ViModeOverlay,LinkHighlightOverlay,PromptJumpFlashOverlay,PaneStatusPills,TerminalInputHost,TerminalLetterboxContainer}.swift`; shared: `Sources/SlopDeskClientCore/Pane/{TerminalFindBarModel,TerminalHintActuator,HintPresentation,FindBarPresentation,ViKeyHintPresentation,TerminalTouchSelection,TerminalLeafPolicy,TerminalPaneWiring}.swift`
 
 ---
 
 ## Notes
 
+### Cross-platform parity
+
+Every terminal capability in the matrix exists on **both** macOS and iOS. The client-UI split
+(`docs/56-client-ui-split.md`, 2026-08-17) turned one `SlopDeskClientUI` target into `SlopDeskMacUI`
++ `SlopDeskPhoneUI` over shared `SlopDeskClientCore`, under the rule **"layout diverges; capability
+does not"** (`docs/56-client-ui-split.md:144-145`). What differs here is arrangement and gesture, not
+ability:
+
+- Hint Mode resolves a label by keystroke on the Mac and additionally by TAP on the phone
+  (`TerminalViewModel.confirmHintTarget`, `:1684`).
+- The paste-protection confirmation is an `NSAlert`-class sheet on the Mac
+  (`MacUI/Terminal/PasteProtectionSheet.swift`) and a card on the phone
+  (`PhoneUI/Overlays/ClipboardConfirmCard.swift`), over one shared presentation model.
+- Modal-key interception is `keyDown` on the Mac and `pressesBegan` on the phone, but both build the
+  same abstract key and feed the same `TerminalViewModel.takeModalKey` (`:711`).
+
+Two macOS-only behaviours are genuinely platform-shaped rather than gaps: `NSCursor`-based
+mouse-hide/pointer-shape actuation and focus-follows-mouse both need a hardware pointer.
+
 ### Wiring gaps and dead seams
 
-1. **OSC 9;4 progress state** — filtered at `HostOutputSniffer.swift:406-411` (skips any OSC 9 payload starting `4`/`4;`) to avoid surfacing winget/MSBuild progress lines as desktop alerts. No progress-bar widget or Dock badge anywhere. To surface progress, replace this filter with a wire message type + client-side consumer.
+1. **In-surface search highlights** — libghostty's own search-result callbacks are still not plumbed
+   through the C `action_cb`. `performBindingAction("start_search:<needle>")` is wired compile-only so
+   the library highlights internally, but the count and next/prev UX are computed from the client-side
+   text mirror via `slopdesk_find_matches`. The two are independent and can drift (e.g. on wrapped
+   lines). `TerminalSearchController.swift:9-13`
 
-2. **Hint-mode** — the `GHOSTTY_ACTION_OPEN_URL` path (`GhosttyTerminalView.swift:218-232`) only opens URLs libghostty resolves via OSC 8 hit-test. No keyboard "hint overlay" scanning the screen for URLs/paths with single-key labels. Would require a libghostty binding action (if one exists) or a client-side overlay scanning `scrollbackTextLines()`.
+2. **OSC 8 hyperlink runs are not hintable or jumpable** — an accepted ceiling
+   (`docs/DECISIONS.md` ~line 332). `HintLabelAssigner` and Jump-To feed only the plain-text detector,
+   so an OSC 8 link whose DISPLAY text is not itself a URL (`click here` → `https://…`) gets no label.
+   The vendored `ghostty.h` exposes the OSC 8 URL only through `GHOSTTY_ACTION_MOUSE_OVER_LINK` — a
+   hover callback for the single link under the mouse, not a viewport-grid enumeration. libghostty's
+   hover underline and ⌘-click still open it for the MOUSE; only the keyboard surfaces miss it.
+   Lifting this needs a new per-cell hyperlink read API in the fork.
 
-3. **Vi-mode / read-only** — `GHOSTTY_READONLY_OFF/ON` (`ghostty.h:643-647`) is the C enum for libghostty's read-only toggle, but the embedder never calls `performBindingAction("toggle_readonly")` or equivalent. Exists in the library, wired to nothing.
+3. **libghostty's native vi-mode / read-only toggle is still called by nothing.**
+   `ghostty_action_readonly_e` (`ghostty.h:668-670`) and `GHOSTTY_ACTION_READONLY` (`:961`) are
+   declared and unreferenced — but this is no longer a capability gap, it is a design choice with two
+   reasons. slopdesk's read-only is a WORKSPACE fact (`WorkspaceStore.paneReadOnly`, mirrored to the
+   sidebar lock indicator and re-asserted across a reattach), not a surface fact; and slopdesk's
+   copy-mode cursor is client state in screen coordinates that must agree with the hint overlay's
+   column arithmetic. Both would have to be re-derived from library state to use the native toggle.
 
-4. **Vi visual-char selection in copy-mode** — documented ceiling (`TerminalViewModel.swift:303-308`). Pinned fork exposes no programmatic cursor-move / set-selection C API, so client-side character-range selection is impossible without a library change.
+4. **Autocomplete is entirely absent** — never built, not removed. The spec placeholder
+   `docs/ui-shell/spec/terminal-features__autocomplete.md` still describes a feature with no code.
 
-5. **In-surface search highlights** — `TerminalSearchController.swift:9-12`: libghostty's search-result callbacks are not plumbed through the C `action_cb` yet. `performBindingAction("start_search:<needle>")` is called (libghostty highlights internally), but count/navigation UX is computed from the client-side text mirror (`scrollbackTextLines()`). The two are independent and can drift if libghostty's result set differs (e.g. on wrapped lines).
+### What was REMOVED since the 2026-06-25/26 survey
 
-6. **Autocomplete** — entirely absent. Spec placeholder `docs/ui-shell/spec/terminal-features__autocomplete.md` confirms planned-but-not-started.
+Each of these shipped or was scaffolded and is now gone. None was quietly dropped from the matrix
+above; each has a row saying so.
 
-### E8 interaction-parity (2026-06-26) — ceilings & omissions
+- **Cursor "Smooth" animation (H3)** — the forward-compat `cursorAnimation` preference went with the
+  feature. Retired-key decode pinned at `Tests/SlopDeskVideoProtocolTests/Settings/TerminalPreferencesDecodeTests.swift:29-32`.
+- **Scroll-past-first/last (I14) and Smooth scroll (I15)** — deleted 2026-07-30 with
+  `ScrollPastPolicy`. "They were shipped ahead of their renderer… add the settings back with the
+  viewport hook that actuates them, not before." (`GhosttyTerminalView.swift:2161-2165`)
+- **Backspace-deletes-selection (I7)** — `BackspaceSelectionPolicy` deleted; **Cut** (⌘X) is the
+  capability, reached by the gesture that can actually be made safe.
+- **`pasteToComposer`** — deleted with the Composer / Prompt-Queue / Send-to-Chat / Fork / agent-footer
+  vertical (`92472b0a`, 2026-07-03).
+- **The theme picker, catalogue, dual light/dark slots and per-theme fonts** — ONE APPEARANCE,
+  user-directed 2026-08-08 (`docs/DECISIONS.md` ~line 7393). The libghostty theme/palette passthrough
+  survives; only the chooser is gone.
+- **`Sources/SlopDeskHost/HostOutputSniffer.swift` and `CommandBlockSegmenter.swift`** — ported to
+  `rust/slopdesk-superd/src/{sniffer,commandblocks}.rs` and deleted in the same change (the
+  one-implementation rule).
+- **`Sources/SlopDeskWorkspaceCore/iOS/InputRouting.swift`** — replaced by
+  `Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift` over `rust/.../phone_key.rs`.
+- **The E8 "partial" and "not yet functional" labels themselves** — no terminal setting in the tree
+  now persists a preference nothing actuates. That was the point of the 2026-07-30 sweep.
 
-E8 added the selection/copy/paste/scroll/mouse/cursor controls above. It is **wholly client-side** — every
-OSC-52 / OSC-22 sequence already lands in the client's libghostty over the existing PATH-1 byte stream, so
-**no wire / golden / version change** (new fire-time `Defaults` keys stay off the `EnvConfig` overlay +
-`video-prefs.json` sidecar; `scripts/golden-check.sh` stays zero-diff). The bulk is config-passthrough
-through the existing live-reload pipeline (`TerminalControls` → `TerminalConfigBuilder` →
-`PreferencesStore.applyTerminal()` / `refreshTerminalControls()`). Honestly-stated limits:
+### What was LIFTED since the survey
 
-1. **Cursor "Smooth" animation (H3) — omitted.** Pinned fork exposes no cursor-animation key/hook. The
-   `cursorAnimation` preference (off/smooth) persists + surfaces in Appearance → Cursor for forward-compat,
-   but no `cursor-animation` line is emitted (there is none).
-
-2. **Undo "redo" at prompt (I18) — omitted.** ⌘Z → readline UNDO (`0x1F`) at an editable prompt; ⌘⇧Z/⌘Y
-   returns nil and falls through — no portable readline redo keystroke.
-
-3. **Scroll-past overscroll + smooth-scroll (I14/I15) — PARTIAL, rendering deferred (ceiling).** Client
-   libghostty owns the viewport and the pinned fork exposes no overscroll-margin / sub-row-render /
-   `smooth-scroll` API. Settings persist, pure `ScrollPastPolicy` anchor arithmetic exists, alt-screen
-   suppression gate is computed; BUT the policy is not yet called from `Sources/` (dormant anchor) and
-   blank-overscroll rendering + pixel-snap-on-gesture-end are deferred pending a libghostty viewport hook.
-   ES-E8-5 is a documented PARTIAL. Settings rows relabelled "Preference saved; overscroll rendering
-   deferred"; no overscroll is faked.
-
-4. **Backspace-deletes-selection (I7) — NOT YET FUNCTIONAL, default OFF (ceiling).** No set-selection /
-   cursor-geometry C API in the pinned fork, so the embedder cannot prove a selection ends at the cursor; a
-   blind DEL run for a mid-line selection deletes the WRONG characters (data loss), so the GUI pre-sends
-   nothing and the effect with the toggle ON is indistinguishable from OFF (one char deleted). Rather than
-   ship a default-ON toggle that does nothing, `Defaults` default is now **OFF** and Settings rows relabelled
-   "not yet functional" — behavior is ABSENT, not degraded. Pure `BackspaceSelectionPolicy` (+
-   `selectionEndsAtCursor` seam) stays wired for a future geometry API.
-
-See [docs/DECISIONS.md](../../DECISIONS.md) "## E8 terminal interaction parity" for the full decision log.
+- **The copy-mode ceiling (2026-07-14).** The "no programmatic char-select" limit was an ABI gap, not
+  a design truth. A fork ABI extension (`ghostty_surface_set_selection` and four companions) gave
+  copy-mode a real vi cursor, keyboard-started char/line/block selection, an `o` swap-ends that does
+  something, and a `y` that yanks the vi selection rather than falling back to the whole scrollback.
+  `docs/DECISIONS.md` ~line 815; `ThirdParty/ghostty/README.md:65-81`.
+- **Hint Mode** — built (E10 WI-9), on both platforms.
+- **Read-only mode** — built as a per-pane LOCK, on both platforms.
+- **OSC 9;4 progress state** — the "missing by design" filter is gone; progress is a first-class wire
+  message (type 32) with a tab badge and a Dock aggregate.
+- **OSC 7 working directory** — sniffed, host-derived and pushed as wire types 33/34.
 
 ### Architecture note on "na-remote" items
 
-Inline images (Kitty, iTerm2), sixel, and box-drawing are rendered by libghostty itself from the PTY byte
-stream. Under PATH 1 (raw VT bytes host PTY → client `feed()` → `ghostty_surface_write_output`) the host
-program can emit any VT sequence and libghostty renders it — the embedder needs no parse/proxy; they work to
-the extent libghostty supports them (v1.3.1 supports all three).
+Inline images (Kitty, iTerm2), sixel and box-drawing are rendered by libghostty itself from the PTY
+byte stream. Under PATH 1 (raw VT bytes: host PTY → client `feed()` → `ghostty_surface_write_output`)
+the host program can emit any VT sequence and libghostty renders it — the embedder needs no
+parse/proxy. They work to the extent libghostty v1.3.1 supports them, which is all three.

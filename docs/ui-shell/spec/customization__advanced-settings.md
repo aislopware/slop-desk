@@ -1,5 +1,16 @@
 # Advanced / All Settings
 
+> ⚠️ **THE SECTION LIST IS OUT OF DATE.** Settings has **eight** sections — General, Shell, Controls,
+> Editor (reserved and deliberately empty), Agents, Appearance, Key Bindings, Advanced
+> (`Sources/SlopDeskClientCore/Settings/SettingsTaxonomy.swift:33-41`), and all eight appear on **both**
+> halves. There is no **Recipes** section — Recipes were deleted 2026-07-03 (`d63e1274`) — and no theme
+> choice to preserve across a reset, the theme system having been deleted 2026-08-08
+> (`docs/DECISIONS.md` §"ONE appearance").
+>
+> Also worth knowing for a reset row: three verbs exist and they are not interchangeable —
+> `resetAll()`, `resetAdvancedOnly()` and `resetEverySetting(deviceLocal:)`. Only the last reaches
+> `device-prefs.json` (`PreferencesStore.swift:319,342-351,369`).
+
 ## Summary
 
 The Advanced tab in SlopDesk Settings is the single-pane escape hatch for every config key the app

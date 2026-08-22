@@ -1,5 +1,17 @@
 # Config File Format
 
+> ⚠️ **THE FORMAT IS REAL; THE `### Theme` SECTION IS NOT.** `~/.config/slopdesk/config.toml` is read
+> (`Sources/SlopDeskCLICore/CLIConfig.swift:6,50`), and `KeybindConfigLoader` parses its
+> `keybind = <chord>:<action>` lines (`:77`). But the `theme` key and everything that resolves "(theme)"
+> were deleted on 2026-08-08 by user ruling (`docs/DECISIONS.md` §"ONE appearance — the theme picker is
+> deleted, not defaulted"); there is no theme to set and no `.slopdesktheme` reader — see
+> [`reference__theme-format.md`](reference__theme-format.md). Read the Theme rows as history.
+>
+> Which keys the app actually honours live in Rust, not here:
+> `rust/slopdesk-settings/src/settings_rows.rs` is the table, surfaced through `AllSettingsCatalog`.
+> A key documented below but absent there is a key `slopdesk config set` will refuse rather than
+> silently accept (`PreferencesStore+ConfigBridge.swift:10-12`).
+
 ## Summary
 
 Syntax of `~/.config/slopdesk/config.toml` — the TOML-based flat config format used by SlopDesk. Syntax/format reference only; the key inventory lives in the Configuration Reference page. Format: a flat list of `key = value` pairs with lenient parsing, hot reload, environment expansion, and include directives.
