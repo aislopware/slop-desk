@@ -2,6 +2,7 @@
 import AppKit
 import ApplicationServices
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -42,8 +43,6 @@ public final class InputInjector: @unchecked Sendable {
     /// by the geometry watcher so mapping stays correct as the window moves.
     private var windowBoundsCG: VideoRect
     private let boundsLock = NSLock()
-    /// The CGEventSource whose `userData` we stamp = self-inject filter tag.
-    private let eventSource: CGEventSource?
 
     /// SAFETY button-balance. On a `mouseDown` for an already-held button it injects a synthetic
     /// release first, so a fresh click never starts inside a selection stranded by a lost
@@ -132,8 +131,8 @@ public final class InputInjector: @unchecked Sendable {
     /// (measured 61ms capture-gap). Parsec instead posts ONE event: a tablet-subtype
     /// (`kCGEventMouseSubtypeTabletPoint`) `.mouseMoved` carrying absolute `kCGTabletEventPointX/Y`, no
     /// warp/associate (disasm parsecd-150-104a @0x148a50). VERIFIED end-to-end on macOS 26 (the event alone
-    /// positions the host cursor at exact coords — no warp needed; still tagged via ``stampAndPost`` so the
-    /// `CursorSampler` self-inject filter keeps working). Applies to HOVER moves ONLY — DRAGS keep the warp
+    /// positions the host cursor at exact coords — no warp needed; the door still stamps the self-inject
+    /// tag, so the `CursorSampler` filter keeps working). Applies to HOVER moves ONLY — DRAGS keep the warp
     /// path so selection engines are byte-unchanged. Escape hatch `=0` for any app that special-cases the
     /// tablet subtype (games/canvas mouse-look — niche on a remote coding desktop).
     private static let tabletMouse = ProcessInfo.processInfo.environment["SLOPDESK_TABLET_MOUSE"] != "0"
@@ -244,14 +243,6 @@ public final class InputInjector: @unchecked Sendable {
             line += " band=\(bandHi)×@\(travel * 2)→\(bandLo)×@\(travel * 3)"
             line += " refractory=\(refractoryMs)ms\n"
             FileHandle.standardError.write(Data(line.utf8))
-        }
-        eventSource = CGEventSource(stateID: .hidSystemState)
-        if let eventSource {
-            // Default suppression interval is 0.25s: after a posted/warped event, synthetic events
-            // landing in that window can be eaten — why a click right after a warp-move sometimes
-            // "didn't take". Zero it so injected events are never suppressed. (This property is the
-            // modern equivalent of the obsoleted `CGEventSourceSetLocalEventsSuppressionInterval`.)
-            eventSource.localEventsSuppressionInterval = 0
         }
     }
 
@@ -434,67 +425,69 @@ public final class InputInjector: @unchecked Sendable {
         CoordinateMapping.windowPoint(normalized: normalized, windowBounds: bounds).cgPoint
     }
 
-    /// Warp the cursor to an absolute point, then immediately re-associate the mouse and
-    /// cursor so the warp's transient disassociation (which can swallow the next synthetic
-    /// event) is cancelled. Together with the suppression interval = 0 set in `init`, this
-    /// makes warp-then-post safe so absolute positioning never eats the following event.
-    private func warp(to pt: CGPoint) {
-        if Self.injectToPid { return } // test seam: don't hijack the global cursor (same-machine loopback)
-        CGWarpMouseCursorPosition(pt)
-        CGAssociateMouseAndMouseCursorPosition(boolean_t(1)) // re-associate (true)
+    /// Where a posted event is DELIVERED. `0` is the HID tap, which is the production path; the
+    /// same-machine loopback seam (`SLOPDESK_VIDEO_INJECT_TO_PID`) instead names the target pid, so
+    /// a host driving a client on the same Mac does not hijack the global cursor away from the
+    /// window under test.
+    private var deliverTo: Int32 {
+        Self.injectToPid && pid != 0 ? Int32(pid) : 0
+    }
+
+    /// One pointer event, spelled for ``slopdesk_inject_pointer``. Every field is a decision this
+    /// class already made; the door builds and posts, and makes none of its own.
+    private func pointerSpec(
+        kind: Int32,
+        button: MouseButton,
+        at pt: CGPoint,
+        clickCount: UInt8,
+        modifiers: InputModifiers,
+        tag: UInt32,
+        warp: Bool,
+        tablet: Bool = false,
+    ) -> SlopDeskInjectPointer {
+        SlopDeskInjectPointer(
+            x: pt.x,
+            y: pt.y,
+            tag: tag,
+            to_pid: deliverTo,
+            kind: UInt8(kind),
+            button: button.rawValue,
+            click_count: clickCount,
+            modifiers: modifiers.rawValue,
+            warp: warp,
+            tablet: tablet,
+        )
     }
 
     private func postMouseMove(normalized: VideoPoint, tag: UInt32) {
-        let pt = target(normalized)
         // PARSEC PATH (`tabletMouse`, real-injection only — the loopback `injectToPid` seam keeps the
-        // warp path below): ONE absolute tablet-point `.mouseMoved`, no warp/associate → 1 WindowServer
-        // IPC not 3, so a hover flood no longer stalls SCStream capture. The event's `mouseCursorPosition`
-        // positions the host cursor (verified macOS 26); the tablet subtype + absolute point fields give
-        // delta-reading apps an absolute position. Stateless like the warp path (pure hover; drags go
-        // through ``postMouseDrag``).
-        if Self.tabletMouse, !Self.injectToPid {
-            if let event = CGEvent(
-                mouseEventSource: eventSource,
-                mouseType: .mouseMoved,
-                mouseCursorPosition: pt,
-                mouseButton: .left,
-            ) {
-                event.setIntegerValueField(.mouseEventSubtype, value: 1) // kCGEventMouseSubtypeTabletPoint
-                // Reuse the never-traps Int32 backstop: a malicious/corrupt mouseMove can carry a finite
-                // huge coordinate (`readFiniteFloat64` rejects only NaN/Inf, and windowPoint doesn't
-                // clamp), so `pt` can reach ~1e21 — a bare `Int64(_:)` would TRAP and crash the host on an
-                // untrusted datagram. Int32 range (±2.1e9) dwarfs any real display; the CGEvent's
-                // `mouseCursorPosition` does the actual positioning.
-                event.setIntegerValueField(.tabletEventPointX, value: Int64(Self.clampToInt32(pt.x)))
-                event.setIntegerValueField(.tabletEventPointY, value: Int64(Self.clampToInt32(pt.y)))
-                stampAndPost(event, tag: tag)
-            }
-            return
-        }
-        // Absolute HOVER move: warp the cursor, then post `.mouseMoved` so apps reading deltas see
-        // it (doc 05 §1). A button-held drag is NEVER inferred here — the client sends an explicit
-        // `.mouseDrag` (see ``postMouseDrag``), so a move is always a pure hover. Inferring "button
-        // held?" from host state would let a lost `mouseUp` strand that state, turning every later
-        // hover into a phantom `.leftMouseDragged` (runaway selection). Stateless = no phantom drag.
-        warp(to: pt)
-        if let event = CGEvent(
-            mouseEventSource: eventSource,
-            mouseType: .mouseMoved,
-            mouseCursorPosition: pt,
-            mouseButton: .left,
-        ) {
-            stampAndPost(event, tag: tag)
-        }
+        // warp path): ONE absolute tablet-point move, no warp/associate → 1 WindowServer IPC not 3,
+        // so a hover flood no longer stalls SCStream capture. Otherwise the absolute HOVER move:
+        // warp the cursor, then post `.mouseMoved` so apps reading deltas see it (doc 05 §1).
+        //
+        // A button-held drag is NEVER inferred here — the client sends an explicit `.mouseDrag` (see
+        // ``postMouseDrag``), so a move is always a pure hover. Inferring "button held?" from host
+        // state would let a lost `mouseUp` strand that state, turning every later hover into a
+        // phantom `.leftMouseDragged` (runaway selection). Stateless = no phantom drag.
+        let tablet = Self.tabletMouse && !Self.injectToPid
+        _ = slopdesk_inject_pointer(pointerSpec(
+            kind: SLOPDESK_INJECT_MOVE,
+            button: .left,
+            at: target(normalized),
+            clickCount: 1,
+            modifiers: [],
+            tag: tag,
+            warp: !Self.injectToPid && !tablet,
+            tablet: tablet,
+        ))
     }
 
-    /// Posts a drag-move: the `*MouseDragged` matching the held `button`, at `pt`. STATELESS — the
-    /// CLIENT reported the button held (its view fired `mouseDragged`, distinct from `mouseMoved`), so
-    /// the host never tracks held state. macOS selection/drag engines consume `*MouseDragged` between
-    /// mouseDown/mouseUp; a bare `.mouseMoved` mid-gesture is ignored and can collapse a selection
-    /// (a stray hover during drag-select would leave the user unable to select). Statelessness is also wire-reorder-safe: over UDP a
-    /// drag can arrive before its `mouseDown`; the app ignores a dragged with no active session, then
-    /// anchors on the down and extends to the final drag — so the range stays correct even if early
-    /// drag samples are lost or reordered.
+    /// Posts a drag-move: the `*MouseDragged` matching the held `button`. STATELESS — the CLIENT
+    /// reported the button held (its view fired `mouseDragged`, distinct from `mouseMoved`), so the
+    /// host never tracks held state. Statelessness is also wire-reorder-safe: over UDP a drag can
+    /// arrive before its `mouseDown`; the app ignores a dragged with no active session, then anchors
+    /// on the down and extends to the final drag — so the range stays correct even if early drag
+    /// samples are lost or reordered.
     private func postMouseDrag(
         button: MouseButton,
         normalized: VideoPoint,
@@ -502,26 +495,15 @@ public final class InputInjector: @unchecked Sendable {
         modifiers: InputModifiers,
         tag: UInt32,
     ) {
-        let pt = target(normalized)
-        warp(to: pt)
-        let (type, cgButton): (CGEventType, CGMouseButton)
-        switch button {
-        case .left: (type, cgButton) = (.leftMouseDragged, .left)
-        case .right: (type, cgButton) = (.rightMouseDragged, .right)
-        case .other: (type, cgButton) = (.otherMouseDragged, .center)
-        }
-        guard let event = CGEvent(
-            mouseEventSource: eventSource,
-            mouseType: type,
-            mouseCursorPosition: pt,
-            mouseButton: cgButton,
-        ) else { return }
-        // A real drag carries the originating click's clickState (1 = drag-select, 2 = word-by-word).
-        // A fresh dragged event defaults to 0, which some selection engines treat as "not a drag" →
-        // nothing selects. Match the down: SAME value on down, drags, and up (`postMouseButton` too).
-        event.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, Int(clickCount))))
-        event.flags = cgFlags(modifiers)
-        stampAndPost(event, tag: tag)
+        _ = slopdesk_inject_pointer(pointerSpec(
+            kind: SLOPDESK_INJECT_DRAG,
+            button: button,
+            at: target(normalized),
+            clickCount: clickCount,
+            modifiers: modifiers,
+            tag: tag,
+            warp: !Self.injectToPid,
+        ))
     }
 
     private func postMouseButton(
@@ -532,30 +514,18 @@ public final class InputInjector: @unchecked Sendable {
         modifiers: InputModifiers,
         tag: UInt32,
     ) {
-        let pt = target(normalized)
-        // Warp before posting so a tap with no preceding move still lands at `pt` and the visible
-        // cursor agrees with where the click registers. Safe now that suppression is 0 and `warp`
-        // re-associates the cursor.
-        warp(to: pt)
-        let (cgButton, downType, upType): (CGMouseButton, CGEventType, CGEventType)
-        switch button {
-        case .left: (cgButton, downType, upType) = (.left, .leftMouseDown, .leftMouseUp)
-        case .right: (cgButton, downType, upType) = (.right, .rightMouseDown, .rightMouseUp)
-        case .other: (cgButton, downType, upType) = (.center, .otherMouseDown, .otherMouseUp)
-        }
-        guard let event = CGEvent(
-            mouseEventSource: eventSource,
-            mouseType: down ? downType : upType,
-            mouseCursorPosition: pt,
-            mouseButton: cgButton,
-        ) else { return }
-        // A single click needs clickState = 1 to register reliably (focus / insertion point); 2 =
-        // double, 3 = triple. MUST be set on BOTH down and up with the SAME value — a fresh CGEvent
-        // doesn't reliably carry clickState = 1, so clicks "didn't take" or landed wrong.
-        // (`mouseEventClickState`; Apple forum 685901.)
-        event.setIntegerValueField(.mouseEventClickState, value: Int64(max(1, Int(clickCount))))
-        event.flags = cgFlags(modifiers)
-        stampAndPost(event, tag: tag)
+        // Warp before posting so a tap with no preceding move still lands at the mapped point and
+        // the visible cursor agrees with where the click registers. Safe because the door zeroes the
+        // source's suppression interval and re-associates the cursor after every warp.
+        _ = slopdesk_inject_pointer(pointerSpec(
+            kind: down ? SLOPDESK_INJECT_DOWN : SLOPDESK_INJECT_UP,
+            button: button,
+            at: target(normalized),
+            clickCount: clickCount,
+            modifiers: modifiers,
+            tag: tag,
+            warp: !Self.injectToPid,
+        ))
     }
 
     /// Routes a forwarded wire scroll. With ``scrollResampleHz`` == 0 (default) it posts the event
@@ -630,58 +600,23 @@ public final class InputInjector: @unchecked Sendable {
         continuous: Bool,
         tag: UInt32,
     ) {
-        // dx/dy arrive off the (untrusted) wire. `Int32(Double)` TRAPS on NaN/±inf or out-of-range
-        // (e.g. a hostile `1e300`), so a crafted scroll datagram could crash the host.
-        // `SlopDeskVideoProtocol` already rejects non-finite deltas at decode; this clamp is the
-        // defence-in-depth backstop for a finite-but-huge value, and it can never trap.
         let phased = Self.scrollPhaseEnabled
         // A precise/continuous trackpad gesture must NOT be re-scaled: the OS derives inertial coast
         // velocity from the Began/Changed delta cadence, so scrollGain would desync the fling. Gain
         // only means anything for legacy discrete-wheel events. Keep it 1:1 whenever replaying a real
         // gesture (phase forwarding on AND continuous).
         let gain = (phased && continuous) ? 1.0 : Self.scrollGain
-        guard let event = CGEvent(
-            scrollWheelEvent2Source: eventSource,
-            units: .pixel,
-            wheelCount: 2,
-            wheel1: Self.scaledScrollDelta(dy, gain: gain),
-            wheel2: Self.scaledScrollDelta(dx, gain: gain),
-            wheel3: 0,
-        ) else { return }
-        if phased {
-            // Replay the forwarded gesture. `IsContinuous` follows the precise flag (1 for a trackpad
-            // gesture incl. momentum tail, 0 for a genuine wheel notch). The two phase fields carry the
-            // CoreGraphics integer codes verbatim and are mutually exclusive (client guarantees at most
-            // one non-zero), so Chromium/AppKit drive native 1:1 inertial + rubber-band scrolling.
-            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: continuous ? 1 : 0)
-            if scrollPhase != 0 {
-                event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(scrollPhase))
-            }
-            if momentumPhase != 0 {
-                event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(momentumPhase))
-            }
-        } else {
-            // A/B fallback (SLOPDESK_SCROLL_PHASE=0): the prior phase-less continuous behaviour.
-            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-        }
-        stampAndPost(event, tag: tag)
-    }
-
-    /// Clamps a wire-supplied scroll delta into `Int32` without ever trapping. `NaN` → 0; ±inf and
-    /// out-of-range magnitudes saturate to `Int32.min`/`Int32.max`. (The NaN check MUST come first —
-    /// every NaN comparison is false, so it would otherwise fall through to the trapping `Int32(_:)`.)
-    static func clampToInt32(_ value: Double) -> Int32 {
-        if value.isNaN { return 0 }
-        if value >= Double(Int32.max) { return Int32.max }
-        if value <= Double(Int32.min) { return Int32.min }
-        return Int32(value.rounded())
-    }
-
-    /// Applies gain BEFORE the trap-free clamp, so a hostile wire delta × a large gain still
-    /// saturates instead of trapping (`inf × gain` and overflow both land in the clamp's
-    /// saturating branches).
-    static func scaledScrollDelta(_ value: Double, gain: Double) -> Int32 {
-        clampToInt32(value * gain)
+        _ = slopdesk_inject_scroll(SlopDeskInjectScroll(
+            dx: dx,
+            dy: dy,
+            gain: gain,
+            tag: tag,
+            to_pid: deliverTo,
+            scroll_phase: scrollPhase,
+            momentum_phase: momentumPhase,
+            continuous: continuous,
+            phased: phased,
+        ))
     }
 
     // MARK: Swipe-back translation (see `swipeNavEnabled`)
@@ -803,86 +738,25 @@ public final class InputInjector: @unchecked Sendable {
         return HostFrontmostApp.bundleID()
     }
 
+    /// A key edge. Posted at the HID tap and deliberately NOT tagged — see the door's own note on
+    /// why a stamped keystroke defeats a host IME's tap-dedup and composes Telex twice.
+    ///
+    /// A posted key reaches even a SecurityAgent/coreauthd secure field: HW-proven on Tahoe 26.5.1,
+    /// an HID-tap keystroke fills the SecurityAgent password field and authenticates while
+    /// `IsSecureEventInputEnabled()` is true — Secure Event Input blocks event-tap interception, NOT
+    /// trusted HID-tap injection. A DriverKit virtual-HID keyboard would add nothing: this already
+    /// reaches every dialog the host can surface, and virtual-HID would only matter at the
+    /// login/lock screen, which the host cannot capture anyway.
     private func postKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag _: UInt32) {
-        // A posted `CGEvent` key reaches even a SecurityAgent/coreauthd secure field: HW-proven on
-        // Tahoe 26.5.1, a `CGEvent(.cghidEventTap)` keystroke fills the SecurityAgent password field
-        // and authenticates while `IsSecureEventInputEnabled()` is true — Secure Event Input blocks
-        // event-tap interception, NOT trusted HID-tap injection. A DriverKit virtual-HID keyboard
-        // would add nothing: CGEvent already reaches every dialog the host can surface, and virtual-HID
-        // would only matter at the login/lock screen, which the host can't capture anyway.
-        guard let event = CGEvent(keyboardEventSource: eventSource, virtualKey: CGKeyCode(keyCode), keyDown: down)
-        else { return }
-        event.flags = cgFlags(modifiers)
-        postKeyboardEvent(event)
+        _ = slopdesk_inject_key(keyCode, down, modifiers.rawValue)
     }
 
     /// Unicode text injection — layout-independent, the robust text path (doc 05 §3).
-    ///
-    /// The unicode string attaches to the **key-DOWN event ONLY**. Attaching it to BOTH edges
-    /// double-inserts the text, so the key-up is posted bare — it just completes the keystroke so
-    /// the app sees a balanced down/up pair (CGEvent contract).
     private func postText(_ string: String, tag _: UInt32) {
-        let units = Array(string.utf16)
-        guard let down = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: true) else { return }
-        units.withUnsafeBufferPointer { buffer in
-            down.keyboardSetUnicodeString(stringLength: buffer.count, unicodeString: buffer.baseAddress)
+        let bytes = Array(string.utf8)
+        _ = bytes.withUnsafeBufferPointer { utf8 in
+            slopdesk_inject_text(utf8.baseAddress, utf8.count)
         }
-        // Force a MODIFIER-FREE insertion. A plain-text keystroke must never inherit a latched/residual
-        // modifier from the shared `.hidSystemState` source — e.g. a ⌘ stuck after ⌘+Delete would make
-        // this a ⌘-modified keystroke. `postKey` sets `flags` explicitly; only `postText` left them at
-        // the source default, so clear them here on both edges.
-        down.flags = []
-        postKeyboardEvent(down)
-        // Bare key-up: NO keyboardSetUnicodeString (would double-insert). Modifier-free, matching the down.
-        if let up = CGEvent(keyboardEventSource: eventSource, virtualKey: 0, keyDown: false) {
-            up.flags = []
-            postKeyboardEvent(up)
-        }
-    }
-
-    /// Posts a KEYBOARD event at the HID tap, deliberately WITHOUT stamping `eventSourceUserData` —
-    /// the one place that diverges from ``stampAndPost``.
-    ///
-    /// A host Vietnamese IME (the user runs **xkey** — xmannv/xkey) installs TWO taps: a HID tap
-    /// (`.cghidEventTap`, head-insert) and a session tap (`.cgSessionEventTap`, tail-append) that
-    /// exists to catch remote-desktop-injected keystrokes. It DEDUPES across them via
-    /// `eventSourceUserData`: the HID tap marks an event handled so the session tap skips it. A
-    /// keystroke posted to the HID tap carrying our NONZERO self-inject `tag` defeats that dedup —
-    /// xkey's session tap re-processes it → DOUBLE Telex composition → garbage (verified with
-    /// `scripts/inject-telex-probe.swift`: "ddaa" WITH nonzero userData yields "daa"; cleared, the
-    /// correct "đâ"). Posting `userData = 0` restores the dedup so the IME composes exactly once.
-    ///
-    /// Keys are safe to leave untagged: the self-inject filter serves only the `CursorSampler` /
-    /// `WindowGeometryWatcher` feedback loop, driven by POINTER/GEOMETRY events — a keystroke never
-    /// moves the cursor or resizes the window, so it can't feed back. Mouse/scroll still go through
-    /// ``stampAndPost`` (xkey only taps keyboard, so their tag is harmless to it and our watchers need it).
-    private func postKeyboardEvent(_ event: CGEvent) {
-        event.post(tap: .cghidEventTap)
-    }
-
-    /// Stamps the self-inject filter tag on `eventSourceUserData` then posts at the
-    /// HID tap (doc 18 §A). The cursor/geometry watchers compare incoming NSEvent
-    /// `eventSourceUserData` to drop events we injected ourselves. POINTER/SCROLL ONLY —
-    /// keyboard events use ``postKeyboardEvent`` (untagged) so the host IME's tap-dedup
-    /// is not defeated.
-    private func stampAndPost(_ event: CGEvent, tag: UInt32) {
-        event.setIntegerValueField(.eventSourceUserData, value: Int64(tag))
-        if Self.injectToPid, pid != 0 {
-            event.postToPid(pid) // test seam: deliver to the target app without moving the cursor
-        } else {
-            event.post(tap: .cghidEventTap)
-        }
-    }
-
-    private func cgFlags(_ modifiers: InputModifiers) -> CGEventFlags {
-        var flags: CGEventFlags = []
-        if modifiers.contains(.shift) { flags.insert(.maskShift) }
-        if modifiers.contains(.control) { flags.insert(.maskControl) }
-        if modifiers.contains(.option) { flags.insert(.maskAlternate) }
-        if modifiers.contains(.command) { flags.insert(.maskCommand) }
-        if modifiers.contains(.capsLock) { flags.insert(.maskAlphaShift) }
-        if modifiers.contains(.function) { flags.insert(.maskSecondaryFn) }
-        return flags
     }
 
     /// NONISOLATED probe: matches `element` to ``windowID`` via the same private AX SPI

@@ -86,6 +86,9 @@ pub mod hid_virtual_key;
 pub mod hint_scan;
 pub mod host_policy;
 pub mod host_state;
+// macOS only: behind it is CoreGraphics event synthesis, which no iOS slice has. See the module.
+#[cfg(target_os = "macos")]
+pub mod inject;
 pub mod input_box;
 pub mod input_event;
 pub mod input_routing;

@@ -2283,7 +2283,7 @@ if [[ -n "${journal_writer}" ]]; then
   fail "Swift is writing a journal file — superd owns every write under the scrollback dir (docs/51 §6.8)"
 fi
 
-# ── Three crates may write `unsafe`, and this is not one of them ────────────────────────────────
+# ── Two families may write `unsafe`, and this is not one of them ────────────────────────────────
 # Every crate under `rust/` except those three carries `unsafe_code = "forbid"`, which rustc already
 # enforces per crate. What rustc cannot notice is the shape drifting back: a new crate that quietly
 # says "deny", or a manifest that says nothing at all and inherits nothing. Both would reopen the
@@ -2299,11 +2299,44 @@ fi
 # of them would make the per-site `#[expect]` impossible, and those self-expiring exemptions are what
 # keeps the surfaces auditable. Root-workspace MEMBERS (`slopdesk-hook`, `-ctl`, `-cli`, `-probe`)
 # state `[lints] workspace = true` and inherit the root's `forbid`, so they are accepted that way.
+#
+# The SECOND family is `slopdesk-apple-*`, opened by `docs/57-apple-frameworks-in-rust.md`, and it is
+# a different permission rather than three more seats at the same table. A crate there wraps ONE
+# Apple framework area, reaches it only through `objc2`'s generated bindings, and may write `unsafe`
+# only to call a binding that is itself `unsafe` — never to dereference a pointer it made. That is
+# what makes the family bounded where a fourth hand-written crate would not be: the obligation each
+# block carries is the FRAMEWORK's rule, which the framework documents, not a Rust rule about memory
+# nobody else can check. Membership is by NAME, so adding one is visible in this file's diff, and
+# the three extra conditions below are checked per crate rather than trusted.
 UNSAFE_EXEMPT=(
   rust/slopdesk-posix/Cargo.toml
   rust/slopdesk-ffi/Cargo.toml
   rust/slopdesk-gfsimd/Cargo.toml
 )
+APPLE_FAMILY=()
+for manifest in rust/slopdesk-apple-*/Cargo.toml; do
+  [[ -f "${manifest}" ]] || continue
+  APPLE_FAMILY+=("${manifest}")
+  UNSAFE_EXEMPT+=("${manifest}")
+done
+# What the family costs, per crate. `deny` alone is the same level the three hand-written crates
+# carry; these three add what `docs/57` §3 asks and what makes the permission narrower rather than
+# wider.
+for manifest in "${APPLE_FAMILY[@]}"; do
+  crate_dir=$(dirname "${manifest}")
+  if ! grep -q '^unsafe_op_in_unsafe_fn = "deny"' "${manifest}"; then
+    fail "${manifest} is in the objc2 family and does not state unsafe_op_in_unsafe_fn = \"deny\" — the family's permission is 'call an unsafe binding', which means every such call must be inside a block that named its obligation (docs/57 §3)"
+  fi
+  if ! grep -q 'objc2' "${manifest}"; then
+    fail "${manifest} is named slopdesk-apple-* and depends on no objc2 crate — the family exists BECAUSE the bindings are generated from SDK metadata; a hand-rolled extern block wearing this name has the permission without the reason for it (docs/57 §1)"
+  fi
+  # The line that separates this family from the three hand-written crates. A raw-pointer operation
+  # here is not a framework obligation — it is a Rust one, and `docs/57` §2 says it belongs in
+  # `slopdesk-posix` or `slopdesk-ffi`, where a reviewer already holds that question.
+  if grep -rEqn --include='*.rs' 'transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)' "${crate_dir}/src"; then
+    fail "${crate_dir} hand-writes a raw-pointer operation — the objc2 family may write unsafe only to CALL an unsafe binding; a transmute or a from_raw is a Rust obligation and belongs in slopdesk-posix or slopdesk-ffi (docs/57 §2)"
+  fi
+done
 # The exemption is not a blank cheque, and this is the half the gate was missing: each of the three
 # must state `deny`, the level the comment above argues for, and nothing else. `allow` there would
 # pass the loop below untouched — an exempt manifest is `continue`d before the allow/warn check ever
@@ -2316,7 +2349,7 @@ for allowed in "${UNSAFE_EXEMPT[@]}"; do
     continue
   fi
   if ! grep -q '^unsafe_code = "deny"' "${allowed}"; then
-    fail "${allowed} is one of the three crates allowed to write unsafe and does not state unsafe_code = \"deny\" — the per-site #[expect] audit depends on that exact level (docs/51 §6.15, docs/55 §5)"
+    fail "${allowed} is allowed to write unsafe and does not state unsafe_code = \"deny\" — the per-site #[expect] audit depends on that exact level (docs/51 §6.15, docs/55 §5)"
   fi
 done
 # `workspace = true` is only an answer for a crate that INHERITS from the root, and only because the
@@ -2356,7 +2389,7 @@ for manifest in rust/Cargo.toml rust/*/Cargo.toml; do
 done
 if [[ -n "${unsafe_policy_missing}" ]]; then
   printf '%s' "${unsafe_policy_missing}" >&2
-  fail "a crate is not unsafe_code = \"forbid\" — the three exempt crates are named above, and a fourth is a design change (docs/51 §6.15, docs/55 §5)"
+  fail "a crate is not unsafe_code = \"forbid\" — the exempt crates are named above (three hand-written, plus the slopdesk-apple-* objc2 family), and a fourth hand-written one is a design change (docs/51 §6.15, docs/55 §5, docs/57)"
 fi
 
 # ── The two lints that would talk you out of bit-exact floats ────────────────────────────────────
@@ -11904,6 +11937,67 @@ for island in Sources/SlopDeskMacUI/Chrome/MacConnectionIsland.swift \
     fail "${island} formats a link figure itself — the ping and the bitrate are slopdesk_workspace::connection's, so one shell writing its own is a reading the other cannot see change (docs/56 increment 83)"
   fi
 done
+
+# N.18 — THE HOST SYNTHESISES NO EVENT OF ITS OWN.
+#
+# Every injected `CGEvent` is built and posted by `rust/slopdesk-apple-cgevent`, the first crate of
+# the `objc2` family `docs/57` opens the unsafe gate for. `InputInjector` still ORCHESTRATES — it
+# owns the bounds, the balance, the resampler, the raise chain — but it no longer builds an event,
+# sets a field on one, warps a cursor or posts anything.
+#
+# The line matters because the two languages fail differently here. Swift's `Int32(_:)` TRAPS on a
+# value off the wire; Rust's clamp saturates. Swift's `CGEvent` construction is nine call sites that
+# each had to remember the click-state rule, the untagged-keyboard rule and the suppression
+# interval; Rust's is one. A second CGEvent built in Swift would not be a duplicate implementation
+# in the abstract — it would be the specific bug each of those rules was written to close.
+#
+# What is pinned:
+#   • the crate and the door exist   — a face over a deleted door does not compile; a face that grew
+#                                      its own CoreGraphics call beside them does.
+#   • no synthesis in the injector   — no `CGEvent(`, no `setIntegerValueField`, no `.post(tap:`, no
+#                                      `CGWarpMouseCursorPosition`. Those ARE the port.
+#   • no second clamp                — `clampToInt32`/`scaledScrollDelta` are `slopdesk-video`'s.
+#                                      A Swift copy is the trap coming back by another name.
+#   • the bijection is spelled       — the crate is a target-gated dependency, the doors sit inside
+#                                      the header's MACOS-ONLY region, and the module is `cfg`'d.
+#                                      `build-ffi.sh` checks the third leg on all three slices; the
+#                                      first two are checked here, because a header that declares an
+#                                      iOS-reachable CoreGraphics door fails at LINK, far from here.
+#
+# BREAK-TEST: restored `CGEvent(mouseEventSource:` in InputInjector ⇒ FAIL "builds a CGEvent itself".
+# Separately restored `static func clampToInt32` there ⇒ FAIL "keeps its own narrowing". Separately
+# deleted the Rust crate ⇒ FAIL "has no Rust behind it". Separately moved the inject declarations out
+# of the MACOS-ONLY region ⇒ FAIL "declares a CoreGraphics door outside the macOS-only region".
+# Separately ungated the Cargo edge ⇒ FAIL "is not target-gated". All five restored from /tmp; PASS.
+cgevent_crate=rust/slopdesk-apple-cgevent/src/inject.rs
+cgevent_door=rust/slopdesk-ffi/src/inject.rs
+input_injector=Sources/SlopDeskVideoHost/InputInjector.swift
+for required in "${cgevent_crate}" "${cgevent_door}"; do
+  if [[ ! -f "${required}" ]]; then
+    fail "${input_injector} has no Rust behind it — ${required} is missing, and the host synthesises no event of its own (docs/57 §5, docs/56 increment 84)"
+  fi
+done
+if [[ -f "${input_injector}" ]]; then
+  # CODE only. The comments still NAME these calls, and should: they carry the hardware measurements
+  # that decided the tablet path and the suppression interval, which is exactly the knowledge a
+  # reader of the orchestration needs. A gate that could not tell a call from a sentence about one
+  # would force those measurements out of the file to stay green.
+  injector_code=$(grep -vE '^[[:space:]]*(///|//)' "${input_injector}" || true)
+  if grep -Eq 'CGEvent\(|\.setIntegerValueField|\.post\(tap:|\.postToPid\(|CGWarpMouseCursorPosition|CGAssociateMouseAndMouseCursorPosition|CGEventSource\(' <<< "${injector_code}"; then
+    fail "${input_injector} builds a CGEvent itself — synthesis, field-setting, the warp and the post are slopdesk-apple-cgevent's, and a second copy here is where the click-state rule and the untagged-keyboard rule drift apart (docs/57 §5)"
+  fi
+  if grep -Eq 'func (clampToInt32|scaledScrollDelta)' <<< "${injector_code}"; then
+    fail "${input_injector} keeps its own narrowing — clamp_to_i32 is slopdesk-video's, and a Swift copy is the trapping Int32(_:) coming back under a new name on a path that parses hostile datagrams (docs/57 §5)"
+  fi
+fi
+if ! awk '/MACOS-ONLY BEGIN/{inside=1} inside{print} /MACOS-ONLY END/{inside=0}' \
+  rust/slopdesk-ffi/include/slopdesk_ffi.h | grep -q 'slopdesk_inject_pointer('; then
+  fail "slopdesk_ffi.h declares a CoreGraphics door outside the macOS-only region — iOS has no CGEvent at all, so an ungated declaration is not a wasted byte, it is a link failure on two of the three slices (docs/57 §3)"
+fi
+if ! grep -A 12 "target.'cfg(target_os = \"macos\")'.dependencies" rust/slopdesk-ffi/Cargo.toml |
+  grep -q 'slopdesk-apple-cgevent'; then
+  fail "rust/slopdesk-ffi/Cargo.toml: the slopdesk-apple-cgevent edge is not target-gated — the macOS-only bijection is three spellings (the cfg, the header region, the Cargo edge) and build-ffi.sh only checks what the library exports (docs/57 §3)"
+fi
 
 if [[ "${1:-}" != "--tests" ]]; then
   exit 0

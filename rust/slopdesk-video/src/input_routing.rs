@@ -16,6 +16,45 @@ use std::collections::BTreeSet;
 
 use crate::input_event::{InputEvent, MouseButton, ScrollEvent, modifier_keys};
 
+/// A wire-supplied coordinate or delta, narrowed to `i32` without ever trapping.
+///
+/// `NaN` answers `0`; `±inf` and any magnitude past the type saturate. The NaN test MUST come
+/// first: every comparison against NaN is false, so a reordering would fall through to the
+/// conversion, and `f64 as i32` saturating is a Rust guarantee the C side does not have — the
+/// injector's own history here is a Swift `Int32(_:)` that TRAPPED, crashing the host on one
+/// crafted datagram.
+///
+/// The decode already rejects non-finite deltas; this is the defence in depth for a finite value
+/// so large that only the target type notices, which is exactly the shape `1e300` has.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the two bounds above leave a value strictly inside i32, which is what the lint asks to prove"
+)]
+pub fn clamp_to_i32(value: f64) -> i32 {
+    if value.is_nan() {
+        return 0;
+    }
+    let rounded = value.round();
+    if rounded >= f64::from(i32::MAX) {
+        return i32::MAX;
+    }
+    if rounded <= f64::from(i32::MIN) {
+        return i32::MIN;
+    }
+    rounded as i32
+}
+
+/// A scroll delta with the gain applied BEFORE the clamp.
+///
+/// The order is the point: gaining after would multiply an already-saturated `i32`, and gaining
+/// before lets `inf * gain` and plain overflow both land in [`clamp_to_i32`]'s saturating arms
+/// rather than anywhere that can trap.
+#[must_use]
+pub fn scaled_scroll_delta(value: f64, gain: f64) -> i32 {
+    clamp_to_i32(value * gain)
+}
+
 /// Whether an event ALWAYS raises and focuses the target first.
 ///
 /// A pointer button-down does; pure moves, scrolls, keys and text do not, so focus is not yanked on
@@ -619,9 +658,9 @@ mod tests {
     )]
 
     use super::{
-        InputButtonBalance, ScrollCoalescePlanner, always_raises, coalesce_motion, coalesce_plan,
-        is_coalescable_scroll_phase, latch_exempt_from_raise, raise_first, rearm_raise_after, should_raise,
-        with_deltas,
+        InputButtonBalance, ScrollCoalescePlanner, always_raises, clamp_to_i32, coalesce_motion,
+        coalesce_plan, is_coalescable_scroll_phase, latch_exempt_from_raise, raise_first, rearm_raise_after,
+        scaled_scroll_delta, should_raise, with_deltas,
     };
     use crate::geometry::VideoPoint;
     use crate::input_event::{
@@ -629,6 +668,48 @@ mod tests {
     };
 
     const ORIGIN: VideoPoint = VideoPoint { x: 0.5, y: 0.5 };
+
+    /// The ordinary half of the clamp: it rounds half away from zero, which is what the injected
+    /// pixel delta has always been.
+    #[test]
+    fn an_ordinary_delta_rounds_half_away_from_zero() {
+        assert_eq!(clamp_to_i32(0.0), 0);
+        assert_eq!(clamp_to_i32(12.7), 13);
+        assert_eq!(clamp_to_i32(-12.7), -13);
+        assert_eq!(clamp_to_i32(2.5), 3);
+        assert_eq!(clamp_to_i32(-2.5), -3);
+    }
+
+    /// The half that exists because the input is hostile. Every one of these was a TRAP before the
+    /// clamp: a crafted datagram carrying `1e300`, or a coordinate the window mapping did not
+    /// bound, crashed the host on the conversion.
+    #[test]
+    fn nothing_off_the_wire_can_make_the_narrowing_trap() {
+        assert_eq!(clamp_to_i32(f64::NAN), 0, "NaN must be tested FIRST");
+        assert_eq!(clamp_to_i32(f64::INFINITY), i32::MAX);
+        assert_eq!(clamp_to_i32(f64::NEG_INFINITY), i32::MIN);
+        assert_eq!(clamp_to_i32(1e300), i32::MAX);
+        assert_eq!(clamp_to_i32(-1e300), i32::MIN);
+        assert_eq!(clamp_to_i32(f64::from(i32::MAX)), i32::MAX);
+        assert_eq!(clamp_to_i32(f64::from(i32::MIN)), i32::MIN);
+        assert_eq!(clamp_to_i32(f64::from(i32::MAX) + 1000.0), i32::MAX);
+        assert_eq!(clamp_to_i32(f64::from(i32::MIN) - 1000.0), i32::MIN);
+    }
+
+    /// The gain multiplies BEFORE the clamp, so a hostile delta times a large gain still saturates.
+    /// A gain of 1 must be byte-identical to no gain at all — that is the default, and the wire's
+    /// deltas are already accelerated by the client's own trackpad.
+    #[test]
+    fn the_gain_is_applied_before_the_clamp_and_one_changes_nothing() {
+        for value in [0.0, 1.0, -1.0, 12.7, -12.7, 1e300, f64::NAN] {
+            assert_eq!(scaled_scroll_delta(value, 1.0), clamp_to_i32(value));
+        }
+        assert_eq!(scaled_scroll_delta(10.0, 1.5), 15);
+        assert_eq!(scaled_scroll_delta(-10.0, 1.5), -15);
+        assert_eq!(scaled_scroll_delta(3.0, 0.5), 2);
+        assert_eq!(scaled_scroll_delta(1e300, 10.0), i32::MAX);
+        assert_eq!(scaled_scroll_delta(-1e300, 10.0), i32::MIN);
+    }
 
     fn button(button: MouseButton) -> MouseButtonEvent {
         MouseButtonEvent {

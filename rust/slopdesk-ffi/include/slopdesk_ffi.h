@@ -8185,20 +8185,90 @@ int32_t slopdesk_pointer_shape_token(int32_t raw);
 // moving a mouse they cannot see.
 bool slopdesk_pointer_mouse_visible(int32_t raw);
 
-// ---- The repository behind a pane's cwd — MACOS ONLY ----------------------------
+// ---- The doors that cause an EFFECT — MACOS ONLY --------------------------------
 //
 // Everything between the MACOS-ONLY markers is declared on macOS and NOWHERE else,
 // and the markers are read by `scripts/build-ffi.sh`: it requires these symbols on
 // the macOS slice and requires them ABSENT from the two iOS slices, so the guard
 // here and the `cfg(target_os = "macos")` in `src/lib.rs` cannot drift apart.
 //
-// Behind the door is a vendored `libgit2`. Only hostd asks — a client on either
-// platform RECEIVES the git status as a metadata reply and never computes it — so
-// compiling that library into the phone slices would cost every phone build and
-// every phone archive for a door nothing on the phone can reach.
+// Two things live here. Behind `slopdesk_git_status` is a vendored `libgit2`: only
+// hostd asks — a client on either platform RECEIVES the git status as a metadata
+// reply and never computes it — so compiling that library into the phone slices
+// would cost every phone build and every phone archive for a door nothing on the
+// phone can reach. Behind the four `slopdesk_inject_*` doors is CoreGraphics event
+// synthesis, which iOS does not have at all, so an ungated declaration there would
+// not merely cost bytes — it would fail to link.
 //
 // MACOS-ONLY BEGIN
 #if TARGET_OS_OSX
+
+// ---- Remote input injection ------------------------------------------------------
+//
+// `rust/slopdesk-apple-cgevent` builds and posts the events; `slopdesk-video`'s
+// `input_routing` decides what should be posted. These doors hold neither half —
+// every field below is a value the caller already decided.
+//
+// They take a struct BY VALUE rather than the `(ptr, len)` this header uses
+// everywhere else, and the reason is the hot path: a remote pointer stream is about
+// 150 hover moves a second, each of which would otherwise be a serialise on one side
+// and a parse on the other for eleven scalars that already have a C layout. The
+// return is not a byte count — it is whether CoreGraphics built the event at all.
+
+// Which pointer event a SlopDeskInjectPointer is. An unrecognised code is a hover:
+// a garbled kind must never become a different GESTURE.
+#define SLOPDESK_INJECT_MOVE 0
+#define SLOPDESK_INJECT_DOWN 1
+#define SLOPDESK_INJECT_UP 2
+#define SLOPDESK_INJECT_DRAG 3
+
+// Which button it names. An unrecognised code is the primary button.
+#define SLOPDESK_INJECT_BUTTON_LEFT 0
+#define SLOPDESK_INJECT_BUTTON_RIGHT 1
+#define SLOPDESK_INJECT_BUTTON_OTHER 2
+
+typedef struct {
+  double x;           // absolute CG point, top-left origin
+  double y;           // its Y, same space
+  uint32_t tag;       // the self-inject stamp the cursor/geometry watchers filter on
+  int32_t to_pid;     // 0 posts at the HID tap (production); non-zero delivers to that pid
+  uint8_t kind;       // SLOPDESK_INJECT_*
+  uint8_t button;     // SLOPDESK_INJECT_BUTTON_*
+  uint8_t click_count; // the originating click's count; raised to 1 on the way out
+  uint8_t modifiers;  // the wire's InputModifiers bits
+  bool warp;          // warp the cursor before posting
+  bool tablet;        // post the one-round-trip tablet-point move instead. Hover only.
+} SlopDeskInjectPointer;
+
+typedef struct {
+  double dx;              // horizontal delta in points, pre-gain
+  double dy;              // vertical delta in points, pre-gain
+  double gain;            // applied before the delta is narrowed
+  uint32_t tag;           // as above
+  int32_t to_pid;         // as above
+  uint8_t scroll_phase;   // the CoreGraphics code, forwarded verbatim; 0 is absent
+  uint8_t momentum_phase; // likewise, and mutually exclusive with scroll_phase
+  bool continuous;        // whether the source gesture was precise, not a wheel notch
+  bool phased;            // whether the two phase fields are replayed at all
+} SlopDeskInjectScroll;
+
+// Each answers false when CoreGraphics refused to build the event.
+bool slopdesk_inject_pointer(SlopDeskInjectPointer spec);
+bool slopdesk_inject_scroll(SlopDeskInjectScroll spec);
+
+// A key edge. Posted at the HID tap and deliberately NOT stamped: a host IME dedupes
+// its own two taps through that same field, and a stamped keystroke defeats the dedup
+// and composes twice. Safe to leave untagged — the self-inject filter serves the
+// cursor and geometry watchers, and a keystroke moves neither.
+bool slopdesk_inject_key(uint16_t key_code, bool down, uint8_t modifiers);
+
+// Unicode text, layout-independently. The string rides the key-DOWN edge only —
+// attaching it to both inserts twice — and both edges post with EMPTY flags so an
+// insertion cannot inherit a modifier latched on the shared HID source. false means
+// the bytes were not UTF-8, or CoreGraphics refused.
+bool slopdesk_inject_text(const uint8_t *text, size_t len);
+
+// ---- The repository behind a pane's cwd ------------------------------------------
 
 // The git status of `path`'s repository, already encoded as the metadata reply's
 // own payload (the layout `slopdesk_metadata_decode_git_status` reads). It crosses

@@ -91,6 +91,12 @@ slopdesk-tree = { path = "../slopdesk-tree" }
 # two, so this cfg cannot quietly stop matching the header.
 [target.'cfg(target_os = "macos")'.dependencies]
 slopdesk-git = { path = "../slopdesk-git" }
+# The injection doors' other half, and the FIRST `slopdesk-apple-*` crate — CoreGraphics event
+# synthesis, called through `objc2`. Gated exactly as `slopdesk-git` is, and for a stronger reason:
+# there is no CoreGraphics event injection on iOS at all, so an ungated edge would not merely cost
+# bytes, it would fail to link. `docs/57-apple-frameworks-in-rust.md` §3 names this bijection as the
+# only route a macOS-only crate may take into this graph.
+slopdesk-apple-cgevent = { path = "../slopdesk-apple-cgevent" }
 
 # Linked into an app, and one of the two consumers is the terminal's hot output path. `panic` is
 # `abort` on purpose and it is not a size choice: unwinding across a C ABI frame into Swift is

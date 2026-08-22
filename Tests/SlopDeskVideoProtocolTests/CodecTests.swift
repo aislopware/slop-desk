@@ -285,7 +285,7 @@ final class CodecTests: XCTestCase {
             }
         }
         // A FINITE (even very large) scroll delta still decodes — clamping out-of-Int32-range
-        // values is the host injector's job (Self.clampToInt32), not decode's.
+        // values is the host injection path's job (`slopdesk-video`'s `clamp_to_i32`), not decode's.
         XCTAssertNoThrow(try InputEvent.decode(
             InputEvent.scroll(
                 dx: 1e9,

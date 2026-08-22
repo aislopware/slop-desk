@@ -3673,6 +3673,39 @@ the bands leave a centre box, and that the drawn rail is wider than the gutter t
 now `const { assert!(…) }`, checked where constants are, at compile time rather than one `cargo test`
 after the edit that broke them.
 
+### Increment 84 — the host stops synthesising events, and the unsafe gate opens for exactly one reason
+
+Increment 83 finished the program this doc has been running since the split: the *decisions* are all
+Rust. What was left in Swift below the view layer was never logic — it was EFFECT, and in the input
+path it was nine `CGEvent` construction sites inside `InputInjector`, each of which had to remember
+the click-state rule, the untagged-keyboard rule and the suppression interval on its own.
+
+**The gate that had to open first.** Calling CoreGraphics from Rust means `unsafe`, which `CLAUDE.md`
+had confined to three hand-written crates. The answer is not a fourth seat at that table but a second
+family with a narrower permission: `slopdesk-apple-*` wraps ONE framework area, reaches it only
+through `objc2`'s generated bindings, and may not hand-write a raw-pointer dereference at all. What
+made that cheap rather than brave is a count: in `objc2-core-graphics` 0.3.2, `CGEvent.rs` is 31 safe
+functions against 7, and `CGEventSource` plus `CGRemoteOperation` are 24 with zero. The whole
+injection path — make a source, build the event, set the fields, warp, post — is SAFE Rust. The one
+`unsafe` block in `slopdesk-apple-cgevent` is `keyboard_set_unicode_string`, and its safety comment
+names a CoreGraphics rule (the string is copied into the event) rather than a Rust one.
+`docs/57-apple-frameworks-in-rust.md` carries the terms.
+
+**The port is a line, not a lift.** `InputInjector` still orchestrates — it owns the window bounds,
+the button balance, the scroll resampler, the swipe recogniser, the AX raise chain and its two
+queues. What it no longer does is *build an event*. Four doors carry the four posts, and they take a
+`#[repr(C)]` struct BY VALUE rather than this ABI's usual `(ptr, len)`: a remote pointer stream is
+about 150 hover moves a second, and serialising eleven scalars that already have a C layout, to parse
+them again on the other side, is a cost with nothing on the other end of it.
+
+**Two things the port fixed rather than moved.** Swift's `Int32(_:)` TRAPS on a value off the wire,
+which is why `clampToInt32` existed at all; the Rust it became saturates, and it now lives in
+`slopdesk-video` beside the rules that produce the deltas rather than in the class that posts them.
+And the macOS-only question got its answer checked rather than argued: the crate enters
+`slopdesk-ffi`'s graph by exactly the route `slopdesk-git` takes — target-gated dependency, doors
+inside the header's `MACOS-ONLY` region, `cfg`'d module — and `build-ffi.sh` requires the symbols
+present on one slice and absent on the other two, which it did on the first build.
+
 ### Increment 83 — the link island, and the difference between one copy and one home
 
 `ConnectionReading` and `ConnectionPresenter` were already the good outcome of an earlier round: two

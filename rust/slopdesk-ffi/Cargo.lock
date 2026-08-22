@@ -129,6 +129,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "objc2-core-foundation"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
+name = "objc2-core-graphics"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807"
+dependencies = [
+ "bitflags",
+ "libc",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -256,6 +276,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-apple-cgevent"
+version = "0.1.0"
+dependencies = [
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "slopdesk-video",
+]
+
+[[package]]
 name = "slopdesk-cli"
 version = "0.1.0"
 dependencies = [
@@ -286,6 +315,7 @@ dependencies = [
  "slopdesk-agent",
  "slopdesk-altscreen",
  "slopdesk-androidd",
+ "slopdesk-apple-cgevent",
  "slopdesk-cli",
  "slopdesk-devicelog",
  "slopdesk-devicepanel",

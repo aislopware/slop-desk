@@ -145,8 +145,9 @@ because the spike proved it costs NONE: the whole injection path is safe `objc2`
 
 | Crate | Wraps | Replaces | State |
 | --- | --- | --- | --- |
-| `slopdesk-apple-cgevent` | CoreGraphics events | `InputInjector`'s posting, `CursorSampler` | planned |
+| `slopdesk-apple-cgevent` | CoreGraphics events | `InputInjector`'s posting | **landed** (increment 84) |
 | `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowGeometryWatcher`, `WindowFeedAXSupport` | planned |
+| `slopdesk-apple-cgcursor` | `CGDisplay`/`NSCursor` reads | `CursorSampler` | planned |
 | `slopdesk-apple-app` | `NSRunningApplication`/`NSWorkspace` reads | `HostFrontmostApp`, `ForegroundProcessProbes` | planned |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder`, `VideoDecoder` | planned |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer` | planned |
