@@ -47,8 +47,9 @@ struct TerminalFindBar: View {
     // where this rung and the pointer rung the AppKit half reads sit side by side, reviewable against each
     // other instead of one per renderer.
     //
-    // ↩ / ⇧↩ (next/prev) need a hardware keyboard; the in-bar ∧ / ∨ chevrons are the touch nav path; the
-    // app-level ⌘G / ⇧⌘G chords also need a hardware keyboard (a toolbar button for them is TODO).
+    // ↩ / ⇧↩ and ⌘G / ⇧⌘G need a hardware keyboard; the in-bar ∧ / ∨ chevrons are the touch path to the
+    // SAME two verbs, which is why no toolbar button is owed for the chords. (The note that used to say
+    // one was TODO read the chord's absence as a missing affordance; the affordance is the chevrons.)
     private let rung = FindBarMetrics.touch
     private var plate: CGFloat { CGFloat(rung.plate) }
     private var iconSize: CGFloat { CGFloat(rung.iconSize) }

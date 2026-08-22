@@ -18,8 +18,10 @@
 // The whole pane is keyed `.id(PaneID)` by the SplitContainer so the surface/connection are never reused
 // across panes (identity hazard). SYSTEM colours/fonts only.
 //
-// DEFERRED (clean seams, do NOT wire in L2):
-//   - TODO(L5): the per-pane agent footer coordinator + overflow context menu.
+// The old "DEFERRED to L5" note here named a per-pane agent footer and an overflow context menu. It is
+// gone rather than done: neither exists on the MAC half either, so it was never a phone gap — it was a
+// staging plan that outlived its stage, and a `TODO` naming something no half has reads as parity debt
+// on the file that carries it. Agent state reaches both halves through the marks, not a pane footer.
 
 #if os(iOS)
 import SlopDeskClientCore
