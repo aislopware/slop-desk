@@ -5902,6 +5902,34 @@ uint8_t slopdesk_cg_momentum_phase_code(uint32_t ns_phase);
 // reads this only as a click-state hint, and trapping would be a crash on a very fast tapper.
 uint8_t slopdesk_touch_click_count(int64_t tap_count);
 
+/* An INDIRECT POINTER — an iPad with a trackpad or a mouse — reports its buttons as a MASK on every
+ * event, not as an edge. A client that forwarded the level rather than the edge either never
+ * presses or never releases, and a button left down outlives the pane on a host whose event source
+ * is process-global. So the client DIFFS, and the diff lives here.
+ *
+ * The bit INDEX of each set is the wire's own MouseButton ordinal (left 0, right 1, other 2), so a
+ * caller walks the set with a shift rather than a table. Every button UIKit does not name — middle,
+ * thumb, a tenth on a gaming mouse — collapses onto `other`, because the wire has three buttons and
+ * dropping the unmapped ones would make a paste-on-middle-click silently do nothing. */
+typedef struct {
+  uint8_t pressed;
+  uint8_t released;
+  uint8_t held;
+} SlopDeskPointerButtons;
+// Stateless on purpose: the one byte of state stays with the caller, so this has no handle and no
+// lifetime — it would otherwise be the only thing on this floor with one. Feeding it the SAME mask
+// twice answers "nothing changed", which is what makes it safe to call from a move as well as a
+// press: UIKit reports the mask on every event of a gesture, and a button pressed mid-drag arrives
+// on a touchesMoved.
+SlopDeskPointerButtons slopdesk_pointer_button_transitions(uint8_t held, uint32_t ui_button_mask);
+// A FOURTH encoding of the same three edges, after the AppKit mask, the two CoreGraphics fields and
+// the phone's (is_first, is_last) pair — this one a UIGestureRecognizer.State ordinal, for the
+// scroll-pan recogniser an iPad trackpad drives. A cancelled or failed recogniser ENDS rather than
+// cancelling, deliberately: the host has one replay for a finished gesture and none for an abandoned
+// one, and sending a phase it cannot replay would leave the remote gesture open until the next
+// scroll closed it. `possible` answers 0 — nothing recognised yet is a wheel tick, never a guess.
+uint8_t slopdesk_scroll_phase_for_gesture_state(uint8_t state);
+
 /* ---------------------------------------------------------------------------- *
  * The host's swipe-nav OPERATING POINT: one parse of the SLOPDESK_SWIPE_NAV* family, shared by the
  * path that fires the chord and by the status push that tells the client what the host will

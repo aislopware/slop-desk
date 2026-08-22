@@ -11,16 +11,29 @@
 // so this is the one surface in the tree that must SYNTHESIZE one — and the vocabulary it
 // synthesizes is `TouchPointerPlan`'s (Rust, behind the FFI), not this file's.
 //
+// A POINTER IS NOT A FINGER, AND BOTH LAND HERE. `TARGETED_DEVICE_FAMILY` is "1,2", so an iPad with
+// a trackpad or a mouse drives this same view — and everything the touch translation is FOR is wrong
+// for it. A pointer has real buttons (so the press is diffed from `UIEvent.buttonMask`, never
+// synthesized from a tap), it hovers with nothing held (so `UIHoverGestureRecognizer` forwards the
+// move that hover-only remote UI needs), it scrolls without touching (so a `UIPanGestureRecognizer`
+// with `allowedScrollTypesMask` carries the wheel), and it is PRECISE — so the tap slop and the
+// long-press-to-right-click, both of which exist because a contact patch is tens of points across and
+// a phone has no second button, are skipped for it. See `Indirect pointer` below; the pure half is
+// `IndirectPointerPlan`.
+//
 // ── TWO THINGS THE NEXT PERSON WILL NEED, recorded here because this is where they land ─────────
 //
-// 1. POINTER SUPPORT (iPad). `TARGETED_DEVICE_FAMILY` is "1,2" — iPad ships, and an iPad with a
-//    trackpad has a real pointer this surface cannot see. There is no `UIPointerInteraction` or
-//    `UIHoverGestureRecognizer` anywhere in the tree, so hover, cursor SHAPE and hover-only remote UI
-//    (tooltips, menu highlight, hover-revealed close boxes) are unreachable from the phone half. When
-//    that lands it belongs HERE, next to the touch translation, and it will want the Mac's
-//    `applyLocalCursor` / `cursorUpdate` model rather than the position-overlay one the pipeline
-//    composites for a touch-only device (`VideoWindowPipeline`, the `#if !os(macOS)` sublayer add).
-//    Tracked as a tree-wide input-modality gap, not a video-pane one.
+// 1. CURSOR SHAPE ON iPad IS THE ONE PIECE STILL MISSING, and the reason is UIKit's, not this file's.
+//    macOS runs the Parsec model — the host's shape drawn ON the local OS cursor at the instant
+//    position, no overlay — because `NSCursor(image:hotSpot:)` takes an arbitrary bitmap.
+//    `UIPointerStyle` does not: its shapes are a `UIBezierPath` or a system effect, and no host cursor
+//    bitmap becomes either. So this half keeps the POSITION overlay the pipeline already composites
+//    for a touch device (`VideoWindowPipeline`, the `#if !os(macOS)` sublayer add) and hides the local
+//    pointer over it, which is `applyLocalCursor`'s decision inverted: pixel-exact shape, RTT-lagged
+//    position, instead of instant position and no shape. The way back to BOTH is to place that same
+//    overlay at the LOCAL hover point rather than the host-reported one — the compositor already has
+//    the shape cached and the placement math is pure — and it wants a host-space conversion the input
+//    encoder currently owns, which is why it is a separate increment and not a `TODO` here.
 //
 // 2. MODIFIER RESYNC ON REFOCUS IS CLOSED, and the note stays because the shape is worth keeping.
 //    The Mac re-establishes a still-held modifier when a pane REGAINS focus; this half only released
@@ -55,10 +68,15 @@ import UIKit
 /// because a finger lifted a frame early reads as a fling), the CLAMPED drag (a drag that leaves the
 /// frame is still a drag), and cancelled touches LIFTED rather than forgotten.
 ///
-/// Deliberately NO `UIGestureRecognizer`s, which is a change from the local-only zoom/pan this surface
-/// used to have: recognizers arbitrate against each other and against the SwiftUI canvas above, and a
-/// recognizer that "fails" 300 ms after the finger lands is 300 ms of a click the user already made.
-/// Raw `touchesBegan`/`Moved`/`Ended`/`Cancelled`, exactly like the two sibling surfaces.
+/// Deliberately NO `UIGestureRecognizer`s FOR TOUCH, which is a change from the local-only zoom/pan
+/// this surface used to have: recognizers arbitrate against each other and against the SwiftUI canvas
+/// above, and a recognizer that "fails" 300 ms after the finger lands is 300 ms of a click the user
+/// already made. Raw `touchesBegan`/`Moved`/`Ended`/`Cancelled`, exactly like the two sibling surfaces.
+///
+/// The two recognizers that ARE installed are the exception that proves it: hover and trackpad scroll
+/// have no `UIView` callback at all — `UIHoverGestureRecognizer` and a pan with `allowedScrollTypesMask`
+/// are the only way UIKit delivers either — and neither can steal a touch, because a hover has no
+/// contact and the scroll pan is capped at zero of them.
 final class MetalLayerBackedView: UIView {
     override static var layerClass: AnyClass { CAMetalLayer.self }
     var videoLayer: CAMetalLayer {
@@ -77,6 +95,29 @@ final class MetalLayerBackedView: UIView {
         // magnify translation needs), so multi-touch has to be on for `event.touches(for:)` to ever
         // report more than one.
         isMultipleTouchEnabled = true
+        installPointerSupport()
+    }
+
+    /// HOVER + TRACKPAD SCROLL + the local pointer's own visibility. All three are pure iPad
+    /// affordances that fall away to nothing on a touch-only device: a phone never hovers, its pan
+    /// recogniser never sees a scroll event, and its pointer interaction is never asked for a style.
+    private func installPointerSupport() {
+        let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover))
+        hover.delegate = self
+        addGestureRecognizer(hover)
+
+        let scroll = UIPanGestureRecognizer(target: self, action: #selector(handleScrollPan))
+        // SCROLL EVENTS ONLY. A `maximumNumberOfTouches` of zero is UIKit's own idiom for "recognise
+        // the wheel, never a finger pan" — without it this recogniser would arbitrate against the raw
+        // touch handling above and swallow the two-contact gestures the whole surface is built on.
+        scroll.maximumNumberOfTouches = 0
+        scroll.allowedScrollTypesMask = .all
+        scroll.delegate = self
+        addGestureRecognizer(scroll)
+        scrollRecognizer = scroll
+
+        pointerInteraction = UIPointerInteraction(delegate: self)
+        if let pointerInteraction { addInteraction(pointerInteraction) }
     }
 
     @available(*, unavailable)
@@ -179,6 +220,25 @@ final class MetalLayerBackedView: UIView {
     /// when the edge arrives — a cold `UIFeedbackGenerator` costs its first tap.
     private let peelHaptic = UISelectionFeedbackGenerator()
 
+    // ── INDIRECT POINTER (iPad trackpad / mouse). Inert on a touch-only device: nothing below is
+    //    reached without a `UITouch` of type `.indirectPointer`, a hover, or a scroll event.
+    /// Held only because ``endScrollPan(cancelled:)`` has to ask whether a scroll is mid-flight — the
+    /// hover recogniser needs no such question and is therefore not kept.
+    private var scrollRecognizer: UIPanGestureRecognizer?
+    private var pointerInteraction: UIPointerInteraction?
+    /// Which host buttons this view has forwarded as DOWN and not released — the caller's half of
+    /// ``IndirectPointerPlan/buttonTransitions(held:mask:)``, which keeps no state of its own. Left
+    /// non-zero across a teardown is a button stranded on a process-global host event source, so
+    /// every path that ends a gesture drains it.
+    private var pointerButtonsHeld: UInt8 = 0
+    /// The last point an indirect pointer was seen at, so a button press that arrives without a move
+    /// (a click without a preceding hover, or a second button mid-drag) lands where the pointer is
+    /// rather than where the last FINGER was.
+    private var pointerHoverPoint: CGPoint?
+    /// The scroll pan's translation at the previous event. UIKit accumulates translation over the
+    /// gesture and the host wants per-event deltas, exactly as the touch centroid path does.
+    private var scrollTranslation: CGPoint = .zero
+
     func activate(connection: VideoWindowConnection?) {
         // 1:1 PANE SNAP — wire BEFORE pipeline.activate (nil-ness picks snap vs host-follow at
         // session construction; mirrors the macOS sibling).
@@ -226,6 +286,10 @@ final class MetalLayerBackedView: UIView {
         // SWIPE-PEEL: the host's operating point + history push. Without it the mirror never arms,
         // which is the correct behaviour against a host too old to send one.
         pipeline.onSwipeNavStatusChanged = { [weak self] status in self?.adoptSwipeNavStatus(status) }
+        // HOST CURSOR VISIBILITY: the LOCAL pointer's decision, re-asked on every flip so the iPadOS
+        // pointer reappears the instant the overlay stops being one (a `.fit` letterbox margin, or a
+        // host that hid its own cursor) rather than waiting for the next hover.
+        pipeline.onServerCursorVisibilityChanged = { [weak self] _ in self?.applyLocalPointerVisibility() }
         if connection != nil, let controls {
             controls.onResetZoom = { [weak self] in self?.applyResetZoom() }
             controls.mode = pipeline.contentMode
@@ -312,9 +376,12 @@ final class MetalLayerBackedView: UIView {
             pipeline.key(keyCode: keyCode, down: false, modifiers: [])
         }
         let centre = VideoPoint(x: Double(bounds.midX), y: Double(bounds.midY))
-        for button in [MouseButton.left, .right, .other] {
+        for button in MouseButton.allCases {
             pipeline.mouseUp(button, centre, 1, [])
         }
+        // The blanket release above already sent every up; forgetting the held set here is what stops
+        // the NEXT press from being swallowed as "already down".
+        pointerButtonsHeld = 0
     }
 
     // MARK: Viewport commands (the footer control bar)
@@ -411,6 +478,14 @@ final class MetalLayerBackedView: UIView {
         if !isActive, inputEnabled { pipeline.focusWindow() }
         claimKeyboardFocus()
         let live = event?.touches(for: self) ?? touches
+        // A POINTER'S PRESS IS NOT A TAP. It arrives as a `UITouch` like a finger does, but its
+        // buttons are on the EVENT, and everything the finger path does next — the tap slop, the
+        // long-press-to-right-click, the two-contact latch — exists because a finger is imprecise and
+        // has one button. A pointer has neither problem.
+        if let pointer = live.first(where: { $0.type == .indirectPointer }) {
+            updatePointerButtons(at: clampedPoint(pointer), event: event)
+            return
+        }
         if live.count >= 2 {
             guard !pairLatched else { return }
             // A second finger means the first one was never a click: abandon it WITHOUT the tap.
@@ -424,6 +499,12 @@ final class MetalLayerBackedView: UIView {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         let live = event?.touches(for: self) ?? touches
+        if let pointer = live.first(where: { $0.type == .indirectPointer }) {
+            // A pointer DRAG. The same call as the press: the mask carries any button pressed or
+            // released mid-drag, and the diff swallows the ones that did not change.
+            updatePointerButtons(at: clampedPoint(pointer), event: event)
+            return
+        }
         if pairLatched {
             movePair(live)
             return
@@ -464,6 +545,18 @@ final class MetalLayerBackedView: UIView {
     }
 
     private func finishTouches(_ touches: Set<UITouch>, _ event: UIEvent?, cancelled: Bool) {
+        if let pointer = touches.first(where: { $0.type == .indirectPointer }) {
+            // A CANCELLED pointer releases too, and does not care that it was cancelled: the finger
+            // path swallows a cancelled tap because the user never clicked anything, but a pointer's
+            // press was a real button that is now physically up. Leaving it down would strand it.
+            let point = clampedPoint(pointer)
+            if cancelled {
+                releaseHeldPointerButtons(at: point, event: event)
+            } else {
+                updatePointerButtons(at: point, event: event)
+            }
+            return
+        }
         let remaining = event?.touches(for: self)?.subtracting(touches) ?? []
         guard remaining.isEmpty else { return }
         if pairLatched {
@@ -491,6 +584,10 @@ final class MetalLayerBackedView: UIView {
                 )
             }
         }
+        // An indirect pointer's buttons are the same bargain as a finger's: released, never
+        // forgotten, and at the last place the pointer was actually seen.
+        releaseHeldPointerButtons(at: pointerHoverPoint ?? pointerLatest, event: nil)
+        endScrollPan(cancelled: true)
         // A LIFT-ALL is a teardown, never a commit: the gesture is being taken away rather than
         // finished, so the mirror is cancelled instead of fed an ended phase.
         abandonSwipePeel()
@@ -579,6 +676,168 @@ final class MetalLayerBackedView: UIView {
         pipeline.mouseMove(point)
         pipeline.mouseDown(.right, point, 1, [])
         pipeline.mouseUp(.right, point, 1, [])
+    }
+
+    // MARK: Indirect pointer (an iPad trackpad or a mouse)
+
+    /// Forward one indirect-pointer event: the move, then whichever buttons the mask says changed.
+    ///
+    /// ONE call site serves press, drag and release, which is the whole reason the diff is pure and
+    /// stateless — UIKit reports the LEVEL on every event, so an edge has to be derived, and deriving
+    /// it in three places is three chances to strand a button on a host whose event source is
+    /// process-global.
+    ///
+    /// The move goes FIRST and unconditionally. A press that arrives without one lands wherever the
+    /// host pointer was left by the last gesture, and hover-only remote UI (a tooltip, a menu
+    /// highlight, a hover-revealed close box) needs the move at all.
+    private func updatePointerButtons(at point: CGPoint, event: UIEvent?) {
+        pointerHoverPoint = point
+        guard inputEnabled else { return }
+        let host = hostPoint(point)
+        let change = IndirectPointerPlan.buttonTransitions(
+            held: pointerButtonsHeld, mask: event?.buttonMask.rawValue ?? 0,
+        )
+        pointerButtonsHeld = change.held
+        // A DRAG is a move with something held, and the pipeline has a distinct verb for it so the
+        // host posts the matching `*MouseDragged` statelessly rather than guessing which button is
+        // down. `mouseDrag` takes ONE button, so a two-button drag drags on the primary — which is
+        // also what AppKit reports, since its drag callbacks are per-button and the Mac forwards the
+        // one whose callback fired.
+        if change.pressed == 0, change.released == 0,
+           let dragging = IndirectPointerPlan.buttons(in: change.held).first
+        {
+            pipeline.mouseDrag(dragging, host, 1, mods(event))
+            return
+        }
+        pipeline.mouseMove(host)
+        // RELEASES BEFORE PRESSES. A swap in one event (the user rolled from one button to the other
+        // between two reports) must not leave the old button down behind the new one's press.
+        for button in IndirectPointerPlan.buttons(in: change.released) {
+            pipeline.mouseUp(button, host, 1, mods(event))
+        }
+        for button in IndirectPointerPlan.buttons(in: change.pressed) {
+            pipeline.mouseDown(button, host, 1, mods(event))
+        }
+    }
+
+    /// Release every button this view still has down, without consulting a mask — the teardown path,
+    /// where there is no event to read one from and the answer is "all of them" regardless.
+    private func releaseHeldPointerButtons(at point: CGPoint, event: UIEvent?) {
+        guard pointerButtonsHeld != 0 else { return }
+        let held = pointerButtonsHeld
+        pointerButtonsHeld = 0
+        guard inputEnabled else { return }
+        let host = hostPoint(point)
+        for button in IndirectPointerPlan.buttons(in: held) {
+            pipeline.mouseUp(button, host, 1, mods(event))
+        }
+    }
+
+    /// HOVER: a pointer moving with nothing held. There is no `UIView` callback for it — a hover
+    /// produces no `UITouch` at all — so the recogniser is the only route, and without it every piece
+    /// of hover-only remote UI is unreachable from this half.
+    @objc
+    private func handleHover(_ recognizer: UIHoverGestureRecognizer) {
+        switch recognizer.state {
+        case .began,
+             .changed:
+            let point = clampedPoint(recognizer.location(in: self))
+            pointerHoverPoint = point
+            guard inputEnabled else { return }
+            pipeline.mouseMove(hostPoint(point))
+        case .ended,
+             .cancelled,
+             .failed:
+            pointerHoverPoint = nil
+        default:
+            return
+        }
+    }
+
+    /// TRACKPAD / WHEEL SCROLL. A pan recogniser capped at zero touches recognises scroll events and
+    /// nothing else, so this cannot arbitrate against the two-contact touch gestures below.
+    ///
+    /// The deltas are the recogniser's per-event travel, the same shape the touch centroid path
+    /// sends, and they feed the swipe-peel mirror for the same reason it does: on an iPad a
+    /// two-finger trackpad swipe is exactly the gesture the host's own recogniser fires on, so a
+    /// trackpad that navigated with no chip would be the bug this half just fixed, back on the other
+    /// input modality.
+    @objc
+    private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
+        let state = IndirectPointerPlan.scrollPhase(gestureState: recognizer.state.rawValue)
+        switch recognizer.state {
+        case .began:
+            scrollTranslation = .zero
+        case .changed,
+             .ended,
+             .cancelled,
+             .failed:
+            break
+        default:
+            return
+        }
+        guard inputEnabled else {
+            // The host's own recogniser stops seeing this gesture too, so a chip left up would
+            // promise a fire that cannot happen.
+            abandonSwipePeel()
+            scrollTranslation = .zero
+            return
+        }
+        let translation = recognizer.translation(in: self)
+        let dx = Double(translation.x - scrollTranslation.x)
+        let dy = Double(translation.y - scrollTranslation.y)
+        scrollTranslation = translation
+        let at = clampedPoint(pointerHoverPoint ?? recognizer.location(in: self))
+        // NO MOMENTUM PHASE, for the touch half's reason with a different cause: iPadOS delivers a
+        // trackpad's inertial tail as more `.changed` events inside the same gesture rather than as a
+        // separately-phased coast, so there is no edge to report — and inventing one would tell the
+        // host a fling ended that never started.
+        pipeline.scroll(
+            dx: dx, dy: dy, viewPoint: hostPoint(at),
+            scrollPhase: state, momentumPhase: 0, continuous: true,
+        )
+        feedSwipePeel(dx: dx, dy: dy, scrollPhase: state)
+        // Reset only where the gesture actually ENDED. Doing it on `.began` too would re-zero the
+        // baseline the began delta just established, and the next `.changed` would count it twice.
+        if recognizer.state != .began, recognizer.state != .changed { scrollTranslation = .zero }
+    }
+
+    /// Close an in-flight trackpad scroll on a teardown. The host is told the gesture ENDED rather
+    /// than cancelled, because it has one replay for a finished gesture and none for an abandoned
+    /// one — the same call ``IndirectPointerPlan/scrollPhase(gestureState:)`` makes.
+    private func endScrollPan(cancelled: Bool) {
+        guard let scrollRecognizer, scrollRecognizer.state == .began || scrollRecognizer.state == .changed
+        else { return }
+        if inputEnabled {
+            pipeline.scroll(
+                dx: 0, dy: 0, viewPoint: hostPoint(clampedPoint(pointerHoverPoint ?? .zero)),
+                scrollPhase: IndirectPointerPlan.scrollPhase(gestureState: UIGestureRecognizer.State.ended.rawValue),
+                momentumPhase: 0, continuous: true,
+            )
+        }
+        scrollTranslation = .zero
+        if cancelled { scrollRecognizer.isEnabled = false
+            scrollRecognizer.isEnabled = true
+        }
+    }
+
+    /// The LOCAL cursor decision, and the mirror image of the Mac's ``applyLocalCursor``.
+    ///
+    /// macOS hides the host's POSITION overlay and paints its SHAPE onto the local OS cursor;
+    /// `UIPointerStyle` takes no bitmap, so this half does the opposite — it keeps the overlay the
+    /// pipeline already composites and hides the LOCAL pointer over it, so the two never both show.
+    /// The gate is the same one, `isServerCursorVisible`: in a `.fit` letterbox margin, or when the
+    /// host has hidden its own cursor, there is no overlay to be the pointer and the iPadOS one must
+    /// come back rather than leaving the user with nothing to aim.
+    private func applyLocalPointerVisibility() {
+        pointerInteraction?.invalidate()
+    }
+
+    private func clampedPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: Swift.min(Swift.max(point.x, 0), Swift.max(bounds.width, 0)),
+            y: Swift.min(Swift.max(point.y, 0), Swift.max(bounds.height, 0)),
+        )
     }
 
     // MARK: Two contacts
@@ -823,11 +1082,7 @@ final class MetalLayerBackedView: UIView {
     }
 
     private func clampedPoint(_ touch: UITouch) -> CGPoint {
-        let point = touch.location(in: self)
-        return CGPoint(
-            x: Swift.min(Swift.max(point.x, 0), Swift.max(bounds.width, 0)),
-            y: Swift.min(Swift.max(point.y, 0), Swift.max(bounds.height, 0)),
-        )
+        clampedPoint(touch.location(in: self))
     }
 
     /// The modifiers a hardware keyboard is holding while a touch happens — ⇧-click and ⌘-click on an
@@ -967,6 +1222,39 @@ final class MetalLayerBackedView: UIView {
         // pixel size is correct regardless of renderer-activation ordering.
         videoLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         pipeline.layoutChanged(layerSize: VideoSize(width: Double(bounds.width), height: Double(bounds.height)))
+    }
+}
+
+// MARK: - The two recognizers coexist with the raw touch handling
+
+extension MetalLayerBackedView: UIGestureRecognizerDelegate {
+    /// Both installed recognizers run ALONGSIDE everything else rather than arbitrating against it.
+    ///
+    /// Neither can take a contact away — a hover has none and the scroll pan is capped at zero of
+    /// them — so the only thing exclusivity could achieve here is cancelling the SwiftUI gestures the
+    /// canvas above puts on the pane, which is the failure this surface avoided by using raw touches
+    /// in the first place.
+    func gestureRecognizer(
+        _: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer,
+    ) -> Bool {
+        true
+    }
+}
+
+// MARK: - The local pointer, over a pane that is already drawing one
+
+extension MetalLayerBackedView: UIPointerInteractionDelegate {
+    /// HIDE THE LOCAL POINTER while the host's own is on screen, so the pane never shows two.
+    ///
+    /// This is ``applyLocalPointerVisibility``'s decision spelled in UIKit's vocabulary, and it is
+    /// the Mac's `applyLocalCursor` with the halves swapped — there, the OS cursor takes the host's
+    /// SHAPE and the position overlay is never added; here, `UIPointerStyle` takes no bitmap, so the
+    /// overlay stays and the OS pointer goes. Same gate on both: a read-only or unfocused pane, a
+    /// letterbox margin, or a host that hid its cursor all fall through to the system pointer,
+    /// because in each of those there is nothing on screen for the user to aim with.
+    func pointerInteraction(_: UIPointerInteraction, styleFor _: UIPointerRegion) -> UIPointerStyle? {
+        guard inputEnabled, pipeline.isServerCursorVisible else { return nil }
+        return .hidden()
     }
 }
 #endif

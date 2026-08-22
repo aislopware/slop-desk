@@ -470,13 +470,131 @@ pub fn click_count(tap_count: i64) -> u8 {
     u8::try_from(tap_count.max(1)).unwrap_or(u8::MAX)
 }
 
+// ── INDIRECT POINTER (an iPad with a trackpad or a mouse) ────────────────────────────────────────
+//
+// A finger has one button and the client SYNTHESIZES the press from a tap. An indirect pointer has
+// real buttons and reports them as a MASK on the event — so the client stops synthesizing and
+// starts DIFFING, which is a different failure mode: the mask says what is held NOW, and a client
+// that forwards the level rather than the edge either never presses or never releases. Both strand
+// a button down on a host whose event source is process-global.
+
+/// The `MouseButton` bit for the primary button.
+///
+/// The bit INDEX is the wire's own button ordinal (`MouseButton.left == 0`), so a caller walks the
+/// set [`pointer_button_transitions`] answers in with a shift rather than a table.
+pub const POINTER_BUTTON_LEFT: u8 = 1 << 0;
+/// The `MouseButton` bit for the secondary button (`MouseButton.right == 1`).
+pub const POINTER_BUTTON_RIGHT: u8 = 1 << 1;
+/// The `MouseButton` bit for every other button (`MouseButton.other == 2`).
+///
+/// A middle click, a back/forward thumb button and a tenth button on a gaming mouse all collapse
+/// here, because the wire has three buttons and the host posts `other` as one. Collapsing is right:
+/// a client that dropped the unmapped ones would make a paste-on-middle-click silently do nothing.
+pub const POINTER_BUTTON_OTHER: u8 = 1 << 2;
+
+/// `UIEventButtonMask`: the primary (left) button.
+pub const UI_BUTTON_PRIMARY: u32 = 1 << 0;
+/// `UIEventButtonMask`: the secondary (right) button.
+pub const UI_BUTTON_SECONDARY: u32 = 1 << 1;
+
+/// The wire's button bit set for a `UIKit` `UIEvent.buttonMask`.
+///
+/// `UIKit` names two buttons and leaves the rest of the mask unnamed rather than absent, so ANY bit
+/// above the second folds to [`POINTER_BUTTON_OTHER`] — a mask this side does not recognise is a
+/// button the user really pressed, not a bit to drop.
+#[must_use]
+pub const fn pointer_buttons(ui_button_mask: u32) -> u8 {
+    let mut bits = 0;
+    if ui_button_mask & UI_BUTTON_PRIMARY != 0 {
+        bits |= POINTER_BUTTON_LEFT;
+    }
+    if ui_button_mask & UI_BUTTON_SECONDARY != 0 {
+        bits |= POINTER_BUTTON_RIGHT;
+    }
+    if ui_button_mask & !(UI_BUTTON_PRIMARY | UI_BUTTON_SECONDARY) != 0 {
+        bits |= POINTER_BUTTON_OTHER;
+    }
+    bits
+}
+
+/// What changed between the buttons a client has forwarded as DOWN and the ones the pointer is
+/// holding now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PointerButtonChange {
+    /// Buttons to send a press for, as [`POINTER_BUTTON_LEFT`] & co.
+    pub pressed: u8,
+    /// Buttons to send a release for.
+    pub released: u8,
+    /// The new held set — the caller's next `held`, so the state it keeps is one byte and the rule
+    /// that updates it is not written at the call site.
+    pub held: u8,
+}
+
+/// Diffs the buttons a pointer is holding against the ones already forwarded.
+///
+/// PURE, and stateless on purpose: the one byte of state is the caller's, because the surfaces that
+/// need this each already carry a dozen little `private var`s and an opaque handle would be the
+/// only thing on this floor with a lifetime. Feeding it the SAME mask twice answers "nothing
+/// changed", which is what makes it safe to call from a move as well as a press — `UIKit` reports
+/// the mask on every event of the gesture, and a button pressed mid-drag arrives on a
+/// `touchesMoved`.
+#[must_use]
+pub const fn pointer_button_transitions(held: u8, ui_button_mask: u32) -> PointerButtonChange {
+    let now = pointer_buttons(ui_button_mask);
+    PointerButtonChange {
+        pressed: now & !held,
+        released: held & !now,
+        held: now,
+    }
+}
+
+/// `UIGestureRecognizer.State`: recognised nothing yet.
+pub const GESTURE_POSSIBLE: u8 = 0;
+/// `UIGestureRecognizer.State`: a continuous gesture began.
+pub const GESTURE_BEGAN: u8 = 1;
+/// `UIGestureRecognizer.State`: it moved.
+pub const GESTURE_CHANGED: u8 = 2;
+/// `UIGestureRecognizer.State`: it finished.
+pub const GESTURE_ENDED: u8 = 3;
+/// `UIGestureRecognizer.State`: it was taken away.
+pub const GESTURE_CANCELLED: u8 = 4;
+/// `UIGestureRecognizer.State`: it never became this gesture.
+pub const GESTURE_FAILED: u8 = 5;
+
+/// The `CGScrollPhase` byte for a `UIKit` scroll-pan recogniser's state.
+///
+/// A FOURTH encoding of the three edges — after `AppKit`'s phase mask, `CoreGraphics`' two fields
+/// and the phone's `(is_first, is_last)` pair — and the reason it is a function rather than a cast
+/// is the last two states. A cancelled or failed scroll ENDS rather than cancelling, deliberately:
+/// the host has one replay for a finished gesture and none for an abandoned one, and this half
+/// already made that call for touches (a cancelled contact is LIFTED, not forgotten). Sending a
+/// phase the host has no replay for would leave the remote gesture open until the next scroll
+/// closed it.
+///
+/// `possible` maps to [`SCROLL_NONE`] because nothing has been recognised yet — a caller that sends
+/// on it is sending a wheel tick, which is the honest reading of "a scroll with no gesture around
+/// it".
+#[must_use]
+pub const fn scroll_phase_for_gesture_state(state: u8) -> u8 {
+    match state {
+        GESTURE_BEGAN => SCROLL_BEGAN,
+        GESTURE_CHANGED => SCROLL_CHANGED,
+        GESTURE_ENDED | GESTURE_CANCELLED | GESTURE_FAILED => SCROLL_ENDED,
+        _ => SCROLL_NONE,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_ZOOM, MIN_ZOOM, PINCH_STEP_THRESHOLD, PinchZoomKeyPlanner, ScrollRoutePinner, TouchPairRoute,
-        allows_zoom_reset, cg_momentum_phase_code, cg_scroll_phase_code, clamp_pan, clamp_zoom,
-        classify_pair, click_count, escapes_tap_slop, extra_unsafe_reset_apps, forwards_pointer,
-        is_background_click, pinched_zoom, scroll_phase, stepped_zoom,
+        GESTURE_BEGAN, GESTURE_CANCELLED, GESTURE_CHANGED, GESTURE_ENDED, GESTURE_FAILED, GESTURE_POSSIBLE,
+        MAX_ZOOM, MIN_ZOOM, PINCH_STEP_THRESHOLD, POINTER_BUTTON_LEFT, POINTER_BUTTON_OTHER,
+        POINTER_BUTTON_RIGHT, PinchZoomKeyPlanner, PointerButtonChange, SCROLL_ENDED, SCROLL_NONE,
+        ScrollRoutePinner, TouchPairRoute, UI_BUTTON_PRIMARY, UI_BUTTON_SECONDARY, allows_zoom_reset,
+        cg_momentum_phase_code, cg_scroll_phase_code, clamp_pan, clamp_zoom, classify_pair, click_count,
+        escapes_tap_slop, extra_unsafe_reset_apps, forwards_pointer, is_background_click, pinched_zoom,
+        pointer_button_transitions, pointer_buttons, scroll_phase, scroll_phase_for_gesture_state,
+        stepped_zoom,
     };
 
     #[test]
@@ -777,5 +895,108 @@ mod tests {
         assert_eq!(click_count(2), 2, "a double-tap is a real double-click");
         assert_eq!(click_count(9999), 255, "a very fast tapper is not a crash");
         assert_eq!(click_count(i64::MIN), 1);
+    }
+
+    #[test]
+    fn an_unnamed_button_is_a_press_the_user_made_not_a_bit_to_drop() {
+        assert_eq!(pointer_buttons(0), 0);
+        assert_eq!(pointer_buttons(UI_BUTTON_PRIMARY), POINTER_BUTTON_LEFT);
+        assert_eq!(pointer_buttons(UI_BUTTON_SECONDARY), POINTER_BUTTON_RIGHT);
+        assert_eq!(pointer_buttons(1 << 2), POINTER_BUTTON_OTHER, "a middle click");
+        assert_eq!(pointer_buttons(1 << 9), POINTER_BUTTON_OTHER, "a tenth button");
+        assert_eq!(
+            pointer_buttons((1 << 2) | (1 << 3)),
+            POINTER_BUTTON_OTHER,
+            "the wire has three buttons, so every extra one collapses onto the same press",
+        );
+        assert_eq!(
+            pointer_buttons(UI_BUTTON_PRIMARY | UI_BUTTON_SECONDARY),
+            POINTER_BUTTON_LEFT | POINTER_BUTTON_RIGHT,
+        );
+    }
+
+    #[test]
+    fn the_button_bit_index_is_the_wires_own_button_ordinal() {
+        // A caller walks the set with a shift instead of a table; if these ever drift, an iPad's
+        // right click arrives at the host as a left one.
+        assert_eq!(POINTER_BUTTON_LEFT.trailing_zeros(), 0, "MouseButton.left");
+        assert_eq!(POINTER_BUTTON_RIGHT.trailing_zeros(), 1, "MouseButton.right");
+        assert_eq!(POINTER_BUTTON_OTHER.trailing_zeros(), 2, "MouseButton.other");
+    }
+
+    #[test]
+    fn the_same_mask_twice_is_nothing_changed() {
+        // The rule that makes this safe to call from a MOVE: UIKit reports the mask on every event
+        // of the gesture, so a drag re-answers the press it already sent unless the diff swallows it.
+        let first = pointer_button_transitions(0, UI_BUTTON_PRIMARY);
+        assert_eq!(first.pressed, POINTER_BUTTON_LEFT);
+        assert_eq!(first.released, 0);
+        assert_eq!(first.held, POINTER_BUTTON_LEFT);
+
+        let again = pointer_button_transitions(first.held, UI_BUTTON_PRIMARY);
+        assert_eq!(again, PointerButtonChange {
+            pressed: 0,
+            released: 0,
+            held: POINTER_BUTTON_LEFT
+        });
+    }
+
+    #[test]
+    fn a_button_pressed_mid_drag_presses_without_releasing_the_first() {
+        let change = pointer_button_transitions(POINTER_BUTTON_LEFT, UI_BUTTON_PRIMARY | UI_BUTTON_SECONDARY);
+        assert_eq!(change.pressed, POINTER_BUTTON_RIGHT);
+        assert_eq!(change.released, 0);
+        assert_eq!(change.held, POINTER_BUTTON_LEFT | POINTER_BUTTON_RIGHT);
+    }
+
+    #[test]
+    fn an_empty_mask_releases_everything_still_held() {
+        // The lift. A client that forwarded the LEVEL rather than the edge would never send these,
+        // and a button left down outlives the pane on a host whose event source is process-global.
+        let change = pointer_button_transitions(POINTER_BUTTON_LEFT | POINTER_BUTTON_OTHER, 0);
+        assert_eq!(change.pressed, 0);
+        assert_eq!(change.released, POINTER_BUTTON_LEFT | POINTER_BUTTON_OTHER);
+        assert_eq!(change.held, 0);
+    }
+
+    #[test]
+    fn a_swap_in_one_event_is_both_edges() {
+        let change = pointer_button_transitions(POINTER_BUTTON_LEFT, UI_BUTTON_SECONDARY);
+        assert_eq!(change.pressed, POINTER_BUTTON_RIGHT);
+        assert_eq!(change.released, POINTER_BUTTON_LEFT);
+    }
+
+    #[test]
+    fn an_abandoned_scroll_ends_rather_than_cancelling() {
+        // The host has one replay for a finished gesture and none for an abandoned one, so a
+        // cancelled recogniser closes the remote gesture instead of leaving it open.
+        assert_eq!(scroll_phase_for_gesture_state(GESTURE_CANCELLED), SCROLL_ENDED);
+        assert_eq!(scroll_phase_for_gesture_state(GESTURE_FAILED), SCROLL_ENDED);
+    }
+
+    #[test]
+    fn a_trackpad_scroll_reads_the_same_table_the_finger_does() {
+        assert_eq!(
+            scroll_phase_for_gesture_state(GESTURE_BEGAN),
+            scroll_phase(true, false)
+        );
+        assert_eq!(
+            scroll_phase_for_gesture_state(GESTURE_CHANGED),
+            scroll_phase(false, false)
+        );
+        assert_eq!(
+            scroll_phase_for_gesture_state(GESTURE_ENDED),
+            scroll_phase(false, true)
+        );
+        assert_eq!(
+            scroll_phase_for_gesture_state(GESTURE_POSSIBLE),
+            SCROLL_NONE,
+            "nothing recognised yet is a wheel tick, never a guess at a gesture edge",
+        );
+        assert_eq!(
+            scroll_phase_for_gesture_state(200),
+            SCROLL_NONE,
+            "a state UIKit adds later"
+        );
     }
 }

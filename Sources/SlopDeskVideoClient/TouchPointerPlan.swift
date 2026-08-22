@@ -13,6 +13,7 @@
 // plumbing and the contact bookkeeping, which is the same split as before — one language less.
 
 import CSlopDeskFFI
+import SlopDeskVideoProtocol
 
 /// What a live TWO-CONTACT gesture over a remote desktop drives. Decided ONCE, the first time the
 /// pair moves past its slop, and held to the gesture's end — the ``ScrollRoutePinner`` rule, for the
@@ -124,5 +125,56 @@ public enum TouchPointerPlan {
     /// Clamp `UITouch.tapCount` into the wire `UInt8`, floored at 1.
     public static func clickCount(_ tapCount: Int) -> UInt8 {
         slopdesk_touch_click_count(Int64(tapCount))
+    }
+}
+
+/// What changed between the buttons a client has already forwarded as DOWN and the ones an indirect
+/// pointer is holding now — a bit set whose bit INDEX is the wire's own ``MouseButton`` ordinal, so
+/// ``IndirectPointerPlan/buttons(in:)`` walks it with a shift rather than a table.
+public struct PointerButtonChange: Sendable, Equatable {
+    /// Buttons to send a press for.
+    public let pressed: UInt8
+    /// Buttons to send a release for.
+    public let released: UInt8
+    /// The new held set — hand it back as the next call's `held`.
+    public let held: UInt8
+}
+
+/// The pure half of "an iPad with a trackpad is a real pointer".
+///
+/// A finger has one button and the client SYNTHESIZES the press from a tap; an indirect pointer has
+/// real buttons and reports them as a LEVEL on every event, so the client stops synthesizing and
+/// starts diffing. That is a different failure mode, and the expensive one: a client that forwarded
+/// the level either never presses or never releases, and a button left down outlives the pane on a
+/// host whose event source is process-global.
+///
+/// The same FACE rule as ``TouchPointerPlan`` — argument marshalling, no arithmetic and no numbers.
+public enum IndirectPointerPlan {
+    /// Diff a UIKit `UIEvent.buttonMask` against what has already been forwarded.
+    ///
+    /// Safe to call from a MOVE as well as a press: the same mask twice answers "nothing changed",
+    /// which is the property that lets one call site serve `touchesBegan`, `touchesMoved` and
+    /// `touchesEnded` — UIKit reports the mask on every event, and a button pressed mid-drag arrives
+    /// on a move.
+    public static func buttonTransitions(held: UInt8, mask: Int) -> PointerButtonChange {
+        let answer = slopdesk_pointer_button_transitions(held, UInt32(truncatingIfNeeded: mask))
+        return PointerButtonChange(pressed: answer.pressed, released: answer.released, held: answer.held)
+    }
+
+    /// The buttons in a bit set, in wire order, as the ``MouseButton`` each bit indexes.
+    ///
+    /// Empty for an empty set, so a caller loops over the answer instead of testing the set first.
+    public static func buttons(in set: UInt8) -> [MouseButton] {
+        MouseButton.allCases.filter { set & (1 << $0.rawValue) != 0 }
+    }
+
+    /// The `CGScrollPhase` byte for a `UIGestureRecognizer.State` raw value — the trackpad's half of
+    /// what ``TouchPointerPlan/scrollPhase(isFirst:isLast:)`` answers for a finger.
+    ///
+    /// A cancelled or failed recogniser ENDS rather than cancelling: the host has one replay for a
+    /// finished gesture and none for an abandoned one, and this half already made that call for
+    /// touches (a cancelled contact is LIFTED, not forgotten).
+    public static func scrollPhase(gestureState: Int) -> UInt8 {
+        slopdesk_scroll_phase_for_gesture_state(UInt8(truncatingIfNeeded: gestureState))
     }
 }

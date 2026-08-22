@@ -3570,6 +3570,61 @@ A Mac holding a fired chip for one length and a phone for another would be two a
 a fire stay acknowledged*, and the Mac's answer was a `520_000_000` literal at a call site. Both halves
 read the door now, and N.14 bans the literal coming back.
 
+### Increment 81 — an iPad had a trackpad the whole time and the pane could not see it
+
+`TARGETED_DEVICE_FAMILY` is `"1,2"`, so an iPad has always driven the phone's video surface, and an
+iPad with a trackpad or a Magic Mouse has a real pointer. The tree had ZERO `UIPointerInteraction`,
+ZERO `UIHoverGestureRecognizer` and read `buttonMask` nowhere. That is not a layout difference — it is
+a whole input modality missing on a first-class device, which is exactly what §3 says the split may
+never produce. Four capabilities the Mac half has had since it existed were unreachable: hovering,
+right-clicking without a long press, scrolling with a trackpad, and seeing one pointer instead of two.
+
+**A pointer is not a finger, and almost everything the touch translation does is wrong for it.** The
+tap slop exists because a contact patch is tens of points across; the long-press-to-right-click exists
+because a phone has no second button and no ⌃ to hold; the two-contact latch exists because a finger
+lifting a frame early reads as a fling. A pointer has none of those problems and does have real
+buttons, so a `UITouch` whose `type` is `.indirectPointer` takes a different branch at every entry
+point rather than being fitted through the finger path with exceptions.
+
+**Its buttons arrive as a LEVEL, and that is the expensive difference.** UIKit puts the currently-held
+mask on the *event*, reported again on every move — so a client that forwards it rather than diffing
+it either never presses or never releases, and a button left down outlives the pane on a host whose
+event source is process-global. The diff went to Rust (`client_gestures::pointer_button_transitions`),
+stateless on purpose: the one byte of state stays with the caller, so the door has no handle and no
+lifetime, and feeding it the same mask twice answers *nothing changed* — which is the property that
+lets one call site serve press, drag and release. The bit index of the set it answers in IS the wire's
+`MouseButton` ordinal, pinned on both sides, because a hand-rolled diff is where a right click quietly
+becomes a left one on one device only. Every button UIKit does not name collapses onto `other`, since
+the wire has three and dropping the unmapped ones would make a paste-on-middle-click do nothing.
+
+Hover and trackpad scroll needed the two recognizers this surface had sworn off — and they are the
+exception that proves the rule, because neither can steal a touch: a hover produces no `UITouch` at
+all, and the scroll pan is capped at *zero* of them (`maximumNumberOfTouches = 0`, UIKit's own idiom
+for "recognise the wheel, never a finger"). The scroll feeds the swipe-peel mirror for the reason
+increment 80 exists: on an iPad the two-finger trackpad swipe is precisely the gesture the host's
+recogniser fires on, so a trackpad that navigated with no chip would be that same bug on the other
+modality. Its `UIGestureRecognizer.State` is a FOURTH encoding of the three scroll edges, after
+AppKit's phase mask, CoreGraphics' two fields and the phone's `(isFirst, isLast)` pair, so it became a
+door beside them — and a cancelled recogniser reports ENDED, deliberately: the host has one replay for
+a finished gesture and none for an abandoned one, which is the call this half already made for touches.
+
+**The cursor is the one place the two halves genuinely diverge, and the reason is UIKit's.** macOS runs
+the Parsec model — the host's SHAPE painted onto the local `NSCursor` at the instant position, no
+overlay — because `NSCursor(image:hotSpot:)` takes an arbitrary bitmap. `UIPointerStyle` does not; its
+shapes are a `UIBezierPath` or a system effect. So the phone keeps the POSITION overlay the pipeline
+already composites for a touch device and hides the local pointer over it: `applyLocalCursor`'s
+decision with the halves swapped, pixel-exact shape for RTT-lagged position. `isServerCursorVisible`
+gates it identically, so a `.fit` letterbox margin or a host that hid its own cursor brings the iPadOS
+pointer back rather than leaving nothing to aim with. The route to both is placing that same overlay at
+the LOCAL hover point — the compositor has the shape cached and the placement math is pure — and it
+wants a host-space conversion the input encoder owns, which is why it is a separate increment.
+
+`onServerCursorVisibilityChanged` leaves `phone_absent_pipeline_sinks`, where it had sat behind the
+premise *"iOS has no hardware cursor to swap or hide"*. `onRemoteCursorChanged` stays, and is now the
+only entry — it is `#if os(macOS)` in the pipeline itself because it carries an `NSCursor`, so it is
+not a subscription the phone is missing but a sink that is macOS-shaped all the way down. Rule N.15
+pins all four capabilities positively, which is the half of a ledger that catches a fix.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

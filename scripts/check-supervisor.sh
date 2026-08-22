@@ -7878,30 +7878,39 @@ fi
 # these are the ENGINE talking back to whichever half mounted it. Three of them are subscribed by the Mac
 # half and not the phone, and unlike Rule D's one exception they are NOT all platform floors:
 #
-#   onRemoteCursorChanged            FLOOR. Drives `applyLocalCursor()` → `NSCursor`. iOS has no hardware
-#   onServerCursorVisibilityChanged  FLOOR. cursor to swap or hide, so there is nothing to subscribe.
+#   onRemoteCursorChanged            FLOOR, and a REAL one — the only entry left. The sink does not
+#                                    exist on iOS: `VideoWindowPipeline` declares it inside
+#                                    `#if os(macOS)` because it carries an `NSCursor`, and the reason
+#                                    it carries one is that `NSCursor(image:hotSpot:)` takes an
+#                                    arbitrary bitmap while `UIPointerStyle` does not (its shapes are
+#                                    a `UIBezierPath` or a system effect, and no host cursor bitmap
+#                                    becomes either). So the two halves answer "what shape is the host
+#                                    cursor" differently ON PURPOSE: macOS paints the shape onto the
+#                                    local pointer and adds no overlay, and the phone keeps the
+#                                    position overlay it already composites and hides the local
+#                                    pointer over it. Not a subscription the phone is missing — a sink
+#                                    that is macOS-shaped all the way down. The way to a shape on iPad
+#                                    is placing that overlay at the LOCAL hover point, which needs no
+#                                    sink at all; see the header of the phone's `MetalLayerBackedView`.
 #
-#                                    ⚠️ BOTH STOP BEING FLOORS THE DAY iPad POINTER SUPPORT LANDS, and
-#                                    that work is being scoped now. The app already ships
-#                                    `TARGETED_DEVICE_FAMILY "1,2"` and has ZERO `UIPointerInteraction`
-#                                    or `UIHoverGestureRecognizer` anywhere in the tree — a whole input
-#                                    modality missing on a first-class device, not a layout difference.
-#                                    When it is built, these two are the first thing the phone half must
-#                                    subscribe (it will want the Mac's `applyLocalCursor` /
-#                                    `cursorUpdate` model), and BOTH entries come out of this array. If
-#                                    you are here because you are building that: this is the ledger you
-#                                    were looking for.
+# TWO ENTRIES ARE GONE, and both left the same way — the gate went red and named the one to delete.
 #
-# `onSwipeNavStatusChanged` was the third entry and it is GONE — it was never a floor, it was a bug,
-# and the mechanism worked exactly as designed: the day the phone's peel driver landed this gate went
-# red and named the entry to delete. What was actually missing was never the drawing (the chip had
-# been mounted the whole time) but the DRIVER, and the premise that kept it missing — "a touch
-# produces no scroll phases" — was false in the file that stated it. The capability is pinned
-# positively now, in rule N.14. Failing both ways matters more here than anywhere else in this
-# section: a ledger that only fails on regression is half a ledger.
+# `onSwipeNavStatusChanged` was never a floor, it was a bug. What was missing was never the drawing
+# (the chip had been mounted the whole time) but the DRIVER, and the premise that kept it missing —
+# "a touch produces no scroll phases" — was false in the file that stated it. Pinned positively now
+# in rule N.14.
+#
+# `onServerCursorVisibilityChanged` was a floor written on a false premise: "iOS has no hardware
+# cursor to swap or hide". `TARGETED_DEVICE_FAMILY` is "1,2", so an iPad with a trackpad always had
+# one, and the tree had zero `UIPointerInteraction` and zero `UIHoverGestureRecognizer` — a whole
+# input modality missing on a first-class device, not a layout difference. The phone half subscribes
+# it now to decide whether to HIDE that pointer, which is `applyLocalCursor`'s decision with the two
+# halves swapped. Pinned positively in rule N.15.
+#
+# Failing both ways matters more here than anywhere else in this section: a ledger that only fails on
+# regression is half a ledger, and both of the deletions above were the half that catches a FIX.
 declare -a phone_absent_pipeline_sinks=(
   onRemoteCursorChanged
-  onServerCursorVisibilityChanged
 )
 video_pipeline_sinks() {
   grep -ohE 'pipeline\.(on[A-Za-z]+) *=' "$1"/*.swift 2> /dev/null |
@@ -11715,6 +11724,56 @@ if leak=$(spells 'nanoseconds: 5[0-9]{2}_000_000' \
   Sources/SlopDeskVideoClientMac/MacMetalLayerBackedView.swift \
   Sources/SlopDeskVideoClientPhone/MetalLayerBackedView.swift); then
   fail "a swipe-peel confirm hold is spelled in a renderer (${leak}) — the length is slopdesk_peel_constants().confirm_hold_seconds, reached through SwipePeelChipDriver.confirmHold"
+fi
+
+# N.15 — AN iPad WITH A TRACKPAD IS A POINTER, AND THE PHONE HALF CAN SEE IT.
+#
+# `TARGETED_DEVICE_FAMILY` is "1,2" and always was, so an iPad with a trackpad or a mouse has always
+# driven the phone's video surface — and for most of the project that surface had ZERO
+# `UIPointerInteraction`, ZERO `UIHoverGestureRecognizer` and no reading of `buttonMask` anywhere in
+# the tree. Not a layout difference: a whole input modality missing on a first-class device, which is
+# the exact thing docs/56 §3 says the split may never produce. Every one of these is a capability the
+# Mac half has had since it existed, so each is pinned as a POSITIVE rather than left in the
+# absent-sinks ledger, which only ever recorded what the phone did NOT do.
+#
+# The four are independent failure modes, not one feature in four spellings:
+#   • hover      — a pointer moving with nothing held produces no `UITouch` at all, so without the
+#                  recogniser every piece of hover-only remote UI (a tooltip, a menu highlight, a
+#                  hover-revealed close box) is unreachable from this half.
+#   • buttons    — UIKit reports the LEVEL on every event; a client that forwarded it rather than the
+#                  edge either never presses or never releases, and a button left down outlives the
+#                  pane on a host whose event source is process-global.
+#   • scroll     — a trackpad's wheel arrives only through a pan with `allowedScrollTypesMask`, and
+#                  the two-finger swipe an iPad user makes on it is the same gesture the host's own
+#                  swipe-nav recogniser fires on.
+#   • the cursor — the pane composites the host's pointer, so the local one has to go, or there are
+#                  visibly two.
+#
+# BREAK-TEST: deleted the `UIHoverGestureRecognizer` line ⇒ FAIL "cannot see a pointer that hovers".
+# Separately deleted `allowedScrollTypesMask` ⇒ FAIL "…a trackpad's scroll". Separately replaced the
+# `buttonMask` read with a hardcoded primary ⇒ FAIL "…synthesizes an indirect pointer's press".
+# Separately dropped the `UIPointerInteraction` ⇒ FAIL "…shows two pointers". All restored from /tmp;
+# PASS.
+phone_video=Sources/SlopDeskVideoClientPhone/MetalLayerBackedView.swift
+if [[ -f "${phone_video}" ]]; then
+  if ! grep -q 'UIHoverGestureRecognizer' "${phone_video}"; then
+    fail "${phone_video} cannot see a pointer that hovers — a hover produces no UITouch, so without UIHoverGestureRecognizer every hover-only remote surface is unreachable from the phone half (docs/56 §3)"
+  fi
+  if ! grep -q 'allowedScrollTypesMask' "${phone_video}"; then
+    fail "${phone_video} cannot see a trackpad's scroll — an iPad's wheel arrives only through a pan recogniser with allowedScrollTypesMask, and that swipe is what the host's swipe-nav fires on (docs/56 §3)"
+  fi
+  if ! grep -q 'buttonMask' "${phone_video}"; then
+    fail "${phone_video} synthesizes an indirect pointer's press instead of reading UIEvent.buttonMask — a pointer has real buttons, and forwarding the level rather than the edge strands one down on a process-global host event source (docs/56 §3)"
+  fi
+  if ! grep -q 'UIPointerInteraction' "${phone_video}"; then
+    fail "${phone_video} shows two pointers on an iPad — the pane composites the host's cursor, so the LOCAL one must be hidden while it is visible (the Mac's applyLocalCursor, halves swapped)"
+  fi
+  # …and the indirect-pointer button diff is the door's, never a mask comparison typed here. The
+  # bit index of that set IS the wire's MouseButton ordinal, and a hand-rolled diff is where a right
+  # click quietly becomes a left one on one device only.
+  if ! grep -q 'IndirectPointerPlan.buttonTransitions(' "${phone_video}"; then
+    fail "${phone_video} diffs an indirect pointer's buttons itself — the edge is IndirectPointerPlan.buttonTransitions(held:mask:), whose bit indices ARE the wire's MouseButton ordinals (docs/55 §6)"
+  fi
 fi
 
 if [[ "${1:-}" != "--tests" ]]; then

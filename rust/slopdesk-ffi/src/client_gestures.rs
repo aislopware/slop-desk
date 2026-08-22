@@ -450,6 +450,58 @@ pub extern "C" fn slopdesk_touch_click_count(tap_count: i64) -> u8 {
     client_gestures::click_count(tap_count)
 }
 
+/// What changed between the buttons a client has forwarded as DOWN and the ones an indirect pointer
+/// is holding now. The bit INDEX of each set is the wire's own `MouseButton` ordinal.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SlopDeskPointerButtons {
+    /// Buttons to send a press for.
+    pub pressed: u8,
+    /// Buttons to send a release for.
+    pub released: u8,
+    /// The new held set — the caller's next `held`.
+    pub held: u8,
+}
+
+/// Diffs a `UIKit` `UIEvent.buttonMask` against the buttons already forwarded.
+///
+/// Stateless by design: the one byte of state stays with the caller, so this door has no handle and
+/// no lifetime. Feeding it the SAME mask twice answers "nothing changed", which is what makes it
+/// safe to call from a move as well as a press.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_pointer_button_transitions(
+    held: u8,
+    ui_button_mask: u32,
+) -> SlopDeskPointerButtons {
+    let change = client_gestures::pointer_button_transitions(held, ui_button_mask);
+    SlopDeskPointerButtons {
+        pressed: change.pressed,
+        released: change.released,
+        held: change.held,
+    }
+}
+
+/// The `CGScrollPhase` byte for a `UIKit` `UIGestureRecognizer.State`.
+///
+/// The iPad trackpad's half of what [`slopdesk_touch_scroll_phase`] answers for a finger and
+/// [`slopdesk_cg_scroll_phase_code`] for a Mac one.
+///
+/// The state crosses as its raw ordinal for the same reason the `NSEvent.Phase` mask does: it is
+/// already a stable platform encoding, and re-indexing it on the Swift side would put back the
+/// table this door exists to remove.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_scroll_phase_for_gesture_state(state: u8) -> u8 {
+    client_gestures::scroll_phase_for_gesture_state(state)
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
