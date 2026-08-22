@@ -269,8 +269,8 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test miri workspace workspace-test ids ids-test tree tree-test settings settings-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
-check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
+.PHONY: check quick check-ios check-macos-apps check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test miri workspace workspace-test ids ids-test tree tree-test settings settings-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
+check: lint build test miri golden check-ios check-macos-apps ## lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
 #
@@ -303,7 +303,7 @@ check: lint build test miri golden check-ios ## lint + build + test + the unsafe
 # SwiftPM lock (which only makes `golden` wait, and `golden` is three seconds), and serially the
 # inner loop paid their sum. Measured on one Swift edit: 5:46 serial, and the iOS half of that was
 # two schemes where one does the work.
-QUICK_SLOW := test-touched golden check-ios
+QUICK_SLOW := test-touched golden check-ios check-macos-apps
 
 quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + golden + the (stamped) iOS triple
 	@dir=$$(mktemp -d -t slopdesk-quick); trap 'rm -rf "$$dir"' EXIT; \
@@ -331,6 +331,16 @@ quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + go
 # logged-in GUI session, so it cannot run from a headless gate.
 check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` never compiles)
 	bash scripts/check-ios.sh
+
+# The OTHER half of the same hole. `check-ios` compiles `Apps/ClientApp-iOS`; `swift build` compiles
+# `Sources/` and `Tests/`. Nothing compiled the two macOS app shells, because they are Xcode targets
+# rather than SwiftPM ones — so a rename under `Sources/` could leave `Apps/ClientApp-macOS` unable
+# to build while every gate stayed green, which is exactly what happened to `VideoSurfaceHost`.
+#
+# Distinct from `check-macos.sh`, which BUILDS AND RUNS the app against a real window and therefore
+# needs a logged-in GUI session. This one only type-checks, so it is headless and belongs here.
+check-macos-apps: ffi ## macOS app-shell typecheck (the `Apps/` code no other gate compiles)
+	bash scripts/check-macos-apps.sh
 
 # The half `check-ios` does not do: it type-checks and runs ZERO tests. `swift test` compiles the
 # MACOS branch of every `#if os(iOS)` fork, so an iOS default asserted there is asserted about the

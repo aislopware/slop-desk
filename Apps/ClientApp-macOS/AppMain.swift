@@ -144,7 +144,7 @@ struct ClientAppMain {
             AnyView(videoPane(descriptor, paneContext))
         }
         VideoWindowFactory.nativeShared = { descriptor, paneContext in
-            VideoSurfaceHost(videoPane(descriptor, paneContext))
+            MacVideoSurfaceHost(videoPane(descriptor, paneContext))
         }
         // UDP-mux: install the per-host shared-flow registry on the video pipeline. Panes targeting the
         // same host share ONE UDP flow (one flow per host, N panes); the host's `slopdesk-videohostd`

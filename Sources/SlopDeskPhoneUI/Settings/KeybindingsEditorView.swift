@@ -21,6 +21,7 @@
 
 #if os(iOS)
 import SFSafeSymbols
+import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore

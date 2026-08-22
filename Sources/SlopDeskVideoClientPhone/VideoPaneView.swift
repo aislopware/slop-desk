@@ -8,10 +8,14 @@
 // (`TouchPointerPlan`, `ViewportZoom`, `ViewportPan`, `SwipePeelPlanner`) lives once in
 // `SlopDeskVideoClient`, most of it already in Rust behind the FFI.
 //
-// NO SWIPE-PEEL CHIP HERE, AND THAT IS A KNOWN BUG, NOT A LAYOUT CHOICE — see the note in
-// `MetalLayerBackedView.activate`. When it is fixed, the chip's DRAWING is duplicated from the
-// Mac's `MacSwipePeelChipView` (it is layout) and the planner is NOT (it is a rule, and is already
-// shared and Rust-backed).
+// THE SWIPE-PEEL CHIP IS HERE, and it is the split's rule working rather than an exception to it:
+// the DRAWING is duplicated from the Mac's `MacSwipePeelChipView` because arrangement is layout,
+// and the planner is not, because a decision is shared. What is still missing on this half is the
+// DRIVER, and that is a real gap rather than a layout choice: `SwipePeelPlanner` is fed by trackpad
+// scroll PHASES, which a touch does not produce. A two-finger swipe here becomes wheel deltas the
+// HOST recognises (`InputInjector.swipeNav`), so the navigation itself works and only the local
+// optimistic feedback is absent. Closing it means giving the phone its own arm/progress source; the
+// chip it would publish to already exists, so that work is a driver and nothing else.
 #if os(iOS)
 import CSlopDeskFFI
 import QuartzCore
@@ -29,10 +33,13 @@ import SwiftUI
 public final class VideoPaneControls: ObservableObject {
     @Published public var mode: VideoContentMode = .fit
     @Published public var zoomed: Bool = false
-    /// SWIPE-PEEL chip (doc 05 §8): the live swipe-nav feedback state the SwiftUI overlay
-    /// renders (`nil` = hidden). Published by the macOS backing view's ``SwipePeelPlanner``
-    /// mirror, already quantized so the 120 Hz gesture stream re-renders the chip at most a
-    /// few dozen times per gesture. Never set on iOS (no trackpad scroll phases).
+    /// SWIPE-PEEL chip (doc 05 §8): the live swipe-nav feedback state ``SwipePeelOverlay`` renders
+    /// (`nil` = hidden), already quantized by ``SwipePeelPlanner`` so a 120 Hz gesture stream
+    /// re-renders the chip at most a few dozen times per gesture.
+    ///
+    /// Nothing on this half sets it YET — the planner arms on trackpad scroll phases and a touch
+    /// produces none (see the file header). The renderer is here so that the day a touch driver
+    /// exists it publishes to a chip rather than to nothing.
     @Published public var swipePeel: SwipePeelChipState?
     var onToggleFill: () -> Void = {}
     var onResetZoom: () -> Void = {}
@@ -278,6 +285,83 @@ public struct VideoWindowView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay { SwipePeelOverlay(controls: controls) }
         .accessibilityLabel(Text("Remote GUI window: \(title)"))
+    }
+}
+
+/// SWIPE-PEEL feedback chip (doc 05 §8) — a SwiftUI overlay, NEVER a `UIView` subview of the Metal
+/// view (the rule at ``VideoPaneControls``: subviews + gesture recognizers on the layer-backed Metal
+/// view perturb its geometry). Flat fills only — no material/blur over the `CAMetalLayer`.
+///
+/// Duplicated from the Mac's ``MacSwipePeelOverlay`` on purpose, and it is the ARRANGEMENT that is
+/// duplicated: the placement rule is layout, so docs/56 §3 puts it on each half. The decision behind
+/// it — when a peel starts, how far it has come, whether a release would commit — is
+/// ``SwipePeelPlanner``, which is shared, Rust-backed, and exists exactly once.
+struct SwipePeelOverlay: View {
+    @ObservedObject var controls: VideoPaneControls
+
+    var body: some View {
+        // The edge alignment lives INSIDE the conditional content so the removal transition keeps the
+        // chip on ITS edge — an outer `alignment:` recomputed from nil would yank a fading
+        // forward-chip across to the leading edge.
+        ZStack {
+            if let peel = controls.swipePeel {
+                SwipePeelChipView(state: peel)
+                    .padding(.horizontal, 14)
+                    .frame(
+                        maxWidth: .infinity, maxHeight: .infinity,
+                        alignment: peel.direction == .forward ? .trailing : .leading,
+                    )
+                    .transition(.opacity)
+                    // Feedback only — never eats pane input: a touch at the pane edge during the
+                    // ~520 ms confirm hold must reach the remote window.
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.timingCurve(0, 0, 0.58, 1, duration: 0.15), value: controls.swipePeel)
+    }
+}
+
+/// The swipe-peel progress chip: a chevron in a flat circle whose ring fills toward the commit
+/// threshold and turns solid the instant a release would navigate — the ENTIRE visible feedback: the
+/// streamed image itself never moves (v6 HW verdict — a remote pane is a window onto a desktop, so
+/// translating it reads as dragging the pane, not peeling a page). To still live with the finger, the
+/// chip EMERGES from its pane edge as progress grows: tucked ~12 pt at the arm line, fully out at
+/// commit. White-on-any-video, flat fills only (no material — never glass over the `CAMetalLayer`).
+struct SwipePeelChipView: View {
+    let state: SwipePeelChipState
+    /// Reduce Motion: the chip renders IN PLACE (no tuck emergence, no scale pulse) and changes by
+    /// fades only. The ring fill, the committed solid state and the haptic stay — they are
+    /// information, not motion.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        // Emergence: progress is quantized to 1/32 by the planner, so the outer `.animation` smooths
+        // this into a glide instead of re-laying-out per gesture event.
+        let tuck = reduceMotion ? 0 : (1 - state.progress) * 12
+        ZStack {
+            Circle()
+                .fill(Color.white.opacity(state.committed ? 0.95 : 0.82))
+            Circle()
+                .stroke(Color.black.opacity(0.12), lineWidth: 1)
+            Circle()
+                .trim(from: 0, to: state.progress)
+                .stroke(Color.black.opacity(0.75), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .opacity(state.committed ? 0 : 1) // the solid state replaces the progress ring
+            Image(systemName: state.direction == .back ? "chevron.left" : "chevron.right")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.black.opacity(state.committed ? 0.9 : 0.45))
+        }
+        .frame(width: 36, height: 36)
+        .scaleEffect(reduceMotion ? 1.0 : (state.confirming ? 1.12 : (state.committed ? 1.06 : 1.0)))
+        .shadow(color: Color.black.opacity(0.25), radius: 4, y: 1)
+        .offset(x: state.direction == .back ? -tuck : tuck)
+        // Confirm pulse → DIM HOLD: the scale-up plays inside the ambient 0.15 s curve, then the chip
+        // HOLDS at low opacity until the ~520 ms clear task removes it (the removal transition fades
+        // the rest) — the hold is what actually spans the 150–400 ms inject→capture→stream beat, the
+        // only fire acknowledgement there is. Fading to 0 here would end the visible pulse at ~150 ms
+        // and hold an invisible chip.
+        .opacity(state.confirming ? 0.35 : 1)
     }
 }
 #endif
