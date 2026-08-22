@@ -5,12 +5,19 @@
 //! the whole enforced set in one screen. A rule that is written but not registered is a rule that
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
+pub mod screend;
+pub mod superd_bodies;
 pub mod supervisor_envelope;
+pub mod video_wire;
 
 use crate::Rule;
 
 /// Every rule, in the order the shell ran them.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the whole enforced set on one screen is the property this list exists to have"
+)]
 pub fn registry() -> Vec<Rule> {
     vec![
         Rule {
@@ -52,6 +59,71 @@ pub fn registry() -> Vec<Rule> {
             name: "frame-envelope",
             origin: "docs/20 §4",
             check: supervisor_envelope::frame_envelope,
+        },
+        Rule {
+            name: "batch-bodies",
+            origin: "docs/51 §6.13-6.14",
+            check: superd_bodies::batch_bodies,
+        },
+        Rule {
+            name: "read-chunk",
+            origin: "docs/51 §5",
+            check: superd_bodies::read_chunk,
+        },
+        Rule {
+            name: "host-owes-superd",
+            origin: "docs/51 §6.5, §6.7, §1",
+            check: superd_bodies::host_owes_superd,
+        },
+        Rule {
+            name: "screend-address",
+            origin: "docs/52",
+            check: screend::address,
+        },
+        Rule {
+            name: "screend-verbs",
+            origin: "docs/52",
+            check: screend::verbs,
+        },
+        Rule {
+            name: "video-send-path",
+            origin: "docs/55 §4b",
+            check: video_wire::send_path,
+        },
+        Rule {
+            name: "video-receive-path",
+            origin: "docs/55 §4b",
+            check: video_wire::receive_path,
+        },
+        Rule {
+            name: "video-ladder-and-recovery",
+            origin: "docs/55 §4b",
+            check: video_wire::ladder_and_recovery,
+        },
+        Rule {
+            name: "video-mux-and-input",
+            origin: "docs/55 §4",
+            check: video_wire::mux_and_input,
+        },
+        Rule {
+            name: "video-metadata-wires",
+            origin: "docs/55 §4b",
+            check: video_wire::metadata_wires,
+        },
+        Rule {
+            name: "video-frame-measurements",
+            origin: "docs/55 §4b",
+            check: video_wire::frame_measurements,
+        },
+        Rule {
+            name: "video-pure-policies",
+            origin: "docs/55 §4b",
+            check: video_wire::pure_policies,
+        },
+        Rule {
+            name: "terminal-mode-tracker",
+            origin: "docs/55 §4b",
+            check: video_wire::mode_tracker,
         },
     ]
 }

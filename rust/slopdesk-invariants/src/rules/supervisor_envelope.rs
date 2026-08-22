@@ -418,43 +418,7 @@ mod tests {
     //! green, then ONE thing is broken and the rule must fail. That second half is the part a
     //! sentence in a comment never performed.
 
-    use std::fs;
-    use std::path::{Path, PathBuf};
-
-    use crate::tree::Tree;
-
-    /// A scratch tree that removes itself.
-    struct Fixture(PathBuf);
-
-    impl Fixture {
-        fn new(name: &str) -> Self {
-            let root = std::env::temp_dir().join(format!("slopdesk-invariants-{name}"));
-            let _ = fs::remove_dir_all(&root);
-            fs::create_dir_all(&root).expect("fixture root");
-            Self(root)
-        }
-
-        fn write(&self, path: &str, contents: &str) -> &Self {
-            let full = self.0.join(path);
-            fs::create_dir_all(full.parent().expect("fixture parent")).expect("fixture dirs");
-            fs::write(full, contents).expect("fixture file");
-            self
-        }
-
-        fn tree(&self) -> Tree {
-            Tree::load(&self.0).expect("fixture tree")
-        }
-
-        fn path(&self) -> &Path {
-            &self.0
-        }
-    }
-
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::tests::Fixture;
 
     const SUPERWIRE_OK: &str = r#"
 pub const CONTROL_SOCKET_NAME: &str = "slopdesk-superd.sock";
@@ -709,7 +673,6 @@ enum SupervisorPaths {
     fn a_missing_file_fails_instead_of_passing_vacuously() {
         let fixture = Fixture::new("missing-file");
         // Nothing written at all; the roots do not even exist.
-        assert!(fixture.path().is_dir());
         let report = super::rendezvous_address(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("is gone")),

@@ -74,3 +74,51 @@ pub fn run(tree: &Tree, filter: Option<&str>) -> Vec<String> {
         .flatten()
         .collect()
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    //! A scratch tree, so every rule's break-test can seed exactly the drift it was written for.
+    //!
+    //! Shared rather than per-module because the fixtures overlap: a rule about superd's protocol
+    //! and a rule about superd's bodies want the same two files present, and a second copy of this
+    //! helper is a second set of paths to keep in step with the real tree.
+
+    use std::fs;
+    use std::path::PathBuf;
+
+    use crate::tree::Tree;
+
+    /// A temp directory that removes itself, written into as if it were the repository.
+    pub struct Fixture(PathBuf);
+
+    impl Fixture {
+        /// A fresh, empty tree. `name` must be unique per test — they run concurrently.
+        #[must_use]
+        pub fn new(name: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("slopdesk-invariants-{name}"));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(&root).expect("fixture root");
+            Self(root)
+        }
+
+        /// Writes one file, creating its parents. Returns `self` so writes chain.
+        pub fn write(&self, path: &str, contents: &str) -> &Self {
+            let full = self.0.join(path);
+            fs::create_dir_all(full.parent().expect("fixture parent")).expect("fixture dirs");
+            fs::write(full, contents).expect("fixture file");
+            self
+        }
+
+        /// Indexes what has been written so far.
+        #[must_use]
+        pub fn tree(&self) -> Tree {
+            Tree::load(&self.0).expect("fixture tree")
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+}

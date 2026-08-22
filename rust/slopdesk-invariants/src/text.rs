@@ -33,8 +33,16 @@ pub fn cached(pattern: &str) -> &'static Regex {
     if let Some(compiled) = guard.get(pattern) {
         return compiled;
     }
+    // MULTILINE, always. Every pattern here is a port of a `grep`, `sed` or `awk` expression, and
+    // all three are line-oriented: `^` means start-of-line and `$` means end-of-line to every one of
+    // them. Leaving Rust's default in place made `$` mean end-of-FILE, which is not a stricter
+    // reading of the same rule — it is a different rule that happens to be satisfied by one line in
+    // the file, so the extraction reads empty and `same` reports it as stale.
     let compiled: &'static Regex = Box::leak(Box::new(
-        Regex::new(pattern).unwrap_or_else(|err| panic!("invariant pattern {pattern:?}: {err}")),
+        regex::RegexBuilder::new(pattern)
+            .multi_line(true)
+            .build()
+            .unwrap_or_else(|err| panic!("invariant pattern {pattern:?}: {err}")),
     ));
     guard.insert(pattern.to_owned(), compiled);
     compiled
@@ -155,6 +163,17 @@ pub fn join(set: &BTreeSet<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{before, capture_all, capture_first, capture_set, count_lines, range};
+
+    /// The reason `cached` forces multi-line. Every pattern here ports a line-oriented tool, and
+    /// `$` meaning end-of-FILE turns a live extraction into a stale-looking empty one.
+    #[test]
+    fn a_dollar_anchors_a_line_the_way_sed_reads_it() {
+        let text = "let a = 1\nstatic let readChunkSize = 32 * 1024\nlet b = 2\n";
+        assert_eq!(
+            capture_first(text, r"readChunkSize = (.*)$").as_deref(),
+            Some("32 * 1024"),
+        );
+    }
 
     #[test]
     fn a_capture_that_matches_nothing_answers_none_rather_than_empty() {
