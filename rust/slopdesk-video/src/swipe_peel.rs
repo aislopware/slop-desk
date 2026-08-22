@@ -54,6 +54,14 @@ pub const PROGRESS_QUANTUM: f64 = 1.0 / 32.0;
 /// slightly diagonal ordinary scroll must not flash the chip for its first few points.
 pub const SHOW_TRAVEL_FRACTION: f64 = 0.3;
 
+/// How long a COMMITTED chip is held after the mirror fires, in seconds.
+///
+/// The pulse and the dim hold together span the beat where the host's own recogniser lands the
+/// chord and the navigated-to page streams in — the only acknowledgement of the fire there is.
+/// It is a number both clients need and neither may spell: a Mac holding it for one length and a
+/// phone for another would be two answers to "how long does a fire stay acknowledged".
+pub const CONFIRM_HOLD_SECONDS: f64 = 0.52;
+
 /// The planner's whole state, carried by a caller that cannot hold a Rust value between calls.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PeelPlannerState {

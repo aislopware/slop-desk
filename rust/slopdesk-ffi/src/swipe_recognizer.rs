@@ -14,8 +14,8 @@ use std::ffi::c_uchar;
 
 use slopdesk_video::swipe_nav::SwipeDirection;
 use slopdesk_video::swipe_peel::{
-    PROGRESS_QUANTUM, PeelPlannerState, PeelVerdict, SHOW_TRAVEL_FRACTION, SwipePeelChipState,
-    SwipePeelPlanner, history_gated,
+    CONFIRM_HOLD_SECONDS, PROGRESS_QUANTUM, PeelPlannerState, PeelVerdict, SHOW_TRAVEL_FRACTION,
+    SwipePeelChipState, SwipePeelPlanner, history_gated,
 };
 use slopdesk_video::swipe_recognizer::{
     DEFAULT_FIRE_TRAVEL, DOMINANCE, FLICK_MAX_DURATION, LiveCandidate, REFRACTORY, RecognizerState,
@@ -358,6 +358,8 @@ pub struct SlopDeskPeelConstants {
     pub progress_quantum: f64,
     /// How much of the fire threshold the travel must reach before the chip appears at all.
     pub show_travel_fraction: f64,
+    /// How long a committed chip is held after the mirror fires, in seconds.
+    pub confirm_hold_seconds: f64,
 }
 
 /// The planner's whole state: the mirrored recogniser, plus what the chip is doing.
@@ -476,6 +478,7 @@ pub const extern "C" fn slopdesk_peel_constants() -> SlopDeskPeelConstants {
     SlopDeskPeelConstants {
         progress_quantum: PROGRESS_QUANTUM,
         show_travel_fraction: SHOW_TRAVEL_FRACTION,
+        confirm_hold_seconds: CONFIRM_HOLD_SECONDS,
     }
 }
 

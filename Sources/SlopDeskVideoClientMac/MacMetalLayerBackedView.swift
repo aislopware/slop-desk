@@ -386,8 +386,10 @@ final class MacMetalLayerBackedView: NSView {
     /// The host's swipe-nav operating point (cursor-socket type=3 push). `nil` until the first
     /// push — an old host never shows the overlay, so the affordance can't lie.
     private var peelStatus: SwipeNavStatusMessage?
-    /// Rising-edge tracker for the commit haptic (tap once when "release now navigates" starts).
-    private var peelChipCommitted = false
+    /// The verdict → chip state machine, shared with the phone (``SwipePeelChipDriver``). It owns
+    /// the haptic's rising edge, the confirm hold and the swallowed retracts; this view owns only
+    /// the three actuations they resolve to.
+    private var peelDriver = SwipePeelChipDriver()
     /// Delayed clear of the confirm-pulse chip after a fire.
     private var peelConfirmClear: Task<Void, Never>?
     /// Per-gesture remote-vs-canvas routing pin (see ``ScrollRoutePinner``): an ⌥ press/release
@@ -1099,6 +1101,7 @@ final class MacMetalLayerBackedView: NSView {
             peelPlanner = SwipePeelPlanner(
                 fireTravel: Double(status.fireTravel), slowSwipe: status.slowTier,
             )
+            peelDriver = SwipePeelChipDriver()
         }
     }
 
@@ -1120,46 +1123,34 @@ final class MacMetalLayerBackedView: NSView {
         applySwipePeel(SwipePeelPlanner.historyGated(verdict, status: status))
     }
 
+    /// Actuates one driver step. Every EDGE below it — the haptic's rising edge, the hold's length,
+    /// which retract is swallowed — is ``SwipePeelChipDriver``'s and shared with the phone; what is
+    /// left here is AppKit's three verbs.
     private func applySwipePeel(_ verdict: SwipePeelPlanner.Verdict) {
-        switch verdict {
-        case .idle:
+        switch peelDriver.step(verdict, showing: controls?.swipePeel) {
+        case .none:
             return
-        case let .show(chip):
+        case let .show(chip, haptic):
             peelConfirmClear?.cancel()
             peelConfirmClear = nil
-            if chip.committed, !peelChipCommitted {
+            if haptic {
                 // The moment the chip turns solid: "release now navigates".
                 NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             }
-            peelChipCommitted = chip.committed
-            if controls?.swipePeel != chip { controls?.swipePeel = chip }
-        case let .commit(direction):
-            peelChipCommitted = false
-            controls?.swipePeel = SwipePeelChipState(
-                direction: direction, progress: 1, committed: true, confirming: true,
-            )
+            controls?.swipePeel = chip
+        case let .confirm(chip, hold):
+            controls?.swipePeel = chip
             peelConfirmClear?.cancel()
             peelConfirmClear = Task { [weak self] in
                 // The chip's confirm pulse + DIM HOLD (see `MacSwipePeelChipView`) span the beat
                 // where the host's ⌘[/⌘] lands and the post-navigation page streams in — the
                 // only fire acknowledgement there is; this clear then fades the held chip out.
-                try? await Task.sleep(nanoseconds: 520_000_000)
+                try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
                 guard !Task.isCancelled else { return }
                 self?.controls?.swipePeel = nil
             }
-        case .retract:
-            peelChipCommitted = false
-            // Two guards, both for the history gate's relabelled verdicts (a dead-direction
-            // gesture converts EVERY qualifying event to `.retract`): a nil-over-nil assign
-            // would re-fire the @Published pane invalidation ~80×/gesture for zero visible
-            // change, and a CONFIRMING chip must keep its 520 ms hold — the planner resets
-            // `showing` at commit, so the only live publish a `.retract` can coexist with is
-            // the PREVIOUS gesture's confirm hold (double-back at history end), which the
-            // pending clear task ends. A genuine same-gesture retract always finds a
-            // non-confirming chip and clears it exactly once.
-            if let chip = controls?.swipePeel, !chip.confirming {
-                controls?.swipePeel = nil
-            }
+        case .clear:
+            controls?.swipePeel = nil
         }
     }
 

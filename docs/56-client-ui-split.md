@@ -3538,6 +3538,38 @@ further than it was allowed to drift. The exact-cell pass runs first for every c
 ever add an answer where there was none, and the pointer's reading is bit-for-bit what it was. The link is
 resolved at the RELEASE point, which is where the menu anchors and what the Mac's `menu(for:)` reads.
 
+### Increment 80 — the phone streamed the swipe and drew none of the feedback
+
+Two-finger swipe-to-navigate is a HOST recogniser: the client streams scroll deltas and the host fires
+⌘[ / ⌘]. The client-side half is a MIRROR of that recogniser, run for feedback only — an edge chip that
+fills as you travel, goes solid at the line, and taps a haptic when it does. `SwipePeelPlanner` and its
+verdicts were already shared and already pinned. Both halves of the split even had the same planner
+available. Only the Mac subscribed to it, so on the phone the two-finger swipe worked and said nothing:
+the navigation fired with no chip, no fill, no haptic, and — because the streamed image never moves under
+a peel — no way to tell a gesture the host accepted from one it dropped.
+
+**The gap was recorded rather than hidden, which is what made it findable.** Rule E of
+`check-supervisor.sh` compares the two halves' `VideoWindowPipeline` callbacks and holds the difference
+as a named ledger entry; `onSwipeNavStatusChanged` sat in `phone_absent_pipeline_sinks` with a comment
+saying why. That rule fails BOTH ways, so wiring the phone up was what forced the entry out, and the
+entry coming out is the record that it is closed.
+
+**The fix was not to copy the Mac's sixty lines.** Between a planner verdict and a surface there are
+three decisions no renderer should be making for itself, and the Mac was making all three inline:
+the haptic is a RISING EDGE (fires once when the chip turns solid, re-arms only after it falls back
+below the line — an every-frame tap would be a buzz, not a signal); a CONFIRMING chip outranks a retract
+(double-back at the end of history must not erase the previous fire's acknowledgement); and a publish
+that changes nothing is not free (the history gate relabels ~80 events per gesture as `.retract`, and
+answering "clear" to each re-fires the observable's invalidation for no visible change). Those three
+became `SwipePeelChipDriver` in `SlopDeskVideoClient`, the Mac was rewired onto it, and each renderer
+now keeps only what it actually owns: publish, haptic, timer. Ten tests pin the driver.
+
+The fourth number went to Rust, where the other peel constants already live:
+`slopdesk_video::swipe_peel::CONFIRM_HOLD_SECONDS`, reachable through the `SlopDeskPeelConstants` door.
+A Mac holding a fired chip for one length and a phone for another would be two answers to *how long does
+a fire stay acknowledged*, and the Mac's answer was a `520_000_000` literal at a call site. Both halves
+read the door now, and N.14 bans the literal coming back.
+
 ## Stage D ledger — what the rename actually costs
 
 `SlopDeskClientUI` cannot fold into `SlopDeskPhoneUI` while `SlopDeskMacUI` still imports it. That is

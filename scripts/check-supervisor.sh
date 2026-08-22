@@ -7892,20 +7892,16 @@ fi
 #                                    you are here because you are building that: this is the ledger you
 #                                    were looking for.
 #
-#   onSwipeNavStatusChanged          ⚠️ NOT A FLOOR — A KNOWN BUG. The Mac routes it to the swipe-peel
-#                                    chip; the phone mounts the overlay and drives nothing, so a
-#                                    two-finger swipe navigates the remote app with no chip and no
-#                                    haptic. The planner (`SwipePeelPlanner`) is already shared and
-#                                    Rust-backed — only the DRAWING is missing. Owned by phone parity.
-#
-# Failing both ways matters more here than anywhere else in this section: the day the swipe-peel chip is
-# built, this gate goes RED and stays red until its entry is deleted. That is the entire mechanism by
-# which a fixed bug stops being recorded as an accepted difference. A ledger that only fails on
-# regression is half a ledger.
+# `onSwipeNavStatusChanged` was the third entry and it is GONE — it was never a floor, it was a bug,
+# and the mechanism worked exactly as designed: the day the phone's peel driver landed this gate went
+# red and named the entry to delete. What was actually missing was never the drawing (the chip had
+# been mounted the whole time) but the DRIVER, and the premise that kept it missing — "a touch
+# produces no scroll phases" — was false in the file that stated it. The capability is pinned
+# positively now, in rule N.14. Failing both ways matters more here than anywhere else in this
+# section: a ledger that only fails on regression is half a ledger.
 declare -a phone_absent_pipeline_sinks=(
   onRemoteCursorChanged
   onServerCursorVisibilityChanged
-  onSwipeNavStatusChanged
 )
 video_pipeline_sinks() {
   grep -ohE 'pipeline\.(on[A-Za-z]+) *=' "$1"/*.swift 2> /dev/null |
@@ -11647,6 +11643,80 @@ if [[ -f Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift ]] &&
     Sources/SlopDeskPhoneUI/Pane/TerminalInputHost.swift; then
   fail "TerminalInputHost registers its editing chords unconditionally — a UIKeyCommand swallows its chord, so it must be offered only while its sink is bound"
 fi
+# N.13 — THE PHONE'S PASTE PLATE ASKS THE BOARD A QUESTION IT CAN ANSWER IN SILENCE.
+#
+# Since iOS 16 a read of `UIPasteboard.string` for content this app did not write raises the modal
+# "Allow Paste?" alert. `GuiPastePlateMenu.canPasteCurrent` is read from `body`, so while it called
+# `currentLocalClipboard()` every render of a remote-GUI pane's footer could put that alert on screen
+# unprompted (increment 78). The fix is a DIFFERENT QUESTION, not a different call site: `hasText`
+# discloses nothing, so the platform answers it without asking anyone. The Mac's twin may read
+# content because it builds its menu in `onClick`; SwiftUI has no equivalent moment, which is why
+# this rule is the phone's alone.
+#
+# Both halves are pinned, because either one alone lets the defect back: the probe must be what
+# enablement asks, AND the content read must not reappear in that property. The CONTENT read inside
+# the Button's action is correct and deliberately untouched — the tap IS the paste.
+#
+# BREAK-TEST: `clipboardHasText: store.localClipboardHasText()` →
+# `clipboardHasText: ClipboardPasteMenu.isPastable(store.currentLocalClipboard())` in
+# GuiLeafView.swift ⇒ FAIL both arms ("…does not ask the silent probe" and "…reads clipboard content
+# from a render"). Restored from /tmp; PASS.
+if [[ -f Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift ]]; then
+  paste_gate=$(
+    sed -n '/var canPasteCurrent: Bool {/,/^    }/p' Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift
+  )
+  if [[ -z "${paste_gate}" ]]; then
+    fail "GuiPastePlateMenu.canPasteCurrent is gone — this gate has no subject, so the iOS paste-alert rule is unpinned (docs/56 increment 78)"
+  elif ! grep -qE 'localClipboardHasText\(\)' <<< "${paste_gate}"; then
+    fail "the phone's paste plate does not ask the silent probe — canPasteCurrent must gate on WorkspaceStore.localClipboardHasText(), which discloses nothing and so raises no iOS paste alert"
+  fi
+  if grep -qE 'currentLocalClipboard\(' <<< "${paste_gate}"; then
+    fail "the phone's paste plate reads clipboard content from a render — canPasteCurrent is evaluated with body, so a content read there puts iOS's \"Allow Paste?\" alert on screen unprompted"
+  fi
+fi
+
+# N.14 — THE SWIPE-PEEL CHIP HAS A DRIVER ON BOTH HALVES.
+#
+# The chip was MOUNTED on the phone and DRIVEN only on the Mac for most of a year, on a premise that
+# was false in the file that stated it: "the planner arms on trackpad scroll PHASES, which a touch
+# does not produce". A two-finger pair routed to `.scroll` produces exactly them — the phone sends
+# Began on the first move and Ended on the lift, because the host needs a native gesture rather than
+# a train of wheel ticks — so the mirror had a stream to read the whole time. A mounted renderer with
+# no producer is the worst shape a parity gap takes: it looks finished from the drawing's side.
+#
+# Three things are pinned, because the gap could return through any of them: each half FEEDS the
+# planner, each half ADOPTS the host's status push (without which the mirror never arms and the chip
+# is dark again with no code missing), and the verdict → chip state machine stays SHARED — the
+# haptic's rising edge, the confirm hold and the swallowed retracts are one law, and two renderers
+# each keeping their own would drift the moment one is edited.
+#
+# BREAK-TEST: deleted the `feedSwipePeel(dx:dy:scrollPhase:)` call from the phone's `applyPairScroll`
+# ⇒ FAIL "the phone's swipe-peel chip has no driver". Separately deleted the
+# `pipeline.onSwipeNavStatusChanged` line ⇒ FAIL "…never learns the host's swipe-nav operating
+# point". Separately inlined the driver's `switch` back into the Mac's `applySwipePeel` ⇒ FAIL "the
+# swipe-peel chip's state machine is spelled per renderer". All restored from /tmp; PASS.
+for peel_view in Sources/SlopDeskVideoClientMac/MacMetalLayerBackedView.swift \
+  Sources/SlopDeskVideoClientPhone/MetalLayerBackedView.swift; do
+  [[ -f "${peel_view}" ]] || continue
+  if ! grep -qE 'feedSwipePeel\(' "${peel_view}"; then
+    fail "${peel_view} has no swipe-peel driver — the chip is mounted on both halves, and a renderer with no producer is a parity gap that looks finished from the drawing's side"
+  fi
+  if ! grep -qE 'pipeline\.onSwipeNavStatusChanged' "${peel_view}"; then
+    fail "${peel_view} never learns the host's swipe-nav operating point — without the status push the mirror never arms and the chip stays dark with no code missing"
+  fi
+  if ! grep -qE 'peelDriver\.step\(' "${peel_view}"; then
+    fail "${peel_view} spells the swipe-peel chip's state machine itself — the haptic's rising edge, the confirm hold and the swallowed retracts are SwipePeelChipDriver's, once, or the two renderers drift"
+  fi
+done
+# …and the hold is the door's number, never a literal in either renderer. 520 ms typed on one half
+# and 500 on the other is two answers to "how long does a fire stay acknowledged", and nothing goes
+# red when they disagree.
+if leak=$(spells 'nanoseconds: 5[0-9]{2}_000_000' \
+  Sources/SlopDeskVideoClientMac/MacMetalLayerBackedView.swift \
+  Sources/SlopDeskVideoClientPhone/MetalLayerBackedView.swift); then
+  fail "a swipe-peel confirm hold is spelled in a renderer (${leak}) — the length is slopdesk_peel_constants().confirm_hold_seconds, reached through SwipePeelChipDriver.confirmHold"
+fi
+
 if [[ "${1:-}" != "--tests" ]]; then
   exit 0
 fi

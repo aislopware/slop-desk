@@ -10,12 +10,12 @@
 //
 // THE SWIPE-PEEL CHIP IS HERE, and it is the split's rule working rather than an exception to it:
 // the DRAWING is duplicated from the Mac's `MacSwipePeelChipView` because arrangement is layout,
-// and the planner is not, because a decision is shared. What is still missing on this half is the
-// DRIVER, and that is a real gap rather than a layout choice: `SwipePeelPlanner` is fed by trackpad
-// scroll PHASES, which a touch does not produce. A two-finger swipe here becomes wheel deltas the
-// HOST recognises (`InputInjector.swipeNav`), so the navigation itself works and only the local
-// optimistic feedback is absent. Closing it means giving the phone its own arm/progress source; the
-// chip it would publish to already exists, so that work is a driver and nothing else.
+// and neither the planner nor the chip's state machine is, because a decision is shared. The DRIVER
+// used to be missing on this half, on a premise that was false: "a touch produces no scroll phases".
+// A two-finger pair routed to `.scroll` produces exactly them — `MetalLayerBackedView` sends Began on
+// the first move and Ended on the lift, because the host needs a native gesture rather than a train
+// of wheel ticks — and the mirror now reads the same tuple. What a touch genuinely has none of is
+// MOMENTUM, so the recogniser's coast arm is unreachable here and the lift is what fires.
 #if os(iOS)
 import CSlopDeskFFI
 import QuartzCore
@@ -42,9 +42,8 @@ public final class VideoPaneControls: ObservableObject {
     /// (`nil` = hidden), already quantized by ``SwipePeelPlanner`` so a 120 Hz gesture stream
     /// re-renders the chip at most a few dozen times per gesture.
     ///
-    /// Nothing on this half sets it YET — the planner arms on trackpad scroll phases and a touch
-    /// produces none (see the file header). The renderer is here so that the day a touch driver
-    /// exists it publishes to a chip rather than to nothing.
+    /// Published by ``MetalLayerBackedView``'s peel driver off the same two-finger scroll it forwards
+    /// to the host (see the file header).
     @Published public var swipePeel: SwipePeelChipState?
     var onResetZoom: () -> Void = {}
     public init() {}

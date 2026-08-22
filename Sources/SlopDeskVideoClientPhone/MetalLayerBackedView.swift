@@ -155,6 +155,30 @@ final class MetalLayerBackedView: UIView {
     /// `hidSystemState` source latched (a plain scroll then rides ⌘ and the remote page zooms).
     private var modifierLatch = ModifierLatchTracker()
 
+    // ── SWIPE-PEEL feedback (doc 05 §8). The chip renderer has been on this half since the video
+    //    carve; what was missing was the DRIVER, and the reason it was missing was a stale one — the
+    //    planner arms on scroll PHASES, and the note said a touch produces none. A two-finger pair
+    //    routed to `.scroll` produces exactly them: `applyPairScroll` already sends Began on the
+    //    first move and `endPair` the Ended on lift, because the host needs a native gesture rather
+    //    than a train of wheel ticks. The mirror reads the SAME tuple.
+    //
+    //    ONE THING IS GENUINELY ABSENT AND IT IS NOT A GAP: momentum. UIKit hands a raw touch
+    //    surface no coast events, and this half refuses to invent a fling the finger never threw
+    //    (`endPair`'s own rule), so the recogniser's coast-expiry path is unreachable here — a
+    //    gesture ends at the lift and the lift is what fires. The Mac's coasting arm is dead code on
+    //    this half rather than a behaviour to reimplement.
+    private var peelPlanner = SwipePeelPlanner()
+    /// The host's swipe-nav operating point (cursor-socket type=3 push). `nil` until the first push
+    /// — an old host never shows the chip, so the affordance cannot lie.
+    private var peelStatus: SwipeNavStatusMessage?
+    /// The verdict → chip state machine, shared with the Mac (``SwipePeelChipDriver``).
+    private var peelDriver = SwipePeelChipDriver()
+    /// Delayed clear of the confirm-pulse chip after a fire.
+    private var peelConfirmClear: Task<Void, Never>?
+    /// The "release now navigates" tick. Held rather than minted per tap so the generator is warm
+    /// when the edge arrives — a cold `UIFeedbackGenerator` costs its first tap.
+    private let peelHaptic = UISelectionFeedbackGenerator()
+
     func activate(connection: VideoWindowConnection?) {
         // 1:1 PANE SNAP — wire BEFORE pipeline.activate (nil-ness picks snap vs host-follow at
         // session construction; mirrors the macOS sibling).
@@ -199,6 +223,9 @@ final class MetalLayerBackedView: UIView {
         // TERMINAL REFUSAL: the pipeline has already torn down with no auto-rebuild; forwarding is what
         // moves the pane off a dead black surface and onto the picker/error state.
         pipeline.onSessionRejected = { [weak self] in self?.onSessionRejectedReady?() }
+        // SWIPE-PEEL: the host's operating point + history push. Without it the mirror never arms,
+        // which is the correct behaviour against a host too old to send one.
+        pipeline.onSwipeNavStatusChanged = { [weak self] status in self?.adoptSwipeNavStatus(status) }
         if connection != nil, let controls {
             controls.onResetZoom = { [weak self] in self?.applyResetZoom() }
             controls.mode = pipeline.contentMode
@@ -218,6 +245,8 @@ final class MetalLayerBackedView: UIView {
         // FIFO stops inside `pipeline.deactivate()`), which is exactly the Mac's bargain too.
         liftAllContacts()
         releaseLatchedModifiers()
+        abandonSwipePeel() // never strand a mid-gesture chip across a teardown
+        peelStatus = nil
         // Deliberately NO nil-publish of the injector sinks — see the macOS `deactivate()` for the
         // detach/reattach race that makes an unconditional clear here kill the REPLACEMENT view's input.
         pipeline.deactivate()
@@ -462,6 +491,9 @@ final class MetalLayerBackedView: UIView {
                 )
             }
         }
+        // A LIFT-ALL is a teardown, never a commit: the gesture is being taken away rather than
+        // finished, so the mirror is cancelled instead of fed an ended phase.
+        abandonSwipePeel()
         pointerOrigin = nil
         pointerDragging = false
         pointerConsumed = false
@@ -561,6 +593,9 @@ final class MetalLayerBackedView: UIView {
         pairBaseSpan = Self.contactGap(contacts)
         pairOrigin = Self.centroid(contacts)
         pairLatestCentroid = pairOrigin
+        // Warm the peel tick now rather than at the commit edge: a cold generator costs its first tap,
+        // and the one tap this surface makes is the one that has to land on the exact frame.
+        peelHaptic.prepare()
     }
 
     private func movePair(_ touches: Set<UITouch>) {
@@ -588,11 +623,18 @@ final class MetalLayerBackedView: UIView {
         if pairRoute == .scroll, pairScrollStarted, inputEnabled {
             // The finger's lift ENDS the host gesture. No momentum tail is invented: UIKit hands a raw
             // touch surface no coast events, so claiming one would be a fling the finger never threw.
+            let scrollPhase = TouchPointerPlan.scrollPhase(isFirst: false, isLast: true)
             pipeline.scroll(
                 dx: 0, dy: 0, viewPoint: hostPoint(pairLatestCentroid),
-                scrollPhase: TouchPointerPlan.scrollPhase(isFirst: false, isLast: true),
-                momentumPhase: 0, continuous: true,
+                scrollPhase: scrollPhase, momentumPhase: 0, continuous: true,
             )
+            // THE LIFT IS WHAT FIRES. The mirror decides on the ended phase exactly as the host's own
+            // recogniser does off the same event, so this feed is not bookkeeping — skip it and the
+            // chip would fill to solid and then simply vanish, having promised a navigation it never
+            // acknowledged.
+            feedSwipePeel(dx: 0, dy: 0, scrollPhase: scrollPhase)
+        } else {
+            abandonSwipePeel()
         }
         pairLatched = false
         pairRoute = nil
@@ -650,17 +692,98 @@ final class MetalLayerBackedView: UIView {
     /// are the centroid's per-event travel in view points — the same natural-scroll sign AppKit reports
     /// (finger right/down = positive), so the two clients feel identical against the same desktop.
     private func applyPairScroll(centroid: CGPoint) {
-        guard inputEnabled else { return }
+        guard inputEnabled else {
+            // A pair that can no longer reach the remote abandons any candidate — the host's own
+            // recogniser stops seeing this gesture too, so a chip left up would promise a fire that
+            // cannot happen.
+            abandonSwipePeel()
+            return
+        }
         let isFirst = !pairScrollStarted
         pairScrollStarted = true
+        let dx = Double(centroid.x - pairLatestCentroid.x)
+        let dy = Double(centroid.y - pairLatestCentroid.y)
+        let scrollPhase = TouchPointerPlan.scrollPhase(isFirst: isFirst, isLast: false)
         pipeline.scroll(
-            dx: Double(centroid.x - pairLatestCentroid.x),
-            dy: Double(centroid.y - pairLatestCentroid.y),
-            viewPoint: hostPoint(centroid),
-            scrollPhase: TouchPointerPlan.scrollPhase(isFirst: isFirst, isLast: false),
-            momentumPhase: 0,
-            continuous: true,
+            dx: dx, dy: dy, viewPoint: hostPoint(centroid),
+            scrollPhase: scrollPhase, momentumPhase: 0, continuous: true,
         )
+        feedSwipePeel(dx: dx, dy: dy, scrollPhase: scrollPhase)
+    }
+
+    // MARK: Swipe-peel feedback (doc 05 §8)
+
+    /// Adopts the host's swipe-nav status push, on the Mac's rules — eligibility flipping OFF
+    /// mid-gesture retracts immediately, a shown chip's direction going history-DEAD retracts unless
+    /// it is CONFIRMING (a fired back-nav flips `canGoBack` itself within one poll, and cutting the
+    /// hold on that push would erase the acknowledgement of the fire that caused it), and a knob
+    /// change rebuilds the idle mirror so a host-side retune never desynchronises the feedback.
+    private func adoptSwipeNavStatus(_ status: SwipeNavStatusMessage) {
+        let previous = peelStatus
+        peelStatus = status
+        if !status.eligible {
+            abandonSwipePeel()
+        } else if let chip = controls?.swipePeel, !chip.confirming, !status.allowsChip(chip.direction) {
+            abandonSwipePeel()
+        }
+        if previous?.fireTravel != status.fireTravel || previous?.slowTier != status.slowTier {
+            peelPlanner = SwipePeelPlanner(
+                fireTravel: Double(status.fireTravel), slowSwipe: status.slowTier,
+            )
+            peelDriver = SwipePeelChipDriver()
+        }
+    }
+
+    /// Mirrors one forwarded scroll event into the peel planner and applies its verdict. Gated on
+    /// the host saying the target app is eligible AT ALL — no push yet (old host) ⇒ nothing — then
+    /// per-direction on the pushed history state.
+    ///
+    /// `now` is `CACurrentMediaTime()` rather than the touch's own timestamp: the recogniser's clock
+    /// only has to be MONOTONIC and shared across the events of one gesture, and this surface feeds
+    /// it from `touchesMoved` batches that are already coalesced by UIKit — so the media clock at
+    /// send time is the same instant the pipeline stamped, without threading a `UITouch` down here.
+    private func feedSwipePeel(dx: Double, dy: Double, scrollPhase: UInt8) {
+        guard let status = peelStatus, status.eligible else { return }
+        let verdict = peelPlanner.ingest(
+            dx: dx, dy: dy, scrollPhase: scrollPhase, momentumPhase: 0,
+            continuous: true, now: CACurrentMediaTime(),
+        )
+        applySwipePeel(SwipePeelPlanner.historyGated(verdict, status: status))
+    }
+
+    /// Actuates one driver step. Every EDGE below it is ``SwipePeelChipDriver``'s and shared with
+    /// the Mac; what is left here is UIKit's three verbs.
+    private func applySwipePeel(_ verdict: SwipePeelPlanner.Verdict) {
+        switch peelDriver.step(verdict, showing: controls?.swipePeel) {
+        case .none:
+            return
+        case let .show(chip, haptic):
+            peelConfirmClear?.cancel()
+            peelConfirmClear = nil
+            if haptic {
+                // The moment the chip turns solid: "release now navigates". A SELECTION tick rather
+                // than an impact — the Mac taps `.alignment`, whose whole character is "a thing
+                // snapped into place", and an impact would read as the navigation itself landing.
+                peelHaptic.selectionChanged()
+            }
+            controls?.swipePeel = chip
+        case let .confirm(chip, hold):
+            controls?.swipePeel = chip
+            peelConfirmClear?.cancel()
+            peelConfirmClear = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                self?.controls?.swipePeel = nil
+            }
+        case .clear:
+            controls?.swipePeel = nil
+        }
+    }
+
+    /// Abandons any in-flight peel candidate (route change, eligibility off, teardown): the planner
+    /// resets and, if the chip was showing, it fades out.
+    private func abandonSwipePeel() {
+        applySwipePeel(peelPlanner.cancel())
     }
 
     /// The two contacts of a pair, clamped, and ordered by position so a jitter cannot swap which finger

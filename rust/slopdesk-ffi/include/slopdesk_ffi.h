@@ -5715,6 +5715,11 @@ typedef struct {
 typedef struct {
   double progress_quantum;
   double show_travel_fraction;
+  /* How long a committed chip is held after the mirror fires, in seconds — the beat where the
+   * host's chord lands and the navigated-to page streams in. Both clients hold it; neither spells
+   * it, because a Mac holding a fire for one length and a phone for another would be two answers
+   * to "how long does a fire stay acknowledged". */
+  double confirm_hold_seconds;
 } SlopDeskPeelConstants;
 
 typedef struct {
