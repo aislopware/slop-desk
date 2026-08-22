@@ -77,8 +77,23 @@ name = "slopdesk-gfsimd"
 version = "0.1.0"
 
 [[package]]
+name = "slopdesk-ids"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-sanitize"
 version = "0.1.0"
+
+[[package]]
+name = "slopdesk-settings"
+version = "0.1.0"
+
+[[package]]
+name = "slopdesk-tree"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-ids",
+]
 
 [[package]]
 name = "slopdesk-video"
@@ -93,7 +108,8 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "slopdesk-altscreen",
- "slopdesk-workspace",
+ "slopdesk-ids",
+ "slopdesk-tree",
 ]
 
 [[package]]
@@ -102,6 +118,9 @@ version = "0.1.0"
 dependencies = [
  "regex",
  "slopdesk-fuzzy",
+ "slopdesk-ids",
+ "slopdesk-settings",
+ "slopdesk-tree",
  "unicode-segmentation",
 ]
 

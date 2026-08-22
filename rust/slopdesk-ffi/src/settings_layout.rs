@@ -1,6 +1,6 @@
 //! The shape of a settings page, in C.
 //!
-//! The rules are `slopdesk_workspace::settings_layout`; what is here is the marshalling.
+//! The rules are `slopdesk_settings::settings_layout`; what is here is the marshalling.
 //!
 //! ## The half asking is an ARGUMENT, not the slice
 //!
@@ -64,8 +64,8 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::settings_catalog::Section;
-use slopdesk_workspace::settings_layout::{self, LayoutRow};
+use slopdesk_settings::settings_catalog::Section;
+use slopdesk_settings::settings_layout::{self, LayoutRow};
 
 use crate::deliver;
 
@@ -168,8 +168,8 @@ mod tests {
                   here is the disagreement being reported"
     )]
 
-    use slopdesk_workspace::settings_catalog::{ApplyTiming, Section};
-    use slopdesk_workspace::settings_layout;
+    use slopdesk_settings::settings_catalog::{ApplyTiming, Section};
+    use slopdesk_settings::settings_layout;
 
     use super::{SLOPDESK_SETTINGS_LAYOUT_NONE, slopdesk_settings_layout_page};
 

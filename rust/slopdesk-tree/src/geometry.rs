@@ -20,7 +20,7 @@ pub struct Point {
 
 impl Point {
     /// The origin.
-    pub(crate) const ZERO: Self = Self { x: 0.0, y: 0.0 };
+    pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
 
     /// A point.
     #[must_use]
@@ -40,7 +40,7 @@ pub struct Size {
 
 impl Size {
     /// The empty size.
-    pub(crate) const ZERO: Self = Self {
+    pub const ZERO: Self = Self {
         width: 0.0,
         height: 0.0,
     };

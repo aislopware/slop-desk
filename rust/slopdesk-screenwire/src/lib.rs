@@ -380,6 +380,32 @@ pub fn decode_reply(body: &[u8]) -> Result<(Status, &[u8]), DecodeError> {
     Ok((status, payload))
 }
 
+/// Bytes of length prefix in front of a request or a reply.
+pub const LENGTH_PREFIX_LEN: usize = 4;
+
+/// The reply body length a length prefix names, or `None` for one this end will not read.
+///
+/// The counterpart of [`encode_reply`], and the reason it is here rather than at the socket: the
+/// prefix is the first four bytes of an UNTRUSTED stream, and what the reader does with them is the
+/// only lever a peer has to make it allocate. Two lengths are refused — `0`, which cannot be a
+/// reply because a reply is at least its status byte, and anything past [`MAX_FRAME`], which is
+/// more than screend would ever have sent. A caller that got either read a boundary it cannot
+/// trust, and a socket with a lost frame boundary never resynchronises, so the answer is to fail
+/// the exchange rather than to read on.
+///
+/// The cap is deliberately the same [`MAX_FRAME`] the request side is measured against. They are
+/// one number because they are one link: a reader whose ceiling drifted above the writer's kills
+/// the connection mid-stream on a frame it thought was legal, and below it refuses a frame the peer
+/// was entitled to send. Neither reports a size.
+#[must_use]
+pub const fn reply_body_length(prefix: [u8; LENGTH_PREFIX_LEN]) -> Option<usize> {
+    let length = u32::from_be_bytes(prefix) as usize;
+    if length == 0 || length > MAX_FRAME {
+        return None;
+    }
+    Some(length)
+}
+
 /// Encodes a reply frame (length prefix included).
 #[must_use]
 pub fn encode_reply(status: Status, payload: &[u8]) -> Vec<u8> {
@@ -403,8 +429,8 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        DecodeError, FLAG_RESET, Request, Status, Verb, decode_detect_payload, decode_reply, decode_request,
-        encode_detect_payload, encode_reply, encode_request, socket_path,
+        DecodeError, FLAG_RESET, MAX_FRAME, Request, Status, Verb, decode_detect_payload, decode_reply,
+        decode_request, encode_detect_payload, encode_reply, encode_request, reply_body_length, socket_path,
     };
 
     fn address(socket_override: Option<&str>, tmpdir: Option<&str>) -> std::path::PathBuf {
@@ -546,5 +572,31 @@ mod tests {
                 "{byte}"
             );
         }
+    }
+
+    /// What this end reads out of a length prefix is exactly what the other end wrote into one,
+    /// and the two refusals bracket the range on both sides.
+    #[test]
+    fn a_length_prefix_reads_back_what_encode_reply_wrote() {
+        for payload in [&b""[..], b"x", b"a longer reply payload"] {
+            let frame = encode_reply(Status::Ok, payload);
+            let prefix: [u8; 4] = frame[..4].try_into().expect("a four-byte prefix");
+            assert_eq!(reply_body_length(prefix), Some(1 + payload.len()));
+            assert_eq!(frame.len(), 4 + 1 + payload.len());
+        }
+    }
+
+    #[test]
+    fn a_zero_or_over_cap_length_is_refused_rather_than_read() {
+        assert_eq!(
+            reply_body_length(0_u32.to_be_bytes()),
+            None,
+            "a reply is at least a status"
+        );
+        assert_eq!(reply_body_length(1_u32.to_be_bytes()), Some(1));
+        let cap = u32::try_from(MAX_FRAME).expect("the cap fits the prefix it is carried in");
+        assert_eq!(reply_body_length(cap.to_be_bytes()), Some(MAX_FRAME));
+        assert_eq!(reply_body_length((cap + 1).to_be_bytes()), None);
+        assert_eq!(reply_body_length(u32::MAX.to_be_bytes()), None);
     }
 }

@@ -13,11 +13,16 @@
 # resolution — stages 24 and 25;
 # rust/slopdesk-ctl, the
 # agent-control CLI; rust/slopdesk-cli, the `slopdesk` CLI core — stage 16; rust/slopdesk-codeseed,
-# the code panel's workbench profile — stage 22), six daemons and five library workspaces
+# the code panel's workbench profile — stage 22), six daemons and eight library workspaces
 # (rust/slopdesk-wire, the terminal wire codec + the replay buffer + the OSC
 # vocabulary — stages 1, 14 and 16; rust/slopdesk-video, the PATH-2 FEC math — stage 5;
-# rust/slopdesk-workspace, the workspace document's domain rules + folder frecency + what the host
-# may listen on — stages 12, 16 and 17; rust/slopdesk-agent, per-pane agent detection — stages 13
+# rust/slopdesk-ids, the leaf the document is spelled in — pane and tab identity, the JSON writer,
+# shell quoting — with no dependency of its own; rust/slopdesk-tree, the workspace DOCUMENT proper —
+# geometry, the split tree, sessions, focus and the tree operations — over that leaf;
+# rust/slopdesk-settings, the settings catalogue, its layout and its rows, also a leaf;
+# rust/slopdesk-workspace, what is left once those three are carved out: the client's remaining
+# surfaces — folder frecency, the git line, the phone keyboard, what the host may listen on —
+# stages 12, 16 and 17; rust/slopdesk-agent, per-pane agent detection — stages 13
 # and 16; rust/slopdesk-terminal, the client's read of the output stream for the input surface, the
 # grid's links and the command blocks — stages 15 and 18), each its own workspace. Stages 19 to 21
 # added no crate: they moved the generated ZDOTDIR shim into superd, which owns the child whose
@@ -264,7 +269,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test miri workspace workspace-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
+.PHONY: check quick check-ios check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test miri workspace workspace-test ids ids-test tree tree-test settings settings-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
 check: lint build test miri golden check-ios ## lint + build + test + the unsafe memory audit + golden pin + the iOS triple (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -512,8 +517,9 @@ devicelog-test: ## cargo test for the device console grammars (rust/slopdesk-dev
 
 # The two device panels' shared decisions — what one ensure round means, how soon to ask again, and
 # what to do about a selection with no video yet. The Android and simulator models each held a
-# byte-identical copy; its own crate because it reads `slopdesk-wire`'s `ServiceState`, and
-# `slopdesk-wire` already depends on `slopdesk-workspace`, where the client's other broad rules live.
+# byte-identical copy; its own crate because it reads `slopdesk-wire`'s `ServiceState`. It sat here
+# originally because `slopdesk-wire` already depended on `slopdesk-workspace`; that edge is gone —
+# the wire now reaches only `slopdesk-ids` and `slopdesk-tree` — so the crate stands on its own.
 devicepanel-test: ## cargo test for the device panel decisions (rust/slopdesk-devicepanel)
 	cd rust/slopdesk-devicepanel && cargo test
 
@@ -577,6 +583,29 @@ workspace: ## Build slopdesk-workspace (rust/slopdesk-workspace)
 
 workspace-test: ## cargo test for the workspace domain rules
 	cd rust/slopdesk-workspace && cargo test
+
+# The three crates carved OUT of slopdesk-workspace when it reached 25k lines and `slopdesk-wire`
+# — which holds the golden-pinned protocol — was found to depend on all of it. Each gets its own
+# target for the same reason `workspace-test` has one: `test-rust` sweeps every workspace, but a
+# named target is what someone reaches for when they change one crate, and a crate with no name
+# here is a crate nobody runs deliberately.
+ids: ## Build slopdesk-ids (rust/slopdesk-ids)
+	cd rust/slopdesk-ids && cargo build --release
+
+ids-test: ## cargo test for pane/tab identity, the JSON writer and shell quoting
+	cd rust/slopdesk-ids && cargo test
+
+tree: ## Build slopdesk-tree (rust/slopdesk-tree)
+	cd rust/slopdesk-tree && cargo build --release
+
+tree-test: ## cargo test for the workspace DOCUMENT — geometry, splits, sessions, focus, tree ops
+	cd rust/slopdesk-tree && cargo test
+
+settings: ## Build slopdesk-settings (rust/slopdesk-settings)
+	cd rust/slopdesk-settings && cargo build --release
+
+settings-test: ## cargo test for the settings catalogue, its layout and its rows
+	cd rust/slopdesk-settings && cargo test
 
 # Stage 13: the half of agent detection that reads the CLOCK — the status state machine, the block
 # ledger, the dissent watchdog, the confirmation holds and the input classifier. screend (docs/52)
@@ -653,7 +682,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test workspace-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + workspace rules + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
+test: ffi hook-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test workspace-test ids-test tree-test settings-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + workspace rules + identity + the document tree + the settings catalogue + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the

@@ -1,14 +1,14 @@
 //! Which keybinding rows a search query keeps.
 //!
-//! ## Why this is not [`crate::settings_rows::matches`]
+//! ## Why this is not [`slopdesk_settings::settings_rows::matches`]
 //!
 //! Same rule, different table, and the difference is where the table lives. A settings row is DATA
-//! in this crate, so its filter reads [`crate::settings_rows::ROWS`] and answers positions in it. A
-//! keybinding row is not: `WorkspaceBindingRegistry` writes the title, the keywords and the symbol
-//! as Swift literals beside the `WorkspaceAction` case each row routes to, and moving those here
-//! would put a crossing in front of every cheat-sheet, menu and palette row that reads a title
-//! today. So the ROWS are lent — the caller marshals its four spellings per row once into a blob
-//! and this side answers which of them a query keeps.
+//! in this crate, so its filter reads [`slopdesk_settings::settings_rows::ROWS`] and answers
+//! positions in it. A keybinding row is not: `WorkspaceBindingRegistry` writes the title, the
+//! keywords and the symbol as Swift literals beside the `WorkspaceAction` case each row routes to,
+//! and moving those here would put a crossing in front of every cheat-sheet, menu and palette row
+//! that reads a title today. So the ROWS are lent — the caller marshals its four spellings per row
+//! once into a blob and this side answers which of them a query keeps.
 //!
 //! ## Why it crosses at all
 //!
@@ -23,11 +23,12 @@
 //! ## The fold, and why the fast path cannot disagree with the slow one
 //!
 //! A row matches when ANY of its spellings contains the query, case-folded — the same sentence
-//! [`crate::settings_rows`] applies to its four fields. Three of a binding's spellings are ASCII
-//! (the title, the keyword run, the `cmd+shift+t` canonical) and one is not (the `⌘⇧T` glyph), so
-//! the fold takes an ASCII byte path when both sides are ASCII and Unicode's when either is not.
-//! The two agree by construction — Unicode simple lowercasing IS ASCII lowercasing over ASCII — and
-//! `the_two_folds_agree_wherever_both_apply` pins it rather than leaving it asserted here.
+//! [`slopdesk_settings::settings_rows`] applies to its four fields. Three of a binding's spellings
+//! are ASCII (the title, the keyword run, the `cmd+shift+t` canonical) and one is not (the `⌘⇧T`
+//! glyph), so the fold takes an ASCII byte path when both sides are ASCII and Unicode's when either
+//! is not. The two agree by construction — Unicode simple lowercasing IS ASCII lowercasing over
+//! ASCII — and `the_two_folds_agree_wherever_both_apply` pins it rather than leaving it asserted
+//! here.
 //!
 //! GOLDEN-SAFE: a filter. Nothing here reads or writes a value or touches a wire codec.
 

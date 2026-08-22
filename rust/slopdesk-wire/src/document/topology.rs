@@ -25,11 +25,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use slopdesk_workspace::identity::{PaneId, SessionId, SplitNodeId, TabId};
-use slopdesk_workspace::session::{DetachedPane, PaneSpec, Session, Tab};
-use slopdesk_workspace::split_tree::{SplitNode, SplitWeight, WeightedChild};
-use slopdesk_workspace::tab_ordering;
-use slopdesk_workspace::workspace::{DEFAULT_PANE_TITLE, TreeWorkspace};
+use slopdesk_ids::identity::{PaneId, SessionId, SplitNodeId, TabId};
+use slopdesk_tree::session::{DetachedPane, PaneSpec, Session, Tab};
+use slopdesk_tree::split_tree::{SplitNode, SplitWeight, WeightedChild};
+use slopdesk_tree::tab_ordering;
+use slopdesk_tree::workspace::{DEFAULT_PANE_TITLE, TreeWorkspace};
 
 use super::codec::{self, WorkspaceLayoutNode};
 use super::fields::{pane, root, session as session_field, split_node, tab as tab_field};
@@ -574,7 +574,7 @@ fn read_spec(id: PaneId, state: &HostWorkspaceState) -> PaneSpec {
         .and_then(codec::decode_u8)
         .unwrap_or(0);
     PaneSpec {
-        kind: slopdesk_workspace::PaneKind::from_byte(kind_byte),
+        kind: slopdesk_tree::PaneKind::from_byte(kind_byte),
         title: state
             .string(&key(pane::TITLE))
             .unwrap_or_else(|| DEFAULT_PANE_TITLE.to_owned()),
@@ -716,10 +716,10 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
-    use slopdesk_workspace::identity::{PaneId, SessionId, SplitNodeId, TabId};
-    use slopdesk_workspace::session::{DetachedPane, PaneKind, PaneSpec, Tab};
-    use slopdesk_workspace::split_tree::{SplitAxis, SplitNode, SplitWeight, WeightedChild};
-    use slopdesk_workspace::workspace::TreeWorkspace;
+    use slopdesk_ids::identity::{PaneId, SessionId, SplitNodeId, TabId};
+    use slopdesk_tree::session::{DetachedPane, PaneKind, PaneSpec, Tab};
+    use slopdesk_tree::split_tree::{SplitAxis, SplitNode, SplitWeight, WeightedChild};
+    use slopdesk_tree::workspace::TreeWorkspace;
 
     use super::super::codec;
     use super::super::fields::{pane, project, root, tab as tab_field};

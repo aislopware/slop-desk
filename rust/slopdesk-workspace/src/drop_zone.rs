@@ -24,8 +24,9 @@
 //! the smallest normalised distance — which is deterministic and makes a zone's own centre
 //! (distance `0`) always resolve to that zone. So the middle of a drawn blob always hits it.
 
+use slopdesk_tree::geometry::{Point, Size};
+
 use crate::drop_action::{DropZone, ZONES};
-use crate::geometry::{Point, Size};
 
 /// Where each central circle sits down the pane, as a fraction of its height.
 const NEW_TAB_Y: f64 = 0.18;
@@ -148,9 +149,10 @@ pub fn zone_at(point: Point, size: Size) -> Option<DropZone> {
     reason = "the proportions are exact, and an off-by-a-pixel blob IS the bug this pins"
 )]
 mod tests {
+    use slopdesk_tree::geometry::{Point, Size};
+
     use super::{ZONES, shape, zone_at};
     use crate::drop_action::DropZone;
-    use crate::geometry::{Point, Size};
 
     const PANE: Size = Size::new(800.0, 600.0);
 

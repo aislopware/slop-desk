@@ -75,6 +75,13 @@ slopdesk-video = { path = "../slopdesk-video" }
 slopdesk-altscreen = { path = "../slopdesk-altscreen" }
 slopdesk-wire = { path = "../slopdesk-wire" }
 slopdesk-workspace = { path = "../slopdesk-workspace" }
+# The three crates carved out of `slopdesk-workspace`. The shim names modules in all four directly,
+# so all four are direct edges — and each one is what puts that crate inside `build-ffi.sh`'s
+# `INPUT_CRATES` closure (`docs/55` §3). A crate reached only through a re-export would be invisible
+# to the stamp.
+slopdesk-ids = { path = "../slopdesk-ids" }
+slopdesk-settings = { path = "../slopdesk-settings" }
+slopdesk-tree = { path = "../slopdesk-tree" }
 
 # hostd's door only, and the ONE dependency in this graph that compiles a C library. `libgit2` is
 # vendored inside `slopdesk-git`, and a client never asks the question — the git status arrives as a

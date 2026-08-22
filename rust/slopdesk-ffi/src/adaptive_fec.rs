@@ -56,8 +56,12 @@ impl From<SlopDeskFecTierState> for TierState {
 ///
 /// 0 default tier · 1 parity tier CLEAN · 2 parity tier NORMAL · 3 parity tier BURST · 4 relax
 /// dwell reports · 5 sticky-relax window reports · 6 the multi-loss default `k` · 7/8 the `m`
-/// bounds · 9/10 the `k` bounds. An unknown index answers 0, which is the default tier and so
-/// cannot be mistaken for a count.
+/// bounds · 9/10 the `k` bounds · 11 the multi-loss default `m`. An unknown index answers 0, which
+/// is the default tier and so cannot be mistaken for a count.
+///
+/// 11 is deliberately not folded into 7: the floor and the default coincide today and answer
+/// different questions, and a settings face that read the floor as "the default" would agree until
+/// the floor moved.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -76,6 +80,7 @@ pub extern "C" fn slopdesk_adaptive_fec_constant(index: u8) -> u32 {
         8 => size(adaptive_fec::multi_loss::M_MAX),
         9 => size(adaptive_fec::multi_loss::K_MIN),
         10 => size(adaptive_fec::multi_loss::K_MAX),
+        11 => size(adaptive_fec::multi_loss::DEFAULT_M),
         // 0 and anything unknown: the default tier, which IS zero.
         _ => u32::from(adaptive_fec::DEFAULT_TIER),
     }

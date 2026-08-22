@@ -48,10 +48,18 @@ targets:
       - package: SlopDesk
         product: SlopDeskMacUI
       # PATH 2 (GUI video path): links the client decode/render/cursor pipeline so
-      # AppMain can register VideoWindowFactory.shared with the real VideoWindowView.
+      # AppMain can register VideoWindowFactory.shared with the real MacVideoWindowView.
       # Carries VideoToolbox/Metal — never instantiated in tests, only at GUI launch.
+      #
+      # TWO PRODUCTS since the video carve (docs/56 §3): `SlopDeskVideoClient` is the platform-free
+      # ENGINE (session, pipeline, connection, discovery — the types AppMain names directly), and
+      # `SlopDeskVideoClientMac` is the AppKit HALF that draws it. The iOS app lists
+      # `SlopDeskVideoClientPhone` in its place; a target that listed BOTH halves would defeat the
+      # carve, since the point is that neither half is reachable from the other's platform.
       - package: SlopDesk
         product: SlopDeskVideoClient
+      - package: SlopDesk
+        product: SlopDeskVideoClientMac
       # PATH 1 (libghostty renderer): the libghostty static binary (the link-time
       # `ghostty` C-ABI symbols) packaged as an xcframework, built ON this macOS-26.5 host
       # by ThirdParty/ghostty/build-libghostty.sh. The universal build also ships iOS

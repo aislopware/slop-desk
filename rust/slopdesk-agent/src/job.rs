@@ -76,13 +76,6 @@ pub fn realpath_basename(token: &str) -> Option<String> {
     if base.is_empty() { None } else { Some(base) }
 }
 
-/// A resolver that resolves nothing — the hermetic default for tests and replays, and the right
-/// one anywhere a filesystem touch would be a lie about the machine the job ran on.
-#[must_use]
-pub const fn no_symlinks(_token: &str) -> Option<String> {
-    None
-}
-
 /// herdr `identify_agent_in_job`.
 ///
 /// Prefers the group LEADER; failing that, scans every process, keeps the recognised agents and
@@ -368,10 +361,16 @@ fn agent_name_from_known_package_path(path: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ForegroundJob, ForegroundJobProcess, identify, no_symlinks, normalized_process_name, process_priority,
-    };
+    use super::{ForegroundJob, ForegroundJobProcess, identify, normalized_process_name, process_priority};
     use crate::kind::AgentKind;
+
+    /// A resolver that resolves nothing. TEST-ONLY: production never wants it — the door's
+    /// `Resolver::resolve` states that a null Swift callback is NOT "resolve nothing" and falls
+    /// back to [`super::realpath_basename`], so a `pub` version of this would be a third spelling
+    /// of a rule that has one.
+    const fn no_symlinks(_token: &str) -> Option<String> {
+        None
+    }
 
     fn wrapped(pid: i32, name: &str, argv: &[&str]) -> ForegroundJobProcess {
         ForegroundJobProcess {

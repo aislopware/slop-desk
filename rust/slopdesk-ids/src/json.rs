@@ -72,7 +72,7 @@ pub struct JsonError {
 impl JsonError {
     /// A fault under a short reason.
     #[must_use]
-    pub(crate) const fn from_hint(hint: &'static str) -> Self {
+    pub const fn from_hint(hint: &'static str) -> Self {
         Self { hint }
     }
 }
@@ -86,7 +86,7 @@ impl fmt::Display for JsonError {
 impl std::error::Error for JsonError {}
 
 /// Result alias for this module.
-pub(crate) type Result<T> = core::result::Result<T, JsonError>;
+pub type Result<T> = core::result::Result<T, JsonError>;
 
 /// The deepest nesting a parsed document may carry.
 ///

@@ -1367,16 +1367,17 @@ pub fn row_at(index: usize) -> Option<&'static SettingRow> {
 /// halves on the grounds that a key still compiles and round-trips on iOS — true, and beside the
 /// point, because what the phone rendered was not a key, it was a live switch over `bounceDock`
 /// that no Dock reads and a ✎ that jumped to an Appearance page with no Dock Icon group on it. A
-/// row that is LISTED and inert is the defect [`crate::palette_rows`] exists to close; a key index
-/// is no exception to it.
+/// row that is LISTED and inert is the defect `slopdesk_workspace::palette_rows` exists to close; a
+/// key index is no exception to it.
 ///
 /// ## The rows no page describes
 ///
 /// A key the layout names NOWHERE is advertised on both halves. Those are the ones a
 /// `Control::Bespoke` surface edits — the font families, the caret — and a bespoke group names no
 /// keys, so the table genuinely cannot answer for them. Failing OPEN is the default
-/// [`crate::palette_rows`] and [`crate::binding_rows`] take, for the same reason: withholding a row
-/// on a guess is silent, while advertising one is visible and is what the test below can bound.
+/// `slopdesk_workspace::palette_rows` and `slopdesk_workspace::binding_rows` take, for the same
+/// reason: withholding a row on a guess is silent, while advertising one is visible and is what the
+/// test below can bound.
 #[must_use]
 pub fn shown(key: &str, mac: bool) -> bool {
     crate::settings_layout::GROUPS

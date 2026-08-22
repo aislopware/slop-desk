@@ -23,8 +23,8 @@
 //! rather than strips: the fact that an agent is running is worth a glyph, just not a new one each
 //! frame.
 
-use crate::session::{PaneKind, PaneSpec};
-use crate::tab_ordering;
+use slopdesk_tree::session::{PaneKind, PaneSpec};
+use slopdesk_tree::tab_ordering;
 
 /// The canonical agent mark a normalised program title leads with.
 ///

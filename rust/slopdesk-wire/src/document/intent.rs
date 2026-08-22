@@ -181,7 +181,7 @@ impl WorkspaceIntentOp {
 // questions the wire asks — where does a new tab land, which gutter was dropped into, what is this
 // pane — and a second copy here would be a mapping with nothing standing between it and a silent
 // divergence from the one the layout engine actually obeys.
-pub use slopdesk_workspace::{NewTabPosition, PaneDropEdge, PaneKind};
+pub use slopdesk_tree::{NewTabPosition, PaneDropEdge, PaneKind};
 
 /// Cap on a name a client may set.
 ///

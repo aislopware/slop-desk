@@ -397,8 +397,9 @@ impl RateLimiter {
     /// [`EXPLICIT_REFILL_PER_SECOND`].
     ///
     /// The numbers live here rather than in a caller's default argument, the way
-    /// [`crate::chrome`]'s dwell gate does: they are the anti-flood POLICY, and a second spelling
-    /// of them would be a second opinion about how much a hostile shell may post.
+    /// [`slopdesk_settings::chrome`]'s dwell gate does: they are the anti-flood POLICY, and a
+    /// second spelling of them would be a second opinion about how much a hostile shell may
+    /// post.
     #[must_use]
     pub const fn explicit(now: f64) -> Self {
         Self::new(EXPLICIT_BURST, EXPLICIT_REFILL_PER_SECOND, now)

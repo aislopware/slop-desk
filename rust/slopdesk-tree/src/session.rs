@@ -15,7 +15,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::identity::{PaneId, SessionId, TabId};
+use slopdesk_ids::identity::{PaneId, SessionId, TabId};
+
 use crate::split_tree::SplitNode;
 
 /// What a pane is.
@@ -354,7 +355,7 @@ pub struct Session {
 impl Session {
     /// A fresh single-tab, single-pane session.
     ///
-    /// The ids are supplied rather than minted, for the reason [`crate::identity`] gives.
+    /// The ids are supplied rather than minted, for the reason [`slopdesk_ids::identity`] gives.
     #[must_use]
     pub fn single_pane(
         id: SessionId,
@@ -544,8 +545,9 @@ impl NewTabPosition {
 
 #[cfg(test)]
 mod tests {
+    use slopdesk_ids::identity::{PaneId, SessionId, SplitNodeId, TabId};
+
     use super::{DetachedPane, NewTabPosition, PaneKind, PaneSpec, Session, Tab};
-    use crate::identity::{PaneId, SessionId, SplitNodeId, TabId};
     use crate::split_tree::{SplitAxis, SplitNode, WeightedChild};
 
     fn pane(byte: u8) -> PaneId {

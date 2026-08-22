@@ -10,8 +10,6 @@ use serde::Deserialize;
 
 use crate::region::Region;
 
-/// The engine's own manifest-format version (herdr `MANIFEST_ENGINE_VERSION`).
-pub const ENGINE_VERSION: u32 = 3;
 /// `top_non_empty_lines(n)` requires a manifest declaring at least this engine version.
 pub const TOP_NON_EMPTY_LINES_ENGINE_VERSION: u32 = 3;
 /// A gate naming its OWN region requires at least this engine version — engine 2 ignores the

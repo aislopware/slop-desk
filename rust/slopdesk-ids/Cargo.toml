@@ -1,0 +1,113 @@
+# `slopdesk-ids` — the three NOTATIONS the rest of the tree writes itself down in.
+#
+# ## Why these three and nothing else
+# An id, a JSON value and a shell word are the forms slopdesk's data takes when it has to leave a
+# process: a pane id in a wire frame, a workspace file on disk, a path typed into somebody's shell.
+# None of them is a DECISION — there is no policy to disagree with, only a spelling — and all three
+# were sitting inside `slopdesk-workspace`, which is why `slopdesk-wire` (the golden-pinned
+# protocol) and `slopdesk-terminal` (the output-path reader) each had to take a 25k-line domain
+# crate to reach one of them.
+#
+# ## Why it is a leaf, and must stay one
+# Zero dependencies, ours or anyone's. That is the property the two callers above are actually
+# buying: a crate that cannot grow an edge back into the domain cannot re-create the inversion this
+# split exists to remove. Anything that needs to know what a pane IS belongs one layer up, in
+# `slopdesk-tree`.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-ids"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The id, JSON and shell-word notations slopdesk writes itself down in"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_ids"
+path = "src/lib.rs"
+
+[dependencies]
+# None, on purpose. See the header: the callers are buying a crate that cannot grow one.
+
+# These run on the wire's decode path and inside the workspace file reader.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml` and `rust/slopdesk-wire/Cargo.toml`. A literal
+# copy rather than inherited, because inheriting would mean being a member, which is what the
+# profile above forbids.
+#
+# `unsafe_code` is FORBID, not deny, and here it is the POINT rather than a nicety: this is the code
+# the Swift side could only make fast by leaving safety, and forbid — unlike deny — cannot be
+# re-allowed downstream by whoever later wants a SIMD kernel.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dev-dependency's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never
+#   `addingProduct`/`fma`)". FMA rounds once where the wire rounds twice, so taking the lint's
+#   advice changes the very `f64` bit patterns `golden/golden_vectors.json` pins. Crate-wide
+#   rather than per-site because every geometry expression would otherwise carry the same
+#   `#[expect]` and the reason is a repo invariant, not a local judgement.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

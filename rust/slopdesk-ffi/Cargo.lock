@@ -293,14 +293,17 @@ dependencies = [
  "slopdesk-fuzzy",
  "slopdesk-git",
  "slopdesk-hookevent",
+ "slopdesk-ids",
  "slopdesk-inspectord",
  "slopdesk-probe",
  "slopdesk-rowscan",
  "slopdesk-sanitize",
  "slopdesk-screenwire",
+ "slopdesk-settings",
  "slopdesk-sidecars",
  "slopdesk-superwire",
  "slopdesk-terminal",
+ "slopdesk-tree",
  "slopdesk-video",
  "slopdesk-wire",
  "slopdesk-workspace",
@@ -329,6 +332,10 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
 ]
+
+[[package]]
+name = "slopdesk-ids"
+version = "0.1.0"
 
 [[package]]
 name = "slopdesk-inspectord"
@@ -363,6 +370,10 @@ name = "slopdesk-screenwire"
 version = "0.1.0"
 
 [[package]]
+name = "slopdesk-settings"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-sidecars"
 version = "0.1.0"
 dependencies = [
@@ -377,8 +388,15 @@ version = "0.1.0"
 name = "slopdesk-terminal"
 version = "0.1.0"
 dependencies = [
+ "slopdesk-ids",
  "slopdesk-sanitize",
- "slopdesk-workspace",
+]
+
+[[package]]
+name = "slopdesk-tree"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-ids",
 ]
 
 [[package]]
@@ -394,7 +412,8 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "slopdesk-altscreen",
- "slopdesk-workspace",
+ "slopdesk-ids",
+ "slopdesk-tree",
 ]
 
 [[package]]
@@ -403,6 +422,9 @@ version = "0.1.0"
 dependencies = [
  "regex",
  "slopdesk-fuzzy",
+ "slopdesk-ids",
+ "slopdesk-settings",
+ "slopdesk-tree",
  "unicode-segmentation",
 ]
 

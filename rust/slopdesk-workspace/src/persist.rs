@@ -2,7 +2,7 @@
 //!
 //! The counterpart to the host's document file. Same rule, opposite half: the host persists the
 //! CELLS, this persists the ARRANGEMENT — the plane, the panes on it, the split trees, the presets.
-//! [`crate::json`] carries why the format is JSON at all.
+//! [`slopdesk_ids::json`] carries why the format is JSON at all.
 //!
 //! ## Validate-then-repair, never trap
 //!
@@ -28,11 +28,11 @@
 
 use std::collections::BTreeMap;
 
-use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
-use crate::json::{Json, JsonError, Result, object, parse, to_pretty_string};
-use crate::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
-use crate::split_tree::{SplitAxis, SplitNode, SplitWeight, WeightedChild};
-use crate::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
+use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+use slopdesk_ids::json::{Json, JsonError, Result, object, parse, to_pretty_string};
+use slopdesk_tree::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
+use slopdesk_tree::split_tree::{SplitAxis, SplitNode, SplitWeight, WeightedChild};
+use slopdesk_tree::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
 
 const fn malformed(hint: &'static str) -> JsonError {
     JsonError::from_hint(hint)
@@ -81,17 +81,17 @@ fn number_or(value: &Json, key: &str, fallback: f64) -> f64 {
 /// Kept rather than flattened to a bare string: every workspace file on disk is written this way,
 /// and the format is not worth a migration that could only ever lose somebody's layout.
 fn encode_id(raw: [u8; 16]) -> Json {
-    object([("raw", Json::String(crate::identity::uuid_text(raw)))])
+    object([("raw", Json::String(slopdesk_ids::identity::uuid_text(raw)))])
 }
 
 fn decode_id(value: &Json, key: &'static str) -> Result<[u8; 16]> {
     let wrapped = field(value, key)?;
     let raw = text(wrapped, "raw")?;
-    crate::identity::parse_uuid(&raw).ok_or_else(|| malformed("an id is not a uuid"))
+    slopdesk_ids::identity::parse_uuid(&raw).ok_or_else(|| malformed("an id is not a uuid"))
 }
 
 fn decode_optional_id(value: &Json, key: &str) -> Option<[u8; 16]> {
-    crate::identity::parse_uuid(value.get(key)?.get("raw")?.string()?)
+    slopdesk_ids::identity::parse_uuid(value.get(key)?.get("raw")?.string()?)
 }
 
 // ---------------------------------------------------------------------------------------------- //
@@ -275,7 +275,7 @@ pub(crate) fn encode_split_node(node: &SplitNode) -> Json {
 ///
 /// # Errors
 /// [`JsonError`] for a node with neither discriminator, an id that is not a uuid, or nesting past
-/// [`crate::json::MAX_DEPTH`] — the parser refuses that before a value ever exists.
+/// [`slopdesk_ids::json::MAX_DEPTH`] — the parser refuses that before a value ever exists.
 pub(crate) fn decode_split_node(value: &Json, mint: &mut impl FnMut() -> PaneId) -> Result<SplitNode> {
     let raw = decode_raw_node(value, ROOT_PATH)?;
     Ok(raw.normalized(mint).unwrap_or_else(|| SplitNode::Leaf(mint())))
@@ -310,14 +310,15 @@ fn fold_all(hash: u128, bytes: impl IntoIterator<Item = u8>) -> u128 {
 /// divider group: `set_divider_weight` moved two seams at once, and the document wrote a single
 /// `splitNode/<nil>/weight` cell for two independent dividers. Swift does not have THAT bug — its
 /// `?? SplitNodeID()` mints a fresh id per split — so the fill here had to beat both languages at
-/// once: no collision, the way Swift already manages, and stable across loads, which Swift does not
-/// (`## Owed` below — the divergence is live, not closed).
+/// once: no collision, the way Swift already manages, and stable across loads, which Swift did not
+/// (`## Settled, 2026-08-20` below — that half is closed; Swift's random fill is gone).
 ///
-/// Minting a random one was rejected: [`crate::identity`]'s header is "the same inputs give the
-/// same tree, forever", and this crate holds no entropy for exactly that reason. A random id would
-/// mean one file decoded twice named the same seam two different things — unpinnable by a test, and
-/// a second reader of the same file would disagree with the first. Threading a second closure in
-/// from the caller would have bought the same non-determinism at the cost of a wider signature.
+/// Minting a random one was rejected: [`slopdesk_ids::identity`]'s header is "the same inputs give
+/// the same tree, forever", and this crate holds no entropy for exactly that reason. A random id
+/// would mean one file decoded twice named the same seam two different things — unpinnable by a
+/// test, and a second reader of the same file would disagree with the first. Threading a second
+/// closure in from the caller would have bought the same non-determinism at the cost of a wider
+/// signature.
 ///
 /// So the id is a function of the node itself, in two parts, each covering what the other cannot:
 ///
@@ -753,16 +754,19 @@ mod tests {
 
     use std::collections::BTreeSet;
 
+    use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+    use slopdesk_ids::json::{Json, object, parse, to_pretty_string};
+    use slopdesk_tree::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
+    use slopdesk_tree::split_tree::{
+        MAX_DEPTH, MIN_WEIGHT, SplitAxis, SplitNode, SplitWeight, WeightedChild,
+    };
+    use slopdesk_tree::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
+
     use super::{
         EMPTY_WORKSPACE_IDS, FileError, MAX_PANES, NO_REFUSAL, decode_file, decode_pane_kind, decode_spec,
         decode_split_node, decode_weight, encode_file, encode_spec, encode_split_node, encode_weight,
         minted_ids_for,
     };
-    use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
-    use crate::json::{Json, object, parse, to_pretty_string};
-    use crate::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab, VideoEndpoint};
-    use crate::split_tree::{MAX_DEPTH, MIN_WEIGHT, SplitAxis, SplitNode, SplitWeight, WeightedChild};
-    use crate::workspace::{CURRENT_SCHEMA_VERSION, TreeWorkspace};
 
     fn pane(byte: u8) -> PaneId {
         PaneId::from_bytes([byte; 16])
@@ -874,9 +878,9 @@ mod tests {
     /// the all-zero uuid, two independent seams shared a name — `set_divider_weight` moved both at
     /// once, and the document wrote one `splitNode/<nil>/weight` cell for two dividers.
     ///
-    /// The other half is the next test, and there it is SWIFT that is wrong: a random mint is not
-    /// stable across loads. `derived_split_id`'s `## Owed` section carries what that costs a user
-    /// and what closing it takes.
+    /// The other half is the next test, and there it USED to be Swift that was wrong: a random mint
+    /// is not stable across loads. `derived_split_id`'s `## Settled, 2026-08-20` section carries
+    /// what that cost a user and what closing it took.
     #[test]
     fn two_unnamed_splits_are_two_dividers_rather_than_one() {
         let Ok(value) = parse(UNNAMED_SPLITS) else {
@@ -900,8 +904,8 @@ mod tests {
 
     /// The other half of the same fix: the fill is DERIVED, so it is the same on every read. A
     /// random mint would pass the test above and fail this one — which is precisely what Swift's
-    /// `?? SplitNodeID()` does today, so this is a property this crate holds ALONE until that call
-    /// site is replaced by the derivation (`derived_split_id`, `## Owed`).
+    /// `?? SplitNodeID()` used to do, so this was a property this crate held ALONE until that call
+    /// site was replaced by the derivation (`derived_split_id`, `## Settled, 2026-08-20`).
     #[test]
     fn the_same_file_names_the_same_dividers_every_time_it_is_read() {
         let Ok(value) = parse(UNNAMED_SPLITS) else {

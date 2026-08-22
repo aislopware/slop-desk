@@ -42,12 +42,6 @@ impl ColorRange {
     pub const fn from_full_range(full_range: bool) -> Self {
         if full_range { Self::Full } else { Self::Video }
     }
-
-    /// The wire bit for `helloAck.fullRange`.
-    #[must_use]
-    pub const fn is_full_range(self) -> bool {
-        matches!(self, Self::Full)
-    }
 }
 
 /// The seven YCbCr→RGB coefficients the Metal fragment shader applies.
@@ -133,8 +127,6 @@ mod tests {
     fn the_wire_bit_maps_both_ways() {
         assert_eq!(ColorRange::from_full_range(false), ColorRange::Video);
         assert_eq!(ColorRange::from_full_range(true), ColorRange::Full);
-        assert!(!ColorRange::Video.is_full_range());
-        assert!(ColorRange::Full.is_full_range());
         assert_eq!(
             ColorRange::default(),
             ColorRange::Video,

@@ -51,11 +51,29 @@ name = "slopdesk-fuzzy"
 version = "0.1.0"
 
 [[package]]
+name = "slopdesk-ids"
+version = "0.1.0"
+
+[[package]]
+name = "slopdesk-settings"
+version = "0.1.0"
+
+[[package]]
+name = "slopdesk-tree"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-ids",
+]
+
+[[package]]
 name = "slopdesk-workspace"
 version = "0.1.0"
 dependencies = [
  "regex",
  "slopdesk-fuzzy",
+ "slopdesk-ids",
+ "slopdesk-settings",
+ "slopdesk-tree",
  "unicode-segmentation",
 ]
 

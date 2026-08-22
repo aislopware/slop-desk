@@ -59,9 +59,9 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_tree::{PaneKind, SplitAxis};
 use slopdesk_wire::bytes::{ByteReader, ByteWriter};
 use slopdesk_workspace::templates::{self, LaunchPreset, SessionTemplate, TemplateNode, TemplatePane};
-use slopdesk_workspace::{PaneKind, SplitAxis};
 
 use crate::{borrow, deliver, saturating_u32};
 
@@ -72,7 +72,7 @@ const TAG_SPLIT: u8 = 1;
 
 /// The deepest nesting the READER will build, as opposed to the deepest the repair will KEEP.
 ///
-/// Two different numbers doing two different jobs, and the same split `slopdesk_workspace::json`
+/// Two different numbers doing two different jobs, and the same split `slopdesk_ids::json`
 /// makes between its own `MAX_DEPTH` of 64 and the split tree's of 12. The repair is a POST-decode
 /// cap: it cannot protect the walk that produces its input, because that walk has already run by
 /// the time it sees a tree. So the reader carries its own bound, and it is a bound on stack rather
@@ -381,11 +381,11 @@ pub unsafe extern "C" fn slopdesk_ws_built_in_launch_presets(out: *mut c_uchar, 
     reason = "a door that refuses its own fixture IS the report"
 )]
 mod tests {
-    use slopdesk_workspace::split_tree::MAX_DEPTH;
+    use slopdesk_tree::split_tree::MAX_DEPTH;
+    use slopdesk_tree::{PaneKind, SplitAxis};
     use slopdesk_workspace::templates::{
         FALLBACK_PANE_TITLE, TemplateNode, TemplatePane, built_in_session_templates,
     };
-    use slopdesk_workspace::{PaneKind, SplitAxis};
 
     use super::{
         ByteWriter, decode_layout, put_node, slopdesk_ws_built_in_launch_presets,

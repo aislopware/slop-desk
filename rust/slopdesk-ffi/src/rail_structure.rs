@@ -25,9 +25,9 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_tree::session::PaneKind;
 use slopdesk_workspace::rail_list::{self, StructurePane};
 use slopdesk_workspace::rail_title::{TitleShape, titles_by_process};
-use slopdesk_workspace::session::PaneKind;
 
 use crate::deliver;
 use crate::workspace::{Span, borrow_array, text_of};
@@ -163,8 +163,8 @@ mod tests {
                   softening it to a default would let a short delivery read as an absent key and pass"
     )]
 
-    use slopdesk_workspace::session::PaneKind;
-    use slopdesk_workspace::tab_ordering::project_key_of;
+    use slopdesk_tree::session::PaneKind;
+    use slopdesk_tree::tab_ordering::project_key_of;
 
     use super::{
         CRailStructurePane, CRailTitleShape, slopdesk_ws_rail_structure_keys,

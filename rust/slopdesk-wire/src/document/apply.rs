@@ -6,7 +6,7 @@
 //! client showing one layout and the host publishing another, with no way to tell which is wrong.
 //!
 //! Everything here is VALIDATION. The transformation itself is
-//! [`slopdesk_workspace::tree_ops`], which was written for a caller that could not supply nonsense;
+//! [`slopdesk_tree::tree_ops`], which was written for a caller that could not supply nonsense;
 //! what it has never had is a caller that is a network peer. So: every referenced id must already
 //! exist, every proposed id must not, every count is bounded before it allocates — the argument
 //! decoders in [`super::intent`] own that part — and the RESULT is re-checked against the depth cap
@@ -21,11 +21,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use slopdesk_workspace::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
-use slopdesk_workspace::session::{PaneKind, PaneSpec, Session, Tab};
-use slopdesk_workspace::split_tree::{MAX_DEPTH, MIN_WEIGHT, SplitNode, SplitWeight, WeightedChild};
-use slopdesk_workspace::workspace::{DEFAULT_DESKTOP_PANE_TITLE, DEFAULT_PANE_TITLE, DEFAULT_SESSION_NAME};
-use slopdesk_workspace::{tab_ordering, tree_ops};
+use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+use slopdesk_tree::session::{PaneKind, PaneSpec, Session, Tab};
+use slopdesk_tree::split_tree::{MAX_DEPTH, MIN_WEIGHT, SplitNode, SplitWeight, WeightedChild};
+use slopdesk_tree::workspace::{DEFAULT_DESKTOP_PANE_TITLE, DEFAULT_PANE_TITLE, DEFAULT_SESSION_NAME};
+use slopdesk_tree::{tab_ordering, tree_ops};
 
 use super::codec::{self, WorkspaceLayoutNode};
 use super::intent::{self, WorkspaceIntentOp};
@@ -561,7 +561,7 @@ fn inserting(
     topology: &WorkspaceTopology,
     pane: PaneId,
     target: PaneId,
-    axis: slopdesk_workspace::SplitAxis,
+    axis: slopdesk_tree::SplitAxis,
     before: bool,
     cwd: &str,
     ids: &mut impl IdSource,
@@ -1138,11 +1138,11 @@ mod tests {
 
     use std::cell::Cell;
 
-    use slopdesk_workspace::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
-    use slopdesk_workspace::session::{NewTabPosition, PaneKind, PaneSpec};
-    use slopdesk_workspace::split_tree::{PaneDropEdge, SplitAxis, SplitNode};
-    use slopdesk_workspace::tree_ops;
-    use slopdesk_workspace::workspace::TreeWorkspace;
+    use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+    use slopdesk_tree::session::{NewTabPosition, PaneKind, PaneSpec};
+    use slopdesk_tree::split_tree::{PaneDropEdge, SplitAxis, SplitNode};
+    use slopdesk_tree::tree_ops;
+    use slopdesk_tree::workspace::TreeWorkspace;
 
     use super::super::codec::{self, VideoEndpoint, WorkspaceLayoutNode};
     use super::super::intent::{self, WorkspaceIntentOp};
@@ -1718,7 +1718,7 @@ mod tests {
             panic!("a split root");
         };
         for child in children {
-            assert_eq!(child.weight, slopdesk_workspace::SplitWeight::Flex(1.0));
+            assert_eq!(child.weight, slopdesk_tree::SplitWeight::Flex(1.0));
         }
     }
 

@@ -319,6 +319,59 @@ pub unsafe extern "C" fn slopdesk_agent_canonical_name(
     }
 }
 
+/// The user's five badge toggles, by value.
+///
+/// A `#[repr(C)]` record of scalars rather than five separate doors or one bit mask: the five are
+/// read together, always, and a mask would put five bit positions on both sides of the boundary —
+/// which is the transcription `slopdesk_agent_tab_badge` below already declines to make.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlopDeskAgentBadgeGates {
+    /// Show the agent's thinking spinner.
+    pub agent_while_processing: bool,
+    /// Show an agent's finished turn.
+    pub agent_when_complete: bool,
+    /// Show the hand when an agent is blocked on a human.
+    pub agent_when_awaiting_input: bool,
+    /// Show a plain command's clean exit.
+    pub command_when_finishes: bool,
+    /// Show a plain command's non-zero exit.
+    pub command_when_fails: bool,
+}
+
+/// Every badge shown — the shape a caller with no preferences to apply passes.
+///
+/// This is the ALL-ON baseline, not the shipped global default: `agent_while_processing` ships OFF,
+/// which is a settings resolution and stays one. What the door removes is the other thing: two
+/// Swift `allOn` constants, in two structs, each independently asserting the same five `true`s that
+/// [`badge::Gates::ALL_ON`] already states. A default that two files declare for themselves is a
+/// decision spelled three times, and the two copies can never be caught disagreeing with the
+/// original because the ungated path never reaches it — `docs/55` §8's drift class exactly.
+///
+/// There is no memory in the signature and none in the answer, so there is no §4 return code to
+/// read: it is [`crate::rate_control`]'s `*_config_default` shape, for the same reason.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_agent_badge_gates_default() -> SlopDeskAgentBadgeGates {
+    let badge::Gates {
+        agent_while_processing,
+        agent_when_complete,
+        agent_when_awaiting_input,
+        command_when_finishes,
+        command_when_fails,
+    } = badge::Gates::ALL_ON;
+    SlopDeskAgentBadgeGates {
+        agent_while_processing,
+        agent_when_complete,
+        agent_when_awaiting_input,
+        command_when_finishes,
+        command_when_fails,
+    }
+}
+
 /// The one badge a tab row shows, as a [`TabBadge`] discriminant, or `-1` for an all-clear row.
 ///
 /// Every optional input crosses as a value plus its absence sentinel rather than a pointer: the
@@ -327,7 +380,8 @@ pub unsafe extern "C" fn slopdesk_agent_canonical_name(
 ///
 /// The five gates are the user's badge toggles, `true` meaning shown. They cross as separate flags
 /// rather than a mask so no bit position has to be spelled on both sides of the boundary; a caller
-/// with no preferences to apply passes `true` five times, which is the ungated ladder exactly.
+/// with no preferences to apply passes what
+/// [`slopdesk_agent_badge_gates_default`] vends, which is the ungated ladder exactly.
 ///
 /// # Safety
 /// `foreground` must be null or point to `foreground_len` initialised bytes live for the call.
@@ -1731,6 +1785,22 @@ pub const extern "C" fn slopdesk_agent_should_prevent_sleep(any_agent_working: b
 )]
 mod tests {
     use super::*;
+
+    /// The all-on baseline the door vends is [`badge::Gates::ALL_ON`] and nothing else.
+    ///
+    /// The rebuild in the door destructures, so a renamed or added field is a compile error rather
+    /// than a silently-dropped flag; what this adds is the VALUES, which a destructure cannot see —
+    /// a future `ALL_ON` that shipped one gate off would still compile and would still be the one
+    /// authority, and this is where a caller finds out that "all on" stopped meaning all on.
+    #[test]
+    fn the_default_gates_are_every_badge_shown() {
+        let gates = slopdesk_agent_badge_gates_default();
+        assert!(gates.agent_while_processing);
+        assert!(gates.agent_when_complete);
+        assert!(gates.agent_when_awaiting_input);
+        assert!(gates.command_when_finishes);
+        assert!(gates.command_when_fails);
+    }
 
     /// A span that runs past its buffer reads as ABSENT, and a present-but-empty one as `""`.
     ///

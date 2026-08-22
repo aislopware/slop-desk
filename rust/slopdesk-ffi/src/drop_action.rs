@@ -13,9 +13,9 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_tree::geometry::{Point, Size};
 use slopdesk_workspace::drop_action::{self, DropAction, DropZone, Dropped, DroppedKind};
 use slopdesk_workspace::drop_zone;
-use slopdesk_workspace::geometry::{Point, Size};
 
 use crate::workspace::CPoint;
 use crate::{borrow, deliver};

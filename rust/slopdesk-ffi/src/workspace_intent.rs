@@ -28,12 +28,12 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_ids::identity::{IdSource, SessionId};
+use slopdesk_ids::{PaneId, SplitNodeId, TabId};
 use slopdesk_wire::WorkspaceIntentStatus;
 use slopdesk_wire::document::apply::{self, IntentOutcome};
 use slopdesk_wire::document::state::{HostWorkspaceState, WorkspaceEntry, WorkspaceKey};
 use slopdesk_wire::document::{codec as wire_codec, intent, liveness, topology};
-use slopdesk_workspace::identity::{IdSource, SessionId};
-use slopdesk_workspace::{PaneId, SplitNodeId, TabId};
 
 use crate::deliver;
 use crate::workspace::{CEntry, KeyedPane, Uuid, borrow_array, text_of};
@@ -400,15 +400,15 @@ mod tests {
         reason = "a door that refuses its own fixture IS the report"
     )]
 
+    use slopdesk_ids::identity::{PaneId, SessionId, TabId};
+    use slopdesk_tree::session::{PaneKind, PaneSpec};
+    use slopdesk_tree::workspace::TreeWorkspace;
     use slopdesk_wire::WorkspaceIntentStatus;
     use slopdesk_wire::document::codec as wire_codec;
     use slopdesk_wire::document::fields::pane as pane_field;
     use slopdesk_wire::document::intent::{WorkspaceIntentOp, encode_identity, encode_name};
     use slopdesk_wire::document::state::{HostWorkspaceState, WorkspaceKey, WorkspaceObjectKind};
     use slopdesk_wire::document::topology::WorkspaceTopology;
-    use slopdesk_workspace::identity::{PaneId, SessionId, TabId};
-    use slopdesk_workspace::session::{PaneKind, PaneSpec};
-    use slopdesk_workspace::workspace::TreeWorkspace;
 
     use super::{IntentOutcome, MINTED_IDS_PER_INTENT, slopdesk_ws_apply_intent};
     use crate::workspace::{CEntry, KeyedPane, Span, Uuid};
@@ -757,12 +757,12 @@ mod tests {
             ids: &[Uuid { bytes: [1; 16] }, Uuid { bytes: [2; 16] }],
             next: 0,
         };
-        let tab = slopdesk_workspace::identity::IdSource::tab(&mut pool);
-        let split = slopdesk_workspace::identity::IdSource::split(&mut pool);
+        let tab = slopdesk_ids::identity::IdSource::tab(&mut pool);
+        let split = slopdesk_ids::identity::IdSource::split(&mut pool);
         assert_ne!(tab.bytes(), split.bytes());
         // Dry repeats rather than panics — a caller who under-sized their pool gets a refusal they
         // can see, not a process that is gone.
-        let third = slopdesk_workspace::identity::IdSource::split(&mut pool);
+        let third = slopdesk_ids::identity::IdSource::split(&mut pool);
         assert_eq!(third.bytes(), split.bytes());
     }
 

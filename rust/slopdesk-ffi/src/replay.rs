@@ -295,10 +295,6 @@ observer!(
     slopdesk_replay_should_pause_drain -> bool, false, |buffer| buffer.should_pause_drain()
 );
 observer!(
-    /// Monotonic mutation counter over the acked ring, guarding a detach-time fold splice.
-    slopdesk_replay_ring_generation -> u64, 0, |buffer| buffer.ring_generation()
-);
-observer!(
     /// Number of entries in the scrollback ring.
     slopdesk_replay_ring_len -> usize, 0, |buffer| buffer.scrollback_ring_len()
 );

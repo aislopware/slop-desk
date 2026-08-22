@@ -67,6 +67,13 @@ let package = Package(
         .library(name: "SlopDeskVideoProtocol", targets: ["SlopDeskVideoProtocol"]),
         .library(name: "SlopDeskVideoHost", targets: ["SlopDeskVideoHost"]),
         .library(name: "SlopDeskVideoClient", targets: ["SlopDeskVideoClient"]),
+        // …and its two VIEW halves (docs/56 §3, the video carve). `SlopDeskVideoClient` is the decode
+        // + pace + transport engine and holds no views; these are the AppKit and UIKit surfaces over
+        // it, and each app shell links exactly one — the same shape as the two UI shells above, for
+        // the same reason. Products rather than bare targets because the shells are Xcode targets
+        // consuming this package by `product:`.
+        .library(name: "SlopDeskVideoClientMac", targets: ["SlopDeskVideoClientMac"]),
+        .library(name: "SlopDeskVideoClientPhone", targets: ["SlopDeskVideoClientPhone"]),
         // PATH 4 (dedicated drag-drop file-transfer channel).
         .library(name: "SlopDeskFileTransfer", targets: ["SlopDeskFileTransfer"]),
         // The three SHIPPED executables (scripts/package-release.sh, docs/49). Products, not just
@@ -221,11 +228,33 @@ let package = Package(
         // (docs/55), the same one hostd and both clients already link, and it carries the SOLVERS this
         // module used to hold a second copy of — focus, send-keys, the sidebar's ordering. The leaf is
         // still a leaf: it names no other target here, and hostd links the archive regardless.
+        // `SlopDeskAgentDetect` arrived with the READINGS below and does not break the rule above: its
+        // own dependency list is `CSlopDeskFFI` and nothing else, and hostd names it directly already
+        // (see its block), so the daemon graph is the same graph it was.
         .target(
             name: "SlopDeskWorkspaceModel",
-            dependencies: ["SlopDeskArena", "CSlopDeskFFI"],
+            dependencies: ["SlopDeskArena", "CSlopDeskFFI", "SlopDeskAgentDetect"],
             linkerSettings: ffiCLibraries,
         ),
+
+        // The bundled FACES: the Symbols Nerd Font (the SAME fallback face ghostty gives the terminal
+        // grid) and JetBrains Mono (the face libghostty falls back to when "SF Mono" does not resolve,
+        // which on a stock system it does not). Foundation + CoreText, no package dependency, and the
+        // 2.9 MB of TTF is the whole reason it is a target rather than a file.
+        //
+        // It used to live in `SlopDeskClientCore`, and could not stay there once `SlopDeskSlate`
+        // needed it: the nerd splice reads `NerdSymbolFont.registered`, which is a `Bundle.module`
+        // lookup, so the TYPE cannot be split from the RESOURCE. The obvious sink — the workspace
+        // value model — is linked by `slopdesk-hostd`, the `slopdesk` CLI and two bench targets, and a
+        // daemon's value-model leaf is the wrong home for a font payload even though `Bundle.module`
+        // is lazy and none of them would ever touch it. A leaf that only the two shells, the design
+        // floor and the presentation layer link keeps the bytes where they are drawn.
+        //
+        // MIT / OFL-1.1, licences beside the TTFs. The code sidebar injects the same bytes as
+        // @font-face data URIs — the webview's WebContent process cannot see a `CTFontManager`
+        // process-scope registration — which is why the URLs are public API here and not just the
+        // registration.
+        .target(name: "SlopDeskFontFaces", resources: [.copy("Resources/Fonts")]),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
         .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol"]),
@@ -431,15 +460,11 @@ let package = Package(
                 "CSlopDeskFFI",
                 // The `SettingsKey` app-flag namespace and the persisted chrome flags.
                 .product(name: "Defaults", package: "Defaults"),
+                // The bundled faces. They moved OUT of this target with `NerdSymbolFont` (which the
+                // design floor reads and so had to descend); the code sidebar's @font-face dressing
+                // and the titlebar's symbol strip still ask for them from here.
+                "SlopDeskFontFaces",
             ],
-            // The bundled faces: the Symbols Nerd Font (the SAME fallback face ghostty gives the
-            // terminal grid) and JetBrains Mono (the face libghostty falls back to when "SF Mono"
-            // does not resolve, which on a stock system it does not). They live with the CORE rather
-            // than with a UI target because the code sidebar injects the same bytes as @font-face
-            // data URIs — the webview's WebContent process cannot see a `CTFontManager` process-scope
-            // registration — and that dressing is not a view. MIT / OFL-1.1, licences beside them.
-            resources: [.copy("Resources/Fonts")],
-
             linkerSettings: ffiCLibraries,
         ),
 
@@ -460,14 +485,26 @@ let package = Package(
         // It reverses the 2026-06-24 "no separate SPM target — `SlopDeskDesignSystem` stays deleted"
         // ruling on new grounds: that decision was taken when there was exactly ONE UI target to
         // compile the constants into, and there are two now.
+        // It reads TEN vocabularies from below and used to reach every one of them through
+        // `SlopDeskClientCore`, which put the design-token floor ABOVE the presentation layer, the
+        // transport, the file-transfer channel and the CLI's core — a target invalidated by a
+        // transport change. The readings themselves had no such tie: `AgentReading`/`AgentInk`,
+        // `PaneStatusPill`, `TabBadgeReading`/`AttentionRole`/`CommandOutcome`, `PaneDropRegister`,
+        // `TabBadgeKind`, `GitInk`, `ConnectionAlarm` and `ToastMarkRung` are enums over a status and
+        // a badge, so they descended to `SlopDeskWorkspaceModel` and the floor came down with them
+        // (closure 19 → 4, level 7 → 3). The two that could NOT descend are named in their own
+        // files: `TabBadgeResolver` needs the store's badge gates, `RailRowsBuilder` needs a
+        // `WorkspaceStore`.
         .target(
             name: "SlopDeskSlate",
             dependencies: [
-                // `AgentReading` / `NerdSymbolFont` / `TabBadgeReading` — the readings this ladder
+                // `AgentReading` / `TabBadgeReading` / `PaneStatusPillInk` — the readings this ladder
                 // resolves an ink and a silhouette for, decided one floor further down.
-                "SlopDeskClientCore",
+                "SlopDeskWorkspaceModel",
                 "SlopDeskAgentDetect",
-                "SlopDeskWorkspaceCore",
+                // `NerdSymbolFont.registered` — the nerd splice's AppKit half asks whether the
+                // bundled face resolved before it splices a run into it.
+                "SlopDeskFontFaces",
                 // The marks are named as `SFSymbol`s, so both renderers ask for the same artwork.
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
             ],
@@ -519,11 +556,12 @@ let package = Package(
                 // a direct dependency of WorkspaceCore, but a `swift build` import needs the module
                 // declared here; this does NOT widen the headless graph (no HW deps in Transport).
                 "SlopDeskTransport",
-                // E20/WI-5: `WorkspaceControlBackend.jump` resolves the frecency/$HOME-toggle/`--no-cd`
-                // target through the PURE `JumpResolver` (the single source of truth the CLI tests pin).
-                // CLICore is a headless internal target (deps Protocol/WorkspaceCore/AgentDetect, all already
-                // below ClientUI) — no HW deps, no cycle.
-                "SlopDeskCLICore",
+                // (`SlopDeskCLICore` is NOT here. It was, for one `import` that named no CLI symbol at
+                // all — `JumpResolver` had already stopped being reached from this target, and the
+                // resolver itself now lives beside the frecency database it lends, in
+                // `SlopDeskWorkspaceCore`.)
+                // The bundled nerd face, for `Text.nerdAware`'s SwiftUI splice.
+                "SlopDeskFontFaces",
                 // L8: external UI libraries (chrome). Cross-platform: SwiftUIIntrospect (reach AppKit
                 // under SwiftUI), SFSafeSymbols (type-safe SF Symbols). (Pow was dropped with the last
                 // `changeEffect` — MERIDIAN L3: status dots hard-cut, nothing glows at rest.)
@@ -652,7 +690,43 @@ let package = Package(
         // the promote/demote policy — are `rust/slopdesk-video`'s `pacer_depth` through the door.
         .target(
             name: "SlopDeskVideoClient",
-            dependencies: ["SlopDeskVideoProtocol", "CSlopDeskFFI"],
+            // `SlopDeskArena` is SPELLED, not inherited. `VideoClientSessionLogic.swift` imports it
+            // directly, and until the video carve this target compiled only because
+            // `SlopDeskVideoProtocol` happens to pull it in — §4c's convention is that a target which
+            // crosses the arena boundary names it. check-supervisor asserts exactly that, and it had
+            // been passing on a coincidence: its `grep -A 24` window started at the `.library(…)`
+            // PRODUCT line and ran far enough to catch a NEIGHBOUR's `SlopDeskArena`. Adding two
+            // product lines for the halves pushed that coincidence out of the window and the gate
+            // reported what had been true all along.
+            dependencies: ["SlopDeskVideoProtocol", "SlopDeskArena", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
+
+        // THE TWO VIEW HALVES of the video pane (docs/56 §3, the video carve). Until this split
+        // `VideoWindowView.swift` was a 2,898-line file whose middle 2,514 lines were an
+        // `#if os(macOS)` / `#elseif os(iOS)` two-armed conditional: an AppKit implementation and a
+        // UIKit one, linked by both shells, with a live parity gap hiding in the fold (the swipe-peel
+        // chip was mounted on both platforms and driven on one).
+        //
+        // ⚠️ NEITHER OF THESE IS A DEPENDENCY OF `SlopDeskMacUI` / `SlopDeskPhoneUI`, and that is the
+        // whole reason they are separate targets rather than folders inside the two UI halves. The
+        // `VideoWindowFactory` seam (SlopDeskWorkspaceCore) exists so the view layer never NAMES a
+        // VideoToolbox/Metal type — putting these surfaces in the UI targets would pull both
+        // frameworks into the headless `swift build`/test graph, which is the exact property the seam
+        // was built to hold. Each app shell links its own half and registers the factory; the UI
+        // targets go on seeing an `AnyView` and an `NSView`.
+        .target(
+            name: "SlopDeskVideoClientMac",
+            dependencies: ["SlopDeskVideoClient", "SlopDeskVideoProtocol", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
+        // iOS-ONLY, and it declares that the way every `SlopDeskPhoneUI` file does: one whole-file
+        // `#if os(iOS)` per file. SwiftPM compiles every target on the host triple, so on macOS this
+        // one compiles to nothing — which is what lets it live in the same package as its Mac twin
+        // without a platform condition here.
+        .target(
+            name: "SlopDeskVideoClientPhone",
+            dependencies: ["SlopDeskVideoClient", "SlopDeskVideoProtocol", "CSlopDeskFFI"],
             linkerSettings: ffiCLibraries,
         ),
 
@@ -897,17 +971,18 @@ let package = Package(
         // summary builder, and the per-shell completion generator. PURE — no socket, no GUI, no
         // subprocess (the `slopdesk` executable's socket I/O + GUI launch are compiled-only and
         // never exercised here, per the hang-safety rule).
-        // WorkspaceCore: `JumpResolverTests` constructs `FolderEntry` values to drive the PURE
-        // `JumpResolver` (WI-5). Protocol: `WatchProgressTests` (WI-7) asserts the emitted OSC 9;4
-        // bytes round-trip through `ProgressOSCParser`/`ProgressState`. Both are transitive deps of
-        // CLICore, but declared here so the imports are explicit.
+        // Protocol: `WatchProgressTests` (WI-7) asserts the emitted OSC 9;4 bytes round-trip through
+        // `ProgressOSCParser`/`ProgressState`. A transitive dep of CLICore, declared here so the
+        // import is explicit.
+        // (`SlopDeskWorkspaceCore` is NOT here any more. It was named for one suite —
+        // `JumpResolverTests`, which built `FolderEntry` values — and that suite moved to
+        // `SlopDeskWorkspaceCoreTests/Folders/` with the resolver it drives.)
         .testTarget(
             name: "SlopDeskCLITests",
             // SlopDeskAgentDetect: `WatchClaudeOutcomeTests` (WI-8) drives the `ClaudeStatus` →
             // exit-code mapping directly. Transitive via CLICore, but declared so the import is explicit.
             dependencies: [
                 "SlopDeskCLICore",
-                "SlopDeskWorkspaceCore",
                 "SlopDeskProtocol",
                 "SlopDeskAgentDetect",
                 // `CLIConfigTests` injects the REAL `KeybindGrammar.parseLine` into `CLIConfig.validate`
@@ -997,10 +1072,14 @@ let package = Package(
         // the same colour, that a project bed deals the same way twice, that the spinner's closed-form
         // integral really is its rate integrated, that a transcribed `d` string parses to the drawing
         // it was copied from. None of it mounts a view, which is exactly the line the target holds.
+        // It named `SlopDeskClientCore` + `SlopDeskWorkspaceCore` only to reach the readings the ink
+        // tables are keyed on (`PaneStatusPillInk`, `TabBadgeKind`, `ConnectionAlarm`,
+        // `ToastMarkRung`, `CommandOutcome`). All five descended with the floor, so the suite now
+        // names exactly what the target under test names.
         .testTarget(
             name: "SlopDeskSlateTests",
             dependencies: [
-                "SlopDeskSlate", "SlopDeskClientCore", "SlopDeskAgentDetect", "SlopDeskWorkspaceCore",
+                "SlopDeskSlate", "SlopDeskAgentDetect", "SlopDeskWorkspaceModel",
             ],
         ),
         // ⚠️ THERE IS NO `SlopDeskPhoneUITests` HERE, and its absence is a consequence, not an omission
@@ -1071,6 +1150,9 @@ let package = Package(
             dependencies: [
                 "SlopDeskClientCore", "SlopDeskWorkspaceCore", "SlopDeskWorkspaceModel",
                 "SlopDeskProtocol", "SlopDeskClient", "SlopDeskTerminal",
+                // `NerdSymbolFontTests` and `CodeSidebarPageDressingTests` read the BUNDLE — the
+                // registration and the three TTF URLs the sidebar injects as data URIs.
+                "SlopDeskFontFaces",
             ],
         ),
 

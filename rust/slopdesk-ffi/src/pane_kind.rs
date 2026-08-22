@@ -1,10 +1,10 @@
 //! What a pane KIND is — the discriminator that names one, and what one can be sent — in C.
 //!
-//! Two doors over [`slopdesk_workspace::session::PaneKind`], reached by two different callers. The
+//! Two doors over [`slopdesk_tree::session::PaneKind`], reached by two different callers. The
 //! first reads a persisted discriminator; the second asks a kind byte whether text can be typed
 //! into it. They are together because they are one vocabulary, not because they share a caller.
 //!
-//! The first is a door over [`slopdesk_workspace::session::PaneKind::from_raw`], which is where the
+//! The first is a door over [`slopdesk_tree::session::PaneKind::from_raw`], which is where the
 //! retired vocabulary lives: `claudeCode`, `web`, `chooser`, `remoteGUI` and `systemDialog` are the
 //! five kinds this project has removed, and each of them names a pane that is still a pane — a
 //! plain terminal — rather than a file that must be refused.
@@ -51,7 +51,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::session::PaneKind;
+use slopdesk_tree::session::PaneKind;
 
 use crate::borrow;
 
@@ -109,7 +109,7 @@ pub const extern "C" fn slopdesk_ws_pane_kind_can_receive_text(kind: c_uchar) ->
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 mod tests {
-    use slopdesk_workspace::session::PaneKind;
+    use slopdesk_tree::session::PaneKind;
 
     use super::{slopdesk_ws_pane_kind_can_receive_text, slopdesk_ws_pane_kind_from_raw};
 

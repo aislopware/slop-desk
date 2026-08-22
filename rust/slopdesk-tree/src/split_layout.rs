@@ -25,8 +25,9 @@
 
 use std::collections::BTreeMap;
 
+use slopdesk_ids::identity::{PaneId, SplitNodeId};
+
 use crate::geometry::{Rect, Size};
-use crate::identity::{PaneId, SplitNodeId};
 use crate::split_tree::{MIN_WEIGHT, SplitAxis, SplitNode, SplitWeight, WeightedChild};
 
 /// The smallest a leaf is ever solved to.
@@ -461,9 +462,10 @@ mod tests {
                   failure with nothing to return"
     )]
 
+    use slopdesk_ids::identity::{PaneId, SplitNodeId};
+
     use super::{DEFAULT_MIN_LEAF, DIVIDER_THICKNESS, dividers, extents, solve, solve_default};
     use crate::geometry::Rect;
-    use crate::identity::{PaneId, SplitNodeId};
     use crate::split_tree::{MIN_WEIGHT, SplitAxis, SplitNode, SplitWeight, WeightedChild};
 
     fn pane(byte: u8) -> PaneId {

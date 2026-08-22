@@ -22,11 +22,12 @@
 //! ## Nothing here invents an identity
 //!
 //! An operation that has to create a split takes the fresh [`SplitNodeId`] as an argument. See
-//! [`crate::identity`] — the crate has no entropy, and that is deliberate rather than a limitation.
+//! [`slopdesk_ids::identity`] — the crate has no entropy, and that is deliberate rather than a
+//! limitation.
 
 use std::collections::BTreeSet;
 
-use crate::identity::{PaneId, SplitNodeId};
+use slopdesk_ids::identity::{PaneId, SplitNodeId};
 
 /// The direction a split lays its children out.
 ///
@@ -725,7 +726,7 @@ impl SplitNode {
     /// the parser has to have survived the file before this can run at all. That is the
     /// parser's job, and it is why a hostile deep file fails cleanly there rather than here.
     #[must_use]
-    pub(crate) fn normalized(&self, mint: &mut impl FnMut() -> PaneId) -> Option<Self> {
+    pub fn normalized(&self, mint: &mut impl FnMut() -> PaneId) -> Option<Self> {
         let mut seen = BTreeSet::new();
         self.normalize_impl(0, &mut seen, mint)
     }
@@ -936,10 +937,11 @@ mod tests {
         reason = "a missing subtree is a test failure with nothing to return"
     )]
 
+    use slopdesk_ids::identity::{PaneId, SplitNodeId};
+
     use super::{
         EnclosingSplit, MAX_DEPTH, MIN_WEIGHT, PaneDropEdge, SplitAxis, SplitNode, SplitWeight, WeightedChild,
     };
-    use crate::identity::{PaneId, SplitNodeId};
 
     fn pane(byte: u8) -> PaneId {
         PaneId::from_bytes([byte; 16])

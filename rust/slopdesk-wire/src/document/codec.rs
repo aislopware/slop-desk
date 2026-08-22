@@ -51,8 +51,8 @@ pub const MAX_STRING_BYTES: usize = 65535;
 // ---------------------------------------------------------------------------------------------- //
 
 // The axis is the DOMAIN's, re-exported rather than redefined: the byte lives on
-// `slopdesk_workspace::SplitAxis` itself, so there is no second mapping to keep in agreement.
-pub use slopdesk_workspace::SplitAxis;
+// `slopdesk_tree::SplitAxis` itself, so there is no second mapping to keep in agreement.
+pub use slopdesk_tree::SplitAxis;
 
 /// The tab's pane-tree SHAPE, weights deliberately excluded.
 ///
@@ -77,7 +77,7 @@ pub enum WorkspaceLayoutNode {
 // Both are the DOMAIN's values, for the same reason the axis is: a weight that the solver and the
 // wire described separately is a weight that can drift, and the video endpoint's `display_id`-wins
 // rule is a product decision, not a framing one.
-pub use slopdesk_workspace::{SplitWeight, VideoEndpoint};
+pub use slopdesk_tree::{SplitWeight, VideoEndpoint};
 
 // ---------------------------------------------------------------------------------------------- //
 // Key and entry

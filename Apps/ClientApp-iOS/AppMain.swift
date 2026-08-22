@@ -6,14 +6,26 @@
 // The SEAM types (`TerminalRendererFactory`,
 // `VideoWindowFactory`, `RemoteWindowDiscovery`, `RemoteWindowSummary`) live in
 // `SlopDeskWorkspaceCore`; the seam registrations below stay PRESERVED — only the production renderer/video/discovery
-// closures are injected here (the GUI app target links libghostty/SlopDeskVideoClient; the
+// closures are injected here (the GUI app target links libghostty/SlopDeskVideoClientPhone; the
 // cross-platform UI library cannot). This file is part of the xcodegen Xcode app target (NOT
 // `swift build`).
 import SlopDeskPhoneUI
 import SlopDeskWorkspaceCore
 import SwiftUI
-#if canImport(SlopDeskVideoClient)
+
+// TWO MODULES, ONE GATE (docs/56 §3, the video carve). `SlopDeskVideoClient` is the platform-free
+// engine — session, pipeline, connection, discovery — and `SlopDeskVideoClientPhone` is the UIKit
+// HALF that draws it. The Mac shell links `SlopDeskVideoClientMac` instead and NEITHER half is
+// importable from the other, which is the whole point: the two-armed `#if os(macOS)` file this
+// replaced could not be read without holding both platforms in your head at once.
+//
+// The gate keys on the HALF, not the engine, because the half is what this shell actually names —
+// and the half declares `SlopDeskVideoClient` as a dependency, so importable-half implies
+// importable-engine. Gating on the engine would compile a shell that can reach the pipeline but not
+// the view that mounts it.
+#if canImport(SlopDeskVideoClientPhone)
 import SlopDeskVideoClient
+import SlopDeskVideoClientPhone
 #endif
 
 /// The `@main` entry for the iOS Xcode app target.
@@ -63,11 +75,11 @@ struct ClientAppMain {
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
         // view. The cross-platform view layer cannot reference
-        // `SlopDeskVideoClient.VideoWindowView` directly (it would pull VideoToolbox + Metal
+        // `SlopDeskVideoClientPhone.VideoWindowView` directly (it would pull VideoToolbox + Metal
         // into the headless `swift build`/tests), so the GUI app target — which links
-        // `SlopDeskVideoClient` — injects it here at launch. With no registration the seam
+        // `SlopDeskVideoClientPhone` — injects it here at launch. With no registration the seam
         // shows the gated `RemoteWindowPlaceholderView`.
-        #if canImport(SlopDeskVideoClient)
+        #if canImport(SlopDeskVideoClientPhone)
         VideoWindowFactory.shared = { descriptor, paneContext in
             // LIVE path when the descriptor carries a full endpoint (host + media/cursor
             // ports), entered via the Remote-window panel: build the VideoWindowConnection
@@ -105,16 +117,21 @@ struct ClientAppMain {
                     onWindowGeometryReady: paneContext.onWindowGeometryChanged,
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
                     onStreamBitrateReady: paneContext.onStreamBitrateChanged,
-                    // NETWORK-STATS MIRROR + LIVE STREAM SETTINGS + HOST AUDIO + SYSTEM-KEY INJECTOR:
-                    // the pane's stats overlay / tune popover / speaker toggle / immersive-capture
-                    // forward path. Defaults are nil, so forgetting these threads compiles headlessly
-                    // but leaves the real app's controls dead — they must ride the factory like every
-                    // other seam callback.
+                    // NETWORK-STATS MIRROR + LIVE STREAM SETTINGS + HOST AUDIO: the pane's stats
+                    // overlay / tune popover / speaker toggle forward path. Defaults are nil, so
+                    // forgetting these threads compiles headlessly but leaves the real app's controls
+                    // dead — they must ride the factory like every other seam callback.
+                    //
+                    // `onSystemKeyInjectorReady` is the ONE the Mac shell threads and this one cannot:
+                    // `VideoWindowView`'s phone initializer does not take it, because the sink carries
+                    // raw `NSEvent.ModifierFlags` bits produced only by a `CGEventTap`, and iOS has
+                    // neither. `PaneImmersiveCapture.isSupported` is already `false` here, so the phone
+                    // footer draws no immersive chip to feed it. Absent from the SIGNATURE rather than
+                    // passed-and-swallowed, so this cannot rot into a sink someone believes is live.
                     onNetworkStatsReady: paneContext.onNetworkStats,
                     onStreamSettingsInjectorReady: paneContext.onStreamSettingsInjectorReady,
                     onAudioInjectorReady: paneContext.onAudioInjectorReady,
                     onPrivacyInjectorReady: paneContext.onPrivacyInjectorReady,
-                    onSystemKeyInjectorReady: paneContext.onSystemKeyInjectorReady,
                     onStreamStallChanged: paneContext.onStreamStallChanged,
                     // TERMINAL REJECTION: host refused the session — the seam routes it to
                     // `RemoteWindowModel.noteSessionRejected()` (picker + error, no rebuild loop).
@@ -210,7 +227,7 @@ struct ClientAppMain {
     }
 }
 
-#if canImport(SlopDeskVideoClient)
+#if canImport(SlopDeskVideoClientPhone)
 /// The video module's persistent feed lane IS the WorkspaceCore seam's link — both halves are
 /// `@MainActor` with matching shapes. The conformance lives HERE (retroactive) because the video
 /// module deliberately never imports `SlopDeskWorkspaceCore` (the seam-split discipline).

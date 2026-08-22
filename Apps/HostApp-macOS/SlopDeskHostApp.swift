@@ -1,4 +1,5 @@
 import AppKit
+import SlopDeskHost
 import SwiftUI
 
 /// The `@main` entry for the SlopDesk macOS HOST menu-bar app (issue #5, research §C / §C1).
@@ -18,10 +19,19 @@ struct SlopDeskHostApp: App {
     /// opened this run.
     @NSApplicationDelegateAdaptor(HostAppDelegate.self) private var appDelegate
 
-    /// The desired listen port, persisted via `@AppStorage`. Default 7779 (the issue's
-    /// requested default; the CLI's own default is 7420, but the app just passes whatever the
-    /// user sets to `HostServer(port:)`).
-    @AppStorage("slopdesk.host.port") private var port: Int = 7779
+    /// The desired listen port, persisted via `@AppStorage`, seeded from the one place that spells
+    /// the default — ``HostdArguments/defaultPort``.
+    ///
+    /// It used to be a literal `7779`, "the issue's requested default", while the CLI bound 7420 and
+    /// the client's connect gate prefilled 7420. So the two halves of the product disagreed out of the
+    /// box: start the host from the menu bar, press Connect in the client, and the client dialled a
+    /// port nothing was listening on. The app still passes whatever the user sets to
+    /// `HostServer(port:)` — only the seed changed.
+    ///
+    /// An installed copy keeps its stored value; `@AppStorage` reads the default only when the key is
+    /// absent. Anyone who ran the old build and never touched the field keeps 7779 and keeps the bug,
+    /// which no code change can reach — it is a value in their defaults database now.
+    @AppStorage("slopdesk.host.port") private var port = Int(HostdArguments.defaultPort)
 
     var body: some Scene {
         MenuBarExtra {

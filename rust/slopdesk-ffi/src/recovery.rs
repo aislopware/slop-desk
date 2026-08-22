@@ -31,6 +31,7 @@ use slopdesk_video::recovery::{
     self, NetworkStatsReport, RecoveryMessage, RecoveryPolicy, RecoveryRequestRedundancy, is_observing_loss,
     note_in_place,
 };
+use slopdesk_video::recovery_routing::StaticIdrDecider;
 
 use crate::{borrow, deliver};
 
@@ -421,6 +422,37 @@ pub extern "C" fn slopdesk_recovery_expected_request_loss_freeze(
     RecoveryRequestRedundancy::expected_request_loss_freeze(per_datagram_loss, copies, escalation_delay)
 }
 
+/// Whether the host's frameQueue timer should re-encode its cached buffer as a forced keyframe.
+///
+/// The decider's whole state is four `f64`s and the rule is pure, so the state crosses as those
+/// four scalars rather than as a handle: there is nothing to own across a call, and a handle would
+/// buy an allocation, a free and a lifetime for a struct that is smaller than the pointer to it.
+/// That keeps this the same shape as [`slopdesk_recovery_should_escalate_to_idr`] above — every
+/// input a scalar, the answer a `bool`, no out-buffer and so no refusal to encode.
+///
+/// `0.0` is the "never happened" sentinel for both anchors, which is why they can be replayed
+/// through the setters rather than needing a constructor: setting an anchor to `0.0` leaves the
+/// value the freshly built decider already had.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_static_idr_should_reencode(
+    heartbeat: f64,
+    quiet_window: f64,
+    last_complete_encode: f64,
+    last_synthetic_encode: f64,
+    now: f64,
+    forced_latched: bool,
+    has_retained_buffer: bool,
+) -> bool {
+    let mut decider = StaticIdrDecider::new(heartbeat, Some(quiet_window));
+    decider.on_complete_frame(last_complete_encode);
+    decider.record_synthetic(last_synthetic_encode);
+    decider.should_reencode(now, forced_latched, has_retained_buffer)
+}
+
 /// Records one loss-ish event at `now`, rewriting the caller's ring IN PLACE.
 ///
 /// An event is an unrecoverable loss or an FEC recovery. What the ring becomes is itself with
@@ -687,6 +719,48 @@ mod tests {
         let needed = unsafe { slopdesk_recovery_send_offsets(3, 0.003, tiny.as_mut_ptr(), 1) };
         assert_eq!(needed, 3);
         assert_eq!(tiny, [0.0]);
+    }
+
+    #[test]
+    fn the_static_idr_state_replays_through_the_scalars_the_swift_timer_passes() {
+        // Called exactly as `WindowCapturer`'s frameQueue tick calls it: the four anchors it is
+        // holding, then the tick's `now` and the two latches.
+        let ask = |complete: f64, synthetic: f64, now: f64, forced: bool, retained: bool| {
+            slopdesk_static_idr_should_reencode(1.0, 1.0, complete, synthetic, now, forced, retained)
+        };
+
+        assert!(
+            !ask(0.0, 0.0, 5.0, true, false),
+            "no cached pixels beats even a latched request"
+        );
+        assert!(
+            ask(0.0, 0.0, 0.0, false, true),
+            "armed, quiet, nothing emitted yet"
+        );
+        assert!(
+            !ask(4.5, 0.0, 5.0, true, true),
+            "the live path owns the cadence inside the window"
+        );
+        assert!(
+            ask(3.0, 9.0, 5.0, true, true),
+            "once quiet, a frozen client wins any phase"
+        );
+        assert!(
+            !ask(3.0, 4.5, 5.0, false, true),
+            "half a heartbeat since the last synthetic"
+        );
+        assert!(
+            ask(3.0, 4.0, 5.0, false, true),
+            "a whole heartbeat since the last synthetic"
+        );
+
+        // The anchors are replayed through the setters, and `0.0` must stay the "never happened"
+        // sentinel rather than becoming an event at time zero — otherwise the first tick of a
+        // session would read as a synthetic emitted a heartbeat ago and fire twice.
+        assert!(
+            ask(0.0, 0.0, 0.5, false, true),
+            "a zero anchor is no anchor, not an early one"
+        );
     }
 
     #[test]

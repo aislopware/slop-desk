@@ -20,9 +20,10 @@
 //! are one rule, and a second copy is how the row list and the header list start disagreeing about
 //! which `myapp` you are looking at.
 
+use slopdesk_tree::session::PaneKind;
+use slopdesk_tree::tab_ordering::{bucketed_by_project, project_key_of};
+
 use crate::rail_title::{TitleShape, parent_qualified_title, titles_by_process};
-use crate::session::PaneKind;
-use crate::tab_ordering::{bucketed_by_project, project_key_of};
 
 /// The fields the search field reads on one row.
 ///

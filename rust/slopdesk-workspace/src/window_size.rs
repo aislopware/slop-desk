@@ -20,7 +20,7 @@
 //! reason, as [`slopdesk_video::window_placement`]. A NaN font size or screen extent stays NaN and
 //! the caller sees it, instead of being silently rewritten into a number that looks plausible.
 
-use crate::geometry::{Point, Size};
+use slopdesk_tree::geometry::{Point, Size};
 
 /// How a new window picks its size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

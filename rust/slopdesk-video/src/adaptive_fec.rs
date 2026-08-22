@@ -82,14 +82,23 @@ pub mod multi_loss {
     /// The group size used when multi-loss is active but `SLOPDESK_FEC_K` is unset.
     pub const DEFAULT_K: usize = 5;
 
-    /// PURE resolution of `SLOPDESK_FEC_M`: parse, default 1, clamp.
+    /// The parity-shard count used when `SLOPDESK_FEC_M` is unset — the production XOR-equivalent,
+    /// byte-identical on the wire.
+    ///
+    /// It coincides with [`M_MIN`] and is still its own constant, because the two answer different
+    /// questions: the floor is what the ladder may be turned DOWN to, and this is what ships when
+    /// nobody turned it anywhere. A settings face reading the floor as "the default" would keep
+    /// agreeing right up until the floor moved.
+    pub const DEFAULT_M: usize = 1;
+
+    /// PURE resolution of `SLOPDESK_FEC_M`: parse, default [`DEFAULT_M`], clamp.
     ///
     /// A non-numeric or out-of-range value clamps to the nearest bound rather than failing — this
     /// runs at process start on both ends and must never be the thing that stops a session.
     #[must_use]
     pub fn resolve_parity_count(raw: Option<&str>) -> usize {
         let Some(parsed) = raw.and_then(|text| text.parse::<i64>().ok()) else {
-            return 1;
+            return DEFAULT_M;
         };
         let clamped = parsed.clamp(
             i64::try_from(M_MIN).unwrap_or(i64::MAX),

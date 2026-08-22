@@ -11,7 +11,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::geometry::Size;
+use slopdesk_tree::geometry::Size;
 use slopdesk_workspace::window_size::{self, WindowSizeInputs, WindowSizeMode};
 
 use crate::borrow;

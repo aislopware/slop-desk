@@ -21,8 +21,9 @@
 //! iteration order is randomized per process and the same layout could navigate differently between
 //! launches; here the ordered map gives it for free, which is one fewer thing to remember.
 
+use slopdesk_ids::identity::PaneId;
+
 use crate::geometry::Rect;
-use crate::identity::PaneId;
 use crate::split_layout::SolvedLayout;
 
 /// How close two coordinates must be to count as the same one.
@@ -202,9 +203,10 @@ fn axial_distance(candidate: Rect, source: Rect, direction: FocusDirection) -> f
 
 #[cfg(test)]
 mod tests {
+    use slopdesk_ids::identity::PaneId;
+
     use super::{FocusDirection, cycle, neighbor};
     use crate::geometry::Rect;
-    use crate::identity::PaneId;
     use crate::split_layout::SolvedLayout;
 
     fn pane(byte: u8) -> PaneId {

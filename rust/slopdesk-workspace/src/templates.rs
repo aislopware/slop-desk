@@ -51,10 +51,11 @@
 //! quotes, not tokens. Only the COMMAND field, which is shell input by intent, goes through the
 //! parser.
 
-use crate::identity::{LaunchPresetId, SessionTemplateId};
+use slopdesk_ids::identity::{LaunchPresetId, SessionTemplateId};
+use slopdesk_tree::session::PaneKind;
+use slopdesk_tree::split_tree::{MAX_DEPTH, SplitAxis};
+
 use crate::send_keys;
-use crate::session::PaneKind;
-use crate::split_tree::{MAX_DEPTH, SplitAxis};
 
 /// The optional second pane of a two-pane launch preset.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,7 +177,7 @@ pub fn keystrokes(command: &str, cwd: Option<&str>) -> Vec<u8> {
     if let Some(path) = cwd.filter(|path| !path.trim().is_empty()) {
         // The whole line is literal UTF-8 — see the module's note on why a path must never reach the
         // token parser. The quoting is only so a directory with spaces survives.
-        out.extend_from_slice(format!("cd {}", crate::shell_quoting::single_quoted(path)).as_bytes());
+        out.extend_from_slice(format!("cd {}", slopdesk_ids::shell_quoting::single_quoted(path)).as_bytes());
         out.push(0x0A);
     }
     if !command.trim().is_empty() {
@@ -224,18 +225,19 @@ impl TemplatePane {
 /// A template must expand to at least one pane, so a node with nothing left in it becomes a plain
 /// terminal rather than nothing at all.
 ///
-/// It re-exports [`crate::workspace::DEFAULT_PANE_TITLE`] instead of spelling the same word again.
-/// The two ask one question — what is a pane nobody has named called — from two directions, and a
-/// second literal would let them answer it differently: rename the default and a repaired template
-/// would go on producing panes titled the old thing, while every gesture-made pane took the new
-/// one. Nothing would fail; the workspace would just have two kinds of unnamed pane in it.
-pub const FALLBACK_PANE_TITLE: &str = crate::workspace::DEFAULT_PANE_TITLE;
+/// It re-exports [`slopdesk_tree::workspace::DEFAULT_PANE_TITLE`] instead of spelling the same word
+/// again. The two ask one question — what is a pane nobody has named called — from two directions,
+/// and a second literal would let them answer it differently: rename the default and a repaired
+/// template would go on producing panes titled the old thing, while every gesture-made pane took
+/// the new one. Nothing would fail; the workspace would just have two kinds of unnamed pane in it.
+pub const FALLBACK_PANE_TITLE: &str = slopdesk_tree::workspace::DEFAULT_PANE_TITLE;
 
 /// The recursive, n-ary layout a session template expands into.
 ///
-/// It mirrors [`crate::split_tree::SplitNode`] but carries each pane's launch intent instead of an
-/// id, and it has no weights at all: a template describes STRUCTURE, and pinning exact divider
-/// positions into it would make every restore fight whatever the person had since dragged.
+/// It mirrors [`slopdesk_tree::split_tree::SplitNode`] but carries each pane's launch intent
+/// instead of an id, and it has no weights at all: a template describes STRUCTURE, and pinning
+/// exact divider positions into it would make every restore fight whatever the person had since
+/// dragged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TemplateNode {
     /// One pane.
@@ -425,11 +427,12 @@ mod tests {
 
     use std::collections::BTreeSet;
 
+    use slopdesk_tree::split_tree::{MAX_DEPTH, SplitAxis};
+
     use super::{
         FALLBACK_PANE_TITLE, TemplateNode, TemplatePane, built_in_launch_presets, built_in_session_templates,
         keystrokes,
     };
-    use crate::split_tree::{MAX_DEPTH, SplitAxis};
 
     #[test]
     fn an_empty_command_and_no_directory_sends_nothing() {

@@ -27,11 +27,18 @@
 # last place to widen a supply chain, and everything here is `to_be_bytes` and slice arithmetic.
 # `serde_json` appears only as a dev-dependency, to read the golden file the tests diff against.
 #
-# The one path dependency is `slopdesk-workspace`, and it exists to DELETE code rather than add it:
-# the axis, the drop edge, the pane kind, the new-tab position, the split weight and the video
-# endpoint are domain values that the wire merely gives a byte. Defining them a second time here
-# meant two enums that had to agree forever, with no compiler and no test standing between them and
-# a silent divergence — so the codec re-exports the domain's, and the byte lives on the domain type.
+# The path dependencies exist to DELETE code rather than add it: the axis, the drop edge, the pane
+# kind, the new-tab position, the split weight and the video endpoint are domain values that the
+# wire merely gives a byte. Defining them a second time here meant two enums that had to agree
+# forever, with no compiler and no test standing between them and a silent divergence — so the codec
+# re-exports the domain's, and the byte lives on the domain type.
+#
+# They point at `slopdesk-ids` and `slopdesk-tree`, NOT at `slopdesk-workspace`. That edge used to
+# exist and was a layering inversion: reaching a 25,000-line domain crate for seven of its modules
+# put the client's Settings catalogue, phone keyboard, git status line and notification policy
+# underneath a golden-pinned protocol. A protocol depending on the model it serialises is not an
+# inversion; depending on the client's Settings page is, and the two crates below are where that
+# line was drawn. Do not re-add `slopdesk-workspace` here.
 [workspace]
 resolver = "3"
 
@@ -57,9 +64,13 @@ base64 = "0.22"
 # Where a front-truncated stream was w.r.t. the alternate screen — the ring's eviction repair. Its
 # own crate because superd's journal needs the same scanner and must not depend on the protocol.
 slopdesk-altscreen = { path = "../slopdesk-altscreen" }
-# The domain values the wire gives a byte to. See the header — this dependency removed six duplicate
-# enums, and it is a path dependency on our own crate, not a supply-chain widening.
-slopdesk-workspace = { path = "../slopdesk-workspace" }
+# A pane, tab, session or split-node id, and the JSON subset the state file is written in. A leaf
+# with no dependencies of its own — see the header for why that property is the point.
+slopdesk-ids = { path = "../slopdesk-ids" }
+# The domain values the wire gives a byte to, and the tree operations `document::apply` performs
+# once it has decoded one. See the header — this dependency removed six duplicate enums, and it is a
+# path dependency on our own crate, not a supply-chain widening.
+slopdesk-tree = { path = "../slopdesk-tree" }
 
 [dev-dependencies]
 # Only the golden-parity test reads JSON. The library itself stays dependency-free.

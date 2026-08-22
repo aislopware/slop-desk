@@ -22,7 +22,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::identity::{IdSource, PaneId, SessionId, TabId};
+use slopdesk_ids::identity::{IdSource, PaneId, SessionId, TabId};
+
 use crate::session::{PaneKind, PaneSpec, Session, Tab};
 use crate::split_tree::SplitNode;
 
@@ -248,7 +249,7 @@ impl TreeWorkspace {
     /// folding a re-dock in would instantly undo a detach the person just performed — re-docking is
     /// a LAUNCH-only step.
     #[must_use]
-    pub(crate) fn normalized(&self, mint: &mut impl IdSource) -> Self {
+    pub fn normalized(&self, mint: &mut impl IdSource) -> Self {
         self.normalizing_specs().normalizing_active(mint)
     }
 
@@ -304,8 +305,9 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+
     use super::{DEFAULT_PANE_TITLE, DEFAULT_SESSION_NAME, TreeWorkspace};
-    use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
     use crate::session::{DetachedPane, PaneKind, PaneSpec, Session, Tab};
     use crate::split_tree::{SplitAxis, SplitNode, WeightedChild};
 

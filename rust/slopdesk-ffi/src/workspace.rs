@@ -29,17 +29,18 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_ids::identity::{IdSource, SessionId};
+use slopdesk_ids::{PaneId, SplitNodeId, TabId, shell_quoting};
+use slopdesk_tree::tree_ops::{self, TileLayout};
+use slopdesk_tree::workspace::{self, TreeWorkspace};
+use slopdesk_tree::{
+    FocusDirection, PaneKind, PaneSpec, Rect, Size, SolvedLayout, SplitAxis, SplitNode, SplitWeight,
+    WeightedChild, focus, geometry, split_layout, split_tree, tab_ordering,
+};
 use slopdesk_wire::document::codec as wire_codec;
 use slopdesk_wire::document::state::HostWorkspaceState;
 use slopdesk_wire::document::topology::WorkspaceTopology;
-use slopdesk_workspace::identity::{IdSource, SessionId};
-use slopdesk_workspace::tree_ops::{self, TileLayout};
-use slopdesk_workspace::workspace::{self, TreeWorkspace};
-use slopdesk_workspace::{
-    FocusDirection, PaneId, PaneKind, PaneSpec, Rect, Size, SolvedLayout, SplitAxis, SplitNode, SplitNodeId,
-    SplitWeight, TabId, WeightedChild, focus, geometry, listen, persist, rail_title, secrets, send_keys,
-    shell_quoting, split_layout, split_tree, state_codec, tab_ordering, templates,
-};
+use slopdesk_workspace::{listen, persist, rail_title, secrets, send_keys, state_codec, templates};
 
 use crate::workspace_state_file::{write_status, write_version};
 use crate::{borrow, deliver};
@@ -1260,7 +1261,7 @@ pub const extern "C" fn slopdesk_ws_max_depth() -> usize {
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
 pub const extern "C" fn slopdesk_ws_schema_version() -> i64 {
-    slopdesk_workspace::CURRENT_SCHEMA_VERSION
+    slopdesk_tree::CURRENT_SCHEMA_VERSION
 }
 
 /// The longest a string field may be, from the codec that clamps it.
@@ -2958,25 +2959,6 @@ pub const unsafe extern "C" fn slopdesk_ws_encode_u32(value: u32, out: *mut u8, 
     unsafe { deliver(&state_codec::encode_u32(value), out, cap) }
 }
 
-/// A `[u16 BE][u16 BE]` field value's bytes, under §4's convention.
-///
-/// # Safety
-/// `out` must be null or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const unsafe extern "C" fn slopdesk_ws_encode_u16_pair(
-    first: u16,
-    second: u16,
-    out: *mut u8,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
-    unsafe { deliver(&state_codec::encode_u16_pair(first, second), out, cap) }
-}
-
 /// An `[i64 BE]` field value's bytes, under §4's convention.
 ///
 /// # Safety
@@ -3228,7 +3210,7 @@ pub unsafe extern "C" fn slopdesk_ws_encode_video_target(
 
 /// The caller's pool of pre-minted identities, handed out in order.
 ///
-/// This crate holds no entropy and [`slopdesk_workspace::identity`] explains why — every repair
+/// This crate holds no entropy and [`slopdesk_ids::identity`] explains why — every repair
 /// here has to be replayable, so the runtime that owns the randomness supplies the ids and a test
 /// supplies a counter. One cursor across all four kinds rather than four, so a pass that takes a
 /// tab and a split gets two DIFFERENT ids.
@@ -3652,7 +3634,8 @@ pub const extern "C" fn slopdesk_ws_workspace_file_max_panes() -> usize {
 mod tests {
     use core::ffi::c_uchar;
 
-    use slopdesk_workspace::{PaneId, SplitAxis, SplitNode, SplitNodeId, SplitWeight, WeightedChild};
+    use slopdesk_ids::{PaneId, SplitNodeId};
+    use slopdesk_tree::{SplitAxis, SplitNode, SplitWeight, WeightedChild};
 
     use super::{
         CRect, CVideoTarget, DividerHandle, Frame, KeyedTab, Span, TreeNode, Uuid, decode_tree, encode_tree,
@@ -4328,11 +4311,11 @@ mod tests {
     #[test]
     fn a_repair_answers_the_documents_own_encoding_and_nothing_else() {
         let broken = slopdesk_wire::document::topology::WorkspaceTopology::new(
-            slopdesk_workspace::workspace::TreeWorkspace::single_pane(
-                slopdesk_workspace::identity::SessionId::from_bytes([1; 16]),
-                slopdesk_workspace::identity::TabId::from_bytes([1; 16]),
+            slopdesk_tree::workspace::TreeWorkspace::single_pane(
+                slopdesk_ids::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_ids::identity::TabId::from_bytes([1; 16]),
                 PaneId::from_bytes([1; 16]),
-                slopdesk_workspace::PaneSpec::new(slopdesk_workspace::PaneKind::Terminal, "Terminal"),
+                slopdesk_tree::PaneSpec::new(slopdesk_tree::PaneKind::Terminal, "Terminal"),
             ),
         );
         let (cells, blob) = flat_document(&broken);
@@ -4356,11 +4339,11 @@ mod tests {
     #[test]
     fn a_probe_that_did_not_fit_leaves_the_buffer_untouched() {
         let topology = slopdesk_wire::document::topology::WorkspaceTopology::new(
-            slopdesk_workspace::workspace::TreeWorkspace::single_pane(
-                slopdesk_workspace::identity::SessionId::from_bytes([1; 16]),
-                slopdesk_workspace::identity::TabId::from_bytes([1; 16]),
+            slopdesk_tree::workspace::TreeWorkspace::single_pane(
+                slopdesk_ids::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_ids::identity::TabId::from_bytes([1; 16]),
                 PaneId::from_bytes([1; 16]),
-                slopdesk_workspace::PaneSpec::new(slopdesk_workspace::PaneKind::Terminal, "Terminal"),
+                slopdesk_tree::PaneSpec::new(slopdesk_tree::PaneKind::Terminal, "Terminal"),
             ),
         );
         let (cells, blob) = flat_document(&topology);
@@ -4391,8 +4374,8 @@ mod tests {
         // the vocabulary reads as a terminal, so an unknown kind degrades rather than opening a
         // stream for a window that will never exist.
         let count = slopdesk_ws_pane_kind_count();
-        assert_eq!(count, slopdesk_workspace::PaneKind::ALL.len());
-        for (index, kind) in slopdesk_workspace::PaneKind::ALL.into_iter().enumerate() {
+        assert_eq!(count, slopdesk_tree::PaneKind::ALL.len());
+        for (index, kind) in slopdesk_tree::PaneKind::ALL.into_iter().enumerate() {
             let byte = u8::try_from(index).unwrap_or(u8::MAX);
             assert_eq!(slopdesk_ws_pane_kind_is_video(byte), kind.is_video());
         }
@@ -4403,28 +4386,25 @@ mod tests {
     fn the_exported_pass_count_and_pool_size_are_the_crates_own() {
         assert_eq!(
             slopdesk_ws_normalize_pass_count(),
-            slopdesk_workspace::tree_ops::RepairPass::ALL.len(),
+            slopdesk_tree::tree_ops::RepairPass::ALL.len(),
         );
         assert_eq!(
             slopdesk_ws_normalize_minted_ids(3, 5),
-            slopdesk_workspace::tree_ops::RepairPass::minted_ids(3, 5),
+            slopdesk_tree::tree_ops::RepairPass::minted_ids(3, 5),
         );
     }
 
     #[test]
     fn the_two_split_tree_metrics_are_the_crates_own() {
-        assert_eq!(
-            slopdesk_ws_min_weight(),
-            slopdesk_workspace::split_tree::MIN_WEIGHT
-        );
-        assert_eq!(slopdesk_ws_max_depth(), slopdesk_workspace::split_tree::MAX_DEPTH);
+        assert_eq!(slopdesk_ws_min_weight(), slopdesk_tree::split_tree::MIN_WEIGHT);
+        assert_eq!(slopdesk_ws_max_depth(), slopdesk_tree::split_tree::MAX_DEPTH);
     }
 
     #[test]
     fn the_exported_schema_version_is_the_crates_own() {
         assert_eq!(
             slopdesk_ws_schema_version(),
-            slopdesk_workspace::CURRENT_SCHEMA_VERSION
+            slopdesk_tree::CURRENT_SCHEMA_VERSION
         );
     }
 
@@ -4449,7 +4429,7 @@ mod tests {
                 cells.len(),
                 blob.as_ptr(),
                 blob.len(),
-                slopdesk_workspace::CURRENT_SCHEMA_VERSION,
+                slopdesk_tree::CURRENT_SCHEMA_VERSION,
                 core::ptr::null_mut(),
                 0,
             )
@@ -4462,7 +4442,7 @@ mod tests {
                 cells.len(),
                 blob.as_ptr(),
                 blob.len(),
-                slopdesk_workspace::CURRENT_SCHEMA_VERSION,
+                slopdesk_tree::CURRENT_SCHEMA_VERSION,
                 out.as_mut_ptr(),
                 out.len(),
             )
@@ -4581,11 +4561,11 @@ mod tests {
     #[test]
     fn a_saved_workspace_comes_back_the_same_arrangement_through_the_two_doors() {
         let topology = slopdesk_wire::document::topology::WorkspaceTopology::new(
-            slopdesk_workspace::workspace::TreeWorkspace::single_pane(
-                slopdesk_workspace::identity::SessionId::from_bytes([1; 16]),
-                slopdesk_workspace::identity::TabId::from_bytes([1; 16]),
+            slopdesk_tree::workspace::TreeWorkspace::single_pane(
+                slopdesk_ids::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_ids::identity::TabId::from_bytes([1; 16]),
                 PaneId::from_bytes([9; 16]),
-                slopdesk_workspace::PaneSpec::new(slopdesk_workspace::PaneKind::Terminal, "Terminal"),
+                slopdesk_tree::PaneSpec::new(slopdesk_tree::PaneKind::Terminal, "Terminal"),
             ),
         );
         let (cells, blob) = flat_document(&topology);
@@ -4680,11 +4660,11 @@ mod tests {
     #[test]
     fn a_save_that_did_not_fit_leaves_the_buffer_untouched() {
         let topology = slopdesk_wire::document::topology::WorkspaceTopology::new(
-            slopdesk_workspace::workspace::TreeWorkspace::single_pane(
-                slopdesk_workspace::identity::SessionId::from_bytes([1; 16]),
-                slopdesk_workspace::identity::TabId::from_bytes([1; 16]),
+            slopdesk_tree::workspace::TreeWorkspace::single_pane(
+                slopdesk_ids::identity::SessionId::from_bytes([1; 16]),
+                slopdesk_ids::identity::TabId::from_bytes([1; 16]),
                 PaneId::from_bytes([1; 16]),
-                slopdesk_workspace::PaneSpec::new(slopdesk_workspace::PaneKind::Terminal, "Terminal"),
+                slopdesk_tree::PaneSpec::new(slopdesk_tree::PaneKind::Terminal, "Terminal"),
             ),
         );
         let (cells, blob) = flat_document(&topology);
@@ -4696,7 +4676,7 @@ mod tests {
                 cells.len(),
                 blob.as_ptr(),
                 blob.len(),
-                slopdesk_workspace::CURRENT_SCHEMA_VERSION,
+                slopdesk_tree::CURRENT_SCHEMA_VERSION,
                 out.as_mut_ptr(),
                 out.len(),
             )
@@ -4731,7 +4711,7 @@ mod tests {
         // would silently promote a file to the current schema — and the load path's version check,
         // the one thing that can refuse a file this build does not understand, would never fire
         // again, because nothing on disk could still claim an older number.
-        let stale = slopdesk_workspace::CURRENT_SCHEMA_VERSION - 1;
+        let stale = slopdesk_tree::CURRENT_SCHEMA_VERSION - 1;
         let empty: Vec<super::CEntry> = Vec::new();
         // SAFETY: every pointer is a live local's, and the null `out` is what §4 says to probe with.
         let needed = unsafe {
@@ -4818,7 +4798,7 @@ mod tests {
         assert_eq!(written, needed);
         assert_eq!(
             core::str::from_utf8(&out).ok(),
-            Some(slopdesk_workspace::workspace::DEFAULT_PANE_TITLE),
+            Some(slopdesk_tree::workspace::DEFAULT_PANE_TITLE),
         );
     }
 
@@ -4837,11 +4817,11 @@ mod tests {
         assert_eq!(written, needed);
         assert_eq!(
             core::str::from_utf8(&out).ok(),
-            Some(slopdesk_workspace::workspace::DEFAULT_DESKTOP_PANE_TITLE),
+            Some(slopdesk_tree::workspace::DEFAULT_DESKTOP_PANE_TITLE),
         );
         assert_ne!(
-            slopdesk_workspace::workspace::DEFAULT_DESKTOP_PANE_TITLE,
-            slopdesk_workspace::workspace::DEFAULT_PANE_TITLE,
+            slopdesk_tree::workspace::DEFAULT_DESKTOP_PANE_TITLE,
+            slopdesk_tree::workspace::DEFAULT_PANE_TITLE,
         );
     }
 }

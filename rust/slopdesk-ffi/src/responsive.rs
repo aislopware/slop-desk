@@ -1,6 +1,6 @@
 //! The responsive switch and the video ceiling, in C, and where a new pane starts.
 //!
-//! The rules are `slopdesk_workspace::responsive` and `slopdesk_workspace::workdir`; what is here
+//! The rules are `slopdesk_settings::responsive` and `slopdesk_workspace::workdir`; what is here
 //! is the marshalling. Only the config string crosses through a buffer, and only in one direction.
 //!
 //! ## Nothing is copied to be chosen between
@@ -11,7 +11,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::responsive::{self, DeviceClass};
+use slopdesk_settings::responsive::{self, DeviceClass};
 use slopdesk_workspace::workdir::{self, Kind, Policy, Source};
 
 use crate::{borrow, deliver};

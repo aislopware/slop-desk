@@ -2,7 +2,7 @@
 //!
 //! **JSON here is deliberate and is not a contradiction of the manual-binary rule — that rule is
 //! about the WIRE.** This file is read once at start by the process that wrote it; determinism and
-//! reviewability matter, latency does not. [`slopdesk_workspace::json`] carries the format and the
+//! reviewability matter, latency does not. [`slopdesk_ids::json`] carries the format and the
 //! reasoning.
 //!
 //! The interesting half is not the encoding but the FILTER. Serializing the entry map wholesale
@@ -13,8 +13,8 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use slopdesk_workspace::identity::{parse_uuid, uuid_text};
-use slopdesk_workspace::json::{self, Json};
+use slopdesk_ids::identity::{parse_uuid, uuid_text};
+use slopdesk_ids::json::{self, Json};
 
 use crate::document::fields::{pane, project};
 use crate::document::state::{HostWorkspaceState, WorkspaceKey, WorkspaceObjectKind};

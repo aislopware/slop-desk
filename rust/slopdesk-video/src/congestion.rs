@@ -798,6 +798,42 @@ pub fn is_material_change(previous: i64, target: i64, ceiling: i64, config: Cong
     (target - previous).abs() >= threshold
 }
 
+/// Parses one of this controller's integer knobs, REJECTING an out-of-range value to `default`
+/// rather than clamping it, and falling back to `default` when the text is absent or not an
+/// integer.
+///
+/// The opposite reading from [`crate::qp_control::clamped_int_from_env`], and the difference is the
+/// KIND of quantity, not an oversight. A quantiser is an ordinal on a fixed 1–51 scale, so an
+/// out-of-range request has a nearest legal value that is plainly what was meant. A rate, a
+/// fraction or a report count does not: `SLOPDESK_ABR_LOSS=5` is not a request for "100% loss", it
+/// is a typo or a unit confusion, and answering the ceiling would invent an operating point nobody
+/// chose. Falling back to the tuned default is the only reading that cannot silently mean something
+/// the operator never asked for. [`crate::live_bitrate::bits_per_pixel_from_env`] is the same rule
+/// for the density knob and argues it the same way.
+///
+/// The bound pair is taken as given: a caller that inverts it rejects everything to `default`,
+/// which is the safe reading and needs no assertion here — this runs at process start and must
+/// never be the thing that stops a session.
+#[must_use]
+pub fn validated_int_from_env(raw: Option<&str>, default: i64, lo: i64, hi: i64) -> i64 {
+    raw.and_then(|text| text.parse::<i64>().ok())
+        .filter(|parsed| (lo..=hi).contains(parsed))
+        .unwrap_or(default)
+}
+
+/// [`validated_int_from_env`] for the fractional knobs — the loss thresholds, the decrease factors,
+/// the utilisation fractions and the round-trip slack.
+///
+/// A non-finite value is rejected before the range test rather than by it: `NaN` compares false
+/// against both bounds, which would reach the same answer by an accident of IEEE ordering rather
+/// than by a rule, and an infinity is inside no band anyone tuned.
+#[must_use]
+pub fn validated_double_from_env(raw: Option<&str>, default: f64, lo: f64, hi: f64) -> f64 {
+    raw.and_then(|text| text.parse::<f64>().ok())
+        .filter(|parsed| parsed.is_finite() && *parsed >= lo && *parsed <= hi)
+        .unwrap_or(default)
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -808,7 +844,10 @@ mod tests {
                   on literal bitrates chosen to divide exactly"
     )]
 
-    use super::{CongestionConfig, CutReason, LiveCongestionController, NetworkEstimate, is_material_change};
+    use super::{
+        CongestionConfig, CutReason, LiveCongestionController, NetworkEstimate, is_material_change,
+        validated_double_from_env, validated_int_from_env,
+    };
 
     const CEILING: i64 = 32_000_000;
 
@@ -1131,5 +1170,37 @@ mod tests {
         // The absolute floor governs a small ceiling.
         assert!(!is_material_change(1_000_000, 1_300_000, 2_000_000, config));
         assert!(is_material_change(1_000_000, 1_600_000, 2_000_000, config));
+    }
+
+    /// The half of the env rule this controller owns: out of range is the DEFAULT, never the
+    /// nearest bound. The `900` case is deliberately the same input `qp_control`'s test clamps to
+    /// 51, so the two readings are pinned against each other by example as well as by prose.
+    #[test]
+    fn the_rate_knobs_reject_rather_than_clamping() {
+        assert_eq!(validated_int_from_env(Some("31"), 26, 1, 51), 31);
+        assert_eq!(
+            validated_int_from_env(Some("900"), 26, 1, 51),
+            26,
+            "defaulted, not clamped — the quantiser reading answers 51 here"
+        );
+        assert_eq!(validated_int_from_env(Some("0"), 26, 1, 51), 26);
+        assert_eq!(validated_int_from_env(Some("fast"), 26, 1, 51), 26);
+        assert_eq!(validated_int_from_env(None, 26, 1, 51), 26);
+        assert_eq!(validated_int_from_env(Some(""), 26, 1, 51), 26);
+        // Both bounds are inclusive, which is what the Swift `v >= lo, v <= hi` guard meant.
+        assert_eq!(validated_int_from_env(Some("1"), 26, 1, 51), 1);
+        assert_eq!(validated_int_from_env(Some("51"), 26, 1, 51), 51);
+    }
+
+    #[test]
+    fn the_fractional_knobs_reject_the_non_finite_and_the_out_of_band() {
+        assert!((validated_double_from_env(Some("0.25"), 0.5, 0.0, 1.0) - 0.25).abs() < f64::EPSILON);
+        assert!((validated_double_from_env(Some("5"), 0.5, 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        assert!((validated_double_from_env(Some("inf"), 0.5, 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        assert!((validated_double_from_env(Some("nan"), 0.5, 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        assert!((validated_double_from_env(Some("dense"), 0.5, 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        assert!((validated_double_from_env(None, 0.5, 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        assert!((validated_double_from_env(Some("0"), 0.5, 0.0, 1.0)).abs() < f64::EPSILON);
+        assert!((validated_double_from_env(Some("1"), 0.5, 0.0, 1.0) - 1.0).abs() < f64::EPSILON);
     }
 }

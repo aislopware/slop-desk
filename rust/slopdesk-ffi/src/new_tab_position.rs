@@ -1,6 +1,6 @@
 //! Where a newly opened tab lands in the tab bar, in C.
 //!
-//! One door over [`slopdesk_workspace::NewTabPosition`]: the `new-tab-position` policy's
+//! One door over [`slopdesk_tree::NewTabPosition`]: the `new-tab-position` policy's
 //! placement arithmetic, plus the two clamps that keep its answer a VALID insertion index for a
 //! list whose count and active index both arrive from a restored document.
 //!
@@ -8,7 +8,7 @@
 //! `NewTabPosition.swift` carried the same three-case arithmetic and the same clamps, and it looked
 //! live: a public method, a doc comment arguing for it, four test cases pinning the hostile inputs.
 //! It had no production caller at all. Every real ⌘T and ⇧⌘T encodes the policy as a BYTE into a
-//! workspace intent, and `slopdesk_workspace::tree_ops` computes the index on the far side — so the
+//! workspace intent, and `slopdesk_tree::tree_ops` computes the index on the far side — so the
 //! Swift arithmetic answered only its own tests, which is the worst possible arrangement for a pair
 //! that has to agree. A drift there is not a red test; it is a green suite over a function nothing
 //! runs, sitting next to the one that decides where the tab actually goes.
@@ -21,7 +21,7 @@
 //!
 //! The spelling costs nothing extra instead. `auto` / `end` / `after-current` IS the Swift enum's
 //! `rawValue`, which is what the settings store persists, what the config file writes, and what
-//! `slopdesk_workspace::settings_catalog` already vends as this group's option TOKENS — so both
+//! `slopdesk_settings::settings_catalog` already vends as this group's option TOKENS — so both
 //! sides were spelling it anyway and `SettingsOptionCatalogTests` already fails if they disagree. A
 //! token nobody recognises reads as the default rather than refusing, which is the same repair the
 //! client's own settings bridge makes for a stale persisted value; the crate owns that fallback so
@@ -29,7 +29,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::NewTabPosition;
+use slopdesk_tree::NewTabPosition;
 
 use crate::borrow;
 
@@ -70,7 +70,7 @@ pub unsafe extern "C" fn slopdesk_ws_new_tab_index(
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 mod tests {
-    use slopdesk_workspace::NewTabPosition;
+    use slopdesk_tree::NewTabPosition;
 
     use super::slopdesk_ws_new_tab_index;
 

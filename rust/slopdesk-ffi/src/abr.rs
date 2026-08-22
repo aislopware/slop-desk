@@ -16,15 +16,28 @@
 //!
 //! The tunables travel inside the controller rather than beside it, exactly as they sit inside
 //! `LiveCongestionController` — the wrapped type is already `Copy`, so this is a mirror rather than
-//! a re-arrangement. What the door does NOT do is read an environment: the host resolves every
-//! `SLOPDESK_ABR_*` knob through its overlay-aware `EnvConfig`, validate-then-default, and hands
-//! the numbers over.
+//! a re-arrangement.
+//!
+//! ## The environment LOOKUP stays near, the PARSE crosses
+//!
+//! The host resolves every `SLOPDESK_ABR_*` and `SLOPDESK_FPS_GOV_*` knob through its overlay-aware
+//! `EnvConfig`, so a GUI setting can beat an environment variable and a test can hand a dictionary
+//! in. That half is the caller's and stays there. What crosses is the RULE applied to the resolved
+//! text — parse, range-test, reject to the tuned default — because that is a policy, and it was
+//! written out in Swift four times (an int and a double form in each of two files) beside a crate
+//! that already spelled the OPPOSITE reading for the quantiser knobs. `docs/55` §8's rendezvous
+//! paragraph is the precedent: a shared identity that is a precedence, a filter or a default is a
+//! rule, and the rule crosses.
+
+use core::ffi::c_uchar;
 
 use slopdesk_video::congestion::{
     CongestionConfig, CongestionSnapshot, CutReason, LiveCongestionController, effective_slack_millis,
-    is_material_change,
+    is_material_change, validated_double_from_env, validated_int_from_env,
 };
 use slopdesk_video::network_estimate::NetworkEstimate;
+
+use crate::borrow;
 
 /// The cold-start guard: no action is possible.
 pub const SLOPDESK_ABR_REASON_WARMUP: u32 = 0;
@@ -582,6 +595,66 @@ pub extern "C" fn slopdesk_abr_is_material_change(
     is_material_change(previous, target, ceiling, config.inner())
 }
 
+/// Parses one of the rate law's integer knobs, REJECTING an out-of-range value to `fallback`.
+///
+/// The counterpart of [`crate::rate_control::slopdesk_qp_clamped_int`], and deliberately the other
+/// reading. A quantiser is an ordinal on a fixed scale, so an out-of-range request has a nearest
+/// legal value that is plainly what was meant; a rate, a fraction or a report count does not, and
+/// answering a bound would invent an operating point nobody chose. Both readings now have exactly
+/// one implementation, which is the whole point of the pair existing as two doors rather than as
+/// two hand-rolled guards.
+///
+/// `has_raw` distinguishes an ABSENT knob from an empty one, the way the quantiser door does: an
+/// empty string is text that does not parse, which reaches the same answer, but the caller should
+/// not have to know that.
+///
+/// # Safety
+/// `(raw, raw_len)` must describe live memory for the whole call, or be null.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_abr_validated_int(
+    raw: *const c_uchar,
+    raw_len: usize,
+    has_raw: bool,
+    fallback: i64,
+    lo: i64,
+    hi: i64,
+) -> i64 {
+    // SAFETY: the pair is live for the call or null, which borrows as empty.
+    let bytes = unsafe { borrow(raw, raw_len) };
+    let text = has_raw.then(|| String::from_utf8_lossy(bytes).into_owned());
+    validated_int_from_env(text.as_deref(), fallback, lo, hi)
+}
+
+/// [`slopdesk_abr_validated_int`] for the fractional knobs, which is most of this law's surface.
+///
+/// A non-finite value is rejected explicitly rather than by the range test, so "infinity is outside
+/// every band anyone tuned" is a rule here rather than an accident of how `NaN` compares.
+///
+/// # Safety
+/// `(raw, raw_len)` must describe live memory for the whole call, or be null.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_abr_validated_double(
+    raw: *const c_uchar,
+    raw_len: usize,
+    has_raw: bool,
+    fallback: f64,
+    lo: f64,
+    hi: f64,
+) -> f64 {
+    // SAFETY: the pair is live for the call or null, which borrows as empty.
+    let bytes = unsafe { borrow(raw, raw_len) };
+    let text = has_raw.then(|| String::from_utf8_lossy(bytes).into_owned());
+    validated_double_from_env(text.as_deref(), fallback, lo, hi)
+}
+
 #[cfg(test)]
 #[expect(
     unsafe_code,
@@ -595,8 +668,9 @@ mod tests {
         SLOPDESK_ABR_REASON_RTT_STREAK, SLOPDESK_ABR_REASON_WARMUP, SlopDeskAbrController,
         SlopDeskNetEstimate, slopdesk_abr_config_default, slopdesk_abr_decide,
         slopdesk_abr_effective_ceiling, slopdesk_abr_effective_slack, slopdesk_abr_is_material_change,
-        slopdesk_abr_new, slopdesk_abr_set_user_ceiling, slopdesk_abr_with_ceiling,
-        slopdesk_net_estimate_fold, slopdesk_net_estimate_new, slopdesk_net_estimate_rtt_millis,
+        slopdesk_abr_new, slopdesk_abr_set_user_ceiling, slopdesk_abr_validated_double,
+        slopdesk_abr_validated_int, slopdesk_abr_with_ceiling, slopdesk_net_estimate_fold,
+        slopdesk_net_estimate_new, slopdesk_net_estimate_rtt_millis,
     };
 
     const CEILING: i64 = 32_000_000;
@@ -864,6 +938,47 @@ mod tests {
         assert!(
             landed.current <= landed.floor.max(slopdesk_abr_effective_ceiling(landed)),
             "a snapshot cannot smuggle a rate no `new` could have produced past the fold",
+        );
+    }
+
+    /// Calls both env doors through the raw pointers Swift uses, and pins the one case that makes
+    /// them the OPPOSITE of the quantiser door: `900` in `[1, 51]` defaults here and clamps there.
+    #[test]
+    fn the_env_doors_reject_rather_than_clamping() {
+        fn asked_int(text: Option<&str>, lo: i64, hi: i64) -> i64 {
+            let bytes = text.unwrap_or("").as_bytes();
+            // SAFETY: the slice is a live local for the length of the call.
+            unsafe { slopdesk_abr_validated_int(bytes.as_ptr(), bytes.len(), text.is_some(), 26, lo, hi) }
+        }
+        fn asked_double(text: Option<&str>, lo: f64, hi: f64) -> f64 {
+            let bytes = text.unwrap_or("").as_bytes();
+            // SAFETY: the slice is a live local for the length of the call.
+            unsafe { slopdesk_abr_validated_double(bytes.as_ptr(), bytes.len(), text.is_some(), 0.5, lo, hi) }
+        }
+        assert_eq!(asked_int(Some("31"), 1, 51), 31);
+        assert_eq!(
+            asked_int(Some("900"), 1, 51),
+            26,
+            "the quantiser door answers 51 here"
+        );
+        assert_eq!(asked_int(Some("0"), 1, 51), 26);
+        assert_eq!(asked_int(Some(""), 1, 51), 26);
+        assert_eq!(asked_int(None, 1, 51), 26);
+        // SAFETY: a null pointer with a zero length is the documented empty case.
+        assert_eq!(
+            unsafe { slopdesk_abr_validated_int(core::ptr::null(), 0, false, 7, 0, 9) },
+            7
+        );
+
+        assert!((asked_double(Some("0.25"), 0.0, 1.0) - 0.25).abs() < f64::EPSILON);
+        assert!((asked_double(Some("5"), 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        assert!((asked_double(Some("inf"), 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        assert!((asked_double(None, 0.0, 1.0) - 0.5).abs() < f64::EPSILON);
+        // SAFETY: a null pointer with a zero length is the documented empty case.
+        assert!(
+            (unsafe { slopdesk_abr_validated_double(core::ptr::null(), 0, false, 0.25, 0.0, 1.0) } - 0.25)
+                .abs()
+                < f64::EPSILON
         );
     }
 }

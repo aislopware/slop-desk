@@ -1,6 +1,6 @@
 //! Every setting as a row, in C.
 //!
-//! The rules are `slopdesk_workspace::settings_rows`; what is here is the marshalling. Same idiom
+//! The rules are `slopdesk_settings::settings_rows`; what is here is the marshalling. Same idiom
 //! as its sibling next door — a count plus indexed accessors — with two additions a row list needs
 //! and a choice list does not.
 //!
@@ -21,7 +21,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::settings_rows::{self, Persistence, SettingRow};
+use slopdesk_settings::settings_rows::{self, Persistence, SettingRow};
 
 use crate::{borrow, deliver};
 

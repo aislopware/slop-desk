@@ -278,8 +278,28 @@ fn encode_config_payload(config: &AudioStreamConfig) -> Vec<u8> {
 /// The full-scale divisor a signed 16-bit sample is normalised by.
 pub const PCM_S16_FULL_SCALE: f32 = 32768.0;
 
-/// Converts an interleaved signed-16-bit little-endian payload to the interleaved float samples the
-/// jitter ring holds.
+/// How many float samples an s16le payload of this length decodes to, or `None` when it is not a
+/// whole number of interleaved frames.
+///
+/// Separate from the decode so a caller can size a destination without running the convert — which
+/// is what makes [`decode_pcm_s16le_into`] a one-call door rather than a probe-then-fill pair
+/// (`docs/55-ffi-boundary.md` §4c bans the probe on a door whose rule is WORK).
+#[must_use]
+#[expect(
+    clippy::integer_division,
+    reason = "two bytes per sample, over a length the guard above proved is a multiple of a whole number of \
+              them — there is no remainder for the division to lose"
+)]
+pub const fn pcm_s16le_sample_count(payload_len: usize, channels: usize) -> Option<usize> {
+    let bytes_per_frame = 2 * channels;
+    if payload_len == 0 || bytes_per_frame == 0 || !payload_len.is_multiple_of(bytes_per_frame) {
+        return None;
+    }
+    Some(payload_len / 2)
+}
+
+/// Converts an interleaved signed-16-bit little-endian payload into the interleaved float samples
+/// the jitter ring holds, writing into `out`.
 ///
 /// This is the codec-free fallback's whole decoder: a pure sample-format convert with no state, so
 /// unlike the AAC path a corrupt payload cannot poison the frames after it. A payload that is not a
@@ -289,23 +309,26 @@ pub const PCM_S16_FULL_SCALE: f32 = 32768.0;
 ///
 /// The bytes are assembled explicitly rather than read as words: the payload is a wire slice with
 /// no alignment guarantee, and the wire is little-endian regardless of what the machine is.
-#[must_use]
-pub fn decode_pcm_s16le(payload: &[u8], channels: usize) -> Vec<f32> {
-    let bytes_per_frame = 2 * channels;
-    if payload.is_empty() || bytes_per_frame == 0 || !payload.len().is_multiple_of(bytes_per_frame) {
-        return Vec::new();
+///
+/// It writes into a destination rather than answering a `Vec` because its only caller is the client
+/// audio queue, one call per ten-millisecond frame, and the caller has to have a buffer of its own
+/// either way. Building a `Vec` to copy out of would be an allocation and a memcpy per frame that
+/// nothing reads.
+///
+/// `None` — nothing written — for a payload that is not whole frames, and for an `out` too small to
+/// hold the answer. Both are the caller's cue to drop the frame; the ring conceals it.
+pub fn decode_pcm_s16le_into(payload: &[u8], channels: usize, out: &mut [f32]) -> Option<usize> {
+    let count = pcm_s16le_sample_count(payload.len(), channels)?;
+    if out.len() < count {
+        return None;
     }
-    payload
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| {
-            let raw = match *pair {
-                [lo, hi] => u16::from_le_bytes([lo, hi]),
-            };
-            f32::from(raw.cast_signed()) / PCM_S16_FULL_SCALE
-        })
-        .collect()
+    for (slot, pair) in out.iter_mut().zip(payload.as_chunks::<2>().0) {
+        let raw = match *pair {
+            [lo, hi] => u16::from_le_bytes([lo, hi]),
+        };
+        *slot = f32::from(raw.cast_signed()) / PCM_S16_FULL_SCALE;
+    }
+    Some(count)
 }
 
 #[cfg(test)]
@@ -313,11 +336,26 @@ mod tests {
     #![expect(
         clippy::expect_used,
         clippy::indexing_slicing,
-        reason = "a panic in a test is the failure report, not a runtime fault"
+        clippy::integer_division,
+        clippy::float_cmp,
+        reason = "a panic in a test is the failure report, not a runtime fault — and a sample-format \
+                  convert is pinned by EXACT bit patterns, which is what makes it a test at all"
     )]
 
-    use super::{AudioChannelMessage, AudioStreamConfig, AudioWireFormat, decode_pcm_s16le};
+    use super::{
+        AudioChannelMessage, AudioStreamConfig, AudioWireFormat, decode_pcm_s16le_into,
+        pcm_s16le_sample_count,
+    };
     use crate::error::VideoProtocolError;
+
+    /// The decode as the assertions read it: a room sized by the arithmetic bound the caller uses,
+    /// and the samples actually written, or `None` for a drop.
+    fn decoded(payload: &[u8], channels: usize) -> Option<Vec<f32>> {
+        let mut room = vec![0.0_f32; payload.len() / 2];
+        let written = decode_pcm_s16le_into(payload, channels, &mut room)?;
+        room.truncate(written);
+        Some(room)
+    }
 
     fn sample_config() -> AudioChannelMessage {
         AudioChannelMessage::Config {
@@ -329,13 +367,13 @@ mod tests {
 
     #[test]
     fn full_scale_and_silence_land_where_the_ring_expects_them() {
-        assert_eq!(decode_pcm_s16le(&[0x00, 0x00, 0xFF, 0x7F], 1), vec![
-            0.0,
-            32767.0 / 32768.0
-        ]);
         assert_eq!(
-            decode_pcm_s16le(&[0x00, 0x80], 1),
-            vec![-1.0],
+            decoded(&[0x00, 0x00, 0xFF, 0x7F], 1),
+            Some(vec![0.0, 32767.0 / 32768.0])
+        );
+        assert_eq!(
+            decoded(&[0x00, 0x80], 1),
+            Some(vec![-1.0]),
             "the negative full scale is exactly minus one",
         );
     }
@@ -343,28 +381,47 @@ mod tests {
     #[test]
     fn the_wire_stays_little_endian_whatever_the_machine_is() {
         // 0x0100 little-endian is 256, not 1.
-        assert_eq!(decode_pcm_s16le(&[0x00, 0x01], 1), vec![256.0 / 32768.0]);
+        assert_eq!(decoded(&[0x00, 0x01], 1), Some(vec![256.0 / 32768.0]));
     }
 
     #[test]
     fn a_payload_that_is_not_whole_frames_drops_rather_than_offsetting_every_later_sample() {
-        assert!(decode_pcm_s16le(&[0x00, 0x00, 0xFF, 0x7F, 0x11], 2).is_empty());
-        assert!(
-            decode_pcm_s16le(&[0x00, 0x00], 2).is_empty(),
+        assert_eq!(decoded(&[0x00, 0x00, 0xFF, 0x7F, 0x11], 2), None);
+        assert_eq!(
+            decoded(&[0x00, 0x00], 2),
+            None,
             "half a stereo frame is not a frame"
         );
-        assert!(decode_pcm_s16le(&[], 2).is_empty());
-        assert!(
-            decode_pcm_s16le(&[0x00, 0x00], 0).is_empty(),
+        assert_eq!(decoded(&[], 2), None);
+        assert_eq!(
+            decoded(&[0x00, 0x00], 0),
+            None,
             "a channel-less config decodes nothing"
         );
+    }
+
+    /// The size question and the convert answer the same rule, and a destination one sample short
+    /// writes NOTHING — a half-filled ring frame is the swapped-stereo bug this decoder refuses.
+    #[test]
+    fn a_short_destination_is_a_drop_and_never_a_partial_fill() {
+        assert_eq!(pcm_s16le_sample_count(4, 1), Some(2));
+        assert_eq!(pcm_s16le_sample_count(5, 2), None);
+        assert_eq!(pcm_s16le_sample_count(0, 2), None);
+        assert_eq!(pcm_s16le_sample_count(2, 0), None);
+
+        let mut cramped = [0.0_f32; 1];
+        assert_eq!(
+            decode_pcm_s16le_into(&[0x00, 0x80, 0xFF, 0x7F], 1, &mut cramped),
+            None
+        );
+        assert_eq!(cramped, [0.0], "a refused call leaves the destination untouched");
     }
 
     #[test]
     fn a_whole_stereo_frame_keeps_its_channels_interleaved() {
         assert_eq!(
-            decode_pcm_s16le(&[0x00, 0x80, 0x00, 0x00, 0xFF, 0x7F, 0x00, 0x40], 2),
-            vec![-1.0, 0.0, 32767.0 / 32768.0, 0.5],
+            decoded(&[0x00, 0x80, 0x00, 0x00, 0xFF, 0x7F, 0x00, 0x40], 2),
+            Some(vec![-1.0, 0.0, 32767.0 / 32768.0, 0.5]),
         );
     }
 

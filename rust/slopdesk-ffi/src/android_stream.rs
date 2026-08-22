@@ -40,8 +40,6 @@ pub const ANDROID_STREAM_CORRUPT: u32 = 2;
 /// The payload does not fit `body`. `payload_len` carries what it needs, and NOTHING was consumed.
 pub const ANDROID_STREAM_AGAIN: u32 = 5;
 
-/// [`SlopDeskAndroidStreamMessage::kind`] — no message; the field block is not live.
-pub const ANDROID_STREAM_KIND_NONE: u8 = 0;
 /// The stream's codec name, in `body`. Sent once, at the head.
 pub const ANDROID_STREAM_KIND_CODEC: u8 = 1;
 /// A video size, in `width`/`height`. No payload.

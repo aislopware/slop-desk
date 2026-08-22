@@ -28,7 +28,8 @@
 
 use std::cmp::Ordering;
 
-use crate::identity::{PaneId, TabId};
+use slopdesk_ids::identity::{PaneId, TabId};
+
 use crate::session::{PaneSpec, Session};
 
 /// The bucket a keyless element lands in.
@@ -205,7 +206,7 @@ pub fn tab_project_key(
 /// Sections are PAIRS keyed on an optional string rather than a map behind a sentinel: a stand-in
 /// string for the keyless case would merely look coupled to the rail's own collapse key while
 /// answering a different question. Absent is its own section, natively.
-pub(crate) fn bucketed_by_project<Element>(
+pub fn bucketed_by_project<Element>(
     elements: Vec<Element>,
     project_key: impl Fn(&Element) -> Option<String>,
 ) -> Vec<(Option<String>, Vec<Element>)> {
@@ -300,12 +301,13 @@ fn neighbour(target: TabId, list: &[TabId]) -> Option<TabId> {
 mod tests {
     use std::cmp::Ordering;
 
+    use slopdesk_ids::identity::{PaneId, SessionId, TabId};
+
     use super::{
         bucketed_by_project, natural_compare, normalized_project_key, pane_project_key,
         project_grouped_tab_order, project_section_header, section_precedes, successor_after_close,
         tab_project_key,
     };
-    use crate::identity::{PaneId, SessionId, TabId};
     use crate::session::{PaneKind, PaneSpec, Session, Tab};
     use crate::split_tree::SplitNode;
 

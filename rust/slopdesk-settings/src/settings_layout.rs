@@ -47,7 +47,7 @@ pub enum Platform {
 impl Platform {
     /// Whether a half that identifies as `mac` draws this.
     #[must_use]
-    pub(crate) const fn shown_on(self, mac: bool) -> bool {
+    pub const fn shown_on(self, mac: bool) -> bool {
         match self {
             Self::Both => true,
             Self::Mac => mac,
@@ -643,16 +643,30 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
         timing: ApplyTiming::Live,
         platform: Platform::Both,
         rows: &[
+            // macOS-only: the pane under the POINTER, on a device with no pointer over its panes.
+            // `FocusFollowsMousePolicy` is asked from exactly two places, the surface's `mouseMoved`
+            // and its `mouseEntered`, both `NSEvent` overrides inside the surface's macOS half.
+            // Unlike its neighbour below, this key is not in `TerminalControls` either, so it has no
+            // second path into the libghostty config — the phone's toggle wrote to nothing at all.
             LayoutRow {
                 key: "controls.focusFollowsMouse",
                 subtitle: "Focus the pane under the mouse cursor automatically.",
                 control: Control::Toggle {
                     glyph: "pointer.arrow.rays",
                 },
-                platform: Platform::Both,
+                platform: Platform::Mac,
             },
             // A MENU, not cards: five actions with no shared geometry to draw. Their difference is
             // the verb, and a glyph standing in for a verb adds a picture frame, not information.
+            //
+            // macOS-only for a reason worth spelling exactly, because the obvious one is WRONG: the
+            // token does reach iOS. `TerminalControls.from(defaults:)` folds it into the libghostty
+            // config string on both halves, and the shared part of the surface loads that string on
+            // iOS too. What iOS never delivers is a RIGHT BUTTON — its only click path sends
+            // `GHOSTTY_MOUSE_LEFT`, and `GHOSTTY_MOUSE_RIGHT` appears nowhere in the surface's iOS
+            // half — so the setting is a live config key for an event that cannot occur. A phone
+            // right-clicks by long-pressing, and that gesture opens the menu unconditionally, which
+            // is the one action this row's five do not include a way to turn off.
             LayoutRow {
                 key: "controls.rightClickAction",
                 subtitle: "What right-click does in the terminal viewport (Ctrl+right-click always opens \
@@ -661,7 +675,7 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                     group: Group::RightClickAction,
                     glyph: None,
                 },
-                platform: Platform::Both,
+                platform: Platform::Mac,
             },
             LayoutRow {
                 key: "controls.mouseHideWhileTyping",
@@ -713,6 +727,18 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                 control: Control::Toggle { glyph: "" },
                 platform: Platform::Both,
             },
+            // macOS-only, and the gate is the GESTURE rather than the API: both rows name what a
+            // MODIFIED CLICK on a link does, and a phone has no click to modify. Its link path is
+            // the long-press menu, whose items are explicit verbs — `LinkActionPolicy` is asked
+            // `action(for: menuItem, link:)`, an overload that takes no config and resolves against
+            // `LinkActionConfig.default` — so there is no bare-tap default for either setting to
+            // govern. `LinkActionConfig` is BUILT in exactly one place repo-wide, the surface's
+            // macOS `mouseUp` (`GhosttyTerminalView.liveLinkConfig()`), and that is the only reader
+            // either key has. Nor can an iPad reach them with a hardware keyboard: the iOS tap
+            // handler takes no `UIEvent` and sends `GHOSTTY_MODS_NONE`, so ⌘ is not merely ignored
+            // at the link — it never arrives. (The one iOS surface that DOES read modifier flags at
+            // touch time, `MetalLayerBackedView.mods(_:)`, ships them to the remote desktop's own
+            // apps and never touches a `DetectedLink`.)
             LayoutRow {
                 key: "controls.linkCmdClick",
                 subtitle: "Open in the best handler (files / folders open on the host, URLs in your \
@@ -721,7 +747,7 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                     group: Group::LinkCmdClick,
                     glyph: None,
                 },
-                platform: Platform::Both,
+                platform: Platform::Mac,
             },
             LayoutRow {
                 key: "controls.linkCmdShiftClick",
@@ -731,7 +757,7 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                     group: Group::LinkCmdShiftClick,
                     glyph: None,
                 },
-                platform: Platform::Both,
+                platform: Platform::Mac,
             },
             LayoutRow {
                 key: "",
@@ -906,17 +932,32 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
     },
     // The HOST half of the same idea, and the reason it is a group of its own rather than two more
     // rows above: these ride the sidecar, so they apply on reconnect and the footer has to say so.
+    //
+    // MAC ONLY, and it is the SIDECAR that decides it, not the page. Both keys reach their reader
+    // through `video-prefs.json` in the EDITING device's own Application Support, which
+    // `slopdesk-hostd` folds into `EnvConfig.overlay` at ITS launch — and the only readers of
+    // `SLOPDESK_AGENT_PREVENT_SLEEP` / `_RESUME_ON_RECOVERY` are `SlopDeskHost` and `slopdesk-hostd`.
+    // A Mac can be the machine hostd runs on, which is when these two land; a phone never is, so a
+    // phone's toggle wrote a file nothing on that device opens and nothing off it reads. The group
+    // drew, the switches moved, and the host slept through it — worse than an absent row, because an
+    // absent row does not promise.
+    //
+    // This is a WITHHOLDING, not a scope-out of the capability: the phone SHOULD be able to say
+    // "keep the host awake". Giving it that means a wire verb (the agent-hooks verbs 11/12 are the
+    // precedent — a client asking the host to write its own config) plus something to do about these
+    // two being read at hostd LAUNCH with no live reload, which is a protocol change and a decision,
+    // not a platform flag. Until then the row goes where its actuator is.
     LayoutGroup {
         section: Section::Agents,
         title: "Agent Behaviour (host)",
         timing: ApplyTiming::Reconnect,
-        platform: Platform::Both,
+        platform: Platform::Mac,
         rows: &[
             LayoutRow {
                 key: "agent-prevent-sleep",
                 subtitle: "Keep the host awake while an agent is working.",
                 control: Control::Toggle { glyph: "zzz" },
-                platform: Platform::Both,
+                platform: Platform::Mac,
             },
             LayoutRow {
                 key: "agent-resume-on-recovery",
@@ -924,7 +965,7 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                 control: Control::Toggle {
                     glyph: "arrow.clockwise",
                 },
-                platform: Platform::Both,
+                platform: Platform::Mac,
             },
         ],
     },
@@ -1339,11 +1380,17 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
             },
         ],
     },
+    // FEC is SYMMETRIC, and the note inside this group has always said so. The client reassembler
+    // resolves `SLOPDESK_FEC_M` / `_FEC_K` at its OWN end — `AdaptiveFECPolicy.makeFECScheme()` is
+    // the default argument of `SlopDeskVideoClientSession`'s `fec:` as much as it is the host
+    // packetizer's — so a phone that cannot set them is a phone pinned to `m == 1` while the host it
+    // dials runs a multi-loss code. That is not a scoped-out row; it is the one end of a two-ended
+    // setting left unable to hold up its half, which the note below asks for in words.
     LayoutGroup {
         section: Section::Advanced,
         title: "Video · Forward Error Correction",
         timing: ApplyTiming::Reconnect,
-        platform: Platform::Mac,
+        platform: Platform::Both,
         rows: &[
             LayoutRow {
                 key: "video-fec-m",
@@ -1351,7 +1398,7 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                 control: Control::Stepper {
                     range: Stepper::VideoFecParity,
                 },
-                platform: Platform::Mac,
+                platform: Platform::Both,
             },
             LayoutRow {
                 key: "video-fec-k",
@@ -1359,7 +1406,7 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                 control: Control::Stepper {
                     range: Stepper::VideoFecGroup,
                 },
-                platform: Platform::Mac,
+                platform: Platform::Both,
             },
             // The warning was a hand-placed `HStack` with a triangle glyph inside the surface. It
             // is prose about the group rather than about either row, which is what a note is.
@@ -1368,15 +1415,19 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                 subtitle: "Both ends must agree: set these IDENTICALLY on the host and the client, or the \
                            two disagree about how to rebuild a lost packet.",
                 control: Control::Note,
-                platform: Platform::Mac,
+                platform: Platform::Both,
             },
         ],
     },
+    // The pacer is the CLIENT's presentation clock. `VideoWindowPipeline` reads `SLOPDESK_PACER`
+    // through `EnvConfig` on whichever device is doing the looking, and deadline mode buys its
+    // smoothness on a JITTERY link — which is a phone on cellular far more often than a Mac on the
+    // same LAN as its host. Nothing host-side reads this key at all.
     LayoutGroup {
         section: Section::Advanced,
         title: "Video · Pacer",
         timing: ApplyTiming::Reconnect,
-        platform: Platform::Mac,
+        platform: Platform::Both,
         rows: &[LayoutRow {
             key: "video-pacer",
             subtitle: "Whether a decoded frame waits for a smoothness deadline or shows on arrival.",
@@ -1384,13 +1435,11 @@ pub(crate) const GROUPS: &[LayoutGroup] = &[
                 group: Group::VideoPacer,
                 glyph: None,
             },
-            platform: Platform::Mac,
+            platform: Platform::Both,
         }],
     },
-    // The one video row a phone reaches. The other five are read by the host daemon off a sidecar
-    // file on the machine hostd runs on, so a phone editing them would write a file nothing opens;
-    // this one is `MetalVideoRenderer`'s own unsharp pass, in the client, on whichever device is
-    // doing the looking — and a phone screen at a 1x stream is exactly where it earns its keep.
+    // `MetalVideoRenderer`'s own unsharp pass, in the client, on whichever device is doing the
+    // looking — and a phone screen at a 1x stream is exactly where it earns its keep.
     LayoutGroup {
         section: Section::Advanced,
         title: "Video · Client render",
@@ -1520,13 +1569,22 @@ mod tests {
 
     /// The video flags split by WHICH MACHINE READS THEM, not by which page they sit on.
     ///
-    /// Five are folded into `video-prefs.json` and read by the host daemon at launch, so a phone
-    /// editing one would write a file nothing on that device opens. `video-sharpen` is
-    /// `MetalVideoRenderer`'s unsharp pass, in the client, on whichever device is looking — and a
-    /// phone at a 1x stream is where it earns its keep. Asserted per key rather than per group so
-    /// moving one between groups cannot quietly move it between platforms.
+    /// THIS TEST USED TO PIN THE OPPOSITE, and the rule changed under it rather than the test being
+    /// loosened to fit. It asserted `["video-sharpen"]` on the strength of "five are folded into
+    /// `video-prefs.json` and read by the host daemon at launch, so a phone editing one would write
+    /// a file nothing on that device opens". The premise was half true: the sidecar IS host-only,
+    /// but `PreferencesStore.applyVideoAndAgent()` folds the SAME fields into the client's own
+    /// `EnvConfig.overlay` on every platform, and three of the five are read from there BY THE
+    /// CLIENT — `SLOPDESK_FEC_M` / `_FEC_K` by the reassembler's
+    /// `AdaptiveFECPolicy.makeFECScheme()` (symmetric: `docs/20-wire-protocol.md` §9.4, and the
+    /// group's own note says so), `SLOPDESK_PACER` by `VideoWindowPipeline`'s presentation
+    /// clock. Only the two QP knobs are genuinely encoder-side: `QPController` is the sole
+    /// reader and it lives in `SlopDeskVideoHost`.
+    ///
+    /// Asserted per key rather than per group so moving one between groups cannot quietly move it
+    /// between platforms.
     #[test]
-    fn only_the_client_side_video_row_reaches_the_phone() {
+    fn the_phone_reaches_every_video_row_its_own_end_reads() {
         let reachable = |mac: bool| -> Vec<&'static str> {
             groups(Section::Advanced, mac)
                 .iter()
@@ -1537,8 +1595,8 @@ mod tests {
         };
         assert_eq!(
             reachable(false),
-            ["video-sharpen"],
-            "the phone reaches exactly the row its own renderer reads",
+            ["video-fec-m", "video-fec-k", "video-pacer", "video-sharpen"],
+            "the phone reaches exactly the rows its own end resolves",
         );
         for key in [
             "video-qp-sharp",
@@ -1549,6 +1607,104 @@ mod tests {
             "video-sharpen",
         ] {
             assert!(reachable(true).contains(&key), "the Mac lost {key}");
+        }
+        for key in ["video-qp-sharp", "video-qp-coarse"] {
+            assert!(
+                !reachable(false).contains(&key),
+                "{key} is the ENCODER's quantiser — only `SlopDeskVideoHost::QPController` reads it, so a \
+                 phone editing it would write a file nothing on that device opens",
+            );
+        }
+    }
+
+    /// The agent flags split the same way the video ones do: by WHICH MACHINE READS THEM.
+    ///
+    /// `agent-prevent-sleep` / `agent-resume-on-recovery` reach their reader through the
+    /// `video-prefs.json` sidecar in the EDITING device's Application Support, and the only readers
+    /// are `SlopDeskHost` + `slopdesk-hostd`. A Mac can be the machine hostd runs on; a phone
+    /// cannot, so on the phone the toggle was a switch wired to nothing. The other Agents rows
+    /// are the CLIENT's own (hook install, notification behaviour) and stay on both halves —
+    /// asserted as a pair, so withholding these two cannot quietly become withholding the page.
+    #[test]
+    fn the_host_read_agent_rows_do_not_reach_the_phone() {
+        let reachable = |mac: bool| -> Vec<&'static str> {
+            groups(Section::Agents, mac)
+                .iter()
+                .flat_map(|group| rows(group, mac))
+                .map(|row| row.key)
+                .collect()
+        };
+        for key in ["agent-prevent-sleep", "agent-resume-on-recovery"] {
+            assert!(reachable(true).contains(&key), "the Mac lost {key}");
+            assert!(
+                !reachable(false).contains(&key),
+                "{key} is read only by hostd, off a sidecar in the EDITING device's own Application Support \
+                 — a phone drawing it moves a switch that reaches no machine",
+            );
+        }
+        assert!(
+            reachable(false).len() > 1,
+            "the phone still has an Agents page of its own rows",
+        );
+    }
+
+    /// The Controls rows split by WHAT INPUT THE DEVICE HAS, which is the third reading of the same
+    /// rule the two tests above apply — a row belongs on a half when that half's own end reads it.
+    ///
+    /// Six rows on this page were `Both` while nothing on the phone read them, and they went two
+    /// ways. FOUR are hardware carve-outs and are now withheld, with the reason written at each row
+    /// rather than only here: a device with no pointer over its panes cannot follow one
+    /// (`focusFollowsMouse`), the iOS surface delivers no right button for a right-click action to
+    /// choose between (`rightClickAction` — whose token DOES reach the iOS libghostty config, which
+    /// is why the reason is the missing EVENT and not a missing API), and a long-press menu of
+    /// explicit verbs has no bare-tap default for either ⌘-click row to govern, on an iPad with a
+    /// hardware keyboard included, because the iOS tap handler takes no `UIEvent` at all.
+    ///
+    /// The other TWO are the opposite verdict and are asserted here as the same fact: a hardware
+    /// keyboard genuinely has ⌘Z and ⌥, so withholding them would have been the wrong repair, and
+    /// the phone's own end was made to read them instead — `TerminalInputHost.takesPromptUndo(_:)`
+    /// through the same `PromptEditPolicy` the Mac's surface calls, and
+    /// `slopdesk_workspace::phone_key::OptionAsAlt` through the encoder every phone press already
+    /// crosses. Asserted TOGETHER with the four so that a later flip in either direction has to
+    /// argue with one test rather than quietly pick the easy half.
+    ///
+    /// The withheld set is asserted EXACTLY: a fifth withholding is a ruling, and a ruling belongs
+    /// in a diff that says what it is.
+    #[test]
+    fn the_controls_rows_split_by_the_input_the_device_has() {
+        let reachable = |mac: bool| -> Vec<&'static str> {
+            groups(Section::Controls, mac)
+                .iter()
+                .flat_map(|group| rows(group, mac))
+                .map(|row| row.key)
+                .filter(|key| !key.is_empty())
+                .collect()
+        };
+        let phone = reachable(false);
+        let withheld: Vec<&'static str> = reachable(true)
+            .into_iter()
+            .filter(|key| !phone.contains(key))
+            .collect();
+        assert_eq!(
+            withheld,
+            [
+                "controls.focusFollowsMouse",
+                "controls.rightClickAction",
+                "controls.linkCmdClick",
+                "controls.linkCmdShiftClick",
+                "controls.autoSecureInput",
+                "controls.secureInputIndicator",
+            ],
+            "the phone is withheld exactly the Controls rows no code on it reads — the first four are the \
+             pointer and the modified click it has no hardware for, the last two are Secure Event Input, \
+             which is process-global and has no iOS form",
+        );
+        for key in ["controls.undoAtPrompt", "controls.optionAsAlt"] {
+            assert!(
+                phone.contains(&key),
+                "{key} is a HARDWARE KEYBOARD's, which an iPad has — the repair for a row nothing on the \
+                 phone read was to make the phone read it, not to take the row away",
+            );
         }
     }
 

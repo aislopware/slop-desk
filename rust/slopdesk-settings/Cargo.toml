@@ -1,0 +1,114 @@
+# `slopdesk-settings` — what Settings OFFERS, as data.
+#
+# ## Why it is its own crate
+# Five thousand lines of catalogue: the sections, the groups, the choices in each, every setting's
+# one label and one description, the scalar ladders' stops and readouts, and the two projections
+# the window chrome switches between. It is the largest single body in the tree that decides
+# nothing — a change here changes a string or a stop, never a behaviour — and it was sitting in the
+# same crate as the tree operations, which is how the workspace document's domain rules came to be
+# a dependency of anything that wanted to know a slider's default.
+#
+# ## Why it is a leaf
+# Zero dependencies, ours or anyone's, and the module graph says it earns that: nothing in here
+# reaches for a pane, a tab or a session. `settings_layout` and `settings_rows` are mutually
+# recursive — a row needs its page and a page needs its rows — and that cycle is the reason they
+# are one crate rather than two.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-settings"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The Settings catalogue for slopdesk — sections, rows, ladders and the two projections"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_settings"
+path = "src/lib.rs"
+
+[dependencies]
+# None, on purpose. A catalogue that needed a pane would not be a catalogue.
+
+# Settings is not a hot path, but the profile is shared with its callers so a mixed build does not
+# recompile the tree twice.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml` and `rust/slopdesk-wire/Cargo.toml`. A literal
+# copy rather than inherited, because inheriting would mean being a member, which is what the
+# profile above forbids.
+#
+# `unsafe_code` is FORBID, not deny, and here it is the POINT rather than a nicety: this is the code
+# the Swift side could only make fast by leaving safety, and forbid — unlike deny — cannot be
+# re-allowed downstream by whoever later wants a SIMD kernel.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dev-dependency's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never
+#   `addingProduct`/`fma`)". FMA rounds once where the wire rounds twice, so taking the lint's
+#   advice changes the very `f64` bit patterns `golden/golden_vectors.json` pins. Crate-wide
+#   rather than per-site because every geometry expression would otherwise carry the same
+#   `#[expect]` and the reason is a repo invariant, not a local judgement.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

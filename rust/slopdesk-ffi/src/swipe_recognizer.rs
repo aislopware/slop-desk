@@ -18,8 +18,8 @@ use slopdesk_video::swipe_peel::{
     SwipePeelPlanner, history_gated,
 };
 use slopdesk_video::swipe_recognizer::{
-    DEFAULT_FIRE_TRAVEL, DOMINANCE, FLICK_MAX_DURATION, LiveCandidate, MOMENTUM_WINDOW, REFRACTORY,
-    RecognizerState, SLOW_DOMINANCE, SLOW_GRACE_MAX_DURATION, SLOW_RELAXED_DOMINANCE, SwipeNavRecognizer,
+    DEFAULT_FIRE_TRAVEL, DOMINANCE, FLICK_MAX_DURATION, LiveCandidate, REFRACTORY, RecognizerState,
+    SLOW_DOMINANCE, SLOW_GRACE_MAX_DURATION, SLOW_RELAXED_DOMINANCE, SwipeNavRecognizer,
     slow_required_travel,
 };
 
@@ -53,8 +53,6 @@ pub struct SlopDeskSwipeConstants {
     pub flick_max_duration: f64,
     /// The longest a slow deliberate swipe may last, in seconds.
     pub slow_grace_max_duration: f64,
-    /// How long an armed candidate may coast awaiting momentum, in seconds.
-    pub momentum_window: f64,
     /// The post-fire window in which nothing may fire again, in seconds.
     pub refractory: f64,
     /// The default on-glass travel that fires at lift, in points.
@@ -221,7 +219,6 @@ pub const extern "C" fn slopdesk_swipe_constants() -> SlopDeskSwipeConstants {
         slow_relaxed_dominance: SLOW_RELAXED_DOMINANCE,
         flick_max_duration: FLICK_MAX_DURATION,
         slow_grace_max_duration: SLOW_GRACE_MAX_DURATION,
-        momentum_window: MOMENTUM_WINDOW,
         refractory: REFRACTORY,
         default_fire_travel: DEFAULT_FIRE_TRAVEL,
     }

@@ -31,9 +31,10 @@
 //! ## Identity is passed in, never invented
 //!
 //! An op that needs a fresh pane, tab, session or split takes an [`IdSource`]. The reason is
-//! [`crate::identity`]'s: with the entropy outside, the same inputs give the same tree forever —
-//! and an INTENT can supply the id the host already chose, so a client's optimistic overlay inserts
-//! the same leaf the host will, rather than one it has to reconcile away a round trip later.
+//! [`slopdesk_ids::identity`]'s: with the entropy outside, the same inputs give the same tree
+//! forever — and an INTENT can supply the id the host already chose, so a client's optimistic
+//! overlay inserts the same leaf the host will, rather than one it has to reconcile away a round
+//! trip later.
 //!
 //! ## Relocation keeps the id
 //!
@@ -43,9 +44,10 @@
 
 use std::collections::BTreeMap;
 
+use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+
 use crate::focus::{self, FocusDirection};
 use crate::geometry::{Point, Rect, Size};
-use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
 use crate::session::{DetachedPane, NewTabPosition, PaneSpec, Session, Tab};
 use crate::split_layout;
 use crate::split_tree::{MAX_DEPTH, PaneDropEdge, SplitAxis, SplitNode, SplitWeight, WeightedChild};
@@ -1199,8 +1201,8 @@ impl RepairPass {
     /// How many identities this pass can spend over a workspace of that shape.
     ///
     /// A CEILING, not a count: the caller pre-mints a pool because this crate holds no entropy
-    /// ([`crate::identity`]), and a pool one short would REPEAT an identity rather than fail — two
-    /// tabs born with one id, which surfaces days later as a tab that will not close.
+    /// ([`slopdesk_ids::identity`]), and a pool one short would REPEAT an identity rather than fail
+    /// — two tabs born with one id, which surfaces days later as a tab that will not close.
     ///
     /// Three for a workspace with no session at all (a session, a tab and a pane, which is what a
     /// re-seed from nothing costs), two per session that lost its tabs, and two per detached pane
@@ -1239,6 +1241,8 @@ mod tests {
 
     use std::collections::BTreeMap;
 
+    use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+
     use super::{
         RepairPass, TileLayout, break_pane_to_tab, close_detached_pane, close_pane, close_session, close_tab,
         detach_pane, focus_pane, insert_session, insert_tab, locate, mint_detached_pane, move_leaf,
@@ -1246,7 +1250,6 @@ mod tests {
         redocking_detached_panes, rename_session, rename_tab, repaired, select_session, set_divider_weight,
         split_pane, swap_panes, updating_spec,
     };
-    use crate::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
     use crate::session::{NewTabPosition, PaneKind, PaneSpec, Session, Tab};
     use crate::split_tree::{PaneDropEdge, SplitAxis, SplitNode};
     use crate::workspace::TreeWorkspace;

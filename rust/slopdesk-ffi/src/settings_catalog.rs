@@ -1,6 +1,6 @@
 //! What Settings offers, in C: the taxonomy, the apply timings and the scalar ladders.
 //!
-//! The rules are `slopdesk_workspace::settings_catalog`; what is here is the marshalling.
+//! The rules are `slopdesk_settings::settings_catalog`; what is here is the marshalling.
 //!
 //! ## Where the OPTION GROUPS went
 //!
@@ -23,7 +23,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::settings_catalog::{self, ApplyTiming, Ladder, Section, Stepper};
+use slopdesk_settings::settings_catalog::{self, ApplyTiming, Ladder, Section, Stepper};
 
 use crate::{borrow, deliver};
 

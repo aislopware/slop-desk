@@ -31,7 +31,7 @@
 //! rather than through the ⌘click behaviour: wiring them to the configurable gesture would let
 //! `link-cmd-click = copy` silently turn a key that says "open" into one that copies.
 
-use slopdesk_workspace::shell_quoting;
+use slopdesk_ids::shell_quoting;
 
 use crate::link::DetectedLinkKind;
 

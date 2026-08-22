@@ -1,6 +1,6 @@
 //! One option group's choices, in C.
 //!
-//! The rules are `slopdesk_workspace::settings_catalog`; what is here is the marshalling.
+//! The rules are `slopdesk_settings::settings_catalog`; what is here is the marshalling.
 //!
 //! ## A GROUP crosses, because a group is what the caller asked for
 //!
@@ -54,7 +54,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::settings_catalog::{self, Group};
+use slopdesk_settings::settings_catalog::{self, Group};
 
 use crate::deliver;
 
@@ -119,7 +119,7 @@ mod tests {
                   truncated delivery read as an empty group and pass"
     )]
 
-    use slopdesk_workspace::settings_catalog::{self, Group};
+    use slopdesk_settings::settings_catalog::{self, Group};
 
     use super::slopdesk_settings_option_group;
 

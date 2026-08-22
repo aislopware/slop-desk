@@ -32,12 +32,12 @@
 //! and `block_hollow`, which are not, because they were not. Renaming one to look like its
 //! neighbours would silently reset that setting on every machine that had it set.
 //!
-//! Two of the enums behind these — [`crate::session::NewTabPosition`] is not among them — repair
-//! rather than fail: their Swift `init(rawValue:)` is NON-FAILABLE and falls back to a default. So
-//! a token misspelled here does not vanish, which would at least be visible as a missing card; it
-//! becomes a SECOND card writing the default, indistinguishable on screen from the real one. That
-//! is why `SettingsOptionCatalogTests` asserts a group has no duplicate values as well as no
-//! missing ones — the duplicate is the only trace a misspelling leaves.
+//! Two of the enums behind these — `slopdesk_tree::session::NewTabPosition` is not among them —
+//! repair rather than fail: their Swift `init(rawValue:)` is NON-FAILABLE and falls back to a
+//! default. So a token misspelled here does not vanish, which would at least be visible as a
+//! missing card; it becomes a SECOND card writing the default, indistinguishable on screen from the
+//! real one. That is why `SettingsOptionCatalogTests` asserts a group has no duplicate values as
+//! well as no missing ones — the duplicate is the only trace a misspelling leaves.
 //!
 //! ## Captions are the honesty channel
 //!

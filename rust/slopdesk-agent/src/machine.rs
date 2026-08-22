@@ -314,6 +314,12 @@ impl ClaudeStatusMachine {
 
     /// How many human-blocking calls are outstanding — the block ledger's depth. Zero whenever the
     /// pane is not hook-blocked.
+    ///
+    /// TEST-ONLY: no production caller in either language, and `standing_block_kind` (which does
+    /// cross) reports `.last()` and so cannot tell one entry from two. Gated rather than deleted
+    /// because it is the only observer that pins the ledger's dedup rule — see
+    /// `a_repeated_notification_is_one_entry_not_two`.
+    #[cfg(test)]
     #[must_use]
     pub const fn outstanding_block_count(&self) -> usize {
         self.block_ledger.len()

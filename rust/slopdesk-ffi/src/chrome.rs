@@ -1,6 +1,6 @@
 //! What the window's chrome shows around the panes, in C.
 //!
-//! The rules are `slopdesk_workspace::chrome`; what is here is the marshalling. Nothing allocates
+//! The rules are `slopdesk_settings::chrome`; what is here is the marshalling. Nothing allocates
 //! and nothing crosses through a buffer — the widest answer is three flags and a fraction, which
 //! fits in a struct returned by value.
 //!
@@ -11,7 +11,7 @@
 //! `present` flag beside its fraction. Both are §4's rule read at the scale of one value: the
 //! refusal must be outside the range of every real answer, or a caller will one day read it as one.
 
-use slopdesk_workspace::chrome::{
+use slopdesk_settings::chrome::{
     self, AutoHideMode, CloseConfirm, DockTile, DwellGate, DwellPhase, Rollup, SidebarState,
 };
 

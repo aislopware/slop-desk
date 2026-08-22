@@ -6,14 +6,26 @@
 // The SEAM types (`TerminalRendererFactory`,
 // `VideoWindowFactory`, `RemoteWindowDiscovery`, `RemoteWindowSummary`) live in
 // `SlopDeskWorkspaceCore`; the seam registrations below stay PRESERVED — only the production renderer/video/discovery
-// closures are injected here (the GUI app target links libghostty/SlopDeskVideoClient; the
+// closures are injected here (the GUI app target links libghostty/SlopDeskVideoClientMac; the
 // cross-platform UI library cannot). This file is part of the xcodegen Xcode app target (NOT
 // `swift build`).
 import SlopDeskMacUI
 import SlopDeskWorkspaceCore
 import SwiftUI
-#if canImport(SlopDeskVideoClient)
+
+// TWO MODULES, ONE GATE (docs/56 §3, the video carve). `SlopDeskVideoClient` is the platform-free
+// engine — session, pipeline, connection, discovery — and `SlopDeskVideoClientMac` is the AppKit HALF
+// that draws it. The phone shell links `SlopDeskVideoClientPhone` instead and NEITHER half is
+// importable from the other, which is the whole point: the two-armed `#if os(macOS)` file this
+// replaced could not be read without holding both platforms in your head at once.
+//
+// The gate keys on the HALF, not the engine, because the half is what this shell actually names —
+// and the half declares `SlopDeskVideoClient` as a dependency, so importable-half implies
+// importable-engine. Gating on the engine would compile a shell that can reach the pipeline but not
+// the view that mounts it.
+#if canImport(SlopDeskVideoClientMac)
 import SlopDeskVideoClient
+import SlopDeskVideoClientMac
 #endif
 
 /// The `@main` entry for the macOS Xcode app target.
@@ -63,26 +75,26 @@ struct ClientAppMain {
 
         // PATH 2 (GUI video path, doc 17 §3): register the production remote-GUI-window
         // view. The cross-platform view layer cannot reference
-        // `SlopDeskVideoClient.VideoWindowView` directly (it would pull VideoToolbox + Metal
+        // `SlopDeskVideoClientMac.MacVideoWindowView` directly (it would pull VideoToolbox + Metal
         // into the headless `swift build`/tests), so the GUI app target — which links
-        // `SlopDeskVideoClient` — injects it here at launch. With no registration the seam
+        // `SlopDeskVideoClientMac` — injects it here at launch. With no registration the seam
         // shows the gated `RemoteWindowPlaceholderView`.
-        #if canImport(SlopDeskVideoClient)
+        #if canImport(SlopDeskVideoClientMac)
         // ONE BUILDER, TWO REGISTRATIONS (docs/56 stage F, risk 2). The AppKit mount is built from the
-        // SAME `VideoWindowView` value the SwiftUI mount is, so the two cannot drift: every seam
+        // SAME `MacVideoWindowView` value the SwiftUI mount is, so the two cannot drift: every seam
         // callback threaded below is threaded once. Splitting them into two closures here is how the
         // twelve injector sinks end up wired on one path and forgotten on the other.
         @MainActor
-        func videoPane(_ descriptor: RemoteWindowDescriptor, _ paneContext: RemotePaneContext) -> VideoWindowView {
+        func videoPane(_ descriptor: RemoteWindowDescriptor, _ paneContext: RemotePaneContext) -> MacVideoWindowView {
             // LIVE path when the descriptor carries a full endpoint (host + media/cursor
             // ports), entered via the Remote-window panel: build the VideoWindowConnection
-            // and the orchestrator-backed VideoWindowView(title:connection:). Otherwise the
+            // and the orchestrator-backed MacVideoWindowView(title:connection:). Otherwise the
             // chrome-only initializer (no live decode) — the seam's preview/placeholder path.
             //
             // `paneContext` (active state + the read-only `inputEnabled` gate + activate/canvas-
             // scroll callbacks) is destructured into primitives here — `SlopDeskVideoClient` cannot import
             // `SlopDeskClientUI` (the seam exists for exactly that reason), so the context type stays on the
-            // `SlopDeskClientUI` side and only its Bools + closures cross into `VideoWindowView`.
+            // `SlopDeskClientUI` side and only its Bools + closures cross into `MacVideoWindowView`.
             if descriptor.hasEndpoint {
                 let connection = VideoWindowConnection(
                     host: descriptor.host,
@@ -91,7 +103,7 @@ struct ClientAppMain {
                     windowID: descriptor.windowID,
                     displayID: descriptor.displayID, // full-desktop pane → wire helloDisplay
                 )
-                return VideoWindowView(
+                return MacVideoWindowView(
                     title: descriptor.title,
                     // Smart-zoom ⌘0 gate (`PinchZeroPolicy`): the pane's app display name rides
                     // the descriptor (client seam, not wire); empty (desktop pane) fails open.
@@ -126,7 +138,7 @@ struct ClientAppMain {
                     onSessionRejected: paneContext.onSessionRejected,
                 )
             }
-            return VideoWindowView(title: descriptor.title)
+            return MacVideoWindowView(title: descriptor.title)
         }
         VideoWindowFactory.shared = { descriptor, paneContext in
             AnyView(videoPane(descriptor, paneContext))
@@ -221,7 +233,7 @@ struct ClientAppMain {
     }
 }
 
-#if canImport(SlopDeskVideoClient)
+#if canImport(SlopDeskVideoClientMac)
 /// The video module's persistent feed lane IS the WorkspaceCore seam's link — both halves are
 /// `@MainActor` with matching shapes. The conformance lives HERE (retroactive) because the video
 /// module deliberately never imports `SlopDeskWorkspaceCore` (the seam-split discipline).
@@ -230,5 +242,5 @@ extension WindowFeedChannel: @retroactive HostWindowFeedLink {}
 /// And the video pane's AppKit mount IS the seam's native host, for the same reason one file up: the
 /// video module never imports `SlopDeskWorkspaceCore`, so neither side can name the other's half and
 /// the app target — which links both — is the only place the two can be joined.
-extension VideoSurfaceHost: @retroactive RemoteSurfaceHosting {}
+extension MacVideoSurfaceHost: @retroactive RemoteSurfaceHosting {}
 #endif
