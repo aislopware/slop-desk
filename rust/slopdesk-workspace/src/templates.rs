@@ -167,7 +167,13 @@ pub fn built_in_launch_presets() -> Vec<LaunchPreset> {
 #[must_use]
 pub fn keystrokes(command: &str, cwd: Option<&str>) -> Vec<u8> {
     let mut out = Vec::new();
-    if let Some(path) = cwd.filter(|path| !path.is_empty()) {
+    // Trimmed, the way the command gate below is. The asymmetry this replaces was a real drift: the
+    // Swift face gated on a TRIMMED cwd and this gated on an untrimmed one, so a whitespace-only
+    // directory was "no directory" on one side and `cd '  '` — a line the shell answers with an
+    // error at every launch — on the other. Neither production caller passes one today, which is
+    // exactly why the pair could sit disagreeing. The gate only decides; the path is still quoted
+    // verbatim, because what was typed is what the person meant to type.
+    if let Some(path) = cwd.filter(|path| !path.trim().is_empty()) {
         // The whole line is literal UTF-8 — see the module's note on why a path must never reach the
         // token parser. The quoting is only so a directory with spaces survives.
         out.extend_from_slice(format!("cd {}", crate::shell_quoting::single_quoted(path)).as_bytes());
@@ -429,6 +435,13 @@ mod tests {
     fn an_empty_command_and_no_directory_sends_nothing() {
         assert!(keystrokes("", None).is_empty());
         assert!(keystrokes("   ", None).is_empty(), "whitespace is not a command");
+        assert!(keystrokes("", Some("")).is_empty());
+        // A whitespace-only directory is not a directory either, and it is the arm the Swift face
+        // used to answer differently: `cd '  '` is a line the shell only ever errors on.
+        assert!(
+            keystrokes("   ", Some("  ")).is_empty(),
+            "whitespace is not a directory"
+        );
     }
 
     #[test]

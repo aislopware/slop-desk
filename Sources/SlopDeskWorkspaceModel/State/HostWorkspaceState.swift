@@ -27,10 +27,15 @@ public enum WorkspaceObjectKind: UInt8, Sendable, CaseIterable {
 /// One addressable cell of the workspace document: `(kindTag, objectID, field)`.
 ///
 /// Fixed 18 bytes on the wire — `[u8 kindTag][16B objectID][u8 field]` — with NO length prefix,
-/// because every component is fixed-width. `Comparable` by exactly the wire's emission order
-/// (ascending kindTag, then objectID BYTES, then field) so a snapshot's bytes are deterministic and
-/// a diff never churns on Dictionary iteration order.
-public struct WorkspaceKey: Hashable, Sendable, Comparable {
+/// because every component is fixed-width.
+///
+/// Deliberately NOT `Comparable`. The wire's emission order is one rule and it lives in
+/// `slopdesk_wire::document::state`, where a `BTreeMap`'s key order IS that rule; this side asks
+/// for it through ``wsKeyOrder(_:)``. It used to be transcribed here as a hand-written `<`, which is
+/// the pair `docs/55` §8 catalogues — and the worst kind, because two orders never disagree loudly:
+/// they RE-EMIT. A snapshot stops being byte-deterministic and a diff churns on map iteration order,
+/// and every frame of that reads downstream exactly like a real change.
+public struct WorkspaceKey: Hashable, Sendable {
     public var kind: UInt8
     public var objectID: UUID
     public var field: UInt8
@@ -57,22 +62,6 @@ public struct WorkspaceKey: Hashable, Sendable, Comparable {
     /// holding a smaller copy reads a key out of the next key's bytes — neither of which is an
     /// error the decoder can raise.
     public static let encodedSize = Int(slopdesk_ws_key_encoded_size())
-
-    /// The objectID's 16 bytes in wire order.
-    public var objectIDBytes: [UInt8] {
-        let u = objectID.uuid
-        return [
-            u.0, u.1, u.2, u.3, u.4, u.5, u.6, u.7,
-            u.8, u.9, u.10, u.11, u.12, u.13, u.14, u.15,
-        ]
-    }
-
-    public static func < (lhs: Self, rhs: Self) -> Bool {
-        if lhs.kind != rhs.kind { return lhs.kind < rhs.kind }
-        let l = lhs.objectIDBytes, r = rhs.objectIDBytes
-        for i in 0..<16 where l[i] != r[i] { return l[i] < r[i] }
-        return lhs.field < rhs.field
-    }
 }
 
 // MARK: - Entry
@@ -137,14 +126,24 @@ public struct HostWorkspaceState: Equatable, Sendable {
 
     /// Every entry in the wire's canonical order. Deterministic bytes are what make a golden vector
     /// stable and a diff free of dictionary-order churn.
+    ///
+    /// The order is ``wsKeyOrder(_:)``'s — the far side's `BTreeMap` order — and never a `sorted()`
+    /// here, because a `Dictionary` that derives the emission order for itself is the second copy of
+    /// a rule the encoder already has.
     public var sortedEntries: [WorkspaceEntry] {
-        entries.keys.sorted().map { WorkspaceEntry(key: $0, value: entries[$0] ?? Data()) }
+        let keys = Array(entries.keys)
+        return wsKeyOrder(keys).compactMap { place in
+            guard keys.indices.contains(place) else { return nil }
+            let key = keys[place]
+            return WorkspaceEntry(key: key, value: entries[key] ?? Data())
+        }
     }
 
     /// Every key belonging to one object, in canonical order. The delete granularity: a field is
     /// retired by setting it to a zero-length value, an OBJECT is removed by deleting all of its keys.
     public func keys(ofKind kind: UInt8, objectID: UUID) -> [WorkspaceKey] {
-        entries.keys.filter { $0.kind == kind && $0.objectID == objectID }.sorted()
+        let matching = entries.keys.filter { $0.kind == kind && $0.objectID == objectID }
+        return wsKeyOrder(matching).compactMap { matching.indices.contains($0) ? matching[$0] : nil }
     }
 
     // MARK: Mutation
@@ -156,8 +155,11 @@ public struct HostWorkspaceState: Equatable, Sendable {
     /// Removes an OBJECT — every field under one `(kind, objectID)`. There is deliberately no
     /// "remove one field" mutator: a single field is retired with a zero-length value, and conflating
     /// the two would make "absent" and "empty" indistinguishable to a mirror.
+    ///
+    /// Filters in place rather than through ``keys(ofKind:objectID:)``: removals from a `Dictionary`
+    /// are order-free, so ordering them first would ask a whole question for an answer nothing reads.
     public mutating func removeObject(kind: UInt8, objectID: UUID) {
-        for key in keys(ofKind: kind, objectID: objectID) { entries.removeValue(forKey: key) }
+        entries = entries.filter { $0.key.kind != kind || $0.key.objectID != objectID }
     }
 
     // MARK: Diff / apply — the algebra
@@ -168,13 +170,21 @@ public struct HostWorkspaceState: Equatable, Sendable {
     /// The host computes this against the state a subscriber last ACKED — never against the last
     /// state it SENT (docs/45 §5.5, mosh SSP). A lost frame therefore self-heals on the next tick,
     /// because the next diff is recomputed from the same acked base.
+    /// Both lists are ordered AFTER the filter, not before it. The old shape ordered every key in
+    /// the document and then kept the few that changed — a tick that moves one divider paid a whole
+    /// canonical ordering of hundreds of cells to emit one. Ordering a subset preserves the relative
+    /// order of what is in it, so the wire sees exactly the same bytes for strictly less work.
     public func diff(from base: Self) -> WorkspaceStateDiff {
-        var sets: [WorkspaceEntry] = []
-        for key in entries.keys.sorted() {
-            let value = entries[key] ?? Data()
-            if base.entries[key] != value { sets.append(WorkspaceEntry(key: key, value: value)) }
+        let changed = entries.keys.filter { base.entries[$0] != (entries[$0] ?? Data()) }
+        let sets = wsKeyOrder(changed).compactMap { place -> WorkspaceEntry? in
+            guard changed.indices.contains(place) else { return nil }
+            let key = changed[place]
+            return WorkspaceEntry(key: key, value: entries[key] ?? Data())
         }
-        let deletes = base.entries.keys.filter { entries[$0] == nil }.sorted()
+        let removed = base.entries.keys.filter { entries[$0] == nil }
+        let deletes = wsKeyOrder(removed).compactMap {
+            removed.indices.contains($0) ? removed[$0] : nil
+        }
         return WorkspaceStateDiff(sets: sets, deletes: deletes)
     }
 

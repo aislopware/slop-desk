@@ -167,12 +167,16 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// coarsening can be capped well below it (e.g. 36) — keeps a scroll frame readable while still
     /// shrinking it ~80 KB → ~15-25 KB. Under const-QP (motion-keyed band) this is the upper end of the
     /// `[floor, AQP_MAX]` range a scroll frame may coarsen into.
-    private static let adaptiveQPMax: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_AQP_MAX"], let v = Int(s), v >= 1, v <= 51 {
-            return v
-        }
-        return VideoEncoder.maxAllowedFrameQP
-    }()
+    ///
+    /// The fifth `[1, 51]` knob of the shape ``VideoEncoder/envQP(_:default:)`` owns, and it had the
+    /// same hand-rolled reject its four siblings had: `SLOPDESK_AQP_MAX=0` asked for the sharpest
+    /// motion cap there is and silently got the coarsest. It CLAMPS now, like the other four and
+    /// like every other quantiser knob in the tree. Absent, empty and non-numeric are unchanged —
+    /// they answer ``VideoEncoder/maxAllowedFrameQP``, which is what the door's own default returns
+    /// for text that is not a number.
+    private static let adaptiveQPMax: Int =
+        VideoEncoder.envQP("SLOPDESK_AQP_MAX", default: VideoEncoder.maxAllowedFrameQP)
+            ?? VideoEncoder.maxAllowedFrameQP
 
     /// How fast the smoothed QP eases UP toward a coarser target on motion onset: the per-frame step is
     /// `(rawQP - smoothed) / N`. `N == 1` (default) ⇒ INSTANT — the QP jumps to the motion target on

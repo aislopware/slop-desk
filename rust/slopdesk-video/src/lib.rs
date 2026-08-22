@@ -162,6 +162,7 @@ pub mod coordinate_mapping;
 pub mod cursor;
 pub mod cursor_overlay;
 pub mod decode_admission;
+pub mod encoder_ceiling;
 pub mod error;
 pub mod escape_monitor;
 pub mod fec;

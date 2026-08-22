@@ -216,6 +216,7 @@ package enum RailRowsBuilder {
     package static func chrome(
         paneID: PaneID, kind: PaneKind, spec: PaneSpec?, tabID: TabID,
         representativePane: PaneID?, manualBadge: TabBadgeKind?, store: WorkspaceStore,
+        commandGates: CommandBadgeGates? = nil,
     ) -> RailRowChrome {
         // The host's coarse foreground-process name (wire type 26): the trailing row label, a
         // badge-resolver input, AND the pane-title fallback when the cwd is not known yet.
@@ -237,7 +238,10 @@ package enum RailRowsBuilder {
             progress: store.progress(for: paneID),
             unseenAgentDone: store.paneUnseenDone.contains(paneID),
             agentGates: store.agentBadgeGates(for: paneID),
-            commandGates: store.commandBadgeGates,
+            // Read here for a single row, and ONCE for a whole list — see `liveChrome(for:store:)`
+            // below, which is what a rail render calls. This is a global with no per-pane override,
+            // so the two spellings cannot disagree; what differs is how often it is asked.
+            commandGates: commandGates ?? store.commandBadgeGates,
         )
         // The blocked-row question: the host's blocking prompt, gated on the SAME predicate the
         // row view uses to pick its `.tail` truncation — status == .needsPermission AND a non-empty label —
@@ -268,6 +272,45 @@ package enum RailRowsBuilder {
             representativePane: representativePane,
             manualBadge: store.tabBadgeOverride(for: row.tabID), store: store,
         )
+    }
+
+    /// Every row's live chrome in ONE pass — what a rail render calls, instead of the single-row entry
+    /// per row.
+    ///
+    /// Three things above are per-RENDER, not per-row, and asking for them per row is what this
+    /// deletes. The command-badge gates are three `UserDefaults` reads behind a computed property with
+    /// no per-pane override, so a list re-read the same three globals once per row; the agent gates
+    /// are three more whenever the pane has no override, which is the ordinary case. Measured,
+    /// `swiftc -O`, two runs agreeing inside 0.3%: one `UserDefaults` bool read is **305 ns**, the six
+    /// a row asks for are **1.85 µs**, and a 24-row rail render spent **44.5 µs** re-reading two
+    /// settings that cannot change while it draws. The active session and its tab list are the third —
+    /// resolved once here rather than walked per row.
+    ///
+    /// The answer is positional: `result[i]` is `rows[i]`'s. A caller that only wants the badges maps
+    /// `\.badge` over it, which is what both sidebar headers do.
+    @MainActor
+    package static func liveChrome(for rows: [RailRow], store: WorkspaceStore) -> [RailRowChrome] {
+        guard !rows.isEmpty else { return [] }
+        let session = store.tree.activeSession
+        let commandGates = store.commandBadgeGates
+        // A split tab contributes several rows and they all resolve the SAME representative pane, so
+        // the tab walk is per tab rather than per row.
+        var representative: [TabID: PaneID] = [:]
+        for tab in session?.tabs ?? [] {
+            // A tab with no pane at all is ABSENT rather than present-and-nil, which is the same
+            // answer the single-row entry gives and keeps the lookup one optional deep.
+            guard let pane = tab.activePane ?? tab.allPaneIDs().first else { continue }
+            representative[tab.id] = pane
+        }
+        return rows.map { row in
+            let pane = representative[row.tabID]
+            return chrome(
+                paneID: row.id, kind: row.kind, spec: session?.specs[row.id], tabID: row.tabID,
+                representativePane: pane,
+                manualBadge: store.tabBadgeOverride(for: row.tabID), store: store,
+                commandGates: commandGates,
+            )
+        }
     }
 
     /// The title a row SHOWS right now — the whole live chain (rename → agent intent → structural →

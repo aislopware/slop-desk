@@ -175,6 +175,21 @@ package enum SimulatorPresentation {
 
     package static func noMatches(_ query: String) -> String { "No devices match “\(query)”." }
 
+    /// The filter, over the two fields a shelf of simulators is told apart by: the device's name and
+    /// its runtime.
+    ///
+    /// The TWIN of ``AndroidPresentation/matches(_:query:)``, and it is here rather than inlined in
+    /// each list for the reason that one is: `SimulatorDeviceList` (SwiftUI) and
+    /// `MacSimulatorDeviceList` (AppKit) are two drawings of one panel, and a filter each of them
+    /// spelled itself is a rule only one of them could be tested against. The predicate underneath
+    /// is ``DeviceRowFilter``'s, shared with both consoles.
+    package static func matches(_ devices: [SimulatorDevice], query: String) -> [SimulatorDevice] {
+        DeviceRowFilter.surviving(devices, query: query) { device, fields in
+            fields.add(device.name)
+            fields.add(device.runtime)
+        }
+    }
+
     /// The trailing text on a shut-down device's row: the live state while the device is CHANGING, the
     /// runtime when it is not and the heading has not already said it, and nothing at all otherwise.
     ///
@@ -433,6 +448,20 @@ package enum SimulatorPresentation {
             SimulatorPlateReading(
                 .arrowDownToLine, isFollowing ? "Following new output" : "Follow new output",
             )
+        }
+
+        /// Case-insensitive substring over the whole row — PROCESS INCLUDED, since "which process is
+        /// spamming this" is as common a question as "where is my message".
+        ///
+        /// The TWIN of ``AndroidPresentation/visible(_:filter:)``, over ``DeviceRowFilter``'s one
+        /// predicate. It is here rather than in each console for the same reason the list filter
+        /// above is: the SwiftUI drawer and the AppKit drawer were spelling it separately, and only
+        /// one of the two spellings was ever reached by a test.
+        package static func visible(_ lines: [DeviceLogLine], filter: String) -> [DeviceLogLine] {
+            DeviceRowFilter.surviving(lines, query: filter) { line, fields in
+                fields.add(line.message)
+                fields.add(line.name)
+            }
         }
 
         /// Three states, three sentences. "Nothing here" over a console that never connected is the

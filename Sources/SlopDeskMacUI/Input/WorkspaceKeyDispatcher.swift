@@ -190,11 +190,15 @@ final class WorkspaceKeyDispatcher {
     ///
     /// Pure — pinned by `DispatcherCodeSidebarYieldTests`.
     static func codePanelLocalAction(for chord: KeyChord) -> WorkspaceAction? {
-        let terminalReach: Set<KeyChord> = [
-            KeyChord(character: "`", [.control]), KeyChord(character: "`", [.command]),
-        ]
-        return terminalReach.contains(chord) ? .focusCodePanel : nil
+        terminalReach.contains(chord) ? .focusCodePanel : nil
     }
+
+    /// The two chords that hand the keyboard back. A `let`, not a literal inside the function: this is
+    /// asked once per keystroke for the whole time the editor holds focus, and a `Set` literal in the
+    /// body is a fresh set — and two fresh `KeyChord`s — allocated per key typed into the editor.
+    private static let terminalReach: Set<KeyChord> = [
+        KeyChord(character: "`", [.control]), KeyChord(character: "`", [.command]),
+    ]
 
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user

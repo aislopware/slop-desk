@@ -12,6 +12,9 @@
 //! I/O, deterministic to the bit. A non-finite input is dropped rather than integrated, so neither
 //! a bad event nor a clock glitch can poison the integrator.
 
+use crate::client_gestures::{
+    MOMENTUM_BEGIN, MOMENTUM_CONTINUE, MOMENTUM_END, SCROLL_CANCELLED, SCROLL_ENDED,
+};
 use crate::geometry::ordered_clamp;
 
 /// The phase of a scroll-velocity sample, as the platform's finer phase codes collapse to it.
@@ -33,18 +36,21 @@ impl ScrollPhase {
     /// read FIRST because it is the later half of one gesture: a frame carrying both a stale finger
     /// phase and a live momentum phase is coasting, not dragging.
     ///
-    /// The codes are the platform's: `CGScrollPhase` is 1 began, 2 changed, 4 ended, 8 cancelled;
-    /// `CGMomentumScrollPhase` is 1 begin, 2 continue, 3 end. An unknown code on either falls to
-    /// [`ScrollPhase::Active`], which tracks without arming a decay — the reading a stray sample
-    /// may not silently stop a live scroll with.
+    /// The codes are the platform's, and they are named rather than typed: the two fields use
+    /// DIFFERENT encodings — a momentum end is 3 where a scroll end is 4 — so a bare literal here
+    /// reads as if it belonged to whichever field the eye happened to be on. `client_gestures` owns
+    /// the table both this and the Mac client's phase mapping read.
+    ///
+    /// An unknown code on either falls to [`ScrollPhase::Active`], which tracks without arming a
+    /// decay — the reading a stray sample may not silently stop a live scroll with.
     #[must_use]
     pub const fn of_platform(scroll_phase: u8, momentum_phase: u8) -> Self {
         match momentum_phase {
-            3 => Self::Ended,
-            1 | 2 => Self::Momentum,
+            MOMENTUM_END => Self::Ended,
+            MOMENTUM_BEGIN | MOMENTUM_CONTINUE => Self::Momentum,
             _ => {
                 match scroll_phase {
-                    4 | 8 => Self::Ended,
+                    SCROLL_ENDED | SCROLL_CANCELLED => Self::Ended,
                     _ => Self::Active,
                 }
             },

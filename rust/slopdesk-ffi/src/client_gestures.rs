@@ -410,6 +410,36 @@ pub const extern "C" fn slopdesk_touch_scroll_phase(is_first: bool, is_last: boo
     client_gestures::scroll_phase(is_first, is_last)
 }
 
+/// The `CGScrollPhase` byte for an `NSEvent.Phase` mask — the trackpad's half of what the door
+/// above answers for a finger.
+///
+/// The mask crosses as its raw bits, because that is the shape the platform already has: turning it
+/// into a case index on the Swift side would put a table there, which is the table this door exists
+/// to remove. A phase this side does not recognise answers `0`, the phase-less wheel tick.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_cg_scroll_phase_code(ns_phase: u32) -> u8 {
+    client_gestures::cg_scroll_phase_code(ns_phase)
+}
+
+/// The `CGMomentumScrollPhase` byte for an `NSEvent.momentumPhase` mask.
+///
+/// Separate from the door above because the two platform fields encode the SAME three edges
+/// differently — an end is 4 in one and 3 in the other — so one door taking a "which field" flag
+/// would be a door whose answer depends on getting the flag right, which is the mistake back again
+/// under a different name.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_cg_momentum_phase_code(ns_phase: u32) -> u8 {
+    client_gestures::cg_momentum_phase_code(ns_phase)
+}
+
 /// Clamps a platform tap count into the wire's byte, floored at 1 and saturating at 255.
 #[unsafe(no_mangle)]
 #[expect(
@@ -431,13 +461,38 @@ mod tests {
 
     use super::{
         SLOPDESK_TOUCH_ROUTE_PAN, SLOPDESK_TOUCH_ROUTE_SCROLL, SLOPDESK_TOUCH_ROUTE_ZOOM,
-        SlopDeskPinchPlanner, slopdesk_gesture_background_click, slopdesk_gesture_forwards_pointer,
-        slopdesk_pinch_planner_new, slopdesk_pinch_planner_plan, slopdesk_scroll_pin_new,
-        slopdesk_scroll_pin_route, slopdesk_touch_clamp_pan, slopdesk_touch_classify_pair,
-        slopdesk_touch_click_count, slopdesk_touch_constant, slopdesk_touch_escapes_tap_slop,
-        slopdesk_touch_pinched_zoom, slopdesk_touch_scroll_phase, slopdesk_touch_stepped_zoom,
-        slopdesk_zoom_reset_allowed, slopdesk_zoom_reset_policy_free, slopdesk_zoom_reset_policy_parse,
+        SlopDeskPinchPlanner, slopdesk_cg_momentum_phase_code, slopdesk_cg_scroll_phase_code,
+        slopdesk_gesture_background_click, slopdesk_gesture_forwards_pointer, slopdesk_pinch_planner_new,
+        slopdesk_pinch_planner_plan, slopdesk_scroll_pin_new, slopdesk_scroll_pin_route,
+        slopdesk_touch_clamp_pan, slopdesk_touch_classify_pair, slopdesk_touch_click_count,
+        slopdesk_touch_constant, slopdesk_touch_escapes_tap_slop, slopdesk_touch_pinched_zoom,
+        slopdesk_touch_scroll_phase, slopdesk_touch_stepped_zoom, slopdesk_zoom_reset_allowed,
+        slopdesk_zoom_reset_policy_free, slopdesk_zoom_reset_policy_parse,
     };
+
+    #[test]
+    fn the_two_platform_phase_fields_cross_as_the_bits_appkit_hands_over() {
+        // The mask arrives verbatim: began is `1 << 0`, ended is `1 << 3`. Neither number is the
+        // CoreGraphics code for the same edge, which is the whole point of asking.
+        assert_eq!(slopdesk_cg_scroll_phase_code(1 << 0), 1, "began");
+        assert_eq!(slopdesk_cg_scroll_phase_code(1 << 3), 4, "ended is a BIT here");
+        assert_eq!(slopdesk_cg_scroll_phase_code(1 << 5), 128, "may-begin");
+        assert_eq!(
+            slopdesk_cg_momentum_phase_code(1 << 3),
+            3,
+            "ended is an ORDINAL here"
+        );
+        assert_eq!(
+            slopdesk_cg_scroll_phase_code(1 << 1),
+            0,
+            "stationary is not a gesture edge"
+        );
+        assert_eq!(
+            slopdesk_cg_momentum_phase_code(1 << 4),
+            0,
+            "a coast cannot be cancelled"
+        );
+    }
 
     #[test]
     fn the_two_pointer_gates_cross_as_arguments() {

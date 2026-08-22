@@ -169,6 +169,14 @@ public enum GlobalSearchController {
 
         var groups: [GlobalSearchGroup] = []
         var totalMatches = 0
+        // The widest answer any source has given so far, as the next source's first guess. A short
+        // guess on this door does not cost a copy, it costs a second SCAN of that pane's whole
+        // scrollback — `slopdesk_find_matches` builds its answer to report the size and keeps
+        // nothing. The panes of one workspace hold similar buffers and are being asked the same
+        // question, so the first pane pays the retry and the rest do not; over-guessing costs a
+        // malloc. Measured through the door over a 10 000-row / 736 KB pane, a query matching every
+        // row: 3.52 ms against 1.83 ms — per pane, per keystroke, across every open pane at once.
+        var expected = 0
 
         for source in sources {
             let matches = TerminalSearchController.computeMatches(
@@ -176,7 +184,9 @@ public enum GlobalSearchController {
                 query: query,
                 caseSensitive: caseSensitive,
                 isRegex: isRegex,
+                expecting: expected,
             )
+            expected = Swift.max(expected, matches.count)
             guard !matches.isEmpty else { continue } // zero-hit source ⇒ no group
 
             var hits: [GlobalSearchHit] = []

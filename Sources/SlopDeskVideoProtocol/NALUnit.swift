@@ -49,7 +49,7 @@ public enum NALUnit {
     /// The units travel as the §4d blob list the FEC boundary already uses, because separately
     /// allocated payloads cannot cross as one span any other way.
     public static func join(_ units: [Data]) -> Data {
-        let packed = FECBlobList.encode(units.map(\.self))
+        let packed = FECBlobList.encode(units)
         let bound = units.reduce(0) { $0 + lengthPrefixSize + $1.count }
         let avcc = packed.withUnsafeBufferPointer { list in
             FECBlobList.call(bound: bound) { out, cap in

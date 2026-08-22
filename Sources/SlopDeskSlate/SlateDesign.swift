@@ -1573,8 +1573,57 @@ package enum Slate {
         /// way round either: `Font.custom(_:size:)` scales with Dynamic Type and `Font(_: NSFont)`
         /// does not, so deriving the SwiftUI rung from this one would silently pin the phone's text
         /// at a fixed size.
+        /// ⚠️ MEMOIZED, and the asymmetry it repairs is the reason to say so here. The proportional
+        /// twin every call site sits beside — `.systemFont(ofSize:weight:)` — is cached BY THE
+        /// FRAMEWORK; `NSFont(descriptor:size:)` is not, and neither is `.monospacedSystemFont`. So
+        /// one arm of `macDevicePanelLabel`'s own ternary was ~270 ns and the other was building a
+        /// CoreText font from scratch, with nothing in either language recording the difference.
+        ///
+        /// Measured in a scratch `swiftc -O` harness (NOT in the tree, two runs agreeing to 1.5%),
+        /// per call: **7.1–7.4 µs** on the mono-INSTALLED arm — of which 7.14 µs is
+        /// `NSFont(descriptor:size:)` alone — and **2.1 µs** on the SF Mono fallback arm, against
+        /// **35 ns** out of the table. That is ~200× and ~60×. `MacPaneDivider` was minting three of
+        /// them per divider per drag frame, for readouts that are hidden most of the time.
+        ///
+        /// The key needs no revision counter, and ``monoInstalled``'s own note above says why: fonts
+        /// do not appear mid-session, so the answer is a pure function of `(size, weight)` for the
+        /// life of the process. Lazy rather than a precomputed ladder because the size is a `CGFloat`
+        /// a caller may pass off the ladder (`macDevicePanelLabel(size:)` does), and a table built
+        /// from the tokens would leave exactly those callers paying the old price with nothing to say
+        /// so — the memo covers every input by construction instead.
+        ///
+        /// `@MainActor` is the compiler's own answer to a shared `static var`, and it costs nothing:
+        /// every caller is an `NSView` or an already-`@MainActor` builder, which is the same reason
+        /// ``Slate/Native`` carries it one screen up.
+        @MainActor
         package static func instrumentNative(
             _ size: CGFloat, weight: SlateNativeFont.Weight = .regular,
+        ) -> SlateNativeFont {
+            let rung = InstrumentRung(size: size, weight: weight)
+            if let struck = mintedInstruments[rung] { return struck }
+            let made = mintInstrument(size, weight: weight)
+            mintedInstruments[rung] = made
+            return made
+        }
+
+        /// One `(size, weight)` of the instrument voice. The whole key, because those are the only
+        /// two things the face is asked for — the family and the fallback are decided once, above.
+        private struct InstrumentRung: Hashable {
+            let size: CGFloat
+            let weight: SlateNativeFont.Weight
+        }
+
+        /// Every rung this process has asked for. Bounded in practice by the size ladder declared at
+        /// the top of this enum crossed with the four weights the chrome uses, which is why nothing
+        /// evicts: a cache that can hold a few dozen immutable font objects for a session is a table,
+        /// not a leak.
+        @MainActor private static var mintedInstruments: [InstrumentRung: SlateNativeFont] = [:]
+
+        /// The face itself, built once per rung — the body ``instrumentNative(_:weight:)`` had before
+        /// the table went in front of it, moved rather than rewritten so the memo cannot be a second
+        /// answer to the same question.
+        private static func mintInstrument(
+            _ size: CGFloat, weight: SlateNativeFont.Weight,
         ) -> SlateNativeFont {
             guard monoInstalled else { return .monospacedSystemFont(ofSize: size, weight: weight) }
             let descriptor = SlateNativeFont.systemFont(ofSize: size, weight: weight)

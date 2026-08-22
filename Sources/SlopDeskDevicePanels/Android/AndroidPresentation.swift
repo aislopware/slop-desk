@@ -389,16 +389,17 @@ package enum AndroidPresentation {
     }
 
     /// The filter, over every field somebody would type: the name, the model, the serial and the
-    /// platform version. Case- and diacritic-insensitive through `localizedCaseInsensitiveContains`,
-    /// which is the platform's own answer rather than a folded copy of it.
+    /// platform version.
+    ///
+    /// Case-folded by ``DeviceRowFilter``, which is where the predicate and the reason for it live —
+    /// including why it is no longer `localizedCaseInsensitiveContains`, and the correction that
+    /// that call was never diacritic-insensitive the way this comment used to claim.
     package static func matches(_ devices: [AndroidDevice], query: String) -> [AndroidDevice] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return devices }
-        return devices.filter {
-            $0.name.localizedCaseInsensitiveContains(trimmed)
-                || ($0.model ?? "").localizedCaseInsensitiveContains(trimmed)
-                || ($0.serial ?? "").localizedCaseInsensitiveContains(trimmed)
-                || ($0.release ?? "").localizedCaseInsensitiveContains(trimmed)
+        DeviceRowFilter.surviving(devices, query: query) { device, fields in
+            fields.add(device.name)
+            fields.add(device.model ?? "")
+            fields.add(device.serial ?? "")
+            fields.add(device.release ?? "")
         }
     }
 
@@ -630,12 +631,13 @@ package enum AndroidPresentation {
     /// Case-insensitive substring over the whole row — TAG INCLUDED, since "which tag is spamming
     /// this" is the first question anyone asks of a `logcat`, and the tag column is the Android
     /// difference: `logcat` carries the whole system rather than one process.
+    ///
+    /// The predicate is ``DeviceRowFilter``'s, shared with the simulator console and both device
+    /// lists; what stays here is WHICH two fields a `logcat` row lends it.
     package static func visible(_ lines: [DeviceLogLine], filter: String) -> [DeviceLogLine] {
-        let trimmed = filter.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return lines }
-        return lines.filter {
-            $0.message.localizedCaseInsensitiveContains(trimmed)
-                || $0.name.localizedCaseInsensitiveContains(trimmed)
+        DeviceRowFilter.surviving(lines, query: filter) { line, fields in
+            fields.add(line.message)
+            fields.add(line.name)
         }
     }
 

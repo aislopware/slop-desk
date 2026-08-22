@@ -287,11 +287,12 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
         let filter = coordinator.openQuicklyFilter
         for (pilled, pill) in pills { pill.setActive(pilled == filter) }
         refreshAgents(filter: filter)
-        let entries = OpenQuicklyPresentation.displayEntries(sections(filter: filter), filter: filter)
-        let selectable = selectableRows(filter: filter)
-        drawRows(entries, selectable: selectable)
+        let built = sections(filter: filter)
+        selectableRows = OpenQuicklyModel.selectable(built)
+        let entries = OpenQuicklyPresentation.displayEntries(built, filter: filter)
+        drawRows(entries, selectable: selectableRows)
         runHint.relabel(
-            OpenQuicklyPresentation.defaultActionLabel(for: selectedItem(in: selectable)?.kind),
+            OpenQuicklyPresentation.defaultActionLabel(for: selectedItem(in: selectableRows)?.kind),
         )
         fitToResults()
         revealSelection(entries)
@@ -395,9 +396,20 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
         return OpenQuicklyModel.sectioned(sources: sources, filter: filter, query: query)
     }
 
-    private func selectableRows(filter: OpenQuicklyFilter) -> [OpenQuicklyItem] {
-        OpenQuicklyModel.selectable(sections(filter: filter))
-    }
+    /// The rows the keyboard can land on, as the LAST ``draw()`` built them.
+    ///
+    /// ⚠️ HELD, not re-derived, and the correctness argument is the stronger half of the reason.
+    /// ``sections(filter:)`` walks every session, tab and pane (one ``TreeWorkspace/spec(for:)`` per
+    /// pane, which is itself a tree walk), re-ranks the whole folder frecency history and runs five
+    /// fuzzy passes — and ``draw()`` used to run it TWICE, once for the entries and once through a
+    /// `selectableRows(filter:)` that threw the sections away. `move`, `moveToEnd`, `setActions`,
+    /// `actSelected` and the ⌘-digit quick pick each ran a THIRD, so one arrow key cost three full
+    /// rebuilds of the corpus.
+    ///
+    /// A held list is also the only one that can be right: a clamp or a quick pick resolved against a
+    /// freshly-derived corpus is answering about rows the user is not looking at, because the drawn
+    /// list is whatever the last `draw()` produced. Every re-derivation site now reads what was drawn.
+    private var selectableRows: [OpenQuicklyItem] = []
 
     private func selectedItem(in rows: [OpenQuicklyItem]) -> OpenQuicklyItem? {
         guard selection >= 0, selection < rows.count else { return nil }
@@ -565,7 +577,7 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
         else { return false }
         switch chord {
         case let .quickPick(digit):
-            let rows = selectableRows(filter: coordinator.openQuicklyFilter)
+            let rows = selectableRows
             if let index = OpenQuicklyModel.quickPickIndex(digit, in: rows) { act(rows[index]) }
         case .toggleActions:
             setActions(visible: sheet.isHidden)
@@ -582,13 +594,12 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
 
     private func move(_ delta: Int) {
         select(ListNavigation.clampedSelection(
-            current: selection, delta: delta,
-            count: selectableRows(filter: coordinator.openQuicklyFilter).count,
+            current: selection, delta: delta, count: selectableRows.count,
         ))
     }
 
     private func moveToEnd(first: Bool) {
-        let count = selectableRows(filter: coordinator.openQuicklyFilter).count
+        let count = selectableRows.count
         select(ListNavigation.clampedSelection(
             current: 0, delta: first ? 0 : count - 1, count: count,
         ))
@@ -621,8 +632,7 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
             window?.makeFirstResponder(field)
             return
         }
-        guard let item = selectedItem(in: selectableRows(filter: coordinator.openQuicklyFilter))
-        else { return }
+        guard let item = selectedItem(in: selectableRows) else { return }
         sheet.isHidden = false
         sheet.begin(
             OpenQuicklyActions.rowActions(
@@ -668,8 +678,7 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
     // MARK: Acting
 
     private func actSelected() {
-        let rows = selectableRows(filter: coordinator.openQuicklyFilter)
-        guard let item = selectedItem(in: rows) else { return }
+        guard let item = selectedItem(in: selectableRows) else { return }
         act(item)
     }
 

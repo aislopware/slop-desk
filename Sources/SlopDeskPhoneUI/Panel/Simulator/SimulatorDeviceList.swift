@@ -92,23 +92,23 @@ struct SimulatorDeviceList: View {
     @State private var query = ""
 
     private var matches: [SimulatorDevice] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return model.devices }
-        return model.devices.filter {
-            $0.name.localizedCaseInsensitiveContains(trimmed)
-                || $0.runtime.localizedCaseInsensitiveContains(trimmed)
-        }
+        SimulatorPresentation.matches(model.devices, query: query)
     }
 
+    /// ⚠️ ``matches`` is read ONCE per pass and threaded into ``list(_:)``. It is not a field: with a
+    /// query in the box it is a filter over every device, and it was answering an emptiness test and
+    /// then building the sections from two separate derivations. The predicate itself is
+    /// ``SimulatorPresentation/matches(_:query:)`` now, shared with the AppKit twin.
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let shown = matches
+        return VStack(alignment: .leading, spacing: 0) {
             searchBar
             if model.devices.isEmpty {
                 message(SimulatorPresentation.noDevices)
-            } else if matches.isEmpty {
+            } else if shown.isEmpty {
                 message(SimulatorPresentation.noMatches(query))
             } else {
-                list
+                list(shown)
             }
         }
         // THE GROUND, like every other column in this window (ONE ISLAND, law 1) — the list sinks.
@@ -151,8 +151,8 @@ struct SimulatorDeviceList: View {
 
     // MARK: List
 
-    private var list: some View {
-        let sections = SimulatorDeviceSections.sections(for: matches)
+    private func list(_ shown: [SimulatorDevice]) -> some View {
+        let sections = SimulatorDeviceSections.sections(for: shown)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(sections) { section in

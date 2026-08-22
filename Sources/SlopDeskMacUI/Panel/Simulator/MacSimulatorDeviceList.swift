@@ -151,12 +151,7 @@ final class MacSimulatorDeviceList: NSView {
     }
 
     private var matches: [SimulatorDevice] {
-        let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return devices }
-        return devices.filter {
-            $0.name.localizedCaseInsensitiveContains(trimmed)
-                || $0.runtime.localizedCaseInsensitiveContains(trimmed)
-        }
+        SimulatorPresentation.matches(devices, query: query)
     }
 
     // MARK: The column

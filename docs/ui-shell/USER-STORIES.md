@@ -141,10 +141,12 @@ Flat list of every acceptance story across all epics in `BACKLOG.md`, tagged wit
 - **ES-E19-4** [E19] Switch to a horizontal (top/bottom) tab-bar layout with auto-hide-tab-bar. — GUI-verifiable
 
 ## E20 — CLI parity + watch + first-launch
-- **ES-E20-1** [E20] `slopdesk open/view/edit/config/font/theme/keybind/tab/pane/window` drive the running app; `--json` produces structured output. — both
+- **ES-E20-1** [E20] `slopdesk view/edit/config/font/keybind/tab/pane/window` drive the running app; `--json` produces structured output. — both
 - **ES-E20-2** [E20] `slopdesk watch <cmd>` shows a spinner during execution and a success/error badge on exit (exit codes 0/4/9 for `watch:claude`). — both
 - **ES-E20-3** [E20] `slopdesk tab badge --kind <kind>`, `pane capture`, `jump/learn/ignore`, `version`, and `completions <shell>` behave per the CLI reference. — both
 - **ES-E20-4** [E20] first-run: set On-Launch behavior, install the CLI, and install Claude Code hooks from a first-launch flow. — GUI-verifiable
+- **ES-E20-5** [E20] NOT YET IMPLEMENTED — `open`, `import`, `export`, `features`, `state:claude`, `ipc`, `theme` are `Availability::Planned`: `--help` lists them, no shell completes them, and typing one prints "designed but not implemented yet" and exits 2. — both
+- **ES-E20-6** [E20] NOT YET IMPLEMENTED — `theme list` / `theme import` of `spec/reference__cli.md` §Behaviors are `Planned` like their five siblings, so typing one is answered as designed-but-unbuilt rather than as a misspelling. It was absent from the table until 2026-08-22, which made it the one designed verb the CLI called a typo. Switching the ACTIVE theme is not part of it and never was — that ships today under the theme key of ES-E20-2's settings verb. — both
 
 ## E21 — Remote-window extension first-class
 - **ES-E21-1** [E21] The remote-window picker and connect-to-host overlay open from the workspace and create `.remoteGUI` panes. — GUI-verifiable

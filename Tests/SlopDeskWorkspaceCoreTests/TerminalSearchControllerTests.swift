@@ -233,6 +233,52 @@ final class TerminalSearchControllerTests: XCTestCase {
         XCTAssertEqual(c.matches.map(\.line), [0, 0, 2])
     }
 
+    // MARK: The answer buffer — every arm of the guess-then-retry
+
+    /// More matches than the stack guess holds, so the door reports a size the first buffer could not
+    /// take and the answer arrives on the retry. The count and the LAST record both matter: a retry
+    /// that silently truncated would still report a plausible count.
+    func testAnswerSurvivesOutgrowingTheFirstGuess() {
+        let rows = (0..<500).map { "row \($0) needle here" }
+        var c = TerminalSearchController()
+        c.setLines(rows)
+        c.setQuery("needle")
+        XCTAssertEqual(c.matchCount, 500, "every row matched, well past the 128-record stack guess")
+        XCTAssertEqual(c.matches.last?.line, 499)
+        XCTAssertEqual(c.matches.last?.length, 6)
+    }
+
+    /// The same answer whether the guess was short, exact or generous. ``TerminalSearchController``
+    /// carries the previous keystroke's count forward, so the guess is an input the door's answer must
+    /// be independent of — that independence is what makes carrying it safe.
+    func testTheGuessCannotChangeTheAnswer() {
+        let rows = (0..<300).map { "row \($0) needle here" }
+        let truth = TerminalSearchController.computeMatches(
+            lines: rows, query: "needle", caseSensitive: false, isRegex: false, expecting: 0,
+        )
+        XCTAssertEqual(truth.count, 300)
+        for guess in [0, 1, 127, 128, 129, 299, 300, 301, 5000] {
+            let answer = TerminalSearchController.computeMatches(
+                lines: rows, query: "needle", caseSensitive: false, isRegex: false, expecting: guess,
+            )
+            XCTAssertEqual(answer.map(\.line), truth.map(\.line), "guess \(guess) changed the answer")
+            XCTAssertEqual(answer.map(\.column), truth.map(\.column), "guess \(guess) changed the answer")
+        }
+    }
+
+    /// Narrowing a query shrinks the count, which is the direction the carried guess relies on; widening
+    /// it again grows past the carried guess and must still answer in full.
+    func testCarriedGuessSurvivesWideningTheQuery() {
+        var c = TerminalSearchController()
+        c.setLines((0..<400).map { "row \($0) alpha beta" })
+        c.setQuery("alpha beta")
+        XCTAssertEqual(c.matchCount, 400)
+        c.setQuery("alpha betaX")
+        XCTAssertEqual(c.matchCount, 0, "narrowing to nothing leaves a carried guess of zero")
+        c.setQuery("a")
+        XCTAssertGreaterThan(c.matchCount, 400, "widening past the carried guess still answers in full")
+    }
+
     // MARK: Navigation no-ops with no matches
 
     func testNavigationIsNoOpWithoutMatches() {

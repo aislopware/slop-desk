@@ -90,11 +90,10 @@ final class MacSettingsNavigatorController: NSViewController, NSTableViewDataSou
 
     @objc
     private func searchChanged() {
-        let needle = search.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // RAW. `sections(matching:)` folds ASCII case and trims on the far side, and answers the whole
+        // taxonomy for a blank needle — so neither the fold nor the zero state is spelled here.
         let selected = shown.indices.contains(table.selectedRow) ? shown[table.selectedRow].id : nil
-        shown = needle.isEmpty
-            ? SettingsCatalog.sections
-            : SettingsCatalog.sections.filter { $0.title.lowercased().contains(needle) }
+        shown = SettingsCatalog.sections(matching: search.stringValue)
         table.reloadData()
         // Narrowing the list must not silently change WHICH page is shown: keep the selection where it
         // was if it survived the filter, and otherwise leave the page alone rather than jumping to

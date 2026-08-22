@@ -95,13 +95,13 @@ public enum SessionTemplateEngine {
     /// verbatim, so a template pane behaves IDENTICALLY to a launch preset: the cwd is emitted as a SAFE
     /// literal `cd` (never through `SendKeysParser`, so a `<Enter>`/quote in a path can't inject a command
     /// — see the engine's SECURITY note), while the command resolves `SendKeysParser` tokens.
+    /// The emptiness rule is the crate's alone. It used to be written here too — a trim on the cwd and a
+    /// trim on the command, ahead of a call to the rule that decides the same thing — and the two did not
+    /// agree: `templates::keystrokes` gated the directory UNTRIMMED, so a whitespace-only cwd was "no
+    /// directory" here and `cd '  '` there. Both production callers pass `cwd: nil`, which is precisely why
+    /// a pair like this can sit disagreeing for as long as anyone leaves it. The crate's gate is symmetric
+    /// now and this reads its answer: an empty answer is the no-op, and nothing else decides it.
     public static func launchBytes(cwd: String?, command: String?) -> [UInt8]? {
-        let trimmedCwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedCommand = (command ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        // Both empty ⇒ no-op (don't send a bare newline into the shell).
-        if trimmedCwd?.isEmpty ?? true, trimmedCommand.isEmpty {
-            return nil
-        }
         let bytes = LaunchPresetEngine.keystrokes(command: command ?? "", cwd: cwd)
         return bytes.isEmpty ? nil : bytes
     }

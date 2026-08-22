@@ -78,19 +78,14 @@ public enum FolderFrecency {
     /// The trim reads no clock, so the same file always repairs into the same database.
     public static func sanitized(entries: [FolderEntry], maxEntries: Int) -> [FolderEntry] {
         let cap = Swift.max(0, maxEntries)
+        // The kept set is a SUBSET of what was lent, truncated at the cap, so `min(count, cap)` is not an
+        // estimate of the answer's size — it is its ceiling. See ``ranked(entries:now:limit:)``.
         let order: [UInt32] = lent(entries) { records, arena in
-            let needed = slopdesk_folder_sanitized(
-                records.baseAddress, records.count, arena.baseAddress, arena.count, cap, nil, 0,
-            )
-            guard needed > 0 else { return [] }
-            var indices = [UInt32](repeating: 0, count: needed)
-            let written = indices.withUnsafeMutableBufferPointer { out in
+            answer(sizedAt: Swift.min(records.count, cap)) { out, capacity in
                 slopdesk_folder_sanitized(
-                    records.baseAddress, records.count, arena.baseAddress, arena.count, cap,
-                    out.baseAddress, out.count,
+                    records.baseAddress, records.count, arena.baseAddress, arena.count, cap, out, capacity,
                 )
             }
-            return written == needed ? indices : []
         }
         return order.compactMap { index in entries.indices.contains(Int(index)) ? entries[Int(index)] : nil }
     }
@@ -122,23 +117,45 @@ public enum FolderFrecency {
     /// The rank comes back as the caller's OWN indices — a rank is a permutation of what was just lent,
     /// so the paths never re-cross the door.
     public static func ranked(entries: [FolderEntry], now: Date, limit: Int? = nil) -> [FolderEntry] {
+        let ceiling = Swift.min(entries.count, limit.map { Swift.max(0, $0) } ?? entries.count)
         let bound = Int64(limit.map { Swift.max(0, $0) } ?? -1)
+        // A rank is a PERMUTATION of what was lent, truncated at the limit — so the first guess is the
+        // arithmetic ceiling of the answer, not an estimate of it, and the retry below is unreachable.
+        // Probing with a null output instead would rebuild the whole database and sort it to learn a
+        // number the caller can already compute: measured 30.9 µs against 15.6 µs at the shipped
+        // 200-entry cap, and the overlay asks for this twice per keystroke.
         let order: [UInt32] = lent(entries) { records, arena in
-            let needed = slopdesk_folder_ranked(
-                records.baseAddress, records.count, arena.baseAddress, arena.count,
-                now.timeIntervalSinceReferenceDate, bound, nil, 0,
-            )
-            guard needed > 0 else { return [] }
-            var indices = [UInt32](repeating: 0, count: needed)
-            let written = indices.withUnsafeMutableBufferPointer { out in
+            answer(sizedAt: ceiling) { out, capacity in
                 slopdesk_folder_ranked(
                     records.baseAddress, records.count, arena.baseAddress, arena.count,
-                    now.timeIntervalSinceReferenceDate, bound, out.baseAddress, out.count,
+                    now.timeIntervalSinceReferenceDate, bound, out, capacity,
                 )
             }
-            return written == needed ? indices : []
         }
         return order.compactMap { index in entries.indices.contains(Int(index)) ? entries[Int(index)] : nil }
+    }
+
+    /// Reads an index answer out of `ask` under docs/55 §4's convention, guessing `guess` first.
+    ///
+    /// Both index doors answer a subset of what was lent, so every caller here has an exact ceiling in
+    /// hand and the `needed > guess` arm cannot be reached. It is written anyway, and written as the
+    /// retry rather than as a refusal, because the convention is what makes the guess safe to change:
+    /// a bound that is one day wrong costs a second call, never a truncated ranking.
+    private static func answer(
+        sizedAt guess: Int,
+        _ ask: (UnsafeMutablePointer<UInt32>?, Int) -> Int,
+    ) -> [UInt32] {
+        guard guess > 0 else { return [] }
+        var indices = [UInt32](repeating: 0, count: guess)
+        let needed = indices.withUnsafeMutableBufferPointer { out in ask(out.baseAddress, out.count) }
+        guard needed > 0 else { return [] }
+        guard needed > guess else {
+            indices.removeLast(guess - needed)
+            return indices
+        }
+        var wider = [UInt32](repeating: 0, count: needed)
+        let written = wider.withUnsafeMutableBufferPointer { out in ask(out.baseAddress, out.count) }
+        return written == needed ? wider : []
     }
 
     // MARK: - Lending a database

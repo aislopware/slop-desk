@@ -197,9 +197,12 @@ struct RailStatusRollup: View {
         // so without this the done mark would outlive the row's own.
         // swiftlint:disable:next redundant_discardable_let
         let _ = store.completionFlashTick
-        let sightings = rows.map { row in
-            let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
-            return (
+        // The BATCH entry, because this walk has the whole array in hand: the per-row one re-reads
+        // `commandBadgeGates` and `agentBadgeGates` — six `UserDefaults` bools at 305 ns each — and
+        // re-resolves the active session's tab list, once per row, for settings that cannot change
+        // while a cluster draws.
+        let sightings = zip(rows, RailRowsBuilder.liveChrome(for: rows, store: store)).map { row, chrome in
+            (
                 pane: row.id,
                 reading: Reading(
                     status: chrome.status, badge: chrome.badge,

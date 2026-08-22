@@ -181,14 +181,17 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
         overlay.openPalette(mode: .command)
 
-        XCTAssertEqual(
-            overlay.mixer?.availableFilters, [.actions, .tabs],
-            "⌘⇧P mixes the Actions category sources + the Panes jump source (no Files/Conversations/Repos)",
-        )
-
-        // The zero-state carries the Panes section with one jump row per open pane; the retired
-        // multi-source sections stay gone.
+        // WHICH sources ⌘⇧P registers, read through what they PRODUCE rather than through a property
+        // that reports the registration. `SearchMixer.availableFilters` used to be that property and
+        // this was its only caller anywhere in the tree — a hook held open for a test, which is the
+        // shape `CLAUDE.md`'s one-implementation rule rejects. The zero state's own sections carry the
+        // same fact and carry it where the user can see it, so a mixer that registers the wrong source
+        // still fails here, and one that registers the right source but renders nothing now fails too.
         let separatorTitles = Set(overlay.rankedResults.filter(\.item.isSeparator).map(\.item.title))
+        XCTAssertTrue(
+            overlay.selectableResults.contains { !$0.id.hasPrefix("tab.") },
+            "⌘⇧P mixes the Actions category sources, not only the Panes jump source",
+        )
         XCTAssertTrue(separatorTitles.contains("Panes"), "the zero-state lists the open panes under ⌘⇧P")
         XCTAssertFalse(separatorTitles.contains("Files"), "no Files section under ⌘⇧P")
         XCTAssertFalse(separatorTitles.contains("Conversations"), "no Conversations section under ⌘⇧P")

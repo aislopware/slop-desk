@@ -28,18 +28,44 @@ import SlopDeskProtocol
 /// the open and the walk all answer ``MetadataCodec/GitStatusPayload/noRepo``. That was already the
 /// answer for the first case and for a host with no probe binary at all, so nothing downstream
 /// learns a new shape.
+///
+/// ## Why the buffer is GUESSED and not asked for
+/// This door is the most expensive one in the archive: behind it is `libgit2` opening the
+/// repository and walking the whole worktree. Asking `(NULL, 0)` for the length first — `docs/55`
+/// §4's supported shape, and what this file did until 2026-08-22 — runs that walk to completion,
+/// encodes the answer and throws it away, so every status cost TWO walks. Measured against the
+/// shipped `macos-arm64` slice on this repository, `swiftc -O`, two runs agreeing: **53.4 ms and
+/// 57.7 ms probe-then-fill against 25.7 ms and 27.0 ms guess-then-retry** — exactly the 2× the
+/// shape predicts, on a call that runs per debounced FSEvents tick per watched repo
+/// (``RepoStatusWatcher``) and per client metadata request.
+///
+/// ``firstGuess`` is the reference shape's "generous by an order of magnitude" (`docs/55` §6): a
+/// repository's whole answer is a branch, a remote, a root and one record per changed path, and the
+/// measured answer for this repository is 138 bytes. 64 KiB covers roughly a thousand changed
+/// paths; past that the retry runs and costs exactly what the probe used to cost unconditionally,
+/// so there is no input for which this is slower.
 enum HostGitStatus {
+    /// The first buffer offered to the door, sized so the retry below exists to be correct rather
+    /// than to be used. `slopdesk_git::MAX_FILES` caps the record count at 4096, so a mid-rebase
+    /// monster still terminates in one retry.
+    private static let firstGuess = 64 * 1024
+
     /// The status of `cwd`'s repository, or `.noRepo`.
     static func of(cwd: String) -> MetadataCodec.GitStatusPayload {
         let bytes = Array(cwd.utf8)
         let payload: [UInt8] = bytes.withUnsafeBufferPointer { input -> [UInt8] in
-            let needed = slopdesk_git_status(input.baseAddress, input.count, nil, 0)
-            guard needed > 0 else { return [] }
-            var room = [UInt8](repeating: 0, count: needed)
-            let written = room.withUnsafeMutableBufferPointer { out in
+            var room = [UInt8](repeating: 0, count: firstGuess)
+            var needed = room.withUnsafeMutableBufferPointer { out in
                 slopdesk_git_status(input.baseAddress, input.count, out.baseAddress, out.count)
             }
-            guard written == needed else { return [] }
+            if needed > room.count {
+                room = [UInt8](repeating: 0, count: needed)
+                needed = room.withUnsafeMutableBufferPointer { out in
+                    slopdesk_git_status(input.baseAddress, input.count, out.baseAddress, out.count)
+                }
+            }
+            guard needed > 0, needed <= room.count else { return [] }
+            room.removeLast(room.count - needed)
             return room
         }
         guard let status = try? MetadataCodec.decodeGitStatus(Data(payload)) else { return .noRepo }

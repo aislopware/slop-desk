@@ -232,6 +232,40 @@ package func wsRailPlan(keys: [String?], tabRanks: [Int]) -> [(element: Int, sec
     return out.map { (element: $0.row_index, section: $0.section) }
 }
 
+// MARK: - The document's canonical order
+
+/// Where each of `keys` places in the wire's emission order — `answer[i]` indexes the key that
+/// comes `i`-th. `slopdesk_wire::document::state::canonical_order`.
+///
+/// The order is the far side's by construction: its document is a `BTreeMap` whose key order IS the
+/// emission order. This side's document is a `Dictionary`, which has none, so it has to ask — and
+/// asking is the point. The Swift copy was a hand-written `Comparable` that materialised a fresh
+/// 16-byte `[UInt8]` per SIDE per comparison, so one `sortedEntries` over a 24-pane document ran
+/// ~8,600 heap allocations to answer a question about eighteen bytes at a time.
+///
+/// Measured, `swiftc -O` against the shipped xcframework, two runs agreeing inside 4%, at 480 cells
+/// (24 panes): the sort alone went **1,018 µs → 23 µs**, and `sortedEntries` end to end
+/// **1,075 µs → 77 µs**. The crossing is one; what it deleted is the allocation, per `docs/55` §4c.
+///
+/// A short answer is refused whole rather than applied in part: a half-permuted document would
+/// emit some cells twice and others never, which is worse than the arrival order this falls back to.
+package func wsKeyOrder(_ keys: [WorkspaceKey]) -> [Int] {
+    guard !keys.isEmpty else { return [] }
+    var flat = keys.map { key in
+        SlopDeskWsDocKey(kind: key.kind, field: key.field, object: SlopDeskWsUuid(key.objectID))
+    }
+    // The size is the arithmetic BOUND, not a guess — every key handed in places exactly once — so
+    // the §4 retry is unreachable here rather than merely rare.
+    var out = [UInt32](repeating: 0, count: keys.count)
+    let written = flat.withUnsafeMutableBufferPointer { input in
+        out.withUnsafeMutableBufferPointer { places in
+            slopdesk_ws_key_order(input.baseAddress, input.count, places.baseAddress, places.count)
+        }
+    }
+    guard written == keys.count else { return Array(keys.indices) }
+    return out.map(Int.init)
+}
+
 // MARK: - The one ranking every search field asks
 
 /// Where one candidate placed in a search field's list.

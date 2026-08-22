@@ -313,9 +313,16 @@ final class MacPaneContainer: NSView {
     /// How many panes the tab CONTAINING this pane holds — 1 for an unsplit tab, where the corner
     /// stays bare because there is no sibling to disambiguate from. Defaults to 1 when the pane is not
     /// in the active session's tabs (a teardown race), which hides the mark rather than guessing.
+    ///
+    /// ⚠️ The owning tab is found with ``Tab/contains(_:)`` rather than
+    /// `allPaneIDs().contains(_:)`. Both walk the same split tree, but the second ALLOCATES that
+    /// tab's whole id list to throw it away — once per tab, before the match, and then again on the
+    /// tab that matched. This read sits inside ``follow()``'s tracking arm, which observes
+    /// `store.paneSwitcher`, so every mounted container re-ran it on every ⌃⇥ tap: T+1 arrays per
+    /// pane per keypress across the canvas.
     private var tabPaneCount: Int {
         store.tree.activeSession?.tabs
-            .first { $0.allPaneIDs().contains(paneID) }?
+            .first { $0.contains(paneID) }?
             .allPaneIDs().count ?? 1
     }
 

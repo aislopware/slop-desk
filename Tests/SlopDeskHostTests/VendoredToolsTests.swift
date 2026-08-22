@@ -133,6 +133,46 @@ final class VendoredToolsTests: XCTestCase {
         XCTAssertEqual(found, override)
     }
 
+    /// The divergence the port removed, asserted from the side that had it wrong.
+    ///
+    /// `FileManager.isExecutableFile` is `access(X_OK)`, which a DIRECTORY passes, so a directory
+    /// wearing the tool's name on `PATH` used to end the walk and be handed to `posix_spawn`. The
+    /// order is `slopdesk_androidd::toolchain::locate_tool` now, which tests `is_file()` as well, so
+    /// the decoy is walked past and the real binary two entries along is what answers.
+    func testADirectoryWearingTheToolsNameIsNotACandidate() throws {
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("decoy/bin/code-server"), withIntermediateDirectories: true,
+        )
+        let real = try makeExecutable("later/bin/code-server")
+
+        let found = HostServiceProcess.locate(
+            "code-server", overrideVariable: "SLOPDESK_CODE_SERVER_BIN",
+            environment: ["PATH": root.appendingPathComponent("decoy/bin").path + ":"
+                + root.appendingPathComponent("later/bin").path],
+            vendoredBinDirectory: nil,
+            homeDirectory: root.appendingPathComponent("nobody").path,
+        )
+
+        XCTAssertEqual(found, real)
+    }
+
+    /// The tail after `PATH`, and the reason it exists: hostd is launched by `nohup`/launchd, so an
+    /// inherited `PATH` routinely misses `~/.local/bin`. The home directory is INJECTED here for the
+    /// same reason the environment is — a test that read the developer's real one would pass or fail
+    /// on what they happen to have installed.
+    func testTheHomeLocalBinTailAnswersWhenPATHDoesNot() throws {
+        let inTail = try makeExecutable("home/.local/bin/baguette")
+
+        let found = HostServiceProcess.locate(
+            "baguette", overrideVariable: "SLOPDESK_SIMULATOR_SERVER_BIN",
+            environment: ["PATH": ""],
+            vendoredBinDirectory: nil,
+            homeDirectory: root.appendingPathComponent("home").path,
+        )
+
+        XCTAssertEqual(found, inTail)
+    }
+
     // MARK: - Android toolchain
 
     //

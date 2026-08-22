@@ -147,27 +147,51 @@ package enum AndroidAnnexB {
     /// convention `slopdesk_nal_split` already crosses under; the copy happens here only because a
     /// `Data` per unit is what the two callers want.
     package static func nalUnits(in data: Data) -> [Data] {
-        spans(in: data) { bytes, out, cap in
-            slopdesk_annexb_split(bytes.baseAddress, bytes.count, out, cap)
+        spans(in: data) { bytes, count, out, cap in
+            slopdesk_annexb_split(bytes, count, out, cap)
         }
     }
+
+    /// How much bigger than its Annex-B input an AVCC rewrite can be, before the retry.
+    ///
+    /// A rewrite trades each start code for a four-byte length, so it GROWS by one byte per NAL
+    /// that arrived under a three-byte start code and by nothing otherwise. An access unit is a
+    /// handful of NALs — a `MediaCodec` frame is one slice plus at most an AUD and an SEI — so this
+    /// slack covers two hundred and fifty-six of them and the retry below never runs. A buffer
+    /// pathological enough to exceed it still gets the right answer, at exactly what the discarded
+    /// probe used to cost.
+    private static let avccSlack = 256
 
     /// Rewrites an Annex-B access unit as AVCC: every NAL prefixed with its 4-byte big-endian length.
     ///
     /// Returns `nil` for a buffer with no start code at all rather than passing it through — a
     /// payload that is already length-prefixed would be silently mis-framed, and the panel would show
     /// a decoder that produces nothing with no clue why.
+    ///
+    /// ## Why the buffer is GUESSED and not asked for
+    /// This runs once per ACCESS UNIT — sixty times a second while a device is mirrored. Asking
+    /// `(NULL, 0)` for the length first walked the whole buffer, built the rewritten `Vec` and threw
+    /// it away, then did it again. Measured against the shipped `macos-arm64` slice, `swiftc -O`,
+    /// two runs agreeing: a 40 KB delta frame went **62.0/63.4 µs → 35.3/33.7 µs**, a 300 KB
+    /// keyframe **500.9/474.9 µs → 265.3/234.2 µs**. The `[UInt8](data)` that used to precede it is
+    /// gone too: `Data` already owns contiguous bytes and lending them is what `withUnsafeBytes` is
+    /// for, so a whole frame no longer crosses into an array on its way to a door that only reads it.
     package static func avccAccessUnit(from data: Data) -> Data? {
-        let bytes = [UInt8](data)
-        return bytes.withUnsafeBufferPointer { input -> Data? in
-            let needed = slopdesk_annexb_to_avcc(input.baseAddress, input.count, nil, 0)
-            // Zero is REFUSED, not "did not fit": a real rewrite costs at least its length prefix.
-            guard needed > 0 else { return nil }
-            var out = [UInt8](repeating: 0, count: needed)
-            let written = out.withUnsafeMutableBufferPointer { room in
-                slopdesk_annexb_to_avcc(input.baseAddress, input.count, room.baseAddress, room.count)
+        data.withUnsafeBytes { raw -> Data? in
+            let input = raw.baseAddress?.assumingMemoryBound(to: UInt8.self)
+            var out = [UInt8](repeating: 0, count: raw.count + avccSlack)
+            var needed = out.withUnsafeMutableBufferPointer { room in
+                slopdesk_annexb_to_avcc(input, raw.count, room.baseAddress, room.count)
             }
-            guard written == needed else { return nil }
+            if needed > out.count {
+                out = [UInt8](repeating: 0, count: needed)
+                needed = out.withUnsafeMutableBufferPointer { room in
+                    slopdesk_annexb_to_avcc(input, raw.count, room.baseAddress, room.count)
+                }
+            }
+            // Zero is REFUSED, not "did not fit": a real rewrite costs at least its length prefix.
+            guard needed > 0, needed <= out.count else { return nil }
+            out.removeLast(out.count - needed)
             return Data(out)
         }
     }
@@ -180,27 +204,46 @@ package enum AndroidAnnexB {
     /// not a parameter set.
     package static func parameterSets(inConfiguration data: Data, codec: AndroidVideoCodec) -> [Data] {
         let hevc = codec == .h265
-        return spans(in: data) { bytes, out, cap in
-            slopdesk_annexb_parameter_sets(bytes.baseAddress, bytes.count, hevc, out, cap)
+        return spans(in: data) { bytes, count, out, cap in
+            slopdesk_annexb_parameter_sets(bytes, count, hevc, out, cap)
         }
     }
 
-    /// The measure-then-fill retry both walks share, and the slicing their answers name.
+    /// How many units the first array offers, before the retry.
+    ///
+    /// A config packet carries two or three parameter sets and an access unit a handful of NALs, so
+    /// this is the same "generous by an order of magnitude" guess ``avccSlack`` is. Sixteen
+    /// sixteen-byte records is a stack-sized allocation against a walk over a whole frame.
+    private static let spanFloor = 16
+
+    /// The guess-then-fill retry both walks share, and the slicing their answers name.
+    ///
+    /// Asking `(NULL, 0)` for the count first walked the entire buffer for a number the walk that
+    /// follows re-derives — the same 2× the rewrite above measured, over the same bytes. The walk
+    /// answers WHERE each unit sits and the payloads never crossed; now the buffer they sit in does
+    /// not cross into a `[UInt8]` either, which for a keyframe was a third of a megabyte copied to
+    /// be read.
     private static func spans(
         in data: Data,
-        _ walk: (UnsafeBufferPointer<UInt8>, UnsafeMutablePointer<SlopDeskNalSpan>?, Int) -> Int,
+        _ walk: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<SlopDeskNalSpan>?, Int) -> Int,
     ) -> [Data] {
-        let bytes = [UInt8](data)
-        return bytes.withUnsafeBufferPointer { input -> [Data] in
-            let count = walk(input, nil, 0)
-            guard count > 0 else { return [] }
-            var spans = [SlopDeskNalSpan](repeating: SlopDeskNalSpan(), count: count)
-            let filled = spans.withUnsafeMutableBufferPointer { room in
-                walk(input, room.baseAddress, room.count)
+        data.withUnsafeBytes { raw -> [Data] in
+            let input = raw.baseAddress?.assumingMemoryBound(to: UInt8.self)
+            var spans = [SlopDeskNalSpan](repeating: SlopDeskNalSpan(), count: spanFloor)
+            var count = spans.withUnsafeMutableBufferPointer { room in
+                walk(input, raw.count, room.baseAddress, room.count)
             }
-            guard filled == count else { return [] }
-            return spans.map { span in
-                Data(bytes[Int(span.offset)..<Int(span.offset) + Int(span.length)])
+            if count > spans.count {
+                spans = [SlopDeskNalSpan](repeating: SlopDeskNalSpan(), count: count)
+                count = spans.withUnsafeMutableBufferPointer { room in
+                    walk(input, raw.count, room.baseAddress, room.count)
+                }
+            }
+            guard count > 0, count <= spans.count else { return [] }
+            return spans.prefix(count).map { span in
+                Data(UnsafeRawBufferPointer(
+                    rebasing: raw[Int(span.offset)..<Int(span.offset) + Int(span.length)],
+                ))
             }
         }
     }

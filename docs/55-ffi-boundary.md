@@ -808,6 +808,52 @@ One caller-side note the numbers do not show: `wsBytes` probes with a 4 KiB buff
 designed and it is still ~170 µs, but it is the first place to look if this ever shows up in a
 trace.
 
+### The retry that is not a second COPY but a second SEARCH
+
+§4's retry is cheap when the door already holds its answer and the second call only copies it out.
+It is not cheap when the door **derives** its answer by walking something large, because then the
+retry re-walks it. `slopdesk_find_matches` is the case: it builds its answer by scanning every row of
+the scrollback, so a short first guess costs a whole second scan of the buffer. Its fixed 128-record
+guess meant that any query matching more than 128 rows paid for two full scans on every keystroke —
+**3.52 ms per pane per keystroke instead of 1.83 ms.**
+
+The fix is not a bigger constant. It is that the caller usually knows: typing NARROWS, so the
+previous keystroke's match count is an exact upper bound after the first character
+(`TerminalSearchController.recompute()` carries it; `GlobalSearchController.run` carries the widest
+count across panes). A guess derived from the last answer beats any guess derived from a hunch.
+
+So the rule §4 states — "guess generously, retry is the backstop" — needs a rider: **price the
+retry by what the door does, not by what it returns.** A door that re-derives should either be given
+a guess the caller can justify, or answer its size in a form that is cheaper than its content. The
+same sweep found the opposite mistake in the same module elsewhere: a null-output PROBE, which is a
+guaranteed double derivation rather than a merely possible one, and is banned for exactly this
+reason.
+
+### The null-output PROBE, and the four doors where it doubled real work
+
+§4 makes `(NULL, 0)` a supported way to ask a door for its length, and for a door whose rule is a
+table lookup that is the honest way to ask — `slopdesk_panel_simulator_key_code` and
+`slopdesk_input_mode_reset` probe on purpose and should keep doing so. For a door whose rule is
+WORK, the probe is not a size question at all: it runs the whole rule, throws the answer away, and
+then runs it again. It is the retry above with the "merely possible" removed.
+
+Four doors were being probed this way. Measured from Swift against the shipped `macos-arm64` slice,
+`swiftc -O`, two runs agreeing:
+
+| door | probed | guessed | what it was doing twice |
+| --- | --- | --- | --- |
+| `slopdesk_git_status` | 53.4 / 57.7 ms | 25.7 / 27.0 ms | libgit2 walks the worktree — per FSEvents tick per watched repo |
+| `slopdesk_plaintext_strip` | 646 / 629 µs | 302 / 310 µs | the VT grammar over a 183 KB pane capture, per agent read |
+| `slopdesk_annexb_to_avcc` | 501 / 475 µs | 265 / 234 µs | a 300 KB keyframe rewritten, PER FRAME |
+| `slopdesk_annexb_split` | — | — | the same walk over the same buffer, per access unit |
+
+What makes this class worth its own entry is that **no test can see it**. Both calls agree; every
+answer is correct; the suites are green either way. The only trace is a git line that lands a beat
+late and a phone mirror that drops frames on a busy host — which reads as a device problem, not as a
+doubled call. `check-supervisor.sh` bans the probe by name on these four and separately requires
+each fixed site to still carry its first guess, because a regression that deletes the guess is the
+same regression arriving by a different edit.
+
 ### The loop-shaped crossing — a cost class, and mostly a false alarm
 
 A door asked once per member of a collection the far side already holds contiguous is a defect no
@@ -1070,7 +1116,12 @@ the same defect this section is about, one register up.)
 | `session::VideoPaneModes` vs `PaneSpec`'s latched modes | Swift | five public fields with no methods, no callers, no tests and no re-export, beside a Swift comment asserting no counterpart existed — **deleted 2026-08-22** |
 | `WorkspaceStateCodec.decodeBool`/`encodeI32` vs `state_codec`'s | — | `!= 0` and `UInt32(bitPattern:)` composed on the near side from doors written for exactly that and left uncalled for a month — **ported 2026-08-22** |
 | `CommandCompletionNotifier`'s bucket defaults vs `notify::RateLimiter` | — | the anti-flood burst and refill rate as a Swift default argument, of which the looser spelling is always the one that runs — **ported 2026-08-22** |
+| `SessionTemplateEngine.launchBytes` vs `templates::keystrokes` | Swift | the two disagreed on a whitespace-only cwd — Swift read it as "no directory", the crate gated it untrimmed and emitted `cd '  '` — **ported 2026-08-22**, and the emptiness rule now has one author |
+| `VideoEncoder.qpCeiling` vs `adaptive_qp::adaptive_max_qp` | — | two rules whose TAILS were one rule: the same linear ramp between a sharp and a coarse quantiser, one driven by the change fraction and one by the budget's bits per pixel, so a side-by-side reading found them plainly different and was right about everything except the last step — **ported 2026-08-22** |
+| `WorkspaceKey.objectIDBytes`/`<` vs the wire document's `BTreeMap` order | — | the emission order derived a second time; two orders never disagree loudly, they RE-EMIT — a snapshot stops being byte-deterministic and a diff churns on map iteration order, which reads downstream exactly like a real change — **ported 2026-08-22** |
 | `RailRowsMemo.titledByProcess` vs `rail_title::title_rung` | — | a Swift transcription of the title chain's escape order whose own doc comment said "Mirrors `RailRowsBuilder.rowTitle`" — a comment as the only thing holding two implementations together — **ported 2026-08-22** |
+| `HostServiceProcess.searchDirectories` vs `toolchain::locate_tool` | Rust | the two agreed on the ORDER and had quietly stopped agreeing on what makes a candidate executable: `FileManager.isExecutableFile` is `access(X_OK)`, which is TRUE for a DIRECTORY, so a directory wearing a tool's name on `PATH` reached `posix_spawn`; `docs/46` had named the Swift copy canonical and the Rust one "mirrored" — **ported 2026-08-22** |
+| the device panels' row predicate, spelled **six** times | — | `localizedCaseInsensitiveContains` over "does any field of this row hold what was typed", in `AndroidPresentation` twice and once in each of the four simulator views — only ONE of the six was ever reached by a test, which is this class in its purest form: the copy a test holds is not the copy the other shell runs — **ported 2026-08-22** onto the door the keybindings editor already had |
 
 **The template row was stale in both directions, and how it was stale is itself the lesson.** It
 named a *security* rule — the literal `cd` line that must never reach the token parser — and that
@@ -1142,6 +1193,107 @@ It is in this section because **every argument above applies unchanged when both
 the drift class is "one decision, two implementations, nobody diffs them", and the language boundary
 was only ever the most common place for that to happen, never the cause. A reader who takes this
 section to be about Swift will not look here.
+
+### The pair that drifted because the two halves asked the SAME question of different inputs
+
+The encoder's quantiser ceiling and the adaptive per-frame quantiser both interpolate linearly
+between a SHARP end and a COARSE end. `adaptive_qp::adaptive_max_qp` had done it in Rust since the
+crate landed, driven by the per-frame change fraction; `VideoEncoder.qpCeiling` did it in Swift,
+driven by the budget's bits per pixel per frame. Neither knew the other was there, and nothing could
+have told them apart by name: one takes a *fraction of the picture that changed*, the other a
+*density of bits the link affords*, and only after both are normalised onto the band is it visible
+that the remaining arithmetic is one line spelled twice.
+
+That is the shape §8 warns about, arriving by a route the ratchets were not watching. The usual
+drift pair is one rule and two transcriptions of it. This was two rules whose *tails* were the same
+rule, so a reviewer comparing the two functions side by side would have found them plainly
+different — and been right about everything except the last step.
+
+It now goes through `slopdesk_video_qp_ceiling`, which maps the density onto the band and hands the
+interpolation to `adaptive_max_qp` unchanged. The six hardware-tuned numbers that surrounded the
+Swift copy — the sharp quantiser, the two density knees, and the drop-relief attack, hold and decay
+— arrive on `slopdesk_video_qp_ceiling_config_default`, so the face names them and does not choose
+them.
+
+Folding the two together introduced exactly one behavioural question, and it is worth recording
+because it is the general one: the Swift rounded the *interpolated ceiling*, the shared ramp rounds
+the *interpolated offset* and adds it to the sharp end. Those are the same number only if rounding
+distributes over that addition, which it does here because the sharp end is an integer — but "it
+does here" is not an argument, so `rounding_the_sum_agrees_with_rounding_the_ramp` sweeps the whole
+band and proves it, rather than asserting it at three points.
+
+The refusals answer the COARSE end rather than a sentinel, because there is nothing a sentinel could
+be mistaken for: a degenerate picture, cadence or budget, an inverted band or an inverted pair of
+knees all mean *the encoder should coarsen rather than drop a frame it cannot fit*, which is the
+safe reading and also the only reading the caller could act on.
+
+### The pair whose cost was the argument AGAINST fixing it
+
+CoreGraphics puts two phase fields on a scroll event and gives them different encodings. The scroll
+field is a bit set — began 1, changed 2, ended 4, cancelled 8, a finger merely resting 128 — and the
+momentum field is a plain ordinal, so ITS end is 3. A three is a *changed* in one field and an *end*
+in the other, and nothing about either number says which field it came from. `NSEvent.Phase`, which
+is where both are read from, is a THIRD encoding again: its ended is `1 << 3`.
+
+Those ten numbers were spelled in four places across two languages — a private block of constants in
+`client_gestures`, the reprojector's `of_platform`, the phone's touch translation, and the Mac
+client's view — and two of the four read different sets of them.
+
+This sweep initially declined to fix it, and the reasoning is worth recording because it was wrong
+in an instructive way. §4c prices a crossing at about a nanosecond and warns that a crossing COUNT
+is not a reason to build a door; the Swift being replaced here was five branches, so the port buys
+nothing and the honest measurement said so. But §8 is not §4c. A rule two languages spell
+differently is a defect at zero calls per second, and the pricing table's answer — that the door and
+the branches cost the same — is not an argument against the port, it is the observation that the
+port is FREE. The cost analysis was correct and irrelevant. When those two sections point in
+opposite directions, §8 wins, because §4c is about which shape to give a crossing and §8 is about
+whether there may be two answers at all.
+
+The mapping is now `client_gestures`'s, the reprojector reads the same constants rather than
+matching literals, and the mask crosses as its raw bits. Passing the bits verbatim rather than a
+case index is the point and not an economy: an index would need a table on the Swift side to
+produce, which is the table the door exists to remove.
+
+Verified rather than asserted, which a free port can afford: the two entries were differentially
+checked from Swift against the deleted Swift verbatim, over all 256 masks × both fields — 512
+comparisons, zero mismatches, twice, through the linked release archive. The `NSEvent.Phase` bit
+values the mapping assumes were read out of the live framework at runtime rather than copied from a
+header, and all six agree.
+
+### The knob that was found by the gate written for its neighbours
+
+The encoder's `SLOPDESK_MAX_QP`, `_CONST_QP` and `_CRISP_QP` each hand-rolled a parse that REJECTED
+an out-of-range value to the knob's default, where `slopdesk_qp_clamped_int` — which every other
+quantiser knob already goes through — CLAMPS it. One rule, two answers, and the pair had been
+*documented* rather than resolved: `QPController.envInt`'s comment says clamping is "deliberate, and
+distinct from" the other reading, which is the shape §8 calls the argument that lets a pair live for
+a year.
+
+It resolves toward clamping, because rejecting silently INVERTS the request. `SLOPDESK_MAX_QP=0`
+asks for the sharpest ceiling the encoder has and answered 51, the coarsest — the opposite end of
+the scale, with nothing said. Clamping answers 1, the nearest thing that was actually asked for, and
+it is the reading every other knob already gives. Presence still decides whether const-QP engages at
+all, so an absent knob is still off; text that is not a number at all still leaves it off, because
+inventing an operating point for a typo is the sin the ceiling port had just finished removing.
+
+The part worth carrying: writing the ratchet found a FOURTH knob. `SLOPDESK_COMPACT_QP` sat ten
+lines from the other three with the same `[1, 51]` range and the same hand-rolled reject, and it was
+in neither the brief nor the sweep's own reading of the file. The gate ran against the shipped tree,
+failed where it was expected to pass, and the failure was correct. A ratchet that fires on the tree
+it was written for is usually a bug in the ratchet; occasionally it is the rest of the defect.
+
+Then a FIFTH, one file over: `SLOPDESK_AQP_MAX` in `WindowCapturer`, same range, same reject. It is
+why `VideoEncoder.envQP` is not `private` — there is no version of "one rule" where the fifth caller
+gets its own copy for living in another file, and a helper's access level is a weaker constraint
+than that.
+
+What was **not** folded, named so the next reader finds it: `EnvConfig`'s generic
+`guard let v = Int(s), v >= lo, v <= hi else { return def }` is this same reject rule for roughly a
+dozen knobs across several targets, and it is the real second implementation of
+`clamped_int_from_env`. It should go the same way. But flipping it is a tree-wide *behaviour* change
+with a per-knob argument to make each time rather than a port, so it is its own change and not a
+rider on this one. Scoping that out is a decision, which is why it is written down rather than
+merely not done.
 
 ### The argument that let two of these live for a year: "a name, not a policy"
 

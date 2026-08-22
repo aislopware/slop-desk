@@ -25,7 +25,7 @@ use core::ffi::c_uchar;
 
 use slopdesk_workspace::settings_catalog::{self, ApplyTiming, Ladder, Section, Stepper};
 
-use crate::deliver;
+use crate::{borrow, deliver};
 
 /// A ladder's range and granularity, flat.
 #[repr(C)]
@@ -141,6 +141,55 @@ pub unsafe extern "C" fn slopdesk_settings_section_symbol(
 ) -> usize {
     // SAFETY: as above.
     unsafe { section_field(index, out, cap, Section::symbol) }
+}
+
+/// Which sections a settings search field shows for a needle.
+///
+/// `out[i]` is an index into the same list the three accessors above are indexed by, ascending, so
+/// the answer is already in render order. Returns how many matched, which is the whole taxonomy for
+/// a blank needle.
+///
+/// This is the door the taxonomy had been missing. The sections crossed here years before the
+/// search over them did, so the near side held the list and then wrote its own case-insensitive
+/// containment rule to filter it — the drift class `docs/55` §8 catalogues, and one the near side
+/// had spelled four separate times. Matching folds ASCII case only, which is sound because every
+/// title is ASCII and pinned as such by a test beside the rule.
+///
+/// Indices rather than the rows themselves for the reason the boundary always prefers a
+/// permutation: the caller already holds every section, so sending eight strings back to name a
+/// subset of eight strings it has would be the taxonomy crossing twice per keystroke.
+///
+/// # Safety
+/// `(needle, needle_len)` must be readable for the call, and `(out, cap)` writable for `cap` `u32`s
+/// or `out` null.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_settings_sections_matching(
+    needle: *const c_uchar,
+    needle_len: usize,
+    out: *mut u32,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; a null or empty needle borrows nothing.
+    let bytes = if needle.is_null() || needle_len == 0 {
+        &[][..]
+    } else {
+        unsafe { borrow(needle, needle_len) }
+    };
+    // Not UTF-8 is not a search: a needle that cannot be a string cannot be IN a title, and the
+    // taxonomy's own zero state is the honest answer rather than a trap or an empty list.
+    let matched = Section::matching(core::str::from_utf8(bytes).unwrap_or_default());
+    if out.is_null() || cap < matched.len() {
+        return matched.len();
+    }
+    for (slot, index) in matched.iter().enumerate() {
+        // SAFETY: `slot < matched.len() <= cap`, and `out` is writable for `cap` `u32`s above.
+        unsafe { out.add(slot).write(*index) };
+    }
+    matched.len()
 }
 
 /// One field of one section, delivered.
@@ -385,6 +434,48 @@ mod tests {
                 compact.as_deref().unwrap_or_default()
             ],
             "the named tokens ARE the group's, in its order",
+        );
+    }
+
+    /// The section SEARCH crosses as a permutation, and the short-buffer leg is the one the caller
+    /// derives its size from rather than guesses — so this is the only place it runs.
+    #[test]
+    fn a_section_search_answers_indices_and_leaves_a_short_buffer_alone() {
+        let ask = |needle: &str, cap: usize| -> (usize, Vec<u32>) {
+            let mut out = vec![u32::MAX; cap];
+            let bytes = needle.as_bytes();
+            let n = unsafe {
+                slopdesk_settings_sections_matching(bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), cap)
+            };
+            (n, out)
+        };
+        let (matched, places) = ask("key", 8);
+        assert_eq!(matched, 1);
+        assert_eq!(
+            places
+                .first()
+                .copied()
+                .and_then(|i| Section::from_index(i as usize))
+                .map(Section::title),
+            Some("Key Bindings")
+        );
+
+        // A cap below the answer writes NOTHING and still reports the size, which is what makes one
+        // retry always enough — the untouched sentinel is the assertion, not the count.
+        let (needed, untouched) = ask("e", 1);
+        assert!(needed > 1, "more than one title carries an `e`");
+        assert_eq!(
+            untouched,
+            vec![u32::MAX],
+            "a short buffer is left exactly as it was"
+        );
+
+        // A blank needle is the zero state; a null output is a size question, not a trap.
+        assert_eq!(ask("", 8).0, slopdesk_settings_section_count());
+        assert_eq!(
+            unsafe { slopdesk_settings_sections_matching(core::ptr::null(), 0, core::ptr::null_mut(), 0) },
+            slopdesk_settings_section_count(),
+            "no needle and nowhere to write still answers how big the answer is",
         );
     }
 

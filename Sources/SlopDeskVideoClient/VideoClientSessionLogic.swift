@@ -180,14 +180,28 @@ public struct VideoClientStateMachine: Sendable {
     /// (accept → start pipeline; reject → `.rejected`) and `bye` (host tore down → stop).
     /// A duplicate accepted ack while already streaming is ignored (idempotent — UDP may
     /// deliver the ack more than once).
+    /// ⚠️ A ZERO-LOGIC WRAPPER, and deliberately kept. Its only callers are the state-machine tests,
+    /// which construct `VideoControlMessage` values because that is the level they are testing at —
+    /// but it decides NOTHING: it encodes and hands over, so there is no rule here that could drift
+    /// from the one below. Do not delete it as dead, and do not grow it: the moment it does anything
+    /// the datagram overload does not, the transition has two homes, and only one of them is on the
+    /// live path where a disagreement would show.
     public mutating func handleControl(_ message: VideoControlMessage) -> [Effect] {
-        handleControl(datagram: [UInt8](message.encode()))
+        handleControl(datagram: message.encode())
     }
 
     /// The same, from the datagram the transport handed over — the shape the door takes, so a caller
     /// that already holds the bytes does not re-encode what it just decoded. An undecodable datagram
     /// is inert: no effects, no transition.
-    public mutating func handleControl(datagram: [UInt8]) -> [Effect] {
+    ///
+    /// This is the entry the LIVE path takes. It existed and went uncalled: the session held the
+    /// transport's `Data`, routed it, and then handed the DECODED message to the overload above,
+    /// which encoded it back into bytes for the door to decode a second time. Measured at the
+    /// operating point (a `scrollOffset`, which the host sends per frame while the picture scrolls):
+    /// `[UInt8](message.encode())` is **148–155 ns** against **0.7 ns** for lending the datagram the
+    /// caller already has, over two agreeing runs. Nine microseconds a second of scroll is not why
+    /// this changed — a door written for exactly this call and left unreached is (`docs/55` §8).
+    public mutating func handleControl(datagram: some ContiguousBytes) -> [Effect] {
         func step(
             _ seat: UnsafeMutablePointer<SlopDeskVideoClientMachine>?,
             _ out: UnsafeMutablePointer<SlopDeskVideoClientEffect>?,
@@ -197,9 +211,10 @@ public struct VideoClientStateMachine: Sendable {
             _ arena: UnsafeMutablePointer<UInt8>?,
             _ arenaRoom: Int,
         ) -> SlopDeskVideoClientShape {
-            datagram.withUnsafeBufferPointer { bytes in
+            datagram.withUnsafeBytes { bytes in
                 slopdesk_video_client_handle_control(
-                    seat, bytes.baseAddress, bytes.count, out, room, masks, maskRoom, arena, arenaRoom,
+                    seat, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count,
+                    out, room, masks, maskRoom, arena, arenaRoom,
                 )
             }
         }
@@ -1050,6 +1065,14 @@ public struct CursorShapeRequestTracker: Sendable, Equatable {
     /// it was sent within ``reRequestInterval``. Records the request time on `true` (query+mutator),
     /// so the next ~120 Hz update for the same still-missing id does not immediately re-fire.
     public mutating func shouldRequest(shapeID: UInt16, now: TimeInterval) -> Bool {
+        // The cached id is the STEADY STATE — the host samples the cursor at ~120 Hz and the shape
+        // changes only when the pointer crosses a control — and it is the one case the crate answers
+        // without touching its state, so asking through the door that reads nothing is the same
+        // question, not a second copy of the rule. It matters because the general step lends three
+        // buffers and adopts three prefixes: 6 allocations to be told "no". Measured against the
+        // shipped xcframework, two agreeing runs: 488.0/509.1 ns per call with 4 cached shapes and
+        // 1249.3/1122.3 ns with 12, against 68.5/68.6 ns and 252.2/258.6 ns through this guard.
+        if isKnown(shapeID) { return false }
         // Read out before the step, which takes `self` exclusively: a closure reaching back for a
         // property of the value it is mutating is the same access twice.
         let interval = reRequestInterval

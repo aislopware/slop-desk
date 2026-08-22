@@ -119,6 +119,29 @@ impl WorkspaceKey {
     }
 }
 
+/// Where each of `keys` places in the wire's canonical order: `out[i]` is the index, into the
+/// slice handed in, of the key that comes `i`-th.
+///
+/// [`HostWorkspaceState`] never needs this — its [`BTreeMap`] iterates in this order already — and
+/// that is precisely why the function exists. A caller holding the document in an UNORDERED map
+/// has to derive the order, and deriving it a second time is how the emission order becomes two
+/// rules: one here, one wherever the second map lives. Two orders never conflict, they RE-EMIT,
+/// and a diff that churns on the loser's iteration order is a frame nothing downstream can tell
+/// from a real change.
+///
+/// A PERMUTATION rather than the sorted keys, because the caller already holds them: answering
+/// with the keys would copy eighteen bytes per cell back over a boundary to say something four can.
+///
+/// The arrival index rides in the sort key rather than being looked up from it, so equal keys —
+/// which a well-formed document does not have, since a map's keys are unique — keep the order they
+/// came in, and no index is ever used to reach back into the slice.
+#[must_use]
+pub fn canonical_order(keys: &[WorkspaceKey]) -> Vec<u32> {
+    let mut placed: Vec<(WorkspaceKey, u32)> = keys.iter().copied().zip(0_u32..).collect();
+    placed.sort_unstable();
+    placed.into_iter().map(|(_, index)| index).collect()
+}
+
 /// A key plus its value.
 ///
 /// A zero-length `value` is a FIRST-CLASS value, not an absence: it is how a field is RETIRED
@@ -346,7 +369,7 @@ impl HostWorkspaceState {
 mod tests {
     use super::{
         HostWorkspaceState, ROOT_OBJECT_ID, WorkspaceEntry, WorkspaceKey, WorkspaceObjectKind,
-        WorkspaceStateDiff,
+        WorkspaceStateDiff, canonical_order,
     };
 
     fn uuid(byte: u8) -> [u8; 16] {
@@ -386,6 +409,40 @@ mod tests {
             WorkspaceKey::new(3, uuid(0xA1), 3),
             WorkspaceKey::new(3, uuid(0xA1), 8),
         ]);
+    }
+
+    /// The permutation is the map's own order, asserted against the container rather than against a
+    /// list written out by hand — a hand-written expectation is a third copy of the very rule this
+    /// function exists so nobody writes twice.
+    #[test]
+    fn the_permutation_places_keys_exactly_where_the_map_would() {
+        let keys = vec![
+            WorkspaceKey::new(3, uuid(0xA1), 8),
+            WorkspaceKey::new(3, uuid(0xA1), 3),
+            WorkspaceKey::new(0, ROOT_OBJECT_ID, 2),
+            WorkspaceKey::new(2, uuid(0xB2), 0),
+            WorkspaceKey::new(3, uuid(0xA0), 99),
+        ];
+        let state = HostWorkspaceState::from_entries(
+            keys.iter()
+                .map(|key| WorkspaceEntry::new(*key, Vec::new()))
+                .collect(),
+        );
+        let placed: Vec<WorkspaceKey> = canonical_order(&keys)
+            .into_iter()
+            .filter_map(|index| keys.get(index as usize).copied())
+            .collect();
+        let mapped: Vec<WorkspaceKey> = state
+            .sorted_entries()
+            .into_iter()
+            .map(|entry| entry.key)
+            .collect();
+        assert_eq!(placed, mapped);
+    }
+
+    #[test]
+    fn an_empty_list_has_an_empty_order() {
+        assert_eq!(canonical_order(&[]), Vec::<u32>::new());
     }
 
     #[test]

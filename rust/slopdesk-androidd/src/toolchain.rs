@@ -15,6 +15,22 @@
 //! **`scrcpy-server` is a jar, not an executable**, so it cannot go through a binary locator at
 //! all. It is the one dependency committed to this repo outright (`ThirdParty/tools/vendor/`), with
 //! Homebrew's `share/scrcpy` kept as the fallback for a daemon running outside a checkout.
+//!
+//! ## The search ORDER lives here for the whole project, not only for this panel
+//!
+//! `docs/46`'s "Vendored runtime deps" table states one order — override, vendored prefix, `PATH`,
+//! then a tail — and it used to be written twice: [`locate_sdk_tool`] here, and
+//! `HostServiceProcess.locate` in Swift for `code-server` and `baguette`. That is the pair shape
+//! `docs/55` §8 catalogues, and the two had already stopped agreeing on the one question neither
+//! doc mentions — *what makes a candidate executable*. Swift asked `FileManager.isExecutableFile`,
+//! which is `access(X_OK)`: true for a DIRECTORY named `code-server` sitting on `PATH`, and false
+//! for a root-owned `0700` binary this crate would have handed back. Two answers, opposite
+//! directions, both silent — one hands a directory to `posix_spawn`, the other hands back a path
+//! this daemon cannot exec.
+//!
+//! So [`locate_tool`] is the order, once, and the two callers differ only in their TAIL: the SDK
+//! roots for a panel tool, [`host_service_fallback_dirs`] for a hostd service. Nothing about that
+//! tail is Android's, which is why it is exported rather than hidden.
 
 use std::collections::HashMap;
 use std::io::Read as _;
@@ -95,12 +111,42 @@ pub fn locate_sdk_tool(
     environment: &HashMap<String, String>,
     vendored_bin: Option<&Path>,
 ) -> Option<PathBuf> {
-    if let Some(override_path) = environment
-        .get(override_variable)
-        .filter(|value| !value.is_empty())
-    {
-        // A named-but-broken override is an ERROR, not a reason to go looking for a different
-        // binary: an operator who pointed at a path meant that path.
+    let tail: Vec<PathBuf> = sdk_roots(environment)
+        .into_iter()
+        .map(|root| root.join(subdirectory))
+        .collect();
+    locate_tool(
+        name,
+        environment.get(override_variable).map(String::as_str),
+        environment.get("PATH").map(String::as_str).unwrap_or_default(),
+        vendored_bin,
+        &tail,
+    )
+}
+
+/// The project's binary search order, once: the override, the vendored prefix, `PATH`, then `tail`.
+///
+/// `override_value` is the variable's VALUE, not its name — the environment read stays with the
+/// caller, whose tests pass dictionaries in (`docs/55` §8, "the environment lookup stays on the
+/// near side"). What crosses is this: the precedence, the emptiness filter that makes an exported
+/// blank the same as an absent one, and the executability test.
+///
+/// **The vendored prefix outranks `PATH`**, which inverts the usual instinct on purpose: the copy
+/// in `ThirdParty/tools/tools.lock` is the one the panels were written and measured against, and a
+/// stale Homebrew install silently winning is the failure that layer exists to end. The override
+/// stays above it, because an operator bisecting a candidate build meant that build.
+///
+/// A named-but-broken override answers `None` rather than falling through. Going looking for a
+/// different binary would make a bisect report the wrong verdict about the wrong program.
+#[must_use]
+pub fn locate_tool(
+    name: &str,
+    override_value: Option<&str>,
+    path_value: &str,
+    vendored_bin: Option<&Path>,
+    tail: &[PathBuf],
+) -> Option<PathBuf> {
+    if let Some(override_path) = override_value.filter(|value| !value.is_empty()) {
         let path = PathBuf::from(override_path);
         return is_executable(&path).then_some(path);
     }
@@ -110,12 +156,7 @@ pub fn locate_sdk_tool(
             return Some(candidate);
         }
     }
-    for directory in environment
-        .get("PATH")
-        .map(String::as_str)
-        .unwrap_or_default()
-        .split(':')
-    {
+    for directory in path_value.split(':') {
         if directory.is_empty() {
             continue;
         }
@@ -124,13 +165,34 @@ pub fn locate_sdk_tool(
             return Some(candidate);
         }
     }
-    for root in sdk_roots(environment) {
-        let candidate = root.join(subdirectory).join(name);
+    for directory in tail {
+        let candidate = directory.join(name);
         if is_executable(&candidate) {
             return Some(candidate);
         }
     }
     None
+}
+
+/// The tail hostd's lazily-spawned HTTP services search after `PATH` — `code-server` (verb 18) and
+/// `baguette` (verb 21).
+///
+/// `~/.local/bin` FIRST and Homebrew after: a service installed there is the hand-managed copy, so
+/// where both exist that is the one the operator meant. The Apple-silicon prefix leads the Homebrew
+/// pair. The tail exists at all because hostd is launched by `nohup`/launchd rather than a login
+/// shell, so its inherited `PATH` routinely misses every one of them.
+///
+/// An absent or blank `HOME` drops the first entry rather than inventing `/.local/bin`, which is
+/// a directory no host has and a candidate no walk should stat.
+#[must_use]
+pub fn host_service_fallback_dirs(home: Option<&str>) -> Vec<PathBuf> {
+    let mut directories = Vec::with_capacity(3);
+    if let Some(home) = home.filter(|value| !value.is_empty()) {
+        directories.push(Path::new(home).join(".local/bin"));
+    }
+    directories.push(PathBuf::from("/opt/homebrew/bin"));
+    directories.push(PathBuf::from("/usr/local/bin"));
+    directories
 }
 
 /// Candidate SDK roots, most authoritative first: the two environment variables Google documents,
@@ -312,7 +374,10 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use super::{capture, locate_scrcpy_server_jar, locate_sdk_tool, run, sdk_roots};
+    use super::{
+        capture, host_service_fallback_dirs, locate_scrcpy_server_jar, locate_sdk_tool, locate_tool, run,
+        sdk_roots,
+    };
 
     fn environment(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs
@@ -540,6 +605,119 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(10),
             "the deadline was enforced"
+        );
+    }
+
+    /// The order hostd's services take, end to end. Same function the SDK tools take, so the two
+    /// cannot come to disagree about which rung wins.
+    #[test]
+    fn a_host_service_takes_the_vendored_prefix_over_path_and_the_tail() {
+        let tree = Tree::new("host-service-order");
+        let vendored = tree.executable("prefix/bin/code-server");
+        tree.executable("homebrew/bin/code-server");
+        tree.executable("home/.local/bin/code-server");
+
+        let tail = host_service_fallback_dirs(Some(&tree.string("home")));
+        assert_eq!(
+            locate_tool(
+                "code-server",
+                None,
+                &tree.string("homebrew/bin"),
+                Some(&tree.path("prefix/bin")),
+                &tail
+            ),
+            Some(vendored)
+        );
+    }
+
+    /// An unprovisioned checkout must not become an unusable one: `PATH` still answers, and the
+    /// tail after it.
+    #[test]
+    fn an_unprovisioned_host_falls_through_to_path_and_then_the_tail() {
+        let tree = Tree::new("host-service-fallthrough");
+        let on_path = tree.executable("homebrew/bin/baguette");
+        let in_tail = tree.executable("home/.local/bin/other-tool");
+
+        let tail = host_service_fallback_dirs(Some(&tree.string("home")));
+        assert_eq!(
+            locate_tool(
+                "baguette",
+                None,
+                &tree.string("homebrew/bin"),
+                Some(&tree.path("prefix/bin")),
+                &tail
+            ),
+            Some(on_path)
+        );
+        // Nothing on `PATH` this time — the tail is what answers.
+        assert_eq!(locate_tool("other-tool", None, "", None, &tail), Some(in_tail));
+    }
+
+    /// The divergence this port removed, in the direction Swift got wrong. `access(X_OK)` — which
+    /// is what `FileManager.isExecutableFile` answers — is TRUE for a directory, so a directory
+    /// named like the tool on `PATH` used to be handed to `posix_spawn`.
+    #[test]
+    fn a_directory_wearing_the_tools_name_is_not_a_candidate() {
+        let tree = Tree::new("directory-not-a-binary");
+        std::fs::create_dir_all(tree.path("bin/code-server")).expect("creates the decoy directory");
+        let real = tree.executable("later/code-server");
+
+        let path = format!("{}:{}", tree.string("bin"), tree.string("later"));
+        assert_eq!(locate_tool("code-server", None, &path, None, &[]), Some(real));
+    }
+
+    /// A file with no execute bit at all is skipped and the search continues past it, rather than
+    /// the first name-match ending the walk. `is_executable` is a MODE test on purpose: it is one
+    /// stated rule both callers now share, and a candidate that passes it and still cannot be
+    /// `exec`d (a mode this user's ids do not reach) fails at spawn, where both callers already
+    /// report the service unavailable.
+    #[test]
+    fn a_name_match_with_no_execute_bit_does_not_stop_the_search() {
+        let tree = Tree::new("unexecutable-candidate");
+        let unreadable = tree.file("first/baguette");
+        std::fs::set_permissions(&unreadable, std::os::unix::fs::PermissionsExt::from_mode(0o644))
+            .expect("marks it non-executable");
+        let real = tree.executable("second/baguette");
+
+        let path = format!("{}:{}", tree.string("first"), tree.string("second"));
+        assert_eq!(locate_tool("baguette", None, &path, None, &[]), Some(real));
+    }
+
+    /// An exported-but-blank override is a shell accident, not a request to find nothing.
+    #[test]
+    fn a_blank_override_is_the_same_as_an_absent_one() {
+        let tree = Tree::new("blank-override");
+        let real = tree.executable("bin/code-server");
+        assert_eq!(
+            locate_tool("code-server", Some(""), &tree.string("bin"), None, &[]),
+            Some(real)
+        );
+    }
+
+    /// Empty `PATH` entries — a leading, trailing or doubled colon — are skipped rather than read
+    /// as the current directory, which would make the answer depend on where hostd was launched.
+    #[test]
+    fn empty_path_entries_are_not_the_working_directory() {
+        let tree = Tree::new("empty-path-entries");
+        let real = tree.executable("bin/adb");
+        let path = format!("::{}::", tree.string("bin"));
+        assert_eq!(locate_tool("adb", None, &path, None, &[]), Some(real));
+    }
+
+    /// A host with no `HOME` gets Homebrew and nothing invented above it.
+    #[test]
+    fn a_homeless_host_does_not_invent_a_local_bin() {
+        assert_eq!(host_service_fallback_dirs(None), vec![
+            PathBuf::from("/opt/homebrew/bin"),
+            PathBuf::from("/usr/local/bin"),
+        ]);
+        assert_eq!(
+            host_service_fallback_dirs(Some("")),
+            host_service_fallback_dirs(None)
+        );
+        assert_eq!(
+            host_service_fallback_dirs(Some("/Users/nobody")).first().cloned(),
+            Some(PathBuf::from("/Users/nobody/.local/bin"))
         );
     }
 

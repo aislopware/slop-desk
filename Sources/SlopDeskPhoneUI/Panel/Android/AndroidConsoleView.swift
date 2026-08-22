@@ -108,9 +108,16 @@ struct AndroidConsoleView: View {
 
     // MARK: Rows
 
+    /// ⚠️ ``visible`` is read ONCE per pass and threaded down — the Simulator twin's note is this
+    /// one's too. It was read three times (the emptiness test, the `animation(value:)` key, the
+    /// `ForEach`) and it is a `localizedCaseInsensitiveContains` over every retained line: **0.78 ms**
+    /// per derivation on a hit and **1.50 ms** on a miss at `AndroidSidebarModel.logCapacity` = 600
+    /// rows, in a scratch `swiftc -O` harness. `logcat` carries the whole system, so the ring sits AT
+    /// its cap on any device that is doing anything.
     private var content: some View {
-        ZStack {
-            if visible.isEmpty {
+        let shown = visible
+        return ZStack {
+            if shown.isEmpty {
                 Text(emptyMessage)
                     .font(.system(size: Slate.Typeface.footnote))
                     .foregroundStyle(AndroidInk.tertiary.color)
@@ -118,17 +125,17 @@ struct AndroidConsoleView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(Slate.Metric.space2)
             } else {
-                rows
+                rows(shown)
             }
         }
-        .animation(Slate.Anim.smallFade, value: visible.isEmpty)
+        .animation(Slate.Anim.smallFade, value: shown.isEmpty)
     }
 
-    private var rows: some View {
+    private func rows(_ shown: [DeviceLogLine]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(visible) { row($0) }
+                    ForEach(shown) { row($0) }
                     // A hairline anchor after the last row rather than scrolling to the row itself: a
                     // row can be several lines tall, and scrolling to it leaves its own TOP edge at the
                     // bottom of the view — which reads as a console one message behind.

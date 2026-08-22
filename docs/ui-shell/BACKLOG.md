@@ -171,9 +171,10 @@ Gaps from `GAP-ANALYSIS.md` clustered into shippable epics, topologically ordere
 ## E20 — CLI parity + watch + first-launch
 **Goal.** Extend the `slopdesk` CLI to full parity with the reference command set and add the first-launch flow.
 **specRefs.** `spec/reference__cli.md`, `spec/terminal-features__progress-state.md`, `spec/getting-started__first-launch.md`.
-**Scope.** Map the reference subcommands onto `slopdesk-ctl`/store ops: `open/view/edit`, `config get/set/reload`, `font/theme/keybind list`, `tab/pane/window` (`send-keys` already exists), `tab badge --kind`, `pane capture`, `watch <cmd>` (OSC 9;4 wrapper), `watch:claude <id>` (exit 0/4/9), `jump/learn/ignore` (frecency), `version`, `completions`, `state:`/`ipc` (done). Install-CLI flow + omit-prefix (O3). First-launch settings (On-Launch, default-terminal local-only, install hooks card) (O1/O2).
+**Scope.** Map the reference subcommands onto `slopdesk-ctl`/store ops: `view/edit`, `config get/set/reload`, `font/keybind list`, `tab/pane/window` (`send-keys` already exists), `tab badge --kind`, `pane capture`, `watch <cmd>` (OSC 9;4 wrapper), `watch:claude <id>` (exit 0/4/9), `jump/learn/ignore` (frecency), `version`, `completions`, `sidecars`, `help`. Install-CLI flow + omit-prefix (O3). First-launch settings (On-Launch, default-terminal local-only, install hooks card) (O1/O2).
+**Scope — NOT YET IMPLEMENTED.** Carried as `Availability::Planned` in `rust/slopdesk-cli/src/vocabulary.rs`: documented in `--help`, never dispatched, never offered for completion. `open`, `import`, `export`, `features`, `state:claude`, `ipc`, `theme`. (This line said "`state:`/`ipc` (done)" until 2026-08-22; neither has ever dispatched. `theme` was missing from the vocabulary table entirely until the same day, so the one designed verb the CLI answered as a misspelling — see ES-E20-6.)
 **Est** L · **Pri** 4 · **dependsOn** E4, E13
-**Acceptance:** ES-E20-1…ES-E20-4.
+**Acceptance:** ES-E20-1…ES-E20-6.
 
 ## E21 — Remote-window extension first-class through UI-shell surfaces
 **Goal.** Ensure the user's remote-window feature flows through every UI-shell surface as a first-class peer of terminal panes.

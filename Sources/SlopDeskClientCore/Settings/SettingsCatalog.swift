@@ -259,6 +259,48 @@ package enum SettingsCatalog {
     /// One section by its routed identifier, for a caller holding the id rather than the row.
     package static func section(_ id: String) -> Section? { sections.first { $0.id == id } }
 
+    /// The sections a settings search field shows for `needle`, in the order ``sections`` renders —
+    /// the whole list for a blank one, which is the zero state.
+    ///
+    /// The search belongs beside the taxonomy, and until now it was not: ``sections`` has crossed the
+    /// boundary since it was written, but each face above it wrote its own `lowercased().contains(…)`
+    /// over the answer, so the list was Rust's and the rule over the list was Swift's — four times.
+    /// That is `docs/55` §8's drift class, and §8's point is that this class is not ranked by cost:
+    /// on cost alone the filter is ~750 ns per keystroke over eight sections and would never be worth
+    /// a door. What is worth it is that "which sections does this needle name" stops having two
+    /// answers, so a title that starts folding differently cannot mean one thing on the Mac and
+    /// another on the phone.
+    ///
+    /// The needle is passed RAW. The far side folds ASCII case itself, so a caller neither lowercases
+    /// nor trims first — and must not, since doing so would be the third spelling of the rule.
+    ///
+    /// One caveat worth naming where the callers can see it: this folds ASCII case and nothing else,
+    /// while `localizedCaseInsensitiveContains` normalises and case-FOLDS — `ﬁle` holds `file`,
+    /// `straße` holds `strasse`, NFC agrees with NFD. It does NOT fold diacritics, whatever this
+    /// comment used to say: probed 2026-08-22, `Café` does not hold `cafe`, and only
+    /// `localizedStandardContains` reaches that far. The two therefore agree on ASCII and only on
+    /// ASCII. Every section title is ASCII and `slopdesk-workspace` pins that in a test, so the
+    /// substitution is exact here — but it is not a general-purpose replacement for a locale-aware
+    /// search over user text.
+    package static func sections(matching needle: String) -> [Section] {
+        var typed = Array(needle.utf8)
+        // The arithmetic bound: no more sections can match than there are, so §4's retry is
+        // unreachable rather than merely unlikely.
+        var places = [UInt32](repeating: 0, count: sections.count)
+        let matched = typed.withUnsafeMutableBufferPointer { text in
+            places.withUnsafeMutableBufferPointer { out in
+                slopdesk_settings_sections_matching(
+                    text.baseAddress, text.count, out.baseAddress, out.count,
+                )
+            }
+        }
+        guard matched <= places.count else { return sections }
+        return places.prefix(matched).compactMap { place in
+            let index = Int(place)
+            return sections.indices.contains(index) ? sections[index] : nil
+        }
+    }
+
     // MARK: Apply timing
 
     /// When a setting takes effect, surfaced as a chip so the distinction is a data attribute rather

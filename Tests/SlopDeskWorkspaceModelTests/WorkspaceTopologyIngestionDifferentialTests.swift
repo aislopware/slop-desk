@@ -317,7 +317,13 @@ final class WorkspaceTopologyIngestionDifferentialTests: XCTestCase {
         file: StaticString,
         line: UInt,
     ) {
-        for key in Set(mine.entries.keys).union(crate.entries.keys).sorted() {
+        // The document's own emission order, asked for rather than re-derived: `WorkspaceKey` is
+        // deliberately not `Comparable` any more — that hand-written order was the second spelling of
+        // the crate's `BTreeMap` key order — so a stable walk goes through `wsKeyOrder`. It matters
+        // here only for READABILITY, but it is the same order the wire emits in, so a failure below
+        // reads in the order a reader would see the cells on the wire.
+        let union = Array(Set(mine.entries.keys).union(crate.entries.keys))
+        for key in wsKeyOrder(union).map({ union[$0] }) {
             let ours = mine[key], theirs = crate[key]
             guard ours != theirs else { continue }
             XCTFail(
@@ -408,7 +414,10 @@ final class WorkspaceTopologyIngestionDifferentialTests: XCTestCase {
             ("one byte that parses as nothing", Data([0xFF])),
             ("forty bytes of noise", Data(repeating: 0xAB, count: 40)),
         ]
-        for key in document.entries.keys.sorted() where !anchorObjects.contains(key.objectID) {
+        // The document's own canonical order, so a failure names the same cell on every run. A
+        // `sorted()` here would be the second copy of that order, which is what the door removed.
+        for entry in document.sortedEntries where !anchorObjects.contains(entry.key.objectID) {
+            let key = entry.key
             for (how, value) in corruptions {
                 var broken = document
                 broken[key] = value

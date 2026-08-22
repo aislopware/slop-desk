@@ -456,7 +456,7 @@ private struct IOSSidebarSectionHeader: View {
                     // one — folding a group must never mute a waiting agent. An OPEN group asks
                     // nothing: its rows are on screen wearing their own marks.
                     let rollup = TabBadgeReading.rollup(
-                        rows.map { RailRowsBuilder.liveChrome(for: $0, store: store).badge },
+                        RailRowsBuilder.liveChrome(for: rows, store: store).map(\.badge),
                     )
                     Text(trailing)
                         .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))

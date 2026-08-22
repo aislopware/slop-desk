@@ -156,6 +156,15 @@ public struct TerminalSearchController: Equatable, Sendable {
             caseSensitive: caseSensitive,
             isRegex: isRegex,
             wholeWord: wholeWord,
+            // What the LAST keystroke found, as the first guess for what this one will. Typing into
+            // a find bar narrows: `w` → `wa` → `war` can only ever match fewer rows, so after the
+            // first character the previous count is an over-estimate, which under docs/55 §4 is an
+            // exact hit. Guessing 128 instead made every query that matches more than 128 times pay
+            // the whole scan TWICE — the door reports the size it would have written and keeps
+            // nothing, so the retry re-scans the entire scrollback. Measured through the door over a
+            // 10 000-row / 736 KB scrollback, a query matching every row: 3.52 ms per keystroke at
+            // the fixed guess against 1.83 ms at the carried one.
+            expecting: matches.count,
         )
         if matches.isEmpty {
             currentIndex = nil
@@ -175,12 +184,26 @@ public struct TerminalSearchController: Equatable, Sendable {
     /// used to live here — a literal `NSString` scan, an `NSRegularExpression` pass and a boundary filter —
     /// and the middle one BACKTRACKS, which is a hang waiting for the pattern that provokes it. The Rust
     /// engine is a finite automaton, so a ⌘F pattern is linear in the line no matter what the user typed.
+    ///
+    /// `expecting` is how many matches the caller already has reason to think it will get — the previous
+    /// keystroke's count, for a find bar. It buys the answer in ONE scan; see ``recompute()``. A caller
+    /// with nothing to go on passes nothing and gets the stack-sized guess, which is what every find
+    /// bar's FIRST keystroke does.
+    ///
+    /// ### The flatten is NOT worth memoizing — measured
+    /// `lines` does not change between keystrokes, so re-flattening it here looks like the classic
+    /// re-derivation. It is not one worth removing: measured over a 10 000-row / 736 KB scrollback the
+    /// flatten is 136 µs against a 1.83 ms scan — 5.7% of the call, and holding a
+    /// `(blob, lengths)` cache would put two representations of the buffer on an `Equatable, Sendable`
+    /// value type, invalidated by hand. ``GlobalSearchController`` calls this per pane with lines it
+    /// holds nowhere, so a cache on the struct would not reach the ⇧⌘F path at all.
     public static func computeMatches(
         lines: [String],
         query: String,
         caseSensitive: Bool,
         isRegex: Bool,
         wholeWord: Bool = false,
+        expecting expected: Int = 0,
     ) -> [Match] {
         guard !query.isEmpty else { return [] }
         let (rowBlob, rowLengths) = TerminalLinkDetector.flatten(lines)
@@ -195,24 +218,52 @@ public struct TerminalSearchController: Equatable, Sendable {
                     out.baseAddress, out.count,
                 )
             }
-            // Most finds land a handful of hits, so guess a stack buffer wide enough for them and pay
-            // the second scan only for the query that matches half the scrollback.
-            return withUnsafeTemporaryAllocation(of: UInt8.self, capacity: firstGuessBytes) { guess in
-                let needed = call(guess)
-                guard needed > guess.count else { return decode(guess, needed) }
-                var wide = [UInt8](repeating: 0, count: needed)
-                return wide.withUnsafeMutableBufferPointer { buffer in
-                    let again = call(buffer)
-                    return again <= buffer.count ? decode(buffer, again) : []
-                }
-            }
+            return read(guessing: Swift.max(stackGuessRecords, expected), call)
         }
     }
 
     // MARK: The door
 
+    /// Reads the door's answer, sizing the first buffer at `records` matches and re-asking at the size
+    /// it reports if that was short.
+    ///
+    /// The retry is docs/55 §4's, and on this door it is EXPENSIVE in a way the convention's cheap
+    /// doors are not: `slopdesk_find_matches` builds its answer by scanning the whole scrollback, so a
+    /// first guess that is one record short costs a second scan of every row. That is why the guess is
+    /// worth carrying forward rather than fixing at a constant, and why nothing here probes with a null
+    /// output — a null-output call is the retry with the first scan thrown away.
+    private static func read(
+        guessing records: Int,
+        _ ask: (UnsafeMutableBufferPointer<UInt8>) -> Int,
+    ) -> [Match] {
+        var needed = 0
+        let attempt = { (room: UnsafeMutableBufferPointer<UInt8>) -> [Match]? in
+            needed = ask(room)
+            return needed > room.count ? nil : decode(room, needed)
+        }
+        let bytes = 4 + Swift.max(0, records) * recordBytes
+        // The stack only for the guess that fits it. A find over a big scrollback can legitimately
+        // expect tens of thousands of matches, and a temporary allocation that size is a stack the
+        // find bar does not have; a malloc is tens of nanoseconds against a scan that is milliseconds.
+        let first: [Match]? =
+            if records <= stackGuessRecords {
+                withUnsafeTemporaryAllocation(of: UInt8.self, capacity: bytes, attempt)
+            } else {
+                heap(bytes: bytes, attempt)
+            }
+        if let first { return first }
+        return heap(bytes: needed, attempt) ?? []
+    }
+
+    /// One heap-backed attempt at `bytes` wide. Separate only so the two call sites in ``read(guessing:_:)``
+    /// spell the allocation once.
+    private static func heap(bytes: Int, _ attempt: (UnsafeMutableBufferPointer<UInt8>) -> [Match]?) -> [Match]? {
+        var room = [UInt8](repeating: 0, count: Swift.max(0, bytes))
+        return room.withUnsafeMutableBufferPointer { buffer in attempt(buffer) }
+    }
+
     /// Room for 128 matches before the answer outgrows the stack: `[count]` plus 128 records.
-    private static let firstGuessBytes = 4 + 128 * recordBytes
+    private static let stackGuessRecords = 128
 
     /// `[uint32 line][uint32 column][uint32 length]`.
     private static let recordBytes = 12

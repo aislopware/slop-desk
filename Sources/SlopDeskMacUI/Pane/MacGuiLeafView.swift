@@ -601,10 +601,29 @@ final class MacGuiLeafView: NSView {
     /// refuse.
     private var isDesktopUploadTarget: Bool {
         GuiPaneReadout.isDesktopUploadTarget(
-            kind: store.tree.spec(for: paneID)?.kind,
-            hasLiveDescriptor: model?.active != nil,
+            kind: paneKind, hasLiveDescriptor: model?.active != nil,
         )
     }
+
+    /// This pane's KIND, resolved once and held.
+    ///
+    /// ⚠️ Only the KIND is cached; the LIVENESS half of ``isDesktopUploadTarget`` stays a fresh read,
+    /// because a stream can go down mid-drag and a pane that stops being able to receive the file has
+    /// to stop saying `.copy`. A kind cannot: it is fixed for the life of the pane id.
+    ///
+    /// The reason it may not be re-read is `draggingUpdated(_:)`, which AppKit fires on EVERY pointer
+    /// move for the whole duration of a drag — and `TreeWorkspace.spec(for:)` is a full DFS over every
+    /// session, every tab and every split node. Hovering a file over a video pane was re-walking the
+    /// entire workspace per mouse-move frame. `nil` is deliberately NOT cached, so a spec that has not
+    /// landed yet is asked for again rather than latched absent.
+    private var paneKind: PaneKind? {
+        if let cachedPaneKind { return cachedPaneKind }
+        let kind = store.tree.spec(for: paneID)?.kind
+        cachedPaneKind = kind
+        return kind
+    }
+
+    private var cachedPaneKind: PaneKind?
 
     override func draggingEntered(_: NSDraggingInfo) -> NSDragOperation {
         guard isDesktopUploadTarget else { return [] }

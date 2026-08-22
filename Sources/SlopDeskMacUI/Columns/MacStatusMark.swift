@@ -172,6 +172,10 @@ final class MacStatusMarkView: NSView {
         let hole = phase * Double(BrailleCell.dotCount)
         let side = StatusDot.dotDiameter
         let box = CGSize(width: StatusDot.footprint, height: StatusDot.footprint)
+        // ⚠️ `fillEllipse` rather than `NSBezierPath(ovalIn:).fill()` — see
+        // ``MacAgentSpinnerView/draw(_:)`` for the measurement. This mark is on the rail, so a
+        // workspace of thinking agents runs this loop once per mark per display refresh.
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
         for index in 0..<BrailleCell.dotCount {
             // `BrailleCell.position` answers in a TOP-DOWN box (the SwiftUI convention it was
             // written for); this view is bottom-up, so the y is mirrored inside the same box rather
@@ -182,9 +186,9 @@ final class MacStatusMarkView: NSView {
                 y: bounds.midY + box.height / 2 - point.y,
             )
             ink.withAlphaComponent(AgentSpinner.lit(index, hole: hole)).setFill()
-            NSBezierPath(ovalIn: CGRect(
+            context.fillEllipse(in: CGRect(
                 x: centre.x - side / 2, y: centre.y - side / 2, width: side, height: side,
-            )).fill()
+            ))
         }
     }
 }

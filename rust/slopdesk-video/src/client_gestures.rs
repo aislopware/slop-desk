@@ -138,15 +138,6 @@ impl PinchZoomKeyPlanner {
     }
 }
 
-/// The scroll phase code for a gesture beginning.
-const PHASE_BEGAN: u8 = 1;
-/// The scroll phase code for a gesture that may begin.
-const PHASE_MAY_BEGIN: u8 = 128;
-/// The scroll phase code for a cancelled gesture.
-const PHASE_CANCELLED: u8 = 8;
-/// The momentum phase code for the end of a coast.
-const MOMENTUM_ENDED: u8 = 3;
-
 /// Pins the forward-to-host versus pan-the-canvas choice for the LIFETIME of one gesture.
 ///
 /// The choice used to be re-derived per event from live focus, so a focus flip mid-gesture rerouted
@@ -187,7 +178,7 @@ impl ScrollRoutePinner {
     ///
     /// `live_remote` is the caller's current would-be decision, WITHOUT the read-only gate.
     pub const fn route(&mut self, live_remote: bool, scroll_phase: u8, momentum_phase: u8) -> bool {
-        let routed = if scroll_phase == PHASE_BEGAN || scroll_phase == PHASE_MAY_BEGIN {
+        let routed = if scroll_phase == SCROLL_BEGAN || scroll_phase == SCROLL_MAY_BEGIN {
             self.pinned_remote = Some(live_remote);
             live_remote
         } else if let Some(pinned) = self.pinned_remote
@@ -199,7 +190,7 @@ impl ScrollRoutePinner {
             // predates this view — fall back to the live decision.
             live_remote
         };
-        if scroll_phase == PHASE_CANCELLED || momentum_phase == MOMENTUM_ENDED {
+        if scroll_phase == SCROLL_CANCELLED || momentum_phase == MOMENTUM_END {
             self.pinned_remote = None;
         }
         routed
@@ -361,20 +352,112 @@ pub fn clamp_pan(pan: f64, zoom: f64) -> f64 {
     }
 }
 
-/// The scroll phase byte for a host scroll built out of touches (`1` began, `2` changed, `4`
-/// ended).
+// -------------------------------------------------------------------------------------------
+// The two phase encodings a scroll carries, and the one place they are spelled
+// -------------------------------------------------------------------------------------------
+//
+// `CoreGraphics` puts TWO phase fields on a scroll event and gives them DIFFERENT encodings, which
+// is the whole reason this table exists rather than a pair of `as u8` casts.
+// `kCGScrollWheelEventScrollPhase` is a bit-per-state field, so its "ended" is 4 and there is room
+// for a cancel at 8 and a finger-resting-but-not-yet-scrolling at 128;
+// `kCGScrollWheelEventMomentumPhase` is a plain ordinal, so ITS "end" is 3. A three is a changed in
+// one field and an end in the other, and nothing about either number says which field it came
+// from.
+//
+// Those ten numbers were spelled in three places — here, in `scroll_reproject`, and again in the
+// Mac client's view — and two of the three read different sets of them. That is a defect at zero
+// calls per second: the cost of asking is the cost of not asking, and only one of the two answers
+// is right. So the vocabulary is here, `scroll_reproject` reads it, and the client asks rather
+// than transcribing.
+
+/// `CGScrollPhase`: no phase — a classic wheel tick, or a finger-phase the platform did not name.
+pub const SCROLL_NONE: u8 = 0;
+/// `CGScrollPhase`: the finger landed and the gesture began.
+pub const SCROLL_BEGAN: u8 = 1;
+/// `CGScrollPhase`: the finger moved.
+pub const SCROLL_CHANGED: u8 = 2;
+/// `CGScrollPhase`: the finger lifted.
+pub const SCROLL_ENDED: u8 = 4;
+/// `CGScrollPhase`: the gesture was taken away rather than finished.
+pub const SCROLL_CANCELLED: u8 = 8;
+/// `CGScrollPhase`: a finger is resting on the trackpad without scrolling yet.
+pub const SCROLL_MAY_BEGIN: u8 = 128;
+
+/// `CGMomentumScrollPhase`: not coasting.
+pub const MOMENTUM_NONE: u8 = 0;
+/// `CGMomentumScrollPhase`: the coast started.
+pub const MOMENTUM_BEGIN: u8 = 1;
+/// `CGMomentumScrollPhase`: the coast is running.
+pub const MOMENTUM_CONTINUE: u8 = 2;
+/// `CGMomentumScrollPhase`: the coast finished. NOT 4 — this field is an ordinal, not a bit set.
+pub const MOMENTUM_END: u8 = 3;
+
+/// The `NSEvent.Phase` bits, as `AppKit` spells them. A THIRD encoding of the same idea, which is
+/// why the mapping below cannot be a cast: `AppKit`'s ended is `1 << 3` and `CoreGraphics`' is
+/// `1 << 2`.
+mod ns_phase {
+    pub(super) const BEGAN: u32 = 1 << 0;
+    pub(super) const CHANGED: u32 = 1 << 2;
+    pub(super) const ENDED: u32 = 1 << 3;
+    pub(super) const CANCELLED: u32 = 1 << 4;
+    pub(super) const MAY_BEGIN: u32 = 1 << 5;
+}
+
+/// The `CGScrollPhase` byte for an `AppKit` `NSEvent.Phase` mask, passed through verbatim.
+///
+/// A MASK, not a value: `AppKit` may set more than one bit, and the order below is the order the
+/// gesture runs in, so a began-and-changed frame reads as a began. `.stationary`, an empty mask and
+/// any bit `AppKit` adds later all fall to [`SCROLL_NONE`] — a phase this side does not recognise
+/// is a phase the host should replay as a plain wheel tick, never as a guess at a gesture edge.
+#[must_use]
+pub const fn cg_scroll_phase_code(ns_phase: u32) -> u8 {
+    if ns_phase & ns_phase::BEGAN != 0 {
+        SCROLL_BEGAN
+    } else if ns_phase & ns_phase::CHANGED != 0 {
+        SCROLL_CHANGED
+    } else if ns_phase & ns_phase::ENDED != 0 {
+        SCROLL_ENDED
+    } else if ns_phase & ns_phase::CANCELLED != 0 {
+        SCROLL_CANCELLED
+    } else if ns_phase & ns_phase::MAY_BEGIN != 0 {
+        SCROLL_MAY_BEGIN
+    } else {
+        SCROLL_NONE
+    }
+}
+
+/// The `CGMomentumScrollPhase` byte for an `AppKit` `NSEvent.momentumPhase` mask.
+///
+/// The same three edges under a different encoding, and the reason this is a second function rather
+/// than an argument: an inertial tail has no cancel and no may-begin, so those two bits are not
+/// "unmapped here", they do not exist in this field. They fall to [`MOMENTUM_NONE`] with everything
+/// else `AppKit` might add.
+#[must_use]
+pub const fn cg_momentum_phase_code(ns_phase: u32) -> u8 {
+    if ns_phase & ns_phase::BEGAN != 0 {
+        MOMENTUM_BEGIN
+    } else if ns_phase & ns_phase::CHANGED != 0 {
+        MOMENTUM_CONTINUE
+    } else if ns_phase & ns_phase::ENDED != 0 {
+        MOMENTUM_END
+    } else {
+        MOMENTUM_NONE
+    }
+}
+
+/// The scroll phase byte for a host scroll built out of touches.
 ///
 /// The phone has no `mayBegin` (no trackpad rest) and no momentum tail (the platform hands the view
-/// no coast events), so the momentum phase is always `0` — the host's replay then ends the gesture
-/// at the lift instead of inventing an inertia the finger never had.
+/// no coast events), so the momentum phase is always [`MOMENTUM_NONE`] — the host's replay then
+/// ends the gesture at the lift instead of inventing an inertia the finger never had.
 #[must_use]
 pub const fn scroll_phase(is_first: bool, is_last: bool) -> u8 {
     if is_last {
-        4
+        SCROLL_ENDED
     } else if is_first {
-        1
+        SCROLL_BEGAN
     } else {
-        2
+        SCROLL_CHANGED
     }
 }
 
@@ -391,9 +474,9 @@ pub fn click_count(tap_count: i64) -> u8 {
 mod tests {
     use super::{
         MAX_ZOOM, MIN_ZOOM, PINCH_STEP_THRESHOLD, PinchZoomKeyPlanner, ScrollRoutePinner, TouchPairRoute,
-        allows_zoom_reset, clamp_pan, clamp_zoom, classify_pair, click_count, escapes_tap_slop,
-        extra_unsafe_reset_apps, forwards_pointer, is_background_click, pinched_zoom, scroll_phase,
-        stepped_zoom,
+        allows_zoom_reset, cg_momentum_phase_code, cg_scroll_phase_code, clamp_pan, clamp_zoom,
+        classify_pair, click_count, escapes_tap_slop, extra_unsafe_reset_apps, forwards_pointer,
+        is_background_click, pinched_zoom, scroll_phase, stepped_zoom,
     };
 
     #[test]
@@ -630,6 +713,62 @@ mod tests {
             4,
             "a pair that lifts on its first move still ENDS — a began with no end strands it"
         );
+    }
+
+    /// The `AppKit` bits, spelled here as the platform spells them so the mapping is checked
+    /// against the header rather than against itself.
+    const NS_BEGAN: u32 = 1 << 0;
+    const NS_STATIONARY: u32 = 1 << 1;
+    const NS_CHANGED: u32 = 1 << 2;
+    const NS_ENDED: u32 = 1 << 3;
+    const NS_CANCELLED: u32 = 1 << 4;
+    const NS_MAY_BEGIN: u32 = 1 << 5;
+
+    #[test]
+    fn the_two_platform_phase_fields_encode_the_same_edges_differently() {
+        assert_eq!(cg_scroll_phase_code(NS_BEGAN), 1);
+        assert_eq!(cg_scroll_phase_code(NS_CHANGED), 2);
+        assert_eq!(cg_scroll_phase_code(NS_ENDED), 4);
+        assert_eq!(cg_scroll_phase_code(NS_CANCELLED), 8);
+        assert_eq!(cg_scroll_phase_code(NS_MAY_BEGIN), 128);
+        // The whole reason the two are separate functions: an END is 4 in one field and 3 in the
+        // other, and a CONTINUE is 2 in both. Reading either through the other's table silently
+        // turns a finished coast into a mid-gesture move.
+        assert_eq!(cg_momentum_phase_code(NS_BEGAN), 1);
+        assert_eq!(cg_momentum_phase_code(NS_CHANGED), 2);
+        assert_eq!(cg_momentum_phase_code(NS_ENDED), 3);
+    }
+
+    #[test]
+    fn an_unnamed_phase_is_a_plain_wheel_tick_rather_than_a_guess() {
+        for phase in [0, NS_STATIONARY, 1 << 6, 1 << 31] {
+            assert_eq!(cg_scroll_phase_code(phase), 0, "{phase} is not a gesture edge");
+            assert_eq!(cg_momentum_phase_code(phase), 0, "{phase} is not a coast edge");
+        }
+        // A momentum field has no cancel and no may-begin — those bits do not exist there, so they
+        // are 0 rather than mapped through the scroll table.
+        assert_eq!(cg_momentum_phase_code(NS_CANCELLED), 0);
+        assert_eq!(cg_momentum_phase_code(NS_MAY_BEGIN), 0);
+    }
+
+    #[test]
+    fn a_mask_carrying_two_edges_reads_as_the_earlier_one() {
+        // `AppKit` sets more than one bit on the frame a gesture starts moving. The gesture's own
+        // order decides, so began wins over changed and changed over ended — a begin the host never
+        // saw would leave it replaying a move against no gesture.
+        assert_eq!(cg_scroll_phase_code(NS_BEGAN | NS_CHANGED), 1);
+        assert_eq!(cg_scroll_phase_code(NS_CHANGED | NS_ENDED), 2);
+        assert_eq!(cg_scroll_phase_code(NS_ENDED | NS_CANCELLED), 4);
+        assert_eq!(cg_momentum_phase_code(NS_BEGAN | NS_ENDED), 1);
+    }
+
+    #[test]
+    fn the_touch_scroll_phase_is_the_same_table_the_trackpad_reads() {
+        // One table, two callers. If these ever disagree the phone and the Mac are describing the
+        // same gesture to the host in two vocabularies.
+        assert_eq!(scroll_phase(true, false), cg_scroll_phase_code(NS_BEGAN));
+        assert_eq!(scroll_phase(false, false), cg_scroll_phase_code(NS_CHANGED));
+        assert_eq!(scroll_phase(false, true), cg_scroll_phase_code(NS_ENDED));
     }
 
     #[test]

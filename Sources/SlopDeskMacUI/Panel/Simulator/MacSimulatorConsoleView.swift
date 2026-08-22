@@ -245,15 +245,11 @@ final class MacSimulatorConsoleView: NSView {
     private var rows: [DeviceLogLine] = []
     private var isStarted = false
 
-    /// Case-insensitive substring over the whole row — process included, since "which process is
-    /// spamming this" is as common a question as "where is my message".
+    /// Case-insensitive substring over the whole row, in
+    /// ``SimulatorPresentation/Console/visible(_:filter:)`` — the SwiftUI twin of this drawer was
+    /// spelling the same three lines, and only one of the two could ever be reached by a test.
     private var visible: [DeviceLogLine] {
-        let trimmed = filter.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return rows }
-        return rows.filter {
-            $0.message.localizedCaseInsensitiveContains(trimmed)
-                || $0.name.localizedCaseInsensitiveContains(trimmed)
-        }
+        SimulatorPresentation.Console.visible(rows, filter: filter)
     }
 
     private func refill() {

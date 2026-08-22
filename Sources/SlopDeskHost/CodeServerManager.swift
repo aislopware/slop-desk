@@ -379,10 +379,11 @@ final class CodeServerManager: @unchecked Sendable {
         return Profile(arguments: arguments, bridgeSocket: paths.bridgeSocket)
     }
 
-    /// `SLOPDESK_CODE_SERVER_BIN` override, else the ``HostServiceProcess/searchDirectories`` walk —
-    /// the version pinned in `ThirdParty/tools/tools.lock` first, then `PATH` and the homes `PATH`
-    /// misses when hostd is launched outside a login shell. The pinned copy leading matters most
-    /// here: everything the seeder writes is keyed to a workbench version.
+    /// `SLOPDESK_CODE_SERVER_BIN` override, else the walk `locate_tool` in
+    /// `rust/slopdesk-androidd/src/toolchain.rs` owns — the version pinned in
+    /// `ThirdParty/tools/tools.lock` first, then `PATH` and the homes `PATH` misses when hostd is
+    /// launched outside a login shell. The pinned copy leading matters most here: everything the
+    /// seeder writes is keyed to a workbench version.
     static let defaultBinaryLocator: BinaryLocator = {
         HostServiceProcess.locate("code-server", overrideVariable: "SLOPDESK_CODE_SERVER_BIN")
     }

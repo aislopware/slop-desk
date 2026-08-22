@@ -213,6 +213,16 @@ private final class MacTabLayer: NSView {
     private var panes: [PaneID: MacPaneContainer] = [:]
     private var dividers: [SplitTreeRenderModel.DividerHandle.Key: MacPaneDivider] = [:]
     private var handles: [PaneID: MacPaneMoveHandle] = [:]
+    /// Whether a leaf's content is UNTHEMED — a video pane, which needs the pill's contrast plate.
+    ///
+    /// ⚠️ MEMOIZED, and the reason is asymptotic rather than tidy. It was
+    /// `store.tree.spec(for: leaf.id)?.kind == .desktop` inside ``applyHandles(_:)``'s leaf loop, and
+    /// `TreeWorkspace.spec(for:)` is a full DFS — every session, every tab, every split node — so the
+    /// loop was O(panes × workspace) on a path that runs per frame of a divider drag, per frame of a
+    /// live window resize, and per pointer move of a pane drag (``dragChanged(_:at:)``). A pane's KIND
+    /// is fixed for the life of its id, so the answer is asked once per leaf and pruned with its
+    /// handle.
+    private var handleIsUnthemed: [PaneID: Bool] = [:]
     private let moveOverlay = MacPaneMoveOverlay()
     private var externalPreview: NSView?
 
@@ -400,6 +410,7 @@ private final class MacTabLayer: NSView {
             if drag.move?.source == id { drag.interrupted() }
             handle.removeFromSuperview()
             handles[id] = nil
+            handleIsUnthemed[id] = nil
         }
         for leaf in wanted {
             let handle = handles[leaf.id] ?? {
@@ -419,8 +430,14 @@ private final class MacTabLayer: NSView {
             }()
             handle.frame = leaf.rect
             // A video leaf streams arbitrary — usually light — content, where the bare tertiary pill
-            // disappears, so it gains a contrast plate.
-            handle.contentIsUnthemed = store.tree.spec(for: leaf.id)?.kind == .desktop
+            // disappears, so it gains a contrast plate. Read through the memo — see
+            // ``handleIsUnthemed`` for why the tree walk may not be in this loop.
+            let unthemed = handleIsUnthemed[leaf.id] ?? {
+                let answer = store.tree.spec(for: leaf.id)?.kind == .desktop
+                handleIsUnthemed[leaf.id] = answer
+                return answer
+            }()
+            handle.contentIsUnthemed = unthemed
             // During a drag only the SOURCE handle stays live: it owns the gesture, and the others'
             // top strips would otherwise shadow the drop target. This is also the second of a hidden
             // tab's two promises — it takes the tracking area down, which `hitTest` cannot.

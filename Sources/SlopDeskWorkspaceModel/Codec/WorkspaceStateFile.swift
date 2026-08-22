@@ -42,10 +42,15 @@ public enum WorkspaceStateFile {
     /// predicate reads neither the object id nor the value: handing a state over to have it handed
     /// back minus some rows would marshal every byte twice to ask about two. The loop is not a
     /// decision — every branch inside it is behind ``isPersisted(_:)``.
+    ///
+    /// It walks the map DIRECTLY and not ``HostWorkspaceState/sortedEntries``. The answer is a
+    /// document — an unordered map — so the order the walk sees is one nothing downstream can
+    /// observe, and asking for it was a whole canonical ordering of every cell (measured at 24
+    /// panes: ~1 ms before the rule moved to Rust, ~77 µs after) thrown away on the next line.
     public static func persisting(_ state: HostWorkspaceState) -> HostWorkspaceState {
         var out = HostWorkspaceState()
-        for entry in state.sortedEntries where isPersisted(entry.key) {
-            out.set(entry.key, entry.value)
+        for (key, value) in state.entries where isPersisted(key) {
+            out.set(key, value)
         }
         return out
     }

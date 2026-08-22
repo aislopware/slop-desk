@@ -3719,7 +3719,267 @@ if grep -qE '"--no-headers"|"--config-file"|"--socket PATH"' "${SWIFT_CLI_MAIN}"
   fail "${SWIFT_CLI_MAIN} spells a global flag again — the grammar and its help are args.rs's"
 fi
 
+# ---- 7. The ui-shell docs' CLI claims are a claim WITH a gate behind it. ----------------------
+#
+# WHAT THIS PINS. `docs/ui-shell/BACKLOG.md` and `docs/ui-shell/USER-STORIES.md` each carry an
+# `## E20 — CLI parity + watch + first-launch` section that names the shipped CLI surface in prose:
+# which verbs there are, which of them run, which flags they take, and what `watch:claude` exits
+# with. Those four things are all written down for real in `rust/slopdesk-cli/src/vocabulary.rs`
+# (`SUBCOMMANDS`, each `Subcommand`'s `availability`, each `Form`'s `invocation`), in
+# `rust/slopdesk-cli/src/args.rs` (`GLOBAL_FLAGS`) and in `rust/slopdesk-agent/src/watch.rs`
+# (`WatchExit`). This section compares the prose against those, both ways.
+#
+# THE FAILURE MODE. docs/55 §8's closing lesson, verbatim: "A row in this table is a claim with no
+# gate behind it … and it decayed the same way: the port moved and the row did not." These two
+# sections had decayed exactly that way, and the decay was found by reading, not by any gate:
+#
+#   * `ES-E20-1` and BACKLOG's Scope line both named a `theme` verb. There is none — `theme` is a
+#     PreferencesStore key reached by `config set`, and `slopdesk theme list` (which
+#     `spec/reference__cli.md` §Behaviors still specifies) exits 2 as an UNKNOWN subcommand. That is
+#     a sharper hole than a stale doc: every other unbuilt reference verb is carried as
+#     `Availability::Planned` so a user is told it is coming, and this one alone is told it is a typo.
+#   * `ES-E20-1` claimed `open` drives the running app. `open` is `Planned` and exits 2.
+#   * BACKLOG's Scope line ended "`state:`/`ipc` (done)". Neither has ever dispatched; both are
+#     `Planned`. A doc that says "done" about a verb that exits 2 is worse than one that says nothing.
+#
+# WHY NO TEST CAN SEE IT. There is nothing to compile and nothing to run: a markdown sentence is not
+# reachable from any target, so no suite in either language can be made to fail on it. `make lint`
+# already refuses to let the CLI's own four spellings drift (sections 1–6 above); the doc is the
+# fifth spelling, and it was the only one nothing read.
+#
+# WHAT IS DELIBERATELY *NOT* COVERED, so the next reader does not mistake a partial gate for a
+# total one:
+#
+#   * `docs/ui-shell/spec/` is NOT read. Those pages are the design TARGET — `reference__cli.md`
+#     specifies `theme list`, `theme import`, `--color`, `--activate` and more that were never
+#     built, on purpose. Gating the spec against the code would demand the spec be rewritten every
+#     time a feature is deferred, which is the opposite of what a spec is for. `COVERAGE.md` is the
+#     shipped-vs-not ledger, and §C/§D/§E of it are the deferral record.
+#   * `COVERAGE.md`'s own prose is only spot-checked (rule 8). Its CLI claims are §D/§E rows in
+#     English — "deferred in source", "INTENTIONALLY NOT BUILT" — and the checkable part of each is
+#     just "this verb had better not be Ready", which is what rule 8 asserts. The *reasons* are not
+#     mechanically checkable and are not claimed to be.
+#   * BEHAVIOUR is not covered, and this is the same limit docs/55 §8 names for the whole of
+#     `check-supervisor.sh`: that `pane capture` "captures the last N lines", that `watch` "shows a
+#     spinner", that `--json` "produces structured output". This gate compares NAMES and NUMBERS. A
+#     verb that exists, dispatches, is spelled right in the docs and does the wrong thing passes here
+#     exactly as it does everywhere else in this file.
+#   * The two sections' non-CLI prose (epic ordering, estimates, first-launch stories) is untouched.
+#   * A malformed verb with a dangling family colon — the literal `state:` the BACKLOG line used to
+#     write — is dropped by the tokeniser rather than reported, because it matches no verb SHAPE.
+#     7a sees words, not near-misses.
+#
+# BREAK-TESTED 2026-08-22, every file copied to /tmp first and restored from there, `git checkout`
+# never used, and the whole tree verified byte-identical afterwards. Each break failed the rule
+# named; undoing each one passed:
+#   1. the original prose in BOTH docs (`open/view/edit`, `font/theme/keybind list`) — 4 failures:
+#      7a "names CLI words vocabulary.rs does not know: theme" ×2, 7b "presents Planned verbs as
+#      working: open" ×2.
+#   2. restoring BACKLOG's "`state:claude`/`ipc` (done)" — 7b, "ipc / state:claude".
+#   3. adding `sidecars` to the ES-E20-5 unbuilt list — 7c, "files verbs under NOT YET IMPLEMENTED
+#      that dispatch today: sidecars".
+#   4. writing `--colour` beside `--json` — 7d, "names flags the CLI does not parse: --colour".
+#   5. `exit codes 0/4/9` → `0/4/8` — 7e, "quotes watch:claude exit codes 0/4/8; WatchExit is 0/4/9".
+#   6. renaming the `## E20 —` heading — the corpus guard, "has no '## E20 …' section — rules 7a–7d
+#      below read an empty corpus and pass".
+#   7. `ipc` promoted to `Availability::Ready` — 3 failures: 7c in both docs and rule 8's ledger row.
+#   8. `watch:claude` renamed `watch:codex` — rule 8's Claude-only ban.
+#   9. deleting COVERAGE §D's `ipc`/`state:<agent>` row — rule 8's "the row this gate reads is gone",
+#      twice.
+#  10. `name:` → `nom:` in vocabulary.rs — the availability floor.
+#  11. widening the spaces around `WatchExit`'s `=` — the `watch.rs` floor, "compares nothing".
+#  12. breaking `name:` AND `invocation:` together — the `vocab_words` floor ("read fewer than 20
+#      vocabulary words"), which is the one that matters most: without it 7a's allowlist empties and
+#      every correct token in both docs reads as a finding.
+#
+UI_SHELL_BACKLOG=docs/ui-shell/BACKLOG.md
+UI_SHELL_STORIES=docs/ui-shell/USER-STORIES.md
+UI_SHELL_COVERAGE=docs/ui-shell/COVERAGE.md
+# The one heading both files spell, and the marker a line must carry to name an unbuilt verb.
+E20_HEADING='## E20 — CLI parity + watch + first-launch'
+E20_UNBUILT='NOT YET IMPLEMENTED'
+# The markdown code fence, bound as a byte rather than typed. ShellCheck reads a literal backtick
+# inside a single-quoted `grep` pattern as a command substitution (SC2016, info — which `enable=all`
+# makes fatal here), and the escape has to appear somewhere; `$'\x60'` puts it in one place, named,
+# instead of in four patterns that then all need a suppression comment.
+TICK=$'\x60'
+
+# The E20 section of one doc: from the heading to the next `## `, heading included.
+e20_section() {
+  awk -v want="${E20_HEADING}" '
+    $0 == want { on = 1; next }
+    on && /^## / { exit }
+    on { print }
+  ' "$1"
+}
+
+# Every CLI-shaped token inside a backtick span. Spans holding a `.` are dropped whole — those are
+# file paths (`spec/reference__cli.md`, `vocabulary.rs`), never invocations — and so is the program's
+# own name in either spelling. Metavariables are stripped, then `/`, `|` and `,` are separators,
+# because that is how both docs write an alternation (`config get/set/reload`, `tab/pane/window`).
+# What survives is a lowercase word, optionally with one `:family` suffix: `pane`, `send-keys`,
+# `watch:claude`.
+cli_tokens() {
+  grep -o "${TICK}[^${TICK}]*${TICK}" |
+    tr -d "${TICK}" |
+    grep -v '\.' |
+    sed -E 's/<[^>]*>//g' |
+    tr '/|,' '   ' |
+    tr -s ' ' '\n' |
+    grep -vxE 'slopdesk|slopdesk-.*' |
+    grep -xE '[a-z][a-z0-9-]*(:[a-z0-9]+)?' |
+    sort -u
+}
+
+# The vocabulary's own words, which is what a token is allowed to be: every `Subcommand.name`, plus
+# every word of every `Form.invocation` — the second half is what makes `config get`, `pane capture`
+# and `font apply` legal without any list in this gate.
+vocab_words=$(
+  {
+    sed -nE 's/^ *name: "([^"]+)",?$/\1/p' "${RUST_CLI_VOCAB}"
+    sed -nE 's/^ *invocation: "([^"]*)".*$/\1/p' "${RUST_CLI_VOCAB}"
+  } | sed -E 's/<[^>]*>//g' | tr '/|,' '   ' | tr -s ' ' '\n' | grep -xE '[a-z][a-z0-9-]*(:[a-z0-9]+)?' | sort -u
+) || true
+# A GATE WHOSE HAYSTACK IS EMPTY PASSES EVERY BAN AT ONCE. `vocab_words` is the allowlist rule 7a
+# compares against, so an empty one would make every token in both docs a finding; the two `sed`
+# extractions are exactly the kind that go quiet when `vocabulary.rs` is reformatted.
+if [[ $(printf '%s\n' "${vocab_words}" | grep -c .) -lt 20 ]]; then
+  fail "${RUST_CLI_VOCAB}: read fewer than 20 vocabulary words — the extraction in this gate has \
+gone stale, so rule 7a is comparing the ui-shell docs against nothing"
+fi
+
+ready_names=$(
+  awk '
+    /^ *name: "/            { name = $0; sub(/^ *name: "/, "", name); sub(/",?$/, "", name) }
+    /Availability::Ready/   { if (name != "") { print name; name = "" } }
+    /Availability::Planned/ { name = "" }
+  ' "${RUST_CLI_VOCAB}" | sort -u
+) || true
+planned_names=$(
+  awk '
+    /^ *name: "/            { name = $0; sub(/^ *name: "/, "", name); sub(/",?$/, "", name) }
+    /Availability::Planned/ { if (name != "") { print name; name = "" } }
+    /Availability::Ready/   { name = "" }
+  ' "${RUST_CLI_VOCAB}" | sort -u
+) || true
+if [[ -z "${ready_names}" || -z "${planned_names}" ]]; then
+  fail "${RUST_CLI_VOCAB}: one availability list read as EMPTY — rules 7b/7c and 8 would pass by \
+having nothing to check"
+fi
+
+for doc in "${UI_SHELL_BACKLOG}" "${UI_SHELL_STORIES}"; do
+  section=$(e20_section "${doc}") || true
+  # Named, not assumed: the heading is a literal in two files this gate does not own, and a doc that
+  # renames or drops it would empty the corpus and pass all four rules below in silence.
+  if [[ -z "${section}" ]]; then
+    fail "${doc} has no '${E20_HEADING}' section — rules 7a–7d below read an empty corpus and pass"
+    continue
+  fi
+
+  # ---- 7a. A verb the docs name is a verb the vocabulary knows. ------------------------------
+  # CATCHES the `theme` bug: a doc naming a subcommand that is not in `SUBCOMMANDS` under either
+  # availability, so it is not merely unbuilt — a user who types it is told it is a typo.
+  tokens=$(printf '%s\n' "${section}" | cli_tokens) || true
+  unknown=$(comm -23 <(printf '%s\n' "${tokens}") <(printf '%s\n' "${vocab_words}")) || true
+  if [[ -n "${unknown}" ]]; then
+    fail "$(printf '%s §E20 names CLI words %s does not know:\n%s' \
+      "${doc}" "${RUST_CLI_VOCAB}" "$(printf '%s\n' "${unknown}" | sed 's/^/    /')")"
+  fi
+
+  # ---- 7b/7c. A verb is named on the side of the line that matches its availability. ---------
+  # Per LINE and per TOKEN, not per backtick span, and that is the whole difference between this
+  # rule working and not: both docs write an alternation inside ONE span — `open/view/edit`,
+  # `jump/learn/ignore` — so a `grep -F '`open`'` finds nothing in the very sentence that made the
+  # false claim. The tokeniser above already splits a span; this reuses it a line at a time.
+  #
+  # 7b CATCHES the `open` and the "`state:`/`ipc` (done)" bugs: a verb the docs present as working
+  # while `vocabulary.rs` still calls it Planned, which is a promise the dispatcher answers with
+  # exit 2. 7c is the direction that goes stale on the day a verb SHIPS: a `Planned` entry promoted
+  # to `Ready` leaves a doc line still filing it under "not yet". The marker is one literal,
+  # `NOT YET IMPLEMENTED`, so a doc cannot half-say it.
+  while IFS= read -r line; do
+    line_tokens=$(printf '%s\n' "${line}" | cli_tokens) || true
+    [[ -z "${line_tokens}" ]] && continue
+    if [[ "${line}" == *"${E20_UNBUILT}"* ]]; then
+      shipped=$(comm -12 <(printf '%s\n' "${line_tokens}") <(printf '%s\n' "${ready_names}")) || true
+      if [[ -n "${shipped}" ]]; then
+        fail "$(printf '%s §E20 files verbs under %s that dispatch today:\n%s\n  on: %s' \
+          "${doc}" "${E20_UNBUILT}" "$(printf '%s\n' "${shipped}" | sed 's/^/    /')" \
+          "$(printf '%.120s' "${line}")")"
+      fi
+    else
+      promised=$(comm -12 <(printf '%s\n' "${line_tokens}") <(printf '%s\n' "${planned_names}")) || true
+      if [[ -n "${promised}" ]]; then
+        fail "$(printf '%s §E20 presents Planned verbs as working (no "%s" on the line):\n%s\n  on: %s' \
+          "${doc}" "${E20_UNBUILT}" "$(printf '%s\n' "${promised}" | sed 's/^/    /')" \
+          "$(printf '%.120s' "${line}")")"
+      fi
+    fi
+  done <<< "${section}"
+
+  # ---- 7d. A flag the docs name is a flag the CLI parses. ------------------------------------
+  # CATCHES a doc promising `--colour` or a renamed `--kind`. The universe is `GLOBAL_FLAGS`'
+  # spellings (which `args.rs`'s own test feeds back through `parse`) plus every flag spelled in a
+  # `Form.invocation`; a bare `--` end-of-options marker is not a flag and is skipped.
+  doc_flags=$(printf '%s\n' "${section}" | grep -o "${TICK}[^${TICK}]*${TICK}" | tr -d "${TICK}" |
+    grep -oE '\-\-[a-z][a-z-]*' | sort -u) || true
+  cli_flags=$(
+    {
+      grep -oE '"--[a-z][a-z-]*"' rust/slopdesk-cli/src/args.rs | tr -d '"'
+      sed -nE 's/^ *invocation: "([^"]*)".*$/\1/p' "${RUST_CLI_VOCAB}" | grep -oE '\-\-[a-z][a-z-]*'
+    } | sort -u
+  ) || true
+  if [[ -z "${cli_flags}" ]]; then
+    fail "no flag spellings read from rust/slopdesk-cli — rule 7d compares ${doc} against nothing"
+  elif [[ -n "${doc_flags}" ]]; then
+    stray=$(comm -23 <(printf '%s\n' "${doc_flags}") <(printf '%s\n' "${cli_flags}")) || true
+    if [[ -n "${stray}" ]]; then
+      fail "$(printf '%s §E20 names flags the CLI does not parse:\n%s' \
+        "${doc}" "$(printf '%s\n' "${stray}" | sed 's/^/    /')")"
+    fi
+  fi
+
+  # ---- 7e. The exit codes the docs quote are the ones the state machine produces. ------------
+  # `watch:claude` is the only verb in the tree with a documented exit-code contract, both docs
+  # quote it as `0/4/9`, and `WatchExit` is where those three numbers actually live. A renumbering
+  # is invisible to every caller — a script that tests `$? == 4` simply stops branching.
+  doc_codes=$(printf '%s\n' "${section}" | grep -oE 'exit(-| )codes? [0-9](/[0-9])+|exit [0-9](/[0-9])+' |
+    grep -oE '[0-9](/[0-9])+' | tr '/' '\n' | sort -u | paste -sd/ -) || true
+  rust_codes=$(sed -nE 's/^ *[A-Z][A-Za-z]* = ([0-9]+),$/\1/p' rust/slopdesk-agent/src/watch.rs |
+    sort -u | paste -sd/ -) || true
+  if [[ -z "${rust_codes}" ]]; then
+    fail "rust/slopdesk-agent/src/watch.rs: no WatchExit discriminants read — rule 7e compares nothing"
+  elif [[ -n "${doc_codes}" && "${doc_codes}" != "${rust_codes}" ]]; then
+    fail "${doc} §E20 quotes watch:claude exit codes ${doc_codes}; WatchExit is ${rust_codes}"
+  fi
+done
+
+# ---- 8. COVERAGE.md's non-build rows may not name a verb that ships. --------------------------
+# `COVERAGE.md` §D files `ipc` and `state:<agent>` as "deferred in source"; §E files `slopdesk
+# import`/`export` under "INTENTIONALLY NOT BUILT — do NOT implement". Both are the deferral record
+# the rest of the repo reads before deciding something is a gap, so the day one of them ships they
+# stop being a record and become an instruction to un-build it.
+#
+# Only the checkable half is asserted — "not Ready" — for the reason given in the scope note above.
+# `state:claude` is spelled here rather than §D's `state:<agent>`: the vocabulary is Claude-only by
+# design (its module doc, and a test in the crate, hold `codex` and `opencode` out), and the last
+# ban re-states that from this side so a doc that is right today cannot be made wrong by a verb.
+for deferred in ipc import export state:claude; do
+  if printf '%s\n' "${ready_names}" | grep -qxF "${deferred}"; then
+    fail "${UI_SHELL_COVERAGE} files '${deferred}' as deferred/not-built, but ${RUST_CLI_VOCAB} \
+now calls it Ready — the coverage ledger is what a future session reads before deciding it is a gap"
+  fi
+  if ! grep -qF "${deferred%%:*}" "${UI_SHELL_COVERAGE}"; then
+    fail "${UI_SHELL_COVERAGE} no longer mentions '${deferred%%:*}' — the row this gate reads is gone"
+  fi
+done
+if printf '%s\n' "${ready_names}" "${planned_names}" | grep -qE 'codex|opencode'; then
+  fail "${RUST_CLI_VOCAB} grew a codex/opencode verb — ${UI_SHELL_COVERAGE} §D scopes agents to \
+Claude Code, and a per-agent verb is the one thing that would silently make that row false"
+fi
+
 printf 'check-supervisor: the slopdesk CLI offers exactly the verbs it can run.\n'
+printf 'check-supervisor: the ui-shell docs describe the CLI the crate actually ships.\n'
 
 # The FRECENCY ranking and the JUMP it resolves — `rust/slopdesk-workspace`'s `frecency` and `jump`.
 # One scorer rather than three sorts, because the folder rail, the open-quickly overlay, the store's
@@ -7935,6 +8195,835 @@ for rail_memo_door in slopdesk_ws_rail_titles_by_process slopdesk_ws_rail_struct
 done
 printf 'check-supervisor: the rail fingerprint asks for its rung and its keys; it does not re-derive them.\n'
 
+# ── The three re-derivations a body pass must not grow back ───────────────────────────────────
+#
+# None of these is visible to a test: every answer stays correct, both halves stay self-consistent,
+# and the only trace is the frame. What they have in common is the shape docs/55 §4c's last section
+# names — a value that reads like a FIELD and is in fact a PROJECTION, sitting behind a computed
+# `var` that a `body` reaches for more than once.
+#
+# 1. THE DEVICE CONSOLES. `visible` is a `localizedCaseInsensitiveContains` over every retained log
+#    line, and `logCapacity` is 600 on both models. Measured in a scratch `swiftc -O` harness (NOT
+#    in the tree, two runs agreeing to 1%): 0.78 ms per derivation when the needle hits, 1.50 ms
+#    when it MISSES — and a miss is the state every keystroke passes through. Both views read it
+#    three times per pass (the emptiness test, the `animation(value:)` key, the `ForEach`), so one
+#    console repaint cost 2.3–4.5 ms of main thread, and the drawer repaints on every arriving line.
+#    The fix is one `let` threaded into `rows(_:)`; the gate is that `rows` stays a FUNCTION taking
+#    the derived rows, because a `private var rows` can only have reached for `visible` itself.
+#
+# 2. THE DEVICE LISTS. Same rule one register down — `matches` answered an emptiness test and then
+#    built the sections from two separate derivations, at ~1.6 µs per `localizedCaseInsensitiveContains`
+#    call over two fields per device.
+#
+# 3. THE PICKER. `sections` reassembles all five pill sources off the live store and then RANKS
+#    every one of them. Measured against the shipped xcframework at 127 candidates over five
+#    sources: 125 µs for the ranking plus 20 µs to mint the rows. `selectableRows` and
+#    `displayEntries` each reached through to it, so the picker paid ~145 µs TWICE per keystroke
+#    before drawing a row — and the ⌘1–9 arm paid it twice more to read one row out.
+#
+# BREAK-TESTED against the real tree on 2026-08-22, each rule individually, by putting the pre-fix
+# spelling back and restoring from a /tmp copy afterwards (never `git checkout`, which would have
+# discarded the file's own uncommitted work). All seven fire, each on its own file only, and the
+# restored tree reads 0:
+#   rows() → a computed var           FAIL "rows() stopped taking the derived lines"      ✓
+#   `value: visible.isEmpty` back     FAIL "asks `visible.isEmpty`"                       ✓
+#   `let shown = visible` deleted     FAIL "content() stopped binding `visible` once"     ✓
+#   list() → a computed var  (×2)     FAIL "list() stopped taking the derived devices"    ✓ ✓
+#   `let built = sections` deleted    FAIL "resultsList stopped binding `sections` once"  ✓
+#   `displayEntries` grown back       FAIL "`displayEntries` is back as a computed var"   ✓
+for half in Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift \
+  Sources/SlopDeskPhoneUI/Panel/Android/AndroidConsoleView.swift; do
+  if ! grep -qE '^ *private func rows\(_ shown: \[DeviceLogLine\]\)' "${half}"; then
+    fail "${half}: rows() stopped taking the derived lines — a \`private var rows\` re-runs the 600-row filter a second time"
+  fi
+  # The other two derivations were both `visible.isEmpty` — the `if` and the `animation(value:)` key
+  # — and they are banned by SHAPE. A shape ban cannot see an intent, but here the shape IS the
+  # defect: there is no reading of this property that costs less than the whole filter, so asking it
+  # a yes/no question is asking for the 600-row scan and throwing the rows away. The ONE surviving
+  # read outside the `let` is the Copy-console verb, and that one is inside a `Button` ACTION
+  # closure, so it happens on a tap rather than on a pass. Comments are stripped first: both files
+  # NAME `visible` in the note that explains the `let`.
+  if grep -qE '\bvisible\.isEmpty\b' <<< "$(sed -E 's,//.*,,;s,^ */// .*,,' "${half}")"; then
+    fail "${half}: asks \`visible.isEmpty\` — that runs the whole 600-row filter to answer a Bool (docs/55 §4c)"
+  fi
+  if ! grep -qE '^ *let shown = visible$' "${half}"; then
+    fail "${half}: content() stopped binding \`visible\` once — the 0.78–1.50 ms filter is back on every reader"
+  fi
+done
+for half in Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift \
+  Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift; do
+  if ! grep -qE '^ *private func list\(_ shown: \[(Simulator|Android)Device\]\)' "${half}"; then
+    fail "${half}: list() stopped taking the derived devices — a \`private var list\` re-filters every device a second time"
+  fi
+done
+# The picker: ONE `sections` per pass, and no computed `var` that reaches through to it a second
+# time. `displayEntries` was exactly that and is deleted; `selectableRows` survives because the key
+# handlers legitimately want one derivation of their own.
+if ! grep -qE '^ *let built = sections$' Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swift; then
+  fail "OpenQuicklyView: resultsList stopped binding \`sections\` once — every reader re-ranks all five sources (~145 µs a keystroke)"
+fi
+if grep -qE '^ *private var displayEntries:' Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swift; then
+  fail "OpenQuicklyView: \`displayEntries\` is back as a computed var — it is a second whole derivation of \`sections\`"
+fi
+printf 'check-supervisor: three projections read once per pass, not three times.\n'
+
+# ── WorkspaceCore: the re-derivations this sweep removed ──────────────────────────────────────
+# Five rules, from the Rust-push sweep of `Sources/SlopDeskWorkspaceCore/`. Every one of them pins a
+# change whose ONLY symptom is latency: the code keeps compiling, every unit test keeps passing, and
+# the find bar or the folder overlay just gets slower. That is the whole reason they are here rather
+# than in a suite — a differential test cannot see a doubled scan, and a timing assertion in CI is a
+# flake generator. Each block states what was measured, and each was break-tested against the real
+# tree by editing the file, running this section, and restoring from a `/tmp` copy.
+#
+# docs/55-ffi-boundary.md §4 (guess-then-retry, never probe with a null output) and §4c (rank by
+# ALLOCATIONS and RE-DERIVATIONS, not by crossing count).
+
+WSCORE_FRECENCY="Sources/SlopDeskWorkspaceCore/Folders/FolderFrecency.swift"
+WSCORE_SYNCINPUT="Sources/SlopDeskWorkspaceCore/Workspace/Store/SyncInputByteFilter.swift"
+WSCORE_LOOPBACK="Sources/SlopDeskWorkspaceCore/Workspace/Sync/LoopbackWorkspaceDocument.swift"
+WSCORE_TEMPLATES="Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift"
+WSCORE_FIND="Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift"
+WSCORE_GLOBALFIND="Sources/SlopDeskWorkspaceCore/Terminal/GlobalSearchController.swift"
+RUST_ROWFIND="rust/slopdesk-rowscan/src/find.rs"
+
+# Every rule below reads CODE, never prose: each of these files documents the shape it no longer has,
+# by name, so a gate that matched comments would fire on the explanation of its own bug. An empty
+# strip is named rather than assumed — a file that became all comment would otherwise read as the
+# healthiest result this section can print.
+for wscore_file in "${WSCORE_FRECENCY}" "${WSCORE_SYNCINPUT}" "${WSCORE_LOOPBACK}" \
+  "${WSCORE_TEMPLATES}" "${WSCORE_FIND}" "${WSCORE_GLOBALFIND}" "${RUST_ROWFIND}"; do
+  if [[ ! -f "${wscore_file}" ]]; then
+    fail "${wscore_file} is gone — the WorkspaceCore latency ratchets below stopped checking anything"
+  fi
+done
+wscore_code() { grep -vE '^ *(///|//!|//|\*)' "$1" 2> /dev/null || true; }
+
+# ── W1. The two index doors guess, they do not probe ────────────────────────────────────────────
+# `slopdesk_folder_ranked`, `slopdesk_folder_sanitized` and `slopdesk_sync_input_keyboard_only` all
+# answer a SUBSET of what was lent, so the caller holds the exact ceiling of the answer before it
+# asks. Both faces used to call with a null output first to learn a size they could already compute
+# — and a null-output call on these doors is not free, it rebuilds the whole folder database and
+# sorts it, or runs the whole `vtscan` pass, and throws the answer away. Measured: `ranked` at the
+# shipped 200-entry cap 30.9 µs → 15.6 µs through the door (54.3 µs → 39.0 µs for the whole Swift
+# face), and the sync-input strip 14.4 µs → 7.5 µs on an 8 KiB mirrored paste. The overlay asks for
+# the ranking twice per keystroke.
+#
+# BREAK-TESTED: restoring the `(nil, 0)` first call in `FolderFrecency.answer(sizedAt:)` fires W1a;
+# restoring it in `SyncInputByteFilter.keyboardOnly` fires W1b. Both files restored from /tmp.
+for wscore_prober in "${WSCORE_FRECENCY}:W1a:the folder ranking" "${WSCORE_SYNCINPUT}:W1b:the sync-input strip"; do
+  wscore_path="${wscore_prober%%:*}"
+  wscore_rest="${wscore_prober#*:}"
+  wscore_tag="${wscore_rest%%:*}"
+  wscore_what="${wscore_rest#*:}"
+  if wscore_code "${wscore_path}" | grep -qE '\bnil, *0\b|\bnull, *0\b'; then
+    fail "${wscore_tag}: ${wscore_path} probes ${wscore_what} with a NULL output again — that call runs the whole far-side rule and keeps nothing, to learn a size the caller already has (docs/55 §4)"
+  fi
+done
+# The guess is what makes the probe unnecessary, so its absence is the same bug wearing a different
+# face: a `ranked` that stopped sizing its first buffer would be back to one call per answer only by
+# accident.
+if ! wscore_code "${WSCORE_FRECENCY}" | grep -q 'answer(sizedAt:'; then
+  fail "W1c: ${WSCORE_FRECENCY} no longer sizes its first buffer from the ceiling it holds — the index doors are back to being asked twice (docs/55 §4)"
+fi
+
+# ── W2. The find door's guess is CARRIED, not a constant ────────────────────────────────────────
+# `slopdesk_find_matches` builds its answer by scanning every row, so §4's retry costs a second scan
+# of the entire scrollback rather than a second copy. A fixed 128-record guess therefore doubled
+# every query that matched more than 128 rows — which is most of the useful ones. Measured through
+# the door over a 10 000-row / 736 KB scrollback with a query matching every row: 3.52 ms per
+# keystroke at the fixed guess against 1.83 ms at the carried one, per pane, and ⇧⌘F asks every open
+# pane at once.
+#
+# BREAK-TESTED: deleting `expecting: matches.count` from `recompute()` fires W2a; deleting
+# `expecting: expected` from `GlobalSearchController.run` fires W2b. Both restored from /tmp.
+if ! wscore_code "${WSCORE_FIND}" | grep -q 'expecting: matches.count'; then
+  fail "W2a: ${WSCORE_FIND} stopped carrying the previous keystroke's match count into the next scan — every query matching more than the stack guess scans the scrollback twice"
+fi
+if ! wscore_code "${WSCORE_GLOBALFIND}" | grep -q 'expecting: expected'; then
+  fail "W2b: ${WSCORE_GLOBALFIND} stopped carrying a guess across panes — the first pane's answer sizes the rest, and without it every pane pays the second scan"
+fi
+
+# ── W3. The find scan does not re-derive a row it already has ───────────────────────────────────
+# Three re-derivations lived in one 90-line module, all of them per keystroke over the whole
+# scrollback. `folded()` returned a fresh `Vec<u16>` per row; the literal matcher compared the
+# pattern at EVERY offset instead of skipping to its first unit; `stands_alone` re-encoded the whole
+# row per HIT; and the regex path measured each column from the start of the row, which is quadratic
+# in a row with many hits. Measured against this module at the commit before, linked into the same
+# binary so both sides run the same `regex` build: 10 000 rows / 736 KB, case-insensitive literal
+# 6.3 ms → 1.2 ms; with whole-word 8.2 ms → 2.0 ms; and on ONE 160 KB row with 20 000 regex hits —
+# the shape a program prints whenever it emits an unwrapped line — 782 ms → 1.9 ms, per keystroke.
+#
+# The rules are shape-based on purpose. A vocabulary pin would pass the day someone reintroduced the
+# per-row allocation under a new name; what cannot come back quietly is the SIGNATURE that forced it.
+#
+# BREAK-TESTED: changing `stands_alone(units: &[u16], …)` back to taking `line: &str` fires W3a;
+# reintroducing `fn folded(text: &str, case_sensitive: bool) -> Vec<u16>` fires W3b; restoring
+# `utf16_units(line.get(..hit.start())…)` fires W3c. `find.rs` restored from /tmp each time.
+if ! wscore_code "${RUST_ROWFIND}" | grep -q 'fn stands_alone(units: &\[u16\]'; then
+  fail "W3a: ${RUST_ROWFIND}'s whole-word filter takes a row again instead of the units its caller already holds — it re-encodes the whole line once per HIT"
+fi
+if wscore_code "${RUST_ROWFIND}" | grep -qE 'fn folded\(.*\) *-> *Vec<u16>'; then
+  fail "W3b: ${RUST_ROWFIND} allocates a fresh Vec<u16> per row again — a malloc and a free per row of the scrollback, per keystroke in the find bar"
+fi
+# Both halves: the shape that is wrong, and the shape that is right. Banning the from-zero slice
+# alone would pass the day someone rewrote the walk without reintroducing that exact spelling.
+if wscore_code "${RUST_ROWFIND}" | grep -q 'utf16_units(line.get(\.\.'; then
+  fail "W3c: ${RUST_ROWFIND} measures each regex column from the start of its row again — quadratic in a row with many hits, and one long unwrapped line freezes the find bar for the better part of a second"
+fi
+if ! wscore_code "${RUST_ROWFIND}" | grep -q 'line.get(counted_bytes\.\.hit.start())'; then
+  fail "W3c: ${RUST_ROWFIND} no longer carries a byte cursor between regex hits on one row — each column is measured over the row's whole prefix again, which is quadratic in the row"
+fi
+# The ASCII arm is the one that actually runs, and it is the difference between a table walk per code
+# unit and a mask. Its absence is not a correctness bug, which is exactly why nothing else catches it.
+if ! wscore_code "${RUST_ROWFIND}" | grep -q 'to_ascii_lowercase'; then
+  fail "W3d: ${RUST_ROWFIND} folds every code unit through the full Unicode mapping again — a ToLowercase iterator per character of every row, per keystroke"
+fi
+
+# ── W4. The loopback document resolves the mirror ONCE ──────────────────────────────────────────
+# `HostWorkspaceMirror.resolved` copies the whole entry map and folds the overlay and every pending
+# patch over it, and `WorkspaceIntentApplier.apply` asks its `projectKey:` closure once per pane the
+# document names — live specs UNION the reopen ring. Built inside the closure that is one whole-map
+# copy per pane, which is quadratic in the workspace. `WorkspaceMirrorBox.stageIntent` hoists it and
+# says why at its own call site; this was the sibling call site that did not.
+#
+# BREAK-TESTED: moving `box.mirror.resolved` back inside the `projectKey:` closure fires W4. File
+# restored from /tmp.
+if wscore_code "${WSCORE_LOOPBACK}" | grep -qE 'projectKey: *\{ *box\.mirror\.resolved'; then
+  fail "W4: ${WSCORE_LOOPBACK} resolves the mirror inside its projectKey closure again — one copy of the whole entry map per pane, quadratic in the workspace"
+fi
+if ! wscore_code "${WSCORE_LOOPBACK}" | grep -q 'let resolved = box.mirror.resolved'; then
+  fail "W4: ${WSCORE_LOOPBACK} no longer hoists the resolved mirror above its projectKey closure — see WorkspaceMirrorBox.stageIntent, which is the same contract"
+fi
+
+# ── W5. The launch-bytes emptiness rule has ONE author ──────────────────────────────────────────
+# Not latency: drift, of docs/55 §8's class. `SessionTemplateEngine.launchBytes` used to trim the
+# cwd and the command itself, ahead of calling `templates::keystrokes`, which decides the same
+# thing — and the two did not agree. The crate gated the DIRECTORY untrimmed, so a whitespace-only
+# cwd was "no directory" in Swift and `cd '  '` in Rust, a line the shell answers with an error at
+# every launch. Both production callers pass `cwd: nil`, which is precisely why a pair like that can
+# sit disagreeing indefinitely. The gate is symmetric in the crate now and the Swift reads its
+# answer; a trim reappearing here is the second author coming back.
+#
+# BREAK-TESTED: adding a `trimmingCharacters` gate to `launchBytes` fires W5. File restored from
+# /tmp.
+if wscore_code "${WSCORE_TEMPLATES}" | grep -q 'trimmingCharacters'; then
+  fail "W5: ${WSCORE_TEMPLATES} decides emptiness itself again — \`templates::keystrokes\` owns that rule, and the last time both wrote it they disagreed about a whitespace-only cwd (docs/55 §8)"
+fi
+
+# =================================================================================================
+# HUNK for scripts/check-supervisor.sh — the VIDEO path's four ports.
+#
+# Append this block wherever the video gates live. It uses `fail`, `spells` and `repo_files` from
+# the script's own preamble; it defines no helpers of its own.
+#
+# Every rule below was BREAK-TESTED against the real tree: the file was copied to /tmp, the port was
+# reverted by hand in the working copy, the rule was run, and the file was restored from /tmp. The
+# verdict is recorded in each rule's comment. None of these four defects is visible to any test,
+# which is the entire reason they are pinned here.
+# =================================================================================================
+
+SWIFT_VIDEO_ENCODER=Sources/SlopDeskVideoHost/VideoEncoder.swift
+SWIFT_VIDEO_CLIENT_SESSION=Sources/SlopDeskVideoClient/SlopDeskVideoClientSession.swift
+SWIFT_VIDEO_SESSION_LOGIC=Sources/SlopDeskVideoClient/VideoClientSessionLogic.swift
+SWIFT_VIDEO_FEC=Sources/SlopDeskVideoProtocol/FECScheme.swift
+SWIFT_VIDEO_NAL=Sources/SlopDeskVideoProtocol/NALUnit.swift
+
+# ---- 1. The encoder's quantiser ceiling is ONE ramp, and it is the crate's. ----------------------
+# The linear sharp↔coarse interpolation existed twice: `VideoEncoder.qpCeiling` drove it from the
+# budget's bits-per-pixel, `adaptive_qp::adaptive_max_qp` drove it from the per-frame change
+# fraction, and neither knew the other was there. That is docs/55 §8's drift class exactly — a rule
+# in two languages where only one side is on a path anyone watches. Both now go through
+# `slopdesk_video_qp_ceiling`, which maps the density onto the band and hands the interpolation to
+# the same routine, and the six hardware-tuned numbers arrive from
+# `slopdesk_video_qp_ceiling_config_default` rather than being typed in beside it.
+#
+# The FACE must keep calling both doors, and it must not grow the arithmetic back.
+for pair in \
+  "${SWIFT_VIDEO_ENCODER}:slopdesk_video_qp_ceiling_config_default" \
+  "${SWIFT_VIDEO_ENCODER}:slopdesk_video_qp_ceiling" \
+  "${SWIFT_VIDEO_ENCODER}:slopdesk_video_qp_drop_relief_fold"; do
+  if ! grep -q "${pair#*:}(" "${pair%%:*}"; then
+    fail "${pair%%:*} no longer calls ${pair#*:} — the encoder's QP ceiling is encoder_ceiling.rs"
+  fi
+done
+# The ARITHMETIC, not the names. A re-transcription has to divide the budget by a pixel rate and
+# then interpolate across the band, so it has to spell a `Double(...) / ` against a product of the
+# three picture terms, or a `(sharp - coarse)` span, or one of the six tuned constants as a literal.
+# BREAK-TESTED: restoring the pre-port body (`let bpp = Double(targetBps) / pixelRate` plus the
+# `Double(sharp - coarse)` ramp) fires "spells the quantiser ramp again"; the shipped tree is silent.
+if hit=$(spells 'Double\(targetBps\) */|/ *pixelRate|Double\(sharp *- *coarse\)|Double\(coarse *- *sharp\)' \
+  "${SWIFT_VIDEO_ENCODER}"); then
+  fail "${hit} spells the quantiser ramp again — the budget→ceiling law is encoder_ceiling.rs"
+fi
+# BREAK-TESTED: re-typing `static let attackStep = 4` fires; reading it off `ceilingConfig` is
+# silent, because the assignment has no bare literal on its right.
+if hit=$(spells '(attackStep|holdFrames|decayEvery|sharpQPCeiling|qpCeiling(Sharp|Coarse)Bpp) *(:[^=]*)?= *[0-9]' \
+  "${SWIFT_VIDEO_ENCODER}"); then
+  fail "${hit} types a tuned ceiling constant again — all six arrive on the config door"
+fi
+printf 'check-supervisor: the encoder ceiling ramps once, in Rust, from constants it does not retype.\n'
+
+# ---- 2. A control datagram the client already holds is not re-encoded to be re-parsed. -----------
+# `handleControl(datagram:)` existed, documented itself as being "so a caller that already holds the
+# bytes does not re-encode what it just decoded", and had no caller: the receive path routed the
+# datagram into a `VideoControlMessage` and then handed the state machine `[UInt8](message.encode())`
+# — re-encoding, into a fresh array, bytes it had just parsed. Measured against the shipped
+# xcframework, two agreeing runs: 147.8/155.2 ns to re-encode against 0.7 ns to lend the `Data`.
+# docs/55 §8 is why this is a gate and not a nicety: an exported door with no caller is worse than
+# an unported rule, because it reads as covered.
+#
+# BREAK-TESTED: putting `stateMachine.handleControl(message)` back in `receiveMedia` fires the first
+# rule; re-adding the `[UInt8](message.encode())` marshalling fires the second. Shipped tree: silent.
+if ! grep -q 'handleControl(datagram:' "${SWIFT_VIDEO_CLIENT_SESSION}"; then
+  fail "${SWIFT_VIDEO_CLIENT_SESSION} no longer lends the control DATAGRAM — it is re-encoding a message it parsed"
+fi
+if hit=$(spells 'handleControl\(message\)|\[UInt8\]\(message\.encode\(\)\)|handleControl\(routed' \
+  "${SWIFT_VIDEO_CLIENT_SESSION}"); then
+  fail "${hit} re-encodes a routed control message — hand the state machine the bytes it arrived in"
+fi
+
+# ---- 3. The cursor-shape tracker answers "already cached" without lending three buffers. ---------
+# Its general step lends three arrays and adopts three prefixes — 6 allocations — and the host
+# samples the cursor at ~120 Hz, so in steady state that is 6 allocations per packet to be told the
+# shape is already cached. The crate answers that case without touching its state, so the face asks
+# through `slopdesk_cursor_shape_is_known`, which allocates nothing. Measured, two agreeing runs:
+# 488.0/509.1 ns per call with 4 cached shapes and 1249.3/1122.3 ns with 12, against 68.5/68.6 ns and
+# 252.2/258.6 ns through the guard.
+#
+# BREAK-TESTED: deleting the `if isKnown(shapeID) { return false }` line fires; shipped tree silent.
+# Matched on the line's shape rather than on `isKnown` alone, because `isKnown` is also the
+# test/diagnostics seam and would pass this gate while the hot path went back through the step.
+if ! grep -qE 'if +isKnown\(shapeID\) *\{ *return false *\}' "${SWIFT_VIDEO_SESSION_LOGIC}"; then
+  fail "${SWIFT_VIDEO_SESSION_LOGIC} lost the cached-shape guard — 6 allocations per cursor packet to answer no"
+fi
+
+# ---- 4. The FEC send path promotes its fragments LAZILY. -----------------------------------------
+# `FECBlobList.encode` takes `Collection<Data?>`; the send side holds `[Data]`. Promoting eagerly
+# builds a whole second array of refcounted `Data`s, once per frame, to say nothing at all. Measured
+# at `-O`, two agreeing runs, per call: 423.7/430.0 ns eager at 24 fragments, 960.6/947.9 ns at 60,
+# 3559.2/3561.8 ns at 240 — against 31.4/30.5, 69.7/70.0 and 247.3/245.1 ns through the lazy view.
+#
+# The trap this pins is that the eager form was written as `.map(\.self)`, and DELETING it does not
+# fix anything: the implicit `[Data]` → `[Data?]` bridge that then runs is a runtime cast, and it is
+# more than TWICE as dear as the `map` (902.8/905.0 ns at 24 fragments). So the ban is on the eager
+# `map`, and the positive rule is that the lazy overload is still there to bind to.
+#
+# BREAK-TESTED: restoring `FECBlobList.encode(dataFragments.map(\.self))` fires the ban; deleting the
+# `[Data]` overload fires the second rule. Shipped tree: silent on both.
+if hit=$(spells 'FECBlobList\.encode\([A-Za-z]+\.map\(' "${SWIFT_VIDEO_FEC}" "${SWIFT_VIDEO_NAL}"); then
+  fail "${hit} eagerly promotes its fragments — hand the encoder the array and let the lazy overload take it"
+fi
+if ! grep -qE 'blobs\.lazy\.map' "${SWIFT_VIDEO_FEC}"; then
+  fail "${SWIFT_VIDEO_FEC} lost the lazy [Data] overload — every send-path caller pays a second array per frame"
+fi
+printf 'check-supervisor: the video path lends what it holds — no re-encode, no re-ask, no second array.\n'
+
+SWIFT_VIDEO_WINDOW_VIEW=Sources/SlopDeskVideoClient/VideoWindowView.swift
+RUST_CLIENT_GESTURES=rust/slopdesk-video/src/client_gestures.rs
+RUST_SCROLL_REPROJECT=rust/slopdesk-video/src/scroll_reproject.rs
+
+# ---- 5. The two CoreGraphics phase encodings are ONE table. --------------------------------------
+# CoreGraphics puts two phase fields on a scroll event and encodes the same three edges differently:
+# the scroll field is a bit set, so its END is 4 and there is room for a cancel at 8 and a
+# finger-at-rest at 128; the momentum field is an ordinal, so ITS end is 3. Those ten numbers were
+# spelled in FOUR places across two languages — a private block in `client_gestures`, the reprojector,
+# the touch translation, and the Mac client's view — and two of the four read different sets of them.
+# Nothing measures: a door here is ~1 ns against ~5 branches, which is the point. A rule two
+# languages spell differently is a defect at zero calls per second, and only one of the two answers
+# is right.
+#
+# VERIFIED, not asserted: the port was differentially checked from Swift against the deleted Swift
+# verbatim, over all 256 masks × both fields = 512 comparisons, through the linked release archive.
+# Zero mismatches, twice. The AppKit bit values the mapping assumes were read out of the live
+# framework at runtime rather than from the header (began 1<<0 … mayBegin 1<<5) — all six agree.
+#
+# BREAK-TESTED: restoring either `if phase.contains(.began) { return 1 }` ladder fires the ban;
+# dropping either door call fires the pair loop. Shipped tree: silent on all four.
+for pair in \
+  "${SWIFT_VIDEO_WINDOW_VIEW}:slopdesk_cg_scroll_phase_code" \
+  "${SWIFT_VIDEO_WINDOW_VIEW}:slopdesk_cg_momentum_phase_code"; do
+  if ! grep -q "${pair#*:}(" "${pair%%:*}"; then
+    fail "${pair%%:*} no longer calls ${pair#*:} — the two phase encodings live in client_gestures.rs"
+  fi
+done
+# The LADDER, not the bit test: `event.phase.contains(.began)` is a legitimate gesture-start check
+# and appears here for the pinch planner. What may not come back is a contains-test whose body
+# RETURNS A BARE NUMBER, which is the transcription and nothing else.
+if hit=$(spells 'contains\(\.(began|changed|ended|cancelled|mayBegin)\) *\{ *return [0-9]' "${SWIFT_VIDEO_WINDOW_VIEW}"); then
+  fail "${hit} decodes an NSEvent.Phase mask into a code itself again — hand the raw bits to the door"
+fi
+# The Rust half: the reprojector must keep READING the table rather than matching bare codes. Its
+# `of_platform` is the one place a 3 and a 4 sit next to each other, so a literal there is the
+# likeliest way for the two encodings to get crossed.
+# BREAK-TESTED: putting `3 => Self::Ended` and `4 | 8 => Self::Ended` back fires; shipped tree silent.
+if ! grep -q 'use crate::client_gestures::{' "${RUST_SCROLL_REPROJECT}"; then
+  fail "${RUST_SCROLL_REPROJECT} stopped reading the phase table — a bare 3 and a bare 4 mean different fields"
+fi
+if hit=$(spells '^ *[0-9]+( \| [0-9]+)? *=> *Self::(Ended|Momentum)' "${RUST_SCROLL_REPROJECT}"); then
+  fail "${hit} matches a bare phase code again — name it from client_gestures.rs"
+fi
+# And the table itself stays single: the private per-file copy that lived in `client_gestures` is
+# what made this a FOUR-way spelling rather than a three-way one.
+# BREAK-TESTED: re-adding `const PHASE_BEGAN: u8 = 1;` fires; shipped tree silent.
+if hit=$(spells 'const (PHASE_|MOMENTUM_ENDED)' "${RUST_CLIENT_GESTURES}"); then
+  fail "${hit} grew a second private phase table — the exported SCROLL_*/MOMENTUM_* constants are it"
+fi
+
+# ---- 6. The encoder's three quantiser knobs CLAMP; they do not reject. ----------------------------
+# `SLOPDESK_MAX_QP`, `_CONST_QP` and `_CRISP_QP` each hand-rolled a parse that REJECTED an
+# out-of-range value to the knob's default, while `slopdesk_qp_clamped_int` — which every other
+# quantiser knob in the tree already goes through — CLAMPS it. One rule, two answers.
+#
+# Resolved toward CLAMPING, and the reason is that rejecting silently INVERTS the request:
+# `SLOPDESK_MAX_QP=0` asks for the sharpest ceiling the encoder has and used to get 51, the coarsest,
+# with nothing said. Clamping answers 1. Measured through the linked archive, old → new, for every
+# shape a knob can take: absent, empty, in-range, and unparseable are all UNCHANGED; only
+# out-of-range moves (MAX_QP `0` 51→1, `99` 51→51; CRISP `0` 18→1, `99` 18→51; CONST_QP `0` OFF→1,
+# `99` OFF→51). Presence still decides whether const-QP engages at all, so an absent knob is still
+# OFF, and text that is not a number at all still leaves it OFF rather than inventing an operating
+# point.
+#
+# BREAK-TESTED: restoring any of the three `let v = Int(s), v >= 1, v <= 51` guards fires the ban;
+# dropping the door call fires the first rule. Shipped tree: silent on both. The fifth knob was
+# break-tested separately on 2026-08-22 by pasting its old computed-property form back into
+# `WindowCapturer.swift` (`cp` to /tmp and restore, never `git checkout`): the ban FIRED naming line
+# 178 and the presence check FIRED with it — two rules on one edit, which is correct here because
+# either half alone is the whole regression. Restored, both silent and `diff -q` identical.
+#
+# NOT covered, and deliberately: `Sources/SlopDeskVideoProtocol/Settings/EnvConfig.swift`'s generic
+# `guard let v = Int(s), v >= lo, v <= hi else { return def }` is the same reject rule for roughly a
+# dozen knobs across several targets, most of them outside the quantiser question. It is a real
+# second implementation of `clamped_int_from_env` and it should go the same way — but flipping it is
+# a tree-wide BEHAVIOUR change with a per-knob argument to make each time, not a port, so it is its
+# own change rather than a rider on this one. Recorded here so the next reader finds it named.
+if ! grep -q 'slopdesk_qp_clamped_int(' "${SWIFT_VIDEO_ENCODER}"; then
+  fail "${SWIFT_VIDEO_ENCODER} parses its quantiser knobs itself again — the parse and the clamp are the door's"
+fi
+# ALL FIVE [1, 51] knobs in this target, named: MAX, CONST, CRISP and COMPACT in the encoder, and
+# AQP_MAX in the capturer. The fourth is here because this very gate found it — it was not in the
+# brief, it sat ten lines from the other three, and it had the same hand-rolled reject. The FIFTH was
+# found the same way, one file over, and is the reason `envQP` is not `private`: there is no version
+# of "one rule" where the fifth caller gets its own copy for living in another file. Matched on the
+# `environment[...]` read followed by a bare `Int(` parse, which is the shape all five had and none
+# of them has now.
+SWIFT_WINDOW_CAPTURER=Sources/SlopDeskVideoHost/WindowCapturer.swift
+if hit=$(spells 'environment\["SLOPDESK_((MAX|CONST|CRISP|COMPACT)_QP|AQP_MAX)"\], *let v = Int\(' \
+  "${SWIFT_VIDEO_ENCODER}" "${SWIFT_WINDOW_CAPTURER}"); then
+  fail "${hit} parses a [1,51] quantiser knob by hand again — clamping through the door is the answer the caller can act on"
+fi
+if ! grep -q 'VideoEncoder\.envQP(' "${SWIFT_WINDOW_CAPTURER}"; then
+  fail "${SWIFT_WINDOW_CAPTURER} stopped asking VideoEncoder.envQP for SLOPDESK_AQP_MAX — the fifth knob of the same shape"
+fi
+
+# ---- 7. The message-shaped control face stays a WRAPPER. -----------------------------------------
+# After the datagram fix its only callers are the state-machine tests, which is the shape the
+# one-implementation rule bans — unless it decides nothing, which it does not: it encodes and hands
+# over. The gate pins exactly that, so it can neither be deleted as dead nor quietly grown into a
+# second transition that only the tests would exercise.
+#
+# BREAK-TESTED: replacing the body with anything else (an early return, a second effect) fires;
+# shipped tree silent.
+if ! grep -qE 'handleControl\(datagram: message\.encode\(\)\)' "${SWIFT_VIDEO_SESSION_LOGIC}"; then
+  fail "${SWIFT_VIDEO_SESSION_LOGIC}'s message-shaped handleControl stopped delegating — a test-only face that decides"
+fi
+printf 'check-supervisor: the scroll phases, the quantiser knobs and the control face each decide in one place.\n'
+
+# ── ClientCore / WorkspaceModel: the projections that must stay ASKED and stay MEMOIZED ─────────
+#
+# Four blocks, nine arms, all from one sweep, all pinning defects that NO test can see. Each is a
+# projection that is correct at every size and only wrong in the clock — which is why a ratchet and
+# not a test is the instrument. Every arm below was break-tested against the real tree and its
+# verdict recorded. The measurements are `swiftc -O` against the shipped staticlib, two runs
+# agreeing inside 4% each.
+
+# 1. THE DOCUMENT'S CANONICAL ORDER — one rule, and it lives in `slopdesk_wire::document::state`,
+#    where a `BTreeMap`'s key order IS the wire's emission order. Swift's mirror is a `Dictionary`
+#    with no order at all, so it used to DERIVE the same order: a hand-written `Comparable` over
+#    `(kind, objectID bytes, field)` whose comparator materialised a fresh 16-byte `[UInt8]` per
+#    SIDE per comparison. One `sortedEntries` on a 24-pane / 480-cell document therefore ran ~8,600
+#    heap allocations for a question about eighteen bytes at a time: the sort alone 1,018 µs, now
+#    23 µs through the door; `sortedEntries` end to end 1,075 µs → 77 µs; at 64 panes 2,334 → 219 µs.
+#    The FAILURE MODE is the reason this is pinned rather than merely fixed: two orders never
+#    disagree loudly, they RE-EMIT. A snapshot stops being byte-deterministic, a diff churns on
+#    dictionary iteration order, and every frame of that reads downstream exactly like a real change.
+#    BREAK-TESTED, three ways, each restored from a `/tmp` copy: re-adding `Comparable` to the
+#    struct fires the spell ban; deleting `diff`'s `deletes` call site drops the count to 3 and fires
+#    the count arm (it did NOT fire before the comment strip — the doc comments name the door twice,
+#    which is the whole reason `spells` strips); renaming the door in the bridge fires the first.
+SWIFT_WS_STATE=Sources/SlopDeskWorkspaceModel/State/HostWorkspaceState.swift
+SWIFT_WS_BRIDGE=Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift
+if ! grep -q 'slopdesk_ws_key_order(' "${SWIFT_WS_BRIDGE}"; then
+  fail "${SWIFT_WS_BRIDGE} no longer calls slopdesk_ws_key_order — the emission order is slopdesk-wire's"
+fi
+# FOUR call sites — `sortedEntries`, `keys(ofKind:objectID:)`, and `diff`'s two lists. Counted with
+# comments stripped, for `spells`' reason: the doc comments above these functions name the door too,
+# and a count that includes prose passes while the last real call site is being deleted.
+WS_ORDER_CALLS=$(sed -E 's,//.*,,' "${SWIFT_WS_STATE}" | grep -c 'wsKeyOrder(' || true)
+if ((WS_ORDER_CALLS < 4)); then
+  fail "${SWIFT_WS_STATE} asks wsKeyOrder ${WS_ORDER_CALLS} times, not 4 — an ordered answer went back to deriving its own"
+fi
+# What a re-implementation grows back: the conformance, the byte array the comparator allocated, the
+# hand-written `<`, and the `.sorted()` that only compiles once one of them is back.
+if grep -qE 'struct WorkspaceKey[^{]*Comparable|objectIDBytes|static func < *\(|entries\.keys\.sorted\(\)|keys\.sorted\(\)' "${SWIFT_WS_STATE}"; then
+  fail "${SWIFT_WS_STATE} derives the emission order again — that order is slopdesk_wire::document::state's, asked through wsKeyOrder"
+fi
+printf 'check-supervisor: the workspace document has one emission order, and Swift asks for it.\n'
+
+# 2. `persisting` MUST NOT ORDER. It reduces the document to what belongs on disk and returns a
+#    `HostWorkspaceState` — an unordered map — so it used to spend a whole canonical ordering of
+#    every cell (~1 ms at 24 panes before the port, 77 µs after) and drop the result into a
+#    `Dictionary` on the very next line. `WorkspaceCacheStore` calls it inside `encodeSnapshot`,
+#    which orders again, so the discarded pass was paid on every save. `encode` below it reads
+#    `sortedEntries` legitimately, which is why this bans it in the FUNCTION and not the file.
+#    BREAK-TESTED twice: restoring `for entry in state.sortedEntries where isPersisted(entry.key)`
+#    fires the sort arm, and renaming the function fires the EMPTY arm rather than passing silently
+#    — which is `same`'s lesson, since `sed -n` exits 0 on no match.
+SWIFT_WS_FILE=Sources/SlopDeskWorkspaceModel/Codec/WorkspaceStateFile.swift
+WS_PERSISTING=$(sed -n '/static func persisting(/,/^    }$/p' "${SWIFT_WS_FILE}")
+if [[ -z "${WS_PERSISTING}" ]]; then
+  fail "${SWIFT_WS_FILE}: the persisting() extraction in this gate read EMPTY and has stopped checking anything"
+elif grep -q 'sortedEntries' <<< "${WS_PERSISTING}"; then
+  fail "${SWIFT_WS_FILE}: persisting() orders the document again — its answer is an unordered map, so the order is thrown away on the next line"
+elif ! grep -q 'in state\.entries where isPersisted' <<< "${WS_PERSISTING}"; then
+  fail "${SWIFT_WS_FILE}: persisting() no longer walks state.entries directly — the filter reads neither the object id nor the value"
+fi
+printf 'check-supervisor: the persisted subset is a filter, not a sort.\n'
+
+# 3. THE PALETTE'S THREE RESULT PROPERTIES ARE ONE PASS. `paletteResults`, `rankedResults` and
+#    `selectableResults` each used to re-run the whole mixer: ~8 category sources, and per source a
+#    fresh tuple array, a fresh `[String?]` of three fields per row, and one `slopdesk_ws_search_rank`
+#    crossing whose blob is every title, subtitle and synonym concatenated. Measured over a 90-row
+#    catalog in 8 sources: ~150 µs PER READ (139–167) for a typed query, ~30 µs for the empty-query
+#    path. `moveSelection` reads `selectableResults` only for `.count`, so every ↑/↓ paid one pass
+#    before the body paid another, and the phone's `PaletteView` reads `rankedResults` twice per
+#    body — three passes per arrow key on the phone, two on the Mac. They now share one memo keyed on
+#    `(generation, query, filter, recents)`, and `mixerGeneration` is what makes a rebuilt mixer
+#    invalidate it. BREAK-TESTED twice: pointing `rankedResults` back at `mixer?.ranked(` fires its
+#    reader arm, and deleting the `&+= 1` line from `rebuildMixer` fires the generation arm.
+SWIFT_OVERLAYS=Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift
+for reader in paletteResults rankedResults selectableResults; do
+  if ! grep -qE "var ${reader}: \[[A-Za-z]+\] \{ memoizedResults\." "${SWIFT_OVERLAYS}"; then
+    fail "${SWIFT_OVERLAYS}: ${reader} no longer reads the memo — each read is a whole ~150 µs fzf pass, and three of them ride one arrow key"
+  fi
+done
+if ! grep -q 'mixerGeneration &+= 1' "${SWIFT_OVERLAYS}"; then
+  fail "${SWIFT_OVERLAYS}: rebuildMixer no longer bumps mixerGeneration — the memo would serve results from the PREVIOUS catalog"
+fi
+printf 'check-supervisor: the palette ranks once per query, not once per read.\n'
+
+# 4. THE PALETTE CATALOG IS INDEXED, NOT RESCANNED. `items(in:)` was `allRows.filter { $0.category
+#    == category }`, so one zero-state build ran eight full passes over ~90 rows and minted eight
+#    arrays; `recentPaletteItems()` linear-scanned `allRows` once per remembered id. Both are now
+#    `static let` dictionaries built once. Measured on the whole zero-state build: 8.06–8.22 µs →
+#    2.53–2.86 µs. BREAK-TESTED three ways: restoring the `allRows.filter` in `items(in:)` fires the
+#    scan arm, renaming `rowsByID` fires the index arm, and restoring the `allRows.first(where:)` in
+#    the coordinator fires the third. Named files, so `spells` vacuity is not in play.
+SWIFT_PALETTE=Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift
+if ! grep -q 'static let rowsByCategory' "${SWIFT_PALETTE}" || ! grep -q 'static let rowsByID' "${SWIFT_PALETTE}"; then
+  fail "${SWIFT_PALETTE} lost an index — items(in:) and the recents lookup would each be a fresh scan of allRows"
+fi
+if grep -qE 'allRows\.filter|allRows\.first\(where:' "${SWIFT_PALETTE}"; then
+  fail "${SWIFT_PALETTE} scans allRows again — the categories and the ids are both indexed once at load"
+fi
+if grep -q 'ActionsPaletteSource.allRows.first(where:' "${SWIFT_OVERLAYS}"; then
+  fail "${SWIFT_OVERLAYS} scans the palette catalog per remembered id — ActionsPaletteSource.rowsByID answers in one lookup"
+fi
+printf 'check-supervisor: the palette catalog is indexed once, not filtered per read.\n'
+
+# ══════════════════════ ROUND TWO — the MacUI sweep's hand-over ══════════════════════
+# Four more, same instrument and same reason: each is a defect no test can see. Two of the six leads
+# handed over were REFUTED on measurement and are recorded as such in the report rather than pinned
+# here — a refutation is not a rule.
+
+# 5. THE NERD-FONT RUN SPLITTER IS LINEAR, AND SKIPS THE WALK ENTIRELY WHEN NOTHING IS A SYMBOL.
+#    `runs(of:)` had the obvious accumulator — read the last run back out of the array, append one
+#    character, write it back — and that is QUADRATIC without looking it: `out.last` hands back a
+#    COPY of the tuple, so the run's `String` is two-referenced for an instant and `append` copies the
+#    whole run before adding a character. Every `.slateNerdAware` string in three overlays walks this
+#    once per keystroke. Measured, `swiftc -O`, two runs agreeing: a plain 48-character title
+#    3,563 → 104 ns, a 240-character one 21,588 → 371 ns (58×). The scalar pre-scan is the other half
+#    and is what makes the ordinary case — no nerd glyph anywhere, which is almost every string —
+#    one scalar walk and one `String`, without entering the per-`Character` loop at all. It is also
+#    what stops the two splice sites' `registered` guard ORDER from mattering.
+#    BREAK-TESTED twice: restoring the `out.last` accumulator fires the shape ban, and deleting the
+#    `unicodeScalars.contains` line fires the pre-scan arm.
+SWIFT_NERD=Sources/SlopDeskClientCore/Support/NerdSymbolFont.swift
+if ! grep -q 'guard text.unicodeScalars.contains(where: isPrivateUse)' "${SWIFT_NERD}"; then
+  fail "${SWIFT_NERD}: runs(of:) lost its scalar pre-scan — every ordinary title pays a per-Character walk and a String per run again"
+fi
+if grep -qE 'if var last = out\.last|out\[out\.count - 1\] = ' "${SWIFT_NERD}"; then
+  fail "${SWIFT_NERD}: runs(of:) accumulates through out.last again — that shape is QUADRATIC in the run length (3,563 ns for a 48-char title against 104)"
+fi
+printf 'check-supervisor: the nerd-font run splitter is linear and skips the walk it does not need.\n'
+
+# 6. THE SETTINGS SECTION SEARCH IS THE TAXONOMY'S OWN RULE. `SettingsCatalog.sections` has crossed
+#    the boundary since it was written; the SEARCH over it had not, so each face wrote its own
+#    `lowercased().contains(…)` over the answer. That is `docs/55` §8's drift class, and §8's point is
+#    that this class is NOT ranked by cost — eight sections filtered per keystroke is ~750 ns and
+#    would never on its own justify a door. What justifies it is that the question stops having two
+#    answers. The needle crosses RAW, which is the load-bearing half of this rule: a caller that
+#    lowercases or trims first has re-spelled the fold it was supposed to stop spelling.
+#    BREAK-TESTED three ways: renaming the door in the bridge fires the call arm; making
+#    `sections(matching:)` pre-lowercase fires the raw-needle arm; re-adding a
+#    `SettingsCatalog.sections.filter { $0.title.lowercased()… }` anywhere under Sources/ fires the
+#    corpus arm — including at the MacUI call site, which is where the fourth spelling lived.
+#
+#    The corpus arm was RED for the length of the change and that was the point. `MacSettingsNavigator`
+#    held the FOURTH spelling and lives outside the target this rule came from, so the rule fired on
+#    the shipped tree until that call site landed centrally. It stays armed over the whole of
+#    `Sources/` rather than scoped to ClientCore BECAUSE the fourth spelling is the finding: a rule
+#    that only watched ClientCore would have passed on the day the drift started.
+SWIFT_SETTINGS_CATALOG=Sources/SlopDeskClientCore/Settings/SettingsCatalog.swift
+if ! grep -q 'slopdesk_settings_sections_matching(' "${SWIFT_SETTINGS_CATALOG}"; then
+  fail "${SWIFT_SETTINGS_CATALOG} no longer calls slopdesk_settings_sections_matching — the search over the taxonomy is slopdesk-workspace's"
+fi
+SETTINGS_MATCHING=$(sed -n '/static func sections(matching/,/^    }$/p' "${SWIFT_SETTINGS_CATALOG}")
+if [[ -z "${SETTINGS_MATCHING}" ]]; then
+  fail "${SWIFT_SETTINGS_CATALOG}: the sections(matching:) extraction in this gate read EMPTY and has stopped checking anything"
+elif grep -qE 'lowercased\(\)|trimmingCharacters' <<< "${SETTINGS_MATCHING}"; then
+  fail "${SWIFT_SETTINGS_CATALOG}: sections(matching:) folds the needle before sending it — the fold is the far side's, and folding twice is the rule spelled twice"
+fi
+SECTION_REFILTER=$(grep -rlE 'SettingsCatalog\.sections[^)]*\.filter' Sources/ 2> /dev/null || true)
+if [[ -n "${SECTION_REFILTER}" ]]; then
+  fail "a face filters SettingsCatalog.sections itself (${SECTION_REFILTER}) — ask SettingsCatalog.sections(matching:), which is the taxonomy's own search"
+fi
+printf 'check-supervisor: the settings taxonomy and the search over it are one rule.\n'
+
+# 7. A RAIL RENDER READS ITS BADGE SETTINGS ONCE, NOT ONCE PER ROW. `chrome(...)` asks the store for
+#    `commandBadgeGates` — three `UserDefaults` reads behind a computed property with NO per-pane
+#    override — and for `agentBadgeGates`, three more whenever the pane has no override, which is the
+#    ordinary case. A list built row by row therefore re-read the same two globals per row. Measured,
+#    `swiftc -O`, two runs agreeing inside 0.3%: one `UserDefaults` bool read is 305 ns, a row's six
+#    are 1.85 µs, and a 24-row rail render spent 44.5 µs on settings that cannot change while it
+#    draws. The batch entry reads them once and resolves the active session and its tab list once too.
+#    BREAK-TESTED twice: deleting the batch overload fires the entry arm, and deleting the
+#    `commandGates` parameter from `chrome` fires the threading arm.
+SWIFT_RAIL_BUILDER=Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift
+if ! grep -q 'func liveChrome(for rows: \[RailRow\]' "${SWIFT_RAIL_BUILDER}"; then
+  fail "${SWIFT_RAIL_BUILDER} lost the batched liveChrome — a rail render goes back to 6 UserDefaults reads per row (44.5 µs at 24 rows)"
+fi
+if ! grep -q 'commandGates ?? store.commandBadgeGates' "${SWIFT_RAIL_BUILDER}"; then
+  fail "${SWIFT_RAIL_BUILDER}: chrome() no longer accepts pre-read command gates — the batch entry has nothing to hand it and the per-row reads come back"
+fi
+printf 'check-supervisor: a rail render reads its badge gates once, not once per row.\n'
+
+# 8. NO PRODUCTION API EXISTS FOR A TEST'S SAKE. `SearchMixer.availableFilters` was a `public var`
+#    whose only reader anywhere in the tree — after the Mac and phone sweeps both finished without
+#    adding one — was a single assertion in `OverlayCoordinatorMountTests`. Under the
+#    one-implementation rule that is a hook held open, so it is deleted and the test now reads the
+#    same fact off what the mixer PRODUCES, where a user could also see it.
+#    BREAK-TESTED: re-declaring the property fires; the grep is over the whole Swift tree, so it
+#    fires wherever it comes back rather than only in the file it left.
+FILTERS_HOOK=$(grep -rln 'var availableFilters' Sources/ 2> /dev/null || true)
+if [[ -n "${FILTERS_HOOK}" ]]; then
+  fail "availableFilters is back (${FILTERS_HOOK}) — it had exactly one reader, a test; assert on the zero state the mixer renders instead"
+fi
+printf 'check-supervisor: no palette API exists only for a test to read.\n'
+
+#
+# ── MacUI: the nine memoizations that a redraw path must keep ─────────────────────────────────
+#
+# WHY THESE ARE HERE AND NOT IN A TEST. Every rule below pins a HELD value — a cache, a guard, a
+# stored list — whose absence changes nothing a test can see. The view draws the same pixels, the
+# same rows come back, the same seam moves; only the clock moves, and only on the paths AppKit
+# drives at the display's rate (a divider drag, a live window resize, a `CADisplayLink` tick, a
+# keystroke in an overlay). That is the shape docs/55 §8 catalogues: a fact re-derived because
+# re-deriving it looked free at the call site. A green suite is exactly what a regression here
+# looks like, so the pin has to be textual.
+#
+# WHAT THE NUMBERS BELOW ARE. Measured on this machine against the shipped xcframework under
+# `swiftc -O`, two agreeing runs each, with the FFI door floor (1.7 ns) as the unit of "free".
+#
+# Each rule names the redraw path, the measurement, and — in its break-test verdict — the exact
+# edit that was applied to the real tree to prove the rule fires, and that the file was restored
+# from a /tmp copy rather than from git (never `git checkout` a file with uncommitted work).
+
+MACUI_HEADER=Sources/SlopDeskMacUI/Columns/MacSidebarHeader.swift
+MACUI_OPENQ=Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift
+MACUI_CANVAS=Sources/SlopDeskMacUI/Pane/MacSplitCanvasView.swift
+MACUI_GUILEAF=Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift
+MACUI_CONTAINER=Sources/SlopDeskMacUI/Pane/MacPaneContainer.swift
+MACUI_DISPATCH=Sources/SlopDeskMacUI/Input/WorkspaceKeyDispatcher.swift
+MACUI_PLATE=Sources/SlopDeskMacUI/Panel/MacPlateIconButton.swift
+MACUI_GLYPH=Sources/SlopDeskMacUI/Overlays/MacAgentGlyph.swift
+MACUI_MARK=Sources/SlopDeskMacUI/Columns/MacStatusMark.swift
+MACUI_DIVIDER=Sources/SlopDeskMacUI/Pane/MacPaneDivider.swift
+
+# ---- M1. The sidebar's git line stays MEASURED, not re-measured. -----------------------------
+# THE PATH: `MacGitLineView` picks between an inline spelling and a four-rung ladder by asking each
+# candidate how wide it is, and AppKit asks for `intrinsicContentSize` and `draw(_:)` on every
+# layout pass of the sidebar — a window resize, a sidebar drag, a row insertion.
+# THE MEASUREMENT: the shedding `draw` was 59–65 µs and `intrinsicContentSize` 16.8–17.5 µs, both
+# of them `NSAttributedString.size()` (2.0–2.3 µs each, full CoreText typesetting) over five to
+# nine candidates. Building the ladder ONCE costs 50–52 µs; every read after it is 5 ns.
+# CATCHES: the ladder being deleted, or `measured()` being inlined back into the two callers.
+if ! grep -q 'private var ladder: Ladder?' "${MACUI_HEADER}"; then
+  fail "${MACUI_HEADER} no longer holds its measured ladder — the git line would re-typeset five to \
+nine candidate strings on every AppKit layout pass (59–65 µs) to pick the one it already picked"
+fi
+if ! grep -q 'private func measured() -> Ladder?' "${MACUI_HEADER}"; then
+  fail "${MACUI_HEADER} lost measured() — intrinsicContentSize and draw(_:) must share ONE build of \
+the ladder, or the guard above buys nothing"
+fi
+# The ladder is `segments` measured, so it must die with them and with nothing else. A didSet that
+# rebuilds the segments without dropping the ladder serves the OLD branch name forever.
+if ! grep -q 'ladder = nil' "${MACUI_HEADER}"; then
+  fail "${MACUI_HEADER} never invalidates the ladder — a memo with no kill is a stale git line, \
+which is worse than the 62 µs it saves"
+fi
+# BREAK-TESTED: `ladder` renamed to `ladderCache` in the real file (cp to /tmp first, restored from
+# there) → all three rules fired, naming the file and the 59–65 µs. Restored, gate green.
+
+# ---- M2. Open Quickly builds its corpus ONCE per draw. ---------------------------------------
+# THE PATH: `sections(filter:)` walks every session, tab and pane, spends a `TreeWorkspace.spec`
+# DFS per pane, re-ranks the whole folder frecency history and runs five fuzzy passes. The shipped
+# `draw()` ran it twice — once for the display entries, once through a `selectableRows(filter:)`
+# METHOD — and `move`, `moveToEnd`, `setActions`, `actSelected` and every ⌘-digit ran a third.
+# CATCHES: the method growing back. It is also the CORRECT shape, not just the cheap one: a clamp
+# or a ⌘-digit resolved against a freshly-derived corpus answers about rows the user is not looking
+# at, because the corpus can have moved under the selection since the draw that showed it.
+if spells 'func selectableRows\(' "${MACUI_OPENQ}" > /dev/null; then
+  fail "${MACUI_OPENQ} derives its selectable rows again — they are the HELD result of the draw \
+that put them on screen; a keystroke must clamp against the list the user can see, not a new one"
+fi
+if ! grep -q 'private var selectableRows: \[OpenQuicklyItem\]' "${MACUI_OPENQ}"; then
+  fail "${MACUI_OPENQ} no longer holds selectableRows — see the ban above for why the held list is \
+the correct one and not merely the fast one"
+fi
+# BREAK-TESTED: the stored property replaced with `private func selectableRows(filter: String) ->
+# [OpenQuicklyItem] { OpenQuicklyModel.selectable(sections(filter: filter)) }` → both rules fired.
+
+# ---- M3. The canvas remembers which leaves are unthemed. -------------------------------------
+# THE PATH: `applyHandles` asked `store.tree.spec(for: leaf.id)?.kind == .desktop` per leaf, and it
+# runs per divider-drag frame, per live-resize frame and per pointer move of a pane drag. `spec` is
+# a full DFS of the split tree, so the cost is O(panes²) per frame for an answer that is FIXED for
+# the life of a pane id.
+# CATCHES: the cache going away, and — separately — the cache never being pruned, which would keep
+# a closed pane's answer alive against a reused id.
+if ! grep -q 'handleIsUnthemed' "${MACUI_CANVAS}"; then
+  fail "${MACUI_CANVAS} asks the tree for each leaf's kind again — that is a DFS per leaf per drag \
+frame for an answer fixed for the life of the pane id"
+fi
+if ! grep -q 'handleIsUnthemed\[id\] = nil' "${MACUI_CANVAS}"; then
+  fail "${MACUI_CANVAS} keeps unthemed answers for panes it has removed — the cache must be pruned \
+in the same loop that tears the handle down"
+fi
+# BREAK-TESTED: the pruning line deleted → the second rule fired alone, which is the point of
+# splitting it from the first.
+
+# ---- M4. The GUI leaf remembers its pane KIND, and only that. --------------------------------
+# THE PATH: `isDesktopUploadTarget` ran a full tree DFS inside `draggingUpdated(_:)`, which AppKit
+# fires on every pointer move of a drag over the pane.
+# THE SHAPE THAT MATTERS: only the KIND is held — it is fixed for the life of a pane id. The
+# liveness half (`model?.active != nil`) stays a fresh read on every call, and a `nil` kind is
+# deliberately NOT cached, so a leaf that asks before its spec lands is not stuck answering no.
+if ! grep -q 'cachedPaneKind' "${MACUI_GUILEAF}"; then
+  fail "${MACUI_GUILEAF} walks the split tree inside a drag-update again — cache the KIND (fixed \
+per pane id), never the liveness"
+fi
+# BREAK-TESTED: `cachedPaneKind` renamed → fired.
+
+# ---- M5. The container counts its tab's panes without building T arrays. ---------------------
+# THE PATH: `tabPaneCount` is read inside the `withObservationTracking` arm that observes
+# `store.paneSwitcher`, so EVERY mounted container re-runs it on every ⌃⇥ tap. The shipped spelling
+# was `tabs.first { $0.allPaneIDs().contains(paneID) }`, which allocates one array per tab per pane
+# per keypress before it can even test membership; `Tab.contains` answers without the array.
+if spells 'allPaneIDs\(\)\.contains\(paneID\)' "${MACUI_CONTAINER}" > /dev/null; then
+  fail "${MACUI_CONTAINER} allocates a pane-id array per tab just to test membership — ask \
+Tab.contains, which is the same question without the allocation, on a ⌃⇥ path that runs it per \
+mounted pane per keypress"
+fi
+# BREAK-TESTED: the old predicate restored verbatim → fired.
+
+# ---- M6. The terminal reach is a set, not a linear scan built per keystroke. ------------------
+# CATCHES: the two-chord array coming back. It is rebuilt on every key event otherwise, which is
+# the one path in this directory where the user is watching the latency directly.
+if ! grep -q 'private static let terminalReach: Set<KeyChord>' "${MACUI_DISPATCH}"; then
+  fail "${MACUI_DISPATCH} rebuilds its code-panel chord list per key event — it is a static Set"
+fi
+# BREAK-TESTED: `Set<KeyChord>` changed to `[KeyChord]` → fired.
+
+# ---- M7. The plate button guards its glyph name like its other two states. -------------------
+# THE PATH: the GUI control bar assigns all four of its glyph names unconditionally from
+# `applyChrome`, which re-fires whenever any of the stream's ten telemetry mirrors move — about
+# twice a second for the life of a stream. Ungated, that re-rendered four SF Symbol images per
+# tick, every one byte-identical to the one already on screen.
+# CATCHES: the guard being dropped while `active` and `enabled` keep theirs, which is exactly how
+# it was missing in the first place — the two that looked like state got one and the one that
+# looked like a plain string did not.
+if ! grep -q 'guard symbolName != oldValue else { return }' "${MACUI_PLATE}"; then
+  fail "${MACUI_PLATE} re-renders its SF Symbol on every assignment — symbolName carries the same \
+equality guard as active and enabled, for a caller that assigns it ~2 Hz forever"
+fi
+# BREAK-TESTED: the guard line deleted → fired.
+
+# ---- M8. Both spinners fill their dots through CoreGraphics. ---------------------------------
+# THE PATH: both draws are driven by a `CADisplayLink`, so the loop runs once per dot per mark per
+# display refresh — and the rail can hold a mark per session.
+# THE MEASUREMENT: eight dots cost 28.6 µs/frame through `NSBezierPath(ovalIn:).fill()` and
+# 21.8–23.2 µs through `context.fillEllipse(in:)` — one `NSBezierPath` allocation per dot per
+# frame, gone. `setFillColor(red:green:blue:alpha:)` measured faster still (16.1–16.9 µs) and is
+# REFUSED on purpose: it would resolve the ink in a different colour space than
+# `withAlphaComponent(_:).setFill()`, which is a pixel change, not an optimisation.
+# Through `spells`, not `grep`: both files NAME the rejected spelling in the comment that records
+# the measurement, and a ban that fires on its own rationale is a ban nobody can satisfy.
+for spinner in "${MACUI_GLYPH}" "${MACUI_MARK}"; do
+  if spells 'NSBezierPath\(ovalIn:' "${spinner}" > /dev/null; then
+    fail "${spinner} allocates an NSBezierPath per dot per display-link frame (28.6 µs vs 22 µs for \
+eight dots) — fill the ellipse on the context"
+  fi
+done
+# BREAK-TESTED: `context.fillEllipse(in: frame)` swapped back to
+# `NSBezierPath(ovalIn: frame).fill()` in MacStatusMark.swift → fired for that file only.
+
+# ---- M9. The divider hides the readout BEFORE it cuts the text, and guards the handle. -------
+# THE PATH: the canvas re-assigns `handle` on every seam in the tab on every solve, and a divider
+# drag or a live window resize solves at the display's rate. `RatioReadout.percents` sets three
+# instrument runs, each of which reaches the un-memoized `Slate.Typeface.instrumentNative` (a
+# `fontDescriptor.withFamily` plus an `NSFont(descriptor:size:)` CoreText build).
+# THREE THINGS HAVE TO HOLD TOGETHER, so all three are pinned:
+#   • the handle's didSet is guarded on the VALUE — only the seam under the cursor actually moves,
+#     so this turns "N handles updated per frame" into "one", on both sides of `handleUpdated()`
+#     (the readout AND an `invalidateCursorRects(for:)` round trip to the window server);
+#   • `percents` is guarded field-by-field — a labelled optional tuple has no synthesized `==`, so
+#     a `!=` on the whole thing does not compile and its absence is silent;
+#   • `applyReadout()` sets `isHidden` FIRST and returns, so the N−1 seams that are not being
+#     dragged do not build three fonts for pixels that are hidden. The ordering is safe because
+#     `mouseDragged` sets `startLead` before `onResizeBegin()`/`setDragging(true)`, and
+#     `setDragging` calls `applyReadout()` first — the readout is populated at the moment it
+#     becomes visible.
+if ! grep -q 'guard handle != oldValue else { return }' "${MACUI_DIVIDER}"; then
+  fail "${MACUI_DIVIDER} re-runs handleUpdated for every seam in the tab on every solve — only the \
+dragged one changed; SplitDividerHandle is Equatable, so guard on the value"
+fi
+if ! grep -q 'percents?.leading != oldValue?.leading' "${MACUI_DIVIDER}"; then
+  fail "${MACUI_DIVIDER} re-cuts three instrument runs per drag frame to print the same two \
+numbers — the tuple has no synthesized ==, so the guard is field-by-field or it is not there"
+fi
+if ! grep -q 'guard shown else { return }' "${MACUI_DIVIDER}"; then
+  fail "${MACUI_DIVIDER} sets the readout's text before deciding whether it is on screen — three \
+uncached CoreText font builds per hidden seam per frame"
+fi
+# The order is the rule, so the order is what is checked: a file that spells both lines but sets
+# the text first is exactly the regression, and it passes all three greps above.
+divider_hide_line=$(grep -n 'readout.isHidden = !shown' "${MACUI_DIVIDER}" | cut -d: -f1 || true)
+divider_text_line=$(grep -n 'readout.percents = percents' "${MACUI_DIVIDER}" | cut -d: -f1 || true)
+if [[ -z "${divider_hide_line}" || -z "${divider_text_line}" ]]; then
+  fail "${MACUI_DIVIDER} no longer spells applyReadout's hide and cut as two separate statements — \
+the ordering rule below cannot be checked, so it is assumed broken"
+elif ((divider_hide_line > divider_text_line)); then
+  fail "${MACUI_DIVIDER} cuts the readout's text before hiding it (line ${divider_text_line} \
+before line ${divider_hide_line}) — the hidden seams pay the fonts"
+fi
+# BREAK-TESTED, four ways against the real file (cp to /tmp, sed the copy back over the original,
+# run, restore from /tmp — never `git checkout`, which would have discarded this sweep's other
+# uncommitted work in the same file):
+#   1. the `handle != oldValue` guard deleted        → rule 1 fired, alone.
+#   2. the field-by-field guard replaced by `guard percents != nil else { return }` → rule 2 fired.
+#   3. `guard shown else { return }` deleted         → rule 3 fired, alone.
+#   4. the two statements SWAPPED, both greps still matching → only the ordering rule fired, which
+#      is the case the three text pins cannot see and the reason it is written separately.
+
 printf 'check-supervisor: the UI split holds — views only, no dead gates, no ancestor between the halves, no palette row that lies.\n'
 
 # ── A pane's master is decided once, and it is OWNED ────────────────────────────────────────────
@@ -8474,6 +9563,219 @@ for ring in Sources/SlopDeskWorkspaceCore/Workspace/Domain/PaneSwitcher.swift \
   fi
 done
 printf 'check-supervisor: every ring steps through the one wrap rule.\n'
+
+# ── hostd and the device panels ───────────────────────────────────────────────────────────────
+# Every rule below was BREAK-TESTED against the real tree — the verdict is recorded in its own
+# comment — by copying the file to /tmp, editing it back to the shape the rule bans, running the
+# rule, and restoring from /tmp. Never `git checkout`, which discards this tree's other work.
+
+# ── The null-output PROBE, on the four doors where it costs a second whole answer ──────────────
+#
+# `docs/55` §4 makes `(NULL, 0)` a supported way to ask a door for its length, and for a door whose
+# rule is a table lookup it costs a nanosecond — `slopdesk_panel_simulator_key_code` and
+# `slopdesk_input_mode_reset` probe on purpose and are not touched here. For a door whose rule is
+# WORK it costs the work TWICE, and these four are the ones in this scope where that is
+# measurable. All four probed until 2026-08-22; all four now guess and retry. The numbers are from
+# a scratch `swiftc -O` harness linked against the shipped `macos-arm64` slice, two runs agreeing:
+#
+#   slopdesk_git_status        53.4 / 57.7 ms → 25.7 / 27.0 ms  libgit2 walks the worktree, per
+#                                                               FSEvents tick per watched repo
+#   slopdesk_plaintext_strip   646 / 629 µs   → 302 / 310 µs    183 KB pane capture, per agent read
+#   slopdesk_annexb_to_avcc    501 / 475 µs   → 265 / 234 µs    300 KB keyframe, PER FRAME
+#   slopdesk_annexb_split      the same walk over the same buffer, per access unit
+#
+# The failure mode no test can see: both calls agree and every answer is correct. The only trace is
+# a git line that lands a beat late and a phone mirror that drops frames on a busy host — which
+# reads as a device problem, not as a doubled call.
+#
+# The pattern is deliberately the ONE-LINE call shape, which is how all seven call sites are
+# written; the presence half below is what holds a reformat that split one across lines.
+#
+# BREAK-TEST 2026-08-22: `Sources/SlopDeskHost/HostGitStatus.swift` copied to /tmp, its retry
+# replaced by `let needed = slopdesk_git_status(input.baseAddress, input.count, nil, 0)` — the ban
+# FIRED and named the file; restored from /tmp, PASSES. Same edit in `ANSIStripper.swift` and in
+# `AndroidStreamProtocol.swift`: FIRED, restored, PASSES.
+# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
+probe_site=$(spells 'slopdesk_(git_status|plaintext_strip|annexb_to_avcc|annexb_split)\([^)]*nil, *0\)' \
+  $(repo_files 'Sources/**/*.swift') 2> /dev/null || true)
+if [[ -n "${probe_site}" ]]; then
+  fail "${probe_site} asks an expensive door for a length with a null output — that runs its whole rule and throws the answer away. Guess, then retry (docs/55 §4)"
+fi
+
+# The other half: each of the three fixed sites still carries a first guess. A probe deleted the
+# guess as well as the retry, so its absence is the same regression arriving by a different edit.
+#
+# BREAK-TEST 2026-08-22: deleting `private static let firstGuess = 64 * 1024` from
+# `HostGitStatus.swift` FIRED; deleting `avccSlack` from `AndroidStreamProtocol.swift` FIRED.
+# Both restored from /tmp, both PASS.
+for pair in \
+  "Sources/SlopDeskHost/HostGitStatus.swift:firstGuess" \
+  "Sources/SlopDeskHost/ANSIStripper.swift:needed > room.count" \
+  "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift:avccSlack" \
+  "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift:spanFloor"; do
+  if ! grep -qF "${pair#*:}" "${pair%%:*}"; then
+    fail "${pair%%:*} no longer spells '${pair#*:}' — the guess-then-retry that halved this path is gone (docs/55 §4, §6)"
+  fi
+done
+
+# ── One binary search order, and it is not this language's ────────────────────────────────────
+#
+# `docs/46`'s "Vendored runtime deps" section states ONE order — the `SLOPDESK_*_BIN` override, the
+# vendored prefix, `PATH`, then `~/.local/bin` and the two Homebrew prefixes — and named the Swift
+# copy as the rule with the Rust one "mirrored" from it. A mirror is a claim with no gate behind
+# it, which is `docs/55` §8's whole subject, and this pair had already stopped agreeing on the
+# question neither doc comment mentions: WHAT MAKES A CANDIDATE EXECUTABLE.
+#
+#   Swift  FileManager.isExecutableFile  →  access(path, X_OK)
+#   Rust   metadata().is_file() && mode & 0o111 != 0
+#
+# They disagree in both directions and neither disagreement can raise an error, because each side
+# is self-consistent and only one of them runs on any given path. A DIRECTORY named `code-server`
+# on `PATH` is `X_OK`, so Swift handed it to `posix_spawn` and the operator got a message about the
+# wrong thing; Rust walks past it to the real binary. `slopdesk_androidd::toolchain::locate_tool`
+# is the order now and `HostServiceProcess.locate` asks for it.
+#
+# The ban is scoped to the file that OWNS the question. `isExecutableFile` elsewhere in hostd
+# (`SidecarVersionAudit`, `HostMetadataProbe`) is a can-I-spawn-THIS-path guard, not a search, and
+# `HostEnvironment`'s `/usr/local/bin:/usr/bin:/bin` is the PATH handed to children — different
+# capabilities, correctly still Swift.
+#
+# BREAK-TEST 2026-08-22: `Sources/SlopDeskHost/HostServiceProcess.swift` copied to /tmp, then (a)
+# the `slopdesk_host_service_binary` call renamed — the presence check FIRED; (b) the deleted
+# `static let fallbackBinDirectories = [NSHomeDirectory() + "/.local/bin", "/opt/homebrew/bin",
+# "/usr/local/bin"]` pasted back — the ban FIRED and named the file. Restored from /tmp after each,
+# both PASS. Restoration was `cp` from /tmp, never `git checkout`, which would have discarded the
+# port itself.
+SWIFT_HOST_SERVICE=Sources/SlopDeskHost/HostServiceProcess.swift
+if ! grep -q 'slopdesk_host_service_binary(' "${SWIFT_HOST_SERVICE}"; then
+  fail "${SWIFT_HOST_SERVICE} no longer calls slopdesk_host_service_binary — hostd's search order is rust/slopdesk-androidd/src/toolchain.rs"
+fi
+if spells '/opt/homebrew/bin|/usr/local/bin|\.local/bin|isExecutableFile' "${SWIFT_HOST_SERVICE}" > /dev/null; then
+  fail "${SWIFT_HOST_SERVICE} spells a bin directory or an executability test again — the whole order is locate_tool, and a second copy of it drifts silently (docs/46, vendored runtime deps)"
+fi
+printf 'check-supervisor: hostd finds a program by one order, and asks the expensive doors once.\n'
+
+# ── ONE search-box predicate for both device panels, both drawings ────────────────────────────
+#
+# `localizedCaseInsensitiveContains` was spelled SIX times over "does any field of this row contain
+# what was typed" — twice in `AndroidPresentation` (the list, the console) and once each in the
+# four simulator views, two SwiftUI and two AppKit. Only one of the six was ever reached by a test,
+# which is the drift class `docs/55` §8 is about: the copy a test holds is not the copy the other
+# shell runs, and nothing can notice them parting. They now route through
+# `DeviceRowFilter` → `slopdesk_ws_binding_row_matches` → `slopdesk_workspace::binding_search`,
+# which is the rule the palette, Settings and the keybindings editor were already using.
+#
+# It is also 8–13× off. Scratch `swiftc -O` harness against the shipped `macos-arm64` slice, at
+# `SimulatorSidebarModel.logCapacity` = 600 console rows, two runs agreeing, blob build INCLUDED:
+#
+#   needle hits    873.8 / 876.9 µs  →  111.6 / 110.4 µs
+#   needle misses 1661.8 / 1624.6 µs →  131.2 / 128.5 µs
+#
+# A miss is the state every keystroke passes through, and the drawer repaints on every arriving log
+# line.
+#
+# The ban is by FILE, not tree-wide: `Sources/slopdesk-capture-probe` matches one window title with
+# it and is a dev tool, not a panel. The corpus is checked non-empty first — a ban over a file that
+# was renamed away passes silently, and this one names six files across three targets, which is
+# exactly the shape that rots.
+#
+# The rule was RED for the length of the change, naming `SimulatorConsoleView.swift` while the four
+# simulator-view edits were still pending — the two UI targets belonged to other owners and their
+# replacements landed centrally. That is worth recording: a ban that spans targets one agent cannot
+# edit reads as a false positive exactly once, at the half-applied moment, and is not one.
+#
+# BREAK-TEST 2026-08-22, each by `cp` to /tmp and back, never `git checkout`:
+#   * `AndroidPresentation.swift`'s `visible` body pasted back as the
+#     `localizedCaseInsensitiveContains` filter → the ban FIRED and named that file. Restored, that
+#     file is clean again.
+#   * `slopdesk_ws_binding_row_matches` renamed inside `DeviceRowFilter.swift` → the presence check
+#     FIRED. Restored, PASSES.
+#   * `DeviceRowFilter.swift` moved out of the tree → the vacuity floor FIRED with "6 of 7 files"
+#     rather than letting the ban read a short corpus and pass. Restored, PASSES.
+PANEL_FILTER_FILES=(
+  Sources/SlopDeskDevicePanels/Android/AndroidPresentation.swift
+  Sources/SlopDeskDevicePanels/Simulator/SimulatorPresentation.swift
+  Sources/SlopDeskDevicePanels/Shared/DeviceRowFilter.swift
+  Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift
+  Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift
+  Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorConsoleView.swift
+  Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift
+)
+panel_filter_present=()
+for file in "${PANEL_FILTER_FILES[@]}"; do
+  [[ -f "${file}" ]] && panel_filter_present+=("${file}")
+done
+if ((${#panel_filter_present[@]} != ${#PANEL_FILTER_FILES[@]})); then
+  fail "the device panels' filter corpus has ${#panel_filter_present[@]} of ${#PANEL_FILTER_FILES[@]} files — a renamed one would let the ban below pass without reading anything"
+elif filter_copy=$(spells 'localizedCaseInsensitiveContains' "${panel_filter_present[@]}"); then
+  fail "${filter_copy} spells localizedCaseInsensitiveContains again — the device panels' search predicate is DeviceRowFilter, and it was six copies of these three lines"
+fi
+SWIFT_ROW_FILTER=Sources/SlopDeskDevicePanels/Shared/DeviceRowFilter.swift
+if [[ -f "${SWIFT_ROW_FILTER}" ]] && ! grep -q 'slopdesk_ws_binding_row_matches(' "${SWIFT_ROW_FILTER}"; then
+  fail "${SWIFT_ROW_FILTER} no longer calls slopdesk_ws_binding_row_matches — the predicate is rust/slopdesk-workspace/src/binding_search.rs and is not to be re-spelled in Swift"
+fi
+printf 'check-supervisor: one search predicate for both device panels, in one language.\n'
+
+# ── The instrument voice is minted ONCE per rung ──────────────────────────────────────────────
+#
+# `Slate.Typeface.instrumentNative` is the AppKit/UIKit half of the mono voice, and it was the only
+# font accessor in this file with no cache in front of it. The asymmetry is what makes it a defect
+# rather than a slow function: `macDevicePanelLabel` picks between `.systemFont(ofSize:weight:)` and
+# this one on a single ternary, and `+systemFont:` is cached BY THE FRAMEWORK while
+# `NSFont(descriptor:size:)` builds a CoreText font from scratch every time. Nothing in either
+# language recorded that one arm of that ternary was two hundred times the other.
+#
+# Measured in a scratch `swiftc -O` harness (NOT in the tree; two runs agreeing to 1.5%), per call:
+#
+#     mono-INSTALLED arm (the shipping configuration)   7 122 – 7 343 ns
+#       of which NSFont(descriptor:size:) alone         7 142 – 7 406 ns
+#     SF Mono fallback arm (no JetBrains Mono)          2 091 – 2 118 ns
+#     out of the table                                     23 –    34 ns
+#     MacPaneDivider's three runs, per divider/frame   21 400 ns  ->  69 ns   (~310x)
+#
+# Those three are the ratio readout's leading/dot/trailing runs, which reach here through
+# `macInstrumentString` in `MacCapsLabel.swift`; `applyReadout` cuts them for a hidden readout for
+# exactly this reason, and that guard covers N−1 seams but not the one being dragged.
+#
+# There are 16 call sites across `Sources/SlopDeskMacUI` plus one test — 17 in all, and one further
+# mention that is only a doc link. All of them are `NSView` or already-`@MainActor` builders, which
+# is why `@MainActor` on the accessor costs nothing.
+#
+# THE FAILURE MODE THE GATE EXISTS FOR is that none of this is visible to a test: every call returns
+# the correct font, the memo and the builder agree by construction, and the only trace is the frame
+# rate while a divider is dragged. So what is pinned is the SHAPE — that the accessor goes through
+# the table, and that the expensive builder is reachable from exactly one place.
+#
+# BREAK-TESTED against the real tree on 2026-08-22 by putting each pre-fix spelling back and
+# restoring `SlateDesign.swift` from a /tmp copy afterwards (never `git checkout`, which would have
+# discarded this tree's uncommitted work). All four fire, each on its own rule only, and the
+# restored file reads 0:
+#   accessor no longer reads the table   FAIL "stopped reading mintedInstruments"        ✓
+#   `@MainActor` dropped off the store   FAIL "mintedInstruments lost its @MainActor"     ✓
+#   descriptor inlined into the accessor FAIL "mints a font outside mintInstrument"       ✓
+#   a second withFamily(mono) grows      FAIL "the instrument face is built in 2 places"  ✓
+slate_design=Sources/SlopDeskSlate/SlateDesign.swift
+if ! grep -qE '^ *if let struck = mintedInstruments\[rung\] \{ return struck \}$' "${slate_design}"; then
+  fail "instrumentNative stopped reading mintedInstruments — it is 7.1 µs a call cold and 30 ns out of the table"
+fi
+if ! grep -qE '^ *@MainActor private static var mintedInstruments: \[InstrumentRung: SlateNativeFont\] = \[:\]$' "${slate_design}"; then
+  fail "mintedInstruments lost its @MainActor (or its type) — the only alternatives are a lock or no memo at all"
+fi
+# The expensive build is `SlateNativeFont.systemFont(…).fontDescriptor.withFamily(mono)` and it must
+# live in `mintInstrument` and nowhere else — a caller that spells it inline has re-minted around the
+# table, which no test can see because the FONT is right. Counted rather than merely required, for
+# the reason `TreeWorkspaceRepairDifferentialTests` gives about vocabularies: a presence check agrees
+# with itself while a second copy appears beside the first, and 0 — the extraction having gone stale
+# — must fail rather than read as compliance. `|| true` so a zero count cannot kill the script under
+# the meta-gate's `pipefail`.
+mint_sites=$(grep -cE 'fontDescriptor\.withFamily\(mono\)' "${slate_design}" || true)
+if [[ "${mint_sites}" != 1 ]]; then
+  fail "the instrument face is built in ${mint_sites} places in ${slate_design}, not 1 — mintInstrument is the only one allowed"
+fi
+if grep -A12 '^ *package static func instrumentNative(' "${slate_design}" | grep -qE 'fontDescriptor'; then
+  fail "instrumentNative mints a font outside mintInstrument — the memo is being walked around"
+fi
+printf 'check-supervisor: the instrument voice is minted once per rung, not once per call.\n'
 
 # ── NOT a ratchet, a note for whoever audits this next ──────────────────────────────────────────
 # `MuxChannelSession.isCompletionTransition` looks like a twin of `slopdesk_agent_attention_completion`

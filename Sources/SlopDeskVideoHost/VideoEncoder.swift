@@ -1,6 +1,7 @@
 #if os(macOS)
 import CoreMedia
 import CoreVideo
+import CSlopDeskFFI
 import Foundation
 import OSLog
 import SlopDeskVideoProtocol
@@ -96,17 +97,42 @@ public final class VideoEncoder: @unchecked Sendable {
     /// and 40 Mbps and tightening the ceiling 32→22 does not fix it. That blur comes from SCK
     /// bounding-rect expansion by a tooltip child window (see WindowCapturer.makeConfiguration
     /// `includeChildWindows = false`).
-    public static let maxAllowedFrameQP: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_MAX_QP"], let v = Int(s), v >= 1,
-           v <= 51 { return v }
-        // 51 = uncapped, paired with default pure-VBR: the encoder must ALWAYS be able to coarsen its
-        // way under the budget rather than drop (HW-validated; the crisp static refresh restores
-        // sharpness the moment motion stops). This is the WORST-CASE bound the budget-adaptive
-        // ceiling (``qpCeiling(forTargetBps:pixelWidth:pixelHeight:fps:)``) relaxes toward when the
-        // ABR budget is thin; when the budget is healthy the live ceiling sits at
-        // ``sharpQPCeiling`` instead, so hard-scroll frames never blur to 51 on a fast link.
-        return 51
-    }()
+    /// 51 = uncapped, paired with default pure-VBR: the encoder must ALWAYS be able to coarsen its
+    /// way under the budget rather than drop (HW-validated; the crisp static refresh restores
+    /// sharpness the moment motion stops). This is the WORST-CASE bound the budget-adaptive
+    /// ceiling (``qpCeiling(forTargetBps:pixelWidth:pixelHeight:fps:)``) relaxes toward when the
+    /// ABR budget is thin; when the budget is healthy the live ceiling sits at
+    /// ``sharpQPCeiling`` instead, so hard-scroll frames never blur to 51 on a fast link.
+    public static let maxAllowedFrameQP: Int = envQP("SLOPDESK_MAX_QP", default: 51) ?? 51
+
+    /// Parses one of this target's `[1, 51]` quantiser knobs, through the same door
+    /// ``QPController/envInt(_:_:min:max:)`` uses, so the *rule* has one home even though the two
+    /// callers read from different places: that face resolves through ``EnvConfig`` so a GUI slider
+    /// can override it, and these must stay pure `ProcessInfo` reads because ``qpCeilingAdaptive``
+    /// decides off the PRESENCE of `SLOPDESK_MAX_QP` in that same dictionary — a value arriving from
+    /// an overlay the presence check cannot see would be a knob that is set and unset at once.
+    ///
+    /// Not `private`, because the fifth knob of this shape is `SLOPDESK_AQP_MAX` in
+    /// ``WindowCapturer`` and there is no version of "one rule" where the fifth caller gets its own
+    /// copy for living in another file.
+    ///
+    /// **CLAMPS an out-of-range value; does not reject it.** These used to reject to their default,
+    /// which is the reading that produces the surprise: `SLOPDESK_MAX_QP=0` asks for the sharpest
+    /// ceiling the encoder has and silently got 51, the COARSEST — the request inverted, with
+    /// nothing said. Clamping answers 1, which is the nearest thing the caller asked for and the
+    /// only reading they could act on. It is also what every other quantiser knob in the tree
+    /// already does, so the pair the two spellings made is gone rather than documented.
+    ///
+    /// `nil` only for a knob that is absent or whose text is not a number at all — `0` is outside
+    /// `[1, 51]` and the door returns its default UNCLAMPED, so it is the one answer that cannot
+    /// have come from a real value.
+    static func envQP(_ key: String, default fallback: Int) -> Int? {
+        guard var text = ProcessInfo.processInfo.environment[key] else { return nil }
+        let answer = text.withUTF8 {
+            slopdesk_qp_clamped_int($0.baseAddress, $0.count, true, Int32(fallback), 1, 51)
+        }
+        return answer >= 1 ? Int(answer) : nil
+    }
 
     /// BUDGET-ADAPTIVE SHARP CEILING (Parsec pins MaxAllowedFrameQP=35; 38 keeps a little more
     /// coarsening headroom). Holding 38 UNCONDITIONALLY drops frames whenever the ABR target cannot
@@ -117,13 +143,17 @@ public final class VideoEncoder: @unchecked Sendable {
     /// budget thins — the encoder always keeps its coarsen-don't-drop escape exactly when it needs it.
     /// `SLOPDESK_MAX_QP` pins a STATIC ceiling and disables adaptation; `SLOPDESK_QP_CEILING_ADAPT=0`
     /// also disables (pure legacy 51 behavior). Const-QP mode owns the QP dials outright.
-    public static let sharpQPCeiling = 38
+    /// The tuned table behind the three constants below and ``QPDropRelief``'s three, asked for
+    /// rather than transcribed: they were HW-calibrated together, so a copy kept here would keep
+    /// encoding at the old operating point after a retune, with no build error and no failing test.
+    private static let ceilingConfig = slopdesk_video_qp_ceiling_config_default()
+    public static let sharpQPCeiling = Int(ceilingConfig.sharp_qp)
     /// ABR-target density (bits/pixel/frame) at or above which QP-38 motion fits without drops
     /// (HW: zero drops at ≥0.14 under a 31 Mbps ceiling at 1080p60).
-    static let qpCeilingSharpBpp = 0.14
+    static let qpCeilingSharpBpp = ceilingConfig.sharp_bpp
     /// Density at or below which the ceiling is fully relaxed to ``maxAllowedFrameQP``
     /// (HW: the drop-storm regime sat at 0.05–0.13).
-    static let qpCeilingCoarseBpp = 0.07
+    static let qpCeilingCoarseBpp = ceilingConfig.coarse_bpp
 
     /// Whether the budget-adaptive ceiling drives `MaxAllowedFrameQP`.
     static let qpCeilingAdaptive: Bool = ProcessInfo.processInfo.environment["SLOPDESK_MAX_QP"] == nil
@@ -138,29 +168,35 @@ public final class VideoEncoder: @unchecked Sendable {
     /// drops: each dropped frame ATTACKS the ceiling up `attackStep` immediately (a storm reaches 51
     /// within ~4 frames ≈ 70ms — coarse-but-moving beats sharp-but-missing), then after
     /// `holdFrames` clean encodes the relief DECAYS 1 QP per `decayEvery` frames back toward the
-    /// budget-derived sharp ceiling (re-sharpening is gradual, never a pop). Pure value type —
-    /// folded on the encode path under `bitrateLock`.
+    /// budget-derived sharp ceiling (re-sharpening is gradual, never a pop).
+    ///
+    /// The FACE of `rust/slopdesk-video`'s `encoder_ceiling::DropRelief`. A value type because that
+    /// is what its owner wants — the encoder takes a copy out under `bitrateLock`, folds it and
+    /// writes it back — so the state crosses BY VALUE, and `cleanFrames` travels with `relief`
+    /// because it IS the state: a fold rebuilt without it decays from inside its own hold window.
     struct QPDropRelief: Equatable {
-        static let attackStep = 4
-        static let holdFrames = 180 // ~3s @60fps of clean encodes before relief starts to decay
-        static let decayEvery = 4 // then −1 QP per 4 clean frames (full 13-QP decay ≈ 0.9s)
+        static let attackStep = Int(ceilingConfig.attack_step)
+        /// ~3s @60fps of clean encodes before relief starts to decay.
+        static let holdFrames = Int(ceilingConfig.hold_frames)
+        /// Then −1 QP per this many clean frames (full 13-QP decay ≈ 0.9s).
+        static let decayEvery = Int(ceilingConfig.decay_every)
 
-        private(set) var relief = 0
-        private(set) var cleanFrames = 0
+        private var state = SlopDeskQpDropRelief()
+        var relief: Int { Int(state.relief) }
+        var cleanFrames: Int { Int(state.clean_frames) }
 
         /// Fold one encode tick: `drops` = VT drops observed since the last tick. Returns the
         /// current relief (extra QP above the budget-derived ceiling, clamped by the caller's
         /// `min(maxAllowedFrameQP, …)` composition).
         mutating func fold(drops: Int) -> Int {
-            if drops > 0 {
-                relief = min(relief + Self.attackStep * drops, 51)
-                cleanFrames = 0
-            } else {
-                cleanFrames += 1
-                if cleanFrames > Self.holdFrames, relief > 0,
-                   cleanFrames.isMultiple(of: Self.decayEvery) { relief -= 1 }
-            }
-            return relief
+            state = slopdesk_video_qp_drop_relief_fold(state, Int64(drops))
+            return Int(state.relief)
+        }
+
+        /// Two reliefs are equal when they hold the same two numbers — the C record the far side
+        /// hands back has no equality of its own, and there is nothing else in this value.
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.state.relief == rhs.state.relief && lhs.state.clean_frames == rhs.state.clean_frames
         }
     }
 
@@ -184,9 +220,16 @@ public final class VideoEncoder: @unchecked Sendable {
         }
     }
 
-    /// PURE: the QP ceiling for an ABR target of `targetBps` on a `pixelWidth×pixelHeight@fps`
-    /// session. `sharp` at/above `sharpBpp` density, `coarse` at/below `coarseBpp`, linear between
-    /// (round half-away). Degenerate dims/fps → `coarse` (never risk a drop on a malformed config).
+    /// The QP ceiling for an ABR target of `targetBps` on a `pixelWidth×pixelHeight@fps` session.
+    /// `sharp` at/above `sharpBpp` density, `coarse` at/below `coarseBpp`, linear between (round
+    /// half-away). Degenerate dims/fps → `coarse` (never risk a drop on a malformed config).
+    ///
+    /// The FACE of `rust/slopdesk-video`'s `encoder_ceiling::qp_ceiling`. The law was written out
+    /// here in Swift and the SAME linear sharp↔coarse ramp already lived in `adaptive_qp`, read in
+    /// the other direction off the per-frame change fraction — two spellings of one interpolation,
+    /// which is `docs/55` §8's drift class exactly: a fused multiply-add on one side or an `f32`
+    /// intermediate on the other, and no test on either side goes red. There is one ramp now, and
+    /// this maps the budget's density onto it.
     static func qpCeiling(
         forTargetBps targetBps: Int,
         pixelWidth: Int,
@@ -197,16 +240,10 @@ public final class VideoEncoder: @unchecked Sendable {
         sharpBpp: Double = qpCeilingSharpBpp,
         coarseBpp: Double = qpCeilingCoarseBpp,
     ) -> Int {
-        guard pixelWidth > 0, pixelHeight > 0, fps > 0, targetBps > 0, coarse >= sharp,
-              sharpBpp > coarseBpp else { return coarse }
-        let pixelRate = Double(pixelWidth) * Double(pixelHeight) * Double(fps)
-        let bpp = Double(targetBps) / pixelRate
-        if bpp >= sharpBpp { return sharp }
-        if bpp <= coarseBpp { return coarse }
-        // keep mul+add separate — no FMA (bit-exact float convention)
-        let t = (sharpBpp - bpp) / (sharpBpp - coarseBpp)
-        let span = Double(coarse - sharp) * t
-        return sharp + Int(span.rounded())
+        Int(slopdesk_video_qp_ceiling(
+            Int64(targetBps), Int64(pixelWidth), Int64(pixelHeight), Int64(fps),
+            Int32(clamping: sharp), Int32(clamping: coarse), sharpBpp, coarseBpp,
+        ))
     }
 
     /// OWN RATE-CONTROL — CONSTANT-QP (`SLOPDESK_CONST_QP`, default OFF = nil). When set
@@ -220,11 +257,10 @@ public final class VideoEncoder: @unchecked Sendable {
     /// draining in a few ms not ~30 ms — the sluggish scroll), then snaps back to the floor when motion
     /// stops. Frame size floats with content (idle tiny, scroll bounded). Brackets (crisp/compact IDRs)
     /// keep their own QP. The link backstop is the slow ABR (the link-AIMD nudges this Q).
-    public static let constQP: Int? = {
-        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_CONST_QP"], let v = Int(s),
-              v >= 1, v <= 51 else { return nil }
-        return v
-    }()
+    /// Presence decides whether the mode engages at all, the value is CLAMPED into `[1, 51]`, and a
+    /// knob whose text is not a number leaves it OFF — "const-QP did not engage" is a reading the
+    /// caller can act on, where inventing an operating point for them is not.
+    public static let constQP: Int? = envQP("SLOPDESK_CONST_QP", default: 0)
 
     /// QP MIN/MAX DECOUPLE (`SLOPDESK_QP_DECOUPLE`, default **ON**; `=0` disables). On a MOTION frame
     /// keeps `MinAllowedFrameQP` at the SHARP const-QP floor while only `MaxAllowedFrameQP` rises to the
@@ -252,11 +288,7 @@ public final class VideoEncoder: @unchecked Sendable {
     /// 1(lossless)…51(coarsest); ~18 is visually transparent for text while far smaller than QP 14.
     /// A/B via `SLOPDESK_CRISP_QP`. Best-effort: a rejected mid-session `MaxAllowedFrameQP` change
     /// (-12900) degrades to a normal keyframe (observable — the `crisp=…` log stays ~live-keyframe-sized).
-    public static let crispMaxQP: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_CRISP_QP"], let v = Int(s), v >= 1,
-           v <= 51 { return v }
-        return 18
-    }()
+    public static let crispMaxQP: Int = envQP("SLOPDESK_CRISP_QP", default: 18) ?? 18
 
     /// Widened `DataRateLimits` byte budget for the window around a crisp IDR (64 Mbit) so the hard
     /// cap does not DROP the (much larger) near-lossless intra frame. The live cap (`dataRateMaxBytes`,
@@ -332,11 +364,7 @@ public final class VideoEncoder: @unchecked Sendable {
     //
     /// QP ceiling for a compact IDR — coarser than the live ceiling (`maxAllowedFrameQP`) so the
     /// encoder can shrink the forced IDR by coarsening instead of dropping it. A/B via `SLOPDESK_COMPACT_QP`.
-    public static let compactMaxQP: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_COMPACT_QP"], let v = Int(s), v >= 1,
-           v <= 51 { return v }
-        return 46
-    }()
+    public static let compactMaxQP: Int = envQP("SLOPDESK_COMPACT_QP", default: 46) ?? 46
 
     /// Rate-control target (bits/sec) applied for EXACTLY the compact IDR — far below the live
     /// `bitrate` so the controller budgets the forced IDR small; restored to `bitrate` immediately

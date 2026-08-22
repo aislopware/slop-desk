@@ -1166,12 +1166,17 @@ public actor SlopDeskVideoClientSession {
             dbgLastMediaRx = now
         }
         switch router.route(channel: channel, data: data, mediaFlowing: stateMachine.mediaFlowing) {
-        case let .control(message):
+        case .control:
             // Stall-scrim liveness: any decodable host control message (the 1 s heartbeat keepalive,
             // acks, cadence, …) proves the host is alive — stamp BEFORE the FSM (which deliberately
             // no-ops a keepalive).
             lastControlSignalAt = ProcessInfo.processInfo.systemUptime
-            for effect in stateMachine.handleControl(message) { apply(effect) }
+            // The DATAGRAM, not the routed message: the router's decode proved this is a control
+            // message the client understands, and the machine's door decodes for itself. Handing the
+            // decoded value over would re-encode it (measured 148–155 ns, against 0.7 ns for lending
+            // the bytes) so the door could decode the same message a second time — and `scrollOffset`
+            // arrives once per scrolled frame.
+            for effect in stateMachine.handleControl(datagram: data) { apply(effect) }
         case let .videoFragment(fragment):
             lastVideoSignalAt = ProcessInfo.processInfo.systemUptime
             ingestVideo(fragment)

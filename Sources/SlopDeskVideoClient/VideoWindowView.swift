@@ -1,5 +1,6 @@
 #if canImport(SwiftUI) && canImport(QuartzCore) && canImport(Metal) && canImport(VideoToolbox)
 import CoreImage
+import CSlopDeskFFI
 import QuartzCore
 import SlopDeskVideoProtocol
 import SwiftUI
@@ -1632,24 +1633,23 @@ final class MetalLayerBackedView: NSView {
     }
 
     /// Maps a finger-on-glass `NSEvent.phase` to its `CGScrollPhase` integer code so the host can set
-    /// `kCGScrollWheelEventScrollPhase` verbatim (`0`=none, `1`=began, `2`=changed, `4`=ended,
-    /// `8`=cancelled, `128`=mayBegin). `.stationary`/empty → `0`.
+    /// `kCGScrollWheelEventScrollPhase` verbatim.
+    ///
+    /// The MASK crosses, not a case index: AppKit's bits are already a wire-stable encoding, and
+    /// turning them into an ordinal here would put back the table this asks in order not to keep.
+    /// The two CoreGraphics fields encode the same three edges DIFFERENTLY — an end is `4` in the
+    /// scroll field and `3` in the momentum one — and those ten numbers were spelled in four places
+    /// across two languages, two of which read different sets of them. They are `client_gestures`'s
+    /// now, and this is the phone's `TouchPointerPlan/scrollPhase(isFirst:isLast:)` asking the same
+    /// table a trackpad question.
     static func cgScrollPhaseCode(_ phase: NSEvent.Phase) -> UInt8 {
-        if phase.contains(.began) { return 1 }
-        if phase.contains(.changed) { return 2 }
-        if phase.contains(.ended) { return 4 }
-        if phase.contains(.cancelled) { return 8 }
-        if phase.contains(.mayBegin) { return 128 }
-        return 0
+        slopdesk_cg_scroll_phase_code(UInt32(truncatingIfNeeded: phase.rawValue))
     }
 
-    /// Maps an inertial-coast `NSEvent.momentumPhase` to its `CGMomentumScrollPhase` integer code
-    /// (`0`=none, `1`=begin, `2`=continue, `3`=end) — a SEPARATE encoding from `cgScrollPhaseCode`.
+    /// Maps an inertial-coast `NSEvent.momentumPhase` to its `CGMomentumScrollPhase` integer code —
+    /// a SEPARATE encoding from ``cgScrollPhaseCode(_:)``, which is why it is a separate door.
     static func cgMomentumPhaseCode(_ phase: NSEvent.Phase) -> UInt8 {
-        if phase.contains(.began) { return 1 }
-        if phase.contains(.changed) { return 2 }
-        if phase.contains(.ended) { return 3 }
-        return 0
+        slopdesk_cg_momentum_phase_code(UInt32(truncatingIfNeeded: phase.rawValue))
     }
 
     override func scrollWheel(with event: NSEvent) {

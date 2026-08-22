@@ -20,6 +20,7 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_video::encoder_ceiling;
 use slopdesk_video::qp_control::{QpConfig, QpController, clamped_int_from_env};
 use slopdesk_video::recovery_idr::{IdrVerdict, RecoveryIdrConfig, RecoveryIdrPolicy};
 
@@ -189,6 +190,121 @@ pub unsafe extern "C" fn slopdesk_qp_clamped_int(
     let bytes = unsafe { borrow(raw, raw_len) };
     let text = has_raw.then(|| String::from_utf8_lossy(bytes).into_owned());
     clamped_int_from_env(text.as_deref(), default, lo, hi)
+}
+
+// ---------------------------------------------------------------------------------------------
+// The encoder's own quantiser ceiling: what the budget affords, and what its drops say
+// ---------------------------------------------------------------------------------------------
+
+/// The band the budget's density is mapped onto, and the relief's three tunables, as they cross.
+///
+/// One record rather than seven arguments and seven fallbacks, for the reason
+/// `slopdesk_qp_config_default` gives one section up: they were calibrated together on hardware, so
+/// a caller that kept its own spelling of one of them would encode at an operating point nobody
+/// chose, with no build error and no failing test to say so. Widest-first, so the hand-written
+/// header has no padding to transcribe.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SlopDeskQpCeilingConfig {
+    /// The density at or above which the sharp end fits, in bits per pixel per frame.
+    pub sharp_bpp: f64,
+    /// The density at or below which the ceiling is fully relaxed.
+    pub coarse_bpp: f64,
+    /// The sharp end of the budget-adaptive ceiling.
+    pub sharp_qp: i32,
+    /// How far one dropped frame lifts the relief.
+    pub attack_step: i32,
+    /// Consecutive clean encodes the relief holds at full height before it may decay.
+    pub hold_frames: i32,
+    /// After the hold, one quantiser step per this many clean encodes.
+    pub decay_every: i32,
+}
+
+/// The drop-feedback relief as it crosses: both numbers the next fold reads, and nothing else.
+///
+/// The clean-frame streak travels for the reason `SlopDeskQpController`'s does — it IS the state,
+/// and a relief rebuilt without it would decay from inside its own hold window.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct SlopDeskQpDropRelief {
+    /// The extra quantiser steps the caller composes above the budget-derived ceiling.
+    pub relief: i32,
+    /// The consecutive clean encodes folded since the last drop.
+    pub clean_frames: i32,
+}
+
+/// The hardware-calibrated defaults for the budget ceiling and the drop relief.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_video_qp_ceiling_config_default() -> SlopDeskQpCeilingConfig {
+    SlopDeskQpCeilingConfig {
+        sharp_bpp: encoder_ceiling::SHARP_BPP,
+        coarse_bpp: encoder_ceiling::COARSE_BPP,
+        sharp_qp: encoder_ceiling::SHARP_QP_CEILING,
+        attack_step: encoder_ceiling::ATTACK_STEP,
+        hold_frames: encoder_ceiling::HOLD_FRAMES,
+        decay_every: encoder_ceiling::DECAY_EVERY,
+    }
+}
+
+/// The quantiser ceiling a budget of `target_bps` affords on a `pixel_width` by `pixel_height`
+/// picture at `fps`, given the band's two ends and two knees.
+///
+/// Every refusal — a degenerate picture, cadence or budget, an inverted band, an inverted pair of
+/// knees, a quantiser outside the byte range — answers `coarse`. There is no sentinel, because the
+/// coarse end IS the safe answer: the encoder coarsens rather than dropping a frame it cannot fit.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_video_qp_ceiling(
+    target_bps: i64,
+    pixel_width: i64,
+    pixel_height: i64,
+    fps: i64,
+    sharp: i32,
+    coarse: i32,
+    sharp_bpp: f64,
+    coarse_bpp: f64,
+) -> i32 {
+    encoder_ceiling::qp_ceiling(
+        target_bps,
+        pixel_width,
+        pixel_height,
+        fps,
+        encoder_ceiling::CeilingBand {
+            sharp,
+            coarse,
+            sharp_bpp,
+            coarse_bpp,
+        },
+    )
+}
+
+/// Folds one encode tick's dropped-frame count into the relief and answers the relief that results.
+///
+/// A drop attacks at once; a clean tick lengthens the streak and, past the hold, decays one step
+/// per interval. A carried record is sanitised into a legal state on the way in, because a panic
+/// crossing this boundary aborts the process.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_video_qp_drop_relief_fold(
+    state: SlopDeskQpDropRelief,
+    drops: i64,
+) -> SlopDeskQpDropRelief {
+    let mut inner = encoder_ceiling::DropRelief::restored(state.relief, state.clean_frames);
+    inner.fold(drops);
+    SlopDeskQpDropRelief {
+        relief: inner.relief(),
+        clean_frames: inner.clean_frames(),
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -423,11 +539,89 @@ mod tests {
     use super::{
         SLOPDESK_IDR_VERDICT_GRANT, SLOPDESK_IDR_VERDICT_SUPPRESS_GRANT_PENDING,
         SLOPDESK_IDR_VERDICT_SUPPRESS_IN_FLIGHT, SLOPDESK_IDR_VERDICT_SUPPRESS_RATE_LIMITED,
-        SlopDeskIdrConfig, SlopDeskQpConfig, SlopDeskQpController, slopdesk_idr_config_default,
-        slopdesk_idr_policy_available_tokens, slopdesk_idr_policy_decide, slopdesk_idr_policy_free,
-        slopdesk_idr_policy_grace, slopdesk_idr_policy_new, slopdesk_idr_policy_note_keyframe_sent,
-        slopdesk_qp_clamped_int, slopdesk_qp_config_default, slopdesk_qp_decide, slopdesk_qp_new,
+        SlopDeskIdrConfig, SlopDeskQpConfig, SlopDeskQpController, SlopDeskQpDropRelief,
+        slopdesk_idr_config_default, slopdesk_idr_policy_available_tokens, slopdesk_idr_policy_decide,
+        slopdesk_idr_policy_free, slopdesk_idr_policy_grace, slopdesk_idr_policy_new,
+        slopdesk_idr_policy_note_keyframe_sent, slopdesk_qp_clamped_int, slopdesk_qp_config_default,
+        slopdesk_qp_decide, slopdesk_qp_new, slopdesk_video_qp_ceiling,
+        slopdesk_video_qp_ceiling_config_default, slopdesk_video_qp_drop_relief_fold,
     };
+
+    /// The encoder ceiling's own tuned table, and the refusal that is not a sentinel.
+    #[test]
+    fn the_encoder_ceiling_table_and_its_refusals_cross_intact() {
+        let config = slopdesk_video_qp_ceiling_config_default();
+        assert!((config.sharp_bpp - 0.14).abs() < f64::EPSILON);
+        assert!((config.coarse_bpp - 0.07).abs() < f64::EPSILON);
+        assert_eq!(
+            (
+                config.sharp_qp,
+                config.attack_step,
+                config.hold_frames,
+                config.decay_every
+            ),
+            (38, 4, 180, 4),
+        );
+
+        let ceiling = |bps| {
+            slopdesk_video_qp_ceiling(
+                bps,
+                1920,
+                1080,
+                60,
+                config.sharp_qp,
+                51,
+                config.sharp_bpp,
+                config.coarse_bpp,
+            )
+        };
+        assert_eq!(ceiling(31_104_000), 38, "a dense budget stays sharp");
+        assert_eq!(ceiling(14_929_920), 42, "the ramp between the knees");
+        assert_eq!(ceiling(6_500_000), 51, "a thin budget relaxes all the way");
+        assert_eq!(
+            slopdesk_video_qp_ceiling(12_000_000, 0, 1080, 60, 38, 51, 0.14, 0.07),
+            51,
+            "a degenerate picture answers the coarse end, which is the SAFE answer and not a sentinel",
+        );
+    }
+
+    /// The relief's streak travels, so a fold cannot decay from inside its own hold window.
+    #[test]
+    fn the_drop_relief_carries_the_state_the_next_fold_reads() {
+        let attacked = slopdesk_video_qp_drop_relief_fold(SlopDeskQpDropRelief::default(), 1);
+        assert_eq!(attacked, SlopDeskQpDropRelief {
+            relief: 4,
+            clean_frames: 0
+        });
+
+        // Walk the hold out one clean tick at a time, carrying the record each time.
+        let mut carried = attacked;
+        for _ in 0..180 {
+            carried = slopdesk_video_qp_drop_relief_fold(carried, 0);
+        }
+        assert_eq!(carried.relief, 4, "nothing decays inside the hold");
+        for _ in 0..4 {
+            carried = slopdesk_video_qp_drop_relief_fold(carried, 0);
+        }
+        assert_eq!(carried.relief, 3, "one step comes off per interval past the hold");
+
+        let hostile = slopdesk_video_qp_drop_relief_fold(
+            SlopDeskQpDropRelief {
+                relief: -900,
+                clean_frames: -7,
+            },
+            0,
+        );
+        assert_eq!(hostile, SlopDeskQpDropRelief {
+            relief: 0,
+            clean_frames: 1
+        },);
+        assert_eq!(
+            slopdesk_video_qp_drop_relief_fold(SlopDeskQpDropRelief::default(), i64::MAX).relief,
+            51,
+            "a broken drop counter lands on the cap rather than aborting the process",
+        );
+    }
 
     /// The defaults cross intact, and they are the operating point `docs/29` records rather than
     /// whatever the struct's own `Default` would have produced field by field.

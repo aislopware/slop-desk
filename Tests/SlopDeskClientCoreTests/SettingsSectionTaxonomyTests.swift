@@ -77,4 +77,39 @@ final class SettingsSectionTaxonomyTests: XCTestCase {
             "no section is one half's alone",
         )
     }
+
+    /// The section SEARCH is the taxonomy's own, not a filter written beside it.
+    ///
+    /// `SettingsCatalog.sections(matching:)` answers through `slopdesk_settings_sections_matching`,
+    /// which is what stops "which sections does this needle name" from having a Swift answer and a
+    /// Rust one. The needle goes across RAW — the fold and the trim are the far side's — so this
+    /// deliberately types the query the way a person does, mixed case and with stray whitespace,
+    /// rather than pre-lowercasing it the way the call site used to.
+    func testTheSectionSearchIsTheCatalogsOwnRule() {
+        XCTAssertEqual(
+            SettingsCatalog.sections(matching: "  KeY  ").map(\.title), ["Key Bindings"],
+            "case and surrounding space are the far side's to fold",
+        )
+        XCTAssertEqual(
+            SettingsCatalog.sections(matching: "nothing here").map(\.title), [],
+            "a needle no title carries names no section",
+        )
+        // A blank needle is the ZERO STATE — the whole list, in the order the navigator renders — so a
+        // search field needs no is-it-empty branch of its own.
+        XCTAssertEqual(
+            SettingsCatalog.sections(matching: "").map(\.id), SettingsCatalog.sections.map(\.id),
+            "an untyped field is not a filter",
+        )
+        XCTAssertEqual(
+            SettingsCatalog.sections(matching: "   ").map(\.id), SettingsCatalog.sections.map(\.id),
+            "and neither is a field holding only space",
+        )
+        // The answer keeps taxonomy order rather than match order: the navigator renders this list
+        // directly, and a search that reshuffled the sections would move rows under the pointer.
+        let manyMatches = SettingsCatalog.sections(matching: "e").map(\.id)
+        XCTAssertEqual(
+            manyMatches, SettingsCatalog.sections.map(\.id).filter(manyMatches.contains),
+            "matches come back in the order the list already draws them",
+        )
+    }
 }

@@ -524,6 +524,48 @@ impl Section {
     pub fn from_index(index: usize) -> Option<Self> {
         Self::ALL.get(index).copied()
     }
+
+    /// Which sections a settings search field shows for `needle` — indices into [`Self::ALL`],
+    /// ascending, so the answer is already in the order both lists render. An empty or
+    /// whitespace-only needle is the zero state and shows everything.
+    ///
+    /// The taxonomy crossed the boundary long before this did, which is the whole reason it is
+    /// here: the near side held the sections but wrote its own containment rule over them, so
+    /// the list and the search over the list lived in different languages. Matching is ASCII
+    /// case-insensitive over [`Self::title`], which is sound BECAUSE every title in `ALL` is
+    /// ASCII — see the test that pins that, since the moment one is not, this rule and a
+    /// locale-folding one stop agreeing.
+    #[must_use]
+    pub fn matching(needle: &str) -> Vec<u32> {
+        let needle = needle.trim();
+        Self::ALL
+            .iter()
+            .zip(0_u32..)
+            .filter(|(section, _)| contains_ascii_case_insensitive(section.title(), needle))
+            .map(|(_, index)| index)
+            .collect()
+    }
+}
+
+/// Whether `haystack` holds `needle`, folding ASCII case and nothing else. An empty needle is held
+/// by everything, which is what makes a search field's zero state its whole list.
+///
+/// Deliberately NOT a Unicode fold, and the difference is not the one usually named. The near
+/// side's `localizedCaseInsensitiveContains` is NOT diacritic-insensitive — probed 2026-08-22,
+/// `Café` does not hold `cafe`, and only `localizedStandardContains` folds that far. What it does
+/// do is normalise and case-FOLD: `ﬁle` holds `file`, `straße` holds `strasse`, and NFC agrees with
+/// NFD. This rule does none of those. The two therefore agree on ASCII and only on ASCII. Every
+/// caller here searches ASCII labels, so the cheaper rule is the same rule, and saying so out loud
+/// is what keeps someone from pointing this at user text where the difference would be a bug.
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    let (hay, want) = (haystack.as_bytes(), needle.as_bytes());
+    if want.is_empty() {
+        return true;
+    }
+    want.len() <= hay.len()
+        && hay
+            .windows(want.len())
+            .any(|slice| slice.eq_ignore_ascii_case(want))
 }
 
 /// When a setting takes effect — a DATA attribute so the distinction can be a chip rather than
@@ -1216,5 +1258,70 @@ mod tests {
         assert_eq!(Stepper::WindowPixels.readout(1000.0), "1000 px");
         assert_eq!(Stepper::FontPoints.readout(13.0), "13");
         assert_eq!(Stepper::FontPoints.readout(13.5), "13.5");
+    }
+
+    /// The search a settings field runs, in the order the list already renders.
+    #[test]
+    fn a_section_search_folds_ascii_case_and_keeps_taxonomy_order() {
+        let titles = |needle: &str| -> Vec<&'static str> {
+            Section::matching(needle)
+                .into_iter()
+                .filter_map(|index| Section::from_index(index as usize))
+                .map(Section::title)
+                .collect()
+        };
+        assert_eq!(titles("key"), ["Key Bindings"]);
+        assert_eq!(titles("KEY"), ["Key Bindings"]);
+        // Every title but "Controls" carries an `e`, and they come back in taxonomy order.
+        assert_eq!(titles("e"), [
+            "General",
+            "Shell",
+            "Editor",
+            "Agents",
+            "Appearance",
+            "Key Bindings",
+            "Advanced"
+        ]);
+        assert_eq!(titles("nothing here"), Vec::<&str>::new());
+        // A blank needle is the ZERO STATE, not a miss — the same list, in the same order, which is
+        // what lets a search field render one code path whether or not anything is typed.
+        assert_eq!(titles("").len(), Section::ALL.len());
+        assert_eq!(titles("   ").len(), Section::ALL.len());
+    }
+
+    /// The ASCII fold is only equivalent to the near side's while every title is ASCII. This is the
+    /// assertion that turns that sentence into something that fails the day it stops being true,
+    /// rather than a comment above a rule that quietly started matching the wrong rows.
+    #[test]
+    fn every_section_title_is_ascii_which_is_what_makes_the_ascii_fold_sound() {
+        for section in Section::ALL {
+            assert!(
+                section.title().is_ascii(),
+                "{} is not ASCII — `matching` folds ASCII case only, so it and the near side's normalising \
+                 case-fold no longer agree on this title",
+                section.title()
+            );
+        }
+        // The cases the two rules actually disagree on, pinned as facts about THIS one. They are NOT
+        // the case usually reached for: `localizedCaseInsensitiveContains` does not fold diacritics
+        // either (probed 2026-08-22 — `Café` does not hold `cafe`; only `localizedStandardContains`
+        // goes that far), so a diacritic proves nothing about the difference. What the near side
+        // DOES fold is the ligature, the sharp s and the normal form — and this rule folds none of
+        // the three, which is exactly why it may only be pointed at ASCII.
+        assert!(
+            !contains_ascii_case_insensitive("ﬁle", "file"),
+            "no ligature folding"
+        );
+        assert!(
+            !contains_ascii_case_insensitive("straße", "strasse"),
+            "no sharp-s expansion"
+        );
+        assert!(
+            !contains_ascii_case_insensitive("Cafe\u{0301}", "Café"),
+            "no NFD/NFC normalising"
+        );
+        // And the half that IS shared: ASCII case, in both directions.
+        assert!(contains_ascii_case_insensitive("Key Bindings", "KEY BIND"));
+        assert!(contains_ascii_case_insensitive("ADVANCED", "advanced"));
     }
 }

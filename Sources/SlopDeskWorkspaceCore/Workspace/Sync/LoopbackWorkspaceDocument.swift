@@ -116,13 +116,20 @@ public final class LoopbackWorkspaceDocument {
         // No workspace to change. Distinguished from a refusal on the merits so a caller can tell
         // "you asked about a document that is not there" from "the document says no".
         guard let current = state.topology else { return (.rejectedNotFound, nil) }
+        // The RESOLVED mirror, not this document's own `state`. A real host learns each pane's cwd from
+        // the PTY it owns and publishes it as `pane/cwd`; in-process the same fact arrives on the
+        // client's fast path, which is a lane `state` cannot see. Reading it here is what keeps the
+        // close rule's project sections working on the loopback path.
+        //
+        // Resolved ONCE, above the closure, for the reason ``WorkspaceMirrorBox/stageIntent`` states at
+        // its own call site: `resolved` copies the whole entry map and then folds the overlay and every
+        // pending patch over it, and the applier asks the closure once per pane the document names —
+        // live specs UNION the reopen ring. Built inside the closure it was that copy per pane, which is
+        // quadratic in the workspace. The two call sites are the same contract and now read the same way.
+        let resolved = box.mirror.resolved
         let outcome = WorkspaceIntentApplier.apply(
             op: op, args: args, to: current, documentIsPristine: isPristine,
-            // The RESOLVED mirror, not this document's own `state`. A real host learns each pane's
-            // cwd from the PTY it owns and publishes it as `pane/cwd`; in-process the same fact
-            // arrives on the client's fast path, which is a lane `state` cannot see. Reading it here
-            // is what keeps the close rule's project sections working on the loopback path.
-            projectKey: { [box] in box.mirror.resolved.projectKey(forPane: $0) },
+            projectKey: { resolved.projectKey(forPane: $0) },
         )
         guard let accepted = outcome.topology else { return (Self.status(for: outcome), nil) }
         // The bootstrap is the one op that may not run twice, so ANY accepted intent ends pristine —

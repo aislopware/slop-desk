@@ -275,7 +275,14 @@ final class CLICompletionsTests: XCTestCase {
     ]
 
     /// The other half of the same table: designed, documented, NOT implemented, never offered.
-    private let expectedPlanned = ["open", "import", "export", "features", "state:claude", "ipc"]
+    ///
+    /// `theme` joined it on 2026-08-22. It is the one verb `spec/reference__cli.md` designs that the
+    /// vocabulary table had simply forgotten, so it exited 2 as MISSPELLED where its six siblings
+    /// exited 2 as PLANNED — the same refusal wearing the wrong reason. Adding it to the table is
+    /// what moved it here.
+    private let expectedPlanned = [
+        "open", "import", "export", "features", "state:claude", "ipc", "theme",
+    ]
 
     func testSubcommandSurfaceMatchesGolden() {
         XCTAssertEqual(CLICompletions.subcommands, expectedSurface)

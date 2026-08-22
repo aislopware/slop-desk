@@ -121,6 +121,31 @@ size_t slopdesk_supervisor_control_socket(const uint8_t *socket_override,
                                           size_t directory_len, const uint8_t *tmpdir,
                                           size_t tmpdir_len, uint8_t *out, size_t cap);
 
+// Where hostd would find one of its lazily spawned services: the `SLOPDESK_*_BIN` override,
+// then the vendored `ThirdParty/tools/.prefix/bin`, then `PATH`, then `<home>/.local/bin`,
+// `/opt/homebrew/bin`, `/usr/local/bin`. The same order and the same executability test the
+// Android toolchain's locator takes, which is the point: it was written out in Swift as well,
+// `docs/46` called the Rust copy a mirror of it, and the two had already stopped agreeing about
+// what makes a candidate executable. `FileManager.isExecutableFile` is `access(X_OK)` — TRUE for
+// a DIRECTORY, so a directory wearing the tool's name on `PATH` was handed to `posix_spawn`;
+// the crate tests `is_file()` and the mode bits and walks past it. Neither reading can raise an
+// error, because each side is self-consistent and only one of them is on any given path.
+//
+// Any pair may be `(NULL, 0)`, and an EMPTY pair reads as an absent one throughout: an
+// exported-but-blank override is a shell accident, an absent prefix is a hostd copied out of its
+// checkout, and a `HOME` nobody set must not become a candidate at `/.local/bin`. A pair that is
+// not UTF-8 reads as unset for the reason the two socket-path entries give.
+//
+// 0 is a REFUSAL and it means "the host has none installed" — the answer the panels render as
+// their install hint. A named-but-broken override answers 0 rather than falling through, because
+// an operator bisecting a candidate build meant that build.
+size_t slopdesk_host_service_binary(const uint8_t *name, size_t name_len,
+                                    const uint8_t *override_value, size_t override_len,
+                                    const uint8_t *path_value, size_t path_len,
+                                    const uint8_t *vendored_bin, size_t vendored_len,
+                                    const uint8_t *home, size_t home_len, uint8_t *out,
+                                    size_t cap);
+
 // The STYLED reading — the clipboard's and the preview's, columns rewritten and colours kept.
 // Answer: [u32 BE lines] ( [u32 BE runs] ( [u8 flags][u8 fg][3] [u8 bg][3] [u32 BE len][text] )* )*
 // flags: bold 1, dim 2, italic 4, underline 8, inverse 16. A colour is [kind, a, b, c] with kind
@@ -1295,6 +1320,31 @@ size_t slopdesk_settings_section_id(size_t index, uint8_t *out, size_t cap);
 size_t slopdesk_settings_section_title(size_t index, uint8_t *out, size_t cap);
 size_t slopdesk_settings_section_symbol(size_t index, uint8_t *out, size_t cap);
 
+// ---- Which settings sections a needle names ----
+//
+// The taxonomy has crossed this boundary since it was written — a count and three indexed field
+// accessors, just above. The SEARCH over it never did, so each face held the list from here and then
+// wrote its own case-insensitive containment rule to filter it, four times over. That is docs/55 §8's
+// drift class in its cleanest form, and §8's point is that this class is not ranked by cost: eight
+// sections filtered per keystroke is ~750 ns and would never on its own justify a crossing. What
+// justifies it is that "which sections does this needle name" stops having two answers.
+//
+// `out[i]` indexes the same list the three accessors above are indexed by, ascending, so the answer
+// arrives in render order. The needle crosses RAW — the far side folds ASCII case itself, so a caller
+// neither lowercases nor trims first, which is what keeps the rule from being spelled a fifth time.
+// Returns how many matched; a blank needle matches the whole taxonomy, which is a search field's zero
+// state. `cap` below that count leaves `out` untouched and reports the same number, the §4 retry —
+// though the caller derives its size from the section count, so it never runs.
+//
+// The fold is ASCII-only, deliberately, and that is NOT what a locale-aware containment does: the
+// system one normalises and case-folds, so it holds `file` in `ﬁle` and `strasse` in `straße`. It
+// does NOT fold diacritics — `Café` does not hold `cafe`; only `localizedStandardContains` reaches
+// that far. The two agree on ASCII and only on ASCII. Every section title is ASCII and the crate pins
+// that in a test beside the rule, so the substitution is exact here — it is not a general
+// replacement for searching user text.
+size_t slopdesk_settings_sections_matching(const uint8_t *needle, size_t needle_len,
+                                           uint32_t *out, size_t cap);
+
 // The apply-timing chip.
 size_t slopdesk_settings_timing_label(uint8_t timing, uint8_t *out, size_t cap);
 size_t slopdesk_settings_timing_symbol(uint8_t timing, uint8_t *out, size_t cap);
@@ -2155,6 +2205,31 @@ size_t slopdesk_ws_state_file_decode(const uint8_t *bytes, size_t len, uint8_t *
 // because a transcribed copy that drifted on one arm would turn a corrupt row into a
 // mint-the-default, and the old file would not be kept aside.
 uint8_t slopdesk_ws_state_file_status(uint8_t index);
+
+// ---- The document's canonical order ----
+//
+// The wire's emission order is ascending kind, then the object id's BYTES, then field — and on the
+// far side it is not a sort at all: the document is a `BTreeMap` whose key order IS that order, so
+// nothing there can drift from the encoder. A caller whose document is an unordered map has to
+// DERIVE it, and deriving it a second time is the pair docs/55 §8 catalogues in its nastiest form:
+// two orders never disagree loudly, they RE-EMIT. A snapshot stops being byte-deterministic and a
+// diff churns on map iteration order, which reads downstream exactly like a real change.
+//
+// The answer is a PERMUTATION, not the sorted keys: the caller already holds them and is asking
+// where they GO, so handing eighteen bytes per cell back to say what an index says would copy a
+// whole snapshot's keys for nothing.
+
+typedef struct {
+    uint8_t        kind;
+    uint8_t        field;
+    SlopDeskWsUuid object;
+} SlopDeskWsDocKey;
+
+// `out[i]` is the index, into `keys`, of the key that places `i`-th. Returns how many places there
+// ARE, which is always `count` — every key comes back exactly once, so a caller rebuilds its array
+// from the answer without checking for a hole. A short `cap` leaves `out` untouched and reports the
+// same number, which is the §4 retry at a size the caller derives rather than guesses.
+size_t slopdesk_ws_key_order(const SlopDeskWsDocKey *keys, size_t count, uint32_t *out, size_t cap);
 
 
 // MARK: The client's workspace FILE
@@ -4090,6 +4165,51 @@ SlopDeskQpController slopdesk_qp_decide(SlopDeskQpController controller, bool co
 int32_t slopdesk_qp_clamped_int(const uint8_t *raw, size_t raw_len, bool has_raw,
                                 int32_t fallback, int32_t lo, int32_t hi);
 
+/* ---------------------------------------------------------------------------- *
+ * The ENCODER'S OWN quantiser ceiling. The controller above answers the LINK; these two answer the
+ * hardware encoder, and they compose with it as min(bound, ceiling + relief) at the one call site.
+ *
+ * The first reads the BUDGET. A ceiling pinned sharp drops frames whenever the rate the link
+ * affords cannot carry sharp motion — measured, 97 dropped frames in one 18-second scroll at
+ * 6-16 Mbps on a 1080p60 session — while a ceiling pinned coarse blurs a hard scroll on a link with
+ * bits to spare. So it follows the budget's density in bits per pixel per frame, sharp above one
+ * knee, fully relaxed below the other, and a linear ramp between. That ramp is not written twice:
+ * the far side maps the density onto the band and hands the interpolation to the same routine
+ * slopdesk_video_adaptive_qp_nv12 uses for the per-frame change fraction.
+ *
+ * The second reads the encoder's own DROPS, which the budget cannot see: a rich budget on
+ * pathological content offers 95-119 Mbps against a 30 Mbps target, and nothing at the sharp end
+ * fits, so the encoder drops instead — 209 in 25 seconds. The relief attacks within a few frames
+ * and decays slowly, because coarse-but-moving beats sharp-but-missing and a sudden re-sharpen is a
+ * pop. Its clean-frame streak crosses beside it for the reason SlopDeskQpController's does: it IS
+ * the state, and a relief rebuilt without it decays from inside its own hold window.
+ *
+ * The ceiling entry has no refusal code, because there is nothing a refusal could be mistaken for:
+ * every uncertainty — a degenerate picture, cadence or budget, an inverted band, an inverted pair of
+ * knees, a quantiser outside the byte range — answers the COARSE end, which is the safe answer. The
+ * encoder coarsens rather than dropping a frame it cannot fit.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct {
+  double sharp_bpp;
+  double coarse_bpp;
+  int32_t sharp_qp;
+  int32_t attack_step;
+  int32_t hold_frames;
+  int32_t decay_every;
+} SlopDeskQpCeilingConfig;
+
+typedef struct {
+  int32_t relief;
+  int32_t clean_frames;
+} SlopDeskQpDropRelief;
+
+SlopDeskQpCeilingConfig slopdesk_video_qp_ceiling_config_default(void);
+int32_t slopdesk_video_qp_ceiling(int64_t target_bps, int64_t pixel_width, int64_t pixel_height,
+                                  int64_t fps, int32_t sharp, int32_t coarse, double sharp_bpp,
+                                  double coarse_bpp);
+SlopDeskQpDropRelief slopdesk_video_qp_drop_relief_fold(SlopDeskQpDropRelief state, int64_t drops);
+
 SlopDeskIdrPolicy *slopdesk_idr_policy_new(SlopDeskIdrConfig config);
 void     slopdesk_idr_policy_free(SlopDeskIdrPolicy *handle);
 void     slopdesk_idr_policy_note_keyframe_sent(SlopDeskIdrPolicy *handle, uint32_t frame_id,
@@ -5680,6 +5800,20 @@ double  slopdesk_touch_clamp_pan(double pan, double zoom);
 // 1 began, 2 changed, 4 ended. The phone has no `mayBegin` and no momentum tail, so a lift ENDS the
 // host's gesture rather than inventing an inertia the finger never threw.
 uint8_t slopdesk_touch_scroll_phase(bool is_first, bool is_last);
+// The trackpad's half of the entry above, for the field CoreGraphics calls the SCROLL phase. The
+// AppKit mask crosses as its raw bits rather than as a case index, because an index would need a
+// table on the Swift side and removing that table is the point: the ten platform codes were spelled
+// in four places across two languages, and two of the four read different sets of them. A mask may
+// carry several bits at once, so the gesture's own order decides — began, then changed, then ended,
+// then cancelled, then may-begin. Anything else, `.stationary` and an empty mask included, is 0: a
+// phase this side does not recognise replays as a plain wheel tick, never as a guess at an edge.
+uint8_t slopdesk_cg_scroll_phase_code(uint32_t ns_phase);
+// The same three edges for the MOMENTUM field, which encodes them differently — its end is 3, where
+// the scroll field's is 4, because one is an ordinal and the other a bit set. A separate entry and
+// not a flag argument: a single entry whose answer depended on getting a "which field" flag right
+// would be the same mistake wearing the boundary's clothes. An inertial tail has no cancel and no
+// may-begin, so those masks answer 0 here rather than crossing over to the other table.
+uint8_t slopdesk_cg_momentum_phase_code(uint32_t ns_phase);
 // Floored at 1 and SATURATING at 255: the platforms count consecutive taps without bound, the host
 // reads this only as a click-state hint, and trapping would be a crash on a very fast tapper.
 uint8_t slopdesk_touch_click_count(int64_t tap_count);

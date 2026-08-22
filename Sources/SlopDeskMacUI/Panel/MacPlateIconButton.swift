@@ -24,7 +24,19 @@ import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) sp
 final class MacPlateIconButton: NSView {
     /// The glyph's name. Settable so a control whose verb flips (the panel's hide/show) can change
     /// what it draws without being rebuilt.
-    var symbolName: String { didSet { repaint() } }
+    ///
+    /// ⚠️ Guarded on the value like ``active`` and ``enabled`` below, and for a measured reason rather
+    /// than symmetry: the GUI control bar assigns all four of its glyph names unconditionally from
+    /// `applyChrome`, which re-fires whenever any of the stream's ten telemetry mirrors move — about
+    /// twice a second for the life of a stream. Ungated, that re-rendered four SF Symbol images per
+    /// tick, every one of them byte-identical to the one already on screen.
+    var symbolName: String {
+        didSet {
+            guard symbolName != oldValue else { return }
+            repaint()
+        }
+    }
+
     /// A LATCHED state — the thing this button turns on is currently on. Distinct from hover, which is
     /// about the pointer: an active plate keeps its fill with the pointer elsewhere.
     var active = false {

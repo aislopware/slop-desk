@@ -89,15 +89,19 @@ struct AndroidDeviceList: View {
         AndroidPresentation.matches(model.devices, query: query)
     }
 
+    /// ⚠️ ``matches`` is read ONCE per pass and threaded into ``list(_:)`` — the Simulator twin's note
+    /// is this one's too. It is a `localizedCaseInsensitiveContains` per device per field, and it was
+    /// answering an emptiness test and then building the sections from two separate derivations.
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let shown = matches
+        return VStack(alignment: .leading, spacing: 0) {
             searchBar
             if model.devices.isEmpty {
                 message(AndroidPresentation.noDevices)
-            } else if matches.isEmpty {
+            } else if shown.isEmpty {
                 message(AndroidPresentation.noMatches(query))
             } else {
-                list
+                list(shown)
             }
         }
         .background(Slate.Surface.field)
@@ -132,8 +136,8 @@ struct AndroidDeviceList: View {
 
     // MARK: List
 
-    private var list: some View {
-        let sections = AndroidDeviceSections.sections(for: matches)
+    private func list(_ shown: [AndroidDevice]) -> some View {
+        let sections = AndroidDeviceSections.sections(for: shown)
         return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(sections) { section in

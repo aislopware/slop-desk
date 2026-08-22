@@ -58,8 +58,20 @@ import SlopDeskWorkspaceModel
 final class MacPaneDivider: NSView {
     /// The live seam. Re-assigned on every solve — the pair weights inside it are what the cursor's
     /// direction and the drag's clamp are both read from, so they are never a frame behind.
+    ///
+    /// ⚠️ Guarded on the VALUE. The mounter re-assigns this on every solve for every seam in the tab,
+    /// and a live divider drag or a live window resize solves at the display's rate — but only the
+    /// seam under the cursor actually moves, so the guard turns "N handles updated per frame" into
+    /// "one". What it saves is real work on both sides of ``handleUpdated()``: the readout's three
+    /// instrument runs, and a `invalidateCursorRects(for:)` round trip to the window server.
+    /// `SplitDividerHandle` is `Equatable`, and everything `handleUpdated()` reads is either this
+    /// value or `startLead` — whose own two transitions call ``applyReadout()`` directly — so an
+    /// equal handle has nothing left to say.
     var handle: SplitTreeRenderModel.DividerHandle {
-        didSet { handleUpdated() }
+        didSet {
+            guard handle != oldValue else { return }
+            handleUpdated()
+        }
     }
 
     /// Drag start — wired to `store.setTerminalResizeSuspended(true)`, holding the host grid-resize
@@ -322,8 +334,15 @@ final class MacPaneDivider: NSView {
     /// reports no percentages, and the cue is then ABSENT rather than wrong.
     private func applyReadout() {
         let percents = handle.splitPercents
+        let shown = startLead != nil && percents != nil
+        readout.isHidden = !shown
+        // ⚠️ The hide comes FIRST and the text is cut only for a readout that is actually up. This
+        // runs from ``handleUpdated()``, i.e. once per divider per solve — and the canvas re-assigns
+        // `handle` on every frame of a divider drag and every frame of a live window resize. Cutting
+        // three instrument runs for the N−1 seams that are not the one being dragged was three
+        // uncached CoreText font builds per divider per frame, for pixels that are hidden.
+        guard shown else { return }
         readout.percents = percents
-        readout.isHidden = startLead == nil || percents == nil
     }
 
     // MARK: - The seam line
@@ -387,7 +406,15 @@ final class MacPaneDivider: NSView {
     /// invisible, which is how the SwiftUI chips ended up floating unbounded over terminal output.
     private final class RatioReadout: NSView {
         var percents: (leading: Int, trailing: Int)? {
-            didSet { applyText() }
+            didSet {
+                // A labelled optional tuple has no synthesized `==`, so the two fields are compared
+                // by hand. Without the guard a drag frame that moved the seam by less than a whole
+                // percent — most of them — re-cut all three runs to print the same two numbers.
+                guard percents?.leading != oldValue?.leading
+                    || percents?.trailing != oldValue?.trailing
+                else { return }
+                applyText()
+            }
         }
 
         /// Three labels rather than one string, because the `·` is a TIER and not a character: the

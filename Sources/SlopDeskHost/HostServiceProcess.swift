@@ -12,6 +12,7 @@
 // Hang-safety: everything here creates real processes and sockets — a unit test drives its manager
 // through the injected seams instead, and never reaches this file.
 
+import CSlopDeskFFI
 import Foundation
 import SlopDeskSupervisor
 
@@ -51,61 +52,76 @@ enum HostServiceProcess {
     /// Reads a child's own announce line for the port it bound, or `nil` for every other line.
     typealias PortParser = @Sendable (_ logLine: String) -> UInt16?
 
-    /// Locates `name` on the host: `overrideVariable` wins when it names an executable, else the
-    /// ``searchDirectories`` walk. `nil` ⇒ the service is not installed (the panel renders its
-    /// install hint rather than failing).
+    /// Locates `name` on the host: the `SLOPDESK_*_BIN` override, then the vendored prefix, then
+    /// `PATH`, then `~/.local/bin` and the two Homebrew prefixes. `nil` ⇒ the service is not
+    /// installed (the panel renders its install hint rather than failing).
     ///
-    /// An override that is SET but not executable resolves to `nil` rather than falling through to
-    /// the search: an operator who named a binary meant that one, and silently running a different
-    /// one is worse than reporting unavailable.
+    /// **The order is `slopdesk_androidd::toolchain::locate_tool`, not this function.** It used to
+    /// be written out here as well, and `docs/46` said so — "mirrored by `locate_sdk_tool`" — which
+    /// is a claim with no gate behind it. The two had already stopped agreeing about what makes a
+    /// candidate executable: `FileManager.isExecutableFile` is `access(X_OK)`, which is TRUE for a
+    /// directory, so a directory named `code-server` on `PATH` was handed to `posix_spawn`; the
+    /// crate tests `is_file()` and the mode bits and walks past it. Neither disagreement can raise
+    /// an error, because each side is self-consistent and only one of them runs.
+    ///
+    /// What stays here is the environment READ — three dictionary lookups, so the tests can pass a
+    /// dictionary in — and nothing else. `NSHomeDirectory()` is one of those reads: it is where
+    /// `~/.local/bin` is measured from, and it stays on this side for the same reason `PATH` does.
     static func locate(
         _ name: String, overrideVariable: String,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        fileManager: FileManager = .default,
         vendoredBinDirectory: String? = VendoredTools.binDirectory,
+        homeDirectory: String = NSHomeDirectory(),
     ) -> String? {
-        if let override = environment[overrideVariable], !override.isEmpty {
-            return fileManager.isExecutableFile(atPath: override) ? override : nil
+        let name = Array(name.utf8)
+        let override = Array((environment[overrideVariable] ?? "").utf8)
+        let path = Array((environment["PATH"] ?? "").utf8)
+        let vendored = Array((vendoredBinDirectory ?? "").utf8)
+        let home = Array(homeDirectory.utf8)
+        let found: [UInt8] = name.withUnsafeBufferPointer { name in
+            override.withUnsafeBufferPointer { over in
+                path.withUnsafeBufferPointer { path in
+                    vendored.withUnsafeBufferPointer { vendored in
+                        home.withUnsafeBufferPointer { home in
+                            // A resolved path is a path, so `PATH_MAX` is the bound rather than a
+                            // guess; the retry below is `docs/55` §4's protocol honoured, not used.
+                            var room = [UInt8](repeating: 0, count: Int(PATH_MAX))
+                            var needed = room.withUnsafeMutableBufferPointer { out in
+                                slopdesk_host_service_binary(
+                                    name.baseAddress, name.count,
+                                    over.baseAddress, over.count,
+                                    path.baseAddress, path.count,
+                                    vendored.baseAddress, vendored.count,
+                                    home.baseAddress, home.count,
+                                    out.baseAddress, out.count,
+                                )
+                            }
+                            if needed > room.count {
+                                room = [UInt8](repeating: 0, count: needed)
+                                needed = room.withUnsafeMutableBufferPointer { out in
+                                    slopdesk_host_service_binary(
+                                        name.baseAddress, name.count,
+                                        over.baseAddress, over.count,
+                                        path.baseAddress, path.count,
+                                        vendored.baseAddress, vendored.count,
+                                        home.baseAddress, home.count,
+                                        out.baseAddress, out.count,
+                                    )
+                                }
+                            }
+                            guard needed > 0, needed <= room.count else { return [] }
+                            room.removeLast(room.count - needed)
+                            return room
+                        }
+                    }
+                }
+            }
         }
-        for directory in searchDirectories(
-            environment: environment, vendoredBinDirectory: vendoredBinDirectory,
-        ) {
-            let candidate = directory + "/" + name
-            if fileManager.isExecutableFile(atPath: candidate) { return candidate }
-        }
-        return nil
+        // The door only ever answers a path it stat-ed, so this decode cannot fail on a real
+        // answer; an empty answer is the "not installed" the callers render.
+        // swiftlint:disable:next optional_data_string_conversion
+        return found.isEmpty ? nil : String(decoding: found, as: UTF8.self)
     }
-
-    /// The full search order, most authoritative first.
-    ///
-    /// **The vendored prefix leads**, ahead of even `PATH`. That inverts the usual "the operator's
-    /// `PATH` wins" instinct on purpose: the version in `ThirdParty/tools/tools.lock` is the one
-    /// this checkout's panel code was written and measured against, and it is the one whose bump is
-    /// a reviewed change with a documented tail (the code panel's clip height and settings seed both
-    /// key off the workbench version). A stale Homebrew copy silently winning is the exact failure
-    /// this layer exists to end. `SLOPDESK_*_BIN` is still the escape hatch, and it is checked
-    /// before any of this.
-    ///
-    /// Then `PATH`, then ``fallbackBinDirectories``: hostd is launched by `nohup`/launchd, not a
-    /// login shell, so its inherited `PATH` routinely misses all of them.
-    static func searchDirectories(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        vendoredBinDirectory: String? = VendoredTools.binDirectory,
-    ) -> [String] {
-        var directories: [String] = []
-        if let vendoredBinDirectory { directories.append(vendoredBinDirectory) }
-        directories.append(contentsOf: (environment["PATH"] ?? "").split(separator: ":").map(String.init))
-        directories.append(contentsOf: fallbackBinDirectories)
-        return directories
-    }
-
-    /// The bin directories appended after the `PATH` walk, for a host with no provisioned prefix.
-    /// `~/.local/bin` comes FIRST and Homebrew after: a service installed there is the hand-managed
-    /// copy, so when both exist that is the one the operator meant. Apple-silicon prefix leads the
-    /// Homebrew pair.
-    static let fallbackBinDirectories = [
-        NSHomeDirectory() + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin",
-    ]
 
     /// Starts `service` — or takes back the one that survived the last hostd — and streams each
     /// line of its merged stdout/stderr to `onLogLine` (the port parse).

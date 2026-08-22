@@ -108,10 +108,33 @@ USED_ENUM_ALIASES: set[str] = set()
 # case is `internalError` against `Internal`, so the letters do not line up and the pass would
 # report a rename as a drift. Two separate binaries share it, which is the sidecar answer — it is
 # ratcheted by value in `check-supervisor.sh` instead.
+# `AndroidBodilessMessage`/`Bodiless` is the fourth, and it is here for a second reason worth
+# naming: it is the entry that required the ordinal-shim pass to learn what a NAMED right-hand side
+# is. `Bodiless` carries no `= n` and no `#[repr]`, so its declaration says nothing; its four bytes
+# are minted in `Bodiless::type_byte`, whose arms answer `kind::COLLAPSE_PANELS` rather than `7`.
+# Before that, adding this alias would have paired the Swift enum with an empty list and the entry
+# would have read as DEAD — which is what the deadness check is for and what it did say.
+#
+# What the pair costs when it drifts: the Swift `rawValue` crosses to
+# `SlopDeskAndroidControl.bodiless_type` and `Bodiless::from_type_byte` reads it as a scrcpy type
+# byte. A raw value moved to a byte no member names makes the door answer 0 and the panel send
+# `Data()` — a button that does nothing. A raw value moved onto ANOTHER member's byte is worse and
+# silent: the rotate button opens the hardware-keyboard settings, both suites green. No test can
+# see it: both sides' unit tests assert their OWN four bytes, and the round trip through the door
+# is Swift → `bodiless_type` → `from_type_byte`, so a byte that means something on both sides
+# encodes and decodes without complaint at whichever meaning the drifted side chose.
+#
+# BREAK-TESTED 2026-08-22, all three restored from /tmp afterwards and the gate re-run green:
+#   * `case rotateDevice = 11` → `= 15` in the Swift enum FAILED —
+#     "`AndroidBodilessMessage.rotatedevice = 15` against `11` in …/control.rs (ordinal map)".
+#   * `kind::RESET_VIDEO: u8 = 17` → `= 18` in Rust FAILED — "`…resetvideo = 17` against `18`".
+#   * deleting `case openHardKeyboardSettings = 15` FAILED —
+#     "`AndroidBodilessMessage` is missing `openhardkeyboardsettings`".
 ENUM_ALIASES: dict[str, str] = {
     "AndroidMotionAction": "MotionAction",
     "AndroidKeyAction": "KeyAction",
     "DeviceLogSeverity": "Severity",
+    "AndroidBodilessMessage": "Bodiless",
 }
 
 # Swift OptionSets whose members share a name with a WIRE flag set without sharing its law. A bit
@@ -274,10 +297,44 @@ RUST_REPR = re.compile(r"#\[repr\((?:u|i)(?:8|16|32|64|size)\)\]")
 # decodes to a DIFFERENT state, and a half-closed channel read as closed simply stops routing.
 # Twenty-five files in `rust/` carry a hand-written map of this shape; each one is the discriminant
 # table for its enum, so each is read as one.
+#
+# The arm's right-hand side is a number OR THE NAME OF ONE, because that is how a protocol whose
+# bytes have names writes it: `androidd::control::Bodiless::type_byte` answers
+# `kind::COLLAPSE_PANELS`, never `7`, and a literal-only reader saw an empty table for the whole
+# enum. The name is resolved only against constants declared in the SAME FILE (`RUST_LOCAL_CONST`),
+# at any visibility — `mod kind` spells them `pub(super)`, which the module-scoped `RUST_CONST`
+# above deliberately does not read. An unresolvable name is left unresolved and ends the block, the
+# way an unparseable literal already did.
+#
+# The qualifier is ONE capture and `Self` is resolved in code, which is not a tidy-up: it used to be
+# `(?:([A-Z][A-Za-z0-9]*)|Self)::`, and `[A-Z][A-Za-z0-9]*` matches the four letters of `Self`, so
+# the second alternative was unreachable and every `Self::`-qualified map in the tree was filed
+# under an enum literally named `Self`. Eighteen files' worth — `agent::status`, `video_control`,
+# `settings_catalog`, `tree_ops`, `phone_key` and the rest — pairing with nothing, in a pass whose
+# own comment described the escape as working. Resolving it brought eleven live Swift pairs under
+# watch that had never been compared: `AgentStatusKind`, `SettingsCatalog.{Group,Ladder,Stepper,
+# ApplyTiming}`, `AllSettingsCatalog.Bucket`, `ChannelState`, `DeviceLogSeverity`,
+# `AudioWireFormat`, `MouseButton`, `VideoChannel`. All eleven AGREE today; the point is that
+# nothing had said so, including the comment above that claimed `ChannelState` was the reason this
+# pass exists.
+#
+# BREAK-TESTED 2026-08-22: restoring the old `(?:(…)|Self)::` alternation and the `named is None`
+# branch (a copy of this script, restored from /tmp) put 28 shim blocks back under the name `Self`,
+# made `rust_alphabets()['Bodiless']` empty and FAILED the run at the ENUM_ALIASES deadness check —
+# "`AndroidBodilessMessage` no longer pairs with `Bodiless`". Undoing it passed.
 RUST_ORDINAL_ARM = re.compile(
-    r"^[ \t]*(?:([A-Z][A-Za-z0-9]*)|Self)::([A-Z][A-Za-z0-9]*)[ \t]*=>[ \t]*"
-    + NUMBER
-    + r",[ \t]*$",
+    r"^[ \t]*([A-Z][A-Za-z0-9]*)::([A-Z][A-Za-z0-9]*)[ \t]*=>[ \t]*"
+    r"(" + NUMBER.replace("(", "(?:", 1) + r"|(?:[a-z][a-z_0-9]*::)*[A-Z][A-Z_0-9]*)"
+    r",[ \t]*$",
+    re.MULTILINE,
+)
+
+# A constant an ordinal arm may NAME. Visibility is optional and `pub(super)`/`pub(crate)` are in
+# scope, which is the difference from `RUST_CONST`: that one reads a vocabulary's exported alphabet
+# and this one reads whatever the file happens to call its own bytes.
+RUST_LOCAL_CONST = re.compile(
+    r"^[ \t]*(?:pub(?:\([a-z_:]+\))? )?const ([A-Z][A-Z_0-9]*): *"
+    r"(?:usize|u8|u16|u32|u64|i8|i16|i32|i64) *= *" + EXPRESSION + r"[ \t]*;",
     re.MULTILINE,
 )
 RUST_IMPL = re.compile(
@@ -467,6 +524,22 @@ def cases(header: str, attributes: str, body: str, language: str) -> dict[str, f
     return out
 
 
+def local_constants(text: str) -> dict[str, float]:
+    """Every integer constant one Rust FILE declares, by bare name, for an ordinal arm to name.
+
+    Keyed by the bare name and not by the path an arm writes, because the arm writes the path from
+    wherever it stands — `kind::COLLAPSE_PANELS` inside the module, `COLLAPSE_PANELS` under a `use`.
+    A name declared TWICE in one file with two different values is dropped rather than guessed at:
+    resolving it would mean deciding which `mod` the arm was written in, and a gate does not get to
+    decide that. Dropping it costs the block, which is the same answer an unparseable literal gets.
+    """
+    seen: dict[str, set[float]] = {}
+    for name, written in RUST_LOCAL_CONST.findall(text):
+        if (value := numeric(written)) is not None:
+            seen.setdefault(name, set()).add(value)
+    return {name: values.pop() for name, values in seen.items() if len(values) == 1}
+
+
 def ordinal_shims(text: str) -> dict[str, list[dict[str, float]]]:
     """Every hand-written `Enum::Case => n` map in one Rust file, one dict per `match` block.
 
@@ -477,6 +550,7 @@ def ordinal_shims(text: str) -> dict[str, list[dict[str, float]]]:
     nothing — a `}` ends the block, and so does an arm naming a different enum.
     """
     impls = [(m.start(), m.group(1)) for m in RUST_IMPL.finditer(text)]
+    constants = local_constants(text)
     out: dict[str, list[dict[str, float]]] = {}
     owner, block, previous_end = "", {}, 0
 
@@ -486,10 +560,13 @@ def ordinal_shims(text: str) -> dict[str, list[dict[str, float]]]:
 
     for arm in RUST_ORDINAL_ARM.finditer(text):
         named = arm.group(1)
-        if named is None:  # `Self::` — the enum is whichever `impl` block encloses the arm
+        if named == "Self":  # the enum is whichever `impl` block encloses the arm
             enclosing = [name for at, name in impls if at < arm.start()]
             named = enclosing[-1] if enclosing else ""
-        value = numeric(arm.group(3))
+        written = arm.group(3)
+        value = numeric(written)
+        if value is None:
+            value = constants.get(written.rsplit("::", 1)[-1])
         if named != owner or "}" in text[previous_end : arm.start()] or value is None:
             flush()
             owner, block = named, {}

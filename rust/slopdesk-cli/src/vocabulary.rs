@@ -388,6 +388,28 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
             summary: "Send one raw control-protocol request and print the reply.",
         }],
     },
+    // `theme` was the one verb `spec/reference__cli.md` designs and this table forgot, so it exited 2
+    // as MISSPELLED while its five siblings above exited 2 as PLANNED. The distinction is the whole
+    // point of `Availability`, and a designed verb reported as a typo is the worst of the three
+    // answers. Switching the ACTIVE theme is not here on purpose — that is `config set theme <name>`,
+    // which ships today.
+    Subcommand {
+        name: "theme",
+        availability: Availability::Planned,
+        forms: &[
+            Form {
+                group: Group::App,
+                invocation: "theme list [--color <dark|light|all>]",
+                summary: "List the themes the client can activate.",
+            },
+            Form {
+                group: Group::App,
+                invocation: "theme import <path-or-url> [--activate] [--overwrite]",
+                summary: "Import a SlopDesk/iTerm2/kitty/alacritty/ghostty theme. (Already ships in the \
+                          app.)",
+            },
+        ],
+    },
 ];
 
 /// The verbs that actually run, in table order. This is what the shells offer and what the

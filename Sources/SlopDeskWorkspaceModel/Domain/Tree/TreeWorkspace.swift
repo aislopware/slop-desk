@@ -102,6 +102,51 @@ private func wsString(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> Str
     String(decoding: wsBytes(call), as: UTF8.self)
 }
 
+// MARK: - The pane index (one walk, held across a gesture)
+
+/// Where one pane lives and what it is — the three answers a caller inside a gesture asks together.
+public struct PaneLocation: Sendable, Equatable {
+    /// The session owning the pane.
+    public let session: SessionID
+    /// The tab within that session whose split tree holds it as a leaf.
+    public let tab: TabID
+    /// The pane's entry in its session's side table.
+    public let spec: PaneSpec
+
+    public init(session: SessionID, tab: TabID, spec: PaneSpec) {
+        self.session = session
+        self.tab = tab
+        self.spec = spec
+    }
+}
+
+/// Every pane's ``PaneLocation``, from one walk of the tree — see ``TreeWorkspace/paneIndex()`` for
+/// when this is cheaper than asking the tree and when it is a straight regression.
+///
+/// A VALUE, deliberately, and one with no reference back to the tree it came from: it is meant to be
+/// held for the length of a gesture, and a gesture is exactly the window in which the tree does not
+/// change. Nothing here can notice if that assumption is wrong, so the caller must be the one that
+/// knows it is true — which is why this is built on request rather than cached on the tree.
+public struct PaneIndex: Sendable, Equatable {
+    private let located: [PaneID: PaneLocation]
+
+    public init(located: [PaneID: PaneLocation]) { self.located = located }
+
+    /// Where `id` lives, or `nil` if the tree does not hold it.
+    public func location(of id: PaneID) -> PaneLocation? { located[id] }
+
+    /// The ``TreeWorkspace/spec(for:)`` answer, without the walk.
+    public func spec(for id: PaneID) -> PaneSpec? { located[id]?.spec }
+
+    /// The ``TreeWorkspace/tab(containing:)`` answer, without the walk.
+    public func tab(containing id: PaneID) -> (SessionID, TabID)? {
+        located[id].map { ($0.session, $0.tab) }
+    }
+
+    /// How many panes the index placed.
+    public var count: Int { located.count }
+}
+
 // MARK: - Facade the store consumes (docs/42 §"Facade the store consumes")
 
 public extension TreeWorkspace {
@@ -125,6 +170,12 @@ public extension TreeWorkspace {
     }
 
     /// The ``PaneSpec`` for `id`, searched across every session's side table (the owning session's spec).
+    ///
+    /// One lookup, and it is a WALK: `Session.spec(for:)` re-checks `contains(id)` — every tab, every
+    /// split node — before the O(1) side-table hit, because the side table is only authoritative while
+    /// the specs-equal-leaves invariant holds. Measured on a faithful mock, `swiftc -O`, two runs: 0.95
+    /// –1.28 µs at 24 panes and 5.40–5.57 µs at 192. Fine ONCE. A caller that asks per leaf per frame,
+    /// or per pointer move, wants ``paneIndex()`` instead — see the arithmetic there.
     func spec(for id: PaneID) -> PaneSpec? {
         for session in sessions {
             if let spec = session.spec(for: id) { return spec }
@@ -132,7 +183,8 @@ public extension TreeWorkspace {
         return nil
     }
 
-    /// The (session, tab) ids owning leaf `id`, or `nil` if absent.
+    /// The (session, tab) ids owning leaf `id`, or `nil` if absent. The same walk ``spec(for:)`` is —
+    /// 1.12–1.15 µs at 24 panes, 6.44–6.66 µs at 192 — and the same advice applies above a handful.
     func tab(containing id: PaneID) -> (SessionID, TabID)? {
         for session in sessions {
             for tab in session.tabs where tab.contains(id) {
@@ -140,6 +192,40 @@ public extension TreeWorkspace {
             }
         }
         return nil
+    }
+
+    /// Where every pane lives and what it is, from ONE walk — the answer a caller holds across a
+    /// gesture instead of asking the tree per leaf per frame.
+    ///
+    /// ## Read the arithmetic before reaching for this
+    /// It is NOT a faster `spec(for:)`. Building it walks every session, every tab and every split node
+    /// exactly once and mints a dictionary: measured on a faithful mock, `swiftc -O`, two runs
+    /// agreeing, **8.53–8.59 µs at 24 panes and 70.99–74.64 µs at 192**. One `spec(for:)` at 192 panes
+    /// is 5.5 µs, so the index pays for itself at roughly THIRTEEN lookups and is a straight regression
+    /// below that. A single answer should still ask the tree.
+    ///
+    /// ## What it is for
+    /// The two shapes that clear that bar by an order of magnitude, and that had each grown their own
+    /// copy of this dictionary at the call site: a divider drag, which asks per leaf per frame for the
+    /// whole duration of the gesture, and a drag-hover, which asks per pointer move. Both hold a tree
+    /// that cannot change under them while the gesture runs, which is exactly the condition that makes
+    /// an index safe to hold — and the reason it is built HERE is that a call site deriving its own is
+    /// the pane-location rule written a third and fourth time.
+    ///
+    /// A pane with no spec is omitted rather than carried as a hole: the specs-equal-leaves invariant
+    /// says there is no such pane, and a caller that meets one has a corrupt file, not a missing entry.
+    func paneIndex() -> PaneIndex {
+        var located: [PaneID: PaneLocation] = [:]
+        located.reserveCapacity(sessions.reduce(0) { $0 + $1.specs.count })
+        for session in sessions {
+            for tab in session.tabs {
+                for pane in tab.allPaneIDs() {
+                    guard let spec = session.specs[pane] else { continue }
+                    located[pane] = PaneLocation(session: session.id, tab: tab.id, spec: spec)
+                }
+            }
+        }
+        return PaneIndex(located: located)
     }
 
     /// The selected session (the one `activeSessionID` names), or `nil` before repair.
