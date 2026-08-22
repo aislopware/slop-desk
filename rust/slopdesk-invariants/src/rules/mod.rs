@@ -8,6 +8,10 @@
 pub mod screend;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
+pub mod terminal_surface;
+pub mod video_client;
+pub mod video_control;
+pub mod video_host;
 pub mod video_wire;
 
 use crate::Rule;
@@ -124,6 +128,116 @@ pub fn registry() -> Vec<Rule> {
             name: "terminal-mode-tracker",
             origin: "docs/55 §4b",
             check: video_wire::mode_tracker,
+        },
+        Rule {
+            name: "input-surface",
+            origin: "docs/55 §4b",
+            check: terminal_surface::input_surface,
+        },
+        Rule {
+            name: "grid-geometry",
+            origin: "docs/55 §4b",
+            check: terminal_surface::grid_geometry,
+        },
+        Rule {
+            name: "link-scan",
+            origin: "docs/55 §4b",
+            check: terminal_surface::link_scan,
+        },
+        Rule {
+            name: "command-blocks",
+            origin: "docs/55 §4b",
+            check: terminal_surface::command_blocks,
+        },
+        Rule {
+            name: "video-admission",
+            origin: "docs/55 §4b",
+            check: video_control::admission,
+        },
+        Rule {
+            name: "video-rate-law",
+            origin: "docs/55 §4b",
+            check: video_control::rate_law,
+        },
+        Rule {
+            name: "video-frame-rate",
+            origin: "docs/55 §4b",
+            check: video_control::frame_rate,
+        },
+        Rule {
+            name: "video-presentation-depth",
+            origin: "docs/55 §4b",
+            check: video_control::presentation_depth,
+        },
+        Rule {
+            name: "video-gradient",
+            origin: "docs/55 §4b",
+            check: video_client::gradient,
+        },
+        Rule {
+            name: "video-decode-admission",
+            origin: "docs/55 §4b",
+            check: video_client::decode_admission,
+        },
+        Rule {
+            name: "video-audio-stage",
+            origin: "docs/55 §4b",
+            check: video_client::audio_stage,
+        },
+        Rule {
+            name: "video-present-queue",
+            origin: "docs/55 §4b",
+            check: video_client::present_queue,
+        },
+        Rule {
+            name: "video-hevc-parameter-sets",
+            origin: "docs/55 §4b",
+            check: video_client::hevc_parameter_sets,
+        },
+        Rule {
+            name: "video-scroll-laws",
+            origin: "docs/55 §4b",
+            check: video_client::scroll_laws,
+        },
+        Rule {
+            name: "video-swipe-nav",
+            origin: "docs/55 §4b",
+            check: video_client::swipe_nav,
+        },
+        Rule {
+            name: "video-client-mux",
+            origin: "docs/55 §4b",
+            check: video_client::client_mux,
+        },
+        Rule {
+            name: "video-reassembly",
+            origin: "docs/55 §4b",
+            check: video_client::reassembly,
+        },
+        Rule {
+            name: "video-host-mux",
+            origin: "docs/55 §4",
+            check: video_host::host_mux,
+        },
+        Rule {
+            name: "video-window-feed",
+            origin: "docs/55 §4b",
+            check: video_host::window_feed,
+        },
+        Rule {
+            name: "video-send-path-decisions",
+            origin: "docs/55 §4b",
+            check: video_host::send_path_decisions,
+        },
+        Rule {
+            name: "video-accumulators",
+            origin: "docs/55 §4b",
+            check: video_host::accumulators,
+        },
+        Rule {
+            name: "video-geometry",
+            origin: "docs/55 §4b",
+            check: video_host::geometry,
         },
     ]
 }

@@ -57,5 +57,14 @@ pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
 
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — FMA rounds once where the wire rounds twice. This crate
+#   has no float math today, and that is the point: the opt-out is here so the FIRST float
+#   expression to land is not a hard clippy error whose only offered fix breaks a repo invariant.
+#   Whole-crate rather than per-site because the reason is that invariant, not a local judgement.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
 [profile.release]
 opt-level = 3

@@ -221,6 +221,22 @@ pub enum Claim {
         /// The sentence, with `{entry}` where the door's name goes.
         message: &'static str,
     },
+    /// A file must match a pattern at least `minimum` times.
+    ///
+    /// For a rule that cannot name what it is looking for: "every tunable falls back to a field of
+    /// the door's defaults, never to a literal". Counting the fallbacks is what catches a knob
+    /// added later with a hand-written default beside it — the one drift no test can see,
+    /// because both languages stay internally consistent.
+    AtLeast {
+        /// Repo-relative path.
+        path: &'static str,
+        /// The pattern to count LINES of.
+        pattern: &'static str,
+        /// The floor.
+        minimum: usize,
+        /// The sentence, with `{found}` where the count goes.
+        message: &'static str,
+    },
     /// A file must contain a literal — a declaration, a call through a door, a doc citation.
     Names {
         /// Repo-relative path.
@@ -245,6 +261,22 @@ pub enum Claim {
     Lacks {
         /// Repo-relative path.
         path: &'static str,
+        /// The pattern.
+        pattern: &'static str,
+        /// Which view to read.
+        view: View,
+        /// What a match means.
+        message: &'static str,
+    },
+    /// No NAMED file may match a pattern — the shell's `grep -qE … file1 file2 file3`.
+    ///
+    /// Separate from [`Claim::NoneUnder`] because the scope is an explicit LIST rather than a tree
+    /// walk: these are the bans that say "this law lives in one crate, and these three faces over
+    /// it may not respell it". Naming the files is the point — a root would sweep in the next
+    /// face somebody adds, and whether that face is covered is a decision, not a default.
+    NoneOf {
+        /// Repo-relative paths, all of which must exist.
+        paths: &'static [&'static str],
         /// The pattern.
         pattern: &'static str,
         /// Which view to read.
@@ -355,6 +387,17 @@ impl Claim {
                     }
                 }
             },
+            Self::AtLeast {
+                path,
+                pattern,
+                minimum,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, path, message) {
+                    let found = text::count_lines(source.code(), pattern);
+                    report.fail_if(found < *minimum, fill(message, "found", &found.to_string()));
+                }
+            },
             Self::Names {
                 path,
                 needle,
@@ -393,6 +436,35 @@ impl Claim {
                     );
                     report.fail_if(text::matches(&haystack, pattern), (*message).to_owned());
                 }
+            },
+            Self::NoneOf {
+                paths,
+                pattern,
+                view,
+                message,
+            } => {
+                // Every named file is read, so one that was renamed away is reported rather than
+                // quietly dropping its share of the ban.
+                let mut offenders = Vec::new();
+                for path in *paths {
+                    if let Some(source) = report.source(tree, path, message) {
+                        let haystack = view.of(source);
+                        report.fail_if(
+                            haystack.trim().is_empty(),
+                            format!(
+                                "{path} stripped to nothing — the ban below reads an empty haystack and \
+                                 passes",
+                            ),
+                        );
+                        if text::matches(&haystack, pattern) {
+                            offenders.push(*path);
+                        }
+                    }
+                }
+                report.fail_if(
+                    !offenders.is_empty(),
+                    fill(message, "files", &offenders.join(", ")),
+                );
             },
             Self::NoneUnder {
                 roots,
