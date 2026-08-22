@@ -8,9 +8,13 @@
 //! ## The flag word IS the binding table's
 //!
 //! Bits 0–3 are `MOD_SHIFT`/`CONTROL`/`OPTION`/`COMMAND`, the same values `KeyChord.Modifiers`
-//! carries, so a chord's modifiers cross back out UNTRANSLATED. There is no fifth bit: which keys
-//! are special is a rule, not a fact the responder is allowed to assert, and it is answered on the
-//! far side from `hid_usage`.
+//! carries, so a chord's modifiers cross back out UNTRANSLATED. Nothing above them is a modifier:
+//! which keys are special is a rule, not a fact the responder is allowed to assert, and it is
+//! answered on the far side from `hid_usage`.
+//!
+//! Bits 4–5 are the one thing that IS the responder's to assert, and they are not a modifier at all
+//! — they are `controls.optionAsAlt`, a property of the keyboard rather than of the press, and the
+//! only setting either door reads. See [`PHONE_KEY_OPTION_AS_ALT_MASK`] for why `BOTH` is the zero.
 //!
 //! ## Two answers that are legitimately empty, and how each says so
 //!
@@ -29,7 +33,7 @@ use core::ffi::c_uchar;
 
 use slopdesk_video::key_naming::NamedKey;
 use slopdesk_workspace::phone_key::{
-    self, CaptureVerdict, ChordKey, FloatingCursor, KeyPress, NamedChordKey, Route,
+    self, CaptureVerdict, ChordKey, FloatingCursor, KeyPress, NamedChordKey, OptionAsAlt, Route,
 };
 
 use crate::{borrow, deliver};
@@ -42,6 +46,29 @@ pub const PHONE_KEY_CONTROL: u32 = 1 << 1;
 pub const PHONE_KEY_OPTION: u32 = 1 << 2;
 /// ⌘.
 pub const PHONE_KEY_COMMAND: u32 = 1 << 3;
+
+/// Bits 4–5, where `controls.optionAsAlt` crosses.
+///
+/// A bit-pair on the word that already crossed, rather than a fifth parameter on two doors: the
+/// mode is a property of the KEYBOARD the press came from, the way `base` is a property of its
+/// layout, and widening the word costs the boundary nothing while a new parameter changes every
+/// caller of `slopdesk_phone_key_encode`.
+///
+/// [`PHONE_KEY_OPTION_AS_ALT_BOTH`] is ZERO on purpose, and it is the one value in this header that
+/// is not free to be reordered: these bits are an EXTENSION of a word that already had four, so an
+/// absent pair has to read as what the door did before the pair existed — which was to treat ⌥ as
+/// Alt unconditionally. Making `OFF` the zero would silently withdraw meta from every caller that
+/// had not yet learnt to set the bits.
+pub const PHONE_KEY_OPTION_AS_ALT_MASK: u32 = 0b11 << 4;
+/// Both Option keys are Alt/Meta — and the value an unset bit-pair reads as.
+pub const PHONE_KEY_OPTION_AS_ALT_BOTH: u32 = 0 << 4;
+/// Neither is; ⌥ is left to compose accented characters.
+pub const PHONE_KEY_OPTION_AS_ALT_OFF: u32 = 1 << 4;
+/// The left Option key alone.
+pub const PHONE_KEY_OPTION_AS_ALT_LEFT: u32 = 2 << 4;
+/// The right Option key alone.
+pub const PHONE_KEY_OPTION_AS_ALT_RIGHT: u32 = 3 << 4;
+
 /// The `named` value for a chord whose key is a printable character rather than a named one.
 pub const PHONE_KEY_NAMED_NONE: u8 = 0xFF;
 
@@ -79,6 +106,21 @@ unsafe fn press_of(raw: &SlopDeskPhoneKeyPress) -> KeyPress<'_> {
         option: raw.flags & PHONE_KEY_OPTION != 0,
         command: raw.flags & PHONE_KEY_COMMAND != 0,
         shift: raw.flags & PHONE_KEY_SHIFT != 0,
+        option_as_alt: option_as_alt_of(raw.flags),
+    }
+}
+
+/// The `controls.optionAsAlt` mode bits 4–5 carry.
+///
+/// Total rather than fallible: the pair has four values and the enum has four cases, so there is no
+/// unrecognised bit pattern for a door to have to refuse — which is why the mode is a pair and not
+/// a token.
+const fn option_as_alt_of(flags: u32) -> OptionAsAlt {
+    match flags & PHONE_KEY_OPTION_AS_ALT_MASK {
+        PHONE_KEY_OPTION_AS_ALT_OFF => OptionAsAlt::Off,
+        PHONE_KEY_OPTION_AS_ALT_LEFT => OptionAsAlt::Left,
+        PHONE_KEY_OPTION_AS_ALT_RIGHT => OptionAsAlt::Right,
+        _ => OptionAsAlt::Both,
     }
 }
 
@@ -414,6 +456,39 @@ mod tests {
         assert_eq!(u32::from(phone_key::MOD_CONTROL), PHONE_KEY_CONTROL);
         assert_eq!(u32::from(phone_key::MOD_OPTION), PHONE_KEY_OPTION);
         assert_eq!(u32::from(phone_key::MOD_COMMAND), PHONE_KEY_COMMAND);
+    }
+
+    /// The four modes cross intact, and the ABSENT pair reads as the behaviour the door had before
+    /// the pair existed — which is what makes bits 4–5 an extension rather than a break.
+    #[test]
+    fn the_option_as_alt_pair_crosses_and_its_zero_is_the_old_behaviour() {
+        let bytes = |flags: u32| {
+            let mut out = [0_u8; 8];
+            let press = raw("e", 0, PHONE_KEY_OPTION | flags);
+            // SAFETY: `press` borrows a live `&str` and `out` is writable for its whole length.
+            let written =
+                unsafe { slopdesk_phone_key_encode(&raw const press, false, out.as_mut_ptr(), out.len()) };
+            out.get(..written).map(<[u8]>::to_vec)
+        };
+        assert_eq!(bytes(PHONE_KEY_OPTION_AS_ALT_BOTH), Some(vec![0x1B, b'e']));
+        assert_eq!(
+            bytes(0),
+            Some(vec![0x1B, b'e']),
+            "an absent pair is BOTH, not OFF"
+        );
+        assert_eq!(bytes(PHONE_KEY_OPTION_AS_ALT_LEFT), Some(vec![0x1B, b'e']));
+        assert_eq!(bytes(PHONE_KEY_OPTION_AS_ALT_RIGHT), Some(vec![0x1B, b'e']));
+        assert_eq!(
+            bytes(PHONE_KEY_OPTION_AS_ALT_OFF),
+            Some(Vec::new()),
+            "OFF leaves ⌥e to the text path, so the door writes nothing",
+        );
+        // The pair sits ABOVE the four modifier bits and never collides with them.
+        assert_eq!(
+            PHONE_KEY_OPTION_AS_ALT_MASK
+                & (PHONE_KEY_SHIFT | PHONE_KEY_CONTROL | PHONE_KEY_OPTION | PHONE_KEY_COMMAND),
+            0,
+        );
     }
 
     #[test]

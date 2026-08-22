@@ -288,7 +288,7 @@ struct AllSettingsListView: View {
             // Read-only live summary here — the full editor lives on the Controls → Link Schemes section,
             // and a second editor would be a second way to write a list whose separator rules live at the
             // first one (``SettingsIndexPresentation/isReadOnly(_:)`` says so for both halves).
-            AnyView(Text(SettingsIndexPresentation.readOnlySummary(customLinkSchemes.joined(separator: ", ")))
+            AnyView(Text(SettingsIndexPresentation.readOnlySummary(CustomLinkSchemes.field(customLinkSchemes)))
                 .font(SettingsType.subtitle)
                 .foregroundStyle(SettingsInk.secondary)
                 .lineLimit(1))

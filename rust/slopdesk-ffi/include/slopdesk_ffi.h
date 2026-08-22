@@ -87,6 +87,23 @@ size_t slopdesk_screen_encode_detect_payload(const uint8_t *agent, size_t agent_
                                              const uint8_t *raw, size_t raw_len, uint8_t *out,
                                              size_t cap);
 int32_t slopdesk_screen_reply_status(const uint8_t *body, size_t len);
+// The reply's LENGTH PREFIX, read rather than guessed. Four big-endian bytes off the socket in,
+// the body length to read next out. This is the one place on the screend lane where an UNTRUSTED
+// number decides how much memory the client is about to commit, and it was being shifted together
+// by hand on the Swift side, against a 64 MiB ceiling re-spelled in a second Swift file.
+//
+// 0 is the refusal — a zero length, a length over the frame ceiling, or a prefix that is not
+// exactly four bytes. It is deliberately NOT the all-ones sentinel the supervisor lane used:
+// Swift's ClangImporter maps `size_t` onto the SIGNED `Int`, so an all-ones refusal arrives as -1
+// and a `== .max` guard against it never fires. It never did fire, on the supervisor lane, for as
+// long as that guard existed. A refusal of 0 is unrepresentable as a real length and survives the
+// signedness change, so `> 0` is the whole check a caller needs.
+//
+// `slopdesk_screen_constant` vends the sizes that used to be literals at both ends: 0 the frame
+// ceiling in bytes, 1 the length-prefix width, 2 the header width. An unknown index answers 0,
+// which is not a size any of the three could take.
+size_t slopdesk_screen_constant(uint8_t index);
+size_t slopdesk_screen_body_length(const uint8_t *prefix, size_t len);
 
 // screend's request socket, resolved: `$SLOPDESK_SCREEND_SOCKET`, else `$TMPDIR/…`, else `/tmp/…`.
 // An EMPTY pair means the variable is unset — an exported-but-blank variable is a shell accident,
@@ -222,7 +239,6 @@ size_t   slopdesk_replay_retained_bytes(SlopDeskReplay *handle);
 size_t   slopdesk_replay_retained_bytes_above(SlopDeskReplay *handle, int64_t seq);
 bool     slopdesk_replay_is_client_online(SlopDeskReplay *handle);
 bool     slopdesk_replay_should_pause_drain(SlopDeskReplay *handle);
-uint64_t slopdesk_replay_ring_generation(SlopDeskReplay *handle);
 size_t   slopdesk_replay_ring_len(SlopDeskReplay *handle);
 size_t   slopdesk_replay_ring_bytes(SlopDeskReplay *handle);
 size_t   slopdesk_replay_max_backup_cap(SlopDeskReplay *handle);
@@ -321,12 +337,24 @@ typedef struct {
 typedef struct SlopDeskAgentHold     SlopDeskAgentHold;
 typedef struct SlopDeskAgentDetector SlopDeskAgentDetector;
 
+typedef struct {
+  bool agent_while_processing;    /* the agent's thinking spinner */
+  bool agent_when_complete;       /* an agent's finished turn */
+  bool agent_when_awaiting_input; /* the hand when an agent is blocked on a human */
+  bool command_when_finishes;     /* a plain command's clean exit */
+  bool command_when_fails;        /* a plain command's non-zero exit */
+} SlopDeskAgentBadgeGates;
+
 // Pure — §4's convention, nothing remembered between calls.
 int32_t slopdesk_agent_kind_identify(const uint8_t *bytes, size_t len);   // -1 = no agent
 bool    slopdesk_agent_kind_is_generic(const uint8_t *bytes, size_t len);
 size_t  slopdesk_agent_process_basename(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t  slopdesk_agent_canonical_name(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 bool    slopdesk_agent_is_sensitive(const uint8_t *bytes, size_t len);
+/* Every badge shown — the baseline a caller with no preferences to apply passes to the tab-badge
+ * entry below. NOT the shipped global default: the thinking spinner ships off, which is a settings
+ * resolution and stays one. */
+SlopDeskAgentBadgeGates slopdesk_agent_badge_gates_default(void);
 // The five gates are the user's badge toggles, true = shown, and each silences ONLY its own
 // family's signal: an agent's spinner/finish/hand, or a plain command's clean/failed exit. A
 // program's own busy bit and its OSC 9;4 progress have no opt-out and are never masked, so a
@@ -1577,12 +1605,31 @@ size_t slopdesk_settings_layout_page(uint8_t section_index, bool mac, uint8_t *o
 // per press, because the program that set it is on the far side of the PTY.
 //
 // The flag word IS `KeyChord.Modifiers`' own bits 0-3, so a chord's modifiers cross back out
-// untranslated. There is no fifth bit: which keys are special is a rule, and it is answered on the
-// far side from `hid_usage`.
+// untranslated. Nothing above them is a modifier: which keys are special is a rule, and it is
+// answered on the far side from `hid_usage`.
 #define SLOPDESK_PHONE_KEY_SHIFT   (1u << 0)
 #define SLOPDESK_PHONE_KEY_CONTROL (1u << 1)
 #define SLOPDESK_PHONE_KEY_OPTION  (1u << 2)
 #define SLOPDESK_PHONE_KEY_COMMAND (1u << 3)
+// Bits 4-5 are the one thing in this word that is not a modifier: `controls.optionAsAlt`, which is a
+// property of the KEYBOARD rather than of the press, and the only setting either encoding door
+// reads. It rides the word that already crossed because a new parameter would change the signature
+// of two doors for a value neither caller computes per-press.
+//
+// BOTH is ZERO on purpose, and it is the one value here that is not free to be reordered: these bits
+// EXTEND a word that had four, so an absent pair has to read as what the doors did before the pair
+// existed, which was to treat the Option key as Alt/Meta unconditionally. Making OFF the zero would
+// silently withdraw Alt from any caller that had not yet learnt to set the bits.
+//
+// A phone reads LEFT and RIGHT the same way it reads BOTH: `UIKey.modifierFlags` carries one
+// `.alternate` bit and no side, so a side-specific choice cannot be honoured, and reading it as OFF
+// would take away the meta the reader asked for while reading it as BOTH costs only the accented
+// character on the side they left free.
+#define SLOPDESK_PHONE_KEY_OPTION_AS_ALT_MASK  (3u << 4)
+#define SLOPDESK_PHONE_KEY_OPTION_AS_ALT_BOTH  (0u << 4)
+#define SLOPDESK_PHONE_KEY_OPTION_AS_ALT_OFF   (1u << 4)
+#define SLOPDESK_PHONE_KEY_OPTION_AS_ALT_LEFT  (2u << 4)
+#define SLOPDESK_PHONE_KEY_OPTION_AS_ALT_RIGHT (3u << 4)
 // The `named` a chord writes when its key is the printable scalar in `character` instead.
 #define SLOPDESK_PHONE_KEY_NAMED_NONE ((uint8_t)0xFF)
 // What capturing one press in the Settings chord recorder means — the SAME four answers, in the same
@@ -2334,7 +2381,6 @@ size_t slopdesk_ws_encode_u32(uint32_t value, uint8_t *out, size_t cap);
 // unsigned door rather than composed from it: the bit pattern IS the convention, and the decode
 // half of that round trip was already being chosen on this side of the boundary.
 size_t slopdesk_ws_encode_i32(int32_t value, uint8_t *out, size_t cap);
-size_t slopdesk_ws_encode_u16_pair(uint16_t first, uint16_t second, uint8_t *out, size_t cap);
 size_t slopdesk_ws_encode_i64(int64_t value, uint8_t *out, size_t cap);
 
 // MARK: - The two composite field values (docs/55 §6)
@@ -2472,6 +2518,18 @@ size_t slopdesk_recovery_clamped_copies(size_t copies);
 double slopdesk_recovery_all_copies_lost_probability(double per_datagram_loss, size_t copies);
 double slopdesk_recovery_expected_request_loss_freeze(double per_datagram_loss, size_t copies,
                                                       double escalation_delay);
+/* The host frameQueue timer's decision: re-encode the cached buffer as a forced keyframe?
+ *
+ * The decider's whole state is the first four doubles, so it crosses as scalars rather than as a
+ * handle — there is nothing to own across the call. `0.0` is the "never happened" sentinel for both
+ * anchors, and it is NOT a time: an anchor of zero means no such encode has occurred, never one at
+ * time zero.
+ *
+ * `quiet_window` defaults to `heartbeat` on the Rust side; a caller with no separate window passes
+ * `heartbeat` twice. */
+bool slopdesk_static_idr_should_reencode(double heartbeat, double quiet_window,
+                                         double last_complete_encode, double last_synthetic_encode,
+                                         double now, bool forced_latched, bool has_retained_buffer);
 /* Rewrites the ring IN PLACE: `events` is both the `count` timestamps held and the `cap` slots the
  * answer may use. Returns the new length; `cap` too small leaves the buffer untouched. */
 size_t slopdesk_recovery_loss_window_note(double window_seconds, size_t capacity, double *events,
@@ -2500,7 +2558,10 @@ bool slopdesk_recovery_loss_window_observing(double window_seconds, size_t min_e
  *
  * `constant(index)` vends the ladder's numbers so neither end writes one the other also writes:
  * 0 default tier · 1/2/3 the parity tiers CLEAN/NORMAL/BURST · 4 relax dwell reports · 5 the
- * sticky-relax window · 6 the multi-loss default k · 7/8 the m bounds · 9/10 the k bounds.
+ * sticky-relax window · 6 the multi-loss default k · 7/8 the m bounds · 9/10 the k bounds · 11
+ * the multi-loss default m, which is NOT index 7: `M_MIN` answers "how low may a caller drive the
+ * parity count", index 11 answers "what does a caller who has not chosen get". They are both 1
+ * today, and that coincidence is exactly why the settings sheet had regrown its own literal.
  *
  * `multi_loss_active(m)` is the THRESHOLD rather than a bound — `m >= 2` is what changes the
  * parity count per group on the wire, selects the true [k + m, k] code over the XOR-equivalent
@@ -4350,6 +4411,25 @@ SlopDeskAbrDecision   slopdesk_abr_decide(SlopDeskAbrController controller,
 double slopdesk_abr_effective_slack(SlopDeskAbrConfig config, double min_rtt_millis);
 bool   slopdesk_abr_is_material_change(int64_t previous, int64_t target, int64_t ceiling,
                                        SlopDeskAbrConfig config);
+// A numeric knob read out of the environment, REJECT-style: a value that does not parse, or parses
+// outside [lo, hi], yields the compile-time default rather than the nearest legal value. That is
+// the opposite reading from the quantiser clamp door, and the difference is deliberate — a
+// quantiser ordinal has a meaningful nearest legal value, a malformed rate does not, so a
+// fat-fingered `SLOPDESK_ABR_LOSS=900` must not silently run pinned at the ceiling. The double
+// form also rejects the non-finite; NaN and the infinities are never in band.
+//
+// `has_raw` is the presence flag: false means the variable is unset, and `raw`/`raw_len` are not
+// read. An exported-but-empty variable is a shell accident — it arrives as a zero-length slice,
+// fails to parse, and lands on the default by the rule rather than by a special case.
+//
+// The LOOKUP stays on the near side; only the PARSE crosses. Swift already holds the resolved
+// string, because the settings overlay is a Swift dictionary no daemon can see, so a door that
+// took a KEY would force this end to re-derive that overlay. One that takes the resolved bytes
+// borrows a buffer the caller already has and allocates nothing.
+int64_t slopdesk_abr_validated_int(const uint8_t *raw, size_t raw_len, bool has_raw,
+                                   int64_t fallback, int64_t lo, int64_t hi);
+double  slopdesk_abr_validated_double(const uint8_t *raw, size_t raw_len, bool has_raw,
+                                      double fallback, double lo, double hi);
 
 /* ---------------------------------------------------------------------------- *
  * The FRAME-RATE axis — two governors, the gate they actuate through, and the self-heal cadence
@@ -5149,7 +5229,6 @@ typedef struct {
   double slow_relaxed_dominance;
   double flick_max_duration;
   double slow_grace_max_duration;
-  double momentum_window;
   double refractory;
   double default_fire_travel;
 } SlopDeskSwipeConstants;
@@ -5877,6 +5956,20 @@ uint32_t slopdesk_audio_decode(const uint8_t *bytes, size_t len, SlopDeskAudioMe
 size_t slopdesk_audio_encode(SlopDeskAudioMessage message, const uint8_t *span, size_t span_len,
                              uint8_t *out, size_t cap);
 size_t slopdesk_audio_constant(uint8_t index);
+// S16LE PCM widened to normalised float, written in place into the caller's buffer. The answer is
+// a SAMPLE count, not a byte count — `out` is `float *`, so bytes would be the wrong unit to
+// compare `cap` against, and the one a caller would get wrong.
+//
+// 0 means REFUSED and nothing was written: an empty payload, zero channels, or a length that is
+// not a whole number of frames — a ragged tail is a torn packet, never a short sample. A return
+// greater than `cap` is the room needed, and per the door convention nothing was written then
+// either. A null `out` with `cap` 0 is the legal way to ask the size first, though a caller
+// sizing at `payload_len / 2` is already exact for every well-formed payload.
+//
+// This REPLACED a Vec-returning Rust form rather than joining it: at one call per 10 ms audio
+// frame the allocation, not the crossing, was the whole cost.
+size_t slopdesk_audio_decode_pcm_s16le(const uint8_t *payload, size_t payload_len, size_t channels,
+                                       float *out, size_t cap);
 
 /* ---------------------------------------------------------------------------- *
  * The cursor side-channel, and the AVCC NAL-unit split.
@@ -7481,7 +7574,6 @@ SlopDeskCursorShapeAnswer slopdesk_cursor_shape_should_request(
 // NOTHING was consumed — grow and call again.
 #define SLOPDESK_ANDROID_STREAM_AGAIN 5u
 
-#define SLOPDESK_ANDROID_STREAM_KIND_NONE 0u
 #define SLOPDESK_ANDROID_STREAM_KIND_CODEC 1u
 #define SLOPDESK_ANDROID_STREAM_KIND_SESSION 2u
 #define SLOPDESK_ANDROID_STREAM_KIND_CONFIGURATION 3u

@@ -1,3 +1,4 @@
+import Defaults
 import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -61,7 +62,16 @@ final class PhoneKeyTests: XCTestCase {
 
     /// The usage and the base string both reach the door, and each answers its own question: the
     /// usage names the key, the string is only ever the layout's base for a fold or a meta prefix.
+    ///
+    /// `optionAsAlt` is set EXPLICITLY here rather than left to the ambient default, and that is the
+    /// point of the line: until 2026-08-22 the phone prefixed ⌥ with ESC unconditionally, so this
+    /// assertion passed on a rule that ignored the setting entirely. The setting now decides, its
+    /// default is `.off` (the Mac's, so ⌥e still composes `é`), and a test about MARSHALLING must not
+    /// silently become a test about which default happens to ship.
     func testTheUsageAndTheBaseBothReachTheDoor() {
+        let prior = Defaults[.optionAsAlt]
+        defer { Defaults[.optionAsAlt] = prior }
+        Defaults[.optionAsAlt] = .both
         let altB = PhoneKey.Press(charactersIgnoringModifiers: "b", option: true)
         XCTAssertEqual(PhoneKey.encode(altB), [0x1B, 0x62], "⌥b takes the base letter, not the layout's ∫")
         let ctrlBracket = PhoneKey.Press(charactersIgnoringModifiers: "[", control: true)
@@ -108,10 +118,51 @@ final class PhoneKeyTests: XCTestCase {
     }
 
     /// A base longer than the inline buffer takes the door's retry protocol rather than truncating.
+    ///
+    /// Needs `optionAsAlt` ON for the same reason as ``testTheUsageAndTheBaseBothReachTheDoor``: the
+    /// meta prefix is what makes this press produce a long answer at all, and the prefix is now the
+    /// setting's to grant. With the shipping default the press correctly encodes nothing, which would
+    /// pass this test's retry protocol vacuously.
     func testALongBaseRetriesRatherThanTruncating() {
+        let prior = Defaults[.optionAsAlt]
+        defer { Defaults[.optionAsAlt] = prior }
+        Defaults[.optionAsAlt] = .both
         let long = String(repeating: "é", count: 40) // 80 UTF-8 bytes, well past the inline buffer
         let press = PhoneKey.Press(charactersIgnoringModifiers: long, option: true)
         XCTAssertEqual(PhoneKey.encode(press), [0x1B] + Array(long.utf8))
+    }
+
+    /// The setting reaches the door, and its SHIPPING DEFAULT is the one a reader gets — the half of
+    /// `controls.optionAsAlt` that no Rust test can see, because the value is read on this side.
+    ///
+    /// Until 2026-08-22 `phone_key.rs` prefixed ⌥ with ESC unconditionally and the string
+    /// `option_as_alt` did not exist in the crate, so the row was drawn, persisted and shown as
+    /// active in Settings while nothing read it: a reader who turned it Off to type `é` got `ESC e`.
+    /// Both directions are pinned here, because a wiring that only ever answers one way is the defect
+    /// it replaced wearing a switch.
+    func testOptionAsAltReachesTheDoorAndItsDefaultIsOff() {
+        let prior = Defaults[.optionAsAlt]
+        defer { Defaults[.optionAsAlt] = prior }
+        let altE = PhoneKey.Press(charactersIgnoringModifiers: "e", option: true)
+
+        Defaults[.optionAsAlt] = .off
+        XCTAssertNil(PhoneKey.encode(altE), "OFF leaves ⌥e to UIKit's composition, which is where é comes from")
+        Defaults[.optionAsAlt] = .both
+        XCTAssertEqual(PhoneKey.encode(altE), [0x1B, 0x65], "BOTH makes ⌥ the meta prefix")
+
+        // A phone's `UIKey` carries one `.alternate` bit and no side, so a side-specific choice
+        // cannot be honoured — it reads as BOTH rather than as OFF, which would take away the meta
+        // the reader asked for. Documented at `OptionAsAlt`; pinned here because it is a crossing.
+        for sided: OptionAsAlt in [.left, .right] {
+            Defaults[.optionAsAlt] = sided
+            XCTAssertEqual(PhoneKey.encode(altE), [0x1B, 0x65], "\(sided) reads as BOTH on a device with no sides")
+        }
+
+        // The shipping default, asserted last so the restores above cannot mask it: `.off`, which is
+        // the Mac's, and the whole reason the two halves now agree about what ⌥ means.
+        Defaults.reset(.optionAsAlt)
+        XCTAssertEqual(Defaults[.optionAsAlt], .off)
+        XCTAssertNil(PhoneKey.encode(altE))
     }
 
     // MARK: The chord recorder

@@ -61,6 +61,24 @@ public enum PasteboardClip {
         read(pasteboard.board, skippingConcealed: skippingConcealed)
     }
 
+    /// The shippable clip for text the caller ALREADY HOLDS, or `nil` when there is nothing to ship.
+    ///
+    /// The attended-read door. iOS refuses an unattended CONTENT read, so the phone's push half runs on
+    /// the reads the user asked for — and by then the text is in hand, which means re-reading the board
+    /// through ``read(_:skippingConcealed:)`` would ask a permission the caller has already spent.
+    ///
+    /// It exists so that path does not spell the cap a second time. It did, for one afternoon, and the
+    /// ratchet caught it: `bytes.count <= MetadataCodec.maxClipboardContentBytes` inline in the sync
+    /// engine is the same rule as the four copies above, in a file that cannot see them change. The
+    /// CONCEALED and FILE refusals are not here on purpose — the caller takes those from the board's
+    /// DECLARED types (``SystemPasteboard/isSyncable``), which needs no content read; this door only
+    /// answers what a clip made of text is allowed to be.
+    public static func clip(forAttendedText text: String) -> MetadataCodec.ClipboardClip? {
+        let bytes = Data(text.utf8)
+        guard !bytes.isEmpty, bytes.count <= MetadataCodec.maxClipboardContentBytes else { return nil }
+        return MetadataCodec.ClipboardClip(kind: .text, bytes: bytes)
+    }
+
     /// Writes `clip` onto `pasteboard`; `false` — board UNTOUCHED — for content that will not decode.
     /// Writing asks no permission on either platform, which is why the host → client direction of
     /// clipboard sync is whole on a phone while the client → host direction is not.

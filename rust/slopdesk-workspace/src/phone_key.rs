@@ -67,6 +67,48 @@ pub const MOD_COMMAND: u8 = 1 << 3;
 /// Usage 0 is the HID keyboard page's own "no event", so it is the sentinel the page already has.
 pub const HID_NONE: u16 = 0;
 
+/// What ⌥ MEANS on this device — `controls.optionAsAlt`, as the encoder reads it.
+///
+/// The Mac's reading is libghostty's `macos-option-as-alt`, and reading it is the whole point of
+/// having this type rather than a `bool`: over there the setting does exactly ONE thing, which is
+/// decide whether the claimed Option side is removed from the mods `AppKit` TRANSLATES a character
+/// with (`GhosttyTerminalView.translationEvent(for:)`). So it bites on the keys that translate to a
+/// character and on nothing else — `⌥←`, `⌥Backspace` and `⌃⌥a` have no character to translate, so
+/// they carry Alt to the encoder under every setting, on both halves. [`encode`] gates the one
+/// branch that corresponds: a bare ⌥ on a printable key, which is precisely where meta competes
+/// with the accented character the reader could otherwise have composed.
+///
+/// ## Why the phone answers [`Self::Left`] and [`Self::Right`] the same as [`Self::Both`]
+///
+/// `UIKey.modifierFlags` carries one `.alternate` bit and no side, so a phone press cannot say
+/// WHICH Option key is down; only a modifier press of its own carries `keyboardLeftAlt` /
+/// `keyboardRightAlt`, and remembering that across presses is the state this module refuses to
+/// keep. So a side-specific choice has two honest readings on this device and the tie is broken by
+/// what each costs. Read as [`Self::Off`], the reader loses meta on the side they asked for it —
+/// word-wise shell editing dead from a hardware keyboard, which is the whole reason ⌥ prefixes at
+/// all. Read as [`Self::Both`], they lose the accented character on the side they left free, which
+/// the software keyboard and a long press still reach. The second is the smaller loss, so a side
+/// means Alt here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionAsAlt {
+    /// Both Option keys send Alt/Meta.
+    Both,
+    /// Neither does — ⌥ is left to compose accented characters.
+    Off,
+    /// The left Option key alone, on a device that can tell the two apart.
+    Left,
+    /// The right Option key alone, on a device that can tell the two apart.
+    Right,
+}
+
+impl OptionAsAlt {
+    /// Whether a ⌥ held on THIS device's keyboard is Alt/Meta.
+    #[must_use]
+    pub const fn treats_option_as_alt(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
 /// One physical key press, as the responder reads it off a `UIKey`.
 ///
 /// A usage and one string. The usage says WHICH key, under every layout; `base`
@@ -94,6 +136,20 @@ pub struct KeyPress<'a> {
     /// Whether ⇧ is held. Deliberately NOT read by [`route`] — a shifted letter is still typing —
     /// only by the encoder, where it is the one thing that tells a back-tab from a forward one.
     pub shift: bool,
+    /// What ⌥ means on this device — `controls.optionAsAlt`, read live off the setting per press.
+    ///
+    /// On the PRESS rather than as an argument to [`encode`] because it is a property of the
+    /// keyboard the press came from, the way `base` is a property of its layout; and because the
+    /// door it crosses carries a flag word already, so an extra bit-pair costs the boundary nothing
+    /// while a fourth parameter would change every caller's signature.
+    ///
+    /// Deliberately NOT read by [`route`] or by [`key_chord`]. On macOS the app-level binding
+    /// monitor resolves a ⌥ chord BEFORE the surface's `keyDown` ever asks libghostty what Option
+    /// meant, so `keybind = alt+b=…` fires under every value of the setting; routing a ⌥ press to
+    /// the proxy here would take that away on this half only. A press whose ⌥ is not Alt still
+    /// reaches the encoder, encodes to nothing, and falls on down the responder chain — which is
+    /// the same path bare typing already takes to `UIKit`'s composition.
+    pub option_as_alt: OptionAsAlt,
 }
 
 /// A key with no printable output, named by its HID usage.
@@ -534,6 +590,13 @@ fn special_bytes(key: SpecialKey, shift: bool, application_cursor_keys: bool) ->
 /// and `⌥b` alike, and it is what makes word-wise shell editing work from a phone at all. ⌃ on a
 /// special key deliberately does NOT take it — that form needs a parameterised CSI
 /// (`ESC [ 1 ; 5 D`), which is a different sequence, not a prefix.
+///
+/// [`OptionAsAlt`] gates the LAST of those three ⌥ branches and only it, because that is the shape
+/// of the setting on the other half too: `macos-option-as-alt` decides whether Option is withheld
+/// from CHARACTER translation, so on macOS it changes `⌥b` (`∫` becomes `ESC b`) and changes
+/// nothing at all about `⌥←`, `⌥Backspace` or `⌃⌥a` — none of which translate to a character for
+/// Option to be withheld from. A press whose ⌥ is not Alt encodes to `None` and falls on down the
+/// responder chain to `UIKit`'s own composition, which is where `⌥e e` becomes `é`.
 #[must_use]
 pub fn encode(press: &KeyPress<'_>, application_cursor_keys: bool) -> Option<Vec<u8>> {
     if press.command {
@@ -547,7 +610,7 @@ pub fn encode(press: &KeyPress<'_>, application_cursor_keys: bool) -> Option<Vec
     if press.control {
         return Some(meta_prefixed(press.option, vec![control_code(scalar)]));
     }
-    if press.option {
+    if press.option && press.option_as_alt.treats_option_as_alt() {
         return Some(meta_prefixed(true, press.base.as_bytes().to_vec()));
     }
     None
@@ -901,6 +964,7 @@ mod tests {
             option: false,
             command: false,
             shift: false,
+            option_as_alt: OptionAsAlt::Both,
         }
     }
 
@@ -1055,6 +1119,8 @@ mod tests {
         assert_eq!(special_bytes(SpecialKey::Up, true, false), vec![0x1B, 0x5B, b'A']);
     }
 
+    /// The [`OptionAsAlt::Both`] half of the setting — every helper here builds that value, so this
+    /// is the reading the whole rest of the module is written against.
     #[test]
     fn option_prefixes_every_key_it_is_held_with() {
         let meta = |usage: u16| {
@@ -1089,6 +1155,82 @@ mod tests {
                 false
             ),
             Some(vec![0x1B, 0x03]),
+        );
+    }
+
+    /// `controls.optionAsAlt` reaches this encoder, and it bites where the Mac's copy of the
+    /// setting bites: on the printable key ⌥ would otherwise have composed an accented
+    /// character on.
+    ///
+    /// Before this, `⌥e` sent `ESC e` under every value of a setting the phone drew, wrote and
+    /// persisted — so the reader who turned Option-as-Alt OFF to get `é` got `ESC e` anyway, and no
+    /// phone code path had ever read the key. The three assertions are the three answers: OFF
+    /// composes, BOTH prefixes, and a SIDE — which `UIKey.modifierFlags` cannot report — prefixes
+    /// too, because losing meta costs more than losing the accent (see [`OptionAsAlt`]).
+    #[test]
+    fn option_is_alt_only_while_the_setting_says_it_is() {
+        let letter = |mode: OptionAsAlt| {
+            encode(
+                &KeyPress {
+                    option: true,
+                    option_as_alt: mode,
+                    ..press("e")
+                },
+                false,
+            )
+        };
+        assert_eq!(
+            letter(OptionAsAlt::Off),
+            None,
+            "Option-as-Alt OFF must leave ⌥e to `UIKit`'s composition, which is where `é` comes from",
+        );
+        assert_eq!(letter(OptionAsAlt::Both), Some(vec![0x1B, b'e']));
+        for side in [OptionAsAlt::Left, OptionAsAlt::Right] {
+            assert_eq!(
+                letter(side),
+                Some(vec![0x1B, b'e']),
+                "{side:?} cannot be told from the other side on a `UIKey`, and reading it as OFF would take \
+                 away the meta the reader asked for",
+            );
+        }
+        // And the setting reaches ONLY that branch, because on the other half it reaches only the
+        // mods a CHARACTER is translated with — which `⌥←` and `⌃⌥c` have none of.
+        for mode in [OptionAsAlt::Off, OptionAsAlt::Both] {
+            assert_eq!(
+                encode(
+                    &KeyPress {
+                        option: true,
+                        option_as_alt: mode,
+                        ..special(HID_LEFT)
+                    },
+                    false,
+                ),
+                Some(vec![0x1B, 0x1B, 0x5B, b'D']),
+                "⌥← translates to no character, so {mode:?} has nothing to withhold from it",
+            );
+            assert_eq!(
+                encode(
+                    &KeyPress {
+                        control: true,
+                        option: true,
+                        option_as_alt: mode,
+                        ..press("c")
+                    },
+                    false,
+                ),
+                Some(vec![0x1B, 0x03]),
+                "⌃⌥c translates to no character either",
+            );
+        }
+        // The routing is deliberately untouched: a ⌥ press still reaches the encoder so the binding
+        // table is asked first, exactly as the Mac's app-level monitor asks it before `keyDown`.
+        assert_eq!(
+            route(&KeyPress {
+                option: true,
+                option_as_alt: OptionAsAlt::Off,
+                ..press("e")
+            }),
+            Route::KeyEncoding,
         );
     }
 

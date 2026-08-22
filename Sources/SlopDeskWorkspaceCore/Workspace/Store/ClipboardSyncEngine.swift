@@ -29,18 +29,26 @@ import SlopDeskProtocol
 ///
 /// **Skips (validate-then-drop, privacy).** Concealed clips (`org.nspasteboard.ConcealedType` —
 /// password managers) are never pushed; file-copy clips (`.fileURL` — a local path is meaningless on
-/// the other machine) and over-cap clips (> ``MetadataCodec/maxClipboardContentBytes``) are skipped;
+/// the other machine) and over-cap clips (the cap is ``PasteboardClip``'s) are skipped;
 /// the pasteboard is left untouched in every skip case.
 ///
-/// **The one direction the phone cannot have on a timer, and why.** The engine used to carry a
-/// whole-file `#if os(macOS)`; the board is ``SystemPasteboard`` now and both halves run the same tick.
-/// PULL is whole on iOS — writing `UIPasteboard` asks no permission, so a copy on the host lands on the
-/// phone within a tick, which is the direction a phone actually wants. PUSH is not, and that IS
-/// necessity rather than scope: since iOS 16, reading pasteboard content the app did not write, with no
-/// system paste gesture behind it, raises a modal "Allow Paste?" alert, and this tick runs once a
-/// second. So ``captureLocalChange()`` consumes the count on every platform and snapshots the CONTENT
-/// only where ``SystemPasteboard/unattendedContentReadIsPermitted``. On iOS the local clip reaches the
-/// host through the paths the user asked to paste on instead of through the timer.
+/// **The one direction the phone cannot have ON A TIMER, and why — and the door that gives it back.**
+/// The engine used to carry a whole-file `#if os(macOS)`; the board is ``SystemPasteboard`` now and both
+/// halves run the same tick. PULL is whole on iOS — writing `UIPasteboard` asks no permission, so a copy
+/// on the host lands on the phone within a tick, which is the direction a phone actually wants. The
+/// TIMER-DRIVEN push is not, and that IS necessity rather than scope: since iOS 16, reading pasteboard
+/// content the app did not write, with no system paste gesture behind it, raises a modal "Allow Paste?"
+/// alert, and this tick runs once a second. So ``captureLocalChange()`` consumes the count on every
+/// platform and snapshots the CONTENT only where ``SystemPasteboard/unattendedContentReadIsPermitted``.
+///
+/// That guard is right and stays. What was MISSING is the other half of the same sentence: the timer is
+/// not the only way a clip can be read. ``noteAttendedLocalRead(_:)`` is the door for a read the USER's
+/// own gesture already made — ``WorkspaceStore/currentLocalClipboard()``, the one place on this platform
+/// where iOS permits the content — and it enqueues that clip onto the SAME ``pendingPush`` the tick
+/// retries. Until it existed the phone's clipboard reached the host through no path at all: the type
+/// docs claimed "the paths the user asked to paste on", but every one of those paths TYPES the text into
+/// a pane (`pasteAsKeystrokes`) and none of them ever called `setClipboard`, so a copy on the phone was
+/// invisible to a ⌘V on the host and to Claude Code's Ctrl+V — the exact case the push half is for.
 ///
 /// Seams (`push`/`pull` closures + injected pasteboard) keep the tick logic unit-testable against a
 /// NAMED pasteboard with no live socket.
@@ -75,6 +83,7 @@ public final class ClipboardSyncEngine {
     public init(
         pasteboard: SystemPasteboard = ClientPasteboard.board,
         pollGap: Duration = .seconds(1),
+        attendedReadsFrom store: WorkspaceStore? = nil,
         push: @escaping Push,
         pull: @escaping Pull,
     ) {
@@ -85,6 +94,10 @@ public final class ClipboardSyncEngine {
         // Seed with the CURRENT count: the clip already on the board at launch is not pushed
         // (sync covers what you copy while the app watches — the ClipboardMonitor convention).
         lastChangeCount = pasteboard.changeCount
+        // The store OWNS the attended reads (every caller of `currentLocalClipboard()` is a paste the
+        // user asked for); this engine owns the wire. Installed here rather than at the app shell so
+        // the two halves cannot each wire it their own way — the shell passes the store and is done.
+        store?.attendedLocalClipboardSink = { [weak self] text in self?.noteAttendedLocalRead(text) }
     }
 
     /// Ticks until the owning Task is cancelled.
@@ -116,6 +129,28 @@ public final class ClipboardSyncEngine {
         // iOS paste alert this refuses to raise once a second.
         guard SystemPasteboard.unattendedContentReadIsPermitted else { return }
         guard let clip = Self.currentClip(pasteboard), clip != lastSynced else { return }
+        pendingPush = clip
+    }
+
+    /// Folds a clip the USER's own gesture just read into ``pendingPush`` — the door the timer cannot
+    /// open on iOS (see the type docs). `text` is what ``WorkspaceStore/currentLocalClipboard()``
+    /// returned, so the content read has already happened and is already attended; nothing here reads
+    /// the board's CONTENT a second time.
+    ///
+    /// It still owes every refusal the tick's own snapshot takes, and takes them from the DECLARED
+    /// types instead of the bytes: ``SystemPasteboard/isSyncable`` refuses a CONCEALED clip (a password
+    /// manager's) and a FILE copy without prompting, and the cap is the same
+    /// cap ``PasteboardClip`` applies to every other clip. A concealed clip a user pastes into a pane on
+    /// purpose must still never land on the other machine's board — the paste is one machine's, the
+    /// board is both machines'.
+    ///
+    /// The count is consumed for ``captureLocalChange()``'s reason: this read is as good as the tick's,
+    /// and a stale seen count would make the next tick treat our own clip as new.
+    public func noteAttendedLocalRead(_ text: String) {
+        lastChangeCount = pasteboard.changeCount
+        guard pasteboard.isSyncable else { return }
+        guard let clip = PasteboardClip.clip(forAttendedText: text) else { return }
+        guard clip != lastSynced else { return }
         pendingPush = clip
     }
 

@@ -51,7 +51,6 @@
 #if os(iOS)
 import Defaults
 import SFSafeSymbols
-import SlopDeskCLICore
 import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskVideoProtocol
@@ -489,17 +488,13 @@ private struct ControlsSettingsTab: View {
         }
     }
 
-    /// Bridge the `[String]` custom-schemes key to a comma / space / newline separated field (each
-    /// token trimmed, empties dropped). The setter persists the parsed list straight into `Defaults`.
+    /// Bridge the `[String]` custom-schemes key to the editor's one text field. WHERE one scheme ends
+    /// and the next begins is ``CustomLinkSchemes``', one floor down; the setter persists what it
+    /// parses straight into `Defaults`.
     private var customSchemesText: Binding<String> {
         Binding(
-            get: { customLinkSchemes.joined(separator: ", ") },
-            set: { newValue in
-                customLinkSchemes = newValue
-                    .split(whereSeparator: { $0 == "," || $0 == " " || $0 == "\n" || $0 == "\t" })
-                    .map { $0.trimmingCharacters(in: .whitespaces) }
-                    .filter { !$0.isEmpty }
-            },
+            get: { CustomLinkSchemes.field(customLinkSchemes) },
+            set: { customLinkSchemes = CustomLinkSchemes.parse($0) },
         )
     }
 
@@ -663,15 +658,21 @@ private struct AppearanceSettingsTab: View {
             // Both rows below are conditioned on the VALUE above — dynamic, not layout — so the
             // table lists the choice and the page draws what picking `custom` opens.
             if lineHeightChoice.wrappedValue == .custom {
-                LabeledContent("Multiplier") {
+                // The range, the granularity, the readout and both strings are ``LineHeightMultiplier``'s
+                // — the same shape the Mac's slider reads, so neither half can drift the other's rungs.
+                LabeledContent(LineHeightMultiplier.label) {
                     HStack(spacing: Slate.Metric.space2) {
-                        Slider(value: lineHeightMultiplier, in: 0.8...2.0, step: 0.05)
-                        Text(String(format: "%.2f×", customMultiplier))
+                        Slider(
+                            value: lineHeightMultiplier,
+                            in: LineHeightMultiplier.range,
+                            step: LineHeightMultiplier.step,
+                        )
+                        Text(LineHeightMultiplier.readout(customMultiplier))
                             .foregroundStyle(SettingsInk.secondary)
                             .monospacedDigit()
                     }
                 }
-                Text("Changing line height re-measures the cell and reflows the terminal (a resize).")
+                Text(LineHeightMultiplier.note)
                     .font(SettingsType.subtitle)
                     .foregroundStyle(SettingsInk.secondary)
                     .fixedSize(horizontal: false, vertical: true)

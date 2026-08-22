@@ -38,9 +38,13 @@ final class ClipboardSyncEngineTests: XCTestCase {
         pasteboard = nil
     }
 
-    private func makeEngine() -> ClipboardSyncEngine {
+    /// `attendedReadsFrom` is the seam the app shells pass their store through — the tests that drive
+    /// the whole store → engine → host chain give it one, the rest leave it `nil` exactly as a headless
+    /// engine has.
+    private func makeEngine(attendedReadsFrom store: WorkspaceStore? = nil) -> ClipboardSyncEngine {
         ClipboardSyncEngine(
             pasteboard: SystemPasteboard(pasteboard),
+            attendedReadsFrom: store,
             push: { [weak self] clip in
                 guard let self else { return false }
                 pushed.append(clip)
@@ -125,6 +129,122 @@ final class ClipboardSyncEngineTests: XCTestCase {
         pasteboard.setString("doc.pdf", forType: .string)
         await engine.tick()
         XCTAssertEqual(pushed, [], "a local file path is meaningless on the host")
+    }
+
+    // MARK: The ATTENDED door (the only client→host path a phone has)
+
+    /// A clip the TICK will never snapshot still reaches the host once the user's own gesture reads it.
+    ///
+    /// The board state here is the platform-free stand-in for the phone's whole predicament: a clip the
+    /// tick has already decided not to push (`testLaunchTimeClipIsNotPushed` pins that it never will).
+    /// On iOS EVERY clip is in that position, because `captureLocalChange()` may not read content off a
+    /// timer. Before ``ClipboardSyncEngine/noteAttendedLocalRead(_:)`` existed there was no second door,
+    /// so a copy on the phone reached the host's pasteboard by no path at all — the paste paths the type
+    /// docs pointed at all TYPE the text into a pane and none of them ever called `setClipboard`.
+    func testAnAttendedReadPushesAClipTheTickWillNeverSee() async {
+        copyLocally("copied before the engine watched")
+        let engine = makeEngine()
+        await engine.tick()
+        XCTAssertEqual(pushed, [], "the tick has passed on this clip and never revisits it")
+        engine.noteAttendedLocalRead("copied before the engine watched")
+        await engine.tick()
+        XCTAssertEqual(
+            pushed.map(\.bytes), [Data("copied before the engine watched".utf8)],
+            "the user's own read is the door the timer cannot open",
+        )
+        XCTAssertEqual(pushed.first?.kind, .text)
+    }
+
+    /// The attended door inherits the retry machinery rather than growing its own.
+    func testAnAttendedReadRetriesUntilTheHostTakesIt() async {
+        let engine = makeEngine()
+        pushResult = false
+        engine.noteAttendedLocalRead("flaky attended")
+        await engine.tick()
+        await engine.tick()
+        XCTAssertEqual(pushed.count, 2, "a rejected attended push retries every tick, like any other")
+        pushResult = true
+        await engine.tick()
+        await engine.tick()
+        XCTAssertEqual(pushed.count, 3, "accepted → pending cleared")
+    }
+
+    /// A CONCEALED clip stays on the device even when the user pastes it somewhere on purpose. The
+    /// paste is one machine's; the pasteboard is both machines'. Answered from the DECLARED types
+    /// (``SystemPasteboard/isSyncable``) so the refusal costs no second content read.
+    func testAnAttendedReadOfAConcealedClipIsNeverPushed() async {
+        let engine = makeEngine()
+        pasteboard.clearContents()
+        pasteboard.setString("hunter2", forType: .string)
+        pasteboard.setString("1", forType: PasteboardClip.concealedType)
+        engine.noteAttendedLocalRead("hunter2")
+        await engine.tick()
+        XCTAssertEqual(pushed, [], "a password the user pasted into a pane must not land on the host board")
+    }
+
+    /// The other refusal the tick's snapshot takes, taken here too: a file copy is a path, and a path
+    /// means nothing on the other machine.
+    func testAnAttendedReadOfAFileCopyIsNeverPushed() async {
+        let engine = makeEngine()
+        pasteboard.clearContents()
+        pasteboard.setString("file:///Users/x/doc.pdf", forType: .fileURL)
+        pasteboard.setString("doc.pdf", forType: .string)
+        engine.noteAttendedLocalRead("doc.pdf")
+        await engine.tick()
+        XCTAssertEqual(pushed, [])
+    }
+
+    /// Empty text and over-cap text are dropped, and the ECHO guard holds on this door too: a clip we
+    /// just applied FROM the host is not shipped back to it.
+    func testTheAttendedDoorDropsEmptyOverCapAndOurOwnApply() async {
+        let engine = makeEngine()
+        engine.noteAttendedLocalRead("")
+        await engine.tick()
+        XCTAssertEqual(pushed, [], "empty is not a clip")
+
+        engine.noteAttendedLocalRead(
+            String(repeating: "x", count: MetadataCodec.maxClipboardContentBytes + 1),
+        )
+        await engine.tick()
+        XCTAssertEqual(pushed, [], "over-cap is dropped, never truncated")
+
+        pullResult = (changeCount: 41, clip: MetadataCodec.ClipboardClip(
+            kind: .text, bytes: Data("from host".utf8),
+        ))
+        await engine.tick()
+        engine.noteAttendedLocalRead("from host")
+        await engine.tick()
+        XCTAssertEqual(pushed, [], "pasting what the host just sent must not bounce it back")
+    }
+
+    /// The whole chain, wired the way the app shells wire it: the store's attended read is the engine's
+    /// push. `attendedReadsFrom:` is the ONE place the seam is installed, so neither shell can wire it
+    /// its own way.
+    func testTheStoresAttendedReadReachesTheHost() async {
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
+        let engine = makeEngine(attendedReadsFrom: store)
+        store.clipboardTextProvider = { "typed on the phone" }
+        XCTAssertEqual(store.currentLocalClipboard(), "typed on the phone")
+        await engine.tick()
+        XCTAssertEqual(
+            pushed.map(\.bytes), [Data("typed on the phone".utf8)],
+            "every caller of currentLocalClipboard() is a paste the user asked for — and now a sync",
+        )
+    }
+
+    /// Turning clipboard HISTORY off says "do not retain my clips", not "do not let my two machines
+    /// share a clipboard". The ring stays empty; the host still gets the clip.
+    func testTheHistoryToggleDoesNotGateTheSync() async {
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
+        let engine = makeEngine(attendedReadsFrom: store)
+        let key = SettingsKey.recordClipboardHistory
+        SettingsKey.store.set(false, forKey: key)
+        defer { SettingsKey.store.removeObject(forKey: key) }
+        store.clipboardTextProvider = { "not retained, still shared" }
+        _ = store.currentLocalClipboard()
+        XCTAssertTrue(store.clipboardRing.isEmpty, "recording is off — nothing is retained")
+        await engine.tick()
+        XCTAssertEqual(pushed.map(\.bytes), [Data("not retained, still shared".utf8)])
     }
 
     // MARK: Pull (host copy → local)

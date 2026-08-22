@@ -33,6 +33,7 @@ import Foundation
 import AppKit
 #elseif canImport(UIKit)
 import UIKit
+import UniformTypeIdentifiers // the UTIs AppKit spells as `NSPasteboard.PasteboardType` constants
 #endif
 
 /// A system pasteboard, in the two shapes clipboard sync needs below the clip conversion: the raw
@@ -61,6 +62,13 @@ public struct SystemPasteboard {
     /// `availableType(from:)` reports what the writer DECLARED, so no content is disclosed and none is
     /// asked for. See the header for why the difference from ``plainText`` is worth a second member.
     public var hasPlainText: Bool { board.availableType(from: [.string]) != nil }
+
+    /// Whether this board's content may leave the device — see the shared docs on the UIKit twin.
+    public var isSyncable: Bool {
+        board.availableType(from: [
+            NSPasteboard.PasteboardType(PasteboardClip.concealedTypeIdentifier), .fileURL,
+        ]) == nil
+    }
     #elseif canImport(UIKit)
     /// The underlying board. Exposed for the same reasons the AppKit half exposes its own.
     public let board: UIPasteboard
@@ -82,6 +90,22 @@ public struct SystemPasteboard {
     /// no content, so iOS answers it WITHOUT the modal "Allow Paste?" alert that ``plainText`` one line
     /// up raises. Enablement asks THIS; the paste itself asks ``plainText``, on the tap the user made.
     public var hasPlainText: Bool { board.hasStrings }
+
+    /// Whether this board's content may leave the device: it is not a CONCEALED clip (a password
+    /// manager's `org.nspasteboard.ConcealedType`) and not a FILE copy (a path means nothing on the
+    /// other machine). The two refusals ``PasteboardClip/read(_:skippingConcealed:)`` already takes,
+    /// asked WITHOUT the content — both are answered from the DECLARED types, and neither platform
+    /// prompts for those.
+    ///
+    /// A third member on the probe side rather than a fourth reader, for the header's reason: a caller
+    /// that already holds text somebody else read attended (``ClipboardSyncEngine``, handed the string
+    /// the user's own paste gesture produced) still owes the privacy refusal, and asking for it by
+    /// re-reading the board would be a second content read — the one thing this file exists to ration.
+    public var isSyncable: Bool {
+        let types = board.types
+        return !types.contains(PasteboardClip.concealedTypeIdentifier)
+            && !types.contains(UTType.fileURL.identifier)
+    }
     #endif
 
     /// Advances on every write by anyone. The whole poll is this one integer read — and on iOS it is

@@ -68,14 +68,33 @@ public enum PhoneKey {
             self.shift = shift
         }
 
-        /// The flag word the doors read — `KeyChord.Modifiers`' own bits, and only those.
+        /// The flag word the doors read — `KeyChord.Modifiers`' own bits 0-3, plus the one thing that
+        /// is not a modifier at all in bits 4-5: what ⌥ MEANS on this keyboard.
+        ///
+        /// `controls.optionAsAlt` is read LIVE off `Defaults` here, per press, exactly the way the
+        /// libghostty surface reads `undoAtPrompt` in its `keyDown` — so a Settings change takes
+        /// effect on the very next keystroke rather than on the next pane. What the value MEANS is
+        /// the door's (`slopdesk_workspace::phone_key::OptionAsAlt`), including why a phone reads a
+        /// LEFT/RIGHT choice the same as BOTH: a `UIKey` carries one `.alternate` bit and no side.
         var ffiFlags: UInt32 {
             var flags: UInt32 = 0
             if shift { flags |= UInt32(SLOPDESK_PHONE_KEY_SHIFT) }
             if control { flags |= UInt32(SLOPDESK_PHONE_KEY_CONTROL) }
             if option { flags |= UInt32(SLOPDESK_PHONE_KEY_OPTION) }
             if command { flags |= UInt32(SLOPDESK_PHONE_KEY_COMMAND) }
-            return flags
+            return flags | Self.optionAsAltFlag(SettingsKey.optionAsAlt)
+        }
+
+        /// The bit-pair one ``OptionAsAlt`` crosses as. A `switch` rather than the raw value's index
+        /// because the two vocabularies are independent: the raw values are slopdesk's persistence
+        /// tokens and the pair is the door's ABI, whose zero has to stay BOTH.
+        private static func optionAsAltFlag(_ mode: OptionAsAlt) -> UInt32 {
+            switch mode {
+            case .off: UInt32(SLOPDESK_PHONE_KEY_OPTION_AS_ALT_OFF)
+            case .both: UInt32(SLOPDESK_PHONE_KEY_OPTION_AS_ALT_BOTH)
+            case .left: UInt32(SLOPDESK_PHONE_KEY_OPTION_AS_ALT_LEFT)
+            case .right: UInt32(SLOPDESK_PHONE_KEY_OPTION_AS_ALT_RIGHT)
+            }
         }
     }
 
