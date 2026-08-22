@@ -11,11 +11,11 @@
 //! ## Why the frontmost app is elected from the window list at all
 //!
 //! `NSWorkspace.shared.frontmostApplication` is a per-process SNAPSHOT: it populates on first
-//! access and then updates only through `AppKit` run-loop machinery a daemon never pumps. Every later
-//! read answers the first-access app forever — probe-verified, with Chrome frontmost, a daemon
-//! launched from Terminal read `com.apple.Terminal` on every call, on and off the main thread,
-//! while a side-by-side window-list scan tracked Chrome→Finder→Chrome live. That freeze made the
-//! swipe-nav status push report `eligible=false` for the daemon's whole life.
+//! access and then updates only through `AppKit` run-loop machinery a daemon never pumps. Every
+//! later read answers the first-access app forever — probe-verified, with Chrome frontmost, a
+//! daemon launched from Terminal read `com.apple.Terminal` on every call, on and off the main
+//! thread, while a side-by-side window-list scan tracked Chrome→Finder→Chrome live. That freeze
+//! made the swipe-nav status push report `eligible=false` for the daemon's whole life.
 
 use crate::geometry::{VideoPoint, VideoRect};
 
@@ -85,9 +85,7 @@ pub fn display_for_window_frame(frame: VideoRect, displays: &[VideoRect]) -> Opt
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        FrontmostCandidate, display_for_window_frame, elected_owner_pid, frontmost_owner_pid,
-    };
+    use super::{FrontmostCandidate, display_for_window_frame, elected_owner_pid, frontmost_owner_pid};
     use crate::geometry::VideoRect;
 
     fn window(layer: Option<i32>, pid: Option<i32>, alpha: Option<f64>) -> FrontmostCandidate {
@@ -105,11 +103,7 @@ mod tests {
     /// The first normal-level, visible window elects, and the ones behind it do not get a say.
     #[test]
     fn the_frontmost_normal_window_elects_its_owner() {
-        let pid = frontmost_owner_pid(&[
-            window(Some(25), Some(11), Some(1.0)),
-            normal(200),
-            normal(300),
-        ]);
+        let pid = frontmost_owner_pid(&[window(Some(25), Some(11), Some(1.0)), normal(200), normal(300)]);
         assert_eq!(pid, Some(200));
     }
 
@@ -141,7 +135,10 @@ mod tests {
     fn an_empty_or_wholly_ineligible_list_answers_nothing() {
         assert_eq!(frontmost_owner_pid(&[]), None);
         assert_eq!(
-            frontmost_owner_pid(&[window(Some(8), Some(1), Some(1.0)), window(Some(0), Some(2), Some(0.0))]),
+            frontmost_owner_pid(&[
+                window(Some(8), Some(1), Some(1.0)),
+                window(Some(0), Some(2), Some(0.0))
+            ]),
             None
         );
     }

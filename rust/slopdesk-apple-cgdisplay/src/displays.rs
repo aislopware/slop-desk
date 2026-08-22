@@ -23,12 +23,7 @@ pub struct Display {
 #[must_use]
 pub fn bounds_of(display: CGDirectDisplayID) -> VideoRect {
     let rect = CGDisplayBounds(display);
-    VideoRect::xywh(
-        rect.origin.x,
-        rect.origin.y,
-        rect.size.width,
-        rect.size.height,
-    )
+    VideoRect::xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
 }
 
 /// The two-call enumeration both display lists use: ask for the count, lend a buffer of exactly
@@ -50,9 +45,11 @@ fn enumerate(list: impl Fn(u32, *mut CGDirectDisplayID, *mut u32) -> CGError) ->
     // Clamped, not trusted: a framework that over-reported would otherwise index past the buffer.
     ids.truncate(reported.min(capacity) as usize);
     ids.into_iter()
-        .map(|id| Display {
-            id,
-            bounds: bounds_of(id),
+        .map(|id| {
+            Display {
+                id,
+                bounds: bounds_of(id),
+            }
         })
         .collect()
 }
@@ -124,9 +121,11 @@ pub fn under(point: VideoPoint) -> Option<Display> {
             )
         }
     };
-    (error == CGError::Success && count > 0).then(|| Display {
-        id: display,
-        bounds: bounds_of(display),
+    (error == CGError::Success && count > 0).then(|| {
+        Display {
+            id: display,
+            bounds: bounds_of(display),
+        }
     })
 }
 
@@ -134,7 +133,7 @@ pub fn under(point: VideoPoint) -> Option<Display> {
 mod tests {
     use slopdesk_video::geometry::VideoPoint;
 
-    use super::{active, under, online};
+    use super::{active, online, under};
 
     /// Nothing in this crate holds a CoreFoundation object, so the leak this file could have is a
     /// HANDLE one: an enumerator that opened something per call would, ten thousand calls in, start

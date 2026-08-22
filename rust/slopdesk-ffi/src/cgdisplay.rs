@@ -73,11 +73,7 @@ pub unsafe extern "C" fn slopdesk_cgdisplay_list(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_cgdisplay_under(
-    x: f64,
-    y: f64,
-    out: *mut SlopDeskCGDisplay,
-) -> bool {
+pub unsafe extern "C" fn slopdesk_cgdisplay_under(x: f64, y: f64, out: *mut SlopDeskCGDisplay) -> bool {
     if out.is_null() {
         return false;
     }

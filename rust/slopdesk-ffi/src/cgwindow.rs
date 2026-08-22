@@ -1,7 +1,8 @@
 //! The window-list doors — macOS only, for the reason `inject` is.
 //!
-//! `rust/slopdesk-apple-cgwindow` asks the `WindowServer` and decodes; `slopdesk_video::window_list`
-//! decides what a record means. This is the door, and it holds neither half.
+//! `rust/slopdesk-apple-cgwindow` asks the `WindowServer` and decodes;
+//! `slopdesk_video::window_list` decides what a record means. This is the door, and it holds
+//! neither half.
 //!
 //! ## What these replaced
 //!
@@ -13,8 +14,9 @@
 //!
 //! ## macOS only, and the three spellings that keep it true
 //!
-//! The `cfg` in `lib.rs`, the `TARGET_OS_OSX` guard in `slopdesk_ffi.h`, and the `MACOS-ONLY` region
-//! `scripts/build-ffi.sh` reads out of that header. See `docs/57-apple-frameworks-in-rust.md` §3.
+//! The `cfg` in `lib.rs`, the `TARGET_OS_OSX` guard in `slopdesk_ffi.h`, and the `MACOS-ONLY`
+//! region `scripts/build-ffi.sh` reads out of that header. See
+//! `docs/57-apple-frameworks-in-rust.md` §3.
 
 use slopdesk_apple_cgwindow::{bounds_of, frontmost_pid, windows_in_front_of};
 
@@ -91,11 +93,13 @@ pub unsafe extern "C" fn slopdesk_cgwindow_in_front_of(
 ) -> usize {
     let windows: Vec<SlopDeskWindowRecord> = windows_in_front_of(window_id)
         .into_iter()
-        .map(|window| SlopDeskWindowRecord {
-            bounds: SlopDeskVideoRect::from(window.bounds),
-            window_id: window.window_id,
-            owner_pid: window.owner_pid,
-            layer: window.layer,
+        .map(|window| {
+            SlopDeskWindowRecord {
+                bounds: SlopDeskVideoRect::from(window.bounds),
+                window_id: window.window_id,
+                owner_pid: window.owner_pid,
+                layer: window.layer,
+            }
         })
         .collect();
     // SAFETY: the caller's obligation above is restated on `spill`.
@@ -111,7 +115,8 @@ mod tests {
     use super::{owner, slopdesk_cgwindow_bounds, slopdesk_cgwindow_frontmost_pid};
 
     /// `0` is "any owner"; anything else is a pid to check against. The parked-window restore
-    /// depends on the second half — a reused `CGWindowID` must never move an unrelated app's window.
+    /// depends on the second half — a reused `CGWindowID` must never move an unrelated app's
+    /// window.
     #[test]
     fn a_zero_expected_pid_means_any_owner_and_anything_else_means_that_one() {
         assert_eq!(owner(0), None);

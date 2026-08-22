@@ -266,9 +266,8 @@ pub fn region_decision(
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_MIN_DELTA, DEFAULT_MIN_OVERLAP_FRACTION, RegionDecision, WindowSnapshot,
-        content_rects, region_decision, should_reorigin_to_window_on_geometry, should_retarget,
-        union_region,
+        DEFAULT_MIN_DELTA, DEFAULT_MIN_OVERLAP_FRACTION, RegionDecision, WindowSnapshot, content_rects,
+        region_decision, should_reorigin_to_window_on_geometry, should_retarget, union_region,
     };
     use crate::geometry::VideoRect;
 

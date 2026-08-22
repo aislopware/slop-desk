@@ -416,8 +416,16 @@ fn every_pinned_capture_union_encloses_what_swift_enclosed() {
         let pinned = |field: &str| vector[field].as_u64().expect("a bit pattern");
         assert_eq!(union.origin.x.to_bits(), pinned("outOriginXBits"), "{name}: x");
         assert_eq!(union.origin.y.to_bits(), pinned("outOriginYBits"), "{name}: y");
-        assert_eq!(union.size.width.to_bits(), pinned("outWidthBits"), "{name}: width");
-        assert_eq!(union.size.height.to_bits(), pinned("outHeightBits"), "{name}: height");
+        assert_eq!(
+            union.size.width.to_bits(),
+            pinned("outWidthBits"),
+            "{name}: width"
+        );
+        assert_eq!(
+            union.size.height.to_bits(),
+            pinned("outHeightBits"),
+            "{name}: height"
+        );
     }
 }
 

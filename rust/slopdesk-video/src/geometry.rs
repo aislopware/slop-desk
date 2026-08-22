@@ -205,7 +205,8 @@ impl VideoRect {
         rect.origin.y + rect.size.height / 2.0
     }
 
-    /// The overlap with `other`, or [`NULL`](Self::NULL) when they are disjoint — `CGRectIntersection`.
+    /// The overlap with `other`, or [`NULL`](Self::NULL) when they are disjoint —
+    /// `CGRectIntersection`.
     ///
     /// Probe-verified against CoreGraphics, and every clause below is one of the answers it gave:
     /// the disjoint test is STRICT, so two rects meeting along an edge answer a real zero-EXTENT
@@ -268,10 +269,7 @@ impl VideoRect {
     #[must_use]
     pub fn contains_point(&self, point: VideoPoint) -> bool {
         let rect = self.standardized();
-        point.x >= rect.min_x()
-            && point.x < rect.max_x()
-            && point.y >= rect.min_y()
-            && point.y < rect.max_y()
+        point.x >= rect.min_x() && point.x < rect.max_x() && point.y >= rect.min_y() && point.y < rect.max_y()
     }
 
     /// Whether `other` lies wholly inside — `CGRectContainsRect`.
@@ -661,8 +659,7 @@ mod tests {
             "a zero rect ON the other still meets it"
         );
         assert_eq!(
-            VideoRect::xywh(120.0, 120.0, 700.0, 500.0)
-                .intersection(&VideoRect::xywh(0.0, 0.0, 0.0, 0.0)),
+            VideoRect::xywh(120.0, 120.0, 700.0, 500.0).intersection(&VideoRect::xywh(0.0, 0.0, 0.0, 0.0)),
             VideoRect::NULL,
             "a zero rect ELSEWHERE does not — this is the zero-area-display vector"
         );

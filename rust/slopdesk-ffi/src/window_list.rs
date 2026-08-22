@@ -70,12 +70,7 @@ mod tests {
     use super::{SlopDeskVideoRect, slopdesk_window_display_for_frame};
 
     const fn rect(x: f64, y: f64, width: f64, height: f64) -> SlopDeskVideoRect {
-        SlopDeskVideoRect {
-            x,
-            y,
-            width,
-            height,
-        }
+        SlopDeskVideoRect { x, y, width, height }
     }
 
     #[test]

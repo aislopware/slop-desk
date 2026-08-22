@@ -36,11 +36,13 @@ unsafe fn snapshots(windows: *const SlopDeskWindowRecord, count: usize) -> Vec<W
     // SAFETY: the caller's obligation above is restated on `borrow`.
     let lent = unsafe { borrow(windows, count) };
     lent.iter()
-        .map(|window| WindowSnapshot {
-            window_id: window.window_id,
-            owner_pid: window.owner_pid,
-            layer: window.layer,
-            frame: window.bounds.of(),
+        .map(|window| {
+            WindowSnapshot {
+                window_id: window.window_id,
+                owner_pid: window.owner_pid,
+                layer: window.layer,
+                frame: window.bounds.of(),
+            }
         })
         .collect()
 }
@@ -134,7 +136,8 @@ pub extern "C" fn slopdesk_capture_should_retarget(
 ///
 /// The pair is the ABI's spelling of `CGRect?`: `active_region` is read only when `region_active`.
 /// While a region IS in force, the mapping origin belongs to the union and the stream is still
-/// union-sized, so re-origining would land clicks in the dialog overhang at the wrong absolute point.
+/// union-sized, so re-origining would land clicks in the dialog overhang at the wrong absolute
+/// point.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -183,7 +186,7 @@ pub unsafe extern "C" fn slopdesk_capture_region_decision(
             // one record for this call. The value written is a plain `Copy` scalar record.
             unsafe { out.write(SlopDeskVideoRect::from(target)) };
             SLOPDESK_REGION_EXPAND
-        }
+        },
     }
 }
 
@@ -201,23 +204,22 @@ mod tests {
     use super::{
         SLOPDESK_REGION_CONTRACT, SLOPDESK_REGION_EXPAND, SLOPDESK_REGION_HOLD, SlopDeskVideoRect,
         SlopDeskWindowRecord, slopdesk_capture_content_rects, slopdesk_capture_region_decision,
-        slopdesk_capture_should_reorigin, slopdesk_capture_should_retarget,
-        slopdesk_capture_union_region,
+        slopdesk_capture_should_reorigin, slopdesk_capture_should_retarget, slopdesk_capture_union_region,
     };
 
     const fn rect(x: f64, y: f64, width: f64, height: f64) -> SlopDeskVideoRect {
-        SlopDeskVideoRect {
-            x,
-            y,
-            width,
-            height,
-        }
+        SlopDeskVideoRect { x, y, width, height }
     }
 
     const DISPLAY: SlopDeskVideoRect = rect(0.0, 0.0, 1920.0, 1080.0);
     const TARGET: SlopDeskVideoRect = rect(120.0, 120.0, 700.0, 500.0);
 
-    const fn record(window_id: u32, owner_pid: i32, layer: i32, bounds: SlopDeskVideoRect) -> SlopDeskWindowRecord {
+    const fn record(
+        window_id: u32,
+        owner_pid: i32,
+        layer: i32,
+        bounds: SlopDeskVideoRect,
+    ) -> SlopDeskWindowRecord {
         SlopDeskWindowRecord {
             bounds,
             window_id,
@@ -250,7 +252,8 @@ mod tests {
         assert_eq!(union.width, TARGET.width);
     }
 
-    /// §4: the answer is the count NEEDED, so a counting call lends nothing and is told what to lend.
+    /// §4: the answer is the count NEEDED, so a counting call lends nothing and is told what to
+    /// lend.
     #[test]
     fn the_content_rects_report_the_count_they_need_before_writing_any() {
         let windows = [record(1794, 407, 101, rect(700.0, 300.0, 200.0, 600.0))];
@@ -289,10 +292,22 @@ mod tests {
 
     #[test]
     fn the_hysteresis_gate_and_the_re_origin_gate_answer_through_the_door() {
-        assert!(!slopdesk_capture_should_retarget(TARGET, rect(123.0, 123.0, 703.0, 503.0)));
-        assert!(slopdesk_capture_should_retarget(TARGET, rect(30.0, 120.0, 880.0, 531.0)));
-        assert!(slopdesk_capture_should_reorigin(SlopDeskVideoRect::default(), false));
-        assert!(!slopdesk_capture_should_reorigin(rect(20.0, 70.0, 880.0, 560.0), true));
+        assert!(!slopdesk_capture_should_retarget(
+            TARGET,
+            rect(123.0, 123.0, 703.0, 503.0)
+        ));
+        assert!(slopdesk_capture_should_retarget(
+            TARGET,
+            rect(30.0, 120.0, 880.0, 531.0)
+        ));
+        assert!(slopdesk_capture_should_reorigin(
+            SlopDeskVideoRect::default(),
+            false
+        ));
+        assert!(!slopdesk_capture_should_reorigin(
+            rect(20.0, 70.0, 880.0, 560.0),
+            true
+        ));
     }
 
     #[test]
@@ -301,18 +316,31 @@ mod tests {
         let mut out = SlopDeskVideoRect::default();
         // SAFETY: `out` is a live local, writable for one record for each call below.
         let verdict = unsafe {
-            slopdesk_capture_region_decision(expanded, TARGET, SlopDeskVideoRect::default(), false, &raw mut out)
+            slopdesk_capture_region_decision(
+                expanded,
+                TARGET,
+                SlopDeskVideoRect::default(),
+                false,
+                &raw mut out,
+            )
         };
         assert_eq!(verdict, SLOPDESK_REGION_EXPAND);
         assert_eq!(out.x, 30.0);
 
         // SAFETY: as above.
-        let verdict = unsafe { slopdesk_capture_region_decision(TARGET, TARGET, expanded, true, &raw mut out) };
+        let verdict =
+            unsafe { slopdesk_capture_region_decision(TARGET, TARGET, expanded, true, &raw mut out) };
         assert_eq!(verdict, SLOPDESK_REGION_CONTRACT);
 
         // SAFETY: as above.
         let verdict = unsafe {
-            slopdesk_capture_region_decision(TARGET, TARGET, SlopDeskVideoRect::default(), false, &raw mut out)
+            slopdesk_capture_region_decision(
+                TARGET,
+                TARGET,
+                SlopDeskVideoRect::default(),
+                false,
+                &raw mut out,
+            )
         };
         assert_eq!(verdict, SLOPDESK_REGION_HOLD);
     }

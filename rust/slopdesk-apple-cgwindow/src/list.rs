@@ -135,9 +135,9 @@ fn query(option: CGWindowListOption, relative_to: CGWindowID) -> Option<CFRetain
 /// normal-level window is on screen at all — login/lock screen, bare desktop, display asleep.
 ///
 /// Fresh is the whole point. `NSWorkspace.shared.frontmostApplication` is a per-process SNAPSHOT
-/// that populates on first access and then updates only through `AppKit` run-loop machinery a daemon
-/// never pumps, so in `slopdesk-videohostd` every later read answered the FIRST app forever. This
-/// needs no run loop and is covered by the TCC the capture daemon already holds.
+/// that populates on first access and then updates only through `AppKit` run-loop machinery a
+/// daemon never pumps, so in `slopdesk-videohostd` every later read answered the FIRST app forever.
+/// This needs no run loop and is covered by the TCC the capture daemon already holds.
 ///
 /// Decodes one record at a time and stops at the first elected pid: the swipe-nav kicker calls this
 /// at 4 Hz for the daemon's whole life, and the frontmost window sits at the head of the
@@ -207,13 +207,9 @@ pub fn windows_in_front_of(window_id: u32) -> Vec<WindowRecord> {
 }
 
 #[cfg(test)]
-#[expect(
-    clippy::expect_used,
-    reason = "a panic in a test is the failure report"
-)]
+#[expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
 mod tests {
     use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString, CFType};
-
     use slopdesk_video::geometry::VideoRect;
 
     use super::{Info, Keys, decode, keys, rect};
