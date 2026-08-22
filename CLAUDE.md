@@ -14,6 +14,7 @@ guessing one.
 | a sidecar daemon | `docs/51` superd · `52` screend · `53` dropd · `54` inspectord · `48` androidd |
 | the wire | `docs/20-wire-protocol.md` — update it after wire changes |
 | Rust that Swift calls in-process | `docs/55-ffi-boundary.md` — the ABI, the artifact, the stale gate |
+| an Apple framework from Rust | `docs/57-apple-frameworks-in-rust.md` — the `objc2` family and its bar |
 | client UI | `DESIGN.md` |
 | release, signing, brew | `docs/49-release-pipeline.md` |
 | why something was scoped out | `docs/DECISIONS.md` |
@@ -41,16 +42,25 @@ guessing one.
   by a list anyone maintains. See `docs/55-ffi-boundary.md`.
 - **One implementation, never two languages.** Porting means deleting the original in the same
   change: not a fallback, not a test fake, not a cross-language mirror fixture.
-- **Three crates may write `unsafe`, each about one thing** — `rust/slopdesk-posix` (a syscall with
-  no safe wrapper), `rust/slopdesk-ffi` (is this `(ptr, len)` from Swift live for the call) and
-  `rust/slopdesk-gfsimd` (does this 16-byte load stay inside its chunk). Every other crate is
-  `forbid(unsafe_code)`, which no downstream `allow` can lift. A fourth dissolves the isolation;
-  adding one is a design change, not a convenience, and the bar the third cleared is the bar: a
-  *measured* conflict where safe Rust cannot reach parity, paid for by a crate small enough to read
-  in a sitting and a differential suite that runs under Miri. Inside any of them, carry the
+- **Three crates may HAND-WRITE `unsafe`, each about one thing** — `rust/slopdesk-posix` (a syscall
+  with no safe wrapper), `rust/slopdesk-ffi` (is this `(ptr, len)` from Swift live for the call) and
+  `rust/slopdesk-gfsimd` (does this 16-byte load stay inside its chunk). A fourth dissolves the
+  isolation; adding one is a design change, not a convenience, and the bar the third cleared is the
+  bar: a *measured* conflict where safe Rust cannot reach parity, paid for by a crate small enough to
+  read in a sitting and a differential suite that runs under Miri. Inside any of them, carry the
   obligation that makes the code sound and nothing else: if the safety comment cannot be written
   without naming slopdesk, the boundary is in the wrong place, so move the *operation* until the
   obligation is local. Never lower a crate to `deny` to fit code in.
+- **`slopdesk-apple-*` is the one other family allowed `unsafe`, and only through `objc2`.** A crate
+  in it wraps exactly ONE Apple framework area, calls it through the `objc2` bindings, and may not
+  hand-write a raw-pointer dereference, a transmute or a `from_raw` — if a call needs one, the
+  obligation belongs in one of the three crates above and the operation moves there. Most of what
+  these crates call is `safe` in the bindings already, so `unsafe` here means "the framework's own
+  contract", never "Rust's". Each carries `#![deny(unsafe_op_in_unsafe_fn)]`, a `# Safety` note per
+  `unsafe` block naming the framework rule it satisfies, and a leak test. This family exists because
+  the goal is Swift-as-UI-only: every effect on the system — capture, encode, injection, IOKit, the
+  accessibility tree — is Rust's. See `docs/57-apple-frameworks-in-rust.md`. Every crate outside these
+  two families is `forbid(unsafe_code)`, which no downstream `allow` can lift.
 - **Never `pkill` the host** — `make host-restart` replays hostd's recorded launch exactly. There is
   no live config reload; the restart is the reload.
 - **superd owns `read` on every PTY master.** A second reader anywhere steals bytes rather than
