@@ -1,0 +1,138 @@
+# `slopdesk-apple-cursor` — the DISPLAYED system cursor, and nothing else.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# Two questions about the pointer the person is looking at: what SHAPE is on screen right now, and
+# what does its bitmap look like as bytes a datagram can carry. Both are `NSCursor` + AppKit imaging
+# and no other API's. Everything ABOUT the answer — when to re-read it, what id a shape gets, whether
+# the pointer is inside the captured window, what size to render at next — is `slopdesk-video`'s
+# `cursor` module, which forbids `unsafe` and always will.
+#
+# ## What is deliberately NOT here: `NSCursor.current`
+# It is THIS process's own cursor stack, and a background `.accessory` daemon's stack is empty — so
+# it answers the arrow forever while the person is looking at an I-beam. `currentSystemCursor` is the
+# system-wide displayed shape, which is the one that crosses the window-server boundary and the only
+# one worth sampling. The fallback to `current` that the Swift original carried is kept, because a
+# nil `currentSystemCursor` is rare and an arrow is a better answer than no cursor at all.
+#
+# ## What is deliberately NOT here: the window-server cursor SEED
+# `CGSCurrentCursorSeed` is resolved with `dlsym` and called through a declared C signature, which is
+# a raw function-pointer transmute — §2 bars exactly that from this family, so the operation moved
+# rather than the rule bending. It is `slopdesk_posix::dynsym::cursor_seed`.
+#
+# ## The `unsafe` in this crate
+# Two blocks, both AppKit imaging contracts rather than Rust ones, each with a `# Safety` note naming
+# the framework rule it satisfies: allocating a bitmap with NULL data planes (the framework owns the
+# buffer), and making a bitmap context current across a draw (the save/restore pair is the contract).
+# Everything `NSCursor` itself offers is generated safe.
+#
+# ## macOS ONLY, and how that is kept true
+# `slopdesk-ffi` links this behind `[target.'cfg(target_os = "macos")'.dependencies]`, its doors are
+# declared inside `slopdesk_ffi.h`'s `MACOS-ONLY BEGIN/END` region, and `scripts/build-ffi.sh`
+# requires those symbols PRESENT on the macOS slice and ABSENT on both iOS slices.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-cursor"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The displayed system cursor for slopdesk — its hotspot, its size and its bitmap"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_cursor"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "=0.6.3", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSCursor",
+  "NSImage",
+  "NSImageRep",
+  "NSBitmapImageRep",
+  "NSGraphicsContext",
+  # `NSDeviceRGBColorSpace` and the whole `initWithBitmapDataPlanes:` family are gated on this —
+  # without it the allocator below is simply absent rather than taking a different colour space.
+  "NSGraphics",
+] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSData",
+  "NSDictionary",
+  "NSGeometry",
+] }
+
+# Mirrors the other two read crates': this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` only
+# because §3 asks every crate in this family for the same two levels; this crate writes none.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

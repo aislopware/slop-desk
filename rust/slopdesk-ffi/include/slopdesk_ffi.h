@@ -25,6 +25,10 @@
 //     * exactly one _free per _new; NULL is inert everywhere.
 //     * NO TWO CALLS ON ONE HANDLE MAY OVERLAP — the mutators take &mut, so a concurrent call is
 //       aliasing UB. The Swift owner serialises under the lock it already held.
+//       ONE EXCEPTION, and it is declared in its own doors rather than assumed: SlopDeskCursorSampler
+//       holds its state behind locks because two threads calling it is that handle's design (the
+//       pointer must keep flowing while the main thread is blocked). Nothing else may be assumed
+//       to be shareable; a handle without that note is not.
 //     * answers still come back through (out, cap) -> needed. Nothing is allocated on one side and
 //       freed on the other.
 //   Producers fill a SLOT on the handle and return its item count; the caller then reads items out
@@ -8445,6 +8449,70 @@ size_t slopdesk_pane_process_list(int32_t master_fd, int64_t now_unix,
 // This is the one door here that spawns: `lsof` twice, TCP with -sTCP:LISTEN and
 // then UDP which cannot take that flag, scoped to the pane's own pids.
 size_t slopdesk_pane_port_list(int32_t master_fd, uint8_t *out, size_t cap);
+
+// ---- The cursor side-channel's host end --------------------------------------------
+
+// THE ONE HANDLE THAT MAY BE CALLED FROM TWO THREADS. The convention at the top of
+// this header says no two calls on one handle may overlap; this handle is the
+// exception, and it is written for it. The 120 Hz position sample runs off the main
+// thread so that a main-thread window raise cannot freeze the pointer, while the
+// shape read is main-thread-only because AppKit says so — so two threads is the
+// design rather than a caller's mistake, and the handle carries its own locks.
+//
+// Everything the old Swift sampler decided is behind these doors: when to re-read
+// the shape (the window server's cursor seed), where the pointer sits in the
+// captured window, which id a shape gets, and what pixel size it renders at. The
+// caller keeps the timer, the one off-main mouse query, and the two sockets.
+typedef struct SlopDeskCursorSampler SlopDeskCursorSampler;
+
+// Builds a sampler for a window at these CG top-left bounds. Never NULL.
+SlopDeskCursorSampler *slopdesk_cursor_sampler_new(double x, double y, double width,
+                                                   double height);
+void slopdesk_cursor_sampler_free(SlopDeskCursorSampler *handle);
+
+// Retargets the sampler; call from the geometry watcher on any thread.
+void slopdesk_cursor_sampler_set_bounds(SlopDeskCursorSampler *handle, double x, double y,
+                                        double width, double height);
+
+// Counts one tick and answers whether it should go to the main thread for a fresh
+// shape. Reads the cursor seed itself — there is nothing to pass in. Sampling thread.
+bool slopdesk_cursor_sampler_should_refresh(SlopDeskCursorSampler *handle);
+
+// The encoded CursorUpdate for a mouse at these GLOBAL COCOA points (bottom-left
+// origin — the space the off-main window-server query answers in). Sampling thread.
+//
+// 0 until the first refresh has primed the shape id and screen height: an update sent
+// before that would name a shape the client has never been given. The answer is a
+// fixed 36 bytes, so size the buffer once and never retry.
+size_t slopdesk_cursor_sampler_position(SlopDeskCursorSampler *handle, double mouse_x,
+                                        double mouse_y, uint8_t *out, size_t cap);
+
+// Reads the displayed cursor and caches what the position path needs. MAIN THREAD
+// ONLY; a call from anywhere else answers 0 and touches nothing.
+//
+// Answers the length of a NEWLY MINTED shape message, parked for _answer, or 0 when
+// the shape was one already shipped — the common case by far. Parked rather than
+// returned because the length is what the render ladder decides, so a retry with a
+// bigger buffer would re-run the whole render.
+//
+// primary_height is the main display's height in points, for the Cocoa-to-CG flip. It
+// is passed in because NSScreen is a different framework area than the one crate this
+// door reads its cursor from (docs/57 §2).
+size_t slopdesk_cursor_sampler_refresh(SlopDeskCursorSampler *handle, double primary_height);
+
+// Copies out the shape message the last _refresh minted.
+size_t slopdesk_cursor_sampler_answer(SlopDeskCursorSampler *handle, uint8_t *out, size_t cap);
+
+// An already-shipped shape message by id, for a client that lost the one-shot
+// shipment. 0 for an id never minted — re-reading the cursor would answer whatever is
+// displayed NOW rather than the shape asked for. Any thread.
+size_t slopdesk_cursor_sampler_shape(SlopDeskCursorSampler *handle, uint16_t shape_id,
+                                     uint8_t *out, size_t cap);
+
+// Whether a refresh changed the shape id since this was last asked, and CLEARS the
+// flag. Taken rather than read so the caller emits exactly one extra position update
+// per change — the client switches its pointer on the next update carrying the new id.
+bool slopdesk_cursor_sampler_take_id_change(SlopDeskCursorSampler *handle);
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END

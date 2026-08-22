@@ -30,6 +30,8 @@
 //! ## Crate layout
 //! One module per kind of syscall, so a reviewer can take them one at a time.
 
+/// Resolving a symbol at run time, and calling it.
+pub mod dynsym;
 /// One-byte-plus-descriptor `recvmsg`, the receiving half of `SCM_RIGHTS`.
 pub mod fdpass;
 /// The disassembly pin on [`pty`]'s fork-to-exec window.

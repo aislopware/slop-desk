@@ -59,7 +59,14 @@ pub fn one_home_per_operation(tree: &Tree) -> Report {
             extensions: RUST,
             pattern: C_ABI,
             all: &[],
-            unless: &[],
+            // A type ALIAS for a C signature points the other way: it is not a door this process
+            // opens, it is the shape of one somebody else already opened. `slopdesk-posix`'s
+            // `dynsym` needs exactly one — the private CoreGraphics symbol it resolves has no
+            // binding anywhere, so its declaration has to be written down to be called at all — and
+            // banning that would ban CALLING C rather than EXPORTING it, which is not this rule.
+            // An `#[unsafe(no_mangle)] pub extern` in the same file is still caught: it is a
+            // different line, and this excuse names the alias form alone.
+            unless: &[r"type \w+ = unsafe extern"],
             view: View::CodeBeforeTests,
             exempt: &["rust/slopdesk-ffi/"],
             message: "a C entry point is outside rust/slopdesk-ffi ({files}) — the ABI is a crate, not an \
@@ -225,6 +232,16 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
         "|NSWorkspace",
         r"\.shared\.frontmostApplication"
     );
+    // NOT `NSCursor` on its own. Setting the app's OWN pointer is UI and stays Swift — the pane
+    // divider and the move affordance push and pop cursors on every drag. What moved is the two
+    // reads: the system-wide DISPLAYED shape, which crosses the window-server boundary, and the
+    // private seed that says it changed.
+    const CURSOR: &str = concat!(
+        "NSCursor",
+        r"\.currentSystem",
+        "|CGSCurrentCursorSeed",
+        "|SLSCurrentCursorSeed"
+    );
     check_all(tree, &[
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -249,6 +266,19 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
             message: "a Swift frontmost/app read is back in {files} — slopdesk_app_bundle_id and \
                       slopdesk_app_activate answer it, and NSWorkspace's snapshot freezes in a daemon that \
                       pumps no run loop (docs/57 §5)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: CURSOR,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift read of the DISPLAYED cursor is back in {files} — the shape is \
+                      slopdesk-apple-cursor and the seed is slopdesk_posix::dynsym, joined behind \
+                      slopdesk_cursor_sampler_*; setting this app's own pointer is UI and is untouched \
+                      (docs/57 §5)",
         },
     ])
 }
@@ -381,6 +411,38 @@ mod tests {
         }
     }
 
+    /// Both halves of the cursor read are caught on their own, and both spellings of the private
+    /// seed — the symbol was re-exported under a second name, so a ban on one of them bans nothing.
+    #[test]
+    fn every_read_of_the_displayed_cursor_is_caught_on_its_own() {
+        for read in [
+            "let cursor = NSCursor.currentSystem ?? NSCursor.current\n",
+            "if let sym = dlsym(rtldDefault, \"CGSCurrentCursorSeed\") { return sym }\n",
+            "if let sym = dlsym(rtldDefault, \"SLSCurrentCursorSeed\") { return sym }\n",
+        ] {
+            let fixture = Fixture::new("cursor-revived");
+            fixture.write("Sources/SlopDeskVideoHost/CursorSampler.swift", read);
+            let report = super::one_probe_per_reading(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains("DISPLAYED cursor")),
+                "{read:?} was not caught: {report:?}"
+            );
+        }
+    }
+
+    /// Setting this app's OWN pointer is UI, and the pane divider does it on every drag. A ban on
+    /// the bare type name would delete a live `SwiftUI` affordance to protect a read that is not
+    /// there — so the pattern names the two READS and nothing else.
+    #[test]
+    fn setting_this_apps_own_pointer_is_not_reading_the_systems() {
+        let fixture = Fixture::new("cursor-ui");
+        fixture.write(
+            "Sources/SlopDeskMacUI/Pane/MacPaneDivider.swift",
+            "NSCursor.resizeLeftRight.push()\nNSCursor.pop()\nNSCursor.openHand.set()\n",
+        );
+        assert!(super::one_probe_per_reading(&fixture.tree()).is_clean());
+    }
+
     /// `SlopDeskMetadataPort(proc_name:)` is the wire record's own FIELD LABEL, and naming a struct
     /// field is not making a syscall. The ban is on the call shape for exactly this reason — a
     /// bare-token ban would fire on the codec that decodes what the census produced.
@@ -425,6 +487,33 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("frontmost/app read")),
+            "{report:?}"
+        );
+    }
+
+    /// Declaring a C signature so it can be CALLED is the opposite direction from exporting one,
+    /// and only the export is what the ABI-is-a-crate rule is about. The excuse names the alias
+    /// form alone, so an entry point in the very same file is still caught.
+    #[test]
+    fn a_signature_declared_to_be_called_is_not_an_entry_point() {
+        let fixture = Fixture::new("call-signature");
+        fixture.write(
+            "rust/slopdesk-posix/src/dynsym.rs",
+            "type Seed = unsafe extern \"C\" fn() -> i32;\n",
+        );
+        assert!(super::one_home_per_operation(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-posix/src/door.rs",
+            "type Seed = unsafe extern \"C\" fn() -> i32;\npub extern \"C\" fn slopdesk_seed() -> i32 { 0 \
+             }\n",
+        );
+        let report = super::one_home_per_operation(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("rust/slopdesk-posix/src/door.rs")),
             "{report:?}"
         );
     }

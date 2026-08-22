@@ -74,6 +74,11 @@ pub mod client_view;
 pub mod connection;
 pub mod cursor_color;
 pub mod cursor_overlay;
+// macOS only: `NSCursor` and the window server's cursor seed. The one handle here that two threads
+// may call at once, because the pointer must keep flowing while the main thread is busy. See the
+// module.
+#[cfg(target_os = "macos")]
+pub mod cursor_sampler;
 pub mod cursor_wire;
 pub mod decode_admission;
 pub mod device_geometry;

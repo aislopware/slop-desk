@@ -151,7 +151,7 @@ an `extern` key constant, an element type C's `CFArrayRef` does not carry, an ou
 | `slopdesk-apple-cgwindow` | CG window services | `HostFrontmostApp`'s decode, `WindowGeometryWatcher`'s window reads | **landed** (increment 85) |
 | `slopdesk-apple-cgdisplay` | CG display services | every `CGDisplayBounds`/`CGGet*DisplayList` site | **landed** (increment 85) |
 | `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowGeometryWatcher`, `WindowFeedAXSupport` | planned |
-| `slopdesk-apple-cgcursor` | `NSCursor` reads | `CursorSampler` | planned |
+| `slopdesk-apple-cursor` | `NSCursor` + the offscreen `NSBitmapImageRep` render | `CursorSampler`'s two AppKit reads | **landed** (increment 89) — costs **two** `unsafe` blocks |
 | `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder`, `VideoDecoder` | planned |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer` | planned |
@@ -161,7 +161,7 @@ an `extern` key constant, an element type C's `CFArrayRef` does not carry, an ou
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s
 one-implementation rule does not soften because the other language is a framework.
 
-### Two corrections this ledger earned by being wrong
+### Four corrections this ledger earned by being wrong
 
 **`ForegroundProcessProbes` was never an `slopdesk-apple-app` row.** It sat in that line because it
 was read as "host code that resolves a process", and it contains no AppKit at all: `tcgetpgrp`,
@@ -180,6 +180,27 @@ are `rust/slopdesk-posix::proc` and `::pty` (increment 88) and the DECISIONS abo
 file's own header had conceded for years: it was compiled and code-reviewed ONLY, never unit-tested,
 because every reading needs a live PTY and a real subprocess. The hostile-input parser rode along
 under that exemption. It is now a function over a string with four tests.
+
+**`CursorSampler` was a row and three quarters of it was not.** The ledger called it "`NSCursor`
+reads", and the file is 389 lines of which about forty are that. The rest is four decisions —
+when to re-read the shape, where the pointer sits in the captured window, which id a shape gets, and
+what pixel size to render it at — plus a `dlsym` for the window server's private cursor SEED. So the
+row split three ways rather than one, and each piece went where §2 sends it:
+
+- the two AppKit reads are `slopdesk-apple-cursor`, this ledger's row;
+- the four decisions are `slopdesk_video::cursor_sampling`, `forbid(unsafe_code)`, with eighteen
+  tests that could not previously exist — the file that held them needed an AppKit run loop, so
+  nothing in it ran headless;
+- the seed is `slopdesk_posix::dynsym`, because resolving a symbol and calling it is a raw
+  function-pointer transmute and §2 bars one from this family outright. The rule did not bend and
+  the crate did not gain an exemption: the OPERATION moved to a crate that may already write it.
+
+`slopdesk-ffi`'s `cursor_sampler` joins the three behind one handle — and it is the FIRST handle in
+that header that two threads may call at once. Every other one is serialised by its Swift owner;
+this one cannot be, because the 120 Hz position sample runs off the main thread precisely so a
+main-thread window raise cannot freeze the pointer, while `AppKit` will only answer the shape ON the
+main thread. So it carries its own locks, renders outside both of them, and says so in its own
+doors. The header's convention note now names the exception rather than being quietly false.
 
 **`NSWorkspace` left the row entirely**, and not because it was hard. Its `frontmostApplication` is
 a per-process snapshot that freezes in a daemon pumping no run loop — the bug `slopdesk-apple-cgwindow`

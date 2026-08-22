@@ -427,6 +427,18 @@ So Rust owns the object and Swift holds an opaque token:
   concurrent call is aliasing UB, not a lost update. The Swift owner serialises under the lock it
   already held for the value type it replaced — including for calls that look read-only, because
   the producers below write the handle's slots.
+
+  **One handle is written for the opposite, and it says so in its own doors:**
+  `SlopDeskCursorSampler`. Its doors take `&`, not `&mut`, and its state sits behind two mutexes,
+  because two threads calling it is the DESIGN rather than a caller's mistake — the 120 Hz cursor
+  position sample runs off the main thread precisely so a main-thread window raise cannot freeze the
+  pointer, while `AppKit` will only answer what shape is displayed ON the main thread. There is no
+  lock the caller could hold that would serialise those two without reintroducing the freeze.
+
+  What makes it an exception rather than a hole: the locks are two so the cold path never blocks the
+  hot one, the PNG render happens with neither held, and nothing else may be assumed shareable. A
+  handle without that note in its own header block is not one — the rule stays the default and this
+  is a documented, tested departure from it, with a test that runs both paths concurrently.
 - Answers still come back through `(out, cap) -> needed`. **Nothing is allocated on one side and
   freed on the other**, so §4's "no free function" survives intact.
 

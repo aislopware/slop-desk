@@ -26,10 +26,18 @@ import PackageDescription
 //
 // macOS only: the iOS slices have no libgit2 in them at all (`slopdesk_ffi.h`'s `TARGET_OS_OSX`
 // region, and the `cfg` behind it).
+// AppKit joins them for the same reason and by the same mechanism. `slopdesk-apple-cursor` reads the
+// displayed cursor and renders its PNG, and the one thing in that path the linker has to resolve is
+// `NSDeviceRGBColorSpace` — an extern CONSTANT, not a class. Classes cost nothing here: `objc2` looks
+// them up through the runtime at first use, which is why the four `slopdesk-apple-*` crates before
+// this one needed no framework naming at all. A constant is a symbol, and one object per crate means
+// every product that calls any door needs it resolvable even though only the video host ever reads a
+// cursor. `-dead_strip` removes what none of them reach.
 let ffiCLibraries: [LinkerSetting] = [
     .linkedLibrary("iconv", .when(platforms: [.macOS])),
     .linkedFramework("Security", .when(platforms: [.macOS])),
     .linkedFramework("CoreFoundation", .when(platforms: [.macOS])),
+    .linkedFramework("AppKit", .when(platforms: [.macOS])),
 ]
 let package = Package(
     name: "SlopDesk",

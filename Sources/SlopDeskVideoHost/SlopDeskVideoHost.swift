@@ -17,7 +17,9 @@
 //                           3, idle-skip, heartbeat IDR.
 // - VideoEncoder          — single low-latency-RC HEVC live session + a crisp static refresh
 //                           (Design A: QP-bumped near-lossless keyframe on the SAME session).
-// - CursorSampler         — ~120 Hz NSEvent/NSCursor → cursor side-channel.
+// - CursorSampler         — a ~120 Hz timer and one off-main mouse read over the Rust
+//                           cursor-sampler handle; every decision and both framework
+//                           reads behind it are Rust's.
 // - WindowGeometryWatcher — AX move/resize notifications + CGWindowList drag-poll.
 // - InputInjector         — activate-then-control: raise+focus → CGEvent.post,
 //                           tagged eventSourceUserData for self-inject filtering.

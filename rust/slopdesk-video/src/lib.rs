@@ -19,6 +19,11 @@
 //!   its `cursor_wire`: a non-finite coordinate reaching a `CALayer` is a dead client, the swipe
 //!   status must never promise a navigation the host would refuse, and the cursor's PNG crosses as
 //!   an offset rather than a copy.
+//! - [`cursor_sampling`] — what fills the cursor channel on the host: when to re-read the shape,
+//!   where the pointer is in the captured window, which id a shape gets and what size to render it
+//!   at. LINKED, through `slopdesk-ffi`'s `cursor_sampler`, which drives it alongside the two reads
+//!   it cannot make itself — `slopdesk-apple-cursor` for the shape and `slopdesk-posix`'s `dynsym`
+//!   for the window server's change counter.
 //! - [`swipe_recognizer`] — what fills that channel: reading a two-finger page-swipe out of the
 //!   forwarded scroll stream, which no browser can recognise from injected events itself.
 //! - [`input_event`] — the client→host input events, in normalised window space. LINKED, through
@@ -162,6 +167,7 @@ pub mod congestion;
 pub mod coordinate_mapping;
 pub mod cursor;
 pub mod cursor_overlay;
+pub mod cursor_sampling;
 pub mod decode_admission;
 pub mod encoder_ceiling;
 pub mod error;

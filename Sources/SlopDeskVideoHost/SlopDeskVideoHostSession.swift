@@ -3442,9 +3442,13 @@ public actor SlopDeskVideoHostSession {
         return out
     }
 
-    private func onCursorUpdate(_ update: CursorUpdate) {
+    /// Already-encoded cursor-position bytes from the sampler, straight onto the cursor socket.
+    ///
+    /// The bytes are the sampler's own — decoding them here so ``VideoSessionLogic/scheduleCursor``
+    /// could encode them again would be a parse and a build 120 times a second with no reader.
+    private func onCursorUpdate(_ datagram: Data) {
         guard stateMachine.mediaFlowing else { return }
-        transport.send(scheduler.scheduleCursor(.update(update)).bytes, on: .cursor)
+        transport.send(datagram, on: .cursor)
     }
 
     /// A new cursor SHAPE bitmap to ship out-of-band (once per shapeID; the sampler
@@ -3485,9 +3489,8 @@ public actor SlopDeskVideoHostSession {
         transport.send(scheduler.scheduleCursor(.swipeNavStatus(status)).bytes, on: .cursor)
     }
 
-    private func onCursorShape(_ shape: CursorShapeMessage) {
+    private func onCursorShape(_ bytes: Data) {
         guard stateMachine.mediaFlowing else { return }
-        let bytes = scheduler.scheduleCursor(.shape(shape)).bytes
         transport.send(bytes, on: .cursor)
         Task { // inherits this actor's isolation; re-checks liveness after each gap so a
             // bye/stop teardown racing the delay aborts cleanly. THREE time-separated copies (0/25/50ms)
