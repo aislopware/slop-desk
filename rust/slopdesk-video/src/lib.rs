@@ -128,6 +128,11 @@
 //! - [`fps_governor`] — frame rate as a second control axis, on two independent bottlenecks: the
 //!   link, and the hardware encoder — actuated through one schedule-anchored cadence gate so a
 //!   governed rate is a metronome rather than an alternating skip.
+//! - [`ax_probe`] — what the host does with what the accessibility tree answers: which candidate
+//!   element is the window it meant, which pids are worth re-sweeping this tick, and what a
+//!   window's absence from a sweep proves. LINKED, through `slopdesk-ffi`'s `ax`, which drives it
+//!   alongside `slopdesk-apple-ax`. Every arm here was previously unreachable by any test: the
+//!   Swift it came from needed an Accessibility grant to run a line of it.
 //!
 //! ## Invariants
 //!
@@ -153,6 +158,7 @@ pub mod adaptive_qp;
 pub mod annexb;
 pub mod audio_jitter;
 pub mod audio_wire;
+pub mod ax_probe;
 pub mod blob;
 pub mod blob_list;
 pub mod bytes;

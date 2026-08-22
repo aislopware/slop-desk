@@ -53,8 +53,10 @@ guessing one.
   obligation is local. Never lower a crate to `deny` to fit code in.
 - **`slopdesk-apple-*` is the one other family allowed `unsafe`, and only through `objc2`.** A crate
   in it wraps exactly ONE Apple framework area, calls it through the `objc2` bindings, and may not
-  hand-write a raw-pointer dereference, a transmute or a `from_raw` — if a call needs one, the
-  obligation belongs in one of the three crates above and the operation moves there. Most of what
+  hand-write a raw-pointer dereference or a transmute — if a call needs one, the obligation belongs
+  in one of the three crates above and the operation moves there. The one admission is
+  `CFRetained::from_raw`, at most ONE site per crate, for a Copy/Create-rule out-parameter that
+  `objc2` hands over raw; the count is gated, and any other `from_raw` is still barred. Most of what
   these crates call is `safe` in the bindings already, so `unsafe` here means "the framework's own
   contract", never "Rust's". Each carries `#![deny(unsafe_op_in_unsafe_fn)]`, a `# Safety` note per
   `unsafe` block naming the framework rule it satisfies, and a leak test. This family exists because

@@ -18,14 +18,19 @@
 //!
 //! ## Why the framework is OPENED rather than searched
 //! `RTLD_DEFAULT` searches the images already loaded, so what it answers depends on whether
-//! something else happened to pull CoreGraphics in first. Measured in a bare process: both names
-//! answer null before `dlopen` and the same address after. A lookup that is cached — and it must be
-//! cached, because the caller asks at 120 Hz and a `dlsym` MISS walks every image's symbol table —
-//! would then freeze whichever answer the first call happened to get. Opening the framework by path
-//! makes the answer a fact about the OS rather than about load order, and costs one `dlopen` of a
-//! library every process with a window-server connection already maps.
+//! something else happened to pull the framework in first. Measured in a bare process: every name
+//! below answers null before `dlopen` and a real address after. A lookup that is cached — and it
+//! must be cached, because the cursor caller asks at 120 Hz and a `dlsym` MISS walks every image's
+//! symbol table — would then freeze whichever answer the first call happened to get. Opening the
+//! framework by path makes the answer a fact about the OS rather than about load order, and costs
+//! one `dlopen` of a library every process with a window-server connection already maps.
 //!
-//! The handle is never closed. It is a system framework the process uses for its whole life, and
+//! Each symbol names the image that actually EXPORTS it, measured rather than assumed: the cursor
+//! seed is CoreGraphics', and `_AXUIElementGetWindow` is HIServices' — opening CoreGraphics and
+//! asking it for the AX symbol answers null, so a single shared handle would have made the AX door
+//! permanently dead.
+//!
+//! A handle is never closed. These are system frameworks the process uses for its whole life, and
 //! `dlclose` on one is a no-op on Darwin anyway.
 //!
 //! ## Nothing here is a fallback
@@ -39,8 +44,13 @@ use std::sync::OnceLock;
 /// CoreGraphics, by absolute path.
 ///
 /// The path rather than the bare name because `dlopen("CoreGraphics")` would search
-/// `DYLD_LIBRARY_PATH` first, and this is the one symbol source that must not be substitutable.
+/// `DYLD_LIBRARY_PATH` first, and these symbol sources must not be substitutable.
 const CORE_GRAPHICS: &CStr = c"/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
+
+/// `HIServices`, the `ApplicationServices` sub-framework that owns the Accessibility client API —
+/// and the only image that exports [`ax_window_id`]'s symbol. Probed: CoreGraphics does not.
+const HI_SERVICES: &CStr =
+    c"/System/Library/Frameworks/ApplicationServices.framework/Frameworks/HIServices.framework/HIServices";
 
 /// The window server's cursor SEED — a counter that increments whenever the DISPLAYED system
 /// cursor image changes.
@@ -71,7 +81,8 @@ pub fn cursor_seed() -> Option<i32> {
     static RESOLVED: OnceLock<Option<Seed>> = OnceLock::new();
 
     let resolved = (*RESOLVED.get_or_init(|| {
-        let symbol = lookup(c"CGSCurrentCursorSeed").or_else(|| lookup(c"SLSCurrentCursorSeed"))?;
+        let symbol = lookup(&CORE_GRAPHICS_HANDLE, CORE_GRAPHICS, c"CGSCurrentCursorSeed")
+            .or_else(|| lookup(&CORE_GRAPHICS_HANDLE, CORE_GRAPHICS, c"SLSCurrentCursorSeed"))?;
         // SAFETY: the function's obligation, discharged above — `symbol` is non-null and came from
         // asking CoreGraphics for one of the two names that denote `int (*)(void)` there.
         Some(unsafe { std::mem::transmute::<*mut c_void, Seed>(symbol) })
@@ -81,38 +92,98 @@ pub fn cursor_seed() -> Option<i32> {
     Some(unsafe { resolved() })
 }
 
-/// CoreGraphics' address for `name`, or `None` when it does not export it.
+/// The `CGWindowID` of an Accessibility window element, or `None` when it cannot be had.
+///
+/// `element` must be a live `AXUIElement` denoting a WINDOW — the caller owns the reference for the
+/// duration of the call. There is no public AX↔`CGWindowID` map, so every window the host tracks by
+/// `CGWindowID` is matched to its AX element through this one private symbol; a frame-equality
+/// match is the alternative and it mis-binds whenever two windows share an origin, which the
+/// virtual display manufactures on purpose.
+///
+/// `None` covers four different failures on purpose, because every caller treats them the same way:
+/// the symbol is gone, the element is not a window, the call failed, or it "succeeded" and wrote
+/// zero. That last one is real — on macOS 15+ with the screen locked the SPI answers success and
+/// leaves the id at zero (`AeroSpace` #445) — and a caller that trusted it would bind every window
+/// in the app to id zero at once.
+///
+/// # Safety
+/// `element` must be a live `AXUIElement`. The callee dereferences it — it reads the element's
+/// `CFTypeID` before it will answer — so this cannot be a safe function no matter how opaquely the
+/// pointer is passed through HERE. Null is still rejected rather than assumed away, because a null
+/// element is what a caller's own failed lookup produces and refusing it is cheaper than a rule.
+///
+/// `_AXUIElementGetWindow` is declared `AXError _AXUIElementGetWindow(AXUIElementRef, CGWindowID
+/// *)` in every published reverse-engineering of `HIServices`, and the transmute target spells
+/// exactly that: two pointer-width arguments in, an `int32` `AXError` back, the platform C ABI.
+/// `dlsym` answers null or the address of an externally-linked function in the image asked, and
+/// null is checked before the cast. `id` is a live local for the whole call and is only READ after
+/// the callee reports success, so an implementation that leaves it untouched cannot make this
+/// observe uninitialised memory — `0` is what it holds and `0` is rejected below.
+#[must_use]
+#[expect(
+    unsafe_code,
+    reason = "dlsym has no safe wrapper, and calling what it answers is a cast"
+)]
+pub unsafe fn ax_window_id(element: *const c_void) -> Option<u32> {
+    type GetWindow = unsafe extern "C" fn(*const c_void, *mut u32) -> i32;
+    static RESOLVED: OnceLock<Option<GetWindow>> = OnceLock::new();
+
+    if element.is_null() {
+        return None;
+    }
+    let resolved = (*RESOLVED.get_or_init(|| {
+        let symbol = lookup(&HI_SERVICES_HANDLE, HI_SERVICES, c"_AXUIElementGetWindow")?;
+        // SAFETY: the function's obligation, discharged above — `symbol` is non-null and came from
+        // asking HIServices for the one name that denotes that signature there.
+        Some(unsafe { std::mem::transmute::<*mut c_void, GetWindow>(symbol) })
+    }))?;
+    let mut id: u32 = 0;
+    // SAFETY: `resolved` is a live function with the declared signature in an image this process
+    // opened and never closes; `element` is non-null and, by this function's own contract, a live
+    // AX element the callee may interpret; `&raw mut id` points at a live, aligned, initialised
+    // `u32` that outlives the call.
+    let status = unsafe { resolved(element, &raw mut id) };
+    (status == 0 && id != 0).then_some(id)
+}
+
+/// An image's address for `name`, or `None` when it does not export it.
 ///
 /// Private because the pointer it answers carries an obligation only the function that knows the
 /// NAME can discharge — handing it out is the shape the module doc rules out.
 ///
 /// # Safety
-/// The handle comes from [`core_graphics`], which is either null-checked or `None`, and `name` is a
-/// `&CStr` so it is NUL-terminated by construction. Nothing is dereferenced or called here.
+/// The handle comes from [`image`], which is either null-checked or `None`, and `name` is a `&CStr`
+/// so it is NUL-terminated by construction. Nothing is dereferenced or called here.
 #[expect(unsafe_code, reason = "dlsym has no safe wrapper")]
-fn lookup(name: &CStr) -> Option<*mut c_void> {
-    let handle = core_graphics()?;
+fn lookup(cache: &OnceLock<Option<usize>>, path: &CStr, name: &CStr) -> Option<*mut c_void> {
+    let handle = image(cache, path)?;
     // SAFETY: the function's obligation, above.
     let symbol = unsafe { libc::dlsym(handle, name.as_ptr()) };
     (!symbol.is_null()).then_some(symbol)
 }
 
-/// The CoreGraphics handle, opened once, or `None` where there is no such framework.
+/// CoreGraphics' handle, opened at most once. See [`image`] for why it is stored as an integer.
+static CORE_GRAPHICS_HANDLE: OnceLock<Option<usize>> = OnceLock::new();
+
+/// `HIServices`' handle, opened at most once. A SEPARATE cache from CoreGraphics' rather than a map
+/// keyed by path: two images is the whole population, and the pair is what makes it impossible to
+/// ask one framework for the other's symbol by accident.
+static HI_SERVICES_HANDLE: OnceLock<Option<usize>> = OnceLock::new();
+
+/// The handle for `path`, opened once into `cache`, or `None` where there is no such framework.
 ///
 /// # Safety
-/// `dlopen` takes a NUL-terminated path — [`CORE_GRAPHICS`] is a `&CStr` literal — and answers
+/// `dlopen` takes a NUL-terminated path — every caller passes a `&CStr` constant — and answers
 /// either null or a handle valid until `dlclose`, which is never called. Nothing is dereferenced.
 #[expect(unsafe_code, reason = "dlopen has no safe wrapper")]
-fn core_graphics() -> Option<*mut c_void> {
-    /// A `*mut c_void` is not `Send`, and the pointer is a process-wide handle rather than data —
-    /// so it is cached as the integer it is and handed back as a pointer at the use site. There is
-    /// nothing to synchronise: `dlopen` is itself thread-safe and answers the same handle for the
-    /// same path.
-    static HANDLE: OnceLock<Option<usize>> = OnceLock::new();
-
-    let address = (*HANDLE.get_or_init(|| {
+fn image(cache: &OnceLock<Option<usize>>, path: &CStr) -> Option<*mut c_void> {
+    // A `*mut c_void` is not `Send`, and the pointer is a process-wide handle rather than data — so
+    // it is cached as the integer it is and handed back as a pointer at the use site. There is
+    // nothing to synchronise: `dlopen` is itself thread-safe and answers the same handle for the
+    // same path.
+    let address = (*cache.get_or_init(|| {
         // SAFETY: the function's obligation, above.
-        let handle = unsafe { libc::dlopen(CORE_GRAPHICS.as_ptr(), libc::RTLD_LAZY) };
+        let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY) };
         (!handle.is_null()).then(|| handle.addr())
     }))?;
     Some(std::ptr::without_provenance_mut(address))
@@ -120,7 +191,10 @@ fn core_graphics() -> Option<*mut c_void> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cursor_seed, lookup};
+    use super::{
+        CORE_GRAPHICS, CORE_GRAPHICS_HANDLE, HI_SERVICES, HI_SERVICES_HANDLE, ax_window_id, cursor_seed,
+        lookup,
+    };
 
     /// The framework opens and the seed is THERE. This is the arm the `RTLD_DEFAULT` version could
     /// not reach — a bare test binary has no CoreGraphics loaded, so a search of the already-loaded
@@ -128,7 +202,10 @@ mod tests {
     #[test]
     #[cfg(target_os = "macos")]
     fn the_seed_resolves_because_the_framework_is_opened_rather_than_searched() {
-        assert!(lookup(c"CGSCurrentCursorSeed").is_some() || lookup(c"SLSCurrentCursorSeed").is_some());
+        assert!(
+            lookup(&CORE_GRAPHICS_HANDLE, CORE_GRAPHICS, c"CGSCurrentCursorSeed").is_some()
+                || lookup(&CORE_GRAPHICS_HANDLE, CORE_GRAPHICS, c"SLSCurrentCursorSeed").is_some()
+        );
         assert!(cursor_seed().is_some());
     }
 
@@ -137,7 +214,58 @@ mod tests {
     /// crashes.
     #[test]
     fn a_symbol_the_framework_does_not_export_is_absent() {
-        assert_eq!(lookup(c"slopdesk_a_symbol_that_cannot_exist"), None);
+        assert_eq!(
+            lookup(
+                &CORE_GRAPHICS_HANDLE,
+                CORE_GRAPHICS,
+                c"slopdesk_a_symbol_that_cannot_exist"
+            ),
+            None
+        );
+    }
+
+    /// The two images are asked SEPARATELY, and this is why: the AX symbol is `HIServices`' and
+    /// CoreGraphics does not export it. Measured before the split, when one shared handle would
+    /// have made [`ax_window_id`] answer `None` forever on a perfectly healthy machine.
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn each_symbol_is_asked_of_the_image_that_actually_exports_it() {
+        assert!(lookup(&HI_SERVICES_HANDLE, HI_SERVICES, c"_AXUIElementGetWindow").is_some());
+        assert_eq!(
+            lookup(&CORE_GRAPHICS_HANDLE, CORE_GRAPHICS, c"_AXUIElementGetWindow"),
+            None
+        );
+    }
+
+    /// A null element is refused BEFORE the SPI sees it. The AX call is documented to tolerate one,
+    /// but "documented" for a private symbol is a reverse-engineered header, and the caller's
+    /// `Option` already has a place to put the answer.
+    #[test]
+    #[expect(
+        unsafe_code,
+        reason = "the door is unsafe; refusing null is the arm being pinned"
+    )]
+    fn no_element_is_no_window() {
+        // SAFETY: null is the one argument the contract does NOT require to be a live element —
+        // it is refused before the symbol is asked for, which is what this test pins.
+        assert_eq!(unsafe { ax_window_id(std::ptr::null()) }, None);
+    }
+
+    /// The null refusal is CHECKED BEFORE resolution, so it holds identically whether or not the
+    /// symbol is present, and a thousand of them open no second handle. The other arm — a live
+    /// element that is not a window — cannot be exercised here: manufacturing one means creating an
+    /// `AXUIElement`, and this crate deliberately has no Accessibility dependency. It is covered
+    /// where the elements exist, in `slopdesk-apple-ax`.
+    #[test]
+    #[expect(
+        unsafe_code,
+        reason = "the door is unsafe; refusing null is the arm being pinned"
+    )]
+    fn refusing_no_element_needs_no_symbol() {
+        for _ in 0..1_000 {
+            // SAFETY: as above — null takes the early return and never reaches the callee.
+            assert_eq!(unsafe { ax_window_id(std::ptr::null()) }, None);
+        }
     }
 
     /// The seed is a COUNTER, so the only thing that is true of it without moving the mouse is that

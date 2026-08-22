@@ -121,6 +121,21 @@ pub fn unsafe_policy(tree: &Tree) -> Report {
 /// obligations it is not carrying — that sentence is the argument for its own existence — and a
 /// gate that could not tell `transmute` in a doc comment from a call to one would force the
 /// argument out of the crate to keep the crate green.
+///
+/// ## The one admission, and why it is narrower than an exception
+/// `CFRetained::from_raw` is admitted, at most ONCE per crate. Core Foundation's Copy/Create rule
+/// says a function whose name contains `Copy` or `Create` hands the caller a +1 retain, and some of
+/// those functions return it through an OUT-PARAMETER rather than as a value — `objc2` generates
+/// those as a raw `NonNull<*const CFType>` and offers nothing owned, because the ownership is
+/// stated by Apple's naming convention, not by the C signature. Taking that retain is therefore a
+/// FRAMEWORK obligation in exactly the sense this rule is built around: it is documented, and a
+/// reviewer checks it by reading the callee's name. Moving it to `slopdesk-posix` would file an
+/// accessibility read under "a syscall with no safe wrapper", which is worse than saying it here.
+///
+/// The count is what keeps this from being a hole. One site per crate means the crate has exactly
+/// one place where a Copy-rule pointer becomes an owned value, so every typed reader is a caller of
+/// that helper rather than a second obligation — and a second `from_raw` fails the gate with the
+/// same message as a `transmute` would.
 #[must_use]
 pub fn apple_family(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -155,15 +170,24 @@ pub fn apple_family(tree: &Tree) -> Report {
         let src = format!("{crate_dir}/src");
         let mut read_any = false;
         let mut hand_written = false;
+        let mut copy_rule_sites = 0_usize;
         for (path, file) in tree.under(&src) {
             if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
                 continue;
             }
             read_any = true;
-            hand_written |= crate::text::matches_line(
-                file.code(),
-                r"transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)",
-            );
+            for line in file.code().lines() {
+                // The admission is recognised BEFORE the ban, and by the qualified path only. A bare
+                // `from_raw` is still a raw-pointer operation whatever it is reconstructing.
+                if line.contains("CFRetained::from_raw") {
+                    copy_rule_sites += 1;
+                    continue;
+                }
+                hand_written |= crate::text::matches_line(
+                    line,
+                    r"transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)",
+                );
+            }
         }
         report.fail_if(
             !read_any,
@@ -175,6 +199,14 @@ pub fn apple_family(tree: &Tree) -> Report {
                 "{crate_dir} hand-writes a raw-pointer operation — the objc2 family may write unsafe only \
                  to CALL an unsafe binding; a transmute or a from_raw is a Rust obligation and belongs in \
                  slopdesk-posix or slopdesk-ffi (docs/57 §2)",
+            ),
+        );
+        report.fail_if(
+            copy_rule_sites > 1,
+            format!(
+                "{crate_dir} takes a Core Foundation Copy-rule retain in {copy_rule_sites} places — the \
+                 family admits CFRetained::from_raw at ONE site per crate, so that every typed reader is a \
+                 caller of that helper rather than a second obligation (docs/57 §2)",
             ),
         );
     }
@@ -417,6 +449,46 @@ mod tests {
              {}\n",
         );
         assert!(super::apple_family(&fixture.tree()).is_clean());
+    }
+
+    /// One Copy-rule retain passes; two are the same failure a transmute is. The count is the whole
+    /// difference between an admission and a hole — one site means every typed reader CALLS it.
+    #[test]
+    fn a_second_copy_rule_retain_is_caught_where_the_first_is_admitted() {
+        let one = "pub fn copy() { let _ = unsafe { CFRetained::from_raw(value) }; }\n";
+        let fixture = policy_fixture("apple-copy-rule");
+        fixture.write("rust/slopdesk-apple-cgevent/src/lib.rs", one);
+        assert!(super::apple_family(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            &format!("{one}pub fn again() {{ let _ = unsafe {{ CFRetained::from_raw(other) }}; }}\n"),
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("Copy-rule retain")),
+            "{report:?}"
+        );
+    }
+
+    /// The admission is by QUALIFIED path. `Box::from_raw`, `CString::from_raw` and friends
+    /// reconstruct an owned value from a pointer this crate made, which is the Rust obligation the
+    /// family does not carry — so a bare `from_raw` is still caught.
+    #[test]
+    fn an_unqualified_from_raw_is_not_the_copy_rule_admission() {
+        let fixture = policy_fixture("apple-bare-from-raw");
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            "pub fn f() { let _ = unsafe { Box::from_raw(handle) }; }\n",
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("raw-pointer operation")),
+            "{report:?}"
+        );
     }
 
     /// A workspace one float expression away from a hard clippy error whose only offered fix breaks

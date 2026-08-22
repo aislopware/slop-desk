@@ -29,6 +29,7 @@
 
 #if os(macOS)
 import AppKit
+import CSlopDeskFFI
 
 /// Owns ONE immersive-mode CGEvent tap: created on ``engage(forward:keyWindow:)``, torn down on
 /// ``disengage()`` (the toggle, the ⌃⌥⌘E escape chord, unmount) / deinit. Default state is OFF — nothing is
@@ -48,19 +49,16 @@ public final class SystemKeyCaptureController {
     /// and the press/release edge (flagsChanged maps to the changed modifier's own down/up).
     public typealias Forward = (_ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool) -> Void
 
-    /// Whether the process holds Accessibility trust (`AXIsProcessTrusted`) — the precondition for a
-    /// filtering keyboard tap. Callers gate their "Immersive Mode" affordance on this.
-    public static var isTrusted: Bool { AXIsProcessTrusted() }
+    /// Whether the process holds Accessibility trust — the precondition for a filtering keyboard tap.
+    /// Callers gate their "Immersive Mode" affordance on this. Never cached: the grant is live TCC state
+    /// a person can give or take away while the app runs.
+    public static var isTrusted: Bool { slopdesk_ax_is_trusted() }
 
-    /// Triggers the system Accessibility-trust prompt (`AXIsProcessTrustedWithOptions` + prompt). macOS shows
-    /// the dialog at most once per app; afterwards the user must flip the toggle in System Settings — callers
-    /// should surface that path in UI text rather than calling this in a loop.
+    /// Triggers the system Accessibility-trust prompt. macOS shows the dialog at most once per app;
+    /// afterwards the user must flip the toggle in System Settings — callers should surface that path in
+    /// UI text rather than calling this in a loop.
     public static func promptForTrust() {
-        // The literal key, not `kAXTrustedCheckOptionPrompt`: that SDK constant is an (immutable-in-practice)
-        // global `var`, which Swift 6 strict concurrency rejects from an isolated context. Its value is the
-        // ABI-stable string "AXTrustedCheckOptionPrompt".
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
+        _ = slopdesk_ax_prompt_for_trust()
     }
 
     /// Whether an engagement is live (the tap exists and the user's toggle is ON — capture itself may be

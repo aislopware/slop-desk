@@ -91,6 +91,17 @@ It may not write `ptr::read`, `transmute`, `from_raw`, `slice::from_raw_parts` o
 framework call needs one, the obligation is a POSIX-shaped or FFI-shaped obligation and it belongs
 in `slopdesk-posix` or `slopdesk-ffi`, where a reviewer is already holding that question.
 
+**With ONE admission: `CFRetained::from_raw`, at most once per crate.** Core Foundation's Copy/Create
+rule says a function whose name contains `Copy` or `Create` hands back a +1 retain, and some of them
+deliver it through an out-parameter rather than as a return value — `objc2` generates those as a raw
+`NonNull<*const CFType>` and offers nothing owned, because the ownership is stated by Apple's naming
+convention and not by the C signature. Taking that retain is a FRAMEWORK obligation in the exact
+sense the paragraph above is built on: documented, and checked by reading the callee's name. What
+keeps this from being a hole is the COUNT. One site per crate means the crate has exactly one place
+where a Copy-rule pointer becomes an owned value and every typed reader is a caller of that helper;
+a second one fails `apple-family` with the same message a `transmute` gets. See the fifth correction
+in §5 for the reading that earned this.
+
 **Every `unsafe` block names the FRAMEWORK rule it satisfies**, not a Rust rule. `// SAFETY: the
 buffer outlives the call` is the wrong comment here — the binding already proved that. The right one
 is `// SAFETY: kAXRaiseAction is a documented action on a window element; a stale element is a
@@ -150,7 +161,7 @@ an `extern` key constant, an element type C's `CFArrayRef` does not carry, an ou
 | `slopdesk-apple-cgevent` | CoreGraphics events | `InputInjector`'s posting | **landed** (increment 84) |
 | `slopdesk-apple-cgwindow` | CG window services | `HostFrontmostApp`'s decode, `WindowGeometryWatcher`'s window reads | **landed** (increment 85) |
 | `slopdesk-apple-cgdisplay` | CG display services | every `CGDisplayBounds`/`CGGet*DisplayList` site | **landed** (increment 85) |
-| `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowGeometryWatcher`, `WindowFeedAXSupport` | planned |
+| `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowPlacement`, `WindowGeometryWatcher`'s resize, `WindowFeedAXSupport`'s probe | **landed** (increment 90) — costs the §2 admission |
 | `slopdesk-apple-cursor` | `NSCursor` + the offscreen `NSBitmapImageRep` render | `CursorSampler`'s two AppKit reads | **landed** (increment 89) — costs **two** `unsafe` blocks |
 | `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder`, `VideoDecoder` | planned |
@@ -161,7 +172,7 @@ an `extern` key constant, an element type C's `CFArrayRef` does not carry, an ou
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s
 one-implementation rule does not soften because the other language is a framework.
 
-### Four corrections this ledger earned by being wrong
+### Five corrections this ledger earned by being wrong
 
 **`ForegroundProcessProbes` was never an `slopdesk-apple-app` row.** It sat in that line because it
 was read as "host code that resolves a process", and it contains no AppKit at all: `tcgetpgrp`,
@@ -207,3 +218,32 @@ a per-process snapshot that freezes in a daemon pumping no run loop — the bug 
 exists to have fixed — so there is nothing to port, only something to keep deleted. Its
 *notifications* are a different API and still Swift's: an observer with a run loop behind it is not an
 effect on the system, it is a subscription, and §1's test for what belongs here is the former.
+
+**§2's raw-pointer ban was one clause too wide, and `slopdesk-apple-ax` is where it showed.** The
+ban listed `from_raw` beside `transmute`, and the two are not the same kind of thing.
+`AXUIElementCopyAttributeValue` is a Copy-rule function that returns its +1 retain through an
+out-parameter, so `objc2` generates the parameter as a raw `NonNull<*const CFType>` — measured, not
+assumed: the binding's own `# Safety` note says only "`value` must be a valid pointer", and there is
+no owned-return variant anywhere in the generated module. Every typed read in this crate goes
+through that one call, so the ban as written had exactly two escapes, and both were worse than the
+thing they avoided: file an accessibility read in `slopdesk-posix` under "a syscall with no safe
+wrapper", or leave the whole AX row in Swift.
+
+So the rule narrowed rather than bent. §2 now admits `CFRetained::from_raw` and nothing else, at one
+site per crate, and `apple-family` counts the sites rather than pattern-matching them away — the
+admission is recognised by the QUALIFIED path, so `Box::from_raw` and `CString::from_raw`, which
+reconstruct a value this crate itself made, are still the Rust obligation the family does not carry.
+In `slopdesk-apple-ax` that site is `attribute::copy`, and the crate's other readers — position,
+size, minimized, the window list — are its callers.
+
+The rest of the AX row split the way the cursor row did, and for the same reason: the private
+`_AXUIElementGetWindow` has no binding at all, so resolving and calling it is a function-pointer
+transmute that §2 still bars outright. It went to `slopdesk_posix::dynsym`, which had to learn a
+second framework image to hold it — CoreGraphics does not export that symbol, HIServices does, and
+asking the wrong one answers null rather than failing, so a single shared handle would have made the
+door permanently dead. A test pins that. The DECISIONS above the reads — the probe budget, the
+window ledger, the phantom filter, and the rule that the private window id wins outright while the
+frame is consulted only when the symbol resolved nothing for any candidate — are
+`slopdesk_video::ax_probe`, `forbid(unsafe_code)`, with eighteen tests. Every one of those arms was
+previously unreachable: the Swift they came from needed an Accessibility grant to run a line of it,
+and `WindowFeedAXSupport.swift`'s header said so.

@@ -11,6 +11,7 @@
 #if os(macOS)
 import AppKit
 import ApplicationServices
+import CSlopDeskFFI // slopdesk_ax_is_trusted
 import SlopDeskVideoHost
 
 func eprint(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
@@ -25,7 +26,7 @@ while let a = it.next() {
     }
 }
 
-eprint("AXIsProcessTrusted=\(AXIsProcessTrusted())")
+eprint("accessibility-trusted=\(slopdesk_ax_is_trusted())")
 guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first else {
     eprint("app not running: \(bundleID)")
     exit(2)

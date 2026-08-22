@@ -917,7 +917,7 @@ let package = Package(
         // beat — the runtime proof for the swipe-nav history gate that unit tests cannot give
         // (hang-safety bars process-external AX from XCTest). Needs Accessibility TCC.
         // Diagnostic-only. `swift run slopdesk-navhistory-probe [bundle-id] [--seconds N]`.
-        .executableTarget(name: "slopdesk-navhistory-probe", dependencies: ["SlopDeskVideoHost"]),
+        .executableTarget(name: "slopdesk-navhistory-probe", dependencies: ["SlopDeskVideoHost", "CSlopDeskFFI"]),
 
         // VD-120Hz DE-RISK probe: creates a headless CGVirtualDisplay advertising a >60Hz mode and
         // reports the refresh rate WindowServer actually grants — the make-or-break for the

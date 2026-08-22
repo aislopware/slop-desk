@@ -1,5 +1,5 @@
 #if os(macOS)
-import ApplicationServices
+import CoreGraphics
 import CSlopDeskFFI
 import SlopDeskVideoProtocol
 
@@ -254,82 +254,31 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         }
     }
 
-    /// PATH A in-session resize: resize the REAL tracked window to `desiredPoints` via the
-    /// Accessibility API and return the size it ACTUALLY adopted (points). The window may clamp to its
-    /// own min/max, so the ACHIEVED size (read back from `kAXSizeAttribute`), not the requested one, is
-    /// the source of truth for the SCStream/encoder reconfigure + `resizeAck`.
+    /// PATH A in-session resize: resize the REAL tracked window to `desiredPoints` and return the
+    /// size it ACTUALLY adopted (points). The window may clamp to its own min/max, so the ACHIEVED
+    /// size, not the requested one, is the source of truth for the SCStream/encoder reconfigure +
+    /// `resizeAck`.
     ///
-    /// Returns `nil` (resize ABORTED — caller keeps the old encoder, sends no ack) when the app/window
-    /// can't be looked up, the window rejects a size write (`kAXErrorAttributeUnsupported` on a
-    /// fixed-size/sheet window), or the AX call can't complete (`kAXErrorCannotComplete` on a
-    /// hung/modal app). NEVER crashes.
+    /// Returns `nil` (resize ABORTED — caller keeps the old encoder, sends no ack) when the
+    /// app/window can't be looked up, the window rejects a size write (a fixed-size/sheet window),
+    /// or the AX call can't complete (a hung/modal app). NEVER crashes.
+    ///
+    /// The display list is lent so the door can re-anchor the window at its display's TOP-LEFT
+    /// before the size write: macOS clamps an AX size-set to keep the window on screen from its
+    /// CURRENT position, so a window parked mid-screen can't grow to the full display until it has
+    /// been moved to the origin first.
     ///
     /// ⚠️ **GUI-ONLY + TCC:** needs the Accessibility grant (as watcher/injector do).
-    /// `AXUIElementSetMessagingTimeout` caps a hung target (mirrors ``InputInjector/raiseTargetWindow()``)
-    /// so a beachballing app fails fast instead of stalling the resize.
-    @preconcurrency
-    @MainActor
     public func resizeWindow(toPoints desiredPoints: VideoSize) -> VideoSize? {
-        let appEl = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appEl, 0.25)
-        var windowsRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let axWindows = windowsRef as? [AXUIElement] else { return nil }
-        // Match the EXACT window by CGWindowID via ``axWindowID(of:)``: a frame-equality lookup can
-        // resize the WRONG window when panes stack at one origin on the shared VD.
-        for axWindow in axWindows where axWindowID(of: axWindow) == windowID {
-            // RESIZE-TO-ORIGIN: re-anchor at the display's TOP-LEFT BEFORE the size write.
-            // macOS clamps an AX size-set to keep the window on-screen from its CURRENT position, so a
-            // window parked mid-screen can't grow to the full display; moving it to the display origin
-            // first lets the requested size take. Best-effort — a window that refuses the position write
-            // (kAXErrorAttributeUnsupported) still gets the size write below.
-            if let live = axWindowFrame(axWindow),
-               let display = HostDisplays.display(
-                   forWindowFrame: CGRect(
-                       x: live.origin.x, y: live.origin.y, width: live.size.width, height: live.size.height,
-                   ),
-                   in: HostDisplays.bounds(online: false),
-               )
-            {
-                var origin = display.origin
-                if let posValue = AXValueCreate(.cgPoint, &origin) {
-                    _ = AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, posValue)
-                }
-            }
-            var size = CGSize(width: max(1, desiredPoints.width), height: max(1, desiredPoints.height))
-            guard let value = AXValueCreate(.cgSize, &size) else { return nil }
-            // WRITE the new size. Tolerate (never crash on) unsupported/cannot-complete — a fixed-size
-            // window returns kAXErrorAttributeUnsupported, a hung app times out to
-            // kAXErrorCannotComplete. Either ⇒ abort (return nil).
-            let setStatus = AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, value)
-            guard setStatus == .success else { return nil }
-            // READ BACK the achieved size — the window may have clamped to its own min/max; the
-            // achieved (not requested) size is the source of truth for the reconfigure.
-            return axWindowFrame(axWindow)?.size ?? desiredPoints
+        var width = 0.0
+        var height = 0.0
+        let resized = HostDisplays.bounds(online: false).map(HostDisplays.record).withUnsafeBufferPointer {
+            slopdesk_ax_resize_window(
+                windowID, pid, desiredPoints.width, desiredPoints.height,
+                $0.baseAddress, $0.count, &width, &height,
+            )
         }
-        return nil
-    }
-
-    @MainActor
-    private func axWindowFrame(_ element: AXUIElement) -> VideoRect? {
-        var posRef: CFTypeRef?
-        var sizeRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
-              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success
-        else {
-            return nil
-        }
-        // `as?` to a CF type (AXValue) always succeeds (compile error); the AX copies above succeeded,
-        // so these are non-nil AXValues. Force cast traps only on an OS-contract break.
-        // swiftlint:disable:next force_cast
-        let posValue = posRef as! AXValue
-        // swiftlint:disable:next force_cast
-        let sizeValue = sizeRef as! AXValue
-        var point = CGPoint.zero
-        var size = CGSize.zero
-        AXValueGetValue(posValue, .cgPoint, &point)
-        AXValueGetValue(sizeValue, .cgSize, &size)
-        return VideoRect(x: Double(point.x), y: Double(point.y), width: Double(size.width), height: Double(size.height))
+        return resized ? VideoSize(width: width, height: height) : nil
     }
 }
 #endif

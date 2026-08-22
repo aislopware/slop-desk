@@ -1,0 +1,148 @@
+# `slopdesk-apple-ax` — the accessibility tree, and nothing else.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# The four things this tree asks an app's accessibility tree for, all of them about ONE window that
+# the rest of the host already knows by `CGWindowID`: where it is and how big, whether it is
+# minimized, raise-and-focus-it, and the same sweep over every window an app owns. That is
+# `AXUIElement` and no other API's.
+#
+# Everything ABOUT the answer is elsewhere and stays there: what size to shrink a window to before
+# it crosses displays is `slopdesk_video::window_placement`, which display it lands on is
+# `slopdesk-apple-cgdisplay`, and whether a candidate element is the right window when the private
+# id SPI is unavailable is `slopdesk_video::ax_matching`, which forbids `unsafe`.
+#
+# ## What is deliberately NOT here: `AXObserver`
+# An observer with a `CFRunLoop` behind it is a SUBSCRIPTION, not an effect on the system, and §1's
+# test for what belongs in this family is the latter — the same ruling that kept `NSWorkspace`'s
+# notifications in Swift. `WindowFeedAXObserver` keeps its dedicated thread and its run loop.
+#
+# ## What is deliberately NOT here: `_AXUIElementGetWindow`
+# The one AX symbol with no binding, because it is private. Resolving it means `dlsym` and calling
+# it means a raw function-pointer transmute, which §2 bars from this family outright — so the
+# OPERATION moved rather than the rule bending. It is `slopdesk_posix::dynsym::ax_window_id`, and
+# this crate asks that one a question.
+#
+# ## The `unsafe` in this crate
+# Every block names a framework rule. The one worth knowing about is `attribute::copy`: the AX
+# attribute read is a COPY-rule out-parameter, so taking ownership of what it wrote is a
+# `CFRetained::from_raw`. §2 admits exactly that shape and no wider — see its fifth correction — and
+# this crate has ONE of them, which every typed reader goes through.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-ax"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The accessibility tree for slopdesk — one app's windows, their frames, and raising one"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_ax"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-application-services = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  # The sub-framework the whole Accessibility client API lives under; without it the four features
+  # below name modules that are not compiled at all.
+  "HIServices",
+  # The element itself, plus the two value types its attributes are carried in.
+  "AXUIElement",
+  "AXValue",
+  "AXError",
+  # `AXUIElement::new_application` takes a `libc::pid_t`, and the binding is gated on this.
+  "libc",
+] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CFArray",
+  "CFDictionary",
+  "CFString",
+  # `CFBoolean` — how `AXMinimized` is carried, in both directions.
+  "CFNumber",
+  # `CGPoint`/`CGSize` — how `AXPosition`/`AXSize` are carried.
+  "CFCGTypes",
+] }
+slopdesk-posix = { path = "../slopdesk-posix" }
+
+# Mirrors the other read crates': this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` because §3
+# asks every crate in this family for the same two levels, and this one lifts it per block.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
+# One more, and it is a lint CONFLICT rather than a preference. `attribute` is a private module whose
+# helpers are used across the crate and exported from none of it, so `pub(crate)` is the only
+# accurate visibility — and this nursery lint asks for `pub` on it while rustc's `unreachable_pub`,
+# denied above, refuses exactly that. Clippy's own documentation records the conflict. The stricter
+# of the two is kept.
+redundant_pub_crate = "allow"

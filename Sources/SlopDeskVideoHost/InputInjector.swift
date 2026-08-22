@@ -1,19 +1,9 @@
 #if os(macOS)
 import AppKit
-import ApplicationServices
 import CoreGraphics
 import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
-
-// Private AX SPI: maps an `AXUIElement` window to its `CGWindowID`, same symbol
-// ``AXWindowID.swift``'s (`@MainActor`-isolated) `axWindowID(of:)` binds, referenced here directly
-// (not via that wrapper) because ``InputInjector/performRaise()`` runs OFF the main actor by design
-// (``InputInjector/raiseQueue``) and the underlying SPI is documented thread-safe. `@_silgen_name`
-// only binds an existing external symbol (no definition emitted here), so a second reference under a
-// distinct Swift name is link-safe.
-@_silgen_name("_AXUIElementGetWindow")
-private func inputInjectorAXWindowIDSPI(_ element: AXUIElement, _ wid: UnsafeMutablePointer<CGWindowID>) -> AXError
 
 /// Injects remote input into a tracked window using the **activate-then-control**
 /// model (doc 18 §A — Dissolved-by-decision; doc 05).
@@ -109,11 +99,11 @@ public final class InputInjector: @unchecked Sendable {
     private var lastRaiseAt: Date?
     private static let raiseThrottle: TimeInterval = 0.5
 
-    /// The matched AX window element, cached after the first successful bounds-match so subsequent
-    /// raises SKIP the O(app-windows) AX iteration (the dominant cost). The `AXUIElement` identity is
-    /// stable across window move/resize (it names the same window), so it stays valid for the session;
-    /// a stale element (window closed) just makes the best-effort AX calls no-op. `raiseQueue`-confined.
-    private var cachedAXWindow: AXUIElement?
+    /// The raise target, through ``slopdesk_ax_raiser_new``. The handle resolves the window at most
+    /// ONCE and then reuses the element, which is what keeps a raise off the O(app-windows)
+    /// accessibility walk; a stale element (window closed) just makes the best-effort calls no-op.
+    /// `raiseQueue`-confined, and freed in ``deinit``.
+    private let raiser: OpaquePointer?
 
     /// Test-only same-machine seam (`SLOPDESK_VIDEO_INJECT_TO_PID=1`): deliver events straight to
     /// the target PID via `postToPid` and SKIP the cursor warp, so a loopback host on the SAME
@@ -226,6 +216,9 @@ public final class InputInjector: @unchecked Sendable {
         self.windowID = windowID
         self.windowBoundsCG = windowBoundsCG
         self.balance = balance
+        // A display-scoped injector (full-desktop pane, pid 0) has no target window to raise, so it
+        // holds no raiser at all rather than one that would answer no forever.
+        raiser = pid > 0 ? slopdesk_ax_raiser_new(pid, windowID) : nil
         // REGIME BANNER: one line per injector naming the swipe-nav threshold family, so a field
         // log spanning host restarts/deploys self-describes which recognizer produced each
         // verdict — an early audit log carried two lines from a stale build that were
@@ -251,6 +244,7 @@ public final class InputInjector: @unchecked Sendable {
         // started), so `cancel()` from any thread releases it cleanly — no suspend/resume balance
         // to honour. Safe even if never started (`nil`).
         scrollTimer?.cancel()
+        slopdesk_ax_raiser_free(raiser)
     }
 
     public func updateWindowBounds(_ bounds: VideoRect) {
@@ -320,33 +314,12 @@ public final class InputInjector: @unchecked Sendable {
         if let lastRaiseAt, Date().timeIntervalSince(lastRaiseAt) < Self.raiseThrottle { return }
         lastRaiseAt = Date()
         hasRaisedTargetOnce = true
-        let appEl = AXUIElementCreateApplication(pid)
-        // Cap each blocking AX IPC so a hung/modal/beachballing target app fails fast (0.08s) instead
-        // of the framework default (~6s) — best-effort, a missed raise just lands the click on the
-        // already-frontmost window.
-        AXUIElementSetMessagingTimeout(appEl, 0.08)
-        // FAST PATH: reuse the cached window element — skips the O(app-windows) AX iteration, which
-        // dominates the raise cost and is why this chain runs off the main actor at all.
-        if let cached = cachedAXWindow {
-            AXUIElementPerformAction(cached, kAXRaiseAction as CFString)
-            AXUIElementSetAttributeValue(appEl, kAXMainWindowAttribute as CFString, cached)
-            AXUIElementSetAttributeValue(appEl, kAXFocusedWindowAttribute as CFString, cached)
-            _ = slopdesk_app_activate(pid)
-            return
-        }
-        var windowsRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
-              let axWindows = windowsRef as? [AXUIElement] else { return }
-        // Match the AX window to the tracked CGWindowID EXACTLY (``matchAXWindow(_:targetBounds:)``);
-        // a frame-only match mis-binds when two panes of the same app share an identical frame (both
-        // parked at the shared VD's origin, doc 05 §4). Cache the match.
-        let targetBounds = bounds
-        if let axWindow = matchAXWindow(axWindows, targetBounds: targetBounds) {
-            AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString)
-            AXUIElementSetAttributeValue(appEl, kAXMainWindowAttribute as CFString, axWindow)
-            AXUIElementSetAttributeValue(appEl, kAXFocusedWindowAttribute as CFString, axWindow)
-            cachedAXWindow = axWindow
-        }
+        // The whole chain — resolve the window once, raise it, point kAXMainWindow and
+        // kAXFocusedWindow at it — is ``slopdesk_ax_raiser_raise``. `bounds` is lent only as the
+        // fallback the door uses when the private id symbol resolves NOTHING for any candidate, the
+        // locked-screen case; a frame-only match mis-binds when two panes of the same app share an
+        // identical frame (both parked at the shared VD's origin, doc 05 §4).
+        _ = slopdesk_ax_raiser_raise(raiser, HostDisplays.record(bounds.cgRect))
         _ = slopdesk_app_activate(pid)
     }
 
@@ -757,70 +730,6 @@ public final class InputInjector: @unchecked Sendable {
         _ = bytes.withUnsafeBufferPointer { utf8 in
             slopdesk_inject_text(utf8.baseAddress, utf8.count)
         }
-    }
-
-    /// NONISOLATED probe: matches `element` to ``windowID`` via the same private AX SPI
-    /// ``axWindowID(of:)`` uses (docs/05 §4 — no public AXUIElement↔CGWindowID map), strictly more
-    /// robust than the frame-equality heuristic (mis-binds when two windows share an identical
-    /// frame, e.g. several panes stacked at the same origin on the shared virtual display — exactly
-    /// what ``WindowPlacement/moveWindowOntoDisplay`` manufactures on purpose). `axWindowID(of:)`
-    /// itself is `@MainActor`-isolated (its other two callers, ``WindowGeometryWatcher`` /
-    /// ``WindowPlacement``, both run on main); ``performRaise`` deliberately runs OFF the main actor
-    /// (see ``raiseQueue``'s doc — hopping back for even a cheap AX call reintroduces the
-    /// cursor-shape-refresh starvation this queue exists to avoid), so this calls the same
-    /// thread-safe `_AXUIElementGetWindow` SPI directly instead of routing through the isolated
-    /// wrapper. Returns `nil` (never `0`) on a lookup failure — mirrors `axWindowID(of:)`'s own
-    /// `wid != 0` guard (macOS 15+ under a locked screen returns `.success` with `wid == 0`).
-    private func axWindowIDNonisolated(_ element: AXUIElement) -> CGWindowID? {
-        var wid: CGWindowID = 0
-        guard inputInjectorAXWindowIDSPI(element, &wid) == .success, wid != 0 else { return nil }
-        return wid
-    }
-
-    /// Picks the AX window matching ``windowID`` EXACTLY (``axWindowIDNonisolated(_:)``) across every
-    /// candidate; falls back to the legacy bounds heuristic ONLY when the SPI resolved NO candidate
-    /// at all (unavailable, e.g. under a locked screen — AeroSpace #445). NEVER per-element: a
-    /// candidate the SPI resolves but that does not match `windowID` is a real non-match, not a
-    /// heuristic opportunity — accepting it by bounds instead is the exact bug (two panes of the
-    /// same app parked at the identical shared-VD origin have identical frames).
-    private func matchAXWindow(_ axWindows: [AXUIElement], targetBounds: VideoRect) -> AXUIElement? {
-        var spiResolvedAny = false
-        for axWindow in axWindows {
-            if let wid = axWindowIDNonisolated(axWindow) {
-                spiResolvedAny = true
-                if wid == windowID { return axWindow }
-            }
-        }
-        guard !spiResolvedAny else { return nil } // SPI worked for at least one — no bounds fallback
-        return axWindows.first { axWindowMatchesBounds($0, targetBounds) }
-    }
-
-    /// NONISOLATED: only thread-safe AX client reads (``AXUIElementCopyAttributeValue``), so it runs
-    /// on ``raiseQueue`` with the rest of ``performRaise``.
-    private func axWindowMatchesBounds(_ element: AXUIElement, _ targetBounds: VideoRect) -> Bool {
-        var posRef: CFTypeRef?
-        var sizeRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
-              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success
-        else {
-            return false
-        }
-        // The copies above succeeded → posRef/sizeRef are non-nil AXValues by the AX contract.
-        // `as?` to a CoreFoundation type (AXValue) ALWAYS succeeds (a compile error), so the force
-        // cast is the only valid downcast — it traps on an OS-contract break, the original intent.
-        // swiftlint:disable:next force_cast
-        let posValue = posRef as! AXValue
-        // swiftlint:disable:next force_cast
-        let sizeValue = sizeRef as! AXValue
-        var point = CGPoint.zero
-        var size = CGSize.zero
-        AXValueGetValue(posValue, .cgPoint, &point)
-        AXValueGetValue(sizeValue, .cgSize, &size)
-        // Tolerate sub-point rounding between AX and CGWindowBounds.
-        return abs(Double(point.x) - targetBounds.origin.x) < 2
-            && abs(Double(point.y) - targetBounds.origin.y) < 2
-            && abs(Double(size.width) - targetBounds.size.width) < 2
-            && abs(Double(size.height) - targetBounds.size.height) < 2
     }
 }
 #endif

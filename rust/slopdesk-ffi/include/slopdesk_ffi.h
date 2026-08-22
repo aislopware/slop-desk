@@ -8450,6 +8450,115 @@ size_t slopdesk_pane_process_list(int32_t master_fd, int64_t now_unix,
 // then UDP which cannot take that flag, scoped to the pane's own pids.
 size_t slopdesk_pane_port_list(int32_t master_fd, uint8_t *out, size_t cap);
 
+// ---- The accessibility tree ---------------------------------------------------------
+
+// Four Swift files opened by writing the same six lines — application element,
+// messaging timeout, kAXWindows, walk it calling a private symbol, compare against a
+// CGWindowID. That preamble is written once now, behind these doors; what each file
+// actually wanted is below. The AXObserver stays Swift: a subscription with a run loop
+// behind it is not an effect on the system (docs/57 §1).
+
+// Whether this process holds the Accessibility grant. Never cache it — the grant is
+// live TCC state a person can give or take away while the process runs.
+bool slopdesk_ax_is_trusted(void);
+
+// Asks for the grant with the system prompt, and answers whether it is ALREADY held.
+// macOS shows the prompt at most once per app per install; after that this is a silent
+// read, which is why the caller's own UI carries the "open System Settings" path.
+bool slopdesk_ax_prompt_for_trust(void);
+
+// What a successful park answers.
+typedef struct {
+  SlopDeskVideoRect original;  // the PRE-move global frame, for putting it back later
+  double achieved_width;       // the size the window ACTUALLY took, which may be clamped
+  double achieved_height;
+} SlopDeskAxPark;
+
+// Moves the window fully onto display_id, shrinking it DOWN first if it does not fit.
+// Size before position, and the order is load-bearing: an app asked to cross displays
+// before it is asked to shrink clamps the shrink against the display it is LEAVING.
+//
+// false on every failure — window not found, pre-move frame unreadable, position write
+// refused, or the app clamped the shrink so the window still overhangs. On the last two
+// the window is rolled BACK to where it started, so a 1x fallback captures it cleanly in
+// place rather than over-cropping a half-moved one. `out` is written only on true.
+bool slopdesk_ax_park_window(uint32_t window_id, int32_t pid, uint32_t display_id,
+                             SlopDeskAxPark *out);
+
+// Puts the window back at `frame` — the inverse of a park, ORIGIN before size, so it
+// crosses back to the roomier display before it is asked to grow.
+bool slopdesk_ax_restore_window(uint32_t window_id, int32_t pid, SlopDeskVideoRect frame);
+
+#define SLOPDESK_AX_DEMINIATURIZE_FAILED        0
+#define SLOPDESK_AX_DEMINIATURIZE_NOT_MINIMIZED 1
+#define SLOPDESK_AX_DEMINIATURIZE_RESTORING     2
+
+// Un-minimizes the window so the WindowServer paints it again — a minimized window is
+// never rendered, so capturing one streams nothing. Read-then-write: a window that is
+// not minimized is left completely untouched.
+int32_t slopdesk_ax_deminiaturize(uint32_t window_id, int32_t pid);
+
+// Resizes the window and answers the size it ACTUALLY took, which is the source of truth
+// for the encoder reconfigure — the window may clamp to its own min/max.
+//
+// `displays` is every display's bounds, used for ONE thing: re-anchoring the window at
+// its display's top-left BEFORE the size write. macOS clamps a size-set to keep the
+// window on screen from its CURRENT position, so a window parked mid-screen cannot grow
+// to fill the display until it has been moved to the origin first. Lend nothing to skip
+// the re-anchor. out_width/out_height are written only on true.
+bool slopdesk_ax_resize_window(uint32_t window_id, int32_t pid, double width, double height,
+                               const SlopDeskVideoRect *displays, size_t display_count,
+                               double *out_width, double *out_height);
+
+// One window's raise target, resolved AT MOST ONCE. A handle rather than a function
+// because the resolution is what costs: listing an app's windows and asking each one for
+// its id is O(windows) synchronous round-trips, and the raise runs on the first event of
+// every interaction.
+typedef struct SlopDeskAxRaiser SlopDeskAxRaiser;
+
+SlopDeskAxRaiser *slopdesk_ax_raiser_new(int32_t pid, uint32_t window_id);
+void slopdesk_ax_raiser_free(SlopDeskAxRaiser *handle);
+
+// Raises and focuses the window; answers whether there was a target to raise. Does NOT
+// bring the application forward — ordering that against this is the caller's.
+//
+// `bounds` is the window's current frame, used only as the fallback when the private id
+// symbol answers for NO candidate at all (a locked screen). Passed per call rather than
+// held because the geometry watcher already tracks it and a second copy would go stale.
+bool slopdesk_ax_raiser_raise(SlopDeskAxRaiser *handle, SlopDeskVideoRect bounds);
+
+// The budgeted minimized probe (docs/45 Phase 5): which off-screen windows are minimized
+// rather than on another Space, and which have any AX evidence of being real windows at
+// all — the feed's junk filter for the phantom entries CGWindowList reports.
+typedef struct SlopDeskAxProbe SlopDeskAxProbe;
+
+SlopDeskAxProbe *slopdesk_ax_probe_new(void);
+void slopdesk_ax_probe_free(SlopDeskAxProbe *handle);
+
+typedef struct {
+  uint32_t window_id;
+  int32_t pid;  // the owning process
+} SlopDeskAxOffScreen;
+
+typedef struct {
+  uint32_t window_id;
+  bool ax_listed;  // false = a phantom the WindowServer lists and no person can look at
+  bool minimized;  // as opposed to sitting on another Space
+} SlopDeskAxVerdict;
+
+// Classifies every off-screen window, sweeping at most a few applications on the way.
+// `now` is the CALLER's clock so a whole tick shares one instant.
+//
+// The sweep is budgeted because it is the only thing in the feed that can BLOCK: a hung
+// app costs its whole messaging timeout, so an unbounded tick is one beachballing app
+// away from stalling the feed. Windows whose pid was not swept this tick answer from the
+// last sweep; windows never swept at all answer false/false rather than a guess.
+//
+// Reports the count it NEEDS. A retry re-classifies from the ledger and sweeps nothing
+// new — this tick's pids are already stamped — so it is cheap and stable.
+size_t slopdesk_ax_probe_classify(SlopDeskAxProbe *handle, const SlopDeskAxOffScreen *windows,
+                                  size_t count, double now, SlopDeskAxVerdict *out, size_t cap);
+
 // ---- The cursor side-channel's host end --------------------------------------------
 
 // THE ONE HANDLE THAT MAY BE CALLED FROM TWO THREADS. The convention at the top of

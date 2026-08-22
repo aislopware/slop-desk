@@ -10,6 +10,7 @@
 
 #if os(macOS)
 import ApplicationServices
+import CSlopDeskFFI
 import Foundation
 
 /// Watches the FRONTMOST app for window-level AX events (created / destroyed / title / focus /
@@ -93,73 +94,6 @@ public final class WindowFeedAXObserver: @unchecked Sendable {
     }
 }
 
-/// PURE budget decider for the minimized probe: which pids may be AX-probed this tick. Each pid is
-/// re-probed at most once per ``ttl``; at most ``maxPIDsPerTick`` STALE pids probe per call (a
-/// hung app costs ≤0.25 s, so the worst tick is bounded at ~0.75 s and steady state is ~0).
-public struct MinimizedProbeBudget: Sendable {
-    private var stamps: [pid_t: TimeInterval] = [:]
-    public let ttl: TimeInterval
-    public let maxPIDsPerTick: Int
-
-    public init(ttl: TimeInterval = 3.0, maxPIDsPerTick: Int = 3) {
-        self.ttl = ttl
-        self.maxPIDsPerTick = maxPIDsPerTick
-    }
-
-    /// The stale subset of `candidates` (≤ `maxPIDsPerTick`, deterministic order), stamped as
-    /// probed. Unpicked stale pids stay stale and win a later tick.
-    public mutating func pidsToProbe(_ candidates: [pid_t], now: TimeInterval) -> [pid_t] {
-        let stale = candidates.sorted().filter { now - (stamps[$0] ?? -.infinity) >= ttl }
-        let picked = Array(stale.prefix(maxPIDsPerTick))
-        for pid in picked { stamps[pid] = now }
-        // Drop stamps for pids no longer present (quit apps) so the map never grows unbounded.
-        let live = Set(candidates)
-        stamps = stamps.filter { live.contains($0.key) }
-        return picked
-    }
-}
-
-/// PURE per-window AX-evidence cache behind ``MinimizedStateProbe``: every probed app's sweep is
-/// folded here, and each window carries the LAST observed verdict between probes (probing is
-/// budgeted; reads must be free). A window in its app's `kAXWindows` list is a REAL window
-/// (minimized / other Space / hidden app); an off-screen CGWindowList entry the sweep does NOT
-/// return is a phantom (Chrome tab caches, panel services) — the feed's junk filter drops those.
-public struct WindowAXLedger: Sendable {
-    public struct Verdict: Equatable, Sendable {
-        public var axListed: Bool
-        public var minimized: Bool
-
-        public init(axListed: Bool, minimized: Bool) {
-            self.axListed = axListed
-            self.minimized = minimized
-        }
-    }
-
-    private var verdicts: [UInt32: Verdict] = [:]
-
-    public init() {}
-
-    /// Fold ONE app's successful AX sweep: `sweep` maps every AX-listed windowID to its
-    /// `AXMinimized`; `offScreenIDs` are the pid's off-screen CGWindowList ids this tick — the ones
-    /// the sweep did NOT return get an explicit not-listed verdict (a phantom must not ride a stale
-    /// entry after its id recycles). A FAILED sweep must not be folded at all (stale beats absent —
-    /// the caller just skips this; the next TTL window retries).
-    public mutating func fold(sweep: [UInt32: Bool], offScreenIDs: [UInt32]) {
-        for (id, minimized) in sweep { verdicts[id] = Verdict(axListed: true, minimized: minimized) }
-        for id in offScreenIDs where sweep[id] == nil {
-            verdicts[id] = Verdict(axListed: false, minimized: false)
-        }
-    }
-
-    public func verdict(for id: UInt32) -> Verdict? { verdicts[id] }
-
-    /// Drop verdicts for windows no longer enumerated at all (closed) so the map never grows
-    /// unbounded across app lifetimes.
-    public mutating func retain(only live: Set<UInt32>) {
-        verdicts = verdicts.filter { live.contains($0.key) }
-    }
-}
-
 /// One classification pass over the off-screen windows: which are MINIMIZED, and which have any AX
 /// evidence of being real windows at all (the feed's inclusion gate).
 public struct OffScreenAXClassification: Sendable {
@@ -169,66 +103,57 @@ public struct OffScreenAXClassification: Sendable {
     public init() {}
 }
 
-/// The budgeted AX probe (docs/45 Phase 5): sweeps `kAXWindows` per off-screen-owning app to tell
-/// a MINIMIZED window from an on-another-Space one, and to tell EITHER from a phantom
-/// CGWindowList entry that no AX sweep ever returns. Cache-first —
-/// each probed pid refreshes every one of its windows' ledger entries, so between probes the answer
-/// is free. Main-actor (the repo's AX-messaging convention; the per-app 0.25 s timeout bounds a
-/// hung target).
-@preconcurrency
-@MainActor
+/// The budgeted AX probe (docs/45 Phase 5): sweeps an app's windows to tell a MINIMIZED window from
+/// one on another Space, and to tell EITHER from a phantom `CGWindowList` entry that no AX sweep
+/// ever returns.
+///
+/// Everything it decides is `slopdesk_video::ax_probe` — which pids are stale enough to sweep, what
+/// a sweep proves, and what a window's absence from one means — and everything it reads is
+/// `slopdesk-apple-ax`. The two meet behind ``slopdesk_ax_probe_classify``, so what is left here is
+/// the handle's lifetime and the shape the feed wants back. Those rules used to be Swift and this
+/// file's own header conceded they were "COMPILED + reviewed; not driven from unit tests"; they now
+/// have fifteen.
 public final class MinimizedStateProbe {
-    private var budget = MinimizedProbeBudget()
-    private var ledger = WindowAXLedger()
+    private let handle: OpaquePointer?
 
-    public init() {}
+    public init() {
+        handle = slopdesk_ax_probe_new()
+    }
 
-    /// Classifies `offScreenByPID` (off-screen windowIDs grouped by owning pid), probing at most
+    deinit {
+        slopdesk_ax_probe_free(handle)
+    }
+
+    /// Classifies `offScreenByPID` (off-screen windowIDs grouped by owning pid), sweeping at most
     /// the budget's stale-pid quota this call; everything else answers from the ledger.
     public func classify(
         offScreenByPID: [pid_t: [UInt32]], now: TimeInterval,
     ) -> OffScreenAXClassification {
-        for pid in budget.pidsToProbe(Array(offScreenByPID.keys), now: now) {
-            if let sweep = sweepAXWindows(pid: pid) {
-                ledger.fold(sweep: sweep, offScreenIDs: offScreenByPID[pid] ?? [])
+        let windows = offScreenByPID.flatMap { pid, ids in
+            ids.map { SlopDeskAxOffScreen(window_id: $0, pid: pid) }
+        }
+        guard !windows.isEmpty else { return OffScreenAXClassification() }
+        var verdicts = [SlopDeskAxVerdict](
+            repeating: SlopDeskAxVerdict(window_id: 0, ax_listed: false, minimized: false),
+            count: windows.count,
+        )
+        // One record per window asked about, so the count is known before the call and the door's
+        // "report what you need" retry can never trigger. Checked anyway: a mismatch would mean the
+        // door and this face disagree about what a window is, and a partial fold is worse than none.
+        let written = windows.withUnsafeBufferPointer { asked in
+            verdicts.withUnsafeMutableBufferPointer { out in
+                slopdesk_ax_probe_classify(
+                    handle, asked.baseAddress, asked.count, now, out.baseAddress, out.count,
+                )
             }
         }
+        guard written == windows.count else { return OffScreenAXClassification() }
         var out = OffScreenAXClassification()
-        for ids in offScreenByPID.values {
-            for id in ids {
-                guard let verdict = ledger.verdict(for: id) else { continue }
-                if verdict.axListed { out.axListed.insert(id) }
-                if verdict.minimized { out.minimized.insert(id) }
-            }
+        for verdict in verdicts {
+            if verdict.ax_listed { out.axListed.insert(verdict.window_id) }
+            if verdict.minimized { out.minimized.insert(verdict.window_id) }
         }
         return out
-    }
-
-    /// Drop ledger entries for windows no longer in the enumeration at all (closed windows).
-    public func retain(onlyWindowIDs live: Set<UInt32>) {
-        ledger.retain(only: live)
-    }
-
-    /// One app's AX window sweep: every `kAXWindows` element's windowID → its `AXMinimized`.
-    /// `nil` on failure (no AX, hung past the timeout) so the caller leaves prior ledger entries
-    /// standing — stale beats absent, and the next TTL window retries.
-    private func sweepAXWindows(pid: pid_t) -> [UInt32: Bool]? {
-        let appElement = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appElement, 0.25)
-        var windowsRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            appElement, kAXWindowsAttribute as CFString, &windowsRef,
-        ) == .success, let axWindows = windowsRef as? [AXUIElement] else { return nil }
-        var sweep: [UInt32: Bool] = [:]
-        for axWindow in axWindows {
-            guard let windowID = axWindowID(of: axWindow) else { continue }
-            var minimizedRef: CFTypeRef?
-            let minimized = AXUIElementCopyAttributeValue(
-                axWindow, kAXMinimizedAttribute as CFString, &minimizedRef,
-            ) == .success ? ((minimizedRef as? Bool) ?? false) : false
-            sweep[UInt32(windowID)] = minimized
-        }
-        return sweep
     }
 }
 #endif

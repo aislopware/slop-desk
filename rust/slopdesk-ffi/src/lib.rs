@@ -78,6 +78,8 @@ pub mod cursor_overlay;
 // may call at once, because the pointer must keep flowing while the main thread is busy. See the
 // module.
 #[cfg(target_os = "macos")]
+pub mod ax;
+#[cfg(target_os = "macos")]
 pub mod cursor_sampler;
 pub mod cursor_wire;
 pub mod decode_admission;

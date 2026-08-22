@@ -1,5 +1,5 @@
-import ApplicationServices // AXIsProcessTrusted
 import CoreGraphics // CGPreflightScreenCaptureAccess
+import CSlopDeskFFI // slopdesk_ax_is_trusted
 import Foundation
 
 /// One row in the TCC (privacy/permission) checklist (research §C1).
@@ -17,7 +17,7 @@ struct TCCRow: Identifiable {
     let requiresRelaunch: Bool
     /// Re-checked EVERY render (research §C1: "grants go stale" — never cache the result).
     /// `@Sendable` so the row (and the `static let rows` global) is concurrency-safe; the
-    /// closures wrap static preflight calls (`CGPreflightScreenCaptureAccess` / `AXIsProcessTrusted`)
+    /// closures wrap static preflight calls (`CGPreflightScreenCaptureAccess` / `slopdesk_ax_is_trusted`)
     /// which are themselves thread-safe.
     let isGranted: @Sendable () -> Bool
     /// The exact System Settings pane to open via `NSWorkspace.shared.open`.
@@ -43,10 +43,10 @@ enum TCC {
         CGPreflightScreenCaptureAccess()
     }
 
-    /// Accessibility (AX) trust — re-checked on every call. `AXIsProcessTrusted()` reads the
+    /// Accessibility (AX) trust — re-checked on every call. ``slopdesk_ax_is_trusted`` reads the
     /// current state without prompting; the user toggles it in the deep-linked pane.
     static func accessibilityGranted() -> Bool {
-        AXIsProcessTrusted()
+        slopdesk_ax_is_trusted()
     }
 
     /// The checklist rows, in onboarding order (Screen Recording first — it is the

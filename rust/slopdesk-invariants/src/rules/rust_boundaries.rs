@@ -210,6 +210,17 @@ pub fn agent_detection(tree: &Tree) -> Report {
 ///
 /// `AppIconGlue` and `slopdesk-navhistory-probe` are still not exempt and still do not need to be,
 /// for the reason above: an icon lookup is image work.
+///
+/// ## And the accessibility tree, PARTLY
+/// The fourth claim is the only one here that bans less than the whole framework area, and the
+/// asymmetry is the point. What moved to `rust/slopdesk-apple-ax` is every EFFECT on a window —
+/// park, restore, resize, un-minimize, raise — plus the trust read and the private window-id
+/// symbol; those are banned. What did not move is a SUBSCRIPTION with a run loop
+/// (`WindowFeedAXObserver`, which docs/57 §1 keeps Swift) and `HostNavHistory`, which has not been
+/// ported yet — both make the two generic reads, so `AXUIElementCopyAttributeValue` and
+/// `…CreateApplication` are deliberately absent from the pattern. Banning them and exempting the
+/// two files would put the remaining debt in an exemption list, which is the failure the census
+/// section above describes.
 #[must_use]
 pub fn one_probe_per_reading(tree: &Tree) -> Report {
     // Assembled rather than spelled, because this file is itself under `Sources`-adjacent review
@@ -241,6 +252,24 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
         r"\.currentSystem",
         "|CGSCurrentCursorSeed",
         "|SLSCurrentCursorSeed"
+    );
+    // NOT `AXUIElementCopyAttributeValue` or `…CreateApplication`, which two Swift files still make:
+    // `WindowFeedAXObserver` holds a SUBSCRIPTION with a run loop (docs/57 §1 keeps those Swift) and
+    // `HostNavHistory` has not moved yet. What is banned is what has exactly one home now — the WRITE
+    // half and the action (`slopdesk_ax_park_window` / `_restore_window` / `_resize_window` /
+    // `_deminiaturize` / `slopdesk_ax_raiser_raise`), the trust read, and the private window-id
+    // symbol. The last is the sharpest of the three: it was a `@_silgen_name` declaration in
+    // `InputInjector`, and a second declaration of a private symbol is how two callers end up
+    // disagreeing about which framework exports it.
+    const ACCESSIBILITY: &str = concat!(
+        "AXIsProcessTrusted",
+        "|AXUIElementSetAttributeValue",
+        "|AXUIElementPerformAction",
+        "|_AXUIElementGetWindow",
+        "|kAXPositionAttribute",
+        "|kAXSizeAttribute",
+        "|kAXMinimizedAttribute",
+        "|kAXRaiseAction"
     );
     check_all(tree, &[
         Claim::NoneUnder {
@@ -279,6 +308,19 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
                       slopdesk-apple-cursor and the seed is slopdesk_posix::dynsym, joined behind \
                       slopdesk_cursor_sampler_*; setting this app's own pointer is UI and is untouched \
                       (docs/57 §5)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: ACCESSIBILITY,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift AX write, action, trust read or private window-id symbol is back in {files} — \
+                      slopdesk-apple-ax holds the tree and slopdesk_ax_* is the whole door; the window id \
+                      comes from slopdesk_posix::dynsym, which asks HIServices for it because CoreGraphics \
+                      does not export it (docs/57 §5)",
         },
     ])
 }
@@ -439,6 +481,46 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskMacUI/Pane/MacPaneDivider.swift",
             "NSCursor.resizeLeftRight.push()\nNSCursor.pop()\nNSCursor.openHand.set()\n",
+        );
+        assert!(super::one_probe_per_reading(&fixture.tree()).is_clean());
+    }
+
+    /// Every effect the window placement path used to have on the tree is caught on its own, and so
+    /// is the trust read and the private window-id symbol. The last one is the reason this ban is
+    /// worth having at all: `_AXUIElementGetWindow` was declared with `@_silgen_name` in
+    /// `InputInjector`, and a private symbol declared twice is how two callers end up disagreeing
+    /// about which framework exports it — measured, it is `HIServices`' and not `CoreGraphics`'.
+    #[test]
+    fn every_effect_on_the_accessibility_tree_is_caught_on_its_own() {
+        for effect in [
+            "guard AXIsProcessTrusted() else { return .denied }\n",
+            "AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)\n",
+            "AXUIElementPerformAction(window, kAXRaiseAction as CFString)\n",
+            "@_silgen_name(\"_AXUIElementGetWindow\") func getWindow(_ e: AXUIElement) -> AXError\n",
+            "AXUIElementCopyAttributeValue(w, kAXSizeAttribute as CFString, &raw)\n",
+            "AXUIElementCopyAttributeValue(w, kAXMinimizedAttribute as CFString, &raw)\n",
+        ] {
+            let fixture = Fixture::new("ax-revived");
+            fixture.write("Sources/SlopDeskVideoHost/WindowPlacement.swift", effect);
+            let report = super::one_probe_per_reading(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains("Swift AX write")),
+                "{effect:?} was not caught: {report:?}"
+            );
+        }
+    }
+
+    /// A SUBSCRIPTION with a run loop stays Swift (docs/57 §1), and `HostNavHistory` has not moved
+    /// yet — so the two generic AX calls both of them make are deliberately NOT banned. A ban on
+    /// `AXUIElementCopyAttributeValue` as a token would report a live observer as debt.
+    #[test]
+    fn a_subscription_that_stays_swift_is_not_an_effect() {
+        let fixture = Fixture::new("ax-observer");
+        fixture.write(
+            "Sources/SlopDeskVideoHost/WindowFeed/WindowFeedAXSupport.swift",
+            "let app = AXUIElementCreateApplication(pid)\nAXUIElementSetMessagingTimeout(app, \
+             0.25)\nAXObserverAddNotification(observer, app, kAXWindowCreatedNotification as CFString, \
+             nil)\n",
         );
         assert!(super::one_probe_per_reading(&fixture.tree()).is_clean());
     }

@@ -107,7 +107,6 @@ func enumerateHostWindows() -> [WindowFeedSourceWindow] {
             offScreen[index].isAXListed = verdicts.axListed.contains(id)
         }
     }
-    minimizedProbe.retain(onlyWindowIDs: Set(onScreen.map(\.windowID) + offScreen.map(\.windowID)))
     // CGWindowList orders on-screen windows front-to-back; off-screen order is unspecified — keep
     // the z-ordered block first so the client's first seed (and the focused-window pick) is honest.
     return onScreen + offScreen
