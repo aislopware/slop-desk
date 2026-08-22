@@ -23,6 +23,7 @@ import Foundation
 
 #if os(macOS)
 import AppKit
+import CSlopDeskFFI
 import ScreenCaptureKit
 import SlopDeskVideoHost
 import SlopDeskVideoProtocol
@@ -295,11 +296,7 @@ func resolveDisplayFps(windowFps: Int) -> Int {
 /// any CG failure (the predicate then fails SOFT: no window is moved on uncertainty).
 @Sendable
 func onlineDisplayBoundsList() -> [CGRect] {
-    var n: UInt32 = 0
-    guard CGGetOnlineDisplayList(0, nil, &n) == .success, n > 0 else { return [] }
-    var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
-    guard CGGetOnlineDisplayList(n, &ids, &n) == .success else { return [] }
-    return ids.prefix(Int(n)).map { CGDisplayBounds($0) }
+    HostDisplays.bounds(online: true)
 }
 
 /// The window's CURRENT global frame (top-left points, the same space as `CGDisplayBounds` / AX)
@@ -308,14 +305,9 @@ func onlineDisplayBoundsList() -> [CGRect] {
 /// window.
 @Sendable
 func currentWindowFrame(windowID: UInt32, expectedPid: Int32) -> CGRect? {
-    guard let infos = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowID))
-        as? [[String: Any]],
-        let info = infos.first,
-        let ownerPid = info[kCGWindowOwnerPID as String] as? Int32, ownerPid == expectedPid,
-        let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
-        let frame = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
-    else { return nil }
-    return frame
+    var record = SlopDeskVideoRect()
+    guard slopdesk_cgwindow_bounds(windowID, expectedPid, &record) else { return nil }
+    return HostDisplays.rect(record)
 }
 
 /// Recover windows a CRASHED/SIGKILLed previous daemon left stranded on its (now gone)
@@ -824,7 +816,7 @@ func mintDisplaySession(
     )
     // Backing ratio (pixels ÷ points) of THIS display — 2.0 on Retina, 1.0 otherwise.
     let displayID = display.displayID
-    let db = CGDisplayBounds(displayID)
+    let db = HostDisplays.bounds(of: displayID)
     let scale = db.width > 0 ? Double(CGDisplayPixelsWide(displayID)) / Double(db.width) : 1.0
     // SCDisplay is an SCK type (not Sendable); owned by the session actor from here on —
     // the same single-owner hand-off the window path uses for its SCWindow.

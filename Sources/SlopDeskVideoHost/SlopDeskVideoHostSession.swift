@@ -1792,7 +1792,7 @@ public actor SlopDeskVideoHostSession {
         }
         guard let frame = window?.frame else { return VideoSize(width: 0, height: 0) }
         if let display = WindowDisplayResolver.display(
-            forWindowFrame: frame, displays: WindowDisplayResolver.activeDisplayBounds(),
+            forWindowFrame: frame, displays: HostDisplays.bounds(online: false),
         ) {
             return VideoSize(width: Double(display.width), height: Double(display.height))
         }
@@ -3073,14 +3073,13 @@ public actor SlopDeskVideoHostSession {
         let windowFrame = currentWindowBoundsCG().cgRect
         let region = regionGlobal ?? windowFrame
         // Display under the region centre (the VD); needed for the display-local sourceRect.
-        var did = CGDirectDisplayID(0)
-        var count: UInt32 = 0
         let center = CGPoint(x: region.midX, y: region.midY)
-        guard CGGetDisplaysWithPoint(center, 1, &did, &count) == .success, count > 0 else {
+        guard let under = HostDisplays.display(under: center) else {
             dbg("dialog-expand: no display under region centre — skipped")
             return
         }
-        let db = CGDisplayBounds(did)
+        let did = under.id
+        let db = under.bounds
         let override: WindowCapturer.CaptureRegionOverride? = regionGlobal.map {
             WindowCapturer.CaptureRegionOverride(
                 displayID: did,
@@ -3502,7 +3501,7 @@ public actor SlopDeskVideoHostSession {
         // CG bounds are fixed — no watcher exists for a full-desktop session).
         if let live = geometryWatcher?.currentBoundsCG() { return live }
         if let window { return VideoRect(window.frame) }
-        if let display { return VideoRect(CGDisplayBounds(display.displayID)) }
+        if let display { return VideoRect(HostDisplays.bounds(of: display.displayID)) }
         return VideoRect(x: 0, y: 0, width: 0, height: 0)
     }
 

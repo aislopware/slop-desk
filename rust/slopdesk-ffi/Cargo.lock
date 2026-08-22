@@ -276,7 +276,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-apple-cgdisplay"
+version = "0.1.0"
+dependencies = [
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "slopdesk-video",
+]
+
+[[package]]
 name = "slopdesk-apple-cgevent"
+version = "0.1.0"
+dependencies = [
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "slopdesk-video",
+]
+
+[[package]]
+name = "slopdesk-apple-cgwindow"
 version = "0.1.0"
 dependencies = [
  "objc2-core-foundation",
@@ -315,7 +333,9 @@ dependencies = [
  "slopdesk-agent",
  "slopdesk-altscreen",
  "slopdesk-androidd",
+ "slopdesk-apple-cgdisplay",
  "slopdesk-apple-cgevent",
+ "slopdesk-apple-cgwindow",
  "slopdesk-cli",
  "slopdesk-devicelog",
  "slopdesk-devicepanel",

@@ -3673,6 +3673,43 @@ the bands leave a centre box, and that the drawn rail is wider than the gutter t
 now `const { assert!(…) }`, checked where constants are, at compile time rather than one `cargo test`
 after the edit that broke them.
 
+### Increment 85 — the host stops decoding window records, and the WindowServer's read side becomes two crates
+
+Increment 84 took the WindowServer's WRITE side — the events the host synthesises. This one takes its
+READ side: which app is frontmost, where a window is, what sits in front of it, and where the displays
+are. Four questions, answered in five Swift files, each with its own `CFDictionary` walk, its own
+`kCGWindow*` key strings and its own idea of what a missing field means.
+
+**The election was never a framework call.** Strip `CGWindowListCopyWindowInfo` away and what
+`HostFrontmostApp` did was a three-field predicate over an ordered list: the first record whose layer
+is 0, whose owner pid is positive and whose alpha is above zero. That is pure, so it is
+`slopdesk-video`'s `window_list` — five tests including the one Swift's `>` could not have stated
+honestly, that a NaN alpha elects nothing. What is left above it is a decode, and the decode is where
+the framework lives.
+
+**Two crates, because §2's unit is a framework AREA and these are two.** `slopdesk-apple-cgwindow`
+walks a `CFArray` of `CFDictionary`; `slopdesk-apple-cgdisplay` calls four fixed-shape enumerators.
+They share no type and no failure mode, and folding them together would have made one crate whose
+safety story had two halves. The cgwindow crate's `unsafe` is three blocks and every one names a
+CoreGraphics contract rather than a Rust one: the `kCGWindow*` keys are `extern` statics `objc2`
+cannot generate safe, and the two `cast_unchecked`s assert an ELEMENT type that C's
+`CFArrayRef`/`CFDictionaryRef` simply does not carry — the array's is cast once for the whole list,
+and the bounds sub-dictionary's runs a checked `downcast_ref` first, so only the key and value types
+remain asserted. The cgdisplay crate's three blocks are all one shape: out-pointer enumerators. Its
+buffer is a fully initialised `vec![0; count]` rather than `MaybeUninit` + `set_len`, and the count
+the framework reports back is `min`'d against the capacity that was lent — clamped, not trusted.
+
+**Two live bugs the port surfaced.** `WindowFeedGlue` seeded both the feed's `isFrontmostApp` flag and
+the AX observer from `NSWorkspace.shared.frontmostApplication`, which in a daemon that pumps no AppKit
+run loop is a snapshot frozen at first access — the exact freeze `HostFrontmostApp`'s own doc comment
+had warned about since increment 62. Both now read the WindowServer. `check-supervisor` N.19 makes
+that a gate: no `Sources/` file decodes a window record or reads a frozen frontmost, with two named
+exemptions that carry their reason.
+
+**One helper stopped being seven.** `window_feed_host.rs` had a private `spill_ids`; the two new
+modules wanted the same "§4 count-or-fill" loop for two different record types. It is now a generic
+`crate::spill<T: Copy>`, and the original is deleted rather than kept beside it.
+
 ### Increment 84 — the host stops synthesising events, and the unsafe gate opens for exactly one reason
 
 Increment 83 finished the program this doc has been running since the split: the *decisions* are all

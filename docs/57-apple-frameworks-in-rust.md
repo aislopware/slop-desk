@@ -141,14 +141,18 @@ does not, and *effect* is nobody's layout.
 ## 5. The ledger
 
 Ordered by how much Swift each removes against how much `unsafe` it costs. `cgevent` is first
-because the spike proved it costs NONE: the whole injection path is safe `objc2` calls.
+because the spike proved it costs NONE: the whole injection path is safe `objc2` calls. The two
+window-server rows cost three `unsafe` blocks each, and every one of the six names a framework rule —
+an `extern` key constant, an element type C's `CFArrayRef` does not carry, an out-pointer enumerator.
 
 | Crate | Wraps | Replaces | State |
 | --- | --- | --- | --- |
 | `slopdesk-apple-cgevent` | CoreGraphics events | `InputInjector`'s posting | **landed** (increment 84) |
+| `slopdesk-apple-cgwindow` | CG window services | `HostFrontmostApp`'s decode, `WindowGeometryWatcher`'s window reads | **landed** (increment 85) |
+| `slopdesk-apple-cgdisplay` | CG display services | every `CGDisplayBounds`/`CGGet*DisplayList` site | **landed** (increment 85) |
 | `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowGeometryWatcher`, `WindowFeedAXSupport` | planned |
-| `slopdesk-apple-cgcursor` | `CGDisplay`/`NSCursor` reads | `CursorSampler` | planned |
-| `slopdesk-apple-app` | `NSRunningApplication`/`NSWorkspace` reads | `HostFrontmostApp`, `ForegroundProcessProbes` | planned |
+| `slopdesk-apple-cgcursor` | `NSCursor` reads | `CursorSampler` | planned |
+| `slopdesk-apple-app` | `NSRunningApplication`/`NSWorkspace` reads | `HostFrontmostApp`'s last line, `ForegroundProcessProbes` | planned |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder`, `VideoDecoder` | planned |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer` | planned |
 | `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder`, `AudioPlaybackEngine` | planned |

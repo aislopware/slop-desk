@@ -1,5 +1,6 @@
 #if os(macOS)
 import ApplicationServices
+import CSlopDeskFFI
 import SlopDeskVideoProtocol
 
 /// PURE display-pick math for host-window-resize (unit-tested): given a window frame and
@@ -23,11 +24,60 @@ public enum WindowDisplayResolver {
     /// config) but cheap + non-hanging — unlike SCStream/VT it needs no window-server session. Returns
     /// `[]` on query failure so callers fall back to no-clamp / no-reposition.
     static func activeDisplayBounds() -> [CGRect] {
-        var count: UInt32 = 0
-        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
-        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
-        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
-        return ids.prefix(Int(count)).map { CGDisplayBounds($0) }
+        HostDisplays.bounds(online: false)
+    }
+}
+
+/// The display list, from `rust/slopdesk-apple-cgdisplay` through the two `slopdesk_cgdisplay_*`
+/// doors. Three call sites ran the same two-call enumeration by hand before this — the resize
+/// display-pick, the feed's display ordinals, and the parked-window restore's "does this intersect
+/// any display at all" — and two of the three sized their buffer from a first counting call while
+/// the third hard-coded sixteen.
+public enum HostDisplays {
+    /// One display: where it sits, and the `CGDirectDisplayID` the capture path names it by.
+    public struct Display: Equatable, Sendable {
+        public let id: CGDirectDisplayID
+        public let bounds: CGRect
+    }
+
+    /// Every display. `online` includes mirrored and sleeping ones; the default (active) is the
+    /// drawable ones. `[]` on query failure, which every caller reads as "do not clamp and do not
+    /// reposition".
+    public static func displays(online: Bool = false) -> [Display] {
+        let needed = slopdesk_cgdisplay_list(online, nil, 0)
+        guard needed > 0 else { return [] }
+        var records = [SlopDeskCGDisplay](
+            repeating: SlopDeskCGDisplay(bounds: SlopDeskVideoRect(), display_id: 0), count: needed,
+        )
+        let written = records.withUnsafeMutableBufferPointer {
+            slopdesk_cgdisplay_list(online, $0.baseAddress, $0.count)
+        }
+        guard written == needed else { return [] }
+        return records.map { Display(id: $0.display_id, bounds: rect($0.bounds)) }
+    }
+
+    /// Every display's bounds, in CG global points.
+    public static func bounds(online: Bool) -> [CGRect] {
+        displays(online: online).map(\.bounds)
+    }
+
+    /// The display under `point`, or `nil` when the point is off every display.
+    public static func display(under point: CGPoint) -> Display? {
+        var record = SlopDeskCGDisplay(bounds: SlopDeskVideoRect(), display_id: 0)
+        guard slopdesk_cgdisplay_under(point.x, point.y, &record) else { return nil }
+        return Display(id: record.display_id, bounds: rect(record.bounds))
+    }
+
+    /// One display's bounds, by id — for callers that already hold one from `SCShareableContent`
+    /// or from the virtual display they created. A zero rect means the id names no display.
+    public static func bounds(of displayID: CGDirectDisplayID) -> CGRect {
+        rect(slopdesk_cgdisplay_bounds_of(displayID))
+    }
+
+    /// The door's rect record as a `CGRect`. Shared so the six call sites that take one back do
+    /// not each write the same four-field copy.
+    public static func rect(_ record: SlopDeskVideoRect) -> CGRect {
+        CGRect(x: record.x, y: record.y, width: record.width, height: record.height)
     }
 }
 
@@ -248,18 +298,29 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         associatedUnionHandler = handler
     }
 
-    /// Reads the window's current bounds via `CGWindowListCopyWindowInfo`
-    /// (`kCGWindowBounds` is CG top-left points — the space the client maps from).
-    /// Returns `nil` if the window is gone.
+    /// Reads the window's current bounds through ``slopdesk_cgwindow_bounds``
+    /// (CG top-left points — the space the client maps from). `nil` if the window is gone.
     public func currentBoundsCG() -> VideoRect? {
-        guard let infoList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
-              let info = infoList.first,
-              let boundsDict = info[kCGWindowBounds as String] as? [String: Any],
-              let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary)
-        else {
-            return nil
+        var record = SlopDeskVideoRect()
+        guard slopdesk_cgwindow_bounds(windowID, 0, &record) else { return nil }
+        return VideoRect(HostDisplays.rect(record))
+    }
+
+    /// Every on-screen window strictly IN FRONT of `windowID`, front-to-back, through
+    /// ``slopdesk_cgwindow_in_front_of``. The door reports the count it NEEDS, so an under-lent
+    /// buffer costs one retry rather than a truncated occluder set — and a truncated one would
+    /// shrink the capture region, cropping the very dialog the union exists to reveal.
+    private static func windowsInFront(of windowID: CGWindowID) -> [SlopDeskCGWindow] {
+        let needed = slopdesk_cgwindow_in_front_of(windowID, nil, 0)
+        guard needed > 0 else { return [] }
+        var records = [SlopDeskCGWindow](
+            repeating: SlopDeskCGWindow(bounds: SlopDeskVideoRect(), window_id: 0, owner_pid: 0, layer: 0),
+            count: needed,
+        )
+        let written = records.withUnsafeMutableBufferPointer {
+            slopdesk_cgwindow_in_front_of(windowID, $0.baseAddress, $0.count)
         }
-        return VideoRect(bounds)
+        return written == needed ? records : []
     }
 
     /// Starts polling for geometry changes during drags. The AX-notification path is
@@ -315,22 +376,18 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         )
         // Display under the window centre (the VD in the real deployment).
         let center = CGPoint(x: targetFrame.midX, y: targetFrame.midY)
-        var did = CGDirectDisplayID(0)
-        var count: UInt32 = 0
-        guard CGGetDisplaysWithPoint(center, 1, &did, &count) == .success, count > 0 else { return }
-        let displayBounds = CGDisplayBounds(did)
-        guard let all = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
-        else { return }
-        // CGWindowList is FRONT-to-back: take the slice strictly in front of the tracked window.
-        var inFront: [CaptureRegionMath.WindowSnapshot] = []
-        for w in all {
-            let wid = (w[kCGWindowNumber as String] as? UInt32) ?? 0
-            if wid == windowID { break } // reached the tracked window — the rest are behind it
-            guard let bd = w[kCGWindowBounds as String] as? [String: Any],
-                  let r = CGRect(dictionaryRepresentation: bd as CFDictionary) else { continue }
-            let ownerPID = Int32((w[kCGWindowOwnerPID as String] as? Int) ?? -1)
-            let layer = (w[kCGWindowLayer as String] as? Int) ?? Int.min
-            inFront.append(.init(windowID: wid, ownerPID: ownerPID, layer: layer, frame: r))
+        guard let displayBounds = HostDisplays.display(under: center)?.bounds else { return }
+        // The door answers the slice strictly in front of the tracked window, already front-to-back
+        // and already dropping any record the WindowServer described incompletely.
+        let inFront = Self.windowsInFront(of: windowID).map {
+            CaptureRegionMath.WindowSnapshot(
+                windowID: $0.window_id,
+                ownerPID: $0.owner_pid,
+                layer: Int($0.layer),
+                frame: CGRect(
+                    x: $0.bounds.x, y: $0.bounds.y, width: $0.bounds.width, height: $0.bounds.height,
+                ),
+            )
         }
         let union = CaptureRegionMath.unionRegion(
             targetFrame: targetFrame,

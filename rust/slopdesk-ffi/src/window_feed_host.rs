@@ -651,8 +651,8 @@ pub unsafe extern "C" fn slopdesk_feed_subscribers_reap(
     let Some(state) = (unsafe { held(handle) }) else {
         return 0;
     };
-    // SAFETY: the caller's obligation on `out`/`cap` is restated on `spill_ids`.
-    unsafe { spill_ids(&state.inner.reap_expired(now), out, cap) }
+    // SAFETY: the caller's obligation on `out`/`cap` is restated on `spill`.
+    unsafe { crate::spill(&state.inner.reap_expired(now), out, cap) }
 }
 
 /// The live subscriber ids — the push targets.
@@ -674,8 +674,8 @@ pub unsafe extern "C" fn slopdesk_feed_subscribers_live(
     let Some(state) = (unsafe { held(handle) }) else {
         return 0;
     };
-    // SAFETY: the caller's obligation on `out`/`cap` is restated on `spill_ids`.
-    unsafe { spill_ids(&state.inner.subscribers(now), out, cap) }
+    // SAFETY: the caller's obligation on `out`/`cap` is restated on `spill`.
+    unsafe { crate::spill(&state.inner.subscribers(now), out, cap) }
 }
 
 /// Classifies the difference between two record sets.
@@ -758,26 +758,6 @@ pub const extern "C" fn slopdesk_feed_tick_interval(policy: SlopDeskFeedPushPoli
     } else {
         IDLE_TICK
     }
-}
-
-/// Copies subscriber ids into the caller's buffer if they fit, reporting the count either way.
-///
-/// # Safety
-/// `out` must be null, or writable for `cap` `uint32_t` for the call.
-#[expect(
-    unsafe_code,
-    reason = "writing into the caller's buffer is the other half of the boundary"
-)]
-const unsafe fn spill_ids(ids: &[u32], out: *mut u32, cap: usize) -> usize {
-    let needed = ids.len();
-    if needed == 0 || needed > cap || out.is_null() {
-        // Nothing written. A caller seeing `needed > cap` retries with a bigger buffer.
-        return needed;
-    }
-    // SAFETY: `needed <= cap` was just checked, `out` is non-null and writable for `cap` ids by the
-    // caller's obligation, and `ids` is a live Rust slice that cannot overlap it.
-    unsafe { std::ptr::copy_nonoverlapping(ids.as_ptr(), out, needed) };
-    needed
 }
 
 /// The crate's policy, restored from the flat one the caller holds.

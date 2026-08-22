@@ -97,6 +97,8 @@ slopdesk-git = { path = "../slopdesk-git" }
 # bytes, it would fail to link. `docs/57-apple-frameworks-in-rust.md` §3 names this bijection as the
 # only route a macOS-only crate may take into this graph.
 slopdesk-apple-cgevent = { path = "../slopdesk-apple-cgevent" }
+slopdesk-apple-cgdisplay = { path = "../slopdesk-apple-cgdisplay" }
+slopdesk-apple-cgwindow = { path = "../slopdesk-apple-cgwindow" }
 
 # Linked into an app, and one of the two consumers is the terminal's hot output path. `panic` is
 # `abort` on purpose and it is not a size choice: unwinding across a C ABI frame into Swift is

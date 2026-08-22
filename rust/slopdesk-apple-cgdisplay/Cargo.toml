@@ -1,0 +1,127 @@
+# `slopdesk-apple-cgdisplay` — Quartz **Display Services**, the read side.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# Which displays exist and where they sit: `CGGetActiveDisplayList`, `CGGetOnlineDisplayList`,
+# `CGGetDisplaysWithPoint`, `CGDisplayBounds`. Nothing else. Which display a window belongs to, and
+# what to do about it, are rules — they live in `slopdesk-video`, which is `forbid(unsafe_code)`.
+#
+# It is a SEPARATE crate from `slopdesk-apple-cgwindow` even though both are CoreGraphics, because
+# §2's unit is one framework AREA and these are two: window services answers a `CFArray` of records
+# and needs a decode, display services answers fixed-size scalars and needs none. Splitting them
+# keeps each small enough to read in a sitting, which is the actual bar.
+#
+# ## The `unsafe` in this crate
+# `CGDisplayBounds` is generated SAFE — it takes an id by value and answers a `CGRect` by value.
+# The three enumerators are not, because each writes its answer through an out-pointer. Every call
+# here hands them a FULLY INITIALISED local array and a fully initialised count, so there is no
+# `MaybeUninit`, no `set_len`, and no dereference on this side: the obligation carried is the
+# framework's own — "write at most `max_displays` ids, and report how many" — and the buffer is
+# sized to make that satisfiable by construction.
+#
+# ## macOS ONLY, and how that is kept true
+# `slopdesk-ffi` links this behind `[target.'cfg(target_os = "macos")'.dependencies]`, its doors are
+# declared inside `slopdesk_ffi.h`'s `MACOS-ONLY BEGIN/END` region, and `scripts/build-ffi.sh`
+# requires those symbols PRESENT on the macOS slice and ABSENT on both iOS slices.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-cgdisplay"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Quartz display-services reads for slopdesk — which displays exist and where"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_cgdisplay"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CGDirectDisplay",
+  "CGError",
+  "libc",
+] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CFBase",
+  "CFCGTypes",
+] }
+# One rect type in the repository, not one per crate: `VideoRect` is what the FFI already answers in.
+slopdesk-video = { path = "../slopdesk-video" }
+
+# Mirrors `slopdesk-video`'s: this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` because
+# every site sits under its own self-expiring `#[expect(unsafe_code, reason = …)]`, so an exemption
+# that stops being needed fails the build. `unsafe_op_in_unsafe_fn` is `deny` on top, per §3.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

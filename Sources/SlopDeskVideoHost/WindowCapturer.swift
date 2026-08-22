@@ -1387,10 +1387,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
                 display = content.displays.first(where: { $0.displayID == region.displayID })
             } else {
                 let center = CGPoint(x: liveWindow.frame.midX, y: liveWindow.frame.midY)
-                display = content.displays.first(where: { CGDisplayBounds($0.displayID).contains(center) })
+                display = content.displays.first(where: { HostDisplays.bounds(of: $0.displayID).contains(center) })
             }
             if let display {
-                let db = CGDisplayBounds(display.displayID)
+                let db = HostDisplays.bounds(of: display.displayID)
                 if let region {
                     config.sourceRect = region.displayLocalRect
                 } else {

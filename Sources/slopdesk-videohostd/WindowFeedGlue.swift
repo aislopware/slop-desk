@@ -33,14 +33,14 @@ func enumerateHostWindows() -> [WindowFeedSourceWindow] {
         [.optionAll, .excludeDesktopElements], kCGNullWindowID,
     ) as? [[String: Any]] else { return [] }
 
-    let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
-    // Display ordinals: CGDisplayBounds is in the SAME CG global top-left space as kCGWindowBounds,
+    // NOT `NSWorkspace.shared.frontmostApplication`, which in a daemon that pumps no AppKit run
+    // loop freezes at its first access — this read had `isFrontmostApp` naming the wrong app for
+    // the daemon's whole life. ``HostFrontmostApp`` elects from the window list instead.
+    let frontmostPID = HostFrontmostApp.frontmostPID()
+    // Display ordinals: the door answers in the SAME CG global top-left space as kCGWindowBounds,
     // so max-intersection is a plain rect test (NSScreen.frame would need a y-flip — see the
     // "NSScreen reports 1×" family of traps; stay in CG space).
-    var displayCount: UInt32 = 0
-    var displayIDs = [CGDirectDisplayID](repeating: 0, count: 16)
-    CGGetActiveDisplayList(UInt32(displayIDs.count), &displayIDs, &displayCount)
-    let displayBounds = displayIDs.prefix(Int(displayCount)).map(CGDisplayBounds)
+    let displayBounds = HostDisplays.bounds(online: false)
 
     // Per-PID AppKit reads cached within ONE enumeration (an app owns many windows).
     var appStates: [pid_t: (bundleID: String, isHidden: Bool)] = [:]
@@ -317,8 +317,13 @@ final class WindowFeedKicker {
         axObserver = WindowFeedAXObserver { [weak self] in
             DispatchQueue.main.async { self?.scheduleKick() }
         }
-        if let frontmost = NSWorkspace.shared.frontmostApplication {
-            axObserver?.retarget(pid: frontmost.processIdentifier)
+        // The SEED target, elected from the window list. `NSWorkspace.frontmostApplication` would
+        // answer its first-access snapshot here — the app that launched this daemon — so the AX
+        // observer would start watching the wrong process and only correct itself at the first
+        // activation notification, which on an idle desktop may never come. The notification path
+        // below is live and stays as it is.
+        if let pid = HostFrontmostApp.frontmostPID() {
+            axObserver?.retarget(pid: pid)
         }
     }
 

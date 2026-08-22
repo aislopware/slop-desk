@@ -54,6 +54,11 @@ pub mod binding_search;
 pub mod blob;
 pub mod block_rerun;
 pub mod blocks;
+// macOS only, both: behind them is the `WindowServer`, which no iOS slice has. See each module.
+#[cfg(target_os = "macos")]
+pub mod cgdisplay;
+#[cfg(target_os = "macos")]
+pub mod cgwindow;
 pub mod cheat_sheet;
 pub mod chrome;
 pub mod cli;
@@ -281,6 +286,32 @@ pub(crate) const unsafe fn records_of<'a, T>(records: *const T, count: usize) ->
     }
     // SAFETY: non-null and, by the caller's obligation, live for this call.
     unsafe { core::slice::from_raw_parts(records, count) }
+}
+
+/// Copies `answer` into the caller's RECORD array if it fits, and reports the count either way.
+///
+/// The typed twin of [`deliver`], for a door that answers a list of `#[repr(C)]` records rather
+/// than bytes. The answer is the count NEEDED — §4 — so a caller that lent too little is told what
+/// to lend. It began as `window_feed_host`'s private `spill_ids`; the second door with the same
+/// shape is where the convention belongs here instead.
+///
+/// # Safety
+/// `out` must be null, or writable for `cap` `T` for the whole call.
+#[expect(
+    unsafe_code,
+    reason = "writing into the caller's buffer is the other half of the boundary"
+)]
+pub(crate) const unsafe fn spill<T: Copy>(answer: &[T], out: *mut T, cap: usize) -> usize {
+    let needed = answer.len();
+    if needed == 0 || needed > cap || out.is_null() {
+        // Nothing written. A caller seeing `needed > cap` retries with a bigger buffer.
+        return needed;
+    }
+    // SAFETY: `needed <= cap` was just checked, `out` is non-null and writable for `cap` records by
+    // the caller's obligation, and `answer` is a live Rust slice that cannot overlap it — every
+    // caller builds it inside the call.
+    unsafe { std::ptr::copy_nonoverlapping(answer.as_ptr(), out, needed) };
+    needed
 }
 
 /// Encodes through a LENT buffer: ONE pass both sizes and writes.

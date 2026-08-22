@@ -8192,13 +8192,14 @@ bool slopdesk_pointer_mouse_visible(int32_t raw);
 // the macOS slice and requires them ABSENT from the two iOS slices, so the guard
 // here and the `cfg(target_os = "macos")` in `src/lib.rs` cannot drift apart.
 //
-// Two things live here. Behind `slopdesk_git_status` is a vendored `libgit2`: only
+// Three things live here. Behind `slopdesk_git_status` is a vendored `libgit2`: only
 // hostd asks — a client on either platform RECEIVES the git status as a metadata
 // reply and never computes it — so compiling that library into the phone slices
 // would cost every phone build and every phone archive for a door nothing on the
 // phone can reach. Behind the four `slopdesk_inject_*` doors is CoreGraphics event
-// synthesis, which iOS does not have at all, so an ungated declaration there would
-// not merely cost bytes — it would fail to link.
+// synthesis, and behind the `slopdesk_cgwindow_*` / `slopdesk_cgdisplay_*` ones is
+// the WindowServer's read side; iOS has neither at all, so an ungated declaration
+// there would not merely cost bytes — it would fail to link.
 //
 // MACOS-ONLY BEGIN
 #if TARGET_OS_OSX
@@ -8267,6 +8268,66 @@ bool slopdesk_inject_key(uint16_t key_code, bool down, uint8_t modifiers);
 // insertion cannot inherit a modifier latched on the shared HID source. false means
 // the bytes were not UTF-8, or CoreGraphics refused.
 bool slopdesk_inject_text(const uint8_t *text, size_t len);
+
+// ---- The WindowServer's read side ------------------------------------------------
+//
+// `rust/slopdesk-apple-cgwindow` asks CGWindowList and decodes the answer;
+// `rust/slopdesk-apple-cgdisplay` asks Quartz which displays exist. Four Swift call
+// sites each hand-decoded the same CFDictionary before these, and they disagreed
+// about what a missing field means — one defaulted kCGWindowLayer to Int.min,
+// another to -1. The crate behind these DROPS an incomplete record, once.
+//
+// Every rect is CG global points, TOP-LEFT origin — the space kCGWindowBounds, the
+// Accessibility API and CGEvent mouse positions share. NSScreen.frame is not that
+// space, and reading one through AppKit would need a y-flip nobody remembers.
+
+// The frontmost app's pid, or 0 when nothing normal-level is on screen (login/lock
+// screen, bare desktop, display asleep).
+//
+// 0 rather than a flag because 0 is not a pid a window can have, and every caller
+// already fails CLOSED on it. Read from the window list and NEVER from NSWorkspace:
+// that snapshot freezes at first access in a daemon that pumps no AppKit run loop,
+// which is the bug this door exists to have fixed.
+int32_t slopdesk_cgwindow_frontmost_pid(void);
+
+// One window's current bounds. `expected_pid` of 0 accepts any owner; anything else
+// requires that owner, because CGWindowIDs are per-boot and REUSABLE — a stale id
+// must never let the parked-window restore move an unrelated app's window. false
+// leaves *out untouched.
+bool slopdesk_cgwindow_bounds(uint32_t window_id, int32_t expected_pid,
+                              SlopDeskVideoRect *out);
+
+typedef struct {
+  SlopDeskVideoRect bounds; // CG global points, top-left origin
+  uint32_t window_id;       // per-boot and reusable — names a window only with owner_pid
+  int32_t owner_pid;        // the owning process
+  int32_t layer;            // 0 an ordinary window, 101 a pop-up menu, 24 the menu bar
+} SlopDeskCGWindow;
+
+// Every on-screen window strictly IN FRONT of `window_id`, front-to-back. The answer
+// is the count NEEDED (§4), so a caller that lent too little is told what to lend. A
+// window_id of 0 names nothing and answers 0.
+size_t slopdesk_cgwindow_in_front_of(uint32_t window_id, SlopDeskCGWindow *out, size_t cap);
+
+typedef struct {
+  SlopDeskVideoRect bounds; // CG global points, top-left origin
+  uint32_t display_id;      // the CGDirectDisplayID SCShareableContent keys on
+} SlopDeskCGDisplay;
+
+// Every display, and how many there are. `online_only` asks for displays that EXIST
+// — mirrored and sleeping ones included — rather than only the drawable ones: a
+// window on a sleeping display is not stranded, and the restore must not move it.
+// The answer is the count NEEDED (§4).
+size_t slopdesk_cgdisplay_list(bool online_only, SlopDeskCGDisplay *out, size_t cap);
+
+// The display under a point. false — the point is off every display — leaves *out
+// untouched.
+bool slopdesk_cgdisplay_under(double x, double y, SlopDeskCGDisplay *out);
+
+// One display's bounds, by id, for the callers that already hold one from
+// SCShareableContent or from the virtual display they created. An id naming no
+// display answers a zero rect, which is CoreGraphics's own answer.
+SlopDeskVideoRect slopdesk_cgdisplay_bounds_of(uint32_t display_id);
 
 // ---- The repository behind a pane's cwd ------------------------------------------
 

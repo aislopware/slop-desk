@@ -2333,7 +2333,13 @@ for manifest in "${APPLE_FAMILY[@]}"; do
   # The line that separates this family from the three hand-written crates. A raw-pointer operation
   # here is not a framework obligation — it is a Rust one, and `docs/57` §2 says it belongs in
   # `slopdesk-posix` or `slopdesk-ffi`, where a reviewer already holds that question.
-  if grep -rEqn --include='*.rs' 'transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)' "${crate_dir}/src"; then
+  #
+  # CODE only, for N.18's reason. A crate in this family has to EXPLAIN, in prose, which Rust
+  # obligations it is not carrying — that sentence is the argument for its own existence — and a
+  # gate that could not tell `transmute` in a doc comment from a call to one would force the
+  # argument out of the crate to keep the crate green.
+  family_code=$(grep -rhvE '^[[:space:]]*(///|//!|//)' --include='*.rs' "${crate_dir}/src" || true)
+  if grep -Eq 'transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)' <<< "${family_code}"; then
     fail "${crate_dir} hand-writes a raw-pointer operation — the objc2 family may write unsafe only to CALL an unsafe binding; a transmute or a from_raw is a Rust obligation and belongs in slopdesk-posix or slopdesk-ffi (docs/57 §2)"
   fi
 done
@@ -11998,6 +12004,93 @@ if ! grep -A 12 "target.'cfg(target_os = \"macos\")'.dependencies" rust/slopdesk
   grep -q 'slopdesk-apple-cgevent'; then
   fail "rust/slopdesk-ffi/Cargo.toml: the slopdesk-apple-cgevent edge is not target-gated — the macOS-only bijection is three spellings (the cfg, the header region, the Cargo edge) and build-ffi.sh only checks what the library exports (docs/57 §3)"
 fi
+
+# N.19 — THE HOST DECODES NO WINDOW RECORD OF ITS OWN.
+#
+# `CGWindowListCopyWindowInfo` answers a `CFArray` of `CFDictionary`, and reading one is a decode:
+# eight optional fields, each of which can be absent or of the wrong type. Four Swift call sites
+# wrote that decode independently and DISAGREED about what absence means — one defaulted
+# `kCGWindowLayer` to `Int.min`, another to `-1`, a third dropped the record, and the fourth read a
+# missing owner pid as `-1` and went on to compare it. `rust/slopdesk-apple-cgwindow` decodes once
+# and drops an incomplete record, which is the only one of the four answers that cannot elect a
+# frontmost app or move a window on a malformed record.
+#
+# The display half is the same shape: three call sites ran the same two-call enumeration by hand,
+# two sizing from a counting call and one hard-coding sixteen — a silent truncation at seventeen
+# displays, which is absurd until it is a mirrored wall.
+#
+# What is pinned:
+#   • the crates and the doors exist  — a face over a deleted door does not compile; a face that
+#                                       grew its own CGWindowList call beside them does.
+#   • no decode in the host           — no `CGWindowListCopyWindowInfo`, no `kCGWindow*` subscript,
+#                                       no `CGGet*DisplayList` outside the two crates. The ONE
+#                                       exception is the feed enumeration, which still builds its
+#                                       own records and is named here so its exemption is visible
+#                                       rather than accidental.
+#   • no frozen frontmost read        — `NSWorkspace.frontmostApplication` in a daemon answers the
+#                                       first-access app forever. `HostFrontmostApp` elects from
+#                                       the window list instead, and nothing in the host may go
+#                                       back.
+#   • the bijection is spelled        — both crates are target-gated dependencies and both doors sit
+#                                       inside the header's MACOS-ONLY region.
+#
+# BREAK-TEST: restored `CGWindowListCopyWindowInfo` in WindowGeometryWatcher ⇒ FAIL "decodes a
+# window record itself". Separately restored `NSWorkspace.shared.frontmostApplication` in
+# WindowFeedGlue ⇒ FAIL "reads a frozen frontmost". Separately deleted the cgwindow crate ⇒ FAIL
+# "has no Rust behind it". Separately moved the declarations out of the MACOS-ONLY region ⇒ FAIL
+# "declares a WindowServer door outside the macOS-only region". Separately ungated a Cargo edge ⇒
+# FAIL "is not target-gated". All five restored from /tmp; PASS.
+for required in rust/slopdesk-apple-cgwindow/src/list.rs rust/slopdesk-apple-cgdisplay/src/displays.rs \
+  rust/slopdesk-ffi/src/cgwindow.rs rust/slopdesk-ffi/src/cgdisplay.rs; do
+  if [[ ! -f "${required}" ]]; then
+    fail "the host has no Rust behind its window reads — ${required} is missing, and the WindowServer decode lives in one place (docs/57 §5, docs/56 increment 85)"
+  fi
+done
+# The feed enumeration is the ONE file still allowed its own record build: it needs three AppKit
+# reads per pid that no CoreGraphics door can answer, and moving it is increment 86's job. Named
+# here so the exemption is a decision on the record rather than a grep that happens to miss it.
+# CODE only, for N.18's reason: these files still NAME the calls in prose, and should — the comments
+# carry why the feed uses CGWindowList over SCShareableContent and why the probe walks displays out
+# of process. A gate that could not tell a call from a sentence about one would force that out.
+window_readers=""
+while IFS= read -r candidate; do
+  case "${candidate}" in
+    Sources/slopdesk-videohostd/WindowFeedGlue.swift | Sources/SlopDeskVideoHost/VirtualDisplay.swift) continue ;;
+  esac
+  if grep -vE '^[[:space:]]*(///|//)' "${candidate}" |
+    grep -q 'CGWindowListCopyWindowInfo\|CGGetActiveDisplayList\|CGGetOnlineDisplayList\|CGGetDisplaysWithPoint'; then
+    window_readers+="${candidate}"$'\n'
+  fi
+done < <(grep -rln 'CGWindowListCopyWindowInfo\|CGGetActiveDisplayList\|CGGetOnlineDisplayList\|CGGetDisplaysWithPoint' Sources 2>/dev/null || true)
+window_readers=${window_readers%$'\n'}
+if [[ -n "${window_readers}" ]]; then
+  fail "these decode a window record themselves: ${window_readers//$'\n'/, } — the CGWindowList and display-list reads are slopdesk-apple-cgwindow's and slopdesk-apple-cgdisplay's, and a second decode is where 'a missing field means Int.min' comes back (docs/57 §5)"
+fi
+# CODE only, and here the prose matters most of all: both remaining files exist BECAUSE of this
+# snapshot's freeze, and each explains it. Naming the trap is the point.
+frozen_frontmost=""
+while IFS= read -r candidate; do
+  if grep -vE '^[[:space:]]*(///|//)' "${candidate}" |
+    grep -q 'NSWorkspace\.shared\.frontmostApplication\|NSWorkspace\.shared\.menuBarOwningApplication'; then
+    frozen_frontmost+="${candidate}"$'\n'
+  fi
+done < <(grep -rln 'NSWorkspace\.shared\.frontmostApplication\|NSWorkspace\.shared\.menuBarOwningApplication' Sources 2>/dev/null || true)
+frozen_frontmost=${frozen_frontmost%$'\n'}
+if [[ -n "${frozen_frontmost}" ]]; then
+  fail "these read a frozen frontmost: ${frozen_frontmost//$'\n'/, } — NSWorkspace's snapshot populates on first access and then never updates in a daemon that pumps no AppKit run loop, so the read answers the launching app for the process's whole life. HostFrontmostApp elects from the window list (docs/57 §5)"
+fi
+for door in slopdesk_cgwindow_frontmost_pid slopdesk_cgdisplay_list; do
+  if ! awk '/MACOS-ONLY BEGIN/{inside=1} inside{print} /MACOS-ONLY END/{inside=0}' \
+    rust/slopdesk-ffi/include/slopdesk_ffi.h | grep -q "${door}("; then
+    fail "slopdesk_ffi.h declares ${door} outside the macOS-only region — iOS has no WindowServer at all, so an ungated declaration is not a wasted byte, it is a link failure on two of the three slices (docs/57 §3)"
+  fi
+done
+for edge in slopdesk-apple-cgwindow slopdesk-apple-cgdisplay; do
+  if ! grep -A 12 "target.'cfg(target_os = \"macos\")'.dependencies" rust/slopdesk-ffi/Cargo.toml |
+    grep -q "${edge}"; then
+    fail "rust/slopdesk-ffi/Cargo.toml: the ${edge} edge is not target-gated — the macOS-only bijection is three spellings (the cfg, the header region, the Cargo edge) and build-ffi.sh only checks what the library exports (docs/57 §3)"
+  fi
+done
 
 if [[ "${1:-}" != "--tests" ]]; then
   exit 0
