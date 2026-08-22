@@ -90,26 +90,12 @@ public struct TrendlineEstimator: Sendable, Equatable {
     /// Regression window in per-frame samples (kDefaultTrendlineWindowSize; 333ms @60fps).
     /// `SLOPDESK_TREND_WINDOW`.
     public static var windowSize: Int { config.window_size }
-    /// Exponential smoothing on the accumulated delay (kDefaultTrendlineSmoothingCoeff).
-    public static var smoothingCoef: Double { constants.smoothing_coef }
-    /// Gain applied to the slope before the threshold compare (kDefaultTrendlineThresholdGain).
-    /// `SLOPDESK_TREND_GAIN`.
-    public static var thresholdGain: Double { config.threshold_gain }
-    /// Adaptive-threshold start value (libwebrtc OveruseDetector), clamped to [min, max] forever.
-    public static var initialThreshold: Double { constants.initial_threshold }
+    /// The adaptive threshold's floor — the clamp the libwebrtc OveruseDetector never rises from.
     public static var thresholdMin: Double { constants.threshold_min }
-    public static var thresholdMax: Double { constants.threshold_max }
     /// Adaptive-threshold gains: rise slowly toward a loud |trend| (kUp), fall quickly back toward
     /// a quiet one (kDown) — the asymmetry keeps one spike from desensitizing the detector for long.
     public static var kUp: Double { constants.k_up }
     public static var kDown: Double { constants.k_down }
-    /// Skip threshold adaptation when |modifiedTrend| overshoots it by more than this — a gross
-    /// outlier must not yank the threshold up to its own level.
-    public static var outlierSkipMargin: Double { constants.outlier_skip_margin }
-    /// Clamp on the per-sample dt used in threshold adaptation (ms).
-    public static var maxAdaptDtMs: Double { constants.max_adapt_dt_ms }
-    /// Time over threshold required before overuse SIGNALS (kOverUsingTimeThreshold, ms).
-    public static var overusingTimeMs: Double { constants.overusing_time_ms }
     /// OURS: an arrival gap larger than this resets the window (≥15 missed frame slots at 60fps —
     /// stale queue context + the two-cluster regression artifact; FPS-governor-proof).
     public static var resetGapMs: Double { constants.reset_gap_ms }
@@ -120,7 +106,7 @@ public struct TrendlineEstimator: Sendable, Equatable {
 
     /// Latest detector verdict. Stays `.normal` until the window fills (the warm-up gate).
     public var state: State { State.of(record.state) }
-    /// `min(numDeltas, 60) × slope × thresholdGain` — the value compared against `threshold`,
+    /// `min(numDeltas, 60) × slope × the configured gain` — the value compared against `threshold`,
     /// shipped on the wire (×1000, Int32 bit-pattern) for host-side logging/corroboration.
     public var modifiedTrend: Double { record.modified_trend }
     /// Total samples folded (saturates at 1000), shipped (capped 255) for host log context.

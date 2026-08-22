@@ -16,14 +16,26 @@ import UIKit
 /// ``ClientCursorCompositor``) and the orchestrator (``SlopDeskVideoClientSession``) for
 /// one remote GUI window, bridging layout + input from the platform backing view.
 ///
-/// `VideoWindowView`'s `NSView`/`UIView` holds one. It constructs the live pipeline
+/// Each half's backing view holds one — `MacMetalLayerBackedView` (`NSView`) in
+/// `SlopDeskVideoClientMac`, `MetalLayerBackedView` (`UIView`) in `SlopDeskVideoClientPhone`. That
+/// pair of subscribers is why this type and its callbacks are `package`: narrower than `public`, and
+/// the narrowest width that reaches a sibling target in the same package. It constructs the live pipeline
 /// (renderer, compositor, transport, session) on activate, tears it down on deactivate,
 /// computes videoScale each layout pass, and forwards input to the host via the session.
 ///
 /// ⚠️ **GUI-ONLY:** constructs a Metal renderer + UDP transport + orchestrator (which
 /// brings up a `VTDecompressionSession` + display link). NEVER instantiated in a test.
 @MainActor
-final class VideoWindowPipeline {
+package final class VideoWindowPipeline {
+    /// SPELLED OUT because an implicit one is `internal` no matter what the type says. Every stored
+    /// property here has a default, so Swift synthesises `init()` — and synthesises it at the DEFAULT
+    /// access level, not the type's. Raising the class and its members to `package` for the two view
+    /// halves therefore left them able to name the type and call every method on it, but unable to
+    /// CONSTRUCT one: `private let pipeline = VideoWindowPipeline()` in each half is the only line
+    /// that needed the initializer, and it is the one line an access-level sweep over declarations
+    /// does not see, because there is no declaration to sweep.
+    package init() {}
+
     private let log = Logger(subsystem: "slopdesk.video.client", category: "VideoWindowPipeline")
 
     /// UDP-mux injection point: the per-host shared-flow pool every pane vends its lane from. Installed
@@ -58,7 +70,7 @@ final class VideoWindowPipeline {
     /// "Reconnecting…" scrim; `false` ⇒ traffic flowing again. Sticky through the recovery rebuild
     /// (``StallScrimLatch``), so the scrim holds from "host went dark" until frames/heartbeats resume.
     /// Set by the view in `activate`.
-    var onStreamStallChanged: ((Bool) -> Void)?
+    package var onStreamStallChanged: ((Bool) -> Void)?
     /// TERMINAL REFUSAL: fired on the @MainActor after the host REJECTED the session
     /// (`helloAck(accepted: false)` — the requested window is gone / version mismatch, incl. the
     /// mux mint-failure refusal). By the time it fires the pipeline has already torn itself down
@@ -66,7 +78,7 @@ final class VideoWindowPipeline {
     /// would re-hello the same doomed request forever). The view forwards it to the pane model so
     /// the pane leaves its live surface and falls back to the picker/error state. Set by the view
     /// in `activate`; `nil` ⇒ standalone/preview (the pane just stays down).
-    var onSessionRejected: (() -> Void)?
+    package var onSessionRejected: (() -> Void)?
     /// The ~1 s monitor Task evaluating ``StreamStallPolicy`` over the session's liveness snapshot.
     /// Started in `activate`, cancelled in `deactivate`. The LATCH deliberately lives on the
     /// pipeline (not the task): a host-ended rebuild replaces the session + monitor, and the scrim
@@ -113,10 +125,10 @@ final class VideoWindowPipeline {
     /// backing view reads this to hide the LOCAL OS arrow while the pointer is inside an active pane, so
     /// host-streamed and OS cursors don't BOTH show ("duplicate cursor"). Defaults `false` (no overlay
     /// yet ⇒ keep the OS arrow).
-    private(set) var isServerCursorVisible = false
+    package private(set) var isServerCursorVisible = false
     /// Fired on the @MainActor whenever ``isServerCursorVisible`` FLIPS (not per 120 Hz packet). The
     /// backing view re-evaluates its OS-cursor decision. Set by the view in `activate`; `nil` on iOS.
-    var onServerCursorVisibilityChanged: ((Bool) -> Void)?
+    package var onServerCursorVisibilityChanged: ((Bool) -> Void)?
 
     /// 1:1 PANE SNAP: fired on the @MainActor when the stream's decoded size changes (first decoded
     /// frame, or the first frame at a new capture size after a host-side resize). Carries the HOST
@@ -125,40 +137,40 @@ final class VideoWindowPipeline {
     /// ``activate(view:videoLayer:connection:maxFrameRate:)`` — its nil-ness decides at session
     /// construction whether the pane follows the stream (snap) or the connect-time host-follow
     /// negotiation runs (standalone windows).
-    var onStreamNativePoints: ((VideoSize) -> Void)?
+    package var onStreamNativePoints: ((VideoSize) -> Void)?
 
     /// ACTUAL-SIZE VIEWPORT: fired on the @MainActor whenever the decoded size changes, carrying the
     /// HOST WINDOW's POINT size — UNCONDITIONALLY (no 1:1-pane-snap coupling). The macOS backing view
     /// reads it to auto-zoom the stream to its actual point size inside a fixed pane viewport. Set by
     /// the view in `activate`; left `nil` on iOS (manual pinch) / standalone.
-    var onDecodedPointsChanged: ((VideoSize) -> Void)?
+    package var onDecodedPointsChanged: ((VideoSize) -> Void)?
 
     /// HOST-WINDOW RESIZE: fired on the @MainActor when the host reports the captured window's MAXIMUM
     /// resizable POINT size (its display bounds). The macOS backing view forwards it to the model so the
     /// "Resize…" popover caps its width/height fields. Set by the view in `activate`.
-    var onDisplayMaxChanged: ((VideoSize) -> Void)?
+    package var onDisplayMaxChanged: ((VideoSize) -> Void)?
 
     /// CONNECTION STATS: fired on the @MainActor when the host's FPS governor announces a new stream
     /// CADENCE (frames/sec) — the initial cadence and every change. The macOS backing view forwards it to
     /// the model so the sidebar's Connection section shows a per-pane "FPS" row. Set by the view in
     /// `activate`. (Same value that re-bases the pacer below — surfaced for display, not control.)
-    var onStreamCadenceChanged: ((Int) -> Void)?
+    package var onStreamCadenceChanged: ((Int) -> Void)?
 
     /// CONNECTION STATS: fired on the @MainActor ~1 Hz with the client-measured video PAYLOAD bitrate
     /// (kilobits/sec) — the titlebar cluster's stream-weight complication. Set by the view in `activate`.
     /// Display-only (never reaches the host).
-    var onStreamBitrateChanged: ((Int) -> Void)?
+    package var onStreamBitrateChanged: ((Int) -> Void)?
 
     /// NETWORK-STATS MIRROR: fired on the @MainActor ~2 Hz with the session's client-local
     /// telemetry aggregate (received-fps / FEC / unrecovered rates + hold + pacer depth) for the
     /// pane's stats surface. Set by the view in `activate`. Display-only (never reaches the host).
-    var onNetworkStatsChanged: ((ClientNetworkStatsSnapshot) -> Void)?
+    package var onNetworkStatsChanged: ((ClientNetworkStatsSnapshot) -> Void)?
 
     /// SWIPE-NAV STATUS: fired on the @MainActor (~2 Hz heartbeat + on host frontmost-app change)
     /// with the host's swipe-translation eligibility + recogniser knobs. The macOS backing view
     /// gates and configures its peel-feedback mirror from it (doc 05 §8). Set by the view in
     /// `activate`. Display-only (never reaches the host).
-    var onSwipeNavStatusChanged: ((SwipeNavStatusMessage) -> Void)?
+    package var onSwipeNavStatusChanged: ((SwipeNavStatusMessage) -> Void)?
 
     /// USER STREAM SETTINGS: the last requested fps cap / bitrate ceiling (`0` = auto), preserved
     /// ACROSS a host-ended rebuild — the rebuild constructs a fresh session whose per-session host
@@ -175,11 +187,11 @@ final class VideoWindowPipeline {
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
     /// the instant local mouse position, so the pointer never lags by an RTT). `nil` until the shape
     /// bitmap arrives → the view shows the plain arrow. Rebuilt only when the host shapeID changes.
-    private(set) var currentRemoteCursor: NSCursor?
+    package private(set) var currentRemoteCursor: NSCursor?
     private var currentRemoteCursorShapeID: UInt16?
     /// Fired on the @MainActor when ``currentRemoteCursor`` changes (host swapped cursor shape). The
     /// backing view re-applies it so the shape updates even while the mouse is stationary.
-    var onRemoteCursorChanged: (() -> Void)?
+    package var onRemoteCursorChanged: (() -> Void)?
     #endif
 
     /// Freeze LOCALISATION probes (env-gated `SLOPDESK_VIDEO_DEBUG`). Monotonic gap probes on the two
@@ -221,16 +233,16 @@ final class VideoWindowPipeline {
     private var outboundConsumer: Task<Void, Never>?
 
     #if os(macOS)
-    typealias HostView = NSView
+    package typealias HostView = NSView
     #elseif canImport(UIKit)
-    typealias HostView = UIView
+    package typealias HostView = UIView
     #endif
 
     /// Brings up the pipeline against `connection`, attaching the display link to
     /// `view`. Idempotent: re-activating with the same connection is a no-op; a
     /// different connection tears the old one down first. `maxFrameRate` caps the GUI
     /// video path (~24-30fps; NOT a 60/120fps game stream).
-    func activate(
+    package func activate(
         view: HostView,
         videoLayer: CAMetalLayer,
         connection: VideoWindowConnection?,
@@ -696,7 +708,7 @@ final class VideoWindowPipeline {
     /// lag it must cover is the FULL close→SwiftUI-dismantle→deactivate→stop chain (not just stop),
     /// so it holds the live-video slot for a small bounded `videoTeardownSettle` past teardown
     /// instead. Over-holding fails safe (at worst a brief admission delay at the cap).
-    func deactivate() {
+    package func deactivate() {
         stopStallMonitor()
         stopMotionPump()
         stopOutboundConsumer()
@@ -726,7 +738,7 @@ final class VideoWindowPipeline {
     /// Called each layout pass with the on-screen layer size (points). Updates the
     /// session's layer size, which recomputes `videoScale = layerSize / decodedSize`
     /// and re-places the cursor overlay.
-    func layoutChanged(layerSize: VideoSize) {
+    package func layoutChanged(layerSize: VideoSize) {
         self.layerSize = layerSize
         // `layerSize` is the on-screen PANE size in POINTS — the input/cursor denominator. The Metal
         // DRAWABLE pixel size belongs to the VIEW's `layout()` (ACTUAL-SIZE VIEWPORT: the oversized video
@@ -745,14 +757,14 @@ final class VideoWindowPipeline {
     /// it (or found the pane already there). Rebase the session's resize debounce on `size` so
     /// the snap-induced layout pass does NOT echo a `resizeRequest` back to the host — the snap
     /// stays client-side (see ``SlopDeskVideoClientSession/noteLayerSizeAdopted(_:)``).
-    func adoptLayerSize(_ size: VideoSize) {
+    package func adoptLayerSize(_ size: VideoSize) {
         guard let session else { return }
         Task { await session.noteLayerSizeAdopted(size) }
     }
 
     /// USER RESIZE (numeric popover): forward an ABSOLUTE host-window POINT size so the session requests
     /// the resize (see ``SlopDeskVideoClientSession/userResizeTo(width:height:)``).
-    func userResizeTo(width: Double, height: Double) {
+    package func userResizeTo(width: Double, height: Double) {
         guard let session else { return }
         Task { await session.userResizeTo(width: width, height: height) }
     }
@@ -760,7 +772,7 @@ final class VideoWindowPipeline {
     /// USER STREAM SETTINGS: forward a live fps-cap / bitrate-ceiling request (`0` = auto) to the
     /// session (which stores it and re-sends after every re-hello) and remember it here so a
     /// host-ended rebuild's fresh session inherits it (see `activate`).
-    func updateStreamSettings(fpsCap: Int, bitrateCeilingBps: Int) {
+    package func updateStreamSettings(fpsCap: Int, bitrateCeilingBps: Int) {
         lastStreamSettings = (fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)
         guard let session else { return }
         Task { await session.updateStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps) }
@@ -770,7 +782,7 @@ final class VideoWindowPipeline {
     /// locally, and re-sends after every re-hello) and remember it here so a host-ended rebuild's
     /// fresh session inherits it (see `activate`) — the ``updateStreamSettings(fpsCap:bitrateCeilingBps:)``
     /// twin.
-    func setAudioEnabled(_ enabled: Bool) {
+    package func setAudioEnabled(_ enabled: Bool) {
         lastAudioEnabled = enabled
         guard let session else { return }
         Task { await session.updateAudioEnabled(enabled) }
@@ -778,7 +790,7 @@ final class VideoWindowPipeline {
 
     /// PRIVACY BLANK: the ``setAudioEnabled(_:)`` twin — forward the wish to the session (store /
     /// act / re-send after every re-hello) and remember it so a rebuild's fresh session inherits it.
-    func setPrivacyEnabled(_ enabled: Bool) {
+    package func setPrivacyEnabled(_ enabled: Bool) {
         lastPrivacyEnabled = enabled
         guard let session else { return }
         Task { await session.updatePrivacyMode(enabled) }
@@ -788,7 +800,7 @@ final class VideoWindowPipeline {
     /// AND to the session, so the input encoder inverts — and the cursor overlay tracks —
     /// the EXACT SAME transform. Both must move together or a click while zoomed lands at
     /// the un-zoomed source position.
-    func setZoom(_ zoom: CGFloat, pan: CGPoint) {
+    package func setZoom(_ zoom: CGFloat, pan: CGPoint) {
         renderer?.zoom = zoom
         renderer?.panNormalized = pan
         pacer?.setNeedsRedisplay() // transform changed under an unchanged frame (see layoutChanged)
@@ -804,7 +816,7 @@ final class VideoWindowPipeline {
     /// window) AND to the session, so the input encoder inverts — and the cursor overlay
     /// tracks — the EXACT SAME displayed rect. Both must move together or a click in `.fill`
     /// lands against the `.fit` letterbox rect.
-    func setContentMode(_ mode: VideoContentMode) {
+    package func setContentMode(_ mode: VideoContentMode) {
         renderer?.contentMode = mode
         if let session {
             Task { await session.setContentMode(mode) }
@@ -813,14 +825,14 @@ final class VideoWindowPipeline {
 
     /// The current content mode the renderer is showing (so the backing view's toggle button
     /// can reflect + flip it). Defaults to `.fit` before the renderer is up.
-    var contentMode: VideoContentMode { renderer?.contentMode ?? .fit }
+    package var contentMode: VideoContentMode { renderer?.contentMode ?? .fit }
 
     /// ACTUAL-SIZE VIEWPORT: tell the SESSION which texture sub-rect (UV origin + size) is currently
     /// visible in the pane, so the input encoder maps a pane click to the right host pixel. The
     /// renderer is NOT cropped — it renders the WHOLE window; the macOS view shows a region by translating
     /// the oversized Metal layer inside the clipping pane (compositor-smooth). `nil` ⇒ no viewport (the
     /// stream fills the pane). Input-only; no render change here.
-    func setInputViewport(_ crop: VideoRect?) {
+    package func setInputViewport(_ crop: VideoRect?) {
         if let session {
             Task { await session.setViewportCrop(crop) }
         }
@@ -828,14 +840,19 @@ final class VideoWindowPipeline {
 
     // MARK: Input forwarding
 
-    func mouseMove(_ viewPoint: VideoPoint) {
+    package func mouseMove(_ viewPoint: VideoPoint) {
         guard let session else { return }
         // Coalesce: defer to the motion pump (most-recent-wins) instead of a Task per event. Stored
         // as the bare async send so a following button can fold it into one ordered hop.
         pendingMotionSend = { await session.sendMouseMove(viewPoint: viewPoint) }
     }
 
-    func mouseDrag(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
+    package func mouseDrag(
+        _ button: MouseButton,
+        _ viewPoint: VideoPoint,
+        _ clickCount: UInt8,
+        _ modifiers: InputModifiers,
+    ) {
         guard let session else { return }
         // A drag is FEEDBACK-CRITICAL — the host-rendered selection highlight tracks it — so it goes
         // out IMMEDIATELY through the ordered FIFO like a button/scroll, NOT deferred to the motion
@@ -851,7 +868,12 @@ final class VideoWindowPipeline {
         ) }
     }
 
-    func mouseDown(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
+    package func mouseDown(
+        _ button: MouseButton,
+        _ viewPoint: VideoPoint,
+        _ clickCount: UInt8,
+        _ modifiers: InputModifiers,
+    ) {
         guard let session else { return }
         // Flush any pending move, THEN the button — both enqueued onto the ONE ordered FIFO with no
         // `await` between, so they reach the session actor in physical order (move, then down). The
@@ -864,7 +886,12 @@ final class VideoWindowPipeline {
         ) }
     }
 
-    func mouseUp(_ button: MouseButton, _ viewPoint: VideoPoint, _ clickCount: UInt8, _ modifiers: InputModifiers) {
+    package func mouseUp(
+        _ button: MouseButton,
+        _ viewPoint: VideoPoint,
+        _ clickCount: UInt8,
+        _ modifiers: InputModifiers,
+    ) {
         guard let session else { return }
         submitFlushingMotion { await session.sendMouseUp(
             button: button,
@@ -874,7 +901,7 @@ final class VideoWindowPipeline {
         ) }
     }
 
-    func scroll(
+    package func scroll(
         dx: Double,
         dy: Double,
         viewPoint: VideoPoint,
@@ -927,7 +954,7 @@ final class VideoWindowPipeline {
         }
     }
 
-    func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
+    package func key(keyCode: UInt16, down: Bool, modifiers: InputModifiers) {
         guard let session else { return }
         submitFlushingMotion { await session.sendKey(keyCode: keyCode, down: down, modifiers: modifiers) }
     }
@@ -941,7 +968,7 @@ final class VideoWindowPipeline {
     /// (hover / first-responder). Fire-and-forget + idempotent on the host (raises once, skips when
     /// already frontmost), so the user's first click lands instantly. NOT routed through the ordered
     /// input FIFO — it is a pre-warm hint, not an input event, and need not be ordered against clicks.
-    func focusWindow() {
+    package func focusWindow() {
         guard let session else { return }
         Task { await session.sendFocusWindow() }
     }

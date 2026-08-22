@@ -310,38 +310,42 @@ final class PointerMappingTests: XCTestCase {
     }
 }
 
-#if os(macOS)
-import AppKit
-
 /// PURE keyCode → modifier-mask + press/release detection for `flagsChanged`. Without
 /// this seam the host never receives a modifier KEY-UP, so a ⌘ flag latched on the
 /// shared CGEventSource stays stuck and corrupts later text insertion (the Cmd+Delete
 /// → "enter" bug).
+///
+/// These pinned `MetalLayerBackedView` statics until the video carve (docs/56 §3) split that view into
+/// a Mac half and a phone half — at which point a rule about to be duplicated moved to
+/// ``LocalInputPolicy`` in the engine, where it lives once. The subject moving DELETED this file's
+/// `#if os(macOS)` + `import AppKit`, which is the point: the flag set is now ``InputModifiers``
+/// (platform-free), so the rule is now exercised on the phone triple too — where the modifier-resync
+/// path it governs is still unbuilt.
 @MainActor
 final class FlagsChangedModifierTests: XCTestCase {
     func testLeftCommandKeyCodeWithCommandFlagIsDown() {
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 55, flags: [.command]), true)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 55, modifiers: [.command]), true)
     }
 
     func testRightCommandKeyCodeWithoutCommandFlagIsUp() {
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 54, flags: []), false)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 54, modifiers: []), false)
     }
 
     func testShiftKeyCodes() {
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 56, flags: [.shift]), true)
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 60, flags: []), false)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 56, modifiers: [.shift]), true)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 60, modifiers: []), false)
     }
 
     func testControlOptionFnCapsLock() {
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 59, flags: [.control]), true)
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 58, flags: [.option]), true)
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 63, flags: [.function]), true)
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 57, flags: [.capsLock]), true)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 59, modifiers: [.control]), true)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 58, modifiers: [.option]), true)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 63, modifiers: [.function]), true)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 57, modifiers: [.capsLock]), true)
     }
 
     func testNonModifierKeyCodeReturnsNil() {
-        XCTAssertNil(MetalLayerBackedView.modifierDown(keyCode: 0, flags: [.command])) // 'a'
-        XCTAssertNil(MetalLayerBackedView.modifierDown(keyCode: 36, flags: [])) // return
+        XCTAssertNil(LocalInputPolicy.modifierDown(keyCode: 0, modifiers: [.command])) // 'a'
+        XCTAssertNil(LocalInputPolicy.modifierDown(keyCode: 36, modifiers: [])) // return
     }
 
     /// C5 BUG A: the focus-regain modifier RESYNC re-forwards every "held" modifier as a key-down. Caps
@@ -349,10 +353,10 @@ final class FlagsChangedModifierTests: XCTestCase {
     /// virtualKey 57) TOGGLES the remote Caps state — focusing a GUI pane with local Caps on flipped
     /// host Caps, and blur flipped it again.
     func testHeldModifierKeyCodesExcludeCapsLock() {
-        let codes = MetalLayerBackedView.heldModifierKeyCodes([.capsLock, .command, .shift])
+        let codes = LocalInputPolicy.heldModifierKeyCodes([.capsLock, .command, .shift])
         XCTAssertEqual(Set(codes), [55, 56], "resync re-establishes ⌘ and ⇧ but never Caps Lock")
         XCTAssertTrue(
-            MetalLayerBackedView.heldModifierKeyCodes([.capsLock]).isEmpty,
+            LocalInputPolicy.heldModifierKeyCodes([.capsLock]).isEmpty,
             "Caps Lock alone resyncs nothing — its flag is a toggle state, not a held key",
         )
     }
@@ -360,20 +364,38 @@ final class FlagsChangedModifierTests: XCTestCase {
     func testDownDetectionDependsOnFlagPresenceNotKeyCode() {
         // The same ⌘ keyCode (55) yields down=true when ⌘ is present and down=false when
         // absent — that flag check is the only way to tell the press edge from the release.
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 55, flags: [.command]), true)
-        XCTAssertEqual(MetalLayerBackedView.modifierDown(keyCode: 55, flags: []), false)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 55, modifiers: [.command]), true)
+        XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: 55, modifiers: []), false)
     }
 
-    /// R14: `MetalLayerBackedView.clampClickCount` saturates `NSEvent.clickCount` (an unbounded Int) into the
+    /// R14: `LocalInputPolicy.clampClickCount` saturates `NSEvent.clickCount` (an unbounded Int) into the
     /// wire UInt8 instead of the trapping `UInt8(Int)` that crashed the client on a 256th rapid in-place
     /// click. Byte-identical for the real 1/2/3-click range.
     func testClampClickCountSaturatesInsteadOfTrapping() {
-        XCTAssertEqual(MetalLayerBackedView.clampClickCount(0), 0)
-        XCTAssertEqual(MetalLayerBackedView.clampClickCount(1), 1)
-        XCTAssertEqual(MetalLayerBackedView.clampClickCount(3), 3)
-        XCTAssertEqual(MetalLayerBackedView.clampClickCount(255), 255)
-        XCTAssertEqual(MetalLayerBackedView.clampClickCount(256), 255) // would have trapped pre-R14
-        XCTAssertEqual(MetalLayerBackedView.clampClickCount(100_000), 255)
+        XCTAssertEqual(LocalInputPolicy.clampClickCount(0), 0)
+        XCTAssertEqual(LocalInputPolicy.clampClickCount(1), 1)
+        XCTAssertEqual(LocalInputPolicy.clampClickCount(3), 3)
+        XCTAssertEqual(LocalInputPolicy.clampClickCount(255), 255)
+        XCTAssertEqual(LocalInputPolicy.clampClickCount(256), 255) // would have trapped pre-R14
+        XCTAssertEqual(LocalInputPolicy.clampClickCount(100_000), 255)
+    }
+
+    /// The carve's own invariant, not a behaviour: the two halves must agree on this rule because they
+    /// no longer own it. A left/right pair shares ONE flag bit, so both keyCodes must answer the same
+    /// question — if a half ever re-grew a local copy keyed on left-vs-right, this is what would catch it.
+    func testLeftAndRightVariantsShareOneFlag() {
+        for (left, right, flag) in [
+            (UInt16(55), UInt16(54), InputModifiers.command),
+            (56, 60, .shift),
+            (59, 62, .control),
+            (58, 61, .option),
+        ] {
+            XCTAssertEqual(
+                LocalInputPolicy.modifierDown(keyCode: left, modifiers: flag),
+                LocalInputPolicy.modifierDown(keyCode: right, modifiers: flag),
+                "keyCodes \(left)/\(right) read the same flag bit",
+            )
+            XCTAssertEqual(LocalInputPolicy.modifierDown(keyCode: right, modifiers: flag), true)
+        }
     }
 }
-#endif

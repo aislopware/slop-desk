@@ -430,6 +430,140 @@ public enum ViewportPan {
     }
 }
 
+/// The ACTUAL-SIZE viewport's ZOOM LADDER, spelled once.
+///
+/// ⚠️ THIS IS NOT THE PHONE'S LADDER, and the difference is a design fact rather than drift.
+/// ``TouchPointerPlan/minZoom`` floors the phone at 1× because its pane IS the viewport and the
+/// stream already `.fit`s into it, so there is nothing to zoom OUT to. The desktop viewport shows a
+/// window that is routinely LARGER than the pane, so minifying below 1× is the only way to see the
+/// whole of it — hence a 0.25 floor here. Two ladders, two viewport models; merging them would take
+/// zoom-out away from the Mac.
+///
+/// What this type exists to end is the OTHER duplication: the four numbers below were spelled inline
+/// at four sites in the one file that used them (the two step call sites, the clamp inside the zoom
+/// step, and the clamp inside fit-to-pane), which is three chances for a footer button and a fit
+/// command to settle on different zooms. They are one spelling now, and the split that follows puts
+/// them in a target where the phone's ladder is no longer visible to compare against — so this had
+/// to happen BEFORE the carve or it could never be noticed again.
+///
+/// PORT CANDIDATE: this is a rule, so `CLAUDE.md`'s default says Rust. It stayed Swift for one
+/// scheduling reason and no design one — `rust/slopdesk-ffi/include/slopdesk_ffi.h` and
+/// `src/lib.rs` are the hand-maintained FFI surface and were being edited concurrently, and a new
+/// symbol there could not be built or verified without `build-ffi.sh`. It belongs beside
+/// ``ViewportPan``'s two entry points in `rust/slopdesk-video/src/client_view.rs`.
+public enum ViewportZoom {
+    /// The floor — minify a window up to 4× larger than the pane into view.
+    public static let minimum: Double = 0.25
+    /// The ceiling.
+    public static let maximum: Double = 4.0
+    /// One step of the footer's − / + controls.
+    public static let stepFactor: Double = 1.25
+    /// How near unity a stepped zoom must land before it SNAPS to exactly 1×.
+    public static let unitySnapBand: Double = 0.06
+
+    /// Clamp to `[minimum, maximum]`. No unity snap — ``fitted(window:pane:)`` needs the exact
+    /// ratio, and a fit of 0.97 snapped to 1.0 would leave the window NOT fitting, which is the one
+    /// thing that command promises.
+    public static func bounded(_ zoom: Double) -> Double {
+        Double.minimum(Double.maximum(zoom, minimum), maximum)
+    }
+
+    /// Clamp, then SNAP to exactly 1× within ``unitySnapBand`` so repeated steps settle on
+    /// actual-size rather than drifting past it by a rounding crumb each time.
+    public static func clamped(_ zoom: Double) -> Double {
+        let value = bounded(zoom)
+        let distanceFromUnity = abs(value - 1)
+        if distanceFromUnity < unitySnapBand { return 1.0 }
+        return value
+    }
+
+    /// One footer zoom STEP from `zoom` (`stepIn` = the + button), clamped and unity-snapped.
+    public static func stepped(_ zoom: Double, stepIn: Bool) -> Double {
+        if stepIn { return clamped(zoom * stepFactor) }
+        return clamped(zoom / stepFactor)
+    }
+
+    /// The zoom at which the WHOLE window fits inside the pane: the smaller per-axis ratio, bounded
+    /// to the ladder. At the 0.25 floor a >4×-oversized window still overflows, which is why the
+    /// caller re-anchors top-left afterwards rather than assuming no overflow.
+    public static func fitted(window: VideoSize, pane: VideoSize) -> Double {
+        guard window.width > 1, window.height > 1, pane.width > 1, pane.height > 1 else { return 1.0 }
+        let horizontal = pane.width / window.width
+        let vertical = pane.height / window.height
+        return bounded(Double.minimum(horizontal, vertical))
+    }
+
+    /// The DISPLAYED window size — native POINT size × zoom. The compositor scales the sublayer
+    /// FRAME by this while the drawable stays native-res, and ``ViewportPan``'s gate and clamp key
+    /// off the same product, so the layer position and the pan limit cannot disagree.
+    public static func displayedSize(window: VideoSize, zoom: Double) -> VideoSize {
+        VideoSize(width: window.width * zoom, height: window.height * zoom)
+    }
+}
+
+/// The rules a platform half applies to a NATIVE input event before it reaches ``VideoWindowPipeline``
+/// — a modifier edge's direction, which modifiers a resync must re-forward, and the click-count clamp.
+///
+/// These lived on the macOS `MetalLayerBackedView` until the video carve (docs/56 §3) split that view
+/// in two, at which point they were a POLICY about to be duplicated: `MacMetalLayerBackedView` and the
+/// phone's `MetalLayerBackedView` would each have grown their own copy, and the iOS one would have
+/// drifted the moment it grew hardware-keyboard support (`GCKeyboard.coalesced` — the modifier-resync
+/// gap the phone still carries). docs/56 §3's line is LAYOUT diverges, CAPABILITY does not: arrangement
+/// is duplicated, a rule never is. So the rule lives here, once, and each half keeps only its own
+/// framework→``InputModifiers`` conversion (`NSEvent.ModifierFlags` on the Mac, `UIKeyModifierFlags` on
+/// the phone) — the one part that genuinely cannot be shared.
+public enum LocalInputPolicy {
+    /// Whether a `flagsChanged`-style keyCode is a modifier PRESS (`true`) or a RELEASE (`false`).
+    /// AppKit's `flagsChanged` fires for BOTH edges with the same keyCode; the only way to tell them
+    /// apart is to ask whether the corresponding modifier is still present AFTER the event. `nil` for a
+    /// keyCode that is not a known modifier, so the caller sends nothing.
+    ///
+    /// Left and right variants are distinct keyCodes but share one flag bit — the host latches the
+    /// FLAG, and which physical key produced it is not something it can act on.
+    public static func modifierDown(keyCode: UInt16, modifiers: InputModifiers) -> Bool? {
+        switch Int(keyCode) {
+        case 55,
+             54: modifiers.contains(.command) // ⌘ left / right
+        case 56,
+             60: modifiers.contains(.shift) // ⇧ left / right
+        case 59,
+             62: modifiers.contains(.control) // ⌃ left / right
+        case 58,
+             61: modifiers.contains(.option) // ⌥ left / right
+        case 57: modifiers.contains(.capsLock) // ⇪
+        case 63: modifiers.contains(.function) // fn
+        default: nil
+        }
+    }
+
+    /// A representative modifier keyCode (the LEFT variant) for each modifier currently held — what a
+    /// refocus resync re-forwards, because there is no event to read on a keyboard/tab refocus and a
+    /// still-held ⌘ the host does not know about starts the next chord a key short. Left-vs-right is
+    /// arbitrary but consistent: the host only cares about the resulting latched flag.
+    ///
+    /// **Caps Lock is deliberately ABSENT** (C5 bug A). `.capsLock` is a TOGGLE STATE, not a held key:
+    /// re-forwarding it as a key-down makes the host post virtualKey 57 and FLIP the remote Caps state
+    /// on every refocus — and the matching latch release on blur flips it back, so the remote keyboard
+    /// case inverts once per focus change. ``InputModifierKeys`` excludes it from the held vocabulary
+    /// for the same reason; this list is that decision applied to a flag set.
+    public static func heldModifierKeyCodes(_ modifiers: InputModifiers) -> [UInt16] {
+        var codes: [UInt16] = []
+        if modifiers.contains(.command) { codes.append(55) }
+        if modifiers.contains(.shift) { codes.append(56) }
+        if modifiers.contains(.control) { codes.append(59) }
+        if modifiers.contains(.option) { codes.append(58) }
+        if modifiers.contains(.function) { codes.append(63) }
+        return codes
+    }
+
+    /// Clamps a native click count (AppKit's `NSEvent.clickCount` is an unbounded `Int` — it keeps
+    /// incrementing for consecutive in-place clicks inside the double-click interval) into the wire
+    /// `UInt8`. `UInt8(clamping:)` saturates at 255 instead of the trapping `UInt8(Int)` that would
+    /// crash the client on a 256th rapid click; identical for every real 1/2/3-click, and the host only
+    /// uses it as a click-state hint (`max(1, Int(clickCount))`), so saturating is harmless.
+    public static func clampClickCount(_ count: Int) -> UInt8 { UInt8(clamping: count) }
+}
+
 /// Tracks which modifier KEYS the view forwarded to the host as "down" but whose release
 /// `flagsChanged` it may never see because focus moved away (⌘-Tab, pane blur, first-responder
 /// resign). The host injects modifiers through a shared `CGEventSource(.hidSystemState)` that

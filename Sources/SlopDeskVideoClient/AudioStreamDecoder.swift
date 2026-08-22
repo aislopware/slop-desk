@@ -1,5 +1,6 @@
 #if canImport(AudioToolbox)
 import AudioToolbox
+import CSlopDeskFFI
 import Foundation
 import OSLog
 import SlopDeskVideoProtocol
@@ -139,21 +140,36 @@ public final class AudioStreamDecoder: @unchecked Sendable {
         )
     }
 
-    /// s16le → Float32: a pure sample-format convert. A payload that is not whole interleaved
-    /// frames is corrupt → drop (validate-then-drop; never a partial frame into the ring).
+    /// s16le → Float32: a pure sample-format convert, through the door.
+    ///
+    /// A payload that is not whole interleaved frames is corrupt → drop (validate-then-drop; never a
+    /// partial frame into the ring, which would offset every later sample by one channel and turn
+    /// one bad datagram into permanently swapped stereo).
+    ///
+    /// **The convert itself used to be spelled here**, byte for byte the same as
+    /// `slopdesk_video::audio_wire`'s and including that drop rule, while the Rust half sat with no
+    /// caller outside its own tests. Both doors either side of it already crossed —
+    /// `slopdesk_audio_decode` hands back a payload SPAN and `slopdesk_audio_stage_push` takes
+    /// `const float *` — so this loop was the last arithmetic on the audio path with an
+    /// implementation in each language, which is `docs/55` §8's entire subject. It cannot be caught
+    /// disagreeing, because a full-scale sample is `-1.0` either way and a drifted one is just
+    /// quieter audio.
+    ///
+    /// The buffer is sized by ARITHMETIC rather than by a probe: whenever there is an answer at all
+    /// it is exactly `payload.count / 2` samples, so the first guess is a bound rather than an
+    /// estimate and the §4c null-output probe (which would run the whole convert twice) is not
+    /// needed.
     private func decodePCM(_ payload: Data) -> [Float] {
-        let bytesPerFrame = 2 * channels
-        guard !payload.isEmpty, payload.count.isMultiple(of: bytesPerFrame) else { return [] }
-        let sampleCount = payload.count / 2
-        var out = [Float](repeating: 0, count: sampleCount)
-        payload.withUnsafeBytes { raw in
-            for i in 0..<sampleCount {
-                // Little-endian on the wire; assemble bytes (a raw slice offers no alignment).
-                let lo = UInt16(raw[i * 2])
-                let hi = UInt16(raw[i * 2 + 1])
-                out[i] = Float(Int16(bitPattern: hi << 8 | lo)) / 32768.0
+        var out = [Float](repeating: 0, count: payload.count / 2)
+        let written = payload.withUnsafeBytes { raw -> Int in
+            out.withUnsafeMutableBufferPointer { room in
+                slopdesk_audio_decode_pcm_s16le(
+                    raw.baseAddress?.assumingMemoryBound(to: UInt8.self), raw.count,
+                    channels, room.baseAddress, room.count,
+                )
             }
         }
+        guard written == out.count, written > 0 else { return [] }
         return out
     }
 

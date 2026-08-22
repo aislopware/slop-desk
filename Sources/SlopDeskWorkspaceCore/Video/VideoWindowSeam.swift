@@ -8,10 +8,15 @@ import SwiftUI
 /// video view (PATH 2 / Phase 4, doc 17 §3).
 ///
 /// Like ``TerminalRendererFactory``, the cross-platform library cannot reference
-/// `SlopDeskVideoClient.VideoWindowView` directly — that pulls VideoToolbox + Metal into
-/// the headless `swift build`, and those HANG without a window-server + TCC session in a
-/// test context. Instead the GUI app target (linking `SlopDeskVideoClient` with the
-/// Screen-Recording / decode entitlements) registers a factory at launch; the library
+/// a video view directly — that pulls VideoToolbox + Metal into the headless `swift build`, and those
+/// HANG without a window-server + TCC session in a test context. Instead the GUI app target registers a
+/// factory at launch; the library
+///
+/// The view it registers is `SlopDeskVideoClientMac.MacVideoWindowView` or
+/// `SlopDeskVideoClientPhone.VideoWindowView` — there are TWO now, one per shell. This comment named
+/// `SlopDeskVideoClient.VideoWindowView` until 2026-08-22, which was wrong in both halves: no view lives
+/// in `SlopDeskVideoClient` at all (it is the engine, views-free by a ratcheted rule), and the bare name
+/// belongs to the phone. The seam is unchanged by the split — that is the point of it being a seam.
 /// calls it, falling back to a labelled placeholder when none was registered (no host
 /// capturing a GUI window).
 ///
@@ -21,9 +26,9 @@ import SwiftUI
 ///
 /// Wiring (app target, once at launch):
 /// ```swift
-/// import SlopDeskVideoClient
+/// import SlopDeskVideoClientMac // or SlopDeskVideoClientPhone, in the phone's shell
 /// VideoWindowFactory.shared = { descriptor, context in
-///     AnyView(VideoWindowView(title: descriptor.title, context: context))
+///     AnyView(MacVideoWindowView(title: descriptor.title, context: context))
 /// }
 /// ```
 public struct RemoteWindowDescriptor: Sendable, Equatable {
@@ -65,7 +70,7 @@ public struct RemoteWindowDescriptor: Sendable, Equatable {
     }
 
     /// True when the descriptor carries a complete live endpoint (host + two DISTINCT ports).
-    /// `VideoWindowFactory` uses this to pick the LIVE `VideoWindowView` vs. the chrome-only
+    /// `VideoWindowFactory` uses this to pick the LIVE video view vs. the chrome-only
     /// placeholder. Media + cursor must be distinct ports (PATH 2 opens two separate UDP
     /// connections).
     public var hasEndpoint: Bool {
@@ -502,6 +507,6 @@ public final class RemoteDisplayDiscovery {
 }
 
 // SEAM SPLIT: the headless `SlopDeskWorkspaceCore` carries no SwiftUI `RemoteWindowPlaceholderView` body —
-// `SlopDeskClientUI` provides the real placeholder body; the Xcode app target injects the production
-// `VideoWindowView` via `VideoWindowFactory`.
+// each UI shell provides its own real placeholder body; the app target injects the production video view
+// (`MacVideoWindowView` on the Mac, `VideoWindowView` on the phone) via `VideoWindowFactory`.
 #endif

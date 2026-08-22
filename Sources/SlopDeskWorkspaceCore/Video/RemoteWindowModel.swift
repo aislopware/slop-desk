@@ -4,6 +4,22 @@ import SlopDeskWorkspaceModel
 // Per-pane `@MainActor @Observable` LOGIC for one PATH-2 video stream (a whole display for a
 // `.desktop` pane; one host window on the automation seam): open/close, the latched pane modes,
 // and paste-as-keystrokes. No SwiftUI usage (a rebuilt view binds to it).
+//
+// ── "THE LIVE VIDEO PANE" IS DELIBERATELY NOT A DOC LINK BELOW (docs/56 §3, the video carve) ──────
+// Eighteen doc comments in this file describe a sink that "the live video pane publishes". They used
+// to say `VideoWindowView` in DOUBLE backticks — a doc link — and it was never resolvable: this module depends on
+// `SlopDeskVideoProtocol` and NOTHING in the video client, because the `VideoWindowFactory` seam
+// exists precisely so the domain layer cannot name a VideoToolbox/Metal type. The double backticks
+// were pointing at a symbol DocC could not see from here.
+//
+// The carve then made them actively misleading. `VideoWindowView` is now the PHONE half's type — the
+// Mac's is `MacVideoWindowView` — so a link left as-is resolves to one platform while describing a
+// contract both honour, and a doc link that resolves to the WRONG platform is worse than one that
+// resolves to nothing. Every generic mention is therefore prose: it means the pane view of whichever
+// half is mounted, and no half in particular.
+//
+// The ONE mention that is platform-specific — ``systemKeyInjector`` — says so at its own declaration,
+// and it is the reason this note is worth reading rather than deleting.
 @preconcurrency
 @MainActor
 @Observable
@@ -42,7 +58,7 @@ public final class RemoteWindowModel {
 
     // MARK: Paste as Keystrokes (per-key CGEvent typing into secure fields)
 
-    /// The live key-injection sink ``VideoWindowView`` publishes (via
+    /// The live key-injection sink the video pane publishes (via
     /// ``RemotePaneContext/onKeyInjectorReady``) once its session exists, cleared (`nil`) on teardown.
     /// Each call drives the host's per-event input path (`InputInjector.postKey`, plain `CGEvent`) — CGEvent
     /// keys reach `sudo` / SecurityAgent password fields even under Secure Event Input. `(keyCode, down, shift)`.
@@ -53,7 +69,7 @@ public final class RemoteWindowModel {
     /// the model never learns the read-only state; the seam withholds the sink.
     public var keyInjector: ((_ keyCode: UInt16, _ down: Bool, _ shift: Bool) -> Void)?
 
-    /// RESIZE (numeric popover): the live ``VideoWindowView`` publishes this once its session exists
+    /// RESIZE (numeric popover): the live video pane publishes this once its session exists
     /// (cleared `nil` on teardown / when read-only). The "Resize…" popover calls it to request an ABSOLUTE
     /// host-window POINT size; `(width, height)`. `nil` ⇒ no live sink (no button).
     public var resizeInjector: ((_ width: Double, _ height: Double) -> Void)?
@@ -62,11 +78,11 @@ public final class RemoteWindowModel {
     /// read-only). `GuiLeafView` gates the "Resize…" button on this.
     public var canResizeWindow: Bool { active != nil && resizeInjector != nil }
 
-    /// The remote window's CURRENT POINT size, pushed by ``VideoWindowView`` on the first decoded frame and
+    /// The remote window's CURRENT POINT size, pushed by the live video pane on the first decoded frame and
     /// every host-/popover-driven resize (via ``noteWindowGeometry(currentW:currentH:maxW:maxH:)``). `nil`
     /// until the first frame; the "Resize…" popover pre-fills its width/height fields from it.
     public private(set) var windowPointSize: CGSize?
-    /// The MAX resizable POINT size the host reported (its display bounds), pushed by ``VideoWindowView``
+    /// The MAX resizable POINT size the host reported (its display bounds), pushed by the live video pane
     /// once the host's `displayMax` lands. `nil` until known — the popover then leaves its fields uncapped
     /// (the host still clamps server-side). The host's resize-to-display-origin makes this max reachable.
     public private(set) var windowMaxPointSize: CGSize?
@@ -79,7 +95,7 @@ public final class RemoteWindowModel {
         if maxW > 0, maxH > 0 { windowMaxPointSize = CGSize(width: maxW, height: maxH) }
     }
 
-    /// The host-announced stream CADENCE (frames/sec), pushed by ``VideoWindowView`` on the initial cadence
+    /// The host-announced stream CADENCE (frames/sec), pushed by the live video pane on the initial cadence
     /// and every FPS-governor change. `nil` until the first lands. The sidebar's Connection section shows it
     /// as a per-pane "FPS" row (hidden for terminal panes). It is the host's negotiated encode rate — NOT a
     /// client-measured present throughput.
@@ -93,7 +109,7 @@ public final class RemoteWindowModel {
     }
 
     /// CONNECTION STATS: client-measured video PAYLOAD bitrate (kilobits/sec), pushed ~1 Hz by
-    /// ``VideoWindowView``. Unlike ``streamFps`` a ZERO is a real reading (idle-skip = nothing flows), so it
+    /// the live video pane. Unlike ``streamFps`` a ZERO is a real reading (idle-skip = nothing flows), so it
     /// is kept; only a negative (nonsense) value is dropped. `nil` until the first report lands.
     public private(set) var streamKbps: Int?
 
@@ -105,7 +121,7 @@ public final class RemoteWindowModel {
 
     /// LIVE NETWORK STATS (client-local mirror, ~2 Hz): received frames/sec, FEC recoveries/sec,
     /// unrecovered losses/sec, the latest host-stamp hold (ms), and the pacer's live depth —
-    /// pushed by ``VideoWindowView`` from the session's aggregated telemetry windows. `nil` until
+    /// pushed by the live video pane from the session's aggregated telemetry windows. `nil` until
     /// the first push lands. Like ``streamKbps``, ZEROS are real readings (an idle stream receives
     /// nothing), so they are kept.
     public private(set) var statsFps: Double?
@@ -144,7 +160,7 @@ public final class RemoteWindowModel {
         if statsDecodeMs != dec { statsDecodeMs = dec }
     }
 
-    /// STREAM SETTINGS (fps cap / bitrate ceiling): the live ``VideoWindowView`` publishes this once its
+    /// STREAM SETTINGS (fps cap / bitrate ceiling): the live video pane publishes this once its
     /// session exists (cleared `nil` on teardown; WITHHELD by the seam while read-only — it changes HOST
     /// encode behaviour, like ``resizeInjector``). `(fpsCap, bitrateCeilingBps)`, `0` = auto; the host
     /// clamps on apply and the session re-sends the request after every re-hello.
@@ -183,7 +199,7 @@ public final class RemoteWindowModel {
         notifyModesChanged()
     }
 
-    /// HOST AUDIO (footer speaker toggle): the live ``VideoWindowView`` publishes this once its session
+    /// HOST AUDIO (footer speaker toggle): the live video pane publishes this once its session
     /// exists (cleared `nil` on teardown; WITHHELD by the seam while read-only — it changes HOST capture
     /// behaviour, like ``streamSettingsInjector``). Absolute `enabled` — the session stores the wish and
     /// re-sends it after every re-hello.
@@ -221,7 +237,7 @@ public final class RemoteWindowModel {
 
     // MARK: Privacy blank (host display blackout — display sessions only)
 
-    /// PRIVACY BLANK (footer shield toggle, DESKTOP panes only): the live ``VideoWindowView``
+    /// PRIVACY BLANK (footer shield toggle, DESKTOP panes only): the live video pane
     /// publishes this once its display session exists (cleared `nil` on teardown; WITHHELD while
     /// read-only — it changes HOST behaviour, like ``audioInjector``). Absolute `enabled`; the
     /// session stores the wish and re-sends it after every re-hello. Re-asserts ``privacyEnabled``
@@ -369,8 +385,21 @@ public final class RemoteWindowModel {
 
     /// SYSTEM-KEY INJECTOR (immersive-capture plumbing): programmatic key events driven through the
     /// SAME wire path the pane's local keyDown/keyUp uses. `(keyCode, modifierFlags [raw platform
-    /// flags], isDown)`. Published by ``VideoWindowView`` once its session exists (cleared `nil` on
-    /// teardown; WITHHELD by the seam while read-only — it sends host input, like ``keyInjector``).
+    /// flags], isDown)`. Cleared `nil` on teardown; WITHHELD by the seam while read-only — it sends
+    /// host input, like ``keyInjector``.
+    ///
+    /// ⚠️ THE ONE SINK ONLY THE MAC HALF EVER PUBLISHES, and the only mention in this file that is not
+    /// generic. `MacVideoWindowView` takes it; the phone's `VideoWindowView` does not accept the
+    /// parameter at all. That is a platform floor, not an unfinished port: `modifierFlags` is a raw
+    /// `NSEvent.ModifierFlags` bit pattern and its only producer is `SystemKeyCaptureController`'s
+    /// `CGEventTap`, neither of which exists in the iOS SDK — which is why `PaneImmersiveCapture`
+    /// already reports `isSupported == false` there and the phone footer draws no immersive chip.
+    ///
+    /// So ``canInjectSystemKeys`` is permanently `false` on the phone, BY CONSTRUCTION rather than by
+    /// omission. Before the carve this read "published by `VideoWindowView`", which after the rename
+    /// would have named the one half that never publishes it — the exact wrong-platform doc link the
+    /// note at the top of this file exists to prevent. check-supervisor's Rule D carries the same fact
+    /// as its single named exception.
     public var systemKeyInjector: ((_ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool) -> Void)?
 
     /// Whether programmatic system-key injection is possible right now: streaming AND a live sink is
@@ -379,7 +408,7 @@ public final class RemoteWindowModel {
 
     /// STALL SCRIM: whether the stream is STALLED — the host went
     /// silent (no frame AND no 1 s host heartbeat) past the stall threshold, so the pane overlays a
-    /// "Reconnecting…" scrim over the frozen last frame. Pushed by ``VideoWindowView`` on every flip (sticky
+    /// "Reconnecting…" scrim over the frozen last frame. Pushed by the live video pane on every flip (sticky
     /// through the client's self-heal rebuild — clears only when traffic actually resumes). Defaults `false`.
     public private(set) var isStreamStalled = false
 
@@ -401,11 +430,11 @@ public final class RemoteWindowModel {
         resizeInjector?(width, height)
     }
 
-    /// VIEWPORT CONTROLS (client-side zoom + pan-lock): the live ``VideoWindowView`` publishes this once its
+    /// VIEWPORT CONTROLS (client-side zoom + pan-lock): the live video pane publishes this once its
     /// session exists (cleared `nil` on teardown). The bottom control bar zooms the actual-size video sublayer
     /// and freezes the edge-hover auto-pan. These are pure CLIENT compositor ops (never touch the host), so —
     /// UNLIKE ``resizeInjector`` — the sink is NOT withheld while read-only. The argument is a raw command byte
-    /// (``ViewportCommand``); the `UInt8` keeps the app-target ``VideoWindowView`` decoupled from this module.
+    /// (``ViewportCommand``); the `UInt8` keeps the app-target pane view decoupled from this module.
     ///
     /// Re-asserts ``viewportLocked`` on every publish: a detach/reattach re-binds the SAME model to a FRESH
     /// view (which always starts unlocked), so the model — the lock's source of truth — pushes the lock back
@@ -423,7 +452,7 @@ public final class RemoteWindowModel {
     public var canControlViewport: Bool { active != nil && viewportInjector != nil }
 
     /// The client-viewport commands carried by ``viewportInjector`` as their raw `UInt8` (the structural-byte
-    /// contract shared with the app-target ``VideoWindowView``, which switches on the same values).
+    /// contract shared with the app-target pane view, which switches on the same values).
     public enum ViewportCommand: UInt8, Sendable {
         case zoomIn = 0
         case zoomOut = 1
@@ -451,7 +480,7 @@ public final class RemoteWindowModel {
         notifyModesChanged()
     }
 
-    /// RELEASE STUCK INPUT (the manual escape hatch): a zero-arg closure ``VideoWindowView`` publishes
+    /// RELEASE STUCK INPUT (the manual escape hatch): a zero-arg closure the live video pane publishes
     /// once its session exists (via ``RemotePaneContext/onInputReleaseReady``; cleared `nil` on teardown,
     /// WITHHELD by the seam while read-only — it sends host input). Firing it synthesizes a key-UP for every
     /// held modifier + a mouse-UP for every button through the existing synthetic-release paths, clearing a
@@ -569,7 +598,7 @@ public final class RemoteWindowModel {
 
     /// Builds the descriptor from the app target (host + UDP ports) + the target (the fixed display
     /// for a desktop pane, else the entered window id) and marks it active (the panel then brings up
-    /// the live ``VideoWindowView``). No-op if a window target's id is invalid.
+    /// the live video pane). No-op if a window target's id is invalid.
     public func open() {
         let t = target()
         loadError = nil
@@ -609,7 +638,7 @@ public final class RemoteWindowModel {
     /// SHARP frame renders — the video analogue of ``TerminalViewModel/awaitingResizeReflow``. The pane
     /// resize-scrim (``PaneContainer``) waits on it so the overlay BRIDGES the gap during which the Metal
     /// view shows the last frame STRETCHED/upscaled (blurry) before re-captured pixels arrive — instead of
-    /// clearing on a fixed settle timer that uncovers the blur early. ``VideoWindowView`` drives it:
+    /// clearing on a fixed settle timer that uncovers the blur early. The live video pane drives it:
     /// ``noteResized()`` on a layout-size change (prompts the 1:1 host re-capture), ``noteRendered()`` on the
     /// first frame at the new native size. A safety timeout + ``close()`` clear it so it can never stick.
     /// (The live-video pane mount is deferred — see ``PaneContainer`` — so this seam is test-exercised today.)
@@ -687,7 +716,8 @@ public final class RemoteWindowModel {
         windowPointSize = nil
         windowMaxPointSize = nil
         // Drop every published sink HERE — the model's own lifecycle, not the view's dismantle. The old
-        // view's `deactivate()` deliberately publishes NOTHING (see `VideoWindowView.deactivate`): during a
+        // view's `deactivate()` deliberately publishes NOTHING (both halves — see the `deactivate()` on
+        // `MacVideoWindowView` and on the phone's `VideoWindowView`, which agree here): during a
         // pane detach/reattach the SAME model is re-bound by a view in ANOTHER hosting root, and SwiftUI may
         // dismantle the old view AFTER the new one published fresh sinks — an unconditional nil-publish
         // there would silently kill the new surface's input. close() always precedes the re-open in store

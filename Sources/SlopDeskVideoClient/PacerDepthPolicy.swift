@@ -56,8 +56,8 @@ public struct PacerTelemetrySnapshot: Sendable, Equatable {
 /// NETWORK-late events, see the file header).
 ///
 /// Promote: ≥ `promoteLateCount` network-late EVENTS (``noteNetworkLate(_:)``) within
-/// `promoteWindowSeconds` ⇒ depth 1 → `boostDepth` (2 — NEVER higher; an unbounded ratchet here
-/// is the latency failure mode this policy exists to avoid).
+/// `promoteWindowSeconds` ⇒ depth 1 → the boosted depth (2 — NEVER higher; an unbounded ratchet
+/// here is the latency failure mode this policy exists to avoid).
 /// Demote: `demoteCleanSeconds` with ≤ `demoteToleranceLates` network-late events (and ≥
 /// `minHoldSeconds` since promotion) ⇒ back to 1. Counters always run (telemetry); only the
 /// depth action is gated by `adaptEnabled`.
@@ -70,19 +70,12 @@ public struct PacerDepthPolicy: Sendable, Equatable {
 
         public init() { state = slopdesk_pacer_depth_config_default() }
 
-        /// late iff gap > max(`absoluteLateFloorSeconds`, `lateGapFactor` × expectedInterval).
-        /// 1.6 sits above 1-interval + 120Hz-tick quantization + present-on-arrival wobble
-        /// (~1.3-1.5×) and below a fully missed content slot (2.0×).
+        /// late iff gap > max(the absolute late floor, `lateGapFactor` × expectedInterval). 1.6
+        /// sits above 1-interval + 120Hz-tick quantization + present-on-arrival wobble (~1.3-1.5×)
+        /// and below a fully missed content slot (2.0×). The floor itself is the crate's.
         public var lateGapFactor: Double {
             get { state.late_gap_factor }
             set { state.late_gap_factor = newValue }
-        }
-
-        /// The HW-validated stall threshold (FramePacer.dbgNoteHold) — also immunizes the depth-2
-        /// tick-alternation case (8.3/25ms present gaps) against self-sustaining promotion.
-        public var absoluteLateFloorSeconds: Double {
-            get { state.absolute_late_floor_seconds }
-            set { state.absolute_late_floor_seconds = newValue }
         }
 
         /// A gap above this is IDLE (host idle-skip / motion stop), never late. Recovery stalls on
@@ -90,25 +83,6 @@ public struct PacerDepthPolicy: Sendable, Equatable {
         public var idleGapSeconds: Double {
             get { state.idle_gap_seconds }
             set { state.idle_gap_seconds = newValue }
-        }
-
-        /// Late additionally requires gap ≥ this × the previous in-flow present gap (suppresses
-        /// gradual cadence drift; one skipped 60fps slot is a 2.0× step and passes).
-        public var gapGradientFactor: Double {
-            get { state.gap_gradient_factor }
-            set { state.gap_gradient_factor = newValue }
-        }
-
-        /// Dense flow = ≥ this many arrivals within `denseWindowSeconds` before the gap opened
-        /// (≈ sustained ≥23fps motion). Excludes typing/sparse content from ever counting late.
-        public var denseMinArrivals: Int {
-            get { state.dense_min_arrivals }
-            set { state.dense_min_arrivals = newValue }
-        }
-
-        public var denseWindowSeconds: Double {
-            get { state.dense_window_seconds }
-            set { state.dense_window_seconds = newValue }
         }
 
         /// LATE SLACK: extra margin ON TOP of the late boundary, as a fraction of the expected
@@ -163,43 +137,6 @@ public struct PacerDepthPolicy: Sendable, Equatable {
         public var promoteWarmupSeconds: Double {
             get { state.promote_warmup_seconds }
             set { state.promote_warmup_seconds = newValue }
-        }
-
-        /// The boosted depth. 1↔2 only; NEVER higher (one frame of slack covers the dominant
-        /// one-slot-late hitch; deeper is pure standing latency).
-        public var boostDepth: Int {
-            get { Int(state.boost_depth) }
-            set { state.boost_depth = UInt32(Swift.max(0, newValue)) }
-        }
-
-        /// expected-interval = median of the last N in-flow inter-ARRIVAL gaps (median, not
-        /// min/mean: at depth 2 presents/arrivals can alternate 8.3/25ms around tick quantization —
-        /// the median stays ≈ the true content interval; min would collapse and over-detect).
-        /// Capped at the 15 the by-value crossing carries: a ring that kept more would lose its
-        /// oldest entry on every fold.
-        public var intervalRingSize: Int {
-            get { state.interval_ring_size }
-            set { state.interval_ring_size = newValue }
-        }
-
-        public var minSamplesForEstimate: Int {
-            get { state.min_samples_for_estimate }
-            set { state.min_samples_for_estimate = newValue }
-        }
-
-        public var defaultIntervalSeconds: Double {
-            get { state.default_interval_seconds }
-            set { state.default_interval_seconds = newValue }
-        }
-
-        public var minIntervalSeconds: Double {
-            get { state.min_interval_seconds }
-            set { state.min_interval_seconds = newValue }
-        }
-
-        public var maxIntervalSeconds: Double {
-            get { state.max_interval_seconds }
-            set { state.max_interval_seconds = newValue }
         }
 
         /// Env-tunable construction (`SLOPDESK_DEPTH_*`), each clamped to a sane band; absent /
@@ -281,8 +218,8 @@ public struct PacerDepthPolicy: Sendable, Equatable {
         state = slopdesk_pacer_depth_new(config.crossing, adaptEnabled)
     }
 
-    /// The recommended presentation depth: 1 or `boostDepth`. Always 1 while `adaptEnabled` is
-    /// false (counters still run — telemetry is unconditional).
+    /// The recommended presentation depth: 1, or the crate's boosted depth. Always 1 while
+    /// `adaptEnabled` is false (counters still run — telemetry is unconditional).
     public var depth: Int { Int(state.depth) }
 
     /// The expected content interval: the hint (if set), else the median of the in-flow
