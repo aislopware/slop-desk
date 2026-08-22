@@ -109,9 +109,15 @@ public enum ScreenWire {
         return String(fields[2])
     }
 
-    /// Refuses to frame more than screend will read (64 MiB) — a caller handing over a ring bigger
-    /// than that gets an error here instead of a connection screend kills mid-stream.
-    public static let maximumFrameBytes = 64 * 1024 * 1024
+    /// What screend will read, and therefore what this end will frame or accept (64 MiB).
+    ///
+    /// Asked for rather than spelled. Both directions are governed by it — ``encodeRequest(verb:flags:rows:cols:pane:raw:)``
+    /// refuses a body over it, and `ScreenClient.exchange` refuses a REPLY prefix over it — and both
+    /// refusals are the door's now, so this constant exists for the one thing left that reads it as
+    /// a number: the error a caller is handed. `check-supervisor.sh` used to ratchet a literal here
+    /// against `screenwire::MAX_FRAME`, which was the right gate for a spelling that should not have
+    /// existed.
+    public static let maximumFrameBytes = Int(slopdesk_screen_constant(0))
 
     public enum WireError: Error, Sendable {
         case frameTooLarge(bytes: Int)

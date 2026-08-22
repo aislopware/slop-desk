@@ -67,16 +67,6 @@ public enum JSONValue: Sendable, Equatable, Codable {
         return nil
     }
 
-    public var arrayValue: [Self]? {
-        if case let .array(value) = self { return value }
-        return nil
-    }
-
-    public var objectValue: [String: Self]? {
-        if case let .object(value) = self { return value }
-        return nil
-    }
-
     /// A human-readable flattening for UI display (text blocks joined, scalars
     /// stringified). Used to render tool input/output compactly.
     ///

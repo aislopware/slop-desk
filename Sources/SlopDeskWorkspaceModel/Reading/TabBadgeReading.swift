@@ -6,8 +6,6 @@
 // rows, the phone's SwiftUI rows and the collapsed-sidebar strip — and a word spelled twice is a
 // state VoiceOver reads two ways on two devices.
 
-import SlopDeskWorkspaceCore
-
 /// The three states that WAIT ON YOU, as roles rather than hues. The ink each takes is the view
 /// floor's answer (``SlopDeskSlate/StatusPresentation/attentionInk(_:)``); the ORDER they rank in
 /// is this file's, because the collapsed-group roll-up has to pick a loudest one and both halves
@@ -76,4 +74,39 @@ package enum TabBadgeReading {
         let present = Set(badges.compactMap(\.self).compactMap(attention))
         return AttentionRole.allCases.first { present.contains($0) }
     }
+
+    /// Whether a badge is a COMMAND's outcome, and which one. The finish tiers fuse both speakers,
+    /// so `agentFinish` decides: the agent's turn ending is the mark column's check, a command's exit
+    /// is the trailing slot's. `.error` is always a command's — `ClaudeStatus` has no error case.
+    ///
+    /// It lives with the other badge READINGS rather than with `RailRowsBuilder`, which is where it
+    /// was written: the builder is welded to `WorkspaceStore` (``RailRowsBuilder/failedBlock(for:badge:store:)``)
+    /// and cannot descend, while this is a pure function of a badge and a `Bool` that both the
+    /// receipt and the design floor's ``StatusPresentation`` have to read. The builder keeps
+    /// ``RailRowsBuilder/commandReceipt(badge:agentFinish:blocks:failedBlock:processLabel:)``, which
+    /// calls through to here, so the mark resolver and the slot's text still read one rule.
+    package static func commandOutcome(badge: TabBadgeKind?, agentFinish: Bool) -> CommandOutcome? {
+        switch badge {
+        case .error: .failed
+        case .completed,
+             .finished: agentFinish ? nil : .succeeded
+        case .awaitingInput,
+             .caffeinate,
+             .commandBusy,
+             .commandRunning,
+             .running,
+             .sudo,
+             nil: nil
+        }
+    }
+}
+
+/// A finished command's OUTCOME — the two readings the trailing slot has (docs/DECISIONS.md
+/// round 24). A fact about the row's command blocks; only the INK it reads in
+/// (``SlopDeskSlate/StatusPresentation/outcomeInk(_:)``) is a view decision.
+package enum CommandOutcome: Equatable, Sendable {
+    /// Exit 0 (or a completion the shell reported no code for).
+    case succeeded
+    /// A non-zero exit, or a held-red `OSC 9;4;2`.
+    case failed
 }

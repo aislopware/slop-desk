@@ -10,6 +10,7 @@
 // Each is `@MainActor` and each is unit-pinned without a live view, a split or an `NSWindow`.
 
 import CSlopDeskFFI
+import SlopDeskFontFaces
 import SlopDeskWorkspaceCore
 
 @MainActor

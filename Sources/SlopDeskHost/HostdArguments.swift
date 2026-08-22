@@ -45,6 +45,19 @@ public struct HostdArguments: Sendable, Equatable {
         self.transcriptPath = transcriptPath
     }
 
+    /// The port hostd binds when nobody says otherwise — and the ONE spelling of it.
+    ///
+    /// Not `private`, because the menu-bar host app persists its own `@AppStorage` port and used to
+    /// seed it with a literal `7779` "the issue's requested default". The client's connect gate
+    /// prefills ``ConnectionTarget/default``, which is this number — so the two apps disagreed out of
+    /// the box: start the host from the menu bar, press Connect in the client, and the client dialled
+    /// a port nothing was listening on. A default that only one of two halves knows is not a default.
+    ///
+    /// `ConnectionTarget` still spells it a second time, in `SlopDeskWorkspaceModel`, which neither
+    /// links the other. That pair belongs in Rust beside `listen::is_valid_port` — which already owns
+    /// what a legal port IS — and is left for the next FFI pass rather than joined by a third copy.
+    public static let defaultPort: UInt16 = 7420
+
     /// The usage string printed on `--help` or a parse error.
     public static func usage(programName: String) -> String {
         "usage: \(programName) [--port N] [--shell /path/to/shell] [--inspector] [--transcript PATH]"
@@ -54,7 +67,7 @@ public struct HostdArguments: Sendable, Equatable {
     /// `--help`/`-h`, a missing flag value, or an unknown flag — the caller then prints
     /// ``usage(programName:)`` and exits non-zero.
     public static func parse(_ args: [String]) -> Self? {
-        var port: UInt16 = 7420
+        var port: UInt16 = Self.defaultPort
         var shell: String?
         var inspector = false
         var transcript: String?

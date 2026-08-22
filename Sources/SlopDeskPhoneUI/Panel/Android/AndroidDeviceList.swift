@@ -115,16 +115,7 @@ struct AndroidDeviceList: View {
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(AndroidInk.icon.color)
             SlateSearchField(placeholder: AndroidPresentation.searchPlaceholder, text: $query)
-            if !query.isEmpty {
-                Button { query = "" } label: {
-                    Image(systemSymbol: .xmarkCircleFill)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(AndroidInk.icon.color)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .transition(.opacity)
-            }
+            DevicePanelChrome.clearKey($query, ink: AndroidInk.icon.color)
         }
         .animation(Slate.Anim.smallFade, value: query.isEmpty)
         .padding(.horizontal, Slate.Metric.space2)

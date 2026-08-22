@@ -27,6 +27,7 @@
 
 import SlopDeskProtocol
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 /// How the link is doing, as one fused state. The name is historical — the lamp itself is gone; this
 /// classifies the island's TEXT inks.
@@ -49,14 +50,9 @@ package enum NetworkHealth: Equatable, Sendable {
     case bad
 }
 
-/// How loud one reading is allowed to be — the island's whole state axis, and the only one it has.
-/// `quiet` is the metadata grey every healthy reading rests in, `raised` is worth knowing about,
-/// `loud` is worth acting on.
-package enum ConnectionAlarm: Equatable, Sendable {
-    case quiet
-    case raised
-    case loud
-}
+// ``ConnectionAlarm`` — the quiet/raised/loud rung — is `SlopDeskWorkspaceModel`'s, because
+// `SlopDeskSlate` resolves it to an ink and a weight and the design floor must not name this whole
+// reading to do it.
 
 /// Which of the three machine readings a run is. The GLYPH is each framework's to resolve; what is
 /// named here is the role, so both halves pick the same drawing for the same number.
@@ -154,14 +150,32 @@ package enum ConnectionReading {
         }
     }
 
-    /// The island's TRAILING slot: the mono ping metric while connected (falling back to the status
-    /// word before the first sample — a connected island with an empty right edge reads as broken,
-    /// which is why the bedded mounts speak where the compact one stays silent), else the short
-    /// status word — never a stale ping.
-    package static func footerDetail(
-        status: ConnectionStatus, pingMS: Double?,
+    /// Where the link's reading is mounted — the ONE thing about the trailing slot the two shells
+    /// genuinely disagree on, named rather than re-derived.
+    package enum ConnectionMount: Sendable, Equatable {
+        /// A bed cut out of the chrome (the Mac's titlebar island). A bed is already on screen, so an
+        /// empty right edge inside it reads as broken.
+        case bedded
+        /// A bedless run of text in a toolbar (the phone's pill). There is no plate for a gap to appear
+        /// in, so a slot that has not filled yet reads as nothing at all rather than as a fault.
+        case compact
+    }
+
+    /// The link's TRAILING slot: the mono ping metric while connected, else the short status word —
+    /// never a stale ping.
+    ///
+    /// The one branch `mount` decides is CONNECTED-BUT-UNSAMPLED, the beat before the first ping
+    /// lands. A ``ConnectionMount/bedded`` reading falls back to the status word, because a connected
+    /// island with an empty right edge reads as broken; a ``ConnectionMount/compact`` one stays
+    /// silent. That is a layout ruling about the two mounts, not two answers to what the link says —
+    /// which is why it is a parameter here rather than a second copy of this function at the pill.
+    package static func trailingDetail(
+        status: ConnectionStatus, pingMS: Double?, mount: ConnectionMount,
     ) -> (text: String, isMetric: Bool)? {
-        if case .connected = status, let label = pingLabel(pingMS) { return (label, true) }
+        if case .connected = status {
+            if let label = pingLabel(pingMS) { return (label, true) }
+            if mount == .compact { return nil }
+        }
         return (ConnectionPresenter.shortLabel(for: status), false)
     }
 

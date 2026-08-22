@@ -16,11 +16,13 @@
 // into one enum would have been a translation layer pretending to be a decision.
 //
 // THE MARK IS SEMANTIC, NOT AN `SFSymbol`. `SFSafeSymbols` is a dependency of `SlopDeskSlate` and of
-// the two UI targets, and deliberately not of this one — the presentation floor names no artwork. So
+// the two UI targets, and deliberately not of this one — the reading floor names no artwork. So
 // the register answers with a ``Mark`` and each drawing maps it to its own image type in exactly one
 // place. The alternative was a dependency edge bought to carry five glyph names.
-
-import SlopDeskWorkspaceModel
+//
+// It sits BESIDE the zone vocabulary it reads (``PaneDropZone``, ``PaneDragDestination``) rather than
+// one target up, so `SlopDeskSlate` — which draws the mark — does not have to name the whole
+// presentation layer to learn what a drop means.
 
 /// The wording and the mark every pane-drop chip draws from.
 package enum PaneDropRegister {

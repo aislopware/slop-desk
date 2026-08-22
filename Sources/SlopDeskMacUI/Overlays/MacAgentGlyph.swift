@@ -19,6 +19,7 @@ import AppKit
 import QuartzCore
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
+import SlopDeskWorkspaceModel
 
 // MARK: - The glyph
 

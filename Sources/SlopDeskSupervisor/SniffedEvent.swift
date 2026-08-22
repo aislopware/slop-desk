@@ -40,8 +40,9 @@ public enum SniffedEvent: Sendable, Equatable {
     /// the drift this port exists to remove. A body that does not parse is dropped here — it was
     /// progress either way, never a notification.
     case progress(String)
-    /// A kind this build has no name for. Kept rather than dropped so the batch stays countable and
-    /// a skew is visible to a test, never acted on.
+    /// A kind this build has no name for — or a known kind carrying a VALUE it cannot name, which
+    /// today means only `status` with an unrecognised `state`. Kept rather than dropped so the
+    /// batch stays countable and a skew is visible to a test, never acted on.
     case unknown(kind: String)
 
     /// One `{"events": [...]}` body, as superd packs it into a `0x04` frame.
@@ -68,7 +69,21 @@ public enum SniffedEvent: Sendable, Equatable {
                 body: member["body"] as? String ?? "",
             )
         case "status":
-            guard member["state"] as? String == "idle" else { return .commandRunning }
+            // BOTH literals are matched, and neither is inferred from the other's absence. Reading
+            // "not idle" as running is what made a rename of either end silent: a superd that
+            // renamed `idle` would have every finished command decode as still running, and the
+            // spinner would never come down — with both suites green, because each end tests only
+            // itself. A state this build cannot name now asserts NOTHING, which is the ruling
+            // ``BlockEvent`` already makes about an unrecognised badge state and for the same
+            // reason: guessing idle takes down a spinner that should be up, and guessing running
+            // leaves one up forever. Asserting nothing still fails toward the visible side — the
+            // pane keeps the state it had, so a finished command whose `idle` was renamed sits
+            // there spinning rather than being quietly marked done.
+            let state = member["state"] as? String
+            if state == "running" { return .commandRunning }
+            // `.unknown(kind: "status")` is unambiguous: `status` is a kind this build DOES know,
+            // so it can only ever mean the STATE was the unreadable part.
+            guard state == "idle" else { return .unknown(kind: kind) }
             // `exitCode` is always present and carries `null` for the code-less `D` — so a missing
             // key and an absent code are the same thing here, which is what `as?` already gives.
             let exitCode = (member["exitCode"] as? Int).flatMap { Int32(exactly: $0) }

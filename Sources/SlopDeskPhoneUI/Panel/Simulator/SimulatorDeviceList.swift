@@ -127,19 +127,10 @@ struct SimulatorDeviceList: View {
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(Slate.Text.icon)
             SlateSearchField(placeholder: SimulatorPresentation.searchPlaceholder, text: $query)
-            if !query.isEmpty {
-                Button { query = "" } label: {
-                    Image(systemSymbol: .xmarkCircleFill)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.icon)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                // It appears on the FIRST keystroke and vanishes on the last, which at a field's
-                // trailing edge is a glyph blinking beside the caret. The fade is what keeps it from
-                // reading as part of the typing.
-                .transition(.opacity)
-            }
+            // It appears on the FIRST keystroke and vanishes on the last; the fade below is what keeps
+            // it from reading as part of the typing. Drawn by ``DevicePanelChrome/clearKey(_:ink:)``
+            // because the consoles draw the same key over the same kind of field.
+            DevicePanelChrome.clearKey($query, ink: Slate.Text.icon)
         }
         .animation(Slate.Anim.smallFade, value: query.isEmpty)
         .padding(.horizontal, Slate.Metric.space2)

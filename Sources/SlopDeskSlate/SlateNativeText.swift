@@ -9,7 +9,7 @@
 
 #if canImport(AppKit)
 import AppKit
-import SlopDeskClientCore
+import SlopDeskFontFaces
 
 package extension NSAttributedString {
     /// An attributed string over `string` whose private-use runs (nerd-font glyphs) are set in the

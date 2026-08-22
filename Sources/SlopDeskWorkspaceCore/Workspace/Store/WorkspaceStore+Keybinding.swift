@@ -79,7 +79,40 @@ extension WorkspaceStore {
     /// uses; a new-pane action (split / new-tab / …) mints a terminal pane directly via the store. A `nil`
     /// `terminal` (headless / non-terminal handle) is a no-op.
     func wireKeyInterceptor(terminal: TerminalViewModel?) {
-        terminal?.keyInterceptor = TerminalKeyInterceptor(
+        terminal?.keyInterceptor = makeKeyInterceptor()
+    }
+
+    /// A ``TerminalKeyInterceptor`` bound to this store — the pane's, and the one the phone's LAST
+    /// RESPONDER holds too.
+    ///
+    /// A key path that can swallow a chord is not a property of a PANE: on iOS the same table has to
+    /// resolve when the focused pane is a video surface, when no pane is focused, and under the
+    /// panel's cover, none of which have a `TerminalViewModel` to hang an interceptor off. So the
+    /// factory is public and the interceptor is the one implementation both rungs consult — a second
+    /// resolve-and-route written at the root would be the same table read twice, which is exactly
+    /// what ``TerminalKeyInterceptor``'s header says it exists to prevent.
+    ///
+    /// `survives` FILTERS which resolved actions may be spent, and defaults to all of them. Its one
+    /// caller is the phone's root rung under the panel cover (`CodePanelKeyYield.survives`): a chord
+    /// the filter refuses resolves to nothing, so the interceptor forwards it and the press goes on
+    /// its way rather than being swallowed into a workspace the reader cannot see.
+    public func makeKeyInterceptor(
+        allowing survives: @escaping (WorkspaceAction) -> Bool = { _ in true },
+    ) -> TerminalKeyInterceptor {
+        TerminalKeyInterceptor(
+            resolveChord: { chord in
+                // An `unbind:` target keeps its chord but loses its ACTION — the press falls through
+                // to whatever would have had it, which for a terminal pane is the PTY. The Mac's
+                // dispatcher has always honoured this (`WorkspaceKeyDispatcher`), and the interceptor
+                // did not, so one shared config file produced two behaviours: an unbound ⌘D still
+                // split the pane on the phone, and still split it on the Mac whenever the press
+                // reached the surface rather than the monitor. Asked HERE because this factory is the
+                // one resolve both of the phone's rungs and the Mac's pane surface share.
+                guard !WorkspaceBindingRegistry.isUnbound(chord),
+                      let action = WorkspaceBindingRegistry.resolvedChordTable[chord],
+                      survives(action) else { return nil }
+                return action
+            },
             onAction: { [weak self] action in
                 guard let self else { return }
                 // Thread the view-injected overlay toggles (iOS hardware-keyboard path — macOS leaves them nil

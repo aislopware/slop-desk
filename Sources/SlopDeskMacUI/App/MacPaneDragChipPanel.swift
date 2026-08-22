@@ -37,6 +37,7 @@ import AppKit
 import SFSafeSymbols // the glyph name, spelled once on the floor and checked by the compiler
 import SlopDeskClientCore // PaneDragChipSink / PaneDropRegister — the resolved outcome, decided below
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
+import SlopDeskWorkspaceModel
 
 // MARK: - The panel
 

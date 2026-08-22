@@ -1,3 +1,5 @@
+import CSlopDeskFFI
+
 /// User-facing subset of the ~80 video/host `SLOPDESK_*` flags (decision #6 / #10), grouped into a
 /// `Codable` model. These flags are read at `static let` init from the environment and CANNOT
 /// live-reload — so the model is serialised to a `video-prefs.json` SIDECAR that the host daemon reads
@@ -78,13 +80,24 @@ public struct VideoPreferences: Codable, Sendable, Equatable {
     /// nothing tells when the first one moves. A control reads through `?? …`, so an untouched field
     /// stays `nil` — the sidecar carries a value only once someone sets one, which is what keeps a
     /// fresh install's env overlay empty.
-    public static let qpSharpDefault = 26
+    ///
+    /// The four below spent a while proving that paragraph right by disobeying it: they were
+    /// literals — `26`, `40`, `1`, `5` — directly under the sentence that forbids literals here,
+    /// against doors that already vended every one of them. The failure mode is quiet and asymmetric:
+    /// a retune moves the encoder's operating point while Settings keeps SHOWING the old number, and
+    /// "reset to default" writes that old number into the overlay as an explicit override, so the
+    /// gesture that is supposed to get out of the daemon's way is the one that pins it to a value
+    /// nobody chose.
+    private static let qpDefaults = slopdesk_qp_config_default()
+    public static let qpSharpDefault = Int(qpDefaults.sharp)
     /// See ``qpSharpDefault``.
-    public static let qpCoarseDefault = 40
-    /// See ``qpSharpDefault``.
-    public static let fecMDefault = 1
-    /// See ``qpSharpDefault``.
-    public static let fecKDefault = 5
+    public static let qpCoarseDefault = Int(qpDefaults.coarse)
+    /// See ``qpSharpDefault`` — index 11 of the FEC ladder's constant door is the multi-loss default
+    /// `m`, which is its own constant rather than the floor it happens to equal today.
+    public static let fecMDefault = Int(slopdesk_adaptive_fec_constant(11))
+    /// See ``qpSharpDefault`` — index 6 is the group size used when multi-loss is on and
+    /// `SLOPDESK_FEC_K` is unset.
+    public static let fecKDefault = Int(slopdesk_adaptive_fec_constant(6))
     /// See ``qpSharpDefault`` — `MetalVideoRenderer` reads anything at or below zero as off.
     public static let sharpenDefault: Double = 0
     /// See ``qpSharpDefault`` — the pacer presents on arrival unless told to hold to a deadline.

@@ -79,35 +79,12 @@ package enum PaneGrabPill {
 
 // MARK: - Where a drag came from, and what releasing it would do
 
-/// Where a live pane drag STARTED: a tiled tree leaf (the in-canvas grab handle) or a detached
-/// satellite window's grab strip. Decides the commit family (move vs reattach) and whether `.tearOff`
-/// resolves (a satellite already is its own window).
-package enum PaneDragOrigin: Equatable {
-    case tree
-    case detached
-}
-
-/// The action releasing the drag at the current cursor would commit — the cross-container superset of
-/// the in-canvas ``PaneDropZone``.
-package enum PaneDragDestination: Equatable {
-    case canvas(PaneDropZone)
-    case sidebarRow(PaneID)
-    case newTab
-    case tearOff
-    case none
-}
-
-/// The action a release at the current cursor location would commit inside ONE tab's canvas (resolved
-/// every drag frame, committed once on release). `.none` is a cancel (release commits nothing).
-package enum PaneDropZone: Equatable {
-    case none
-    /// Drop in the centre of `target` → exchange the two panes' positions.
-    case swap(target: PaneID)
-    /// Drop on an `edge` band of `target` → the dragged pane becomes a new column/row beside it.
-    case resplit(target: PaneID, edge: PaneDropEdge)
-    /// Drop in the container's outer gutter → dock the dragged pane to that whole `edge`.
-    case dock(edge: PaneDropEdge)
-}
+// ``PaneDragOrigin``, ``PaneDragDestination`` and ``PaneDropZone`` used to be declared here. They now
+// live one floor down, in `SlopDeskWorkspaceModel/Reading/PaneDropVocabulary.swift`, beside the
+// ``PaneDropRegister`` that switches over all three — `SlopDeskSlate` draws that register's `Mark`,
+// and the design floor may not import this target to learn what a drop means. This file keeps the
+// GRAB-STRIP half of the vocabulary and the view-local drag state; the three moved for the question
+// they answer, not for tidiness.
 
 /// View-local move-drag state (held by the canvas compositor). `zone` is the resolved drop action
 /// under the cursor; the overlay previews it and the release commits it.

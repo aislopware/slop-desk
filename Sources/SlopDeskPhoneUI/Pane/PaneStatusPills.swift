@@ -25,6 +25,7 @@
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 /// One pane status chip: `🔒 READ ONLY ×`, `🛡 SECURE INPUT`, or `⚠ SYNC INPUT ×`.

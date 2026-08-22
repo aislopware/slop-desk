@@ -98,8 +98,14 @@ public enum SupervisorFrame {
         let count = header.withUnsafeBufferPointer { bytes in
             slopdesk_supervisor_body_length(bytes.baseAddress, bytes.count)
         }
-        // `.max` is the door's refusal for a length past the cap. A real body can never reach it.
-        guard count != .max else {
+        // `usize::MAX` is the door's refusal for a length past the cap. A real body can never reach
+        // it — but this guard cannot be spelled `count != .max`, and it was, which meant it never
+        // fired. Swift imports `size_t` as the SIGNED `Int`, so the door's all-ones refusal arrives
+        // as `-1` while `.max` infers `Int.max`; the two never met, and an over-cap header fell
+        // through to `readExactly(count: -1)`. Measured with a scratch C target on 2026-08-22, not
+        // reasoned about: `probe_max()` returning `(size_t)-1` types as `Int`, prints `-1`, and
+        // `== .max` is `false`.
+        guard count >= 0 else {
             if let descriptor { close(descriptor) }
             throw FrameError.bodyTooLarge(count)
         }

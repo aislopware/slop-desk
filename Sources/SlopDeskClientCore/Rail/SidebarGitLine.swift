@@ -21,26 +21,11 @@ import CSlopDeskFFI
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
-// MARK: - The dialect
+// ``GitInk`` — the ROLE a run carries — is `SlopDeskWorkspaceModel`'s, because `SlopDeskSlate`
+// resolves it to a hue and the design floor must not name this whole reading to do it. Everything
+// else about the dialect is here.
 
-/// What one run of the git line MEANS — the axis its ink and weight are chosen on. Roles, not
-/// colours: the palette resolution belongs to whichever framework is drawing.
-package enum GitInk: CaseIterable, Sendable {
-    /// The branch name — identity, not a count.
-    case branch
-    /// `↑`/`↓` — where this branch sits against its upstream.
-    case divergence
-    /// `+` — staged and ready to commit.
-    case staged
-    /// `!` — unstaged worktree changes.
-    case modified
-    /// `?` — files git does not know about yet.
-    case untracked
-    /// `~` — an unmerged state. The one run that genuinely needs a human.
-    case conflicted
-    /// `$` — parked work.
-    case stash
-}
+// MARK: - The dialect
 
 /// The three weights a run is set at — a second channel the palette cannot supply, and the one that
 /// survives the hue set's CVD collapse (under protanopia `+staged` and `~conflicted` land close

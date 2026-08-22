@@ -142,6 +142,11 @@ public enum OpenQuicklyPresentation {
     /// The footer's two fixed hints. The third is ``defaultActionLabel(for:)``, which moves.
     public static let quickSelectHint = "Quick Select"
     public static let actionsHint = "Actions"
+    /// The CAPS beside those two hints. They rode as literals at both call sites while the words next
+    /// to them were already shared — which is the shape that lets a rebind change the key on one
+    /// platform's footer and leave the other advertising the old one.
+    public static let quickSelectGlyph = "⌘"
+    public static let actionsGlyph = "⌘K"
     /// The ⌘K sheet's own zero state, when its filter narrowed past every verb.
     public static let noActionsMessage = "No actions"
     /// The ⌘K sheet's filter placeholder, and the picker's own.

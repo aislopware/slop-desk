@@ -12,6 +12,7 @@
 import SFSafeSymbols
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 /// The privilege marker for one sidebar tab row. Renders nothing for the lifecycle kinds (those

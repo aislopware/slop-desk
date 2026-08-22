@@ -40,6 +40,7 @@ import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct ConnectionPill: View {
@@ -68,12 +69,13 @@ struct ConnectionPill: View {
         }
     }
 
-    /// Connected: the ping alone (or nil before the first sample). Else the short status word.
+    /// Connected: the ping alone (or nothing before the first sample). Else the short status word.
+    ///
+    /// The whole reading is ``ConnectionReading/trailingDetail(status:pingMS:mount:)``'s, the same door
+    /// the Mac's island calls — `.compact` is what buys the silence this file's header argues for, and
+    /// it is a named mount rather than a second copy of the rule.
     private var trailing: (text: String, isMetric: Bool)? {
-        if isConnected {
-            return ConnectionReading.pingLabel(pingMS).map { ($0, true) }
-        }
-        return (ConnectionPresenter.shortLabel(for: status), false)
+        ConnectionReading.trailingDetail(status: status, pingMS: pingMS, mount: .compact)
     }
 
     private var helpText: String {

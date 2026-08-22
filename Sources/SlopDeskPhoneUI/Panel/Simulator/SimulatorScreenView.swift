@@ -157,8 +157,11 @@ final class SimulatorScreenUIView: UIView, SimulatorFrameRenderer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         // Taking key focus on the press is what makes a hardware keyboard type into the device that
-        // was last touched, rather than into whatever pane had focus before.
-        if !isFirstResponder { becomeFirstResponder() }
+        // was last touched, rather than into whatever pane had focus before. NOT while the soft
+        // keyboard is up: tapping a text field on the mirrored device is exactly when a phone user
+        // needs the keyboard to stay, and stealing first responder here would drop it on the tap
+        // that opened the field.
+        if !softKeys.isFirstResponder, !isFirstResponder { becomeFirstResponder() }
         let live = live(event) ?? touches
         if live.count >= 2 {
             isPinching = true
@@ -254,12 +257,7 @@ final class SimulatorScreenUIView: UIView, SimulatorFrameRenderer {
     }
 
     private func clampedDevicePoint(_ touch: UITouch) -> CGPoint {
-        let fitted = fitted
-        let point = touch.location(in: self)
-        return CGPoint(
-            x: min(max(point.x - fitted.minX, 0), fitted.width),
-            y: min(max(point.y - fitted.minY, 0), fitted.height),
-        )
+        SimulatorScreenLayout.clampedDevicePoint(from: touch.location(in: self), fitted: fitted)
     }
 
     // MARK: Keyboard
@@ -276,14 +274,60 @@ final class SimulatorScreenUIView: UIView, SimulatorFrameRenderer {
         }
         guard let code = SimulatorKeyMap.code(hidUsage: UInt16(resolved.keyCode.rawValue)) else {
             // No mapping: fall back to the characters, which covers the whole printable range without
-            // this file owning a layout table. Empty (a dead key, a modifier alone) is dropped.
+            // this file owning a layout table. A dead key, a modifier alone, or a ⌘-chord (which the
+            // mirror cannot forward — the device's layout is not knowable from here) is not this
+            // view's, so it is FORWARDED rather than dropped: the mirror takes first responder on
+            // touch, so a swallowed ⌘T meant every workspace chord died the moment anyone tapped the
+            // picture. Up the chain it reaches ``PhoneRootKeyResponder``, which owns those chords.
             let text = resolved.charactersIgnoringModifiers
-            if !text.isEmpty, !resolved.modifierFlags.contains(.command) { send(.type(text)) }
+            guard !text.isEmpty, !resolved.modifierFlags.contains(.command) else {
+                super.pressesBegan(presses, with: event)
+                return
+            }
+            send(.type(text))
             return
         }
         send(.key(code, modifiers: SimulatorKeyMap.modifiers(for: resolved)))
     }
+
+    // MARK: The soft keyboard
+
+    /// The zero-sized child the on-screen keyboard belongs to — see ``DeviceSoftKeyboard``.
+    private lazy var softKeys: DeviceSoftKeyInput = {
+        let keys = DeviceSoftKeyInput(frame: .zero)
+        keys.onText = { [weak self] text in self?.send?(.type(text)) }
+        keys.onDeleteBackward = { [weak self] in
+            // Spelled as the HID usage a real Backspace reports, resolved by the SAME door the
+            // hardware path uses — this view names a KEY, never the server's code for one.
+            guard let code = SimulatorKeyMap.code(hidUsage: DeviceSoftKeyboard.softDeleteUsage)
+            else { return }
+            self?.send?(.key(code, modifiers: []))
+        }
+        keys.onResign = { DeviceSoftKeyboard.shared.report(isTyping: false) }
+        addSubview(keys)
+        return keys
+    }()
+
+    func setSoftKeyboard(_ armed: Bool) {
+        if armed {
+            softKeys.becomeFirstResponder()
+        } else {
+            _ = softKeys.resignFirstResponder()
+            becomeFirstResponder()
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            DeviceSoftKeyboard.shared.unregister(self)
+        } else {
+            DeviceSoftKeyboard.shared.register(self)
+        }
+    }
 }
+
+extension SimulatorScreenUIView: DeviceSoftKeyboardHost {}
 
 /// The device's frame as a SwiftUI view. It carries no frame data: the view attaches itself to the
 /// model's sink and is fed from the socket directly.

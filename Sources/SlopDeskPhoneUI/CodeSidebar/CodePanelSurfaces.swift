@@ -16,9 +16,20 @@
 // (`SlopDeskSlate` depends on `SlopDeskClientCore`, so an ink cannot descend without becoming a cycle).
 //
 // How the surfaces are HOUSED stays each platform's own business. Here they sit under a full-screen
-// cover with a bar over them (``PhonePanelSheet``); on the Mac they are a third split column. While
-// the cover is down SwiftUI cancels the `.task`s below and the poll loops stop — the code-server is
-// only ever ensured while the panel is up, on either platform, because the ensure rides the mount.
+// cover with a bar over them (``PhonePanelSheet``); on the Mac they are a third split column.
+//
+// That difference used to be written here as a shared LIFETIME — "the code-server is only ever ensured
+// while the panel is up, on either platform" — and it was wrong on both halves. The Mac's column is
+// built once and collapse only fades it (`alphaValue`), so nothing there is ever unmounted and no
+// `.task` is ever cancelled; and an ensure is not a lease anyway — ``CodeSidebarModel/poll`` RETURNS at
+// `.ready`, so even a mounted panel stops asking, and a code-server outlives every client that ever
+// ensured it. What the cover really cancels is a loop that had already finished.
+//
+// It is the RE-ENTRY the cover creates that had to be reconciled, and it is reconciled below the split
+// rather than here: `poll` returns immediately when it is already settled on that root, so re-opening
+// the cover shows the workbench it left instead of flashing the spinner over it. See that method's
+// note. Anything about lifetime belongs there, in the one model both shells drive — a comment on one
+// shell's renderer is exactly where a claim about the other shell goes stale unnoticed.
 
 #if os(iOS)
 import SlopDeskClientCore

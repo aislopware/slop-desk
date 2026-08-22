@@ -1,4 +1,5 @@
 #if os(iOS)
+import SFSafeSymbols
 import SlopDeskSlate
 import SwiftUI
 
@@ -52,6 +53,37 @@ enum DevicePanelChrome {
             .multilineTextAlignment(.center)
             .padding(Slate.Metric.space3)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The trailing key that empties a filter field.
+    ///
+    /// `SlateSearchField`'s header hands the plate — and with it "the trailing clear affordance" — to
+    /// its CALLER, and four callers took that four different distances: both device LISTS drew this
+    /// key, and neither CONSOLE drew anything, so a typed filter over a log could only be undone by
+    /// backspacing it. Same panel, same field, same act, two answers. Cut once here, drawn by all
+    /// four.
+    ///
+    /// `ink` is a parameter because the two panels ARE two inks — the Android half reads in
+    /// `AndroidInk`, which is the one thing about these surfaces that is deliberately not shared.
+    ///
+    /// The caller keeps the `.animation(Slate.Anim.smallFade, value:)`: this key appears on the FIRST
+    /// keystroke and vanishes on the last, which at a field's trailing edge is a glyph blinking beside
+    /// the caret, and the fade that keeps it from reading as part of the typing belongs to the row it
+    /// blinks in, not to the key.
+    static func clearKey(_ text: Binding<String>, ink: Color) -> some View {
+        Group {
+            if !text.wrappedValue.isEmpty {
+                Button { text.wrappedValue = "" } label: {
+                    Image(systemSymbol: .xmarkCircleFill)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(ink)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
+                .accessibilityLabel("Clear the filter")
+            }
+        }
     }
 
     /// Whether the loading veil should be showing, late on the way up and immediate on the way down;

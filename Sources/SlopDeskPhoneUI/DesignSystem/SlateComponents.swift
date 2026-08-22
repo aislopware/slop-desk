@@ -9,6 +9,7 @@
 #if os(iOS)
 import SlopDeskClientCore // AgentReading — the readout both platforms' glyphs draw
 import SlopDeskSlate
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 /// The AGENT status instrument, spoken as TEXT in the terminal's own dialect: each reading is a

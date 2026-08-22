@@ -45,6 +45,24 @@ package struct PanelTabReading: Equatable, Sendable {
         self.label = label
         self.help = help
     }
+
+    /// What a screen reader CALLS this tab. The word, never the sentence: a label is an identity and
+    /// gets read on every focus change, so a tab whose label is the whole help text makes the reader
+    /// listen to an explanation four times to find out where they are.
+    ///
+    /// The two shells had drifted to opposite answers — the Mac read `label`, the phone read `help` —
+    /// which is the drift a shared reading exists to prevent. Cut here rather than in either renderer
+    /// so there is one answer, and so the next surface added is described once.
+    package var accessibilityLabel: String { label }
+
+    /// The elaboration, offered AFTER the label. `help` minus the name it opens with, because the
+    /// reader has just heard that name as the label and hearing it twice reads as a stutter. Every
+    /// help string is written `Name — sentence`; one without the dash is already a bare sentence and
+    /// is offered whole.
+    package var accessibilityHint: String {
+        guard let dash = help.range(of: " — ") else { return help }
+        return String(help[dash.upperBound...])
+    }
 }
 
 /// How many tabs get to say their name at the width the strip actually has.

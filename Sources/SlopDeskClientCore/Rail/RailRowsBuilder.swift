@@ -619,17 +619,6 @@ package enum RailRowsBuilder {
         return status == .done || unseenDone
     }
 
-    /// A finished command's OUTCOME — the two readings the trailing slot has (docs/DECISIONS.md
-    /// round 24). Kept here beside ``finishIsAgents(badge:status:unseenDone:)`` rather than in the
-    /// design system: which outcome a row has is a fact about its command blocks, and only the INK
-    /// it reads in (``StatusPresentation/outcomeInk(_:)``) is a view decision.
-    package enum CommandOutcome: Equatable, Sendable {
-        /// Exit 0 (or a completion the shell reported no code for).
-        case succeeded
-        /// A non-zero exit, or a held-red `OSC 9;4;2`.
-        case failed
-    }
-
     /// The trailing slot's RECEIPT for a finished command: the command's own name plus how it went.
     /// `nil` ⇒ the slot keeps its resting process label.
     package struct CommandReceipt: Equatable, Sendable {
@@ -654,7 +643,8 @@ package enum RailRowsBuilder {
         badge: TabBadgeKind?, agentFinish: Bool, blocks: [CommandBlock],
         failedBlock: CommandBlock?, processLabel: String?,
     ) -> CommandReceipt? {
-        guard let outcome = commandOutcome(badge: badge, agentFinish: agentFinish) else { return nil }
+        guard let outcome = TabBadgeReading.commandOutcome(badge: badge, agentFinish: agentFinish)
+        else { return nil }
         let text = outcome == .failed
             ? failedBlock?.commandText
             : blocks.last(where: { $0.complete || $0.durationMS != nil })?.commandText
@@ -676,25 +666,11 @@ package enum RailRowsBuilder {
         return store.commandBlocks(for: id).last(where: \.isFailed)
     }
 
-    /// Whether a badge is a COMMAND's outcome, and which one. The finish tiers fuse both speakers,
-    /// so `agentFinish` decides: the agent's turn ending is the mark column's check, a command's exit
-    /// is the slot's. `.error` is always a command's — `ClaudeStatus` has no error case. Pure +
-    /// static; ``StatusPresentation/commandOutcome(badge:agentFinish:)`` is the view-side alias so
-    /// the mark resolver and this one read the same rule.
-    package static func commandOutcome(badge: TabBadgeKind?, agentFinish: Bool) -> CommandOutcome? {
-        switch badge {
-        case .error: .failed
-        case .completed,
-             .finished: agentFinish ? nil : .succeeded
-        case .awaitingInput,
-             .caffeinate,
-             .commandBusy,
-             .commandRunning,
-             .running,
-             .sudo,
-             nil: nil
-        }
-    }
+    // ``CommandOutcome`` and the badge → outcome rule are ``TabBadgeReading/commandOutcome(badge:agentFinish:)``
+    // (`SlopDeskWorkspaceModel`). They left because `SlopDeskSlate` reads them and this builder is
+    // welded to the store (``failedBlock(for:badge:store:)`` takes a `WorkspaceStore`), so the design
+    // floor could not reach one without naming the other. What stays here is everything that needs a
+    // BLOCK: the receipt above, and the name below.
 
     /// The command's NAME as the slot prints it: the first REAL word of the command line, basenamed
     /// (`/usr/bin/make -j8` → `make`). A leading `sudo` and leading `KEY=value` env assignments are

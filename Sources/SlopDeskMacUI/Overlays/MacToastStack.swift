@@ -204,7 +204,7 @@ final class MacToastCardView: MacOverlayCardView {
         closeButton.bezelStyle = .inline
         closeButton.imagePosition = .imageOnly
         closeButton.image = NSImage(
-            systemSymbolName: "xmark", accessibilityDescription: "Dismiss notification",
+            systemSymbolName: "xmark", accessibilityDescription: ToastPresentation.dismissLabel,
         )?.withSymbolConfiguration(.init(pointSize: Slate.Typeface.small, weight: .semibold))
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
@@ -243,11 +243,11 @@ final class MacToastCardView: MacOverlayCardView {
 
     // MARK: Content
 
-    /// Re-reads a replaced toast. A same-id re-push takes a fresh ``Toast/epoch``, and THAT is what
-    /// restarts the dwell — keyed on the id it would not fire at all (the id is unchanged), leaving
-    /// the replacement to inherit the dead card's nearly-elapsed timer.
+    /// Re-reads a replaced toast. What restarts the dwell is ``ToastPresentation/dwellKey(_:)``, the
+    /// same value the phone's `.task(id:)` keys on — keyed on the row's id it would not fire at all
+    /// (the id is unchanged), leaving the replacement to inherit the dead card's elapsed timer.
     func update(toast new: Toast, expanded: Bool) {
-        let restart = new.epoch != toast.epoch || new.autoDismiss != toast.autoDismiss
+        let restart = ToastPresentation.dwellKey(new) != ToastPresentation.dwellKey(toast)
         let reflows = expanded != self.expanded
         apply(toast: new, expanded: expanded)
         if restart { restartDwell() }
@@ -265,16 +265,18 @@ final class MacToastCardView: MacOverlayCardView {
         mark.show(ToastPresentation.mark(for: toast.flavor))
         bodyLabel.isHidden = !showsBody
         closeButton.isHidden = !showsClose
-        toolTip = onJump == nil ? nil : "Jump to the pane this notification came from"
+        toolTip = onJump == nil ? nil : ToastPresentation.jumpHint
         setAccessibilityLabel(headlineLabel.stringValue)
     }
 
     /// A collapsed card shows only its headline; hovering it reveals the body it was holding back.
-    private var showsBody: Bool { (expanded || hovering) && !(toast.body ?? "").isEmpty }
+    /// The rule is ``ToastPresentation/showsBody(_:expanded:hovering:)``'s — this half only hides.
+    private var showsBody: Bool {
+        ToastPresentation.showsBody(toast, expanded: expanded, hovering: hovering)
+    }
 
-    /// Hover-only, because a card that leaves by itself does not need permanent dismiss chrome —
-    /// EXCEPT on a sticky card, whose only exit this is.
-    private var showsClose: Bool { hovering || toast.autoDismiss == nil }
+    /// Hover-only, except on a sticky card — ``ToastPresentation/showsClose(_:hovering:)``.
+    private var showsClose: Bool { ToastPresentation.showsClose(toast, hovering: hovering) }
 
     @objc
     private func closeClicked() { onDismiss() }

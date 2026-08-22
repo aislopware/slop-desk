@@ -1,7 +1,6 @@
 import CSlopDeskFFI
 import Foundation
 import SlopDeskArena
-import SlopDeskWorkspaceCore
 
 // `slopdesk jump` path resolution — the Swift face of `rust/slopdesk-workspace`'s `jump`.
 //
@@ -10,6 +9,11 @@ import SlopDeskWorkspaceCore
 // the running app's `WorkspaceControlBackend` feeds it the frecency entries + the focused pane's cached
 // OSC-7 cwd + the `$HOME` path + the persisted last-jump-source, then applies the result (sends
 // `cd <path>` VERBATIM unless `--no-cd`). Unit-tested in isolation (`JumpResolverTests`).
+//
+// It sits BESIDE ``FolderFrecency`` rather than in `SlopDeskCLICore`, which is where it was written:
+// it lends that database to the same crate through the same `lent(_:_:)`, and the only GUI caller
+// (`WorkspaceControlBackend.jump`) had to name the whole CLI core to reach it. `slopdesk jump` still
+// resolves through it — `SlopDeskCLICore` depends on this target.
 //
 // Jump semantics (faithful to `docs/ui-shell/spec/reference__cli.md`, and the crate's own doc):
 //   - **With a query** → the most-frecent visited folder whose path CONTAINS the query (case-insensitive

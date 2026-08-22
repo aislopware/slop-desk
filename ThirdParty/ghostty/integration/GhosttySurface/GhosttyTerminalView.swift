@@ -3671,6 +3671,16 @@ final class GhosttyLayerBackedView: UIView {
     /// model. Safe to call repeatedly from `updateUIView` / `didMoveToWindow`.
     func attach(model: TerminalViewModel) {
         self.model = model
+        // The EDITING VERBS, reachable from something other than a long press. `TerminalInputHost`
+        // registers ⌘C/⌘X/⌘V/⌘A as key commands — it has to, because on this platform the pane's
+        // first responder is a zero-sized sibling of this view, so AppKit's trick of the terminal
+        // BEING the responder does not carry over and the four chords reached nothing at all. What it
+        // must not do is implement them: everything about running one (the paste pre-check, cut's
+        // editable-prompt policy, `select_all`) is already here, one switch, for the menu. So the
+        // chord names a verb and this line is where the verb is actuated. Weak, and set before the
+        // off-window return: a probe view never spawns a surface but its model still deserves a live
+        // sink, and a torn-down view leaves a closure that answers nothing rather than a dangling one.
+        model.onRequestMenuItem = { [weak self] item in self?.performContextMenuItem(item) }
         guard window != nil else { return }   // never spawn a surface for the off-window probe view
         installPanToScrollIfNeeded()
         installTapIfNeeded()
@@ -3706,6 +3716,20 @@ final class GhosttyLayerBackedView: UIView {
             // alt-screen flag through this hook, so it suppresses inside a true full-screen TUI exactly as
             // the menu's own `requestPaste` pre-check does. Unset, it read a hardcoded `false` here.
             s.isAlternateScreen = { [weak model] in model?.isAlternateScreen ?? false }
+            // Viewport-scroll echo → the prompt-jump landed-flash SETTLE signal, byte-for-byte the
+            // macOS binding above (`GHOSTTY_ACTION_SCROLLBAR` is a libghostty RENDERER signal, not an
+            // AppKit event — the shared `action_cb` already delivers it on this half; only the closure
+            // was missing). Without it `noteViewportScroll` had no caller on this platform at all: the
+            // phone's Command Navigator ARMS a jump through the same cross-platform store verbs
+            // (`WorkspaceStore+Blocks`), the 400ms settle window then lapsed in silence,
+            // `promptJumpFlashEpoch` never moved, and `PromptJumpFlashOverlay` — mounted
+            // unconditionally in `TerminalLeafView` — could not light. An overlay that renders on both
+            // halves and is driven on one is the shape this file has now stopped twice.
+            s.onScrollbarChange = { [weak model] offset, length, total in
+                let end = offset.addingReportingOverflow(length)
+                let atBottom = end.overflow || end.partialValue >= total
+                model?.noteViewportScroll(atBottom: atBottom)
+            }
             self.surface = s
             // A BRAND-NEW surface must get its first real layout — drop the same-size cache.
             lastAppliedLayout = nil

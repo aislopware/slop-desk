@@ -63,14 +63,10 @@ struct MacSettingsBindings {
         if let token = tokenAccess(key) { return token }
         if let number = numberAccess(key) { return number }
         if key == SettingsKey.customLinkSchemes {
+            // Separator rules are ``CustomLinkSchemes``', one floor down — this half only binds.
             return .text(
-                get: { Defaults[.customLinkSchemes].joined(separator: ", ") },
-                set: { raw in
-                    Defaults[.customLinkSchemes] = raw
-                        .split(separator: ",")
-                        .map { $0.trimmingCharacters(in: .whitespaces) }
-                        .filter { !$0.isEmpty }
-                },
+                get: { CustomLinkSchemes.field(Defaults[.customLinkSchemes]) },
+                set: { Defaults[.customLinkSchemes] = CustomLinkSchemes.parse($0) },
             )
         }
         return nil

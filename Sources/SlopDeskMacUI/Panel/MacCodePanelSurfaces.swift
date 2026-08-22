@@ -299,8 +299,11 @@ final class MacCodePanelSurfaces: NSViewController {
         await model.poll(
             projectRoot: root,
             host: { [connection] in connection.target.host },
+            // The round itself is ``CodeServerEnsure``'s, below both shells: it names no view type, and
+            // the font dedupe it carries is a key against ONE host-global settings file, so a static
+            // per shell was two keys for one fact (docs/56 §3).
             ensure: { [store, preferences] in
-                await Self.ensureEndpoint(projectRoot: $0, store: store, preferences: preferences)
+                await CodeServerEnsure.round(projectRoot: $0, store: store, preferences: preferences)
             },
             // Front the remote endpoint with the loopback relay: a secure browser context (no
             // insecure-context toast) on an origin that survives respawns. On bind failure the remote
@@ -454,45 +457,13 @@ final class MacCodePanelSurfaces: NSViewController {
                 MainActor.assumeIsolated { self?.followFontSpec() }
             }
         }
-        guard let spec, spec != Self.lastPushedFontSpec,
+        guard let spec, spec != CodeServerEnsure.lastPushedFontSpec,
               let client = store.firstConnectedMetadataClient
         else { return }
         // Records the push too, so the next ensure round does not re-send what just landed.
-        Self.lastPushedFontSpec = spec
+        CodeServerEnsure.recordPushed(spec)
         Task { await client.syncCodeFont(spec) }
     }
-
-    /// One ensure round: verb 18 through whichever pane carries a live metadata channel (resolved per
-    /// call, like the host-info/vitals fetchers — survives pane churn/reconnects). `nil` when no pane is
-    /// connected (→ `.offline`, and the loop keeps polling). A round that reaches a host which HAS
-    /// code-server also pushes the client's terminal-font spec (verb 20) — the seed has to land before
-    /// the workbench reads its settings, so the push rides the starting rounds rather than waiting for
-    /// `.ready`. An old host's `.unsupportedVerb` is silently ignored.
-    ///
-    /// Two things it deliberately does NOT do. It does not push to an `.unavailable` host: the poll
-    /// keeps running every ~3.6 s while the panel is open, and patching a settings file for a workbench
-    /// that will never boot is pure churn. And it does not re-push a spec identical to the last one it
-    /// sent — the host no-ops such a write, but the round trip still occupies the metadata queue behind
-    /// real work.
-    private static func ensureEndpoint(
-        projectRoot: String, store: WorkspaceStore, preferences: PreferencesStore?,
-    ) async -> MetadataCodec.ServiceEndpoint? {
-        guard let client = store.firstConnectedMetadataClient else { return nil }
-        let endpoint = await client.ensureCodeServer(projectRoot: projectRoot)
-        if let terminal = preferences?.terminal {
-            let spec = CodeFontSync.spec(terminal: terminal)
-            if CodeFontSync.shouldPush(endpoint: endpoint, spec: spec, lastSent: lastPushedFontSpec) {
-                lastPushedFontSpec = spec
-                await client.syncCodeFont(spec)
-            }
-        }
-        return endpoint
-    }
-
-    /// The spec the last ensure round pushed — the dedupe key above. Static because the poll is
-    /// restarted per project/reload and the settings file it writes is host-global anyway; a project
-    /// switch must not re-push a spec the host already has.
-    private static var lastPushedFontSpec: MetadataCodec.CodeFontSpec?
 
     // MARK: - What the panel resolves the focus to
 

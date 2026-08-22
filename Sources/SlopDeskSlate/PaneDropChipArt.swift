@@ -31,7 +31,7 @@
 
 import CoreGraphics // CGFloat — this file is points and a glyph name, and never a view
 import SFSafeSymbols
-import SlopDeskClientCore // PaneDropRegister.Mark — the OUTCOME this file draws
+import SlopDeskWorkspaceModel // PaneDropRegister.Mark — the OUTCOME this file draws
 
 package extension PaneDropRegister.Mark {
     /// The SF Symbol every renderer draws for this drop mark.

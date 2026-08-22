@@ -248,7 +248,9 @@ private struct PhonePanelTab: View {
         .buttonStyle(SlatePlateStyle { pressed in
             selected ? Slate.State.selected : pressed ? Slate.State.hover : .clear
         })
-        .accessibilityLabel(tab.help)
+        .accessibilityLabel(tab.accessibilityLabel)
+        .accessibilityHint(tab.accessibilityHint)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     private var ink: Color { selected ? Slate.Text.primary : Slate.Text.icon }

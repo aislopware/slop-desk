@@ -49,7 +49,11 @@ public final class MacFirstLaunchSheet: NSObject, NSWindowDelegate {
         }
         let created = NSWindow(contentViewController: content)
         created.styleMask = [.titled, .fullSizeContentView]
-        created.setContentSize(NSSize(width: 540, height: 580))
+        // The box is ``Slate/Metric/firstLaunchSheetWidth``'s, not this half's — the phone draws the
+        // same checklist at the same size, and it was two literals until now.
+        created.setContentSize(NSSize(
+            width: Slate.Metric.firstLaunchSheetWidth, height: Slate.Metric.firstLaunchSheetHeight,
+        ))
         sheet = created
         host.beginSheet(created) { [weak self] _ in
             // ANY path out of the sheet completes first launch — Done, Skip Setup, or the window going

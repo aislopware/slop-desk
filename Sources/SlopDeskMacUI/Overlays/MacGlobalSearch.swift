@@ -97,7 +97,7 @@ final class MacGlobalSearchView: NSView, NSTextFieldDelegate {
         field.focusRingType = .none
         field.font = .systemFont(ofSize: Slate.Typeface.body)
         field.textColor = Slate.Native.Overlay.primary
-        field.placeholderString = "Search across all tabs…"
+        field.placeholderString = GlobalSearchPresentation.queryPrompt
         field.delegate = self
 
         // The field SINKS into a well while the pills sit on plates that RISE — opposite directions
@@ -550,7 +550,7 @@ final class MacGlobalSearchRowView: NSView {
         heightConstraint?.constant = Slate.Metric.heightRowTall
         disclosure.image = NSImage(
             systemSymbolName: collapsed ? "chevron.right" : "chevron.down",
-            accessibilityDescription: collapsed ? "Collapsed" : "Expanded",
+            accessibilityDescription: GlobalSearchPresentation.disclosureState(collapsed: collapsed),
         )
         text.attributedStringValue = NSAttributedString(
             string: group.groupTitle,

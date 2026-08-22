@@ -29,7 +29,6 @@
 import CSlopDeskFFI // slopdesk_ws_key_token — the ONE named-key vocabulary, shared with the host's `write`
 import Foundation
 import SlopDeskAgentDetect
-import SlopDeskCLICore // JumpResolver — the PURE frecency/$HOME-toggle/`--no-cd` jump resolution
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 #if canImport(AppKit)

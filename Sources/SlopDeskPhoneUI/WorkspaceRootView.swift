@@ -312,14 +312,7 @@ public struct WorkspaceRootView: View {
             Button { overlay.togglePalette() } label: { Image(systemSymbol: .command) }
                 .help("Command Palette")
         }
-        ToolbarItem(placement: .primaryAction) {
-            // THE RIGHT PANEL's entry point. macOS has ⌥⌘B and a rail to click; the phone has neither,
-            // so the four surfaces need a button of their own or they are unreachable. The glyph is the
-            // Mac strip's hide toggle read the other way round — same control, same corner of the same
-            // panel, mirrored because here it opens rather than closes.
-            Button { chrome.toggleCodeSidebar() } label: { Image(systemSymbol: .sidebarRight) }
-                .help("Panel")
-        }
+        ToolbarItem(placement: .primaryAction) { panelButton }
         ToolbarItem(placement: .primaryAction) {
             // The `+` mints a focused terminal pane directly (the kind chooser is retired).
             Button { store.newTerminalPane(.newTab) } label: { Image(systemSymbol: .plus) }
@@ -333,6 +326,49 @@ public struct WorkspaceRootView: View {
                 .help("Settings")
                 .disabled(preferencesStore == nil)
         }
+    }
+
+    /// THE RIGHT PANEL's entry point, and the phone's answer to the Mac's rail.
+    ///
+    /// macOS has ⌥⌘B and, while the panel is collapsed, a RAIL — four named plates down the window's
+    /// edge, any of which opens the panel ON that surface in one click (`SlopDeskMacUI/MacPanelRail`).
+    /// The phone had a bare toggle: it reopened on whatever surface was last selected, so reaching
+    /// Emulators from a closed panel was two taps with nothing on screen naming the second one. A rail
+    /// cannot be copied here — a phone has no window edge to spare and the panel is a full-screen cover
+    /// rather than a column — but the CAPABILITY is "open on a named surface, in one gesture", and that
+    /// is a menu on this platform.
+    ///
+    /// A `Menu` with a `primaryAction`, so the cheap gesture keeps its cheap meaning: a TAP is still
+    /// the toggle it always was, and a PRESS offers the four by name. The rows carry the same words
+    /// and the same order the panel's own strip draws (``PanelTabs/all``) — the rail's whole point is
+    /// that it names the same four things the strip does — and each one selects AND reveals, because a
+    /// row that only selected would leave the reader on a closed panel wondering what it did.
+    ///
+    /// The check is the menu's own affordance for the chosen row, as it is on the consoles' level
+    /// menu; drawing the selection any other way would give one control two vocabularies.
+    private var panelButton: some View {
+        Menu {
+            ForEach(PanelTabs.all, id: \.surface) { tab in
+                Button {
+                    chrome.panelSurface = tab.surface
+                    chrome.revealCodeSidebar()
+                } label: {
+                    if chrome.panelSurface == tab.surface, !chrome.codeSidebarCollapsed {
+                        Label(tab.label, systemSymbol: .checkmark)
+                    } else {
+                        Text(tab.label)
+                    }
+                }
+                .accessibilityHint(tab.accessibilityHint)
+            }
+        } label: {
+            // The glyph is the Mac strip's hide toggle read the other way round — same control, same
+            // corner of the same panel, mirrored because here it opens rather than closes.
+            Image(systemSymbol: .sidebarRight)
+        } primaryAction: {
+            chrome.toggleCodeSidebar()
+        }
+        .accessibilityLabel("Panel")
     }
 
     /// Opens the Connect-to-Host flow via the injected coordinator (sets `overlay.connectVisible`). A give-up

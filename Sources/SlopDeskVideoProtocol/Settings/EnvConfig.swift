@@ -78,30 +78,22 @@ public enum EnvConfig {
     // MARK: Typed accessors (additive — for NEW sites / W13 UI)
 
     //
-    // These mirror the COMMON validate-then-default idiom (parse; reject out-of-range → default) used
-    // by `LiveCongestionController`/`FPSGovernor`/`TrendlineEstimator`/`MuxFlowControl`. A few sites
-    // (notably `QPController`) instead CLAMP into range — that distinct law stays at the call site
-    // (it routes only its lookup through ``string(_:)``), so migrating it is byte-identical. New
-    // settings-driven sites can use these; do not retrofit them onto a site whose idiom differs.
-
-    /// Parse an `Int`, REJECTING a value outside `[lo, hi]` back to `def` (the validate-then-default
-    /// idiom). Garbage / unset ⇒ `def`. Never traps (validate-then-drop on untrusted input).
-    public static func int(_ key: String, default def: Int, min lo: Int = Int.min, max hi: Int = Int.max) -> Int {
-        guard let s = string(key), let v = Int(s), v >= lo, v <= hi else { return def }
-        return v
-    }
-
-    /// Parse a `Double`, REJECTING a non-finite value or one outside `[lo, hi]` back to `def`. Garbage
-    /// / unset ⇒ `def`. Never traps.
-    public static func double(
-        _ key: String,
-        default def: Double,
-        min lo: Double = -.infinity,
-        max hi: Double = .infinity,
-    ) -> Double {
-        guard let s = string(key), let v = Double(s), v.isFinite, v >= lo, v <= hi else { return def }
-        return v
-    }
+    // `int(_:default:min:max:)` and `double(_:default:min:max:)` USED to live here, as a generic
+    // spelling of the validate-then-default idiom for "roughly a dozen knobs across several
+    // targets". They were deleted on 2026-08-22, and the count in that phrase was the whole reason
+    // they lasted: it was ZERO. Every hit outside this file was in `EnvConfigTests`, and the sites
+    // the doc comment named — `LiveCongestionController`, `FPSGovernor` — had each kept a private
+    // copy of the same guard rather than calling these. So the pair was a third implementation of a
+    // rule with no callers, sitting under a comment asserting it had a dozen.
+    //
+    // The rule itself did not go away; it moved to where it can only be written once. It is
+    // `slopdesk_abr_validated_int` / `_double` now, over `slopdesk_video::congestion`, and the two
+    // private copies call it. The LOOKUP stays here — ``string(_:)`` is the env → overlay
+    // precedence, which is this type's whole job and is not a policy any door should hold.
+    //
+    // Anything NEW that needs a validated number asks the door and resolves its text through
+    // ``string(_:)``; anything that needs the CLAMPING reading asks `slopdesk_qp_clamped_int`.
+    // Do not grow a third generic accessor here — that is exactly what these two were.
 
     /// Resolve a `RawRepresentable` (e.g. an enum) by its raw string, falling back to `def` on an
     /// unknown / unset value. Validate-then-default: an unrecognised value never traps.

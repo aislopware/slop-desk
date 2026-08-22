@@ -42,6 +42,12 @@ public struct SlopDeskPhoneApp: App {
     /// THE COMPOSITION ROOT — what the app IS, built and wired once in `SlopDeskClientCore` so this
     /// shell and the Mac's can never grow two copies of it (docs/56 §2).
     @State private var app: ClientComposition
+    /// THE WORKSPACE CHORDS' LAST RUNG. A delegate rather than a view because the responder chain's
+    /// tail is the one place on this platform that is an ancestor of every first responder the
+    /// workspace can have — see ``PhoneRootKeyResponder``. It is pointed at the composition on
+    /// appear and carries no lifecycle of its own; the foreground/background fan-out below stays
+    /// `scenePhase`'s.
+    @UIApplicationDelegateAdaptor(PhoneRootKeyResponder.self) private var rootKeys
     @Environment(\.scenePhase) private var scenePhase
     /// Serialises the scene-phase fan-outs: a background→active flip must not run its resume against a
     /// pause that has not finished, so each phase awaits the previous one's task.
@@ -55,7 +61,10 @@ public struct SlopDeskPhoneApp: App {
     @State private var clipboardMonitor: ClipboardMonitor
     /// Cross-device clipboard sync, the same engine the Mac shell runs. The PULL half is whole here —
     /// a copy on the host lands on the phone's pasteboard within a tick, which needs no permission —
-    /// and the push half is gated by the same iOS rule the monitor states.
+    /// and the push half runs on the ATTENDED reads instead of the timer, which is the only shape iOS
+    /// permits: the tick may not read board CONTENT unattended (that is a modal "Allow Paste?" alert
+    /// once a second), so ``WorkspaceStore/currentLocalClipboard()`` hands each clip the user actually
+    /// asked to paste straight to the engine's queue. See ``ClipboardSyncEngine``.
     @State private var clipboardSync: ClipboardSyncEngine
 
     // MARK: The composition's parts, read straight through
@@ -104,6 +113,7 @@ public struct SlopDeskPhoneApp: App {
         // fetcher). A phone differs from the Mac in LAYOUT, not in which features exist — docs/56 §3 —
         // and this one is a phone's best case: copy on the host, paste on the device in your hand.
         _clipboardSync = State(initialValue: ClipboardSyncEngine(
+            attendedReadsFrom: app.store,
             push: { [weak store = app.store] clip in
                 guard let store, let client = store.firstConnectedMetadataClient else { return false }
                 return await client.setClipboard(clip)
@@ -203,6 +213,12 @@ public struct SlopDeskPhoneApp: App {
                     hasCompleted: SettingsKey.hasCompletedFirstLaunchEnabled,
                     automationActive: app.isAutomation,
                 )
+            }
+            // Point the responder chain's tail at the live composition. On appear rather than in
+            // `init()`: the adaptor's instance is not reachable before the scene's body runs, and a
+            // rung with no store is inert by construction rather than by luck.
+            .onAppear {
+                rootKeys.attach(store: store, overlay: overlayCoordinator, chrome: chrome)
             }
             .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
             // Clipboard-history poll. Skipped under automation like the Mac's: an E2E run must not

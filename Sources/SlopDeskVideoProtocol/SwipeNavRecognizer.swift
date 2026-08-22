@@ -124,9 +124,6 @@ public struct SwipeNavRecognizer: Sendable {
     /// dominance, eaten by the step and immediately retried). At the ramp's top the rule
     /// equals the full-dominance band exactly, so behaviour past it is unchanged.
     public static var slowGraceMaxDuration: TimeInterval { law.slow_grace_max_duration }
-    /// How long after lift momentum may still confirm. Momentum begins within a frame of the
-    /// lift; this only needs to absorb wire jitter plus a few coalesced momentum emits.
-    public static var momentumWindow: TimeInterval { law.momentum_window }
     /// No NEW candidate may start this soon after a fire. The input channel can REORDER: an
     /// on-glass `changed` datagram of the gesture that just fired can arrive after its `ended`
     /// did — without this quiet window that straggler synthesises a fresh candidate which the

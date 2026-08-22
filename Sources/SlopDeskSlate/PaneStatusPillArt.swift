@@ -22,7 +22,7 @@
 // both spellings.
 
 import SFSafeSymbols
-import SlopDeskClientCore // PaneStatusPill — the STATE this file draws
+import SlopDeskWorkspaceModel // PaneStatusPill — the STATE this file draws
 
 package extension PaneStatusPill {
     /// The SF Symbol every renderer draws for this pill.

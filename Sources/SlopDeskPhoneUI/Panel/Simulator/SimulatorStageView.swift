@@ -237,6 +237,7 @@ struct SimulatorStageView: View {
                 WorkingSpinner()
                     .transition(.opacity)
             }
+            keyboard
             location
             PlateIconButton(symbol: consolePlate.symbol, active: model.isConsoleOpen) {
                 // The drawer's own `.transition` has always been a move from the bottom edge; until
@@ -247,6 +248,20 @@ struct SimulatorStageView: View {
             .help(consolePlate.help)
         }
         .animation(Slate.Anim.smallFade, value: model.isSendingFile)
+    }
+
+    /// PHONE-ONLY, and it belongs with the latching pair rather than on a tray: the keyboard it
+    /// raises outlives the tap, which is what a lit key means here.
+    ///
+    /// It exists because this device may have no keys. The mirror has always typed — `pressesBegan`
+    /// reads a `UIKey` and sends what the shared rule makes of it — and on a Mac that is the whole
+    /// story, because a Mac has a keyboard. A phone without one could tap, swipe, rotate and
+    /// screenshot the mirrored device and never put a character into it. See ``DeviceSoftKeyboard``.
+    private var keyboard: some View {
+        PlateIconButton(symbol: .keyboard, active: DeviceSoftKeyboard.shared.isTyping) {
+            DeviceSoftKeyboard.shared.toggle()
+        }
+        .help(DeviceSoftKeyboard.plateHelp)
     }
 
     /// Latched while a position is pinned, so the toolbar says the device is somewhere else without

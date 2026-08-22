@@ -15,8 +15,7 @@
 #if canImport(SwiftUI)
 import SFSafeSymbols
 import SlopDeskAgentDetect
-import SlopDeskClientCore
-import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 // `@MainActor` because the colour mappers read the runtime ``Slate/theme`` (D3) — every call site is a
@@ -234,7 +233,7 @@ package enum StatusPresentation {
 
     // MARK: Command outcome
 
-    package typealias CommandOutcome = RailRowsBuilder.CommandOutcome
+    package typealias CommandOutcome = SlopDeskWorkspaceModel.CommandOutcome
 
     /// Whether this badge is a COMMAND's outcome, and which one — the trailing slot's reading.
     ///
@@ -245,10 +244,10 @@ package enum StatusPresentation {
     ///
     /// This and ``mark(for:agentFinish:)`` partition the badge set between the row's two voices: a
     /// badge that resolves to an outcome here mounts no mark, and vice versa. The rule itself lives
-    /// with the receipt (``RailRowsBuilder/commandOutcome(badge:agentFinish:)``), so the mark
+    /// with the badge readings (``TabBadgeReading/commandOutcome(badge:agentFinish:)``), so the mark
     /// resolver and the slot's text can never disagree about who is speaking.
     package static func commandOutcome(badge: TabBadgeKind?, agentFinish: Bool) -> CommandOutcome? {
-        RailRowsBuilder.commandOutcome(badge: badge, agentFinish: agentFinish)
+        TabBadgeReading.commandOutcome(badge: badge, agentFinish: agentFinish)
     }
 
     /// The INK a command's outcome reads in — TWO answers, brightness plus one hue: a fact that needs

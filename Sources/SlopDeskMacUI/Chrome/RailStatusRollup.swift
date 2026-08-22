@@ -45,10 +45,16 @@
 // WHY IT LIVES IN `SlopDeskMacUI` (docs/56 increment 36). It hangs off the TITLEBAR — beside the
 // traffic lights, on the sidebar toggle's own band, parked against the navigator column's gutter.
 // Every one of those is a macOS window's furniture, and there is nothing under this file the phone
-// is missing: the capability it wraps is ``WorkspaceStore/jumpToOldestAttentionPane()``, which both
-// shells reach through the `.jumpToAttention` binding. This is the SAME feature laid out for a
-// window, which is exactly the split the two shells are for. It arrived here as SwiftUI hosted by
-// ``MacTitlebarBand``; when that mount becomes AppKit this file goes with it.
+// is missing: the capability it wraps is the PER-STATE jump — ``jump(_:panes:)``, three marks each
+// landing in its own state's panes — which both shells reach through the same store ops. This is the
+// SAME feature laid out for a window, which is exactly the split the two shells are for. It arrived
+// here as SwiftUI hosted by ``MacTitlebarBand``; when that mount becomes AppKit this file goes with it.
+//
+// ⚠️ This paragraph used to cite ``WorkspaceStore/jumpToOldestAttentionPane()`` as the parity story,
+// which is the ONE tap target the second cut above replaced after a user report: the attention walk
+// ranks needs-permission first, so it silently landed on the blocked pane whichever mark was clicked.
+// The rollup has not called it since; a header that named it as the shared capability was describing
+// a version of this file that no longer exists.
 //
 // ⚠️ THE MARKS ARE ALREADY APPKIT (docs/56 stage D, kind 1's cheapest surface). What is still SwiftUI
 // in this file is the derivation above and the cluster's PLACE on the band — the rung it hangs from

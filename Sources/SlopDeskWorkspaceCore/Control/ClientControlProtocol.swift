@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // Client control protocol.
 //

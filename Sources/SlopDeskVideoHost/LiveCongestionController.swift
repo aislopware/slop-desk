@@ -576,19 +576,40 @@ public struct LiveCongestionController: Sendable, Equatable {
 
     // MARK: Env parsing helpers
 
-    // Resolve through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can override these
-    // tunables. With an EMPTY overlay `EnvConfig.string(key)` is byte-identical to a raw
-    // `ProcessInfo.processInfo.environment[key]` lookup, so the golden corpus pinning these defaults
-    // holds. Validate-then-default: out-of-range or garbage falls back to `fallback`, never traps.
+    /// Resolve + VALIDATE an int knob: out of range or unparseable falls back to `fallback`, never
+    /// to a bound.
+    ///
+    /// The LOOKUP is this side's — `EnvConfig` (ProcessInfo env → overlay), so a GUI setting can
+    /// override the tunable, and with an EMPTY overlay it is byte-identical to a raw
+    /// `ProcessInfo.processInfo.environment[key]` read, which is what keeps the golden corpus that
+    /// pins these defaults valid. The PARSE and the range test are the door's, because they are a
+    /// policy rather than a lookup and they were spelled here, in `FPSGovernor`, and in
+    /// `EnvConfig`'s two generic accessors, against a crate that already spelled the OPPOSITE
+    /// reading for the quantiser knobs.
+    ///
+    /// **REJECTING is the rule here and CLAMPING is the rule at ``QPController/envInt(_:_:min:max:)``,
+    /// and that is a decision rather than a divergence.** A quantiser is an ordinal on a fixed 1–51
+    /// scale, so `SLOPDESK_MAX_QP=0` has a nearest legal value that is plainly what was meant. A
+    /// rate, a fraction or a report count does not: `SLOPDESK_ABR_LOSS=5` is a unit confusion, and
+    /// answering `1.0` would arm a controller at "100% loss tolerated" that nobody asked for. Both
+    /// readings now have exactly one implementation apiece.
     private static func envInt(_ key: String, _ fallback: Int, min lo: Int, max hi: Int) -> Int {
-        guard let s = EnvConfig.string(key), let v = Int(s), v >= lo,
-              v <= hi else { return fallback }
-        return v
+        let raw = EnvConfig.string(key)
+        var text = raw ?? ""
+        let answer = text.withUTF8 {
+            slopdesk_abr_validated_int(
+                $0.baseAddress, $0.count, raw != nil, Int64(fallback), Int64(lo), Int64(hi),
+            )
+        }
+        return Int(answer)
     }
 
+    /// ``envInt(_:_:min:max:)`` for the fractional knobs, which is most of this law's surface.
     private static func envDouble(_ key: String, _ fallback: Double, min lo: Double, max hi: Double) -> Double {
-        guard let s = EnvConfig.string(key), let v = Double(s), v >= lo,
-              v <= hi else { return fallback }
-        return v
+        let raw = EnvConfig.string(key)
+        var text = raw ?? ""
+        return text.withUTF8 {
+            slopdesk_abr_validated_double($0.baseAddress, $0.count, raw != nil, fallback, lo, hi)
+        }
     }
 }

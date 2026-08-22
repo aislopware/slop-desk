@@ -475,17 +475,11 @@ public enum WorkspaceStateCodec {
     }
 
     /// A two-byte pair — `agentState` (`[state][kind]`) and `progress` (`[state][percent]`).
-    public static func encodeU8Pair(_ first: UInt8, _ second: UInt8) -> Data { Data([first, second]) }
-
     public static func decodeU8Pair(_ data: Data) -> (UInt8, UInt8)? {
         wsPair(data, UInt8(0)) { bytes, len, a, b in slopdesk_ws_decode_u8_pair(bytes, len, a, b) }
     }
 
     /// A `[u16 BE][u16 BE]` pair — `pane/grid` is `(cols, rows)`, in that order.
-    public static func encodeU16Pair(_ first: UInt16, _ second: UInt16) -> Data {
-        wsFixed(4) { out, cap in slopdesk_ws_encode_u16_pair(first, second, out, cap) }
-    }
-
     public static func decodeU16Pair(_ data: Data) -> (UInt16, UInt16)? {
         wsPair(data, UInt16(0)) { bytes, len, a, b in slopdesk_ws_decode_u16_pair(bytes, len, a, b) }
     }

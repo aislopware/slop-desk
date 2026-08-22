@@ -137,7 +137,9 @@ final class MacSettingsPageController: NSViewController {
         }
 
         guard !group.drawsItsOwnHeader else { return rows }
-        let header = NSTextField(labelWithString: group.title)
+        // The CASING is ``SlateSettingsSectionHeader``'s, not this renderer's — the same door the phone's
+        // `slateFormSection` reads. Spelled raw here, the two halves printed one group's name two ways.
+        let header = NSTextField(labelWithString: SlateSettingsSectionHeader.label(group.title))
         header.font = .preferredFont(forTextStyle: .headline)
 
         let stack = NSStackView(views: [header, rows])
@@ -207,25 +209,28 @@ final class MacSettingsPageController: NSViewController {
               case let .number(get, set) = bindings.lineHeightMultiplier()
         else { return [] }
 
-        let readout = NSTextField(labelWithString: String(format: "%.2f×", get()))
+        // The range, the granularity, the readout and both strings are ``LineHeightMultiplier``'s.
+        // ⚠️ An `NSSlider` has no `step:`, so the RUNGS are applied by hand through `snapped(_:)` —
+        // without it this half drags continuously and prints a readout that names no stored value.
+        let readout = NSTextField(labelWithString: LineHeightMultiplier.readout(get()))
         readout.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         readout.textColor = Slate.Native.Text.secondary
-        let slider = MacActionSlider { value in
-            readout.stringValue = String(format: "%.2f×", value)
+        let slider = MacActionSlider { raw in
+            let value = LineHeightMultiplier.snapped(raw)
+            readout.stringValue = LineHeightMultiplier.readout(value)
             set(value)
         }
-        slider.minValue = 0.8
-        slider.maxValue = 2.0
+        slider.minValue = LineHeightMultiplier.range.lowerBound
+        slider.maxValue = LineHeightMultiplier.range.upperBound
         slider.doubleValue = get()
 
-        let line = NSStackView(views: [NSTextField(labelWithString: "Multiplier"), slider, readout])
+        let line = NSStackView(views: [
+            NSTextField(labelWithString: LineHeightMultiplier.label), slider, readout,
+        ])
         line.orientation = .horizontal
         line.spacing = Slate.Metric.space2
         slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return [
-            line,
-            builder.note("Changing line height re-measures the cell and reflows the terminal (a resize)."),
-        ]
+        return [line, builder.note(LineHeightMultiplier.note)]
     }
 
     private func token(_ key: String, _ bindings: MacSettingsBindings) -> String {

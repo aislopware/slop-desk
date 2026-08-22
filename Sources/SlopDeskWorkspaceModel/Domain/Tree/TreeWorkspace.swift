@@ -1,7 +1,7 @@
 import CSlopDeskFFI
 import Foundation
 
-// MARK: - TreeWorkspace (the tree-rooted workspace container — transitional name)
+// MARK: - TreeWorkspace (the workspace container)
 
 /// The tree-rooted workspace container for the `Session → Tab → Pane` redesign (docs/42 §Domain model).
 /// It holds `[Session]` + the active session and NOTHING device-local: the preset library, the latched
@@ -11,19 +11,21 @@ import Foundation
 /// `Codable`: the file it is persisted to is read and written by `rust/slopdesk-workspace`, through
 /// ``WorkspaceFile``.
 ///
-/// **Transitional name (W2 is purely additive).** The plan's final type name for this is `Workspace`
-/// (docs/42 §Domain model, `currentSchemaVersion = 11`), but the live ``Workspace`` (the v9 canvas value)
-/// is still the persistence format and the store/views reference it. W2 must **not** rewrite or replace
-/// it — the build must stay green and every existing test must still pass. So this container ships under
-/// the transitional name `TreeWorkspace`; the store cutover (W4) promotes it to `Workspace` once the
-/// canvas path is retired. Choosing a distinct name (vs. the plan's `Workspace`) is the one deliberate
-/// deviation — it is exactly the additive-coexistence constraint the W2 brief mandates.
+/// **The name is no longer transitional, and the plan it deferred to is spent.** This comment used to
+/// say `TreeWorkspace` was a placeholder held only because the v9 canvas `Workspace` was still the live
+/// persistence format, and that a later cutover would promote this type to `Workspace`. The canvas value
+/// was deleted 2026-08-17: there is no type named `Workspace` in this module or any other, so the reason
+/// to rename went with it. The rename is now a pure churn — every reference in Swift, in
+/// `rust/slopdesk-tree` and in the golden vectors spells `TreeWorkspace`/`tree_workspace` — and is
+/// declined rather than owed. The stale note also quoted `currentSchemaVersion = 11`; see below for what
+/// the number actually is and why nothing here spells it.
 ///
 /// **Invariant — specs == leafIDs.** For every session, `Set(session.specs.keys)` equals the set of leaf
 /// ids across all of that session's tabs. ``isInvariantHeld()`` checks it; the ops preserve it and
 /// ``normalizingSpecs()`` repairs a corrupt file.
 public struct TreeWorkspace: Sendable, Equatable {
-    /// The persisted schema version for the tree-rooted shape (docs/42 §Domain model). 10 = this shape.
+    /// The persisted schema version for the tree-rooted shape (docs/42 §Domain model). Never spelled as a
+    /// literal here — see ``currentSchemaVersion``, which asks Rust.
     public var schemaVersion: Int
     /// The sessions, in sidebar order. ≥ 1 (the workspace is never empty — see ``normalizingActive()``).
     public var sessions: [Session]
@@ -41,8 +43,8 @@ public struct TreeWorkspace: Sendable, Equatable {
     }
 
     /// The schema version this shape writes. A file carrying any OTHER version is not migrated — the
-    /// load path resets it aside (single-user, no backward compatibility). The retained-but-dead
-    /// canvas ``Workspace`` owns its own `currentSchemaVersion = 9`.
+    /// load path resets it aside (single-user, no backward compatibility). There is no second workspace
+    /// value with a version of its own any more — the v9 canvas one was deleted 2026-08-17.
     ///
     /// 12 is the shape whose device-local half lives in ``DevicePreferences``. The bump is what makes
     /// the no-migration rule TRUE rather than merely stated: the retired keys are keys no decoder
@@ -51,7 +53,7 @@ public struct TreeWorkspace: Sendable, Equatable {
     /// silently, with no `.corrupt` copy kept. A version this build does not speak resets aside
     /// instead, which keeps the old file recoverable.
     ///
-    /// ASKED for rather than spelled: `slopdesk_workspace` writes this number into every snapshot it
+    /// ASKED for rather than spelled: `slopdesk-tree` writes this number into every snapshot it
     /// encodes, so a second spelling here would be the two halves of one comparison, each free to
     /// move without the other.
     public static let currentSchemaVersion = Int(slopdesk_ws_schema_version())

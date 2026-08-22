@@ -71,7 +71,7 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
         list.alignment = .leading
         list.spacing = Slate.Metric.space3
 
-        search.placeholderString = "Search key bindings"
+        search.placeholderString = KeybindingsEditorCopy.searchPrompt
         search.delegate = self
         search.sendsSearchStringImmediately = true
 
@@ -119,10 +119,12 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
     private func drawResetSlot() {
         empty(resetSlot)
         guard KeybindingsEditorModel.hasCustomizations(store.keybindings) else { return }
-        let button = MacActionButton(title: "Reset to Default") { [weak self] in self?.confirmReset() }
+        let button = MacActionButton(title: KeybindingsEditorCopy.resetAction) { [weak self] in
+            self?.confirmReset()
+        }
         button.isBordered = false
         button.contentTintColor = Slate.Native.accent
-        button.toolTip = "Reset every customized shortcut to its default"
+        button.toolTip = KeybindingsEditorCopy.resetHelp
         resetSlot.addArrangedSubview(button)
     }
 
@@ -133,7 +135,7 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
         let conflicts = store.keybindingConflicts()
         guard !conflicts.isEmpty else { return }
 
-        let heading = NSTextField(labelWithString: "Shortcut conflicts")
+        let heading = NSTextField(labelWithString: KeybindingsEditorCopy.conflictsTitle)
         heading.font = .systemFont(ofSize: Slate.Typeface.footnote, weight: .semibold)
         heading.textColor = Slate.Native.StatusInk.warn
         let mark = NSImageView(
@@ -147,7 +149,7 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
         title.spacing = Slate.Metric.space1
         bannerSlot.addArrangedSubview(title)
 
-        for line in conflictLines(conflicts) {
+        for line in KeybindingsEditorReading.conflictLines(conflicts) {
             let label = NSTextField(wrappingLabelWithString: line)
             label.font = .preferredFont(forTextStyle: .caption1)
             label.textColor = Slate.Native.Text.secondary
@@ -155,13 +157,6 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
             bannerSlot.addArrangedSubview(label)
             label.widthAnchor.constraint(equalTo: bannerSlot.widthAnchor).isActive = true
         }
-    }
-
-    private func conflictLines(_ conflicts: [String: [String]]) -> [String] {
-        conflicts.map { chord, ids in
-            let titles = ids.compactMap { id in binding(forID: id)?.title }.sorted()
-            return "\(chord): \(titles.joined(separator: ", "))"
-        }.sorted()
     }
 
     private func drawList() {
@@ -213,7 +208,7 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
                 ) ?? NSImage(),
             )
             mark.contentTintColor = Slate.Native.StatusInk.warn
-            mark.toolTip = "This shortcut conflicts with another command"
+            mark.toolTip = KeybindingsEditorCopy.conflictHelp
             views.append(mark)
         }
         let spacer = NSView()
@@ -243,46 +238,29 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
 
     // MARK: - Reading the registry
 
-    /// Which rows of `WorkspaceBindingRegistry.allBindings` the search query keeps, in that order —
-    /// asked once per keystroke and read by every category.
+    /// Every read below is ``KeybindingsEditorReading``'s, below both editors — they were five helpers
+    /// spelled twice, four of them byte-identical down to the doc comments. What is left here is the
+    /// one thing this half owns: the live `store` and the live query.
     private func surviving() -> [Bool] {
-        KeybindingsEditorModel.surviving(
-            WorkspaceBindingRegistry.allBindings,
-            effectiveChord: { effectiveChord(for: $0) },
-            query: searchQuery,
-        )
+        KeybindingsEditorReading.surviving(overrides: store.keybindings, query: searchQuery)
     }
 
-    /// The bindings in `category` that survive the search, minus the synthetic ⌘1…⌘9 representative —
-    /// it has no single chord to rebind, and the real per-digit chords are an implementation detail.
-    /// `surviving` is positional against `allBindings`, so this walks the same array it was built from.
     private func bindings(
         in category: WorkspaceAction.Category, surviving: [Bool],
     ) -> [WorkspaceBinding] {
-        zip(WorkspaceBindingRegistry.allBindings, surviving).filter { binding, kept in
-            kept
-                && binding.category == category
-                && binding.id != WorkspaceBindingRegistry.selectPaneRepresentative.id
-        }.map(\.0)
+        KeybindingsEditorReading.bindings(in: category, surviving: surviving)
     }
 
     private func binding(forID id: String) -> WorkspaceBinding? {
-        WorkspaceBindingRegistry.allBindings.first { $0.id == id }
+        KeybindingsEditorReading.binding(forID: id)
     }
 
     private func effectiveChord(for binding: WorkspaceBinding) -> KeyChord? {
-        WorkspaceBindingRegistry.resolvedChord(for: binding.action, overrides: store.keybindings)
+        KeybindingsEditorReading.effectiveChord(for: binding, overrides: store.keybindings)
     }
 
-    /// What the chip shows: the override if it maps, else the registry default, else nothing bound.
-    /// Through the spelling memo, so a default chord — which is every chord until the user rebinds one
-    /// — is a dictionary read rather than the two doors and four allocations rendering it costs.
     private func effectiveGlyph(for binding: WorkspaceBinding) -> String {
-        if let override = store.keybindings.chord(for: binding.id), let mapped = override.asRegistryChord {
-            return KeybindingsEditorModel.spelling(of: mapped).glyph
-        }
-        if let chord = binding.chord { return KeybindingsEditorModel.spelling(of: chord).glyph }
-        return "—"
+        KeybindingsEditorReading.effectiveGlyph(for: binding, overrides: store.keybindings)
     }
 
     // MARK: - Writing (all through `store.keybindings`, the single persistence channel)
@@ -305,10 +283,10 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
     private func confirmReset() {
         guard let window else { return }
         let alert = NSAlert()
-        alert.messageText = "Reset all key bindings?"
-        alert.informativeText = "This clears every customized shortcut and restores the defaults."
+        alert.messageText = KeybindingsEditorCopy.resetConfirmTitle
+        alert.informativeText = KeybindingsEditorCopy.resetConfirmBody
         alert.addButton(withTitle: "Cancel")
-        let reset = alert.addButton(withTitle: "Reset to Default")
+        let reset = alert.addButton(withTitle: KeybindingsEditorCopy.resetAction)
         reset.hasDestructiveAction = true
         alert.beginSheetModal(for: window) { [weak self] response in
             MainActor.assumeIsolated {
@@ -380,11 +358,10 @@ final class MacKeybindingsEditor: NSView, NSSearchFieldDelegate {
     // MARK: - Chrome
 
     private func header() -> NSView {
-        let title = NSTextField(labelWithString: "Keyboard Shortcuts")
+        let title = NSTextField(labelWithString: KeybindingsEditorCopy.title)
         title.font = .systemFont(ofSize: Slate.Typeface.base, weight: .semibold)
         let subtitle = NSTextField(
-            wrappingLabelWithString:
-            "Click a shortcut to record a replacement; Backspace clears it, Esc cancels.",
+            wrappingLabelWithString: KeybindingsEditorCopy.subtitle,
         )
         subtitle.font = .preferredFont(forTextStyle: .caption1)
         subtitle.textColor = Slate.Native.Text.secondary

@@ -163,9 +163,6 @@ public final class ReplayBuffer: @unchecked Sendable {
     /// Sum of the payload sizes of all currently-retained (un-acked) entries.
     public var retainedBytes: Int { slopdesk_replay_retained_bytes(handle) }
 
-    /// Monotonic mutation counter over the RING (acked history), guarding a detach-time fold splice.
-    public var ringGeneration: UInt64 { slopdesk_replay_ring_generation(handle) }
-
     /// Whether the connection layer currently considers the client reachable. Drives the offline
     /// gate via ``shouldPauseDrain``.
     public var isClientOnline: Bool {

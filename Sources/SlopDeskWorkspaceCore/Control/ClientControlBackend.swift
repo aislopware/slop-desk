@@ -1,4 +1,5 @@
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceModel
 
 // Client control backend seam.
 //

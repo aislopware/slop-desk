@@ -76,14 +76,14 @@ struct KeybindingsEditorView: View {
         }
         .padding(Slate.Metric.space4)
         .confirmationDialog(
-            "Reset all key bindings?",
+            KeybindingsEditorCopy.resetConfirmTitle,
             isPresented: $showResetConfirm,
             titleVisibility: .visible,
         ) {
-            Button("Reset to Default", role: .destructive) { resetAllOverrides() }
+            Button(KeybindingsEditorCopy.resetAction, role: .destructive) { resetAllOverrides() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This clears every customized shortcut and restores the defaults.")
+            Text(KeybindingsEditorCopy.resetConfirmBody)
         }
     }
 
@@ -92,10 +92,10 @@ struct KeybindingsEditorView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-                Text("Keyboard Shortcuts")
+                Text(KeybindingsEditorCopy.title)
                     .font(SettingsType.body.weight(.semibold))
                     .foregroundStyle(SettingsInk.primary)
-                Text("Click a shortcut to record a replacement; Backspace clears it, Esc cancels.")
+                Text(KeybindingsEditorCopy.subtitle)
                     .font(SettingsType.subtitle)
                     .foregroundStyle(SettingsInk.secondary)
             }
@@ -103,11 +103,11 @@ struct KeybindingsEditorView: View {
             // The "Reset to Default" button appears in the top-right ONLY once a binding has been
             // customized; clicking it confirms then clears ALL overrides (there is NO per-row revert).
             if KeybindingsEditorModel.hasCustomizations(store.keybindings) {
-                Button("Reset to Default") { showResetConfirm = true }
+                Button(KeybindingsEditorCopy.resetAction) { showResetConfirm = true }
                     .buttonStyle(.plain)
                     .font(SettingsType.subtitle.weight(.medium))
                     .foregroundStyle(SettingsInk.accent)
-                    .help("Reset every customized shortcut to its default")
+                    .help(KeybindingsEditorCopy.resetHelp)
             }
         }
     }
@@ -119,7 +119,7 @@ struct KeybindingsEditorView: View {
             Image(systemSymbol: .magnifyingglass)
                 .font(SettingsType.subtitle)
                 .foregroundStyle(SettingsInk.secondary)
-            TextField("Search key bindings", text: $searchQuery)
+            TextField(KeybindingsEditorCopy.searchPrompt, text: $searchQuery)
                 .textFieldStyle(.plain)
                 .font(SettingsType.label)
                 .foregroundStyle(SettingsInk.primary)
@@ -146,13 +146,12 @@ struct KeybindingsEditorView: View {
     }
 
     private func conflictBanner(_ conflicts: [String: [String]]) -> some View {
-        // Each conflict key is a canonical chord string shared by ≥2 ids; surface them plainly.
-        let lines = conflicts.map { chord, ids -> String in
-            let titles = ids.compactMap { id in binding(forID: id)?.title }.sorted()
-            return "\(chord): \(titles.joined(separator: ", "))"
-        }.sorted()
+        // Each conflict key is a canonical chord string shared by ≥2 ids; surfaced plainly, and by the
+        // same floor call the Mac's banner makes — these lines used to be built inline here and in a
+        // private `conflictLines` there, which is why a file-level `cmp` never saw the pair.
+        let lines = KeybindingsEditorReading.conflictLines(conflicts)
         return VStack(alignment: .leading, spacing: Slate.Metric.space1) {
-            Label("Shortcut conflicts", systemImage: "exclamationmark.triangle.fill")
+            Label(KeybindingsEditorCopy.conflictsTitle, systemImage: "exclamationmark.triangle.fill")
                 .font(SettingsType.subtitle.weight(.semibold))
                 .foregroundStyle(SettingsInk.warn)
             ForEach(lines, id: \.self) { line in
@@ -180,7 +179,7 @@ struct KeybindingsEditorView: View {
                 Image(systemSymbol: .exclamationmarkTriangleFill)
                     .font(SettingsType.caption)
                     .foregroundStyle(SettingsInk.warn)
-                    .help("This shortcut conflicts with another command")
+                    .help(KeybindingsEditorCopy.conflictHelp)
             }
             Spacer(minLength: Slate.Metric.space2)
             // Tap to record, exactly as the Mac's row does — there is still NO per-row revert, and
@@ -247,53 +246,29 @@ struct KeybindingsEditorView: View {
 
     // MARK: Data helpers
 
-    /// The bindings in `category`, excluding the synthetic ⌘1…⌘9 representative (it has no single chord to
-    /// rebind and the real per-digit chords are an implementation detail) and any row filtered OUT by the live
-    /// search query. Reads `allBindings` so the generated select-tab chords are present but the display-only
-    /// representative is filtered out.
-    /// `surviving` is positional against `allBindings`, so this walks the same array it was built from.
+    /// Every read below is ``KeybindingsEditorReading``'s, below both editors — they were five helpers
+    /// spelled twice, four of them byte-identical down to the doc comments. What is left here is the
+    /// one thing this half owns: the live `store` and the live query.
     private func bindings(
         in category: WorkspaceAction.Category, surviving: [Bool],
     ) -> [WorkspaceBinding] {
-        zip(WorkspaceBindingRegistry.allBindings, surviving).filter { binding, kept in
-            kept
-                && binding.category == category
-                && binding.id != WorkspaceBindingRegistry.selectPaneRepresentative.id
-        }.map(\.0)
+        KeybindingsEditorReading.bindings(in: category, surviving: surviving)
     }
 
-    /// Which rows of `WorkspaceBindingRegistry.allBindings` the search query keeps, in that order —
-    /// asked once per keystroke and read by every category.
     private func surviving() -> [Bool] {
-        KeybindingsEditorModel.surviving(
-            WorkspaceBindingRegistry.allBindings,
-            effectiveChord: { effectiveChord(for: $0) },
-            query: searchQuery,
-        )
+        KeybindingsEditorReading.surviving(overrides: store.keybindings, query: searchQuery)
     }
 
     private func binding(forID id: String) -> WorkspaceBinding? {
-        WorkspaceBindingRegistry.allBindings.first { $0.id == id }
+        KeybindingsEditorReading.binding(forID: id)
     }
 
-    /// The binding's EFFECTIVE chord (user override if it maps, else the registry default) — the same source
-    /// `effectiveGlyph` renders, surfaced as a `KeyChord` so the search filter can match its glyph + canonical.
     private func effectiveChord(for binding: WorkspaceBinding) -> KeyChord? {
-        WorkspaceBindingRegistry.resolvedChord(for: binding.action, overrides: store.keybindings)
+        KeybindingsEditorReading.effectiveChord(for: binding, overrides: store.keybindings)
     }
 
-    /// The glyph for the binding's EFFECTIVE chord: the user override (if it maps) else the registry
-    /// default. Mirrors `WorkspaceBindingRegistry.resolvedChord(for:)` so the chip shows what actually fires.
-    /// Through the spelling memo, so a default chord — which is every chord until the user rebinds one —
-    /// is a dictionary read rather than the two doors and four allocations rendering it costs.
     private func effectiveGlyph(for binding: WorkspaceBinding) -> String {
-        if let override = store.keybindings.chord(for: binding.id), let mapped = override.asRegistryChord {
-            return KeybindingsEditorModel.spelling(of: mapped).glyph
-        }
-        if let chord = binding.chord {
-            return KeybindingsEditorModel.spelling(of: chord).glyph
-        }
-        return "—"
+        KeybindingsEditorReading.effectiveGlyph(for: binding, overrides: store.keybindings)
     }
 
     // MARK: Mutation (all routed through `store.keybindings`)

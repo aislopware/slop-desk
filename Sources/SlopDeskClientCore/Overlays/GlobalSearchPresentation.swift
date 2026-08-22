@@ -94,6 +94,17 @@ public struct GlobalSearchExcerpt: Equatable, Sendable {
 }
 
 public enum GlobalSearchPresentation {
+    /// The query bar's prompt. The zero-state lines below already lived here; this one did not, and
+    /// stood spelled character for character in both halves' query bars.
+    public static let queryPrompt = "Search across all tabs…"
+
+    /// What a group's disclosure ANNOUNCES — the Mac hangs it off the chevron's
+    /// `accessibilityDescription`, the phone off `accessibilityValue`, and both said it themselves.
+    /// A state a screen reader reads out is copy, and copy is the surface's meaning, not its drawing.
+    public static func disclosureState(collapsed: Bool) -> String {
+        collapsed ? "Collapsed" : "Expanded"
+    }
+
     /// Cuts `hit`'s excerpt around its highlighted run.
     ///
     /// The range arrives as UTF-16 offsets, pre-clamped into the excerpt's bounds by

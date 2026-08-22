@@ -37,21 +37,6 @@ public enum WindowSizeMath {
     /// second source for a value the clamps already work to.
     private static let limits = slopdesk_window_size_limits()
 
-    /// The inclusive column / row band: at least 1 (a 0-row window is degenerate) and capped at a
-    /// sane 1000 (`window-cols`/`window-rows` are small cell counts; a 5-figure value is a typo /
-    /// hostile).
-    public static let minCells = Int(limits.min_cells)
-    public static let maxCells = Int(limits.max_cells)
-    /// The inclusive pixel band for `frame` mode: a 64pt floor (smaller than a usable window) up to
-    /// 16384 (the Metal max-texture / sane-display ceiling, matching the video path's clamp).
-    public static let minPx = Int(limits.min_px)
-    public static let maxPx = Int(limits.max_px)
-    /// The sane CONTENT floor for ``clampToScreen(_:visible:chromeInsets:)`` — a window can never
-    /// resolve below this even on a tiny display (200×120pt ≈ a few cells; below it the chrome would
-    /// have no room).
-    public static let minContentWidth = CGFloat(limits.min_content_width)
-    public static let minContentHeight = CGFloat(limits.min_content_height)
-
     // MARK: Scalar clamps
 
     /// Clamp a raw column count into `1...1000` — never 0 (degenerate), never gigantic.
@@ -80,10 +65,6 @@ public enum WindowSizeMath {
     /// tuned so the default 13pt font resolves to ≈ 8×16pt while any other font scales with it.
     public static let fallbackCellWidthRatio = CGFloat(limits.fallback_cell_width_ratio)
     public static let fallbackCellHeightRatio = CGFloat(limits.fallback_cell_height_ratio)
-    /// The inclusive font-size band the fallback derivation clamps into — mirrors `PreferencesStore`'s
-    /// `8...32` range so a hostile / zero / NaN persisted size can never produce a 0 or absurd cell.
-    public static let minFontPointSize = CGFloat(limits.min_font_point_size)
-    public static let maxFontPointSize = CGFloat(limits.max_font_point_size)
 
     /// Derive a fallback ``TerminalCellMetrics`` from `fontPointSize` — used by the macOS window-size
     /// glue ONLY before the active terminal surface has reported its real cell advance, so a
@@ -113,7 +94,7 @@ public enum WindowSizeMath {
     // MARK: Screen clamp
 
     /// Clamp a desired CONTENT size so `content + chrome ≤ visible`, then floor it at the sane
-    /// minimum (``minContentWidth`` × ``minContentHeight``) so a tiny request / tiny display can
+    /// minimum the crate carries (200×120pt) so a tiny request / tiny display can
     /// never resolve to a degenerate window. `chromeInsets` is the window's non-content overhead
     /// (title bar + borders).
     ///
@@ -132,7 +113,7 @@ public enum WindowSizeMath {
 
     /// Parse an `NSWindow.frameDescriptor` string ("x y w h screenX screenY screenW screenH" — the
     /// window FRAME then the screen's frame at save time; bottom-left origin, points). `nil` unless
-    /// the first 8 whitespace-separated tokens are all finite numbers with positive, ≤ ``maxPx``
+    /// the first 8 whitespace-separated tokens are all finite numbers with positive, in-band
     /// window + screen extents. Extra trailing tokens are ignored (AppKit's format has grown before).
     ///
     /// Consumed by the macOS scene glue to SEED `.defaultSize` / `.defaultPosition` so a `remember`

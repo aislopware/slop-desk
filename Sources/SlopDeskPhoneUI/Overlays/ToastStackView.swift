@@ -149,12 +149,15 @@ struct ToastCardView: View {
     /// The whole dwell in seconds; 0 for a sticky card (no timer at all).
     private var total: Double { ToastPresentation.dwellSeconds(toast) }
 
-    /// A collapsed card shows only its title; hovering it reveals the body it was holding back.
-    private var showsBody: Bool { expanded || hovering }
+    /// A collapsed card shows only its title; hovering it reveals the body it was holding back — and a
+    /// card with no body reveals nothing, so it must not reflow the stack either. Both clauses are
+    /// ``ToastPresentation/showsBody(_:expanded:hovering:)``'s; this half only hides.
+    private var showsBody: Bool {
+        ToastPresentation.showsBody(toast, expanded: expanded, hovering: hovering)
+    }
 
-    /// Hover-only, because a card that leaves by itself does not need permanent dismiss chrome — EXCEPT on
-    /// a sticky card, whose only exit this is (and iOS has no hover to reveal it with).
-    private var showsClose: Bool { hovering || toast.autoDismiss == nil }
+    /// Hover-only, except on a sticky card — ``ToastPresentation/showsClose(_:hovering:)``.
+    private var showsClose: Bool { ToastPresentation.showsClose(toast, hovering: hovering) }
 
     var body: some View {
         content
@@ -182,9 +185,13 @@ struct ToastCardView: View {
             // notification can no longer be yanked away mid-read. Nothing about this is drawn (an earlier
             // round put a depleting hairline along the bottom edge to show the time left; it was cut for
             // reading as ornament — the pause is behaviour, not decoration). A plain `Task.sleep(total)`
-            // cannot express it, which is why the countdown is sampled. Keyed on `epoch`, not `id`, so a
-            // same-id re-push restarts from full instead of inheriting the replaced card's spent dwell.
-            .task(id: toast.epoch) {
+            // cannot express it, which is why the countdown is sampled. Keyed on
+            // ``ToastPresentation/dwellKey(_:)``, not on `id` and not on the epoch alone: a same-id
+            // re-push restarts from full instead of inheriting the replaced card's spent dwell, AND a
+            // card whose `autoDismiss` changed under a stable epoch restarts too — without that second
+            // half, sticky→timed left the card immortal and timed→sticky dismissed it on the next tick.
+            // The Mac's card compares the same value across its in-place update.
+            .task(id: ToastPresentation.dwellKey(toast)) {
                 spent = 0
                 guard total > 0 else { return }
                 while spent < total {
@@ -282,7 +289,7 @@ struct ToastCardView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Dismiss notification")
+        .accessibilityLabel(ToastPresentation.dismissLabel)
         // Hidden ⇒ not a target, so a stray click in the corner cannot silently kill a card the user
         // never saw a ✕ on.
         .allowsHitTesting(showsClose)
@@ -303,7 +310,7 @@ private struct ToastJumpAction: ViewModifier {
         if let onJump {
             Button(action: onJump) { content }
                 .buttonStyle(.plain)
-                .accessibilityHint("Jump to the pane this notification came from")
+                .accessibilityHint(ToastPresentation.jumpHint)
         } else {
             content
                 .accessibilityElement(children: .combine)

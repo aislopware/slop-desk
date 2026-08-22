@@ -142,8 +142,11 @@ final class AndroidScreenUIView: UIView, AndroidFrameRenderer {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         // Taking key focus on the press is what makes a hardware keyboard type into the device that
-        // was last touched, rather than into whatever pane had focus before.
-        if !isFirstResponder { becomeFirstResponder() }
+        // was last touched, rather than into whatever pane had focus before. NOT while the soft
+        // keyboard is up: tapping a text field on the mirrored device is exactly when a phone user
+        // needs the keyboard to stay, and stealing first responder here would drop it on the tap
+        // that opened the field.
+        if !softKeys.isFirstResponder, !isFirstResponder { becomeFirstResponder() }
         let live = event?.touches(for: self) ?? touches
         if live.count >= 2 {
             isPinching = true
@@ -298,10 +301,63 @@ final class AndroidScreenUIView: UIView, AndroidFrameRenderer {
                 send(message)
             }
         case .none:
-            break
+            // `.none` means "a bare modifier, or a chord the client KEEPS FOR ITSELF" — and keeping
+            // it meant dropping it. `resolve_android` returns it for every ⌘/⌃ chord (the panel
+            // cannot know the device's layout, so an ambiguous chord is never forwarded), so with a
+            // `break` here every workspace chord died the moment the mirror took key focus: a touch
+            // on the picture makes this view first responder, and from then on ⌘T, ⌘⇧P and ⌘1–9 hit a
+            // `break`. Forwarded instead, so the press walks the chain to the root rung that owns
+            // those chords (``PhoneRootKeyResponder``) — which is what "the client keeps it" was
+            // always supposed to mean.
+            super.pressesBegan(presses, with: event)
+        }
+    }
+
+    // MARK: The soft keyboard
+
+    /// The zero-sized child the on-screen keyboard belongs to — see ``DeviceSoftKeyboard``.
+    private lazy var softKeys: DeviceSoftKeyInput = {
+        let keys = DeviceSoftKeyInput(frame: .zero)
+        keys.onText = { [weak self] text in
+            guard let message = AndroidControlMessage.text(text) else { return }
+            self?.send?(message)
+        }
+        keys.onDeleteBackward = { [weak self] in
+            // The HID usage a real Backspace reports, put through the SAME resolve door the hardware
+            // path uses — this view names a KEY, never Android's keycode for one.
+            guard case let .keycode(keycode, meta) = AndroidKeyMap.resolve(
+                hidUsage: DeviceSoftKeyboard.softDeleteUsage,
+                characters: nil, charactersIgnoringModifiers: nil, modifiers: [],
+            ) else { return }
+            for message in AndroidControlMessage.keyPress(keycode, metaState: meta) {
+                self?.send?(message)
+            }
+        }
+        keys.onResign = { DeviceSoftKeyboard.shared.report(isTyping: false) }
+        addSubview(keys)
+        return keys
+    }()
+
+    func setSoftKeyboard(_ armed: Bool) {
+        if armed {
+            softKeys.becomeFirstResponder()
+        } else {
+            _ = softKeys.resignFirstResponder()
+            becomeFirstResponder()
+        }
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil {
+            DeviceSoftKeyboard.shared.unregister(self)
+        } else {
+            DeviceSoftKeyboard.shared.register(self)
         }
     }
 }
+
+extension AndroidScreenUIView: DeviceSoftKeyboardHost {}
 
 /// The device's frame as a SwiftUI view. It carries no frame data: the view attaches itself to the
 /// model's sink and is fed from the socket directly.

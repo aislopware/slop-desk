@@ -339,11 +339,8 @@ package final class SimulatorScreenNSView: NSView, SimulatorFrameRenderer {
     }
 
     private func clampedDevicePoint(for event: NSEvent) -> CGPoint {
-        let fitted = fitted
-        let point = convert(event.locationInWindow, from: nil)
-        return CGPoint(
-            x: min(max(point.x - fitted.minX, 0), fitted.width),
-            y: min(max(point.y - fitted.minY, 0), fitted.height),
+        SimulatorScreenLayout.clampedDevicePoint(
+            from: convert(event.locationInWindow, from: nil), fitted: fitted,
         )
     }
 

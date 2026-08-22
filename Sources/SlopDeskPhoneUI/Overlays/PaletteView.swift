@@ -123,7 +123,7 @@ struct PaletteView: View {
     private var searchBar: some View {
         // The shared card-top search bar (focus-grab deferral included); plain ↩ runs + closes.
         SlateSearchBar(
-            prompt: "Search for commands…",
+            prompt: PalettePresentation.queryPrompt,
             text: $coordinator.paletteQuery,
             focus: $searchFocused,
             onSubmit: { coordinator.acceptSelected() },

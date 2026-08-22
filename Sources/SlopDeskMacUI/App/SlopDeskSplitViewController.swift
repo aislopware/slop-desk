@@ -3,8 +3,10 @@
 // ``MacNavigatorColumn``, ``MacContentColumn``, ``MacCodePanelColumn``. Modelled on CodeEdit's
 // `CodeEditSplitViewController`. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds
 // subtrees) is the load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills
-// the surface. There is no Details column — the app is keyboard-centric; the Git details window opens
-// from the palette / View menu instead.
+// the surface. There is no Details column — the app is keyboard-centric. The sentence that used to
+// follow, "the Git details window opens from the palette / View menu instead", was true when the
+// column was cut and is not now: there is no `GitStatusView`, no git verb in the palette, and none in
+// the binding registry. What survives of that column is the one-line sidebar git readout.
 //
 // THE `SlopDeskClientUI` IMPORT IS GONE (docs/56 stage D, increment 56a). It survived the three column
 // rewrites as a comment about columns this file no longer builds: every one of the 219 types that target

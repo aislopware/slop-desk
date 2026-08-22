@@ -51,7 +51,7 @@
 
 #if canImport(SwiftUI)
 import QuartzCore // CAMediaTimingFunction — ``SlateCurve``'s CoreAnimation rung, on BOTH platforms
-import SlopDeskClientCore // AgentInk — the status vocabulary this ladder resolves for both platforms
+import SlopDeskWorkspaceModel // AgentInk — the status vocabulary this ladder resolves for both platforms
 import SwiftUI
 #if canImport(AppKit)
 import AppKit
@@ -1393,6 +1393,16 @@ package enum Slate {
         /// A PORT number's field on a form card — five digits wide, never the card's width: a field's
         /// width is part of what it says about its answer.
         package static let portFieldWidth: CGFloat = 96
+
+        /// The guided first-launch sheet's content box. Wider and much taller than a form card because
+        /// it is a CHECKLIST that scrolls between a fixed header and a fixed footer, and a step that
+        /// resized the sheet under the reader would move Next out from under the pointer between steps.
+        ///
+        /// ⚠️ One box, not one per shell: `540 × 580` was typed at both `MacFirstLaunchSheet.present`
+        /// and `FirstLaunchView.body`, which is a sheet whose two halves can silently stop being the
+        /// same size — and the step bodies inside are laid out against exactly this height.
+        package static let firstLaunchSheetWidth: CGFloat = 540
+        package static let firstLaunchSheetHeight: CGFloat = 580
 
         // Chrome dimensions (semantic aliases INTO the height ladder — never a sixth literal)
         package static let paneHeaderHeight: CGFloat = heightBar

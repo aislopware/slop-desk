@@ -97,9 +97,6 @@ public struct WindowFeedPushPolicy: Sendable {
     private static let law = slopdesk_feed_constants()
     public static var idleTick: TimeInterval { law.idle_tick }
     public static var burstTick: TimeInterval { law.burst_tick }
-    public static var burstWindow: TimeInterval { law.burst_window }
-    public static var titleCoalesce: TimeInterval { law.title_coalesce }
-    public static var focusCoalesce: TimeInterval { law.focus_coalesce }
 
     /// The two stamps the policy carries.
     private var record = slopdesk_feed_policy_new()

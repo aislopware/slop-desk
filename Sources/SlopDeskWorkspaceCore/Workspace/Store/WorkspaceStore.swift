@@ -977,6 +977,23 @@ public final class WorkspaceStore {
     /// (``SystemPasteboard/hasPlainText``).
     @ObservationIgnored public var clipboardHasTextProbe: (() -> Bool)?
 
+    /// Where an ATTENDED read of the local clipboard goes besides the caller that asked for it —
+    /// ``ClipboardSyncEngine`` installs itself here (in its own `init`, given the store) and pushes the
+    /// clip to the HOST's pasteboard.
+    ///
+    /// It exists because the phone had no client→host clipboard path at all. The engine's timer cannot
+    /// snapshot content on iOS (the modal "Allow Paste?" alert — see
+    /// ``SystemPasteboard/unattendedContentReadIsPermitted``), and the engine's own docs answered that
+    /// with "the local clip reaches the host through the paths the user asked to paste on" — prose that
+    /// was never true of any path: every one of them TYPES the text into a pane and none called
+    /// `setClipboard`. So a copy on the phone was invisible to a ⌘V on the host. This seam is that
+    /// sentence made real, and it is deliberately fed from ``currentLocalClipboard()`` rather than from
+    /// a new affordance: that function IS the attended read, on both halves, and on the Mac the tick
+    /// has usually pushed the same clip a moment earlier and the engine's content compare drops it.
+    ///
+    /// `nil` (the headless / test default) ⇒ an attended read syncs nowhere, exactly as before.
+    @ObservationIgnored public var attendedLocalClipboardSink: ((String) -> Void)?
+
     /// Brings a DETACHED pane's satellite `NSWindow` to the front, injected by the app (macOS:
     /// `SatelliteWindowsCoordinator`) so the pure store stays AppKit-free + testable. Returns `true` iff a
     /// satellite for `paneID` was found and revealed. `nil` (the headless / test default) or a `false`
@@ -994,9 +1011,15 @@ public final class WorkspaceStore {
     /// ``SystemPasteboard/unattendedContentReadIsPermitted``). On macOS the polling
     /// ``ClipboardMonitor`` has usually recorded the same clip a tick earlier and ``recordClip(_:)``
     /// dedups it to a no-op, so this is one behaviour on both halves rather than a phone special case.
+    /// A LIVE read is also a RECORDING **and a SYNC** — see ``attendedLocalClipboardSink`` for why the
+    /// second one hangs off this function and not off an affordance of its own. The sink is fed the
+    /// text UNCONDITIONALLY (not through ``recordClip(_:)``'s history gate): turning clipboard HISTORY
+    /// off says "do not retain my clips", not "do not let my two machines share a clipboard", and the
+    /// engine keeps no history — it pushes one clip and forgets it.
     public func currentLocalClipboard() -> String? {
         guard let text = clipboardTextProvider?() else { return clipboardRing.first }
         recordClip(text)
+        attendedLocalClipboardSink?(text)
         return text
     }
 

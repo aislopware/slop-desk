@@ -37,6 +37,7 @@ import AppKit
 import SFSafeSymbols // the mark's name, spelled once on the floor and checked by the compiler
 import SlopDeskClientCore // PaneStatusPill / PaneStatusPillFill / PaneStatusPillInk — decided below
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
+import SlopDeskWorkspaceModel
 
 /// One pane status chip.
 ///

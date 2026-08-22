@@ -247,6 +247,22 @@ public final class TerminalViewModel {
     /// the host performer lands ⇒ a graceful no-op. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var onRequestRevealHostPath: ((_ path: String) -> Void)?
 
+    /// ONE clipboard verb, asked for from OUTSIDE the renderer — the iPad's ⌘C / ⌘X / ⌘V / ⌘A.
+    ///
+    /// The verbs themselves are not new and are not duplicated here: the renderer already runs every
+    /// ``TerminalContextMenu/Item`` for its long-press menu, paste-protection pre-check and all, and
+    /// this hands that dispatcher one item. What is new is the CALLER. On macOS these four chords
+    /// arrive as AppKit responder selectors (`copy:`/`cut:`/`paste:`/`selectAll:`) on the terminal
+    /// view, which IS the window's first responder; on iOS the pane's first responder is
+    /// `SlopDeskPhoneUI.TerminalInputHostView` — a zero-sized sibling — so the standard editing
+    /// actions land on a view that owns no surface, and the renderer that owns the surface is not in
+    /// the chain at all. Four chords a phone user has in every other app were therefore dead in the
+    /// one pane the app exists for. This is the seam that closes that, and it stays a seam rather
+    /// than a second implementation: the phone sends an ITEM, the renderer runs it.
+    ///
+    /// `nil` for headless/preview callers (never invoked). `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored public var onRequestMenuItem: ((TerminalContextMenu.Item) -> Void)?
+
     /// The ⌘F / right-click "Find…" action — opens the find-in-terminal bar over THIS pane. The
     /// renderer's menu (and the `find:` responder selector) call it; the leaf wires it to the find-bar
     /// `@State`. `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.

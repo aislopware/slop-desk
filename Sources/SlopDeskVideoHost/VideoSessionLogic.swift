@@ -849,25 +849,17 @@ public final class StaticIDRDecider: @unchecked Sendable, Equatable {
     /// - `forcedLatched`: a client recovery/keyframe request is pending (drained by caller).
     /// - `hasRetainedBuffer`: a cached `.complete` pixel buffer exists to re-encode.
     /// Returns true iff the caller should re-encode the cached buffer as a forced IDR.
+    ///
+    /// The rule is `slopdesk_video::recovery_routing::StaticIdrDecider`'s and is not spelled here:
+    /// the quiet window that lets the live path own the cadence, the recovery request that wins once
+    /// it is quiet, and the heartbeat measured from the last SYNTHETIC emission only. This class is
+    /// the four anchors and the thread discipline; the four anchors are all the state there is, so
+    /// they cross as scalars and nothing is owned across the call (`docs/55` §4).
     public func shouldReencode(now: TimeInterval, forcedLatched: Bool, hasRetainedBuffer: Bool) -> Bool {
-        // No cached pixels ⇒ nothing to re-encode (e.g. before the first ever .complete frame).
-        guard hasRetainedBuffer else { return false }
-        // A real frame within the quiet window ⇒ the live path is (or just was) driving the
-        // stream; let it own the cadence, don't double-emit. (A recovery request while live is
-        // already serviced faster by the live `.complete` latch drain — the timer is the
-        // fallback only when the live path has gone quiet, so the quiet window gates forced too.)
-        let sinceComplete = now - lastCompleteEncode
-        if lastCompleteEncode != 0, sinceComplete < quietWindow { return false }
-        // Recovery request always wins once the live path is quiet (latency-critical: a client
-        // is frozen). Fire regardless of heartbeat phase.
-        if forcedLatched { return true }
-        // Otherwise: heartbeat — measured from the last SYNTHETIC emission ONLY. Anchoring on
-        // `max(lastComplete, lastSynthetic)` would make the first crisp re-anchor after a scroll
-        // wait a full heartbeat even though the quiet window had long passed (Parsec re-sharpens in
-        // ~1 s). Synthetic-only fires the first crisp as soon as the quiet window clears (~1 s after
-        // motion stops), while steady-state static cadence stays one `heartbeat` apart.
-        if lastSyntheticEncode == 0 { return true } // armed, none emitted yet, quiet ⇒ fire now
-        return (now - lastSyntheticEncode) >= heartbeat
+        slopdesk_static_idr_should_reencode(
+            heartbeat, quietWindow, lastCompleteEncode, lastSyntheticEncode,
+            now, forcedLatched, hasRetainedBuffer,
+        )
     }
 
     /// Value-equal iff all four observable anchors match; used only by the golden-parity sanity

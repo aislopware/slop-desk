@@ -122,7 +122,7 @@ final class MacPaletteView: NSView, NSTextFieldDelegate {
         field.focusRingType = .none
         field.font = .systemFont(ofSize: Slate.Typeface.body)
         field.textColor = Slate.Native.Overlay.primary
-        field.placeholderString = "Search for commands…"
+        field.placeholderString = PalettePresentation.queryPrompt
         field.delegate = self
         field.translatesAutoresizingMaskIntoConstraints = false
         addSubview(field)

@@ -46,7 +46,15 @@ package final class CodeSidebarModel {
     /// settled loop and re-ensures from scratch (respawning a dead code-server).
     package private(set) var generation = 0
 
-    package func requestReload() { generation += 1 }
+    /// Re-ensure from scratch. The bump restarts the column's task; unsettling is what lets that
+    /// restart do any work at all, now that ``poll(projectRoot:host:ensure:localize:interval:)``
+    /// returns immediately on a root it has already settled. The two go together: a reload that left
+    /// the phase at `.ready` would cancel the loop and start a new one that instantly returned, which
+    /// is precisely the button doing nothing.
+    package func requestReload() {
+        phase = .starting
+        generation += 1
+    }
 
     /// Poll `ensure` until `.ready` (or cancellation). `host` is read per round — the connection
     /// target can change mid-loop (a reconnect to a different host must not bake in the stale name).
@@ -65,6 +73,24 @@ package final class CodeSidebarModel {
         localize: ((_ host: String, _ port: UInt16) async -> (host: String, port: UInt16))? = nil,
         interval: Duration = .milliseconds(900),
     ) async {
+        // Already settled on THIS root ⇒ nothing to ensure. The loop terminates at `.ready` (see the
+        // `case .ready: return` below), so a settled model holds a finished answer, not a lease: no
+        // keepalive runs, and re-entering is a re-ask of a question already answered.
+        //
+        // It matters because the two shells enter differently. The Mac's column is built once and
+        // merely faded when collapsed, so its `.task` is never cancelled and re-entry never happens.
+        // The phone's panel is a `.fullScreenCover`, so DISMISSING it cancels the task and every
+        // re-open re-enters — and without this guard each re-open dropped a live `.ready` back to
+        // `.starting`, flashing the spinner over a workbench that was already loaded and re-ensuring a
+        // project the host had long since brought up. Nothing on the host was ever at risk (an ensure
+        // is idempotent and no lease expires); what the phone lost was the panel looking settled.
+        // Guarding here rather than at the phone's mount keeps the two shells on one behaviour — the
+        // difference between them stays layout, which is the only difference allowed to exist.
+        //
+        // Root-scoped, because a `.ready` for a DIFFERENT project is exactly the stale leftover
+        // `CodeSidebarPhase.ready`'s own note warns about: that one must re-ensure, so it falls
+        // through to `.starting` as before. `requestReload()` unsettles for the same reason.
+        if case let .ready(settledRoot, _) = phase, settledRoot == projectRoot { return }
         phase = .starting
         var round = 0
         while !Task.isCancelled {

@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceModel
 
 // MARK: - Per-pane agent-badge gating policy (Claude-only)
 
@@ -49,7 +51,18 @@ public struct AgentBadgeGates: Equatable, Sendable {
     /// All three gates ON — the explicit "show every agent badge" baseline (the seed a per-pane override
     /// toggles from). NOTE: this is NOT the SHIPPED global default — `whileProcessing`
     /// ships OFF (resolved from ``SettingsKey/agentBadgeGates``); `allOn` is the explicit all-on constant.
-    public static let allOn = Self()
+    ///
+    /// Read from `slopdesk-agent::badge`'s own `Gates::ALL_ON` rather than declared here. A `Self()`
+    /// would have been a second assertion of the same baseline that no input ever reaches — the
+    /// ungated ladder never consults it, so the two could not be caught disagreeing (`docs/55` §8).
+    public static let allOn = {
+        let gates = slopdesk_agent_badge_gates_default()
+        return Self(
+            badgeWhileProcessing: gates.agent_while_processing,
+            badgeWhenComplete: gates.agent_when_complete,
+            badgeWhenAwaitingInput: gates.agent_when_awaiting_input,
+        )
+    }()
 
     /// Returns a copy with one gate flipped — the per-pane override the tab context-menu toggle writes.
     public func toggling(_ gate: AgentBadgeGate) -> Self {
@@ -104,7 +117,20 @@ public struct CommandBadgeGates: Equatable, Sendable {
     }
 
     /// All three command gates ON — the shipped global default (every command badge shows).
-    public static let allOn = Self()
+    ///
+    /// Two of the three come from `slopdesk-agent::badge`'s `Gates::ALL_ON`, for the reason
+    /// ``AgentBadgeGates/allOn`` states. `whenCommandAwaitsInput` does NOT, and its absence is
+    /// deliberate on the far side rather than an omission here: nothing yet produces that signal, so
+    /// `Gates` carries no field for it — a mask over a value that is never set. It is spelled here
+    /// because here is the only place it exists.
+    public static let allOn = {
+        let gates = slopdesk_agent_badge_gates_default()
+        return Self(
+            whenCommandFinishes: gates.command_when_finishes,
+            whenCommandFails: gates.command_when_fails,
+            whenCommandAwaitsInput: true,
+        )
+    }()
 }
 
 // MARK: - Source-aware tab-badge gating (the ONE production gating entry point)

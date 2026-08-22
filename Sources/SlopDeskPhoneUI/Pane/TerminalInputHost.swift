@@ -216,6 +216,75 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// reads its presses with too, so there is one answer to "which key is this".
     private static func read(_ key: UIKey) -> PhoneKey.Press { PhoneKey.Press(key) }
 
+    // MARK: The four editing chords
+
+    /// ⌘C / ⌘X / ⌘V / ⌘A over the terminal.
+    ///
+    /// The Mac gets these for free: its terminal view IS the window's first responder, so AppKit's
+    /// standard `copy:`/`cut:`/`paste:`/`selectAll:` selectors land on the surface that owns the
+    /// selection. Here the pane's first responder is THIS view — zero-sized, holding no surface —
+    /// and the renderer that owns the selection is a sibling, absent from the chain. So the four
+    /// chords reached nothing at all: they are not workspace chords (the table deliberately leaves
+    /// C/X/V/A alone), and a ⌘ combination encodes to no bytes, so each one fell out of `handle(_:)`
+    /// and died. The long-press menu could copy and paste; a keyboard could not.
+    ///
+    /// Declared as KEY COMMANDS rather than as the standard editing selectors because a command is
+    /// unconditional — it does not depend on this process having built a menu — and because a
+    /// command carries the TITLE, so the ⌘-hold discoverability HUD names these four out of the same
+    /// ``TerminalContextMenu/Item`` vocabulary the menu draws. `wantsPriorityOverSystemBehavior`
+    /// because this view is a `UIKeyInput` and the system would otherwise read ⌘A as select-all over
+    /// a text input that holds no text.
+    ///
+    /// A chord the BINDING TABLE claims is not offered. Nothing binds C/X/V/A by default, but a user
+    /// override may, and the workspace's own table must win the way it does on macOS — where the
+    /// app-level monitor resolves before the surface's responder ever runs.
+    ///
+    /// Offered only while the SINK IS BOUND, and that guard is the load-bearing half. A key command is
+    /// registered with the system and SWALLOWS its chord; one whose action reaches a nil closure is
+    /// strictly worse than never having declared it, because ⌘C stops falling through to whatever
+    /// would otherwise have had it and starts doing nothing instead — a dead chord that looks alive.
+    /// The renderer binds `onRequestMenuItem` when it attaches, so asking here means the four chords
+    /// exist exactly while something can run them.
+    override var keyCommands: [UIKeyCommand]? {
+        guard live?.terminalModel?.onRequestMenuItem != nil else { return nil }
+        return Self.editingChords.compactMap { input, item in
+            guard !Self.isWorkspaceBound(input) else { return nil }
+            let command = UIKeyCommand(
+                title: item.title, action: #selector(runEditingChord(_:)),
+                input: input, modifierFlags: .command,
+                propertyList: item.rawValue,
+            )
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        }
+    }
+
+    /// The four, in the Edit-menu order every platform draws them in.
+    private static let editingChords: [(String, TerminalContextMenu.Item)] = [
+        ("x", .cut), ("c", .copy), ("v", .paste), ("a", .selectAll),
+    ]
+
+    /// Whether the workspace's own table claims this ⌘-chord — the SAME override-aware table the
+    /// pane's interceptor and the Mac's dispatcher resolve against.
+    private static func isWorkspaceBound(_ input: String) -> Bool {
+        guard let character = input.first else { return false }
+        let chord = KeyChord(character: character, [.command])
+        return WorkspaceBindingRegistry.resolvedChordTable[chord] != nil
+    }
+
+    /// Hand the resolved item to the renderer, which already runs every one of them for its
+    /// long-press menu — paste-protection pre-check, cut's editable-prompt policy and all. This side
+    /// names the verb and nothing else; a second implementation of paste is exactly what the seam
+    /// exists to prevent.
+    @objc
+    private func runEditingChord(_ sender: UIKeyCommand) {
+        guard let raw = sender.propertyList as? String,
+              let item = TerminalContextMenu.Item(rawValue: raw),
+              let model = live?.terminalModel
+        else { return }
+        model.onRequestMenuItem?(item)
+    }
+
     /// Takes the press, or reports that the chain should have it. `true` means handled — spent on the
     /// ⌃⇥ walk, answered by an armed mode, swallowed as a workspace chord, or handed to the repeater,
     /// which writes it.
@@ -251,8 +320,48 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         }
         guard PhoneKey.routesToKeyEncoding(press) else { return false }
         if swallowsAsWorkspaceChord(press) { return true }
+        // UNDO AT PROMPT, below the binding table and above the encoder — the same rung the Mac
+        // gives it, where the app-level monitor has already had the chord and libghostty has not yet
+        // seen it. Not through the repeater: an undo that fired twenty times a second on a held ⌘Z
+        // would roll the line back past what the reader can see, which is the argument
+        // `swallowsAsWorkspaceChord(_:)` makes for a held ⌘D.
+        if takesPromptUndo(press) { return true }
         guard encodedBytes(press) != nil else { return false }
         repeater.keyDown(press)
+        return true
+    }
+
+    /// ⌘Z at an editable shell prompt, which is the ONE ⌘ combination that is terminal input rather
+    /// than an app shortcut.
+    ///
+    /// `controls.undoAtPrompt` is drawn, written and persisted on this device, and until this branch
+    /// existed nothing on it read the key: `PhoneKey.encode` answers `nil` to every ⌘ press by
+    /// design, so ⌘Z fell out of `handle(_:)` and died while the Mac emitted the readline undo byte.
+    ///
+    /// The rule is `slopdesk_terminal::surface::prompt_edit_byte` through ``PromptEditPolicy`` — the
+    /// SAME function the libghostty surface's `keyDown` calls, including the byte itself and why
+    /// redo is recognised and deliberately unanswered. What is this side's is only the mapping of a
+    /// `UIKey` to that call, which is what an `NSEvent` needs its own of over there.
+    ///
+    /// The prompt zone is read LIVE off the model's public OSC-133 truth, identically to the Mac:
+    /// connected AND idle AND not on the alternate screen, so ⌘Z passes through to a full-screen
+    /// program that keeps its own undo. ⌃ and ⌥ are refused because those are other line-edit
+    /// chords, and the key is read off `charactersIgnoringModifiers` so the chord is layout-aware.
+    private func takesPromptUndo(_ press: PhoneKey.Press) -> Bool {
+        guard SettingsKey.undoAtPromptEnabled,
+              press.command, !press.control, !press.option,
+              let model = live?.terminalModel
+        else { return false }
+        let base = press.charactersIgnoringModifiers.lowercased()
+        let isUndo = base == "z" && !press.shift
+        let isRedo = (base == "z" && press.shift) || base == "y"
+        guard isUndo || isRedo else { return false }
+        let inPromptZone = model.connectionStatus.isLive
+            && model.shellActivity == .idle
+            && !model.isAlternateScreen
+        guard let bytes = PromptEditPolicy.bytes(forUndo: isUndo, redo: isRedo, inPromptZone: inPromptZone)
+        else { return false }
+        live?.sendBytes(bytes)
         return true
     }
 
@@ -276,9 +385,24 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// Mac's dispatcher resolves against, so a rebind made once fires on both. A bound chord is
     /// swallowed — it never reaches the PTY, and it does not repeat: a split that fired twenty times
     /// a second is not what holding ⌘D means.
+    ///
+    /// A `text:`/`csi:`/`esc:` LITERAL-BYTE binding is answered first, exactly as the Mac's
+    /// dispatcher answers it before the action table. It had no answer here at all: the config file
+    /// is shared between the two shells, so `keybind = cmd+shift+h=text:hello` typed on a Mac and
+    /// typed on the phone were one line producing two behaviours — bytes there, silence here. The
+    /// payload arrives with its ESC/CSI lead bytes already baked in by `KeybindGrammar`; this side
+    /// resolves nothing and writes what it is given.
+    ///
+    /// It is answered on the PANE's rung and not the root one, and that is the same line the root
+    /// rung's own header draws: literal bytes are terminal INPUT, so they belong to the pane holding
+    /// the keyboard rather than to a rung that runs when no pane does.
     private func swallowsAsWorkspaceChord(_ press: PhoneKey.Press) -> Bool {
-        guard let chord = PhoneKey.keyChord(for: press),
-              let interceptor = live?.terminalModel?.keyInterceptor,
+        guard let chord = PhoneKey.keyChord(for: press) else { return false }
+        if let binding = WorkspaceBindingRegistry.textBinding(for: chord) {
+            live?.sendBytes(binding.payload)
+            return true
+        }
+        guard let interceptor = live?.terminalModel?.keyInterceptor,
               case .swallow = interceptor.intercept(chord)
         else { return false }
         return true

@@ -17,7 +17,14 @@
 // here — its chord recorder was said to need an `NSEvent` monitor — and it is not dropped any more, because
 // the phone records with `KeybindingCaptureHost` off the same Rust tables (docs/56 increment 30). What still
 // differs by half is the GROUPS inside a page (the raw `SLOPDESK_*` editor, the Video host flags), and those
-// are gated by the layout table's `Platform` as data, so the All-Settings index still reaches every setting.
+// are gated by the layout table's `Platform` as data rather than by an `#if` at a call site.
+//
+// ⚠️ WHAT THAT DOES NOT BUY is an index that reaches the other half's keys, and this note used to claim
+// it did. ``AllSettingsCatalog/entries`` is `entries(mac: isMac)` — the door's `slopdesk_settings_row_shown`
+// filter, applied to THIS half — so a Mac-only key is absent from the phone's index, not merely absent
+// from its pages. That is the deliberate shape (a row the phone can never write is a row it must not
+// offer to write), and `entries(mac:)` stays public precisely so a test on one platform can read the
+// other's. What is owed to the phone is every setting it CAN act on, not a listing of the ones it cannot.
 //
 // The single live `PreferencesStore` is handed in by `WorkspaceRootView` (read there from
 // `\.preferencesStore`).

@@ -99,7 +99,10 @@ public enum WorkspaceAction: Hashable, Sendable {
     // View → Toggle Code Panel: show/hide the RIGHT sidebar hosting the project-scoped embedded
     // VS Code (code-server in a WKWebView — every pane of one project shares the ONE instance opened
     // at that project's root). ⌘⇧R, mirroring ⌘⇧L on the left panel. Window-scope chrome → needs no
-    // active pane; iOS has no code panel (documented no-op — the closure is never installed there).
+    // active pane. iOS HAS the code panel — the old note here said it did not, which stopped being
+    // true: `SlopDeskPhoneUI/WorkspaceRootView.swift` mounts the same `CodePanelSurfaces` as a
+    // `.fullScreenCover` and installs this closure. A sidebar on the Mac, a cover on the phone, is
+    // the layout difference the split exists for; the capability is on both.
     case toggleCodeSidebar
     // View → Switch Editor / Terminal Focus: move the KEYBOARD between the terminal and the embedded
     // editor, and back. ⌥⌘R, the sibling of ⌘⇧R (that one shows/hides the panel; this one decides who types
@@ -558,7 +561,9 @@ public enum WorkspaceBindingRegistry {
         ),
         // Reopen the most recently closed pane (the browser "reopen tab" idiom, beside ⌘T new / ⌘⇧W close).
         // ⌘⇧T is FREE on the tree shell (the only other `t` chords are ⌘T new tab + ⌃⌘T break-pane). The
-        // closed-pane LIFO + restore are future work; this route is a documented graceful no-op (no dead chord).
+        // "closed-pane LIFO + restore are future work, this is a graceful no-op" note that used to sit here
+        // outlived its own subject: the route runs `reopenLastClosedPane()`, which stages intent 20 with LIFO
+        // index 0 — a pinned wire op with a golden vector — and Open Quickly addresses the same stack by index.
         WorkspaceBinding(
             id: "tab.reopenClosed", action: .reopenClosed, title: "Reopen Closed Pane",
             category: .tabs, chord: KeyChord(character: "t", [.command, .shift]),

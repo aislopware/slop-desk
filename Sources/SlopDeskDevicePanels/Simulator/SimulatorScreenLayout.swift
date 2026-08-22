@@ -28,6 +28,18 @@ package enum SimulatorScreenLayout {
         DevicePanelGeometry.devicePoint(from: point, fitted: fitted)
     }
 
+    /// The same mapping for a point that may have left the frame mid-drag, CLAMPED instead of
+    /// dropped — shared, see ``DevicePanelGeometry/clampedDevicePoint(from:fitted:)``.
+    ///
+    /// This lane spelled it itself until 2026-08-22, and the copy was WRONG: it clamped to the
+    /// fitted rect's size where the shared rule clamps to the last addressable point inside it. A
+    /// drag to the right edge of a 200-point frame therefore reported x = 200 into a surface whose
+    /// columns are `0..<200`, and the host scales that straight off the far side of the
+    /// framebuffer. The Android lane had asked through the door since the door existed.
+    package static func clampedDevicePoint(from point: CGPoint, fitted: CGRect) -> CGPoint {
+        DevicePanelGeometry.clampedDevicePoint(from: point, fitted: fitted)
+    }
+
     /// The surface descriptor that rides on every positional envelope: the fitted rect's own size, so
     /// the host scales from the space the coordinates were actually measured in.
     package static func surface(fitted: CGRect) -> SimulatorInputEnvelope.Surface {

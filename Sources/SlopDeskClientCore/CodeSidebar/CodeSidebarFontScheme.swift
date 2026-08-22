@@ -16,6 +16,7 @@
 // the CLIENT's resources, nothing the host serves.
 
 import Foundation
+import SlopDeskFontFaces
 
 /// The scheme, its faces, and the URL shape both ends agree on. Pure — no WebKit, so the iOS
 /// slice and the tests both compile it.

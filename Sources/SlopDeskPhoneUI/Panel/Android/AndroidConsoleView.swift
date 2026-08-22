@@ -63,6 +63,7 @@ struct AndroidConsoleView: View {
             SlateSearchField(
                 placeholder: AndroidPresentation.consoleFilterPlaceholder, text: $filter,
             )
+            DevicePanelChrome.clearKey($filter, ink: AndroidInk.icon.color)
             PlateIconButton(symbol: AndroidPresentation.consoleFollowSymbol, active: isFollowing) {
                 isFollowing.toggle()
             }
@@ -76,6 +77,7 @@ struct AndroidConsoleView: View {
                 .help(AndroidPresentation.consoleHideHelp)
             }
         }
+        .animation(Slate.Anim.smallFade, value: filter.isEmpty)
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.heightBar)
         .background(Slate.Surface.raised)

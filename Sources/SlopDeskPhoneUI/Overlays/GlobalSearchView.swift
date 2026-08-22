@@ -1,7 +1,8 @@
 // GlobalSearchView — the PHONE's cross-tab Global Search results surface, opened by ⇧⌘F. A LARGE,
 // content-area-filling, NON-scrimmed card (a dedicated results *overlay* rather than a
 // results *tab*, which we do not add to avoid blast-radius across every `switch PaneKind` site).
-// Presented as a NATIVE `.sheet` by ``OverlayHostView`` — a large results window on macOS (system chrome).
+// Presented as a NATIVE `.sheet` by ``OverlayHostView``. The clause that used to follow — "a large results
+// window on macOS (system chrome)" — described a shared view that no longer exists; see the ⚠️ below.
 //
 // Anatomy matches `screenshots/global-search.png` (`Slate.*` tokens ONLY — raw font / colour / radius literals
 // fail `scripts/check-ds-leaks.sh`):
@@ -93,7 +94,7 @@ struct GlobalSearchView: View {
         // No leading magnifier — the query text is flush-left per global-search.png. No in-bar `×` either: the
         // overlay's dismiss affordance is Esc (the `.slateCancelKey` on the surface above).
         HStack(spacing: Slate.Metric.space2) {
-            TextField("Search across all tabs…", text: queryBinding)
+            TextField(GlobalSearchPresentation.queryPrompt, text: queryBinding)
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
                 .foregroundStyle(SlateOverlayInk.primary)
@@ -212,7 +213,7 @@ struct GlobalSearchView: View {
         .slateRowButton { collapse.toggle(group.paneID) }
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel(Text(group.groupTitle))
-        .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
+        .accessibilityValue(Text(GlobalSearchPresentation.disclosureState(collapsed: collapsed)))
     }
 
     // MARK: - Hit row (extracted so each row owns its own hover @State for the hover-reveal jump glyph)

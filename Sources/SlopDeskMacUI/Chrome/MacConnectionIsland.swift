@@ -32,6 +32,7 @@ import AppKit
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 @MainActor
 final class MacConnectionIsland: NSView {
@@ -249,7 +250,7 @@ final class MacConnectionIsland: NSView {
         withObservationTracking {
             let status = connection.status
             let ping = ConnectionTelemetry.pingMS(store)
-            let slot = ConnectionReading.footerDetail(status: status, pingMS: ping)
+            let slot = ConnectionReading.trailingDetail(status: status, pingMS: ping, mount: .bedded)
             next = Reading(
                 host: connection.hostDisplayName ?? connection.target.host,
                 led: ConnectionReading.ledState(status: status, pingMS: ping),

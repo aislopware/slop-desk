@@ -211,12 +211,18 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
         // Quick Select on the left, the ↩ verb and ⌘K on the right — the two gravities are what the
         // `Spacer` between them was.
         footer.addView(
-            MacFooterHintView(label: OpenQuicklyPresentation.quickSelectHint, glyph: "⌘"),
+            MacFooterHintView(
+                label: OpenQuicklyPresentation.quickSelectHint,
+                glyph: OpenQuicklyPresentation.quickSelectGlyph,
+            ),
             in: .leading,
         )
         footer.addView(runHint, in: .trailing)
         footer.addView(
-            MacFooterHintView(label: OpenQuicklyPresentation.actionsHint, glyph: "⌘K"),
+            MacFooterHintView(
+                label: OpenQuicklyPresentation.actionsHint,
+                glyph: OpenQuicklyPresentation.actionsGlyph,
+            ),
             in: .trailing,
         )
 
@@ -367,33 +373,14 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
 
     // MARK: The sources
 
-    /// The two per-pane facts the pure builders need and the tree does not carry — read here, from
-    /// the workspace mirror, so ``OpenQuicklyModel`` stays a pure value function.
-    private var paneFacts: (PaneID) -> (title: String?, cwd: String?, process: String?) {
-        { [store] paneID in
-            let cwd = store.paneCwd(for: paneID)
-            // The process rung is read under the SAME guard the window title uses
-            // (``WorkspaceChromePolicy/windowTitle(for:)``): reading it unconditionally would title a
-            // pane by its program where its cwd or its rename already answers, which is the rung's own
-            // escape order and not this surface's to restate.
-            let spec = store.tree.spec(for: paneID)
-            let titled = RailStructureKey.titledByProcess(kind: spec?.kind ?? .terminal, spec: spec, cwd: cwd)
-            return (
-                store.liveProgramTitle(for: paneID), cwd,
-                titled ? store.paneForegroundProcess[paneID] : nil,
-            )
-        }
-    }
-
+    /// The picker's corpora, ranked and sectioned for the active pill. Both the per-pane fact read and
+    /// the five-source assembly are ``OpenQuicklySources``', below either shell — this half only says
+    /// which pill and which query, and holds what came back.
     private func sections(filter: OpenQuicklyFilter) -> [OpenQuicklySection] {
-        let sources: [OpenQuicklyFilter: [OpenQuicklyItem]] = [
-            .opened: OpenQuicklyModel.openedItems(from: store.tree, facts: paneFacts),
-            .recent: OpenQuicklyModel.recentItems(from: store.closedTabRecords, facts: paneFacts),
-            .folders: OpenQuicklyModel.folderItems(from: folders?.ranked() ?? []),
-            .agents: agentItems,
-            .current: OpenQuicklyModel.currentItems(from: currentJumpItems),
-        ]
-        return OpenQuicklyModel.sectioned(sources: sources, filter: filter, query: query)
+        OpenQuicklySources.sections(
+            store: store, folders: folders, agents: agentItems, current: currentJumpItems,
+            filter: filter, query: query,
+        )
     }
 
     /// The rows the keyboard can land on, as the LAST ``draw()`` built them.
@@ -443,29 +430,12 @@ final class MacOpenQuicklyView: NSView, NSTextFieldDelegate {
 
     // MARK: Current snapshot + the Agents fetch
 
-    /// Snapshot the focused pane into ``currentJumpItems`` ONCE on the way in: the link detector over
-    /// its scrollback (only when link detection is on) plus its OSC-133 command index, assembled by
-    /// the pure ``JumpToModel``.
+    /// Snapshot the focused pane into ``currentJumpItems`` ONCE on the way in. The snapshot itself is
+    /// ``OpenQuicklySources/currentItems(model:cwd:)``'s, below both halves — it was these same
+    /// eighteen lines here and in the phone's picker, detector gate and `BlockSummary` mapping
+    /// included, and the cross-target clone rule is what found it rather than a reader.
     private func snapshotCurrent() {
-        guard let model = activeModel else {
-            currentJumpItems = []
-            return
-        }
-        let rows = model.searchScrollbackLines()
-        let links: [DetectedLink] = SettingsKey.linkDetectionEnabled
-            ? TerminalLinkDetector.detect(
-                rows: rows, cwd: activeCwd, schemes: SettingsKey.linkSchemePolicy,
-            )
-            : []
-        let blocks = model.blocks.navigatorBlocks.map { block in
-            BlockSummary(
-                index: block.index,
-                commandText: block.commandText,
-                isPrompt: false,
-                firstSeen: model.blocks.firstSeen(index: block.index),
-            )
-        }
-        currentJumpItems = JumpToModel.items(links: links, blocks: blocks)
+        currentJumpItems = OpenQuicklySources.currentItems(model: activeModel, cwd: activeCwd)
     }
 
     /// What the Agents fetch depends on: whether a pill surfaces Agents at all, the focused pane, and

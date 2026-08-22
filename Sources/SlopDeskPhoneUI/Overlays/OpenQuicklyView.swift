@@ -368,10 +368,16 @@ struct OpenQuicklyView: View {
 
     private var footerBar: some View {
         HStack(spacing: Slate.Metric.space2) {
-            footerHint(OpenQuicklyPresentation.quickSelectHint, glyph: "⌘")
+            footerHint(
+                OpenQuicklyPresentation.quickSelectHint,
+                glyph: OpenQuicklyPresentation.quickSelectGlyph,
+            )
             Spacer(minLength: Slate.Metric.space2)
             footerHint(defaultActionLabel, glyph: "↩")
-            footerHint(OpenQuicklyPresentation.actionsHint, glyph: "⌘K")
+            footerHint(
+                OpenQuicklyPresentation.actionsHint,
+                glyph: OpenQuicklyPresentation.actionsGlyph,
+            )
         }
         .padding(.horizontal, Slate.Metric.space4)
         .frame(height: Slate.Metric.heightRow)
@@ -514,38 +520,17 @@ struct OpenQuicklyView: View {
 
     // MARK: - Sources + sectioning
 
-    /// The two per-pane facts the pure builders need and the tree does not carry — read here, from the
-    /// workspace mirror, so ``OpenQuicklyModel`` stays a pure value function.
-    private var paneFacts: (PaneID) -> (title: String?, cwd: String?, process: String?) {
-        { paneID in
-            let cwd = store.paneCwd(for: paneID)
-            // Guarded exactly as the Mac's twin and the window title are — the rung's escape order is
-            // `RailStructureKey`'s, and a surface that restates it is the second copy.
-            let spec = store.tree.spec(for: paneID)
-            let titled = RailStructureKey.titledByProcess(kind: spec?.kind ?? .terminal, spec: spec, cwd: cwd)
-            return (
-                store.liveProgramTitle(for: paneID), cwd,
-                titled ? store.paneForegroundProcess[paneID] : nil,
-            )
-        }
-    }
-
-    /// The per-pill source rows, assembled from the live store / folders / async Agents / Current snapshot
-    /// via the PURE `OpenQuicklyModel` builders — the view stays a thin renderer.
-    private var sources: [OpenQuicklyFilter: [OpenQuicklyItem]] {
-        [
-            .opened: OpenQuicklyModel.openedItems(from: store.tree, facts: paneFacts),
-            .recent: OpenQuicklyModel.recentItems(from: store.closedTabRecords, facts: paneFacts),
-            .folders: OpenQuicklyModel.folderItems(from: folders?.ranked() ?? []),
-            .agents: agentItems,
-            .current: OpenQuicklyModel.currentItems(from: currentJumpItems),
-        ]
-    }
-
-    /// The ranked, sectioned result list for the active pill — `.all` merges every non-empty source under its
-    /// ALL-CAPS header; a specific pill is one section.
+    /// The ranked, sectioned result list for the active pill — `.all` merges every non-empty source under
+    /// its ALL-CAPS header; a specific pill is one section.
+    ///
+    /// The per-pane fact read (guarded by ``RailStructureKey``'s escape order) and the five-source
+    /// assembly are ``OpenQuicklySources``', below either shell — the comment that used to stand over the
+    /// copy here said "guarded exactly as the Mac's twin", which is the admission that there was a twin.
     private var sections: [OpenQuicklySection] {
-        OpenQuicklyModel.sectioned(sources: sources, filter: coordinator.openQuicklyFilter, query: query)
+        OpenQuicklySources.sections(
+            store: store, folders: folders, agents: agentItems, current: currentJumpItems,
+            filter: coordinator.openQuicklyFilter, query: query,
+        )
     }
 
     /// The flattened, navigable rows (headers excluded) — the arrow-key / ⌘1–9 target.
@@ -597,27 +582,11 @@ struct OpenQuicklyView: View {
 
     // MARK: - Current snapshot + Agents async load
 
-    /// Snapshot the focused pane into ``currentJumpItems`` ONCE on appear: run the link detector over its
-    /// scrollback (only when link detection is enabled) + map its OSC-133 command index, assembled by the pure
-    /// `JumpToModel`.
+    /// Snapshot the focused pane into ``currentJumpItems`` ONCE on appear. The snapshot itself is
+    /// ``OpenQuicklySources/currentItems(model:cwd:)``'s, below both halves — it was these same
+    /// eighteen lines here and in the Mac's picker, detector gate and `BlockSummary` mapping included.
     private func snapshotCurrent() {
-        guard let model = activeModel else {
-            currentJumpItems = []
-            return
-        }
-        let rows = model.searchScrollbackLines()
-        let links: [DetectedLink] = SettingsKey.linkDetectionEnabled
-            ? TerminalLinkDetector.detect(rows: rows, cwd: activeCwd, schemes: SettingsKey.linkSchemePolicy)
-            : []
-        let blocks = model.blocks.navigatorBlocks.map { block in
-            BlockSummary(
-                index: block.index,
-                commandText: block.commandText,
-                isPrompt: false,
-                firstSeen: model.blocks.firstSeen(index: block.index),
-            )
-        }
-        currentJumpItems = JumpToModel.items(links: links, blocks: blocks)
+        currentJumpItems = OpenQuicklySources.currentItems(model: activeModel, cwd: activeCwd)
     }
 
     /// Identity of "what the Agents fetch depends on": whether a pill that surfaces Agents is active, the

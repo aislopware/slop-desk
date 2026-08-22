@@ -1,7 +1,8 @@
 // ConnectHostView — THE PHONE's Connect-to-Host editor, presented in a NATIVE SHEET (user-directed
 // 2026-08-08). The Mac draws the same form in AppKit over the same ``AppConnection``
-// (``SlopDeskMacUI/MacConnectFormController``), and the one thing the two agree on below the view layer is
-// ``ConnectPresentation/shouldCloseAfterConnect(status:)``.
+// (``SlopDeskMacUI/MacConnectFormController``). What the two agree on below the view layer is
+// ``ConnectPresentation/shouldCloseAfterConnect(status:)`` and — since every label, prompt and button
+// title here was spelled character for character in the other half too — the whole of ``ConnectForm``.
 //
 // It is the only overlay in the set that is a FORM to fill in and commit rather than a picker to skim, so
 // it is the one that takes the platform's own modal: the sheet owns the window (no stray click into the
@@ -57,7 +58,7 @@ struct ConnectHostView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SlateCardTitle("Connect to Host")
+            SlateCardTitle(ConnectForm.title)
 
             VStack(alignment: .leading, spacing: Slate.Metric.space3) {
                 // Host and port share ONE row — a port is five digits, and a five-digit field the full
@@ -65,10 +66,19 @@ struct ConnectHostView: View {
                 // placeholder-as-label cut was photographed and rejected: this card usually opens
                 // PRE-FILLED with the live target, and a filled field with no label says nothing.)
                 HStack(alignment: .top, spacing: Slate.Metric.space3) {
-                    SlateLabeledField(label: "Host", text: $connection.host, prompt: "host.local or 10.0.0.7")
-                        .focused($hostFocused)
-                    SlateLabeledField(label: "Port", text: $connection.port, prompt: "9000", mono: true)
-                        .frame(width: Slate.Metric.portFieldWidth)
+                    SlateLabeledField(
+                        label: ConnectForm.hostLabel,
+                        text: $connection.host,
+                        prompt: ConnectForm.hostPrompt,
+                    )
+                    .focused($hostFocused)
+                    SlateLabeledField(
+                        label: ConnectForm.portLabel,
+                        text: $connection.port,
+                        prompt: ConnectForm.portPrompt,
+                        mono: true,
+                    )
+                    .frame(width: Slate.Metric.portFieldWidth)
                 }
 
                 // The two video ports stay folded away — most people keep the defaults, and a card that
@@ -79,7 +89,7 @@ struct ConnectHostView: View {
                     HStack(spacing: Slate.Metric.space1) {
                         Image(systemSymbol: showAdvanced ? .chevronDown : .chevronRight)
                             .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                        Text("Video ports")
+                        Text(ConnectForm.videoPortsLabel)
                             .font(.callout)
                         Spacer(minLength: 0)
                     }
@@ -94,11 +104,16 @@ struct ConnectHostView: View {
                 if showAdvanced {
                     // The two video ports are peers, so they share a row the way host/port do.
                     HStack(alignment: .top, spacing: Slate.Metric.space3) {
-                        SlateLabeledField(label: "Media port", text: $connection.mediaPort, prompt: "9001", mono: true)
                         SlateLabeledField(
-                            label: "Cursor port",
+                            label: ConnectForm.mediaPortLabel,
+                            text: $connection.mediaPort,
+                            prompt: ConnectForm.mediaPortPrompt,
+                            mono: true,
+                        )
+                        SlateLabeledField(
+                            label: ConnectForm.cursorPortLabel,
                             text: $connection.cursorPort,
-                            prompt: "9002",
+                            prompt: ConnectForm.cursorPortPrompt,
                             mono: true,
                         )
                     }
@@ -118,7 +133,7 @@ struct ConnectHostView: View {
             .padding(.bottom, Slate.Metric.space4)
 
             SlateCardFooter(
-                confirmTitle: "Connect",
+                confirmTitle: ConnectForm.connectAction,
                 confirmDisabled: !connection.canConnect,
                 onCancel: { cancelAndClose() },
                 onConfirm: { connectAndClose() },

@@ -73,6 +73,10 @@ struct SimulatorConsoleView: View {
             SlateSearchField(
                 placeholder: SimulatorPresentation.Console.filterPlaceholder, text: $filter,
             )
+            // The same key the device list draws beside the same kind of field. It was missing here,
+            // so a typed filter over a log could only be undone by backspacing it — while the list one
+            // scroll away cleared in a tap.
+            DevicePanelChrome.clearKey($filter, ink: Slate.Text.icon)
             PlateIconButton(
                 symbol: SimulatorPresentation.Console.follow(isFollowing: isFollowing).symbol,
                 active: isFollowing,
@@ -93,6 +97,7 @@ struct SimulatorConsoleView: View {
                 .help(SimulatorPresentation.Console.hide.help)
             }
         }
+        .animation(Slate.Anim.smallFade, value: filter.isEmpty)
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.heightBar)
         .background(Slate.Surface.raised)

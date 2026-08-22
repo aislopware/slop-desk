@@ -128,8 +128,22 @@ struct AndroidStageView: View {
             SlatePlateGroup {
                 ForEach(AndroidPresentation.actionTray, id: \.action) { plate($0) }
             }
+            keyboard
             plate(AndroidPresentation.consoleVerb)
         }
+    }
+
+    /// PHONE-ONLY, and loose beside the console plate for the same reason that one is: it LATCHES.
+    ///
+    /// The mirror has always typed from a hardware keyboard, which is the whole story on a Mac and
+    /// only half of it here — a phone with no keys could tap, swipe and screenshot the device without
+    /// ever putting a character into it. (The tray's paste verb was the one way round it, and pasting
+    /// is not typing.) See ``DeviceSoftKeyboard``.
+    private var keyboard: some View {
+        PlateIconButton(symbol: .keyboard, active: DeviceSoftKeyboard.shared.isTyping) {
+            DeviceSoftKeyboard.shared.toggle()
+        }
+        .help(DeviceSoftKeyboard.plateHelp)
     }
 
     /// One verb as a plate. The LATCH is the view's — `scrcpy` has no read side for the backlight and

@@ -59,6 +59,11 @@ public struct PaletteDisplayRow: Sendable, Identifiable {
 }
 
 public enum PalettePresentation {
+    /// The query field's prompt — the card's ONE user-facing string, and it was spelled once per
+    /// shell. It names what the card searches, which is the palette's meaning rather than either
+    /// half's drawing.
+    public static let queryPrompt = "Search for commands…"
+
     /// Pairs the ranked results with their selectable indices, in draw order.
     public static func displayRows(_ ranked: [RankedRow]) -> [PaletteDisplayRow] {
         var index = 0

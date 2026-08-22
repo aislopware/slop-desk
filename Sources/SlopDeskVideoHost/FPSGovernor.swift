@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskVideoProtocol
 
 /// PURE content/congestion-adaptive FPS governor with a regular-cadence actuation model.
 ///
@@ -206,16 +207,35 @@ public struct FPSGovernor: Sendable, Equatable {
 
     // MARK: Env parsing helpers
 
+    /// Resolve + VALIDATE an int knob, through the same door ``LiveCongestionController`` reads —
+    /// out of range or unparseable falls back to `fallback`, never to a bound.
+    ///
+    /// **The lookup goes through ``EnvConfig``, and until 2026-08-22 it did not.** Every other knob
+    /// in the video stack resolves env → settings overlay, which is what lets a GUI setting reach a
+    /// `static let` that is forced before any UI exists; these six read
+    /// `ProcessInfo.processInfo.environment` directly, so a governor tunable set in Settings was
+    /// written to the sidecar, folded into the overlay at `main()`, and then ignored — a control
+    /// that moves and does nothing, with no error anywhere. With an EMPTY overlay the two spellings
+    /// are byte-identical, which is exactly why nothing caught it: every test, every golden run and
+    /// every developer launch has an empty overlay.
     private static func envInt(_ key: String, _ fallback: Int, min lo: Int, max hi: Int) -> Int {
-        guard let s = ProcessInfo.processInfo.environment[key], let v = Int(s), v >= lo,
-              v <= hi else { return fallback }
-        return v
+        let raw = EnvConfig.string(key)
+        var text = raw ?? ""
+        let answer = text.withUTF8 {
+            slopdesk_abr_validated_int(
+                $0.baseAddress, $0.count, raw != nil, Int64(fallback), Int64(lo), Int64(hi),
+            )
+        }
+        return Int(answer)
     }
 
+    /// ``envInt(_:_:min:max:)`` for the one fractional knob, and the same two corrections.
     private static func envDouble(_ key: String, _ fallback: Double, min lo: Double, max hi: Double) -> Double {
-        guard let s = ProcessInfo.processInfo.environment[key], let v = Double(s), v >= lo,
-              v <= hi else { return fallback }
-        return v
+        let raw = EnvConfig.string(key)
+        var text = raw ?? ""
+        return text.withUTF8 {
+            slopdesk_abr_validated_double($0.baseAddress, $0.count, raw != nil, fallback, lo, hi)
+        }
     }
 }
 

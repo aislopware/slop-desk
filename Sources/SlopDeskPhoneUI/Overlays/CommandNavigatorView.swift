@@ -349,28 +349,28 @@ struct CommandNavigatorView: View {
         .help(CommandNavigatorPresentation.bookmarkHelp)
     }
 
-    /// The row title with the fzf-matched runs tinted the accent colour + semibold (the Jump-To / palette
-    /// idiom). A still-forming block (empty command) shows an em-dash; it can never match a real query, so it
-    /// only appears in the zero-state list.
+    /// The command line with the query's matched runs marked by CONTRAST — the hit keeps the reading ink
+    /// and goes a weight up while the letters around it step back. WHERE the cuts fall is
+    /// ``FuzzyMatcher/runs(of:ranges:)``'s, the same door the palette and both halves of Open Quickly
+    /// read; the ink is this half's.
+    ///
+    /// It was a hand-rolled range walk that tinted the hit `Slate.State.accent`, which is the one thing
+    /// the palette's own note (``PaletteView``) says a match may never be: colour on an otherwise
+    /// monochrome card, and off the accent's budget besides. A still-forming block (empty command) shows
+    /// an em-dash; it can never match a real query, so it only appears in the zero-state list.
     private func highlightedTitle(_ block: CommandBlock) -> Text {
         let title = block.commandText.isEmpty ? "—" : block.commandText
         let trimmed = query.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, let ranges = FuzzyMatcher.score(trimmed, title)?.ranges, !ranges.isEmpty else {
-            return Text(title).foregroundStyle(Slate.Text.primary)
+        let ranges = trimmed.isEmpty ? [] : FuzzyMatcher.score(trimmed, title)?.ranges ?? []
+        let runs = FuzzyMatcher.runs(of: title, ranges: ranges)
+        guard runs.count > 1 else {
+            return Text.nerdAware(title, size: Slate.Typeface.body).foregroundStyle(Slate.Text.primary)
         }
-        var segments: [Text] = []
-        var cursor = title.startIndex
-        for range in ranges where range.lowerBound >= cursor {
-            if cursor < range.lowerBound {
-                segments.append(Text(title[cursor..<range.lowerBound]).foregroundStyle(Slate.Text.primary))
-            }
-            segments.append(Text(title[range]).foregroundStyle(Slate.State.accent).fontWeight(.semibold))
-            cursor = range.upperBound
-        }
-        if cursor < title.endIndex {
-            segments.append(Text(title[cursor...]).foregroundStyle(Slate.Text.primary))
-        }
-        return .spliced(segments)
+        return .spliced(runs.map { run in
+            Text.nerdAware(run.text, size: Slate.Typeface.body)
+                .foregroundStyle(run.matched ? Slate.Text.primary : Slate.Text.secondary)
+                .fontWeight(run.matched ? .semibold : .regular)
+        })
     }
 
     // MARK: - Footer hint bar

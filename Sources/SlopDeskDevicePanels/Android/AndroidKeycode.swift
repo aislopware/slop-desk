@@ -32,33 +32,17 @@ package struct AndroidKeycode: RawRepresentable, Equatable, Hashable {
     package init(rawValue: UInt32) { self.rawValue = rawValue }
     package init(_ rawValue: UInt32) { self.rawValue = rawValue }
 
-    // Navigation — the three that make an Android device usable at all.
+    // The two hardware buttons a panel VERB presses. Every other keycode this panel sends comes back
+    // from `slopdesk_devicepanel::panel_key` through the door below, so naming one here again would
+    // be a second table that no input ever reaches — and therefore one that can never be caught
+    // disagreeing (docs/55 §8).
+    //
+    // `KEYCODE_BACK` is deliberately NOT here, and its absence is the sharper half: the Back verb
+    // sends `BACK_OR_SCREEN_ON`, not `KEYCODE_BACK`, because a press on a sleeping device must wake
+    // it. A constant named for the obvious thing that the obvious call does not use is a trap, not
+    // just dead weight.
     package static let home = Self(3)
-    package static let back = Self(4)
     package static let appSwitch = Self(187)
-
-    // Hardware.
-    package static let power = Self(26)
-    package static let camera = Self(27)
-    package static let notification = Self(83)
-
-    // Editing.
-    package static let del = Self(67)
-    package static let forwardDel = Self(112)
-    package static let enter = Self(66)
-    package static let tab = Self(61)
-    package static let escape = Self(111)
-    package static let space = Self(62)
-
-    // Motion.
-    package static let dpadUp = Self(19)
-    package static let dpadDown = Self(20)
-    package static let dpadLeft = Self(21)
-    package static let dpadRight = Self(22)
-    package static let moveHome = Self(122)
-    package static let moveEnd = Self(123)
-    package static let pageUp = Self(92)
-    package static let pageDown = Self(93)
 }
 
 /// `KeyEvent` meta-state bits.

@@ -45,6 +45,7 @@
 import Foundation
 import Observation
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 /// Per-pane chrome holder driving the Command Navigator's visibility — a reference type so the pane
 /// model's `onRequestBlockNavigator` `@MainActor` closure can TOGGLE it (the seam doc: "show/hide"),

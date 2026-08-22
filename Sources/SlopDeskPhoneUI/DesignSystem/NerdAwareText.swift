@@ -6,6 +6,7 @@
 
 #if os(iOS)
 import SlopDeskClientCore
+import SlopDeskFontFaces
 import SwiftUI
 
 extension Text {

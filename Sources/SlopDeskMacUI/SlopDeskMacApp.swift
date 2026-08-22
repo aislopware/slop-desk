@@ -171,53 +171,22 @@ public struct SlopDeskMacApp: App {
         dockProgress.onActivatedWhileErrored = { [weak store] in store?.revealNextErrorPane() }
         _dockProgress = State(initialValue: dockProgress)
 
-        // The three OS-notification sinks the composition leaves open. The phone installs NONE of them —
-        // which is the honest statement that the in-app toast is its only notification surface. The toast
-        // half of each fan-out already fired inside the composition, on both platforms.
-        app.backgroundNoticeSink = { notice in
-            explicitNotifier.notifyExplicit(
-                event: notice.event,
-                paneIDKey: notice.paneIDKey, paneTitle: notice.paneTitle,
-                title: notice.title, body: notice.body,
-                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
-                settings: SettingsKey.notificationSettings,
-            )
-        }
-        // Notify on Finish (clean exit, default OFF) / Notify on Error Exit (non-zero, default ON) + the
-        // Notify-While-Foreground gate — the duration threshold is the notifier's own.
-        app.longCommandSink = { notice in
-            explicitNotifier.notifyIfLong(
-                paneTitle: notice.paneTitle, exitCode: notice.exitCode, durationMS: notice.durationMS,
-                paneIDKey: notice.paneIDKey,
-                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
-                settings: SettingsKey.notificationSettings,
-            )
-        }
-        app.agentAttentionSink = { notice in
-            // The herdr-style sound cues (Submarine on a finish, Glass on awaiting-input), gated by the
-            // pure ``AgentSoundPolicy`` — which does NOT gate on focus: the TOAST is suppressed for a
-            // focused pane (a card over the event you are watching is spam), but the cue still rings,
-            // because a focused pane is routinely one in a background window or on another display.
-            // System sounds via `NSSound(named:)` — nothing bundled.
-            if let sound = AgentSoundPolicy.sound(
-                needsInput: notice.needsInput,
-                sourcePaneFocused: notice.sourcePaneFocused,
-                soundTaskComplete: Defaults[.agentSoundTaskComplete],
-                soundAwaitInput: Defaults[.agentSoundAwaitInput],
-            ) {
-                NSSound(named: sound.rawValue)?.play()
-            }
-            // Agent edges (reusing AttentionSupervision) ride their OWN per-event toggles —
-            // awaiting-input vs task-complete — NOT the shell-app master switch, then the
-            // Notify-While-Foreground gate.
-            explicitNotifier.notifyExplicit(
-                event: notice.needsInput ? .agentAwaitInput : .agentTaskComplete,
-                paneIDKey: notice.paneIDKey, paneTitle: notice.name,
-                title: notice.name, body: notice.body,
-                appActive: notice.appActive, sourcePaneVisible: notice.sourcePaneVisible,
-                settings: SettingsKey.notificationSettings,
-            )
-        }
+        // The three OS-notification sinks the composition leaves open — filled by
+        // ``ClientNotificationSinks``, below both shells. ⚠️ THE PHONE INSTALLS ALL THREE (its own
+        // `installNotificationSinks`, since `UserNotifications` stopped being the Mac's alone); the
+        // note that used to stand here said it installed NONE, which was true when it was written and
+        // was still being read as a rule long after it stopped being a fact. The toast half of each
+        // fan-out already fired inside the composition, on both platforms.
+        //
+        // The one thing that is genuinely this platform's is the CUE'S SPEAKER: the herdr-style system
+        // sounds (Submarine on a finish, Glass on awaiting-input) play through `NSSound(named:)` —
+        // nothing bundled — and the banner beside them stays silent. Which cue rings at all is
+        // ``AgentSoundPolicy``'s, on both.
+        ClientNotificationSinks.install(
+            on: app,
+            notifier: explicitNotifier,
+            cue: .played { NSSound(named: $0.rawValue)?.play() },
+        )
 
         // Host-windows FEED: Open Quickly's host-window rows. Its renewal loop (a scene `.task` below)
         // gates on OQ visibility + connection — no OQ up costs the host exactly 0 Hz.
@@ -249,6 +218,7 @@ public struct SlopDeskMacApp: App {
         // copy flows back. Routed through whichever pane carries a live channel — the same
         // resolve-at-call-time idiom as the Agents card / hostInfo fetcher.
         _clipboardSync = State(initialValue: ClipboardSyncEngine(
+            attendedReadsFrom: store,
             push: { [weak store] clip in
                 guard let store, let client = store.firstConnectedMetadataClient else { return false }
                 return await client.setClipboard(clip)

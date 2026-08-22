@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Darwin
 import Foundation
 import SlopDeskSupervisor
@@ -264,15 +265,27 @@ public final class ScreenClient: @unchecked Sendable {
         throw lastError ?? ClientError.malformedReply
     }
 
+    /// One request out, one reply in — and the four bytes in between that decide how much this
+    /// process is about to allocate on a peer's say-so.
+    ///
+    /// The length prefix is asked for rather than shifted apart here. It used to be four
+    /// `Int(bytes[i]) <<` terms, a `>= 1` and a re-spelling of the 64 MiB cap, against an encoder
+    /// `rust/slopdesk-screenwire` already owned — a hand-written parser on the one field of this
+    /// lane that an untrusted peer fully controls. `SupervisorFrame.read` asks the identical
+    /// question through `slopdesk_supervisor_body_length` one lane over, and this is the same
+    /// answer with one difference, and the difference is the point: this door refuses with `0`
+    /// rather than with `usize::MAX`, because a reply of zero bytes is not a thing on this wire and
+    /// `size_t` reaches Swift as the SIGNED `Int` — so the supervisor lane's `usize::MAX` arrives
+    /// here as `-1`, which the obvious `!= .max` does not catch. `0` needs no such knowledge.
     private func exchange(fd: Int32, frame: Data) throws -> Data {
         try writeAll(fd: fd, frame)
         let header = try readExactly(fd: fd, count: 4)
         let declared = header.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Int in
-            Int(bytes[0]) << 24 | Int(bytes[1]) << 16 | Int(bytes[2]) << 8 | Int(bytes[3])
+            slopdesk_screen_body_length(
+                bytes.baseAddress?.assumingMemoryBound(to: UInt8.self), bytes.count,
+            )
         }
-        guard declared >= 1, declared <= ScreenWire.maximumFrameBytes else {
-            throw ClientError.malformedReply
-        }
+        guard declared > 0 else { throw ClientError.malformedReply }
         return try readExactly(fd: fd, count: declared)
     }
 

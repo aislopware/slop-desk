@@ -92,20 +92,22 @@ final class MacConnectFormController: NSViewController, NSTextFieldDelegate {
     }
 
     override func loadView() {
-        let title = NSTextField(labelWithString: "Connect to Host")
+        let title = NSTextField(labelWithString: ConnectForm.title)
         title.font = .systemFont(ofSize: Slate.Typeface.title, weight: .semibold)
         title.textColor = Slate.Native.Overlay.primary
 
         // Host and port share ONE row — a port is five digits, and a five-digit field the full width of
-        // the card asks a question the same size as "which machine?".
-        let hostField = field(host, prompt: "host.local or 10.0.0.7", mono: false)
-        let portField = field(port, prompt: "9000", mono: true)
+        // the card asks a question the same size as "which machine?". Every WORD below is
+        // ``ConnectForm``'s, including the prompts: the phone draws this same form, and the card's copy
+        // is the form's meaning rather than this shell's drawing.
+        let hostField = field(host, prompt: ConnectForm.hostPrompt, mono: false)
+        let portField = field(port, prompt: ConnectForm.portPrompt, mono: true)
         portField.widthAnchor.constraint(equalToConstant: Slate.Metric.portFieldWidth).isActive = true
         let headline = pair(
-            labelled("Host", hostField), labelled("Port", portField),
+            labelled(ConnectForm.hostLabel, hostField), labelled(ConnectForm.portLabel, portField),
         )
 
-        disclosure.title = "Video ports"
+        disclosure.title = ConnectForm.videoPortsLabel
         disclosure.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
         disclosure.imagePosition = .imageLeading
         disclosure.isBordered = false
@@ -114,8 +116,14 @@ final class MacConnectFormController: NSViewController, NSTextFieldDelegate {
         disclosure.action = #selector(toggleAdvanced)
 
         // The two video ports are peers, so they share a row the way host/port do.
-        let media = labelled("Media port", field(mediaPort, prompt: "9001", mono: true))
-        let cursor = labelled("Cursor port", field(cursorPort, prompt: "9002", mono: true))
+        let media = labelled(
+            ConnectForm.mediaPortLabel,
+            field(mediaPort, prompt: ConnectForm.mediaPortPrompt, mono: true),
+        )
+        let cursor = labelled(
+            ConnectForm.cursorPortLabel,
+            field(cursorPort, prompt: ConnectForm.cursorPortPrompt, mono: true),
+        )
         advancedRow.orientation = .horizontal
         advancedRow.alignment = .top
         advancedRow.spacing = Slate.Metric.space3
@@ -265,7 +273,7 @@ final class MacConnectFormController: NSViewController, NSTextFieldDelegate {
         cancel.bezelStyle = .rounded
         cancel.keyEquivalent = "\u{1b}"
 
-        connect.title = "Connect"
+        connect.title = ConnectForm.connectAction
         connect.bezelStyle = .rounded
         connect.keyEquivalent = "\r"
         connect.target = self
