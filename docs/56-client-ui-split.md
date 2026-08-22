@@ -3673,6 +3673,39 @@ the bands leave a centre box, and that the drawn rail is wider than the gutter t
 now `const { assert!(…) }`, checked where constants are, at compile time rather than one `cargo test`
 after the edit that broke them.
 
+### Increment 86 — the capture region stops being CoreGraphics algebra written in Swift
+
+Increment 85 took the window server's read side. What it left behind was the DECIDING: `CaptureRegionMath` and
+`WindowDisplayResolver`, two Swift enums whose every operation was `CGRect.intersection`, `.union`,
+`.isNull` and `.contains`. They were the last pure geometry below the view layer, and the reason
+they had stayed is honest — reimplementing CoreGraphics's rect algebra by reasoning is how a port
+ships a predicate that is right in every case anyone thought to test.
+
+**So it was not reasoned about; it was measured.** A Swift probe built each edge case and printed
+CoreGraphics's answer as raw `f64` bit patterns, and those numbers are the assertions in
+`geometry`'s new algebra tests. Four of them are things a plausible reimplementation gets wrong:
+`CGRectIsNull` is true for a POSITIVE infinity in either origin field and for nothing else — not a
+negative infinity, not a NaN; an edge touch does NOT answer null but a real zero-WIDTH rect at the
+seam, which is what lets the overlap test tell "they meet" from "they miss"; the corner picks are
+NaN-IGNORING, so a rect with a NaN coordinate resolves to the OTHER rect rather than poisoning the
+result; and a union does not skip an empty rect — `(100,100,0,0) ∪ (0,0,10,10)` is `(0,0,100,100)`,
+because the empty rect is still a point in the bounding box.
+
+**The 23 vectors that were pinned by a sentence.** `captureUnion` and `captureRetarget` have been
+frozen in `golden/golden_vectors.json` since before this doc, under a generator comment claiming a
+Rust `slopdesk_core::capture_region` crate validated them through a `golden_parity` test. Neither
+ever existed. A Swift suite finally replayed them a few increments ago; now
+`rust/slopdesk-video/tests/golden_vectors.rs` does, beside the `windowPlacement` replay that took
+the same route, and the arithmetic and its pin are for the first time in the same language.
+
+**One decision instead of four calls.** The session's union handler used to spell the policy itself —
+`union.contains(frame) && union != frame ? union : frame`, then two separate hysteresis calls to
+choose between expanding and contracting. That is `region_decision` now, answering one of three
+verdicts, so the rule about what a union LARGER than the window means lives with the rule that
+measured it. The doors are portable, unlike the `cgwindow` ones next to them, and `check-supervisor`
+N.20 fails if anyone declares one inside the macOS-only region: these decide rather than read, and
+gating them would hide that.
+
 ### Increment 85 — the host stops decoding window records, and the WindowServer's read side becomes two crates
 
 Increment 84 took the WindowServer's WRITE side — the events the host synthesises. This one takes its

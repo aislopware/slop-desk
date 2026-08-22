@@ -54,6 +54,7 @@ pub mod binding_search;
 pub mod blob;
 pub mod block_rerun;
 pub mod blocks;
+pub mod capture_region;
 // macOS only, both: behind them is the `WindowServer`, which no iOS slice has. See each module.
 #[cfg(target_os = "macos")]
 pub mod cgdisplay;
@@ -172,6 +173,7 @@ pub mod wait_scan;
 pub mod watch;
 pub mod window_feed;
 pub mod window_feed_host;
+pub mod window_list;
 pub mod window_placement;
 pub mod window_size;
 pub mod wire_message;
@@ -188,19 +190,23 @@ use std::ffi::c_uchar;
 
 /// Borrows a caller-provided `(ptr, len)` as a slice, treating a null or empty pair as empty.
 ///
+/// Generic in the ELEMENT because the boundary is: most doors lend bytes, and the ones that lend a
+/// `#[repr(C)]` record array — the occluder scan, the display list — are lending the same thing in
+/// a wider unit. One obligation, stated once.
+///
 /// # Safety
-/// `ptr` must either be null or point to `len` initialised bytes that stay live and unaliased for
-/// the whole call. `len` bytes must not exceed `isize::MAX`.
+/// `ptr` must either be null or point to `len` initialised `T` that stay live and unaliased for the
+/// whole call. `len * size_of::<T>()` must not exceed `isize::MAX`.
 #[expect(
     unsafe_code,
     reason = "this IS the boundary: a C pointer/length pair becoming a slice"
 )]
-pub(crate) const unsafe fn borrow<'a>(ptr: *const c_uchar, len: usize) -> &'a [u8] {
+pub(crate) const unsafe fn borrow<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     if ptr.is_null() || len == 0 {
         return &[];
     }
-    // SAFETY: the caller's obligation above is discharged by Swift's `withUnsafeBytes`, whose scope
-    // is exactly this call — the wrapper in `AltScreenCut.swift` is the only caller.
+    // SAFETY: the caller's obligation above is discharged by Swift's `withUnsafeBytes` /
+    // `withUnsafeBufferPointer`, whose scope is exactly this call.
     unsafe { std::slice::from_raw_parts(ptr, len) }
 }
 

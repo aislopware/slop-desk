@@ -2790,6 +2790,67 @@ SlopDeskVideoPoint slopdesk_geometry_view_point(SlopDeskVideoPoint host_point,
                                                 SlopDeskVideoSize video_native, double zoom,
                                                 SlopDeskVideoPoint pan, uint32_t mode);
 
+/* ---- The window record, and the two things decided over a list of them --------------------------
+ *
+ * The record is declared HERE, outside the macOS-only region, although only a macOS door ever fills
+ * one: `slopdesk_cgwindow_in_front_of` answers an array of these and the `slopdesk_capture_*` doors
+ * below consume it unchanged. Declaring the layout on both sides of the `TARGET_OS_OSX` guard is how
+ * a field reorder ships as green tests and a scrambled capture region.
+ *
+ * The DECIDERS are portable because they decide rather than read: `golden/golden_vectors.json` pins
+ * the union and the hysteresis gate as raw `f64` bit patterns, and that check runs wherever the
+ * crate builds. */
+
+typedef struct {
+  SlopDeskVideoRect bounds; // CG global points, top-left origin
+  uint32_t window_id;       // per-boot and reusable — names a window only with owner_pid
+  int32_t owner_pid;        // the owning process
+  int32_t layer;            // 0 an ordinary window, 101 a pop-up menu, 24 the menu bar
+} SlopDeskWindowRecord;
+
+// The display a window sits on: the one holding its CENTRE, else the LARGEST. false — there are no
+// displays at all — leaves *out untouched, and the caller then reports the window's own size as its
+// resize ceiling rather than a zero one nobody could resize to.
+bool slopdesk_window_display_for_frame(SlopDeskVideoRect frame, const SlopDeskVideoRect *displays,
+                                       size_t count, SlopDeskVideoRect *out);
+
+// DIALOG-EXPAND. `windows` is the front-to-back slice strictly IN FRONT of the target — exactly what
+// slopdesk_cgwindow_in_front_of answers — and the region is the target frame ∪ every same-pid panel
+// on an associatable layer that overlaps it enough, clamped to the display.
+//
+// The overlap fraction and the hysteresis delta do NOT cross: they are the crate's constants, and
+// the one caller took both defaults, so carrying them over would have made a second place to change
+// one.
+SlopDeskVideoRect slopdesk_capture_union_region(SlopDeskVideoRect target, uint32_t target_window_id,
+                                                int32_t target_pid,
+                                                const SlopDeskWindowRecord *windows, size_t count,
+                                                SlopDeskVideoRect display);
+
+// The OPAQUE pieces inside that region — the target, then each panel — so the client can mask the
+// black flank BETWEEN them, which the bounding box cannot express. The answer is the count NEEDED.
+size_t slopdesk_capture_content_rects(SlopDeskVideoRect target, uint32_t target_window_id,
+                                      int32_t target_pid, const SlopDeskWindowRecord *windows,
+                                      size_t count, SlopDeskVideoRect display,
+                                      SlopDeskVideoRect *out, size_t cap);
+
+// Whether a region change is worth acting on — every one is an encoder rebuild and an IDR.
+bool slopdesk_capture_should_retarget(SlopDeskVideoRect current, SlopDeskVideoRect desired);
+
+// Whether a window MOVE should re-origin the input and cursor mapping to the plain window frame.
+// The pair is this ABI's spelling of `CGRect?`: active_region is read only when region_active.
+bool slopdesk_capture_should_reorigin(SlopDeskVideoRect active_region, bool region_active);
+
+#define SLOPDESK_REGION_HOLD 0u
+#define SLOPDESK_REGION_EXPAND 1u
+#define SLOPDESK_REGION_CONTRACT 2u
+
+// What a freshly measured union means for a capture currently at `current` — has_current false
+// being the plain window frame. Answers one of the three SLOPDESK_REGION_* verdicts, and writes
+// *out only for EXPAND. A null out cannot carry an expansion, so it is answered HOLD.
+uint32_t slopdesk_capture_region_decision(SlopDeskVideoRect union_global,
+                                          SlopDeskVideoRect window_frame, SlopDeskVideoRect current,
+                                          bool has_current, SlopDeskVideoRect *out);
+
 /* The cursor OVERLAY placement — bit-exact with `view_point` above, because the overlay must track
  * the same displayed pixel a click lands on at every zoom and in every letterbox. */
 SlopDeskVideoRect slopdesk_cursor_layer_frame_scalar(SlopDeskVideoPoint position,
@@ -8297,17 +8358,11 @@ int32_t slopdesk_cgwindow_frontmost_pid(void);
 bool slopdesk_cgwindow_bounds(uint32_t window_id, int32_t expected_pid,
                               SlopDeskVideoRect *out);
 
-typedef struct {
-  SlopDeskVideoRect bounds; // CG global points, top-left origin
-  uint32_t window_id;       // per-boot and reusable — names a window only with owner_pid
-  int32_t owner_pid;        // the owning process
-  int32_t layer;            // 0 an ordinary window, 101 a pop-up menu, 24 the menu bar
-} SlopDeskCGWindow;
-
-// Every on-screen window strictly IN FRONT of `window_id`, front-to-back. The answer
+// Every on-screen window strictly IN FRONT of `window_id`, front-to-back, as
+// SlopDeskWindowRecord — declared with the deciders that consume it, above. The answer
 // is the count NEEDED (§4), so a caller that lent too little is told what to lend. A
 // window_id of 0 names nothing and answers 0.
-size_t slopdesk_cgwindow_in_front_of(uint32_t window_id, SlopDeskCGWindow *out, size_t cap);
+size_t slopdesk_cgwindow_in_front_of(uint32_t window_id, SlopDeskWindowRecord *out, size_t cap);
 
 typedef struct {
   SlopDeskVideoRect bounds; // CG global points, top-left origin

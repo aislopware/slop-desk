@@ -68,8 +68,8 @@ use slopdesk_video::{
     AudioChannelMessage, AudioStreamConfig, AudioWireFormat, ColorRange, CursorChannelMessage,
     CursorShapeMessage, CursorUpdate, FrameFragment, InputEvent, InputModifiers, MouseButton,
     MuxFrameFragmentHeader, NetworkStatsReport, RecoveryMessage, ReedSolomonFec, SwipeNavStatusMessage,
-    VideoProtocolError, WindowGeometryMessage, adaptive_fec, coordinate_mapping, input_event, mux_header,
-    nal_unit, window_placement, ycbcr,
+    VideoProtocolError, WindowGeometryMessage, adaptive_fec, capture_region, coordinate_mapping, input_event,
+    mux_header, nal_unit, window_placement, ycbcr,
 };
 
 /// The pinned corpus, read at compile time so a missing or renamed file is a build failure rather
@@ -368,6 +368,83 @@ fn every_pinned_placement_puts_the_window_where_swift_put_it() {
             plan.needs_resize,
             vector["needsResize"].as_bool().expect("a flag"),
             "{name}: needsResize"
+        );
+    }
+}
+
+#[test]
+fn every_pinned_capture_union_encloses_what_swift_enclosed() {
+    // `captureUnion` was frozen with a note claiming a `slopdesk_core::capture_region` crate and a
+    // `golden_parity` test validated it. Neither had existed for a long time, so fourteen cases
+    // were pinned by a sentence. They are pinned by this instead — and by bit patterns, because
+    // what a port gets wrong here all compares equal otherwise: the `!(area > 0.0)` NaN guard, the
+    // `>=`-inclusive fraction against the SMALLER area, a standardised extent read as a raw one,
+    // and a separate multiply that became an FMA.
+    let root = corpus();
+    let vectors = group_of(&root, "captureUnion");
+    assert_eq!(
+        vectors.len(),
+        14,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let name = vector["name"].as_str().expect("a name");
+        let bits = |field: &str| f64::from_bits(vector[field].as_u64().expect("a bit pattern"));
+        let windows: Vec<capture_region::WindowSnapshot> = vector["windows"]
+            .as_array()
+            .expect("a window list")
+            .iter()
+            .map(|window| {
+                let field = |name: &str| f64::from_bits(window[name].as_u64().expect("a bit pattern"));
+                capture_region::WindowSnapshot {
+                    window_id: u32::try_from(window["windowID"].as_u64().expect("an id")).expect("a u32"),
+                    owner_pid: i32::try_from(window["ownerPID"].as_i64().expect("a pid")).expect("an i32"),
+                    layer: i32::try_from(window["layer"].as_i64().expect("a layer")).expect("an i32"),
+                    frame: VideoRect::xywh(field("fX"), field("fY"), field("fW"), field("fH")),
+                }
+            })
+            .collect();
+        let union = capture_region::union_region(
+            VideoRect::xywh(bits("tX"), bits("tY"), bits("tW"), bits("tH")),
+            u32::try_from(vector["targetWindowID"].as_u64().expect("an id")).expect("a u32"),
+            i32::try_from(vector["targetPID"].as_i64().expect("a pid")).expect("an i32"),
+            &windows,
+            VideoRect::xywh(bits("dX"), bits("dY"), bits("dW"), bits("dH")),
+            bits("minOverlapBits"),
+        );
+        let pinned = |field: &str| vector[field].as_u64().expect("a bit pattern");
+        assert_eq!(union.origin.x.to_bits(), pinned("outOriginXBits"), "{name}: x");
+        assert_eq!(union.origin.y.to_bits(), pinned("outOriginYBits"), "{name}: y");
+        assert_eq!(union.size.width.to_bits(), pinned("outWidthBits"), "{name}: width");
+        assert_eq!(union.size.height.to_bits(), pinned("outHeightBits"), "{name}: height");
+    }
+}
+
+#[test]
+fn every_pinned_retarget_gate_opens_exactly_where_swift_opened_it() {
+    // The gate is a STRICT `>` per edge: a difference of exactly `minDelta` does not retarget.
+    // `exactThreshold` and `customZeroDelta` are the two cases that say so, and each region change
+    // they wave through is an encoder rebuild and an IDR on a live stream.
+    let root = corpus();
+    let vectors = group_of(&root, "captureRetarget");
+    assert_eq!(
+        vectors.len(),
+        9,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let name = vector["name"].as_str().expect("a name");
+        let bits = |field: &str| f64::from_bits(vector[field].as_u64().expect("a bit pattern"));
+        assert_eq!(
+            capture_region::should_retarget(
+                VideoRect::xywh(bits("cX"), bits("cY"), bits("cW"), bits("cH")),
+                VideoRect::xywh(bits("eX"), bits("eY"), bits("eW"), bits("eH")),
+                bits("minDeltaBits"),
+            ),
+            vector["shouldRetarget"].as_bool().expect("a flag"),
+            "{name}"
         );
     }
 }

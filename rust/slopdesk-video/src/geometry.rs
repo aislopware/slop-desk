@@ -138,6 +138,160 @@ impl VideoRect {
         ix * iy
     }
 
+    /// The rect `CGRectNull` is: an INFINITE origin and a zero extent.
+    ///
+    /// It is not "empty" and not "zero" — those are ordinary rects that happen to enclose nothing.
+    /// `CGRectIntersection` answers this and only this when two rects are disjoint, so a caller can
+    /// tell "they miss each other" from "they meet along an edge", which is a real distinction for
+    /// the capture region: an edge touch is a zero-area overlap, a miss is no overlap at all.
+    pub const NULL: Self = Self::xywh(f64::INFINITY, f64::INFINITY, 0.0, 0.0);
+
+    /// Whether this is [`NULL`](Self::NULL) — `CGRectIsNull`.
+    ///
+    /// Probe-verified against CoreGraphics: a POSITIVE infinity in EITHER origin field is null; a
+    /// negative infinity is not, and neither is a NaN anywhere. That is narrower than "not finite"
+    /// and the difference is load-bearing, since a NaN rect must flow through the same arithmetic
+    /// a NaN flows through everywhere else rather than short-circuiting to a sentinel.
+    #[must_use]
+    pub fn is_null(&self) -> bool {
+        self.origin.x == f64::INFINITY || self.origin.y == f64::INFINITY
+    }
+
+    /// The rect with a non-negative extent — `CGRectStandardize`. A negative width moves the origin
+    /// left by that much and flips the sign; likewise for height. NaN and infinity pass through,
+    /// because `< 0.0` is false for both and the framework does not test them either.
+    #[must_use]
+    pub fn standardized(&self) -> Self {
+        let (x, width) = if self.size.width < 0.0 {
+            (self.origin.x + self.size.width, -self.size.width)
+        } else {
+            (self.origin.x, self.size.width)
+        };
+        let (y, height) = if self.size.height < 0.0 {
+            (self.origin.y + self.size.height, -self.size.height)
+        } else {
+            (self.origin.y, self.size.height)
+        };
+        Self::xywh(x, y, width, height)
+    }
+
+    /// The STANDARDISED width — what `CGRect.width` answers, never the raw `size.width` field.
+    ///
+    /// Swift spells the raw field `size.width` and the standardised extent `.width`, and the host
+    /// geometry deciders read the second everywhere. Naming them apart here is what keeps a port
+    /// from silently squaring a negative extent into a positive area.
+    #[must_use]
+    pub fn width(&self) -> f64 {
+        self.standardized().size.width
+    }
+
+    /// The STANDARDISED height — `CGRect.height`. See [`width`](Self::width).
+    #[must_use]
+    pub fn height(&self) -> f64 {
+        self.standardized().size.height
+    }
+
+    /// The horizontal centre — `CGRect.midX`, over the standardised rect.
+    #[must_use]
+    pub fn mid_x(&self) -> f64 {
+        let rect = self.standardized();
+        rect.origin.x + rect.size.width / 2.0
+    }
+
+    /// The vertical centre — `CGRect.midY`.
+    #[must_use]
+    pub fn mid_y(&self) -> f64 {
+        let rect = self.standardized();
+        rect.origin.y + rect.size.height / 2.0
+    }
+
+    /// The overlap with `other`, or [`NULL`](Self::NULL) when they are disjoint — `CGRectIntersection`.
+    ///
+    /// Probe-verified against CoreGraphics, and every clause below is one of the answers it gave:
+    /// the disjoint test is STRICT, so two rects meeting along an edge answer a real zero-EXTENT
+    /// rect at the seam rather than null; the corner picks are NaN-IGNORING (`fmax`/`fmin`, which
+    /// is Rust's `f64::max`/`min` and Swift's `Double.maximum`/`.minimum`), so a rect with a NaN
+    /// coordinate resolves to the other one instead of poisoning the result.
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Self {
+        if self.is_null() || other.is_null() {
+            return Self::NULL;
+        }
+        let (first, second) = (self.standardized(), other.standardized());
+        if first.max_x() < second.min_x()
+            || second.max_x() < first.min_x()
+            || first.max_y() < second.min_y()
+            || second.max_y() < first.min_y()
+        {
+            return Self::NULL;
+        }
+        let x = first.min_x().max(second.min_x());
+        let y = first.min_y().max(second.min_y());
+        Self::xywh(
+            x,
+            y,
+            first.max_x().min(second.max_x()) - x,
+            first.max_y().min(second.max_y()) - y,
+        )
+    }
+
+    /// The smallest rect enclosing both — `CGRectUnion`.
+    ///
+    /// A null rect is the identity and the ONLY special case: an empty-but-real rect still
+    /// contributes its corner, so `(100,100,0,0) ∪ (0,0,10,10)` is `(0,0,100,100)` and not
+    /// `(0,0,10,10)`. Probe-verified; a port that "helpfully" skipped empty rects would shrink
+    /// every capture region that ever saw a zero-size window.
+    #[must_use]
+    pub fn union(&self, other: &Self) -> Self {
+        if self.is_null() {
+            return other.standardized();
+        }
+        if other.is_null() {
+            return self.standardized();
+        }
+        let (first, second) = (self.standardized(), other.standardized());
+        let x = first.min_x().min(second.min_x());
+        let y = first.min_y().min(second.min_y());
+        Self::xywh(
+            x,
+            y,
+            first.max_x().max(second.max_x()) - x,
+            first.max_y().max(second.max_y()) - y,
+        )
+    }
+
+    /// Whether `point` is inside — `CGRectContainsPoint`. The minimum edges are INCLUSIVE and the
+    /// maximum edges are not, so adjacent displays cannot both claim the pixel on their seam.
+    ///
+    /// Needs no null or empty special case: `NULL`'s infinite origin fails the first compare, an
+    /// empty rect's `x < max_x` fails on its own, and a NaN coordinate fails every one of them.
+    #[must_use]
+    pub fn contains_point(&self, point: VideoPoint) -> bool {
+        let rect = self.standardized();
+        point.x >= rect.min_x()
+            && point.x < rect.max_x()
+            && point.y >= rect.min_y()
+            && point.y < rect.max_y()
+    }
+
+    /// Whether `other` lies wholly inside — `CGRectContainsRect`.
+    ///
+    /// Both max edges are INCLUSIVE here, unlike [`contains_point`](Self::contains_point): a rect
+    /// flush with this one's right edge is contained, while the point ON that edge is not. That
+    /// asymmetry is CoreGraphics's, probe-verified, and so is the one special case — a null rect is
+    /// contained by everything, including by another null rect.
+    #[must_use]
+    pub fn contains_rect(&self, other: &Self) -> bool {
+        if other.is_null() {
+            return true;
+        }
+        let (outer, inner) = (self.standardized(), other.standardized());
+        inner.min_x() >= outer.min_x()
+            && inner.max_x() <= outer.max_x()
+            && inner.min_y() >= outer.min_y()
+            && inner.max_y() <= outer.max_y()
+    }
+
     /// Whether this rect OVERLAPS `other` — `CGRect.intersects` for standardised rects.
     ///
     /// Touching edges do not overlap, and an empty rect overlaps nothing, which is what makes this
@@ -442,5 +596,158 @@ mod tests {
             !a.intersects(&VideoRect::xywh(50.0, 50.0, 0.0, 10.0)),
             "a zero-width rect is nowhere"
         );
+    }
+
+    // ---- The `CGRect` algebra ------------------------------------------------------------------
+    //
+    // Every expectation below was READ OFF CoreGraphics by a probe rather than reasoned about: a
+    // Swift program built each case, printed the answer as raw `f64` bit patterns, and those are
+    // the numbers asserted here. The cases are exactly the ones where a plausible reimplementation
+    // and the framework part company — an edge touch, a NaN coordinate, a negative extent, an
+    // empty-but-real rect in a union, a null on either side — so this is the differential suite
+    // that `capture_region` and `window_list` stand on.
+
+    #[test]
+    fn only_a_positive_infinity_in_the_origin_reads_as_null() {
+        assert!(VideoRect::NULL.is_null());
+        assert!(VideoRect::xywh(f64::INFINITY, 2.0, 3.0, 4.0).is_null());
+        assert!(VideoRect::xywh(1.0, f64::INFINITY, 3.0, 4.0).is_null());
+        assert!(
+            !VideoRect::xywh(f64::NEG_INFINITY, 2.0, 3.0, 4.0).is_null(),
+            "a negative infinity is a real, very distant rect"
+        );
+        assert!(!VideoRect::xywh(f64::NAN, 2.0, 3.0, 4.0).is_null());
+        assert!(!VideoRect::xywh(1.0, 2.0, f64::INFINITY, 4.0).is_null());
+        assert!(
+            !VideoRect::xywh(1.0, 2.0, 0.0, 0.0).is_null(),
+            "a zero rect encloses nothing but is not the null rect"
+        );
+    }
+
+    #[test]
+    fn a_negative_extent_moves_the_origin_rather_than_being_read_as_zero() {
+        let flipped = VideoRect::xywh(10.0, 10.0, -10.0, -6.0);
+        assert_eq!(flipped.standardized(), VideoRect::xywh(0.0, 4.0, 10.0, 6.0));
+        assert_eq!(flipped.width(), 10.0);
+        assert_eq!(flipped.height(), 6.0);
+        assert_eq!(flipped.mid_x(), 5.0);
+        assert_eq!(flipped.mid_y(), 7.0);
+    }
+
+    #[test]
+    fn an_edge_touch_intersects_at_the_seam_while_a_miss_answers_null() {
+        let a = VideoRect::xywh(0.0, 0.0, 10.0, 10.0);
+        assert_eq!(
+            a.intersection(&VideoRect::xywh(5.0, 5.0, 10.0, 10.0)),
+            VideoRect::xywh(5.0, 5.0, 5.0, 5.0)
+        );
+        assert_eq!(
+            a.intersection(&VideoRect::xywh(20.0, 20.0, 10.0, 10.0)),
+            VideoRect::NULL
+        );
+        assert_eq!(
+            a.intersection(&VideoRect::xywh(10.0, 0.0, 10.0, 10.0)),
+            VideoRect::xywh(10.0, 0.0, 0.0, 10.0),
+            "an edge touch is a zero-WIDTH overlap, not a miss"
+        );
+        assert_eq!(
+            a.intersection(&VideoRect::xywh(10.0, 10.0, 10.0, 10.0)),
+            VideoRect::xywh(10.0, 10.0, 0.0, 0.0),
+            "and a corner touch is a zero-AREA one"
+        );
+        assert_eq!(
+            VideoRect::xywh(0.0, 0.0, 0.0, 0.0).intersection(&a),
+            VideoRect::xywh(0.0, 0.0, 0.0, 0.0),
+            "a zero rect ON the other still meets it"
+        );
+        assert_eq!(
+            VideoRect::xywh(120.0, 120.0, 700.0, 500.0)
+                .intersection(&VideoRect::xywh(0.0, 0.0, 0.0, 0.0)),
+            VideoRect::NULL,
+            "a zero rect ELSEWHERE does not — this is the zero-area-display vector"
+        );
+        assert_eq!(
+            VideoRect::xywh(10.0, 10.0, -10.0, -10.0).intersection(&VideoRect::xywh(5.0, 5.0, 10.0, 10.0)),
+            VideoRect::xywh(5.0, 5.0, 5.0, 5.0),
+            "both sides standardise first"
+        );
+        assert_eq!(
+            VideoRect::NULL.intersection(&a),
+            VideoRect::NULL,
+            "null is absorbing"
+        );
+    }
+
+    #[test]
+    fn a_nan_coordinate_resolves_to_the_other_rect_instead_of_poisoning_it() {
+        let a = VideoRect::xywh(0.0, 0.0, 10.0, 10.0);
+        assert_eq!(
+            VideoRect::xywh(f64::NAN, 0.0, 10.0, 10.0).intersection(&a),
+            a,
+            "the corner picks ignore NaN, the way fmax/fmin do"
+        );
+        assert_eq!(VideoRect::xywh(0.0, 0.0, f64::NAN, 10.0).intersection(&a), a);
+        assert_eq!(VideoRect::xywh(f64::NAN, 0.0, 10.0, 10.0).union(&a), a);
+    }
+
+    #[test]
+    fn an_empty_rect_still_contributes_its_corner_to_a_union() {
+        let a = VideoRect::xywh(0.0, 0.0, 10.0, 10.0);
+        assert_eq!(
+            a.union(&VideoRect::xywh(5.0, 5.0, 10.0, 10.0)),
+            VideoRect::xywh(0.0, 0.0, 15.0, 15.0)
+        );
+        assert_eq!(
+            VideoRect::xywh(100.0, 100.0, 0.0, 0.0).union(&a),
+            VideoRect::xywh(0.0, 0.0, 100.0, 100.0),
+            "the empty rect is a POINT in the bounding box, never skipped"
+        );
+        assert_eq!(
+            VideoRect::xywh(100.0, 100.0, 0.0, 0.0).union(&VideoRect::xywh(3.0, 3.0, 0.0, 0.0)),
+            VideoRect::xywh(3.0, 3.0, 97.0, 97.0),
+            "even when both are empty"
+        );
+        assert_eq!(VideoRect::NULL.union(&a), a, "null is the identity");
+        assert_eq!(a.union(&VideoRect::NULL), a);
+        assert_eq!(
+            VideoRect::xywh(10.0, 10.0, -10.0, -10.0).union(&VideoRect::xywh(5.0, 5.0, 10.0, 10.0)),
+            VideoRect::xywh(0.0, 0.0, 15.0, 15.0)
+        );
+    }
+
+    #[test]
+    fn a_point_belongs_to_the_display_whose_minimum_edge_it_is_on() {
+        let a = VideoRect::xywh(0.0, 0.0, 10.0, 10.0);
+        assert!(a.contains_point(VideoPoint::new(5.0, 5.0)));
+        assert!(a.contains_point(VideoPoint::new(0.0, 0.0)), "min edge inclusive");
+        assert!(
+            !a.contains_point(VideoPoint::new(10.0, 5.0)),
+            "max edge exclusive, so two abutting displays never both claim the seam"
+        );
+        assert!(!a.contains_point(VideoPoint::new(-1.0, 5.0)));
+        assert!(!a.contains_point(VideoPoint::new(f64::NAN, 5.0)));
+        assert!(!VideoRect::xywh(0.0, 0.0, 0.0, 0.0).contains_point(VideoPoint::new(0.0, 0.0)));
+        assert!(!VideoRect::NULL.contains_point(VideoPoint::new(0.0, 0.0)));
+        assert!(
+            VideoRect::xywh(10.0, 10.0, -10.0, -10.0).contains_point(VideoPoint::new(5.0, 5.0)),
+            "standardised first"
+        );
+    }
+
+    #[test]
+    fn a_rect_flush_with_the_outer_edge_is_contained_though_the_point_on_it_is_not() {
+        let a = VideoRect::xywh(0.0, 0.0, 10.0, 10.0);
+        assert!(a.contains_rect(&VideoRect::xywh(2.0, 2.0, 3.0, 3.0)));
+        assert!(a.contains_rect(&a));
+        assert!(
+            a.contains_rect(&VideoRect::xywh(5.0, 5.0, 5.0, 5.0)),
+            "flush with the max edge — inclusive here, unlike contains_point"
+        );
+        assert!(!a.contains_rect(&VideoRect::xywh(2.0, 2.0, 30.0, 3.0)));
+        assert!(a.contains_rect(&VideoRect::xywh(2.0, 2.0, 0.0, 0.0)));
+        assert!(!a.contains_rect(&VideoRect::xywh(20.0, 2.0, 0.0, 0.0)));
+        assert!(a.contains_rect(&VideoRect::NULL), "null is contained by all");
+        assert!(!VideoRect::NULL.contains_rect(&a));
+        assert!(!a.contains_rect(&VideoRect::xywh(f64::NAN, 2.0, 3.0, 3.0)));
     }
 }

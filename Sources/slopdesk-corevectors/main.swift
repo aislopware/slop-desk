@@ -1362,10 +1362,12 @@ root["muxEnvelopes"] = [
 // dumped as its raw component bits and matched against Rust `VideoRect::NULL`.
 
 // NOTE: captureUnion / captureRetarget vectors are FROZEN in golden_vectors.json — this generator
-// does not import `SlopDeskVideoHost`, so it cannot emit them. `CaptureRegionGoldenVectorTests`
-// replays them through the live `CaptureRegionMath`. (This note used to claim the logic lived in a
-// Rust `slopdesk_core` crate validated by a `golden_parity` test; neither has existed for a long
-// time, and while the note stood the 23 cases were pinned by nothing at all.)
+// does not import the capture-region math, so it cannot emit them. They are replayed by
+// `every_pinned_capture_union_encloses_what_swift_enclosed` and
+// `every_pinned_retarget_gate_opens_exactly_where_swift_opened_it` in
+// `rust/slopdesk-video/tests/golden_vectors.rs`, which is where the arithmetic now lives. (This
+// note used to claim a Rust `slopdesk_core` crate validated them via a `golden_parity` test;
+// neither existed, and while the note stood the 23 cases were pinned by nothing at all.)
 
 // NOTE: virtualDisplayGeometry / vdOriginToRight / vdChipPixelLimit / vdRefreshRates vectors are
 // FROZEN in golden_vectors.json, for the same reason as the capture keys above.

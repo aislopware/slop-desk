@@ -1,6 +1,7 @@
 #if os(macOS)
 import AppKit
 import CoreMedia
+import CSlopDeskFFI
 import Foundation
 import OSLog
 import ScreenCaptureKit
@@ -1783,7 +1784,7 @@ public actor SlopDeskVideoHostSession {
     /// The captured window's max resizable POINT size: the parked-VD point bounds when set (the existing
     /// resize ceiling), else the CG bounds of the display the window currently sits on, else the window's
     /// own current size (degenerate fallback — never reports 0). Pure pick math lives in
-    /// ``WindowDisplayResolver``; only the live display enumeration is impure.
+    /// `slopdesk_video::window_list`; only the live display enumeration is impure.
     private func resolveDisplayMaxPoints() -> VideoSize {
         if let limit = resizePointLimit { return limit }
         // A full-desktop session's "max" is simply the display's own point size (it never resizes).
@@ -1791,8 +1792,8 @@ public actor SlopDeskVideoHostSession {
             return VideoSize(width: display.frame.width, height: display.frame.height)
         }
         guard let frame = window?.frame else { return VideoSize(width: 0, height: 0) }
-        if let display = WindowDisplayResolver.display(
-            forWindowFrame: frame, displays: HostDisplays.bounds(online: false),
+        if let display = HostDisplays.display(
+            forWindowFrame: frame, in: HostDisplays.bounds(online: false),
         ) {
             return VideoSize(width: Double(display.width), height: Double(display.height))
         }
@@ -2996,7 +2997,9 @@ public actor SlopDeskVideoHostSession {
         // union-sized stream (clicks/cursor in the dialog area map to the wrong absolute point). The union
         // poll (onAssociatedUnion → applyCaptureRegion) re-applies the correct mapping as things move.
         if let bounds = boundsFromGeometry(message) {
-            if CaptureRegionMath.shouldReoriginToWindowOnGeometry(activeRegionGlobal: captureRegionGlobal) {
+            if slopdesk_capture_should_reorigin(
+                HostDisplays.record(captureRegionGlobal ?? .zero), captureRegionGlobal != nil,
+            ) {
                 cursorSampler?.updateWindowBounds(bounds)
                 injector?.updateWindowBounds(bounds)
             }
@@ -3024,14 +3027,19 @@ public actor SlopDeskVideoHostSession {
     private func onAssociatedUnion(_ unionGlobal: CGRect, contentRectsGlobal: [CGRect]) async {
         guard dialogExpandArmed, stateMachine.mediaFlowing, !captureRegionRebuilding else { return }
         let windowFrame = currentWindowBoundsCG().cgRect
-        // The "natural" region is the window frame; a union strictly larger than it (a dialog
-        // overhangs) expands, otherwise we want the plain window frame back.
-        let desired = unionGlobal.contains(windowFrame) && unionGlobal != windowFrame ? unionGlobal : windowFrame
-        let current = captureRegionGlobal ?? windowFrame
-        guard CaptureRegionMath.shouldRetarget(current: current, desired: desired) else { return }
-        // Contracting back to (approximately) the window frame ⇒ clear the override; else expand.
-        let target: CGRect? = CaptureRegionMath
-            .shouldRetarget(current: desired, desired: windowFrame) ? desired : nil
+        // Expand, contract or hold — `slopdesk_video::capture_region` owns the whole decision,
+        // including the "a union strictly larger than the frame is a dialog overhanging it" rule
+        // and both hysteresis gates.
+        var expansion = SlopDeskVideoRect()
+        let verdict = slopdesk_capture_region_decision(
+            HostDisplays.record(unionGlobal),
+            HostDisplays.record(windowFrame),
+            HostDisplays.record(captureRegionGlobal ?? .zero),
+            captureRegionGlobal != nil,
+            &expansion,
+        )
+        guard verdict != SLOPDESK_REGION_HOLD else { return }
+        let target: CGRect? = verdict == SLOPDESK_REGION_EXPAND ? HostDisplays.rect(expansion) : nil
         if let target {
             // EXPAND immediately, and cancel any pending contract (a popup re-opened inside the
             // debounce window — no need to shrink-then-grow).

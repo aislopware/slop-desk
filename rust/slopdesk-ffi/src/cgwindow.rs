@@ -20,20 +20,7 @@ use slopdesk_apple_cgwindow::{bounds_of, frontmost_pid, windows_in_front_of};
 
 use crate::spill;
 use crate::video_policy::SlopDeskVideoRect;
-
-/// One window standing in front of the tracked one, as the occluder scan sees it.
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct SlopDeskCGWindow {
-    /// The frame in CG global points, top-left origin.
-    pub bounds: SlopDeskVideoRect,
-    /// The `CGWindowID`. Per-boot and reusable, so it names a window only with `owner_pid`.
-    pub window_id: u32,
-    /// The owning process.
-    pub owner_pid: i32,
-    /// The CG window level: `0` an ordinary window, `101` a pop-up menu, `24` the menu bar.
-    pub layer: i32,
-}
+use crate::window_list::SlopDeskWindowRecord;
 
 /// `0` means "any owner", which is what a caller with no stale id to guard against passes.
 const fn owner(expected_pid: i32) -> Option<i32> {
@@ -91,7 +78,7 @@ pub unsafe extern "C" fn slopdesk_cgwindow_bounds(
 /// `window_id` of `0` names nothing and answers `0`.
 ///
 /// # Safety
-/// `out` must be null, or writable for `cap` [`SlopDeskCGWindow`] for the call.
+/// `out` must be null, or writable for `cap` [`SlopDeskWindowRecord`] for the call.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
@@ -99,12 +86,12 @@ pub unsafe extern "C" fn slopdesk_cgwindow_bounds(
 )]
 pub unsafe extern "C" fn slopdesk_cgwindow_in_front_of(
     window_id: u32,
-    out: *mut SlopDeskCGWindow,
+    out: *mut SlopDeskWindowRecord,
     cap: usize,
 ) -> usize {
-    let windows: Vec<SlopDeskCGWindow> = windows_in_front_of(window_id)
+    let windows: Vec<SlopDeskWindowRecord> = windows_in_front_of(window_id)
         .into_iter()
-        .map(|window| SlopDeskCGWindow {
+        .map(|window| SlopDeskWindowRecord {
             bounds: SlopDeskVideoRect::from(window.bounds),
             window_id: window.window_id,
             owner_pid: window.owner_pid,

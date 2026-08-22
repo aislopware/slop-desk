@@ -1332,7 +1332,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// is `displayLocalRect` (points) on `displayID` instead of the live window frame, so the
     /// captured surface spans the window ∪ its associated dialog. `globalRect` is the same region in
     /// global points — the session uses it to re-origin the input/cursor mapping into the dialog
-    /// area. Built by ``CaptureRegionMath`` and threaded through ``start(window:pixelWidth:pixelHeight:region:)``.
+    /// area. Built by `slopdesk_video::capture_region` and threaded through
+    /// ``start(window:pixelWidth:pixelHeight:region:)``.
     public struct CaptureRegionOverride: Sendable {
         public let displayID: CGDirectDisplayID
         public let displayLocalRect: CGRect

@@ -152,6 +152,7 @@ pub mod blob;
 pub mod blob_list;
 pub mod bytes;
 pub mod capture_recovery;
+pub mod capture_region;
 pub mod client_gestures;
 pub mod client_input;
 pub mod client_jitter;

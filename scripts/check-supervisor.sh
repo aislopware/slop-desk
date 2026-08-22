@@ -12092,6 +12092,62 @@ for edge in slopdesk-apple-cgwindow slopdesk-apple-cgdisplay; do
   fi
 done
 
+# N.20 — THE HOST DECIDES NO CAPTURE REGION OF ITS OWN.
+#
+# DIALOG-EXPAND's math — the union with an attached panel, the individual content rects, the
+# per-edge hysteresis gate, the expand/contract/hold verdict — and the resize path's display pick
+# were `CaptureRegionMath` and `WindowDisplayResolver`, two Swift enums whose every operation was
+# `CGRect` algebra. `golden/golden_vectors.json` pinned 23 of their outputs as raw `f64` bit
+# patterns and, for a long time, NOTHING replayed them: the generator's own comment claimed a Rust
+# `slopdesk_core` crate and a `golden_parity` test validated them, and neither had ever existed.
+#
+# They live in `slopdesk_video::capture_region` and `::window_list` now, over a `CGRect` algebra
+# read off CoreGraphics by probe — an edge touch intersects at the seam, a NaN coordinate resolves
+# to the other rect, an empty rect still contributes its corner to a union — and the 23 vectors are
+# replayed by the Rust integration suite, which `golden-check.sh` independently requires to exist.
+#
+# What is pinned:
+#   • the modules and doors exist    — a Swift face over a deleted door does not compile.
+#   • both Swift enums stay deleted  — the failure mode is not a call that breaks, it is a second
+#                                      copy of the same predicate that drifts one ulp.
+#   • the doors are PORTABLE         — the mirror of N.19's arm: these decide rather than read, so a
+#                                      declaration inside the MACOS-ONLY region would drop them from
+#                                      the iOS slices for no reason and hide that they are pure.
+#
+# BREAK-TEST: reintroduced `enum CaptureRegionMath` in WindowGeometryWatcher ⇒ FAIL "decide a
+# capture region themselves". Separately deleted `rust/slopdesk-video/src/capture_region.rs` ⇒ FAIL
+# "has no Rust behind its capture region". Separately moved `slopdesk_capture_union_region` inside
+# the MACOS-ONLY region ⇒ FAIL "declares a portable decider inside the macOS-only region". All three
+# restored from /tmp; PASS.
+for required in rust/slopdesk-video/src/capture_region.rs rust/slopdesk-ffi/src/capture_region.rs \
+  rust/slopdesk-ffi/src/window_list.rs; do
+  if [[ ! -f "${required}" ]]; then
+    fail "the host has no Rust behind its capture region — ${required} is missing, and the 23 golden-pinned union and retarget vectors are replayed against it (docs/56 increment 86)"
+  fi
+done
+# CODE only, for N.18's reason: the Swift that CALLS these doors still names the old enums in prose,
+# and should — the comments carry why the region expands at all.
+region_deciders=""
+while IFS= read -r candidate; do
+  if grep -vE '^[[:space:]]*(///|//)' "${candidate}" |
+    grep -q 'enum CaptureRegionMath\|enum WindowDisplayResolver\|CaptureRegionMath\.\|WindowDisplayResolver\.'; then
+    region_deciders+="${candidate}"$'\n'
+  fi
+done < <(grep -rln 'CaptureRegionMath\|WindowDisplayResolver' Sources Tests 2>/dev/null || true)
+region_deciders=${region_deciders%$'\n'}
+if [[ -n "${region_deciders}" ]]; then
+  fail "these decide a capture region themselves: ${region_deciders//$'\n'/, } — the union, the content rects, the hysteresis gate and the display pick are slopdesk_video::capture_region's and ::window_list's, and a second copy is a predicate that drifts one ulp under a green suite (docs/56 increment 86)"
+fi
+for door in slopdesk_capture_union_region slopdesk_capture_region_decision slopdesk_window_display_for_frame; do
+  if ! grep -q "${door}(" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
+    fail "slopdesk_ffi.h does not declare ${door} — the Swift face calls it, so a missing declaration is a link failure the moment anyone rebuilds (docs/55 §3)"
+  fi
+  if awk '/MACOS-ONLY BEGIN/{inside=1} inside{print} /MACOS-ONLY END/{inside=0}' \
+    rust/slopdesk-ffi/include/slopdesk_ffi.h | grep -q "${door}("; then
+    fail "slopdesk_ffi.h declares a portable decider inside the macOS-only region: ${door} — it reads no WindowServer and its answers are golden-pinned on every slice, so gating it hides that it is pure and costs the iOS slices a door for nothing (docs/57 §3)"
+  fi
+done
+
 if [[ "${1:-}" != "--tests" ]]; then
   exit 0
 fi
