@@ -2325,16 +2325,11 @@ SWIFT_FOREGROUND=Sources/SlopDeskHost/ForegroundProcessProbes.swift
 if hit=$(spells 'split\(separator: "/"\)|isVersionShaped|"versions"' "${SWIFT_FOREGROUND}"); then
   fail "${hit} reduces a process name again — slopdesk-agent::process owns the basename and the version walk"
 fi
-# And the PROBE itself, not only the reduction. Swift ran six Darwin syscalls to answer this, then
-# staged the deep answer back across the FFI one field at a time; `rust/slopdesk-posix::proc` runs
-# them now and `rust/slopdesk-ffi::foreground` folds them, so each question is ONE call. A syscall
-# reappearing in Sources/ is the probe growing back beside the door, which is how the two spellings
-# of "which agent" started disagreeing in the first place.
-probe_revived=$(among_deleted 'tcgetpgrp|proc_listpids|proc_pidpath|proc_pidinfo|KERN_PROCARGS2')
-if [[ -n "${probe_revived}" ]]; then
-  printf '%s\n' "${probe_revived}" >&2
-  fail "a Swift foreground PROBE is back in Sources/ — rust/slopdesk-posix::proc owns the syscalls (docs/55 §6)"
-fi
+# The PROBE itself is banned in `rust/slopdesk-invariants` (`rust_boundaries::one_probe_per_reading`)
+# rather than here, and the reason is this file's one blind spot: a ban here greps RAW text, so the
+# paragraph above explaining which syscalls left would itself trip it. The Rust claim reads
+# `View::Code`, which strips whole-line comments, so prose may name what code may not. What stays
+# here is the other half — that the face keeps ASKING.
 for door in slopdesk_pty_foreground_name slopdesk_pty_foreground_agent; do
   if ! spells "${door}" "${SWIFT_FOREGROUND}" > /dev/null; then
     fail "${SWIFT_FOREGROUND} stopped asking ${door} — it is a face over the probe, not a second one"
@@ -2359,13 +2354,9 @@ for rule in 'pub fn is_sensitive' 'pub fn canonical_name' 'pub fn is_version_sha
   fi
 done
 # One frontmost read, and no AppKit in it. The pid is the window list's election and the bundle id
-# is `rust/slopdesk-apple-app`'s; a `NSRunningApplication` beside the door is the second half of one
-# question answered in the other language.
-frontmost_appkit=$(among_deleted 'NSRunningApplication\(processIdentifier:|NSWorkspace\.shared\.frontmostApplication')
-if [[ -n "${frontmost_appkit}" ]]; then
-  printf '%s\n' "${frontmost_appkit}" >&2
-  fail "a Swift frontmost read is back in Sources/ — slopdesk_app_bundle_id answers it (docs/57 §5)"
-fi
+# is `rust/slopdesk-apple-app`'s. The BAN is in `rust/slopdesk-invariants` for the same reason the
+# probe's is — every file that explains the port names `NSWorkspace.shared.frontmostApplication` in
+# prose, and a raw grep cannot tell an explanation from a call. What stays here is the face's door.
 if ! spells 'slopdesk_app_bundle_id' Sources/SlopDeskVideoHost/HostFrontmostApp.swift > /dev/null; then
   fail "Sources/SlopDeskVideoHost/HostFrontmostApp.swift stopped asking the bundle-id door — it is a face over two doors"
 fi

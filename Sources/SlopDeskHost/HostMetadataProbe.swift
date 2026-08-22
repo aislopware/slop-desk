@@ -1,4 +1,5 @@
 #if os(macOS)
+import CSlopDeskFFI
 import Darwin
 import Foundation
 import SlopDeskAgentDetect
@@ -15,7 +16,7 @@ import SlopDeskProtocol
 /// **What is left here is what needs the fd.** The five verbs that were subprocess and filesystem
 /// work with no handle behind them — git status, git diff, directory listing, session listing,
 /// session read — moved to `slopdesk-probe` and are forwarded through ``HostProbe`` below. What
-/// stays is anchored to something a fork does not have: `tcgetpgrp`/`ptsname` on this pane's master
+/// stays is anchored to something a fork does not have: the foreground group / `ptsname` of this master
 /// fd, `proc_pidinfo` over every live pid, and a CPU baseline that outlives the request.
 ///
 /// **Validate-then-drop everywhere.** Every syscall return is checked (`> 0`, exact struct size); every
@@ -51,7 +52,7 @@ struct HostMetadataProbe: MetadataQuerying {
     /// The PTY's foreground process group leader pid, or the shell pid when none resolves.
     private func foregroundPID() -> pid_t {
         guard masterFD >= 0 else { return shellPID }
-        let pgid = tcgetpgrp(masterFD)
+        let pgid = slopdesk_pty_foreground_group(masterFD)
         return pgid > 0 ? pgid : shellPID
     }
 

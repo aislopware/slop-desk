@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Darwin
 import Foundation
 import SlopDeskSupervisor
@@ -481,11 +482,11 @@ public final class PTYProcess: @unchecked Sendable {
     /// running app.
     ///
     /// ## Delivery strategy
-    /// 1. `tcgetpgrp(masterFD)` resolves the **foreground** group (may be a child `vim`/`make`
-    ///    rather than the shell). Preferred over `killpg(childPid's pgrp)` because it honours
+    /// 1. ``slopdesk_pty_foreground_group`` resolves the **foreground** group (may be a child
+    ///    `vim`/`make` rather than the shell). Preferred over `killpg(childPid's pgrp)` because it honours
     ///    job-control (the shell may have suspended itself with a child in the foreground).
     /// 2. `killpg(fgPgrp, SIGWINCH)` — signal the whole foreground group.
-    /// 3. Fallback: `tcgetpgrp ≤ 0` (no foreground group yet, or master already closed) ⇒
+    /// 3. Fallback: a group of 0 (none yet, or the master is already closed) ⇒
     ///    `kill(childPid, SIGWINCH)` to catch the shell itself.
     ///
     /// Guards checked under `exitLock` (same TOCTOU discipline as
@@ -502,7 +503,7 @@ public final class PTYProcess: @unchecked Sendable {
 
         guard fd >= 0, childPid > 0 else { return }
 
-        let fgPgrp = tcgetpgrp(fd)
+        let fgPgrp = slopdesk_pty_foreground_group(fd)
         if fgPgrp > 0 {
             killpg(fgPgrp, SIGWINCH)
         } else {

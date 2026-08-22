@@ -196,8 +196,13 @@ VOCABULARIES = [
 # Keyed by the gate's own label, which must still be there: an escape hatch pointing at a gate
 # someone deleted is a suppression, not a ratchet.
 DERIVED_RATCHETS = {
+    # The gate is `reset_flags_and_ceiling` in `rust/slopdesk-invariants/src/rules/screend_wire.rs`
+    # now, and the label below is the set name it reports a disagreement under. Same rule, one
+    # language over: it normalises both spellings (`flagAgentChanged` / `FLAG_AGENT_CHANGED`) and
+    # compares them as a SET, so it names no constant here either — which is what keeps it a ratchet
+    # rather than a list, and what makes this entry necessary.
     ("Sources/SlopDeskScreen/ScreenProtocol.swift", "rust/slopdesk-screenwire/src/lib.rs"): (
-        'same "screend reset flags"'
+        'report.same_set("screend reset flags"'
     ),
 }
 
@@ -692,7 +697,16 @@ def main() -> int:
             rust.setdefault(name.replace("_", "").lower(), []).append((path, name, worth))
 
     # A name a supervisor gate already compares is ratcheted, which is the sidecar answer.
-    ratcheted = (ROOT / "scripts" / "check-supervisor.sh").read_text()
+    #
+    # The supervisor is TWO files now. Sections of `check-supervisor.sh` are being ported into
+    # `rust/slopdesk-invariants`, where a rule carries a BREAK-TEST — a unit test with an inline
+    # fixture that must fail — which the shell could only ever record as prose. Reading only the
+    # shell made a ratchet that moved language look like a ratchet that was deleted, so this gate
+    # began reporting the very pairs the port had made stricter (the four screend reset flags, the
+    # supervisor envelope's version and notification ids). Both halves are the gate; read both.
+    ratcheted = (ROOT / "scripts" / "check-supervisor.sh").read_text() + "".join(
+        path.read_text() for path in tracked("rust/slopdesk-invariants/*.rs")
+    )
 
     vocabulary = {ROOT / swift for swift, _, _ in VOCABULARIES}
 

@@ -171,6 +171,72 @@ pub fn agent_detection(tree: &Tree) -> Report {
     report
 }
 
+/// Who holds a pane's foreground, and which app is frontmost: each asked ONCE, in Rust.
+///
+/// Both questions were answered in Swift with the framework's own calls — six Darwin syscalls per
+/// foreground poll, and `NSRunningApplication` beside a door that already answered the other half
+/// of the frontmost read. Both are `rust/slopdesk-posix::proc` and `rust/slopdesk-apple-app` now,
+/// reached through `rust/slopdesk-ffi`'s `foreground` and `app` modules.
+///
+/// **This rule lives here rather than in `check-supervisor.sh` because of what `View::Code` buys.**
+/// A shell ban greps raw text, and every file that explains this port names the calls it removed —
+/// `NSWorkspace.shared.frontmostApplication` is spelled in two doc comments precisely to say why
+/// there is no fallback to it. A raw ban cannot tell an explanation from a call, so the shell
+/// version fired on its own documentation. Stripping whole-line comments first lets prose name what
+/// code may not, which is the only way a ban and an honest comment can coexist.
+///
+/// `AppIconGlue` and `slopdesk-navhistory-probe` are not exempt and do not need to be: they ask
+/// `runningApplications(withBundleIdentifier:)` for an ICON, which is image work and stays Swift's.
+/// The banned shape is the pid lookup, which is the one this port replaced.
+///
+/// ## What this rule deliberately does NOT ban, and why saying so is the point
+/// `proc_listpids`, `proc_pidpath` and `proc_pidinfo` are still spelled in
+/// `Sources/SlopDeskHost/HostMetadataProbe.swift` — the all-pids CPU census and the
+/// `PROC_PIDVNODEPATHINFO` cwd read, which are a DIFFERENT reading and are not ported yet. Banning
+/// them here would need an exemption for that file, and a ban whose exemption list is the only
+/// place the debt is written down is a rule that reports itself green. The two below are banned
+/// because they have exactly one home now, which is the only claim this rule can make honestly:
+/// `tcgetpgrp` (the foreground GROUP — three Swift readings, now `slopdesk_pty_foreground_group`)
+/// and `KERN_PROCARGS2` (argv, which nothing else in the tree asks for).
+#[must_use]
+pub fn one_probe_per_reading(tree: &Tree) -> Report {
+    // Assembled rather than spelled, because this file is itself under `Sources`-adjacent review
+    // and a literal here would be the second spelling the rule exists to forbid.
+    const SYSCALLS: &str = concat!("tcgetpgrp", "|KERN_PROCARGS2");
+    const FRONTMOST: &str = concat!(
+        "NSRunningApplication",
+        r"\(processIdentifier:",
+        "|NSWorkspace",
+        r"\.shared\.frontmostApplication"
+    );
+    check_all(tree, &[
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: SYSCALLS,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift foreground PROBE is back in {files} — the syscalls are rust/slopdesk-posix, \
+                      and slopdesk_pty_foreground_group/_name/_agent are the three questions they answer \
+                      (docs/55 §6)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: FRONTMOST,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift frontmost/app read is back in {files} — slopdesk_app_bundle_id and \
+                      slopdesk_app_activate answer it, and NSWorkspace's snapshot freezes in a daemon that \
+                      pumps no run loop (docs/57 §5)",
+        },
+    ])
+}
+
 /// The two agent vocabularies, compared by CASE COUNT across the boundary.
 ///
 /// The Swift enums declare the cases and the crate answers every question about them by
@@ -257,6 +323,56 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("rust/slopdesk-superd/src/pty.rs")),
+            "{report:?}"
+        );
+    }
+
+    /// The whole reason this rule is Rust and not shell: every file that EXPLAINS the port names
+    /// the call it removed, so a raw grep fires on its own documentation. Prose may name what code
+    /// may not, and `View::Code` is the difference.
+    #[test]
+    fn a_comment_naming_the_call_is_not_the_call() {
+        let fixture = Fixture::new("probe-prose");
+        fixture.write(
+            "Sources/SlopDeskHost/Probe.swift",
+            "/// Was `tcgetpgrp(masterFD)` here; the door answers it now.\n// NOT \
+             `NSWorkspace.shared.frontmostApplication`, which freezes in a daemon.\nlet group = \
+             slopdesk_pty_foreground_group(fd)\n",
+        );
+        assert!(super::one_probe_per_reading(&fixture.tree()).is_clean());
+    }
+
+    /// The syscall itself, on a code line, is the second reading of a question with one home.
+    #[test]
+    fn the_syscall_on_a_code_line_is_caught() {
+        let fixture = Fixture::new("probe-revived");
+        fixture.write(
+            "Sources/SlopDeskHost/Probe.swift",
+            "let pgid = tcgetpgrp(masterFD)\n",
+        );
+        let report = super::one_probe_per_reading(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("foreground PROBE")),
+            "{report:?}"
+        );
+    }
+
+    /// The frontmost read has the same shape and the same trap — a pid lookup in code, whatever the
+    /// comments above it say. `activate` and `bundleIdentifier` are the same lookup, so the ban is
+    /// on the constructor rather than on what is asked of the result.
+    #[test]
+    fn the_pid_lookup_is_caught_wherever_it_reappears() {
+        let fixture = Fixture::new("frontmost-revived");
+        fixture.write(
+            "Sources/SlopDeskVideoHost/Front.swift",
+            "let app = NSRunningApplication(processIdentifier: pid)\n",
+        );
+        let report = super::one_probe_per_reading(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("frontmost/app read")),
             "{report:?}"
         );
     }

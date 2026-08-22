@@ -325,6 +325,11 @@ pub fn registry() -> Vec<Rule> {
             check: rust_boundaries::agent_detection,
         },
         Rule {
+            name: "one-probe-per-reading",
+            origin: "docs/55 §6, docs/57 §5",
+            check: rust_boundaries::one_probe_per_reading,
+        },
+        Rule {
             name: "agent-vocabularies",
             origin: "docs/55",
             check: rust_boundaries::agent_vocabularies,

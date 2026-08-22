@@ -8396,6 +8396,13 @@ size_t slopdesk_pty_foreground_name(int32_t master_fd, uint8_t *out, size_t cap)
 // above answered a generic runtime or shell; it costs a process-group enumeration.
 int32_t slopdesk_pty_foreground_agent(int32_t master_fd);
 
+// The bare foreground process GROUP id, or 0 when there is none — for the callers
+// that want neither a name nor an agent: the redraw nudge (signal the whole group,
+// so a suspended shell's child still hears it) and the metadata probe (the group
+// leader's cwd). 0 rather than -1: a pgid is positive, and both callers already fall
+// back on a non-positive answer.
+int32_t slopdesk_pty_foreground_group(int32_t master_fd);
+
 // ---- The repository behind a pane's cwd ------------------------------------------
 
 // The git status of `path`'s repository, already encoded as the metadata reply's

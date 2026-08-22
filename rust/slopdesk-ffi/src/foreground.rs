@@ -90,6 +90,27 @@ pub extern "C" fn slopdesk_pty_foreground_agent(master_fd: i32) -> i32 {
         .map_or(-1, |(kind, _)| crate::agent::kind_index(kind))
 }
 
+/// The PTY's foreground process GROUP id, or `0` when it has none.
+///
+/// The bare number, for the two callers that do not want a name or an agent: the redraw nudge,
+/// which signals the whole group so a suspended shell's child still hears it, and the metadata
+/// probe, which reads the group leader's working directory. Both spelled `tcgetpgrp` themselves,
+/// which made the same question three readings — and the third one is what a door is for.
+///
+/// `0` rather than `-1` because a process group id is positive and every caller already falls back
+/// on a non-positive answer: the nudge signals the child directly, the probe uses the shell pid.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_pty_foreground_group(master_fd: i32) -> i32 {
+    slopdesk_posix::pty::foreground_process_group(master_fd)
+        .ok()
+        .filter(|group| *group > 0)
+        .unwrap_or(0)
+}
+
 /// One probed process as the identifier's shape.
 ///
 /// `argv0` carries the login shell's leading `-` stripped, and an EMPTY argv stays `None` rather
@@ -123,7 +144,7 @@ mod tests {
 
     use super::{
         ForegroundJob, ForegroundJobProcess, process, realpath_basename, slopdesk_pty_foreground_agent,
-        slopdesk_pty_foreground_name,
+        slopdesk_pty_foreground_group, slopdesk_pty_foreground_name,
     };
 
     /// A closed descriptor has no foreground group, and both doors must say so with their own
@@ -135,6 +156,7 @@ mod tests {
         let needed = unsafe { slopdesk_pty_foreground_name(-1, out.as_mut_ptr(), out.len()) };
         assert_eq!(needed, 0);
         assert_eq!(slopdesk_pty_foreground_agent(-1), -1);
+        assert_eq!(slopdesk_pty_foreground_group(-1), 0);
     }
 
     /// A login shell's `argv[0]` carries a leading `-` that names no program. Stripping it is the
