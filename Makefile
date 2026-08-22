@@ -284,7 +284,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-macos-apps check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
+.PHONY: check quick check-ios check-macos-apps check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
 check: lint build test miri golden check-ios check-macos-apps ## lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -614,6 +614,17 @@ apple-cgdisplay-test: ## cargo test for the display-list reads (space agreement,
 apple-app-test: ## cargo test for the running-application reads (nothing-pid answers, no-snapshot property)
 	cd rust/slopdesk-apple-app && cargo test
 
+# The pane census — which processes belong to one PTY, and what they are listening on. Everything
+# here used to be Swift that no test could reach: `HostMetadataProbe` carried a standing note that
+# it was compiled and code-reviewed ONLY, because every reading needs a live PTY and a real `lsof`.
+# What that note protected was the syscalls; what it also covered was a hand-rolled parser for
+# hostile subprocess output. Behind this boundary the parse is a function over a string, so the
+# suite is the one that could never be written: malformed `lsof` lines, an address with no port, a
+# clock that moved backwards, and a descriptor that is not a PTY censusing NOTHING rather than the
+# machine's whole process table.
+panecensus-test: ## cargo test for one pane's process and port census (lsof parse, caps, empty-pane answers)
+	cd rust/slopdesk-panecensus && cargo test
+
 # The memory half of that: what actually reads the loads and stores for a pointer that left its
 # allocation or its provenance. `CLAUDE.md` says the third `unsafe` crate was bought with "a
 # differential suite that runs under Miri" — and until this line, NOTHING ran it. Not `check`, not
@@ -735,7 +746,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test invariants-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test workspace-test ids-test tree-test settings-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the running-application reads + workspace rules + identity + the document tree + the settings catalogue + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
+test: ffi hook-test invariants-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test panecensus-test workspace-test ids-test tree-test settings-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the running-application reads + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the

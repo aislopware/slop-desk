@@ -10,12 +10,16 @@
 //! hostd and answers it from an open repository handle, so the verb the repo watcher polls on a
 //! cadence costs zero spawns. See that crate's manifest for why it is a library and not a program.
 //!
-//! Five stayed, each because a forked program does not have what it needs:
+//! Five did NOT come here, each because a forked program does not have what it needs — but only
+//! two of those are still Swift:
 //!
 //! - `paneWorkingDirectory` and `processes`/`ports` are anchored to the pane's PTY master fd
 //!   (`tcgetpgrp`, `ptsname`) and to `proc_pidinfo` over every live pid. hostd holds that fd, and
 //!   CLAUDE.md is explicit that holding it for `ioctl`/`tcgetpgrp` is the one thing a second reader
-//!   may do — passing it across an exec to save four Darwin calls is a trade nobody wants.
+//!   may do — passing it across an exec to save four Darwin calls is a trade nobody wants. So they
+//!   are LINKED rather than forked: `rust/slopdesk-panecensus`, reached through
+//!   `rust/slopdesk-ffi::pane_probe`. Its port scan borrows [`run::capture`] from this crate, which
+//!   is the whole reason a forked program's spawn helper is `pub`.
 //! - `hostVitals` is a DELTA between two tick snapshots, so it needs state that outlives a request.
 //!   A forked program has none, and giving it a file to keep a baseline in would be inventing
 //!   durability for a number that is meaningless after a gap.
@@ -31,7 +35,10 @@
 //! And it is TESTABLE. The Swift probe carried a standing note that it was compiled and
 //! code-reviewed only, never unit-tested, because spinning a real `git` in a test is precisely what
 //! the hang-safety rule exists to keep out of the suite. Here the process boundary is at the edge
-//! and everything behind it is a function over strings and directories.
+//! and everything behind it is a function over strings and directories. That is why the pane census
+//! borrows [`run::capture`] instead of writing a second drain-before-wait loop: the hostile input
+//! it parses — `lsof -F cn`, which the Swift version parsed under the same untested exemption — is
+//! now on the near side of a process boundary somebody can put a fixture through.
 
 //! ## The one thing here that is not about the probe's own answers
 //!

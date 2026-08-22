@@ -601,6 +601,34 @@ staticlib is one object per crate, so the object holding this door also holds ev
 `ffiCLibraries` and every `CSlopDeskFFI` dependent carries it. Weigh that before linking the next C
 library through this boundary — the gate keeps the BYTES off the phone, not the flags off the graph.
 
+### The answer that is a REPLY, because the near side only forwards it
+
+`slopdesk_git_status` set a shape three later doors took: it answers the metadata reply's own
+payload, not a record. `slopdesk_pane_process_list` and `slopdesk_pane_port_list` are the same
+argument at a different verb — hostd's `MetadataResponseBuilder` holds no opinion about either list,
+it puts the bytes in a frame — so a `SlopDeskProcessInfo *` would cross the boundary only to be
+encoded one line later by a Swift function that already exists for the golden vectors.
+
+What settles it is §4's own test: **what picks the convention is the FAR side.** The far side of a
+process list is a client that decodes it; hostd is a relay in the middle. So the seam that used to
+be `func processes() -> [MetadataCodec.ProcessInfo]` is `func processes() -> Data`, and the builder's
+arm is `reply(requestID, .ok, query.processes())`. The Swift encoders did not become dead — the
+golden-vector generator and the codec's round-trip tests still call them, which is exactly why the
+fake in `MetadataResponseBuilderTests` encodes: the assertions still read the values back out, and
+what they now pin is that the builder forwards bytes it did not touch.
+
+The third door is the exception that shows the rule. `slopdesk_pane_working_directory` answers a
+STRING, because hostd genuinely uses it: it is the confinement root every path-carrying verb is
+checked against before any query runs. A caller that consumes an answer gets the answer; a caller
+that forwards one gets the frame.
+
+There is a second, smaller reason these three are doors at all rather than a fork of
+`slopdesk-probe`. Everything behind them is anchored to a PTY master fd hostd holds, and handing a
+descriptor across an `execve` to save four Darwin calls is the trade §1 exists to refuse. The port
+scan still SPAWNS — `lsof`, twice — but it spawns from the linked side, through the same bounded
+`slopdesk_probe::run::capture` the forked probe uses, which is what retired the third spelling of the
+15 MiB opaque cap that §8's ratchet used to have to reconcile.
+
 ### The answer that is a NESTED shape, walked once
 
 `slopdesk_styled_lines` renders a finished command's captured bytes as the styled lines a person

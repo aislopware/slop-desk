@@ -121,10 +121,16 @@ protocol MetadataQuerying {
     /// The pane's current working directory — the `cwd` verb's answer AND the confinement root for
     /// `listDirectory`/`gitDiff`/`listAgentSessions`. `nil` when unresolvable (the verb replies `.error`).
     func paneWorkingDirectory() -> String?
-    /// The pane's processes (controlling-terminal scoped). Empty list is valid.
-    func processes() -> [MetadataCodec.ProcessInfo]
-    /// The pane's listening ports. Empty list ("No listening ports") is valid.
-    func ports() -> [MetadataCodec.PortInfo]
+    /// The pane's processes (controlling-terminal scoped), ALREADY ENCODED as the reply payload.
+    /// An empty list is valid and encodes as a zero count; there is no `nil`.
+    ///
+    /// Encoded rather than as values because this responder holds no opinion about either list — it
+    /// forwards them verbatim. A `[ProcessInfo]` here would mean records crossing the FFI boundary
+    /// to be re-encoded one line later, which is the shape ``gitStatus(cwd:)`` already rejected.
+    func processes() -> Data
+    /// The pane's listening ports, ALREADY ENCODED. Empty ("No listening ports") is valid — see
+    /// ``processes()`` for why both cross encoded.
+    func ports() -> Data
     /// The git status of `cwd` (branch + remote + ahead/behind + changed files; `gitBranch` subsumed).
     func gitStatus(cwd: String) -> MetadataCodec.GitStatusPayload
     /// A unified `git diff` of `file` (already confined repo-relative) in `cwd`. `nil` → `.notFound`.
@@ -189,10 +195,10 @@ struct MetadataResponseBuilder {
         }
         switch verb {
         case .processes:
-            return reply(requestID, .ok, MetadataCodec.encodeProcessList(query.processes()))
+            return reply(requestID, .ok, query.processes())
 
         case .ports:
-            return reply(requestID, .ok, MetadataCodec.encodePortList(query.ports()))
+            return reply(requestID, .ok, query.ports())
 
         case .cwd:
             guard let cwd = query.paneWorkingDirectory(), !cwd.isEmpty else {

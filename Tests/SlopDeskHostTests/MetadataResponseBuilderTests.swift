@@ -34,8 +34,11 @@ final class MetadataResponseBuilderTests: XCTestCase {
         private(set) var readAgentSessionCalls: [String] = []
 
         func paneWorkingDirectory() -> String? { cwd }
-        func processes() -> [MetadataCodec.ProcessInfo] { processList }
-        func ports() -> [MetadataCodec.PortInfo] { portList }
+        // The seam carries ENCODED payloads now, so the fake encodes: what the builder is being
+        // asked to prove is that it forwards those bytes verbatim, and the round-trip below still
+        // reads them back as the values that went in.
+        func processes() -> Data { MetadataCodec.encodeProcessList(processList) }
+        func ports() -> Data { MetadataCodec.encodePortList(portList) }
         func gitStatus(cwd _: String) -> MetadataCodec.GitStatusPayload { gitStatusPayload }
         func gitDiff(cwd: String, file: String) -> Data? {
             gitDiffCalls.append((cwd, file))

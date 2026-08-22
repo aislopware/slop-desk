@@ -189,20 +189,36 @@ pub fn agent_detection(tree: &Tree) -> Report {
 /// `runningApplications(withBundleIdentifier:)` for an ICON, which is image work and stays Swift's.
 /// The banned shape is the pid lookup, which is the one this port replaced.
 ///
-/// ## What this rule deliberately does NOT ban, and why saying so is the point
-/// `proc_listpids`, `proc_pidpath` and `proc_pidinfo` are still spelled in
-/// `Sources/SlopDeskHost/HostMetadataProbe.swift` — the all-pids CPU census and the
-/// `PROC_PIDVNODEPATHINFO` cwd read, which are a DIFFERENT reading and are not ported yet. Banning
-/// them here would need an exemption for that file, and a ban whose exemption list is the only
-/// place the debt is written down is a rule that reports itself green. The two below are banned
-/// because they have exactly one home now, which is the only claim this rule can make honestly:
-/// `tcgetpgrp` (the foreground GROUP — three Swift readings, now `slopdesk_pty_foreground_group`)
-/// and `KERN_PROCARGS2` (argv, which nothing else in the tree asks for).
+/// ## The pane census joined it, so the ban widened
+/// This rule once banned two calls and said so: the all-pids census and the `PROC_PIDVNODEPATHINFO`
+/// cwd read were still `HostMetadataProbe.swift`'s, a DIFFERENT reading, and banning them would
+/// have needed an exemption for that file — a ban whose exemption list is the only place the debt
+/// is written down is a rule that reports itself green. That census is
+/// `rust/slopdesk-panecensus` now, reached through `rust/slopdesk-ffi`'s `pane_probe`, so the
+/// exemption is gone rather than granted and every call below has exactly one home.
+///
+/// `proc_name` is banned as a CALL (`proc_name(`) and not as a token, because
+/// `SlopDeskMetadataPort(proc_name:)` is the wire record's own field label and naming a struct
+/// field is not making a syscall.
+///
+/// `AppIconGlue` and `slopdesk-navhistory-probe` are still not exempt and still do not need to be,
+/// for the reason above: an icon lookup is image work.
 #[must_use]
 pub fn one_probe_per_reading(tree: &Tree) -> Report {
     // Assembled rather than spelled, because this file is itself under `Sources`-adjacent review
     // and a literal here would be the second spelling the rule exists to forbid.
-    const SYSCALLS: &str = concat!("tcgetpgrp", "|KERN_PROCARGS2");
+    const SYSCALLS: &str = concat!(
+        "tcgetpgrp",
+        "|KERN_PROCARGS2",
+        "|proc_listpids",
+        "|proc_pidpath",
+        "|proc_pidinfo",
+        r"|proc_name\(",
+        "|PROC_ALL_PIDS",
+        "|PROC_PIDVNODEPATHINFO",
+        "|PROC_PIDTBSDINFO",
+        r"|ptsname\("
+    );
     const FRONTMOST: &str = concat!(
         "NSRunningApplication",
         r"\(processIdentifier:",
@@ -338,6 +354,42 @@ mod tests {
             "/// Was `tcgetpgrp(masterFD)` here; the door answers it now.\n// NOT \
              `NSWorkspace.shared.frontmostApplication`, which freezes in a daemon.\nlet group = \
              slopdesk_pty_foreground_group(fd)\n",
+        );
+        assert!(super::one_probe_per_reading(&fixture.tree()).is_clean());
+    }
+
+    /// The pane census is the reading this rule used to exempt, so it is the one most likely to be
+    /// rewritten in Swift by someone who does not know it moved. Each call is checked separately —
+    /// a single alternation that matched only its first branch would pass this test while banning
+    /// nothing.
+    #[test]
+    fn every_call_the_pane_census_used_to_make_is_caught_on_its_own() {
+        for call in [
+            "let n = proc_listpids(UInt32(PROC_ALL_PIDS), 0, nil, 0)\n",
+            "proc_pidpath(pid, &buffer, UInt32(buffer.count))\n",
+            "proc_pidinfo(pid, Int32(PROC_PIDVNODEPATHINFO), 0, $0, size)\n",
+            "_ = proc_name(pid, &nameBuffer, UInt32(nameBuffer.count))\n",
+            "guard let slave = ptsname(masterFD) else { return nil }\n",
+        ] {
+            let fixture = Fixture::new("census-revived");
+            fixture.write("Sources/SlopDeskHost/Probe.swift", call);
+            let report = super::one_probe_per_reading(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains("foreground PROBE")),
+                "{call:?} was not caught: {report:?}"
+            );
+        }
+    }
+
+    /// `SlopDeskMetadataPort(proc_name:)` is the wire record's own FIELD LABEL, and naming a struct
+    /// field is not making a syscall. The ban is on the call shape for exactly this reason — a
+    /// bare-token ban would fire on the codec that decodes what the census produced.
+    #[test]
+    fn a_wire_field_named_after_a_syscall_is_not_that_syscall() {
+        let fixture = Fixture::new("census-field");
+        fixture.write(
+            "Sources/SlopDeskProtocol/Metadata/MetadataCodec.swift",
+            "SlopDeskMetadataPort(proc_name: intern($0.procName, &pool), port: $0.port)\n",
         );
         assert!(super::one_probe_per_reading(&fixture.tree()).is_clean());
     }

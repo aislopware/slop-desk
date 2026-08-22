@@ -131,6 +131,10 @@ pub mod pacer_depth;
 pub mod palette_rows;
 pub mod pane_drop;
 pub mod pane_kind;
+// macOS only: Darwin `proc_*` over every live pid, plus an `lsof` spawn. Only hostd asks, and only
+// about a PTY it holds. See the module.
+#[cfg(target_os = "macos")]
+pub mod pane_probe;
 pub mod panel_key;
 pub mod paste_safety;
 pub mod path_confine;

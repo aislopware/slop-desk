@@ -7909,7 +7909,7 @@ done
 # is the order now and `HostServiceProcess.locate` asks for it.
 #
 # The ban is scoped to the file that OWNS the question. `isExecutableFile` elsewhere in hostd
-# (`SidecarVersionAudit`, `HostMetadataProbe`) is a can-I-spawn-THIS-path guard, not a search, and
+# (`SidecarVersionAudit`) is a can-I-spawn-THIS-path guard, not a search, and
 # `HostEnvironment`'s `/usr/local/bin:/usr/bin:/bin` is the PATH handed to children — different
 # capabilities, correctly still Swift.
 #
@@ -8577,10 +8577,10 @@ printf 'check-supervisor: slopdesk-agenthooks agrees too — %s subcommands both
 # Swift-only, before the probe was Rust — the record went stale rather than the design going wrong.
 # The rule these two must satisfy is `rust >= swift`, so the gate checks the relation, not equality.
 #
-# `HostMetadataProbe.maxCaptureBytes` is deliberately NOT in this gate. It is 15 MiB too, and it is
-# not a mirror of anything: it is the stop condition on the `lsof` drain, and its own comment says
-# no caller reaches it. Pinning it here would tie an unrelated loop's ceiling to the wire's, so that
-# lowering one would fail on the other for no reason. Same number, different question.
+# There used to be a THIRD spelling, `HostMetadataProbe.maxCaptureBytes`, deliberately not in this
+# gate: the stop condition on hostd's own `lsof` drain, the same number asking a different question.
+# It is gone — the pane census is `rust/slopdesk-panecensus` and its port scan rides
+# `slopdesk_probe::run::capture`, so the drain that had its own ceiling now shares the one below.
 probe_cap_rust=$(grep -oE 'MAX_OPAQUE_READ_BYTES: usize = [0-9 *]+;' rust/slopdesk-probe/src/run.rs |
   grep -oE '[0-9]+ \* [0-9]+ \* [0-9]+' || true)
 probe_cap_swift=$(grep -oE 'defaultMaxOpaquePayloadBytes = [0-9 *]+' \

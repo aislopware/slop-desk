@@ -170,18 +170,21 @@ pub fn reset_flags_and_ceiling(tree: &Tree) -> Report {
     report
 }
 
-/// The 15 MiB opaque budget, which is one cap spelled THREE times.
+/// The 15 MiB opaque budget, which is one cap spelled TWICE.
 ///
 /// A metadata `read` verb answers a file, and the ceiling on how much of one it will carry back is
-/// written in three places: `MetadataResponseBuilder.defaultMaxOpaquePayloadBytes` (what hostd will
-/// put in a reply), `HostMetadataProbe.maxCaptureBytes` (what hostd will accumulate from the child)
-/// and `slopdesk_probe::run::MAX_OPAQUE_READ_BYTES` (what the child will read before truncating).
+/// written in two places: `MetadataResponseBuilder.defaultMaxOpaquePayloadBytes` (what hostd will
+/// put in a reply) and `slopdesk_probe::run::MAX_OPAQUE_READ_BYTES` (what the child will read
+/// before truncating).
+///
+/// It was THREE until the pane census moved. `HostMetadataProbe.maxCaptureBytes` was hostd's own
+/// ceiling on the `lsof` drain — the same number asking a different question — and it is gone
+/// because that scan is `rust/slopdesk-panecensus` now and rides `slopdesk_probe::run::capture`.
+/// The two Swift halves this rule used to report as a genuine second finding are one half.
 ///
 /// `slopdesk-probe` is a `[[bin]]` hostd SPAWNS — it links nothing of hostd's and hostd links
-/// nothing of its — so the third spelling cannot become a door however the first two are settled,
-/// and the ratchet is the answer the lifetime picks rather than a compromise. The two Swift halves
-/// are a genuine second finding, reported rather than folded: they live in one target and could be
-/// one constant, which is a `Sources/` change and not this gate's to make.
+/// nothing of its — so the Rust spelling cannot become a door however the Swift one is settled, and
+/// the ratchet is the answer the lifetime picks rather than a compromise.
 ///
 /// A skew here is silent in the worst direction. The probe truncates at ITS ceiling and marks the
 /// payload truncated; hostd's builder refuses at ITS ceiling by dropping the payload. Raise only
@@ -193,24 +196,14 @@ pub fn opaque_budget(tree: &Tree) -> Report {
     const RUST_PROBE_RUN: &str = "rust/slopdesk-probe/src/run.rs";
     const RUST_CAP: &str = r"^pub const MAX_OPAQUE_READ_BYTES: usize = (.*);$";
 
-    let claims = [
-        Claim::SameValue {
-            label: "the opaque payload budget hostd will REPLY with",
-            swift: Extract::code(
-                "Sources/SlopDeskHost/MetadataResponseBuilder.swift",
-                r"^ *static let defaultMaxOpaquePayloadBytes = (.*)$",
-            ),
-            rust: Extract::code(RUST_PROBE_RUN, RUST_CAP),
-        },
-        Claim::SameValue {
-            label: "the opaque payload budget hostd will CAPTURE",
-            swift: Extract::code(
-                "Sources/SlopDeskHost/HostMetadataProbe.swift",
-                r"^ *private static let maxCaptureBytes = (.*)$",
-            ),
-            rust: Extract::code(RUST_PROBE_RUN, RUST_CAP),
-        },
-    ];
+    let claims = [Claim::SameValue {
+        label: "the opaque payload budget hostd will REPLY with",
+        swift: Extract::code(
+            "Sources/SlopDeskHost/MetadataResponseBuilder.swift",
+            r"^ *static let defaultMaxOpaquePayloadBytes = (.*)$",
+        ),
+        rust: Extract::code(RUST_PROBE_RUN, RUST_CAP),
+    }];
     check_all(tree, &claims)
 }
 
@@ -370,10 +363,6 @@ mod tests {
                 "    static let defaultMaxOpaquePayloadBytes = 15 * 1024 * 1024\n",
             )
             .write(
-                "Sources/SlopDeskHost/HostMetadataProbe.swift",
-                "    private static let maxCaptureBytes = 15 * 1024 * 1024\n",
-            )
-            .write(
                 "rust/slopdesk-probe/src/run.rs",
                 "pub const MAX_OPAQUE_READ_BYTES: usize = 15 * 1024 * 1024;\n",
             );
@@ -386,10 +375,6 @@ mod tests {
         let report = super::opaque_budget(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("REPLY with")),
-            "{report:?}"
-        );
-        assert!(
-            report.violations().iter().any(|v| v.contains("CAPTURE")),
             "{report:?}"
         );
     }

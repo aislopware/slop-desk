@@ -1,0 +1,121 @@
+# `slopdesk-panecensus` — what is RUNNING in one terminal pane, and what it is listening on.
+#
+# ## Why this is a crate and not three functions in the shim
+# `slopdesk-ffi` is argument marshalling and nothing else (see its manifest), and every answer here
+# needs a decision the shim may not hold: which pid's cwd wins, what a process is CALLED when its
+# path cannot be read, which of the machine's processes belong to this pane, how `lsof`'s field
+# output becomes a port. That is the logic the Swift `HostMetadataProbe` carried, and it stays under
+# `forbid(unsafe_code)` where it can be tested against fixtures rather than against the machine.
+#
+# ## Why it is not in `slopdesk-probe`
+# The probe is FORKED per request and remembers nothing. Everything here is anchored to a PTY master
+# fd that hostd holds, so a fork would have to be handed a descriptor across an `execve` to save
+# four Darwin calls — a trade nobody wants (`docs/51` §6.9 is the same rule from the other side).
+# The one thing it borrows from that crate is `run::capture`, because the port scan really is a
+# subprocess and a second drain-before-wait loop would be a second implementation of it.
+#
+# ## macOS only
+# Every reading is a Darwin `proc_*` call or `lsof`, and the only caller is hostd. It is reached
+# through `slopdesk-ffi`'s macOS-only edge, so it is never compiled into the iOS slice — `docs/57`
+# §3 for the three spellings that keep that true.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-panecensus"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The processes and listening ports of one slopdesk terminal pane"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_panecensus"
+path = "src/lib.rs"
+
+[dependencies]
+# The name a process is shown under — the same reduction the sidebar's program slot uses, so a pane
+# lists `claude` and not `2.1.218`.
+slopdesk-agent = { path = "../slopdesk-agent" }
+# The Darwin readings, and the one crate allowed to make them.
+slopdesk-posix = { path = "../slopdesk-posix" }
+# `run::capture` — the bounded drain-before-wait spawn the port scan rides.
+slopdesk-probe = { path = "../slopdesk-probe" }
+# The metadata RPC's encoders. The census answers ENCODED bytes because hostd's responder forwards
+# them verbatim; handing back a `Vec<ProcessInfo>` would mean a record crossing the C ABI to be
+# encoded one line later on the far side.
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+# A host library folded per metadata request, not a forked program — the same profile as
+# `slopdesk-agent` and for the same reason: a panic here must never abort a host.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml` and `rust/slopdesk-agent/Cargo.toml`. A
+# literal copy rather than inherited, because inheriting would mean being a member, which is what
+# the profile above forbids.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dependency's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

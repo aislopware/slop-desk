@@ -8416,6 +8416,36 @@ int32_t slopdesk_pty_foreground_group(int32_t master_fd);
 // not UTF-8.
 size_t slopdesk_git_status(const uint8_t *path, size_t len, uint8_t *out, size_t cap);
 
+// ---- What is running in a pane -----------------------------------------------------
+
+// The pane's working directory: the foreground group leader's, falling back to
+// shell_pid's. 0 when neither resolves — and that is not a degraded answer to paper
+// over: every path-carrying metadata verb must refuse on it, because a request
+// confined against a guessed root is confined against the wrong directory.
+size_t slopdesk_pane_working_directory(int32_t master_fd, int32_t shell_pid,
+                                       uint8_t *out, size_t cap);
+
+// The pane's processes — every process whose controlling terminal is this master's
+// slave — already encoded as the metadata reply's own payload (the layout
+// slopdesk_metadata_decode_process_list reads). Encoded for slopdesk_git_status'
+// reason: hostd's responder forwards it verbatim.
+//
+// now_unix is the CALLER's clock so the whole census shares one instant; reading it
+// per row would age two processes started in the same second differently.
+//
+// Never 0. A pane whose PTY is gone encodes an EMPTY list, which is a valid answer
+// the client already renders — there is no "could not census" reply.
+size_t slopdesk_pane_process_list(int32_t master_fd, int64_t now_unix,
+                                  uint8_t *out, size_t cap);
+
+// The ports the pane's processes are listening on, encoded as the metadata reply's
+// own payload (the layout slopdesk_metadata_decode_port_list reads). Never 0, for
+// the reason above; an empty list is the COMMON answer, not an edge case.
+//
+// This is the one door here that spawns: `lsof` twice, TCP with -sTCP:LISTEN and
+// then UDP which cannot take that flag, scoped to the pane's own pids.
+size_t slopdesk_pane_port_list(int32_t master_fd, uint8_t *out, size_t cap);
+
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END
 

@@ -1,11 +1,11 @@
-//! Reading another process: its executable path, its process group's members, its `comm` name and
-//! its argv.
+//! Its executable path, its group's members, its `comm` name, its argv, its working directory,
+//! and which terminal it is attached to.
 //!
-//! Four Darwin calls with no wrapper in `std` or `nix` — `proc_pidpath`, `proc_listpids`,
-//! `proc_pidinfo` and `sysctl(KERN_PROCARGS2)` — each of which fills a caller-provided buffer and
-//! reports how much of it it used. That is the shape this crate exists for: the obligation is
-//! entirely local (is the buffer as big as I said, is the reported length inside it) and can be
-//! discharged without naming anything above the syscall.
+//! Five Darwin calls with no wrapper in `std` or `nix` — `proc_pidpath`, `proc_name`,
+//! `proc_listpids`, `proc_pidinfo` and `sysctl(KERN_PROCARGS2)` — each of which fills a
+//! caller-provided buffer and reports how much of it it used. That is the shape this crate exists
+//! for: the obligation is entirely local (is the buffer as big as I said, is the reported length
+//! inside it) and can be discharged without naming anything above the syscall.
 //!
 //! The rule every one of them follows is VALIDATE-THEN-DROP. A length of zero or less, a size that
 //! does not match what the struct needs, an argc outside a sane range — each answers `None` rather
@@ -118,6 +118,136 @@ pub fn executable_path(pid: i32) -> Option<String> {
     String::from_utf8(buffer).ok()
 }
 
+/// A process's `comm` name — `proc_name`, the SHORT name the kernel keeps beside the pid.
+///
+/// The fallback under [`executable_path`] for a process whose path cannot be read: a system process
+/// the caller is not entitled to `proc_pidpath`, or one that execed out from under the read. It is
+/// truncated to 16 bytes by the kernel, so it is a worse name and never the first choice.
+///
+/// # Safety
+/// `proc_name` writes at most the byte count it is given into the buffer it is given and answers
+/// how many bytes it wrote. The buffer is a live local whose length is passed verbatim as that
+/// count, so the call cannot reach past it, and the returned length is checked to be positive and
+/// within the buffer before any byte is read.
+#[must_use]
+#[expect(unsafe_code, reason = "proc_name has no wrapper in std or nix")]
+pub fn short_name(pid: i32) -> Option<String> {
+    // `MAXCOMLEN + 1` is 17; 256 is what the kernel's own callers pass and leaves no doubt.
+    let mut buffer = vec![0_u8; 256];
+    let written = unsafe {
+        libc::proc_name(
+            pid,
+            buffer.as_mut_ptr().cast::<c_void>(),
+            u32::try_from(buffer.len()).ok()?,
+        )
+    };
+    let written = usize::try_from(written).ok()?;
+    if written == 0 || written > buffer.len() {
+        return None;
+    }
+    buffer.truncate(written);
+    String::from_utf8(buffer).ok()
+}
+
+/// A process's current working directory — `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.
+///
+/// `None` for a pid that is gone, one this process is not entitled to read, and one whose cwd
+/// resolved to nothing. All three are the same answer to the metadata RPC: the pane has no root, so
+/// every path-confined verb under it must refuse rather than fall back to somewhere else.
+///
+/// # Safety
+/// As [`bsd_info`]: a live, fully-initialised local of exactly the type whose `size_of` is passed,
+/// and a returned byte count required to EQUAL that size before any field is read. Zeroed rather
+/// than `MaybeUninit` for the same reason — `proc_vnodepathinfo` is a plain C struct of integers
+/// and byte arrays with no niches.
+#[must_use]
+#[expect(unsafe_code, reason = "proc_pidinfo has no wrapper in std or nix")]
+pub fn working_directory(pid: i32) -> Option<String> {
+    if pid <= 0 {
+        return None;
+    }
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = i32::try_from(size_of_val(&info)).ok()?;
+    let got = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            std::ptr::from_mut(&mut info).cast::<c_void>(),
+            size,
+        )
+    };
+    if got != size {
+        return None;
+    }
+    // SAFETY: `vip_path` is a NUL-terminated C string in a fixed array the kernel filled. The slice
+    // is built from the array's own pointer and its own SIZE, so it cannot reach past the struct,
+    // and `from_bytes_until_nul` re-checks the terminator rather than trusting it.
+    //
+    // `size_of_val` and not `.len()`: `libc` declares this `MAXPATHLEN` array as `[[c_char; 32];
+    // 32]`, so `.len()` is 32 — the number of ROWS. Reading 32 bytes finds no terminator in any
+    // path longer than that, and every such cwd would answer `None` while short ones worked.
+    let path = unsafe {
+        std::slice::from_raw_parts(
+            info.pvi_cdir.vip_path.as_ptr().cast::<u8>(),
+            size_of_val(&info.pvi_cdir.vip_path),
+        )
+    };
+    let path = CStr::from_bytes_until_nul(path).ok()?.to_str().ok()?;
+    (!path.is_empty()).then(|| path.to_owned())
+}
+
+/// Every live pid on the machine — `proc_listpids(PROC_ALL_PIDS)`.
+///
+/// Sized from the call's own answer to a null buffer, plus headroom, because the census that
+/// follows is a per-pid `proc_pidinfo` and a pid that appeared between the sizing call and the
+/// filling one would otherwise silently truncate the list at whichever pid the kernel enumerated
+/// last. The headroom is not a fix for that race — nothing here can be — it is what keeps the
+/// common case from losing the tail of the list.
+///
+/// # Safety
+/// As [`process_group_pids`]: the pointer and the size come from the same live `Vec` in the same
+/// expression, and the answer is converted to an element count clamped to the buffer's length
+/// before any element is read.
+#[must_use]
+#[expect(unsafe_code, reason = "proc_listpids has no wrapper in std or nix")]
+pub fn all_pids() -> Vec<i32> {
+    // `PROC_ALL_PIDS`, which libc does not re-export. 1 in `<sys/proc_info.h>`.
+    const PROC_ALL_PIDS: u32 = 1;
+
+    let sized = unsafe { libc::proc_listpids(PROC_ALL_PIDS, 0, std::ptr::null_mut(), 0) };
+    let Ok(sized) = usize::try_from(sized) else {
+        return Vec::new();
+    };
+    if sized == 0 {
+        return Vec::new();
+    }
+    // Bytes to pids, then headroom for what starts while we are asking. Integer division IS the
+    // operation, exactly as in `process_group_pids`.
+    #[expect(
+        clippy::integer_division,
+        reason = "a byte count of whole pids; a remainder is a truncated entry, not a fraction"
+    )]
+    let capacity = sized / size_of::<i32>() + 16;
+    let mut buffer = vec![0_i32; capacity];
+    let Ok(bytes) = i32::try_from(size_of_val(buffer.as_slice())) else {
+        return Vec::new();
+    };
+    let written =
+        unsafe { libc::proc_listpids(PROC_ALL_PIDS, 0, buffer.as_mut_ptr().cast::<c_void>(), bytes) };
+    let Ok(written) = usize::try_from(written) else {
+        return Vec::new();
+    };
+    #[expect(
+        clippy::integer_division,
+        reason = "a byte count of whole pids; a remainder is a truncated entry, not a fraction"
+    )]
+    let count = (written / size_of::<i32>()).min(capacity);
+    buffer.truncate(count);
+    buffer.retain(|pid| *pid > 0);
+    buffer
+}
+
 /// Every pid in a process group — `proc_listpids(PROC_PGRP_ONLY)`.
 ///
 /// The buffer grows geometrically because the call answers "I filled all of it" and "there was
@@ -173,17 +303,37 @@ pub fn process_group_pids(group: i32) -> Vec<i32> {
 /// The two travel together because the caller needs both to decide membership, and reading them in
 /// two calls would reopen the race the pair closes: a process that changed group between them.
 ///
-/// # Safety
-/// `proc_pidinfo` fills the struct whose size it is told, and answers the number of bytes it wrote.
-/// The pointer is to a live, fully-initialised local of exactly that type, the size passed is that
-/// type's own `size_of`, and the answer is required to EQUAL that size before any field is read —
-/// a short write means the kernel refused, and every field is then left at its zeroed value.
+/// The read itself is [`bsd_info`], which carries the obligation.
 #[must_use]
-#[expect(unsafe_code, reason = "proc_pidinfo has no wrapper in std or nix")]
 pub fn comm_and_group(pid: i32) -> Option<(String, i32)> {
-    // Zeroed rather than `MaybeUninit`: `proc_bsdinfo` is a plain C struct of integers and byte
-    // arrays with no niches, so all-zero is a valid inhabitant, and starting from one means a short
-    // write cannot leave a field holding whatever was on the stack.
+    bsd_info(pid).and_then(|info| {
+        let comm = comm_of(&info)?;
+        Some((comm, i32::try_from(info.pbi_pgid).ok()?))
+    })
+}
+
+/// Which terminal a process is attached to, and when it started.
+///
+/// The two fields the pane census needs off the same `proc_bsdinfo` read: `e_tdev` is the
+/// controlling tty's device number, which is how a pane's process set is defined, and
+/// `pbi_start_tvsec` is a Unix second the caller turns into an uptime. Asking for them separately
+/// would be two `proc_pidinfo` calls per pid over EVERY live process on the machine.
+#[must_use]
+pub fn tty_and_start(pid: i32) -> Option<(u32, i64)> {
+    let info = bsd_info(pid)?;
+    Some((info.e_tdev, i64::try_from(info.pbi_start_tvsec).ok()?))
+}
+
+/// One `PROC_PIDTBSDINFO` read, which is what every accessor above is a projection of.
+///
+/// # Safety
+/// As documented on [`comm_and_group`]: a live, fully-initialised local of exactly the type whose
+/// `size_of` is passed, and a returned byte count required to EQUAL that size before any field is
+/// read. Zeroed rather than `MaybeUninit` because `proc_bsdinfo` is a plain C struct of integers
+/// and byte arrays with no niches, so all-zero is a valid inhabitant and a short write cannot leave
+/// a field holding whatever was on the stack.
+#[expect(unsafe_code, reason = "proc_pidinfo has no wrapper in std or nix")]
+fn bsd_info(pid: i32) -> Option<libc::proc_bsdinfo> {
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     let size = i32::try_from(size_of::<libc::proc_bsdinfo>()).ok()?;
     let got = unsafe {
@@ -195,16 +345,25 @@ pub fn comm_and_group(pid: i32) -> Option<(String, i32)> {
             size,
         )
     };
-    if got != size {
-        return None;
-    }
-    // `pbi_comm` is a NUL-terminated C string in a fixed array, and the kernel guarantees the
-    // terminator; `CStr::from_bytes_until_nul` re-checks rather than trusting it, and a name that
-    // is not UTF-8 answers `None` rather than being lossily repaired into a different name.
+    (got == size).then_some(info)
+}
+
+/// The `comm` name out of a `proc_bsdinfo`.
+///
+/// # Safety
+/// `pbi_comm` is a NUL-terminated C string in a fixed array and the kernel guarantees the
+/// terminator; the slice is built from the array's own pointer and its own length, so it cannot
+/// reach past the struct, and `CStr::from_bytes_until_nul` re-checks the terminator rather than
+/// trusting it. A name that is not UTF-8 answers `None` rather than being lossily repaired into a
+/// name that is a DIFFERENT program.
+#[expect(
+    unsafe_code,
+    reason = "reading a fixed C char array as a string has no safe spelling"
+)]
+fn comm_of(info: &libc::proc_bsdinfo) -> Option<String> {
     let comm: &[u8] =
         unsafe { std::slice::from_raw_parts(info.pbi_comm.as_ptr().cast::<u8>(), info.pbi_comm.len()) };
-    let name = CStr::from_bytes_until_nul(comm).ok()?.to_str().ok()?;
-    Some((name.to_owned(), i32::try_from(info.pbi_pgid).ok()?))
+    Some(CStr::from_bytes_until_nul(comm).ok()?.to_str().ok()?.to_owned())
 }
 
 /// A process's argv — `sysctl(KERN_PROCARGS2)`, size-then-fill.
@@ -300,7 +459,77 @@ fn parse_procargs2(buffer: &[u8]) -> Option<Vec<String>> {
     reason = "a panic in a test is the failure report, not a runtime fault"
 )]
 mod tests {
-    use super::{executable_path, parse_procargs2, process_args, process_group_pids};
+    use super::{
+        all_pids, executable_path, parse_procargs2, process_args, process_group_pids, short_name,
+        tty_and_start, working_directory,
+    };
+
+    /// The all-pids census must at minimum contain the process asking, and must not contain a
+    /// non-positive entry — the filter is what keeps a `0` from being read as a pid a later
+    /// `proc_pidinfo` would answer for the WHOLE machine's process table.
+    #[test]
+    fn the_census_finds_this_process_and_nothing_that_is_not_a_pid() {
+        let pids = all_pids();
+        let own = i32::try_from(std::process::id()).expect("this pid fits");
+        assert!(pids.contains(&own), "the census must see the process running it");
+        assert!(pids.iter().all(|pid| *pid > 0));
+    }
+
+    /// The cwd read is checked against the answer `std` gives for the same process, which is the
+    /// only way to tell a correct path from a plausible one.
+    #[test]
+    fn a_processs_working_directory_is_the_one_it_is_actually_in() {
+        let own = i32::try_from(std::process::id()).expect("this pid fits");
+        let expected = std::fs::canonicalize(std::env::current_dir().expect("a cwd")).expect("canonical");
+        let read = working_directory(own).expect("this process has a cwd");
+        assert_eq!(
+            std::fs::canonicalize(&read).expect("canonical"),
+            expected,
+            "the vnode read must answer the directory std reports"
+        );
+    }
+
+    /// A pid that cannot exist answers nothing from every per-pid reading, rather than an empty
+    /// string or a zero a caller would print.
+    #[test]
+    fn an_impossible_pid_answers_nothing_from_every_reading() {
+        assert_eq!(working_directory(0), None);
+        assert_eq!(working_directory(-1), None);
+        assert_eq!(short_name(i32::MAX), None);
+        assert_eq!(tty_and_start(i32::MAX), None);
+    }
+
+    /// `proc_name` is the fallback under `proc_pidpath`, so it has to answer for THIS process, and
+    /// its answer has to be a prefix of the path's basename — the kernel truncates at 16 bytes.
+    #[test]
+    fn the_short_name_is_the_truncated_head_of_the_executables_basename() {
+        let own = i32::try_from(std::process::id()).expect("this pid fits");
+        let short = short_name(own).expect("this process has a comm name");
+        let path = executable_path(own).expect("this process has a path");
+        let base = path.rsplit('/').next().expect("a basename");
+        assert!(!short.is_empty());
+        assert!(
+            base.starts_with(&short),
+            "comm {short:?} must be the head of basename {base:?}"
+        );
+    }
+
+    /// The start second is a real Unix time, not the zero a failed read would leave behind — the
+    /// census subtracts it from now, and a zero would report an uptime of decades.
+    #[test]
+    fn a_live_process_reports_a_start_time_in_the_past() {
+        let own = i32::try_from(std::process::id()).expect("this pid fits");
+        let (_tty, start) = tty_and_start(own).expect("this process has bsd info");
+        let now = i64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("after the epoch")
+                .as_secs(),
+        )
+        .expect("a second that fits");
+        assert!(start > 0, "a live process must report when it started");
+        assert!(start <= now, "and it cannot have started in the future");
+    }
 
     /// The parse is the half that had every off-by-one in it, so it is tested without a process.
     #[test]

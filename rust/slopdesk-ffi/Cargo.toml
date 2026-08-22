@@ -104,6 +104,10 @@ slopdesk-apple-app = { path = "../slopdesk-apple-app" }
 # crate is otherwise linked by the iOS app, and `slopdesk-posix` exists to stay tiny for a daemon —
 # an ungated edge would drag `fork`/`openpty` into a slice that has no use for either.
 slopdesk-posix = { path = "../slopdesk-posix" }
+# The pane census — the processes and listening ports behind one PTY master. Gated with its two
+# dependencies above for the same reason: it is Darwin `proc_*` and an `lsof` spawn, and there is no
+# pane, no PTY and no `lsof` in an iOS slice.
+slopdesk-panecensus = { path = "../slopdesk-panecensus" }
 
 # Linked into an app, and one of the two consumers is the terminal's hot output path. `panic` is
 # `abort` on purpose and it is not a size choice: unwinding across a C ABI frame into Swift is

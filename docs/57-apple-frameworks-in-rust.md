@@ -171,6 +171,16 @@ violated is §2's, not a scheduling one: this family wraps a FRAMEWORK AREA, and
 no framework to name in its safety comment. A row that names a Swift FILE rather than an API is a row
 that has not been read yet.
 
+**`HostMetadataProbe` was not one either, and it was the bigger half.** The same misreading put it
+nowhere at all: it is `proc_listpids` over every live pid, `proc_pidinfo` for each one's `e_tdev` and
+start second, `proc_pidinfo(PROC_PIDVNODEPATHINFO)` for the cwd, `ptsname` + `stat` for the pane's
+device number, and a `Foundation.Process` running `lsof`. No framework, so no row here — the syscalls
+are `rust/slopdesk-posix::proc` and `::pty` (increment 88) and the DECISIONS above them are
+`rust/slopdesk-panecensus`, a `forbid(unsafe_code)` crate. What that split bought is the thing the
+file's own header had conceded for years: it was compiled and code-reviewed ONLY, never unit-tested,
+because every reading needs a live PTY and a real subprocess. The hostile-input parser rode along
+under that exemption. It is now a function over a string with four tests.
+
 **`NSWorkspace` left the row entirely**, and not because it was hard. Its `frontmostApplication` is
 a per-process snapshot that freezes in a daemon pumping no run loop — the bug `slopdesk-apple-cgwindow`
 exists to have fixed — so there is nothing to port, only something to keep deleted. Its

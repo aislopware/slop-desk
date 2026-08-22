@@ -425,6 +425,7 @@ dependencies = [
  "slopdesk-hookevent",
  "slopdesk-ids",
  "slopdesk-inspectord",
+ "slopdesk-panecensus",
  "slopdesk-posix",
  "slopdesk-probe",
  "slopdesk-rowscan",
@@ -474,6 +475,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "slopdesk-panecensus"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-agent",
+ "slopdesk-posix",
+ "slopdesk-probe",
+ "slopdesk-wire",
 ]
 
 [[package]]

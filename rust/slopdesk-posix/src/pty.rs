@@ -468,6 +468,52 @@ pub fn foreground_process_group(master: RawFd) -> Result<i32, Errno> {
     Ok(group)
 }
 
+/// The DEVICE NUMBER of a PTY master's slave side — `ptsname` + `stat`.
+///
+/// This is what defines a pane's process SET. A process's controlling terminal is recorded in its
+/// `proc_bsdinfo` as `e_tdev`, a device number and not a path, so "which processes belong to this
+/// pane" is answered by comparing that field against this — never by walking names.
+///
+/// `None` for a descriptor that is not a master, and for a slave that has been unlinked. Both mean
+/// the pane has no process set rather than that it has an empty one, but the census reports the
+/// same empty list either way: a pane whose PTY is gone has no processes to show.
+///
+/// # Safety
+/// `ptsname` answers a pointer into a static per-process buffer, valid until the next `ptsname` on
+/// any thread — so it is copied into a `CString` before anything else runs, and never held. It is
+/// checked for null first, and a null answer is the documented failure. `stat` fills the struct
+/// whose pointer it is given; the local is fully initialised (zeroed) beforehand and read only when
+/// the call reports success.
+#[must_use]
+#[expect(
+    unsafe_code,
+    reason = "ptsname and stat on a raw fd have no wrapper that answers st_rdev"
+)]
+pub fn slave_device(master: RawFd) -> Option<u32> {
+    if master < 0 {
+        return None;
+    }
+    // SAFETY: `master` is a live fd; the answer is a static buffer this copies out of immediately.
+    let name = unsafe {
+        let raw = libc::ptsname(master);
+        if raw.is_null() {
+            return None;
+        }
+        CStr::from_ptr(raw).to_owned()
+    };
+    // SAFETY: a fully-initialised local of exactly `stat`'s type, and a path that is live for the
+    // call because `name` owns it. `stat` is a plain C struct of integers — all-zero is a valid
+    // inhabitant, so a failed call cannot leave a field holding whatever was on the stack.
+    let mut status: libc::stat = unsafe { std::mem::zeroed() };
+    let got = unsafe { libc::stat(name.as_ptr(), &raw mut status) };
+    if got != 0 {
+        return None;
+    }
+    // `e_tdev` is a `u32` while `st_rdev` is a `dev_t`; the low 32 bits are the whole device number
+    // on Darwin, and truncating is what makes the two fields comparable at all.
+    Some(status.st_rdev.cast_unsigned())
+}
+
 /// Borrows the `char *` out of each `CString` and NUL-terminates the vector, the exact shape
 /// `execve` takes. The returned pointers borrow `owned`, which must outlive them.
 fn null_terminated(owned: &[CString]) -> Vec<*const libc::c_char> {
@@ -507,7 +553,7 @@ mod tests {
     use std::io::Read as _;
     use std::os::fd::AsRawFd as _;
 
-    use super::{SpawnPlan, foreground_process_group, spawn_pty};
+    use super::{SpawnPlan, foreground_process_group, slave_device, spawn_pty};
 
     fn plan<'a>(executable: &'a str, arguments: &'a [String]) -> SpawnPlan<'a> {
         SpawnPlan {
@@ -583,6 +629,48 @@ mod tests {
             nix::sys::signal::Signal::SIGKILL,
         );
         let _ignored = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(spawned.pid), None);
+    }
+
+    /// The device number the master reports for its slave must be the one the CHILD carries as its
+    /// controlling terminal, because comparing those two numbers is the entire definition of "the
+    /// processes belonging to this pane". If they ever disagreed the census would be empty and the
+    /// pane's process list would read as a pane with nothing running in it — a silent wrong answer,
+    /// not an error.
+    #[test]
+    fn the_masters_slave_device_is_what_the_child_carries_as_its_terminal() {
+        let arguments = vec!["-c".to_owned(), "sleep 5".to_owned()];
+        let spawned = spawn_pty(&plan("/bin/sh", &arguments)).unwrap();
+        let master = spawned.master.as_raw_fd();
+        let device = slave_device(master).unwrap();
+
+        // Same poll as above: the child has no controlling terminal until it reaches `TIOCSCTTY`.
+        let mut child_device = None;
+        for _attempt in 0..200 {
+            child_device = crate::proc::tty_and_start(spawned.pid).map(|(tty, _start)| tty);
+            if child_device.is_some_and(|tty| tty == device) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            child_device,
+            Some(device),
+            "the child's e_tdev must equal the master's slave st_rdev"
+        );
+
+        let _ignored = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(spawned.pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
+        let _ignored = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(spawned.pid), None);
+    }
+
+    /// A descriptor that is not a PTY master has no slave, and must say so rather than answer a
+    /// device number the census would then match every process on the machine against.
+    #[test]
+    fn a_descriptor_that_is_not_a_master_has_no_slave_device() {
+        assert_eq!(slave_device(-1), None);
+        assert_eq!(slave_device(0), None);
     }
 
     /// A nonexistent binary must fail as a dead child, not as a hung parent. `execve` failing
