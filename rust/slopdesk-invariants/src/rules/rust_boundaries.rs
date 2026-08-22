@@ -105,11 +105,16 @@ pub fn replay_buffer(tree: &Tree) -> Report {
 
 /// Agent detection is `rust/slopdesk-agent`, and the Swift module is vocabulary plus marshalling.
 ///
-/// Four files stay as faces and must each still call the crate. The four that used to be on that
+/// Three files stay as faces and must each still call the crate. The ones that used to be on that
 /// list are GONE rather than thin: once the fusion moved, nothing in `Sources/` had a reason to
 /// name a machine, a signal, a process matcher or an input classifier — the detector's doors take
 /// the raw input and answer the fold. A wrapper that only forwards is still a file another wrapper
 /// can be written next to, so the check for those is that they stay deleted.
+///
+/// `AgentJobIdentifier.swift` left the list most recently, and by the same rule rather than by an
+/// exception to it: it staged a foreground job across the FFI one field at a time because Swift
+/// owned the syscalls that produced it. `rust/slopdesk-posix::proc` owns them now, so the whole
+/// question is `slopdesk_pty_foreground_agent` and there is nothing left for a face to marshal.
 ///
 /// The six banned strings are the tables and the walks a re-implementation would need and a wrapper
 /// cannot have.
@@ -119,7 +124,6 @@ pub fn agent_detection(tree: &Tree) -> Report {
         "Sources/SlopDeskAgentDetect/AgentKind.swift",
         "Sources/SlopDeskAgentDetect/ClaudeStatus.swift",
         "Sources/SlopDeskAgentDetect/AgentDetectionHold.swift",
-        "Sources/SlopDeskAgentDetect/AgentJobIdentifier.swift",
     ];
     const GHOSTS: &str = r#"case "claude-code"|wrapperBasenames|cancelOnly|pendingIdleStartedAt|private var blockLedger|func wrappedAgentName"#;
 
@@ -157,6 +161,11 @@ pub fn agent_detection(tree: &Tree) -> Report {
             exempt: &[],
             message: "Sources/SlopDeskAgentDetect grew a detection table back ({files}) — the rules \
                       live in rust/slopdesk-agent (docs/55 §6)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskAgentDetect/AgentJobIdentifier.swift",
+            message: "the Swift foreground-job identifier is back — one door answers the whole \
+                      question now (rust/slopdesk-ffi::foreground, docs/55 §6)",
         },
     ]));
     report

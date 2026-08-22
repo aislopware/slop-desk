@@ -15,6 +15,7 @@ import Foundation
 #if os(macOS)
 import AppKit
 import CoreGraphics
+import CSlopDeskFFI
 import SlopDeskVideoHost
 import SlopDeskVideoProtocol
 
@@ -23,10 +24,14 @@ import SlopDeskVideoProtocol
 /// 0.25 s per-app timeout — a fleet of hung apps costs ≤0.75 s worst-tick, ~0 steady-state).
 @MainActor private let minimizedProbe = MinimizedStateProbe()
 
-/// Enumerates the host's app windows into the pure feed input shape. `@MainActor`: the AppKit reads
-/// (`NSWorkspace.frontmostApplication`, `NSRunningApplication`) belong there, and one ≤ 2.5 ms
-/// CGWindowList call per tick on the daemon's otherwise-idle main queue is far below any budget
-/// that matters.
+/// Enumerates the host's app windows into the pure feed input shape. `@MainActor` for the one
+/// remaining framework read, `CGWindowListCopyWindowInfo` — ≤ 2.5 ms per tick on the daemon's
+/// otherwise-idle main queue, far below any budget that matters.
+///
+/// The per-pid app state was `NSRunningApplication` here and is `rust/slopdesk-apple-app` now, one
+/// door per field. That is not a style change: the two fields were read through a framework whose
+/// other frontmost API freezes in a daemon that pumps no run loop, and keeping one of them in Swift
+/// meant one question answered in two languages beside a door that already answered the other.
 @MainActor
 func enumerateHostWindows() -> [WindowFeedSourceWindow] {
     guard let info = CGWindowListCopyWindowInfo(
@@ -42,12 +47,15 @@ func enumerateHostWindows() -> [WindowFeedSourceWindow] {
     // "NSScreen reports 1×" family of traps; stay in CG space).
     let displayBounds = HostDisplays.bounds(online: false)
 
-    // Per-PID AppKit reads cached within ONE enumeration (an app owns many windows).
+    // Per-PID reads cached within ONE enumeration (an app owns many windows), so the cache is what
+    // keeps two doors per window down to two doors per app.
     var appStates: [pid_t: (bundleID: String, isHidden: Bool)] = [:]
     func appState(for pid: pid_t) -> (bundleID: String, isHidden: Bool) {
         if let cached = appStates[pid] { return cached }
-        let app = NSRunningApplication(processIdentifier: pid)
-        let state = (bundleID: app?.bundleIdentifier ?? "", isHidden: app?.isHidden ?? false)
+        let state = (
+            bundleID: HostFrontmostApp.bundleID(of: pid) ?? "",
+            isHidden: slopdesk_app_is_hidden(pid),
+        )
         appStates[pid] = state
         return state
     }

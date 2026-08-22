@@ -317,13 +317,6 @@ size_t  slopdesk_replay_seqs_copy(SlopDeskReplay *handle, int64_t *out, size_t c
 // a hook body is untrusted input.
 // ---------------------------------------------------------------------------
 
-// present == false is Swift's nil; present == true with len == 0 is the empty string.
-typedef struct {
-    size_t offset;
-    size_t len;
-    bool   present;
-} SlopDeskAgentSpan;
-
 // A screen verdict, in the fields the temporal layer compares. state: 0 idle, 1 working, 2 blocked,
 // 3 unknown.
 typedef struct {
@@ -521,35 +514,15 @@ ptrdiff_t slopdesk_agent_intent_line(const uint8_t *prompt, size_t len, uint8_t 
 ptrdiff_t slopdesk_agent_topic_line(const uint8_t *title, size_t len, uint8_t *out, size_t cap);
 uint8_t   slopdesk_agent_block_kind(uint8_t standing, uint8_t ledger, uint8_t event, bool blocked);
 
-// The foreground JOB: a process-group id plus N processes, each with up to three optional strings
-// and a whole argv. Too much shape for one flat struct, so it is STAGED — build it, then ask it.
 // A screen-dissent window in seconds: 0 how long the screen must claim BLOCKED before it may raise
 // a block the hook feed never announced, 1 how long it must contradict the other way before it may
 // release one. The two are asymmetric on purpose, and the asymmetry IS the policy. Unknown index
 // answers 0, which is no window rather than a plausible one.
 double slopdesk_agent_dissent_seconds(uint8_t index);
 
-// Its strings ride in a shared buffer as spans, exactly like a signal's.
-typedef struct SlopDeskAgentJob SlopDeskAgentJob;
-
-// The caller's symlink resolver. Returns how many bytes the resolved BASENAME needs; 0 means the
-// token resolves to nothing, which is also all an empty basename could have meant.
-typedef size_t (*slopdesk_agent_resolve_fn)(void *ctx, const uint8_t *token, size_t token_len,
-                                            uint8_t *out, size_t cap);
-
-SlopDeskAgentJob *slopdesk_agent_job_new(int32_t process_group_id);
-void slopdesk_agent_job_free(SlopDeskAgentJob *handle);
-void slopdesk_agent_job_push_process(SlopDeskAgentJob *handle, int32_t pid,
-                                     SlopDeskAgentSpan name, SlopDeskAgentSpan argv0,
-                                     SlopDeskAgentSpan cmdline,
-                                     const uint8_t *strings, size_t strings_len);
-// Appends to the LAST pushed process; a no-op before the first one.
-void slopdesk_agent_job_push_argv(SlopDeskAgentJob *handle, const uint8_t *bytes, size_t len);
-
-// -1 = no agent in this job. The name that identified it lands in the answer slot.
-int32_t slopdesk_agent_job_identify(SlopDeskAgentJob *handle,
-                                    slopdesk_agent_resolve_fn resolve, void *context);
-size_t  slopdesk_agent_job_answer(SlopDeskAgentJob *handle, uint8_t *out, size_t cap);
+// The foreground JOB has no doors here. It used to have six plus a resolver callback, so Swift
+// could hand over a process group it had probed itself; both halves live in Rust now and the
+// question is asked once, as slopdesk_pty_foreground_agent below (macOS only, like the probe).
 
 // Whether the host should be holding a system-sleep assertion right now — the WHOLE state, asked on
 // every fold, so the daemon's create⇄release stays balanced against the answer rather than an edge.
@@ -8383,6 +8356,45 @@ bool slopdesk_cgdisplay_under(double x, double y, SlopDeskCGDisplay *out);
 // SCShareableContent or from the virtual display they created. An id naming no
 // display answers a zero rect, which is CoreGraphics's own answer.
 SlopDeskVideoRect slopdesk_cgdisplay_bounds_of(uint32_t display_id);
+
+// The bundle identifier of a pid, or 0 (§4's None) when it names no application — it
+// exited, it is not an app bundle, or it has no Info.plist. Every caller reads that as
+// "not eligible" and fails CLOSED. Pair it with slopdesk_cgwindow_frontmost_pid above;
+// together they are the whole frontmost read, with no AppKit on the Swift side.
+size_t slopdesk_app_bundle_id(int32_t pid, uint8_t *out, size_t cap);
+
+// Whether that app is HIDDEN (⌘H, or hidden by another app becoming active). A pid
+// naming no application answers false — the window feed reads hidden as a reason to
+// SUPPRESS a row, and a window belonging to nothing is not a window a person hid.
+bool slopdesk_app_is_hidden(int32_t pid);
+
+// Brings that app to the front — a REQUEST, never a guarantee, and false when the pid
+// names no application. No activation options cross and there is no door that takes
+// them: the injector raises and focuses ONE window through AX first, and
+// ActivateAllWindows would undo exactly that.
+bool slopdesk_app_activate(int32_t pid);
+
+// ---- Who holds a pane's PTY foreground -------------------------------------------
+//
+// Both doors take a PTY MASTER fd and do the probing here: tcgetpgrp, proc_pidpath,
+// proc_listpids, proc_pidinfo and sysctl(KERN_PROCARGS2) are rust/slopdesk-posix's.
+// Swift used to run all five and then stage the result back across this boundary one
+// field at a time; it now asks a question and gets an answer.
+
+// The CANONICAL name of the program holding this PTY's foreground group. 0 for a
+// closed fd, no foreground group, or a process that exited mid-read — all the same
+// answer to the detector, which clears presence rather than holding the last name.
+//
+// Canonical, not raw: the Claude Code native installer names its executable by
+// VERSION, so a raw basename would print "2.1.218" and identify nobody.
+size_t slopdesk_pty_foreground_name(int32_t master_fd, uint8_t *out, size_t cap);
+
+// Which agent holds it, as an index into AgentKind::ALL (the Swift enum's allCases
+// order), or -1 for none. The DEEP probe — the whole process group with each member's
+// comm and argv — so it answers the npm-wrapped case, where the leader is `node` and
+// the agent's name is only in someone's argv. Reach for it exactly when the name door
+// above answered a generic runtime or shell; it costs a process-group enumeration.
+int32_t slopdesk_pty_foreground_agent(int32_t master_fd);
 
 // ---- The repository behind a pane's cwd ------------------------------------------
 

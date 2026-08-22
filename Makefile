@@ -284,7 +284,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-macos-apps check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
+.PHONY: check quick check-ios check-macos-apps check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
 check: lint build test miri golden check-ios check-macos-apps ## lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -606,6 +606,14 @@ apple-cgwindow-test: ## cargo test for the window-list decode (key constants, dr
 apple-cgdisplay-test: ## cargo test for the display-list reads (space agreement, handle-leak check)
 	cd rust/slopdesk-apple-cgdisplay && cargo test
 
+# `NSRunningApplication` — a pid in, a bundle id / hidden flag / activation out. The one crate in the
+# family that writes NO `unsafe` at all: `objc2-app-kit` generates every call it makes as safe, which
+# is the bar `docs/57` §3 sets per crate rather than as a budget. Its suite asks about pids that name
+# nothing, because that is the whole failure mode — every caller reads the answer as "not eligible"
+# and must fail CLOSED rather than on a stale or defaulted value.
+apple-app-test: ## cargo test for the running-application reads (nothing-pid answers, no-snapshot property)
+	cd rust/slopdesk-apple-app && cargo test
+
 # The memory half of that: what actually reads the loads and stores for a pointer that left its
 # allocation or its provenance. `CLAUDE.md` says the third `unsafe` crate was bought with "a
 # differential suite that runs under Miri" — and until this line, NOTHING ran it. Not `check`, not
@@ -727,7 +735,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test invariants-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test workspace-test ids-test tree-test settings-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + workspace rules + identity + the document tree + the settings catalogue + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
+test: ffi hook-test invariants-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test workspace-test ids-test tree-test settings-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the running-application reads + workspace rules + identity + the document tree + the settings catalogue + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the

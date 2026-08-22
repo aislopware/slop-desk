@@ -152,7 +152,7 @@ an `extern` key constant, an element type C's `CFArrayRef` does not carry, an ou
 | `slopdesk-apple-cgdisplay` | CG display services | every `CGDisplayBounds`/`CGGet*DisplayList` site | **landed** (increment 85) |
 | `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowGeometryWatcher`, `WindowFeedAXSupport` | planned |
 | `slopdesk-apple-cgcursor` | `NSCursor` reads | `CursorSampler` | planned |
-| `slopdesk-apple-app` | `NSRunningApplication`/`NSWorkspace` reads | `HostFrontmostApp`'s last line, `ForegroundProcessProbes` | planned |
+| `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder`, `VideoDecoder` | planned |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer` | planned |
 | `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder`, `AudioPlaybackEngine` | planned |
@@ -160,3 +160,19 @@ an `extern` key constant, an element type C's `CFArrayRef` does not carry, an ou
 
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s
 one-implementation rule does not soften because the other language is a framework.
+
+### Two corrections this ledger earned by being wrong
+
+**`ForegroundProcessProbes` was never an `slopdesk-apple-app` row.** It sat in that line because it
+was read as "host code that resolves a process", and it contains no AppKit at all: `tcgetpgrp`,
+`proc_pidpath`, `proc_listpids`, `proc_pidinfo` and `sysctl(KERN_PROCARGS2)`, which are syscalls and
+therefore `rust/slopdesk-posix`'s — `proc.rs`, landed with increment 87. The rule the mistake
+violated is §2's, not a scheduling one: this family wraps a FRAMEWORK AREA, and a Darwin syscall has
+no framework to name in its safety comment. A row that names a Swift FILE rather than an API is a row
+that has not been read yet.
+
+**`NSWorkspace` left the row entirely**, and not because it was hard. Its `frontmostApplication` is
+a per-process snapshot that freezes in a daemon pumping no run loop — the bug `slopdesk-apple-cgwindow`
+exists to have fixed — so there is nothing to port, only something to keep deleted. Its
+*notifications* are a different API and still Swift's: an observer with a run loop behind it is not an
+effect on the system, it is a subscription, and §1's test for what belongs here is the former.

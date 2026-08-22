@@ -39,6 +39,8 @@ pub mod fdpass;
 /// the same object as the function it guards.
 #[cfg(test)]
 mod fork_window_contract;
+/// Reading another process: its path, its group's members, its `comm` name and its argv.
+pub mod proc;
 /// `openpty` + `fork` + `execve`, and the descriptor flags around them.
 pub mod pty;
 /// Process-wide signal dispositions.

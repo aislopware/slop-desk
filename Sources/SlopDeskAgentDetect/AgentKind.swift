@@ -42,7 +42,15 @@ public enum AgentKind: String, CaseIterable, Sendable {
     /// is an index into ``allCases``, which is the same order as the crate's `AgentKind::ALL` —
     /// `scripts/check-supervisor.sh` fails the build if the two ever disagree.
     public static func identify(processName: String) -> Self? {
-        let index = agentPredicateIndex(processName)
+        at(index: agentPredicateIndex(processName))
+    }
+
+    /// A crate-side answer as a case: an index into ``allCases``, or `nil` for the `-1` every door
+    /// spells "no agent" with.
+    ///
+    /// Out of range is `nil` rather than a trap, which is the documented contract for a crate that
+    /// grew an agent this build has never heard of — the pane shows no agent instead of crashing.
+    public static func at(index: Int) -> Self? {
         guard index >= 0 else { return nil }
         let all = allCases
         guard index < all.count else { return nil }

@@ -29,7 +29,7 @@ private func inputInjectorAXWindowIDSPI(_ element: AXUIElement, _ wid: UnsafeMut
 /// COMPILED + reviewed; NEVER driven from tests.
 ///
 /// Per-interaction flow (doc 18 §A, doc 05 §6):
-/// 1. Raise + focus the target window (`NSRunningApplication.activate` + AX
+/// 1. Raise + focus the target window (`slopdesk_app_activate` + AX
 ///    `kAXRaiseAction` / set `kAXFocusedWindow`) → it becomes frontmost.
 /// 2. Map the event's normalised window coordinate → host-window CG point via
 ///    ``CoordinateMapping`` (no Y flip; the click point is CG top-left, doc 05 §2).
@@ -331,7 +331,7 @@ public final class InputInjector: @unchecked Sendable {
             AXUIElementPerformAction(cached, kAXRaiseAction as CFString)
             AXUIElementSetAttributeValue(appEl, kAXMainWindowAttribute as CFString, cached)
             AXUIElementSetAttributeValue(appEl, kAXFocusedWindowAttribute as CFString, cached)
-            NSRunningApplication(processIdentifier: pid)?.activate()
+            _ = slopdesk_app_activate(pid)
             return
         }
         var windowsRef: CFTypeRef?
@@ -347,7 +347,7 @@ public final class InputInjector: @unchecked Sendable {
             AXUIElementSetAttributeValue(appEl, kAXFocusedWindowAttribute as CFString, axWindow)
             cachedAXWindow = axWindow
         }
-        NSRunningApplication(processIdentifier: pid)?.activate()
+        _ = slopdesk_app_activate(pid)
     }
 
     // MARK: Event posting (tagged for self-inject filtering)
@@ -670,7 +670,7 @@ public final class InputInjector: @unchecked Sendable {
 
     /// The allowlist check + chord post for one recognised flick (see
     /// ``translateSwipeNavIfNeeded`` for when this runs directly vs on `scrollQueue`). AppKit
-    /// reads here (`NSRunningApplication`/`NSWorkspace`) are the same thread-safe calls
+    /// reads here (the `slopdesk_app_*` doors) are the same thread-safe calls
     /// ``performRaise`` makes off-main.
     private func fireSwipeNav(_ fired: SwipeNavRecognizer.Direction) {
         // Only drive apps where ⌘[ / ⌘] is history navigation — in an editor it EDITS TEXT
@@ -734,7 +734,7 @@ public final class InputInjector: @unchecked Sendable {
     /// first access, which here means firing ⌘[ into whatever app happened to be frontmost the
     /// first time this process looked — an OUTDENT in an editor the user switched to later.
     private func swipeNavTargetBundleID() -> String? {
-        if pid > 0 { return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier }
+        if pid > 0 { return HostFrontmostApp.bundleID(of: pid) }
         return HostFrontmostApp.bundleID()
     }
 

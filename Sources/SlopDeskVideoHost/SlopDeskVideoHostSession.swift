@@ -3474,8 +3474,8 @@ public actor SlopDeskVideoHostSession {
         let status: SwipeNavStatusMessage =
             if let pid = window?.owningApplication?.processID, pid > 0 {
                 SwipeNavHostConfig.windowStatus(
-                    // Thread-safe AppKit read, same as InputInjector's off-main usage.
-                    paneBundleID: NSRunningApplication(processIdentifier: pid_t(pid))?.bundleIdentifier,
+                    // The same door the window feed and the injector ask, off-main like both.
+                    paneBundleID: HostFrontmostApp.bundleID(of: pid_t(pid)),
                     frontmostBundleID: frontmostBundleID,
                     history: history,
                 )

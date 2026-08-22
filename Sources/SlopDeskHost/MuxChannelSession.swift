@@ -1445,8 +1445,7 @@ final class MuxChannelSession: @unchecked Sendable {
         if let cached = jobProbeCachedAgent, cacheAge < 5 { return cached }
         if jobProbeCachedAgent == nil, cacheAge < 1 { return nil }
         jobProbeCachedAt = now
-        jobProbeCachedAgent = ForegroundJobProbe.job(masterFD: masterFD)
-            .flatMap { AgentJobIdentifier.identify(job: $0)?.agent }
+        jobProbeCachedAgent = PTYForegroundProbe.agent(masterFD: masterFD)
         return jobProbeCachedAgent
     }
 

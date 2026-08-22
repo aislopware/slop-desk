@@ -558,8 +558,10 @@ PANE rather than to nobody. That is exactly the confusion the attribution exists
 nested `claude -p` that inherited `SLOPDESK_PANE_ID` driving the pane's own status), and a zero
 length cannot carry it, so a bit did.
 
-The bitmask rule stands wherever an optional string crosses — it is why `SlopDeskAgentSpan` carries
-a `present` flag next to its length. The DOOR does not. When the fusion moved
+The bitmask rule stands wherever an optional string crosses, and nothing crosses that way any more:
+the last carrier of it, `SlopDeskAgentSpan`, retired with the foreground-job staging handle below.
+Keep the rule where the next optional string appears — a zero LENGTH is not an absent VALUE. The DOOR
+does not. When the fusion moved
 (`rust/slopdesk-agent`'s `detector`), a hook body stopped needing to become a Swift value at all: it
 crosses as raw bytes into `slopdesk_agent_detector_hook`, which parses and folds it in one call.
 What the old door answered was a value whose only consumer was the next call across the same
@@ -1023,19 +1025,26 @@ unchanged.
 
 ### Two shapes the agent module added
 
-**One string buffer, not one pointer each.** A foreground job's process carries three optional
-strings, and a hook event used to carry six. Six `(ptr, len)` pairs is six nested `withUnsafeBytes`
-per call. Instead the caller concatenates into one buffer and passes `(offset, len, present)` spans
-into it — one pointer, one lifetime, one scope. The crate bounds-checks every span, because this is
-untrusted input; an out-of-range span reads as absent. `present == false` is `nil`;
-`present == true, len == 0` is the empty string, and the crate tells those apart. The hook half of
-that no longer crosses — the body goes over raw — so `slopdesk_agent_job_push_process` is the door
-that holds the rule now, and `rust/slopdesk-ffi`'s own tests hold it there.
+**One string buffer, not one pointer each — retired, and worth reading for why.** A foreground job's
+process carried three optional strings and a hook event carried six; six `(ptr, len)` pairs is six
+nested `withUnsafeBytes` per call, so the caller concatenated into one buffer and passed
+`(offset, len, present)` spans into it. Both halves are gone now — the hook body goes over raw, and
+the job is not assembled across the boundary at all — so no door takes a span today. The rule the
+shape encoded is the part to keep: an out-of-range span reads as ABSENT because this is untrusted
+input, and `present == false` (`nil`) is not `present == true, len == 0` (the empty string).
 
-**A staged handle for a shape too big to flatten.** A foreground job is a pgid plus N processes, each
-with three optional strings and a whole argv. `job_new` → `push_process` / `push_argv` per item →
-`identify` → read the answer slot → `free`. Same staging pattern as the replay buffer's input slot,
-for the same reason: one item at a time, and no list encoding to get wrong.
+**A staged handle for a shape too big to flatten — and the question that dissolved it.** A foreground
+job is a pgid plus N processes, each with three optional strings and a whole argv, so it was built
+across the boundary one item at a time: `job_new` → `push_process` / `push_argv` → `identify` → read
+the answer slot → `free`, plus a C function pointer calling back for symlink resolution. Six doors and
+a trampoline, all because SWIFT owned the syscalls that produced the job.
+
+It owns none of them now (`rust/slopdesk-posix/src/proc.rs`), so both halves of the question live on one
+side and `slopdesk_pty_foreground_agent` asks it in a single call — N+1 crossings per poll became one,
+and the resolver callback became a direct call. **Before staging a shape, ask which side is producing
+it.** Staging is the right answer for a shape the CALLER genuinely owns — the replay buffer's input
+slot still is one — and the wrong answer for a shape the caller only assembled because it was holding
+the wrong end of the port.
 
 **A slot mask, where one fold owes several answers.** The pane detector's folds owe up to four
 messages of three different shapes. A single flat answer buffer encoding all four would be a second

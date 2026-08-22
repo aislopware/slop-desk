@@ -99,6 +99,11 @@ slopdesk-git = { path = "../slopdesk-git" }
 slopdesk-apple-cgevent = { path = "../slopdesk-apple-cgevent" }
 slopdesk-apple-cgdisplay = { path = "../slopdesk-apple-cgdisplay" }
 slopdesk-apple-cgwindow = { path = "../slopdesk-apple-cgwindow" }
+slopdesk-apple-app = { path = "../slopdesk-apple-app" }
+# The foreground doors' probe half. Gated for the same reason `slopdesk-git` is, and one more: this
+# crate is otherwise linked by the iOS app, and `slopdesk-posix` exists to stay tiny for a daemon —
+# an ungated edge would drag `fork`/`openpty` into a slice that has no use for either.
+slopdesk-posix = { path = "../slopdesk-posix" }
 
 # Linked into an app, and one of the two consumers is the terminal's hot output path. `panic` is
 # `abort` on purpose and it is not a size choice: unwinding across a C ABI frame into Swift is

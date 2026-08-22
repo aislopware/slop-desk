@@ -31,8 +31,7 @@ use core::ffi::c_uchar;
 
 use slopdesk_agent::{
     AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeStatus,
-    ClaudeStatusMachine, Emission, ForegroundJob, ForegroundJobProcess, NotificationKind, PaneDetector,
-    attention, badge, sleep,
+    ClaudeStatusMachine, Emission, NotificationKind, PaneDetector, attention, badge, sleep,
 };
 
 use crate::{borrow, deliver, records_of, saturating_u32};
@@ -84,21 +83,6 @@ const fn notification_from(byte: u8) -> NotificationKind {
 }
 
 // MARK: The C-visible shapes
-
-/// One optional string, as a window into the signal's string buffer.
-///
-/// `present == false` is Swift's `nil`; `present == true` with `len == 0` is the empty string. The
-/// machine tells those apart (an empty session id is not an unattributed event), so the ABI must.
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct Span {
-    /// Byte offset into the signal's string buffer.
-    pub offset: usize,
-    /// Length in bytes, which may be zero.
-    pub len: usize,
-    /// `false` is Swift's `nil`; `true` with `len == 0` is the empty string.
-    pub present: bool,
-}
 
 /// A screen verdict, in the fields the temporal layer compares. Deliberately WITHOUT the rule id
 /// and fallback reason: `hold` reads neither, and a struct that carried them would imply it did.
@@ -251,7 +235,7 @@ pub unsafe extern "C" fn slopdesk_agent_kind_identify(bytes: *const c_uchar, len
 }
 
 /// An agent as its index into `AgentKind::ALL`, which is the Swift enum's `allCases` order.
-fn kind_index(kind: slopdesk_agent::AgentKind) -> i32 {
+pub(crate) fn kind_index(kind: slopdesk_agent::AgentKind) -> i32 {
     slopdesk_agent::AgentKind::ALL
         .iter()
         .position(|candidate| *candidate == kind)
@@ -1481,91 +1465,6 @@ pub const extern "C" fn slopdesk_agent_block_kind(standing: u8, ledger: u8, even
     slopdesk_agent::block_kind(standing, ledger, event, blocked)
 }
 
-// MARK: The foreground job
-//
-// A job is a process-group id plus N processes, each carrying up to three optional strings and a
-// whole argv. That is too much shape for one flat struct, so it is STAGED: build the job on a
-// handle, then ask it a question. Same pattern as the replay buffer's input slot (docs/55 §4b),
-// for the same reason — one item at a time, no list encoding to get wrong.
-
-/// A job under construction, plus the answer slot the identify call fills.
-#[derive(Debug, Default)]
-pub struct SlopDeskAgentJob {
-    job: ForegroundJob,
-    answer: String,
-}
-
-/// The Swift side's symlink resolver: `(ctx, token, token_len, out, cap) -> needed`.
-///
-/// `0` means "this token resolves to nothing I know" — §4's `Option::None`, which is also the only
-/// thing an empty basename could have meant.
-pub type ResolveFn = unsafe extern "C" fn(
-    ctx: *mut core::ffi::c_void,
-    token: *const c_uchar,
-    token_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize;
-
-/// A C resolver, borrowed for the length of one identify call.
-struct Resolver {
-    call: Option<ResolveFn>,
-    context: *mut core::ffi::c_void,
-}
-
-impl slopdesk_agent::SymlinkResolver for Resolver {
-    #[expect(
-        unsafe_code,
-        reason = "calling back out through a C function pointer is the inverted half of the boundary"
-    )]
-    fn resolve(&self, token: &str) -> Option<String> {
-        // A null callback is NOT "resolve nothing". `AgentJobIdentifier.defaultSymlinkResolver` is
-        // `nil` on purpose, and says why: routing a filesystem touch back out through the trampoline
-        // would pay two boundary crossings per token to reach the same `realpath`, so the crate runs
-        // it here instead. Returning `None` for a missing callback made that comment a lie — the
-        // host probe resolved no symlinks at all, and `realpath_basename`, which exists for exactly
-        // this arm, had no caller anywhere in either language.
-        let Some(call) = self.call else {
-            return slopdesk_agent::job::realpath_basename(token);
-        };
-        let mut out = vec![0u8; 512];
-        // SAFETY: `out` is live and `out.len()` long for the call, and the caller's obligation on
-        // `slopdesk_agent_job_identify` is that `call`/`context` are valid for its whole duration.
-        let needed = unsafe {
-            call(
-                self.context,
-                token.as_ptr(),
-                token.len(),
-                out.as_mut_ptr(),
-                out.len(),
-            )
-        };
-        if needed == 0 {
-            return None;
-        }
-        if needed > out.len() {
-            out = vec![0u8; needed];
-            // SAFETY: as above, with a buffer the callback itself asked for.
-            let again = unsafe {
-                call(
-                    self.context,
-                    token.as_ptr(),
-                    token.len(),
-                    out.as_mut_ptr(),
-                    out.len(),
-                )
-            };
-            if again == 0 || again > out.len() {
-                return None;
-            }
-            out.truncate(again);
-        } else {
-            out.truncate(needed);
-        }
-        String::from_utf8(out).ok()
-    }
-}
-
 /// One of the screen-dissent windows, in seconds, by index.
 ///
 /// `0` how long the screen must claim BLOCKED before it may raise a block the hook feed never
@@ -1590,178 +1489,14 @@ pub const extern "C" fn slopdesk_agent_dissent_seconds(index: c_uchar) -> f64 {
     }
 }
 
-/// Creates an empty job for the given process group. Exactly one [`slopdesk_agent_job_free`] per
-/// call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_agent_job_new(process_group_id: i32) -> *mut SlopDeskAgentJob {
-    Box::into_raw(Box::new(SlopDeskAgentJob {
-        job: ForegroundJob {
-            process_group_id,
-            processes: Vec::new(),
-        },
-        answer: String::new(),
-    }))
-}
-
-/// Frees a job. Null is a no-op.
-///
-/// # Safety
-/// `handle` must be null, or a live pointer from [`slopdesk_agent_job_new`] not yet freed.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_job_free(handle: *mut SlopDeskAgentJob) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: by the caller's obligation this came from `Box::into_raw` and has not been freed.
-    drop(unsafe { Box::from_raw(handle) });
-}
-
-/// Appends one process. Its three optional strings ride in the shared buffer, as spans, the same
-/// way a signal's do — a present-but-empty span is an empty string, an absent one is Swift's `nil`.
-///
-/// # Safety
-/// `handle` must be null or a live job with no other call on it in flight; `strings` must be null
-/// or valid for `strings_len` bytes for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_job_push_process(
-    handle: *mut SlopDeskAgentJob,
-    pid: i32,
-    name: Span,
-    argv0: Span,
-    cmdline: Span,
-    strings: *const c_uchar,
-    strings_len: usize,
-) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
-    unsafe {
-        let bytes = borrow(strings, strings_len);
-        let read = |span: Span| -> Option<String> {
-            if !span.present {
-                return None;
-            }
-            let end = span.offset.checked_add(span.len)?;
-            let raw = bytes.get(span.offset..end)?;
-            core::str::from_utf8(raw).ok().map(str::to_owned)
-        };
-        (*handle).job.processes.push(ForegroundJobProcess {
-            pid,
-            name: read(name).unwrap_or_default(),
-            argv0: read(argv0),
-            // `argv` starts absent and becomes a list on the first push, so a process with no argv
-            // is distinguishable from one with an empty argv — the wrappers read the two apart.
-            argv: None,
-            cmdline: read(cmdline),
-        });
-    }
-}
-
-/// Appends one argv entry to the LAST pushed process. Before the first process, it is a no-op.
-///
-/// # Safety
-/// `handle` must be null or a live job with no other call on it in flight; `bytes` must be null or
-/// valid for `len` bytes for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_job_push_argv(
-    handle: *mut SlopDeskAgentJob,
-    bytes: *const c_uchar,
-    len: usize,
-) {
-    if handle.is_null() {
-        return;
-    }
-    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
-    unsafe {
-        let Ok(text) = core::str::from_utf8(borrow(bytes, len)) else {
-            return;
-        };
-        let Some(process) = (*handle).job.processes.last_mut() else {
-            return;
-        };
-        process.argv.get_or_insert_with(Vec::new).push(text.to_owned());
-    }
-}
-
-/// Identifies the agent running this job: the `AgentKind` index, or `-1` for none. The normalized
-/// name that identified it lands in the answer slot, read back with
-/// [`slopdesk_agent_job_answer`].
-///
-/// # Safety
-/// `handle` must be null or a live job with no other call on it in flight. `resolve` must be null,
-/// or callable with `context` for the whole of this call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_job_identify(
-    handle: *mut SlopDeskAgentJob,
-    resolve: Option<ResolveFn>,
-    context: *mut core::ffi::c_void,
-) -> i32 {
-    if handle.is_null() {
-        return -1;
-    }
-    // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
-    let staged = unsafe { &mut *handle };
-    staged.answer.clear();
-    let resolver = Resolver {
-        call: resolve,
-        context,
-    };
-    let Some((agent, name)) = slopdesk_agent::job::identify(&staged.job, &resolver) else {
-        return -1;
-    };
-    staged.answer = name;
-    kind_index(agent)
-}
-
-// Neither the per-process NAME nor its tie-break RANK has a door of its own.
+// The foreground JOB has no doors any more, and that is the point.
 //
-// They are the two steps `identify` folds — normalize each process, then keep the highest rank —
-// and the fold is the whole question a caller has. Exposing the steps invites a caller to run them
-// in the wrong order, or to stop at the first match, which is exactly the bug the strict `>` in
-// `slopdesk_agent::job::identify` exists to prevent. Both keep their tests in `slopdesk-agent`.
-
-/// Reads the answer slot — the name the last identify or normalize call produced.
-///
-/// # Safety
-/// `handle` must be null or a live job with no other call on it in flight; `out` must be null or
-/// writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_job_answer(
-    handle: *mut SlopDeskAgentJob,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    if handle.is_null() {
-        return 0;
-    }
-    // SAFETY: the caller's obligations, restated above; `deliver` states its own.
-    unsafe { deliver((*handle).answer.as_bytes(), out, cap) }
-}
+// It had six — `_new`, `_free`, `_push_process`, `_push_argv`, `_identify`, `_answer` — plus a
+// `Span` blob and a C function pointer calling back the other way, all so Swift could hand over a
+// job it had probed with its own `proc_listpids`/`sysctl`. The probe is `slopdesk_posix::proc` now,
+// so both halves of that question live on this side and a caller asks it once:
+// `slopdesk_pty_foreground_agent` in `crate::foreground`. N+1 boundary crossings per poll became
+// one, and the resolver trampoline became a direct call to `realpath_basename`.
 
 /// Whether the host should be holding a system-sleep assertion right now.
 ///
@@ -1779,9 +1514,7 @@ pub const extern "C" fn slopdesk_agent_should_prevent_sleep(any_agent_working: b
 #[cfg(test)]
 #[expect(
     unsafe_code,
-    clippy::panic,
-    reason = "driving the C ABI the way Swift does is the thing under test, and a test that cannot resolve \
-              its own signal has nothing left to assert"
+    reason = "driving the C ABI the way Swift does is the thing under test"
 )]
 mod tests {
     use super::*;
@@ -1800,44 +1533,6 @@ mod tests {
         assert!(gates.agent_when_awaiting_input);
         assert!(gates.command_when_finishes);
         assert!(gates.command_when_fails);
-    }
-
-    /// A span that runs past its buffer reads as ABSENT, and a present-but-empty one as `""`.
-    ///
-    /// The last door that takes `(offset, len, present)` spans into a caller-owned blob is the
-    /// foreground job's, so this is where the bounds discipline is held: a hostile length must
-    /// answer `None` rather than index out of the slice, and a zero LENGTH must stay apart from a
-    /// zero PRESENCE — an argv0 of `""` is a process that reported one, an absent argv0 is a
-    /// process that did not.
-    #[test]
-    fn a_span_past_its_buffer_is_absent_and_an_empty_one_is_not() {
-        let strings = b"abc";
-        let span = |offset: usize, len: usize, present: bool| Span { offset, len, present };
-        let handle = slopdesk_agent_job_new(7);
-        unsafe {
-            slopdesk_agent_job_push_process(
-                handle,
-                11,
-                span(0, 3, true),
-                // One byte past the end: a caller's arithmetic, not a caller's promise.
-                span(1, 99, true),
-                span(1, 0, true),
-                strings.as_ptr(),
-                strings.len(),
-            );
-        }
-        // SAFETY: the pointer came from `slopdesk_agent_job_new` above and nothing else holds it.
-        let staged = unsafe { &*handle };
-        let process = staged
-            .job
-            .processes
-            .first()
-            .unwrap_or_else(|| panic!("one pushed process"));
-        assert_eq!(process.name, "abc");
-        assert_eq!(process.argv0, None);
-        assert_eq!(process.cmdline.as_deref(), Some(""));
-        // SAFETY: as above, and this is the last use of the handle.
-        unsafe { slopdesk_agent_job_free(handle) };
     }
 
     /// `ClaudeStatus::ALL`'s order IS the byte, and the two maps below agree with it.
@@ -1862,56 +1557,6 @@ mod tests {
         let past_the_end = u8::try_from(ClaudeStatus::ALL.len()).unwrap_or(u8::MAX);
         assert_eq!(status_from(past_the_end), ClaudeStatus::None);
         assert_eq!(status_from(u8::MAX), ClaudeStatus::None);
-    }
-
-    /// A null callback means "the crate resolves it", not "nothing resolves".
-    ///
-    /// This is the arm Swift takes in production: `AgentJobIdentifier.defaultSymlinkResolver` is
-    /// `nil` so the `realpath` happens on this side of the boundary rather than twice across it.
-    /// The failure it guards is silent by construction — a wrapper whose own basename means nothing
-    /// simply goes unidentified, and the pane shows no agent, with nothing logged anywhere.
-    #[test]
-    #[expect(
-        clippy::expect_used,
-        reason = "this case needs a real symlink on disk, and a fixture that failed to build it would \
-                  otherwise assert about a resolver it never reached"
-    )]
-    fn a_null_callback_still_resolves_a_symlink_through_the_crate() {
-        let dir = std::env::temp_dir().join(format!("slopdesk-resolver-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let target = dir.join("claude");
-        let link = dir.join("cc-agent");
-        std::fs::write(&target, b"#!/bin/sh\n").expect("target");
-        drop(std::fs::remove_file(&link));
-        std::os::unix::fs::symlink(&target, &link).expect("symlink");
-
-        // The link's OWN basename identifies nobody, so this reaches the resolver and nothing else.
-        assert_eq!(slopdesk_agent::AgentKind::identify("cc-agent"), None);
-
-        let job = ForegroundJob {
-            process_group_id: 41,
-            processes: vec![ForegroundJobProcess {
-                pid: 41,
-                name: "cc-agent".to_owned(),
-                argv0: None,
-                // The PATH token is read off argv/cmdline, never off argv0 — `normalized_process_name`
-                // treats argv0 as a name and only these as something that might be a path.
-                argv: None,
-                cmdline: Some(link.to_string_lossy().into_owned()),
-            }],
-        };
-        let resolver = Resolver {
-            call: None,
-            context: core::ptr::null_mut(),
-        };
-        let identified = slopdesk_agent::job::identify(&job, &resolver);
-        std::fs::remove_dir_all(&dir).ok();
-
-        assert_eq!(
-            identified.map(|(agent, _)| agent),
-            Some(slopdesk_agent::AgentKind::Claude),
-            "a null callback must fall back to the crate's realpath, not resolve nothing"
-        );
     }
 
     #[test]

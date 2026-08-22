@@ -2325,6 +2325,27 @@ SWIFT_FOREGROUND=Sources/SlopDeskHost/ForegroundProcessProbes.swift
 if hit=$(spells 'split\(separator: "/"\)|isVersionShaped|"versions"' "${SWIFT_FOREGROUND}"); then
   fail "${hit} reduces a process name again — slopdesk-agent::process owns the basename and the version walk"
 fi
+# And the PROBE itself, not only the reduction. Swift ran six Darwin syscalls to answer this, then
+# staged the deep answer back across the FFI one field at a time; `rust/slopdesk-posix::proc` runs
+# them now and `rust/slopdesk-ffi::foreground` folds them, so each question is ONE call. A syscall
+# reappearing in Sources/ is the probe growing back beside the door, which is how the two spellings
+# of "which agent" started disagreeing in the first place.
+probe_revived=$(among_deleted 'tcgetpgrp|proc_listpids|proc_pidpath|proc_pidinfo|KERN_PROCARGS2')
+if [[ -n "${probe_revived}" ]]; then
+  printf '%s\n' "${probe_revived}" >&2
+  fail "a Swift foreground PROBE is back in Sources/ — rust/slopdesk-posix::proc owns the syscalls (docs/55 §6)"
+fi
+for door in slopdesk_pty_foreground_name slopdesk_pty_foreground_agent; do
+  if ! spells "${door}" "${SWIFT_FOREGROUND}" > /dev/null; then
+    fail "${SWIFT_FOREGROUND} stopped asking ${door} — it is a face over the probe, not a second one"
+  fi
+done
+# The staging handle that existed ONLY because Swift owned the syscalls. Six doors plus a callback
+# trampoline, retired together with the probe; a door that comes back means a job is being assembled
+# across the boundary again.
+if hit=$(spells 'slopdesk_agent_job_new|slopdesk_agent_job_push_process|slopdesk_agent_resolve_fn' rust/slopdesk-ffi/include/slopdesk_ffi.h); then
+  fail "${hit} — the foreground job staging handle is back; slopdesk_pty_foreground_agent asks it in one call"
+fi
 SWIFT_CONTROL=Sources/SlopDeskHost/AgentControlListener.swift
 if hit=$(spells 'sensitiveBasenames|"sshpass"|"doas"' "${SWIFT_CONTROL}"); then
   fail "${hit} lists the sensitive commands in Swift — the set is SENSITIVE_BASENAMES in Rust"
@@ -2337,6 +2358,17 @@ for rule in 'pub fn is_sensitive' 'pub fn canonical_name' 'pub fn is_version_sha
     fail "rust/slopdesk-agent/src/process.rs lost ${rule} — the foreground vocabulary is one module"
   fi
 done
+# One frontmost read, and no AppKit in it. The pid is the window list's election and the bundle id
+# is `rust/slopdesk-apple-app`'s; a `NSRunningApplication` beside the door is the second half of one
+# question answered in the other language.
+frontmost_appkit=$(among_deleted 'NSRunningApplication\(processIdentifier:|NSWorkspace\.shared\.frontmostApplication')
+if [[ -n "${frontmost_appkit}" ]]; then
+  printf '%s\n' "${frontmost_appkit}" >&2
+  fail "a Swift frontmost read is back in Sources/ — slopdesk_app_bundle_id answers it (docs/57 §5)"
+fi
+if ! spells 'slopdesk_app_bundle_id' Sources/SlopDeskVideoHost/HostFrontmostApp.swift > /dev/null; then
+  fail "Sources/SlopDeskVideoHost/HostFrontmostApp.swift stopped asking the bundle-id door — it is a face over two doors"
+fi
 printf 'check-supervisor: one vocabulary for a foreground process name.\n'
 
 # ── One badge ladder for a tab row ─────────────────────────────────────────────────────────────

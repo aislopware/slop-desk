@@ -47,6 +47,9 @@ pub mod android_control;
 pub mod android_log_level;
 pub mod android_stream;
 pub mod annexb;
+// macOS only: `NSRunningApplication`, which no iOS slice has. See the module.
+#[cfg(target_os = "macos")]
+pub mod app;
 pub mod audio_jitter;
 pub mod binding_config;
 pub mod binding_rows;
@@ -80,6 +83,9 @@ pub mod drop_action;
 pub mod file_transfer;
 pub mod find_matches;
 pub mod folders;
+// macOS only: Darwin `proc_*` and `KERN_PROCARGS2`, asked only by hostd. See the module.
+#[cfg(target_os = "macos")]
+pub mod foreground;
 pub mod frame_decoder;
 pub mod frame_rate;
 pub mod fuzzy;
