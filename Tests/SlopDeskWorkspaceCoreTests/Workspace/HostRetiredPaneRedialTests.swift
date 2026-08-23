@@ -15,7 +15,7 @@ import XCTest
 /// round trip BEFORE it learns the pane is gone — and in that window its reconnect campaign treated
 /// the close as a transport drop and re-opened the channel. A pane channel naming a session the host
 /// no longer has is a fresh SPAWN, so a whole login shell was forked for a pane the user had just
-/// closed. Measured on hardware, `scripts/check-multiclient.sh`:
+/// closed. Measured on hardware, `slopdesk-guigate multiclient`:
 ///
 ///     mux channel  7 (conn …ADCA27): joined live session 5AD35312… as subscriber 1
 ///     mux channel 11 (conn …ADCA27): shell /bin/sh (pid 75883) attached for pane 5AD35312…

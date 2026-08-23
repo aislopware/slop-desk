@@ -29,7 +29,7 @@ public enum SettingsKey {
     /// port into the developer's `connection.recentTargets`, five entries deep, evicting the host
     /// they actually use. A suite isolates BOTH directions: a suite-backed `UserDefaults` cannot see
     /// this bundle's own persistent domain, and `NSArgumentDomain` still outranks it — which is what
-    /// keeps `check-launch-restore.sh`'s `-connection.recentTargets` fixture driving the real
+    /// keeps `slopdesk-guigate launch-restore`'s `-connection.recentTargets` fixture driving the real
     /// auto-reconnect. The XCTest suite wins over it, so an exported variable in a developer's shell
     /// cannot collapse `swift test --parallel` back onto one shared domain.
     /// `nonisolated(unsafe)`: `UserDefaults` is documented thread-safe; it just lacks a `Sendable` mark.
@@ -42,7 +42,7 @@ public enum SettingsKey {
         // can clean it and a reused pid would inherit the last run's mutations. It wipes itself.
         //
         // An env-named suite is the opposite: whoever set `SLOPDESK_DEFAULTS_SUITE` owns its lifetime
-        // and SEEDS it. `check-launch-restore.sh` drives the returning-user launch path, and a
+        // and SEEDS it. `slopdesk-guigate launch-restore` drives the returning-user launch path, and a
         // returning user is precisely someone whose defaults are not empty — wiping here would erase
         // the fixture and turn every run of that gate into a fresh install.
         if testProcessSuiteName != nil {

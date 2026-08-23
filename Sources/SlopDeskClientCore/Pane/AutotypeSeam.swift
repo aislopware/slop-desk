@@ -2,7 +2,7 @@ import Foundation
 
 /// The `SLOPDESK_AUTOTYPE` OUT-path proof seam (docs/22 §7).
 ///
-/// `check-macos.sh --connect` asserts the whole keystroke→host chain by having the app type one
+/// `slopdesk-guigate macos --connect` asserts the whole keystroke→host chain by having the app type one
 /// command through the REAL OUT path — `TerminalViewModel.sendInput` → the ordered drain → the host
 /// PTY — and then reading a computed marker the remote shell wrote to a file. This is the client
 /// half: the first leaf to connect while it carries `LivePaneSession.isAutotypeTarget` sends the

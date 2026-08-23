@@ -41,7 +41,7 @@ package enum TerminalLeafPolicy {
     /// one shot doing it. And it must MOVE as that pane connects: a key that is already the pane's id
     /// while the channel is still dialling is a task that runs once, too early, and never again. That
     /// is an OUT path dead for the rest of the launch, and the whole seam otherwise only fails on
-    /// hardware, in `check-macos.sh --connect`.
+    /// hardware, in `slopdesk-guigate macos --connect`.
     package static func autotypeTaskKey(pane: PaneID?, isTarget: Bool, status: ConnectionStatus?) -> PaneID? {
         guard let pane, isTarget, case .connected = status else { return nil }
         return pane

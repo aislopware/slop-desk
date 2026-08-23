@@ -3,7 +3,7 @@ import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceStore × the automation bootstrap (docs/22 §7)
 
-/// The `SLOPDESK_*` launch seams `check-macos.sh --connect` and `check-video.sh` drive.
+/// The `SLOPDESK_*` launch seams `slopdesk-guigate macos --connect` and `slopdesk-guigate video` drive.
 ///
 /// One story, end to end: resolve the autoconnect shape from the environment, apply it locally so
 /// the window mounts THAT and nothing else, and upload it as op 0 once there is a document to upload
@@ -12,7 +12,7 @@ public extension WorkspaceStore {
     /// Builds the INITIAL workspace from the automation env vars (docs/22 §7), replacing the current
     /// `workspace` and reconciling. It only sets up SHAPE + INTENT (endpoints pre-filled) — it does
     /// **not** connect or open video; the connect / autotype / video-open TRIGGER stays in the view
-    /// layer, and the env-var names are fixed by `check-macos.sh` / `check-video.sh`.
+    /// layer, and the env-var names are fixed by `slopdesk-guigate macos` / `slopdesk-guigate video`.
     ///
     /// - `SLOPDESK_AUTOCONNECT_HOST` + `SLOPDESK_AUTOCONNECT_PORT` ⇒ the app ``Workspace/connection`` target is
     ///   that host:port and pane 0 is a plain terminal (it rides the app connection).
@@ -117,7 +117,7 @@ extension WorkspaceStore {
         // Nothing to fold in beside the tree: an autoconnect shape is minted here, not restored, so its
         // panes have no spawn directory to carry and the host takes its own default for each.
         stageAdopt(WorkspaceTopology(tree: shape.tree))
-        // The window-targeted video autoconnect (`check-video.sh` serves ONE host window) boots the
+        // The window-targeted video autoconnect (`slopdesk-guigate video` serves ONE host window) boots the
         // remote desktop the way the user gets it: a DETACHED `.desktop` pane in its own OS window —
         // video never enters the workspace tree (docs/DECISIONS.md 2026-07-23). Its pane id is minted
         // with the shape, so the deferred run asks for the same window the immediate one would have.

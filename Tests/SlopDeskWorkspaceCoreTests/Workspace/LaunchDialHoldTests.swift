@@ -523,7 +523,7 @@ final class LaunchDialHoldTests: XCTestCase {
     }
 
     /// The AUTOMATION bootstrap publishes its own shape and clears the offer, so the gates that ride
-    /// it (`check-macos.sh --connect`, `check-video.sh`) dial exactly when they always did.
+    /// it (`slopdesk-guigate macos --connect`, `slopdesk-guigate video`) dial exactly when they always did.
     func testTheAutomationBootstrapIsNeverHeld() {
         let dials = Dials()
         let store = makeStore(clientTree(), dials: dials)

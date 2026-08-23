@@ -14,22 +14,25 @@
 //!
 //! ## The two edges the graph cannot see
 //! A dependency graph knows about imports. It does not know that `SubprocessE2ETests` SPAWNS the
-//! built `slopdesk-hostd` and `slopdesk-client` binaries, nor that the two gate-contract suites
-//! OPEN `scripts/*.sh` off disk at run time. Both are hand-mapped in [`attribute`], and a new test
-//! that spawns a binary or reads a repo path outside its own target directory must add its edge
-//! there or go silently unselected.
+//! built `slopdesk-hostd` and `slopdesk-client` binaries, nor that `LaunchRestoreGateContractTests`
+//! OPENS `scripts/fixtures/*.json` off disk at run time. Both are hand-mapped in [`attribute`], and
+//! a new test that spawns a binary or reads a repo path outside its own target directory must add
+//! its edge there or go silently unselected.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-/// The two suites that read `scripts/` off disk at run time.
+/// The suite that reads `scripts/` off disk at run time.
 ///
-/// They used to live in a shared UI suite; increment 63 dissolved it (`SlopDeskPhoneUI` is
-/// iOS-only, so a `SwiftPM` suite over it compiles to nothing) and they now sit in the two targets
-/// that own them. Naming a target that no longer exists would make a scripts-only edit attribute to
-/// NOTHING and run clean.
-const SCRIPT_READERS: &[&str] = &["SlopDeskClientCoreTests", "SlopDeskWorkspaceCoreTests"];
+/// It was TWO, and both read gate SCRIPTS as text — the only way to pin a contract a shell script
+/// carries. The four GUI gates are Rust now, so those contracts are `cargo test`s where they
+/// belong, and what is left here is the half Rust cannot check: that `scripts/fixtures/*.json`
+/// still decodes through the shipping Swift types the gate will hand it to.
+///
+/// Naming a target that no longer exists would make a scripts-only edit attribute to NOTHING and
+/// run clean, which is why this is a constant and not a literal at the call site.
+const SCRIPT_READERS: &[&str] = &["SlopDeskWorkspaceCoreTests"];
 
 /// The two products `SubprocessE2ETests` spawns, and the suite that spawns them.
 const SPAWNED: &[&str] = &["slopdesk-hostd", "slopdesk-client"];
@@ -275,13 +278,10 @@ mod tests {
     }
 
     #[test]
-    fn a_scripts_edit_selects_the_two_suites_that_read_them() {
+    fn a_scripts_edit_selects_the_suite_that_reads_them() {
         assert_eq!(
-            select(&["scripts/check-macos.sh"]),
-            Selection::Targets(vec![
-                "SlopDeskClientCoreTests".to_owned(),
-                "SlopDeskWorkspaceCoreTests".to_owned(),
-            ])
+            select(&["scripts/fixtures/launch-restore-workspace.json"]),
+            Selection::Targets(vec!["SlopDeskWorkspaceCoreTests".to_owned()])
         );
     }
 
@@ -313,7 +313,8 @@ mod tests {
             select(&[
                 "Sources/Core/Model.swift",
                 "Tests/SlopDeskClientTests/A.swift",
-                "scripts/check-macos.sh",
+                "Tests/SlopDeskClientCoreTests/A.swift",
+                "scripts/fixtures/launch-restore-workspace.json",
             ]),
             Selection::Full
         );

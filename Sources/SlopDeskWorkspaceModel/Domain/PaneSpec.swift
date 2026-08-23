@@ -120,7 +120,7 @@ public extension PaneKind {
 /// Which remote target a video pane streams. The host + UDP ports are no longer here — they live ONCE
 /// on the app-global ``ConnectionTarget`` (docs/31). All video panes ride the one shared UDP flow at
 /// the app host; the per-pane target is normally a whole display (``displayID``) — the window shape
-/// (``windowID``) survives ONLY as the automation/E2E seam (`check-video.sh` serves one window) and
+/// (``windowID``) survives ONLY as the automation/E2E seam (`slopdesk-guigate video` serves one window) and
 /// for decode of older files. Persisted with the tree so a restored video pane remembers its target +
 /// title; the actual UDP is opened against the app target.
 public struct VideoEndpoint: Sendable, Equatable {

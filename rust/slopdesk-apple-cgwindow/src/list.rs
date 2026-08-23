@@ -176,6 +176,33 @@ pub fn bounds_of(window_id: u32, expected_pid: Option<i32>) -> Option<VideoRect>
     }
 }
 
+/// Every on-screen window the server attributes to `owner_pid`, front-to-back.
+///
+/// The question a GUI gate asks about the app it just launched, and the only place it can be
+/// asked. "The process is alive" is not "the app came up": a macOS app with ZERO windows is a
+/// perfectly healthy process sitting in its run loop, and neither its own control socket nor a
+/// `pgrep` can tell the two apart — the socket bind outlives the scene that made it, and the
+/// session list it answers is built before any scene exists. The `WindowServer` is the only
+/// party that knows, and this is what it says.
+///
+/// `ExcludeDesktopElements` on purpose: the desktop backstop and the wallpaper are windows too,
+/// and they are never the app's. No TCC either — owner, layer and bounds are public fields, and a
+/// window TITLE, which is the one field behind Screen Recording, is never asked for.
+#[must_use]
+pub fn windows_of_pid(owner_pid: i32) -> Vec<WindowRecord> {
+    let keys = keys();
+    let Some(list) = query(
+        CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements,
+        kCGNullWindowID,
+    ) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|info| decode(&info, &keys))
+        .filter(|record| record.owner_pid == owner_pid)
+        .collect()
+}
+
 /// Every on-screen window strictly IN FRONT of `window_id`, front-to-back.
 ///
 /// `CGWindowListCopyWindowInfo` orders on-screen windows front-to-back, so the answer is the prefix
@@ -345,5 +372,25 @@ mod tests {
             assert!(decode(&record, &keys).is_some());
         }
         assert_eq!(record.retain_count(), before);
+    }
+
+    /// A per-pid census asks the LIVE window server, so the only window set a unit test knows for
+    /// certain is its own: a `cargo test` harness has no scene, no `NSApplication` and therefore no
+    /// window, and an answer of anything but empty would mean the filter is not filtering by owner.
+    ///
+    /// It also pins the OTHER half of the contract, which is the half a gate depends on: an empty
+    /// answer is a real answer. A query that failed and a process with nothing on screen both
+    /// arrive here as `[]`, and the gate that polls this treats it as "not yet" and waits — which
+    /// is correct precisely because the window server does not fail transiently for a live pid.
+    #[test]
+    fn a_process_with_no_scene_owns_no_windows() {
+        let mine = i32::try_from(std::process::id()).expect("a pid fits in an i32");
+        assert_eq!(super::windows_of_pid(mine), Vec::new());
+    }
+
+    /// A pid nothing owns is not an error either — the census answers about whoever asked.
+    #[test]
+    fn a_pid_the_server_knows_nothing_about_is_empty_rather_than_a_failure() {
+        assert!(super::windows_of_pid(-1).is_empty());
     }
 }

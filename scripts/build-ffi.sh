@@ -183,8 +183,8 @@ done
 #
 # Neither app built, on either platform, from the moment this xcframework joined the graph. Nothing
 # caught it: `swift build` and `swift test` never process an xcframework this way, and the two
-# scripts that DO build the apps (`check-macos.sh`, `check-ios.sh`) are reachable from no `make`
-# target and no hook.
+# gates that DO build the apps (`slopdesk-guigate macos`, `check-ios.sh`) are reachable from no
+# `make` target and no hook.
 #
 # Nesting under `CSlopDeskFFI/` gives the copy a unique destination. SwiftPM still resolves the
 # module — it walks the whole Headers tree for a `module.modulemap` rather than only its root

@@ -363,7 +363,7 @@ public final class AppConnection {
     public func retry() async { await connect() }
 
     /// Mark the app connected WITHOUT pinning a TCP mux — used ONLY by the video-only automation seam
-    /// (`check-video.sh`): `slopdesk-videohostd` serves UDP only and runs no TCP listener, so there is no mux
+    /// (`slopdesk-guigate video`): `slopdesk-videohostd` serves UDP only and runs no TCP listener, so there is no mux
     /// to pin; a video pane rides the shared UDP flow independently. This dismisses the gate +
     /// mounts the canvas so that pane can open its UDP lane. Never used in the normal user flow (which
     /// always pins the terminal mux via ``connect()``).

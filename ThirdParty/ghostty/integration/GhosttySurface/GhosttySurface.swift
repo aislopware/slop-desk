@@ -786,7 +786,7 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
     /// whole-viewport read (``viewportTextRowsUnwrapped(_:)``) rather than render no overlay at all.
     ///
     /// The row→pixel mapping is now strictly per-grid-row; full VISUAL proof of the alignment is the GUI
-    /// gate (`scripts/check-macos.sh`) — a GUI-only residual the headless core cannot pixel-verify, but the
+    /// gate (`slopdesk-guigate macos`) — a GUI-only residual the headless core cannot pixel-verify, but the
     /// per-grid-row read is the correct fix. libghostty owns each returned buffer ⇒ copy + `free_text` on
     /// every path (validate-then-drop).
     public func viewportTextRows() -> [String] {

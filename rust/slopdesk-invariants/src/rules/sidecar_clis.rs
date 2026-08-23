@@ -425,7 +425,7 @@ pub fn the_git_status_is_linked_and_asked_once(tree: &Tree) -> Report {
 /// `slopdesk_terminal::pointer` owns both of libghostty's pointer actions. This is pinned harder
 /// than its size suggests, because EVERY way it breaks is silent: a resize handle showing a hand,
 /// or a pointer hidden with no gesture that brings it back. Nothing fails to compile, nothing
-/// crashes, and `check-macos.sh` is the only thing that would ever have noticed.
+/// crashes, and `slopdesk-guigate macos` is the only thing that would ever have noticed.
 ///
 /// `OSCPointerShape` (34 cases) and `MouseVisibility` existed only so a Swift `switch` had
 /// something to switch over, which made THREE copies of one declaration order — libghostty's

@@ -246,7 +246,7 @@ pub fn every_script_sets_pipefail(tree: &Tree) -> Report {
 ///
 /// Four scripts had lost the bit and nothing noticed, because the Makefile invokes every one of
 /// them as `bash scripts/foo.sh` — the one spelling that works either way. What breaks is the
-/// spelling the scripts and `docs/46` tell a human to type (`scripts/check-macos.sh --connect`),
+/// spelling a script's own usage line and `docs/46` tell a human to type (`scripts/foo.sh --flag`),
 /// which is exactly the path no gate walks. So the shebang is the declaration and this is its
 /// check: `#!` on line one, no `x` bit, is a documented entry point that answers "permission
 /// denied". Derived from the file itself, so a new script is covered the day it is written.

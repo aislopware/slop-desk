@@ -263,7 +263,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-macos-apps check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install devtools devtools-test dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
+.PHONY: check quick check-ios check-macos-apps check-ios-tests gui-macos gui-video gui-multiclient gui-launch-restore build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install devtools devtools-test dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
 check: lint build test miri golden check-ios check-macos-apps ## lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -321,8 +321,8 @@ quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + go
 # Xcode copies both to `$BUILT_PRODUCTS_DIR/include/`, and neither app had built on either platform
 # since (fixed in scripts/build-ffi.sh, which now nests its headers and asserts the nesting).
 #
-# `check-macos.sh` is the sibling and is deliberately NOT here: it drives a real window and needs a
-# logged-in GUI session, so it cannot run from a headless gate.
+# `slopdesk-guigate macos` is the sibling and is deliberately NOT here: it drives a real window and
+# needs a logged-in GUI session, so it cannot run from a headless gate.
 check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` never compiles)
 	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios
 
@@ -331,8 +331,9 @@ check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` 
 # rather than SwiftPM ones — so a rename under `Sources/` could leave `Apps/ClientApp-macOS` unable
 # to build while every gate stayed green, which is exactly what happened to `VideoSurfaceHost`.
 #
-# Distinct from `check-macos.sh`, which BUILDS AND RUNS the app against a real window and therefore
-# needs a logged-in GUI session. This one only type-checks, so it is headless and belongs here.
+# Distinct from `slopdesk-guigate macos`, which BUILDS AND RUNS the app against a real window and
+# therefore needs a logged-in GUI session. This one only type-checks, so it is headless and belongs
+# here.
 check-macos-apps: ffi ## macOS app-shell typecheck (the `Apps/` code no other gate compiles)
 	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- macos-apps
 
@@ -344,9 +345,27 @@ check-macos-apps: ffi ## macOS app-shell typecheck (the `Apps/` code no other ga
 # and then nothing ran it.
 #
 # NOT in `check`: it boots a simulator, which a headless gate cannot assume — same reason
-# `check-macos.sh` stays out. Run it after touching anything inside an `#if os(iOS)`.
+# `slopdesk-guigate` stays out. Run it after touching anything inside an `#if os(iOS)`.
 check-ios-tests: ffi ## RUN the iOS tests on a booted simulator (the only assertions on that triple)
 	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios-tests
+
+# The four gates that DRIVE THE SHIPPING APP. None is in `check` and none can be: each launches the
+# real bundle against a real window server, so all four need an unlocked Aqua login session —
+# `video` additionally needs Screen Recording TCC and `multiclient` needs Accessibility TCC.
+# They are here so `make help` names them, which is the only way anyone finds them now that the
+# shell scripts that used to carry them are gone. Minutes each; run one at a time (each binds its
+# own port from `gui::port`, but they all fight over the same window server and the same TCC grant).
+gui-macos: ## GUI gate: launch, connect, type, quit (needs an unlocked Aqua session)
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- macos
+
+gui-video: ## GUI gate: the video pane end to end (also needs Screen Recording TCC)
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- video
+
+gui-multiclient: ## GUI gate: two clients on one host (also needs Accessibility TCC)
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- multiclient
+
+gui-launch-restore: ## GUI gate: restore `workspace.json` and re-dial the saved host, as a user does
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-guigate -- launch-restore
 
 # The three arm64 static slices the Swift clients link, from `rust/slopdesk-ffi`. FIRST, and not
 # optional: `Package.swift` declares a `binaryTarget` at that path, so SwiftPM cannot even resolve

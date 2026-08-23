@@ -81,7 +81,7 @@ public actor SlopDeskVideoClientSession {
     private let log = Logger(subsystem: "slopdesk.video.client", category: "SlopDeskVideoClientSession")
 
     /// Opt-in stderr diagnostics (`SLOPDESK_VIDEO_DEBUG=1`), client counterpart to the host's — so
-    /// `scripts/check-video.sh` sees datagram arrival / reassembly / decode (OSLog `.info` isn't
+    /// `slopdesk-guigate video` sees datagram arrival / reassembly / decode (OSLog `.info` isn't
     /// persisted; a white client window is otherwise opaque). No-op in production.
     private static let debugStderr = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     /// Redundancy for the critical RELEASE edge: a dropped `mouseUp` over plain UDP strands the target

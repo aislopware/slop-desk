@@ -987,7 +987,7 @@ Four ordered facts hold this together, and each exists because the one before it
    for, because the client proposes those ids and its own applier has already agreed the host will
    take them (Phase 5 ruling 1); a wifi flap back to the SAME host confirms nothing that host has not
    already said, so the re-subscribe holds nobody. Cost, measured on loopback: ~0.13 s on a launch
-   that reaches its shells in ~1.1 s. The launch arm is gated by `scripts/check-launch-restore.sh`
+   that reaches its shells in ~1.1 s. The launch arm is gated by `slopdesk-guigate launch-restore`
    phase C; the host-switch arm is pinned headlessly in `LaunchDialHoldTests` (no GUI gate reaches a
    second hostd).
 
@@ -1550,7 +1550,7 @@ projection owed the rest of the app")
   swallowed; the ⇧⌘T cue asks which tab is on the ring rather than how many; a re-tile exits zoom
   host-side; the client's dead `tabFocusHistory` is deleted in favour of `topology.focusMRU`.
 
-**SHIPPED — hardware verification, `scripts/check-multiclient.sh`**
+**SHIPPED — hardware verification, `slopdesk-guigate multiclient`**
 
 Two real macOS instances, one `slopdesk-hostd`, one machine. Each client gets its own
 `CFFIXED_USER_HOME` container and its own `SLOPDESK_CLIENT_SOCKET`; the gate drives a REAL menu

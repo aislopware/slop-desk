@@ -7,7 +7,7 @@ import XCTest
 ///
 /// RED before the fix: the latch was set before the settle wait, so a pane torn down inside that
 /// window consumed the shot without typing anything — and the pane that survived could never take
-/// it. On hardware that is `check-macos.sh --connect` failing its OUT-path proof with no crash, no
+/// it. On hardware that is `slopdesk-guigate macos --connect` failing its OUT-path proof with no crash, no
 /// Swift error, and not a single `[echo-probe]` line to point at.
 @MainActor
 final class AutotypeSeamTests: XCTestCase {
@@ -129,7 +129,7 @@ final class AutotypeSeamTests: XCTestCase {
     /// …and the load-bearing half: the key MOVES on that edge. `.task(id:)` re-fires only when its key
     /// changes, so a key that already reads as the pane's id while it is still dialling is a task that
     /// runs once, too early, and never again — an OUT path silently dead for the whole launch, with a
-    /// red `check-macos.sh --connect` as the only signal.
+    /// red `slopdesk-guigate macos --connect` as the only signal.
     func testTheTaskKeyMovesWhenThePaneConnects() {
         let pane = PaneID()
         let dialling = TerminalLeafPolicy.autotypeTaskKey(pane: pane, isTarget: true, status: .connecting)

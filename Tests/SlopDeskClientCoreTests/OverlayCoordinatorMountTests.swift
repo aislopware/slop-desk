@@ -1,5 +1,5 @@
 // OverlayCoordinatorMountTests — pins the overlay coordinator's mount wiring at the model level. (The ⌘⇧P / ⌘/ GUI
-// press + toast emission are acceptance-tested in `check-macos.sh`; these pin the contract the app's
+// press + toast emission are acceptance-tested in `slopdesk-guigate macos`; these pin the contract the app's
 // wiring depends on so a refactor can't silently sever it.)
 //
 // The app builds an `OverlayCoordinator` in `SlopDeskClientApp.init()`, injects `connectionTarget`, threads

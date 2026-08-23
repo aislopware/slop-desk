@@ -637,7 +637,7 @@ func performGracefulShutdown(_ signalName: String) {
 }
 
 // Handle every graceful-termination signal the daemon can receive: SIGINT (Ctrl-C), SIGTERM (the
-// default `kill` / launchd / `scripts/check-video.sh` stop) and SIGHUP (controlling terminal closed —
+// default `kill` / launchd / `slopdesk-guigate video` stop) and SIGHUP (controlling terminal closed —
 // the foreground `.command` launcher's quit). All funnel through the one-shot drain so windows parked
 // on the VD are restored on the COMMON stop paths, not just Ctrl-C. SIGKILL stays uncatchable; its
 // stranded windows are then recovered by the `.forAppOnly` arrangement revert + next-launch hygiene.

@@ -54,6 +54,10 @@ path = "src/bin/gate.rs"
 name = "slopdesk-ops"
 path = "src/bin/ops.rs"
 
+[[bin]]
+name = "slopdesk-guigate"
+path = "src/bin/guigate.rs"
+
 [dependencies]
 # The access raiser is a line scanner over SwiftFormat-clean source, which is what makes a regex
 # the right reader rather than a shortcut — and the same DFA-backed crate the invariants gate
@@ -72,6 +76,14 @@ sha2 = "0.10"
 # upstream controls is the classic place to be wrong, and the projection has to compare values
 # structurally — `"1.0"` and `1.0` are not the same answer.
 serde_json = "1"
+# The GUI gates decode three control-socket verbs whose field names are the WIRE's, not Rust's, so
+# the renames belong on the struct rather than in a hand-written reader — a key that changes on
+# either side then fails to decode instead of silently reading zero.
+serde = { version = "1", features = ["derive"] }
+# `getsid`, `kill(pid, None)` and the signal constants. The pty-versus-helper census turns on
+# `getsid(pid) == pid` and nothing else answers it: `ps -o sess=` returns 0 for every process on
+# this machine. All three are SAFE in nix 0.31, so no gate needs `unsafe` to make the observation.
+nix = { version = "0.31", features = ["process", "signal"] }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -131,7 +131,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// Whether this session is the `SLOPDESK_AUTOTYPE` OUT-path-proof target — the first leaf of the first
     /// tab (docs/22 §7). Set by the store's `reconcile()` (the store owns the tree); read by the terminal
     /// leaf's `.task` after connect to push command bytes through the REAL OUT path so
-    /// `scripts/check-macos.sh --connect` keeps proving type→exec→render. Defaults `false`; fires for
+    /// `slopdesk-guigate macos --connect` keeps proving type→exec→render. Defaults `false`; fires for
     /// exactly one session.
     public internal(set) var isAutotypeTarget: Bool = false
 
@@ -380,7 +380,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     ) -> LivePaneSession {
         let model =
             if let v = spec.video, v.displayID == nil, v.windowID != 0 {
-                // Window-shaped endpoint — the AUTOMATION seam only (`check-video.sh` serves one
+                // Window-shaped endpoint — the AUTOMATION seam only (`slopdesk-guigate video` serves one
                 // window; docs/DECISIONS.md 2026-07-23): the classic window `hello`.
                 RemoteWindowModel(
                     target: target,

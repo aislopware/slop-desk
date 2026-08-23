@@ -7,7 +7,7 @@
 // aggregate state lives in ``WorkspaceStore`` (``WorkspaceStore/dockTileModel``), consumed only here.
 //
 // HANG-SAFETY: never instantiate `NSDockTile` in a test — the pure decision is pinned by
-// `DockTintPolicyTests`; this actuation is GUI-verified (`check-macos.sh` screenshot) only.
+// `DockTintPolicyTests`; this actuation is GUI-verified (`slopdesk-guigate macos` screenshot) only.
 
 import AppKit
 

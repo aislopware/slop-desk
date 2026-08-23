@@ -2,7 +2,7 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The automation launch — `check-macos.sh --connect`'s client, in the order the app shell runs it.
+/// The automation launch — `slopdesk-guigate macos --connect`'s client, in the order the app shell runs it.
 ///
 /// `SlopDeskClientApp.init` builds the store, calls ``WorkspaceStore/bootstrapFromEnvironment(_:)``,
 /// and only THEN installs the workspace channel. The window mounts as soon as that initializer
@@ -39,7 +39,7 @@ final class AutomationBootstrapLaunchTests: XCTestCase {
     }
 
     /// A host document minted for a FIRST RUN: its own epoch, its own single-pane default, pristine
-    /// (`check-macos.sh` wipes `SLOPDESK_WORKSPACE_STATE_DIR` per run). `install` publishes the frame
+    /// (`slopdesk-guigate macos` wipes `SLOPDESK_WORKSPACE_STATE_DIR` per run). `install` publishes the frame
     /// the way the wire does — the mirror folds it and announces the change — and attaching the
     /// channel is the `.live` edge that follows it in the same turn.
     @discardableResult
@@ -133,7 +133,7 @@ final class AutomationBootstrapLaunchTests: XCTestCase {
         XCTAssertEqual(store.workspaceMirror.pendingIntentCount, 0, "the refused patch is gone")
     }
 
-    /// The window-targeted video autoconnect (`check-video.sh`) rides the same launch: its TERMINAL
+    /// The window-targeted video autoconnect (`slopdesk-guigate video`) rides the same launch: its TERMINAL
     /// pane is seeded once, and the detached desktop pane it owes the document is minted once too —
     /// so the run that finally reaches a channel spawns exactly the pane the window is showing.
     func testTheVideoAutoconnectSeedsItsTerminalPaneOnce() throws {

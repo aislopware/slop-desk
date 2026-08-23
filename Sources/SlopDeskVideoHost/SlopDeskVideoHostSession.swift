@@ -36,7 +36,7 @@ public actor SlopDeskVideoHostSession {
     private let log = Logger(subsystem: "slopdesk.video.host", category: "SlopDeskVideoHostSession")
 
     /// Opt-in stderr diagnostics (`SLOPDESK_VIDEO_DEBUG=1`). OSLog `.info`/`.debug` aren't persisted,
-    /// so a headless verify (`scripts/check-video.sh`) can't read the capture/encode flow from
+    /// so a headless verify (`slopdesk-guigate video`) can't read the capture/encode flow from
     /// `log show`; when enabled, lifecycle beats mirror to stderr to pinpoint pipeline stalls. No-op in production.
     private static let debugStderr = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     /// Burst-resilient transmission interleaving (anti-flicker). DEFAULT ON; `SLOPDESK_INTERLEAVE=0`

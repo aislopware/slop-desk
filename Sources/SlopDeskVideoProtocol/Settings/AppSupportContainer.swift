@@ -15,7 +15,7 @@ import Foundation
 /// `CFFIXED_USER_HOME` does move it, and the CLIENT gates use exactly that. It is the wrong tool for
 /// a DAEMON: it relocates `NSHomeDirectory()` for everything downstream — the login shell hostd
 /// spawns, the cwd a pane defaults to, the volume `HostVitalsSampler` measures — and pointing
-/// `slopdesk-hostd` at one made `check-launch-restore.sh` flake three runs in five. So the daemons
+/// `slopdesk-hostd` at one made `slopdesk-guigate launch-restore` flake three runs in five. So the daemons
 /// get this instead: one variable that moves the CONTAINER and nothing else.
 ///
 /// `SLOPDESK_SCROLLBACK_DIR` / `SLOPDESK_WORKSPACE_STATE_DIR` still name their own file's location

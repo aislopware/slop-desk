@@ -175,7 +175,7 @@ public final class MetalVideoRenderer {
     /// Counts frames that reached `commandBuffer.present(drawable)`. SEPARATE from
     /// ``renderDiagCount``, which counts entries that merely got a drawable: everything between the
     /// two returns early on a frame this renderer cannot draw, so the gap between the counters IS the
-    /// present-path failure. `scripts/check-video.sh` asserts on the marker this one prints.
+    /// present-path failure. `slopdesk-guigate video` asserts on the marker this one prints.
     private var presentDiagCount = 0
     private static let renderDiag = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
 
@@ -361,7 +361,7 @@ public final class MetalVideoRenderer {
         encoder.endEncoding()
         commandBuffer.present(drawable)
         // PRESENT marker — the one line that means a frame reached the screen, and the only frame
-        // marker `scripts/check-video.sh` may assert on. `RENDER#` above prints the instant
+        // marker `slopdesk-guigate video` may assert on. `RENDER#` above prints the instant
         // `nextDrawable()` returns, which is BEFORE every guard between here and there: a plane that
         // will not make an `MTLTexture` (a stream that is not 8-bit NV12), a `CVMetalTextureGetTexture`
         // that yields nil, a command buffer or render encoder the device refuses. Each of those

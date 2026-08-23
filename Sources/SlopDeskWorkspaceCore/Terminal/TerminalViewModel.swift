@@ -1962,7 +1962,7 @@ public final class TerminalViewModel {
     // MARK: Echo probe (rig instrumentation — docs/31 follow-up #4)
 
     /// `SLOPDESK_ECHO_PROBE=1`: print a keystroke→first-output-ingest latency line per echo to stderr, so
-    /// `check-macos.sh --connect` (an idle pane + AUTOTYPE) emits real keystroke-feel numbers instead of
+    /// `slopdesk-guigate macos --connect` (an idle pane + AUTOTYPE) emits real keystroke-feel numbers instead of
     /// pass/fail — the A/B harness for smoothness work. The measured span = wire out + host PTY round trip +
     /// wire back + client delivery up to the render feed (the user-feel path minus the final present tick).
     /// Rig-only: matching is positional (NEXT ingest after a send = the echo), correct for an idle interactive
