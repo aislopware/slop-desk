@@ -148,6 +148,17 @@ impl Extract {
         Some(set)
     }
 
+    /// Counts the LINES this extraction matches — the shell's `sed -n '/a/,/b/p' | grep -c`.
+    fn count(self, tree: &Tree, report: &mut Report) -> Option<usize> {
+        let source = report.source(tree, self.path, "one side of a census lives there")?;
+        let view = self.view.of(source);
+        let haystack = match self.within {
+            Some((start, end)) => std::borrow::Cow::Owned(text::range(&view, start, end)),
+            None => view,
+        };
+        Some(text::count_lines(&haystack, self.pattern))
+    }
+
     /// Reads the single value this extraction names — the first match, whitespace removed, which is
     /// the shell's `| head -1 | tr -d ' '`.
     fn value(self, tree: &Tree, report: &mut Report) -> Option<String> {
@@ -359,6 +370,36 @@ pub enum Claim {
         /// The value, with whitespace removed before comparison.
         expect: &'static str,
     },
+    /// A case list COUNTED on one side must equal a count DECLARED on the other.
+    ///
+    /// The shell's `sed -n '/^enum X/,/^}/p' | grep -c '^    case '` against
+    /// `pub const ALL: [Self; N]`. Separate from [`Claim::SameSet`] because the two sides share no
+    /// vocabulary — one is a list of Swift case names, the other is an array LENGTH — so the only
+    /// thing comparable is how many. Both readings are checked for emptiness in their own right: a
+    /// rename that breaks BOTH extractions leaves two zeros, which agree, and a gate that passes
+    /// having compared nothing is worse than no gate.
+    Census {
+        /// What the two counts are called in the diagnostic.
+        label: &'static str,
+        /// Where the cases are; the pattern matches ONE case line.
+        cases: Extract,
+        /// Where the count is declared; the first capture group is the number.
+        declared: Extract,
+    },
+    /// A `Package.swift` target must keep a dependency edge.
+    ///
+    /// The shell asked this as `grep -A 24 'name: "X"' | grep -q Y`, which is a WINDOW: a target
+    /// whose dependency list grew past the window would report the edge missing, and one whose
+    /// neighbour declared it would report it present. This reads the target's own block instead —
+    /// see [`target_block`] for the two ways a naive range gets that wrong.
+    Depends {
+        /// The target's name, as spelled in the manifest.
+        target: &'static str,
+        /// The dependency's name.
+        dependency: &'static str,
+        /// Why the edge exists.
+        message: &'static str,
+    },
     /// A set extracted from one place must equal a literal set — for an alphabet that is the wire
     /// and has no second spelling to compare against.
     PinnedSet {
@@ -566,6 +607,45 @@ impl Claim {
                 let found = from.value(tree, report);
                 report.same(label, found.as_deref(), Some(&expect.replace(' ', "")));
             },
+            Self::Census {
+                label,
+                cases,
+                declared,
+            } => {
+                // Both readings are checked for emptiness BEFORE they are compared, and a reading
+                // that matched nothing at all is as empty as one that counted zero. An early
+                // `return` on a `None` here is what a vacuous pass looks like: a renamed constant
+                // stops matching, the claim compares nothing, and the gate stays green.
+                let counted = cases.count(tree, report);
+                let text = declared.value(tree, report);
+                let stated = text.as_ref().and_then(|value| value.parse::<usize>().ok());
+                if counted.is_none_or(|n| n == 0) || stated.is_none_or(|n| n == 0) {
+                    report.fail(format!(
+                        "the {label} census read EMPTY (counted={counted:?} declared={text:?}) — this claim \
+                         has stopped checking anything"
+                    ));
+                    return;
+                }
+                report.same(
+                    label,
+                    counted.map(|n| n.to_string()).as_deref(),
+                    stated.map(|n| n.to_string()).as_deref(),
+                );
+            },
+            Self::Depends {
+                target,
+                dependency,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, "Package.swift", message) {
+                    let manifest = View::Code.of(source);
+                    let block = target_block(&manifest, target);
+                    report.fail_if(
+                        block.is_empty() || !block.contains(dependency),
+                        format!("{target} dropped {dependency} — {message}"),
+                    );
+                }
+            },
             Self::PinnedSet { label, from, expect } => {
                 let Some(found) = from.set(tree, report) else {
                     return;
@@ -575,6 +655,31 @@ impl Claim {
             },
         }
     }
+}
+
+/// The lines of one `Package.swift` target's declaration, dependency list and all.
+///
+/// A target is found by the line that names it ALONE — `name: "SlopDeskProtocol",` on its own line,
+/// the way every multi-line `.target(…)` in this manifest is written. Matching the name anywhere
+/// would find the single-line `.library(name: "SlopDeskProtocol", targets: […])` first, and a
+/// library declaration names no dependencies at all, so every edge would read as dropped.
+///
+/// The block ends at the next line that names something — again alone, so a nested
+/// `.product(name: "X", package: "y")` inside the dependency list does not close the block it is
+/// part of. That was the other half of the same bug.
+fn target_block(manifest: &str, target: &str) -> String {
+    let names_alone = |line: &str| {
+        let trimmed = line.trim();
+        trimmed.starts_with(r#"name: ""#) && trimmed.ends_with(',')
+    };
+    let opens = format!(r#"name: "{target}","#);
+    manifest
+        .lines()
+        .skip_while(|line| line.trim() != opens)
+        .skip(1)
+        .take_while(|line| !names_alone(line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Substitutes one `{name}` placeholder in a claim's sentence.
@@ -601,6 +706,17 @@ pub fn check_all(tree: &Tree, claims: &[Claim]) -> Report {
 pub const SWIFT: &[&str] = &["swift"];
 /// Rust sources.
 pub const RUST: &[&str] = &["rs"];
+
+/// Where this gate's own rule tables live, exempted from every tree-wide ban that reads `rust/`.
+///
+/// A ban has to WRITE DOWN the thing it forbids, so the file stating "no second base64 alphabet"
+/// contains a base64 alphabet. The shell never had to say this: it searched `rust/*/src` and its own
+/// text was in `scripts/`. Moving the rules into a crate under `rust/` brought the gate inside its
+/// own corpus, and a gate that reports itself reports nothing anybody can act on.
+///
+/// This is narrow on purpose — the RULES directory, not the crate. `claim.rs`, `text.rs` and
+/// `tree.rs` are ordinary Rust that scans bytes for a living, and they stay inside every ban.
+pub const GATE_RULES: &str = "rust/slopdesk-invariants/src/rules/";
 
 #[cfg(test)]
 mod tests {

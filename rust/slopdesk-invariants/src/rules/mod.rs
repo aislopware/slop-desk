@@ -5,6 +5,9 @@
 //! the whole enforced set in one screen. A rule that is written but not registered is a rule that
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
+pub mod agent_fold;
+pub mod byte_scanners;
+pub mod cli_config;
 pub mod client_layers;
 pub mod client_memos;
 pub mod code_panel;
@@ -13,14 +16,17 @@ pub mod device_frames;
 pub mod device_streams;
 pub mod host_probes;
 pub mod hot_paths;
+pub mod overlay_split;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
+pub mod split_surfaces;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
 pub mod terminal_config;
 pub mod terminal_grammar;
 pub mod terminal_surface;
+pub mod transport_lanes;
 pub mod video_client;
 pub mod video_control;
 pub mod video_host;
@@ -600,6 +606,171 @@ pub fn registry() -> Vec<Rule> {
             name: "scrcpy-stream-reader",
             origin: "scripts/check-supervisor.sh",
             check: device_frames::one_reader_for_scrcpy_stream,
+        },
+        Rule {
+            name: "split-drop-zone",
+            origin: "scripts/check-supervisor.sh",
+            check: split_surfaces::the_drop_overlay_draws_one_shape,
+        },
+        Rule {
+            name: "split-cheat-sheet",
+            origin: "scripts/check-supervisor.sh",
+            check: split_surfaces::one_cheat_sheet_two_layouts,
+        },
+        Rule {
+            name: "split-toast-card",
+            origin: "scripts/check-supervisor.sh",
+            check: split_surfaces::one_notification_card_two_corners,
+        },
+        Rule {
+            name: "split-palette",
+            origin: "scripts/check-supervisor.sh",
+            check: split_surfaces::one_palette_two_frameworks,
+        },
+        Rule {
+            name: "split-bespoke-settings",
+            origin: "scripts/check-supervisor.sh",
+            check: split_surfaces::one_bespoke_settings_surface,
+        },
+        Rule {
+            name: "cli-folder-frecency",
+            origin: "scripts/check-supervisor.sh",
+            check: cli_config::folders_rank_once_and_a_jump_reads_it,
+        },
+        Rule {
+            name: "config-file-reader",
+            origin: "scripts/check-supervisor.sh",
+            check: cli_config::the_config_file_has_one_reader,
+        },
+        Rule {
+            name: "number-spelled-once",
+            origin: "scripts/check-supervisor.sh",
+            check: cli_config::a_number_is_spelled_once,
+        },
+        Rule {
+            name: "swipe-nav-handle",
+            origin: "scripts/check-supervisor.sh",
+            check: cli_config::the_swipe_nav_operating_point_is_a_handle,
+        },
+        Rule {
+            name: "plain-text-vt-grammar",
+            origin: "scripts/check-supervisor.sh",
+            check: byte_scanners::one_vt_grammar_for_plain_text,
+        },
+        Rule {
+            name: "shell-word-quoting",
+            origin: "scripts/check-supervisor.sh",
+            check: byte_scanners::one_shell_word_wherever_a_path_is_typed,
+        },
+        Rule {
+            name: "width-table",
+            origin: "scripts/check-supervisor.sh",
+            check: byte_scanners::one_width_table_under_that_clustering,
+        },
+        Rule {
+            name: "escape-end-grammar",
+            origin: "scripts/check-supervisor.sh",
+            check: byte_scanners::one_grammar_for_where_an_escape_ends,
+        },
+        Rule {
+            name: "find-bar-engine",
+            origin: "scripts/check-supervisor.sh",
+            check: byte_scanners::the_find_bar_asks_the_same_engine,
+        },
+        Rule {
+            name: "base64-and-secret-notation",
+            origin: "scripts/check-supervisor.sh",
+            check: byte_scanners::one_base64_and_one_secret_notation,
+        },
+        Rule {
+            name: "escape-decoding",
+            origin: "scripts/check-supervisor.sh",
+            check: byte_scanners::one_reading_of_an_escape,
+        },
+        Rule {
+            name: "tab-badge-ladder",
+            origin: "scripts/check-supervisor.sh",
+            check: agent_fold::one_badge_ladder_for_a_tab_row,
+        },
+        Rule {
+            name: "hook-body-reading",
+            origin: "scripts/check-supervisor.sh",
+            check: agent_fold::one_reading_of_a_hook_body,
+        },
+        Rule {
+            name: "pane-detector-probes",
+            origin: "scripts/check-supervisor.sh",
+            check: agent_fold::one_pane_detector_and_the_probes_only_probe,
+        },
+        Rule {
+            name: "secret-shape-vocabulary",
+            origin: "scripts/check-supervisor.sh",
+            check: agent_fold::one_vocabulary_of_secret_shapes,
+        },
+        Rule {
+            name: "fresh-install-payload",
+            origin: "scripts/check-supervisor.sh",
+            check: agent_fold::what_a_fresh_install_carries,
+        },
+        Rule {
+            name: "device-console-grammar",
+            origin: "scripts/check-supervisor.sh",
+            check: transport_lanes::one_grammar_per_device_console,
+        },
+        Rule {
+            name: "superd-frame-spelling",
+            origin: "scripts/check-supervisor.sh",
+            check: transport_lanes::one_spelling_of_the_superd_frame,
+        },
+        Rule {
+            name: "receive-buffer",
+            origin: "scripts/check-supervisor.sh",
+            check: transport_lanes::one_receive_buffer_and_one_narrowing,
+        },
+        Rule {
+            name: "arena-reader",
+            origin: "scripts/check-supervisor.sh",
+            check: transport_lanes::one_arena_reader_and_one_interner,
+        },
+        Rule {
+            name: "nwconnection-channel",
+            origin: "scripts/check-supervisor.sh",
+            check: transport_lanes::one_nwconnection_byte_channel,
+        },
+        Rule {
+            name: "write-loop",
+            origin: "scripts/check-supervisor.sh",
+            check: transport_lanes::one_write_loop_and_one_read_exactly,
+        },
+        Rule {
+            name: "overlay-host-ambient-layer",
+            origin: "scripts/check-supervisor.sh",
+            check: overlay_split::the_overlay_host_holds_no_ambient_layer,
+        },
+        Rule {
+            name: "split-peek-card",
+            origin: "scripts/check-supervisor.sh",
+            check: overlay_split::one_peek_card_two_frameworks,
+        },
+        Rule {
+            name: "keystroke-and-peek-rules",
+            origin: "scripts/check-supervisor.sh",
+            check: overlay_split::the_keystroke_table_and_peek_rules_are_rusts,
+        },
+        Rule {
+            name: "split-global-search",
+            origin: "scripts/check-supervisor.sh",
+            check: overlay_split::one_global_search_two_frameworks,
+        },
+        Rule {
+            name: "split-picker",
+            origin: "scripts/check-supervisor.sh",
+            check: overlay_split::one_picker_two_frameworks,
+        },
+        Rule {
+            name: "stage-d-ledger",
+            origin: "scripts/check-supervisor.sh",
+            check: overlay_split::the_stage_d_ledger_is_empty,
         },
         Rule {
             name: "untrusted-regex-engine",
