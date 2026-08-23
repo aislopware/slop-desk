@@ -1975,119 +1975,13 @@ fi
 # (`confinement-door-reachable`); and the mux-type vocabulary asked once with an unknown byte refused
 # on both sides (`mux-type-refused`).
 
-# A3 — an undecodable Android stream ENDS rather than defaulting.
-#
-# CATCHES: the `?? .h264` coming back. `slopdesk_android_stream_decodable_codec` answers "this Mac
-# cannot display that"; the panel used to overrule it with H.264, which configured an H.264 NAL-type
-# reading for AV1 parameter sets and handed VTDecompressionSession a mis-typed format description —
-# the black rectangle `AndroidVideoCodec`'s omission of AV1 exists to prevent, with nothing logged.
-SWIFT_ANDROID_STREAM=Sources/SlopDeskDevicePanels/Android/AndroidStreamConnection.swift
-if grep -q 'AndroidVideoCodec(streamIdentifier:.*??' "${SWIFT_ANDROID_STREAM}"; then
-  fail "${SWIFT_ANDROID_STREAM} defaults an unrecognised codec again — the door already refused it"
-fi
-if ! grep -q 'slopdesk_android_stream_decodable_codec(' \
-  Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift; then
-  fail "AndroidStreamProtocol.swift stopped asking which codecs decode — that set is Rust's"
-fi
-
-# A4 — the multi-loss THRESHOLD is one answer, not a literal in each language.
-#
-# CATCHES: `parityCount >= 2` (or `m >= 2`) reappearing in Swift. The bounds cannot stand in for it —
-# `M_MIN` is 1 — so a reader who does not know the door exists reaches for the literal, which is how
-# it came to be spelled twice in Swift and a third time inside the crate's own tier table. A host and
-# a client that disagree about it emit and expect different parity counts per group, and neither end
-# logs anything: the client simply stops repairing.
-SWIFT_FEC=Sources/SlopDeskVideoProtocol/AdaptiveFECPolicy.swift
-if grep -qE '(parityCount|resolveParityCount\([^)]*\)) *>= *2' \
-  <<< "$(grep -vE '^[[:space:]]*//|^[[:space:]]*///' "${SWIFT_FEC}")"; then
-  fail "${SWIFT_FEC} spells the multi-loss threshold again — ask slopdesk_adaptive_fec_multi_loss_active"
-fi
-if ! grep -q 'slopdesk_adaptive_fec_multi_loss_active(' "${SWIFT_FEC}"; then
-  fail "${SWIFT_FEC} stopped asking the door whether multi-loss is active"
-fi
-
-# A5 — the two RAW level bytes are READ through their doors.
-#
-# CATCHES: `MemoryPressure(rawValue: pressureByte)` / `ServiceState(rawValue: stateByte)` — the raw
-# field going straight into the Swift enum again, which restates "an unrecognised byte reads as the
-# benign level" beside `slopdesk_wire`'s own copy of that rule. Neither enum has a `compare_abi_enum`
-# pin, so a renumber on one side is invisible; the doors are what make the reading single.
-SWIFT_METADATA=Sources/SlopDeskProtocol/Metadata/MetadataCodec.swift
-for door in slopdesk_metadata_memory_pressure slopdesk_metadata_service_state; do
-  if ! grep -q "${door}(" "${SWIFT_METADATA}"; then
-    fail "${SWIFT_METADATA} no longer calls ${door} — the level readings are rust/slopdesk-wire's"
-  fi
-done
-for raw in 'MemoryPressure(rawValue: pressureByte)' 'ServiceState(rawValue: stateByte)'; do
-  if grep -qF "${raw}" "${SWIFT_METADATA}"; then
-    fail "${SWIFT_METADATA} reads a raw level byte directly again — go through the door"
-  fi
-done
-
-# B2 — the dead Rust launch-preset expansion stays deleted.
-#
-# CATCHES: `templates::plan` / `LaunchPlan` / `PaneLaunch` / `TemplatePane::keystrokes` coming back.
-# The expansion is `LaunchPresetEngine.plan`'s and stays Swift (docs/55 §8); a Rust copy that nothing
-# calls cannot be caught disagreeing, because no input ever reaches both — and `dead_code` cannot see
-# a `pub` item in a library crate, so nothing else would notice either. The one it had already drifted
-# on: `TemplatePane::keystrokes` hardcoded `None` for the cwd and so could not emit a `cd` line.
-RUST_TEMPLATES=rust/slopdesk-workspace/src/templates.rs
-for revived in 'pub fn plan(' 'struct LaunchPlan' 'struct PaneLaunch' 'pub fn keystrokes(&self)'; do
-  if grep -qF "${revived}" "${RUST_TEMPLATES}"; then
-    fail "${RUST_TEMPLATES} grew '${revived}' back — the preset expansion is LaunchPresetEngine.plan's"
-  fi
-done
-
-# B4 — ONE pacing schedule and ONE pacing gap, whichever drain sends the frame.
-#
-# CATCHES: the chunk/deadline arithmetic, or a second gap computation, growing back in the session.
-# `SLOPDESK_SEND_LANE=0` runs the same job on the session actor instead of the lane, and it used to
-# hand-roll both: it chunked and deadlined the frame itself, and — having no `keyframe` in scope —
-# floored EVERY frame at the delta pace target. So the gate documented as a byte-identical fallback
-# actually paced a recovery IDR off a post-backoff ABR, serializing for hundreds of ms the one frame
-# whose delivery time IS the client's recovery time. Nothing could fail on it: the inline path has no
-# test, and the two paths are never both live. The gap is now computed once by the caller and the
-# schedule comes from `slopdesk_send_pace_plan` through `VideoSendLane.plan`, which both drains ask.
-VH_SESSION=Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift
-VH_LANE=Sources/SlopDeskVideoHost/VideoSendLane.swift
-if ! grep -q 'VideoSendLane.plan(for: job)' "${VH_SESSION}"; then
-  fail "${VH_SESSION} stopped asking VideoSendLane.plan — the paced-send schedule is slopdesk_send_pace_plan's"
-fi
-if [[ "$(grep -c 'Self.adaptivePaceGapNanos(' "${VH_SESSION}")" -ne 1 ]]; then
-  fail "${VH_SESSION} computes the pacing gap twice again — the two copies had already parted on keyframes"
-fi
-if ! grep -q 'slopdesk_send_pace_plan(' "${VH_LANE}"; then
-  fail "${VH_LANE} stopped calling slopdesk_send_pace_plan — the chunk boundaries would be hand-rolled again"
-fi
-
-# B1 — the two shipped tables are the CRATE's, and there is no second copy of them.
-#
-# CATCHES: `SessionTemplate.builtIns` / `LaunchPreset.builtIns` going back to a Swift literal beside
-# the crate's `built_in_*` tables. That is the arrangement CLAUDE.md bans by name, and the cost is
-# specific rather than stylistic: a built-in's UUID is FIXED so that re-seeding a workspace MATCHES
-# its row instead of appending a second one, so a fourth row added to one side only hands every
-# device a different set depending on which side seeded it — surfacing weeks later as a duplicated
-# menu row with nothing in any log. `compare_abi_enum` cannot see it (it pins names and numbers it
-# was told about), and the differential that used to see it is gone precisely because there is now
-# one table. The `builtInID` helper is banned too: it existed only to spell a literal UUID for a
-# table, so its return is the shape of the mirror coming back.
-SWIFT_MODEL=Sources/SlopDeskWorkspaceModel/Domain
-if ! grep -q 'SessionTemplateCrossing.builtInTemplatesFromTheCrate()' "${SWIFT_MODEL}/SessionTemplate.swift"; then
-  fail "${SWIFT_MODEL}/SessionTemplate.swift stopped seeding from the crate — the shipped table is templates.rs's"
-fi
-if ! grep -q 'SessionTemplateCrossing.builtInLaunchPresetsFromTheCrate()' "${SWIFT_MODEL}/LaunchPreset.swift"; then
-  fail "${SWIFT_MODEL}/LaunchPreset.swift stopped seeding from the crate — the shipped table is templates.rs's"
-fi
-for mirrored in SessionTemplate LaunchPreset; do
-  if grep -q 'builtInID(' "${SWIFT_MODEL}/${mirrored}.swift"; then
-    fail "${SWIFT_MODEL}/${mirrored}.swift spells a built-in UUID again — the rows come from the crate"
-  fi
-done
-for table in built_in_session_templates built_in_launch_presets; do
-  if ! grep -q "pub fn ${table}(" rust/slopdesk-workspace/src/templates.rs; then
-    fail "rust/slopdesk-workspace/src/templates.rs lost ${table} — Swift seeds a fresh device from it"
-  fi
-done
+# PORTED to `rust/slopdesk-invariants` — `rules::crossed_tables`: an undecodable Android stream
+# ENDING rather than defaulting to H.264 (`undecodable-stream-ends`); the multi-loss threshold asked
+# once instead of spelled three times (`multi-loss-threshold`); the two raw level bytes read through
+# their doors (`level-bytes-through-doors`); the dead Rust preset expansion staying deleted, all four
+# items of it (`dead-rust-expansion`); ONE pacing schedule and — COUNTED, because one is right and two
+# is the regression — ONE pacing gap (`one-pacing-schedule`); and the two shipped tables seeded from
+# templates.rs with `builtInID` banned on both model files (`shipped-tables-are-the-crates`).
 
 # ── B. …and the two compositions staying gone ───────────────────────────────────────────────────
 # PORTED — it is part of `workspace-scalar-codec` in `rust/slopdesk-invariants`, where it sits

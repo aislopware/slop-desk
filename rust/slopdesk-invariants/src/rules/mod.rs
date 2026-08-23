@@ -16,6 +16,7 @@ pub mod command_surface;
 pub mod crate_defaults;
 pub mod crate_policy;
 pub mod cross_twins;
+pub mod crossed_tables;
 pub mod device_frames;
 pub mod device_law;
 pub mod device_streams;
@@ -956,6 +957,36 @@ pub fn registry() -> Vec<Rule> {
             name: "macui-divider-readout",
             origin: "docs/55 §8",
             check: macui_memos::the_divider_hides_before_it_cuts,
+        },
+        Rule {
+            name: "undecodable-stream-ends",
+            origin: "docs/48",
+            check: crossed_tables::an_undecodable_stream_ends,
+        },
+        Rule {
+            name: "multi-loss-threshold",
+            origin: "docs/55 §4b",
+            check: crossed_tables::the_multi_loss_threshold_is_one_answer,
+        },
+        Rule {
+            name: "level-bytes-through-doors",
+            origin: "docs/55 §4b",
+            check: crossed_tables::the_level_bytes_are_read_through_doors,
+        },
+        Rule {
+            name: "dead-rust-expansion",
+            origin: "docs/55 §8",
+            check: crossed_tables::the_dead_rust_expansion_stays_deleted,
+        },
+        Rule {
+            name: "one-pacing-schedule",
+            origin: "docs/55 §4b",
+            check: crossed_tables::one_pacing_schedule_and_one_gap,
+        },
+        Rule {
+            name: "shipped-tables-are-the-crates",
+            origin: "docs/55 §8",
+            check: crossed_tables::the_shipped_tables_are_the_crates,
         },
         Rule {
             name: "no-second-path-opinion",
