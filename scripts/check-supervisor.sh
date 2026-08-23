@@ -1987,63 +1987,11 @@ fi
 # PORTED — it is part of `workspace-scalar-codec` in `rust/slopdesk-invariants`, where it sits
 # beside the door list it is the other half of.
 
-# ── C. Where an anti-flood bucket comes from ────────────────────────────────────────────────────
-# The spend door hands the bucket back BY VALUE, so the near side owns the four doubles between
-# calls — and for a year it also decided what a NEW one holds. That is not an assignment: a bucket
-# that rests empty rather than full swallows the first explicit notification of every attach, and a
-# rate limiter is the last place anyone looks for a missing banner.
-NOTIFIER_SWIFT=Sources/SlopDeskWorkspaceCore/Connection/CommandCompletionNotifier.swift
-if [[ ! -e "${NOTIFIER_SWIFT}" ]]; then
-  fail "${NOTIFIER_SWIFT} is gone — the bucket's Swift face moved, so the bans below stopped checking anything (docs/55 §6)"
-fi
-# CATCHES: either constructor door being dropped, which can only mean the four fields are being
-# filled on this side again.
-for door in slopdesk_ws_notify_rate_limiter slopdesk_ws_notify_explicit_rate_limiter; do
-  if ! grep -qF "${door}" "${NOTIFIER_SWIFT}"; then
-    fail "${NOTIFIER_SWIFT} stopped calling ${door} — a resting bucket is RateLimiter::new / ::explicit in rust/slopdesk-workspace's notify (docs/55 §6)"
-  fi
-done
-
-# ── D. …and the burst that must not be spelled twice ────────────────────────────────────────────
-# CATCHES two drifts in one pattern. `SlopDeskWsNotifyRateLimiter(` is the memberwise construction
-# that decided `tokens: capacity` on this side; a `= 5` / `= 0.5` default argument on the initialiser
-# is the anti-flood POLICY spelled in Swift, and the looser of two spellings is always the one that
-# runs. Both are gone; neither would fail a test if it came back.
-if spells 'SlopDeskWsNotifyRateLimiter\(|refillPerSecond: Double = |capacity: Double = ' "${NOTIFIER_SWIFT}" > /dev/null; then
-  fail "${NOTIFIER_SWIFT} builds or defaults a bucket again — the burst, the refill rate and 'a new bucket rests full' are notify.rs's EXPLICIT_BURST / EXPLICIT_REFILL_PER_SECOND / RateLimiter::new (docs/55 §4, §8)"
-fi
-
-# ── E. A vocabulary pin needs a COUNT as well as a map ──────────────────────────────────────────
-# `Stepper::ALL` is what the round-trip test walks, and it is hand-maintained. The test already
-# catches a seventh case added to `from_index` but not to `ALL` — `from_index(ALL.len())` would
-# answer `Some` where it asserts `None`. What NOTHING catches is the other order: a case added to
-# the enum and to `index` (which is an exhaustive match, so the compiler forces it) but left out of
-# both `from_index` and `ALL`. Then the suite walks six of seven and passes, and the seventh
-# stepper's door answers `found: false` — a settings field rendered with no range at all.
-#
-# CATCHES: exactly that. The enum's variant count against the length `ALL` declares.
-STEPPER_RS=rust/slopdesk-settings/src/settings_catalog.rs
-stepper_variants=$(awk '
-  /^pub enum Stepper \{/ { inside = 1; next }
-  inside && /^\}/ { exit }
-  inside && /^    [A-Z][A-Za-z]*,$/ { n++ }
-  END { print n + 0 }
-' "${STEPPER_RS}")
-stepper_all=$(awk '
-  /^impl Stepper \{/ { inside = 1 }
-  inside && /const ALL: \[Self; / {
-    match($0, /\[Self; [0-9]+\]/)
-    print substr($0, RSTART + 7, RLENGTH - 8)
-    exit
-  }
-' "${STEPPER_RS}")
-# EMPTY is not agreement, for `same`'s reason one register up: both sides here are extractions, and
-# a rename that broke either would leave "" == "" looking like the healthiest result this can print.
-if [[ -z "${stepper_variants}" || -z "${stepper_all}" || "${stepper_variants}" == "0" ]]; then
-  fail "the Stepper count gate read one side as EMPTY — its awk extraction over ${STEPPER_RS} has gone stale and stopped comparing anything (docs/55 §8)"
-elif [[ "${stepper_variants}" != "${stepper_all}" ]]; then
-  fail "${STEPPER_RS} has ${stepper_variants} Stepper cases but ALL declares ${stepper_all} — add the case to ALL and to from_index, or the round-trip test walks a vocabulary it no longer covers (docs/55 §8)"
-fi
+# PORTED to `rust/slopdesk-invariants` — `rules::rate_and_range`: the anti-flood bucket built by the
+# crate rather than the near side, with the memberwise construction and the `= 5` / `= 0.5` default
+# argument banned together and the face floored by name first (`bucket-from-the-crate`); and the
+# `Stepper` vocabulary COUNTED — the enum's variants against the length `ALL` declares, refusing two
+# empties rather than calling them equal (`stepper-census`).
 
 # ── Every path this file names still exists ───────────────────────────────────────────────────
 # Forty `SWIFT_*` / `RUST_*` constants name the files the contracts above are read out of, and a

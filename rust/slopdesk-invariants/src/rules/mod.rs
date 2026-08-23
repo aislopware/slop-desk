@@ -32,6 +32,7 @@ pub mod panel_floor;
 pub mod panel_predicates;
 pub mod path_confinement;
 pub mod panel_shells;
+pub mod rate_and_range;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
@@ -957,6 +958,16 @@ pub fn registry() -> Vec<Rule> {
             name: "macui-divider-readout",
             origin: "docs/55 §8",
             check: macui_memos::the_divider_hides_before_it_cuts,
+        },
+        Rule {
+            name: "bucket-from-the-crate",
+            origin: "docs/55 §6",
+            check: rate_and_range::an_anti_flood_bucket_comes_from_the_crate,
+        },
+        Rule {
+            name: "stepper-census",
+            origin: "docs/55 §8",
+            check: rate_and_range::the_stepper_vocabulary_is_counted,
         },
         Rule {
             name: "undecodable-stream-ends",
