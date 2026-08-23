@@ -16,10 +16,13 @@
 
 use objc2_core_foundation::CFString;
 
-/// A property or option key this crate may name.
+/// A COMPRESSION property or option key this crate may name.
 ///
 /// An enum rather than a `&CFString` parameter so the vocabulary is closed: a caller cannot invent
 /// a key, and the compiler lists every one that exists at the single site that resolves them.
+/// [`DecodeKey`] is its decompression twin, and they are two enums rather than one because only one
+/// of them exists on every slice.
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Key {
     // ---- encoder specification (the CREATE dictionary, not `VTSessionSetProperty`) ----
@@ -71,6 +74,7 @@ pub enum Key {
     AcknowledgedLtrTokens,
 }
 
+#[cfg(target_os = "macos")]
 impl Key {
     /// The framework's own `CFString` for this key.
     ///
@@ -123,7 +127,9 @@ impl Key {
 
 /// A `CFString` VALUE this crate may write, as opposed to a key.
 ///
-/// Only the BT.709 colour tags need one; every other property takes a number or a boolean.
+/// Only the BT.709 colour tags need one; every other property takes a number or a boolean. The
+/// encoder writes them, so this is macOS-only with the rest of the compression vocabulary.
+#[cfg(target_os = "macos")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StringValue {
     /// `kCVImageBufferColorPrimaries_ITU_R_709_2`.
@@ -134,6 +140,7 @@ pub enum StringValue {
     Matrix709,
 }
 
+#[cfg(target_os = "macos")]
 impl StringValue {
     /// The framework's own `CFString` for this value.
     ///
@@ -157,13 +164,21 @@ impl StringValue {
     }
 }
 
-/// A per-sample ATTACHMENT this crate reads off a finished encode.
+/// A per-sample ATTACHMENT this crate reads off a finished encode, or writes onto one to decode.
+///
+/// The only key vocabulary shared by both halves of the crate, which is why it is not `cfg`'d as a
+/// whole: the two the encoder READS are macOS-only, the one the decoder WRITES is on every slice.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Attachment {
     /// `kCMSampleAttachmentKey_NotSync` — present and true on a frame that is NOT a keyframe.
+    #[cfg(target_os = "macos")]
     NotSync,
     /// `kVTSampleAttachmentKey_RequireLTRAcknowledgementToken` — the token a client must ack.
+    #[cfg(target_os = "macos")]
     RequireLtrAcknowledgementToken,
+    /// `kCMSampleAttachmentKey_DisplayImmediately` — emit on decode rather than holding for
+    /// reorder.
+    DisplayImmediately,
 }
 
 impl Attachment {
@@ -180,10 +195,13 @@ impl Attachment {
         // SAFETY: framework rule, above.
         unsafe {
             match self {
+                #[cfg(target_os = "macos")]
                 Self::NotSync => objc2_core_media::kCMSampleAttachmentKey_NotSync,
+                #[cfg(target_os = "macos")]
                 Self::RequireLtrAcknowledgementToken => {
                     objc2_video_toolbox::kVTSampleAttachmentKey_RequireLTRAcknowledgementToken
                 },
+                Self::DisplayImmediately => objc2_core_media::kCMSampleAttachmentKey_DisplayImmediately,
             }
         }
     }
@@ -194,4 +212,67 @@ impl Attachment {
 /// A plain `i32` in the bindings rather than a `CFNumber` static, so there is nothing to read
 /// unsafely; it is here so the one call site does not carry a bare literal whose meaning is
 /// invisible. MEASURED to be `0` — the sign is not guessable from the name.
+#[cfg(target_os = "macos")]
 pub(crate) const QP_MODULATION_DISABLE: i64 = objc2_video_toolbox::kVTQPModulationLevel_Disable as i64;
+
+/// A DECOMPRESSION key this crate may name, and the two pixel formats it may ask for.
+///
+/// Separate from [`Key`] because only this half of the crate exists on every Apple slice. Same
+/// obligation, same shape, same reason for reading the framework's own statics rather than spelling
+/// them: `kCVPixelBufferIOSurfacePropertiesKey` is `IOSurfaceProperties`, which looks guessable
+/// right up until one of them is not.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DecodeKey {
+    /// `kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder`.
+    RequireHardwareAcceleratedVideoDecoder,
+    /// `kCVPixelBufferPixelFormatTypeKey`.
+    PixelFormatType,
+    /// `kCVPixelBufferMetalCompatibilityKey`.
+    MetalCompatibility,
+    /// `kCVPixelBufferIOSurfacePropertiesKey`.
+    IoSurfaceProperties,
+}
+
+impl DecodeKey {
+    /// The framework's own `CFString` for this key.
+    ///
+    /// # Safety
+    /// [`Attachment::cf`]'s — every arm is a framework-initialised `extern` static, carrying the
+    /// `&'static` lifetime and the `CFString` type from the binding.
+    #[expect(
+        unsafe_code,
+        reason = "framework key constants are extern statics; same obligation as Attachment::cf"
+    )]
+    pub(crate) fn cf(self) -> &'static CFString {
+        use objc2_core_video as cv;
+        // SAFETY: framework rule, above.
+        unsafe {
+            match self {
+                Self::RequireHardwareAcceleratedVideoDecoder => {
+                    objc2_video_toolbox::kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder
+                },
+                Self::PixelFormatType => cv::kCVPixelBufferPixelFormatTypeKey,
+                Self::MetalCompatibility => cv::kCVPixelBufferMetalCompatibilityKey,
+                Self::IoSurfaceProperties => cv::kCVPixelBufferIOSurfacePropertiesKey,
+            }
+        }
+    }
+
+    /// The NV12 four-character code for the negotiated luma range.
+    ///
+    /// The two variants have an IDENTICAL plane layout, so the renderer's texture creation does not
+    /// branch on this; what differs is the range the shader's coefficients assume. Plain constants
+    /// in the bindings, so there is nothing to read unsafely — they are resolved here so the one
+    /// call site carries a name rather than a hex literal.
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "a four-character code is a bit pattern; CFNumber wants those bits signed"
+    )]
+    pub(crate) const fn nv12_format(full_range: bool) -> i32 {
+        if full_range {
+            objc2_core_video::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i32
+        } else {
+            objc2_core_video::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i32
+        }
+    }
+}

@@ -2,7 +2,17 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** Shipped, co-equal with terminal panes (old "Phase 4 / secondary" framing retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Runs on **both macOS and iOS/iPadOS** (shared code). Floor: macOS 26 / iOS 26. Pipeline: NALU (reassembled + FEC-recovered in Swift) → `VTDecompressionSession` → `CVPixelBuffer` → Metal render. This doc covers decode + present.
+Runs on **both macOS and iOS/iPadOS** (shared code). Floor: macOS 26 / iOS 26. Pipeline: NALU (reassembled + FEC-recovered) → `VTDecompressionSession` → `CVPixelBuffer` → Metal render. This doc covers decode + present.
+
+> **The decode half is RUST as of 2026-08-23.** Every `VTDecompressionSession` and CoreMedia call
+> below now lives in `rust/slopdesk-apple-vt`, every decision that drives them in
+> `slopdesk_video::decoder_state`, and `slopdesk_video_decoder_*` is the whole door —
+> `VideoDecoder.swift` is a face over it. The Swift snippets in §§1–4 are kept because they are the
+> clearest statement of WHAT the pipeline does and WHY each property is set; read them as the
+> specification the Rust satisfies, not as code that is in the tree. See
+> [57-apple-frameworks-in-rust.md](57-apple-frameworks-in-rust.md) §5 and
+> [55-ffi-boundary.md](55-ffi-boundary.md). The RENDER half below is still Swift, and stays Swift —
+> it is Metal and `CAMetalLayer`.
 
 ---
 

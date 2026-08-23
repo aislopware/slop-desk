@@ -115,6 +115,19 @@ path only — `value.retain()` on a live typed reference asserts nothing and is 
 The two counts are independent: a crate that owns a session AND reads its callback's samples
 genuinely carries both, and one does not consume the other.
 
+**Both admissions may be spent on a GENERIC HELPER, and that is the reading, not a loophole.**
+`slopdesk-apple-vt` grew a second framework area — compression takes one Create-rule out-parameter
+and one Get-rule callback pointer, decompression takes four and one — and written inline that would
+have been ten sites and a §2 violation for a crate that had done nothing wrong. Written as one
+`created<T>` and one `borrowed<T>` in its own module it is two, which is what the paragraphs above
+already ASK for in their own words: "the crate has exactly one place where a Copy-rule pointer
+becomes an owned value and every typed reader is a caller of that helper". The per-site alternative
+is strictly worse for a reviewer — it makes the same argument ten times, each of which must be
+re-derived from the callee's name. Here the argument is made once, in the helper's `# Safety` note,
+and each call site's remaining job is the one thing a reader can actually check on the line in front
+of them: *does this function's name contain `Copy` or `Create`?* The cap is unchanged and
+`apple-family` still counts two qualified paths; what moved is where the crate spends them.
+
 **Every `unsafe` block names the FRAMEWORK rule it satisfies**, not a Rust rule. `// SAFETY: the
 buffer outlives the call` is the wrong comment here — the binding already proved that. The right one
 is `// SAFETY: kAXRaiseAction is a documented action on a window element; a stale element is a
@@ -185,7 +198,7 @@ accordingly — see the sixth correction.
 | `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowPlacement`, `WindowGeometryWatcher`'s resize, `WindowFeedAXSupport`'s probe, `HostNavHistory` | **landed** (increments 90-91) — costs the §2 admission |
 | `slopdesk-apple-cursor` | `NSCursor` + the offscreen `NSBitmapImageRep` render | `CursorSampler`'s two AppKit reads | **landed** (increment 89) — costs **two** `unsafe` blocks |
 | `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
-| `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder` **(done)**, `VideoDecoder` (open) | **landed** (increment 92) — costs the §2 Get-rule admission, and the shim's third convention |
+| `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder` **(done)**, `VideoDecoder` **(done)** | **landed** (increments 92, 93) — costs both §2 admissions, the shim's third convention, and the family's only iOS edge |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer` | planned |
 | `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder`, `AudioPlaybackEngine` | planned |
 | `slopdesk-apple-power` | `IOKit.pwr_mgt` | `PreventSleepAssertion`, `HostDisplayWake` | **deferred** — §1 |
@@ -353,3 +366,44 @@ colour tags, which are `extern` constants. Until this row they were implicit —
 imported VideoToolbox itself, and the import was the link. **Every future row that calls a C function
 or reads an `extern` constant will hit this, and it presents as a wall of undefined symbols at the
 final link, long after the crate and `make ffi` are both green.**
+
+**The decoder closes the row, and it is where the family first reached iOS.** Every other crate in
+this family is macOS-gated in `slopdesk-ffi`'s manifest, most because the API does not exist on a
+phone at all. VideoToolbox is the exception: iOS has it, and the two halves have opposite audiences
+— only the host COMPRESSES, every client DECOMPRESSES. So the crate gates its own compression half
+with `#[cfg(target_os = "macos")]` and its Cargo edge widened to `cfg(any(macos, ios))`, which makes
+`decoder.rs` the only ungated `slopdesk-apple-*` door in the header and puts its declarations
+OUTSIDE the `MACOS-ONLY` region. What keeps the internal gate honest is the check that was already
+there: `build-ffi.sh` requires the ENCODER's symbols present on the macOS slice and absent on the
+other two, so a `#[cfg]` that quietly stopped matching fails a gate rather than merely bloating a
+phone.
+
+**The callback's ownership term is INVERTED from the encoder's, and that is not a style choice.**
+The encoder lends `(ptr, len)` for the duration of the call and requires the caller to copy. The
+decoder hands the `CVImageBufferRef` over at **+1**, and Swift's `takeRetainedValue()` is the
+release the contract requires. The reason is the consumer: the decoded buffer goes to a display-link
+pacer that holds it until the next vsync, which is always after the callback returns. A borrow would
+be a use-after-free on the first frame; a copy would be a full NV12 frame memcpy sixty times a
+second to avoid one retain. Two doors on the same convention with opposite ownership is exactly the
+kind of thing a header has to SAY rather than leave to symmetry, so both terms are written out where
+the doors are declared.
+
+**Reading this half found the same thing reading the encoder did: the file was mostly rules.**
+`VideoDecoder.swift` was 380 lines with three test seams in it — a `cachedParameterSetsForTesting`
+getter and a `seedCachedParameterSetsForTesting` setter existed purely so a test could model a
+configured decoder without creating a session that would hang. Those seams are gone, because in
+`slopdesk_video::decoder_state` the state IS a value and a test builds one by calling the
+constructor. Two of the decisions it holds are load-bearing in a way their Swift spelling did not
+show: the parameter-set cache must be CLEARED by a hard failure, or a fixed-capture-size stream's
+byte-identical recovery IDR answers "reuse" and freezes the pane permanently with nothing reporting
+it; and the decode-wall average's first sample must SEED the average whole, or the stats HUD shows a
+warmup ramp no decode ever took. Both now have a named test each and a content ban in
+`hevc-decode-is-rusts`.
+
+**Three doors were deleted by this row, not ported.** `slopdesk_hevc_types`,
+`slopdesk_hevc_nal_type` and `slopdesk_hevc_parameter_sets` existed so `HEVCParameterSets.swift`
+could be a face over `slopdesk_video::hevc_parameter_sets`. With the decoder in Rust the only caller
+of that face was the decoder, so the face went and the doors went with it — the crate module they
+wrapped is unchanged and keeps its own tests, and the shim now calls it directly. This is the second
+time in two increments that collapsing a Swift face into Rust orphaned the doors that face existed
+to call, and both times `check-ffi-doors` is what said so.

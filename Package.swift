@@ -42,14 +42,22 @@ import PackageDescription
 // which packages a plain static archive. Naming them here is the only thing that puts them on the link
 // line. They were implicit until the encoder collapsed: `VideoEncoder.swift` used to
 // `import VideoToolbox` itself.
+//
+// And those three are UNGATED, which is the one line here that is not macOS-only. The crate's two
+// framework areas have opposite audiences — only the host compresses, every client DECOMPRESSES —
+// so `slopdesk-apple-vt` ships on the iOS slices too, and `VTDecompressionSessionCreate` is as much
+// a bare C function there as its compression twin is here. The failure this prevents is the one
+// `docs/57` §5 warns about, and it is not subtle: four undefined symbols at the FINAL link of the
+// iOS app, long after both the crate and `make ffi` are green, because `import VideoToolbox` used
+// to be what put the framework on that link line and `VideoDecoder.swift` no longer imports it.
 let ffiCLibraries: [LinkerSetting] = [
     .linkedLibrary("iconv", .when(platforms: [.macOS])),
     .linkedFramework("Security", .when(platforms: [.macOS])),
     .linkedFramework("CoreFoundation", .when(platforms: [.macOS])),
     .linkedFramework("AppKit", .when(platforms: [.macOS])),
-    .linkedFramework("VideoToolbox", .when(platforms: [.macOS])),
-    .linkedFramework("CoreMedia", .when(platforms: [.macOS])),
-    .linkedFramework("CoreVideo", .when(platforms: [.macOS])),
+    .linkedFramework("VideoToolbox"),
+    .linkedFramework("CoreMedia"),
+    .linkedFramework("CoreVideo"),
 ]
 let package = Package(
     name: "SlopDesk",

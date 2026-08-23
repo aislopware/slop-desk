@@ -6213,34 +6213,6 @@ size_t slopdesk_nal_split(const uint8_t *avcc, size_t len, SlopDeskNalSpan *out,
 size_t slopdesk_nal_join(const uint8_t *list, size_t list_len, uint8_t *out, size_t cap);
 size_t slopdesk_nal_constant(uint8_t index);
 
-/* The HEVC parameter sets a keyframe carries inline, under the same span convention: an access
- * unit is most of a frame and the caller is already holding it, so a decode answers WHERE the
- * three sets sit. An incomplete set is ONE answer, not three — a format description built from two
- * of them would configure the decoder wrong — so `_parameter_sets` answers false and leaves `out`
- * untouched unless all three are there, and takes the LAST of each where one is duplicated. */
-
-typedef struct {
-  uint8_t vps;  /* 32 */
-  uint8_t sps;  /* 33 */
-  uint8_t pps;  /* 34 */
-} SlopDeskHevcTypes;
-
-typedef struct {
-  uint8_t nal_type;  /* live only when present */
-  bool    present;   /* an empty unit has no type, and no sentinel says so */
-} SlopDeskHevcNalType;
-
-typedef struct {
-  SlopDeskNalSpan vps;
-  SlopDeskNalSpan sps;
-  SlopDeskNalSpan pps;
-} SlopDeskHevcParameterSets;
-
-SlopDeskHevcTypes   slopdesk_hevc_types(void);
-SlopDeskHevcNalType slopdesk_hevc_nal_type(const uint8_t *unit, size_t unit_len);
-bool slopdesk_hevc_parameter_sets(const uint8_t *avcc, size_t avcc_len,
-                                  SlopDeskHevcParameterSets *out);
-
 /* ---------------------------------------------------------------------------- *
  * The control channel: session bring-up, discovery, the host-window feed, the live knobs.
  *
@@ -8756,6 +8728,84 @@ int32_t slopdesk_video_encoder_qp_knob(const uint8_t *raw, size_t len, int32_t f
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END
+
+// ---- The HEVC decoder ---------------------------------------------------------------
+//
+// OUTSIDE the region above, and it is the only VideoToolbox door that is. The two halves
+// of that framework have opposite audiences: only the host COMPRESSES, and every client
+// DECOMPRESSES. So the encoder is macOS-only and this ships on every slice.
+//
+// THE SECOND DOOR THAT CALLS BACK, on the same third convention the encoder's block
+// above describes — with ONE term inverted, and it is the term that matters:
+//
+//   * The callback is handed the CVImageBufferRef at +1. THE CALLEE OWNS IT and must
+//     release it: Unmanaged<CVImageBuffer>.fromOpaque(_:).takeRetainedValue() IS that
+//     release. The encoder's (avcc, len) is borrowed and must be copied; this is not.
+//     The reason is the consumer — a display-link pacer holds the buffer until the next
+//     vsync, which is always after the call returns, so a borrow would be a
+//     use-after-free on the first frame and a copy would be a full NV12 memcpy per frame.
+//   * It is registered once, at _new, and never changed.
+//   * The context must outlive the handle. Free the handle first.
+//   * UNLIKE the encoder's, it runs on the CALLING thread: the decode is synchronous, so
+//     the callback has already run by the time _decode returns.
+//
+// Behind it: the session (slopdesk-apple-vt) and every decision that drives it
+// (slopdesk_video::decoder_state) — when a keyframe is worth rebuilding for, what an
+// empty frame means, and how the decode wall folds into the stats HUD's average.
+//
+// COPIES: exactly one, and it is not removable. Core Media owns a sample buffer's bytes,
+// so the AVCC run is copied into a block the framework allocated; the alternative
+// references the caller's bytes without retaining them, while the sample buffer outlives
+// the call. Everything after it is zero-copy — the decoded surface reaches Metal as the
+// IOSurface the decoder wrote.
+typedef struct SlopDeskVideoDecoder SlopDeskVideoDecoder;
+
+// One decoded frame. image_buffer is a CVImageBufferRef at +1 — see above.
+typedef void (*SlopDeskDecodedFrameFn)(void *context, void *image_buffer);
+
+// The four outcomes of a decode, each asking the caller for something DIFFERENT. A caller
+// that collapsed any two would get a visible fault: dropping what should re-anchor freezes
+// the pane, and re-anchoring what should be dropped costs a keyframe per corrupt fragment.
+#define SLOPDESK_DECODE_DELIVERED 0      // pixels went to the callback
+#define SLOPDESK_DECODE_DROPPED 1        // an empty delta; drop it and say nothing
+#define SLOPDESK_DECODE_NEEDS_KEYFRAME 2 // ask the host, but do NOT invalidate
+#define SLOPDESK_DECODE_FAILED 3         // invalidate, then ask; status_out has the OSStatus
+
+// Creates a decoder. It has no session until the first keyframe gives it one — lazily by
+// necessity, not by choice: the host streams parameter sets inline ahead of every IDR and
+// none out of band, so there is nothing to build a session FROM before one arrives.
+SlopDeskVideoDecoder *slopdesk_video_decoder_new(void *context, SlopDeskDecodedFrameFn deliver);
+
+// Tears down. No drain, unlike the encoder's free: the decode is synchronous, so nothing
+// is ever in flight when this is called.
+void slopdesk_video_decoder_free(SlopDeskVideoDecoder *handle);
+
+// Requests the FULL-RANGE NV12 output variant rather than the video-range one. Set from
+// the stream's negotiated helloAck before any media arrives. The two have identical plane
+// layouts, so what differs is the range — and therefore which shader coefficients the
+// renderer must pair with it. Read at every configure, so a later change lands on the
+// next session rather than never.
+void slopdesk_video_decoder_set_full_range(SlopDeskVideoDecoder *handle, bool full_range);
+
+// One reassembled AVCC frame. Answers one of the four SLOPDESK_DECODE_* codes above;
+// status_out takes the framework's OSStatus on _FAILED and is untouched otherwise.
+//
+// Self-configuring: a keyframe carries its VPS/SPS/PPS inline, and one whose sets DIFFER
+// from the running session's rebuilds before decoding. One whose sets MATCH does not —
+// the heartbeat IDR arrives about once a second, and a teardown that often is a stall on
+// an otherwise healthy stream.
+int32_t slopdesk_video_decoder_decode(SlopDeskVideoDecoder *handle, const uint8_t *avcc,
+                                      size_t len, bool keyframe, int32_t *status_out);
+
+// Tears the live session down so the NEXT keyframe rebuilds, even a byte-identical one.
+// Call it on _FAILED before asking the host for an anchor: on a fixed-capture-size stream
+// the recovery IDR carries the SAME parameter sets, so without this the same malfunctioning
+// session is reused forever and the pane freezes on the last good frame.
+void slopdesk_video_decoder_invalidate(SlopDeskVideoDecoder *handle);
+
+// The decode-wall average in milliseconds, 0 when nothing has decoded yet. The stats HUD's
+// client-local decode axis, read at ~2 Hz from a different thread than the one decoding.
+double slopdesk_video_decoder_millis_ewma(SlopDeskVideoDecoder *handle);
 
 #ifdef __cplusplus
 }

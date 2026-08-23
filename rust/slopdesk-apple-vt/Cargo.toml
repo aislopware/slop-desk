@@ -43,12 +43,16 @@
 # entire `unsafe` remit is "is this `(ptr, len)` live for the duration of this call" — makes the
 # slices, with the owning sample still borrowed for the call that reads them.
 #
-# ## macOS ONLY, and how that is kept true
-# `slopdesk-ffi` links this behind `[target.'cfg(target_os = "macos")'.dependencies]`, its doors are
-# declared inside `slopdesk_ffi.h`'s `MACOS-ONLY BEGIN/END` region, and `scripts/build-ffi.sh`
-# requires those symbols PRESENT on the macOS slice and ABSENT on both iOS slices. iOS HAS
-# VideoToolbox, so unlike `slopdesk-apple-cgevent` an ungated edge here would LINK and merely bloat —
-# which is worse, not better, because nothing would fail. The gate is what catches it.
+# ## TWO framework areas, on two different sets of slices
+# Compression is macOS-only: only the host encodes. Its doors are declared inside `slopdesk_ffi.h`'s
+# `MACOS-ONLY BEGIN/END` region, `slopdesk-ffi` gates its `encoder` module on macOS, and
+# `scripts/build-ffi.sh` requires those symbols PRESENT on the macOS slice and ABSENT on both iOS
+# slices. iOS HAS VideoToolbox, so unlike `slopdesk-apple-cgevent` an ungated edge would LINK and
+# merely bloat — which is worse, not better, because nothing would fail. The gate is what catches it.
+#
+# DEcompression is on every Apple slice, because every client decodes. Its doors are declared OUTSIDE
+# that region, deliberately: gating them would cost the two iOS slices the decoder the phone app is
+# built around. The `#[cfg]`s in `lib.rs` are what keep the compression half out of those slices.
 [workspace]
 resolver = "3"
 
@@ -68,9 +72,13 @@ path = "src/lib.rs"
 # PINNED EXACTLY, all of them, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is
 # documented as explicitly NOT policy, so a caret range would let a routine `cargo update` raise the
 # toolchain floor of a repository that builds three slices in CI.
-[target.'cfg(target_os = "macos")'.dependencies]
-# `objc2` is on because `block2` needs `Encode` for `VTEncodeInfoFlags`, and the output handler is a
-# block. The alternative — the C-function-pointer callback form — takes a `*mut c_void` refcon this
+#
+# The gate is EVERY APPLE SLICE, not macOS, and the asymmetry is the crate's shape: only the host
+# compresses, but every client decompresses. `lib.rs` gates the compression modules to macOS inside
+# the crate, so the iOS slices carry the decode half and nothing else.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+# `objc2` is on because `block2` needs `Encode` for `VTEncodeInfoFlags`, and both output handlers are
+# blocks. The alternative — the C-function-pointer callback form — takes a `*mut c_void` refcon this
 # crate would have to reconstitute on every frame, which is the raw-pointer operation §2 bars.
 objc2-video-toolbox = { version = "=0.3.2", default-features = false, features = [
   "std",
@@ -79,6 +87,8 @@ objc2-video-toolbox = { version = "=0.3.2", default-features = false, features =
   "VTSession",
   "VTCompressionSession",
   "VTCompressionProperties",
+  "VTDecompressionSession",
+  "VTDecompressionProperties",
   "block2",
   "objc2",
   "objc2-core-media",
@@ -97,6 +107,7 @@ objc2-core-video = { version = "=0.3.2", default-features = false, features = [
   "CVBase",
   "CVImageBuffer",
   "CVPixelBuffer",
+  "CVPixelBufferPool",
   "CVReturn",
 ] }
 objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [

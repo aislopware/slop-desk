@@ -29,25 +29,38 @@
 //! doing outright. The block form captures an `Arc` instead, so ownership is Rust's and the
 //! framework only ever sees an opaque copied block.
 
-#![cfg_attr(not(target_os = "macos"), allow(unused_crate_dependencies))]
+#![cfg_attr(
+    not(any(target_os = "macos", target_os = "ios")),
+    allow(unused_crate_dependencies)
+)]
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod decompress;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 mod keys;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod owned;
 #[cfg(target_os = "macos")]
 mod sample;
 #[cfg(target_os = "macos")]
 mod session;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod status;
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use decompress::{DecodedSink, DecompressionSession, FormatDescription, NAL_LENGTH_PREFIX, SampleBuffer};
 #[cfg(target_os = "macos")]
 pub use keys::{Key, StringValue};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use objc2_core_foundation::CFRetained;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use objc2_core_video::CVImageBuffer;
 #[cfg(target_os = "macos")]
 pub use sample::{EncodedSample, FrameworkBytes};
 #[cfg(target_os = "macos")]
-pub use session::{
-    CompressionSession, FrameOptions, FrameSink, INVALID_SESSION, NO_ERR, Spec, Timestamp, XPC_CREATE_RACE,
-};
+pub use session::{CompressionSession, FrameOptions, FrameSink, Spec, Timestamp, XPC_CREATE_RACE};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use status::{INVALID_SESSION, NO_ERR};
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {

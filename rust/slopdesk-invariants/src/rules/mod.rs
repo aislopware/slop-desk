@@ -215,11 +215,6 @@ pub fn registry() -> Vec<Rule> {
             check: video_client::present_queue,
         },
         Rule {
-            name: "video-hevc-parameter-sets",
-            origin: "docs/55 §4b",
-            check: video_client::hevc_parameter_sets,
-        },
-        Rule {
             name: "video-scroll-laws",
             origin: "docs/55 §4b",
             check: video_client::scroll_laws,
@@ -333,6 +328,11 @@ pub fn registry() -> Vec<Rule> {
             name: "hevc-encode-is-rusts",
             origin: "docs/57 §5",
             check: rust_boundaries::hevc_encode_is_rusts,
+        },
+        Rule {
+            name: "hevc-decode-is-rusts",
+            origin: "docs/57 §5",
+            check: rust_boundaries::hevc_decode_is_rusts,
         },
         Rule {
             name: "agent-vocabularies",

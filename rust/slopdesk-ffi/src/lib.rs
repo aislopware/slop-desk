@@ -83,13 +83,16 @@ pub mod ax;
 pub mod cursor_sampler;
 pub mod cursor_wire;
 pub mod decode_admission;
-// macOS only: behind it is VideoToolbox's hardware HEVC encoder. iOS HAS VideoToolbox, so an
-// ungated edge here would LINK and merely bloat every client slice with a host-only encoder — which
-// is worse than a link error, because nothing would fail. See the module.
+// UNGATED, and the only `slopdesk-apple-*` door that is: every client decodes, so this ships on
+// every slice. Its macOS-only twin below is the asymmetry, not this. See the module.
+pub mod decoder;
 pub mod device_geometry;
 pub mod device_log;
 pub mod device_panel;
 pub mod drop_action;
+// macOS only: behind it is VideoToolbox's hardware HEVC encoder. iOS HAS VideoToolbox, so an
+// ungated edge here would LINK and merely bloat every client slice with a host-only encoder — which
+// is worse than a link error, because nothing would fail. See the module.
 #[cfg(target_os = "macos")]
 pub mod encoder;
 pub mod file_transfer;
@@ -105,7 +108,6 @@ pub mod git_line;
 // macOS only: behind it is a vendored `libgit2`, and only hostd asks the question. See the module.
 #[cfg(target_os = "macos")]
 pub mod git_status;
-pub mod hevc_parameter_sets;
 pub mod hid_virtual_key;
 pub mod hint_scan;
 pub mod host_policy;

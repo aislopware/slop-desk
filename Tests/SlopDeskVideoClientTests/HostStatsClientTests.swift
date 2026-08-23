@@ -55,17 +55,6 @@ final class HostStatsClientTests: XCTestCase {
         )
     }
 
-    // MARK: Decode-wall EWMA (pure fold — no VTDecompressionSession, hang-safe)
-
-    func testDecodeEWMAFirstSampleSeedsWhole() {
-        XCTAssertEqual(VideoDecoder.foldDecodeEWMA(current: 0, sampleMs: 1.2), 1.2, "no zero-drag warmup")
-    }
-
-    func testDecodeEWMAFoldsAtPacerAlpha() {
-        let alpha = VideoDecoder.decodeEWMAAlpha
-        let folded = VideoDecoder.foldDecodeEWMA(current: 2.0, sampleMs: 4.0)
-        XCTAssertEqual(folded, 2.0 * (1 - alpha) + 4.0 * alpha, "EWMA at the pacer alpha")
-        XCTAssertGreaterThan(folded, 2.0, "moves toward the sample")
-        XCTAssertLessThan(folded, 4.0, "but keeps memory")
-    }
+    // The decode-wall EWMA moved with the decoder: `slopdesk_video::decoder_state` folds it, and its
+    // own tests cover the seed, the weight and the convergence this pair used to.
 }

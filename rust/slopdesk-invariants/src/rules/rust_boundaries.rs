@@ -337,11 +337,9 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
 
 /// HEVC ENCODE is `slopdesk-apple-vt`, and `VideoEncoder.swift` is a face with a callback.
 ///
-/// The ban is on the compression half of `VideoToolbox` alone. Decompression is still Swift —
-/// `VideoDecoder.swift` and `HEVCParameterSets.swift` are the open half of the `docs/57` §5 `vt`
-/// row — so a blanket ban on the framework would be a ban on work that has not happened yet, which
-/// is a rule that gets deleted rather than a rule that holds. The day the decoder lands, the second
-/// alternation below grows and this comment shrinks.
+/// The ban is on the COMPRESSION half of `VideoToolbox`. Its decompression twin is the rule below,
+/// separate rather than folded in because the two have different audiences — only the host encodes,
+/// every client decodes — so a single rule would name one file in the other's message.
 ///
 /// Two of the banned strings are not calls, and they are the ones worth having. A property KEY
 /// constant in Swift means somebody is configuring a session from this side of the boundary, and a
@@ -380,7 +378,6 @@ pub fn hevc_encode_is_rusts(tree: &Tree) -> Report {
         "|kVTVideoEncoderSpecification_",
         "|kVTQPModulationLevel_"
     );
-
     let claims = [
         Claim::NoneUnder {
             roots: &["Sources", "Tests"],
@@ -432,6 +429,86 @@ pub fn hevc_encode_is_rusts(tree: &Tree) -> Report {
             message: "Sources/SlopDeskVideoHost/VideoEncoder.swift types a tuned ceiling constant again — \
                       all six were calibrated together on hardware and live in \
                       rust/slopdesk-video::encoder_ceiling (docs/57 §5)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
+/// The client's HEVC DECOMPRESSION session is Rust's, and `VideoDecoder.swift` is a face over it.
+///
+/// The encoder's twin, and the other half of the `docs/57` §5 `vt` row. Its shape is the same: a
+/// ban on the session vocabulary anywhere in Swift, a demand that the face still call the door, and
+/// content checks on the two rules the face must NOT hold back.
+///
+/// Both content checks name a BUG rather than a preference. The parameter-set cache is what a hard
+/// decode failure must CLEAR: on a fixed-capture-size stream the recovery IDR carries
+/// byte-identical sets, so a cache that survived would answer "reuse" and hand the next frame to
+/// the session that just failed — for ever, with nothing reporting it. And the decode-wall
+/// average's first sample must SEED it whole; folding against zero shows a quarter of the real
+/// figure and climbs for a dozen frames, which reads as a decoder warming up.
+///
+/// What is deliberately NOT banned is the `CoreMedia` side. `CMVideoFormatDescriptionCreate…` and
+/// `kCMSampleAttachmentKey_…` are how the SIMULATOR and ANDROID panels feed an
+/// `AVSampleBufferDisplayLayer` — a different pipeline with no decompression session in it at all.
+/// Sweeping those in would fire on the tree this rule ships with, and a rule that does that gets
+/// deleted rather than fixed.
+#[must_use]
+pub fn hevc_decode_is_rusts(tree: &Tree) -> Report {
+    const DECODER: &str = "Sources/SlopDeskVideoClient/VideoDecoder.swift";
+    // Sessions and their vocabulary only — see the note above.
+    const DECOMPRESSION: &str = concat!(
+        "VTDecompressionSessionCreate",
+        "|VTDecompressionSessionDecodeFrame",
+        "|VTDecompressionSessionInvalidate",
+        "|VTDecompressionSessionWaitForAsynchronousFrames",
+        "|VTDecompressionOutputCallback",
+        "|kVTDecompressionPropertyKey_",
+        "|kVTVideoDecoderSpecification_"
+    );
+
+    let claims = [
+        Claim::NoneUnder {
+            roots: &["Sources", "Tests"],
+            extensions: SWIFT,
+            pattern: DECOMPRESSION,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift HEVC decompression session is back in {files} — slopdesk-apple-vt holds the \
+                      session, the format description and the sample buffer, slopdesk_video::decoder_state \
+                      decides when to rebuild one, and slopdesk_video_decoder_* is the whole door (docs/57 \
+                      §5)",
+        },
+        Claim::Names {
+            path: DECODER,
+            needle: "import CSlopDeskFFI",
+            message: "Sources/SlopDeskVideoClient/VideoDecoder.swift no longer calls the Rust decoder — the \
+                      port was undone (docs/57 §5)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskVideoClient/HEVCParameterSets.swift",
+            message: "Sources/SlopDeskVideoClient/HEVCParameterSets.swift is back — the VPS/SPS/PPS scan \
+                      over an AVCC frame is rust/slopdesk-video::hevc_parameter_sets, and the host's \
+                      packetizer already read it from there, so a second one would be the two-language \
+                      mirror CLAUDE.md forbids (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: DECODER,
+            pattern: "needsReconfigure|currentParameterSets|cachedParameterSets",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoClient/VideoDecoder.swift decides again whether a keyframe is \
+                      worth rebuilding for — that cache is what a hard failure must CLEAR, and getting it \
+                      wrong freezes the pane permanently on a fixed-size stream with nothing reporting it \
+                      (rust/slopdesk-video::decoder_state, docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: DECODER,
+            pattern: "decodeEWMAAlpha|foldDecodeEWMA|decodeMsEWMA",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoClient/VideoDecoder.swift folds the decode-wall average again — \
+                      the first sample must SEED it rather than fold against zero, or the stats HUD shows a \
+                      warmup ramp no decode ever took (rust/slopdesk-video::decoder_state, docs/57 §5)",
         },
     ];
     check_all(tree, &claims)
@@ -594,22 +671,121 @@ mod tests {
         }
     }
 
-    /// The decompression half is the open row, so banning it would ban work that has not happened —
-    /// and a rule that fires on the state of the tree it ships with gets deleted rather than fixed.
+    /// Each decompression call and each key family is caught on its own, for the reason the
+    /// compression pair above is: an alternation that matched only its first branch would pass a
+    /// single-case test while banning nothing.
     #[test]
-    fn the_decoder_is_not_swept_in_with_the_encoder() {
-        let fixture = Fixture::new("decoder-untouched");
+    fn every_decompression_call_the_decoder_used_to_make_is_caught_on_its_own() {
+        for call in [
+            "VTDecompressionSessionCreate(allocator: nil, formatDescription: fmt)\n",
+            "VTDecompressionSessionDecodeFrame(session, sample, flags, nil, nil)\n",
+            "VTDecompressionSessionInvalidate(session)\n",
+            "VTDecompressionSessionWaitForAsynchronousFrames(session)\n",
+            "let cb: VTDecompressionOutputCallback = { _, _, _, _, _, _, _ in }\n",
+            "set(kVTDecompressionPropertyKey_RealTime, true)\n",
+            "spec[kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder] = true\n",
+        ] {
+            let fixture = Fixture::new("decoder-revived");
+            fixture.write("Sources/SlopDeskVideoClient/VideoDecoder.swift", call);
+            let report = super::hevc_decode_is_rusts(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains("decompression session")),
+                "{call:?} was not caught: {report:?}"
+            );
+        }
+    }
+
+    /// The DEVICE PANELS are not swept in. They feed an `AVSampleBufferDisplayLayer`, which has no
+    /// decompression session in it at all, and they build a format description and stamp an
+    /// attachment to do it. A ban wide enough to catch those would fire on the tree it ships with.
+    #[test]
+    fn the_display_layer_panels_keep_their_core_media_calls() {
+        let fixture = Fixture::new("panels-untouched");
+        fixture
+            .write(
+                "Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift",
+                "CMVideoFormatDescriptionCreateFromHEVCParameterSets(allocator: nil, nalUnitHeaderLength: \
+                 4)\n",
+            )
+            .write(
+                "Sources/SlopDeskDevicePanels/Shared/DevicePanelSampleBuffer.swift",
+                "Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque()\n",
+            )
+            .write(
+                "Sources/SlopDeskVideoClient/VideoDecoder.swift",
+                "import CSlopDeskFFI\n",
+            );
+        assert!(super::hevc_decode_is_rusts(&fixture.tree()).is_clean());
+    }
+
+    /// The decoder's face, by CONTENT. Both revivals name a bug rather than a preference: the
+    /// parameter-set cache is what a hard failure must clear, and the EWMA's first sample must seed
+    /// the average whole.
+    #[test]
+    fn the_decoder_face_must_call_the_door_and_must_not_hold_the_rules() {
+        let fixture = Fixture::new("decoder-face");
         fixture
             .write(
                 "Sources/SlopDeskVideoClient/VideoDecoder.swift",
-                "import VideoToolbox\nVTDecompressionSessionCreate(allocator: nil, formatDescription: \
-                 fmt)\nVTDecompressionSessionDecodeFrame(session, sample, flags, nil, nil)\n",
+                "import CSlopDeskFFI\nslopdesk_video_decoder_decode(handle, base, len, kf, &status)\n",
             )
             .write(
                 "Sources/SlopDeskVideoHost/VideoEncoder.swift",
                 "import CSlopDeskFFI\n",
             );
-        assert!(super::hevc_encode_is_rusts(&fixture.tree()).is_clean());
+        assert!(super::hevc_decode_is_rusts(&fixture.tree()).is_clean());
+
+        for (revived, needle) in [
+            (
+                "private var currentParameterSets: Sets?\n",
+                "worth rebuilding for",
+            ),
+            (
+                "static func needsReconfigure(current: Sets?) -> Bool { true }\n",
+                "worth rebuilding for",
+            ),
+            ("static let decodeEWMAAlpha = 0.25\n", "decode-wall average"),
+            ("private var decodeMsEWMA: Double = 0\n", "decode-wall average"),
+        ] {
+            let fixture = Fixture::new("decoder-face-revived");
+            fixture.write(
+                "Sources/SlopDeskVideoClient/VideoDecoder.swift",
+                &format!("import CSlopDeskFFI\n{revived}"),
+            );
+            let report = super::hevc_decode_is_rusts(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains(needle)),
+                "{revived:?} was not caught: {report:?}"
+            );
+        }
+    }
+
+    /// The parameter-set scan must stay deleted. The host's packetizer already reads VPS/SPS/PPS
+    /// from `slopdesk_video::hevc_parameter_sets`, so a Swift one back in the client would be the
+    /// cross-language mirror `CLAUDE.md` forbids — two readings of the same bytes, one per side.
+    #[test]
+    fn the_swift_parameter_set_scan_stays_deleted() {
+        let fixture = Fixture::new("sets-revived");
+        fixture
+            .write(
+                "Sources/SlopDeskVideoClient/HEVCParameterSets.swift",
+                "enum HEVCParameterSets { static let vpsType: UInt8 = 32 }\n",
+            )
+            .write(
+                "Sources/SlopDeskVideoClient/VideoDecoder.swift",
+                "import CSlopDeskFFI\n",
+            );
+        let report = super::hevc_decode_is_rusts(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("HEVCParameterSets.swift is back")),
+            "{report:?}"
+        );
     }
 
     /// The face is checked by CONTENT, so the two things the rules crate owns are named. The

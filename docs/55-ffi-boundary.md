@@ -1324,7 +1324,7 @@ increment 92, and their absence is the better end state rather than a regression
 encoder state machine moved to `slopdesk_video::encoder_state`, which calls `encoder_ceiling`
 directly; a door exists to let the OTHER language ask, and there is no longer another language
 asking. The fold this section is about is untouched — it is one ramp in one module, which was always
-the point — and `hevc-encode-is-rusts` in `rust/slopdesk-invariants` keeps it from being respelled in
+the point — and `hevc-codec-is-rusts` in `rust/slopdesk-invariants` keeps it from being respelled in
 Swift, where `check-supervisor.sh`'s section 1 used to.
 
 Folding the two together introduced exactly one behavioural question, and it is worth recording

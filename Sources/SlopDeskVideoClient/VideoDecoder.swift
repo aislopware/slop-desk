@@ -1,380 +1,123 @@
 #if canImport(VideoToolbox)
-import CoreMedia
 import CoreVideo
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
-import VideoToolbox
 
 /// Errors raised by the video decoder.
+///
+/// Two cases where there were five. `sessionCreateFailed`, `formatDescriptionFailed`,
+/// `sampleBufferFailed` and `decodeFailed` all described a step of the same thing — the framework
+/// refused — and no caller ever matched on which: every catch site logged `String(describing:)` and
+/// ran the same recovery. `awaitingKeyframe` survives because a caller DOES match on it, and must:
+/// it asks the host for an anchor without tearing the session down.
 public enum VideoDecoderError: Error {
-    case sessionCreateFailed(OSStatus)
-    case formatDescriptionFailed(OSStatus)
-    case sampleBufferFailed(OSStatus)
+    /// The framework refused. The caller invalidates, then asks for a keyframe.
     case decodeFailed(OSStatus)
-    /// A non-keyframe arrived before any IDR established the format description, so we
-    /// cannot decode it (the client drops it and waits for / requests a keyframe).
+    /// Nothing can be decoded until a keyframe arrives. The session, if any, stays up.
     case awaitingKeyframe
 }
 
-/// A tiny Sendable box so the `@Sendable` VideoToolbox output handler can surface the decode
-/// callback's `OSStatus` to the (synchronous) caller without an unsafe captured-`var` mutation.
-/// `@unchecked Sendable`: the synchronous `flags: []` decode runs the handler on the caller's thread
-/// before `VTDecompressionSessionDecodeFrame` returns, so the write-then-read never races.
-private final class DecodeStatusBox: @unchecked Sendable {
-    var value: OSStatus = noErr
-}
-
-/// Decodes reassembled HEVC frames with `VTDecompressionSession` (doc 04, doc 18 §F).
+/// The face of the HEVC decoder. Every decision behind it is Rust's.
 ///
-/// ⚠️ **HANG-SAFETY:** decode was MEASURED safe (~0.9-1.1ms synchronous,
-/// single-frame, RESULTS.md "F") but to honour the hang-safety rule this type is
-/// COMPILED + reviewed and its `decode` is NEVER called from a test — only from a
-/// real client app. The session is created lazily from the first frame's format
-/// description.
+/// Behind `slopdesk_video_decoder_*`: the session, the format description and the sample buffer
+/// (`slopdesk-apple-vt`), and every rule that drives them (`slopdesk_video::decoder_state`) — when a
+/// keyframe is worth rebuilding for, what an empty frame means, how the decode wall folds into the
+/// stats HUD's average. What is left here is a `Data`, a `Bool`, and turning four outcome codes into
+/// the two a caller acts on.
 ///
-/// Configs (cited):
-/// - `decodeFlags = []` → **synchronous single-frame** decode (MEASURED 0.9-1.1ms,
-///   NOT 2-frame-buffered — RESULTS.md F / doc 18 §F).
-/// - `RequireHardwareAcceleratedVideoDecoder = true` is set unconditionally.
-/// - Output `CVPixelBuffer` is NV12 + Metal-compatible for the zero-copy renderer.
-/// - Reassembled frames arrive as AVCC bytes; we wrap them in a `CMSampleBuffer`
-///   against the running format description.
+/// This door's callback differs from the encoder's in ONE term, and it is the term that matters:
+/// pixels arrive at **+1**, and `takeRetainedValue()` below is the release the contract requires. It
+/// hands over rather than lending because the consumer is a display-link pacer that holds the buffer
+/// until the next vsync — always after the callback returns.
 public final class VideoDecoder: @unchecked Sendable {
     /// Emits a decoded NV12 `CVPixelBuffer` for the renderer to draw at vsync.
     public typealias DecodedFrameHandler = @Sendable (CVImageBuffer) -> Void
 
-    private let decodedFrameHandler: DecodedFrameHandler
-
-    private var session: VTDecompressionSession?
-    private var formatDescription: CMFormatDescription?
-    /// The parameter sets the running ``session`` was configured from, cached so a
-    /// byte-identical keyframe (the ~1s heartbeat IDR, every forced-recovery IDR) does
-    /// NOT tear down + recreate the `VTDecompressionSession`: a teardown/warmup on every
-    /// heartbeat would stall an otherwise-healthy stream. Reconfigure only when the
-    /// extracted sets actually DIFFER (a real resolution / SPS change). `nil` until the
-    /// first keyframe configures the session.
-    private var currentParameterSets: HEVCParameterSets.ParameterSets?
-
-    /// Test seam: the parameter sets the live session is currently built from,
-    /// or `nil` if there is no session (e.g. after ``invalidateSession()``). Lets a unit
-    /// test assert the cache state — and therefore that the NEXT byte-identical keyframe
-    /// would reconfigure (`needsReconfigure(current: nil, ...) == true`) after a hard
-    /// failure — WITHOUT creating a real `VTDecompressionSession` or driving a decode.
-    var cachedParameterSetsForTesting: HEVCParameterSets.ParameterSets? { currentParameterSets }
-
-    /// Test seam: seeds the cached parameter sets WITHOUT building a real
-    /// `VTDecompressionSession`, so a unit test can model a healthy, configured decoder
-    /// and then verify that ``invalidateSession()`` (the hard-failure path) clears the
-    /// cache — forcing the next byte-identical keyframe to reconfigure. Never used in
-    /// production; the live path sets the cache only via a successful `configure`.
-    func seedCachedParameterSetsForTesting(_ sets: HEVCParameterSets.ParameterSets) {
-        currentParameterSets = sets
+    /// What the C callback's context points at.
+    ///
+    /// A class, retained across the boundary and released only after the handle is freed. The decode
+    /// is synchronous so the callback cannot outlive a call, but the handle is still what bounds the
+    /// context's lifetime and the ordering in `deinit` says so.
+    private final class Box {
+        let handler: DecodedFrameHandler
+        init(_ handler: @escaping DecodedFrameHandler) { self.handler = handler }
     }
 
-    /// Requests the FULL-RANGE NV12 output variant when true (else the VideoRange variant).
-    /// Set from the stream's negotiated `helloAck.fullRange` BEFORE the first `configure`: the
-    /// session configures lazily on the first keyframe, and `helloAck` always arrives before any media,
-    /// so the ordering is safe. Default false ⇒ byte-identical output. R8/RG8 plane layout is identical
-    /// for both NV12 variants, so the renderer's makeTexture is unaffected — only the requested range
-    /// (and thus the shader coefficients the renderer pairs with it) differs.
-    public var outputFullRange = false
+    private let context: UnsafeMutableRawPointer
+    private let handle: OpaquePointer?
 
-    /// Parsec-parity PRESENT-ON-DECODE (`SLOPDESK_DISPLAY_IMMEDIATE`, default ON; `=0` restores the
-    /// unset path). Cloned 1:1 from the parsecd RE (its decode fn stamps
-    /// `kCMSampleAttachmentKey_DisplayImmediately=true` on every sample buffer before
-    /// `VTDecompressionSessionDecodeFrame`): the decoder emits the frame the INSTANT it decodes rather
-    /// than holding it in the DPB for reorder. Our encoder already sets `AllowFrameReordering=false`
-    /// so the SPS should declare no reorder, but this is the belt-and-suspenders guarantee Parsec
-    /// ships — a decoder that still advertised reorder capacity would hold the frame under our
-    /// synchronous `flags:[]` decode (a silent no-pixels drop). Output pixels are byte-identical; only
-    /// the emission timing (no DPB hold) changes.
-    static let displayImmediate = EnvConfig.boolDefaultOn("SLOPDESK_DISPLAY_IMMEDIATE")
-
-    /// Stamps `kCMSampleAttachmentKey_DisplayImmediately=true` on `sampleBuffer`'s first per-sample
-    /// attachment dictionary (creating the attachments array if absent). No-op when the buffer has no
-    /// sample slot. Extracted so the attachment round-trip is unit-testable against a headless
-    /// CoreMedia sample buffer — no `VTDecompressionSession` (hang-safe).
-    static func stampDisplayImmediately(_ sampleBuffer: CMSampleBuffer) {
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
-            sampleBuffer, createIfNecessary: true,
-        ), CFArrayGetCount(attachments) > 0 else { return }
-        let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
-        CFDictionarySetValue(
-            dict,
-            Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque(),
-        )
-    }
-
-    /// DECODE-WALL EWMA (the stats HUD's client-local decode axis): folded around every
-    /// synchronous VT decode submit under `decodeStatsLock` — decode runs on the serial decode
-    /// queue (or the actor, inline mode) while the session actor reads the EWMA from the ~2 Hz
-    /// mirror flush, so the reading crosses threads. `0` = nothing decoded yet.
-    private let decodeStatsLock = NSLock()
-    private var decodeMsEWMA: Double = 0
-    /// EWMA weight for the decode-wall fold (the ``EncodeLoadPacer`` alpha — ~4-frame memory).
-    static let decodeEWMAAlpha = 0.25
-
-    /// The current decode-wall EWMA in milliseconds (`0` = nothing decoded yet). Lock-guarded,
-    /// callable from any thread; never touches the VT session (hang-safe).
-    public func decodeMillisEWMA() -> Double {
-        decodeStatsLock.lock()
-        defer { decodeStatsLock.unlock() }
-        return decodeMsEWMA
-    }
-
-    /// PURE EWMA fold for the decode-wall sample: the first sample seeds the average whole
-    /// (no zero-drag warmup), later samples fold at ``decodeEWMAAlpha``.
-    static func foldDecodeEWMA(current: Double, sampleMs: Double) -> Double {
-        guard current > 0 else { return sampleMs }
-        return current * (1 - decodeEWMAAlpha) + sampleMs * decodeEWMAAlpha
-    }
-
-    private func noteDecodeWall(milliseconds: Double) {
-        decodeStatsLock.lock()
-        decodeMsEWMA = Self.foldDecodeEWMA(current: decodeMsEWMA, sampleMs: milliseconds)
-        decodeStatsLock.unlock()
+    /// Requests the FULL-RANGE NV12 output variant rather than the video-range one.
+    ///
+    /// Set from the stream's negotiated `helloAck.fullRange` before any media arrives. The two
+    /// variants share a plane layout, so the renderer's texture creation is unaffected; what differs
+    /// is the range, and therefore the shader coefficients the renderer pairs with it.
+    public var outputFullRange = false {
+        didSet {
+            guard let handle else { return }
+            slopdesk_video_decoder_set_full_range(handle, outputFullRange)
+        }
     }
 
     public init(decodedFrameHandler: @escaping DecodedFrameHandler) {
-        self.decodedFrameHandler = decodedFrameHandler
+        context = Unmanaged.passRetained(Box(decodedFrameHandler)).toOpaque()
+        handle = slopdesk_video_decoder_new(context) { context, imageBuffer in
+            guard let context, let imageBuffer else { return }
+            // +1: the door's terms make this side the owner, and `takeRetainedValue` IS the release.
+            let image = Unmanaged<CVImageBuffer>.fromOpaque(imageBuffer).takeRetainedValue()
+            Unmanaged<Box>.fromOpaque(context).takeUnretainedValue().handler(image)
+        }
     }
 
     deinit {
-        if let session {
-            // iOS background-suspend hang mitigation (doc 18 §F): invalidate async.
-            VTDecompressionSessionInvalidate(session)
-        }
+        // The handle first: it owns the session, and the context must outlive it.
+        if let handle { slopdesk_video_decoder_free(handle) }
+        Unmanaged<Box>.fromOpaque(context).release()
     }
 
-    /// Builds the HEVC `CMVideoFormatDescription` from the VPS/SPS/PPS parameter sets
-    /// the host streams inline ahead of an IDR slice (the host ships raw AVCC, no
-    /// out-of-band parameter sets — see ``HEVCParameterSets``) and (re)creates the
-    /// session. Recreate on a resolution change (a fresh IDR carries fresh sets).
-    public func configure(parameterSets: HEVCParameterSets.ParameterSets) throws {
-        let sets = parameterSets.ordered
-        var formatDescription: CMFormatDescription?
-        let status: OSStatus = sets.withUnsafeParameterSetPointers { pointers, sizes in
-            CMVideoFormatDescriptionCreateFromHEVCParameterSets(
-                allocator: kCFAllocatorDefault,
-                parameterSetCount: pointers.count,
-                parameterSetPointers: pointers,
-                parameterSetSizes: sizes,
-                nalUnitHeaderLength: Int32(NALUnit.lengthPrefixSize),
-                extensions: nil,
-                formatDescriptionOut: &formatDescription,
-            )
-        }
-        guard status == noErr, let formatDescription else {
-            throw VideoDecoderError.formatDescriptionFailed(status)
-        }
-        try configure(formatDescription: formatDescription)
-        // Cache the sets the live session is now built from so a byte-identical keyframe
-        // can reuse the session instead of recreating it. Set AFTER a successful
-        // configure so a throw leaves the cache matching the still-running session.
-        currentParameterSets = parameterSets
-    }
-
-    /// Whether a keyframe's parameter sets require rebuilding the decode session: there
-    /// is no session yet, or the incoming sets differ byte-for-byte from the ones the
-    /// running session was built from. Pure (only compares `Equatable` value types) so
-    /// the "identical IDR does not reconfigure" decision is unit-testable with ZERO
-    /// VideoToolbox dependency.
-    public static func needsReconfigure(
-        current: HEVCParameterSets.ParameterSets?,
-        incoming: HEVCParameterSets.ParameterSets,
-    ) -> Bool {
-        current != incoming
-    }
-
-    /// Force-tears the live `VTDecompressionSession` down so the NEXT keyframe — even one
-    /// whose VPS/SPS/PPS are byte-identical to the current ones — re-runs `configure()`
-    /// and builds a FRESH session. Without this, a HARD decode failure on a fixed-capture-size
-    /// stream is unrecoverable: the forced-recovery IDR carries byte-identical parameter sets, so
-    /// `needsReconfigure` would return `false` and the SAME malfunctioning session would be reused
-    /// forever, freezing the pane permanently. The caller (``SlopDeskVideoClientSession``'s
-    /// decode `catch`) invokes this BEFORE `requestIDR()` so the next keyframe rebuilds.
+    /// Decodes one reassembled AVCC frame synchronously and hands the pixels to the handler.
     ///
-    /// Clears `currentParameterSets` too, so the byte-identical recovery keyframe is seen
-    /// as a reconfigure (`current == nil` ⇒ `needsReconfigure == true`). This is ONLY
-    /// called on a decode FAILURE — the healthy heartbeat-IDR reuse path keeps
-    /// the cached sets on a SUCCESSFUL decode and is untouched.
-    public func invalidateSession() {
-        if let session {
-            VTDecompressionSessionInvalidate(session)
-            self.session = nil
-        }
-        currentParameterSets = nil
-    }
-
-    /// Sets the format description and (re)creates the session. Must precede the first
-    /// `decode`. Recreate on resolution change.
-    public func configure(formatDescription: CMFormatDescription) throws {
-        if let session { VTDecompressionSessionInvalidate(session)
-            self.session = nil
-        }
-        self.formatDescription = formatDescription
-        // This path builds the session from a raw format description, not parameter
-        // sets, so drop any cached sets — a later identical-sets keyframe must rebuild
-        // rather than wrongly reuse a session that wasn't built from those sets. The
-        // `configure(parameterSets:)` path re-populates the cache after this returns.
-        currentParameterSets = nil
-
-        // Request the NV12 variant matching the stream's negotiated luma range (set from
-        // helloAck before this lazy first configure). Default VideoRange ⇒ byte-identical output.
-        let pixelFormat = outputFullRange
-            ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        let imageBufferAttributes: [CFString: Any] = [
-            kCVPixelBufferPixelFormatTypeKey: pixelFormat, // NV12 (doc 04)
-            kCVPixelBufferMetalCompatibilityKey: true, // zero-copy to Metal
-            kCVPixelBufferIOSurfacePropertiesKey: [:],
-        ]
-        var spec: [CFString: Any] = [:]
-        // Require HW-accelerated HEVC decode (set unconditionally).
-        spec[kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder] = true
-
-        var session: VTDecompressionSession?
-        let status = VTDecompressionSessionCreate(
-            allocator: nil, formatDescription: formatDescription,
-            decoderSpecification: spec as CFDictionary,
-            imageBufferAttributes: imageBufferAttributes as CFDictionary,
-            outputCallback: nil, decompressionSessionOut: &session,
-        )
-        guard status == noErr, let session else { throw VideoDecoderError.sessionCreateFailed(status) }
-        self.session = session
-    }
-
-    /// Decodes one reassembled AVCC frame synchronously (`decodeFlags = []`,
-    /// MEASURED single-frame ~1ms). Hands the resulting NV12 buffer to the renderer.
-    ///
-    /// Self-configuring: a **keyframe** carries its VPS/SPS/PPS inline, so we
-    /// (re)build the format description + session from it before decoding (handling
-    /// the first IDR AND a mid-stream resolution change). A non-keyframe that arrives
-    /// before any IDR cannot be decoded — it throws ``VideoDecoderError/awaitingKeyframe``
-    /// so the caller drops it and requests recovery.
+    /// Self-configuring: a keyframe carries its VPS/SPS/PPS inline and one whose sets DIFFER from the
+    /// running session's rebuilds before decoding, which covers both the first IDR and a mid-stream
+    /// resolution change. One whose sets MATCH — the heartbeat IDR, about once a second — reuses the
+    /// session, because a teardown and warmup that often is a stall on a healthy stream.
     public func decode(_ frame: ReassembledFrame) throws {
-        // Triage a ZERO-byte frame BEFORE building a (degenerate, zero-length) CMSampleBuffer.
-        // Submitting an empty sample buffer to VTDecompressionSessionDecodeFrame fails the decode and
-        // drives the caller's hard-failure recovery (invalidateSession + IDR) — a needless session
-        // teardown + visible stall for what is really a corrupt/empty fragment. An empty delta is
-        // dropped cheaply; an empty keyframe re-anchors via `awaitingKeyframe` (no session rebuild).
-        switch FrameDecodability.classify(keyframe: frame.keyframe, byteCount: frame.avcc.count) {
-        case .decodable: break
-        case .dropSilently: return
-        case .requestKeyframe: throw VideoDecoderError.awaitingKeyframe
-        }
-        if frame.keyframe, let sets = HEVCParameterSets.extract(from: frame.avcc) {
-            // Only rebuild the VTDecompressionSession when the parameter sets actually
-            // changed. The heartbeat IDR (~1×/sec) and every forced-recovery IDR
-            // carry byte-identical VPS/SPS/PPS on a steady stream — recreating the
-            // session for each one would cause a teardown/warmup stall once a second. A
-            // matching keyframe keeps the existing session and just decodes below.
-            if Self.needsReconfigure(current: currentParameterSets, incoming: sets) {
-                try configure(parameterSets: sets)
-            }
-        }
-        guard let session, let formatDescription else { throw VideoDecoderError.awaitingKeyframe }
-        let sampleBuffer = try makeSampleBuffer(avcc: frame.avcc, formatDescription: formatDescription)
-        let handler = decodedFrameHandler
-        // Capture the CALLBACK status: VideoToolbox reports a decode error (e.g. -12909
-        // kVTVideoDecoderBadDataErr from an FEC mis-recovery that passed the length check, or
-        // kVTVideoDecoderMalfunctionErr) via the output callback's `status`, NOT the submission
-        // return value. The decode is SYNCHRONOUS (`flags: []`), so this callback runs on THIS thread
-        // before `VTDecompressionSessionDecodeFrame` returns — so reading `callbackStatus` after is
-        // race-free. Swallowing a callback error (a bare `guard status == noErr … else { return }`)
-        // would produce NO pixels and NO throw, so the caller's recovery (`invalidateSession` + `requestIDR`)
-        // would never arm and the pane would freeze on the last good frame — exactly the packet-loss / FEC
-        // mis-recovery case. Surface it so the caller re-anchors the stream.
-        // A Sendable box for the callback status (the output handler is `@Sendable`; the decode is
-        // synchronous so the write-then-read is race-free, but the box keeps the capture Sendable-clean).
-        let callbackStatus = DecodeStatusBox()
-        // Stats HUD: time the synchronous decode submit (callback included — `flags: []` runs it
-        // on this thread before the call returns, so the wall time IS the decode time).
-        let decodeStart = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
-        let status = VTDecompressionSessionDecodeFrame(
-            session, sampleBuffer: sampleBuffer, flags: [], infoFlagsOut: nil,
-        ) { status, _, imageBuffer, _, _ in
-            if status != noErr { callbackStatus.value = status
-                return
-            }
-            guard let imageBuffer else { return }
-            handler(imageBuffer) // NV12 CVPixelBuffer → MetalVideoRenderer at vsync
-        }
-        noteDecodeWall(
-            milliseconds: (Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) - decodeStart) / 1_000_000.0,
-        )
-        guard status == noErr else { throw VideoDecoderError.decodeFailed(status) }
-        guard callbackStatus.value == noErr else { throw VideoDecoderError.decodeFailed(callbackStatus.value) }
-    }
-
-    /// Wraps AVCC bytes (length-prefixed NAL units — see SlopDeskVideoProtocol.NALUnit)
-    /// in a `CMSampleBuffer` against the running format description.
-    ///
-    /// Core Media OWNS the backing bytes: the block buffer is allocated with
-    /// `kCFAllocatorDefault` + `memoryBlock: nil` (so it allocates `dataLength` bytes
-    /// itself), then the AVCC bytes are COPIED in via `CMBlockBufferReplaceDataBytes`.
-    /// We deliberately do NOT use `kCFAllocatorNull` over a local `NSMutableData`'s
-    /// pointer — that only references the raw bytes without retaining them, a latent
-    /// use-after-free if the local is freed (or its lifetime shortened by the optimizer)
-    /// while the returned `CMSampleBuffer` still points at them. Copying makes the
-    /// buffer self-contained and correct regardless of sync/async decode.
-    private func makeSampleBuffer(avcc: Data, formatDescription: CMFormatDescription) throws -> CMSampleBuffer {
-        let dataLength = avcc.count
-        var blockBuffer: CMBlockBuffer?
-        var status = CMBlockBufferCreateWithMemoryBlock(
-            allocator: kCFAllocatorDefault, memoryBlock: nil,
-            blockLength: dataLength, blockAllocator: kCFAllocatorDefault,
-            customBlockSource: nil, offsetToData: 0, dataLength: dataLength,
-            flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &blockBuffer,
-        )
-        guard status == noErr, let blockBuffer else { throw VideoDecoderError.sampleBufferFailed(status) }
-
-        // Copy the AVCC bytes into the block buffer's own (Core Media-owned) storage.
-        status = avcc.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return noErr } // empty frame: nothing to copy
-            return CMBlockBufferReplaceDataBytes(
-                with: base, blockBuffer: blockBuffer,
-                offsetIntoDestination: 0, dataLength: dataLength,
+        guard let handle else { throw VideoDecoderError.awaitingKeyframe }
+        var status: Int32 = noErr
+        let outcome = frame.avcc.withUnsafeBytes { raw in
+            slopdesk_video_decoder_decode(
+                handle,
+                raw.bindMemory(to: UInt8.self).baseAddress,
+                raw.count,
+                frame.keyframe,
+                &status,
             )
         }
-        guard status == noErr else { throw VideoDecoderError.sampleBufferFailed(status) }
-
-        var sampleBuffer: CMSampleBuffer?
-        var sampleSize = dataLength
-        status = CMSampleBufferCreateReady(
-            allocator: kCFAllocatorDefault, dataBuffer: blockBuffer,
-            formatDescription: formatDescription, sampleCount: 1,
-            sampleTimingEntryCount: 0, sampleTimingArray: nil,
-            sampleSizeEntryCount: 1, sampleSizeArray: &sampleSize,
-            sampleBufferOut: &sampleBuffer,
-        )
-        guard status == noErr, let sampleBuffer else { throw VideoDecoderError.sampleBufferFailed(status) }
-        // Parsec-parity: emit the frame the instant it decodes (no DPB reorder hold). See
-        // ``displayImmediate``. Default-ON; the OFF path leaves the buffer's attachments untouched.
-        if Self.displayImmediate { Self.stampDisplayImmediately(sampleBuffer) }
-        return sampleBuffer
-    }
-}
-
-private extension [Data] {
-    /// Exposes parallel base-pointer + size arrays for the parameter-set bytes, valid
-    /// only for the duration of `body` (the pointers reference the `Data`'s storage).
-    /// `CMVideoFormatDescriptionCreateFromHEVCParameterSets` copies the bytes, so the
-    /// scoped lifetime is sufficient.
-    func withUnsafeParameterSetPointers<R>(
-        _ body: ([UnsafePointer<UInt8>], [Int]) -> R,
-    ) -> R {
-        func recurse(index: Int, pointers: [UnsafePointer<UInt8>], sizes: [Int]) -> R {
-            if index == count { return body(pointers, sizes) }
-            return self[index].withUnsafeBytes { raw -> R in
-                guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
-                    preconditionFailure("HEVC parameter-set Data must be non-empty (a zero-length NAL unit is invalid)")
-                }
-                return recurse(index: index + 1, pointers: pointers + [base], sizes: sizes + [self[index].count])
-            }
+        switch outcome {
+        case SLOPDESK_DECODE_DELIVERED,
+             SLOPDESK_DECODE_DROPPED:
+            return
+        case SLOPDESK_DECODE_NEEDS_KEYFRAME: throw VideoDecoderError.awaitingKeyframe
+        default: throw VideoDecoderError.decodeFailed(status)
         }
-        return recurse(index: 0, pointers: [], sizes: [])
+    }
+
+    /// Force-tears the live session down so the NEXT keyframe — even a byte-identical one — rebuilds.
+    ///
+    /// Called by the session's decode `catch` before `requestIDR()`. Without it, a hard failure on a
+    /// fixed-capture-size stream is unrecoverable: the recovery IDR carries byte-identical parameter
+    /// sets, so the same malfunctioning session would be reused forever and the pane would freeze on
+    /// the last good frame.
+    public func invalidateSession() {
+        guard let handle else { return }
+        slopdesk_video_decoder_invalidate(handle)
+    }
+
+    /// The decode-wall EWMA in milliseconds (`0` = nothing decoded yet), for the stats HUD's
+    /// client-local decode axis. Callable from any thread.
+    public func decodeMillisEWMA() -> Double {
+        guard let handle else { return 0 }
+        return slopdesk_video_decoder_millis_ewma(handle)
     }
 }
 #endif

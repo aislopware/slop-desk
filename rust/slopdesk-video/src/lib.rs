@@ -175,6 +175,7 @@ pub mod cursor;
 pub mod cursor_overlay;
 pub mod cursor_sampling;
 pub mod decode_admission;
+pub mod decoder_state;
 pub mod encoder_ceiling;
 pub mod encoder_config;
 pub mod encoder_state;

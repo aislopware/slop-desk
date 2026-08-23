@@ -272,38 +272,6 @@ pub fn present_queue(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// The HEVC parameter sets — `hevc_parameter_sets`.
-///
-/// The bytes do not cross: an access unit is most of a frame and Swift is holding it, so the door
-/// answers WHERE the three sets sit, exactly as `slopdesk_nal_split` does one layer down. The walk
-/// and the numbers a re-implementation would grow back are the six-bit shift, the three types, and
-/// the split-then-classify loop the door replaced.
-#[must_use]
-pub fn hevc_parameter_sets(tree: &Tree) -> Report {
-    const SWIFT_HEVC: &str = "Sources/SlopDeskVideoClient/HEVCParameterSets.swift";
-
-    let claims = [
-        Claim::Doors {
-            path: SWIFT_HEVC,
-            entries: &[
-                "slopdesk_hevc_types",
-                "slopdesk_hevc_nal_type",
-                "slopdesk_hevc_parameter_sets",
-            ],
-            message: "Sources/SlopDeskVideoClient/HEVCParameterSets.swift no longer calls {entry} — the \
-                      extraction is rust/slopdesk-video's",
-        },
-        Claim::Lacks {
-            path: SWIFT_HEVC,
-            pattern: r">> 1\) & 0x3F|vpsType: UInt8 = |spsType: UInt8 = |ppsType: UInt8 = |NALUnit\.split",
-            view: View::Code,
-            message: "Sources/SlopDeskVideoClient/HEVCParameterSets.swift spells the NAL header or the set \
-                      types again — those live in hevc_parameter_sets.rs",
-        },
-    ];
-    check_all(tree, &claims)
-}
-
 /// The two SCROLL laws — `scroll_reproject` on the pane's side and `scroll_resample` on the
 /// injector's.
 ///

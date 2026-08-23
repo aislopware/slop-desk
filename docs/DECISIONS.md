@@ -16800,3 +16800,47 @@ Two callers went with it: the `SLOPDESK_LTR_PROBE` block in `slopdesk-videohostd
 liveness smoke at the top of `slopdesk-loopback-validate`. The second was replaceable by nothing,
 because the scenario immediately after it encodes real hardware frames and fails loudly if the path
 is dead — the probe was proving, one line earlier, a thing the next line proves anyway.
+
+## The client decoder is a face, and the Swift parameter-set span door went with it (2026-08-23)
+
+`VideoDecoder.swift` was 380 lines. Behind it now: the session, the format description and the
+sample buffer in `slopdesk-apple-vt`; every decision that drives them in
+`slopdesk_video::decoder_state`; the join in `slopdesk-ffi/src/decoder.rs`. What is left in Swift is
+a `Data`, a `Bool`, and turning four outcome codes into the two a caller acts on.
+
+**Two of its decisions turned out to be load-bearing in a way the Swift spelling did not show.** The
+parameter-set cache must be CLEARED by a hard decode failure: on a fixed-capture-size stream the
+recovery IDR carries byte-identical VPS/SPS/PPS, so a cache that survived would answer "reuse" and
+hand the next frame to the session that just failed — permanently, with nothing reporting it. And
+the decode-wall average's first sample must SEED the average whole rather than fold against zero, or
+the stats HUD shows a warmup ramp no decode ever took. Both were true in the Swift and both were
+comments; both are now named tests in `decoder_state.rs` and content bans in `hevc-decode-is-rusts`.
+
+**Three test seams disappeared rather than moving.** `cachedParameterSetsForTesting` and
+`seedCachedParameterSetsForTesting` existed only so a test could model a configured decoder without
+creating a `VTDecompressionSession` that would hang. In `decoder_state` the state IS a value, so a
+test builds one by calling the constructor, and the seams have nothing to expose.
+
+**`HEVCParameterSets.swift` is deleted, which supersedes "The HEVC parameter sets are spans, not a
+second walk" (2026-08-15) as far as the Swift half goes.** That decision made the Swift type a face
+over `slopdesk_video::hevc_parameter_sets` through three FFI doors. Its only caller was the decoder,
+so with the decoder in Rust the face had no reader and the doors — `slopdesk_hevc_types`,
+`slopdesk_hevc_nal_type`, `slopdesk_hevc_parameter_sets` — had no Swift caller. Face and doors both
+went; the crate module is unchanged and keeps its own tests, and the shim calls it directly. The
+span-shaped answer that decision argued for was right and is still the shape the crate exposes — it
+simply no longer has to cross a boundary to be used.
+
+**`stampDisplayImmediately` went too, which closes the note left at "The five sidecar managers keep
+their vocabulary" (2026-08-15).** That note recorded a deliberate decision NOT to share those three
+lines of CoreFoundation with the device panels' `annotate`, because the two live in targets with
+different dependency floors and mark a sample for different reasons. The decision holds and the
+panels' copy is untouched; what changed is that the decoder's copy is no longer Swift at all, so
+there is nothing left to consider sharing.
+
+**The four outcome codes are four rather than a `throws` with five cases.** The Swift had
+`sessionCreateFailed`, `formatDescriptionFailed`, `sampleBufferFailed`, `decodeFailed` and
+`awaitingKeyframe`, and no caller ever matched on which of the first four it got — every catch site
+logged `String(describing:)` and ran the same recovery. What a caller genuinely distinguishes is
+four things, each asking for something different: deliver, drop in silence, ask for a keyframe
+without tearing down, and fail. Collapsing any two of those has a visible symptom, which is why they
+cross as separate codes rather than as one status the caller has to interpret.

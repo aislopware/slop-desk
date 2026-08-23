@@ -15,10 +15,9 @@ use objc2_core_video::CVImageBuffer;
 use objc2_video_toolbox::{VTCompressionSession, VTEncodeInfoFlags, VTSessionSetProperty};
 
 use crate::keys::{Key, QP_MODULATION_DISABLE, StringValue};
+use crate::owned::{borrowed, created};
 use crate::sample::EncodedSample;
-
-/// `noErr` — the framework's success code, which every call here compares against.
-pub const NO_ERR: i32 = 0;
+use crate::status::{INVALID_SESSION, NO_ERR};
 
 /// `kVTCouldNotFindVideoEncoderErr`-adjacent XPC create race, retried once by
 /// [`CompressionSession::create`].
@@ -26,9 +25,6 @@ pub const NO_ERR: i32 = 0;
 /// Not an error the caller can act on: the encoder service was mid-restart and the same call
 /// succeeds a moment later. Named so the retry reads as the specific thing it is.
 pub const XPC_CREATE_RACE: i32 = -12905;
-
-/// `kVTInvalidSessionErr` — what a caller gets when it asks a session that was never created.
-pub const INVALID_SESSION: i32 = -12903;
 
 /// HEVC, as the four-character code `CMVideoCodecType` wants.
 ///
@@ -202,9 +198,9 @@ impl CompressionSession {
     /// # Safety
     /// `VTCompressionSessionCreate` stores a **Create-rule** reference — one this caller owns and
     /// must release — through a caller-supplied slot. The slot is a live local of the declared type
-    /// for the whole call, initialised to null, and `CFRetained::from_raw` is applied to it only
-    /// after the call reported success and only after the null check. That is this crate's ONE
-    /// Create-rule admission under `docs/57` §2.
+    /// for the whole call, initialised to null, and the ownership is taken by
+    /// [`crate::owned::created`], which is this crate's ONE Create-rule site under `docs/57` §2
+    /// and the only thing that needs checking here: the callee's name contains `Create`.
     ///
     /// The output-callback parameter is passed NULL, with a null refcon, which the header requires
     /// of any session that will be fed through
@@ -213,7 +209,7 @@ impl CompressionSession {
     /// `*mut c_void` refcon across every frame, which §2 bars this family from reconstituting.
     #[expect(
         unsafe_code,
-        reason = "the create is a Create-rule out-parameter; docs/57 §2 admits this shape"
+        reason = "objc2 generates the bare VideoToolbox entry points unsafe"
     )]
     pub fn create(width: i32, height: i32, spec: Spec) -> Result<Self, i32> {
         let specification = spec.cf();
@@ -247,14 +243,12 @@ impl CompressionSession {
             if status != NO_ERR {
                 continue;
             }
-            let Some(created) = NonNull::new(slot) else {
+            let Some(session) = created(slot) else {
                 // `noErr` with a null slot is not a shape the framework documents; treat it as the
                 // invalid-session failure rather than trusting the status over the pointer.
                 status = INVALID_SESSION;
                 continue;
             };
-            // SAFETY: framework rule, above — the Create rule made this reference ours to release.
-            let session = unsafe { CFRetained::from_raw(created) };
             return Ok(Self { session });
         }
         Err(status)
@@ -377,12 +371,13 @@ impl CompressionSession {
     /// flags arrive in the handler.
     ///
     /// The handler's `sampleBuffer` is a **Get-rule** borrowed pointer, valid for the call.
-    /// `CFRetained::retain` takes a reference of this crate's own for the duration of the sink,
-    /// which is this crate's ONE Get-rule admission under `docs/57` §2. Null is the documented
-    /// signal for a dropped frame and is routed to [`FrameSink::dropped`] rather than retained.
+    /// [`crate::owned::borrowed`] — this crate's ONE Get-rule site under `docs/57` §2 — takes a
+    /// reference of this crate's own for the duration of the sink. Null is the documented signal
+    /// for a dropped frame, and the helper answering `None` is what routes it to
+    /// [`FrameSink::dropped`] rather than retaining nothing.
     #[expect(
         unsafe_code,
-        reason = "the encode is a block call and a Get-rule pointer; docs/57 §2 admits both"
+        reason = "the encode is a bare VideoToolbox entry point taking a block"
     )]
     #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
                   critical"]
@@ -397,13 +392,11 @@ impl CompressionSession {
         let want_ltr_token = options.force_ltr_refresh || !options.acknowledged_ltr_tokens.is_empty();
         let block = block2::RcBlock::new(
             move |status: i32, flags: VTEncodeInfoFlags, buffer: *mut CMSampleBuffer| {
-                let Some(buffer) = NonNull::new(buffer).filter(|_| status == NO_ERR) else {
+                let held = (status == NO_ERR).then(|| borrowed(buffer)).flatten();
+                let Some(buffer) = held else {
                     sink.dropped(status, flags.contains(VTEncodeInfoFlags::FrameDropped));
                     return;
                 };
-                // SAFETY: framework rule, above — the handler's sample buffer is a live +0
-                // reference for the duration of this call, and the Get rule says a holder retains.
-                let buffer = unsafe { CFRetained::retain(buffer) };
                 match EncodedSample::read(&buffer, want_ltr_token) {
                     Some(sample) => sink.encoded(&sample),
                     // A sample with no data buffer is not a frame; it is the same non-event a drop

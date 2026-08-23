@@ -6497,7 +6497,7 @@ SWIFT_VIDEO_NAL=Sources/SlopDeskVideoProtocol/NALUnit.swift
 # ramp and the drop relief from Swift while the arithmetic lived in `encoder_ceiling.rs`. The whole
 # state machine is now `slopdesk_video::encoder_state`, which calls that module DIRECTLY, so the
 # three doors were a second way to ask what the crate already answers and are deleted with this rule.
-# What replaces it is `hevc-encode-is-rusts` in `rust/slopdesk-invariants` — a content ban on the
+# What replaces it is `hevc-codec-is-rusts` in `rust/slopdesk-invariants` — a content ban on the
 # bracket and the integrator in the same file, plus the ramp arithmetic this rule watched — and
 # `docs/57` §5 records why. The heading number stays so the ones below it keep their names.
 

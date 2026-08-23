@@ -83,6 +83,16 @@ slopdesk-ids = { path = "../slopdesk-ids" }
 slopdesk-settings = { path = "../slopdesk-settings" }
 slopdesk-tree = { path = "../slopdesk-tree" }
 
+# The ONE `slopdesk-apple-*` crate that is not macOS-gated, and the only place in this graph where
+# the family reaches an iOS slice. It wraps VideoToolbox, of which the two halves have opposite
+# audiences: only the host COMPRESSES, and every client DECOMPRESSES. The crate gates its own
+# compression half to macOS, so what an iOS build links from here is the decoder and nothing else,
+# and `slopdesk_ffi.h` declares the decoder doors OUTSIDE its `TARGET_OS_OSX` region for the same
+# reason. `build-ffi.sh` still requires the ENCODER's symbols present on macOS and absent on the
+# other two slices, which is what keeps that internal gate from quietly stopping matching.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
+
 # hostd's door only, and the ONE dependency in this graph that compiles a C library. `libgit2` is
 # vendored inside `slopdesk-git`, and a client never asks the question — the git status arrives as a
 # metadata reply on both platforms. Gated by target rather than by feature so no phone build can opt
@@ -108,11 +118,6 @@ slopdesk-apple-cursor = { path = "../slopdesk-apple-cursor" }
 # Gated with the rest of the family: `AXUIElement` is a macOS-only API, and iOS has no window it
 # would name.
 slopdesk-apple-ax = { path = "../slopdesk-apple-ax" }
-# The hardware HEVC compression session. Gated with the rest of the family for a reason the others
-# do not have: iOS HAS VideoToolbox, so an ungated edge would LINK and merely bloat every client
-# slice with a host-only encoder. Nothing would fail, which is why `build-ffi.sh`'s present-on-macOS
-# / absent-on-iOS check is the only thing that catches it.
-slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
 # The foreground doors' probe half. Gated for the same reason `slopdesk-git` is, and one more: this
 # crate is otherwise linked by the iOS app, and `slopdesk-posix` exists to stay tiny for a daemon —
 # an ungated edge would drag `fork`/`openpty` into a slice that has no use for either.
