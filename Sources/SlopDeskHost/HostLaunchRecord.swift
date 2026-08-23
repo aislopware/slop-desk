@@ -12,7 +12,7 @@ import SlopDeskVideoProtocol
 /// enough, then retype the flags. A restart that is *technically* free but *manually* fiddly still
 /// gets postponed, which is the behaviour this whole subsystem set out to change.
 ///
-/// So hostd states its own launch, and `scripts/restart-hostd.sh` reads it. Nothing has to parse
+/// So hostd states its own launch, and `slopdesk-ops restart-hostd` reads it. Nothing has to parse
 /// `ps` output, guess a port, or infer flags.
 ///
 /// ## Why the process writes it rather than the script

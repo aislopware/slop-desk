@@ -2,7 +2,7 @@
 //!
 //! Drives the host's INPUT path directly (the root-cause location), so an ordering or
 //! button-balance fix can be verified deterministically without the GUI client or a computer-use
-//! cursor war. `scripts/video-input-test.sh` starts an isolated host and hands it one gesture from
+//! cursor war. `slopdesk-ops video-input` starts an isolated host and hands it one gesture from
 //! here, then reads the injection trace back out of the log.
 //!
 //! The datagram shapes are the wire's, not this file's — see `docs/20-wire-protocol.md`. What
@@ -12,7 +12,7 @@ use std::io;
 use std::net::UdpSocket;
 use std::time::Duration;
 
-/// The loopback the host binds when `video-input-test.sh` starts it.
+/// The loopback the host binds when `slopdesk-ops video-input` starts it.
 pub const HOST: &str = "127.0.0.1";
 /// The media port, which carries control and input.
 pub const MEDIA_PORT: u16 = 9000;

@@ -63,7 +63,7 @@ targets:
       # PATH 1 (libghostty renderer): the libghostty static binary (the link-time
       # `ghostty` C-ABI symbols) packaged as an xcframework, built ON this macOS-26.5 host
       # by ThirdParty/ghostty/build-libghostty.sh. The universal build also ships iOS
-      # slices (see scripts/enable-ios-renderer.sh); this macOS target links the macOS slice.
+      # slices (see `slopdesk-ops enable-renderer ios`); this macOS target links the macOS slice.
       # embed: false — the xcframework wraps a STATIC archive (macos-arm64.a, 198 MB). The
       # symbols are in the executable once the link is done; embedding additionally COPIES the
       # .a into Contents/Frameworks, where it is dead weight and unsignable — codesign walks the

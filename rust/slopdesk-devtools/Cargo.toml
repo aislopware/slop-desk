@@ -50,6 +50,10 @@ path = "src/bin/release.rs"
 name = "slopdesk-gate"
 path = "src/bin/gate.rs"
 
+[[bin]]
+name = "slopdesk-ops"
+path = "src/bin/ops.rs"
+
 [dependencies]
 # The access raiser is a line scanner over SwiftFormat-clean source, which is what makes a regex
 # the right reader rather than a shortcut — and the same DFA-backed crate the invariants gate

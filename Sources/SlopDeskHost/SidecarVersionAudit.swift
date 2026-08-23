@@ -4,7 +4,7 @@ import Foundation
 // SidecarVersionAudit — is the sidecar RUNNING the sidecar that is INSTALLED?
 //
 // Every daemon in this repo outlives hostd. superd is a launch agent held across logins; screend is
-// one too (`scripts/install-screend.sh`); dropd, inspectord and androidd are superd's children,
+// one too (`make screend-install`); dropd, inspectord and androidd are superd's children,
 // which is why hostd re-learns their ports off superd's retained ring rather than by starting them.
 // So `brew upgrade` replaces twelve binaries on disk and changes what is executing for none of them.
 //

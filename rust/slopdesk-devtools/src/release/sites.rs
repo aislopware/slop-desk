@@ -24,7 +24,7 @@ use std::path::Path;
 
 use regex::Regex;
 
-use super::proc;
+use crate::proc;
 
 /// A Swift constant carrying the product version: the file, and the assignment that anchors it.
 ///

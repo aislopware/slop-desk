@@ -8,7 +8,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-/// The default herdr checkout, matching what `scripts/herdr-sync.sh` clones into.
+/// The default herdr checkout, matching what `slopdesk-ops herdr-sync` expects to find.
 #[must_use]
 pub fn default_herdr_dir() -> PathBuf {
     let home = env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from);

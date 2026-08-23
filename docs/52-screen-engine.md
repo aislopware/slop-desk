@@ -134,7 +134,7 @@ if either enum allocates it again.
 `slopdesk-screend 1` — is the PROTOCOL identity, a ratcheted constant `check-supervisor.sh` compares
 against `ScreenWire.helloBanner`; it is matched as a **prefix**, never for equality. The third field
 is the version of the screend process that answered. screend is a LaunchAgent
-(`scripts/install-screend.sh`) and so outlives hostd's build: after an upgrade the binary on disk
+(`make screend-install`) and so outlives hostd's build: after an upgrade the binary on disk
 and the process on the socket are routinely different code, and this field is what tells them apart
 (`docs/49`). Nothing is done about a mismatch — screend exits after `SLOPDESK_SCREEND_IDLE_EXIT`
 (2 minutes) of quiet and `ScreenClient` starts the installed one on the next verb, so the stale
@@ -273,7 +273,7 @@ durable** — its per-pane grids are a cache the next repaint refills. So:
 
 - `ScreenClient` STARTS one if nothing is listening (rate-limited to one attempt per 2 s across
   every caller, waits 3 s for the bind), which superd's client deliberately does not do.
-- `scripts/install-screend.sh` installs a `KeepAlive` LaunchAgent anyway, so the first cold
+- `make screend-install` installs a `KeepAlive` LaunchAgent anyway, so the first cold
   reattach of the day does not pay the spawn — but it asks no confirmation, because restarting it
   costs nothing.
 - A request that fails is retried ONCE on a fresh connection: the overwhelmingly likely cause is a

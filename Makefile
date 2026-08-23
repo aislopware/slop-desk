@@ -432,7 +432,7 @@ git-test: ## cargo test for the in-process git status (rust/slopdesk-git)
 	cd rust/slopdesk-git && cargo test
 
 superd-install: ## Build + (re)install the com.slopdesk.superd LaunchAgent — RESTARTS superd
-	bash scripts/install-superd.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- install superd
 
 # The VT screen engine (docs/52): the terminal parser, the snapshot renderer and the overprint
 # collapser, which used to be the hottest Swift in the tree (17.9 MiB/s against 186 in Rust). Its
@@ -447,13 +447,14 @@ screend-test: ## cargo test for the screen engine
 	cd rust/slopdesk-screend && cargo test
 
 screend-install: ## Build + (re)install the com.slopdesk.screend LaunchAgent
-	bash scripts/install-screend.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- install screend
 
-# The operator tools (rust/slopdesk-devtools): the release pipeline, the herdr sync + parity
-# harness, the Swift access raiser, the input synclient. Not part of `build` — nothing ships them
-# and no gate runs them, so they are built when a harness asks for them (`herdr-sync.sh`,
-# `video-input-test.sh`, every `make release*` target) and not on
-# the inner loop. Their tests DO run in `test-rust`, via the workspace glob.
+# The operator tools (rust/slopdesk-devtools): the release pipeline, the build gates, the operator
+# harnesses (`slopdesk-ops`), the herdr sync + parity harness, the Swift access raiser, the input
+# synclient. Not part of `build` — nothing ships them, so they are built when a target asks for
+# them (`make host-restart`, `make superd-install`, every `make release*` target, every gate that
+# is a `slopdesk-gate` verb) and not on the inner loop. Their tests DO run in `test-rust`, via the
+# workspace glob.
 devtools: ## Build the operator tools (rust/slopdesk-devtools)
 	cd rust/slopdesk-devtools && cargo build --release
 
@@ -780,10 +781,10 @@ host: ## Build ONLY slopdesk-hostd and its libraries
 # child-facing sockets and the panel backends, so this costs a client reconnect rather than the
 # afternoon's work. It prints the observed downtime and superd's child count on either side.
 host-restart: ## Rebuild hostd and restart the running one, identically (docs/51 §9)
-	bash scripts/restart-hostd.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- restart-hostd
 
 host-status: ## Report the running hostd (pid, port, flags) and superd's child count; change nothing
-	bash scripts/restart-hostd.sh --status
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- restart-hostd --status
 
 # `hook-test` runs FIRST and unconditionally. `swift build`/`swift test` never compile the Rust
 # crate, so a Swift-only gate is blind to it; and the pre-push green-tree cache keys on the

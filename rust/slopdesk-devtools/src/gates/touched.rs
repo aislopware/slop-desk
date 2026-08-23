@@ -24,9 +24,9 @@
 use std::fs;
 use std::path::Path;
 
-use super::super::release::proc;
 use super::prepush;
 use super::swift_graph::{self, Graph, Selection};
+use crate::proc;
 
 /// The cached package description. `swift package describe` costs ~1 s+; `Package.swift` changes
 /// rarely.

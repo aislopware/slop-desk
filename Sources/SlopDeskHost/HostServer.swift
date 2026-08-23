@@ -3158,7 +3158,7 @@ public final class HostServer: @unchecked Sendable {
     /// Installs the REAL laggard-eviction wiring on `session` against a retained `connection`, so a
     /// test can fire the seam `MuxChannelSession.evictLaggingSubscribers` fires and watch what
     /// reaches the far end (testing only). Reproducing the lag itself needs a real PTY and tens of
-    /// megabytes — `scripts/soak-fanout-laggard.sh` — so this drives the closure directly.
+    /// megabytes — `slopdesk-ops soak` — so this drives the closure directly.
     func armSubscriberEvictionForTesting(
         _ session: MuxChannelSession,
         on connection: MuxNWConnection,

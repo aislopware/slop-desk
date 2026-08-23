@@ -1,0 +1,650 @@
+//! Rebuild `slopdesk-hostd` and restart the running one, IDENTICALLY.
+//!
+//! `docs/51` made the restart itself cheap: `slopdesk-superd` holds every pane's PTY master, both
+//! child-facing sockets and the panel backends, so stopping hostd costs a client reconnect instead
+//! of whatever `claude` was mid-way through. What stayed expensive was the RITUAL — find the
+//! process without `pkill` matching too much, wait long enough, remember which flags it had,
+//! notice that `--port 0` bound something else. A restart that is technically free but manually
+//! fiddly still gets postponed, which is the behaviour this subsystem set out to change.
+//!
+//! So the daemon states its own launch — `HostLaunchRecord`, written once the REAL bound port is
+//! known — and this reads it. Nothing here parses `ps` for a flag, guesses a port or retypes an
+//! argument.
+//!
+//! ## What the port to Rust actually changed
+//! `jq` stopped being a hard dependency. The shell read six fields with six `jq -r` forks and then
+//! reached for `@sh` + `eval` for the two ARRAY fields, because an environment value holding a
+//! space, a quote or a newline is not hypothetical and no other bash spelling survives one. That
+//! whole apparatus is [`serde_json`] and a `Vec<String>` here.
+//!
+//! ## The order, which is the thing that must not change
+//! Everything is read from the record UP FRONT, because hostd DELETES it on an orderly shutdown
+//! (an absent file means "no hostd", which is worth telling apart from "one died badly"). The
+//! build comes BEFORE the stop, because a build that fails must leave the running daemon alone
+//! rather than replace it with nothing. The stop is SIGTERM and never SIGKILL, because the handler
+//! runs the orderly drain — panes relinquished to superd, backends relinquished, clients told
+//! `bye`, journals flushed. And the readiness test is a real LISTENER, never the record file: a
+//! file a previous run left behind is exactly how a readiness check lies.
+//!
+//! `docs/51-process-supervision.md` §9, `docs/46-gates-env-paths.md`.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+use std::{env, fs};
+
+use serde_json::Value;
+
+use super::{home, log_dir, say};
+use crate::proc;
+
+/// What the caller asked for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Plan {
+    /// Rebuild before stopping.
+    pub build: bool,
+    /// Stop the recorded daemon.
+    pub stop: bool,
+    /// Start a replacement.
+    pub start: bool,
+}
+
+impl Plan {
+    /// The whole loop: build, stop, start, verify.
+    pub const FULL: Self = Self {
+        build: true,
+        stop: true,
+        start: true,
+    };
+    /// Report and change nothing.
+    pub const STATUS: Self = Self {
+        build: false,
+        stop: false,
+        start: false,
+    };
+
+    /// True when there is nothing to do but report.
+    #[must_use]
+    pub const fn is_status_only(self) -> bool {
+        !self.build && !self.stop && !self.start
+    }
+}
+
+/// The launch a running hostd published for itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record {
+    /// The pid it had when it wrote this.
+    pub pid: i32,
+    /// The port it actually BOUND, which is not always the one it was asked for.
+    pub port: u16,
+    /// The executable the kernel ran, symlinks resolved.
+    pub binary: PathBuf,
+    /// The working directory its panes default to.
+    pub working_directory: PathBuf,
+    /// Its version, for the report.
+    pub version: String,
+    /// When it started, for the report.
+    pub started_at: String,
+    /// Its argv after the program name.
+    pub arguments: Vec<String>,
+    /// The `SLOPDESK_*` pairs it actually resolved, as `KEY=VALUE`.
+    pub environment: Vec<String>,
+}
+
+/// Read a launch record.
+///
+/// # Errors
+/// When the file is not JSON, or a field it must have is missing or of the wrong shape.
+pub fn parse_record(text: &str) -> Result<Record, String> {
+    let document: Value =
+        serde_json::from_str(text).map_err(|error| format!("launch record is not valid JSON: {error}"))?;
+    let string = |key: &str| -> Result<String, String> {
+        document
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("launch record has no string `{key}`"))
+    };
+    let pid = i32::try_from(
+        document
+            .get("pid")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| "launch record has no numeric `pid`".to_owned())?,
+    )
+    .map_err(|_| "launch record's `pid` is not a pid".to_owned())?;
+    let port = u16::try_from(
+        document
+            .get("port")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "launch record has no numeric `port`".to_owned())?,
+    )
+    .map_err(|_| "launch record's `port` is not a port".to_owned())?;
+    let arguments = document
+        .get("arguments")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    // An object, flattened to the `KEY=VALUE` pairs `env` takes. A value holding a space, a quote
+    // or a newline is carried verbatim here, which is the whole reason the shell needed `@sh`.
+    let environment = document
+        .get("environment")
+        .and_then(Value::as_object)
+        .map_or_else(Vec::new, |pairs| {
+            pairs
+                .iter()
+                .filter_map(|(key, value)| value.as_str().map(|text| format!("{key}={text}")))
+                .collect()
+        });
+    Ok(Record {
+        pid,
+        port,
+        binary: PathBuf::from(string("binary")?),
+        working_directory: PathBuf::from(string("workingDirectory")?),
+        version: string("version").unwrap_or_else(|_| "?".to_owned()),
+        started_at: string("startedAt").unwrap_or_else(|_| "?".to_owned()),
+        arguments,
+        environment,
+    })
+}
+
+/// The port the recorded argv ASKED for, in either spelling, if it named one at all.
+///
+/// `--port 0` is the case this exists for: it asks the OS for an ephemeral port, so the number the
+/// old process bound says nothing about the new one, and polling it would time out on a daemon
+/// that is up and well.
+#[must_use]
+pub fn requested_port(arguments: &[String]) -> Option<String> {
+    let mut found = None;
+    let mut previous: Option<&str> = None;
+    for argument in arguments {
+        if let Some(joined) = argument.strip_prefix("--port=") {
+            found = Some(joined.to_owned());
+        } else if matches!(previous, Some("--port" | "-p")) {
+            found = Some(argument.clone());
+        }
+        previous = Some(argument);
+    }
+    found
+}
+
+/// Which build configuration the recorded binary came from.
+///
+/// Read off the PATH rather than guessed: `.build/release/…` is a release build and anything else
+/// is a debug one, which is what the default has always been.
+#[must_use]
+pub fn configuration_of(binary: &Path) -> &'static str {
+    if binary.components().any(|part| part.as_os_str() == "release") {
+        "release"
+    } else {
+        "debug"
+    }
+}
+
+/// Where the record lives, honouring the same override the daemon reads.
+fn record_path() -> PathBuf {
+    let base = env::var_os("SLOPDESK_APP_SUPPORT_DIR").map_or_else(
+        || home().join("Library/Application Support/SlopDesk"),
+        PathBuf::from,
+    );
+    base.join("hostd-launch.json")
+}
+
+/// True when a pid exists — the cheap half of the identity check.
+fn pid_exists(pid: i32) -> bool {
+    proc::ask("/bin/kill", &["-0", &pid.to_string()], Path::new("/")).is_some()
+}
+
+/// The executable the kernel actually ran for a pid, or `None` when `lsof` declines.
+///
+/// `lsof -d txt`, not `ps -o comm=`. `comm` is argv[0] as the caller typed it — usually the
+/// relative `.build/release/slopdesk-hostd` — while `txt` is the vnode the kernel executed, which
+/// is what the record holds (`HostLaunchRecord.runningExecutablePath`, symlinks resolved on both
+/// sides so `.build/release` and `.build/arm64-apple-macosx/release` are one file).
+fn running_executable(pid: i32) -> Option<String> {
+    let dump = proc::ask(
+        "/usr/sbin/lsof",
+        &["-a", "-p", &pid.to_string(), "-d", "txt", "-Fn"],
+        Path::new("/"),
+    )?;
+    dump.lines()
+        .find_map(|line| line.strip_prefix('n'))
+        .map(str::to_owned)
+}
+
+/// Whether the recorded daemon is the process at the recorded pid.
+///
+/// Pids are recycled, so existence is not identity — signalling a reused pid is the failure mode
+/// that made `pkill` a trap in the first place.
+fn is_alive(record: &Record) -> bool {
+    if !pid_exists(record.pid) {
+        return false;
+    }
+    match running_executable(record.pid) {
+        Some(path) if Path::new(&path) == record.binary => true,
+        Some(path) => {
+            say(
+                "host-restart",
+                &format!(
+                    "record pid {} is alive but runs '{path}', not '{}' — pid reused, the record is stale",
+                    record.pid,
+                    record.binary.display()
+                ),
+            );
+            false
+        },
+        None => {
+            // lsof declined (permissions, a hardened process). The name is weaker than the vnode
+            // and still stronger than signalling a pid on trust alone.
+            let comm = proc::ask(
+                "/bin/ps",
+                &["-o", "comm=", "-p", &record.pid.to_string()],
+                Path::new("/"),
+            )
+            .unwrap_or_default();
+            let same = Path::new(comm.trim()).file_name() == record.binary.file_name();
+            if same {
+                say(
+                    "host-restart",
+                    &format!(
+                        "could not read pid {}'s executable — matched on name only",
+                        record.pid
+                    ),
+                );
+            }
+            same
+        },
+    }
+}
+
+/// How many children superd is holding, as a printable answer.
+///
+/// Counted by PARENTAGE rather than by asking superd: superd is the parent of every pane's shell
+/// and of both panel backends, which is the whole architecture in one number, and it needs no
+/// protocol, no client and no socket — all three of which are exactly what is unavailable
+/// mid-restart.
+fn superd_children() -> String {
+    let Some(pid) = proc::ask("/usr/bin/pgrep", &["-x", "slopdesk-superd"], Path::new("/"))
+        .and_then(|list| list.lines().next().map(str::to_owned))
+    else {
+        return "superd not running".to_owned();
+    };
+    let count = proc::ask("/usr/bin/pgrep", &["-P", pid.trim()], Path::new("/")).map_or(0, |children| {
+        children.lines().filter(|line| !line.trim().is_empty()).count()
+    });
+    count.to_string()
+}
+
+/// True when something is LISTENING on a port.
+fn listening(port: &str) -> bool {
+    proc::ask(
+        "/usr/sbin/lsof",
+        &["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"],
+        Path::new("/"),
+    )
+    .is_some_and(|answer| !answer.trim().is_empty())
+}
+
+/// Poll a condition until it holds, or give up after `budget`.
+fn until(budget: Duration, mut condition: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    condition()
+}
+
+/// The whole loop.
+///
+/// # Errors
+/// When the build fails, the daemon will not stop, the port stays held, there is no record to
+/// reproduce, or nothing is listening afterwards.
+#[allow(clippy::too_many_lines)]
+pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
+    let path = record_path();
+    let record = match fs::read_to_string(&path) {
+        Ok(text) => Some(parse_record(&text)?),
+        Err(_) => None,
+    };
+
+    let alive = record.as_ref().is_some_and(is_alive);
+    match record.as_ref() {
+        None => {
+            say(
+                "host-restart",
+                &format!(
+                    "no launch record at {} — no hostd has run since the last clean stop",
+                    path.display()
+                ),
+            );
+        },
+        Some(found) if alive => {
+            say(
+                "host-restart",
+                &format!(
+                    "hostd pid {} on port {} (v{}), started {}",
+                    found.pid, found.port, found.version, found.started_at
+                ),
+            );
+        },
+        Some(found) => {
+            say(
+                "host-restart",
+                &format!(
+                    "launch record names pid {}, which is gone — hostd died without an orderly stop",
+                    found.pid
+                ),
+            );
+        },
+    }
+    let children_before = superd_children();
+    say(
+        "host-restart",
+        &format!("superd is holding {children_before} child process(es)"),
+    );
+
+    if plan.is_status_only() {
+        return Ok(());
+    }
+
+    if plan.build {
+        let configuration = record
+            .as_ref()
+            .map_or("debug", |found| configuration_of(&found.binary));
+        say(
+            "host-restart",
+            &format!("swift build --product slopdesk-hostd -c {configuration}"),
+        );
+        proc::run(
+            "swift",
+            &["build", "--product", "slopdesk-hostd", "-c", configuration],
+            root,
+        )?;
+    }
+
+    let mut stopped_at = None;
+    if plan.stop {
+        if let (true, Some(found)) = (alive, record.as_ref()) {
+            stopped_at = Some(Instant::now());
+            say("host-restart", &format!("SIGTERM → pid {}", found.pid));
+            let _ = proc::ask("/bin/kill", &["-TERM", &found.pid.to_string()], Path::new("/"));
+            if !until(Duration::from_secs(20), || !pid_exists(found.pid)) {
+                return Err(format!(
+                    "pid {} did not exit within 20s of SIGTERM — investigate rather than forcing it; a \
+                     SIGKILL here skips the orderly drain",
+                    found.pid
+                ));
+            }
+            say("host-restart", &format!("pid {} exited", found.pid));
+
+            // The port, SEPARATELY. An exited process is not a freed listener, and launching into
+            // a port that is not free yet is the "left a host on the port" failure by another route.
+            let port = found.port.to_string();
+            if !until(Duration::from_secs(20), || !listening(&port)) {
+                return Err(format!(
+                    "port {port} is still listening 20s after pid {} exited — something else holds it",
+                    found.pid
+                ));
+            }
+        } else {
+            say("host-restart", "nothing running to stop");
+        }
+    }
+
+    if !plan.start {
+        say(
+            "host-restart",
+            &format!(
+                "stopped — superd is holding {} child process(es), unchanged",
+                superd_children()
+            ),
+        );
+        return Ok(());
+    }
+
+    let found = record.as_ref().ok_or_else(|| {
+        "no launch record, so there is nothing to reproduce — start hostd once by hand and this takes over"
+            .to_owned()
+    })?;
+    if !found.binary.is_file() {
+        return Err(format!(
+            "recorded binary is not executable: {}",
+            found.binary.display()
+        ));
+    }
+    if !found.working_directory.is_dir() {
+        return Err(format!(
+            "recorded working directory is gone: {}",
+            found.working_directory.display()
+        ));
+    }
+
+    let log = log_dir()?.join("hostd.log");
+    say(
+        "host-restart",
+        &format!(
+            "starting {} {}",
+            found.binary.display(),
+            found.arguments.join(" ")
+        ),
+    );
+    spawn_detached(found, &log)?;
+
+    // Usually the recorded port. Not for `--port 0` — see `requested_port`.
+    let expected = if requested_port(&found.arguments).as_deref() == Some("0") {
+        say(
+            "host-restart",
+            "launched with --port 0 — waiting for the new daemon to publish its bound port",
+        );
+        let mut bound = None;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while Instant::now() < deadline && bound.is_none() {
+            if let Ok(text) = fs::read_to_string(&path)
+                && let Ok(fresh) = parse_record(&text)
+                && fresh.pid != found.pid
+                && pid_exists(fresh.pid)
+            {
+                bound = Some(fresh.port.to_string());
+            }
+            if bound.is_none() {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        let bound = bound.ok_or_else(|| {
+            format!(
+                "the new daemon never published a launch record 30s after launch — see {}",
+                log.display()
+            )
+        })?;
+        say(
+            "host-restart",
+            &format!(
+                "the new daemon bound port {bound} (the old one had {})",
+                found.port
+            ),
+        );
+        bound
+    } else {
+        found.port.to_string()
+    };
+
+    if !until(Duration::from_secs(30), || listening(&expected)) {
+        return Err(format!(
+            "nothing is listening on port {expected} 30s after launch — see {}",
+            log.display()
+        ));
+    }
+
+    if let Some(at) = stopped_at {
+        say(
+            "host-restart",
+            &format!(
+                "listening again on {expected} — down for {:.2}s",
+                at.elapsed().as_secs_f64()
+            ),
+        );
+    } else {
+        say("host-restart", &format!("listening on {expected}"));
+    }
+    say(
+        "host-restart",
+        &format!(
+            "superd is holding {} child process(es) — was {children_before} before the restart",
+            superd_children()
+        ),
+    );
+    say("host-restart", &format!("log: {}", log.display()));
+    Ok(())
+}
+
+/// Start the recorded daemon so that it OUTLIVES this process.
+///
+/// The shell's `nohup … &` inside a subshell. Here the child gets its own session — a fresh
+/// process group detached from this terminal — so a Ctrl-C at the prompt this returns to does not
+/// take the daemon with it, and its streams are the append-mode log rather than inherited pipes.
+fn spawn_detached(record: &Record, log: &Path) -> Result<(), String> {
+    use std::process::{Command, Stdio};
+
+    let out = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log)
+        .map_err(|error| format!("{}: {error}", log.display()))?;
+    let err = out
+        .try_clone()
+        .map_err(|error| format!("{}: {error}", log.display()))?;
+
+    // `/usr/bin/env --` is not portable to macOS's `env`, and it is not needed: the recorded pairs
+    // are `SLOPDESK_*=…` by construction (`HostLaunchRecord.configVariables`), so none can be
+    // mistaken for an option.
+    let mut command = Command::new("/usr/bin/env");
+    command
+        .arg("-P")
+        .arg("/usr/bin:/bin")
+        .args(&record.environment)
+        .arg(&record.binary)
+        .args(&record.arguments)
+        .current_dir(&record.working_directory)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(out))
+        .stderr(Stdio::from(err));
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("{}: {error}", record.binary.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    /// The record, including an environment value with a space in it — the case that made the
+    /// shell reach for `jq @sh` + `eval` and the case a naive split would corrupt.
+    #[test]
+    fn a_launch_record_reads_back_field_for_field() {
+        let text = r#"{
+          "pid": 4242,
+          "port": 7420,
+          "binary": "/repo/.build/release/slopdesk-hostd",
+          "workingDirectory": "/repo",
+          "version": "0.4.1",
+          "startedAt": "2026-08-24T00:00:00Z",
+          "arguments": ["--port", "7420", "--shell", "/bin/zsh"],
+          "environment": {"SLOPDESK_SHELL_ARGS": "-l -c 'echo hi'", "SLOPDESK_VIDEO_DEBUG": "1"}
+        }"#;
+        let record = super::parse_record(text).expect("a well-formed record");
+        assert_eq!(record.pid, 4242);
+        assert_eq!(record.port, 7420);
+        assert_eq!(record.arguments, ["--port", "7420", "--shell", "/bin/zsh"]);
+        let mut environment = record.environment;
+        environment.sort();
+        assert_eq!(environment, [
+            "SLOPDESK_SHELL_ARGS=-l -c 'echo hi'",
+            "SLOPDESK_VIDEO_DEBUG=1"
+        ]);
+    }
+
+    /// A record with no `pid` is an error, never a zero — signalling pid 0 is signalling a group.
+    #[test]
+    fn a_record_missing_a_field_is_refused_rather_than_defaulted() {
+        assert!(super::parse_record(r#"{"port": 1}"#).is_err());
+        assert!(super::parse_record("not json at all").is_err());
+    }
+
+    /// Both spellings of the flag, and the LAST one winning, which is what the daemon's own parse
+    /// does.
+    #[test]
+    fn the_requested_port_is_read_from_either_spelling() {
+        let split = [
+            "--port".to_owned(),
+            "0".to_owned(),
+            "--shell".to_owned(),
+            "/bin/sh".to_owned(),
+        ];
+        assert_eq!(super::requested_port(&split).as_deref(), Some("0"));
+
+        let joined = ["--port=47420".to_owned()];
+        assert_eq!(super::requested_port(&joined).as_deref(), Some("47420"));
+
+        let short = ["-p".to_owned(), "9000".to_owned()];
+        assert_eq!(super::requested_port(&short).as_deref(), Some("9000"));
+
+        let none = ["--shell".to_owned(), "/bin/sh".to_owned()];
+        assert_eq!(super::requested_port(&none), None);
+    }
+
+    /// `--shell` whose VALUE is `--port` must not be read as a flag — the value wins its own turn.
+    #[test]
+    fn a_flag_value_that_looks_like_a_flag_is_still_a_value() {
+        let tricky = [
+            "--shell".to_owned(),
+            "--port".to_owned(),
+            "--port".to_owned(),
+            "8080".to_owned(),
+        ];
+        assert_eq!(super::requested_port(&tricky).as_deref(), Some("8080"));
+    }
+
+    /// The configuration comes off the path, and anything that is not release is debug.
+    #[test]
+    fn the_build_configuration_is_read_off_the_recorded_path() {
+        assert_eq!(
+            super::configuration_of(std::path::Path::new("/r/.build/release/slopdesk-hostd")),
+            "release"
+        );
+        assert_eq!(
+            super::configuration_of(std::path::Path::new(
+                "/r/.build/arm64-apple-macosx/release/slopdesk-hostd"
+            )),
+            "release"
+        );
+        assert_eq!(
+            super::configuration_of(std::path::Path::new("/r/.build/debug/slopdesk-hostd")),
+            "debug"
+        );
+        assert_eq!(
+            super::configuration_of(std::path::Path::new("/usr/local/bin/slopdesk-hostd")),
+            "debug"
+        );
+    }
+
+    /// `--status` changes nothing, and the full plan does all three.
+    #[test]
+    fn the_status_plan_is_the_only_one_that_does_nothing() {
+        assert!(super::Plan::STATUS.is_status_only());
+        assert!(!super::Plan::FULL.is_status_only());
+        assert!(
+            !super::Plan {
+                build: false,
+                stop: true,
+                start: false
+            }
+            .is_status_only()
+        );
+    }
+}

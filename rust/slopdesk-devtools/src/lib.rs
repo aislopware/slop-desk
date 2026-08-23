@@ -19,6 +19,10 @@
 //! build gate. What the two share is the discipline: the decidable half — the selection, the key
 //! sets, the stamp, the count — is a function with a test beside it, not prose in a comment.
 //!
+//! [`ops`] is the third family and the only one that is not a gate at all: the harnesses a
+//! developer runs BY HAND, which install a `LaunchAgent`, restart a live daemon or drive an
+//! eighty-second soak. None is in `make check`, because every one of them changes the machine.
+//!
 //! The binaries in `src/bin/` are argument parsing, process spawning and printing, and nothing
 //! else.
 
@@ -30,6 +34,8 @@ pub mod access;
 pub mod differential;
 pub mod gates;
 pub mod manifests;
+pub mod ops;
+pub mod proc;
 pub mod release;
 pub mod repo;
 pub mod rng;

@@ -15,7 +15,7 @@
 >   built on this 26.5 host against 26.5 SDKs — **no iOS ≤18 SDK needed** (a static-lib slice
 >   has no link step; the former "iOS needs an old SDK" caveat was WRONG). The universal recipe
 >   (complete dep-closure re-merge) is folded into `build-libghostty.sh`; activate with
->   `scripts/enable-macos-renderer.sh` / `scripts/enable-ios-renderer.sh`. See
+>   `slopdesk-ops enable-renderer macos` / `… ios`. See
 >   [[libghostty-zig-sdk-blocker]] + the libghostty section below.
 > - **Terminal OUT path is WIRED**: `GhosttySurface.onWrite`/`onResize` → `TerminalViewModel`
 >   `sendInput`/`sendResize` → an ORDERED serial drain in `ConnectionViewModel` →
@@ -56,7 +56,7 @@
   GUI smoke-test** on a desktop session; the **iOS slice still needs an iOS ≤ 18 SDK** (macos-arm64
   slice does not cover iOS). The 64 MB xcframework is **gitignored** (regenerable), so the committed
   default macOS app stays placeholder-based and builds WITHOUT the artifact; run
-  `scripts/enable-macos-renderer.sh` to wire it in on demand.
+  `slopdesk-ops enable-renderer macos` to wire it in on demand.
 
 ## Per-layer status
 
@@ -95,7 +95,7 @@ claimed to "work"; it COMPILES + is reviewed.**
 | GUI **decode + Metal render** + client cursor + UDP transport + display-link pacing | `SlopDeskVideoClient` (`VideoDecoder`, `MetalVideoRenderer`, `ClientCursorCompositor`, `FramePacer` CVDisplayLink/CADisplayLink, `NWVideoClientTransport`, `SlopDeskVideoClientSession` orchestrator) | Decode is MEASURED-safe (~0.9–1.1 ms synchronous), but per the hang-safety rule no `VTDecompressionSession`/Metal device/display link is instantiated in tests — only client pure logic (frame-pacer newest-wins, reassembly pacing, scale math, parameter-set parse). |
 | SwiftUI / Metal terminal + video **views** | `ThirdParty/ghostty/integration` (`GhosttyTerminalView`), `SlopDeskVideoClient` (`VideoWindowView`, `MetalVideoRenderer`); `SlopDeskClientUI` holds only the `TerminalRenderingView` seam + `BuildStatusPlaceholderView` | Render seams; need a GUI app target + (terminal) the libghostty xcframework. Logic behind them is tested; the views only lay out. **The live PATH 2 pipeline is not even started in the app** — see the deferred-gate note below. |
 | iOS **input responder host** + UIKit table-stakes wrappers | `SlopDeskClientUI` (`TerminalInputHost` — the `UIResponder`/`UIViewRepresentable` assembling `KeyRepeater` + `KeyboardAccessoryBar` + `IMEProxyTextView` + `FloatingCursorController`, routing to `SlopDeskClient.sendInput`; `InputBarView` uses it on iOS, macOS unchanged) | Compiles for iOS via `scripts/check-ios.sh` and is reviewed, but on-device interaction — key-repeat cadence under real `pressesBegan`/`pressesEnded`, IME multi-stage composition, floating-cursor gesture — is **unverified**: iOS-only `UIResponder`/`UIView` glue, not unit-testable on macOS, never run on simulator/device. Underlying logic (repeater cadence, cursor delta→arrow, accessory decision, IME routing) IS pure + macOS-unit-tested. |
-| libghostty terminal renderer | `GhosttySurface` + **`GhosttyTerminalView`** (both under `ThirdParty/ghostty/integration/GhosttySurface/`) + the `#if canImport(CGhostty)` `TerminalRendererFactory.shared` registration in `Apps/Shared/AppMain.swift` | **COMPILES + LINKS on macOS; runtime GUI test pending.** With the macos-arm64 `libghostty.xcframework` built on THIS host (`build-libghostty.sh`), the macOS app compiles `GhosttySurface.swift` + `GhosttyTerminalView.swift` + the gated `AppMain` registration and **links** the `ghostty_*` C-ABI (`** BUILD SUCCEEDED **`; symbols defined `T`). Renderer code stays gated `#if canImport(CGhostty)` and is in **no `Package.swift` target** by design — headless `swift build`/`swift test` never see it, committed `project.yml` is placeholder; run `scripts/enable-macos-renderer.sh` (needs the gitignored xcframework) to wire it in. Remaining: **runtime GUI smoke-test** + the **iOS slice** (needs iOS ≤ 18 SDK). See **"Activating the libghostty renderer"** below. |
+| libghostty terminal renderer | `GhosttySurface` + **`GhosttyTerminalView`** (both under `ThirdParty/ghostty/integration/GhosttySurface/`) + the `#if canImport(CGhostty)` `TerminalRendererFactory.shared` registration in `Apps/Shared/AppMain.swift` | **COMPILES + LINKS on macOS; runtime GUI test pending.** With the macos-arm64 `libghostty.xcframework` built on THIS host (`build-libghostty.sh`), the macOS app compiles `GhosttySurface.swift` + `GhosttyTerminalView.swift` + the gated `AppMain` registration and **links** the `ghostty_*` C-ABI (`** BUILD SUCCEEDED **`; symbols defined `T`). Renderer code stays gated `#if canImport(CGhostty)` and is in **no `Package.swift` target** by design — headless `swift build`/`swift test` never see it, committed `project.yml` is placeholder; run `slopdesk-ops enable-renderer macos` (needs the gitignored xcframework) to wire it in. Remaining: **runtime GUI smoke-test** + the **iOS slice** (needs iOS ≤ 18 SDK). See **"Activating the libghostty renderer"** below. |
 
 > **Deferred live-connection gate (PATH 2 — honest, load-bearing).** The app registers the
 > video seam in `Apps/Shared/AppMain.swift` as
@@ -160,14 +160,14 @@ it. **The one-command path** for a developer who has built the xcframework:
 
 ```sh
 bash ThirdParty/ghostty/build-libghostty.sh        # produces the (gitignored) xcframework
-bash scripts/enable-macos-renderer.sh              # injects the wiring into project.yml + xcodegen
+cargo run --release --quiet --bin slopdesk-ops -- enable-renderer macos   # inject the wiring + xcodegen
 # build: xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj -scheme ClientApp-macOS \
 #          -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
 # restore placeholder state afterwards:
 #   git checkout -- Apps/ClientApp-macOS/project.yml && xcodegen generate --spec Apps/ClientApp-macOS/project.yml
 ```
 
-`scripts/enable-macos-renderer.sh` is idempotent and reproduces EXACTLY the wiring in the manual
+`slopdesk-ops enable-renderer macos` is idempotent and reproduces EXACTLY the wiring in the manual
 steps below (preflights the xcframework + the macos-arm64 slice, fails with the build command if
 absent). Manual steps remain documented for reference / the iOS target.
 

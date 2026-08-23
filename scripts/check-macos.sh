@@ -11,7 +11,7 @@
 #
 # MODES:
 #   (default)    Build the committed PLACEHOLDER app, launch, assert alive AND WINDOWED, screenshot.
-#   --renderer   Wire in the libghostty renderer (enable-macos-renderer.sh), build, launch,
+#   --renderer   Wire in the libghostty renderer (`slopdesk-ops enable-renderer macos`), build, launch,
 #                assert alive AND WINDOWED, screenshot. Verifies the renderer app launches without
 #                crashing.
 #   --connect    --renderer PLUS a real END-TO-END render check: stand up `slopdesk-hostd` (a real
@@ -145,7 +145,7 @@ trap cleanup EXIT
 # ── 1. (optional) enable the libghostty renderer ────────────────────────────────────────────
 if [[ "${WITH_RENDERER}" == "1" ]]; then
   echo "==> enabling libghostty renderer (will restore on exit)"
-  bash "${REPO_ROOT}/scripts/enable-macos-renderer.sh"
+  (cd "${REPO_ROOT}/rust/slopdesk-devtools" && cargo run --release --quiet --bin slopdesk-ops -- enable-renderer macos)
 else
   # Make sure the .xcodeproj matches the committed spec.
   xcodegen generate --spec "${SPEC}" > /dev/null

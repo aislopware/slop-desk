@@ -1,6 +1,6 @@
 //! `slopdesk-herdr` — the upstream sync and the parity harness, in one program.
 //!
-//! Two subcommands, because they are two halves of one operation and `scripts/herdr-sync.sh` runs
+//! Two subcommands, because they are two halves of one operation and `slopdesk-ops herdr-sync` runs
 //! both back to back:
 //!
 //!   slopdesk-herdr manifests [--herdr-dir PATH] [--check]
@@ -151,7 +151,7 @@ struct Flags {
 }
 
 impl Flags {
-    /// The defaults, which are the ones `herdr-sync.sh` relies on.
+    /// The defaults, which are the ones `slopdesk-ops herdr-sync` relies on.
     fn read(arguments: &[String]) -> Result<Self, String> {
         let mut flags = Self {
             repo_root: None,

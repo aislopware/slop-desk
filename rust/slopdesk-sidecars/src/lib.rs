@@ -1,7 +1,7 @@
 //! Is the sidecar that is RUNNING the sidecar that is INSTALLED?
 //!
 //! Every daemon in this repository outlives the process that asks about it. superd is a launchd
-//! agent held across logins; screend is one too (`scripts/install-screend.sh`); dropd, inspectord
+//! agent held across logins; screend is one too (`make screend-install`); dropd, inspectord
 //! and androidd are superd's children, which is why hostd re-learns their ports off superd's
 //! retained ring rather than by starting them. So `brew upgrade` replaces twelve binaries on disk
 //! and changes what is executing for none of them.
@@ -48,7 +48,7 @@ pub enum RestartPolicy {
     /// Report it and let it go. screend exits on its own after `SLOPDESK_SCREEND_IDLE_EXIT` (two
     /// minutes by default) of quiet, and the next verb that needs one starts the INSTALLED binary —
     /// so the stale window closes without anybody acting, and nothing outside launchd holds a
-    /// handle it could act with anyway (screend is a launch agent, `scripts/install-screend.sh`).
+    /// handle it could act with anyway (screend is a launch agent, `make screend-install`).
     SelfRetiring,
     /// Report it and stop. superd holds every PTY master in the process; ending it ends every pane,
     /// so "there is a newer superd installed" is information, never an action. hostd is here too,
@@ -97,8 +97,8 @@ impl RestartPolicy {
 ///
 /// `None` for everything else, and that `None` is load-bearing: a line that tells a user to
 /// `launchctl kickstart` a job that does not exist is worse than no line, because they will run it
-/// and believe it worked. Only superd (`scripts/install-superd.sh`) and screend
-/// (`scripts/install-screend.sh`) are agents; the other three daemons are superd's children and
+/// and believe it worked. Only superd (`make superd-install`) and screend
+/// (`make screend-install`) are agents; the other three daemons are superd's children and
 /// launchd has never heard of them.
 #[must_use]
 pub fn launch_agent_label(tool: &str) -> Option<&'static str> {

@@ -38,7 +38,7 @@ use std::path::Path;
 
 use regex::Regex;
 
-use super::super::release::proc;
+use crate::proc;
 
 /// The recorded tree of the last full green run. A git object id, and nothing else.
 pub const TREE_MARKER: &str = ".build/pre-push-green-tree";

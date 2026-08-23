@@ -3971,7 +3971,7 @@ extension GhosttyLayerBackedView: UIDocumentPickerDelegate {
 /// BUILD-STATUS placeholder anywhere the SwiftUI leaf still mounts (a satellite pane, a preview).
 ///
 /// ⚠️ This file is compiled by NO `Package.swift` target — it joins the Xcode app target through
-/// `scripts/enable-macos-renderer.sh` (macOS) / `scripts/enable-ios-renderer.sh` (iOS), and the whole file
+/// `slopdesk-ops enable-renderer macos` / `… ios`, and the whole file
 /// is behind `#if canImport(CGhostty)`. A grep over `Sources/` and `Tests/` reads every symbol here as
 /// dead, and none of it is (docs/56 stage F risk 2's corollary; increment 45b's lesson). The only callers
 /// are `Apps/ClientApp-macOS/AppMain.swift` and `Apps/ClientApp-iOS/AppMain.swift`.

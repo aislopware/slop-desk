@@ -26,7 +26,7 @@
 use std::fs;
 use std::path::Path;
 
-use super::proc;
+use crate::proc;
 
 /// The rendered changelog's path, repo-relative.
 pub const CHANGELOG: &str = "CHANGELOG.md";

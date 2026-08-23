@@ -38,8 +38,8 @@ use std::process::Command;
 
 use regex::Regex;
 
-use super::super::release::proc;
 use super::stamp;
+use crate::proc;
 
 /// The iOS gate's cached verdict.
 const IOS_STAMP: &str = ".build/check-ios.sha256";

@@ -41,9 +41,9 @@ pub const THEME_VERSION: &str = "1.0.0";
 /// ground cream IS Alucard's published `editor.background`, so the editor canvas and the window's
 /// ground are the same colour by ORIGIN rather than by an override forcing them to agree. It is the
 /// app's own row — the eight below it are the vendored vsix's, and only THEY are mirrored by
-/// `scripts/monokai-sync.sh`, which fails loudly when the upstream set stops matching its own copy
-/// of the Monokai rows. All eight still ship: the picker offers the full family, the seed just no
-/// longer starts there.
+/// `slopdesk-ops monokai-sync`, which fails loudly when the upstream set stops matching its own
+/// copy of the Monokai rows. All eight still ship: the picker offers the full family, the seed just
+/// no longer starts there.
 ///
 /// The two kinds differ in shape as well as origin: a vendored theme names the workbench's whole
 /// key set (~600 colours), while ours names only what it means to change.
@@ -71,7 +71,7 @@ pub const THEMES: &[(&str, bool, &str)] = &[
     ("Monokai Classic", true, "monokai-classic"),
 ];
 
-/// Which rows are OURS rather than vendored — the set `scripts/monokai-sync.sh` must never expect
+/// Which rows are OURS rather than vendored — the set `slopdesk-ops monokai-sync` must never expect
 /// to find upstream.
 pub const OWN_THEME_RESOURCES: &[&str] = &["alucard"];
 

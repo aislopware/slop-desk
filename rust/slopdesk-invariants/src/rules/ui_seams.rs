@@ -238,8 +238,8 @@ pub fn the_canvas_registers_itself_in_appkit(tree: &Tree) -> Report {
 /// census reports the prose as a registrar and this gate could never be written.
 ///
 /// The embedder is compiled by NO `Package.swift` target — it joins the Xcode app through
-/// `enable-macos-renderer.sh` — so a rename that leaves its path dangling would silently empty the
-/// census rather than fail it. It is asked for first.
+/// `slopdesk-ops enable-renderer macos` — so a rename that leaves its path dangling would silently
+/// empty the census rather than fail it. It is asked for first.
 ///
 /// BOTH SHAPES SURVIVE ON BOTH SEAMS. `shared` is not deprecated by `nativeShared` and must never
 /// be: deleting it does not break the Mac, which is exactly why it would get deleted. And ONE

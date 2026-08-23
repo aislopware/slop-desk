@@ -38,7 +38,8 @@ use std::path::Path;
 use regex::Regex;
 
 use super::stamps::{self, Entry, Pin};
-use super::{proc, tools};
+use super::tools;
+use crate::proc;
 
 /// How far a version moves. Ordered, so a scan can keep the highest it has seen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

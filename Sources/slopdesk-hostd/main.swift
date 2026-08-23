@@ -265,13 +265,13 @@ Task {
     }
 
     // State how this daemon was started, now that the BOUND port is known (`--port 0` mints one
-    // that differs from the request). `scripts/restart-hostd.sh` reads it, so a rebuild is one
+    // that differs from the request). `slopdesk-ops restart-hostd` reads it, so a rebuild is one
     // command that cannot pick the wrong process, the wrong port or the wrong flags — the ritual
     // was the last thing making a restart feel expensive, now that superd makes it cheap.
     // Best-effort: a host that cannot write it still serves every client.
     let launchRecord = HostLaunchRecord.current(boundPort: bound)
     if launchRecord.write(), let recordPath = HostLaunchRecord.url()?.path {
-        log("launch record at \(recordPath) — `scripts/restart-hostd.sh` restarts this exact daemon")
+        log("launch record at \(recordPath) — `slopdesk-ops restart-hostd` restarts this exact daemon")
     }
 
     // Boot the code panel's backend NOW, off the client path: the shared code-server pays its

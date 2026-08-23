@@ -31,7 +31,7 @@ Regression tests added: 5 in `MuxBugFixRegressionTests` + `ConnectionRegistryTes
 
 ## Hardware validation (cua, Mac Studio, real Aqua session)
 
-Built the renderer-enabled `SlopDesk.app` (`scripts/enable-macos-renderer.sh`), launched with autoconnect to a local `slopdesk-hostd`, drove it as a user:
+Built the renderer-enabled `SlopDesk.app` (`slopdesk-ops enable-renderer macos`), launched with autoconnect to a local `slopdesk-hostd`, drove it as a user:
 
 - **#9 unfocused-pane repaint — CONFIRMED FIXED.** Streamed a `date` clock loop in pane A, split right (⌘D) so pane A became unfocused; pane A's clock kept advancing across screenshots (11:03:38 → 11:03:57 → 11:04:24 → 11:09:09) while pane B was focused. Before the fix it froze on the last frame.
 - **#9 focus — CONFIRMED.** After split, typing landed in focused pane B (not A); ⌘-arrow moved focus (focus-in report reached pane A); a click moved the focus ring (`onTapGesture → store.focus`). Keyboard reaches the focused pane when the window is key.
@@ -99,7 +99,7 @@ SlopDeskVideoClient: `VideoDecoder.swift`, `Mux/VideoConnectionRegistry.swift`.
 App: `Apps/Shared/AppMain.swift`; renderer: `ThirdParty/.../GhosttyTerminalView.swift`.
 Tests: `MuxBugFixRegressionTests.swift` (new), `ConnectionRegistryTests.swift`, `PTYProcessTests.swift`, `Support/InMemoryMuxLink.swift`.
 
-`Apps/ClientApp-macOS/project.yml` was restored to the committed placeholder after HW testing (renderer-enable is reproduced on demand by `scripts/enable-macos-renderer.sh`).
+`Apps/ClientApp-macOS/project.yml` was restored to the committed placeholder after HW testing (renderer-enable is reproduced on demand by `slopdesk-ops enable-renderer macos`).
 
 ---
 *Generated autonomously. HW evidence under `/tmp/slopdesk-*.png`. Bug-hunt workflow result: the session task output.*

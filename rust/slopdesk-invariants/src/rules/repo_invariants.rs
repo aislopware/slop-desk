@@ -246,7 +246,7 @@ pub fn every_script_sets_pipefail(tree: &Tree) -> Report {
 ///
 /// Four scripts had lost the bit and nothing noticed, because the Makefile invokes every one of
 /// them as `bash scripts/foo.sh` — the one spelling that works either way. What breaks is the
-/// spelling the scripts and `docs/46` tell a human to type (`scripts/restart-hostd.sh --status`),
+/// spelling the scripts and `docs/46` tell a human to type (`scripts/check-macos.sh --connect`),
 /// which is exactly the path no gate walks. So the shebang is the declaration and this is its
 /// check: `#!` on line one, no `x` bit, is a documented entry point that answers "permission
 /// denied". Derived from the file itself, so a new script is covered the day it is written.
@@ -845,12 +845,111 @@ pub fn source_comments_cite_files_that_exist(tree: &Tree) -> Report {
     report
 }
 
+/// Where the operator harnesses live, one module per thing that used to be a shell script.
+const OPS: &str = "rust/slopdesk-devtools/src/ops";
+/// The module that spells the container, and so is allowed to name it without calling it.
+const OPS_CONTAINER: &str = "mod.rs";
+/// The build products whose launch lands on a `<App Support>/SlopDesk` unless it is redirected.
+const HOST_DAEMONS: [&str; 2] = ["slopdesk-hostd", "slopdesk-videohostd"];
+/// The four variables a container is, which is the thing [`OPS_CONTAINER`] must keep naming.
+const CONTAINER_VARIABLES: [&str; 4] = [
+    "SLOPDESK_APP_SUPPORT_DIR",
+    "SLOPDESK_SCROLLBACK_DIR",
+    "SLOPDESK_FILE_DROP_DIR",
+    "SLOPDESK_WORKSPACE_STATE_DIR",
+];
+/// A module that names a daemon and must NOT contain it, with the reason written down.
+///
+/// One entry, and adding a second is a design decision rather than a convenience: an exemption is
+/// "this harness acts on the developer's OWN daemon on purpose", which is true of exactly one of
+/// them.
+const OPS_UNCONTAINED: [(&str, &str); 1] = [(
+    "hostd.rs",
+    "restarts the developer's own live hostd by replaying the environment that daemon RECORDED for itself. \
+     Imposing a container would move the state directories out from under the panes it is holding, which is \
+     the opposite of restarting it identically.",
+)];
+
+/// An operator harness that STARTS a daemon gives it a container
+///
+/// `HOME` moves none of the four directories the daemons write — Core Foundation reads the account
+/// record for `NSHomeDirectory()` — so a daemon started without the set lands on the developer's
+/// own `<App Support>/SlopDesk`: it sweeps their scrollback journals to the newest 256 on its first
+/// loop, rewrites the `workspace-state.json` of the layout they are working in, resolves their
+/// `~/Downloads` as its file-drop directory, and (for `slopdesk-videohostd`) reads and then UNLINKS
+/// the `parked-windows.json` crash journal belonging to their own running host.
+///
+/// This is the Rust half of a contract `GuiGateLaunchContractTests` already keeps over `scripts/`,
+/// and it is here because the two harnesses that most needed it were the two that did NOT look like
+/// a gate — a soak and a manual input harness — and both went without for months. The shell version
+/// discovered its subjects by walking a directory rather than reading a list, for exactly that
+/// reason, and so does this: the day a new module under `ops/` execs a daemon, it is asked for the
+/// container whether or not anybody thought to say so.
+#[must_use]
+pub fn an_ops_harness_that_starts_a_daemon_contains_it(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let files = collect(tree, &[OPS], &["rs"]);
+    report.fail_if(
+        files.is_empty(),
+        format!("{OPS}: the walk found no modules — this rule reads nothing and would pass vacuously"),
+    );
+
+    let mut launchers = 0_usize;
+    let mut found = Vec::new();
+    for (path, source) in &files {
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        let code = source.statements();
+        if name == OPS_CONTAINER {
+            for variable in CONTAINER_VARIABLES {
+                report.fail_if(
+                    !code.contains(variable),
+                    format!(
+                        "{OPS}/{OPS_CONTAINER}: the container no longer names `{variable}` — a harness that \
+                         calls it would be uncontained and this rule would still pass"
+                    ),
+                );
+            }
+            continue;
+        }
+        if !HOST_DAEMONS.iter().any(|daemon| code.contains(daemon)) {
+            continue;
+        }
+        launchers += 1;
+        if OPS_UNCONTAINED.iter().any(|(exempt, _)| *exempt == name) || code.contains("container(") {
+            continue;
+        }
+        found.push(path.display().to_string());
+    }
+    report.fail_if(
+        launchers == 0,
+        format!("{OPS}: no module names a host daemon — the discovery is broken, not the tree"),
+    );
+    let exempt: Vec<String> = OPS_UNCONTAINED
+        .iter()
+        .map(|(name, why)| format!("{name} is exempt because it {why}"))
+        .collect();
+    sites(
+        &mut report,
+        &format!(
+            "an ops harness starts a host daemon with no container — it lands on the DEVELOPER's own state. \
+             ({})",
+            exempt.join(" ")
+        ),
+        &found,
+    );
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        a_script_with_a_shebang_is_executable, every_injected_sink_has_someone_who_binds_it,
-        every_script_sets_pipefail, live_docs_cite_files_that_exist, no_app_layer_crypto,
-        no_fused_multiply_add, no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
+        a_script_with_a_shebang_is_executable, an_ops_harness_that_starts_a_daemon_contains_it,
+        every_injected_sink_has_someone_who_binds_it, every_script_sets_pipefail,
+        live_docs_cite_files_that_exist, no_app_layer_crypto, no_fused_multiply_add,
+        no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
         pkill_never_reaches_the_developers_host, source_comments_cite_files_that_exist,
         the_formula_installs_every_binary_the_release_ships,
     };
@@ -1094,6 +1193,73 @@ mod tests {
             &format!("/// libghostty's own {TICK}Helpers/Cursor.swift{TICK}\n"),
         );
         assert!(source_comments_cite_files_that_exist(&fixture.tree()).is_clean());
+    }
+
+    /// The container is what makes a harness safe to run, so a harness without one is RED.
+    #[test]
+    fn an_ops_module_that_launches_a_daemon_without_a_container_is_red() {
+        let fixture = Fixture::new("ops-uncontained");
+        fixture.write(
+            "rust/slopdesk-devtools/src/ops/mod.rs",
+            "pub fn container(state: &Path) -> Vec<(String, String)> {\n    \
+             vec![(\"SLOPDESK_APP_SUPPORT_DIR\".into(), state), (\"SLOPDESK_SCROLLBACK_DIR\".into(), \
+             state), (\"SLOPDESK_FILE_DROP_DIR\".into(), state), (\"SLOPDESK_WORKSPACE_STATE_DIR\".into(), \
+             state)]\n}\n",
+        );
+        fixture.write(
+            "rust/slopdesk-devtools/src/ops/soak.rs",
+            "let hostd = root.join(\".build/debug/slopdesk-hostd\");\nCommand::new(&hostd).spawn();\n",
+        );
+        assert!(!an_ops_harness_that_starts_a_daemon_contains_it(&fixture.tree()).is_clean());
+    }
+
+    /// The same module WITH the container passes, and so does the one exemption.
+    #[test]
+    fn a_contained_launch_and_the_one_exemption_pass() {
+        let fixture = Fixture::new("ops-contained");
+        fixture.write(
+            "rust/slopdesk-devtools/src/ops/mod.rs",
+            "pub fn container(state: &Path) -> Vec<(String, String)> {\n    \
+             vec![(\"SLOPDESK_APP_SUPPORT_DIR\".into(), state), (\"SLOPDESK_SCROLLBACK_DIR\".into(), \
+             state), (\"SLOPDESK_FILE_DROP_DIR\".into(), state), (\"SLOPDESK_WORKSPACE_STATE_DIR\".into(), \
+             state)]\n}\n",
+        );
+        fixture.write(
+            "rust/slopdesk-devtools/src/ops/soak.rs",
+            "let environment = container(&state)?;\nCommand::new(\".build/debug/slopdesk-hostd\");\n",
+        );
+        // `hostd.rs` replays the daemon's OWN recorded environment and must not impose one.
+        fixture.write(
+            "rust/slopdesk-devtools/src/ops/hostd.rs",
+            "proc::run(\"swift\", &[\"build\", \"--product\", \"slopdesk-hostd\"], root)?;\n",
+        );
+        assert!(an_ops_harness_that_starts_a_daemon_contains_it(&fixture.tree()).is_clean());
+    }
+
+    /// A container hollowed out to three variables is RED, or the rule would pass over a harness
+    /// that calls it and is still uncontained.
+    #[test]
+    fn a_container_that_stops_naming_all_four_variables_is_red() {
+        let fixture = Fixture::new("ops-hollow-container");
+        fixture.write(
+            "rust/slopdesk-devtools/src/ops/mod.rs",
+            "pub fn container() -> Vec<String> {\n    vec![\"SLOPDESK_APP_SUPPORT_DIR\".into(), \
+             \"SLOPDESK_SCROLLBACK_DIR\".into(), \"SLOPDESK_FILE_DROP_DIR\".into()]\n}\n",
+        );
+        fixture.write(
+            "rust/slopdesk-devtools/src/ops/soak.rs",
+            "let environment = container(&state)?;\nCommand::new(\".build/debug/slopdesk-hostd\");\n",
+        );
+        assert!(!an_ops_harness_that_starts_a_daemon_contains_it(&fixture.tree()).is_clean());
+    }
+
+    /// A walk that finds no harness at all reads nothing, and a rule that reads nothing must not
+    /// report health.
+    #[test]
+    fn an_empty_ops_directory_is_red_rather_than_vacuously_green() {
+        let fixture = Fixture::new("ops-empty");
+        fixture.write("Sources/A/Note.swift", "// nothing to do with ops\n");
+        assert!(!an_ops_harness_that_starts_a_daemon_contains_it(&fixture.tree()).is_clean());
     }
 
     #[test]

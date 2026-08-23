@@ -562,7 +562,7 @@ and leaves it alone forever.
 
 So `spawn` carries an **`owner`** — protocol 1.4, opaque to superd, stored on the `PaneRecord` and
 echoed back in `list`. hostd builds it from the requested port (two live hostds cannot share one,
-and `restart-hostd.sh` reproduces it exactly) and the workspace state directory when one is set.
+and `slopdesk-ops restart-hostd` reproduces it exactly) and the workspace state directory when one is set.
 `adoptSurvivingPanes` reads it three ways: **ours** → adoptable, subject to the `attached` rule as
 before; **a different owner** → left alone whatever `attached` says; **absent** → treated exactly as
 before the field existed, because refusing there would strand real shells on the one upgrade where
@@ -867,7 +867,7 @@ distinction §1 turns on. Its absence is meaningful too: no file means no hostd,
 gone means one died badly.
 
 ### `make host-restart`
-`scripts/restart-hostd.sh` — build (`--product slopdesk-hostd`, so not the client app, the video
+`slopdesk-ops restart-hostd` — build (`--product slopdesk-hostd`, so not the client app, the video
 host or iOS), then SIGTERM, then wait for both the process **and** the port, then relaunch with the
 recorded binary/argv/cwd/env, then wait for a real listener. It builds *before* it stops, so a
 failed build leaves the running daemon alone. It reports the observed downtime and superd's child

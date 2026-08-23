@@ -1322,12 +1322,12 @@ did, and for the same reason: an `NSAlert` is macOS's. It moves to `SlopDeskMacU
 gate is the target.
 
 **Its caller is not under `Sources/`.** `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift`
-is the libghostty embedder, added to the two Xcode app targets by `enable-macos-renderer.sh` /
-`enable-ios-renderer.sh` and compiled by neither `swift build` nor `make quick`'s macOS half. It is
+is the libghostty embedder, added to the two Xcode app targets by `slopdesk-ops enable-renderer macos` /
+`… ios` and compiled by neither `swift build` nor `make quick`'s macOS half. It is
 where `PasteSafetyAnalyzer`, `PastePrecheck`, `ClipboardWritePolicy`, `RightClickPasteInterceptPolicy`
 and `PasteTransform` are all reached from — so a grep over `Sources/` reports that whole cluster as
 dead, and it is not. Anything moved or renamed here is verified by hand:
-`bash scripts/enable-macos-renderer.sh && xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj
+`(cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- enable-renderer macos) && xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj
 -scheme ClientApp-macOS -destination 'generic/platform=macOS' CODE_SIGNING_ALLOWED=NO build`, then
 `git checkout -- Apps/ClientApp-macOS/project.yml && xcodegen generate --spec Apps/ClientApp-macOS/project.yml`.
 
@@ -2533,7 +2533,7 @@ does not, a pair is the wrong answer and the floor was available the whole time.
 
 **What only a click can check, and what a gate can.** P4's registration lives in an app target no
 `Package.swift` builds, so `swift build` never compiles the embedder at all — the pair is verified by
-`enable-macos-renderer.sh` plus `xcodebuild`, and `** BUILD SUCCEEDED **` is the entire pass criterion.
+`slopdesk-ops enable-renderer macos` plus `xcodebuild`, and `** BUILD SUCCEEDED **` is the entire pass criterion.
 That leaves the half-registration failure invisible to every suite: only `shared` set ships a Mac that
 cannot mount natively, only `nativeShared` ships iOS the BUILD-STATUS placeholder, and neither is a
 compile error. Hence the census down to `GhosttyRendererSeam.install()` alone — written through
@@ -4154,7 +4154,7 @@ belongs in the same commit as the table.**
    along: `GhosttyTerminalView.body` carries the `TerminalConfigBroadcaster` observation that is the
    only path from a Settings edit to a surface reflow — skip the SwiftUI wrapper and you skip it — and
    anything touched under `ThirdParty/ghostty/` is verified **only** by the manual
-   `enable-macos-renderer.sh` + `xcodebuild` recipe, so P4 lands as its own commit with that recipe in
+   `slopdesk-ops enable-renderer macos` + `xcodebuild` recipe, so P4 lands as its own commit with that recipe in
    the message. Corollary, and increment 45b's lesson again: **any dead-code claim in this port greps
    `ThirdParty/` too.**
 

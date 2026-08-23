@@ -8,7 +8,7 @@
 //!   slopdesk-synclient redundantup            # a click whose mouseUp is sent 3×
 //!   slopdesk-synclient lostup                 # down + drags with NO up, then a fresh click
 //!
-//! `scripts/video-input-test.sh` starts an isolated host, runs one of these, and reads the
+//! `slopdesk-ops video-input` starts an isolated host, runs one of these, and reads the
 //! injection trace back out of the log. The gestures themselves are in
 //! `slopdesk_devtools::synclient`.
 
@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use slopdesk_devtools::synclient::{CURSOR_PORT, Client, MEDIA_PORT, Motion, along};
 
-/// The window the harness defaults to, matching `WID` in `scripts/video-input-test.sh`.
+/// The window the harness defaults to, matching the `WID` default of `slopdesk-ops video-input`.
 const WINDOW_ID: u32 = 267;
 
 /// The usage line, which is also the error for an unknown command.

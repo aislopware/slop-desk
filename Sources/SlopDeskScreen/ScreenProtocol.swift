@@ -96,7 +96,7 @@ public enum ScreenWire {
     /// The running screend's crate version, parsed out of a `hello` reply.
     ///
     /// The reply is `<name> <protocol> <build>`: the banner above, then the version of the screend
-    /// process that answered. screend is installed as a `LaunchAgent` by `scripts/install-screend.sh`
+    /// process that answered. screend is installed as a `LaunchAgent` by `make screend-install`
     /// and so outlives hostd's build — after an upgrade the binary on disk and the process on the
     /// socket are routinely different code, and this field is what tells them apart.
     ///

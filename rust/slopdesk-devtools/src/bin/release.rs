@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use slopdesk_devtools::release::stamps::Pin;
-use slopdesk_devtools::release::{bump, changelog, commitmsg, pack, proc, sites, stamps, tools};
-use slopdesk_devtools::repo;
+use slopdesk_devtools::release::{bump, changelog, commitmsg, pack, sites, stamps, tools};
+use slopdesk_devtools::{proc, repo};
 
 /// The usage text, which is also the whole argument grammar.
 const USAGE: &str = "\

@@ -15,10 +15,12 @@
 //! `cargo test` runs them on every commit.
 //!
 //! ## What is still a process, and why
-//! [`proc`] spawns `xcodebuild`, `codesign`, `notarytool`, `hdiutil`, `ditto`, `tar`, `xcodegen`,
-//! `git` and `git-cliff`. Every one of those is a thing a compiled program genuinely cannot do
-//! itself. Nothing else shells out: the digests, the JSON, the version arithmetic, the file
-//! rewriting and the Mach-O check are all in-process, which is where the wall-clock went.
+//! [`crate::proc`] spawns `xcodebuild`, `codesign`, `notarytool`, `hdiutil`, `ditto`, `tar`,
+//! `xcodegen`, `git` and `git-cliff`. Every one of those is a thing a compiled program genuinely
+//! cannot do itself. Nothing else shells out: the digests, the JSON, the version arithmetic, the
+//! file rewriting and the Mach-O check are all in-process, which is where the wall-clock went.
+//! It started here and moved up a level when [`crate::gates`] and [`crate::ops`] turned out to
+//! need the same four functions — a seam three module families share is not the release's.
 //!
 //! ## The order a cut runs in
 //! ```text
@@ -33,7 +35,6 @@ pub mod bump;
 pub mod changelog;
 pub mod commitmsg;
 pub mod pack;
-pub mod proc;
 pub mod sites;
 pub mod stamps;
 pub mod tools;

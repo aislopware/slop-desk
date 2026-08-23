@@ -17,7 +17,7 @@ import XCTest
 /// What is NOT here, and cannot be: whether the registered factory actually renders anything. The only
 /// conformer of either protocol lives in `ThirdParty/ghostty/integration/GhosttySurface/` and
 /// `SlopDeskVideoClient`, neither reachable from a headless `swift build` — the embedder is not in any
-/// `Package.swift` target at all. Those halves are verified by `scripts/enable-macos-renderer.sh` +
+/// `Package.swift` target at all. Those halves are verified by `slopdesk-ops enable-renderer macos` +
 /// `xcodebuild`, by hand.
 @MainActor
 final class LeafSeamNativeSlotTests: XCTestCase {

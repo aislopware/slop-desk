@@ -1147,6 +1147,11 @@ pub fn registry() -> Vec<Rule> {
             check: macui_memos::the_divider_hides_before_it_cuts,
         },
         Rule {
+            name: "ops-daemon-container",
+            origin: "docs/46",
+            check: repo_invariants::an_ops_harness_that_starts_a_daemon_contains_it,
+        },
+        Rule {
             name: "green-tree-marker",
             origin: "docs/DECISIONS.md 2026-08-16",
             check: frozen_pairs::the_green_tree_marker_means_one_thing,

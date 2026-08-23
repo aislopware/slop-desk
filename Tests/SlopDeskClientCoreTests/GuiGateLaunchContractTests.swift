@@ -270,15 +270,19 @@ final class GuiGateLaunchContractTests: XCTestCase {
     ///
     /// A hardcoded list is the exact shape of the defect this file exists for. The daemon-side
     /// isolation rule was written into `check-macos.sh`'s comments; the three gates that look like
-    /// `check-macos.sh` copied it, and the two that do not — `soak-fanout-laggard.sh`, which looks
-    /// like a soak, and `video-input-test.sh`, which looks like a manual harness — went without for
-    /// months. A list has to be edited by the same person who forgot the rule. A directory does not:
-    /// the moment a new `scripts/*.sh` execs `slopdesk-hostd` or `slopdesk-videohostd`, this contract
-    /// picks it up and demands the isolation, whether or not anybody thought to say so.
+    /// `check-macos.sh` copied it, and the two that did not — a soak and a manual input harness —
+    /// went without for months. A list has to be edited by the same person who forgot the rule. A
+    /// directory does not: the moment a new `scripts/*.sh` execs `slopdesk-hostd` or
+    /// `slopdesk-videohostd`, this contract picks it up and demands the isolation, whether or not
+    /// anybody thought to say so.
     ///
-    /// RED when this was first derived rather than listed: it found `scripts/video-input-test.sh`,
-    /// a sixth daemon launch nobody had counted, running `slopdesk-videohostd` with no container at
-    /// all.
+    /// RED when this was first derived rather than listed: it found a sixth daemon launch nobody had
+    /// counted, running `slopdesk-videohostd` with no container at all.
+    ///
+    /// ⚠️ THE SOAK AND THE INPUT HARNESS ARE NO LONGER HERE. Both are Rust now — `slopdesk-ops soak`
+    /// and `slopdesk-ops video-input` — and the same contract over them is the `ops-daemon-container`
+    /// rule in `slopdesk-invariants`, which walks `rust/slopdesk-devtools/src/ops/` the same way this
+    /// walks `scripts/`. Neither half may be deleted without the other growing its subjects.
     private func daemonLaunchingScripts() throws -> [String] {
         try allScripts().filter { try !launchCommands(of: $0, invoking: daemonBinaryTokens(of: $0)).isEmpty }
     }
@@ -718,14 +722,13 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// one of its own behind.
     func testNoGateLaunchesADaemonAgainstTheDevelopersContainer() throws {
         let scripts = try daemonLaunchingScripts()
-        // A CANARY, not the subject set: five scripts known to stand a daemon up, so a walk that
+        // A CANARY, not the subject set: four gates known to stand a daemon up, so a walk that
         // silently matched nothing is caught reading nothing rather than passing vacuously.
         for known in [
             "scripts/check-macos.sh",
             "scripts/check-video.sh",
             "scripts/check-multiclient.sh",
             "scripts/check-launch-restore.sh",
-            "scripts/soak-fanout-laggard.sh",
         ] {
             XCTAssertTrue(
                 scripts.contains(known),
@@ -756,15 +759,15 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// Every shell token in `script` that denotes a host-daemon binary: the literal build-product
     /// paths, plus every spelling of a variable whose resolved value names one.
     ///
-    /// The indirection is not cosmetic — `soak-fanout-laggard.sh` and `check-video.sh` both launch
-    /// through a `HOSTD=…` variable, so a contract that grepped for the literal binary name would
-    /// find the ASSIGNMENT, call it a launch, and never read the exec at all.
+    /// The indirection is not cosmetic — `check-video.sh` launches through a `HOSTD=…` variable, so
+    /// a contract that grepped for the literal binary name would find the ASSIGNMENT, call it a
+    /// launch, and never read the exec at all.
     private func daemonBinaryTokens(of script: String) throws -> [String] {
         let names = ["slopdesk-hostd", "slopdesk-videohostd"]
         return try binaryTokens(
             of: script,
-            // debug AND release: `video-input-test.sh` runs the release build, and a rule that only
-            // knows one configuration is a rule with a documented way around it.
+            // debug AND release: a harness may run either build, and a rule that only knows one
+            // configuration is a rule with a documented way around it.
             literals: names.flatMap { [".build/debug/\($0)", ".build/release/\($0)"] },
             naming: names,
         )

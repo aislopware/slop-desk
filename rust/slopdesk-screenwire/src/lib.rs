@@ -10,7 +10,7 @@
 //!
 //! ## "version-locked by the build" was half true, and the half that was false is why
 //! [`hello_payload`] exists
-//! Shipped together, yes. RUNNING together, no: `scripts/install-screend.sh` installs a
+//! Shipped together, yes. RUNNING together, no: `slopdesk-ops install screend` installs a
 //! `LaunchAgent`, so a screend started at login outlives every hostd of the day and survives the
 //! `brew upgrade` that replaces its binary. The pair are then two different builds talking to each
 //! other, which this wire tolerates — it is stable enough that they interoperate — while nothing
@@ -96,7 +96,7 @@ pub const HELLO_BANNER: &[u8] = b"slopdesk-screend 1";
 /// hostd reads the second to decide whether the screend ANSWERING is the screend on disk. It can
 /// afford to act on the answer here where it cannot for superd: screend holds no children and no
 /// durable state, its per-pane grids are a cache the next repaint refills, and hostd starts one
-/// itself if none is listening (`scripts/install-screend.sh` says the same in its header). A
+/// itself if none is listening (`make screend-install` says the same in its report). A
 /// restart costs a repaint. superd's costs every pane.
 ///
 /// Space-separated and appended, never prefixed: `HELLO_BANNER` stays a prefix of this, so a

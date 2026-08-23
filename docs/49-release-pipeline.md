@@ -513,8 +513,8 @@ under `homebrew.mxcl.slopdesk`. It is `keep_alive successful_exit: false`, never
 that detail is load-bearing: superd exits **0 on purpose** when another instance already holds its
 lock file, rather than stealing a live socket and stranding the panes behind it. A bare `KeepAlive`
 restarts on any exit, so the loser respawned every ten seconds forever. A machine with both agents —
-this one and a checkout's `com.slopdesk.superd` from `scripts/install-superd.sh` — now settles, with
-whichever booted first keeping the panes. `install-superd.sh` was fixed to the same form.
+this one and a checkout's `com.slopdesk.superd` from `make superd-install` — now settles, with
+whichever booted first keeping the panes. The installer was fixed to the same form.
 
 The **cask depends on the formula** (`packaging/homebrew/Casks/slopdesk.rb`). `SlopDeskHost.app` does not shell out to `slopdesk-hostd`; it
 runs the same `HostServer` in-process, so it needs superd exactly as much as the CLI does, and a

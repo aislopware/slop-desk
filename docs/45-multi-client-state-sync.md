@@ -1250,7 +1250,7 @@ inside the existing render diff.
     With N subscribers, eviction **replaces** buffering for the laggard; the gate's pause-the-PTY
     semantics are reserved for the case where they still mean what they always meant.
   - **The PTY drain pauses only when the LAST subscriber is gone** — preserving today's
-    detached-budget behaviour exactly. **Amended by the soak** (`scripts/soak-fanout-laggard.sh`):
+    detached-budget behaviour exactly. **Amended by the soak** (`slopdesk-ops soak`):
     "the last subscriber is gone" is not the same statement as "nobody is consuming". A pane that
     fanned out keeps delivering from per-member outboxes for the rest of its life — including after
     it shrinks back to ONE member — so `PausableQueueGate`'s enqueued-not-yet-sent accounting, which
@@ -1744,7 +1744,7 @@ below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and 
    one usable position is a coupling hazard wearing a settings label. Multi-client sync is
    first-class and always-on, like tmux and zellij, and has no toggle at all.
 2. `SLOPDESK_SUB_LAG_BYTES = 32 MiB` is a first guess. Only a cellular-iOS soak settles it.
-   **The MECHANISM is now soaked** (`scripts/soak-fanout-laggard.sh`, real `slopdesk-hostd` + two
+   **The MECHANISM is now soaked** (`slopdesk-ops soak`, real `slopdesk-hostd` + two
    `slopdesk-client`s, the laggard frozen with `SIGSTOP` so it stops reading AND stops acking in the
    same instant). At the shipped 32 MiB: retention held 8.4 MB for the laggard and it received every
    line exactly once on resume; the fast member took 134.2 MB, contiguous and duplicate-free, while

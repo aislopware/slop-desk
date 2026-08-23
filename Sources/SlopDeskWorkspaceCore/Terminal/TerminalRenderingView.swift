@@ -116,7 +116,7 @@ public final class TerminalRendererFactory {
 ///
 /// ⚠️ The only conformer is `GhosttyLayerBackedView`, in
 /// `ThirdParty/ghostty/integration/GhosttySurface/GhosttyTerminalView.swift` — a file NO `Package.swift`
-/// target compiles (it joins the Xcode app target via `scripts/enable-macos-renderer.sh`). A grep over
+/// target compiles (it joins the Xcode app target via `slopdesk-ops enable-renderer macos`). A grep over
 /// `Sources/` and `Tests/` alone reads this protocol as unimplemented, and it is not. Same trap as
 /// ``TerminalViewModel/makeCopyModeKey(event:)``.
 @preconcurrency

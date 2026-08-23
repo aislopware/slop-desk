@@ -86,7 +86,7 @@ Sessions survive disconnect; clients resume from the replay buffer. Claude is a 
 ```sh
 XCFRAMEWORK_TARGET=universal bash ThirdParty/ghostty/build-libghostty.sh
 
-bash scripts/enable-macos-renderer.sh
+(cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-ops -- enable-renderer macos)
 xcodebuild -project Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj \
   -scheme ClientApp-macOS -destination 'generic/platform=macOS' \
   CODE_SIGNING_ALLOWED=NO build

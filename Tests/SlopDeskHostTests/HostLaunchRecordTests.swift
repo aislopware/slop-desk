@@ -3,7 +3,7 @@ import XCTest
 @testable import SlopDeskHost
 
 /// ``HostLaunchRecord`` — what a running hostd says about how it was started, so
-/// `scripts/restart-hostd.sh` can start it again identically.
+/// `slopdesk-ops restart-hostd` can start it again identically.
 ///
 /// The record is the last piece of `docs/51`: superd made a restart cheap, and this makes it
 /// *easy*, which is the half that decides whether it actually gets done. Every assertion here is

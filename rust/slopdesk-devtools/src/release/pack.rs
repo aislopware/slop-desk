@@ -30,7 +30,8 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 use super::stamps::{self, Pin};
-use super::{proc, tools};
+use super::tools;
+use crate::proc;
 
 /// The one triple this ships.
 const TRIPLE: &str = "aarch64-apple-darwin";
@@ -531,7 +532,9 @@ fn build_and_sign_apps(layout: &Layout, settings: &Settings) -> Result<(), Strin
     // xcframework + CGhostty module map into the (deliberately placeholder) committed spec and
     // regenerates the project; it is idempotent, and the spec is checked back out afterwards.
     proc::step("Wiring the libghostty renderer into ClientApp-macOS");
-    proc::run("bash", &["scripts/enable-macos-renderer.sh"], &layout.root)?;
+    // An in-process call, not a spawn: the injector is [`crate::ops::renderer`] in this same
+    // binary, and shelling out to a copy of itself would only add a way for the two to disagree.
+    crate::ops::renderer::enable(&layout.root, &crate::ops::renderer::MACOS)?;
 
     for (spec, project, scheme, product, entitlements) in [
         (
