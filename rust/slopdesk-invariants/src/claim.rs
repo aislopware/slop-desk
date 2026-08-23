@@ -250,6 +250,26 @@ pub enum Claim {
         /// What its return means.
         message: &'static str,
     },
+    /// A path must be a SYMLINK, resolving to a named file, with that file's contents.
+    ///
+    /// Three facts rather than one, because each fails differently and only the first is visible in
+    /// a diff. The repo has TWO test trees and one list of test-lint relaxations; the second tree
+    /// gets the list by link. A COPY is two lists that drift, and the drift is silent in the worst
+    /// direction — one tree quietly enforcing different rules than the other, discovered whenever
+    /// somebody edits one and not the other. A link that resolves to nothing is worse still: the
+    /// bundle lints under the SOURCE rules, so every fixture force-unwrap turns red at once and the
+    /// obvious fix is to add the relaxations back as a copy.
+    ///
+    /// Read off the FILESYSTEM, not the tree: a dotfile is not walked, and the question is about
+    /// the directory entry rather than the bytes behind it.
+    Symlink {
+        /// Repo-relative path, which must be a link.
+        path: &'static str,
+        /// Repo-relative path it must resolve to.
+        target: &'static str,
+        /// Why the link is a link.
+        message: &'static str,
+    },
     /// A file must call every one of these FFI doors.
     ///
     /// The commonest shape in the whole gate: a Swift file that used to hold an implementation is
@@ -323,6 +343,26 @@ pub enum Claim {
         pattern: &'static str,
         /// How many there must be.
         count: usize,
+        /// Which view to read.
+        view: View,
+        /// The sentence, with `{found}` where the count goes.
+        message: &'static str,
+    },
+    /// A file may match a pattern at most `maximum` times — [`Claim::AtLeast`] from the other side.
+    ///
+    /// A CEILING rather than a ban, for the one shape a ban cannot state: a memo's own miss path has
+    /// to read the expensive thing, so the rule is not "nobody reads it" but "only the memo does,
+    /// and only where it must". `HostWorkspaceMirror.topology` copies the whole entry map and
+    /// re-projects every cell; `mirroredTopology` memoizes it against `workspaceMirrorRevision`, and
+    /// its miss path is the two reads that are allowed. A third puts the projection back on some
+    /// caller's path with green tests and no compile error.
+    AtMost {
+        /// Repo-relative path.
+        path: &'static str,
+        /// The pattern to count LINES of.
+        pattern: &'static str,
+        /// The ceiling.
+        maximum: usize,
         /// Which view to read.
         view: View,
         /// The sentence, with `{found}` where the count goes.
@@ -457,6 +497,38 @@ pub enum Claim {
         /// The sentence, with `{files}` where the offenders go.
         message: &'static str,
     },
+    /// Every renderer PRESENT must answer every rung of an enum READ OUT OF the tree.
+    ///
+    /// [`Claim::NoneQuoting`]'s positive twin, and the shape of the whole named-ink family: an enum
+    /// is a NAME in the logic floor because its resolution is a `Color`, `Color` belongs to the
+    /// design layer, and the design layer sits ABOVE the floor — so the BRANCH descends and the
+    /// LOOKUP stays in each renderer, one small `switch` per framework. Nothing in either language
+    /// makes the two switches cover the same cases, so a third rung added to the enum compiles
+    /// everywhere and ships inked correctly in one framework only.
+    ///
+    /// The rungs are READ, never listed here, for the reason the shell's own comment gives: a check
+    /// that NAMES the symbols it watches goes quietly blind the day one is renamed, and nobody
+    /// re-reads a regex. An empty reading fails, and so does a table no present file renders — both
+    /// are the vacuous pass this shape exists to make impossible.
+    ///
+    /// A half that is ABSENT is skipped rather than failed. That is deliberate and is what makes it
+    /// worth writing a row ahead of the renderer it names: the Mac twin of a given surface may not
+    /// exist yet, and the row is here so that the day it lands it is already obliged to answer the
+    /// same rungs instead of inventing its own.
+    Resolved {
+        /// What the table is called in the diagnostic.
+        label: &'static str,
+        /// Where the rungs are read from. An empty reading fails.
+        needles: Extract,
+        /// Every renderer that resolves the table. Absent ones are skipped.
+        halves: &'static [&'static str],
+        /// The pattern each half must match, with `{needle}` where the rung's name goes.
+        template: &'static str,
+        /// Which view of each half to read.
+        view: View,
+        /// The sentence, with `{half}` and `{needle}` where the file and the rung go.
+        message: &'static str,
+    },
     /// EVERY file under `roots` must match each pattern exactly the stated number of times.
     ///
     /// A per-file shape, which no ban and no whole-corpus count can state. The rule it exists for is
@@ -528,6 +600,30 @@ pub enum Claim {
         /// Which view to read.
         view: View,
         /// What a match means.
+        message: &'static str,
+    },
+    /// One pattern's first match must come BEFORE another's, in the same file.
+    ///
+    /// Order, stated directly, which [`Claim::Within`] can only imply. A tear-off is two steps:
+    /// `PaneCanvasDragController` records the drop placement on the drag coordinator and only THEN
+    /// asks the store to detach, because `detachedPanes` changes SYNCHRONOUSLY inside that call and
+    /// the satellite-window coordinator reads the placement as it opens the window. Reversed, the
+    /// window still opens — it just opens at the centre-cascade instead of under the cursor, and only
+    /// when the reader wins the race. An occasional wrong-place window is the worst failure shape
+    /// there is, and no type in either language can hold the ordering.
+    ///
+    /// Either pattern going unmatched fails: a file that stopped spelling one of the two steps has
+    /// not satisfied the order, it has stopped having one.
+    Before {
+        /// Repo-relative path.
+        path: &'static str,
+        /// The pattern whose first match must come first.
+        first: &'static str,
+        /// The pattern whose first match must come second.
+        second: &'static str,
+        /// Which view to read.
+        view: View,
+        /// What the wrong order means.
         message: &'static str,
     },
     /// These roots must together hold at least `minimum` files of these extensions.
@@ -730,6 +826,36 @@ impl Claim {
                     format!("{path} is back — {message}"),
                 );
             },
+            Self::Symlink {
+                path,
+                target,
+                message,
+            } => {
+                let link = tree.root().join(path);
+                let Ok(entry) = std::fs::symlink_metadata(&link) else {
+                    report.fail(format!("{path} is gone — {message}"));
+                    return;
+                };
+                if !entry.file_type().is_symlink() {
+                    report.fail(format!("{path} is not a symlink — {message}"));
+                    return;
+                }
+                // Resolved through the link, which is what makes a dangling one reportable: the
+                // read fails where a `has`-style check would see a directory entry and agree.
+                let (Ok(linked), Ok(source)) = (
+                    std::fs::read_to_string(&link),
+                    std::fs::read_to_string(tree.root().join(target)),
+                ) else {
+                    report.fail(format!(
+                        "{path} is a symlink that resolves to nothing — {message}"
+                    ));
+                    return;
+                };
+                report.fail_if(
+                    linked != source,
+                    format!("{path} resolves somewhere other than {target} — {message}"),
+                );
+            },
             Self::Doors {
                 path,
                 entries,
@@ -785,6 +911,18 @@ impl Claim {
                 if let Some(source) = report.source(tree, path, message) {
                     let found = text::count_lines(&view.of(source), pattern);
                     report.fail_if(found != *count, fill(message, "found", &found.to_string()));
+                }
+            },
+            Self::AtMost {
+                path,
+                pattern,
+                maximum,
+                view,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, path, message) {
+                    let found = text::count_lines(&view.of(source), pattern);
+                    report.fail_if(found > *maximum, fill(message, "found", &found.to_string()));
                 }
             },
             Self::Names {
@@ -998,6 +1136,48 @@ impl Claim {
                     report.fail(fill(message, "files", &named.join(", ")));
                 }
             },
+            Self::Resolved {
+                label,
+                needles,
+                halves,
+                template,
+                view,
+                message,
+            } => {
+                let Some(rungs) = needles.set(tree, report) else {
+                    return;
+                };
+                if rungs.is_empty() {
+                    report.fail(format!(
+                        "no {label} rungs parsed out of {} — this claim would pass by demanding \
+                         nothing of anybody",
+                        needles.path
+                    ));
+                    return;
+                }
+                let present: Vec<&&str> = halves.iter().filter(|half| tree.has(half)).collect();
+                if present.is_empty() {
+                    report.fail(format!(
+                        "not one of the {} renderers of {label} is in the tree — the table is \
+                         resolved by nobody and this claim reads as green",
+                        halves.len()
+                    ));
+                    return;
+                }
+                for half in present {
+                    let Some(source) = tree.get(half) else {
+                        continue;
+                    };
+                    let haystack = view.of(source);
+                    for rung in &rungs {
+                        let pattern = fill(template, "needle", rung);
+                        report.fail_if(
+                            !text::matches(&haystack, &pattern),
+                            fill(&fill(message, "half", half), "needle", rung),
+                        );
+                    }
+                }
+            },
             Self::PerFileCounts {
                 roots,
                 extensions,
@@ -1050,6 +1230,30 @@ impl Claim {
                 if let Some(source) = report.source(tree, path, message) {
                     let block = text::range(&view.of(source), start, end);
                     report.fail_if(!text::matches(&block, pattern), message.to_owned());
+                }
+            },
+            Self::Before {
+                path,
+                first,
+                second,
+                view,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, path, message) {
+                    let haystack = view.of(source);
+                    // Line numbers rather than byte offsets, which is what the shell compared and
+                    // what a diagnostic can be read against.
+                    let line_of = |pattern: &str| {
+                        let regex = text::cached(pattern);
+                        haystack.lines().position(|line| regex.is_match(line))
+                    };
+                    let (Some(early), Some(late)) = (line_of(first), line_of(second)) else {
+                        report.fail(format!(
+                            "{path} no longer spells both halves of an ordered pair — {message}"
+                        ));
+                        return;
+                    };
+                    report.fail_if(early >= late, (*message).to_owned());
                 }
             },
             Self::LacksWithin {

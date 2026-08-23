@@ -12,6 +12,7 @@ pub mod cli_config;
 pub mod client_layers;
 pub mod client_memos;
 pub mod code_panel;
+pub mod command_surface;
 pub mod crate_policy;
 pub mod cross_twins;
 pub mod device_frames;
@@ -19,6 +20,7 @@ pub mod device_law;
 pub mod device_streams;
 pub mod host_probes;
 pub mod hot_paths;
+pub mod ink_floor;
 pub mod overlay_split;
 pub mod pane_wiring;
 pub mod panel_floor;
@@ -881,6 +883,66 @@ pub fn registry() -> Vec<Rule> {
             name: "leaf-seam-shapes",
             origin: "docs/56 stage F, P4",
             check: ui_seams::one_seam_two_shapes_one_installer,
+        },
+        Rule {
+            name: "canvas-drag-decides-once",
+            origin: "docs/56 §3",
+            check: command_surface::the_canvas_drag_decides_once,
+        },
+        Rule {
+            name: "palette-verb-platform",
+            origin: "docs/56 §3.6",
+            check: command_surface::a_palette_verb_names_its_platform_once,
+        },
+        Rule {
+            name: "palette-reaches-bindings",
+            origin: "docs/56 §3.6",
+            check: command_surface::every_keybinding_is_reachable_from_the_palette,
+        },
+        Rule {
+            name: "keybinding-platform",
+            origin: "docs/56 §3.6",
+            check: command_surface::a_keybinding_names_its_platform_once,
+        },
+        Rule {
+            name: "chord-table-held",
+            origin: "docs/55 §8",
+            check: command_surface::the_chord_table_is_held_not_rebuilt,
+        },
+        Rule {
+            name: "frameworkless-value-floor",
+            origin: "docs/56 stage F, P6",
+            check: ink_floor::a_frameworkless_value_goes_to_the_floor,
+        },
+        Rule {
+            name: "mac-scene-environment",
+            origin: "docs/56 §3.5",
+            check: ink_floor::the_mac_injects_no_environment_it_does_not_read,
+        },
+        Rule {
+            name: "fold-gate-condition",
+            origin: "docs/56 increments 61 and 63",
+            check: ink_floor::the_fold_is_shut_from_both_sides,
+        },
+        Rule {
+            name: "two-test-trees",
+            origin: "docs/56 F4c",
+            check: ink_floor::two_test_trees_one_relaxation,
+        },
+        Rule {
+            name: "drop-chip-and-pill",
+            origin: "docs/56 §3.5",
+            check: ink_floor::one_drop_chip_two_drawings,
+        },
+        Rule {
+            name: "named-ink-tables",
+            origin: "docs/56 §3.5",
+            check: ink_floor::a_named_ink_table_answers_every_renderer,
+        },
+        Rule {
+            name: "static-mirror-deleted",
+            origin: "docs/56 §3.5",
+            check: ink_floor::the_static_mirror_stays_deleted,
         },
         Rule {
             name: "device-panel-law",
