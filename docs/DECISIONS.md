@@ -16766,3 +16766,37 @@ is the whole mechanism by which a fixed bug stops being filed as an accepted dif
 cursor to swap or hide. The app ships `TARGETED_DEVICE_FAMILY "1,2"` and has zero
 `UIPointerInteraction` anywhere in the tree; when that is built, these two are the first thing the
 phone half must subscribe.
+
+## The LTR capability probe is deleted, not ported (2026-08-23)
+
+`VideoEncoder.swift` carried `runLTRCapabilityProbe`, ~130 lines behind `SLOPDESK_LTR_PROBE`: it
+allocated a scratch pixel buffer, built a throwaway compression session, asked it to enable long-term
+references, encoded a frame with `ForceLTRRefresh`, and read four `OSStatus` values plus whether an
+acknowledgement token came back — then interpreted the five into supported / unsupported /
+ambiguous / unknown and printed the verdict. When the encoder moved to Rust, the probe did not.
+
+**Porting it needed a second §2 admission, and the admission is the expensive part.** The probe's
+first step is `CVPixelBufferCreate` — a Create-rule out-parameter, so a second `CFRetained::from_raw`
+in `slopdesk-apple-vt`, which §2 caps at one per crate and `apple-family` fails on. The way out
+inside the rules is a new crate, because CoreVideo pixel-buffer allocation is a different framework
+area than VideoToolbox compression and the family is one area per crate. So the real price of a
+default-off diagnostic was a whole `slopdesk-apple-cv` crate: a leak test, a `# Safety` note per
+block, a ledger row, and a permanent widening of the family's surface.
+
+**Against a question that is already answered and already load-bearing.** The probe exists to find
+out whether this hardware supports long-term references. It does; the answer is why
+`FrameOptions::cf` writes `EnableLTR` and `ForceLTRRefresh` at all, and why the whole LTR ack path
+downstream of it was built. A probe that re-derives a settled answer on demand is a harness, not a
+capability, and the tree does not carry a crate to hold a harness.
+
+**What survives is the part with the reasoning in it.** `interpret_ltr_probe` and
+`LtrProbeVerdict` are in `slopdesk_video::encoder_config`, with tests — the five-signal fold that was
+the only non-mechanical thing in the probe, and the only part that was ever hard to get right. If the
+question is ever live again (a new chip, a virtualised host, a report of LTR silently doing nothing),
+re-instrumenting is wiring four status values into a function that already exists and already passes
+its tests, not re-deriving what they mean.
+
+Two callers went with it: the `SLOPDESK_LTR_PROBE` block in `slopdesk-videohostd/main.swift`, and the
+liveness smoke at the top of `slopdesk-loopback-validate`. The second was replaceable by nothing,
+because the scenario immediately after it encodes real hardware frames and fails loudly if the path
+is dead — the probe was proving, one line earlier, a thing the next line proves anyway.

@@ -11,16 +11,18 @@
 //! single time and both the keyframe flag and the token come out of it, because fetching it is a
 //! bridge and this runs sixty times a second.
 
-use core::ffi::c_void;
+use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
 
 use objc2_core_foundation::{CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
-use objc2_core_media::{CMBlockBuffer, CMFormatDescription, CMSampleBuffer, CMVideoFormatDescriptionGetHEVCParameterSetAtIndex};
+use objc2_core_media::{
+    CMBlockBuffer, CMFormatDescription, CMSampleBuffer, CMVideoFormatDescriptionGetHEVCParameterSetAtIndex,
+};
 
 use crate::keys::Attachment;
 use crate::session::NO_ERR;
 
-/// One HEVC parameter set, as the framework's own `(pointer, length)`.
+/// A run of bytes the FRAMEWORK owns, as its own `(pointer, length)`.
 ///
 /// A VALUE rather than a slice, deliberately. Turning a framework-owned `(pointer, length)` into a
 /// `&[u8]` is a RUST obligation — it asserts alignment, initialisation and a lifetime the framework
@@ -28,11 +30,11 @@ use crate::session::NO_ERR;
 /// `unsafe` remit is that exact question, makes the slice, and it can answer the lifetime half
 /// because it holds the [`EncodedSample`] borrowed across the call that reads it.
 ///
-/// The bytes live as long as the `EncodedSample` this came from, which holds the format description
-/// that owns them.
+/// The bytes live as long as the `EncodedSample` this came from, which holds both the block buffer
+/// and the format description that own them.
 #[derive(Clone, Copy, Debug)]
-pub struct ParameterSet {
-    /// First byte of the parameter set's payload — the NAL unit WITHOUT a length prefix.
+pub struct FrameworkBytes {
+    /// First byte of the run.
     pub bytes: NonNull<u8>,
     /// How many bytes.
     pub len: usize,
@@ -59,14 +61,17 @@ impl EncodedSample {
     /// # Safety
     /// `CMSampleBufferGetDataBuffer`, `CMSampleBufferGetFormatDescription` and
     /// `CMSampleBufferGetSampleAttachmentsArray` are Get-rule accessors that `objc2` generates as
-    /// owned returns — it applies the retain itself — so nothing crosses raw here. They are `unsafe`
-    /// only because they are bare `extern` functions taking a sample buffer, and this one is a live
-    /// reference for the whole call.
+    /// owned returns — it applies the retain itself — so nothing crosses raw here. They are
+    /// `unsafe` only because they are bare `extern` functions taking a sample buffer, and this
+    /// one is a live reference for the whole call.
     ///
     /// `CMBlockBufferGetDataLength` is likewise a read of the buffer's own bookkeeping, with no
     /// pointer and no ownership.
     #[must_use]
-    #[expect(unsafe_code, reason = "objc2 generates the bare CoreMedia entry points unsafe")]
+    #[expect(
+        unsafe_code,
+        reason = "objc2 generates the bare CoreMedia entry points unsafe"
+    )]
     pub fn read(sample: &CMSampleBuffer, read_ltr_token: bool) -> Option<Self> {
         // SAFETY: framework rule, above — an owned-return Get-rule accessor on a live sample.
         let block = unsafe { sample.data_buffer() }?;
@@ -125,8 +130,11 @@ impl EncodedSample {
     /// it reports is owned by the format description, which `self` holds for as long as the
     /// returned values are usable. Nothing is dereferenced here.
     #[must_use]
-    #[expect(unsafe_code, reason = "the parameter-set enumerator writes through caller-owned slots")]
-    pub fn parameter_sets(&self) -> Vec<ParameterSet> {
+    #[expect(
+        unsafe_code,
+        reason = "the parameter-set enumerator writes through caller-owned slots"
+    )]
+    pub fn parameter_sets(&self) -> Vec<FrameworkBytes> {
         let Some(format) = self.format.as_deref() else {
             return Vec::new();
         };
@@ -145,7 +153,7 @@ impl EncodedSample {
         if probe != NO_ERR || count == 0 {
             return Vec::new();
         }
-        let mut sets = Vec::with_capacity(count);
+        let mut sets: Vec<FrameworkBytes> = Vec::with_capacity(count);
         for index in 0..count {
             let mut pointer: *const u8 = core::ptr::null();
             let mut len = 0_usize;
@@ -169,9 +177,55 @@ impl EncodedSample {
             let Some(bytes) = NonNull::new(pointer.cast_mut()) else {
                 return Vec::new();
             };
-            sets.push(ParameterSet { bytes, len });
+            sets.push(FrameworkBytes { bytes, len });
         }
         sets
+    }
+
+    /// This frame's coded bytes IN PLACE, when the block buffer happens to hold them contiguously.
+    ///
+    /// The fast path, and the reason it exists: a delta frame needs no parameter sets prepended, so
+    /// if the bytes are already one run there is nothing to assemble and the consumer can read them
+    /// where the encoder left them. Sixty times a second that is the difference between one copy of
+    /// the frame and none.
+    ///
+    /// `None` means the buffer is SEGMENTED — `CMBlockBuffer` is a chain, and the framework
+    /// promises nothing about how many links a given sample arrives in — and the caller must fall
+    /// back to [`Self::copy_payload_into`], which asks the framework to assemble it. Answering the
+    /// first segment as if it were the frame is the bug this shape exists to make impossible.
+    ///
+    /// # Safety
+    /// `CMBlockBufferGetDataPointer` writes through the caller's slots, and only the non-null ones;
+    /// all four here are live locals of the declared types. The pointer it reports is owned by the
+    /// block buffer, which `self` holds for as long as the returned value is usable, and the run is
+    /// accepted ONLY when the framework's own `lengthAtOffset` says it covers the whole sample.
+    /// Nothing is dereferenced here.
+    #[must_use]
+    #[expect(
+        unsafe_code,
+        reason = "the data-pointer accessor writes through caller-owned slots"
+    )]
+    pub fn contiguous_payload(&self) -> Option<FrameworkBytes> {
+        if self.payload_len == 0 {
+            return None;
+        }
+        let mut run_len = 0_usize;
+        let mut total = 0_usize;
+        let mut pointer: *mut c_char = core::ptr::null_mut();
+        // SAFETY: framework rule, above — three live slots of the declared types on a live buffer.
+        let status = unsafe {
+            self.block
+                .data_pointer(0, &raw mut run_len, &raw mut total, &raw mut pointer)
+        };
+        if status != NO_ERR || run_len != self.payload_len || total != self.payload_len {
+            return None;
+        }
+        NonNull::new(pointer.cast::<u8>()).map(|bytes| {
+            FrameworkBytes {
+                bytes,
+                len: self.payload_len,
+            }
+        })
     }
 
     /// Appends this frame's coded bytes to `out`; answers whether the framework copied them.
@@ -187,7 +241,10 @@ impl EncodedSample {
     /// the length the framework itself just reported for the same buffer, and already initialised
     /// by the resize, so there is no uninitialised window even if the copy fails. Nothing foreign
     /// is dereferenced and nothing is transmuted.
-    #[expect(unsafe_code, reason = "the block-buffer copy writes into a destination this crate allocated")]
+    #[expect(
+        unsafe_code,
+        reason = "the block-buffer copy writes into a destination this crate allocated"
+    )]
     pub fn copy_payload_into(&self, out: &mut Vec<u8>) -> bool {
         if self.payload_len == 0 {
             return false;
@@ -219,7 +276,10 @@ impl EncodedSample {
 /// The array it answers is untyped, because C's `CFArrayRef` carries no element type. `CoreMedia`
 /// documents every element as a `CFDictionary` keyed by `CFString`, and one `cast_unchecked` states
 /// that once — every read after it is type-checked by `CoreFoundation` itself.
-#[expect(unsafe_code, reason = "C's CFArrayRef carries no element type; the CoreMedia header is where it lives")]
+#[expect(
+    unsafe_code,
+    reason = "C's CFArrayRef carries no element type; the CoreMedia header is where it lives"
+)]
 fn read_attachments(sample: &CMSampleBuffer, read_ltr_token: bool) -> (bool, Option<i64>) {
     // SAFETY: framework rule, above — an owned-return Get-rule accessor, asked not to create.
     let Some(array) = (unsafe { sample.sample_attachments_array(false) }) else {

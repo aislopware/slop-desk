@@ -3,9 +3,9 @@
 //! These are the readings that used to sit as `static let`s beside the `VTSessionSetProperty` calls
 //! they fed, in a file whose own header conceded it was "COMPILED + code-reviewed but NEVER
 //! instantiated in a test" — because `VTCompressionSessionCreate` hangs without a window server.
-//! Sitting next to a call that cannot run headless made them unrunnable too, and they are not calls:
-//! they are a dozen environment parses, three clamps and a rate-limit calculation, every one of
-//! which is a function of a string.
+//! Sitting next to a call that cannot run headless made them unrunnable too, and they are not
+//! calls: they are a dozen environment parses, three clamps and a rate-limit calculation, every one
+//! of which is a function of a string.
 //!
 //! ## The clamp discipline, and why it is not a rejection
 //! A quantiser knob outside `[1, 51]` is CLAMPED, never rejected to a default. The reading that
@@ -73,8 +73,8 @@ pub const VBV_WINDOW_MAX: f64 = 4.0;
 /// The byte budget that stands in for "no hard cap" under pure VBR — 1 GB/s, which no encoder
 /// approaches.
 ///
-/// Unbinding rather than removing the property is what keeps ONE code path: every set site — create,
-/// crisp, compact, the rate actuator, the probe — routes through [`data_rate_limits`], so a
+/// Unbinding rather than removing the property is what keeps ONE code path: every set site —
+/// create, crisp, compact, the rate actuator, the probe — routes through [`data_rate_limits`], so a
 /// half-threaded gate is impossible.
 pub const PURE_VBR_UNBOUND_BYTES: i64 = 1_000_000_000;
 
@@ -135,7 +135,10 @@ pub fn vbv_components(bytes_per_second: i64, seconds: f64) -> (i64, f64) {
     // The product is taken in `f64` because the window is one; `as` truncates toward zero, which is
     // the conservative direction for a cap.
     #[expect(clippy::cast_precision_loss, reason = "a byte budget is far below 2^53")]
-    #[expect(clippy::cast_possible_truncation, reason = "truncating a cap downward is the safe direction")]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "truncating a cap downward is the safe direction"
+    )]
     let scaled = (bytes_per_second as f64 * seconds) as i64;
     (scaled, seconds)
 }
@@ -149,7 +152,11 @@ pub fn vbv_components(bytes_per_second: i64, seconds: f64) -> (i64, f64) {
 /// beats a missing one.
 #[must_use]
 pub fn data_rate_limits(bytes_per_second: i64, pure_vbr: bool, window_seconds: f64) -> (i64, f64) {
-    let effective = if pure_vbr { PURE_VBR_UNBOUND_BYTES } else { bytes_per_second };
+    let effective = if pure_vbr {
+        PURE_VBR_UNBOUND_BYTES
+    } else {
+        bytes_per_second
+    };
     vbv_components(effective, window_seconds)
 }
 
@@ -260,7 +267,10 @@ impl LtrProbeVerdict {
 
 /// Every resolved knob the encoder session is built and driven from.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[expect(clippy::struct_excessive_bools, reason = "each is one independent operator gate, not a state enum")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is one independent operator gate, not a state enum"
+)]
 pub struct Config {
     /// The worst-case quantiser ceiling; the bound everything else composes up to.
     pub max_allowed_frame_qp: i32,
@@ -306,11 +316,13 @@ impl Config {
         let const_qp = qp_knob(text("SLOPDESK_CONST_QP").as_deref(), 0);
         // Adaptation is off when a static ceiling is PINNED, when it is explicitly disabled, or
         // when const-QP owns the quantiser dials outright. Presence, not value, decides the first.
-        let qp_ceiling_adaptive =
-            max_qp_raw.is_none() && text("SLOPDESK_QP_CEILING_ADAPT").as_deref() != Some("0") && const_qp.is_none();
+        let qp_ceiling_adaptive = max_qp_raw.is_none()
+            && text("SLOPDESK_QP_CEILING_ADAPT").as_deref() != Some("0")
+            && const_qp.is_none();
         Self {
             max_allowed_frame_qp: qp_knob(max_qp_raw.as_deref(), DEFAULT_MAX_QP).unwrap_or(DEFAULT_MAX_QP),
-            crisp_qp: qp_knob(text("SLOPDESK_CRISP_QP").as_deref(), DEFAULT_CRISP_QP).unwrap_or(DEFAULT_CRISP_QP),
+            crisp_qp: qp_knob(text("SLOPDESK_CRISP_QP").as_deref(), DEFAULT_CRISP_QP)
+                .unwrap_or(DEFAULT_CRISP_QP),
             compact_qp: qp_knob(text("SLOPDESK_COMPACT_QP").as_deref(), DEFAULT_COMPACT_QP)
                 .unwrap_or(DEFAULT_COMPACT_QP),
             compact_bitrate: compact_bitrate(text("SLOPDESK_COMPACT_KBPS").as_deref()),
@@ -340,7 +352,10 @@ impl Config {
     /// site and `/ 8` at the next and produces a hard cap at twice the average rate, which looks
     /// like a generous encoder rather than like a bug.
     #[must_use]
-    #[expect(clippy::integer_division, reason = "bits to bytes; the remainder is under one byte a second")]
+    #[expect(
+        clippy::integer_division,
+        reason = "bits to bytes; the remainder is under one byte a second"
+    )]
     pub fn hard_cap(&self, bits_per_second: i64) -> (i64, f64) {
         self.data_rate_limits(bits_per_second / 8)
     }
@@ -363,7 +378,11 @@ impl Config {
     #[must_use]
     pub const fn clamp_target(&self, target: i64, ceiling: i64) -> i64 {
         let bounded = if target > ceiling { ceiling } else { target };
-        if bounded < MINIMUM_BITRATE { MINIMUM_BITRATE } else { bounded }
+        if bounded < MINIMUM_BITRATE {
+            MINIMUM_BITRATE
+        } else {
+            bounded
+        }
     }
 }
 
@@ -373,17 +392,19 @@ mod tests {
 
     use super::{
         CRISP_DATA_RATE_MAX_BYTES, Config, DEFAULT_COMPACT_BITRATE, DEFAULT_COMPACT_QP, DEFAULT_CRISP_QP,
-        DEFAULT_MAX_QP, DEFAULT_VBV_WINDOW, FRAME_DELAY_PROBE, LtrProbe, LtrProbeVerdict, PURE_VBR_UNBOUND_BYTES,
-        QP_MAX, QP_MIN, compact_bitrate, const_qp_for_frame, data_rate_limits, frame_delay_candidates,
-        interpret_ltr_probe, qp_knob, resolve_vbv_window, vbv_components,
+        DEFAULT_MAX_QP, DEFAULT_VBV_WINDOW, FRAME_DELAY_PROBE, LtrProbe, LtrProbeVerdict,
+        PURE_VBR_UNBOUND_BYTES, QP_MAX, QP_MIN, compact_bitrate, const_qp_for_frame, data_rate_limits,
+        frame_delay_candidates, interpret_ltr_probe, qp_knob, resolve_vbv_window, vbv_components,
     };
 
     /// Builds a reader over a fixed table, which is what makes the whole resolution testable —
     /// the Swift this replaces read `ProcessInfo` at first touch of a `static let`, so a process
     /// could observe exactly one combination and a test could observe none.
     fn reader(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> + use<> {
-        let table: HashMap<String, String> =
-            pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+        let table: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
         move |key: &str| table.get(key).cloned()
     }
 
@@ -415,7 +436,11 @@ mod tests {
             assert_eq!(frame_delay_candidates(Some(&pinned.to_string())), vec![pinned]);
         }
         for raw in ["", "seven", "7", "-2", "3.5", "0x2"] {
-            assert_eq!(frame_delay_candidates(Some(raw)), FRAME_DELAY_PROBE.to_vec(), "{raw}");
+            assert_eq!(
+                frame_delay_candidates(Some(raw)),
+                FRAME_DELAY_PROBE.to_vec(),
+                "{raw}"
+            );
         }
     }
 
@@ -426,7 +451,10 @@ mod tests {
         assert!((resolve_vbv_window(None) - DEFAULT_VBV_WINDOW).abs() < f64::EPSILON);
         for raw in ["0", "0.001", "5", "-1", "nan", "", "wide"] {
             let seconds = resolve_vbv_window(Some(raw));
-            assert!((seconds - DEFAULT_VBV_WINDOW).abs() < f64::EPSILON, "{raw} -> {seconds}");
+            assert!(
+                (seconds - DEFAULT_VBV_WINDOW).abs() < f64::EPSILON,
+                "{raw} -> {seconds}"
+            );
         }
         for raw in ["0.01", "0.5", "1", "2.5", "4"] {
             let seconds = resolve_vbv_window(Some(raw));
@@ -444,7 +472,8 @@ mod tests {
     }
 
     /// The budget scales WITH the window, which is what preserves the average rate. Halving the
-    /// window and keeping the budget would slash the average to a third — the bug this shape avoids.
+    /// window and keeping the budget would slash the average to a third — the bug this shape
+    /// avoids.
     #[test]
     fn the_budget_scales_with_the_window_so_the_average_rate_holds() {
         let (bytes, seconds) = vbv_components(1_500_000, 0.5);
@@ -457,7 +486,12 @@ mod tests {
     /// which is the property that makes a half-threaded gate impossible.
     #[test]
     fn pure_vbr_unbinds_every_budget_it_is_given() {
-        for budget in [1_i64, 1_500_000, CRISP_DATA_RATE_MAX_BYTES, PURE_VBR_UNBOUND_BYTES] {
+        for budget in [
+            1_i64,
+            1_500_000,
+            CRISP_DATA_RATE_MAX_BYTES,
+            PURE_VBR_UNBOUND_BYTES,
+        ] {
             assert_eq!(data_rate_limits(budget, true, 1.0), (PURE_VBR_UNBOUND_BYTES, 1.0));
             assert_eq!(data_rate_limits(budget, false, 1.0), (budget, 1.0));
         }
@@ -676,8 +710,14 @@ mod tests {
         let config = Config::resolve(&reader(&[]), None);
         let ceiling = 40_000_000;
         assert_eq!(config.clamp_target(60_000_000, ceiling), ceiling);
-        assert_eq!(config.clamp_target(-1, ceiling), crate::live_bitrate::MINIMUM_BITRATE);
-        assert_eq!(config.clamp_target(0, ceiling), crate::live_bitrate::MINIMUM_BITRATE);
+        assert_eq!(
+            config.clamp_target(-1, ceiling),
+            crate::live_bitrate::MINIMUM_BITRATE
+        );
+        assert_eq!(
+            config.clamp_target(0, ceiling),
+            crate::live_bitrate::MINIMUM_BITRATE
+        );
         assert_eq!(config.clamp_target(20_000_000, ceiling), 20_000_000);
     }
 

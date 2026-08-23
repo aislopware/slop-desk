@@ -185,7 +185,7 @@ accordingly — see the sixth correction.
 | `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowPlacement`, `WindowGeometryWatcher`'s resize, `WindowFeedAXSupport`'s probe, `HostNavHistory` | **landed** (increments 90-91) — costs the §2 admission |
 | `slopdesk-apple-cursor` | `NSCursor` + the offscreen `NSBitmapImageRep` render | `CursorSampler`'s two AppKit reads | **landed** (increment 89) — costs **two** `unsafe` blocks |
 | `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
-| `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder`, `VideoDecoder` | planned |
+| `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder` **(done)**, `VideoDecoder` (open) | **landed** (increment 92) — costs the §2 Get-rule admission, and the shim's third convention |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer` | planned |
 | `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder`, `AudioPlaybackEngine` | planned |
 | `slopdesk-apple-power` | `IOKit.pwr_mgt` | `PreventSleepAssertion`, `HostDisplayWake` | **deferred** — §1 |
@@ -317,3 +317,39 @@ per keyframe into one. The HEVC parameter sets have no copy-out variant in the S
 are answered as `(NonNull<u8>, usize)` VALUES and the one slice is made in `slopdesk-ffi`, whose
 entire `unsafe` remit is that question. Only the output block's `*mut CMSampleBuffer` had nowhere
 else to go, and that is the admission.
+
+**The join is the one door in the header that calls back, and that is a third `slopdesk-ffi`
+convention.** Every other door in `slopdesk_ffi.h` answers when asked. A compression session does
+not: the frame arrives on a VideoToolbox thread whenever the hardware is done with it, so
+`slopdesk_video_encoder_new` takes a `@convention(c)` function and a context, and the module states
+the four terms it is sound under — the bytes are borrowed for the duration of the call, so the caller
+copies; the callback runs on a framework thread and never reentrantly; the function is registered
+once at `_new` and never changed; the context outlives the handle, which is why Swift retains the box
+and releases it only after `_free` has drained. The convention is confined to `encoder.rs` by name,
+not by habit, and widening it is a design change.
+
+**The port came out with FEWER copies than the Swift it replaced, which was not the goal.** Swift
+paid one copy for a delta frame and two for a keyframe, because it built the parameter-set prefix and
+then appended the payload. Rust asks the block buffer whether the payload is one contiguous run
+first, and an ordinary delta frame is: it is handed to Swift exactly where the encoder left it, zero
+Rust-side copies, and Swift's `Data(bytes:count:)` is the only one in the system. A keyframe still
+costs one — parameter sets then payload, into a scratch `Vec` that is reused for the life of the
+session rather than reallocated per frame.
+
+**Two things were deleted rather than ported, and one of them was a bug.** The drop-relief integrator
+folded its counter only inside the default regime's `else` arm, so under const-QP the count
+accumulated for the process lifetime and nothing ever drained it — in the mode most likely to produce
+drops, the number a person would read to diagnose them was the one number that could not be trusted.
+Rust folds unconditionally, and the accessor that proves it is public because a test needed it. The
+LTR capability probe went for the other reason: see `docs/DECISIONS.md`.
+
+**The link line grew, and the reason is worth knowing before the next row.** `objc2-video-toolbox`
+carries `#[link(name = "VideoToolbox", kind = "framework")]`, and that attribute does not survive
+`xcodebuild -create-xcframework` — it lives in the rlib's metadata, and what ships is a plain static
+archive. Three frameworks therefore had to be named in `Package.swift`'s `ffiCLibraries`, where
+AppKit already sits for the analogous reason. VideoToolbox and CoreMedia because C FUNCTIONS never
+resolve through the Objective-C runtime; CoreVideo for the three `kCVImageBuffer*_ITU_R_709_2`
+colour tags, which are `extern` constants. Until this row they were implicit — `VideoEncoder.swift`
+imported VideoToolbox itself, and the import was the link. **Every future row that calls a C function
+or reads an `extern` constant will hit this, and it presents as a wall of undefined symbols at the
+final link, long after the crate and `make ffi` are both green.**

@@ -335,6 +335,108 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
     ])
 }
 
+/// HEVC ENCODE is `slopdesk-apple-vt`, and `VideoEncoder.swift` is a face with a callback.
+///
+/// The ban is on the compression half of `VideoToolbox` alone. Decompression is still Swift —
+/// `VideoDecoder.swift` and `HEVCParameterSets.swift` are the open half of the `docs/57` §5 `vt`
+/// row — so a blanket ban on the framework would be a ban on work that has not happened yet, which
+/// is a rule that gets deleted rather than a rule that holds. The day the decoder lands, the second
+/// alternation below grows and this comment shrinks.
+///
+/// Two of the banned strings are not calls, and they are the ones worth having. A property KEY
+/// constant in Swift means somebody is configuring a session from this side of the boundary, and a
+/// `kVTEncodeFrameOptionKey_` means somebody is steering a frame — both are the state machine
+/// growing back one write at a time, which is how the original 1500-line file happened. The key
+/// constants are also where the port found its silent bug: `…_ForceKeyFrame` is the string
+/// `EncoderForceKeyframe`, so a Swift respelling would look right, apply without error, and ship
+/// every forced IDR as a delta frame.
+///
+/// The face itself is checked by CONTENT, like `replay_buffer` above: it legitimately still exists,
+/// so "is it still a face" is a question about what it holds. It must call the door, and it must
+/// not hold the four things the rules crate owns — the quantiser bracket, the drop-relief
+/// integrator, the budget-to-ceiling ramp, and the six constants that ramp was calibrated with.
+///
+/// The last two arrive from `check-supervisor.sh`'s withdrawn section 1, which pinned this file to
+/// three FFI doors it no longer calls: the ramp used to be driven from Swift against arithmetic in
+/// `encoder_ceiling.rs`, and now `encoder_state` calls that module directly. The doors went with
+/// the rule. What survives is the part that was never about the doors — a re-transcription has to
+/// divide a budget by a pixel rate and interpolate across a band, so it has to spell one of these
+/// four shapes, and it has to type at least one of the six constants as a literal.
+#[must_use]
+pub fn hevc_encode_is_rusts(tree: &Tree) -> Report {
+    const ENCODER: &str = "Sources/SlopDeskVideoHost/VideoEncoder.swift";
+    // Assembled for the same reason as the rules above it: this file is scanned by nothing, but the
+    // prose that explains a ban is read by everyone, and a literal here is a string this repo now
+    // contains twice.
+    const COMPRESSION: &str = concat!(
+        "VTCompressionSessionCreate",
+        "|VTCompressionSessionEncodeFrame",
+        "|VTCompressionSessionCompleteFrames",
+        "|VTCompressionSessionPrepareToEncodeFrames",
+        "|VTCompressionSessionInvalidate",
+        "|VTCompressionOutputCallback",
+        "|kVTCompressionPropertyKey_",
+        "|kVTEncodeFrameOptionKey_",
+        "|kVTVideoEncoderSpecification_",
+        "|kVTQPModulationLevel_"
+    );
+
+    let claims = [
+        Claim::NoneUnder {
+            roots: &["Sources", "Tests"],
+            extensions: SWIFT,
+            pattern: COMPRESSION,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift HEVC compression session is back in {files} — slopdesk-apple-vt holds the \
+                      session and every property write, slopdesk_video::encoder_config resolves the knobs, \
+                      ::encoder_state runs the brackets, and slopdesk_video_encoder_* is the whole door \
+                      (docs/57 §5)",
+        },
+        Claim::Names {
+            path: ENCODER,
+            needle: "import CSlopDeskFFI",
+            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift no longer calls the Rust encoder — the \
+                      port was undone (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: ENCODER,
+            pattern: "func beginCrispBracket|func beginCompactBracket|bracketDepth",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift grew the quantiser bracket back — a \
+                      bracket owns the quantiser for its whole span and that invariant lives in \
+                      rust/slopdesk-video::encoder_state (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: ENCODER,
+            pattern: "dropRelief|consecutiveDrops",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift grew the drop-relief integrator back — \
+                      the Swift one folded only in the default regime's else arm, so under const-QP its \
+                      counter never drained (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: ENCODER,
+            pattern: r"Double\(targetBps\) */|/ *pixelRate|Double\(sharp *- *coarse\)|Double\(coarse *- *sharp\)",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift spells the quantiser ramp again — the \
+                      budget→ceiling law is rust/slopdesk-video::encoder_ceiling, and it is the same ramp \
+                      the per-frame adaptive quantiser walks (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: ENCODER,
+            pattern: r"(attackStep|holdFrames|decayEvery|sharpQPCeiling|qpCeiling(Sharp|Coarse)Bpp) *(:[^=]*)?= *[0-9]",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/VideoEncoder.swift types a tuned ceiling constant again — \
+                      all six were calibrated together on hardware and live in \
+                      rust/slopdesk-video::encoder_ceiling (docs/57 §5)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 /// The two agent vocabularies, compared by CASE COUNT across the boundary.
 ///
 /// The Swift enums declare the cases and the crate answers every question about them by
@@ -459,6 +561,89 @@ mod tests {
             assert!(
                 report.violations().iter().any(|v| v.contains("foreground PROBE")),
                 "{call:?} was not caught: {report:?}"
+            );
+        }
+    }
+
+    /// Each compression call and each key family is caught on its own — an alternation that matched
+    /// only its first branch would pass a single-case test while banning nothing.
+    #[test]
+    fn every_compression_call_the_encoder_used_to_make_is_caught_on_its_own() {
+        for call in [
+            "let status = VTCompressionSessionCreate(allocator: nil, width: w, height: h)\n",
+            "VTCompressionSessionEncodeFrame(session, pixelBuffer, pts, .invalid, opts, nil, nil)\n",
+            "VTCompressionSessionCompleteFrames(session, until: .invalid)\n",
+            "VTCompressionSessionPrepareToEncodeFrames(session)\n",
+            "VTCompressionSessionInvalidate(session)\n",
+            "let cb: VTCompressionOutputCallback = { _, _, _, _, _ in }\n",
+            "set(kVTCompressionPropertyKey_MaxAllowedFrameQP, 51)\n",
+            "opts[kVTEncodeFrameOptionKey_ForceKeyFrame] = kCFBooleanTrue\n",
+            "spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true\n",
+            "set(key, kVTQPModulationLevel_Disable)\n",
+        ] {
+            let fixture = Fixture::new("encoder-revived");
+            fixture.write("Sources/SlopDeskVideoHost/VideoEncoder.swift", call);
+            let report = super::hevc_encode_is_rusts(&fixture.tree());
+            assert!(
+                report
+                    .violations()
+                    .iter()
+                    .any(|v| v.contains("compression session")),
+                "{call:?} was not caught: {report:?}"
+            );
+        }
+    }
+
+    /// The decompression half is the open row, so banning it would ban work that has not happened —
+    /// and a rule that fires on the state of the tree it ships with gets deleted rather than fixed.
+    #[test]
+    fn the_decoder_is_not_swept_in_with_the_encoder() {
+        let fixture = Fixture::new("decoder-untouched");
+        fixture
+            .write(
+                "Sources/SlopDeskVideoClient/VideoDecoder.swift",
+                "import VideoToolbox\nVTDecompressionSessionCreate(allocator: nil, formatDescription: \
+                 fmt)\nVTDecompressionSessionDecodeFrame(session, sample, flags, nil, nil)\n",
+            )
+            .write(
+                "Sources/SlopDeskVideoHost/VideoEncoder.swift",
+                "import CSlopDeskFFI\n",
+            );
+        assert!(super::hevc_encode_is_rusts(&fixture.tree()).is_clean());
+    }
+
+    /// The face is checked by CONTENT, so the two things the rules crate owns are named. The
+    /// integrator is the sharper of the two: the Swift original folded it only inside the default
+    /// regime's else arm, which is the bug the port found.
+    #[test]
+    fn the_face_must_call_the_door_and_must_not_hold_the_state_machine() {
+        let fixture = Fixture::new("encoder-face");
+        fixture.write(
+            "Sources/SlopDeskVideoHost/VideoEncoder.swift",
+            "import CSlopDeskFFI\nslopdesk_video_encoder_encode_live(handle, buffer, pts, scale)\n",
+        );
+        assert!(super::hevc_encode_is_rusts(&fixture.tree()).is_clean());
+
+        for (revived, needle) in [
+            ("private var bracketDepth = 0\n", "quantiser bracket"),
+            ("private var dropRelief = 0\n", "drop-relief integrator"),
+            ("let bpp = Double(targetBps) / pixelRate\n", "quantiser ramp"),
+            ("let span = Double(sharp - coarse)\n", "quantiser ramp"),
+            ("static let attackStep = 4\n", "tuned ceiling constant"),
+            (
+                "static let qpCeilingSharpBpp: Double = 0.14\n",
+                "tuned ceiling constant",
+            ),
+        ] {
+            let fixture = Fixture::new("encoder-face-revived");
+            fixture.write(
+                "Sources/SlopDeskVideoHost/VideoEncoder.swift",
+                &format!("import CSlopDeskFFI\n{revived}"),
+            );
+            let report = super::hevc_encode_is_rusts(&fixture.tree());
+            assert!(
+                report.violations().iter().any(|v| v.contains(needle)),
+                "{revived:?} was not caught: {report:?}"
             );
         }
     }

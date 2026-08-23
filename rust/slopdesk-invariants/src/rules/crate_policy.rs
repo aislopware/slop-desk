@@ -223,9 +223,9 @@ pub fn apple_family(tree: &Tree) -> Report {
             get_rule_sites > 1,
             format!(
                 "{crate_dir} takes a Core Foundation Get-rule retain in {get_rule_sites} places — the \
-                 family admits CFRetained::retain at ONE site per crate, so the question 'is this \
-                 borrowed pointer still the framework's' is answered once, at the boundary the \
-                 framework hands it across (docs/57 §2)",
+                 family admits CFRetained::retain at ONE site per crate, so the question 'is this borrowed \
+                 pointer still the framework's' is answered once, at the boundary the framework hands it \
+                 across (docs/57 §2)",
             ),
         );
     }
@@ -519,8 +519,8 @@ mod tests {
         let fixture = policy_fixture("apple-both-rules");
         fixture.write(
             "rust/slopdesk-apple-cgevent/src/lib.rs",
-            "pub fn create() { let _ = unsafe { CFRetained::from_raw(out) }; }\n\
-             pub fn borrow() { let _ = unsafe { CFRetained::retain(value) }; }\n",
+            "pub fn create() { let _ = unsafe { CFRetained::from_raw(out) }; }\npub fn borrow() { let _ = \
+             unsafe { CFRetained::retain(value) }; }\n",
         );
         assert!(super::apple_family(&fixture.tree()).is_clean());
     }

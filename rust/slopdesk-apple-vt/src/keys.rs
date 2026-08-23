@@ -80,13 +80,18 @@ impl Key {
     /// bindings already carry the `&'static` lifetime and the `CFString` type, so nothing is cast
     /// and nothing is owned.
     #[must_use]
-    #[expect(unsafe_code, reason = "framework key constants are extern statics; docs/57 §2 admits reading one")]
+    #[expect(
+        unsafe_code,
+        reason = "framework key constants are extern statics; docs/57 §2 admits reading one"
+    )]
     pub(crate) fn cf(self) -> &'static CFString {
         use objc2_video_toolbox as vt;
         // SAFETY: framework rule, above — every arm is a framework-initialised `extern` static.
         unsafe {
             match self {
-                Self::EnableLowLatencyRateControl => vt::kVTVideoEncoderSpecification_EnableLowLatencyRateControl,
+                Self::EnableLowLatencyRateControl => {
+                    vt::kVTVideoEncoderSpecification_EnableLowLatencyRateControl
+                },
                 Self::RequireHardwareAcceleratedVideoEncoder => {
                     vt::kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder
                 },
@@ -135,7 +140,10 @@ impl StringValue {
     /// # Safety
     /// [`Key::cf`]'s, for `CoreVideo`'s image-buffer attachment constants.
     #[must_use]
-    #[expect(unsafe_code, reason = "framework value constants are extern statics; same obligation as Key::cf")]
+    #[expect(
+        unsafe_code,
+        reason = "framework value constants are extern statics; same obligation as Key::cf"
+    )]
     pub(crate) fn cf(self) -> &'static CFString {
         use objc2_core_video as cv;
         // SAFETY: framework rule, above.
@@ -162,8 +170,12 @@ impl Attachment {
     /// The framework's own `CFString` for this attachment key.
     ///
     /// # Safety
-    /// [`Key::cf`]'s, for the two sample-attachment constants — one `CoreMedia`'s, one `VideoToolbox`'s.
-    #[expect(unsafe_code, reason = "framework attachment constants are extern statics; same obligation as Key::cf")]
+    /// [`Key::cf`]'s, for the two sample-attachment constants — one `CoreMedia`'s, one
+    /// `VideoToolbox`'s.
+    #[expect(
+        unsafe_code,
+        reason = "framework attachment constants are extern statics; same obligation as Key::cf"
+    )]
     pub(crate) fn cf(self) -> &'static CFString {
         // SAFETY: framework rule, above.
         unsafe {

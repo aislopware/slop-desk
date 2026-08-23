@@ -4426,51 +4426,6 @@ SlopDeskQpController slopdesk_qp_decide(SlopDeskQpController controller, bool co
 int32_t slopdesk_qp_clamped_int(const uint8_t *raw, size_t raw_len, bool has_raw,
                                 int32_t fallback, int32_t lo, int32_t hi);
 
-/* ---------------------------------------------------------------------------- *
- * The ENCODER'S OWN quantiser ceiling. The controller above answers the LINK; these two answer the
- * hardware encoder, and they compose with it as min(bound, ceiling + relief) at the one call site.
- *
- * The first reads the BUDGET. A ceiling pinned sharp drops frames whenever the rate the link
- * affords cannot carry sharp motion — measured, 97 dropped frames in one 18-second scroll at
- * 6-16 Mbps on a 1080p60 session — while a ceiling pinned coarse blurs a hard scroll on a link with
- * bits to spare. So it follows the budget's density in bits per pixel per frame, sharp above one
- * knee, fully relaxed below the other, and a linear ramp between. That ramp is not written twice:
- * the far side maps the density onto the band and hands the interpolation to the same routine
- * slopdesk_video_adaptive_qp_nv12 uses for the per-frame change fraction.
- *
- * The second reads the encoder's own DROPS, which the budget cannot see: a rich budget on
- * pathological content offers 95-119 Mbps against a 30 Mbps target, and nothing at the sharp end
- * fits, so the encoder drops instead — 209 in 25 seconds. The relief attacks within a few frames
- * and decays slowly, because coarse-but-moving beats sharp-but-missing and a sudden re-sharpen is a
- * pop. Its clean-frame streak crosses beside it for the reason SlopDeskQpController's does: it IS
- * the state, and a relief rebuilt without it decays from inside its own hold window.
- *
- * The ceiling entry has no refusal code, because there is nothing a refusal could be mistaken for:
- * every uncertainty — a degenerate picture, cadence or budget, an inverted band, an inverted pair of
- * knees, a quantiser outside the byte range — answers the COARSE end, which is the safe answer. The
- * encoder coarsens rather than dropping a frame it cannot fit.
- * ---------------------------------------------------------------------------- */
-
-typedef struct {
-  double sharp_bpp;
-  double coarse_bpp;
-  int32_t sharp_qp;
-  int32_t attack_step;
-  int32_t hold_frames;
-  int32_t decay_every;
-} SlopDeskQpCeilingConfig;
-
-typedef struct {
-  int32_t relief;
-  int32_t clean_frames;
-} SlopDeskQpDropRelief;
-
-SlopDeskQpCeilingConfig slopdesk_video_qp_ceiling_config_default(void);
-int32_t slopdesk_video_qp_ceiling(int64_t target_bps, int64_t pixel_width, int64_t pixel_height,
-                                  int64_t fps, int32_t sharp, int32_t coarse, double sharp_bpp,
-                                  double coarse_bpp);
-SlopDeskQpDropRelief slopdesk_video_qp_drop_relief_fold(SlopDeskQpDropRelief state, int64_t drops);
-
 SlopDeskIdrPolicy *slopdesk_idr_policy_new(SlopDeskIdrConfig config);
 void     slopdesk_idr_policy_free(SlopDeskIdrPolicy *handle);
 void     slopdesk_idr_policy_note_keyframe_sent(SlopDeskIdrPolicy *handle, uint32_t frame_id,
@@ -8660,6 +8615,144 @@ size_t slopdesk_cursor_sampler_shape(SlopDeskCursorSampler *handle, uint16_t sha
 // flag. Taken rather than read so the caller emits exactly one extra position update
 // per change — the client switches its pointer on the next update carrying the new id.
 bool slopdesk_cursor_sampler_take_id_change(SlopDeskCursorSampler *handle);
+
+// ---- The HEVC encoder ---------------------------------------------------------------
+
+// THE ONE DOOR THAT CALLS BACK. Every other entry point in this header answers when
+// asked; this one hands frames over when VideoToolbox says so, on a thread VideoToolbox
+// chose. That is a THIRD convention beside the (out, cap) -> needed one at the top of
+// this header and the handle one below it, and it exists for exactly one reason: a
+// finished frame must reach the wire before the next one arrives 16 ms later, and both
+// existing conventions require the caller to ask. Polling would be latency added on
+// purpose to preserve a rule about shapes.
+//
+// Its terms:
+//   * The callback's (avcc, len) is borrowed for the duration of the call. COPY IT.
+//   * It runs on a framework thread, never reentrantly into the handle.
+//   * It is registered once, at _new, and never changed.
+//   * The context must outlive the handle. Free the handle first.
+//
+// Behind it: the session (slopdesk-apple-vt), every knob resolved and clamped
+// (slopdesk_video::encoder_config), and the whole rate-control state machine — the
+// crisp and compact brackets, the three quantiser regimes, the drop-relief integrator,
+// the deferred restore (slopdesk_video::encoder_state). The caller keeps the capture
+// queue, the pixel buffers, and the send path.
+//
+// COPIES: a delta frame whose block buffer is contiguous — the ordinary case — is handed
+// over where the encoder left it, so the caller's own Data(bytes:count:) is the only copy
+// in the system. A keyframe costs one more, because HEVC parameter sets live in the
+// format description rather than inline and have to be laid down in front of the slice.
+typedef struct SlopDeskVideoEncoder SlopDeskVideoEncoder;
+
+// One finished frame. ltr_token is meaningful only when has_ltr_token is true — a token
+// may legitimately be any int64_t, so no value is reserved as a sentinel.
+typedef void (*SlopDeskEncodedFrameFn)(void *context, const uint8_t *avcc, size_t len,
+                                       bool keyframe, bool crisp, int64_t ltr_token,
+                                       bool has_ltr_token, bool acked_anchored);
+
+// Creates a hardware HEVC session and applies the whole low-latency configuration.
+//
+// NULL when the session could not be created or a latency-critical property was rejected
+// — RealTime, AllowFrameReordering, AverageBitRate and DataRateLimits, whose silent
+// failure would leave a session that looks configured and encodes like the default one.
+// Everything else is best-effort: several of the quantiser keys are rejected outright on
+// some HEVC encoders, and aborting on one would yield a stream of zero frames rather than
+// a soft one. status_out takes the framework's OSStatus when non-NULL.
+//
+// qp_decouple is the one knob a graphical setting may override; every other knob is read
+// from the environment on the far side. context is carried, unread, to every callback.
+SlopDeskVideoEncoder *slopdesk_video_encoder_new(int32_t width, int32_t height,
+                                                 int64_t bitrate, int64_t fps,
+                                                 bool full_range, bool ltr_enabled,
+                                                 bool qp_decouple, void *context,
+                                                 SlopDeskEncodedFrameFn deliver,
+                                                 int32_t *status_out);
+
+// Drains and tears down. The drain is not the caller's to remember: a session
+// invalidated with frames still queued silently discards output that was already
+// encoded, so completing first is part of what freeing MEANS here.
+void slopdesk_video_encoder_free(SlopDeskVideoEncoder *handle);
+
+// One live frame. per_frame_max_qp is read only when has_per_frame_max_qp is true —
+// the content-driven ceiling being ABSENT is not the same as it being zero. Answers the
+// framework's OSStatus; 0 is success.
+int32_t slopdesk_video_encoder_encode_live(SlopDeskVideoEncoder *handle,
+                                           const void *pixel_buffer,
+                                           int64_t presentation_value,
+                                           int32_t presentation_timescale,
+                                           bool force_keyframe, int32_t per_frame_max_qp,
+                                           bool has_per_frame_max_qp);
+
+// The near-lossless static refresh: bracketed, drained on both sides, sharp. Restoring
+// before the frame has finished is what silently ships a SOFT crisp frame, encoded at
+// the live ceiling — which is why the drain is inside this door rather than beside it.
+int32_t slopdesk_video_encoder_encode_crisp(SlopDeskVideoEncoder *handle,
+                                            const void *pixel_buffer,
+                                            int64_t presentation_value,
+                                            int32_t presentation_timescale);
+
+// A recovery or heartbeat intra frame small enough to survive a burst — the crisp
+// bracket inverted, ceiling up and target down. Tagged as an ordinary keyframe on the
+// wire, because that is what it is. By default its restore is DEFERRED to the next
+// encode with no drain at all: two drains at ~115 ms of blocked capture each, six times
+// a second under a recovery storm, IS the scroll judder.
+int32_t slopdesk_video_encoder_encode_compact(SlopDeskVideoEncoder *handle,
+                                              const void *pixel_buffer,
+                                              int64_t presentation_value,
+                                              int32_t presentation_timescale);
+
+// A cheap refresh anchored on an ACKNOWLEDGED long-term reference — no decoder flush and
+// a fraction of the bytes of a recovery IDR. Deliberately unbracketed: the brackets exist
+// to shape an intra frame, and this is the alternative to one. A no-op reference when the
+// session was created with ltr_enabled false.
+int32_t slopdesk_video_encoder_encode_ltr_refresh(SlopDeskVideoEncoder *handle,
+                                                  const void *pixel_buffer,
+                                                  int64_t presentation_value,
+                                                  int32_t presentation_timescale);
+
+// Actuates the live target, clamped into [minimum, ceiling]. Answers whether it changed.
+// The write is SKIPPED while a bracket is mid-relax; that bracket's restore applies it,
+// from its own fresh read, which is why the restore writes both rate knobs rather than
+// only the one it relaxed.
+bool slopdesk_video_encoder_set_live_bitrate(SlopDeskVideoEncoder *handle, int64_t target);
+
+// The link controller's constant quantiser, and its congestion verdict. Both are no-ops
+// unless const-QP mode is engaged, and neither writes anything: they clear the frame memo
+// so the NEXT frame re-pins under the new band. Callable per network report.
+bool slopdesk_video_encoder_set_const_qp(SlopDeskVideoEncoder *handle, int32_t q);
+bool slopdesk_video_encoder_set_link_congested(SlopDeskVideoEncoder *handle, bool congested);
+
+// The rate-control window's frame-rate hint. Deliberately NOT paired with a bitrate
+// change: fewer frames sharing the same budget is bigger, sharper frames, which is the
+// point of stepping the rate down.
+void slopdesk_video_encoder_set_expected_frame_rate(SlopDeskVideoEncoder *handle, int64_t fps);
+
+// Stages a token the client acknowledged decoding, deduplicated and bounded to the most
+// recent few. _clear drops every staged token, and the caller must call it when a
+// keyframe ships: an IDR flushes the client's picture buffer, long-term references
+// included, so a pre-IDR acknowledgement names a reference that is gone.
+void slopdesk_video_encoder_stage_acked_token(SlopDeskVideoEncoder *handle, int64_t token);
+void slopdesk_video_encoder_clear_staged_tokens(SlopDeskVideoEncoder *handle);
+
+// Blocks until every frame presented so far has reached the callback. Call before
+// dropping an encoder on a resize swap.
+int32_t slopdesk_video_encoder_complete_frames(SlopDeskVideoEncoder *handle);
+
+// The three knobs the CAPTURER and the session builder need before an encoder exists —
+// the pure convention reduced to its smallest case, no buffer, because each answer is one
+// number. ZERO IS ABSENT throughout, and that is not a reserved value dressed up as one:
+// the HEVC quantiser range starts at 1, so zero cannot be a real answer to any of them.
+int64_t slopdesk_video_encoder_default_bitrate(void);
+int32_t slopdesk_video_encoder_max_allowed_frame_qp(void);
+
+// The const-QP seed, or 0 when the mode is off. PRESENCE engages the mode, so ask this
+// rather than reading the variable: a knob whose text is not a number leaves it off, and
+// only this door knows that.
+int32_t slopdesk_video_encoder_const_qp(void);
+
+// One [1, 51] quantiser knob from its raw text, CLAMPED — 0 asks for the sharpest ceiling
+// and must not silently invert into the coarsest. 0 out when absent or not a number.
+int32_t slopdesk_video_encoder_qp_knob(const uint8_t *raw, size_t len, int32_t fallback);
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END

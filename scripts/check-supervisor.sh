@@ -6491,40 +6491,15 @@ SWIFT_VIDEO_SESSION_LOGIC=Sources/SlopDeskVideoClient/VideoClientSessionLogic.sw
 SWIFT_VIDEO_FEC=Sources/SlopDeskVideoProtocol/FECScheme.swift
 SWIFT_VIDEO_NAL=Sources/SlopDeskVideoProtocol/NALUnit.swift
 
-# ---- 1. The encoder's quantiser ceiling is ONE ramp, and it is the crate's. ----------------------
-# The linear sharp↔coarse interpolation existed twice: `VideoEncoder.qpCeiling` drove it from the
-# budget's bits-per-pixel, `adaptive_qp::adaptive_max_qp` drove it from the per-frame change
-# fraction, and neither knew the other was there. That is docs/55 §8's drift class exactly — a rule
-# in two languages where only one side is on a path anyone watches. Both now go through
-# `slopdesk_video_qp_ceiling`, which maps the density onto the band and hands the interpolation to
-# the same routine, and the six hardware-tuned numbers arrive from
-# `slopdesk_video_qp_ceiling_config_default` rather than being typed in beside it.
-#
-# The FACE must keep calling both doors, and it must not grow the arithmetic back.
-for pair in \
-  "${SWIFT_VIDEO_ENCODER}:slopdesk_video_qp_ceiling_config_default" \
-  "${SWIFT_VIDEO_ENCODER}:slopdesk_video_qp_ceiling" \
-  "${SWIFT_VIDEO_ENCODER}:slopdesk_video_qp_drop_relief_fold"; do
-  if ! grep -q "${pair#*:}(" "${pair%%:*}"; then
-    fail "${pair%%:*} no longer calls ${pair#*:} — the encoder's QP ceiling is encoder_ceiling.rs"
-  fi
-done
-# The ARITHMETIC, not the names. A re-transcription has to divide the budget by a pixel rate and
-# then interpolate across the band, so it has to spell a `Double(...) / ` against a product of the
-# three picture terms, or a `(sharp - coarse)` span, or one of the six tuned constants as a literal.
-# BREAK-TESTED: restoring the pre-port body (`let bpp = Double(targetBps) / pixelRate` plus the
-# `Double(sharp - coarse)` ramp) fires "spells the quantiser ramp again"; the shipped tree is silent.
-if hit=$(spells 'Double\(targetBps\) */|/ *pixelRate|Double\(sharp *- *coarse\)|Double\(coarse *- *sharp\)' \
-  "${SWIFT_VIDEO_ENCODER}"); then
-  fail "${hit} spells the quantiser ramp again — the budget→ceiling law is encoder_ceiling.rs"
-fi
-# BREAK-TESTED: re-typing `static let attackStep = 4` fires; reading it off `ceilingConfig` is
-# silent, because the assignment has no bare literal on its right.
-if hit=$(spells '(attackStep|holdFrames|decayEvery|sharpQPCeiling|qpCeiling(Sharp|Coarse)Bpp) *(:[^=]*)?= *[0-9]' \
-  "${SWIFT_VIDEO_ENCODER}"); then
-  fail "${hit} types a tuned ceiling constant again — all six arrive on the config door"
-fi
-printf 'check-supervisor: the encoder ceiling ramps once, in Rust, from constants it does not retype.\n'
+# ---- 1. WITHDRAWN 2026-08-23: the whole ramp left Swift. ------------------------------------------
+# This rule pinned `VideoEncoder.swift` to three doors — `slopdesk_video_qp_ceiling`,
+# `_ceiling_config_default` and `_qp_drop_relief_fold` — because the file drove the budget→ceiling
+# ramp and the drop relief from Swift while the arithmetic lived in `encoder_ceiling.rs`. The whole
+# state machine is now `slopdesk_video::encoder_state`, which calls that module DIRECTLY, so the
+# three doors were a second way to ask what the crate already answers and are deleted with this rule.
+# What replaces it is `hevc-encode-is-rusts` in `rust/slopdesk-invariants` — a content ban on the
+# bracket and the integrator in the same file, plus the ramp arithmetic this rule watched — and
+# `docs/57` §5 records why. The heading number stays so the ones below it keep their names.
 
 # ---- 2. A control datagram the client already holds is not re-encoded to be re-parsed. -----------
 # `handleControl(datagram:)` existed, documented itself as being "so a caller that already holds the
@@ -6684,7 +6659,11 @@ fi
 # against both bounds, so a clamp would pass it straight through into the controller's arithmetic.
 #
 # Block C below ratchets the second of those. Section 6 continues to ratchet the first.
-if ! grep -q 'slopdesk_qp_clamped_int(' "${SWIFT_VIDEO_ENCODER}"; then
+# The door the face asks changed with the encoder port — `slopdesk_video_encoder_qp_knob` is the
+# encoder's own knob entry, and it routes to the same `clamped_int_from_env` the general door does,
+# one crate closer to the rules that read the answer. The rule is unchanged: the parse and the clamp
+# are the door's.
+if ! grep -q 'slopdesk_video_encoder_qp_knob(' "${SWIFT_VIDEO_ENCODER}"; then
   fail "${SWIFT_VIDEO_ENCODER} parses its quantiser knobs itself again — the parse and the clamp are the door's"
 fi
 # ALL FIVE [1, 51] knobs in this target, named: MAX, CONST, CRISP and COMPACT in the encoder, and
@@ -9362,6 +9341,18 @@ for island in Sources/SlopDeskMacUI/Chrome/MacConnectionIsland.swift \
   fi
 done
 
+# The header's macOS-only region, read ONCE into a variable rather than re-extracted per door.
+#
+# Not a tidy-up. The three checks below used to spell `awk … | grep -q "${door}("`, and under
+# `set -o pipefail` that is a COIN FLIP: `grep -q` exits the moment it matches, awk takes SIGPIPE on
+# its next write, and the pipeline's status is awk's failure rather than grep's success — so a door
+# that IS correctly gated reports as ungated, and whether it does depends on how far into the region
+# it sits and how much of it fits in the pipe buffer. It fired for the first time when the encoder
+# doors changed the region's length in increment 92, having been latent since the region existed.
+# A variable has no pipe to break, and it is read once instead of five times.
+macos_only_region=$(awk '/MACOS-ONLY BEGIN/{inside=1} inside{print} /MACOS-ONLY END/{inside=0}' \
+  rust/slopdesk-ffi/include/slopdesk_ffi.h)
+
 # N.18 — THE HOST SYNTHESISES NO EVENT OF ITS OWN.
 #
 # Every injected `CGEvent` is built and posted by `rust/slopdesk-apple-cgevent`, the first crate of
@@ -9414,8 +9405,7 @@ if [[ -f "${input_injector}" ]]; then
     fail "${input_injector} keeps its own narrowing — clamp_to_i32 is slopdesk-video's, and a Swift copy is the trapping Int32(_:) coming back under a new name on a path that parses hostile datagrams (docs/57 §5)"
   fi
 fi
-if ! awk '/MACOS-ONLY BEGIN/{inside=1} inside{print} /MACOS-ONLY END/{inside=0}' \
-  rust/slopdesk-ffi/include/slopdesk_ffi.h | grep -q 'slopdesk_inject_pointer('; then
+if ! grep -q 'slopdesk_inject_pointer(' <<< "${macos_only_region}"; then
   fail "slopdesk_ffi.h declares a CoreGraphics door outside the macOS-only region — iOS has no CGEvent at all, so an ungated declaration is not a wasted byte, it is a link failure on two of the three slices (docs/57 §3)"
 fi
 if ! grep -A 12 "target.'cfg(target_os = \"macos\")'.dependencies" rust/slopdesk-ffi/Cargo.toml |
@@ -9499,8 +9489,7 @@ if [[ -n "${frozen_frontmost}" ]]; then
   fail "these read a frozen frontmost: ${frozen_frontmost//$'\n'/, } — NSWorkspace's snapshot populates on first access and then never updates in a daemon that pumps no AppKit run loop, so the read answers the launching app for the process's whole life. HostFrontmostApp elects from the window list (docs/57 §5)"
 fi
 for door in slopdesk_cgwindow_frontmost_pid slopdesk_cgdisplay_list; do
-  if ! awk '/MACOS-ONLY BEGIN/{inside=1} inside{print} /MACOS-ONLY END/{inside=0}' \
-    rust/slopdesk-ffi/include/slopdesk_ffi.h | grep -q "${door}("; then
+  if ! grep -q "${door}(" <<< "${macos_only_region}"; then
     fail "slopdesk_ffi.h declares ${door} outside the macOS-only region — iOS has no WindowServer at all, so an ungated declaration is not a wasted byte, it is a link failure on two of the three slices (docs/57 §3)"
   fi
 done
@@ -9561,8 +9550,7 @@ for door in slopdesk_capture_union_region slopdesk_capture_region_decision slopd
   if ! grep -q "${door}(" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
     fail "slopdesk_ffi.h does not declare ${door} — the Swift face calls it, so a missing declaration is a link failure the moment anyone rebuilds (docs/55 §3)"
   fi
-  if awk '/MACOS-ONLY BEGIN/{inside=1} inside{print} /MACOS-ONLY END/{inside=0}' \
-    rust/slopdesk-ffi/include/slopdesk_ffi.h | grep -q "${door}("; then
+  if grep -q "${door}(" <<< "${macos_only_region}"; then
     fail "slopdesk_ffi.h declares a portable decider inside the macOS-only region: ${door} — it reads no WindowServer and its answers are golden-pinned on every slice, so gating it hides that it is pure and costs the iOS slices a door for nothing (docs/57 §3)"
   fi
 done

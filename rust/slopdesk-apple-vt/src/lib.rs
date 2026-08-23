@@ -23,8 +23,8 @@
 //! that file alongside the calls now live in `slopdesk_video`, where they are exercised properly.
 //!
 //! ## The output handler is a block, and that is a decision with a reason
-//! `VideoToolbox` offers two encode entry points: one whose session carries a C function pointer and
-//! a `void *` refcon, and one that takes a block per frame. The refcon form would mean
+//! `VideoToolbox` offers two encode entry points: one whose session carries a C function pointer
+//! and a `void *` refcon, and one that takes a block per frame. The refcon form would mean
 //! reconstituting a raw pointer into a Rust object on every frame, which §2 bars this family from
 //! doing outright. The block form captures an `Arc` instead, so ownership is Rust's and the
 //! framework only ever sees an opaque copied block.
@@ -43,7 +43,7 @@ pub use keys::{Key, StringValue};
 #[cfg(target_os = "macos")]
 pub use objc2_core_video::CVImageBuffer;
 #[cfg(target_os = "macos")]
-pub use sample::{EncodedSample, ParameterSet};
+pub use sample::{EncodedSample, FrameworkBytes};
 #[cfg(target_os = "macos")]
 pub use session::{
     CompressionSession, FrameOptions, FrameSink, INVALID_SESSION, NO_ERR, Spec, Timestamp, XPC_CREATE_RACE,
@@ -74,8 +74,8 @@ mod tests {
     }
 
     /// A frame that asks for nothing needs no dictionary — the property that keeps the steady-state
-    /// delta path free of a `CoreFoundation` allocation per frame. This is the hot path's shape, and
-    /// it is checkable without an encoder.
+    /// delta path free of a `CoreFoundation` allocation per frame. This is the hot path's shape,
+    /// and it is checkable without an encoder.
     #[test]
     fn a_frame_that_asks_for_nothing_carries_no_options_at_all() {
         let plain = FrameOptions {
@@ -160,9 +160,7 @@ mod tests {
             };
             assert_eq!(
                 options.cf().map(|built| built.len()),
-                Some(
-                    1 + usize::from(index.is_multiple_of(2)) + usize::from(index.is_multiple_of(3)),
-                ),
+                Some(1 + usize::from(index.is_multiple_of(2)) + usize::from(index.is_multiple_of(3)),),
             );
         }
     }

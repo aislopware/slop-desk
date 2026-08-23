@@ -13,8 +13,9 @@
 //     AdaptiveFECPolicy.tier, OWDJitterEstimator + AdaptiveJitterController, LTRController.
 //
 // The HW HEVC encode + decode run headlessly from a normal executable (they hang ONLY inside
-// xctest; only capture + Metal need a GUI/TCC session). runLTRCapabilityProbe() runs FIRST as a
-// liveness smoke. The harness is AppKit-free and fully synchronous (encode drained by
+// xctest; only capture + Metal need a GUI/TCC session). The first scenario proves that path is alive
+// on its own — it encodes real frames — which is why the standalone LTR capability probe that used to
+// run ahead of it is gone. The harness is AppKit-free and fully synchronous (encode drained by
 // completeFrames(); decode uses flags:[] = synchronous), so there is NO dispatchMain /
 // NSApplication.run / detached Task — it runs top-to-bottom and exit(0)s.
 //
@@ -3758,10 +3759,6 @@ if smoke { frameCount = 10 }
 
 print("=== slopdesk-loopback-validate :: headless closed-loop video validation ===")
 print("    mode=\(smoke ? "SMOKE" : "FULL")  perScenarioFrames=\(frameCount)  size=\(kWidth)x\(kHeight)@\(kFPS)\n")
-
-print("=== HW HEVC LTR capability probe (proves the HW encode path is alive headlessly) ===")
-VideoEncoder.runLTRCapabilityProbe(log: { print("  " + $0) })
-print("")
 
 if args.contains("--recovery-idr") {
     // Component 2 standalone: just the [F] recovery-IDR delivery-keyed-cooldown scenario (fast —

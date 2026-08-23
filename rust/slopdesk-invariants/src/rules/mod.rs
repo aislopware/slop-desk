@@ -330,6 +330,11 @@ pub fn registry() -> Vec<Rule> {
             check: rust_boundaries::one_probe_per_reading,
         },
         Rule {
+            name: "hevc-encode-is-rusts",
+            origin: "docs/57 §5",
+            check: rust_boundaries::hevc_encode_is_rusts,
+        },
+        Rule {
             name: "agent-vocabularies",
             origin: "docs/55",
             check: rust_boundaries::agent_vocabularies,

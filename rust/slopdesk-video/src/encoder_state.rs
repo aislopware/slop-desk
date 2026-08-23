@@ -13,8 +13,9 @@
 //! split is what lets a test drive a bracket, an actuator and a frame in any interleaving at all.
 //!
 //! ## The three invariants the interleavings turn on
-//! 1. **A bracket owns the quantiser.** While `bracket_depth > 0` no frame writes `MaxAllowedFrameQP`,
-//!    because the bracket relaxed it on purpose and a frame would undo that mid-intra.
+//! 1. **A bracket owns the quantiser.** While `bracket_depth > 0` no frame writes
+//!    `MaxAllowedFrameQP`, because the bracket relaxed it on purpose and a frame would undo that
+//!    mid-intra.
 //! 2. **A bracket's restore is the ONLY writer of a rate that landed during it.** An actuator that
 //!    fires mid-bracket updates the target and issues NOTHING; if the restore did not re-apply both
 //!    rate knobs from its own fresh read, that change would be lost until the next one.
@@ -24,14 +25,15 @@
 //!
 //! Each is a comment in the Swift. Each is a test below.
 
-use crate::encoder_config::{CRISP_DATA_RATE_MAX_BYTES, Config, QP_MAX, QP_MIN, const_qp_for_frame};
 use crate::encoder_ceiling::DropRelief;
+use crate::encoder_config::{CRISP_DATA_RATE_MAX_BYTES, Config, QP_MAX, QP_MIN, const_qp_for_frame};
 
 /// The session properties a caller must write, and what to.
 ///
 /// A `None` field is a property to LEAVE ALONE, which is a different instruction from writing the
-/// value it already holds: the hot path's whole point is that a static stream writes nothing at all,
-/// and every write is a `CFNumber` bridge plus a framework round trip at sixty frames a second.
+/// value it already holds: the hot path's whole point is that a static stream writes nothing at
+/// all, and every write is a `CFNumber` bridge plus a framework round trip at sixty frames a
+/// second.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Writes {
     /// `MaxAllowedFrameQP`.
@@ -48,7 +50,10 @@ impl Writes {
     /// Whether there is nothing at all to do — the static-stream hot path.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.max_qp.is_none() && self.min_qp.is_none() && self.average_bitrate.is_none() && self.data_rate.is_none()
+        self.max_qp.is_none()
+            && self.min_qp.is_none()
+            && self.average_bitrate.is_none()
+            && self.data_rate.is_none()
     }
 }
 
@@ -156,7 +161,10 @@ impl AckedTokens {
 /// would advance a duplicate, and the drop-relief integrator, the bracket depth and the write memo
 /// would all diverge from the session they describe with nothing to see at the copy.
 #[derive(Clone, Debug)]
-#[expect(missing_copy_implementations, reason = "a copied state machine diverges from its session")]
+#[expect(
+    missing_copy_implementations,
+    reason = "a copied state machine diverges from its session"
+)]
 pub struct EncoderState {
     config: Config,
     /// The immutable ceiling; the live target is clamped to it and never exceeds it.
@@ -180,8 +188,8 @@ impl EncoderState {
     /// Seeds the state for a session of this geometry at this ceiling.
     ///
     /// The live target starts AT the ceiling — the controller only ever lowers from there — and the
-    /// quantiser ceiling starts at whatever that target's budget affords, so the very first frame is
-    /// already at the right operating point rather than adapting into it.
+    /// quantiser ceiling starts at whatever that target's budget affords, so the very first frame
+    /// is already at the right operating point rather than adapting into it.
     #[must_use]
     pub fn new(config: Config, ceiling_bitrate: i64, width: i64, height: i64, fps: i64) -> Self {
         let ceiling_bitrate = config.clamp_target(ceiling_bitrate, i64::MAX);
@@ -241,8 +249,8 @@ impl EncoderState {
     /// The rate-control values a freshly created session must be given.
     ///
     /// Read from the LIVE target rather than the ceiling so a session rebuilt mid-stream — a resize
-    /// — comes up at the controller's current rate instead of jumping back to the ceiling and having
-    /// to be cut down again.
+    /// — comes up at the controller's current rate instead of jumping back to the ceiling and
+    /// having to be cut down again.
     #[must_use]
     pub fn creation_writes(&self) -> Writes {
         Writes {
@@ -269,7 +277,9 @@ impl EncoderState {
         let clamped = self.config.clamp_target(target, self.ceiling_bitrate);
         // Computed before the fields move, and stored whether or not the rate itself changed: the
         // ceiling is a function of the clamped target, so an unchanged target cannot move it.
-        self.live_qp_ceiling = self.config.budget_ceiling(clamped, self.width, self.height, self.fps);
+        self.live_qp_ceiling = self
+            .config
+            .budget_ceiling(clamped, self.width, self.height, self.fps);
         let changed = clamped != self.live_bitrate;
         self.live_bitrate = clamped;
         if !changed || self.in_bracket() {
@@ -393,7 +403,11 @@ impl EncoderState {
                 average_bitrate: Some(self.config.compact_bitrate),
                 data_rate: None,
             },
-            restore: if lazy { Restore::Deferred } else { Restore::Immediate },
+            restore: if lazy {
+                Restore::Deferred
+            } else {
+                Restore::Immediate
+            },
         }
     }
 
@@ -404,8 +418,8 @@ impl EncoderState {
     ///
     /// Every regime deduplicates against the last value actually applied, and every regime declines
     /// entirely while a bracket owns the property. A static stream therefore writes NOTHING per
-    /// frame, which is the point: the alternative is a bridge and a framework round trip sixty times
-    /// a second to set a value that is already set.
+    /// frame, which is the point: the alternative is a bridge and a framework round trip sixty
+    /// times a second to set a value that is already set.
     pub fn frame_writes(&mut self, per_frame_max_qp: Option<i32>, drops: i64) -> Writes {
         // Folded unconditionally, before any regime decides anything, though only the default
         // regime READS it. The Swift folded inside that regime's arm and drained its drop counter
@@ -424,7 +438,11 @@ impl EncoderState {
             // Holding `Min` at the sharp floor is what keeps the static region crisp while the
             // moving body coarsens, and re-pinning it to `Max` is what keeps a scroll frame small
             // when the link cannot carry the wider band. Decouple off and congestion both pin.
-            let min_qp = if self.config.qp_decouple && !self.link_congested { floor } else { q };
+            let min_qp = if self.config.qp_decouple && !self.link_congested {
+                floor
+            } else {
+                q
+            };
             return Writes {
                 min_qp: Some(min_qp),
                 ..writes
@@ -468,8 +486,10 @@ mod tests {
     use crate::live_bitrate::MINIMUM_BITRATE;
 
     fn config(pairs: &[(&str, &str)]) -> Config {
-        let table: HashMap<String, String> =
-            pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+        let table: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
         Config::resolve(&move |key: &str| table.get(key).cloned(), None)
     }
 
@@ -566,8 +586,14 @@ mod tests {
         let bracket = state.begin_crisp();
         assert!(bracket.drain);
         assert_eq!(bracket.relax.max_qp, Some(state.config.crisp_qp));
-        assert_eq!(bracket.relax.data_rate, Some(state.config.data_rate_limits(CRISP_DATA_RATE_MAX_BYTES)));
-        assert_eq!(bracket.relax.min_qp, None, "no floor to lower when const-QP is off");
+        assert_eq!(
+            bracket.relax.data_rate,
+            Some(state.config.data_rate_limits(CRISP_DATA_RATE_MAX_BYTES))
+        );
+        assert_eq!(
+            bracket.relax.min_qp, None,
+            "no floor to lower when const-QP is off"
+        );
     }
 
     /// Under const-QP the crisp bracket lowers the FLOOR too, because the live path pins `Min` at
@@ -591,7 +617,10 @@ mod tests {
         let _ = state.end_bracket();
         let compact = state.begin_compact();
         let (crisp_qp, compact_qp) = (crisp.relax.max_qp, compact.relax.max_qp);
-        assert!(crisp_qp.is_some() && compact_qp > crisp_qp, "{compact_qp:?} must coarsen past {crisp_qp:?}");
+        assert!(
+            crisp_qp.is_some() && compact_qp > crisp_qp,
+            "{compact_qp:?} must coarsen past {crisp_qp:?}"
+        );
         assert!(compact.relax.average_bitrate.unwrap_or(i64::MAX) < DEFAULT_BITRATE);
     }
 
@@ -603,12 +632,18 @@ mod tests {
         let bracket = state.begin_compact();
         assert_eq!(bracket.restore, Restore::Deferred);
         assert!(!bracket.drain);
-        assert!(state.in_bracket(), "the relaxed configuration is still on the session");
+        assert!(
+            state.in_bracket(),
+            "the relaxed configuration is still on the session"
+        );
 
         let restore = state.settle_pending_compact().unwrap_or_default();
         assert!(!restore.is_empty());
         assert!(!state.in_bracket());
-        assert!(state.settle_pending_compact().is_none(), "settling twice is a no-op");
+        assert!(
+            state.settle_pending_compact().is_none(),
+            "settling twice is a no-op"
+        );
     }
 
     /// Turning lazy restore off takes the drain-bracketed path, whose restore the caller issues.
@@ -657,11 +692,10 @@ mod tests {
     /// compact frame the bracket exists to prevent.
     #[test]
     fn no_regime_writes_the_quantiser_while_a_bracket_owns_it() {
-        for env in [
-            vec![],
-            vec![("SLOPDESK_CONST_QP", "30")],
-            vec![("SLOPDESK_MAX_QP", "44")],
-        ] {
+        for env in [vec![], vec![("SLOPDESK_CONST_QP", "30")], vec![(
+            "SLOPDESK_MAX_QP",
+            "44",
+        )]] {
             let mut state = state(&env);
             let _ = state.begin_crisp();
             for per_frame in [None, Some(20), Some(48)] {
@@ -678,11 +712,19 @@ mod tests {
         let mut state = state(&[]);
         let first = state.frame_writes(None, 0);
         assert!(first.max_qp.is_some(), "the first frame always applies");
-        assert_eq!(state.frame_writes(None, 0), Writes::default(), "then it deduplicates");
+        assert_eq!(
+            state.frame_writes(None, 0),
+            Writes::default(),
+            "then it deduplicates"
+        );
 
         let _ = state.begin_crisp();
         let _ = state.end_bracket();
-        assert_eq!(state.frame_writes(None, 0).max_qp, first.max_qp, "re-applied, not deduplicated");
+        assert_eq!(
+            state.frame_writes(None, 0).max_qp,
+            first.max_qp,
+            "re-applied, not deduplicated"
+        );
     }
 
     /// The static hot path writes NOTHING per frame. Sixty times a second, the alternative is a
@@ -691,7 +733,10 @@ mod tests {
     fn a_static_stream_writes_nothing_at_all_per_frame() {
         for env in [vec![], vec![("SLOPDESK_CONST_QP", "30")]] {
             let mut state = state(&env);
-            assert!(!state.frame_writes(None, 0).is_empty(), "{env:?}: the first frame applies");
+            assert!(
+                !state.frame_writes(None, 0).is_empty(),
+                "{env:?}: the first frame applies"
+            );
             for _ in 0..600 {
                 assert!(state.frame_writes(None, 0).is_empty(), "{env:?}");
             }
@@ -728,7 +773,11 @@ mod tests {
         let mut state = state(&[("SLOPDESK_CONST_QP", "30")]);
         let clean = state.frame_writes(Some(44), 0);
         assert_eq!(clean.min_qp, Some(30));
-        assert_eq!(state.frame_writes(Some(44), 0), Writes::default(), "deduplicated while nothing moves");
+        assert_eq!(
+            state.frame_writes(Some(44), 0),
+            Writes::default(),
+            "deduplicated while nothing moves"
+        );
 
         assert!(state.set_link_congested(true));
         let congested = state.frame_writes(Some(44), 0);
@@ -739,8 +788,9 @@ mod tests {
         assert_eq!(restored.min_qp, Some(30));
     }
 
-    /// A motion ceiling BELOW the floor is clamped up to it: the floor is a sharpness guarantee, and
-    /// a frame is never allowed to be sharper than the controller decided the link can carry.
+    /// A motion ceiling BELOW the floor is clamped up to it: the floor is a sharpness guarantee,
+    /// and a frame is never allowed to be sharper than the controller decided the link can
+    /// carry.
     #[test]
     fn a_motion_ceiling_below_the_floor_never_sharpens_past_the_guarantee() {
         let mut state = state(&[("SLOPDESK_CONST_QP", "30")]);
@@ -791,16 +841,23 @@ mod tests {
     /// The relief integrates in EVERY regime, not only the one that reads it. The Swift folded it
     /// inside the default arm and drained its counter there, so under const-QP the drop counter
     /// accumulated for the life of the process and nothing ever emptied it — and the number a host
-    /// log needs to explain a coarse stream read zero in exactly the mode most likely to produce one.
+    /// log needs to explain a coarse stream read zero in exactly the mode most likely to produce
+    /// one.
     #[test]
     fn the_relief_integrates_in_every_regime_even_the_ones_that_do_not_read_it() {
-        for env in [vec![], vec![("SLOPDESK_CONST_QP", "30")], vec![("SLOPDESK_MAX_QP", "44")]] {
+        for env in [vec![], vec![("SLOPDESK_CONST_QP", "30")], vec![(
+            "SLOPDESK_MAX_QP",
+            "44",
+        )]] {
             let mut state = state(&env);
             assert_eq!(state.drop_relief(), 0, "{env:?}");
             for _ in 0..12 {
                 let _ = state.frame_writes(Some(40), 4);
             }
-            assert!(state.drop_relief() > 0, "{env:?}: the drops were integrated regardless");
+            assert!(
+                state.drop_relief() > 0,
+                "{env:?}: the drops were integrated regardless"
+            );
         }
     }
 
@@ -855,8 +912,9 @@ mod tests {
         assert_eq!(staged.last(), Some(&199));
     }
 
-    /// An intra frame clears every staged token. The picture buffer is flushed by the specification,
-    /// long-term references included, so a pre-intra acknowledgement names a reference that is gone.
+    /// An intra frame clears every staged token. The picture buffer is flushed by the
+    /// specification, long-term references included, so a pre-intra acknowledgement names a
+    /// reference that is gone.
     #[test]
     fn an_intra_frame_clears_every_staged_token() {
         let mut tokens = AckedTokens::new();

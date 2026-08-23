@@ -83,10 +83,15 @@ pub mod ax;
 pub mod cursor_sampler;
 pub mod cursor_wire;
 pub mod decode_admission;
+// macOS only: behind it is VideoToolbox's hardware HEVC encoder. iOS HAS VideoToolbox, so an
+// ungated edge here would LINK and merely bloat every client slice with a host-only encoder — which
+// is worse than a link error, because nothing would fail. See the module.
 pub mod device_geometry;
 pub mod device_log;
 pub mod device_panel;
 pub mod drop_action;
+#[cfg(target_os = "macos")]
+pub mod encoder;
 pub mod file_transfer;
 pub mod find_matches;
 pub mod folders;

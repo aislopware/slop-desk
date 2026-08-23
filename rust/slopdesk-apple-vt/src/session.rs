@@ -6,8 +6,8 @@
 //! the XPC race code is retried once, because a session that does not exist has no caller to report
 //! to and the retry is part of the call rather than a policy over it.
 
-use std::sync::Arc;
 use core::ptr::NonNull;
+use std::sync::Arc;
 
 use objc2_core_foundation::{CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
 use objc2_core_media::{CMSampleBuffer, CMTime, CMTimeFlags};
@@ -20,7 +20,8 @@ use crate::sample::EncodedSample;
 /// `noErr` — the framework's success code, which every call here compares against.
 pub const NO_ERR: i32 = 0;
 
-/// `kVTCouldNotFindVideoEncoderErr`-adjacent XPC create race, retried once by [`CompressionSession::create`].
+/// `kVTCouldNotFindVideoEncoderErr`-adjacent XPC create race, retried once by
+/// [`CompressionSession::create`].
 ///
 /// Not an error the caller can act on: the encoder service was mid-restart and the same call
 /// succeeds a moment later. Named so the retry reads as the specific thing it is.
@@ -118,12 +119,16 @@ impl FrameOptions<'_> {
         // Held so the borrows above outlive the build; `CFDictionary::from_slices` retains what it
         // is given, but not before it is given it.
         let truth = CFBoolean::new(true);
-        let tokens: Option<CFRetained<CFArray<CFType>>> = (!self.acknowledged_ltr_tokens.is_empty()).then(|| {
-            let numbers: Vec<CFRetained<CFNumber>> =
-                self.acknowledged_ltr_tokens.iter().map(|token| CFNumber::new_i64(*token)).collect();
-            let borrowed: Vec<&CFType> = numbers.iter().map(|number| &***number).collect();
-            CFArray::from_objects(&borrowed)
-        });
+        let tokens: Option<CFRetained<CFArray<CFType>>> =
+            (!self.acknowledged_ltr_tokens.is_empty()).then(|| {
+                let numbers: Vec<CFRetained<CFNumber>> = self
+                    .acknowledged_ltr_tokens
+                    .iter()
+                    .map(|token| CFNumber::new_i64(*token))
+                    .collect();
+                let borrowed: Vec<&CFType> = numbers.iter().map(|number| &***number).collect();
+                CFArray::from_objects(&borrowed)
+            });
         if self.force_keyframe {
             keys.push(Key::ForceKeyFrame.cf());
             values.push(&**truth);
@@ -168,11 +173,20 @@ pub struct CompressionSession {
 // no thread affinity; VideoToolbox serialises its own state. The `CFRetained` inside is not `Send`
 // on its own because CoreFoundation makes no blanket promise for every CF type, which is exactly
 // the per-type judgement this impl is.
-#[expect(unsafe_code, reason = "the framework documents the session as thread-safe; Rust cannot see that")]
-#[expect(clippy::non_send_fields_in_send_ty, reason = "the field is the session; the promise is the framework's")]
+#[expect(
+    unsafe_code,
+    reason = "the framework documents the session as thread-safe; Rust cannot see that"
+)]
+#[expect(
+    clippy::non_send_fields_in_send_ty,
+    reason = "the field is the session; the promise is the framework's"
+)]
 unsafe impl Send for CompressionSession {}
 // SAFETY: as above.
-#[expect(unsafe_code, reason = "the framework documents the session as thread-safe; Rust cannot see that")]
+#[expect(
+    unsafe_code,
+    reason = "the framework documents the session as thread-safe; Rust cannot see that"
+)]
 unsafe impl Sync for CompressionSession {}
 
 impl CompressionSession {
@@ -197,7 +211,10 @@ impl CompressionSession {
     /// `VTCompressionSessionEncodeFrameWithOutputHandler` — and that is the only encode entry point
     /// [`Self::encode`] uses. Passing a function pointer here instead would mean carrying a
     /// `*mut c_void` refcon across every frame, which §2 bars this family from reconstituting.
-    #[expect(unsafe_code, reason = "the create is a Create-rule out-parameter; docs/57 §2 admits this shape")]
+    #[expect(
+        unsafe_code,
+        reason = "the create is a Create-rule out-parameter; docs/57 §2 admits this shape"
+    )]
     pub fn create(width: i32, height: i32, spec: Spec) -> Result<Self, i32> {
         let specification = spec.cf();
         let mut status = NO_ERR;
@@ -249,9 +266,14 @@ impl CompressionSession {
     /// `VTSessionSetProperty` requires the value to be of the class the key expects. Every key this
     /// method is called with — `RealTime`, `AllowFrameReordering`, `MaximizePowerEfficiency`,
     /// `PrioritizeEncodingSpeedOverQuality`, `EnableLTR` — is documented as taking a `CFBoolean`.
-    /// A key that does not answers `kVTPropertyNotSupportedErr`, which is a value here, not a fault.
-    #[expect(unsafe_code, reason = "the binding cannot check a value's class against a property key")]
-    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from critical"]
+    /// A key that does not answers `kVTPropertyNotSupportedErr`, which is a value here, not a
+    /// fault.
+    #[expect(
+        unsafe_code,
+        reason = "the binding cannot check a value's class against a property key"
+    )]
+    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
+                  critical"]
     pub fn set_bool(&self, key: Key, value: bool) -> i32 {
         // SAFETY: framework rule, above — key and class are paired at every call site.
         unsafe { VTSessionSetProperty(&self.session, key.cf(), Some(CFBoolean::new(value))) }
@@ -263,8 +285,12 @@ impl CompressionSession {
     /// [`Self::set_bool`]'s, for the keys documented as taking a `CFNumber`:
     /// `ExpectedFrameRate`, `MaxFrameDelayCount`, `MaxKeyFrameInterval`, `AverageBitRate`,
     /// `SpatialAdaptiveQPLevel`, `MaxAllowedFrameQP`, `MinAllowedFrameQP`.
-    #[expect(unsafe_code, reason = "the binding cannot check a value's class against a property key")]
-    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from critical"]
+    #[expect(
+        unsafe_code,
+        reason = "the binding cannot check a value's class against a property key"
+    )]
+    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
+                  critical"]
     pub fn set_int(&self, key: Key, value: i64) -> i32 {
         let number = CFNumber::new_i64(value);
         // SAFETY: framework rule, above.
@@ -276,8 +302,12 @@ impl CompressionSession {
     /// # Safety
     /// [`Self::set_bool`]'s, for the three BT.709 colour tags, each documented as taking one of
     /// `CoreVideo`'s own attachment `CFString`s — which is exactly what [`StringValue`] resolves.
-    #[expect(unsafe_code, reason = "the binding cannot check a value's class against a property key")]
-    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from critical"]
+    #[expect(
+        unsafe_code,
+        reason = "the binding cannot check a value's class against a property key"
+    )]
+    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
+                  critical"]
     pub fn set_string(&self, key: Key, value: StringValue) -> i32 {
         // SAFETY: framework rule, above.
         unsafe { VTSessionSetProperty(&self.session, key.cf(), Some(value.cf())) }
@@ -288,7 +318,8 @@ impl CompressionSession {
     /// A method rather than a caller-supplied number because the level is an enumeration whose
     /// values are not derivable from their names — `kVTQPModulationLevel_Disable` is `0`, and a
     /// caller guessing `-1` would be asking for something else entirely.
-    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from critical"]
+    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
+                  critical"]
     pub fn disable_spatial_adaptive_qp(&self) -> i32 {
         self.set_int(Key::SpatialAdaptiveQPLevel, QP_MODULATION_DISABLE)
     }
@@ -298,8 +329,12 @@ impl CompressionSession {
     /// # Safety
     /// [`Self::set_bool`]'s. `DataRateLimits` is documented as taking a `CFArray` of exactly two
     /// `CFNumber`s, a byte count and a duration in seconds, in that order — which is what is built.
-    #[expect(unsafe_code, reason = "the binding cannot check a value's class against a property key")]
-    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from critical"]
+    #[expect(
+        unsafe_code,
+        reason = "the binding cannot check a value's class against a property key"
+    )]
+    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
+                  critical"]
     pub fn set_data_rate_limits(&self, max_bytes: i64, seconds: f64) -> i32 {
         let bytes = CFNumber::new_i64(max_bytes);
         let window = CFNumber::new_f64(seconds);
@@ -314,8 +349,12 @@ impl CompressionSession {
     /// `VTCompressionSessionPrepareToEncodeFrames` takes only the session and is documented as an
     /// optional optimisation — allocating the encoder's resources up front rather than on the first
     /// frame. There is nothing to get wrong and nothing to report.
-    #[expect(unsafe_code, reason = "objc2 generates the bare VideoToolbox entry points unsafe")]
-    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from critical"]
+    #[expect(
+        unsafe_code,
+        reason = "objc2 generates the bare VideoToolbox entry points unsafe"
+    )]
+    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
+                  critical"]
     pub fn prepare(&self) -> i32 {
         // SAFETY: framework rule, above — no arguments, no ownership.
         unsafe { self.session.prepare_to_encode_frames() }
@@ -323,9 +362,10 @@ impl CompressionSession {
 
     /// Presents one frame; answers the framework's status.
     ///
-    /// The sink is called on `VideoToolbox`'s own thread, possibly after this returns. The session is
-    /// created with `AllowFrameReordering` false and `RealTime` true, so the calls arrive in encode
-    /// order — which is what lets the caller keep an ordered queue without a reorder buffer.
+    /// The sink is called on `VideoToolbox`'s own thread, possibly after this returns. The session
+    /// is created with `AllowFrameReordering` false and `RealTime` true, so the calls arrive in
+    /// encode order — which is what lets the caller keep an ordered queue without a reorder
+    /// buffer.
     ///
     /// # Safety
     /// `VTCompressionSessionEncodeFrameWithOutputHandler` requires a session created with a NULL
@@ -340,8 +380,12 @@ impl CompressionSession {
     /// `CFRetained::retain` takes a reference of this crate's own for the duration of the sink,
     /// which is this crate's ONE Get-rule admission under `docs/57` §2. Null is the documented
     /// signal for a dropped frame and is routed to [`FrameSink::dropped`] rather than retained.
-    #[expect(unsafe_code, reason = "the encode is a block call and a Get-rule pointer; docs/57 §2 admits both")]
-    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from critical"]
+    #[expect(
+        unsafe_code,
+        reason = "the encode is a block call and a Get-rule pointer; docs/57 §2 admits both"
+    )]
+    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
+                  critical"]
     pub fn encode(
         &self,
         image: &CVImageBuffer,
@@ -388,8 +432,12 @@ impl CompressionSession {
     /// `VTCompressionSessionCompleteFrames` with a NON-numeric timestamp is the documented sentinel
     /// for "complete all pending frames", and [`invalid_time`] is exactly that value. The call is
     /// synchronous and owns nothing.
-    #[expect(unsafe_code, reason = "objc2 generates the bare VideoToolbox entry points unsafe")]
-    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from critical"]
+    #[expect(
+        unsafe_code,
+        reason = "objc2 generates the bare VideoToolbox entry points unsafe"
+    )]
+    #[must_use = "the framework answers a status; a caller that drops it cannot tell best-effort from \
+                  critical"]
     pub fn complete_frames(&self) -> i32 {
         // SAFETY: framework rule, above — the invalid timestamp is the drain-everything sentinel.
         unsafe { self.session.complete_frames(invalid_time()) }
@@ -401,7 +449,10 @@ impl CompressionSession {
     /// `VTCompressionSessionInvalidate` takes only the session. The header asks for it BEFORE the
     /// last release so teardown is ordered rather than whenever the retain count happens to fall,
     /// which is why [`Drop`] calls it rather than relying on the `CFRetained` alone.
-    #[expect(unsafe_code, reason = "objc2 generates the bare VideoToolbox entry points unsafe")]
+    #[expect(
+        unsafe_code,
+        reason = "objc2 generates the bare VideoToolbox entry points unsafe"
+    )]
     fn invalidate(&self) {
         // SAFETY: framework rule, above — no arguments, no ownership.
         unsafe { self.session.invalidate() }

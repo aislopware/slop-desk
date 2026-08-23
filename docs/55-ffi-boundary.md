@@ -1316,11 +1316,16 @@ drift pair is one rule and two transcriptions of it. This was two rules whose *t
 rule, so a reviewer comparing the two functions side by side would have found them plainly
 different — and been right about everything except the last step.
 
-It now goes through `slopdesk_video_qp_ceiling`, which maps the density onto the band and hands the
-interpolation to `adaptive_max_qp` unchanged. The six hardware-tuned numbers that surrounded the
-Swift copy — the sharp quantiser, the two density knees, and the drop-relief attack, hold and decay
-— arrive on `slopdesk_video_qp_ceiling_config_default`, so the face names them and does not choose
-them.
+It went through `slopdesk_video_qp_ceiling`, which mapped the density onto the band and handed the
+interpolation to `adaptive_max_qp` unchanged, while the six hardware-tuned numbers that had
+surrounded the Swift copy — the sharp quantiser, the two density knees, and the drop-relief attack,
+hold and decay — arrived on `slopdesk_video_qp_ceiling_config_default`. **Both doors are gone as of
+increment 92, and their absence is the better end state rather than a regression.** The whole
+encoder state machine moved to `slopdesk_video::encoder_state`, which calls `encoder_ceiling`
+directly; a door exists to let the OTHER language ask, and there is no longer another language
+asking. The fold this section is about is untouched — it is one ramp in one module, which was always
+the point — and `hevc-encode-is-rusts` in `rust/slopdesk-invariants` keeps it from being respelled in
+Swift, where `check-supervisor.sh`'s section 1 used to.
 
 Folding the two together introduced exactly one behavioural question, and it is worth recording
 because it is the general one: the Swift rounded the *interpolated ceiling*, the shared ramp rounds

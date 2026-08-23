@@ -33,11 +33,23 @@ import PackageDescription
 // this one needed no framework naming at all. A constant is a symbol, and one object per crate means
 // every product that calls any door needs it resolvable even though only the video host ever reads a
 // cursor. `-dead_strip` removes what none of them reach.
+// VideoToolbox, CoreMedia and CoreVideo join for a THIRD reason, and it is the one that bites
+// hardest. `slopdesk-apple-vt` calls `VTCompressionSessionCreate` and the `CMBlockBuffer` readers —
+// plain C FUNCTIONS, not classes and not constants, so nothing resolves them at runtime — and it names
+// the three `kCVImageBuffer*_ITU_R_709_2` colour tags, which are extern constants like AppKit's above.
+// `objc2-video-toolbox` carries its own `#[link(name = "VideoToolbox", kind = "framework")]`, but that
+// attribute travels in the rlib's metadata and does NOT survive `xcodebuild -create-xcframework`,
+// which packages a plain static archive. Naming them here is the only thing that puts them on the link
+// line. They were implicit until the encoder collapsed: `VideoEncoder.swift` used to
+// `import VideoToolbox` itself.
 let ffiCLibraries: [LinkerSetting] = [
     .linkedLibrary("iconv", .when(platforms: [.macOS])),
     .linkedFramework("Security", .when(platforms: [.macOS])),
     .linkedFramework("CoreFoundation", .when(platforms: [.macOS])),
     .linkedFramework("AppKit", .when(platforms: [.macOS])),
+    .linkedFramework("VideoToolbox", .when(platforms: [.macOS])),
+    .linkedFramework("CoreMedia", .when(platforms: [.macOS])),
+    .linkedFramework("CoreVideo", .when(platforms: [.macOS])),
 ]
 let package = Package(
     name: "SlopDesk",
