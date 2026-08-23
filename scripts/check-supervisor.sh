@@ -2174,74 +2174,11 @@ fi
 printf 'check-supervisor: slopdesk-probe agrees too — %s subcommands both ways, empty is still an answer, opaque cap %s >= %s, no Swift porcelain, git or infocmp.\n' \
   "$(printf '%s\n' "${swift_probe_verbs}" | grep -c .)" "$((probe_cap_rust))" "$((probe_cap_swift))"
 
-# ── THE ANDROID KEYCODE TABLE ONLY EVER SHRINKS ────────────────────────────────────────────────
-#
-# `FunctionalKey::android_keycode` in `rust/slopdesk-devicepanel/src/panel_key.rs` is the one table
-# that says what Android number a functional key is. `AndroidKeycode.swift` used to spell thirteen
-# of those numbers a second time, and every one of them was reached by nothing: the panel's live
-# path gets its keycode from the door (`AndroidKeycode(bigEndian(...))`), and the only named
-# constants anything presses are `.home` and `.appSwitch`, which the Rust table does not carry.
-#
-# A dead duplicate of a live number is worse than a live one — it reads as authoritative and it can
-# never be caught disagreeing, because no input ever reaches both copies (docs/55 §8). So the shape
-# is pinned rather than the names: this counts how many literals `AndroidKeycode.swift` spells that
-# `panel_key.rs` already answers, and fails if that count goes UP.
-#
-# The count is now ZERO and the mark is set there, so the ratchet has reached its floor: the `-gt`
-# arm is the whole gate, and it fires the moment one comes back. The `-lt` arm below is unreachable
-# at zero by construction — a count cannot be negative — and it is kept rather than deleted because
-# the mark is the thing that moves, and the arm is what makes lowering it mandatory rather than
-# optional if this ever has to be raised for a real reason and walked back down again.
-#
-# Both sides are DERIVED. A list of banned numbers maintained here would drift from the Rust table
-# the first time a key was added, which is the same defect one register up.
-ANDROID_KEYCODE_SWIFT=Sources/SlopDeskDevicePanels/Android/AndroidKeycode.swift
-ANDROID_KEYCODE_RUST=rust/slopdesk-devicepanel/src/panel_key.rs
-# The high-water mark, and the floor. Lower it whenever one goes; never raise it.
-ANDROID_KEYCODE_DUPES_MAX=0
+# PORTED to `rust/slopdesk-invariants` — `rules::panel_predicates`: the Android keycode ratchet
+# (`android-keycode-ratchet`), as the new `Claim::Overlap` — two DERIVED sets, the intersection
+# against a high-water mark of zero, failing above it AND below it so ground gained is held, with both
+# sides floored non-empty because at zero a broken extraction reads exactly like success.
 
-if [[ ! -f "${ANDROID_KEYCODE_SWIFT}" ]] || [[ ! -f "${ANDROID_KEYCODE_RUST}" ]]; then
-  fail "the Android keycode ratchet lost a path it reads — a gate that reads nothing agrees with nothing"
-else
-  # `|| true` on both: a `grep` that matches nothing exits 1, and under `set -e` that kills the run
-  # before the emptiness check below ever executes — so the guard that exists to catch a broken
-  # extraction could never see one. The `|| true` is what LETS the vacuity check do its job; it does
-  # not weaken it.
-  android_keycode_rust_answers=$(
-    grep -oE 'Some\([0-9]+\)' "${ANDROID_KEYCODE_RUST}" | grep -oE '[0-9]+' | sort -u || true
-  )
-  android_keycode_swift_literals=$(
-    grep -oE 'Self\([0-9]+\)' "${ANDROID_KEYCODE_SWIFT}" | grep -oE '[0-9]+' | sort -u || true
-  )
-  # A gate that would pass vacuously is not a gate. At a mark of zero an EMPTY intersection is the
-  # expected answer, so an extraction that broke (a refactor to `Self(rawValue:)`, a match arm
-  # rewritten) would read exactly like success. Both sides are therefore required to parse to
-  # something before the comparison is believed.
-  if [[ -z "${android_keycode_rust_answers}" ]]; then
-    fail "no keycodes parsed out of ${ANDROID_KEYCODE_RUST} — this gate would pass vacuously"
-  elif [[ -z "${android_keycode_swift_literals}" ]]; then
-    fail "no keycodes parsed out of ${ANDROID_KEYCODE_SWIFT} — this gate would pass vacuously"
-  else
-    android_keycode_dupes=$(
-      comm -12 <(printf '%s\n' "${android_keycode_rust_answers}") \
-        <(printf '%s\n' "${android_keycode_swift_literals}")
-    )
-    android_keycode_dupe_count=$(printf '%s' "${android_keycode_dupes}" | grep -c '[0-9]' || true)
-    if [[ "${android_keycode_dupe_count}" -gt "${ANDROID_KEYCODE_DUPES_MAX}" ]]; then
-      fail "$(
-        printf '%s spells %s keycode(s) panel_key.rs already answers (%s), was %s — the table only shrinks (docs/55 §8)' \
-          "${ANDROID_KEYCODE_SWIFT}" "${android_keycode_dupe_count}" \
-          "$(printf '%s' "${android_keycode_dupes}" | tr '\n' ' ')" "${ANDROID_KEYCODE_DUPES_MAX}"
-      )"
-    elif [[ "${android_keycode_dupe_count}" -lt "${ANDROID_KEYCODE_DUPES_MAX}" ]]; then
-      fail "$(
-        printf 'the Android keycode duplicates are down to %s from %s — lower ANDROID_KEYCODE_DUPES_MAX to %s so the ground gained is held' \
-          "${android_keycode_dupe_count}" "${ANDROID_KEYCODE_DUPES_MAX}" "${android_keycode_dupe_count}"
-      )"
-    fi
-  fi
-fi
-printf 'check-supervisor: the Android keycode table spells no number panel_key.rs has not already lost.\n'
 
 # ══════════════════════════════════════════════════════════════════════════════════════════════
 #  SPLICE POINT: anywhere AFTER `repo_files` / `spells` are defined (scripts/check-supervisor.sh

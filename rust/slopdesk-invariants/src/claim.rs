@@ -685,6 +685,32 @@ pub enum Claim {
         /// Why an orphan matters, with `{orphans}` where the missing members go.
         message: &'static str,
     },
+    /// Two extracted sets may OVERLAP in at most `mark` members — a ratchet, failing both ways.
+    ///
+    /// The shell's `comm -12 <(a) <(b) | grep -c`, against a high-water mark that only ever goes
+    /// down. Neither [`Claim::Subset`] nor [`Claim::SameSet`] can state it: the two sides are not
+    /// supposed to agree at all, and the rule is about how much of one has not yet left the other.
+    ///
+    /// FAILING BELOW THE MARK is the half that makes it a ratchet rather than a ceiling. A count
+    /// that has fallen is ground gained, and a gate that accepts it silently lets the same ground be
+    /// lost again next week without anyone noticing; the failure says "lower the mark". At a mark of
+    /// zero that arm is unreachable by construction — a count cannot be negative — and it is kept
+    /// anyway, because the mark is the thing that moves.
+    ///
+    /// Both sides are floored non-empty first. At a mark of zero an EMPTY intersection is the
+    /// expected answer, so an extraction that broke would read exactly like success.
+    Overlap {
+        /// What the two sets are called in the diagnostic.
+        label: &'static str,
+        /// One side.
+        left: Extract,
+        /// The other.
+        right: Extract,
+        /// How many members may still be in both. Lower it whenever one goes; never raise it.
+        mark: usize,
+        /// Why an overlap matters, with `{shared}` where the common members go.
+        message: &'static str,
+    },
     /// Every member of an extracted set must match a pattern.
     ///
     /// The classifier under a [`Claim::Subset`], and it exists because the subset above it reads
@@ -1314,6 +1340,45 @@ impl Claim {
                     return;
                 };
                 report.same_set(label, &left, &right);
+            },
+            Self::Overlap {
+                label,
+                left,
+                right,
+                mark,
+                message,
+            } => {
+                let (Some(ours), Some(theirs)) = (left.set(tree, report), right.set(tree, report))
+                else {
+                    return;
+                };
+                if ours.is_empty() || theirs.is_empty() {
+                    report.fail(format!(
+                        "the {label} overlap read EMPTY ({} of {}, {} of {}) — this claim would pass \
+                         vacuously",
+                        ours.len(),
+                        left.path,
+                        theirs.len(),
+                        right.path,
+                    ));
+                    return;
+                }
+                let mut shared: Vec<&str> =
+                    ours.iter().filter(|m| theirs.contains(*m)).map(String::as_str).collect();
+                shared.sort_unstable();
+                let found = shared.len();
+                if found > *mark {
+                    report.fail(fill(
+                        &fill(message, "shared", &shared.join(" ")),
+                        "found",
+                        &found.to_string(),
+                    ));
+                } else if found < *mark {
+                    report.fail(format!(
+                        "the {label} overlap is down to {found} from {mark} — lower the mark to \
+                         {found} so the ground gained is held"
+                    ));
+                }
             },
             Self::Subset {
                 label,

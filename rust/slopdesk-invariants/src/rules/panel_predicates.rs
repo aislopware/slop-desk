@@ -5,7 +5,7 @@
 //! a test holds is not the copy the other shell runs, the memo and the builder agree by
 //! construction, the two spellings of one setting sit a scroll apart on the same page.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, Extract, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -17,6 +17,10 @@ const SLATE_DESIGN: &str = "Sources/SlopDeskSlate/SlateDesign.swift";
 const ANDROID_LOG_LEVEL: &str = "Sources/SlopDeskDevicePanels/Android/AndroidLogLevel.swift";
 /// The cursor style, which has one label and it is the catalog's.
 const TERMINAL_PREFS: &str = "Sources/SlopDeskVideoProtocol/Settings/TerminalPreferences.swift";
+/// The Swift keycode face, which used to spell thirteen of the crate's numbers a second time.
+const ANDROID_KEYCODE_SWIFT: &str = "Sources/SlopDeskDevicePanels/Android/AndroidKeycode.swift";
+/// The one table that says what Android number a functional key is.
+const ANDROID_KEYCODE_RUST: &str = "rust/slopdesk-devicepanel/src/panel_key.rs";
 
 /// ONE search-box predicate for both device panels, both drawings
 ///
@@ -220,6 +224,37 @@ pub fn the_cursor_style_has_one_label(tree: &Tree) -> Report {
     )
 }
 
+/// The Android keycode table only ever shrinks
+///
+/// `FunctionalKey::android_keycode` in `panel_key.rs` is the one table that says what Android number
+/// a functional key is. `AndroidKeycode.swift` used to spell thirteen of those numbers a second
+/// time, and every one of them was reached by nothing: the panel's live path gets its keycode from
+/// the door (`AndroidKeycode(bigEndian(...))`), and the only named constants anything presses are
+/// `.home` and `.appSwitch`, which the Rust table does not carry.
+///
+/// A dead duplicate of a live number is worse than a live one — it reads as authoritative and it can
+/// never be caught disagreeing, because no input ever reaches both copies (`docs/55` §8). So the
+/// SHAPE is pinned rather than the names: how many literals the Swift face spells that the crate
+/// already answers, against a mark that only goes down.
+///
+/// The count is ZERO and the mark is set there, so the ratchet has reached its floor. Both sides are
+/// DERIVED: a list of banned numbers maintained here would drift from the Rust table the first time
+/// a key was added, which is the same defect the rule exists to catch.
+#[must_use]
+pub fn the_android_keycode_table_only_shrinks(tree: &Tree) -> Report {
+    check_all(
+        tree,
+        &[Claim::Overlap {
+            label: "Android keycodes",
+            left: Extract::raw(ANDROID_KEYCODE_RUST, r"Some\(([0-9]+)\)"),
+            right: Extract::raw(ANDROID_KEYCODE_SWIFT, r"Self\(([0-9]+)\)"),
+            mark: 0,
+            message: "AndroidKeycode.swift spells {found} keycode(s) panel_key.rs already answers \
+                      ({shared}) — the table only shrinks (docs/55 §8)",
+        }],
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -387,5 +422,34 @@ mod tests {
              \x20   var displayName: String { \"Block (hollow)\" } }\n",
         );
         assert!(!super::the_cursor_style_has_one_label(&fixture.tree()).is_clean());
+    }
+
+    #[test]
+    fn a_keycode_spelled_twice_is_red() {
+        let fixture = Fixture::new("panel-keycodes");
+        fixture
+            .write(
+                super::ANDROID_KEYCODE_RUST,
+                "match self {\n    Self::Up => Some(19),\n    Self::Down => Some(20),\n\
+                 \x20   Self::Enter => Some(66),\n}\n",
+            )
+            .write(
+                super::ANDROID_KEYCODE_SWIFT,
+                "static let home = Self(3)\nstatic let appSwitch = Self(187)\n",
+            );
+        assert!(super::the_android_keycode_table_only_shrinks(&fixture.tree()).is_clean());
+
+        // A dead duplicate reads as authoritative and can never be caught disagreeing, because no
+        // input ever reaches both copies.
+        fixture.write(
+            super::ANDROID_KEYCODE_SWIFT,
+            "static let home = Self(3)\nstatic let appSwitch = Self(187)\n\
+             static let enter = Self(66)\n",
+        );
+        assert!(!super::the_android_keycode_table_only_shrinks(&fixture.tree()).is_clean());
+
+        // And a broken extraction, which at a mark of zero reads exactly like success.
+        fixture.write(super::ANDROID_KEYCODE_SWIFT, "static let home = Self(rawValue: 3)\n");
+        assert!(!super::the_android_keycode_table_only_shrinks(&fixture.tree()).is_clean());
     }
 }

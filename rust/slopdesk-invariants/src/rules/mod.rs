@@ -1046,6 +1046,11 @@ pub fn registry() -> Vec<Rule> {
             check: panel_predicates::the_android_level_filter_is_androidds,
         },
         Rule {
+            name: "android-keycode-ratchet",
+            origin: "docs/55 §8",
+            check: panel_predicates::the_android_keycode_table_only_shrinks,
+        },
+        Rule {
             name: "one-cursor-label",
             origin: "docs/56",
             check: panel_predicates::the_cursor_style_has_one_label,
