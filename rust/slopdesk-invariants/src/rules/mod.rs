@@ -13,6 +13,7 @@ pub mod client_layers;
 pub mod client_memos;
 pub mod code_panel;
 pub mod command_surface;
+pub mod crate_defaults;
 pub mod crate_policy;
 pub mod cross_twins;
 pub mod device_frames;
@@ -953,6 +954,36 @@ pub fn registry() -> Vec<Rule> {
             name: "macui-divider-readout",
             origin: "docs/55 §8",
             check: macui_memos::the_divider_hides_before_it_cuts,
+        },
+        Rule {
+            name: "seeded-names",
+            origin: "docs/55 §8",
+            check: crate_defaults::the_seeded_names_are_the_crates,
+        },
+        Rule {
+            name: "encoder-defaults",
+            origin: "docs/55 §8",
+            check: crate_defaults::the_encoder_defaults_are_the_crates,
+        },
+        Rule {
+            name: "settings-row-whole",
+            origin: "docs/55 §8",
+            check: crate_defaults::a_settings_row_crosses_whole,
+        },
+        Rule {
+            name: "rail-relabel-once",
+            origin: "docs/55 §8",
+            check: crate_defaults::a_rail_relabelling_crosses_once,
+        },
+        Rule {
+            name: "one-line-col-splitter",
+            origin: "docs/55 §8",
+            check: crate_defaults::the_open_target_splits_once,
+        },
+        Rule {
+            name: "one-ring-wrap",
+            origin: "docs/55 §8",
+            check: crate_defaults::a_ring_wraps_through_one_rule,
         },
         Rule {
             name: "master-owned-duplicate",

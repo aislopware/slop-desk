@@ -1927,153 +1927,18 @@ if [[ -n "${doc_missing}" ]]; then
   fail "a read-first doc cites a file that does not exist — repoint it, or add it to doc_path_tombstones"
 fi
 
-# ── One seeded name, one font stack, one encoder default table (docs/55 §8) ─────────────────────
-# The three seeded names are the crate's, and Swift asks for them.
+# PORTED to `rust/slopdesk-invariants` — `rules::crate_defaults`: the three seeded names minted by
+# TreeWorkspaceDefaults and banned as literals across a five-file corpus that is floored by name first
+# (`seeded-names`); the eleven tuned encoder numbers read through the two `*_config_default` doors,
+# with the declaration default and the digit env fallback each banned in the shape it regrows as
+# (`encoder-defaults`); a settings row crossing WHOLE, the seven deleted field doors still banned
+# inside `entry(at:)` alone so the key door beside them stays legal (`settings-row-whole`); the rail
+# relabelling asked once for the whole list rather than per row (`rail-relabel-once`); one `:line[:col]`
+# splitter, pinned by the scan's three tells rather than by a function name (`one-line-col-splitter`);
+# and both hand-rolled ring wraps stepping through the one door that survives an empty list
+# (`one-ring-wrap`).
 #
-# `TreeWorkspaceDefaults` has existed for a while and its own doc names the failure: a copy of
-# either literal on the Swift side is a second answer to "what is a fresh pane called", and the
-# fresh-workspace SHAPE TEST comparing against a spelled-out "Terminal" would go on passing against
-# a default the crate had stopped producing. The face was built and the callers were never moved;
-# this is what stops them drifting back. Comments are stripped first, because the prose around these
-# call sites quotes the words on purpose.
-#
-# This is a BAN, so an empty result passes it — which is exactly what a renamed file would produce.
-# The corpus is established first, the way the gate one register down says a ban list has to be.
-seeded_corpus=(
-  Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspacePersistence.swift
-  Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Desktop.swift
-  Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift
-  Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift
-  Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift
-)
-for file in "${seeded_corpus[@]}"; do
-  [[ -e "${file}" ]] || fail "${file} is gone — the seeded-name ban below reads an empty corpus, which passes it (docs/55 §8)"
-done
-for seeded in Terminal Desktop Local; do
-  hits="$(
-    for file in "${seeded_corpus[@]}"; do
-      sed -E 's#^[[:space:]]*//.*##' "${file}" | grep -Fq "\"${seeded}\"" && printf '%s ' "${file}"
-    done
-  )" || true
-  if [[ -n "${hits}" ]]; then
-    fail "the seeded name \"${seeded}\" is spelled in Swift again (${hits}) — ask TreeWorkspaceDefaults (docs/55 §8)"
-  fi
-done
-for face in paneTitle sessionName desktopPaneTitle; do
-  if ! grep -q "static let ${face} = wsString" Sources/SlopDeskWorkspaceModel/Domain/Tree/TreeWorkspace.swift; then
-    fail "TreeWorkspaceDefaults lost ${face} — the seeded names would go back to being literals"
-  fi
-done
-
-# PaneChooserRegistry is deliberately NOT in that list. Its "Terminal"/"Desktop" are the CHOOSER's
-# labels for a pane kind — a vocabulary a Swift `switch` reads, which docs/55 §6 leaves in Swift —
-# not the title a minted pane is born with. They are the same word today for the same reason a
-# folder and its icon share a name, and nothing breaks if the seeded title is renamed and the menu
-# entry is not.
-# PORTED to rust/slopdesk-invariants (`code-panel-font-pair`): the two bundled font families are one
-# pair held across a boundary they deliberately do not cross, and `code-panel-one-implementation`
-# now also bans the dressing itself from growing back in Swift. See rules/code_panel.rs.
-# The tuned encoder defaults are Rust's, and the host asks for them.
-#
-# Eleven numbers — four quantiser knobs, seven recovery-keyframe ones — used to be spelled in both
-# `qp_control.rs`/`recovery_idr.rs` and their Swift faces. Nothing failed when they agreed and
-# nothing would have failed when they stopped: the host would simply encode at the old operating
-# point, or grant keyframes on the old bucket, with no build error and no failing test. The two
-# `*_config_default` doors put the table on one side; this stops the literals growing back.
-qp_face="Sources/SlopDeskVideoHost/QPController.swift"
-idr_face="Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift"
-for door in slopdesk_qp_config_default slopdesk_idr_config_default; do
-  if ! grep -rq "${door}" Sources/SlopDeskVideoHost/; then
-    fail "${door} lost its caller — the tuned defaults are spelled Swift-side again (docs/55 §8)"
-  fi
-done
-# A `var` in the IDR config carrying its own literal is exactly the regrowth: the struct's fields are
-# seeded from the door in `init()`, so a default on the declaration would silently win.
-if grep -qE '^ *public var [a-zA-Z]+: (Double|Int) = ' "${idr_face}"; then
-  fail "${idr_face} put literal defaults back on Config's fields — they come from slopdesk_idr_config_default()"
-fi
-# Same shape on the quantiser side: the env fallbacks are the door's answer, never a digit.
-if grep -qE 'envInt\("SLOPDESK_QP_[A-Z_]+", [0-9]' "${qp_face}"; then
-  fail "${qp_face} typed a quantiser default back in — the fallback is slopdesk_qp_config_default()'s"
-fi
-# A settings row crosses whole, not field by field.
-#
-# `slopdesk_ffi::settings_rows`' own header argues the principle for the MATCH — positions rather
-# than rows, so a filter is one crossing and not one per field per row — and the reader then turned
-# each position back into eight calls, on every settings-search keystroke. `slopdesk_settings_row_fields`
-# is that argument applied one level out. This stops `entry(at:)` sliding back to the field doors.
-#
-# The seven named below were DELETED on 2026-08-22, so this loop now bans symbols that do not exist
-# — deliberately. `check-ffi-doors.py` is what found them exported and uncalled, and the reason they
-# could never acquire a caller was this ban; keeping it outliving them stops the next reader from
-# re-declaring one as the obvious fix for a one-field question.
-catalog="Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift"
-entry_body="$(sed -n '/private static func entry(at index: Int)/,/^    }/p' "${catalog}")"
-for field_door in slopdesk_settings_row_label slopdesk_settings_row_page_label \
-  slopdesk_settings_row_description slopdesk_settings_row_default_text \
-  slopdesk_settings_row_target_section slopdesk_settings_row_keywords \
-  slopdesk_settings_row_bucket; do
-  if printf '%s' "${entry_body}" | grep -q "${field_door}"; then
-    fail "entry(at:) went back to ${field_door} — a row crosses whole (slopdesk_settings_row_fields)"
-  fi
-done
-if ! grep -q 'slopdesk_settings_row_fields' "${catalog}"; then
-  fail "${catalog} stopped calling slopdesk_settings_row_fields — reading a row costs 8 crossings again"
-fi
-
-# THREE field doors stay, and only three, because three callers really do want one field: the key
-# lookup, the shown gate, and the reset walk over `persistence`. Each asks a question about a row it
-# is not otherwise reading, so routing it through the whole-row door would decode seven fields to
-# use one. The other seven had no such caller left, which is why they are gone rather than kept
-# "for symmetry" — docs/55 §8: an unreached port is worse than an unported one.
-if ! grep -q 'slopdesk_settings_row_key' "${catalog}"; then
-  fail "${catalog} lost the single-field key door — a key lookup should not decode a whole row"
-fi
-# A rail relabelling crosses once, not once per row.
-#
-# The collision rule needs the WHOLE list in hand to answer for any one member, so asking per index
-# meant rebuilding the label array and every title's bytes `n` times to answer `n` questions off one
-# input — quadratic in marshalling, on a list rebuilt whenever anything in it ticks.
-#
-# The per-index door was DELETED on 2026-08-22, so this first rule now bans a symbol that does not
-# exist — deliberately. `check-ffi-doors.py` is what caught the door sitting there exported and
-# uncalled, and the reason it could never acquire a caller was this ban; the ban outliving the door
-# is what keeps the next reader from re-declaring it as the obvious fix for a one-row question.
-rail="Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift"
-if grep -q 'slopdesk_ws_rail_disambiguated_label(' "${rail}"; then
-  fail "${rail} asks for a per-index label door — there is none, and there is none because a collision is a fact about the whole list: ask slopdesk_ws_rail_disambiguated_labels and read the member you want"
-fi
-if ! grep -q 'slopdesk_ws_rail_disambiguated_labels(' "${rail}"; then
-  fail "${rail} stopped calling slopdesk_ws_rail_disambiguated_labels — the relabelling is quadratic again"
-fi
-
-# ── The open target splits once, and the crate owns where ──────────────────────────────────────
-# `HostCodeServerPerformer.splitLineColSuffix` used to be a second `:line[:col]` splitter beside
-# `slopdesk-terminal`'s, and the two had already answered differently for a target that is ALL
-# suffix (`":12"`): Swift called it a suffix with an empty path, the crate calls it no suffix at
-# all. Three host call sites read that split — the existence check, the workbench CLI target, and
-# the code-server window routing — so a second splitter growing back here means the path the host
-# stats and the path the extension opens can disagree by a colon.
-SWIFT_CODEOPEN=Sources/SlopDeskHost/HostCodeServerPerformer.swift
-if ! spells 'slopdesk_link_line_col_suffix' "${SWIFT_CODEOPEN}" > /dev/null; then
-  fail "${SWIFT_CODEOPEN} splits a line:col suffix in Swift again — that rule is link_action.rs's"
-fi
-if hit=$(spells 'isNumber|runStart|sawDigit' "${SWIFT_CODEOPEN}"); then
-  fail "${hit} re-derives the suffix scan — the crate answers it, and the path is the remainder"
-fi
-printf 'check-supervisor: one line:col splitter, and the host asks it.\n'
-
-# ── A ring wraps through the one ring rule ──────────────────────────────────────────────────────
-# `(i ± 1 + n) % n` was hand-rolled in three places beside `slopdesk_list_wrapped_index`, which the
-# picker's filter pills already ask. Each copy is one `% 0` away from a trap on an empty list, and
-# the door is the only spelling that answers "there is nothing to step from" instead.
-for ring in Sources/SlopDeskWorkspaceCore/Workspace/Domain/PaneSwitcher.swift \
-  Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift; do
-  if hit=$(spells '\+ count\) %|\+ matches\.count\) %|\+ candidates\.count\) %' "${ring}"); then
-    fail "${hit} hand-rolls a ring wrap — ListNavigation.wrappedIndex is the one ring step"
-  fi
-done
-printf 'check-supervisor: every ring steps through the one wrap rule.\n'
+# The `code-panel-font-pair` note that sat in this span is folded in: see `rules/code_panel.rs`.
 
 # ── hostd and the device panels ───────────────────────────────────────────────────────────────
 # Every rule below was BREAK-TESTED against the real tree — the verdict is recorded in its own
