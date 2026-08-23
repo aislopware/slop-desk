@@ -20,6 +20,7 @@ pub mod crossed_tables;
 pub mod device_frames;
 pub mod device_law;
 pub mod device_streams;
+pub mod frozen_pairs;
 pub mod held_values;
 pub mod host_probes;
 pub mod hot_paths;
@@ -958,6 +959,16 @@ pub fn registry() -> Vec<Rule> {
             name: "macui-divider-readout",
             origin: "docs/55 §8",
             check: macui_memos::the_divider_hides_before_it_cuts,
+        },
+        Rule {
+            name: "green-tree-marker",
+            origin: "docs/DECISIONS.md 2026-08-16",
+            check: frozen_pairs::the_green_tree_marker_means_one_thing,
+        },
+        Rule {
+            name: "liveness-bytes",
+            origin: "docs/20 §6",
+            check: frozen_pairs::the_liveness_bytes_agree,
         },
         Rule {
             name: "bucket-from-the-crate",

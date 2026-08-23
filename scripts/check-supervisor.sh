@@ -2092,74 +2092,13 @@ if [[ -n "${unbuilt_artifacts}" ]]; then
   fail "a gitignored binaryTarget is never built by ${release_workflow} — SwiftPM cannot resolve the graph on a fresh runner (docs/49)"
 fi
 
-# ── The two writers of the green-tree marker must mean the same thing by it ────────────────────
-# `pre-push-test.sh` and `test-touched.sh` both WRITE `.build/pre-push-green-tree`, and each decides
-# whether it may from a `git status --porcelain --` pathspec naming the inputs `swift test` consumes.
-# That is one list spelled twice: a path added to one only is a marker the other records over a tree
-# it would itself have called dirty, and the marker is read back as a promise about content. It stays
-# a promise about the SAME content only while the two agree.
-#
-# `scripts/` was missing from both for as long as both existed, while the fast loop's SELECTION
-# already attributed a scripts edit to the suite that owns those tests — they open `scripts/*.sh` off
-# disk at run time. The list knew about the input in one place and not the other two.
-cache_specs=$(
-  for script in scripts/pre-push-test.sh scripts/test-touched.sh; do
-    grep -oE 'git status --porcelain -- [^)]*' "${script}" | sed 's| 2> */dev/null||; s| *$||' | head -1
-  done
-) || true
-if [[ "$(printf '%s\n' "${cache_specs}" | grep -c .)" -ne 2 ]]; then
-  fail "the tested-inputs pathspec could not be read out of BOTH test scripts — this gate has gone stale"
-fi
-if [[ "$(printf '%s\n' "${cache_specs}" | sort -u | grep -c .)" -ne 1 ]]; then
-  printf '%s\n' "${cache_specs}" >&2
-  fail "pre-push-test.sh and test-touched.sh disagree on which inputs must be clean to record a green"
-fi
-# And the marker NAMES themselves, as sets rather than as a spelled-out pair. The first draft asked
-# `grep -qF pre-push-green-ffi` of each script, which a rename to `pre-push-green-ffi-stamp` passes
-# by substring — a check that survives the edit it exists to catch. Both files must name the same
-# markers, whatever they are called this week.
-cache_markers=$(
-  for script in scripts/pre-push-test.sh scripts/test-touched.sh; do
-    grep -ohE '\.build/pre-push-[a-z0-9-]+' "${script}" | sort -u | paste -sd, -
-  done
-) || true
-if [[ "$(printf '%s\n' "${cache_markers}" | grep -c .)" -ne 2 ]]; then
-  fail "neither test script names a .build/pre-push-* marker — this gate has gone stale"
-fi
-if [[ "$(printf '%s\n' "${cache_markers}" | sort -u | grep -c .)" -ne 1 ]]; then
-  printf '%s\n' "${cache_markers}" >&2
-  fail "pre-push-test.sh and test-touched.sh do not name the same green-tree markers"
-fi
+# PORTED to `rust/slopdesk-invariants` — `rules::frozen_pairs`: the two writers of the green-tree
+# marker agreeing on the tested-inputs pathspec and on the marker NAMES as a set, so a rename cannot
+# pass by substring (`green-tree-marker`); and the three frozen `pane/liveness` bytes compared arm by
+# arm across the two enums that spell them, which no door could pin because a Swift raw value must be
+# a compile-time constant (`liveness-bytes`).
 
-# ── The liveness bytes, which no door can pin ──────────────────────────────────────────────────
-# `pane/liveness` carries a frozen byte per state, and BOTH languages spell the three arms:
-# `slopdesk-wire`'s `PaneLivenessState` and `SlopDeskWorkspaceModel`'s enum of the same name.
-#
-# A door was tried for exactly this and could not work, which is why the check is here instead. It
-# exported "the byte for arm N" so the Swift side would never transcribe a frozen number — but a
-# Swift enum's raw values must be COMPILE-TIME constants, so no call can supply them. The door was
-# uncallable by construction, sat dead behind `check-ffi-doors.py`, and the transcription it was
-# written to prevent happened anyway one file over. A ratchet can do what the door could not:
-# compare the two arm lists as TEXT, before either is compiled.
-rust_liveness=$(
-  sed -n '/^pub enum PaneLivenessState {/,/^}/p' rust/slopdesk-wire/src/document/fields.rs |
-    grep -oE '^\s+(Attached|Detached|Dead) = [0-9]+,' |
-    tr -d ' ,' | tr '[:upper:]' '[:lower:]' | paste -sd, -
-) || true
-swift_liveness=$(
-  sed -n '/^public enum PaneLivenessState/,/^}/p' Sources/SlopDeskWorkspaceModel/State/WorkspaceFields.swift |
-    grep -oE '^\s+case (attached|detached|dead) = [0-9]+' |
-    sed 's/^ *case //' | tr -d ' ' | paste -sd, -
-) || true
-if [[ -z "${rust_liveness}" || -z "${swift_liveness}" ]]; then
-  fail "PaneLivenessState could not be read from one of its two halves — this gate has gone stale"
-fi
-if [[ "${rust_liveness}" != "${swift_liveness}" ]]; then
-  printf 'rust:  %s\nswift: %s\n' "${rust_liveness}" "${swift_liveness}" >&2
-  fail "the two PaneLivenessState enums disagree — these bytes ride in pane/liveness cells and are frozen"
-fi
-
-printf 'check-supervisor: one deadline latch, one clipboard clip, one sidecar encoder, one channel tag, no dangling doc link, no doc citing a file that is gone, no gate that dies quietly, one meaning for the green-tree marker, one liveness byte per arm.\n'
+printf 'check-supervisor: no dangling doc link, no doc citing a file that is gone, no gate that dies quietly.\n'
 
 # The token bans live in Python, and this is where their status joins the count. Each of them is
 # "this spelling must not appear in code", which in shell is a `grep` — and three separate silent
