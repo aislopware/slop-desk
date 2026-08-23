@@ -69,10 +69,6 @@ SWIFT_PROTOCOL="Sources/SlopDeskSupervisor/SupervisorProtocol.swift"
 SWIFT_FRAME="Sources/SlopDeskSupervisor/SupervisorFrame.swift"
 RUST_PROTOCOL="rust/slopdesk-superd/src/protocol.rs"
 RUST_FRAME="rust/slopdesk-superd/src/frame.rs"
-# The wire left screend for its own crate, for `slopdesk-sanitize`'s reason: two callers, one
-# implementation. hostd is the other caller, and while the layouts lived inside the daemon the only
-# way to reach them was to BE the daemon — so hostd hand-wrote a second copy in Swift.
-RUST_SCREEN_PROTOCOL="rust/slopdesk-screenwire/src/lib.rs"
 SWIFT_DROP_PROTOCOL="Sources/SlopDeskFileTransfer/FileTransferProtocol.swift"
 SWIFT_DROP_DIR="Sources/SlopDeskFileTransfer"
 SWIFT_DROP_MANAGER="Sources/SlopDeskHost/FileDropServiceManager.swift"
@@ -1764,27 +1760,9 @@ for site in "${SWIFT_TERMCONF}" "${SWIFT_LOADER}" "${SWIFT_ENVBRIDGE}"; do
   fi
 done
 printf 'check-supervisor: a number is spelled once, and every text door is measured once.\n'
-
-# ── One motion run rule, and it names events rather than carrying them ──────────────────────────
-# The coalescer decided a run twice: `InputMotionCoalescer` in Swift and `coalesce_motion` in Rust
-# that nothing reached. The two halves that can drift are the run KEY (a move and a drag never
-# merge; a scroll is keyed by its phase signature so a gesture boundary never joins the bulk run)
-# and the merge (keep the latest, but SUM a scroll's deltas — keeping the latest silently drops
-# scrolled distance). Both live in `slopdesk-video` now, and the answer is a PLAN: a slot names the
-# input it is built from, so the `.text` arm's string never has to cross a flat record.
-SWIFT_COALESCER=Sources/SlopDeskVideoHost/VideoSessionLogic.swift
-if ! spells 'slopdesk_input_coalesce_plan' "${SWIFT_COALESCER}" > /dev/null; then
-  fail "${SWIFT_COALESCER} no longer takes its coalescing plan from slopdesk_input_coalesce_plan"
-fi
-if hit=$(spells 'enum RunKey|func runKey|func mergeRun' "${SWIFT_COALESCER}"); then
-  fail "${hit} decides a motion run again — the rule is input_routing.rs's coalesce_plan"
-fi
-for entry in 'fn coalesce_plan' 'fn run_key' 'RunKey::Scroll'; do
-  if ! spells "${entry}" rust/slopdesk-video/src/input_routing.rs > /dev/null; then
-    fail "rust/slopdesk-video/src/input_routing.rs lost ${entry} — the run rule is written there once"
-  fi
-done
-printf 'check-supervisor: one motion run rule, and it answers a plan.\n'
+# PORTED to `rust/slopdesk-invariants`: motion-run-rule, key-vocabulary, styled-vt-grammar,
+# paste-guard, copy-mode-clustering, fuzzy-ranking — the five row grammars and the palette
+# ranking, each now carrying the break-test its shell comment could only describe.
 
 # ── The swipe-nav operating point is parsed ONCE, and it is a handle ────────────────────────────
 # One parse of the SLOPDESK_SWIPE_NAV* family answers both the path that fires ⌘[/⌘] and the status
@@ -1813,29 +1791,6 @@ if hit=$(grep -rn 'slopdesk_swipe_is_navigable\|slopdesk_swipe_extra_apps\|slopd
   fail "${hit} answers the allowlist apart from an operating point again"
 fi
 printf 'check-supervisor: the swipe-nav operating point is parsed once, and it is a handle.\n'
-
-# ── One key vocabulary, whichever grammar names it ──────────────────────────────────────────────
-# `send_keys` reads the table for the `<Token>` grammar a preset, a template, a re-run and a text
-# drop carry; the agent-control `write` verb names the SAME keys in a comma-separated `--key` list,
-# and used to carry a second table for it. They had drifted: `C-?` was DEL on the Swift side and
-# `C-_`'s byte in Rust, `C-Space` was NUL there and refused here, and the function and paging keys
-# had no Rust spelling at all. One table answers both now.
-SWIFT_KEYMAP=Sources/SlopDeskHost/ControlKeyMap.swift
-if ! spells 'slopdesk_ws_key_token' "${SWIFT_KEYMAP}" > /dev/null; then
-  fail "${SWIFT_KEYMAP} answers a key name again — the vocabulary is send_keys.rs's"
-fi
-if hit=$(spells '0x1B, 0x5B|case "enter"|case "pageup"|& 0x1F' "${SWIFT_KEYMAP}"); then
-  fail "${hit} spells a key sequence again — a second table is how C-? and C-Space drifted"
-fi
-if ! spells 'pub fn key_token' rust/slopdesk-workspace/src/send_keys.rs > /dev/null; then
-  fail "rust/slopdesk-workspace/src/send_keys.rs lost key_token — the bare-name grammar reads the table through it"
-fi
-for entry in '"f12"' '"pagedown"' '"insert"'; do
-  if ! spells "${entry}" rust/slopdesk-workspace/src/send_keys.rs > /dev/null; then
-    fail "rust/slopdesk-workspace/src/send_keys.rs dropped ${entry} — the union is the vocabulary, so a preset can say it too"
-  fi
-done
-printf 'check-supervisor: one key vocabulary, whichever grammar names it.\n'
 
 # ── One VT grammar for plain text, read two ways ────────────────────────────────────────────────
 # `vtscan` exists because the replay passes each hand-rolled the same skimmer. Two MORE machines
@@ -1888,51 +1843,9 @@ if hit=$(spells "fn shell_quoted" rust/slopdesk-workspace/src/templates.rs); the
   fail "${hit} is the emitter's private copy again — it asks shell_quoting like everyone else"
 fi
 printf 'check-supervisor: one shell word, wherever a path is typed into a live shell.\n'
-
-# ── One vocabulary for a foreground process name ───────────────────────────────────────────────
-# The `claude` and wrapper matches already reduced a process name in Rust while Swift kept its own
-# reducer beside them, plus the version-directory walk and an eleven-name sensitive set with no
-# Rust twin at all. One name, read three ways, must reduce the same way each time.
+# PORTED to `rust/slopdesk-invariants`: foreground-process-vocabulary.
+# The path below still names a file the SURVIVING sections read.
 SWIFT_FOREGROUND=Sources/SlopDeskHost/ForegroundProcessProbes.swift
-if hit=$(spells 'split\(separator: "/"\)|isVersionShaped|"versions"' "${SWIFT_FOREGROUND}"); then
-  fail "${hit} reduces a process name again — slopdesk-agent::process owns the basename and the version walk"
-fi
-# The PROBE itself is banned in `rust/slopdesk-invariants` (`rust_boundaries::one_probe_per_reading`)
-# rather than here, and the reason is this file's one blind spot: a ban here greps RAW text, so the
-# paragraph above explaining which syscalls left would itself trip it. The Rust claim reads
-# `View::Code`, which strips whole-line comments, so prose may name what code may not. What stays
-# here is the other half — that the face keeps ASKING.
-for door in slopdesk_pty_foreground_name slopdesk_pty_foreground_agent; do
-  if ! spells "${door}" "${SWIFT_FOREGROUND}" > /dev/null; then
-    fail "${SWIFT_FOREGROUND} stopped asking ${door} — it is a face over the probe, not a second one"
-  fi
-done
-# The staging handle that existed ONLY because Swift owned the syscalls. Six doors plus a callback
-# trampoline, retired together with the probe; a door that comes back means a job is being assembled
-# across the boundary again.
-if hit=$(spells 'slopdesk_agent_job_new|slopdesk_agent_job_push_process|slopdesk_agent_resolve_fn' rust/slopdesk-ffi/include/slopdesk_ffi.h); then
-  fail "${hit} — the foreground job staging handle is back; slopdesk_pty_foreground_agent asks it in one call"
-fi
-SWIFT_CONTROL=Sources/SlopDeskHost/AgentControlListener.swift
-if hit=$(spells 'sensitiveBasenames|"sshpass"|"doas"' "${SWIFT_CONTROL}"); then
-  fail "${hit} lists the sensitive commands in Swift — the set is SENSITIVE_BASENAMES in Rust"
-fi
-if ! spells 'slopdesk_agent_is_sensitive' Sources/SlopDeskAgentDetect/ForegroundProcessName.swift > /dev/null; then
-  fail "Sources/SlopDeskAgentDetect/ForegroundProcessName.swift stopped asking the door — it is a face, not a second rule"
-fi
-for rule in 'pub fn is_sensitive' 'pub fn canonical_name' 'pub fn is_version_shaped' 'pub fn basename'; do
-  if ! spells "${rule}" rust/slopdesk-agent/src/process.rs > /dev/null; then
-    fail "rust/slopdesk-agent/src/process.rs lost ${rule} — the foreground vocabulary is one module"
-  fi
-done
-# One frontmost read, and no AppKit in it. The pid is the window list's election and the bundle id
-# is `rust/slopdesk-apple-app`'s. The BAN is in `rust/slopdesk-invariants` for the same reason the
-# probe's is — every file that explains the port names `NSWorkspace.shared.frontmostApplication` in
-# prose, and a raw grep cannot tell an explanation from a call. What stays here is the face's door.
-if ! spells 'slopdesk_app_bundle_id' Sources/SlopDeskVideoHost/HostFrontmostApp.swift > /dev/null; then
-  fail "Sources/SlopDeskVideoHost/HostFrontmostApp.swift stopped asking the bundle-id door — it is a face over two doors"
-fi
-printf 'check-supervisor: one vocabulary for a foreground process name.\n'
 
 # ── One badge ladder for a tab row ─────────────────────────────────────────────────────────────
 # Ten precedence rungs over four independent signals, with two placements that are the whole reason
@@ -1965,27 +1878,6 @@ if [[ "${swift_badges}" != "${rust_badges}" ]]; then
   fail "TabBadgeKind has ${swift_badges} Swift cases and ${rust_badges} Rust ones — the discriminant that crosses the ABI is now wrong (docs/55)"
 fi
 printf 'check-supervisor: one badge ladder for a tab row.\n'
-
-# ── One fuzzy ranking, for every search field ──────────────────────────────────────────────────
-# fzf's `FuzzyMatchV2` — a Smith-Waterman DP, a structural-bonus table and a backtrace — was 300
-# lines of Swift beside the Rust that owns it now. This one carries IDENTITY: the order a palette
-# shows IS the product, so a second scorer does not fail a test, it just starts ranking differently
-# and nobody can say which copy the person is looking at. Every search field asks the same door.
-SWIFT_FUZZY=Sources/SlopDeskClientCore/Palette/FuzzyMatcher.swift
-scorer_revived=$(among_deleted '(let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b')
-if [[ -n "${scorer_revived}" ]]; then
-  printf '%s\n' "${scorer_revived}" >&2
-  fail "a Swift fuzzy scorer is back in Sources/ — rust/slopdesk-fuzzy owns FuzzyMatchV2"
-fi
-if ! spells 'slopdesk_fuzzy_score' "${SWIFT_FUZZY}" > /dev/null; then
-  fail "${SWIFT_FUZZY} stopped asking the door — it is a marshaller over the matcher, not a second one"
-fi
-for rule in 'pub fn score' 'pub fn rank' 'pub fn match_pattern' 'fn bonus_for'; do
-  if ! spells "${rule}" rust/slopdesk-fuzzy/src/lib.rs > /dev/null; then
-    fail "rust/slopdesk-fuzzy/src/lib.rs lost ${rule} — the ranking is one module"
-  fi
-done
-printf 'check-supervisor: one fuzzy ranking, for every search field.\n'
 
 # ── One reading of a hook body ─────────────────────────────────────────────────────────────────
 # A hook body used to be read TWICE over: a typed `HookPayload` enum modelling the JSON in
@@ -2087,93 +1979,8 @@ if hit=$(grep -rln 'struct StatusTriple' Sources 2> /dev/null); then
   fail "a second status triple is declared in Sources/ — ClaudeStatusTriple is the one shape of a type-27 emit"
 fi
 printf 'check-supervisor: one pane detector, in Rust, and the probes only probe.\n'
-
-# ── One VT grammar for STYLED text, and the clipboard reads it destyled ────────────────────────
-# `AnsiStyledParser` was a SECOND VT grammar: a hand-rolled escape skipper, a hand-rolled SGR
-# decoder and a hand-rolled string-sequence scan, sitting beside the `vtscan` module that already
-# owned all three for the replay passes. Two grammars over one byte stream is how a sequence one
-# side skips and the other prints becomes a bug nobody can localise. `slopdesk_sanitize::styled`
-# owns the pass now; the clipboard's plain text is that pass with the styles discarded, which is
-# what keeps the copied text and the coloured text from being two behaviours.
-SWIFT_STYLED=Sources/SlopDeskWorkspaceCore/Terminal/AnsiStyledText.swift
-grammar_revived=$(among_deleted 'func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b')
-if [[ -n "${grammar_revived}" ]]; then
-  printf '%s\n' "${grammar_revived}" >&2
-  fail "a Swift VT grammar is back in Sources/ — slopdesk-sanitize::styled owns the styled pass"
-fi
-if ! spells 'slopdesk_styled_lines' "${SWIFT_STYLED}" > /dev/null; then
-  fail "${SWIFT_STYLED} stopped asking the door — it is a marshaller over the pass, not a second one"
-fi
-SWIFT_PLAIN=Sources/SlopDeskWorkspaceCore/Terminal/BlockOutputSanitizer.swift
-if ! spells 'AnsiStyledParser\.lines' "${SWIFT_PLAIN}" > /dev/null; then
-  fail "${SWIFT_PLAIN} skims on its own again — the clipboard's text IS the styled pass, destyled"
-fi
-for rule in 'pub fn lines' 'fn escape_end' 'fn apply_sgr' 'fn is_erase_to_line_end'; do
-  if ! spells "${rule}" rust/slopdesk-sanitize/src/styled.rs > /dev/null; then
-    fail "rust/slopdesk-sanitize/src/styled.rs lost ${rule} — one grammar, read two ways"
-  fi
-done
-printf 'check-supervisor: one VT grammar for styled text, and the clipboard destyles it.\n'
-
-# ── One paste guard, and the other one stays a different engine ────────────────────────────────
-# Two guards ask two questions and must never merge: `paste` asks "would this run something
-# dangerous at a prompt?", `secrets` asks "would typing this leak a credential?". Both are Rust
-# now; what this pins is that neither Swift face grows rules of its own, and that the four dangers
-# keep the same bit numbering on both sides — the mask crosses as itself, so a renumbering here
-# would silently relabel every warning the sheet prints.
-#
-# The SENTENCES are pinned the same way, and for the same reason. A line describing a danger is as
-# much the guard as the bit that trips it: a renderer that spelled its own would be a second guard
-# saying something slightly different, and a fifth danger would reach the user as a blank bullet.
+# The path below still names a file the SURVIVING sections read.
 SWIFT_PASTE=Sources/SlopDeskWorkspaceCore/Terminal/PasteSafetyAnalyzer.swift
-SWIFT_PASTE_SHEET=Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift
-if hit=$(spells 'containsElevationToken|isSeparator|unicodeScalars' "${SWIFT_PASTE}"); then
-  fail "${hit} classifies a paste in Swift again — slopdesk-terminal::paste owns the four dangers"
-fi
-for entry in 'slopdesk_paste_dangers' 'slopdesk_paste_should_warn' 'slopdesk_paste_danger_description' 'slopdesk_paste_preview'; do
-  if ! spells "${entry}" "${SWIFT_PASTE}" > /dev/null; then
-    fail "${SWIFT_PASTE} no longer asks ${entry} — the guard is one implementation"
-  fi
-done
-if hit=$(spells 'previewLimit|messageText = "|Paste Anyway|OSC 52' "${SWIFT_PASTE_SHEET}"); then
-  fail "${hit} spells the confirmation's own words — slopdesk-terminal::paste owns every sentence"
-fi
-for law in 'pub fn descriptions' 'pub fn preview' 'pub enum Ask'; do
-  if ! spells "${law}" rust/slopdesk-terminal/src/paste.rs > /dev/null; then
-    fail "rust/slopdesk-terminal/src/paste.rs lost ${law} — the sheet's words live beside its rules"
-  fi
-done
-for bit in 'MULTI_LINE: u32 = 1 << 0' 'TRAILING_NEWLINE: u32 = 1 << 1' 'SUDO_OR_SU: u32 = 1 << 2' 'CONTROL_CHARS: u32 = 1 << 3'; do
-  if ! spells "${bit}" rust/slopdesk-terminal/src/paste.rs > /dev/null; then
-    fail "rust/slopdesk-terminal/src/paste.rs renumbered a danger (${bit}) — the mask crosses as itself"
-  fi
-done
-printf 'check-supervisor: one paste guard, and the secret one stays a different engine.\n'
-
-# ── One clustering answers the cursor and the badge that says where it is ──────────────────────
-# The vi copy-mode motions used to walk the row in Swift, `Character` by `Character`, asking the
-# link detector for each glyph's width. The link and hint overlays walked the SAME row through
-# `slopdesk_terminal::link`'s clustering. Two clusterings over one row put a cursor half a glyph
-# away from the badge claiming to be on it, on exactly the CJK rows nobody checks by hand — so the
-# motions moved beside the clustering, and this pins that they stay there.
-SWIFT_VI=Sources/SlopDeskWorkspaceCore/Terminal/ViLineMotion.swift
-if hit=$(spells 'CellChar|charClass|isWhitespace|isLetter|isNumber|runStartIndex|runEndIndex' "${SWIFT_VI}"); then
-  fail "${hit} walks the row in Swift again — slopdesk-terminal::vimotion owns the motions"
-fi
-for entry in 'slopdesk_vi_next_word_start' 'slopdesk_vi_column_step' 'slopdesk_vi_cell_width'; do
-  if ! spells "${entry}" "${SWIFT_VI}" > /dev/null; then
-    fail "${SWIFT_VI} no longer asks ${entry} — the motions are one implementation"
-  fi
-done
-for law in 'pub fn cells' 'pub fn addressable_cells' 'fn run_start_index' 'fn run_end_index'; do
-  if ! spells "${law}" rust/slopdesk-terminal/src/vimotion.rs > /dev/null; then
-    fail "rust/slopdesk-terminal/src/vimotion.rs lost ${law} — the copy-mode motions live there"
-  fi
-done
-if ! spells 'use crate::link::\{clusters, scalar_cells\}' rust/slopdesk-terminal/src/vimotion.rs > /dev/null; then
-  fail "vimotion stopped reading link's clustering — the cursor and the hint badge would drift apart"
-fi
-printf 'check-supervisor: one clustering answers the cursor and the badge.\n'
 
 # ── And ONE width table under that clustering ──────────────────────────────────────────────────
 # One clustering was not enough, because there were still two tables saying how wide a cluster IS.
@@ -2236,67 +2043,9 @@ if ! spells 'slopdesk_sync_input_keyboard_only' "${SWIFT_SYNC_INPUT}" > /dev/nul
   fail "${SWIFT_SYNC_INPUT} no longer asks the door — the sync-input filter is one implementation"
 fi
 printf 'check-supervisor: one grammar for where an escape ends, and six copies is not it.\n'
-
-# ── And ONE encoder for the screend frame ──────────────────────────────────────────────────────
-# `docs/DECISIONS.md` recorded in stage 17 that each protocol's client end moves into Rust, so the
-# round trip becomes a TEST rather than an agreement two files keep by review. dropd's Swift
-# original was deleted in that change; screend's was not, and `ScreenProtocol.swift` went on
-# hand-writing the same frame for a whole stage afterwards. The two had already diverged on an
-# over-long detect label — Swift threw where Rust truncated.
-SWIFT_SCREEN_PROTOCOL=Sources/SlopDeskScreen/ScreenProtocol.swift
-if hit=$(spells 'func appendBigEndian|truncatingIfNeeded: value|UInt16\(clamping: paneBytes' "${SWIFT_SCREEN_PROTOCOL}"); then
-  fail "${hit} lays out the screend frame in Swift again — slopdesk-screenwire owns every layout"
-fi
-for entry in 'slopdesk_screen_encode_request' 'slopdesk_screen_encode_detect_payload' 'slopdesk_screen_reply_status'; do
-  if ! spells "${entry}" "${SWIFT_SCREEN_PROTOCOL}" > /dev/null; then
-    fail "${SWIFT_SCREEN_PROTOCOL} no longer asks ${entry} — the screend wire is one implementation"
-  fi
-done
-# Both ends stay in ONE crate, which is what makes the round trip a test rather than two files
-# agreeing. Split them and the property the stage-17 ruling bought is gone.
-for half in 'pub fn encode_request' 'pub fn decode_request' 'pub fn encode_reply' 'pub fn decode_reply'; do
-  if ! spells "${half}" "${RUST_SCREEN_PROTOCOL}" > /dev/null; then
-    fail "${RUST_SCREEN_PROTOCOL} lost '${half}' — both ends live together so the round trip is a test"
-  fi
-done
-printf 'check-supervisor: one encoder for the screend frame, and both its ends in one crate.\n'
-
-# ── The scrcpy stream is reassembled ONCE, and not in Swift ────────────────────────────────
-# The bridge relays the device's stream verbatim, so nothing in Rust had ever read it and the whole
-# decoder sat in Swift — a stateful reassembler over bytes a DEVICE wrote, on the per-frame path,
-# whose own comment admitted it copied the buffer remainder on every message. Stage 17's rule puts a
-# protocol's client end in the crate that owns the protocol, and `slopdesk-androidd` owns scrcpy's
-# dialect. Nothing here may grow a second reader of that wire.
+# PORTED to `rust/slopdesk-invariants`: screend-frame-encoder, scrcpy-stream-reader.
+# The path below still names a file the SURVIVING sections read.
 SWIFT_ANDROID_STREAM=Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift
-if hit=$(spells 'func readUInt32|private mutating func take|maximumPacketSize|headerSize = |sessionFlag|keyFrameFlag' "${SWIFT_ANDROID_STREAM}"); then
-  fail "${hit} frames the scrcpy stream in Swift again — slopdesk-androidd owns the framing"
-fi
-# The Annex-B walk is `slopdesk-video`'s, beside the AVCC walker that is its other half: the two
-# framings carry the SAME NAL units, and the HEVC type reading is spelled out once there.
-if hit=$(spells 'codeLength|starts\.append|first & 0x1F|first >> 1' "${SWIFT_ANDROID_STREAM}"); then
-  fail "${hit} walks Annex-B in Swift again — slopdesk_video::annexb owns both start-code lengths"
-fi
-for entry in 'slopdesk_android_stream_new' 'slopdesk_android_stream_free' 'slopdesk_android_stream_append' \
-  'slopdesk_android_stream_next' 'slopdesk_android_stream_decodable_codec' 'slopdesk_annexb_split' \
-  'slopdesk_annexb_parameter_sets' 'slopdesk_annexb_to_avcc'; do
-  if ! spells "${entry}" "${SWIFT_ANDROID_STREAM}" > /dev/null; then
-    fail "${SWIFT_ANDROID_STREAM} no longer asks ${entry} — the scrcpy stream is one implementation"
-  fi
-done
-# `free` without `new` is a leak per mirror session; `new` without `free` is the same bug read the
-# other way. Both names above, and the handle held by a CLASS — a struct would copy the pointer.
-if ! spells 'final class AndroidStreamParser' "${SWIFT_ANDROID_STREAM}" > /dev/null; then
-  fail "${SWIFT_ANDROID_STREAM}: the parser stopped being a class — a copied handle is a double free"
-fi
-# Both start-code lengths, in the crate that owns them. Handling only the four-byte form does not
-# fail loudly: it yields NAL units with a start code embedded, which decode as corruption.
-RUST_ANNEXB=rust/slopdesk-video/src/annexb.rs
-for half in 'pub fn split_ranges' 'pub fn to_avcc' 'pub fn h264_parameter_sets' 'pub fn h265_parameter_sets'; do
-  if ! spells "${half}" "${RUST_ANNEXB}" > /dev/null; then
-    fail "${RUST_ANNEXB} lost '${half}' — the Annex-B walk is one implementation"
-  fi
-done
-printf 'check-supervisor: one reader for the scrcpy stream, and one walk over Annex-B.\n'
 # PORTED to `rust/slopdesk-invariants` — `rules::device_streams`: scrcpy-control and wait-scan.
 SWIFT_WAIT=Sources/SlopDeskHost/AgentControlListener.swift
 
@@ -5607,29 +5356,7 @@ if ((mirror_topology_inside > 2)); then
   fail "${MIRROR_MEMO} reads workspaceMirror.topology ${mirror_topology_inside} times; the memo has ONE miss path. A second read belongs inside \`mirroredTopology\` or it is not memoized"
 fi
 printf 'check-supervisor: the mirror topology is projected once per revision, not once per sidebar row.\n'
-
-# ── …and the rail's title RUNG is asked, never transcribed ──────────────────────────────────────
-# `titledByProcess` is `slopdesk_workspace::rail_title::title_rung` asked without composing the
-# string. It used to be transcribed into Swift, and its own doc comment said "Mirrors
-# RailRowsBuilder.rowTitle's escape order" — docs/55 §8's named anti-pattern, a comment describing
-# another language's behaviour as the only thing holding two implementations together.
-#
-# The transcription is deleted. The two helpers banned below are the pieces the Swift copy was built
-# from, so their reappearance in the memo IS the transcription growing back; the two doors are
-# pinned because an unreached port is worse than an unported one.
-#
-# BREAK-TESTED 2026-08-22: restoring `if RailRowsBuilder.cwdFolderName(cwd) == nil` in
-# RailRowsMemo.swift failed rule 1; deleting either door call failed its own rule. All three pass.
-RAIL_MEMO=Sources/SlopDeskClientCore/Rail/RailRowsMemo.swift
-if hit=$(spells 'cwdFolderName|normalizedProjectKey' "${RAIL_MEMO}"); then
-  fail "${hit} re-derives the rail's title rung in Swift — the rung lives in slopdesk_workspace::rail_title::title_rung and \`row_title\` composes its string from the SAME function, so the two cannot drift"
-fi
-for rail_memo_door in slopdesk_ws_rail_titles_by_process slopdesk_ws_rail_structure_keys; do
-  if ! spells "${rail_memo_door}" "${RAIL_MEMO}" > /dev/null; then
-    fail "${RAIL_MEMO} no longer asks ${rail_memo_door} — docs/55 §8: an unreached port is worse than an unported one, and the Swift answering it would be a second implementation"
-  fi
-done
-printf 'check-supervisor: the rail fingerprint asks for its rung and its keys; it does not re-derive them.\n'
+# PORTED to `rust/slopdesk-invariants`: rail-fingerprint.
 
 # ── The three re-derivations a body pass must not grow back ───────────────────────────────────
 #
@@ -7089,93 +6816,8 @@ printf 'check-supervisor: every ring steps through the one wrap rule.\n'
 # ── hostd and the device panels ───────────────────────────────────────────────────────────────
 # Every rule below was BREAK-TESTED against the real tree — the verdict is recorded in its own
 # comment — by copying the file to /tmp, editing it back to the shape the rule bans, running the
-# rule, and restoring from /tmp. Never `git checkout`, which discards this tree's other work.
-
-# ── The null-output PROBE, on the four doors where it costs a second whole answer ──────────────
-#
-# `docs/55` §4 makes `(NULL, 0)` a supported way to ask a door for its length, and for a door whose
-# rule is a table lookup it costs a nanosecond — `slopdesk_panel_simulator_key_code` and
-# `slopdesk_input_mode_reset` probe on purpose and are not touched here. For a door whose rule is
-# WORK it costs the work TWICE, and these four are the ones in this scope where that is
-# measurable. All four probed until 2026-08-22; all four now guess and retry. The numbers are from
-# a scratch `swiftc -O` harness linked against the shipped `macos-arm64` slice, two runs agreeing:
-#
-#   slopdesk_git_status        53.4 / 57.7 ms → 25.7 / 27.0 ms  libgit2 walks the worktree, per
-#                                                               FSEvents tick per watched repo
-#   slopdesk_plaintext_strip   646 / 629 µs   → 302 / 310 µs    183 KB pane capture, per agent read
-#   slopdesk_annexb_to_avcc    501 / 475 µs   → 265 / 234 µs    300 KB keyframe, PER FRAME
-#   slopdesk_annexb_split      the same walk over the same buffer, per access unit
-#
-# The failure mode no test can see: both calls agree and every answer is correct. The only trace is
-# a git line that lands a beat late and a phone mirror that drops frames on a busy host — which
-# reads as a device problem, not as a doubled call.
-#
-# The pattern is deliberately the ONE-LINE call shape, which is how all seven call sites are
-# written; the presence half below is what holds a reformat that split one across lines.
-#
-# BREAK-TEST 2026-08-22: `Sources/SlopDeskHost/HostGitStatus.swift` copied to /tmp, its retry
-# replaced by `let needed = slopdesk_git_status(input.baseAddress, input.count, nil, 0)` — the ban
-# FIRED and named the file; restored from /tmp, PASSES. Same edit in `ANSIStripper.swift` and in
-# `AndroidStreamProtocol.swift`: FIRED, restored, PASSES.
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-probe_site=$(spells 'slopdesk_(git_status|plaintext_strip|annexb_to_avcc|annexb_split)\([^)]*nil, *0\)' \
-  $(repo_files 'Sources/**/*.swift') 2> /dev/null || true)
-if [[ -n "${probe_site}" ]]; then
-  fail "${probe_site} asks an expensive door for a length with a null output — that runs its whole rule and throws the answer away. Guess, then retry (docs/55 §4)"
-fi
-
-# The other half: each of the three fixed sites still carries a first guess. A probe deleted the
-# guess as well as the retry, so its absence is the same regression arriving by a different edit.
-#
-# BREAK-TEST 2026-08-22: deleting `private static let firstGuess = 64 * 1024` from
-# `HostGitStatus.swift` FIRED; deleting `avccSlack` from `AndroidStreamProtocol.swift` FIRED.
-# Both restored from /tmp, both PASS.
-for pair in \
-  "Sources/SlopDeskHost/HostGitStatus.swift:firstGuess" \
-  "Sources/SlopDeskHost/ANSIStripper.swift:needed > room.count" \
-  "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift:avccSlack" \
-  "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift:spanFloor"; do
-  if ! grep -qF "${pair#*:}" "${pair%%:*}"; then
-    fail "${pair%%:*} no longer spells '${pair#*:}' — the guess-then-retry that halved this path is gone (docs/55 §4, §6)"
-  fi
-done
-
-# ── One binary search order, and it is not this language's ────────────────────────────────────
-#
-# `docs/46`'s "Vendored runtime deps" section states ONE order — the `SLOPDESK_*_BIN` override, the
-# vendored prefix, `PATH`, then `~/.local/bin` and the two Homebrew prefixes — and named the Swift
-# copy as the rule with the Rust one "mirrored" from it. A mirror is a claim with no gate behind
-# it, which is `docs/55` §8's whole subject, and this pair had already stopped agreeing on the
-# question neither doc comment mentions: WHAT MAKES A CANDIDATE EXECUTABLE.
-#
-#   Swift  FileManager.isExecutableFile  →  access(path, X_OK)
-#   Rust   metadata().is_file() && mode & 0o111 != 0
-#
-# They disagree in both directions and neither disagreement can raise an error, because each side
-# is self-consistent and only one of them runs on any given path. A DIRECTORY named `code-server`
-# on `PATH` is `X_OK`, so Swift handed it to `posix_spawn` and the operator got a message about the
-# wrong thing; Rust walks past it to the real binary. `slopdesk_androidd::toolchain::locate_tool`
-# is the order now and `HostServiceProcess.locate` asks for it.
-#
-# The ban is scoped to the file that OWNS the question. `isExecutableFile` elsewhere in hostd
-# (`SidecarVersionAudit`) is a can-I-spawn-THIS-path guard, not a search, and
-# `HostEnvironment`'s `/usr/local/bin:/usr/bin:/bin` is the PATH handed to children — different
-# capabilities, correctly still Swift.
-#
-# BREAK-TEST 2026-08-22: `Sources/SlopDeskHost/HostServiceProcess.swift` copied to /tmp, then (a)
-# the `slopdesk_host_service_binary` call renamed — the presence check FIRED; (b) the deleted
-# `static let fallbackBinDirectories = [NSHomeDirectory() + "/.local/bin", "/opt/homebrew/bin",
-# "/usr/local/bin"]` pasted back — the ban FIRED and named the file. Restored from /tmp after each,
-# both PASS. Restoration was `cp` from /tmp, never `git checkout`, which would have discarded the
-# port itself.
-SWIFT_HOST_SERVICE=Sources/SlopDeskHost/HostServiceProcess.swift
-if ! grep -q 'slopdesk_host_service_binary(' "${SWIFT_HOST_SERVICE}"; then
-  fail "${SWIFT_HOST_SERVICE} no longer calls slopdesk_host_service_binary — hostd's search order is rust/slopdesk-androidd/src/toolchain.rs"
-fi
-if spells '/opt/homebrew/bin|/usr/local/bin|\.local/bin|isExecutableFile' "${SWIFT_HOST_SERVICE}" > /dev/null; then
-  fail "${SWIFT_HOST_SERVICE} spells a bin directory or an executability test again — the whole order is locate_tool, and a second copy of it drifts silently (docs/46, vendored runtime deps)"
-fi
-printf 'check-supervisor: hostd finds a program by one order, and asks the expensive doors once.\n'
+# PORTED to `rust/slopdesk-invariants`: hostd-binary-order — the null-output probe ban, the
+# three guess-then-retry sites, and the one search order.
 
 # ── ONE search-box predicate for both device panels, both drawings ────────────────────────────
 #

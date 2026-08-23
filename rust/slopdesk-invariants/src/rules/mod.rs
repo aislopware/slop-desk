@@ -6,9 +6,12 @@
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
 pub mod client_layers;
+pub mod client_memos;
 pub mod code_panel;
 pub mod crate_policy;
+pub mod device_frames;
 pub mod device_streams;
+pub mod host_probes;
 pub mod hot_paths;
 pub mod rust_boundaries;
 pub mod screend;
@@ -16,6 +19,7 @@ pub mod screend_wire;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
 pub mod terminal_config;
+pub mod terminal_grammar;
 pub mod terminal_surface;
 pub mod video_client;
 pub mod video_control;
@@ -541,6 +545,61 @@ pub fn registry() -> Vec<Rule> {
             name: "code-panel-one-implementation",
             origin: "scripts/check-supervisor.sh",
             check: code_panel::dressing_is_one_implementation,
+        },
+        Rule {
+            name: "motion-run-rule",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_grammar::one_motion_run_rule_answers,
+        },
+        Rule {
+            name: "key-vocabulary",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_grammar::one_key_vocabulary_whichever_grammar,
+        },
+        Rule {
+            name: "styled-vt-grammar",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_grammar::one_vt_grammar_for_styled,
+        },
+        Rule {
+            name: "paste-guard",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_grammar::one_paste_guard_secret_one,
+        },
+        Rule {
+            name: "copy-mode-clustering",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_grammar::one_clustering_answers_cursor_badge,
+        },
+        Rule {
+            name: "foreground-process-vocabulary",
+            origin: "scripts/check-supervisor.sh",
+            check: host_probes::one_vocabulary_for_foreground_process,
+        },
+        Rule {
+            name: "hostd-binary-order",
+            origin: "scripts/check-supervisor.sh",
+            check: host_probes::hostd_finds_program_by_one,
+        },
+        Rule {
+            name: "fuzzy-ranking",
+            origin: "scripts/check-supervisor.sh",
+            check: client_memos::one_fuzzy_ranking_for_every,
+        },
+        Rule {
+            name: "rail-fingerprint",
+            origin: "scripts/check-supervisor.sh",
+            check: client_memos::rail_fingerprint_asks_for_its,
+        },
+        Rule {
+            name: "screend-frame-encoder",
+            origin: "scripts/check-supervisor.sh",
+            check: device_frames::one_encoder_for_screend_frame,
+        },
+        Rule {
+            name: "scrcpy-stream-reader",
+            origin: "scripts/check-supervisor.sh",
+            check: device_frames::one_reader_for_scrcpy_stream,
         },
         Rule {
             name: "untrusted-regex-engine",
