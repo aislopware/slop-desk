@@ -67,7 +67,6 @@ among_deleted() {
 
 SWIFT_PROTOCOL="Sources/SlopDeskSupervisor/SupervisorProtocol.swift"
 RUST_PROTOCOL="rust/slopdesk-superd/src/protocol.rs"
-RUST_FRAME="rust/slopdesk-superd/src/frame.rs"
 SWIFT_DROP_PROTOCOL="Sources/SlopDeskFileTransfer/FileTransferProtocol.swift"
 SWIFT_DROP_DIR="Sources/SlopDeskFileTransfer"
 SWIFT_DROP_MANAGER="Sources/SlopDeskHost/FileDropServiceManager.swift"
@@ -1778,187 +1777,20 @@ printf 'check-supervisor: the ui-shell docs describe the CLI the crate actually 
 #
 # The printf that closed the UI-split region went with it: every rule it summarised is now the crate's.
 
-# ── A pane's master is decided once, and it is OWNED ────────────────────────────────────────────
-# superd used to answer `spawn` by inserting the pane and then asking the map for its master fd by
-# name, and the two steps are not one decision. The reaper removes a pane and drops its master the
-# instant the child dies, and a child like `exit 0` is usually already dead by the time the reply is
-# assembled — so the second lookup either found nothing (an `ok` reply carrying no descriptor, which
-# hostd reports as `missingDescriptor` for a child that really ran) or found a raw number the reaper
-# had closed and the kernel had reissued to something else, which hostd would have adopted in
-# silence. Both windows close the same way: take the duplicate where the pane is decided, hand it
-# back OWNED, and let the wire BORROW it — see `docs/51` §2.3.
-RUST_REGISTRY="rust/slopdesk-superd/src/registry.rs"
-for entry in 'Result<\(PaneRecord, OwnedFd\), RegistryError>' 'duplicate_master\(&spawned\.master\)' \
-  'duplicate_master\(&pane\.master\)'; do
-  if ! spells "${entry}" "${RUST_REGISTRY}" > /dev/null; then
-    fail "${RUST_REGISTRY} no longer hands its caller an owned master duplicate — see docs/51 §2.3"
-  fi
-done
-if hit=$(spells 'fn master_fd' "${RUST_REGISTRY}"); then
-  fail "${hit} looks a master up by pane id again — that lookup races the reaper (docs/51 §2.3)"
-fi
-if ! spells "descriptor: Option<BorrowedFd<'_>>" "${RUST_FRAME}" > /dev/null; then
-  fail "${RUST_FRAME} takes a descriptor it cannot prove is still open — BorrowedFd is the proof"
-fi
-printf 'check-supervisor: a master crosses as an owned duplicate, borrowed for the send.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::sidecar_seams`: the pane master decided once,
+# handed back OWNED and borrowed for the send, with the racing lookup banned by name
+# (`master-owned-duplicate`); ONE probed and ONE announced lifecycle over five sidecar managers, the
+# four re-written shapes banned target-wide and each manager holding one lock (`two-sidecar-lifecycles`);
+# the cancel-and-re-arm deadline as a two-line WINDOW nobody may write out, with its six arming sites
+# pinned (`one-deadline-latch`); one pasteboard↔clip conversion read by both ends of the wire
+# (`one-pasteboard-clip`); every JSON sidecar sorting its keys, and WorkspaceCore holding one encoder
+# (`one-sidecar-encoder`); the two client debug gates read in DebugTrace alone (`one-debug-gate`); and
+# the channel tag as one enum with its seven raw values pinned to their wire numbers (`one-channel-tag`).
+#
+# STILL HERE, deliberately: the two doc gates below. The ``DocC link`` check and the cited-path check
+# each build a corpus this crate has no shape for yet — one an identifier census over every Swift file
+# in the tree, the other CLAUDE.md's own read-first table expanded into a doc list. They port next.
 
-# ── One sidecar lifecycle per KIND, and five faces over the two ────────────────────────────────
-# `HostServiceProcess` held the shape's prose — spawn with port 0, learn the bound port from the
-# child's own line, probe with a bounded loopback connect — and its production seams, but not the
-# code, so five managers each wrote it out. They had already drifted where nobody could see it:
-# `CodeServerManager`'s probe-and-latch wrote its updated record inside the `if due` block and the
-# other two wrote it after, and the dropd/inspectord parse accepted a `:0` announce that androidd's
-# rejected. Both lifecycles now live in `SupervisedServiceLifecycle.swift`:
-# `ProbedPortService` (the OS picks the port, `ensure` never waits) and `AnnouncedPortService`
-# (hostd picks it, so the announce is WAITED for and VERIFIED). What stays with each manager is what
-# the daemons genuinely disagree about — the socket name, the announce marker, the argv, the env
-# override and whether a spawn that threw reads `unavailable` or `starting`.
-SERVICE_LIFECYCLE="Sources/SlopDeskHost/SupervisedServiceLifecycle.swift"
-for piece in 'final class ProbedPortService' 'final class AnnouncedPortService' 'enum AnnouncedPort'; do
-  if ! spells "${piece}" "${SERVICE_LIFECYCLE}" > /dev/null; then
-    fail "${SERVICE_LIFECYCLE} no longer holds ${piece} — the five managers share one of each"
-  fi
-done
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-lifecycles=$(spells 'var lastProbe|spawnGeneration|func awaitAnnouncedPort|prefix\(while: \\.isNumber\)' \
-  $(repo_files 'Sources/SlopDeskHost/*.swift' | grep -v 'SupervisedServiceLifecycle.swift') 2> /dev/null || true)
-if [[ -n "${lifecycles}" ]]; then
-  printf '%s\n' "${lifecycles}" >&2
-  fail "a sidecar manager grew its own probe latch, spawn generation or port parse back"
-fi
-# Each manager keeps exactly one lock, and it is the service's. A second `NSLock` beside a
-# `ProbedPortService` is two critical sections gating one spawn, which is how a boot gate and the
-# instance record start disagreeing under a racing pair of metadata queues.
-for manager in Android Simulator Code; do
-  path=$(repo_files "Sources/SlopDeskHost/${manager}*Manager.swift")
-  # shellcheck disable=SC2086 # `${path}` may name more than one file; the split is the argument list
-  if [[ -n "${path}" ]] && spells 'let lock = NSLock\(\)' ${path} > /dev/null 2>&1; then
-    fail "${path} took a second lock beside ProbedPortService — use its locked(_:)"
-  fi
-done
-printf 'check-supervisor: two sidecar lifecycles, five faces, one lock each.\n'
-
-# ── One re-armable deadline, one pasteboard clip, one sidecar encoder ─────────────────────────────
-# `DeadlineLatch` is five lines with three load-bearing details in them, and each reads as noise
-# until the one time it is missing: the cancel comes FIRST (a re-arm during a live drag otherwise
-# stacks one timer per layout pass), `Task.isCancelled` is checked AFTER the sleep (`try?` swallows
-# the cancellation throw, so a cancelled timer would run its body anyway), and the caller's closure
-# is `[weak self]`. Four models had it written out; a fifth must ask for the latch instead.
-# The shape is narrow on purpose — a `Task` holding a SLEEP and then a cancellation check — so a
-# repeating loop (`while !Task.isCancelled { … await sleep }`) does not match it: that is a different
-# law with a different lifetime. Scoped to the two targets that can SEE the latch; SlopDeskVideoHost
-# and SlopDeskVideoClient hold one-shots of the same shape and depend on nothing that could carry
-# `DeadlineLatch` down to them, so pinning them here would only demand an impossible import.
-# Not `spells`: the check is a two-line WINDOW (open the Task, then find the guard under it), which
-# is a `grep -A2` per file rather than a pattern over a file list.
-# The `-A2` window is why this is per file rather than one pattern over the list — but only files
-# that carry the INTRODUCER can have a window worth reading, so one `grep -l` picks those out first
-# and the two-process-per-file cost becomes two per candidate. Same trick as `spells`, same reason.
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-while IFS= read -r file; do
-  [[ -f "${file}" ]] || continue
-  [[ "${file}" == *DeadlineLatch.swift ]] && continue
-  if grep -q 'guard !Task.isCancelled' <<< "$(grep -A2 'Task { \[weak self\] in' "${file}" 2> /dev/null)"; then
-    printf '%s\n' "${file}" >&2
-    fail "a cancel-and-re-arm deadline grew back — DeadlineLatch.arm owns the three details"
-  fi
-done <<< "$(grep -lF 'Task { [weak self] in' \
-  $(repo_files 'Sources/SlopDeskPhoneUI/**/*.swift' 'Sources/SlopDeskClientCore/**/*.swift' \
-    'Sources/SlopDeskWorkspaceCore/**/*.swift') \
-  2> /dev/null || true)"
-declare -a latch_shares=(
-  "Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift:reflowDeadline.arm"
-  "Sources/SlopDeskWorkspaceCore/Video/RemoteWindowModel.swift:reflowDeadline.arm"
-  "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:noticeClear.arm"
-  "Sources/SlopDeskDevicePanels/Simulator/SimulatorSidebarModel.swift:noticeClear.arm"
-  "Sources/SlopDeskDevicePanels/Android/AndroidSidebarModel.swift:reattempt.arm"
-  "Sources/SlopDeskClientCore/Pane/PaneDragCoordinator.swift:springLoadTask.arm"
-)
-for share in "${latch_shares[@]}"; do
-  if ! grep -qF "${share#*:}" "${share%%:*}"; then
-    fail "${share%%:*} stopped arming a DeadlineLatch — the timer is shared, the state is not"
-  fi
-done
-# Clipboard sync's two ends are two halves of ONE wire contract, so the pasteboard↔clip conversion
-# is one file. They had already drifted once — the client refuses to push a CONCEALED clip and the
-# host does not refuse to ship one back — which is now a named parameter rather than two bodies.
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-clipdupes=$(spells 'forType: .tiff|MetadataCodec.maxClipboardContentBytes' \
-  $(repo_files 'Sources/**/*.swift' | grep -v 'PasteboardClip.swift') 2> /dev/null || true)
-if [[ -n "${clipdupes}" ]]; then
-  printf '%s\n' "${clipdupes}" >&2
-  fail "a second pasteboard↔clip conversion grew back — PasteboardClip reads and writes both ends"
-fi
-declare -a clip_shares=(
-  "Sources/SlopDeskHost/HostClipboardPerformer.swift:PasteboardClip.read"
-  "Sources/SlopDeskHost/HostClipboardPerformer.swift:PasteboardClip.write"
-  "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift:PasteboardClip.read"
-  "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift:PasteboardClip.write"
-)
-for share in "${clip_shares[@]}"; do
-  if ! grep -qF "${share#*:}" "${share%%:*}"; then
-    fail "${share%%:*} stopped calling ${share#*:} — the two ends agree by sharing, not by luck"
-  fi
-done
-# Every JSON sidecar sorts its keys. Not tidiness: docs/22 §8's round-trip tests compare BYTES, and
-# Swift's default key order is not stable across runs, so an encoder that omits `.sortedKeys` writes
-# a perfectly good file and turns a passing test into one that fails on a Tuesday. A positive check,
-# because a `JSONEncoder` is ordinary Foundation used in plenty of places that never touch disk.
-# The candidate list IS the `outputFormatting` grep that used to be the loop's first line, hoisted
-# out of it: one process over the tree instead of one per file, and a deleted-but-still-indexed file
-# simply does not come back from `grep -l`.
-# `< /dev/null` for the reason written at `spells` — this is the ONE ban that greps a splat directly
-# instead of going through it, so it needs the guard spelled out rather than inherited.
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-while IFS= read -r file; do
-  [[ -f "${file}" ]] || continue
-  grep -q '\.sortedKeys' "${file}" || {
-    printf '%s\n' "${file}" >&2
-    fail "a sidecar encoder set outputFormatting without .sortedKeys — docs/22 §8 compares bytes"
-  }
-done <<< "$(grep -lF 'outputFormatting' $(repo_files 'Sources/**/*.swift') < /dev/null 2> /dev/null || true)"
-# …and inside WorkspaceCore, where four stores wrote sidecars, there is one encoder for all of them.
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-core_encoders=$(spells 'outputFormatting' \
-  $(repo_files 'Sources/SlopDeskWorkspaceCore/**/*.swift' | grep -v 'SidecarJSON.swift') 2> /dev/null || true)
-if [[ -n "${core_encoders}" ]]; then
-  printf '%s\n' "${core_encoders}" >&2
-  fail "a second sidecar encoder grew back in WorkspaceCore — SidecarJSON.encoder is the one"
-fi
-# The two client-side debug gates are read in ONE file. Not tidiness: `SLOPDESK_BLOCKS_DEBUG` traces a
-# block jump END-TO-END across three files (`[blocks]` issue → `[flash]` arm/settle → `[flash]` paint),
-# so a reader that spells the gate itself is one that can spell it `!= nil` while the others say
-# `== "1"` — and then half the trace appears and the missing half reads as "that step never ran". One
-# of the three had already drifted to its own copy of gate + tag when this check was written.
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-tracegates=$(spells 'SLOPDESK_BLOCKS_DEBUG|SLOPDESK_WORKSPACE_DEBUG' \
-  $(repo_files 'Sources/**/*.swift' | grep -v 'Support/DebugTrace.swift') 2> /dev/null || true)
-if [[ -n "${tracegates}" ]]; then
-  printf '%s\n' "${tracegates}" >&2
-  fail "a debug gate is read outside DebugTrace — one gate, one spelling, one tag grammar"
-fi
-# The channel tag is ONE enum in the wire target. The host and the client each used to declare their
-# own copy, byte-identical, each with a doc paragraph explaining that the wire contract — not a Swift
-# type — was the agreement. True of the modules (the client must not depend on the macOS-only host),
-# false of `SlopDeskVideoProtocol`, which both already depend on. Two declarations of one contract is
-# the `process::basename` shape (docs/55 §6): they agree until a seventh channel lands on one side.
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-channeldupes=$(spells 'enum VideoChannel' \
-  $(repo_files 'Sources/**/*.swift' 'Tests/**/*.swift' | grep -v 'SlopDeskVideoProtocol/VideoChannel.swift') 2> /dev/null || true)
-if [[ -n "${channeldupes}" ]]; then
-  printf '%s\n' "${channeldupes}" >&2
-  fail "a second VideoChannel grew back — SlopDeskVideoProtocol owns the tag both sides send"
-fi
-# …and the raw values ARE the wire tags on every media-socket datagram. Renumbering one re-routes a
-# channel on the far side with nothing failing to compile, so each tag is pinned to its number here.
-declare -a channel_tags=(
-  "control = 0" "video = 1" "geometry = 2" "cursor = 3" "input = 4" "recovery = 5" "audio = 6"
-)
-for tag in "${channel_tags[@]}"; do
-  if ! grep -qF "case ${tag}" Sources/SlopDeskVideoProtocol/VideoChannel.swift; then
-    fail "VideoChannel lost 'case ${tag}' — the raw values are the wire tags (doc 17 §3.3)"
-  fi
-done
 # A ``DocC link`` must name something this repo declares. The rule is not tidiness: a port moves the
 # implementation out of Swift and deletes the original (CLAUDE.md), and the doc that described it keeps
 # the old spelling — so a reader chasing ``HostOutputSniffer`` or ``TerminalQueryStripper`` greps Swift,

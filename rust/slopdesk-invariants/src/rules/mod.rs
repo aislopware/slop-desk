@@ -31,6 +31,7 @@ pub mod panel_shells;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
+pub mod sidecar_seams;
 pub mod settings_catalog;
 pub mod settings_rows;
 pub mod split_surfaces;
@@ -952,6 +953,41 @@ pub fn registry() -> Vec<Rule> {
             name: "macui-divider-readout",
             origin: "docs/55 §8",
             check: macui_memos::the_divider_hides_before_it_cuts,
+        },
+        Rule {
+            name: "master-owned-duplicate",
+            origin: "docs/51 §2.3",
+            check: sidecar_seams::a_master_crosses_owned,
+        },
+        Rule {
+            name: "two-sidecar-lifecycles",
+            origin: "docs/55 §6",
+            check: sidecar_seams::two_sidecar_lifecycles_five_faces,
+        },
+        Rule {
+            name: "one-deadline-latch",
+            origin: "docs/55 §6",
+            check: sidecar_seams::one_re_armable_deadline,
+        },
+        Rule {
+            name: "one-pasteboard-clip",
+            origin: "docs/55 §6",
+            check: sidecar_seams::one_pasteboard_clip,
+        },
+        Rule {
+            name: "one-sidecar-encoder",
+            origin: "docs/22 §8",
+            check: sidecar_seams::one_sidecar_encoder,
+        },
+        Rule {
+            name: "one-debug-gate",
+            origin: "docs/46",
+            check: sidecar_seams::one_debug_gate_spelling,
+        },
+        Rule {
+            name: "one-channel-tag",
+            origin: "docs/17 §3.3",
+            check: sidecar_seams::one_channel_tag,
         },
         Rule {
             name: "video-path-lends",
