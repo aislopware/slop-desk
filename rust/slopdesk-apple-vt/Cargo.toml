@@ -1,0 +1,184 @@
+# `slopdesk-apple-vt` — VideoToolbox compression, and the CoreMedia read of what it emits.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# `VTCompressionSessionCreate`, `VTSessionSetProperty`, `VTCompressionSessionEncodeFrame`,
+# `VTCompressionSessionCompleteFrames`, `VTCompressionSessionInvalidate`, and the decode of the
+# `CMSampleBuffer` each finished encode hands back. Nothing else. Every DECISION about the session —
+# which properties, at what values, when a bracket relaxes them and when it puts them back — is
+# `slopdesk-video`'s `encoder_config`/`encoder_state`, which `forbid(unsafe_code)` and always will.
+#
+# The split is the one `docs/57` §2 draws, and it is worth naming here because the Swift original
+# had it the other way round: `VideoEncoder.swift` was 1500 lines of which roughly 350 were
+# VideoToolbox calls and the rest were rules, none of them reachable from a test, because
+# `VTCompressionSessionCreate` HANGS without a window server and a Screen-Recording grant. The rules
+# now run headless; only the calls need the hardware.
+#
+# ## The `unsafe` in this crate
+# `objc2-video-toolbox` generates every VideoToolbox entry point `unsafe` — they are bare `extern`
+# functions — so calling one is `unsafe` no matter how ordinary the arguments are. Beyond that
+# blanket fact, exactly four KINDS of obligation exist here, and each is the FRAMEWORK's contract
+# rather than Rust's:
+#
+# 1. Reading the `kVT*`/`kCM*`/`kCV*` key constants. They are `extern` statics, so Rust cannot prove
+#    they are initialised; the frameworks guarantee it at image load. `slopdesk-apple-cgwindow`
+#    carries the same obligation for `kCGWindow*` and states it the same way. These are read rather
+#    than spelled as string literals for a MEASURED reason: `kVTEncodeFrameOptionKey_ForceKeyFrame`
+#    is the string `EncoderForceKeyframe`, not `ForceKeyFrame`. Every other key in the surface
+#    mirrors its own name, so a literal would have looked right and quietly turned every forced IDR
+#    — every recovery keyframe, every crisp static refresh, every heartbeat — into a delta frame.
+# 2. The CREATE-rule out-parameter of `VTCompressionSessionCreate`. It stores a +1 reference in a
+#    caller-owned slot, and `CFRetained::from_raw` is that ownership moved into the type system.
+#    ONE site, which is the whole allowance `docs/57` §2 gives this family.
+# 3. The GET-rule pointer the output block is handed. `VTCompressionOutputHandler` is generated from
+#    C as `*mut CMSampleBuffer` — a borrowed, +0 reference valid for the call — and `CFRetained::retain`
+#    is the documented way to hold one. ONE site, the second of §2's two counted admissions.
+# 4. Writing through a slot this crate itself owns: `CMBlockBufferCopyDataBytes` fills a `Vec` we
+#    allocated, at a length the framework itself just reported. Nothing foreign is dereferenced —
+#    the same shape `slopdesk-apple-ax` uses for `AXValueGetValue`.
+#
+# What is NOT here: turning a `(pointer, length)` the framework hands out into a slice. The HEVC
+# parameter sets arrive that way, and `slice::from_raw_parts` is a Rust obligation, not a framework
+# one, so [`EncodedSample::parameter_sets`] answers the pairs as VALUES and `slopdesk-ffi` — whose
+# entire `unsafe` remit is "is this `(ptr, len)` live for the duration of this call" — makes the
+# slices, with the owning sample still borrowed for the call that reads them.
+#
+# ## macOS ONLY, and how that is kept true
+# `slopdesk-ffi` links this behind `[target.'cfg(target_os = "macos")'.dependencies]`, its doors are
+# declared inside `slopdesk_ffi.h`'s `MACOS-ONLY BEGIN/END` region, and `scripts/build-ffi.sh`
+# requires those symbols PRESENT on the macOS slice and ABSENT on both iOS slices. iOS HAS
+# VideoToolbox, so unlike `slopdesk-apple-cgevent` an ungated edge here would LINK and merely bloat —
+# which is worse, not better, because nothing would fail. The gate is what catches it.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-vt"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "VideoToolbox HEVC compression for slopdesk — the calls, none of the rules"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_vt"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, all of them, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is
+# documented as explicitly NOT policy, so a caret range would let a routine `cargo update` raise the
+# toolchain floor of a repository that builds three slices in CI.
+[target.'cfg(target_os = "macos")'.dependencies]
+# `objc2` is on because `block2` needs `Encode` for `VTEncodeInfoFlags`, and the output handler is a
+# block. The alternative — the C-function-pointer callback form — takes a `*mut c_void` refcon this
+# crate would have to reconstitute on every frame, which is the raw-pointer operation §2 bars.
+objc2-video-toolbox = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "VTBase",
+  "VTErrors",
+  "VTSession",
+  "VTCompressionSession",
+  "VTCompressionProperties",
+  "block2",
+  "objc2",
+  "objc2-core-media",
+  "objc2-core-video",
+] }
+objc2-core-media = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CMBase",
+  "CMBlockBuffer",
+  "CMFormatDescription",
+  "CMSampleBuffer",
+  "CMTime",
+] }
+objc2-core-video = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CVBase",
+  "CVImageBuffer",
+  "CVPixelBuffer",
+  "CVReturn",
+] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CFArray",
+  "CFBase",
+  "CFDictionary",
+  "CFNumber",
+  "CFString",
+] }
+block2 = "=0.6.2"
+
+# Mirrors `slopdesk-video`'s: this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` because
+# every site sits under its own self-expiring `#[expect(unsafe_code, reason = …)]`, so an exemption
+# that stops being needed fails the build. `unsafe_op_in_unsafe_fn` is `deny` on top, per §3.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# `keys` is a private module whose items are `pub(crate)` because they are the crate's internal
+# vocabulary, not its API. The lint wants them bare `pub`, which would make the module's privacy the
+# only thing holding them in — `slopdesk-apple-ax` disables it for the identical shape.
+redundant_pub_crate = "allow"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

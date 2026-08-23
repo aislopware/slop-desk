@@ -102,6 +102,19 @@ where a Copy-rule pointer becomes an owned value and every typed reader is a cal
 a second one fails `apple-family` with the same message a `transmute` gets. See the fifth correction
 in §5 for the reading that earned this.
 
+**And its Get-rule twin: `CFRetained::retain`, at most once per crate.** The other half of the same
+convention. A function whose name contains neither `Copy` nor `Create` hands back a BORROWED +0
+reference valid only for the call, and the place that matters is a callback: `objc2` generates
+`VTCompressionOutputHandler`'s sample buffer as a bare `*mut CMSampleBuffer` because that is what
+the C block signature says, and a sink that outlives the block needs a reference of its own.
+`CFRetained::retain` is Apple's documented way to take one. Same shape as the Copy-rule admission
+and same defence: a framework obligation, checked by reading the callee's name, counted at ONE site
+per crate so the question "is this borrowed pointer still the framework's" is answered where the
+framework hands it across rather than wherever someone found a pointer. Counted by the qualified
+path only — `value.retain()` on a live typed reference asserts nothing and is not this admission.
+The two counts are independent: a crate that owns a session AND reads its callback's samples
+genuinely carries both, and one does not consume the other.
+
 **Every `unsafe` block names the FRAMEWORK rule it satisfies**, not a Rust rule. `// SAFETY: the
 buffer outlives the call` is the wrong comment here — the binding already proved that. The right one
 is `// SAFETY: kAXRaiseAction is a documented action on a window element; a stale element is a
@@ -161,6 +174,8 @@ Ordered by how much Swift each removes against how much `unsafe` it costs. `cgev
 because the spike proved it costs NONE: the whole injection path is safe `objc2` calls. The two
 window-server rows cost three `unsafe` blocks each, and every one of the six names a framework rule —
 an `extern` key constant, an element type C's `CFArrayRef` does not carry, an out-pointer enumerator.
+`vt` is the first row whose Swift original was mostly RULES rather than calls, and it is split
+accordingly — see the sixth correction.
 
 | Crate | Wraps | Replaces | State |
 | --- | --- | --- | --- |
@@ -178,7 +193,7 @@ an `extern` key constant, an element type C's `CFArrayRef` does not carry, an ou
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s
 one-implementation rule does not soften because the other language is a framework.
 
-### Five corrections this ledger earned by being wrong
+### Six corrections this ledger earned by being wrong
 
 **`ForegroundProcessProbes` was never an `slopdesk-apple-app` row.** It sat in that line because it
 was read as "host code that resolves a process", and it contains no AppKit at all: `tcgetpgrp`,
@@ -269,3 +284,36 @@ Swift read the second only when the first had already matched. Passing both as V
 made that eager and doubled the round trips of an 800-node walk to learn nothing, so the second
 attribute crosses as a closure and the policy crate decides whether to call it. Laziness here is not
 an optimisation applied to a rule; it is part of the rule, and it lives with it.
+
+**The `vt` row is two thirds decisions, and reading it that way is what found a silent bug.**
+`VideoEncoder.swift` was 1500 lines, and the ledger row named the file. Roughly 350 of those lines
+are VideoToolbox calls; the rest are a dozen environment parses, three clamps, a rate-limit
+calculation and a seven-field rate-control state machine with three concurrent writers. None of it
+had ever run in a test, and the file's own header said why: `VTCompressionSessionCreate` hangs
+without a window server and a Screen-Recording grant, so a constructor nobody could call held rules
+nobody could reach. The row therefore lands as three pieces, not one — `slopdesk-apple-vt` for the
+calls, `slopdesk_video::encoder_config` and `::encoder_state` for the rules, and the shim for the
+join. That is the same split the `HostNavHistory` row settled into one increment earlier; what is
+new is the RATIO, and it is the reason a row that names a Swift file rather than an API has to be
+read before it is scheduled.
+
+Two measurements paid for themselves before a line of the crate was written. The property keys were
+read from the framework's own `extern` statics rather than transcribed as string literals, and
+`kVTEncodeFrameOptionKey_ForceKeyFrame` turns out to be the string `EncoderForceKeyframe`. Every
+other key in the surface — twenty-odd of them — is spelled exactly like the tail of its own
+constant, so a literal would have looked right to any reviewer, applied without error, encoded
+successfully, and quietly shipped every forced IDR as a delta frame: no recovery keyframe, no crisp
+static refresh, no heartbeat, and nothing anywhere reporting a fault. `kVTQPModulationLevel_Disable`
+is `0` rather than the `-1` its name suggests, which is the same class of thing one step less
+dangerous.
+
+The row also cost the Get-rule admission in §2, and the placement of the other three obligations is
+what kept it to one. The session's Create-rule out-parameter uses the existing `CFRetained::from_raw`
+site. The encoded payload avoids `slice::from_raw_parts` ENTIRELY by asking
+`CMBlockBufferCopyDataBytes` to copy into a `Vec` the crate allocated and resized first — the same
+"writes through a slot the caller owns" shape `slopdesk-apple-ax` uses for `AXValueGetValue`, and it
+costs nothing, because appending the parameter sets before the payload turns the Swift's two copies
+per keyframe into one. The HEVC parameter sets have no copy-out variant in the SDK at all, so they
+are answered as `(NonNull<u8>, usize)` VALUES and the one slice is made in `slopdesk-ffi`, whose
+entire `unsafe` remit is that question. Only the output block's `*mut CMSampleBuffer` had nowhere
+else to go, and that is the admission.

@@ -171,6 +171,7 @@ pub fn apple_family(tree: &Tree) -> Report {
         let mut read_any = false;
         let mut hand_written = false;
         let mut copy_rule_sites = 0_usize;
+        let mut get_rule_sites = 0_usize;
         for (path, file) in tree.under(&src) {
             if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
                 continue;
@@ -181,6 +182,15 @@ pub fn apple_family(tree: &Tree) -> Report {
                 // `from_raw` is still a raw-pointer operation whatever it is reconstructing.
                 if line.contains("CFRetained::from_raw") {
                     copy_rule_sites += 1;
+                    continue;
+                }
+                // The Get-rule twin: a framework hands out a BORROWED +0 pointer valid only for the
+                // call — a callback's sample buffer, a delegate's argument — and taking a reference
+                // of one's own is how it outlives that call. Qualified path only, for the same
+                // reason: `something.retain()` on a live typed reference asserts nothing and is not
+                // this admission.
+                if line.contains("CFRetained::retain") {
+                    get_rule_sites += 1;
                     continue;
                 }
                 hand_written |= crate::text::matches_line(
@@ -207,6 +217,15 @@ pub fn apple_family(tree: &Tree) -> Report {
                 "{crate_dir} takes a Core Foundation Copy-rule retain in {copy_rule_sites} places — the \
                  family admits CFRetained::from_raw at ONE site per crate, so that every typed reader is a \
                  caller of that helper rather than a second obligation (docs/57 §2)",
+            ),
+        );
+        report.fail_if(
+            get_rule_sites > 1,
+            format!(
+                "{crate_dir} takes a Core Foundation Get-rule retain in {get_rule_sites} places — the \
+                 family admits CFRetained::retain at ONE site per crate, so the question 'is this \
+                 borrowed pointer still the framework's' is answered once, at the boundary the \
+                 framework hands it across (docs/57 §2)",
             ),
         );
     }
@@ -469,6 +488,41 @@ mod tests {
             report.violations().iter().any(|v| v.contains("Copy-rule retain")),
             "{report:?}"
         );
+    }
+
+    /// The Get-rule admission is counted the same way and for the same reason: one site per crate,
+    /// so the question "is this borrowed pointer still the framework's" is answered where the
+    /// framework hands it across rather than at every place someone found a pointer.
+    #[test]
+    fn a_second_get_rule_retain_is_caught_where_the_first_is_admitted() {
+        let one = "pub fn borrow() { let _ = unsafe { CFRetained::retain(value) }; }\n";
+        let fixture = policy_fixture("apple-get-rule");
+        fixture.write("rust/slopdesk-apple-cgevent/src/lib.rs", one);
+        assert!(super::apple_family(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            &format!("{one}pub fn again() {{ let _ = unsafe {{ CFRetained::retain(other) }}; }}\n"),
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("Get-rule retain")),
+            "{report:?}"
+        );
+    }
+
+    /// The two admissions are counted SEPARATELY, so a crate may hold one of each — the Create rule
+    /// and the Get rule are different obligations and a crate that owns a session and reads its
+    /// callback's samples genuinely carries both.
+    #[test]
+    fn the_copy_and_get_admissions_do_not_consume_each_other() {
+        let fixture = policy_fixture("apple-both-rules");
+        fixture.write(
+            "rust/slopdesk-apple-cgevent/src/lib.rs",
+            "pub fn create() { let _ = unsafe { CFRetained::from_raw(out) }; }\n\
+             pub fn borrow() { let _ = unsafe { CFRetained::retain(value) }; }\n",
+        );
+        assert!(super::apple_family(&fixture.tree()).is_clean());
     }
 
     /// The admission is by QUALIFIED path. `Box::from_raw`, `CString::from_raw` and friends

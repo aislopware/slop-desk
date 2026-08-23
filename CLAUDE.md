@@ -54,9 +54,11 @@ guessing one.
 - **`slopdesk-apple-*` is the one other family allowed `unsafe`, and only through `objc2`.** A crate
   in it wraps exactly ONE Apple framework area, calls it through the `objc2` bindings, and may not
   hand-write a raw-pointer dereference or a transmute — if a call needs one, the obligation belongs
-  in one of the three crates above and the operation moves there. The one admission is
-  `CFRetained::from_raw`, at most ONE site per crate, for a Copy/Create-rule out-parameter that
-  `objc2` hands over raw; the count is gated, and any other `from_raw` is still barred. Most of what
+  in one of the three crates above and the operation moves there. TWO admissions, each Core
+  Foundation's own ownership convention and each at most ONE gated site per crate:
+  `CFRetained::from_raw` for a Copy/Create-rule out-parameter `objc2` hands over raw, and
+  `CFRetained::retain` for a Get-rule pointer a callback borrows. Both are recognised by the
+  QUALIFIED path; any other `from_raw` is still barred. Most of what
   these crates call is `safe` in the bindings already, so `unsafe` here means "the framework's own
   contract", never "Rust's". Each carries `#![deny(unsafe_op_in_unsafe_fn)]`, a `# Safety` note per
   `unsafe` block naming the framework rule it satisfies, and a leak test. This family exists because
