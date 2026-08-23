@@ -84,7 +84,7 @@ pub unsafe extern "C" fn slopdesk_sidecar_audit(
 /// The version out of a `--version` banner: the second field of the first line.
 ///
 /// Exported rather than reimplemented on the near side because the SAME parse decides what
-/// `package-release.sh` pins, what the manifest carries and what this audit compares. Three readers
+/// `slopdesk-release package` pins, what the manifest carries and what this audit compares. Three
 /// of one contract is two chances to drift.
 ///
 /// # Safety

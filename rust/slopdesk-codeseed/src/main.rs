@@ -112,8 +112,8 @@ fn sync_font(arguments: &[String], environment: &paths::Environment) -> Option<V
 /// `--version`, on stdout with the rest of this program's output.
 ///
 /// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
-/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
-/// binary against `scripts/tool-stamps.pin`.
+/// every tool in this tree answers and the one `slopdesk-release package` parses when it checks a
+/// built binary against `scripts/tool-stamps.pin`.
 ///
 /// The parenthetical names the two artefacts this program WRITES into the workbench profile, and
 /// they are why it needs a version banner at all despite speaking no wire: it is not a daemon

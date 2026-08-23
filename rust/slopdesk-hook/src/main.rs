@@ -10,7 +10,7 @@ fn main() {
     // `--version` FIRST, and it is the only argument this binary understands.
     //
     // The relay is forked twice per tool call and its whole cost is startup, so an argv branch here
-    // is not free and was not added lightly. What buys it: `package-release.sh` asks every shipped
+    // is not free and was not added lightly. What buys it: the packager asks every shipped
     // binary its version and refuses to package on a disagreement with `scripts/tool-stamps.pin`.
     // A gate with one exemption is a gate someone has to remember the shape of, and the exempt tool
     // would have been THIS one — the binary that gets copied to a SECOND place on disk by

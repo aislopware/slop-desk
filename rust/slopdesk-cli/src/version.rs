@@ -1,10 +1,10 @@
 //! `slopdesk version` — the multi-line banner, assembled from values the caller supplies.
 //!
 //! ## Why the version number is a parameter and not a constant here
-//! `docs/49-release-pipeline.md` names six version sites, and `bump-version.sh` owns all six
-//! because no gate can see most of them. Transliterating `CLIVersion.version` would have made a
-//! seventh — one the bump script does not know about, and one `package-release.sh` would not catch,
-//! because that gate asks the built CLI binary and would keep asking the Swift one.
+//! `docs/49-release-pipeline.md` names six version sites, and `slopdesk-release bump-product` owns
+//! all six because no gate can see most of them. Transliterating `CLIVersion.version` would have
+//! made a seventh — one the bumper does not know about, and one `slopdesk-release package` would
+//! not catch, because that gate asks the built CLI binary and would keep asking the Swift one.
 //!
 //! So the number stays in exactly one place and arrives here as an argument. What was worth porting
 //! is the SHAPE of the banner and the build-hash branch, which is the part that had a test.

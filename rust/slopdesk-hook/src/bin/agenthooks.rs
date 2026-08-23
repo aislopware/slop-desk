@@ -43,8 +43,8 @@ fn main() -> ExitCode {
     };
     // Ahead of the path resolution, because "which one is installed" is asked precisely when the
     // environment is the thing in doubt. The SECOND whitespace-separated field of the FIRST line is
-    // the version — the shape every tool in this tree answers and the one `package-release.sh`
-    // parses when it checks a built binary against `scripts/tool-stamps.pin`.
+    // the version — the shape every tool in this tree answers and the one `slopdesk-release
+    // package` parses when it checks a built binary against `scripts/tool-stamps.pin`.
     //
     // NOT the JSON this program's real subcommands return: a version banner is read by a human and
     // by one `awk` in the packaging script, and wrapping it in an object would make both work

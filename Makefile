@@ -54,12 +54,15 @@ SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
 # using it as a proxy silently dropped five scripts — `check-supervisor.sh` and `build-ffi.sh` among
 # them, the two this repo leans on hardest. They are untracked, so `git ls-files` never named them,
 # so shellcheck had never run on either and `make fmt-shell` had never touched them: a lint scope
-# that shrinks when a file is new is exactly backwards. Every `.sh` we own lives in `scripts/` (the
-# 25 tracked ones all do) plus the one under `ThirdParty/tools`, and a glob says so without a list.
+# that shrinks when a file is new is exactly backwards. Every `.sh` we own lives in `scripts/` plus
+# the one under `ThirdParty/tools`, and a glob says so without a list. The COUNT is deliberately not
+# written here: it falls every time a script becomes Rust, and a number in a comment is one more
+# thing to forget.
 SHELL_FILES  := $(wildcard scripts/*.sh) ThirdParty/tools/provision.sh
 SHFMT_FLAGS  := -i 2 -ci -sr
 # There is no PY_FILES, and no ruff. Every Python script this repo had is now Rust — the four
-# lint gates are rules in `rust/slopdesk-invariants`, the three operator tools are binaries in
+# lint gates are rules in `rust/slopdesk-invariants`, the operator tools (the release pipeline, the
+# herdr harness, the Swift access raiser, the input synclient) are binaries in
 # `rust/slopdesk-devtools`. A `$(wildcard scripts/*.py)` left behind would be a lint scope that
 # silently un-empties the day someone drops a script in, which is the shape of gate this file
 # already warns about twice below.
@@ -446,9 +449,10 @@ screend-test: ## cargo test for the screen engine
 screend-install: ## Build + (re)install the com.slopdesk.screend LaunchAgent
 	bash scripts/install-screend.sh
 
-# The operator tools (rust/slopdesk-devtools): the herdr sync + parity harness, the Swift access
-# raiser, the input synclient. Not part of `build` — nothing ships them and no gate runs them, so
-# they are built when a harness asks for them (`herdr-sync.sh`, `video-input-test.sh`) and not on
+# The operator tools (rust/slopdesk-devtools): the release pipeline, the herdr sync + parity
+# harness, the Swift access raiser, the input synclient. Not part of `build` — nothing ships them
+# and no gate runs them, so they are built when a harness asks for them (`herdr-sync.sh`,
+# `video-input-test.sh`, every `make release*` target) and not on
 # the inner loop. Their tests DO run in `test-rust`, via the workspace glob.
 devtools: ## Build the operator tools (rust/slopdesk-devtools)
 	cd rust/slopdesk-devtools && cargo build --release
@@ -810,17 +814,19 @@ golden: ## Verify the wire codecs still reproduce golden/golden_vectors.json
 .PHONY: changelog release release-preview
 # The release metadata, generated from the commit log rather than hand-maintained. The commit TYPE
 # decides both the CHANGELOG.md section a change lands in and whether the version moves a minor or
-# a patch, which is why `scripts/check-commit-msg.sh` gates the subject at commit-msg time.
+# a patch, which is why the `commit-msg` hook (`slopdesk-release commit-msg`) gates the subject at
+# commit time. The whole pipeline is ONE binary — `rust/slopdesk-devtools/src/release/` — where it
+# used to be eight shell scripts sharing a tool table by `source`-ing each other.
 changelog: ## Regenerate CHANGELOG.md from the commit log (git-cliff)
-	bash scripts/render-changelog.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- changelog render
 
 release-preview: ## Print the version and release notes the next cut would produce; write nothing
-	bash scripts/cut-release.sh --dry-run
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- cut --dry-run
 
 # Commits and tags LOCALLY; pushing the tag is the separate keystroke that starts the signing
 # pipeline. `make release VERSION=0.3.0` forces a version instead of computing it.
 release: ## Cut a release: version + CHANGELOG.md + the six version sites + commit + tag
-	bash scripts/cut-release.sh $(VERSION)
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- cut $(VERSION)
 
 # ---------------------------------------------------------------------------- #
 .PHONY: tool-versions
@@ -829,17 +835,17 @@ release: ## Cut a release: version + CHANGELOG.md + the six version sites + comm
 # The product version moves on every cut; a sidecar's moves only when its own sources did. That is
 # what lets an upgrade replace the daemon that changed and leave the others running — restarting
 # superd costs the user every live pane (`docs/51`), and it should cost that only when superd
-# actually changed. `scripts/tool-stamps.sh` is what can tell, and `MANIFEST.json` in the tarball
+# actually changed. `slopdesk-release stamps` is what can tell, and `MANIFEST.json` in the tarball
 # is where the answer ships.
 #
 # NOT part of `check` or `quick`, deliberately: a sidecar whose sources changed since the last
 # release is the ordinary state of `main`, so a gate here would be red almost always and mean
 # nothing when it was. The gate that DOES run is `every-sidecar-is-pinned` in
 # `rust/slopdesk-invariants` — every shipped sidecar
-# must have a pin entry — and the one that refuses to ship a lie is in `package-release.sh`, which
-# asks each built binary its version and compares it with the pin.
+# must have a pin entry — and the one that refuses to ship a lie is `slopdesk-release package`,
+# which asks each built binary its version and compares it with the pin.
 tool-versions: ## Show which sidecars changed since the last release, and the bump each would take
-	bash scripts/bump-tool-versions.sh --dry-run
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- bump-tools --dry-run
 
 # ---------------------------------------------------------------------------- #
 .PHONY: provision provision-check

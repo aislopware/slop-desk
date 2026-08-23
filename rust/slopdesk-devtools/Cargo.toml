@@ -22,7 +22,7 @@ name = "slopdesk-devtools"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Operator tools: the herdr sync + parity harness, the Swift access raiser, the input synclient"
+description = "Operator tools: the release pipeline, the herdr parity harness, the Swift access raiser, the input synclient"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
@@ -42,6 +42,10 @@ path = "src/bin/swift_access.rs"
 name = "slopdesk-synclient"
 path = "src/bin/synclient.rs"
 
+[[bin]]
+name = "slopdesk-release"
+path = "src/bin/release.rs"
+
 [dependencies]
 # The access raiser is a line scanner over SwiftFormat-clean source, which is what makes a regex
 # the right reader rather than a shortcut — and the same DFA-backed crate the invariants gate
@@ -50,6 +54,12 @@ regex = "1"
 # The differential forks two binaries per case and there are tens of thousands of cases. The work
 # is entirely wait, and the cases are independent by construction.
 rayon = "1"
+# The tool stamps are a digest of each sidecar's source closure, and the release tarball's
+# SHA256SUMS is what the Homebrew tap pins. RustCrypto's `sha2` rather than a hand-rolled block
+# function or a `shasum` fork: it is the reference implementation the rest of the ecosystem audits,
+# it is `no_std`-clean and dependency-light, and hashing in-process is what turns a stamp scan from
+# hundreds of process spawns into one pass over the bytes.
+sha2 = "0.10"
 # Both engines answer in JSON and the diff is FIELD-level. Hand-rolling a reader for a document
 # upstream controls is the classic place to be wrong, and the projection has to compare values
 # structurally — `"1.0"` and `1.0` are not the same answer.

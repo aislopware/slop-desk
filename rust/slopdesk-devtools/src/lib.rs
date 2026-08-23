@@ -6,6 +6,11 @@
 //! reason a parity run means anything twice. As a library those are functions with unit tests; as
 //! a script they were prose in a docstring.
 //!
+//! The release pipeline arrived the same way and for the same reason: nine shell scripts sharing a
+//! tool table, a semver arithmetic and a commit grammar by `source`-ing each other, none of which
+//! any gate could reach. As [`release`] they are modules with unit tests, and the binary over them
+//! is the eight verbs a release needs.
+//!
 //! The binaries in `src/bin/` are argument parsing, process spawning and printing, and nothing
 //! else.
 
@@ -16,6 +21,7 @@
 pub mod access;
 pub mod differential;
 pub mod manifests;
+pub mod release;
 pub mod repo;
 pub mod rng;
 pub mod synclient;

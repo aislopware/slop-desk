@@ -805,7 +805,7 @@ fi
 while IFS= read -r artifact; do
   git check-ignore -q "${artifact}" || continue # a tracked artifact is checked out, not built
   # EVERY script that names it outside a comment, not the first one found. Several scripts know an
-  # artifact without producing it — the two renderer togglers and `package-release.sh` all name
+  # artifact without producing it — both renderer togglers name
   # libghostty's — and `head -1` picked one of those and demanded the release run it. The question
   # that has one right answer is whether the workflow runs ANY of them. Comment lines are stripped on
   # this side too: `build-ffi.sh` discusses libghostty's gitignore in prose, which is how it came to

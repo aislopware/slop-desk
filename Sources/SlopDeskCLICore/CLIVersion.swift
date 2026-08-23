@@ -4,8 +4,8 @@ import SlopDeskProtocol
 
 // `slopdesk version` — the Swift face of `rust/slopdesk-cli`'s `version`. The banner's SHAPE and
 // the build-hash branch are the crate's; the version NUMBER stays here on purpose. `docs/49` names
-// six version sites and `bump-version.sh` owns all six because no gate can see most of them — a
-// seventh, in Rust, would be one the bump script does not know about and `package-release.sh`
+// six version sites and `slopdesk-release bump-product` owns all six because no gate can see most
+// of them — a seventh, in Rust, would be one the bumper does not know about and the packager
 // would not catch, because that gate asks the built CLI binary. So the number is passed in.
 
 public enum CLIVersion {

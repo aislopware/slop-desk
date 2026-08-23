@@ -279,23 +279,28 @@ pub fn a_script_with_a_shebang_is_executable(tree: &Tree) -> Report {
 // The release, in three steps
 // ------------------------------------------------------------------------------------------- //
 
-/// The one file the tool arrays live in — read by four scripts and by two rules here.
-const SHIPPED_TOOLS: &str = "scripts/shipped-tools.sh";
+/// The one file the tool arrays live in — read by the release binary's own modules and by two
+/// rules here.
+const SHIPPED_TOOLS: &str = "rust/slopdesk-devtools/src/release/tools.rs";
 /// The per-binary version pins `MANIFEST.json` publishes.
 const TOOL_PIN: &str = "scripts/tool-stamps.pin";
 /// The formula the release workflow copies into the tap, rewriting only `version` and `sha256`.
 const FORMULA: &str = "packaging/homebrew/Formula/slopdesk.rb";
 
-/// Every `slopdesk-…` name inside the named tool arrays of `scripts/shipped-tools.sh`.
+/// Every `slopdesk-…` name inside the named tool arrays of the release binary's tool table.
 ///
-/// Reading the ARRAYS rather than the file is the whole gate: a first draft grepped
-/// `package-release.sh` whole, which the comment above those arrays — it names every daemon —
-/// satisfied on its own. A gate a comment can pass is not a gate.
+/// Reading the ARRAYS rather than the file is the whole gate: a first draft grepped the whole
+/// packager, which the commentary around those arrays — it names every daemon — satisfied on its
+/// own. A gate a comment can pass is not a gate. The same reason keeps this a TEXT read after the
+/// table became Rust: a gate that linked the crate it judges would be judging itself.
 fn shipped(tree: &Tree, report: &mut Report, arrays: &str, name_pattern: &str) -> BTreeSet<String> {
     let Some(tools) = report.source(tree, SHIPPED_TOOLS, "the shipped tool arrays live there") else {
         return BTreeSet::new();
     };
-    let bodies = text::capture_all(&tools.text, &format!(r"(?s)^(?:{arrays})=\((.*?)\)"));
+    let bodies = text::capture_all(
+        &tools.text,
+        &format!(r"(?s)^pub const (?:{arrays}): &\[&str\] =(.*?)\]"),
+    );
     if bodies.is_empty() {
         report.fail(format!(
             "{SHIPPED_TOOLS}: the release tool arrays are gone — this gate is blind"
@@ -368,14 +373,14 @@ pub fn the_release_ships_every_sidecar_the_host_needs(tree: &Tree) -> Report {
 ///
 /// `MANIFEST.json` publishes a version per binary, and the install side restarts a daemon when that
 /// version moves — so a tool missing from `scripts/tool-stamps.pin` is not a cosmetic gap.
-/// `package-release.sh` would find no pinned version, and `bump-tool-versions.sh` would treat the
-/// tool as new on every single run, bumping it whether or not it changed. Either way the number
+/// `slopdesk-release package` would find no pinned version, and `bump-tools` would treat the tool
+/// as new on every single run, bumping it whether or not it changed. Either way the number
 /// stops meaning "this daemon is different from the one you have", which is the only thing it is
 /// for.
 ///
 /// Only the CARGO tools: `slopdesk` and `slopdesk-hostd` are `SwiftPM`, they ARE the product, and
 /// their version is the product's (`docs/49` §"The six version sites"). A pin entry for them would
-/// be a seventh version site — exactly the thing `bump-version.sh` exists to prevent.
+/// be a seventh version site — exactly the thing `slopdesk-release bump-product` exists to prevent.
 #[must_use]
 pub fn every_shipped_sidecar_carries_its_own_version(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -404,7 +409,7 @@ pub fn every_shipped_sidecar_carries_its_own_version(tree: &Tree) -> Report {
     disagreeing.extend(pinned.difference(&carried).cloned());
     sites(
         &mut report,
-        "scripts/tool-stamps.pin and the shipped cargo tools disagree — run scripts/bump-tool-versions.sh",
+        "scripts/tool-stamps.pin and the shipped cargo tools disagree — run `slopdesk-release bump-tools`",
         &disagreeing,
     );
     report
@@ -1095,8 +1100,9 @@ mod tests {
     fn a_formula_that_installs_no_manifest_is_red() {
         let fixture = Fixture::new("formula");
         fixture.write(
-            "scripts/shipped-tools.sh",
-            "SPM_TOOLS=(slopdesk slopdesk-hostd)\nRUST_ROOT_TOOLS=(slopdesk-ctl)\n",
+            "rust/slopdesk-devtools/src/release/tools.rs",
+            "pub const SPM_TOOLS: &[&str] = &[\"slopdesk\", \"slopdesk-hostd\"];\npub const \
+             RUST_ROOT_TOOLS: &[&str] = &[\"slopdesk-ctl\"];\n",
         );
         fixture.write(
             "packaging/homebrew/Formula/slopdesk.rb",

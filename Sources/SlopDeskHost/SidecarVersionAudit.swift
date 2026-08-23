@@ -62,7 +62,7 @@ public enum SidecarVersionAudit {
     /// The `--version` banner of the binary at `path`, or `nil` when it is absent or would not run.
     ///
     /// The PARSE is the door's — field two of line one, the contract every shipped binary honours and
-    /// `package-release.sh` pins against. Only the spawn is here, and it is here rather than in
+    /// `slopdesk-release package` pins against. Only the spawn is here, and it is here rather than in
     /// ``SidecarVersionReport`` so the decision stays testable without a process tree; a caller
     /// under test substitutes its own reader.
     public static func installedVersion(ofBinaryAt path: String) -> String? {

@@ -54,9 +54,9 @@ fn main() -> ExitCode {
 /// output is a log and goes to stderr.
 ///
 /// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
-/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
-/// binary against `scripts/tool-stamps.pin`. The parenthetical is [`VERSION`], the PROTOCOL — a
-/// different number moving for a different reason: this daemon's version says what code is
+/// every tool in this tree answers and the one `slopdesk-release package` parses when it checks a
+/// built binary against `scripts/tool-stamps.pin`. The parenthetical is [`VERSION`], the PROTOCOL —
+/// a different number moving for a different reason: this daemon's version says what code is
 /// running, `VERSION` says what a client must speak. They are printed together precisely so nobody
 /// has to guess which is which.
 #[expect(clippy::print_stdout, reason = "a --version banner is stdout by convention")]

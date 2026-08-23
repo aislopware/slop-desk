@@ -133,7 +133,9 @@ jobs:
       # job needs this section to exist; discovering that at the END of the pipeline means
       # a tag that burned a notarization round trip and still cannot be released.
       - name: Check the changelog has a section for this version
-        run: scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > /dev/null
+        run: |
+          cargo run --release --quiet --manifest-path rust/slopdesk-devtools/Cargo.toml \
+            --bin slopdesk-release -- changelog section "${{ steps.version.outputs.version }}" > /dev/null
 
       - uses: actions/download-artifact@v8
         with:
@@ -228,7 +230,8 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: \
             -s -k "${keychain_password}" "${keychain}" > /dev/null
 
-          scripts/package-release.sh
+          cargo run --release --quiet --manifest-path rust/slopdesk-devtools/Cargo.toml \
+            --bin slopdesk-release -- package
 
       - name: Upload the release artifacts
         uses: actions/upload-artifact@v7
@@ -290,7 +293,8 @@ jobs:
           # A release note answers one question — what changed — and the sections that do not
           # answer it push the part that does off the first screen.
           notes="${RUNNER_TEMP}/release-notes.md"
-          scripts/changelog-section.sh "${VERSION}" > "${notes}"
+          cargo run --release --quiet --manifest-path rust/slopdesk-devtools/Cargo.toml \
+            --bin slopdesk-release -- changelog section "${VERSION}" > "${notes}"
 
           # Re-running a release (a re-tag, a retried job) must not fail on an existing
           # release — and must REFRESH the notes, not leave the first attempt's body behind.
@@ -365,7 +369,7 @@ jobs:
           # formula in it was whatever the last hand-edit left — and for four releases that was a
           # `bin.install` naming three of the twelve binaries, so a `brew install` had no superd and
           # therefore a host that could not open a pane. `packaging/homebrew/` is the source of
-          # truth now, `rust/slopdesk-invariants` derives its install list from `shipped-tools.sh`, and
+          # truth now, `rust/slopdesk-invariants` derives its install list from the release binary's tool table, and
           # this job's only remaining freedom is the version and the two SHAs.
           cp packaging/homebrew/Formula/slopdesk.rb tap/Formula/slopdesk.rb
           cp packaging/homebrew/Casks/slopdesk.rb tap/Casks/slopdesk.rb

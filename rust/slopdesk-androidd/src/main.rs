@@ -93,8 +93,8 @@ struct Options {
 /// output is a log and goes to stderr.
 ///
 /// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
-/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
-/// binary against `scripts/tool-stamps.pin`.
+/// every tool in this tree answers and the one `slopdesk-release package` parses when it checks a
+/// built binary against `scripts/tool-stamps.pin`.
 ///
 /// The parenthetical names the SCRCPY server this bridge speaks to, which is neither a version of
 /// this daemon nor a protocol either side of ours negotiates — it is a pin on somebody else's

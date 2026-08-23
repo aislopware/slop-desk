@@ -13,7 +13,7 @@ better-update vault (org weebuild, env production)   ← p12 + notary creds + ta
 GitHub Actions · aislopware/slop-desk · macos-26 · arm64
    libghostty  →  cached libghostty.xcframework          (Zig 0.15.2, ~40 min cold, ~0 warm)
    package     →  scripts/build-ffi.sh                   (SlopDeskFFI.xcframework, 3 arm64 slices)
-               →  scripts/package-release.sh             (build → stamp → sign → notarize)
+               →  slopdesk-release package               (build → stamp → sign → notarize)
    publish     →  GitHub Release v<version>
    tap         →  aislopware/homebrew-tap                (version + sha256 rewrite)
         ▼
@@ -22,8 +22,14 @@ brew services start slopdesk                   # superd — REQUIRED, see below
 brew install --cask aislopware/tap/slopdesk    # SlopDesk.app + SlopDeskHost.app
 ```
 
-`scripts/package-release.sh` is the single source of truth for *how* a release is built. CI runs
-it unmodified, so a maintainer reproducing a failure locally runs the same code path.
+`slopdesk-release package` is the single source of truth for *how* a release is built. CI runs it
+unmodified, so a maintainer reproducing a failure locally runs the same code path. It is a
+subcommand of `rust/slopdesk-devtools`'s release binary, which replaced nine shell scripts —
+`shipped-tools.sh`, `tool-stamps.sh`, `bump-tool-versions.sh`, `bump-version.sh`,
+`changelog-section.sh`, `render-changelog.sh`, `cut-release.sh`, `check-commit-msg.sh` and
+`package-release.sh` — that shared a tool table, a semver arithmetic and a commit grammar by
+`source`-ing each other. Each of those decidable halves is now a module with unit tests
+(`rust/slopdesk-devtools/src/release/`).
 
 **Two linked artifacts, both gitignored, both built by the pipeline rather than checked out.**
 `libghostty.xcframework` has its own job (cached, because Zig costs ~40 minutes cold);
@@ -44,7 +50,7 @@ Three independent reasons, any one of which is sufficient:
 3. The Homebrew formula and cask both declare `depends_on arch: :arm64`, so `brew` refuses the
    install rather than handing an Intel user a binary that dies at launch.
 
-There is deliberately no x86_64 matrix leg. `package-release.sh` aborts on an x86_64 host rather
+There is deliberately no x86_64 matrix leg. `slopdesk-release package` aborts on an x86_64 host rather
 than emitting a half-broken slice.
 
 ## The vault (better-update, org `weebuild`)
@@ -55,7 +61,7 @@ as the end-to-end-encrypted credential vault, which is platform-agnostic.
 
 It *can* sign and notarize macOS — `better-update macos sign|notarize` (CLI ≥ 0.73.1) does
 Developer-ID signing with hardened runtime, notarizes, and staples. We still keep the identity in
-`env` and drive `codesign`/`notarytool` from `package-release.sh`. **Both routes into the
+`env` and drive `codesign`/`notarytool` from `slopdesk-release package`. **Both routes into the
 credentials store were tried on 2026-08-11 and both are closed** — do not spend the afternoon
 again:
 
@@ -159,7 +165,7 @@ make release             # version + CHANGELOG.md + all six version sites + comm
 git push origin main && git push origin vx.y.z
 ```
 
-`scripts/cut-release.sh` is the whole procedure, and it exists because the manual version of it
+`slopdesk-release cut` is the whole procedure, and it exists because the manual version of it
 had six steps that were each individually easy to forget. It refuses to run off `main` or on a
 dirty tree, then:
 
@@ -169,8 +175,8 @@ dirty tree, then:
    argument — `make release VERSION=0.3.0` — to override it.
 2. **Renders `CHANGELOG.md`** from the same commit log (`cliff.toml`), with the pending commits
    filed under the version about to be tagged rather than left under *Unreleased*.
-3. **Writes the version into all six sites** via `scripts/bump-version.sh`, which greps every one
-   of them back afterwards and fails on a substitution that silently did nothing.
+3. **Writes the version into all six sites** via `slopdesk-release bump-product`, which reads every
+   one of them back off disk afterwards and fails on a substitution that silently did nothing.
 4. **Commits and tags** — `chore(release): vx.y.z`, the one subject `cliff.toml` skips, so the
    release commit never appears in the next release's notes.
 
@@ -186,7 +192,7 @@ spctl -a -vvv -t install /Applications/SlopDesk.app     # accepted / Notarized D
 
 ### The six version sites — the PRODUCT's
 
-`bump-version.sh` owns these; the table is here because the gates cannot see most of them. Every
+`slopdesk-release bump-product` owns these; the table is here because the gates cannot see most of them. Every
 one of them carries the same number, and it moves on every cut, because all six describe one thing:
 the app the user installed. A sidecar is versioned separately — see the next section.
 
@@ -198,11 +204,11 @@ the app the user installed. A sidecar is versioned separately — see the next s
 | `Apps/HostApp-macOS/project.yml` | same two | same reason |
 | `Apps/ClientApp-macOS/Info.plist`, `Apps/HostApp-macOS/Info.plist` | `CFBundleShortVersionString` | xcodegen output that is nevertheless committed, so a clean checkout builds without running xcodegen first — which is exactly why it goes stale silently |
 
-`package-release.sh` asks the built **CLI binary** for its version and **refuses to package** on
+`slopdesk-release package` asks the built **CLI binary** for its version and **refuses to package** on
 drift. That gate covers `CLIVersion.version` only — it never opens either Info.plist and never
 reads `HostEnvironment.buildVersion`. At v0.2.1 both plists still read `0.1.0` and every local
 `xcodebuild` produced an app claiming that version; releases were unaffected only because
-`stamp_and_sign_app` rewrites `CFBundleShortVersionString` with PlistBuddy before signing. That
+the packager rewrites `CFBundleShortVersionString` with PlistBuddy before signing. That
 stamp is why nobody noticed for two releases, not evidence the tree was right.
 
 `Apps/ClientApp-iOS/*.yml` carry their own `0.1.0` and are deliberately left alone: no iOS release
@@ -222,10 +228,10 @@ when the tool did.
 
 | Piece | What it is |
 |---|---|
-| `scripts/shipped-tools.sh` | the tool list and the tool→crate map, SOURCED by the four scripts that need it |
-| `scripts/tool-stamps.sh` | a sha256 over each tool's source closure — its crate plus every local crate it links, derived from the cargo graph |
+| `rust/slopdesk-devtools/src/release/tools.rs` | the tool list and the tool→crate map, read directly by the release binary's own modules and as TEXT by `rust/slopdesk-invariants` |
+| `slopdesk-release stamps` | a sha256 over each tool's source closure — its crate plus every local crate it links, derived from the cargo graph, over repo-RELATIVE paths so it is a property of the tree and not of the checkout |
 | `scripts/tool-stamps.pin` | `<tool> <version> <stamp>` as of the last release. Written by the bumper, never by hand |
-| `scripts/bump-tool-versions.sh` | stamp moved ⇒ bump; stamp same ⇒ leave it. Called by `cut-release.sh` |
+| `slopdesk-release bump-tools` | stamp moved ⇒ bump; stamp same ⇒ leave it. Called by `slopdesk-release cut` |
 | `MANIFEST.json` | in the tarball and attached to the release: one entry per binary, with its version, its stamp and its SHA |
 
 Two questions, two sources, and they are not interchangeable. **Did this tool change** is the
@@ -241,7 +247,7 @@ reached a README, and a version that moved would restart a daemon to install the
 
 ### The version is the identity, not the SHA
 
-`package-release.sh` signs every binary with `--timestamp`, so an unchanged tool rebuilt and
+`slopdesk-release package` signs every binary with `--timestamp`, so an unchanged tool rebuilt and
 re-signed has **different bytes every time**. Comparing shipped SHAs across two releases would
 report every tool as changed, forever — the exact behaviour this exists to end. `MANIFEST.json`
 carries a `sha256` per tool for integrity of *that* file *now*, and the `stamp` beside it is what
@@ -251,7 +257,7 @@ Two gates keep the number honest, and they are deliberately in different places:
 
 * `every-sidecar-is-pinned` (`rust/slopdesk-invariants`) — every shipped cargo tool has a pin entry, and every pin entry names a
   shipped tool. Runs in `make check`.
-* `package-release.sh` — asks every **built** binary `--version` and refuses to package on a
+* `slopdesk-release package` — asks every **built** binary `--version` and refuses to package on a
   disagreement with the pin. The same question the CLI gate has always asked, now asked of all twelve,
   and asked of the binary rather than the source, so a stale artifact staged by `locate_tool` is
   caught here instead of on a user's machine.
@@ -261,7 +267,7 @@ release: that is the ordinary state of `main`, so it would be red almost always 
 when it was. `make tool-versions` prints the same information as a report.
 
 Every cargo tool answers `--version` with the version in the **second whitespace-separated field of
-the first line** — the shape `slopdesk version` has always had and `package-release.sh` has always
+the first line** — the shape `slopdesk version` has always had and the packager has always
 parsed. The parenthetical after it, where there is one, is a *protocol* number and a different
 thing entirely: superd's `1.8`, dropd's `1`, screend's banner digit. A reader who conflates the two
 concludes a patch release requires a client update.
@@ -372,7 +378,7 @@ They moved because the tap was edited in place and nothing could check it. For f
 so a `brew install` produced a host with no superd and therefore no pane, which is the exact bug
 `the_release_ships_every_sidecar_the_host_needs` was written to end, surviving one step further
 down the pipeline in a file that gate could not see. `rust/slopdesk-invariants` now derives the
-formula's install list from `scripts/shipped-tools.sh` as well, and checks that `MANIFEST.json` is
+formula's install list from the release binary's tool table as well, and checks that `MANIFEST.json` is
 installed alongside it.
 
 The same edit made two things this document already claimed actually true: the formula's `service`
@@ -383,7 +389,7 @@ block, and the cask's `depends_on formula: "slopdesk"`.
 The commit TYPE is read twice by the release: once to decide the version, once to decide which
 section of `CHANGELOG.md` the change lands in. A subject outside the conventional-commit grammar
 contributes to neither — silently. So it is gated at commit time by
-`scripts/check-commit-msg.sh`, wired as a `commit-msg` hook in `.pre-commit-config.yaml`:
+`slopdesk-release commit-msg`, wired as a `commit-msg` hook in `.pre-commit-config.yaml`:
 
 ```
 <type>[(scope)][!]: <subject>
@@ -396,7 +402,7 @@ environment to provision.
 
 ### The subject is published text
 
-The grammar is only half of it. `changelog-section.sh` slices these subjects out of `CHANGELOG.md`
+The grammar is only half of it. `slopdesk-release changelog section` slices these subjects out of `CHANGELOG.md`
 and the GitHub Release body is **one bullet per subject, verbatim** — so a subject written to be
 read inside the repo becomes a release note read by someone who has never seen it. The rule is:
 **say what the change does, in the imperative, to a reader who was not here.**
@@ -428,12 +434,12 @@ length. History keeps its style; `cliff.toml` renders it as-is. Only new commits
 `cliff.toml` skips almost nothing, which is deliberate: git-cliff drops a release whose commits
 all got skipped, **header and all**. v0.2.1 carried one `ci` commit and one `chore(release)`
 commit, and hiding both would have deleted the release from the file entirely — then
-`changelog-section.sh 0.2.1` fails on a version that genuinely shipped. Emphasis comes from
+`slopdesk-release changelog section 0.2.1` fails on a version that genuinely shipped. Emphasis comes from
 ordering instead: features and fixes on top, tooling underneath.
 
 ### Where the release notes come from
 
-`scripts/changelog-section.sh <version>` slices one release out of `CHANGELOG.md`. The publish job
+`slopdesk-release changelog section <version>` slices one release out of `CHANGELOG.md`. The publish job
 posts that slice, and **fails when the section is missing** rather than falling back to prose. A
 second copy of the same check runs in the `package` job right after the version resolves, so a tag
 with no notes fails in seconds instead of after a ~20-minute signed, notarized build.
@@ -465,7 +471,7 @@ to ship. Only `--product` links (*Linking slopdesk*), and `--product` needs a de
 `.executable` products. The other `executableTarget`s are dev/bench tools and stay product-less on
 purpose.
 
-Everything else in the tarball is Rust, and `package-release.sh` builds it with
+Everything else in the tarball is Rust, and `slopdesk-release package` builds it with
 `cargo build --release --target aarch64-apple-darwin`. That target triple is explicit for the same
 reason `--arch arm64` is on the Swift half. `locate_tool` resolves a cargo binary to its cargo path
 or to *nothing* — deliberately never falling through to the SwiftPM search, because a stale
@@ -496,7 +502,7 @@ why one function walks for a per-crate `target/` and the other only looks beside
 the formula puts everything in one flat `bin` rather than tucking the daemons into `libexec`.
 
 `rust/slopdesk-invariants` derives the required set from the `RustServicePaths.locate`/`locateBeside`
-call sites and compares it with the tool arrays in `package-release.sh`, so a seventh daemon cannot
+call sites and compares it with the release binary's tool arrays, so a seventh daemon cannot
 be forgotten the way six were. It reads the ARRAYS, not the file: a first draft grepped the script
 whole and the comment naming every daemon satisfied it on its own.
 
@@ -515,12 +521,12 @@ runs the same `HostServer` in-process, so it needs superd exactly as much as the
 cask-only install was the same broken host wearing a menu-bar icon. The CLI tools coming along is a
 side effect of declaring the real dependency.
 
-`package-release.sh` also pins `--scratch-path .build-release` rather than discovering the output
+`slopdesk-release package` also pins `--scratch-path .build-release` rather than discovering the output
 directory, and still *searches* it for the SwiftPM binaries instead of assuming a layout: the path
 differs by build backend (`<triple>/release` vs `Products/Release`), and a packaging script that
 cannot find its own output fails three minutes into CI instead of at the flag.
 
-`scripts/package-release.sh` names `SlopDesk.app` without ever launching it, which is the first
+The packager names `SlopDesk.app` without ever launching it, which is the first
 counterexample to `GuiGateLaunchContractTests`'s "names it ⇒ launches it" net. It is declared in
 that file's `nonLaunchingScripts`, and a companion test re-derives the claim — add an `open` there
 and the suite fails with the verb named.
@@ -539,7 +545,7 @@ and the suite fails with the verb named.
   a networked machine, a failed first launch offline. Verified on the shipped v0.2.1 DMG:
   `stapler validate SlopDesk.app` → *does not have a ticket stapled to it*.
 
-  **Fixed in §3b of `package-release.sh`** (from v0.2.2): both bundles are zipped and notarized in
+  **Fixed in `notarize_apps`** (from v0.2.2): both bundles are zipped and notarized in
   one submission, each is stapled, and only then is the image built from the stapled originals.
   Ordering is the whole trick — the bundle inside the DMG is a *copy*, so a staple after
   `hdiutil create` reaches nothing. Moving that block below the image step leaves the pipeline

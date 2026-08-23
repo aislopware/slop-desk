@@ -136,8 +136,8 @@ fn not_found() -> ExitCode {
 /// more exemption is one more thing to reason about.
 ///
 /// The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
-/// every tool in this tree answers and the one `package-release.sh` parses when it checks a built
-/// binary against `scripts/tool-stamps.pin`.
+/// every tool in this tree answers and the one `slopdesk-release package` parses when it checks a
+/// built binary against `scripts/tool-stamps.pin`.
 fn print_version() -> ExitCode {
     let mut out = std::io::stdout().lock();
     let _unused = writeln!(out, "slopdesk-probe {}", env!("CARGO_PKG_VERSION"));

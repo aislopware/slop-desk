@@ -42,7 +42,7 @@ fn main() -> ExitCode {
 /// ## The format is a contract, not a banner
 /// The SECOND whitespace-separated field of the FIRST line is the version, and every tool in the
 /// tree answers that shape — `slopdesk version` has since before any of this, and
-/// `package-release.sh` has read it that way for as long. That script now asks every shipped
+/// the packager has read it that way for as long. `slopdesk-release package` now asks every shipped
 /// binary the same question and refuses to package on a disagreement with
 /// `scripts/tool-stamps.pin`, so a crate version bumped in `Cargo.toml` and a binary built from
 /// something else cannot both reach a user.

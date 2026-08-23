@@ -118,8 +118,8 @@ pub fn launch_agent_label(tool: &str) -> Option<&'static str> {
 ///
 /// Unknown names are [`RestartPolicy::OperatorChoice`] all the same: a tool this table has not been
 /// taught about has an unknown restart cost, and the safe unknown is "ask". A seventh daemon added
-/// to `scripts/shipped-tools.sh` and not to this match reads as the user's call, which is wrong in
-/// the harmless direction.
+/// to the release binary's tool table and not to this match reads as the user's call, which is
+/// wrong in the harmless direction.
 #[must_use]
 #[expect(
     clippy::match_same_arms,
@@ -208,7 +208,7 @@ pub fn verdict(running: Option<&str>, on_disk: Option<&str>) -> Verdict {
 /// The contract every shipped binary honours (`docs/49`) is: the second whitespace-separated field
 /// of the FIRST line is the version, and whatever follows is free text. That is why the
 /// parenthetical each daemon adds — `(protocol 1)`, `(scrcpy 4.1)` — costs nothing here, and why
-/// `package-release.sh` can ask the same question of every shipped binary with one `awk`.
+/// `slopdesk-release package` can ask the same question of every shipped binary the same way.
 ///
 /// The parse is POSITIONAL, not semantic: it does not check that field two looks like a version,
 /// because the only caller compares it against another field two read the same way. A binary that

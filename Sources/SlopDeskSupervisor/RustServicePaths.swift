@@ -23,7 +23,7 @@ import Foundation
 /// four short-lived programs whose output lands in the SHARED `rust/target/`, and every daemon is
 /// EXCLUDED from it with a workspace of its own, so its output lands in `rust/<crate>/target/`.
 /// A root-workspace binary has no per-crate target directory for the walk to find, which is exactly
-/// why it is staged beside hostd instead. `scripts/package-release.sh` builds along the same seam.
+/// why it is staged beside hostd instead. `slopdesk-release package` builds along the same seam.
 public enum RustServicePaths {
     /// Levels walked up from the running executable before giving up. A build tree is a handful of
     /// levels deep, and an unbounded walk from an executable somewhere else entirely would stat its

@@ -132,7 +132,7 @@ pub fn run(argv: &[String], env: &Environment, io: &mut Io<'_>) -> Result<u8, St
     // what someone asks when nothing is answering.
     //
     // The SECOND whitespace-separated field of the FIRST line is the version, which is the shape
-    // every tool in this tree answers and the one `package-release.sh` parses when it checks a
+    // every tool in this tree answers and the one `slopdesk-release package` parses when it checks a
     // built binary against `scripts/tool-stamps.pin`.
     if argv.get(1).is_some_and(|argument| argument == "--version") {
         io.out
@@ -208,7 +208,7 @@ mod tests {
         let first_line = text.lines().next().expect("a first line");
         let mut fields = first_line.split_whitespace();
         assert_eq!(fields.next(), Some("slopdesk-ctl"));
-        // The contract `package-release.sh` parses, and the reason this asserts on a FIELD rather
+        // The contract `slopdesk-release package` parses, and the reason this asserts on a FIELD
         // than on the whole string: the banner may grow, the position of the version may not.
         assert_eq!(fields.next(), Some(env!("CARGO_PKG_VERSION")));
     }

@@ -127,7 +127,7 @@ let package = Package(
         .library(name: "SlopDeskVideoClientPhone", targets: ["SlopDeskVideoClientPhone"]),
         // PATH 4 (dedicated drag-drop file-transfer channel).
         .library(name: "SlopDeskFileTransfer", targets: ["SlopDeskFileTransfer"]),
-        // The three SHIPPED executables (scripts/package-release.sh, docs/49). Products, not just
+        // The three SHIPPED executables (`slopdesk-release package`, docs/49). Products, not just
         // targets, because `swift build --target <exe>` under the Swift 6.3 build backend compiles
         // the module and never links a binary — the release tarball needs `--product`, which only
         // exists for a declared product. Every other executableTarget below is a dev/bench tool and

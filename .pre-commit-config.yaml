@@ -146,7 +146,7 @@ repos:
       # pattern would match nothing and quietly skip every commit.
       - id: commit-msg-conventional
         name: conventional commit subject
-        entry: bash scripts/check-commit-msg.sh
+        entry: cargo run --release --quiet --manifest-path rust/slopdesk-devtools/Cargo.toml --bin slopdesk-release -- commit-msg
         language: system
         stages: [commit-msg]
         always_run: true

@@ -6,14 +6,14 @@
 #
 # lerna is a package versioner: it bumps the `version` field of a package.json. There is
 # no package.json here and six places carry the version instead, so the bump lives in
-# `scripts/bump-version.sh` and this file is left with the two jobs lerna would have
+# `slopdesk-release bump-product` and this file is left with the two jobs lerna would have
 # delegated to conventional-changelog anyway.
 #
 #   git cliff --bumped-version        # next semver, computed from commits since the last tag
 #   git cliff --output CHANGELOG.md   # rewrite the whole changelog
-#   scripts/cut-release.sh            # both, plus the bump, the commit and the tag
+#   slopdesk-release cut              # both, plus the bump, the commit and the tag
 #
-# `scripts/changelog-section.sh <version>` slices one release out of the rendered file;
+# `slopdesk-release changelog section <version>` slices one release out of the rendered file;
 # the publish job posts that slice as the GitHub Release body.
 
 [changelog]
@@ -65,7 +65,7 @@ trim = false
 # RELEASE, not over the finished document: `{ pattern = '\n+$', replace = "\n" }` strips the
 # separator from every release body and glues each `## [x.y.z]` heading onto the previous
 # release's last bullet, while leaving the actual end-of-file untouched. The trailing
-# newline is normalised by `scripts/render-changelog.sh`, which is the only thing that may
+# newline is normalised by `slopdesk-release changelog render`, which is the only thing that may
 # write this file.
 
 [git]
@@ -97,7 +97,7 @@ commit_preprocessors = [
 # ALMOST NOTHING IS SKIPPED, and that is deliberate. git-cliff drops a release that ends
 # up with zero commits — header and all — so a `skip` on the housekeeping types deletes
 # whole releases from the file: v0.2.1 carried one `ci` commit and one `chore(release)`
-# commit, and hiding both made the release itself disappear. `changelog-section.sh` would
+# commit, and hiding both made the release itself disappear. The changelog slice would
 # then fail on a version that genuinely shipped. Ordering carries the emphasis instead:
 # what a reader installed for is at the top, the plumbing is underneath.
 commit_parsers = [

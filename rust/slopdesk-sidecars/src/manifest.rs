@@ -11,12 +11,12 @@
 //! upgrade touched, and it is known before anything is restarted, dialled or even started.
 //!
 //! ## The version is the identity, not the SHA
-//! `scripts/package-release.sh` signs every binary with `--timestamp`, so an unchanged tool rebuilt
+//! `slopdesk-release package` signs every binary with `--timestamp`, so an unchanged tool rebuilt
 //! and re-signed has different bytes every single time. Diffing `sha256` across two releases would
 //! report every tool as changed, forever, which is the behaviour this whole mechanism exists to
-//! end. So the diff is on `version`, which only moves when `scripts/tool-stamps.sh` says the tool's
-//! source closure moved — and `sha256` stays what its name says in `scripts/tool-stamps.pin`:
-//! integrity for the file that shipped, not identity across releases.
+//! end. So the diff is on `version`, which only moves when `slopdesk-release stamps` says the
+//! tool's source closure moved — and `sha256` stays what its name says in
+//! `scripts/tool-stamps.pin`: integrity for the file that shipped, not identity across releases.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -212,7 +212,7 @@ impl Step {
 ///
 /// The order is `current`'s, then whatever `previous` had that `current` does not. A plan whose
 /// order shifts between runs is a plan nobody diffs, and the manifest's own order is the tarball's,
-/// which is `scripts/shipped-tools.sh`'s — one list, all the way down.
+/// which is the release binary's tool table — one list, all the way down.
 #[must_use]
 pub fn plan(previous: Option<&Manifest>, current: &Manifest) -> Vec<Step> {
     let was: BTreeMap<&str, &str> = previous.map_or_else(BTreeMap::new, |manifest| {
@@ -327,7 +327,7 @@ mod tests {
         }
     }
 
-    /// The shape `scripts/package-release.sh` writes, verbatim down to the extra fields — the two
+    /// The shape `slopdesk-release package` writes, verbatim down to the extra fields — the two
     /// this reader ignores are in here on purpose, because ignoring them is the contract.
     const REAL: &str = r#"{
       "product": "0.4.0",

@@ -38,16 +38,17 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// Scripts that NAME the app and never bring it up.
     ///
     /// The net below reads "names it" as "launches it somehow", which held for as long as `scripts/`
-    /// was only GUI gates. `package-release.sh` is the first counterexample: the bundle is its
-    /// OUTPUT — xcodegen builds it, PlistBuddy stamps it, codesign signs it, hdiutil ships it — and
-    /// isolating a launch that does not exist is not a thing to demand.
+    /// was only GUI gates. The packager was the one counterexample: the bundle is its OUTPUT —
+    /// xcodegen builds it, PlistBuddy stamps it, codesign signs it, hdiutil ships it — and isolating
+    /// a launch that does not exist is not a thing to demand.
     ///
-    /// This is a declaration, not a hole. ``testDeclaredNonLaunchersReallyCannotLaunch`` re-derives
-    /// the claim from the file, so the day one of these grows a launch it fails THERE, with the
-    /// verb named, rather than quietly opting out of all seventeen contracts.
-    private static let nonLaunchingScripts: Set<String> = [
-        "scripts/package-release.sh", // build → sign → notarize → dmg (docs/49)
-    ]
+    /// It is EMPTY today, and that is the packager having become Rust (`slopdesk-release package`)
+    /// rather than the exemption having been withdrawn: nothing under `scripts/` names the app
+    /// without bringing it up. Kept as a declaration rather than deleted, because the next script
+    /// that needs it should have to say so here — and ``testDeclaredNonLaunchersReallyCannotLaunch``
+    /// re-derives every entry from the file, so a declared non-launcher that grows a launch fails
+    /// THERE, with the verb named, rather than quietly opting out of all seventeen contracts.
+    private static let nonLaunchingScripts: Set<String> = []
 
     /// Every way a script could START the app, in the spellings the net is blind to.
     private static let launchVerbs = ["open ", "osascript", "launchctl", "Contents/MacOS/SlopDesk"]
@@ -366,9 +367,10 @@ final class GuiGateLaunchContractTests: XCTestCase {
 
     /// The exemption above, re-derived from the file instead of taken on trust.
     ///
-    /// RED the moment `package-release.sh` grows an `open "${STAGE}/SlopDesk.app"` — a plausible
-    /// "let's smoke-test what we just signed" line — which is exactly the launch the net would have
-    /// caught before the script was declared non-launching.
+    /// RED the moment a declared non-launcher grows an `open "${STAGE}/SlopDesk.app"` — the
+    /// plausible "let's smoke-test what we just signed" line — which is exactly the launch the net
+    /// would have caught before the script was declared non-launching. Vacuous while the set is
+    /// empty, which is the correct amount of work for a declaration nobody has made.
     func testDeclaredNonLaunchersReallyCannotLaunch() throws {
         let scripts = try Set(allScripts())
         for script in Self.nonLaunchingScripts.sorted() {
