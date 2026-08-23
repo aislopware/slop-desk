@@ -1170,7 +1170,7 @@ the same defect this section is about, one register up.)
 | `qp_control`/`recovery_idr` defaults vs their Swift faces | — | eleven tuned numbers that would encode at the old operating point in silence — **ported 2026-08-22** |
 | `TreeWorkspaceDefaults` vs the seeded pane names | — | a fresh-workspace shape test passing against a default the crate stopped producing — **ported 2026-08-22** |
 | `TerminalPreferences.CursorStyle.displayName` vs `settings_catalog` | — | one setting, two words ("Hollow" / "Block (hollow)"), a scroll apart on one page — **ported 2026-08-22** |
-| `CodeSidebarPageDressing`'s `@font-face` vs `codeseed`'s seeded stack | — | agrees today; a disagreement falls silently through to the system mono — **ratcheted 2026-08-22** |
+| `CodeSidebarPageDressing`'s `@font-face` vs `codeseed`'s seeded stack | — | agrees today; a disagreement falls silently through to the system mono — **ratcheted 2026-08-22**, and the near side became `slopdesk-codepanel` on **2026-08-23**, so the gate now compares two Rust crates that still deliberately share no code |
 | `NewTabPosition.insertionIndex` vs `session::NewTabPosition` | Rust | the Swift copy answered only its own four test cases; ⌘T has always gone through `tree_ops` — **ported 2026-08-22** |
 | `PaneKind.canReceiveText` vs `PaneKind::can_receive_text` | — | half a classification asked through a door and half transcribed: a third kind splits the broadcast recipient set from the restore filter, both suites green — **ported 2026-08-22** |
 | `PortValidation.port` vs `listen::port` | — | a range predicate in Rust and the cast in Swift, agreeing only because `u16`'s range happens to BE the accepted range — **ported 2026-08-22** |

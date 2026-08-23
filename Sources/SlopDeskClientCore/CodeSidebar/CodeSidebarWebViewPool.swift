@@ -202,55 +202,60 @@ package final class CodeSidebarWebViewPool {
     /// The workbench's five user scripts, in the order their injection times require. Split out so
     /// the mint reads as "pick a dressing" rather than sixty lines of one branch.
     private func installWorkbenchDressing(on controller: WKUserContentController) {
-        // The finishing coat (terminal-mono + nerd-font @font-faces, Slate softening, slopcat
-        // letterpress) rides every navigation — user scripts persist on the controller, so a
-        // reload/respawn re-dresses itself.
-        controller.addUserScript(WKUserScript(
-            source: Self.dressingScriptSource,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true,
-        ))
-        // The recommendation-tips GRAFT: code-server's boot configuration never carries the
-        // recommendation catalogue (its server forwards only the gallery), leaving the Extensions
-        // view's RECOMMENDED section empty. The script rewrites the configuration meta tag with
-        // the bundled catalogue before the workbench boots — document START (the rewrite must
-        // precede the workbench's read), MAIN frame only (the meta lives on the top document).
-        controller.addUserScript(WKUserScript(
-            source: CodeSidebarPageDressing.recommendationTipsScript(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true,
-        ))
-        // The focus-truth corrector: replay the blur a never-focused page misses, so only the
-        // real keyboard owner renders a caret (see `focusTruthScript`). Document START (the
-        // timers must span the workbench's whole boot), MAIN frame (the workbench top frame
-        // owns the editor).
-        controller.addUserScript(WKUserScript(
-            source: CodeSidebarPageDressing.focusTruthScript(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true,
-        ))
-        // The clipboard BRIDGE: WebKit's async clipboard API drops the workbench's copy (the
-        // transient user activation is spent by the time VS Code's async path calls `writeText`),
-        // so ⌘C in the editor never reached NSPasteboard. The wrap posts the text to the native
-        // handler, which writes the pasteboard directly — document START (before the workbench
-        // captures the API) and ALL frames (extension webviews copy too).
-        controller.addUserScript(WKUserScript(
-            source: CodeSidebarPageDressing.clipboardBridgeScript(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false,
-        ))
-        // The webview CANVAS: VS Code webview content documents are transparent at every layer
-        // and scroll at frame level, so WebKit painted the slivers a markdown-preview scroll
-        // exposes WHITE (`underPageBackgroundColor` and the KVC `drawsBackground` never reach a
-        // subframe). Document START (the first paint needs the colour) and ALL frames (the
-        // preview lives two iframes deep). See `webviewCanvasScript`.
-        controller.addUserScript(WKUserScript(
-            source: CodeSidebarPageDressing.webviewCanvasScript(),
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: false,
-        ))
+        for script in Self.workbenchScripts {
+            controller.addUserScript(WKUserScript(
+                source: script.source,
+                injectionTime: script.atDocumentStart ? .atDocumentStart : .atDocumentEnd,
+                forMainFrameOnly: script.mainFrameOnly,
+            ))
+        }
         controller.add(Self.clipboardBridge, name: CodeSidebarPageDressing.clipboardHandlerName)
     }
+
+    /// One injected script: what it says, and the two WebKit knobs that decide when and where it
+    /// runs. Both knobs are the reason this is a table rather than a `map` — the sources are
+    /// interchangeable strings, the timings are not.
+    private struct WorkbenchScript {
+        let source: String
+        let atDocumentStart: Bool
+        let mainFrameOnly: Bool
+    }
+
+    /// The workbench's five user scripts, in the order their injection times require, built ONCE
+    /// per process and shared by every pooled webview.
+    ///
+    /// A script the linked artifact cannot serve is DROPPED rather than installed empty: the panel
+    /// then boots undressed in that one respect, which is what a missing door should look like.
+    ///
+    /// * The finishing coat (the two mono faces and the nerd font as `@font-face` rules, the Slate
+    ///   softening, the slopcat letterpress) rides every navigation — user scripts persist on the
+    ///   controller, so a reload or respawn re-dresses itself. The faces themselves ride the
+    ///   `slopdesk-font:` scheme rather than base64 data URIs, so this string is a couple of KB
+    ///   instead of ~4 MB.
+    /// * The recommendation-tips GRAFT rewrites the boot configuration meta tag with the bundled
+    ///   catalogue — document START (the rewrite must precede the workbench's read), MAIN frame
+    ///   (the meta lives on the top document).
+    /// * The focus-truth corrector replays the blur a never-focused page misses, so only the real
+    ///   keyboard owner renders a caret. Document START (the timers must span the whole boot),
+    ///   MAIN frame (the workbench top frame owns the editor).
+    /// * The clipboard BRIDGE posts each copy to the native handler, which writes the pasteboard
+    ///   directly — document START (before the workbench captures the API) and ALL frames
+    ///   (extension webviews copy too).
+    /// * The webview CANVAS gives every document an opaque root in the theme's editor colour —
+    ///   document START (the first paint needs it) and ALL frames (the markdown preview lives two
+    ///   iframes deep).
+    private static let workbenchScripts: [WorkbenchScript] = {
+        let sources: [(String?, Bool, Bool)] = [
+            (dressingScriptSource, false, true),
+            (CodeSidebarPageDressing.recommendationTipsScript(), true, true),
+            (CodeSidebarPageDressing.focusTruthScript(), true, true),
+            (CodeSidebarPageDressing.clipboardBridgeScript(), true, false),
+            (CodeSidebarPageDressing.webviewCanvasScript(), true, false),
+        ]
+        return sources.compactMap { source, atStart, mainFrameOnly in
+            source.map { WorkbenchScript(source: $0, atDocumentStart: atStart, mainFrameOnly: mainFrameOnly) }
+        }
+    }()
 
     // MARK: LRU
 
@@ -309,16 +314,12 @@ package final class CodeSidebarWebViewPool {
         keyboard?.noteRemount(projectRoot: projectRoot)
     }
 
-    /// The dressing user-script source, built ONCE per process and shared by every pooled webview.
-    /// The faces themselves ride the `slopdesk-font:` scheme (``CodeSidebarFontScheme``) rather
-    /// than base64 data URIs, so this string is a couple of KB instead of ~4 MB. A face whose
-    /// bundle resource is missing is simply left out of the sheet, never a crash.
-    private static let dressingScriptSource: String = CodeSidebarPageDressing.userScript(
-        styleSheet: CodeSidebarPageDressing.styleSheet(
-            nerdFontURL: fontURL(.nerdSymbols),
-            monoUprightURL: fontURL(.monoUpright),
-            monoItalicURL: fontURL(.monoItalic),
-        ),
+    /// The dressing user-script source: the stylesheet and its injection wrapper, composed in ONE
+    /// crossing. A face whose bundle resource is missing is simply left out of the sheet.
+    private static let dressingScriptSource: String? = CodeSidebarPageDressing.dressingScript(
+        nerdFontURL: fontURL(.nerdSymbols),
+        monoUprightURL: fontURL(.monoUpright),
+        monoItalicURL: fontURL(.monoItalic),
     )
 
     /// The sheet's `src` URL for a face, or `nil` when the bundle has no such resource — the

@@ -20,7 +20,8 @@ Taken on the tree at `287a3ba4`, over `Sources/SlopDeskClientUI` (183 files, 48 
 
 So the "shared" target was already two targets wearing one coat: 72 of its 183 files vanish on iOS,
 and the halves overlap by far less than the file count suggests. Worse, the overlap that *does*
-exist is mostly accidental — `CodeSidebarRecommendationTips` (838 lines), `WorkspaceControlBackend`
+exist is mostly accidental — `CodeSidebarRecommendationTips` (838 lines, since crossed to
+`rust/slopdesk-codepanel`), `WorkspaceControlBackend`
 (308), `PaneDragCoordinator` (246) and `ClientControlServer` (171) all compile into the iOS app for
 a code panel, a control socket and a pane-drag gesture that iOS does not have and will not get.
 

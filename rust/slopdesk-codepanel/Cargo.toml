@@ -1,0 +1,120 @@
+# `slopdesk-codepanel` — what the embedded workbench is DRESSED with.
+#
+# ## Why it is its own crate
+# The code panel injects a stylesheet and five scripts into a code-server workbench it does not
+# control. Every one of them is a pure string builder over a fixed catalogue, and every one of them
+# was Swift — 1350 lines of it, `import Foundation` and nothing else, tested headlessly because
+# there was nothing there to touch a view. That is the exact shape this repo moves.
+#
+# ## Why it is a leaf
+# One dependency, `base64`, for the letterpress data URI. Nothing here knows what a pane is, and
+# nothing here reads a preference: the two font-family names are literals on BOTH sides of a gate
+# rather than a door, because the other side is `slopdesk-codeseed`, a HOST crate whose seed history
+# would be dragged into the iOS binary to fetch two strings.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-codepanel"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The code panel's injected dressing — the sheet, the scripts and the tips catalogue"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_codepanel"
+path = "src/lib.rs"
+
+[dependencies]
+# The letterpress rides into the sheet as a base64 data URI, and this is the repo's one codec for
+# that — the same `base64` `slopdesk-wire` uses for retained pane bytes, rather than a second
+# alphabet table written out beside a CSS builder.
+base64 = "0.22"
+
+[dev-dependencies]
+# The catalogue is 800 lines of JSON nothing in this process reads. Only a TEST needs a parser, and
+# a hand-rolled one would be a second JSON implementation shipped to prove the first one's input.
+serde_json = "1"
+
+# Not a hot path — the sheet is built once per webview — but the profile is shared with its callers
+# so a mixed build does not recompile the tree twice.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# Same maximal-strict philosophy as `rust/Cargo.toml` and `rust/slopdesk-wire/Cargo.toml`. A literal
+# copy rather than inherited, because inheriting would mean being a member, which is what the
+# profile above forbids.
+#
+# `unsafe_code` is FORBID, not deny, and here it is the POINT rather than a nicety: this is the code
+# the Swift side could only make fast by leaving safety, and forbid — unlike deny — cannot be
+# re-allowed downstream by whoever later wants a SIMD kernel.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in a dev-dependency's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never
+#   `addingProduct`/`fma`)". FMA rounds once where the wire rounds twice, so taking the lint's
+#   advice changes the very `f64` bit patterns `golden/golden_vectors.json` pins. Crate-wide
+#   rather than per-site because every geometry expression would otherwise carry the same
+#   `#[expect]` and the reason is a repo invariant, not a local judgement.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

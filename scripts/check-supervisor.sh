@@ -6981,38 +6981,9 @@ done
 # not the title a minted pane is born with. They are the same word today for the same reason a
 # folder and its icon share a name, and nothing breaks if the seeded title is renamed and the menu
 # entry is not.
-# The two bundled font families are one pair, and they used to be held in sync by a comment.
-#
-# `CodeSidebarPageDressing` injects @font-face declarations into the embedded workbench and
-# `slopdesk-codeseed` seeds the `editor.fontFamily` that names them. If the two disagree the panel
-# falls through to the system mono — no error, no crash, just the wrong shapes beside a terminal
-# drawing the right ones. They cross no door on purpose: codeseed is a host crate carrying the whole
-# seed history, and linking it into the FFI artifact would drag those tables into the iOS binary for
-# two strings. So the gate does the job the door would have.
-codeseed_settings="rust/slopdesk-codeseed/src/settings.rs"
-dressing="Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarPageDressing.swift"
-for pair in "MONO_FONT_FAMILY|monoFontFamilyName" "NERD_FONT_FAMILY|nerdFontFamilyName"; do
-  rust_name="${pair%%|*}"
-  swift_name="${pair#*|}"
-  rust_value="$(sed -n "s/^pub const ${rust_name}: &str = \"\\(.*\\)\";\$/\\1/p" "${codeseed_settings}")"
-  swift_value="$(sed -n "s/^ *package static let ${swift_name} = \"\\(.*\\)\"\$/\\1/p" "${dressing}")"
-  if [[ -z "${rust_value}" ]]; then
-    fail "${codeseed_settings} no longer declares ${rust_name} — the seeded stack lost its named face"
-  fi
-  if [[ -z "${swift_value}" ]]; then
-    fail "${dressing} no longer declares ${swift_name} — the injected @font-face lost its family"
-  fi
-  if [[ "${rust_value}" != "${swift_value}" ]]; then
-    fail "the injected face and the seeded one disagree: ${rust_name}=${rust_value} vs ${swift_name}=${swift_value}"
-  fi
-done
-
-# And the stack is BUILT from those two rather than typed out a third time. The check that stops the
-# family being listed twice used to hold its own copy of the word, so renaming the face in the stack
-# alone would have made the stack repeat it while every `starts_with` assertion kept passing.
-if grep -qE "const FALLBACK: &str = \"'" "${codeseed_settings}"; then
-  fail "${codeseed_settings} typed the font stack out again — build it from the two named families"
-fi
+# PORTED to rust/slopdesk-invariants (`code-panel-font-pair`): the two bundled font families are one
+# pair held across a boundary they deliberately do not cross, and `code-panel-one-implementation`
+# now also bans the dressing itself from growing back in Swift. See rules/code_panel.rs.
 # The tuned encoder defaults are Rust's, and the host asks for them.
 #
 # Eleven numbers — four quantiser knobs, seven recovery-keyframe ones — used to be spelled in both

@@ -6,6 +6,7 @@
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
 pub mod client_layers;
+pub mod code_panel;
 pub mod crate_policy;
 pub mod device_streams;
 pub mod hot_paths;
@@ -530,6 +531,16 @@ pub fn registry() -> Vec<Rule> {
             name: "client-core-draws-nothing",
             origin: "scripts/check-supervisor.sh",
             check: client_layers::presentation_logic_draws_nothing_both,
+        },
+        Rule {
+            name: "code-panel-font-pair",
+            origin: "scripts/check-supervisor.sh",
+            check: code_panel::font_pair_agrees_across_the_seam,
+        },
+        Rule {
+            name: "code-panel-one-implementation",
+            origin: "scripts/check-supervisor.sh",
+            check: code_panel::dressing_is_one_implementation,
         },
         Rule {
             name: "untrusted-regex-engine",

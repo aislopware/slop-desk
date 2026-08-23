@@ -81,6 +81,7 @@ slopdesk-workspace = { path = "../slopdesk-workspace" }
 # to the stamp.
 slopdesk-ids = { path = "../slopdesk-ids" }
 slopdesk-settings = { path = "../slopdesk-settings" }
+slopdesk-codepanel = { path = "../slopdesk-codepanel" }
 slopdesk-tree = { path = "../slopdesk-tree" }
 
 # The ONE `slopdesk-apple-*` crate that is not macOS-gated, and the only place in this graph where

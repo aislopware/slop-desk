@@ -82,6 +82,7 @@ pub mod client_input;
 pub mod client_jitter;
 pub mod client_session;
 pub mod client_view;
+pub mod code_panel;
 pub mod connection;
 pub mod cursor_color;
 pub mod cursor_overlay;

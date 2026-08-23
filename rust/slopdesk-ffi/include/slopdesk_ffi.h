@@ -8994,6 +8994,46 @@ void slopdesk_video_decoder_invalidate(SlopDeskVideoDecoder *handle);
 // client-local decode axis, read at ~2 Hz from a different thread than the one decoding.
 double slopdesk_video_decoder_millis_ewma(SlopDeskVideoDecoder *handle);
 
+// ---- The code panel's DRESSING ----
+//
+// The embedded code-server workbench is a page the app does not own, and six jobs the host-side
+// settings seed cannot do are done by injecting strings into it: the terminal's mono and the nerd
+// font as @font-face rules (a WebContent process cannot see fonts registered with CTFontManager),
+// the Slate softening, the slopcat letterpress, the recommendation-tips graft code-server's server
+// never forwards, the clipboard bridge WebKit's async API drops, and the subframe canvas that
+// otherwise resolves to WHITE. Every one of them is a pure string builder, so every one of them is
+// `slopdesk-codepanel`'s; what stays in Swift is the WebKit seam that installs them.
+//
+// _text serves the TEN fixed texts under the codes below — ten symbols for one lookup would be ten
+// header lines and ten wrappers — and answers 0 for a code this artifact does not know, which the
+// Swift face reads as "not installed" rather than dressing a page with a fragment.
+//
+// _dressing_script is the one door that takes arguments: three `slopdesk-font:` URLs, each NULL for
+// a face this bundle has no resource for (the sheet then omits it rather than naming a URL the
+// scheme handler would 404). It composes the stylesheet AND its user script on this side, because
+// handing several kilobytes of CSS out only to have them handed back to be wrapped would copy the
+// whole sheet across the boundary twice.
+
+#define SLOPDESK_CODE_PANEL_STYLE_ELEMENT_ID       0  /* the dressing style tag's DOM id */
+#define SLOPDESK_CODE_PANEL_CLIPBOARD_HANDLER      1  /* the WKScriptMessageHandler name */
+#define SLOPDESK_CODE_PANEL_CANVAS_ELEMENT_ID      2  /* the webview-canvas style tag's DOM id */
+#define SLOPDESK_CODE_PANEL_CONFIGURATION_META_ID  3  /* the workbench boot-configuration meta tag */
+#define SLOPDESK_CODE_PANEL_FOCUS_SYNC_NAME        4  /* the window hook the focus script publishes */
+#define SLOPDESK_CODE_PANEL_FOCUS_SYNC_CALL        5  /* that hook as a call inert on an undressed page */
+#define SLOPDESK_CODE_PANEL_FOCUS_TRUTH_SCRIPT     6  /* document START, main frame */
+#define SLOPDESK_CODE_PANEL_CANVAS_SCRIPT          7  /* document START, ALL frames */
+#define SLOPDESK_CODE_PANEL_CLIPBOARD_SCRIPT       8  /* document START, ALL frames */
+#define SLOPDESK_CODE_PANEL_TIPS_SCRIPT            9  /* document START, main frame */
+#define SLOPDESK_CODE_PANEL_NERD_FONT_FAMILY      10  /* gated against codeseed, never shared */
+#define SLOPDESK_CODE_PANEL_MONO_FONT_FAMILY      11  /* gated against codeseed, never shared */
+
+size_t slopdesk_code_panel_text(uint8_t kind, uint8_t *out, size_t cap);
+
+size_t slopdesk_code_panel_dressing_script(const uint8_t *nerd, size_t nerd_len,
+                                           const uint8_t *mono_upright, size_t mono_upright_len,
+                                           const uint8_t *mono_italic, size_t mono_italic_len,
+                                           uint8_t *out, size_t cap);
+
 #ifdef __cplusplus
 }
 #endif

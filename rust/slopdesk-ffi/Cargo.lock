@@ -979,6 +979,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-codepanel"
+version = "0.1.0"
+dependencies = [
+ "base64",
+]
+
+[[package]]
 name = "slopdesk-devicelog"
 version = "0.1.0"
 
@@ -1013,6 +1020,7 @@ dependencies = [
  "slopdesk-apple-vt",
  "slopdesk-audio-out",
  "slopdesk-cli",
+ "slopdesk-codepanel",
  "slopdesk-devicelog",
  "slopdesk-devicepanel",
  "slopdesk-dropd",
