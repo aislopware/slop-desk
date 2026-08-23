@@ -1,58 +1,78 @@
-//! Two scripts that must mean one thing by a marker, and three bytes no door could pin.
+//! Two gates that must mean one thing by a marker, and three bytes no door could pin.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Both rules compare two spellings of one fact, and
-//! both exist because the alternative was tried and could not work: the marker cannot be a shared
-//! constant while two scripts write it independently, and the liveness bytes cannot come from a
-//! door at all. Every arm reads the two sides as TEXT and refuses two empties, because an
-//! extraction that stopped matching would otherwise print the healthiest result this gate can
-//! print.
+//! Ported from `check-supervisor.sh`. Both rules exist because the alternative was tried and could
+//! not work: the marker could not be a shared constant while two SHELL scripts wrote it
+//! independently, and the liveness bytes cannot come from a door at all. The liveness arms read
+//! both sides as TEXT and refuse two empties, because an extraction that stopped matching would
+//! otherwise print the healthiest result this gate can print — and the marker rule, whose two
+//! spellings became one Rust constant, now pins the thing that keeps them one.
 
 use crate::claim::{Claim, Extract, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-/// The pre-push writer of the green-tree marker.
-const PRE_PUSH: &str = "scripts/pre-push-test.sh";
-/// The fast-loop writer of the same marker.
-const TOUCHED: &str = "scripts/test-touched.sh";
+/// Where the green-tree marker, its FFI half and the tested-inputs list are DECLARED.
+const PRE_PUSH: &str = "rust/slopdesk-devtools/src/gates/prepush.rs";
+/// The fast loop, which must reach all three through the module above rather than re-spell them.
+const TOUCHED: &str = "rust/slopdesk-devtools/src/gates/touched.rs";
 /// The frozen bytes' Rust half.
 const WIRE_FIELDS: &str = "rust/slopdesk-wire/src/document/fields.rs";
 /// Their Swift half.
 const MODEL_FIELDS: &str = "Sources/SlopDeskWorkspaceModel/State/WorkspaceFields.swift";
 
-/// The two writers of the green-tree marker must mean the same thing by it
+/// The green-tree marker has ONE writer and ONE definition of clean
 ///
-/// `pre-push-test.sh` and `test-touched.sh` both WRITE `.build/pre-push-green-tree`, and each
-/// decides whether it may from a `git status --porcelain --` pathspec naming the inputs `swift
-/// test` consumes. That is one list spelled twice: a path added to one only is a marker the other
-/// records over a tree it would itself have called dirty, and the marker is read back as a promise
-/// about content. It stays a promise about the SAME content only while the two agree.
+/// Two gates record `.build/pre-push-green-tree`: the pre-push run and a FULL fast-loop run. Each
+/// may only record it over a tree that carries no change to the inputs `swift test` consumes, and
+/// the marker is read back as a promise about content — so it stays a promise about the SAME
+/// content only while the two agree about what "clean" means.
 ///
+/// As two shell scripts that was one list spelled twice, and this rule compared the two spellings:
 /// `scripts/` was missing from both for as long as both existed, while the fast loop's SELECTION
-/// already attributed a scripts edit to the suite that owns those tests — they open `scripts/*.sh`
-/// off disk at run time. The list knew about the input in one place and not the other two.
+/// already attributed a scripts edit to the suites that open `scripts/*.sh` off disk at run time.
+/// The list knew about the input in one place and not the other two.
 ///
-/// The marker NAMES are compared as SETS rather than as a spelled-out pair. The first draft asked
-/// `grep -qF pre-push-green-ffi` of each script, which a rename to `pre-push-green-ffi-stamp`
-/// passes by substring — a check that survives the edit it exists to catch. Both files must name
-/// the same markers, whatever they are called this week.
-///
-/// The two `Extract` sides are labelled `swift` and `rust` because that is what the claim's fields
-/// are called; here they are simply the two shells, and the comparison is the same one.
+/// Ported to Rust the duplication is gone — `prepush` declares the list and both markers, and
+/// `touched` reaches all three through it — so the old comparison would now compare a constant with
+/// itself and pass forever. What this rule pins instead is the property that MAKES it a tautology:
+/// the fast loop may not grow its own `git status` pathspec or its own marker path. The day it
+/// does, the two spellings are back and this fails, which is the same failure the shell version
+/// caught.
 #[must_use]
 pub fn the_green_tree_marker_means_one_thing(tree: &Tree) -> Report {
-    check_all(tree, &[
-        Claim::SameValue {
-            label: "tested-inputs pathspec",
-            swift: Extract::raw(PRE_PUSH, r"git status --porcelain -- (.*?) 2> */dev/null"),
-            rust: Extract::raw(TOUCHED, r"git status --porcelain -- (.*?) 2> */dev/null"),
-        },
-        Claim::SameSet {
-            label: "green-tree markers",
-            swift: Extract::raw(PRE_PUSH, r"(\.build/pre-push-[a-z0-9-]+)"),
-            rust: Extract::raw(TOUCHED, r"(\.build/pre-push-[a-z0-9-]+)"),
-        },
-    ])
+    let mut report = Report::new();
+    let Some(declaring) = report.source(tree, PRE_PUSH, "the marker would have no declaration") else {
+        return report;
+    };
+    for (constant, what) in [
+        ("TESTED_INPUTS", "the tested-inputs list"),
+        ("TREE_MARKER", "the green-tree marker"),
+        ("FFI_MARKER", "its FFI half"),
+    ] {
+        report.fail_if(
+            !declaring.text.contains(&format!("pub const {constant}")),
+            format!("{PRE_PUSH}: {what} is no longer declared as `{constant}` — this rule is blind"),
+        );
+    }
+
+    let Some(fast) = report.source(tree, TOUCHED, "there would be no second writer to check") else {
+        return report;
+    };
+    report.fail_if(
+        fast.text.contains("status") && fast.text.contains("--porcelain"),
+        format!(
+            "{TOUCHED}: the fast loop spells its own `git status --porcelain` — clean must come from \
+             {PRE_PUSH}, or the two gates disagree about what the marker promises"
+        ),
+    );
+    report.fail_if(
+        fast.text.contains(".build/pre-push-"),
+        format!(
+            "{TOUCHED}: the fast loop names a marker path directly — it must reach both through {PRE_PUSH}, \
+             whatever they are called this week"
+        ),
+    );
+    report
 }
 
 /// The liveness bytes, which no door can pin
@@ -106,48 +126,51 @@ pub fn the_liveness_bytes_agree(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
-    /// Both writers agreeing on the pathspec and on the two marker names.
-    fn writers(fixture: &Fixture, pathspec: &str, markers: &str) {
-        for script in [super::PRE_PUSH, super::TOUCHED] {
-            fixture.write(
-                script,
-                &format!(
-                    "if [[ -z \"$(git status --porcelain -- {pathspec} 2> /dev/null)\" ]]; \
-                     then\n{markers}\nfi\n"
-                ),
-            );
-        }
+    /// One declaring module, and a fast loop that reaches everything through it.
+    fn writers(fixture: &Fixture) {
+        fixture.write(
+            super::PRE_PUSH,
+            "pub const TREE_MARKER: &str = \".build/pre-push-green-tree\";\npub const FFI_MARKER: &str = \
+             \".build/pre-push-green-ffi\";\npub const TESTED_INPUTS: &[&str] = &[\"Package.swift\", \
+             \"Sources\", \"scripts\"];\n",
+        );
+        fixture.write(
+            super::TOUCHED,
+            "use super::prepush;\nfn go() { prepush::record_green(root); }\n",
+        );
     }
 
     #[test]
-    fn two_writers_that_disagree_are_red() {
+    fn a_second_spelling_of_clean_is_red() {
         let fixture = Fixture::new("marker-writers");
-        writers(
-            &fixture,
-            "Package.swift Sources Tests Apps golden scripts",
-            "  : > .build/pre-push-green-tree\n  : > .build/pre-push-green-ffi",
-        );
+        writers(&fixture);
         assert!(super::the_green_tree_marker_means_one_thing(&fixture.tree()).is_clean());
 
-        // A path added to one only records a green over a tree the other would have called dirty.
+        // The fast loop deciding for itself what a clean tree is — the shell's original bug, back.
         fixture.write(
             super::TOUCHED,
-            "if [[ -z \"$(git status --porcelain -- Package.swift Sources Tests Apps golden 2> /dev/null)\" \
-             ]]; then\n\x20 : > .build/pre-push-green-tree\n  : > .build/pre-push-green-ffi\nfi\n",
+            "fn go() { proc::ask(\"git\", &[\"status\", \"--porcelain\", \"--\", \"Sources\"], root); }\n",
         );
         assert!(!super::the_green_tree_marker_means_one_thing(&fixture.tree()).is_clean());
 
-        // And a rename that a substring check would have passed.
-        writers(
-            &fixture,
-            "Package.swift Sources Tests Apps golden scripts",
-            "  : > .build/pre-push-green-tree\n  : > .build/pre-push-green-ffi",
-        );
+        // And a marker path written out a second time, whatever it is called this week.
+        writers(&fixture);
         fixture.write(
             super::TOUCHED,
-            "if [[ -z \"$(git status --porcelain -- Package.swift Sources Tests Apps golden scripts 2> \
-             /dev/null)\" ]]; then\n\x20 : > .build/pre-push-green-tree\n  : > \
-             .build/pre-push-green-ffi-stamp\nfi\n",
+            "fn go() { fs::write(root.join(\".build/pre-push-green-ffi-stamp\"), stamp); }\n",
+        );
+        assert!(!super::the_green_tree_marker_means_one_thing(&fixture.tree()).is_clean());
+    }
+
+    /// A rule that cannot see its own subject must say so, not pass.
+    #[test]
+    fn a_renamed_declaration_blinds_the_rule_loudly() {
+        let fixture = Fixture::new("marker-blind");
+        writers(&fixture);
+        fixture.write(
+            super::PRE_PUSH,
+            "pub const TREE_MARKER: &str = \".build/pre-push-green-tree\";\npub const FFI_MARKER: &str = \
+             \".build/pre-push-green-ffi\";\nconst INPUTS: &[&str] = &[\"Sources\"];\n",
         );
         assert!(!super::the_green_tree_marker_means_one_thing(&fixture.tree()).is_clean());
     }

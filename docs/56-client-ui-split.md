@@ -2784,7 +2784,7 @@ A rename does not break a gate; it makes the gate true about something else.
 | `ui_edges` | a blanket rename turned two of its four entries into a duplicate and a SELF-edge (`PhoneUI` may not import `PhoneUI`) — a rule no file can break | two halves, two edges |
 | `ui_test_edges` | `[[ -d "${test_dir}" ]] \|\| continue` — the phone's `Tests/` directory ceased to exist and the ban went quiet | a missing directory is a stale ledger, and FAILS |
 | `SettingsControls.swift` "exactly one `#if os(`" | `Half.current`'s `#if os(macOS)` became a constant, and the whole-file guard took the slot. The count still read 1 | `Half.current` exists AND does not fork |
-| `test-touched.sh` scripts/ attribution | it named `SlopDeskPhoneUITests`, so a scripts-only edit would have attributed to a target that no longer exists and run clean | the two suites that actually own the gate-contract tests |
+| `test-touched` scripts/ attribution | it named `SlopDeskPhoneUITests`, so a scripts-only edit would have attributed to a target that no longer exists and run clean | the two suites that actually own the gate-contract tests |
 
 All five, plus the two manifest edges, were re-run against a deliberately broken tree — F5's stated
 obligation, and the reason it is stated: **four of the five were caught by re-pointing, not by
@@ -4285,7 +4285,7 @@ no directive in this target is therefore a question, not a leftover.
 tests out of `make check`.** Fifty-six files compile on the macOS triple today, because
 `canImport(SwiftUI)` is TRUE there — which is what lets `Tests/SlopDeskClientUITests` run under `swift
 test`. Make them `os(iOS)` and that suite can only run on a booted simulator
-(`scripts/check-ios-tests.sh`, deliberately NOT in `make check` because a headless gate cannot assume
+(`slopdesk-gate ios-tests`, deliberately NOT in `make check` because a headless gate cannot assume
 one). Thirty-two test files would leave the default gate silently, and a suite that still exists but
 no longer runs is worse than a deleted one.
 

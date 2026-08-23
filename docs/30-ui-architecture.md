@@ -243,7 +243,7 @@ agent then READS:
 
 - **Phone** — `Apps/ClientApp-iOS/Tests/SlateSnapshotRender.swift:1-8`. `ImageRenderer` over a
   hand-built mock of the real chrome from the same token layer. Gated on `SLOPDESK_SNAPSHOT_OUT`;
-  run via `SIMCTL_CHILD_SLOPDESK_SNAPSHOT_OUT=… bash scripts/check-ios-tests.sh`.
+  run via `SIMCTL_CHILD_SLOPDESK_SNAPSHOT_OUT=… make check-ios-tests`.
 - **Mac** — `Tests/SlopDeskMacUITests/MacChromeSnapshotRender.swift:1-22` and
   `MacRailStatusRollupRender.swift`. These mount the **real `NSView`s** (`MacSidebarRowView`,
   `MacNavigatorColumn`, `MacConnectionIsland`, `MacTitlebarBand`) and seed every state through the

@@ -47,7 +47,7 @@ Headless core needs no GUI, libghostty, or signing:
 ```sh
 swift build
 swift test
-scripts/check-ios.sh   # iOS slice (#if os(iOS)); needs Xcode
+make check-ios   # iOS slice (#if os(iOS)); needs Xcode
 ```
 
 **Host (terminal):**

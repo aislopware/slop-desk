@@ -14,7 +14,7 @@ import SlopDeskWorkspaceModel // WorkspaceStateCodec (the host workspace documen
 // itself — the ABI and the marshalling. A field reordered in a `#[repr(C)]` record, a length
 // spelled in the wrong unit, an endianness flipped on the way out: each still produces a Rust
 // suite that passes and bytes on the wire that a peer of an older build cannot read. The frozen
-// corpus catches exactly that class, and `scripts/golden-check.sh` diffs against it rather than
+// corpus catches exactly that class, and `slopdesk-gate golden` diffs against it rather than
 // regenerating it.
 //
 // Determinism: floats that feed bytes use exactly-representable values; pure-numeric

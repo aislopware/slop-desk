@@ -1,4 +1,4 @@
-//! The Android path's dedicated gate (`scripts/check-android.sh`).
+//! The Android path's dedicated gate (`slopdesk-gate android`).
 //!
 //! These do NOT run under `make test` or `cargo test` on a clean checkout: they need a booted
 //! Android device or emulator, an `adb`, and a `scrcpy-server` jar. `docs/46-gates-env-paths.md` is

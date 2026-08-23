@@ -899,7 +899,7 @@ printf 'check-supervisor: cargo test (dropd)\n'
 (cd rust/slopdesk-dropd && cargo test --quiet)
 
 # The SOCKET cases in this one need a booted device and are gated on SLOPDESK_ANDROID_HW=1
-# (`scripts/check-android.sh`); without it they print why they proved nothing and pass.
+# (`slopdesk-gate android`); without it they print why they proved nothing and pass.
 printf 'check-supervisor: cargo test (androidd)\n'
 (cd rust/slopdesk-androidd && cargo test --quiet)
 

@@ -24,7 +24,7 @@ import SlopDeskWorkspaceModel
 ///
 /// **iOS.** Pure `String → String?`, no SwiftUI / view / platform API; it compiles into the iOS slice
 /// of `SlopDeskWorkspaceCore` (macOS `swift build` won't type-check that slice — run
-/// `scripts/check-ios.sh`). Names taken from `spec/reference__keybindings.md` "Config keys" +
+/// `slopdesk-gate ios`). Names taken from `spec/reference__keybindings.md` "Config keys" +
 /// `spec/customization__custom-keybindings.md`.
 public extension WorkspaceBindingRegistry {
     /// Resolve a config action `name` (with an optional `arg`) to this registry's binding id, or

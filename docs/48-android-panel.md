@@ -384,7 +384,7 @@ half as `rust/slopdesk-androidd`'s unit tests (catalogue, toolchain locator, con
 vectors, refusals, request decode). Every runtime seam is injectable, so no test opens a device socket
 or builds a display layer (hang-safety). The **sockets** are exercised only by
 `rust/slopdesk-androidd/tests/hardware.rs` behind `SLOPDESK_ANDROID_HW=1`, with a booted device —
-`scripts/check-android.sh` is what sets it, having first resolved the same `adb` and jar production
+`slopdesk-gate android` is what sets it, having first resolved the same `adb` and jar production
 would.
 
 `scripts/check-supervisor.sh` §11 ratchets what is typed on both sides of the wire: every `op` the

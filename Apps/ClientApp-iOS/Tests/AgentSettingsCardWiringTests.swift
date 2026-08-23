@@ -6,7 +6,7 @@
 // `.disconnected` (Install/Uninstall impossible) and the whole behaviour block stayed greyed.
 //
 // These pin the FIX headlessly on the iOS triple (docs/56 F4c: `SettingsSheet` is `SlopDeskPhoneUI`, which
-// only the simulator bundle compiles — `scripts/check-ios-tests.sh`; a macOS `swift test` sees an empty
+// only the simulator bundle compiles — `slopdesk-gate ios-tests`; a macOS `swift test` sees an empty
 // module and would assert nothing):
 // - the iOS `SettingsSheet` RETAINS the controller threaded into it so the card it hands that controller
 //   resolves a LIVE state;

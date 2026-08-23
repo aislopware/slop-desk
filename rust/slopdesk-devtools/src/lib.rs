@@ -11,6 +11,14 @@
 //! any gate could reach. As [`release`] they are modules with unit tests, and the binary over them
 //! is the eight verbs a release needs.
 //!
+//! ## Where the line with `slopdesk-invariants` actually falls
+//! That crate holds every rule a gate can decide by READING the tree, and its gate is `cargo test`.
+//! [`gates`] is the other half: the seven whose verdict comes from a PROCESS — an xcodebuild, a
+//! booted simulator, a `swift test`, an `adb` handshake. Neither belongs in the other. A rule that
+//! spawns a toolchain is not a unit test, and a build gate that only reads text would not be a
+//! build gate. What the two share is the discipline: the decidable half — the selection, the key
+//! sets, the stamp, the count — is a function with a test beside it, not prose in a comment.
+//!
 //! The binaries in `src/bin/` are argument parsing, process spawning and printing, and nothing
 //! else.
 
@@ -20,6 +28,7 @@
 
 pub mod access;
 pub mod differential;
+pub mod gates;
 pub mod manifests;
 pub mod release;
 pub mod repo;

@@ -12,7 +12,7 @@
 // put the rig in the iOS-triple bundle, where the view it photographs is compiled at all (`ToastCardView` is
 // `SlopDeskPhoneUI`, `#if os(iOS)` end to end), so the dump runs through the simulator harness:
 //
-//     SIMCTL_CHILD_SLOPDESK_TOAST_GALLERY_DIR=/tmp/toast bash scripts/check-ios-tests.sh
+//     SIMCTL_CHILD_SLOPDESK_TOAST_GALLERY_DIR=/tmp/toast slopdesk-gate ios-tests
 //
 // The `SIMCTL_CHILD_` prefix is `simctl`'s: it forwards such a variable into the process it spawns inside
 // the simulator with the prefix stripped, so the test reads the bare `SLOPDESK_TOAST_GALLERY_DIR` name it

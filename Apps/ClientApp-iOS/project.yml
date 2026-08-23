@@ -142,7 +142,7 @@ targets:
   # `swift test` compiles the macOS slice, so every iOS default (`WorkspaceClientKind.thisPlatform`,
   # `DevicePreferences.platformDefaultFollowSessionFocus`, the letterbox's phone-shaped geometry) is
   # asserted against the WRONG branch there. A HOST-LESS logic bundle on purpose: it needs no app, no
-  # window server and no libghostty, so `scripts/check-ios-tests.sh` can load it straight into the
+  # window server and no libghostty, so `slopdesk-gate ios-tests` can load it straight into the
   # simulator's `xctest` agent.
   #
   # docs/56 F4c: it is ALSO the home of every `SlopDeskPhoneUI` view test, because `SlopDeskPhoneUI` is

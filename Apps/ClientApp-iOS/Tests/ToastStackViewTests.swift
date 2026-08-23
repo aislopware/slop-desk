@@ -14,7 +14,7 @@
 // Headless-only (per the hang-safety rule): no SCStream/VT/Metal — `ImageRenderer` of a pure SwiftUI view is
 // CPU rasterisation (the same `SlateSnapshotRender` pattern the repo already uses in this bundle).
 //
-// docs/56 F4c: this rig lives in the iOS-triple bundle (`scripts/check-ios-tests.sh`) because the view it
+// docs/56 F4c: this rig lives in the iOS-triple bundle (`slopdesk-gate ios-tests`) because the view it
 // renders does — `ToastStackView` is `SlopDeskPhoneUI`, which is `#if os(iOS)` end to end. `Slate` is
 // `@testable`-imported for its `package` design floor: this bundle is an Xcode target OUTSIDE the SwiftPM
 // package, so a plain `import` cannot see `Slate.Surface` / `Slate.Text` at all.

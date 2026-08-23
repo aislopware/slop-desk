@@ -1,7 +1,7 @@
 // Visual-verification harness — renders a chrome showcase to a PNG via ImageRenderer so the
 // palette + component kit can be eyeballed headlessly (no GUI/TCC). Opt-in: INERT unless the env var
 // `SLOPDESK_SNAPSHOT_OUT=<path.png>` is set, so the suite / `make check` never write a file. Run on demand:
-//   SIMCTL_CHILD_SLOPDESK_SNAPSHOT_OUT="$PWD/.build/showcase.png" bash scripts/check-ios-tests.sh
+//   SIMCTL_CHILD_SLOPDESK_SNAPSHOT_OUT="$PWD/.build/showcase.png" slopdesk-gate ios-tests
 // It renders a hand-built mock of the real chrome from the SAME token layer + component kit, so a palette /
 // component regression shows up visually. It is NOT a pixel-diff CI gate.
 //

@@ -22,7 +22,7 @@ name = "slopdesk-devtools"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Operator tools: the release pipeline, the herdr parity harness, the Swift access raiser, the input synclient"
+description = "Operator tools: the release pipeline, the build gates, the herdr parity harness, the Swift access raiser, the input synclient"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
@@ -45,6 +45,10 @@ path = "src/bin/synclient.rs"
 [[bin]]
 name = "slopdesk-release"
 path = "src/bin/release.rs"
+
+[[bin]]
+name = "slopdesk-gate"
+path = "src/bin/gate.rs"
 
 [dependencies]
 # The access raiser is a line scanner over SwiftFormat-clean source, which is what makes a regex

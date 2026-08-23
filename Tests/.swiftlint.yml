@@ -6,7 +6,7 @@
 #
 # THERE ARE TWO TEST TREES AND THIS IS THE ONLY COPY OF THIS LIST.
 # `Apps/ClientApp-iOS/Tests/.swiftlint.yml` is a SYMLINK to this file. That tree holds the iOS-triple
-# XCTest bundle (`scripts/check-ios-tests.sh`), which since docs/56 F4c is where every `SlopDeskPhoneUI`
+# XCTest bundle (`slopdesk-gate ios-tests`), which since docs/56 F4c is where every `SlopDeskPhoneUI`
 # view suite lives — the target is `#if os(iOS)` end to end, so the macOS `swift test` host cannot
 # compile one. Without a nested config there those suites would be linted under the SOURCE rules purely
 # because of which directory the split moved them to; with a COPIED one, the two lists drift and one

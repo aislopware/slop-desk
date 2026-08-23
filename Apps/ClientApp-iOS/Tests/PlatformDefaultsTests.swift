@@ -8,7 +8,7 @@ import XCTest
 ///
 /// `swift test` compiles the macOS slice, so every one of these reads the OTHER branch there — a
 /// macOS test asserting `platformDefaultFollowSessionFocus` is asserting `true` about a phone. These
-/// run under `scripts/check-ios-tests.sh`, which loads this bundle into a booted simulator's `xctest`
+/// run under `slopdesk-gate ios-tests`, which loads this bundle into a booted simulator's `xctest`
 /// agent, and they are the only place the iOS values are ever executed.
 final class PlatformDefaultsTests: XCTestCase {
     /// The kind the client announces on `subscribe`, which is what the HOST branches on to make a

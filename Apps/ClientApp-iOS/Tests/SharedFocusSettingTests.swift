@@ -8,7 +8,7 @@
 //
 // These pin the Settings row's SwiftUI-side wiring headlessly on the iOS triple (docs/56 F4c: the row's
 // host, `SettingsSheet`, is `SlopDeskPhoneUI`, which only the simulator bundle compiles —
-// `scripts/check-ios-tests.sh`):
+// `slopdesk-gate ios-tests`):
 // - the row's binding WRITE reaches `WorkspaceStore.setFollowSessionFocus(_:)`, and the flag survives a
 //   round trip through `device-prefs.json` — a FRESH store reading the same file sees the choice.
 //   `devicePreferences` is `public private(set)`, so that setter is the ONLY way a write from this module

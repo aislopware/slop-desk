@@ -6,7 +6,7 @@
 // all died at a nil closure. `UserNotifications` is one framework with one API on both triples, so the
 // guard is gone and the phone installs the same poster the Mac does.
 //
-// These run on the iOS triple (`scripts/check-ios-tests.sh`) and are the only place that widening is
+// These run on the iOS triple (`slopdesk-gate ios-tests`) and are the only place that widening is
 // OBSERVABLE: a macOS `swift test` compiled those types before the change too and would assert nothing
 // about it. They follow the discipline of the notifier's own suite — `UNUserNotificationCenter` is never
 // instantiated (it needs a bundle + entitlements + an auth prompt, and this is a host-less logic bundle),

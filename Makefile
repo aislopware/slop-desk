@@ -272,13 +272,13 @@ check: lint build test miri golden check-ios check-macos-apps ## lint + build + 
 # a single edit can break:
 #
 #   test → test-touched   The full suite re-runs every Swift target for a change that reaches three.
-#                         `test-touched.sh` attributes the change set to SwiftPM targets and runs the
+#                         `slopdesk-gate test-touched` attributes the change set to SwiftPM targets and runs the
 #                         test targets whose closure contains them — escalating to the full suite
 #                         whenever it cannot attribute a path, so it is fail-toward-slow, not
 #                         fail-toward-green. A touched-green never writes the pre-push marker, so
 #                         this can never make a push skip what it did not run.
 #   check-ios (stamped)   Unchanged as a gate; it just costs nothing when no iOS-compiled input moved
-#                         (scripts/check-ios.sh explains the stamp). It stays IN the inner loop for
+#                         (gates::stamp explains it). It stays IN the inner loop for
 #                         that reason — the `#if os(iOS)` surface breaks on a Swift edit like any
 #                         other, and now noticing costs nothing on the edits that cannot break it.
 #   miri omitted          ~47 s to re-audit `rust/slopdesk-gfsimd`, which only a change to that crate
@@ -316,7 +316,7 @@ quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + go
 
 # `swift build` compiles the macOS slice ONLY — it never type-checks a `#if os(iOS)` source, so the
 # UIKit input host and the iOS components in Sources/SlopDeskPhoneUI/iOS/ compiled only in someone's
-# head. `scripts/check-ios.sh` has existed for exactly that and was reachable from no target, no
+# head. This gate has existed for exactly that and was reachable from no target, no
 # hook and no workflow. It was also RED: two xcframeworks each shipped `Headers/module.modulemap`,
 # Xcode copies both to `$BUILT_PRODUCTS_DIR/include/`, and neither app had built on either platform
 # since (fixed in scripts/build-ffi.sh, which now nests its headers and asserts the nesting).
@@ -324,7 +324,7 @@ quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + go
 # `check-macos.sh` is the sibling and is deliberately NOT here: it drives a real window and needs a
 # logged-in GUI session, so it cannot run from a headless gate.
 check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` never compiles)
-	bash scripts/check-ios.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios
 
 # The OTHER half of the same hole. `check-ios` compiles `Apps/ClientApp-iOS`; `swift build` compiles
 # `Sources/` and `Tests/`. Nothing compiled the two macOS app shells, because they are Xcode targets
@@ -334,19 +334,19 @@ check-ios: ffi ## iOS-triple typecheck (the `#if os(iOS)` surface `swift build` 
 # Distinct from `check-macos.sh`, which BUILDS AND RUNS the app against a real window and therefore
 # needs a logged-in GUI session. This one only type-checks, so it is headless and belongs here.
 check-macos-apps: ffi ## macOS app-shell typecheck (the `Apps/` code no other gate compiles)
-	bash scripts/check-macos-apps.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- macos-apps
 
 # The half `check-ios` does not do: it type-checks and runs ZERO tests. `swift test` compiles the
 # MACOS branch of every `#if os(iOS)` fork, so an iOS default asserted there is asserted about the
 # wrong branch — a macOS build of `platformDefaultFollowSessionFocus` reads the opposite value.
-# `scripts/check-ios-tests.sh` is the only thing in the repo that executes an assertion on the iOS
+# `slopdesk-gate ios-tests` is the only thing in the repo that executes an assertion on the iOS
 # triple, and it too was reachable from no target: `docs/46` calls it the ONLY executor of iOS tests
 # and then nothing ran it.
 #
 # NOT in `check`: it boots a simulator, which a headless gate cannot assume — same reason
 # `check-macos.sh` stays out. Run it after touching anything inside an `#if os(iOS)`.
 check-ios-tests: ffi ## RUN the iOS tests on a booted simulator (the only assertions on that triple)
-	bash scripts/check-ios-tests.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ios-tests
 
 # The three arm64 static slices the Swift clients link, from `rust/slopdesk-ffi`. FIRST, and not
 # optional: `Package.swift` declares a `binaryTarget` at that path, so SwiftPM cannot even resolve
@@ -477,7 +477,7 @@ androidd: ## Build slopdesk-androidd (rust/slopdesk-androidd)
 	cd rust/slopdesk-androidd && cargo build --release
 
 # The SOCKET cases here need a booted device and are gated on SLOPDESK_ANDROID_HW=1
-# (`scripts/check-android.sh`); without it they print why they proved nothing and pass.
+# (`slopdesk-gate android`); without it they print why they proved nothing and pass.
 androidd-test: ## cargo test for the Android bridge
 	cd rust/slopdesk-androidd && cargo test
 
@@ -786,7 +786,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 	bash scripts/restart-hostd.sh --status
 
 # `hook-test` runs FIRST and unconditionally. `swift build`/`swift test` never compile the Rust
-# crate, so a Swift-only gate is blind to it; and pre-push-test.sh's green-tree cache keys on the
+# crate, so a Swift-only gate is blind to it; and the pre-push green-tree cache keys on the
 # Swift inputs alone (Package.swift Sources Tests Apps golden), so a rust/ change would hit the
 # cache and skip everything. Warm cargo costs ~0.07s and fails before the ~60s Swift run.
 #
@@ -795,7 +795,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
 test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the running-application reads + the cursor shape + the accessibility tree + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + sidecar versions + code-server profile + the operator tools) + swift test with the green-tree cache
-	bash scripts/pre-push-test.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the
 # gate CLAUDE.md tells you to run after a Swift edit, and the code most of those edits touch is the
@@ -803,12 +803,12 @@ test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test
 # SupervisedPaneSurvivalTests, HostRestartSurvivalTests, PaneOutputStreamTests and PTYProcessTests
 # all report green having run nothing — a fast gate that cannot see the regressions it exists for.
 test-touched: ctl superd screend dropd androidd inspectord ## Fast inner loop: incremental build + only the test targets the change set reaches
-	bash scripts/test-touched.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- test-touched
 
 # Golden regression pin: regenerate the wire corpus from the live native-Swift codecs and assert
 # byte-identity to golden/golden_vectors.json (replaces the old cross-language Rust golden_parity).
 golden: ## Verify the wire codecs still reproduce golden/golden_vectors.json
-	bash scripts/golden-check.sh
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- golden
 
 # ---------------------------------------------------------------------------- #
 .PHONY: changelog release release-preview

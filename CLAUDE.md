@@ -25,7 +25,7 @@ guessing one.
   full suite swapped for `test-touched` (the test targets whose closure contains the change, and the
   full suite whenever a path cannot be attributed) and Miri omitted. Both are cheap on a warm tree
   because the two expensive gates are CONTENT-STAMPED, not re-run: `build-ffi.sh` against the Rust
-  sources it links, `check-ios.sh` against every input the iOS triple compiles. `--force` on either
+  sources it links, `slopdesk-gate ios` against every input the iOS triple compiles. `--force` on either
   re-runs it when the stamp itself is in doubt. A *touched-target* green never writes the pre-push
   green-tree marker — only a full suite on a clean tree does — so `quick` cannot make a push skip
   what it did not run.

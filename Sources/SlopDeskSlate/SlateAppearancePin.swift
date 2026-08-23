@@ -98,7 +98,7 @@ package enum SlateAppearancePin {
         // ⚠️ THE NOTIFICATION ITSELF IS NOT READ, and that is a concurrency requirement rather than a
         // style choice: `Notification` is not `Sendable`, so reaching for its `object` inside the
         // `MainActor` body sends a non-sendable value across an isolation boundary and Swift 6 refuses
-        // it — the one error `scripts/check-ios.sh` catches that a standalone `swiftc -typecheck` of
+        // it — the one error `slopdesk-gate ios` catches that a standalone `swiftc -typecheck` of
         // this file does not. So the arm does what the Mac's `{ _ in }` already does: it ignores the
         // payload and re-derives the work. Re-pinning every connected scene is idempotent (an override
         // assigned twice is the same override), self-healing if a scene was ever missed, and correct

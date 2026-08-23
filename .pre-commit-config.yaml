@@ -166,10 +166,10 @@ repos:
       # artifact stamp joined its key. `golden/` pins the wire, `Package.*` decides the graph, and
       # `scripts/` is read off DISK at runtime by the gate-contract tests (`LaunchRestoreGateContract`
       # in `SlopDeskWorkspaceCoreTests`, `GuiGateLaunchContract` in `SlopDeskClientCoreTests`) —
-      # `test-touched.sh` already attributes a scripts change to those targets, so leaving it out here
+      # `slopdesk-gate test-touched` already attributes a scripts change to those targets, so leaving it out here
       # meant the fast inner loop knew about an input the push gate did not.
       #
-      # `make test`, NOT `bash scripts/pre-push-test.sh` directly. Eighteen suites boot a real
+      # `make test`, NOT `slopdesk-gate pre-push` directly. Eighteen suites boot a real
       # sidecar — superd, screend, dropd — and every one of them `XCTSkip`s by name when its binary
       # is absent, deliberately, so a missing daemon reads as "not run" rather than as a pass. But
       # `swift build` never sees cargo, so nothing in the Swift graph builds those binaries: calling

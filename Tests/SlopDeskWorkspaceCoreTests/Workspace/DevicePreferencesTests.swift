@@ -7,7 +7,7 @@ import XCTest
 /// video modes, launch presets / session templates, the per-host connection target, and the
 /// follow-session-focus preference. Pins the on-disk round-trip, the decode-failure rule (a corrupt or
 /// stale file becomes a FRESH default — never migrated), and the per-platform `followSessionFocus`
-/// default, which `scripts/check-ios.sh` cannot catch because it only COMPILES the iOS slice.
+/// default, which `slopdesk-gate ios` cannot catch because it only COMPILES the iOS slice.
 @MainActor
 final class DevicePreferencesTests: XCTestCase {
     private var directory: URL!
@@ -107,7 +107,7 @@ final class DevicePreferencesTests: XCTestCase {
     // MARK: - followSessionFocus, per platform
 
     /// macOS follows the host's session focus by default; iOS does not (docs/45 §8.2). A wrong value
-    /// here has NO other guard — `scripts/check-ios.sh` only type-checks the iOS slice.
+    /// here has NO other guard — `slopdesk-gate ios` only type-checks the iOS slice.
     func testFollowSessionFocusDefaultsOnPerPlatform() {
         #if os(iOS)
         XCTAssertFalse(DevicePreferences().followSessionFocus)

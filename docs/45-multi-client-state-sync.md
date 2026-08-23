@@ -550,7 +550,7 @@ title-sniffer behaviour change in exactly the phases that touch the title path p
 `rust/slopdesk-superd/tests/golden_sniffer.rs` asserts the frozen vector still round-trips against
 the live sniffer, so the suite is a real gate rather than an implicit one. (It was a Swift test named
 HostOutputSnifferGoldenGuardTests until the sniffer moved into
-superd's pump — the guarantee crossed languages with the code, and `scripts/golden-check.sh` is what
+superd's pump — the guarantee crossed languages with the code, and `slopdesk-gate golden` is what
 holds the two ends together: `hostOutputSniffer` is a SUITE-PINNED key, and that script fails if no
 suite replays it.)
 
@@ -1342,7 +1342,7 @@ that variant.
 - Move the existing tree tests to `Tests/SlopDeskWorkspaceModelTests/` **unchanged**.
 
 **Gate:** `make check` green, every existing tree test passes unmodified, **and
-`bash scripts/golden-check.sh` shows a zero-key diff** (regenerated with no `SLOPDESK_*` env). The
+`slopdesk-gate golden` shows a zero-key diff** (regenerated with no `SLOPDESK_*` env). The
 phase moves `Session.swift` and `SplitNode+Codable.swift` — the hand-written deterministic `Codable`
 this design cites as its ordering precedent — *and* adds a dependency to the vector generator in the
 same commit. "Existing tests pass" does not prove the encoded bytes are unchanged; the corpus does.
@@ -1437,7 +1437,7 @@ one the moment Phase 5b projected the tree — the sinks carry per-pane FACTS, n
 - `Tests/SlopDeskHostTests/WorkspacePresenceTests.swift` — clock ordering (older clock ignored), TTL
   expiry, null-broadcast on clean close, two connections from one device yielding two identities, a
   stale reconnecting clock not resurrecting a dead viewer.
-- **Gate includes `bash scripts/check-ios.sh`** (`clientKind` branching).
+- **Gate includes `slopdesk-gate ios`** (`clientKind` branching).
 
 ### Phase 5 — topology flips host-side · intents, overlay, persistence
 
@@ -1489,7 +1489,7 @@ future build's config survives this one.
 - `OptimisticIntentTests` — the anti-flicker rule in every direction
 - `WorkspaceStateFileTests` / `HostWorkspaceStoreTests` — no living process survives a restart
 - Golden: `workspaceStateCodec` extended, `workspaceIntentOps` + `workspaceIntentArgs` added
-  (corpus 50 → 52). **Gate included `bash scripts/check-ios.sh`.**
+  (corpus 50 → 52). **Gate included `slopdesk-gate ios`.**
 
 ### Phase 5b — the store's mutations become intents
 
@@ -1659,7 +1659,7 @@ and `testASecondClientJoinsTheLiveSessionAndForksNoSecondShell` (the join forks 
 children of the real hostd pid, counted out of the process table before and after). Two shipped
 `slopdesk-client` processes on one `--session-id` against one `slopdesk-hostd`, real PTYs. Per
 [CLAUDE.md](../CLAUDE.md) the in-memory loopback provably misses open-order races, so a loopback test
-is not acceptable evidence here. Plus `bash scripts/check-ios.sh`. There is ONE configuration to run.
+is not acceptable evidence here. Plus `slopdesk-gate ios`. There is ONE configuration to run.
 
 **Hardware, as far as it goes:** `bash scripts/check-multiclient.sh` runs the Phase 5b gate and
 asserts the fan-out unconditionally in step 7b — every pane in the FINAL layout has to appear in a
@@ -1690,7 +1690,7 @@ headless regression in `HostRetiredPaneRedialTests`, `EvictedSubscriberRedialTes
 asserts no pane uuid appears twice in `attached for pane …` — permanent evidence, unlike a live
 census, which passed even on the buggy build — and the settle it had been given drops 20 s → 4 s.
 
-**The iOS half now RUNS: `bash scripts/check-ios-tests.sh`.** `check-ios.sh` type-checks the
+**The iOS half now RUNS: `slopdesk-gate ios-tests`.** `check-ios.sh` type-checks the
 `#if os(iOS)` slice and executes nothing, and `swift test` compiles the macOS slice — so every iOS
 default in this document (`WorkspaceClientKind.thisPlatform`, §8.2's
 `platformDefaultFollowSessionFocus`, §8.3 rule 7's letterbox geometry) was only ever asserted against

@@ -7,7 +7,7 @@
 // call, and the phone shell's `SidebarColumnVisibility` column mapping that makes the shared
 // `chrome.sidebarCollapsed` flag honored on iPad (not a dead toggle). Both are pure, so the contract is
 // unit-tested with nothing mounted — no view, no split, no window. It runs on the iOS triple
-// (`scripts/check-ios-tests.sh`) because `SidebarColumnVisibility` is `SlopDeskPhoneUI`, which is
+// (`slopdesk-gate ios-tests`) because `SidebarColumnVisibility` is `SlopDeskPhoneUI`, which is
 // `#if os(iOS)` end to end (docs/56 F4c); `WorkspaceChromePolicy` itself is cross-platform ClientCore.
 
 import SwiftUI
