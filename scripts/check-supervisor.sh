@@ -1946,127 +1946,11 @@ fi
 # PORTED to `rust/slopdesk-invariants`: hostd-binary-order — the null-output probe ban, the
 # three guess-then-retry sites, and the one search order.
 
-# ── ONE search-box predicate for both device panels, both drawings ────────────────────────────
-#
-# `localizedCaseInsensitiveContains` was spelled SIX times over "does any field of this row contain
-# what was typed" — twice in `AndroidPresentation` (the list, the console) and once each in the
-# four simulator views, two SwiftUI and two AppKit. Only one of the six was ever reached by a test,
-# which is the drift class `docs/55` §8 is about: the copy a test holds is not the copy the other
-# shell runs, and nothing can notice them parting. They now route through
-# `DeviceRowFilter` → `slopdesk_ws_binding_row_matches` → `slopdesk_workspace::binding_search`,
-# which is the rule the palette, Settings and the keybindings editor were already using.
-#
-# It is also 8–13× off. Scratch `swiftc -O` harness against the shipped `macos-arm64` slice, at
-# `SimulatorSidebarModel.logCapacity` = 600 console rows, two runs agreeing, blob build INCLUDED:
-#
-#   needle hits    873.8 / 876.9 µs  →  111.6 / 110.4 µs
-#   needle misses 1661.8 / 1624.6 µs →  131.2 / 128.5 µs
-#
-# A miss is the state every keystroke passes through, and the drawer repaints on every arriving log
-# line.
-#
-# The ban is by FILE, not tree-wide: `Sources/slopdesk-capture-probe` matches one window title with
-# it and is a dev tool, not a panel. The corpus is checked non-empty first — a ban over a file that
-# was renamed away passes silently, and this one names six files across three targets, which is
-# exactly the shape that rots.
-#
-# The rule was RED for the length of the change, naming `SimulatorConsoleView.swift` while the four
-# simulator-view edits were still pending — the two UI targets belonged to other owners and their
-# replacements landed centrally. That is worth recording: a ban that spans targets one agent cannot
-# edit reads as a false positive exactly once, at the half-applied moment, and is not one.
-#
-# BREAK-TEST 2026-08-22, each by `cp` to /tmp and back, never `git checkout`:
-#   * `AndroidPresentation.swift`'s `visible` body pasted back as the
-#     `localizedCaseInsensitiveContains` filter → the ban FIRED and named that file. Restored, that
-#     file is clean again.
-#   * `slopdesk_ws_binding_row_matches` renamed inside `DeviceRowFilter.swift` → the presence check
-#     FIRED. Restored, PASSES.
-#   * `DeviceRowFilter.swift` moved out of the tree → the vacuity floor FIRED with "6 of 7 files"
-#     rather than letting the ban read a short corpus and pass. Restored, PASSES.
-PANEL_FILTER_FILES=(
-  Sources/SlopDeskDevicePanels/Android/AndroidPresentation.swift
-  Sources/SlopDeskDevicePanels/Simulator/SimulatorPresentation.swift
-  Sources/SlopDeskDevicePanels/Shared/DeviceRowFilter.swift
-  Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorConsoleView.swift
-  Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift
-  Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorConsoleView.swift
-  Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift
-)
-panel_filter_present=()
-for file in "${PANEL_FILTER_FILES[@]}"; do
-  [[ -f "${file}" ]] && panel_filter_present+=("${file}")
-done
-if ((${#panel_filter_present[@]} != ${#PANEL_FILTER_FILES[@]})); then
-  fail "the device panels' filter corpus has ${#panel_filter_present[@]} of ${#PANEL_FILTER_FILES[@]} files — a renamed one would let the ban below pass without reading anything"
-elif filter_copy=$(spells 'localizedCaseInsensitiveContains' "${panel_filter_present[@]}"); then
-  fail "${filter_copy} spells localizedCaseInsensitiveContains again — the device panels' search predicate is DeviceRowFilter, and it was six copies of these three lines"
-fi
-SWIFT_ROW_FILTER=Sources/SlopDeskDevicePanels/Shared/DeviceRowFilter.swift
-if [[ -f "${SWIFT_ROW_FILTER}" ]] && ! grep -q 'slopdesk_ws_binding_row_matches(' "${SWIFT_ROW_FILTER}"; then
-  fail "${SWIFT_ROW_FILTER} no longer calls slopdesk_ws_binding_row_matches — the predicate is rust/slopdesk-workspace/src/binding_search.rs and is not to be re-spelled in Swift"
-fi
-printf 'check-supervisor: one search predicate for both device panels, in one language.\n'
-
-# ── The instrument voice is minted ONCE per rung ──────────────────────────────────────────────
-#
-# `Slate.Typeface.instrumentNative` is the AppKit/UIKit half of the mono voice, and it was the only
-# font accessor in this file with no cache in front of it. The asymmetry is what makes it a defect
-# rather than a slow function: `macDevicePanelLabel` picks between `.systemFont(ofSize:weight:)` and
-# this one on a single ternary, and `+systemFont:` is cached BY THE FRAMEWORK while
-# `NSFont(descriptor:size:)` builds a CoreText font from scratch every time. Nothing in either
-# language recorded that one arm of that ternary was two hundred times the other.
-#
-# Measured in a scratch `swiftc -O` harness (NOT in the tree; two runs agreeing to 1.5%), per call:
-#
-#     mono-INSTALLED arm (the shipping configuration)   7 122 – 7 343 ns
-#       of which NSFont(descriptor:size:) alone         7 142 – 7 406 ns
-#     SF Mono fallback arm (no JetBrains Mono)          2 091 – 2 118 ns
-#     out of the table                                     23 –    34 ns
-#     MacPaneDivider's three runs, per divider/frame   21 400 ns  ->  69 ns   (~310x)
-#
-# Those three are the ratio readout's leading/dot/trailing runs, which reach here through
-# `macInstrumentString` in `MacCapsLabel.swift`; `applyReadout` cuts them for a hidden readout for
-# exactly this reason, and that guard covers N−1 seams but not the one being dragged.
-#
-# There are 16 call sites across `Sources/SlopDeskMacUI` plus one test — 17 in all, and one further
-# mention that is only a doc link. All of them are `NSView` or already-`@MainActor` builders, which
-# is why `@MainActor` on the accessor costs nothing.
-#
-# THE FAILURE MODE THE GATE EXISTS FOR is that none of this is visible to a test: every call returns
-# the correct font, the memo and the builder agree by construction, and the only trace is the frame
-# rate while a divider is dragged. So what is pinned is the SHAPE — that the accessor goes through
-# the table, and that the expensive builder is reachable from exactly one place.
-#
-# BREAK-TESTED against the real tree on 2026-08-22 by putting each pre-fix spelling back and
-# restoring `SlateDesign.swift` from a /tmp copy afterwards (never `git checkout`, which would have
-# discarded this tree's uncommitted work). All four fire, each on its own rule only, and the
-# restored file reads 0:
-#   accessor no longer reads the table   FAIL "stopped reading mintedInstruments"        ✓
-#   `@MainActor` dropped off the store   FAIL "mintedInstruments lost its @MainActor"     ✓
-#   descriptor inlined into the accessor FAIL "mints a font outside mintInstrument"       ✓
-#   a second withFamily(mono) grows      FAIL "the instrument face is built in 2 places"  ✓
-slate_design=Sources/SlopDeskSlate/SlateDesign.swift
-if ! grep -qE '^ *if let struck = mintedInstruments\[rung\] \{ return struck \}$' "${slate_design}"; then
-  fail "instrumentNative stopped reading mintedInstruments — it is 7.1 µs a call cold and 30 ns out of the table"
-fi
-if ! grep -qE '^ *@MainActor private static var mintedInstruments: \[InstrumentRung: SlateNativeFont\] = \[:\]$' "${slate_design}"; then
-  fail "mintedInstruments lost its @MainActor (or its type) — the only alternatives are a lock or no memo at all"
-fi
-# The expensive build is `SlateNativeFont.systemFont(…).fontDescriptor.withFamily(mono)` and it must
-# live in `mintInstrument` and nowhere else — a caller that spells it inline has re-minted around the
-# table, which no test can see because the FONT is right. Counted rather than merely required, for
-# the reason `TreeWorkspaceRepairDifferentialTests` gives about vocabularies: a presence check agrees
-# with itself while a second copy appears beside the first, and 0 — the extraction having gone stale
-# — must fail rather than read as compliance. `|| true` so a zero count cannot kill the script under
-# the meta-gate's `pipefail`.
-mint_sites=$(grep -cE 'fontDescriptor\.withFamily\(mono\)' "${slate_design}" || true)
-if [[ "${mint_sites}" != 1 ]]; then
-  fail "the instrument face is built in ${mint_sites} places in ${slate_design}, not 1 — mintInstrument is the only one allowed"
-fi
-if grep -A12 '^ *package static func instrumentNative(' "${slate_design}" | grep -qE 'fontDescriptor'; then
-  fail "instrumentNative mints a font outside mintInstrument — the memo is being walked around"
-fi
-printf 'check-supervisor: the instrument voice is minted once per rung, not once per call.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::panel_predicates`: the six copies of the device
+# panels' search predicate, now one `DeviceRowFilter` over a seven-file corpus floored by name
+# (`one-panel-predicate`); the instrument voice read out of its table, the store still `@MainActor`,
+# and the expensive build site COUNTED at exactly one so a stale extraction cannot read as compliance
+# (`instrument-voice-minted-once`).
 
 # ── NOT a ratchet, a note for whoever audits this next ──────────────────────────────────────────
 # `MuxChannelSession.isCompletionTransition` looks like a twin of `slopdesk_agent_attention_completion`
@@ -2077,36 +1961,10 @@ printf 'check-supervisor: the instrument voice is minted once per rung, not once
 # `Tests/SlopDeskHostTests/CompletionTransitionTests.swift` pins the difference; leave it Swift, or
 # give the wider rule a door of its own.
 
-# ── The Android console's level filter is androidd's array, not a second list ────────────────────
-#
-# CATCHES: a Swift `AndroidLogLevel` that goes back to spelling its own letters. It did once, and it
-# drifted short — five letters against androidd's six — so `F` was a filter the menu could not
-# produce while `logcat_level` was validating against a set that contained it. Nothing failed: the
-# console just had no way to ask for fatal. The set now crosses through
-# `slopdesk_android_log_level_letter`, and this is what keeps it crossing.
-SWIFT_ANDROID_LOG_LEVEL="Sources/SlopDeskDevicePanels/Android/AndroidLogLevel.swift"
-if ! grep -q 'slopdesk_android_log_level_letter' "${SWIFT_ANDROID_LOG_LEVEL}"; then
-  fail "${SWIFT_ANDROID_LOG_LEVEL} no longer reads androidd's level array — the menu is a second list again (docs/48)"
-fi
-# The named constants (`.info`, `.fatal`) are allowed and `AndroidLogLevelTests` pins each against
-# the crossed set. What is NOT allowed is the type going back to an `enum`, because an enum's case
-# list cannot be built from a table at run time — that keyword IS the second copy.
-if grep -qE '^ *(package|public|internal)? *enum +AndroidLogLevel' "${SWIFT_ANDROID_LOG_LEVEL}"; then
-  fail "${SWIFT_ANDROID_LOG_LEVEL} is an enum again — a case list cannot come from androidd's array, so it is a second copy of it"
-fi
-
-# ── The cursor style has ONE label ───────────────────────────────────────────────────────────────
-#
-# CATCHES: a display name growing back on `TerminalPreferences.CursorStyle`. There was one, reading
-# "Block (hollow)", against `settings_catalog`'s "Hollow" for the same token — and both were on the
-# same Settings page, the catalog's at the picker and this one at the ✎ row that jumps to it. One
-# setting, two words, a scroll apart.
-SWIFT_TERMINAL_PREFS="Sources/SlopDeskVideoProtocol/Settings/TerminalPreferences.swift"
-# Comments stripped for the same reason: the enum's doc quotes both spellings to record which one
-# survived, and the check is about the CODE.
-if grep -qE 'Block \(hollow\)|displayName' <<< "$(grep -vE '^ *(///|//|\*)' "${SWIFT_TERMINAL_PREFS}")"; then
-  fail "${SWIFT_TERMINAL_PREFS} names a cursor style again — the label is settings_catalog's CURSOR_STYLES (docs/56)"
-fi
+# PORTED to `rust/slopdesk-invariants` — `rules::panel_predicates`: the console's level letters
+# crossing through androidd's array, with the `enum` keyword banned because a case list cannot be
+# built from a table at run time (`android-level-array`); and the cursor style's one label, the
+# catalog's (`one-cursor-label`).
 
 # ── 1. No second traversal check in Swift ─────────────────────────────────────────────────────────
 # CATCHES: a Swift file deciding for itself whether a path contains `..`. That predicate is exactly

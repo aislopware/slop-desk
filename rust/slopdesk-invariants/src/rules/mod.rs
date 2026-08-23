@@ -28,6 +28,7 @@ pub mod macui_memos;
 pub mod overlay_split;
 pub mod pane_wiring;
 pub mod panel_floor;
+pub mod panel_predicates;
 pub mod panel_shells;
 pub mod rust_boundaries;
 pub mod screend;
@@ -954,6 +955,26 @@ pub fn registry() -> Vec<Rule> {
             name: "macui-divider-readout",
             origin: "docs/55 §8",
             check: macui_memos::the_divider_hides_before_it_cuts,
+        },
+        Rule {
+            name: "one-panel-predicate",
+            origin: "docs/55 §8",
+            check: panel_predicates::one_device_panel_predicate,
+        },
+        Rule {
+            name: "instrument-voice-minted-once",
+            origin: "docs/55 §8",
+            check: panel_predicates::the_instrument_voice_is_minted_once,
+        },
+        Rule {
+            name: "android-level-array",
+            origin: "docs/48",
+            check: panel_predicates::the_android_level_filter_is_androidds,
+        },
+        Rule {
+            name: "one-cursor-label",
+            origin: "docs/56",
+            check: panel_predicates::the_cursor_style_has_one_label,
         },
         Rule {
             name: "seeded-names",
