@@ -26,8 +26,12 @@
 #[cfg(target_os = "macos")]
 mod attribute;
 #[cfg(target_os = "macos")]
+mod nav;
+#[cfg(target_os = "macos")]
 mod window;
 
+#[cfg(target_os = "macos")]
+pub use nav::{Element, Step, walk};
 #[cfg(target_os = "macos")]
 pub use window::{App, Frame, Window};
 
@@ -97,7 +101,9 @@ pub const fn prompt_for_trust() -> bool {
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::{App, is_trusted};
+    use std::time::{Duration, Instant};
+
+    use super::{App, Step, is_trusted, walk};
 
     /// A pid that cannot be running still yields an element — the framework has nothing to check it
     /// against — and every read through it answers empty rather than trapping. This is the arm a
@@ -151,5 +157,83 @@ mod tests {
             }
             assert!(window.minimized().is_none_or(|_| true));
         }
+    }
+
+    /// A zero node budget visits nothing, and it is checked BEFORE the root rather than after — a
+    /// walk that always paid for its first node would spend a round trip on a target it had already
+    /// decided not to search.
+    #[test]
+    fn a_walk_with_no_allowance_makes_no_round_trip_at_all() {
+        let app = App::new(std::process::id().cast_signed(), 0.05);
+        let Some(bar) = app.menu_bar() else { return };
+        let mut seen = 0_u32;
+        let visited = walk(
+            &bar,
+            8,
+            0,
+            Instant::now() + Duration::from_secs(1),
+            &mut |_, _| {
+                seen += 1;
+                Step::Descend
+            },
+        );
+        assert_eq!((visited, seen), (0, 0));
+    }
+
+    /// A deadline already in the past stops the walk on the same terms, and for a different reason:
+    /// the node bounds cap the call COUNT, and a target answering slowly-but-successfully stays
+    /// under them forever.
+    #[test]
+    fn a_walk_past_its_deadline_stops_before_it_starts() {
+        let app = App::new(std::process::id().cast_signed(), 0.05);
+        let Some(bar) = app.menu_bar() else { return };
+        // Taken and then waited past, rather than subtracted from now: `Instant` subtraction can
+        // underflow near boot and the checked form's only recovery is a panic.
+        let past = Instant::now();
+        std::thread::sleep(Duration::from_millis(2));
+        let mut seen = 0_u32;
+        assert_eq!(
+            walk(&bar, 8, 1_000, past, &mut |_, _| {
+                seen += 1;
+                Step::Descend
+            }),
+            0
+        );
+        assert_eq!(seen, 0);
+    }
+
+    /// `Step::Stop` from the root ends the walk having visited exactly the root — the property the
+    /// pair search relies on to stop the moment it has both controls, rather than finishing a
+    /// subtree it no longer needs.
+    #[test]
+    fn a_walk_told_to_stop_at_the_root_visits_only_the_root() {
+        let app = App::new(std::process::id().cast_signed(), 0.05);
+        let Some(bar) = app.menu_bar() else { return };
+        let mut depths = Vec::new();
+        let visited = walk(
+            &bar,
+            8,
+            1_000,
+            Instant::now() + Duration::from_secs(1),
+            &mut |_, depth| {
+                depths.push(depth);
+                Step::Stop
+            },
+        );
+        assert_eq!((visited, depths.as_slice()), (1, [0].as_slice()));
+    }
+
+    /// The same window fetched twice compares equal, because `CFEqual` on an element compares
+    /// (pid, accessibility object) and not pointer identity. The per-window currency check is
+    /// nothing but this comparison, so a framework that compared by pointer would make every check
+    /// fail and every beat rescan. Vacuous without the grant; live on a granted machine.
+    #[test]
+    fn the_same_window_fetched_twice_is_the_same_window() {
+        let app = App::new(std::process::id().cast_signed(), 0.25);
+        let (Some(first), Some(second)) = (app.focused_or_first_window(), app.focused_or_first_window())
+        else {
+            return;
+        };
+        assert_eq!(first, second);
     }
 }

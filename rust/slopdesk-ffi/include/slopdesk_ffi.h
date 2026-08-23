@@ -8559,6 +8559,44 @@ typedef struct {
 size_t slopdesk_ax_probe_classify(SlopDeskAxProbe *handle, const SlopDeskAxOffScreen *windows,
                                   size_t count, double now, SlopDeskAxVerdict *out, size_t cap);
 
+// ---- The swipe-nav history gate (doc 20 §9.6) ---------------------------------------
+
+// Whether the frontmost browser can go back and forward, so the chip never promises a
+// navigation the chord cannot perform. Two readings, tried in this order:
+//
+//   1. the toolbar buttons with AXIdentifier BackButton/ForwardButton — what the person
+//      SEES grey out, so it cannot be stale;
+//   2. the menu items whose key equivalent is bare-Cmd [ or ] — locale-independent and
+//      semantically exact, and Chromium keeps them live without any menu opening.
+//
+// A handle rather than a function because a cold scan is 25-180 ms of blocking IPC and a
+// cached re-read is ~0.05 ms, while the poll runs at 4 Hz. One handle per reader; no two
+// calls on it may overlap.
+typedef struct SlopDeskNavHistory SlopDeskNavHistory;
+
+SlopDeskNavHistory *slopdesk_nav_history_new(void);
+void slopdesk_nav_history_free(SlopDeskNavHistory *handle);
+
+typedef struct {
+  bool can_go_back;     // whether Cmd-[ would navigate
+  bool can_go_forward;  // whether Cmd-] would navigate
+} SlopDeskNavFlags;
+
+// Reads pid's availability into `out`; answers whether it is KNOWN. false leaves `out`
+// untouched and is the FAIL-OPEN answer: the client falls back to its pre-gate behaviour
+// rather than darking a chip nobody can vouch for.
+//
+// `rescan_unknown` is the slow heartbeat's permission to retry a pid whose last scan
+// found no pair — without it a browser with no windows would cost a full walk 4x a
+// second forever. `verify_window` is that same beat's permission to spend one extra
+// round trip confirming a TOOLBAR pair still belongs to the focused window, since that
+// state is per-window and a stale pair reads successfully rather than failing.
+//
+// Blocks on out-of-process IPC, bounded by a per-message cap and a scan deadline. Call
+// it OFF the main thread.
+bool slopdesk_nav_history_read(SlopDeskNavHistory *handle, int32_t pid, bool rescan_unknown,
+                               bool verify_window, SlopDeskNavFlags *out);
+
 // ---- The cursor side-channel's host end --------------------------------------------
 
 // THE ONE HANDLE THAT MAY BE CALLED FROM TWO THREADS. The convention at the top of

@@ -201,6 +201,7 @@ pub mod mux_flow;
 pub mod mux_header;
 pub mod mux_routing;
 pub mod nal_unit;
+pub mod nav_history;
 pub mod network_estimate;
 pub mod pacer_depth;
 pub mod packetizer;

@@ -113,8 +113,14 @@ no-op, not a fault.`
 2. A `# Safety` comment per `unsafe` block, in the form §2 describes.
 3. A LEAK test: the crate's central object is created and dropped in a loop, and the test asserts the
    process's resident footprint does not climb. Generated bindings are the risk this covers.
-4. Small enough to read in a sitting. If a wrapper crosses ~600 lines, the framework area was drawn
-   too wide.
+4. Small enough to read in a sitting. If a wrapper crosses ~600 lines of CODE, the framework area
+   was drawn too wide. **Code**, counting neither blank lines nor comments, and the distinction is
+   not a loophole — these crates run about half prose, because every `unsafe` block owes a `# Safety`
+   note naming a framework rule and every door owes the reason it answers nothing rather than
+   failing. A bar that counted those would be a bar on writing them down. The family as it stands:
+   `app` 67, `cgdisplay` 131, `cursor` 140, `cgwindow` 247, `cgevent` 317, `ax` 462 — the last is the
+   widest because the accessibility client API genuinely is, and splitting it would break the rule
+   above it.
 5. `cargo test` runs it on macOS; on any other host every module is `#[cfg(target_os = "macos")]` and
    the crate compiles to nothing.
 
@@ -161,7 +167,7 @@ an `extern` key constant, an element type C's `CFArrayRef` does not carry, an ou
 | `slopdesk-apple-cgevent` | CoreGraphics events | `InputInjector`'s posting | **landed** (increment 84) |
 | `slopdesk-apple-cgwindow` | CG window services | `HostFrontmostApp`'s decode, `WindowGeometryWatcher`'s window reads | **landed** (increment 85) |
 | `slopdesk-apple-cgdisplay` | CG display services | every `CGDisplayBounds`/`CGGet*DisplayList` site | **landed** (increment 85) |
-| `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowPlacement`, `WindowGeometryWatcher`'s resize, `WindowFeedAXSupport`'s probe | **landed** (increment 90) — costs the §2 admission |
+| `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowPlacement`, `WindowGeometryWatcher`'s resize, `WindowFeedAXSupport`'s probe, `HostNavHistory` | **landed** (increments 90-91) — costs the §2 admission |
 | `slopdesk-apple-cursor` | `NSCursor` + the offscreen `NSBitmapImageRep` render | `CursorSampler`'s two AppKit reads | **landed** (increment 89) — costs **two** `unsafe` blocks |
 | `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder`, `VideoDecoder` | planned |
@@ -247,3 +253,19 @@ frame is consulted only when the symbol resolved nothing for any candidate — a
 `slopdesk_video::ax_probe`, `forbid(unsafe_code)`, with eighteen tests. Every one of those arms was
 previously unreachable: the Swift they came from needed an Accessibility grant to run a line of it,
 and `WindowFeedAXSupport.swift`'s header said so.
+
+`HostNavHistory` followed one increment later and split the same three ways, which is what turned
+the shape above from a fix into a pattern. The crate gained an untyped `Element` and one bounded
+depth-first `walk` — the mechanical part, which belongs beside the IPC because every node it touches
+is a round trip, so the bound and the traversal have to be the same loop. It takes its two bounds as
+plain numbers rather than a policy type, and that is what keeps the policy one crate over:
+`slopdesk_video::nav_history` owns which node counts, how deep to look, when a cached pair may still
+be believed, and how two half-answers fold. Thirteen tests, against a file whose own header had
+conceded that no unit test could reach it.
+
+One detail is worth recording because it is the kind a port loses. Both readings are two-attribute
+matches — a role and then an identifier, a key-equivalent character and then its modifiers — and the
+Swift read the second only when the first had already matched. Passing both as VALUES would have
+made that eager and doubled the round trips of an 800-node walk to learn nothing, so the second
+attribute crosses as a closure and the policy crate decides whether to call it. Laziness here is not
+an optimisation applied to a rule; it is part of the rule, and it lives with it.

@@ -622,14 +622,15 @@ apple-app-test: ## cargo test for the running-application reads (nothing-pid ans
 apple-cursor-test: ## cargo test for the NSCursor read + PNG render (off-main answers nothing, leak check)
 	cd rust/slopdesk-apple-cursor && cargo test
 
-# One app's accessibility tree: its windows, their frames, and the four effects on one of them
-# (move, resize, un-minimize, raise). Every reading needs a live app AND the Accessibility grant,
-# which is why the Swift this replaced carried a standing "compiled + reviewed, not driven from
-# unit tests" note — so what this suite can ask is the refusal half: no app, no window, no grant.
-# The DECISIONS the reader used to make in the same breath live in `slopdesk-video`'s `ax_probe`
-# instead, under `forbid(unsafe_code)`, where they are ordinary tests. The leak check creates and
-# releases ten thousand elements and asks whether anything accumulated.
-apple-ax-test: ## cargo test for the accessibility tree (refusals without a grant, leak check)
+# One app's accessibility tree: its windows, their frames, the four effects on one of them (move,
+# resize, un-minimize, raise), and one bounded walk for the searches that do not know which element
+# they want. Every reading needs a live app AND the Accessibility grant, which is why the two Swift
+# files this replaced BOTH carried a standing "compiled + reviewed, not driven from unit tests"
+# note — so what this suite can ask is the refusal half: no app, no window, no grant, no allowance.
+# The DECISIONS those readers used to make in the same breath live in `slopdesk-video`'s `ax_probe`
+# and `nav_history` instead, under `forbid(unsafe_code)`, where they are ordinary tests. The leak
+# check creates and releases ten thousand elements and asks whether anything accumulated.
+apple-ax-test: ## cargo test for the accessibility tree (refusals without a grant, walk bounds, leak check)
 	cd rust/slopdesk-apple-ax && cargo test
 
 # The pane census — which processes belong to one PTY, and what they are listening on. Everything

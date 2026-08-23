@@ -211,16 +211,23 @@ pub fn agent_detection(tree: &Tree) -> Report {
 /// `AppIconGlue` and `slopdesk-navhistory-probe` are still not exempt and still do not need to be,
 /// for the reason above: an icon lookup is image work.
 ///
-/// ## And the accessibility tree, PARTLY
-/// The fourth claim is the only one here that bans less than the whole framework area, and the
-/// asymmetry is the point. What moved to `rust/slopdesk-apple-ax` is every EFFECT on a window —
-/// park, restore, resize, un-minimize, raise — plus the trust read and the private window-id
-/// symbol; those are banned. What did not move is a SUBSCRIPTION with a run loop
-/// (`WindowFeedAXObserver`, which docs/57 §1 keeps Swift) and `HostNavHistory`, which has not been
-/// ported yet — both make the two generic reads, so `AXUIElementCopyAttributeValue` and
-/// `…CreateApplication` are deliberately absent from the pattern. Banning them and exempting the
-/// two files would put the remaining debt in an exemption list, which is the failure the census
-/// section above describes.
+/// ## And the accessibility tree, all but the subscription
+/// The fourth claim is the only one here that bans less than the whole framework area, and what it
+/// leaves out is the point. Every EFFECT on a window — park, restore, resize, un-minimize, raise —
+/// is `rust/slopdesk-apple-ax`'s, and so is every attribute READ, the trust check and the private
+/// window-id symbol; all of those are banned outright. What is not banned is
+/// `AXUIElementCreateApplication` and `AXUIElementSetMessagingTimeout`, because
+/// `WindowFeedAXObserver` still needs both: an observer with a run loop behind it is a SUBSCRIPTION
+/// rather than an effect on the system, and `docs/57` §1's test for what belongs in the objc2
+/// family is the latter. Those two calls create and configure the element a subscription attaches
+/// to and read nothing, so leaving them is not leaving debt — the file that makes them is where
+/// they belong.
+///
+/// The read half joined the ban when `HostNavHistory` moved. While it was still Swift, banning
+/// `AXUIElementCopyAttributeValue` would have needed an exemption for it, and a ban whose exemption
+/// list is the only place the debt is written down is the failure the census section above
+/// describes. The file is a face over `slopdesk_nav_history_read` now, so the exemption is gone
+/// rather than granted.
 #[must_use]
 pub fn one_probe_per_reading(tree: &Tree) -> Report {
     // Assembled rather than spelled, because this file is itself under `Sources`-adjacent review
@@ -253,23 +260,26 @@ pub fn one_probe_per_reading(tree: &Tree) -> Report {
         "|CGSCurrentCursorSeed",
         "|SLSCurrentCursorSeed"
     );
-    // NOT `AXUIElementCopyAttributeValue` or `…CreateApplication`, which two Swift files still make:
-    // `WindowFeedAXObserver` holds a SUBSCRIPTION with a run loop (docs/57 §1 keeps those Swift) and
-    // `HostNavHistory` has not moved yet. What is banned is what has exactly one home now — the WRITE
-    // half and the action (`slopdesk_ax_park_window` / `_restore_window` / `_resize_window` /
-    // `_deminiaturize` / `slopdesk_ax_raiser_raise`), the trust read, and the private window-id
-    // symbol. The last is the sharpest of the three: it was a `@_silgen_name` declaration in
+    // NOT `AXUIElementCreateApplication` or `…SetMessagingTimeout`, which `WindowFeedAXObserver`
+    // still makes: it holds a SUBSCRIPTION with a run loop, and `docs/57` §1 keeps those Swift. Every
+    // other reach into the tree is banned — the READ, the write, the action, the trust check and the
+    // private window-id symbol. The last is the sharpest: it was a `@_silgen_name` declaration in
     // `InputInjector`, and a second declaration of a private symbol is how two callers end up
     // disagreeing about which framework exports it.
     const ACCESSIBILITY: &str = concat!(
         "AXIsProcessTrusted",
+        "|AXUIElementCopyAttributeValue",
         "|AXUIElementSetAttributeValue",
         "|AXUIElementPerformAction",
         "|_AXUIElementGetWindow",
         "|kAXPositionAttribute",
         "|kAXSizeAttribute",
         "|kAXMinimizedAttribute",
-        "|kAXRaiseAction"
+        "|kAXRaiseAction",
+        "|kAXEnabledAttribute",
+        "|kAXChildrenAttribute",
+        "|kAXMenuBarAttribute",
+        "|kAXMenuItemCmd"
     );
     check_all(tree, &[
         Claim::NoneUnder {
@@ -499,6 +509,10 @@ mod tests {
             "@_silgen_name(\"_AXUIElementGetWindow\") func getWindow(_ e: AXUIElement) -> AXError\n",
             "AXUIElementCopyAttributeValue(w, kAXSizeAttribute as CFString, &raw)\n",
             "AXUIElementCopyAttributeValue(w, kAXMinimizedAttribute as CFString, &raw)\n",
+            "_ = AXUIElementCopyAttributeValue(el, kAXEnabledAttribute as CFString, &ref)\n",
+            "let kids = attr(el, kAXChildrenAttribute) as? [AXUIElement]\n",
+            "guard let bar = attr(appEl, kAXMenuBarAttribute) else { return nil }\n",
+            "if let cmd = attr(item, kAXMenuItemCmdCharAttribute) as? String { return cmd }\n",
         ] {
             let fixture = Fixture::new("ax-revived");
             fixture.write("Sources/SlopDeskVideoHost/WindowPlacement.swift", effect);
@@ -510,9 +524,9 @@ mod tests {
         }
     }
 
-    /// A SUBSCRIPTION with a run loop stays Swift (docs/57 §1), and `HostNavHistory` has not moved
-    /// yet — so the two generic AX calls both of them make are deliberately NOT banned. A ban on
-    /// `AXUIElementCopyAttributeValue` as a token would report a live observer as debt.
+    /// A SUBSCRIPTION with a run loop stays Swift (docs/57 §1), so the two calls that create and
+    /// configure the element it attaches to are deliberately NOT banned. They read nothing; a ban
+    /// on `AXUIElementCreateApplication` as a token would report a live observer as debt.
     #[test]
     fn a_subscription_that_stays_swift_is_not_an_effect() {
         let fixture = Fixture::new("ax-observer");

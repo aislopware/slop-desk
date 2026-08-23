@@ -10,7 +10,6 @@
 
 #if os(macOS)
 import AppKit
-import ApplicationServices
 import CSlopDeskFFI // slopdesk_ax_is_trusted
 import SlopDeskVideoHost
 

@@ -1,7 +1,7 @@
 //! An application's accessibility element, and the windows it publishes.
 
 use objc2_application_services::AXUIElement;
-use objc2_core_foundation::{CFArray, CFRetained, CGPoint, CGSize};
+use objc2_core_foundation::{CFRetained, CGPoint, CGSize};
 
 use crate::attribute;
 
@@ -43,7 +43,9 @@ pub struct Frame {
 #[derive(Debug)]
 pub struct App {
     /// The `AXUIElement` for the process.
-    element: CFRetained<AXUIElement>,
+    pub(crate) element: CFRetained<AXUIElement>,
+    /// The cap this app was opened with, re-stamped on every element read out of it.
+    pub(crate) timeout: f32,
 }
 
 impl App {
@@ -58,49 +60,45 @@ impl App {
     /// # Safety
     /// `AXUIElementCreateApplication` is documented to answer a valid element for any pid under the
     /// Create rule, which the binding discharges by handing back a `CFRetained`.
-    /// `AXUIElementSetMessagingTimeout` accepts any non-negative float and treats zero as "restore
-    /// the default"; the value is the caller's and is passed through unexamined, because a caller
-    /// asking for no cap is asking for the framework's behaviour.
     #[must_use]
     #[expect(
         unsafe_code,
-        reason = "objc2 marks both AX entry points unsafe; the obligations are the framework's"
+        reason = "objc2 marks the AX create entry point unsafe; the obligation is the framework's"
     )]
     pub fn new(pid: i32, timeout_seconds: f32) -> Self {
         // SAFETY: framework rule, above — any pid is a legal argument, Create rule on the result.
         let element = unsafe { AXUIElement::new_application(pid) };
-        // SAFETY: framework rule, above — the cap applies to every later message to this app.
-        let _ = unsafe { element.set_messaging_timeout(timeout_seconds) };
-        Self { element }
+        attribute::stamp(&element, timeout_seconds);
+        Self {
+            element,
+            timeout: timeout_seconds,
+        }
     }
 
-    /// Every window the application publishes, in the order it publishes them.
+    /// Every window the application publishes, in the order it publishes them, each capped at this
+    /// app's messaging timeout.
     ///
     /// Empty covers a real absence and a refusal alike — an app with no windows, an app that does
     /// not implement the attribute, a pid that is gone, and accessibility not being granted at all.
     /// The caller's next step is the same in each case, so the distinction has no reader.
-    ///
-    /// # Safety
-    /// The Accessibility header documents `AXWindows` as an array of `AXUIElementRef`. C's
-    /// `CFArrayRef` has nowhere to say so, which is why the read hands back an untyped array; this
-    /// states it once. Nothing is dereferenced — the typed view only decides which `get` applies.
     #[must_use]
-    #[expect(
-        unsafe_code,
-        reason = "C's CFArrayRef carries no element type; the Accessibility header is where it lives"
-    )]
     pub fn windows(&self) -> Vec<Window> {
-        let Some(array) = attribute::copy(&self.element, WINDOWS).and_then(|v| v.downcast::<CFArray>().ok())
-        else {
-            return Vec::new();
-        };
-        // SAFETY: framework rule, above — `AXWindows` is documented as an array of window elements.
-        let typed = unsafe { CFRetained::cast_unchecked::<CFArray<AXUIElement>>(array) };
-        typed
-            .to_vec()
+        attribute::elements(&self.element, WINDOWS, self.timeout)
             .into_iter()
             .map(|element| Window { element })
             .collect()
+    }
+
+    /// The window the ⌘[/⌘] chord would land in: the app's focused window, else its first.
+    ///
+    /// The fallback is what makes this comparable with itself. A currency check re-runs this and
+    /// compares the answer with the window a pair was scanned from, so scan and check have to agree
+    /// on what "the window" means even for an app that publishes no focused one.
+    #[must_use]
+    pub fn focused_or_first_window(&self) -> Option<Window> {
+        attribute::element(&self.element, FOCUSED_WINDOW, self.timeout)
+            .map(|element| Window { element })
+            .or_else(|| self.windows().into_iter().next())
     }
 
     /// Point the application's `AXMainWindow` and `AXFocusedWindow` at `window`.
@@ -118,8 +116,22 @@ impl App {
 #[derive(Debug)]
 pub struct Window {
     /// The `AXUIElement` for the window.
-    element: CFRetained<AXUIElement>,
+    pub(crate) element: CFRetained<AXUIElement>,
 }
+
+/// Two windows are the same window when the framework says so.
+///
+/// `CFEqual` on an `AXUIElement` compares (pid, accessibility object) rather than pointer identity,
+/// so the same window re-fetched a second later compares equal — which is the whole basis of the
+/// per-window currency check. `objc2` routes `PartialEq` through `CFEqual`, so this costs no
+/// `unsafe` and no round trip.
+impl PartialEq for Window {
+    fn eq(&self, other: &Self) -> bool {
+        self.element == other.element
+    }
+}
+
+impl Eq for Window {}
 
 impl Window {
     /// The window's `CGWindowID`, or `None` when the private symbol cannot answer.

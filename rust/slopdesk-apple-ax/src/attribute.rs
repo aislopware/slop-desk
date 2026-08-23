@@ -9,7 +9,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use objc2_application_services::{AXError, AXUIElement, AXValue, AXValueType};
-use objc2_core_foundation::{CFBoolean, CFRetained, CFString, CFType, CGPoint, CGSize};
+use objc2_core_foundation::{CFArray, CFBoolean, CFNumber, CFRetained, CFString, CFType, CGPoint, CGSize};
 
 /// The value of `attribute` on `element`, or `None` when the read did not produce one.
 ///
@@ -92,6 +92,87 @@ pub(crate) fn size(element: &AXUIElement, attribute: &str) -> Option<CGSize> {
 /// The boolean stored at `attribute`, or `None` when it is absent or is not one.
 pub(crate) fn flag(element: &AXUIElement, attribute: &str) -> Option<bool> {
     Some(copy(element, attribute)?.downcast::<CFBoolean>().ok()?.value())
+}
+
+/// The string stored at `attribute`, or `None` when it is absent or is not one.
+///
+/// A `String` rather than a borrow, because the `CFString` is released when this returns and every
+/// caller compares the value against a literal — the copy is one small allocation per node of a
+/// walk that is already paying for out-of-process IPC at each one.
+pub(crate) fn text(element: &AXUIElement, attribute: &str) -> Option<String> {
+    Some(copy(element, attribute)?.downcast::<CFString>().ok()?.to_string())
+}
+
+/// The integer stored at `attribute`, widened to `i64`, or `None` when it is absent or is not one.
+///
+/// `CFNumber` does not remember which C type it was built from, so asking for the widest signed one
+/// is the reading that cannot truncate whatever the framework chose.
+pub(crate) fn number(element: &AXUIElement, attribute: &str) -> Option<i64> {
+    copy(element, attribute)?.downcast::<CFNumber>().ok()?.as_i64()
+}
+
+/// The single element stored at `attribute`, stamped with `timeout_seconds`.
+///
+/// The stamp is the point of doing this here. An element that arrives as an attribute VALUE carries
+/// the framework's ~6 second default rather than the element it was read from — the cap is a
+/// per-reference client-side property, not an inherited one — so a walk that skipped this would
+/// have exactly one uncapped reference per level.
+pub(crate) fn element(
+    element: &AXUIElement,
+    attribute: &str,
+    timeout_seconds: f32,
+) -> Option<CFRetained<AXUIElement>> {
+    let found = copy(element, attribute)?.downcast::<AXUIElement>().ok()?;
+    stamp(&found, timeout_seconds);
+    Some(found)
+}
+
+/// The elements stored at `attribute`, each stamped with `timeout_seconds`.
+///
+/// Empty covers a real absence and a refusal alike: no such attribute, no children, a pid that is
+/// gone, accessibility not granted. Every caller's next step is the same, so the distinction has no
+/// reader.
+///
+/// # Safety
+/// The Accessibility header documents `AXWindows`, `AXChildren` and the menu attributes as arrays
+/// of `AXUIElementRef`. C's `CFArrayRef` has nowhere to say so, which is why the read hands back an
+/// untyped array; this states it once for every caller. Nothing is dereferenced — the typed view
+/// only decides which `get` applies, and `to_vec` retains each element it hands out.
+#[expect(
+    unsafe_code,
+    reason = "C's CFArrayRef carries no element type; the Accessibility header is where it lives"
+)]
+pub(crate) fn elements(
+    element: &AXUIElement,
+    attribute: &str,
+    timeout_seconds: f32,
+) -> Vec<CFRetained<AXUIElement>> {
+    let Some(array) = copy(element, attribute).and_then(|value| value.downcast::<CFArray>().ok()) else {
+        return Vec::new();
+    };
+    // SAFETY: framework rule, above — the Accessibility header documents these as element arrays.
+    let typed = unsafe { CFRetained::cast_unchecked::<CFArray<AXUIElement>>(array) };
+    let found = typed.to_vec();
+    for one in &found {
+        stamp(one, timeout_seconds);
+    }
+    found
+}
+
+/// Cap every later message to `element` at `timeout_seconds`.
+///
+/// # Safety
+/// `AXUIElementSetMessagingTimeout` accepts any non-negative float and treats zero as "restore the
+/// default". The value is the caller's and is passed through unexamined, because a caller asking
+/// for no cap is asking for the framework's own behaviour. This is a local client-side property
+/// set: no IPC, and nothing to fail.
+#[expect(
+    unsafe_code,
+    reason = "objc2 generates the bare AX entry points unsafe; the cap has no other obligation"
+)]
+pub(crate) fn stamp(element: &AXUIElement, timeout_seconds: f32) {
+    // SAFETY: framework rule, above — any non-negative float is a legal cap.
+    let _ = unsafe { element.set_messaging_timeout(timeout_seconds) };
 }
 
 /// Writes a `CGPoint` to `attribute`; answers whether the framework accepted it.
