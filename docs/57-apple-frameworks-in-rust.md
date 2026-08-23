@@ -447,7 +447,7 @@ could be a face over `slopdesk_video::hevc_parameter_sets`. With the decoder in 
 of that face was the decoder, so the face went and the doors went with it — the crate module they
 wrapped is unchanged and keeps its own tests, and the shim now calls it directly. This is the second
 time in two increments that collapsing a Swift face into Rust orphaned the doors that face existed
-to call, and both times `check-ffi-doors` is what said so.
+to call, and both times `ffi-doors-are-opened` is what said so.
 
 **The `sck` row was the biggest file and the smallest port, and both halves of that are the point.**
 `WindowCapturer.swift` was 2 350 lines. About 250 of them called ScreenCaptureKit; the rest is the

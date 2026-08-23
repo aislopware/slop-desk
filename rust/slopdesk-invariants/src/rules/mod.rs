@@ -22,6 +22,7 @@ pub mod device_frames;
 pub mod device_law;
 pub mod device_streams;
 pub mod frozen_pairs;
+pub mod gate_health;
 pub mod held_values;
 pub mod host_probes;
 pub mod hot_paths;
@@ -40,21 +41,22 @@ pub mod repo_invariants;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
+pub mod settings_catalog;
+pub mod settings_rows;
+pub mod shared_constants;
 pub mod sidecar_clis;
 pub mod sidecar_seams;
 pub mod sidecar_wires;
-pub mod settings_catalog;
-pub mod settings_rows;
 pub mod split_surfaces;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
 pub mod terminal_config;
 pub mod terminal_grammar;
 pub mod terminal_surface;
+pub mod transport_lanes;
 pub mod two_shells;
 pub mod ui_seams;
 pub mod ui_split;
-pub mod transport_lanes;
 pub mod video_client;
 pub mod video_control;
 pub mod video_host;
@@ -1546,6 +1548,41 @@ pub fn registry() -> Vec<Rule> {
             name: "shell-quoting-one-owner",
             origin: "docs/46",
             check: repo_invariants::shell_quoting_has_one_owner,
+        },
+        Rule {
+            name: "shared-number-asked-or-ratcheted",
+            origin: "CLAUDE.md §Rules",
+            check: shared_constants::a_shared_number_is_asked_for_or_ratcheted,
+        },
+        Rule {
+            name: "field-vocabularies-agree",
+            origin: "docs/20",
+            check: shared_constants::the_field_vocabularies_agree,
+        },
+        Rule {
+            name: "wire-enums-agree",
+            origin: "docs/20",
+            check: shared_constants::the_wire_enums_agree,
+        },
+        Rule {
+            name: "wire-flag-bits-agree",
+            origin: "docs/20",
+            check: shared_constants::the_wire_flag_bits_agree,
+        },
+        Rule {
+            name: "constant-allowlists-alive",
+            origin: "docs/55 §6",
+            check: shared_constants::every_allowlist_entry_is_alive,
+        },
+        Rule {
+            name: "ffi-doors-are-opened",
+            origin: "docs/55 §3",
+            check: gate_health::every_ffi_door_is_opened_or_declared_deliberate,
+        },
+        Rule {
+            name: "ban-union-is-whole",
+            origin: "scripts/check-supervisor.sh",
+            check: gate_health::the_ban_union_contains_every_ban,
         },
     ]
 }

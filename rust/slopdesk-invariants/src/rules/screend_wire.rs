@@ -25,7 +25,7 @@ const RUST_SCREEN_SERVER: &str = "rust/slopdesk-screend/src/server.rs";
 ///
 /// The STATUS byte is the last of screend's three alphabets and the one nothing watched.
 /// `ScreenStatus` and `screenwire::Status` are the same values in the same order, and the enum pass
-/// in `check-shared-constants.py` deliberately does not pair them: the third case is spelled
+/// in `rules::shared_constants` deliberately does not pair them: the third case is spelled
 /// `internalError` on one side and `Internal` on the other, so a name-for-name comparison would
 /// report a naming choice as a drift and get itself deleted. The NUMBERS are the contract, so the
 /// numbers are what is compared — in declaration order, with the count riding along. An inserted

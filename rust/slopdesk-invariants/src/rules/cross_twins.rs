@@ -2,10 +2,10 @@
 //! like loops.
 //!
 //! Ported from `scripts/check-supervisor.sh`. In three of the four twins the two copies were not
-//! even reached by the same inputs — one side had the callers and the other had the tests — which is
-//! the arrangement in which a divergence can never show up as a red anything. What regrows a pair is
-//! not a whole function reappearing; it is one predicate, one cast or one line of index arithmetic
-//! written by hand beside a door that already answers it.
+//! even reached by the same inputs — one side had the callers and the other had the tests — which
+//! is the arrangement in which a divergence can never show up as a red anything. What regrows a
+//! pair is not a whole function reappearing; it is one predicate, one cast or one line of index
+//! arithmetic written by hand beside a door that already answers it.
 
 use crate::claim::{Claim, RUST, SWIFT, View, check_all};
 use crate::report::Report;
@@ -19,15 +19,15 @@ const REPLAY_BUFFER: &str = "Sources/SlopDeskTransport/ReplayBuffer.swift";
 
 /// The tree repair pass is Rust, and what regrows is one predicate
 ///
-/// The pair never shadowed itself because the two halves fired on DIFFERENT EVENTS — Swift's copy on
-/// file load, the crate's on every intent. A workspace that closed cleanly came back a different
+/// The pair never shadowed itself because the two halves fired on DIFFERENT EVENTS — Swift's copy
+/// on file load, the crate's on every intent. A workspace that closed cleanly came back a different
 /// shape after a relaunch, with every test on both sides green, because each half was
 /// self-consistent. It is `slopdesk_workspace::tree_ops::repaired` now (`docs/55` §8).
 ///
-/// What grows a second implementation back is not a whole function reappearing — that would be seen.
-/// It is one PREDICATE or one re-seed STRING restated by hand, which is how the divergence started:
-/// `isVideo` was `self == .desktop` on one side and a crate predicate on the other, agreeing by
-/// coincidence right up until a third video-ish kind would have split them.
+/// What grows a second implementation back is not a whole function reappearing — that would be
+/// seen. It is one PREDICATE or one re-seed STRING restated by hand, which is how the divergence
+/// started: `isVideo` was `self == .desktop` on one side and a crate predicate on the other,
+/// agreeing by coincidence right up until a third video-ish kind would have split them.
 ///
 /// The bans read the file COMMENT-STRIPPED: this file's header EXPLAINS the divergence and has to
 /// quote the predicate it names to be worth reading. A gate that cannot tell the code from the
@@ -79,10 +79,10 @@ pub fn one_tree_repair_in_rust(tree: &Tree) -> Report {
 ///
 /// 2. THE OTHER HALF OF THE PANE-KIND CLASSIFICATION. `canReceiveText` was `self == .terminal`
 ///    beside a `PaneKind::can_receive_text` that no Rust caller had ever reached — one
-///    classification, one half asked through a door and one half transcribed, which is precisely the
-///    `MIN_WEIGHT`/`MAX_DEPTH` anti-pattern `docs/55` §8 names and says one of the two is always
-///    wrong. Catches: the broadcast recipient set and the launch restore selecting different panes
-///    the day a third kind lands on one side only.
+///    classification, one half asked through a door and one half transcribed, which is precisely
+///    the `MIN_WEIGHT`/`MAX_DEPTH` anti-pattern `docs/55` §8 names and says one of the two is
+///    always wrong. Catches: the broadcast recipient set and the launch restore selecting different
+///    panes the day a third kind lands on one side only.
 ///
 /// 3. THE BINDABLE PORT. `PortValidation.port` asked the RANGE door and then made its own `UInt16`
 ///    conversion, while `listen::port` — which does both — had no caller and said so in its own doc
@@ -114,8 +114,8 @@ pub fn four_cross_language_twins(tree: &Tree) -> Report {
             path: NEW_TAB,
             needle: "slopdesk_ws_new_tab_index(",
             message: "NewTabPosition.swift stopped asking slopdesk_ws_new_tab_index — the placement is \
-                      rust/slopdesk-workspace's, and a Swift copy of it answers only its own tests \
-                      (docs/55 §8)",
+                      rust/slopdesk-workspace's, and a Swift copy of it answers only its own tests (docs/55 \
+                      §8)",
         },
         // And the arithmetic itself, in case a copy lands BESIDE the door rather than replacing it —
         // the way the isVideo divergence started. Comment-stripped, so the doc comment may go on
@@ -151,15 +151,15 @@ pub fn four_cross_language_twins(tree: &Tree) -> Report {
             pattern: r"UInt16\(raw\)",
             view: View::Code,
             message: "PortValidation.swift re-derived the port from the range predicate — the refusal and \
-                      the conversion are one answer, and slopdesk_ws_listen_port is where it lives \
-                      (docs/55 §8)",
+                      the conversion are one answer, and slopdesk_ws_listen_port is where it lives (docs/55 \
+                      §8)",
         },
         Claim::Populated {
             roots: &["rust/slopdesk-workspace/src", "rust/slopdesk-tree/src"],
             extensions: RUST,
             minimum: 20,
-            message: "rust/slopdesk-{workspace,tree}/src read as {found} files — the crate moved, so the ban \
-                      beside this stopped checking anything (docs/55 §8)",
+            message: "rust/slopdesk-{workspace,tree}/src read as {found} files — the crate moved, so the \
+                      ban beside this stopped checking anything (docs/55 §8)",
         },
         Claim::NoneUnder {
             roots: &["rust/slopdesk-workspace/src", "rust/slopdesk-tree/src"],
@@ -197,7 +197,7 @@ pub fn the_loop_shaped_crossings_are_whole_collection_doors(tree: &Tree) -> Repo
                       message slot in one crossing, then one slopdesk_replay_result_copy per message",
         },
         // The two per-index metadata doors were DELETED, not kept beside the list door, because
-        // scripts/check-ffi-doors.py would have called them dead the moment Swift stopped asking. A
+        // The dead-door ratchet would have called them dead the moment Swift stopped asking. A
         // name reappearing anywhere in Swift means someone re-cut a second way to ask what the headers
         // door answers.
         Claim::NoneUnder {
@@ -241,8 +241,8 @@ pub fn the_loop_shaped_crossings_are_whole_collection_doors(tree: &Tree) -> Repo
             path: "Sources/SlopDeskWorkspaceCore/Workspace/Domain/PeekReply.swift",
             pattern: r"blocks\.map\(\\\.statusLabel\)",
             view: View::Code,
-            message: "PeekReply.swift maps statusLabel over its blocks again — that is one block-status door \
-                      crossing per block per render; ask Line.statusLabels(of:) once",
+            message: "PeekReply.swift maps statusLabel over its blocks again — that is one block-status \
+                      door crossing per block per render; ask Line.statusLabels(of:) once",
         },
         Claim::Names {
             path: "Sources/SlopDeskWorkspaceCore/Workspace/Domain/PeekReply.swift",
@@ -263,7 +263,10 @@ mod tests {
         let fixture = Fixture::new("twins-repair");
         let seed = |fixture: &Fixture| {
             fixture
-                .write(super::REPAIR, "// kind == .desktop is what it USED to say\nrepaired(intent)\n")
+                .write(
+                    super::REPAIR,
+                    "// kind == .desktop is what it USED to say\nrepaired(intent)\n",
+                )
                 .write(
                     super::PANE_SPEC,
                     "slopdesk_ws_pane_kind_is_video\nslopdesk_ws_pane_kind_can_receive_text(\n",
@@ -361,7 +364,10 @@ mod tests {
 
         // A deleted per-index door, asked for again — anywhere, tests included.
         loops(&fixture);
-        fixture.write("Tests/TransportTests/ReplayTests.swift", "slopdesk_replay_result_seq(0)\n");
+        fixture.write(
+            "Tests/TransportTests/ReplayTests.swift",
+            "slopdesk_replay_result_seq(0)\n",
+        );
         assert!(!super::the_loop_shaped_crossings_are_whole_collection_doors(&fixture.tree()).is_clean());
 
         // And the index walk, back under whatever door name.

@@ -26,7 +26,7 @@ public enum WorkspaceFile {
     /// How many panes one file may name before ``decode(_:)`` refuses it as ``FileError/tooManyPanes``.
     ///
     /// Asked for, never spelled here: an in-process cap crosses through a door, which is the rule
-    /// `scripts/check-shared-constants.py` states and `WorkspaceTopology.closedTabRingCap` already
+    /// `shared-number-asked-or-ratcheted` states and `WorkspaceTopology.closedTabRingCap` already
     /// follows. This one is a REFUSAL threshold, so two copies drifting would not read as a
     /// disagreement — this side would write a file it believes fits, the far side would refuse it,
     /// and the user would meet a workspace reset to the default with nothing saying why.

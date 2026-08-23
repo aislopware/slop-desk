@@ -188,7 +188,7 @@ answer it cannot mistake for one that does.
 The FLAG doors are the ones worth the entry twice over. A bit position is the worst thing in the
 codebase to transcribe: the word is ORed together on one side and ANDed apart on the other, nothing
 on the wire pins it, and a side that disagrees produces no error and no decode failure — just a
-keyframe encoded as a delta, or an LTR the client never acks. `scripts/check-shared-constants.py` is
+keyframe encoded as a delta, or an LTR the client never acks. The `shared-number-asked-or-ratcheted` rule in `rust/slopdesk-invariants` is
 the gate that keeps a number from being spelled on both sides in the first place; it is birth
 control, not a drift check, which is exactly why the constant should live behind a door and not in
 its allowlist.
@@ -937,7 +937,7 @@ arithmetic says so.** Of the sweep's top-ranked cluster, four of five findings w
 measurement and every refutation held. The #1-ranked site cost 4.98 ns against a 190 ns call on the
 same datagram. The blob chunker caps at 42 chunks and its whole achievable win was ~15 µs against a
 *deliberate* 42 ms inter-chunk pace. Each of those doors would have bought a rounding error and a
-permanent second way to ask one question, which `check-ffi-doors.py` penalises for the reason §8
+permanent second way to ask one question, which `ffi-doors-are-opened` penalises for the reason §8
 gives. When the far side does keep both forms, say in the header which one a row asks and which one a
 list asks — `slopdesk_block_statuses` sits beside `slopdesk_block_status` on exactly that basis.
 
@@ -1244,7 +1244,7 @@ and then let the far half sit there anyway — a Rust `plan`, a `LaunchPlan` and
 by nothing but their own two tests. An unreached port is not a safer half-measure than an unported
 one, it is a worse one: the pair could not be caught disagreeing, because no input ever reached both
 copies, and neither `dead_code` (it cannot see a `pub` item in a library crate) nor
-`make lint-ffi-doors` (it audits doors, and this was not one) could see it either. It had already
+`ffi-doors-are-opened` (it audits doors, and this was not one) could see it either. It had already
 drifted — `TemplatePane::keystrokes` hardcoded `None` for the cwd and so could not emit the `cd` line
 its Swift counterpart takes a directory in order to write. All four were deleted on 2026-08-22.
 **"Do not port this" and "keep an unreachable copy of it" are different instructions**, and the
@@ -1592,7 +1592,7 @@ the shape rather than the subject. Two things it does that a normal suite does n
   without knowing what either door does.
 
 A door with no caller is how the second half gets lost: `slopdesk_ws_normalize_pass_count` shipped dead
-and `make lint-ffi-doors` caught it, which is the ratchet doing exactly its job. **A differential suite
+and `ffi-doors-are-opened` caught it, which is the ratchet doing exactly its job. **A differential suite
 is not finished until every door it justified is one the suite calls.**
 
 **The second one (2026-08-20): `SessionTemplateRepairDifferentialTests`.** It is the first written for
