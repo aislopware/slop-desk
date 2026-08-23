@@ -279,6 +279,24 @@ pub enum Claim {
         /// The sentence, with `{found}` where the count goes.
         message: &'static str,
     },
+    /// A file must match a pattern EXACTLY this many times.
+    ///
+    /// [`Claim::AtLeast`]'s stricter sibling, and the difference is the whole rule where it is used:
+    /// the phone's code poll is one `.task(id:)` OUTSIDE the state switch, and the first draft hung
+    /// one on three of the four branches. Three reads correctly and cancels the poll on every
+    /// transition the poll itself caused. A floor of one would have passed it.
+    Exactly {
+        /// Repo-relative path.
+        path: &'static str,
+        /// The pattern to count LINES of.
+        pattern: &'static str,
+        /// How many there must be.
+        count: usize,
+        /// Which view to read.
+        view: View,
+        /// The sentence, with `{found}` where the count goes.
+        message: &'static str,
+    },
     /// A file must contain a literal — a declaration, a call through a door, a doc citation.
     Names {
         /// Repo-relative path.
@@ -381,6 +399,33 @@ pub enum Claim {
         /// The sentence, with `{files}` where the offenders go.
         message: &'static str,
     },
+    /// No line under `roots` may quote one of a set of strings READ OUT OF the tree.
+    ///
+    /// Every other ban here forbids a pattern written in this crate. This one forbids a list that
+    /// only exists in the tree: the labels in `settings_rows.rs`, the group titles in
+    /// `settings_layout.rs`. The rule is "a view may not re-type a word the table already holds",
+    /// and the words are the table's — writing them down here would be the third copy, and the one
+    /// nobody would remember to update.
+    ///
+    /// `template` is a LITERAL with `{needle}` in it, so a rule can demand the surrounding syntax
+    /// (`slateFormSection("{needle}")`) rather than the bare string. No regex: a label is prose and
+    /// prose is full of characters a pattern would read as syntax.
+    NoneQuoting {
+        /// Path prefixes to scan.
+        roots: &'static [&'static str],
+        /// Only files with one of these extensions are read.
+        extensions: &'static [&'static str],
+        /// Where the forbidden strings are read from. An empty reading fails.
+        needles: Extract,
+        /// The literal to look for, with `{needle}` where the string goes.
+        template: &'static str,
+        /// Which view to read.
+        view: View,
+        /// Paths that may quote, each because somebody decided so.
+        exempt: &'static [&'static str],
+        /// The sentence, with `{files}` where the offenders go.
+        message: &'static str,
+    },
     /// A pattern must appear between two other patterns — the shell's `awk '/a/,/b/'` with a `grep`
     /// inside it.
     ///
@@ -401,6 +446,29 @@ pub enum Claim {
         /// Which view to read.
         view: View,
         /// What an absence means.
+        message: &'static str,
+    },
+    /// A pattern may NOT appear between two other patterns — [`Claim::Within`] negated.
+    ///
+    /// The shell's `grep -A 2 'x' | grep -q '#if'`, and it is a range rather than a file ban because
+    /// the thing forbidden is ordinary everywhere else in the same file. `Half.current` is the case:
+    /// `#if os(macOS)` is perfectly normal Swift, and normal in that file, and a compile-time fork
+    /// INSIDE that one property is the gate the settings table was written to delete.
+    ///
+    /// An empty range fails rather than passing. A ban over a declaration that has been renamed away
+    /// has nothing left to ban.
+    LacksWithin {
+        /// Repo-relative path.
+        path: &'static str,
+        /// The line the range opens on.
+        start: &'static str,
+        /// The line it closes on.
+        end: &'static str,
+        /// What may not appear inside it.
+        pattern: &'static str,
+        /// Which view to read.
+        view: View,
+        /// What a match means.
         message: &'static str,
     },
     /// These roots must together hold at least `minimum` files of these extensions.
@@ -442,6 +510,42 @@ pub enum Claim {
         swift: Extract,
         /// The Rust side.
         rust: Extract,
+    },
+    /// Every member of one extracted set must be a member of another — the shell's
+    /// `comm -23 <(a) <(b)`.
+    ///
+    /// ONE DIRECTION, which is the whole reason this is not [`Claim::SameSet`]. Three of the settings
+    /// comparisons are honestly asymmetric: eleven `SettingsKey` constants are internal state with no
+    /// row by design, and the config bridge covers the terminal keys and not the video ones. A
+    /// two-way gate over either would need an allowlist of the exceptions, and an allowlist is the
+    /// thing that goes stale. One direction still catches a typo on EITHER side — the two spellings
+    /// stop being equal, so the subject's member stops being found.
+    Subset {
+        /// What the relation is called in the diagnostic.
+        label: &'static str,
+        /// The side every member of which must be found.
+        subject: Extract,
+        /// The side that must hold them.
+        universe: Extract,
+        /// Why an orphan matters, with `{orphans}` where the missing members go.
+        message: &'static str,
+    },
+    /// Every member of an extracted set must match a pattern.
+    ///
+    /// The classifier under a [`Claim::Subset`], and it exists because the subset above it reads
+    /// HALF a set: the dotted `UserDefaults` keys, not the dashed config names. That split is a
+    /// convention nothing enforces, so a key carrying both notations or neither would silently drop
+    /// out of the comparison — the half being read would still be a valid half, just no longer the
+    /// whole of what it claims to cover.
+    EachMatches {
+        /// What the set is called in the diagnostic.
+        label: &'static str,
+        /// Where to read it.
+        from: Extract,
+        /// The shape every member must have.
+        pattern: &'static str,
+        /// Why, with `{members}` where the offenders go.
+        message: &'static str,
     },
     /// Two single values, extracted from two places, must agree — the shell's `same`.
     SameValue {
@@ -569,6 +673,18 @@ impl Claim {
                 if let Some(source) = report.source(tree, path, message) {
                     let found = text::count_lines(source.code(), pattern);
                     report.fail_if(found < *minimum, fill(message, "found", &found.to_string()));
+                }
+            },
+            Self::Exactly {
+                path,
+                pattern,
+                count,
+                view,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, path, message) {
+                    let found = text::count_lines(&view.of(source), pattern);
+                    report.fail_if(found != *count, fill(message, "found", &found.to_string()));
                 }
             },
             Self::Names {
@@ -734,6 +850,54 @@ impl Claim {
                     report.fail(fill(message, "files", &named.join(", ")));
                 }
             },
+            Self::NoneQuoting {
+                roots,
+                extensions,
+                needles,
+                template,
+                view,
+                exempt,
+                message,
+            } => {
+                let Some(words) = needles.set(tree, report) else {
+                    return;
+                };
+                if words.is_empty() {
+                    report.fail(format!(
+                        "no strings parsed out of {} — {message} would pass by forbidding nothing",
+                        needles.path
+                    ));
+                    return;
+                }
+                let quotations: Vec<String> = words
+                    .iter()
+                    .map(|word| fill(template, "needle", word))
+                    .collect();
+                let mut offenders = BTreeSet::new();
+                for root in *roots {
+                    for (path, source) in tree.under(root) {
+                        let display = path.to_string_lossy().into_owned();
+                        let excused = exempt.iter().any(|entry| {
+                            *entry == display || (entry.ends_with('/') && display.starts_with(*entry))
+                        });
+                        let matching_extension = path
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .is_some_and(|ext| extensions.contains(&ext));
+                        if excused || !matching_extension {
+                            continue;
+                        }
+                        let haystack = view.of(source);
+                        if quotations.iter().any(|quoted| haystack.contains(quoted)) {
+                            offenders.insert(display);
+                        }
+                    }
+                }
+                if !offenders.is_empty() {
+                    let named: Vec<&str> = offenders.iter().map(String::as_str).collect();
+                    report.fail(fill(message, "files", &named.join(", ")));
+                }
+            },
             Self::Within {
                 path,
                 start,
@@ -745,6 +909,25 @@ impl Claim {
                 if let Some(source) = report.source(tree, path, message) {
                     let block = text::range(&view.of(source), start, end);
                     report.fail_if(!text::matches(&block, pattern), message.to_owned());
+                }
+            },
+            Self::LacksWithin {
+                path,
+                start,
+                end,
+                pattern,
+                view,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, path, message) {
+                    let block = text::range(&view.of(source), start, end);
+                    if block.trim().is_empty() {
+                        report.fail(format!(
+                            "{path} no longer holds {start} — {message} is a ban over nothing"
+                        ));
+                        return;
+                    }
+                    report.fail_if(text::matches_line(&block, pattern), message.to_owned());
                 }
             },
             Self::Populated {
@@ -786,6 +969,61 @@ impl Claim {
                     return;
                 };
                 report.same_set(label, &left, &right);
+            },
+            Self::Subset {
+                label,
+                subject,
+                universe,
+                message,
+            } => {
+                // Both sides are read before either is judged, so a diagnostic names every missing
+                // file rather than the first one.
+                let (Some(members), Some(holder)) =
+                    (subject.set(tree, report), universe.set(tree, report))
+                else {
+                    return;
+                };
+                if members.is_empty() || holder.is_empty() {
+                    report.fail(format!(
+                        "the {label} comparison read EMPTY ({} of {}, {} of {}) — this claim has stopped \
+                         checking anything",
+                        members.len(),
+                        subject.path,
+                        holder.len(),
+                        universe.path,
+                    ));
+                    return;
+                }
+                let orphans: Vec<&str> = members
+                    .iter()
+                    .filter(|member| !holder.contains(*member))
+                    .map(String::as_str)
+                    .collect();
+                report.fail_if(!orphans.is_empty(), fill(message, "orphans", &orphans.join(" ")));
+            },
+            Self::EachMatches {
+                label,
+                from,
+                pattern,
+                message,
+            } => {
+                let Some(members) = from.set(tree, report) else {
+                    return;
+                };
+                if members.is_empty() {
+                    report.fail(format!(
+                        "the {label} set read EMPTY out of {} — this claim has stopped checking anything",
+                        from.path
+                    ));
+                    return;
+                }
+                let regex = text::cached(pattern);
+                let stray: Vec<&str> = members
+                    .iter()
+                    .filter(|member| !regex.is_match(member))
+                    .map(String::as_str)
+                    .collect();
+                report.fail_if(!stray.is_empty(), fill(message, "members", &stray.join(" ")));
             },
             Self::SameValue { label, swift, rust } => {
                 // Both sides are read even when the first is absent, so a diagnostic names every

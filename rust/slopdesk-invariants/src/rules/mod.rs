@@ -21,10 +21,12 @@ pub mod hot_paths;
 pub mod overlay_split;
 pub mod pane_wiring;
 pub mod panel_floor;
+pub mod panel_shells;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
 pub mod settings_catalog;
+pub mod settings_rows;
 pub mod split_surfaces;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
@@ -846,6 +848,46 @@ pub fn registry() -> Vec<Rule> {
             name: "settings-constant-answers",
             origin: "scripts/check-supervisor.sh",
             check: settings_catalog::the_cheat_sheet_and_menu_bar_hold_their_constants,
+        },
+        Rule {
+            name: "panel-vocabulary",
+            origin: "scripts/check-supervisor.sh",
+            check: panel_shells::one_panel_vocabulary_four_surfaces,
+        },
+        Rule {
+            name: "device-panel-twins",
+            origin: "scripts/check-supervisor.sh",
+            check: panel_shells::two_device_panels_drawn_twice,
+        },
+        Rule {
+            name: "device-panel-shells",
+            origin: "scripts/check-supervisor.sh",
+            check: panel_shells::one_set_of_shells_and_one_caps_heading,
+        },
+        Rule {
+            name: "design-floor",
+            origin: "scripts/check-supervisor.sh",
+            check: panel_shells::one_design_floor_two_renderers,
+        },
+        Rule {
+            name: "settings-row-naming",
+            origin: "scripts/check-supervisor.sh",
+            check: settings_rows::a_setting_is_named_once,
+        },
+        Rule {
+            name: "settings-key-spelling",
+            origin: "scripts/check-supervisor.sh",
+            check: settings_rows::a_settings_key_is_spelled_once,
+        },
+        Rule {
+            name: "settings-page-shape",
+            origin: "scripts/check-supervisor.sh",
+            check: settings_rows::a_settings_page_is_shaped_once,
+        },
+        Rule {
+            name: "chord-editor-twins",
+            origin: "scripts/check-supervisor.sh",
+            check: settings_rows::one_chord_editor_drawn_twice,
         },
         Rule {
             name: "untrusted-regex-engine",
