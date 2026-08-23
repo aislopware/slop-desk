@@ -1730,213 +1730,21 @@ if spells 'slopdesk:watch-finish' "${SWIFT_WATCH_MARKER}" > /dev/null; then
   fail "${SWIFT_WATCH_MARKER} spells the sentinel again — it is osc.rs's WATCH_NOTIFICATION_MARKER"
 fi
 printf 'check-supervisor: what watch decides and what it prints come from the crates that parse them back.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::video_seams`: cursor-overlay-and-progress,
+# client-session, client-view, client-jitter, client-input, scroll-hint, client-gestures,
+# paced-send and host-session-machine. Each was a face naming its doors and a ban on the state a
+# re-implementation is made of, which is the shape `Claim::Mentions` + `Claim::NoneOf` already
+# spelled — so the port is a transcription, and the break-test each rule gained is the thing the
+# shell never had: proof that the ban still fires when the law comes back.
 
-# The cursor OVERLAY placement, the progress GRAMMAR and the windowList ARRANGEMENT — three small
-# rules that were each written twice. Small is exactly why: a rule that is two multiplies, a parser
-# that is one split and a filter that is one line are what get re-typed at the call site instead of
-# called, and each of the three has a failure the type checker cannot see. The overlay must land on
-# the pixel the input encoder targets — a contracted multiply-add on one side moves the cursor away
-# from where the click goes. The parser and the byte builders are one grammar, so a second copy is
-# how a spinner survives the command that raised it. And an arrangement that drops the wrong side
-# closes a pane on a window the host was mid-rescue on.
-SWIFT_OVERLAY=Sources/SlopDeskVideoClient/ClientCursorCompositor.swift
-SWIFT_PROGRESS=Sources/SlopDeskProtocol/ProgressState.swift
-SWIFT_ARRANGE=Sources/SlopDeskVideoHost/StreamableWindowListOrder.swift
-for pair in \
-  "${SWIFT_OVERLAY}:slopdesk_cursor_layer_frame_scalar" \
-  "${SWIFT_OVERLAY}:slopdesk_cursor_layer_frame_fit" \
-  "${SWIFT_OVERLAY}:slopdesk_cursor_bottom_left_origin_y" \
-  "${SWIFT_OVERLAY}:slopdesk_cursor_is_placeable" \
-  "${SWIFT_OVERLAY}:slopdesk_cursor_rendered_shape_size" \
-  "${SWIFT_PROGRESS}:slopdesk_osc_parse_progress" \
-  "${SWIFT_ARRANGE}:slopdesk_arrange_streamable_windows"; do
-  if ! grep -q "${pair#*:}(" "${pair%%:*}"; then
-    fail "${pair%%:*} no longer calls ${pair#*:} — that rule is rust/slopdesk-video's or rust/slopdesk-wire's"
-  fi
-done
-if hit=$(spells 'AspectFit\.|parentHeight - topLeftY|isFinite,|split\(separator: ";"|windows\.filter' \
-  "${SWIFT_OVERLAY}" "${SWIFT_PROGRESS}" "${SWIFT_ARRANGE}"); then
-  fail "${hit} re-derives the overlay placement, the progress grammar or the arrangement — those live in cursor_overlay.rs, osc.rs and capture_recovery.rs"
-fi
-printf 'check-supervisor: the cursor lands where the click does, and the progress grammar is one grammar.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::window_placement`: parked-window,
+# off-screen-rescue, discovery-and-resend, raise-rule and ledger-and-accumulator.
 
-# ── A client video session decides once ─────────────────────────────────────────────────────────
-# `rust/slopdesk-video`'s `client_session` owns the lifecycle: what the client says to the host, what
-# it does with the answers, how fast it retries a lost hello, and when the reconnecting scrim goes up.
-# The machine crosses BY VALUE — every field is read on the Swift side, so there is nothing for a
-# handle to own — and each transition answers its effects through lent buffers. Two failures are
-# invisible to the type checker and both are outages. A second copy of the transition table lets the
-# refusal path REBUILD and re-hello forever on a window that is gone, which is the mint-failure retry
-# wedge. And a second hello ENCODER lets the two disagree by a byte on the datagram that opens every
-# session, which the golden vectors pin precisely because nothing else would catch it.
-SWIFT_CLIENT_SESSION=Sources/SlopDeskVideoClient/VideoClientSessionLogic.swift
-for entry in slopdesk_video_client_new slopdesk_video_client_start slopdesk_video_client_resend_hello \
-  slopdesk_video_client_stop slopdesk_video_client_handle_control slopdesk_video_client_media_flowing \
-  slopdesk_video_client_requested_window_id slopdesk_video_client_hello_retry_delay \
-  slopdesk_stall_scrim_note_reconnecting slopdesk_stall_scrim_apply; do
-  # Three of these are passed as a function REFERENCE, not called with an argument list, so the
-  # name is what is looked for — in CODE, past the doc comments that name the same door.
-  if ! spells "${entry}" "${SWIFT_CLIENT_SESSION}" > /dev/null; then
-    fail "${SWIFT_CLIENT_SESSION} no longer calls ${entry} — that decision is rust/slopdesk-video's client_session"
-  fi
-done
-if hit=$(spells 'state = \.|helloMessage|\.sendControl\(\.|initialDelay \* Double|guard state == ' "${SWIFT_CLIENT_SESSION}"); then
-  fail "${hit} re-derives a transition, the hello or the retry cadence — those live in client_session.rs"
-fi
-printf 'check-supervisor: a client session decides once, and the hello it sends has one encoder.\n'
-
-# The same file holds six rules about the SIZE the pane was given, and `client_view` holds them too.
-# Each is two or three sizes wide, which is exactly why they get re-typed at the call site instead of
-# called — and each has a failure the type checker cannot see. The pan gate and its clamp must key
-# off the same ZOOMED size or a zoomed-in window's overflow is unreachable, or only half reachable.
-# The adoption gates must reject an in-flight old-size frame or the cursor mis-scales for a beat.
-# And the debounce must rebase on a client-side snap WITHOUT minting an epoch, or the snap echoes a
-# resize request that re-triggers the snap: a feedback loop with the host's window in it.
-for entry in slopdesk_client_is_navigable slopdesk_client_max_pan_offset slopdesk_client_video_scale \
-  slopdesk_frame_decodability slopdesk_resize_should_adopt slopdesk_resize_debounce_default \
-  slopdesk_resize_debounce_new slopdesk_resize_debounce_decide slopdesk_resize_debounce_note_requested \
-  slopdesk_resize_debounce_note_adopted slopdesk_snap_target_points \
-  slopdesk_snap_inferred_capture_scale slopdesk_snap_should_snap slopdesk_snap_epsilon; do
-  if ! spells "${entry}" "${SWIFT_CLIENT_SESSION}" > /dev/null; then
-    fail "${SWIFT_CLIENT_SESSION} no longer calls ${entry} — that rule is rust/slopdesk-video's client_view"
-  fi
-done
-if hit=$(spells 'zoom > pane\.|< 0\.02|>= epsilon|/ s,|lastEpoch &\+|width / decodedSize' "${SWIFT_CLIENT_SESSION}"); then
-  fail "${hit} re-derives the pan clamp, the aspect gate, the snap or the epoch — those live in client_view.rs"
-fi
-printf 'check-supervisor: the pane pans, scales, adopts and snaps by one set of rules.\n'
-
-# And the two accumulators the presentation buffer is sized by. `client_jitter` owns both. The
-# estimate must stay in the CLIENT's own clock — folding the host's send stamp in would re-admit
-# cross-machine skew and read it as jitter — and the controller must stay asymmetric: a symmetric one
-# thrashes a link sitting on the boundary, judder the user sees as the picture breathing.
-for entry in slopdesk_owd_jitter_new slopdesk_owd_jitter_note slopdesk_owd_jitter_micros \
-  slopdesk_adaptive_jitter_default_safety slopdesk_adaptive_jitter_default_cooldown \
-  slopdesk_adaptive_jitter_new slopdesk_adaptive_jitter_note_frame \
-  slopdesk_adaptive_jitter_note_underrun; do
-  if ! spells "${entry}" "${SWIFT_CLIENT_SESSION}" > /dev/null; then
-    fail "${SWIFT_CLIENT_SESSION} no longer calls ${entry} — that rule is rust/slopdesk-video's client_jitter"
-  fi
-done
-if hit=$(spells '/ 16$|jitterSeconds \+=|shrinkRun|rounded\(\.up\)|1_000_000' "${SWIFT_CLIENT_SESSION}"); then
-  fail "${hit} re-derives the jitter smoothing or the shrink hysteresis — those live in client_jitter.rs"
-fi
-printf 'check-supervisor: the buffer is sized by one estimate and one hysteresis.\n'
-
-# The pointer inverse and the modifier latch, which `client_input` owns. The inverse is the one
-# piece of client math a second copy gets subtly WRONG rather than loudly broken: a click that lands
-# near the pixel under the cursor instead of on it reads as a remote machine that feels off, and it
-# is golden-pinned precisely because nothing else would catch a drift of half a letterbox bar. The
-# latch's failure is louder and worse — a swallowed key-up leaves ⌘ stuck on the host's shared event
-# source, so every later plain scroll is a ⌘-scroll and the remote page zooms.
-SWIFT_LATCH=Sources/SlopDeskVideoClient/VideoClientSessionLogic.swift
-for entry in slopdesk_input_normalize slopdesk_input_next_tag slopdesk_modifier_latch_new \
-  slopdesk_modifier_latch_is_empty slopdesk_modifier_latch_is_down slopdesk_modifier_latch_note \
-  slopdesk_modifier_latch_capacity slopdesk_modifier_latch_drain; do
-  if ! spells "${entry}" "${SWIFT_LATCH}" > /dev/null; then
-    fail "${SWIFT_LATCH} no longer calls ${entry} — that rule is rust/slopdesk-video's client_input"
-  fi
-done
-for entry in slopdesk_cursor_shape_default_interval slopdesk_cursor_shape_is_known \
-  slopdesk_cursor_shape_note_arrived slopdesk_cursor_shape_should_request; do
-  if ! spells "${entry}" "${SWIFT_LATCH}" > /dev/null; then
-    fail "${SWIFT_LATCH} no longer calls ${entry} — the shape self-heal is client_input's"
-  fi
-done
-if hit=$(spells 'nextTag &\+=|panLimit|invZoom|downKeyCodes|capsLockKeyCode|knownShapeIDs|lastRequested\[' "${SWIFT_LATCH}"); then
-  fail "${hit} re-derives the pointer inverse, the latch or the shape budget — client_input.rs owns them"
-fi
-printf 'check-supervisor: the click lands where the cursor is, no modifier stays stuck, no shape asks twice.\n'
-
-# ── The scroll hint is ONE encoding, spelled once ───────────────────────────────────────────────
-# The host measures the true per-frame pixel shift and sends it as ten-thousandths of the frame
-# extent; the client turns it back into a velocity. Two ends, one scale — and a scale spelled on
-# both sides is a scale that drifts: change the host's rounding or the band's inclusive-to-exclusive
-# step alone and the picture warps by a hair on every scrolled frame, with nothing failing. The
-# cadence knob is the same shape of rule (an env string in, a tick interval out), so it is guarded
-# beside it.
-SWIFT_HINT_HOST=Sources/SlopDeskVideoHost/WindowCapturer.swift
-SWIFT_HINT_CLIENT=Sources/SlopDeskVideoClient/VideoWindowPipeline.swift
-if ! spells 'ScrollReprojector\.Hint\(' "${SWIFT_HINT_HOST}" > /dev/null; then
-  fail "${SWIFT_HINT_HOST} no longer encodes through ScrollReprojector.Hint — that scale is scroll_reproject.rs"
-fi
-for entry in 'ScrollReprojector\.Hint\(' 'hint\.velocity\(contentFps:' 'hint\.band\(\)'; do
-  if ! spells "${entry}" "${SWIFT_HINT_CLIENT}" > /dev/null; then
-    fail "${SWIFT_HINT_CLIENT} no longer decodes through ScrollReprojector.Hint — the two ends must share one scale"
-  fi
-done
-if hit=$(spells '10000\.0|10_000\.0' "${SWIFT_HINT_HOST}" "${SWIFT_HINT_CLIENT}"); then
-  fail "${hit} respells the ten-thousandths scale — ScrollHint::SCALE is the only place it lives"
-fi
-if ! spells 'slopdesk_input_motion_interval' "${SWIFT_HINT_CLIENT}" > /dev/null; then
-  fail "${SWIFT_HINT_CLIENT} no longer reads its motion cadence through client_input.rs"
-fi
-printf 'check-supervisor: the scroll hint is one encoding, and the far side spells the scale.\n'
-
-# ── The park math is Rust, and Swift keeps only what CoreGraphics defines ───────────────────────
-# `WindowPlacementMath` was reabsorbed into Swift back when a Rust twin was a mirror rather than the
-# implementation, and its 19 frozen vectors were pinned by a comment for a long time. The arithmetic
-# is now `window_placement`, replayed on both sides of the door. Two things must not come back: the
-# ordered ternary (a `Swift.min` here would swallow a NaN the corpus pins) and the half-point
-# tolerance, which decides whether an app is asked to resize at all.
-SWIFT_PARK=Sources/SlopDeskVideoHost/WindowPlacement.swift
-for entry in slopdesk_window_placement slopdesk_window_fits; do
-  if ! spells "${entry}" "${SWIFT_PARK}" > /dev/null; then
-    fail "${SWIFT_PARK} no longer parks through ${entry} — that math is rust/slopdesk-video's window_placement"
-  fi
-done
-if hit=$(spells '\+ 0\.5|< windowSize\.|needsResize = ' "${SWIFT_PARK}"); then
-  fail "${hit} re-derives the clamp or the half-point tolerance — window_placement.rs owns both"
-fi
-printf 'check-supervisor: a parked window is placed by one set of arithmetic.\n'
-
-# ── One keybind grammar, and the CLI no longer asks Swift for it ────────────────────────────────
-# `config validate` used to hand the crate a C function pointer BACK into Swift, once per line, so
-# the validator's verdict would track the grammar the app honours. The grammar is Rust now, so both
-# ends of that round trip are the same side of the door — and the callback must not come back, or
-# the two would be free to disagree again. The escape vocabulary and the base-key vocabulary stay
-# out of Swift for the same reason: a `\xNN` that decodes differently on either side puts bytes on a
-# pane the user never wrote.
-SWIFT_KEYBIND=Sources/SlopDeskVideoProtocol/Settings/KeybindGrammar.swift
-for entry in slopdesk_keybind_parse_line slopdesk_keybind_is_valid; do
-  if ! spells "${entry}" "${SWIFT_KEYBIND}" > /dev/null; then
-    fail "${SWIFT_KEYBIND} no longer parses through ${entry} — that grammar is rust/slopdesk-terminal's keybind"
-  fi
-done
-if hit=$(spells 'func literalBytes|func isValidBaseKey|func hexNibble|"pageup"|case "cmd"' "${SWIFT_KEYBIND}"); then
-  fail "${hit} re-derives the keybind grammar — keybind.rs owns the escapes and the vocabularies"
-fi
-if hit=$(spells 'SlopDeskKeybindValidFn|isValidKeybindValue' Sources/SlopDeskCLICore/CLIConfig.swift \
-  rust/slopdesk-ffi/src/cli.rs rust/slopdesk-ffi/include/slopdesk_ffi.h); then
-  fail "${hit} asks Swift whether a keybind parses — the crate holds that grammar itself now"
-fi
-printf 'check-supervisor: one keybind grammar, and no callback back across the door.\n'
-
-# ── One terminal config emitter, and Swift keeps only the enums it persists ─────────────────────
-# The libghostty config text is a stable ORDER of `key = value` lines, and the order is load-bearing:
-# `background` after `theme` is what makes the explicit colour win, the palette after `foreground` is
-# what makes the theme's sixteen entries win over both, and `font-feature` rides EVERY build because
-# a font that ships ligatures turns them on itself. A second emitter would not fail a test — it would
-# quietly hand libghostty a different terminal. So the tokens, the validation and the number
-# formatting stay in `rust/slopdesk-terminal`'s `config`, and this side crosses the RAW VALUES it
-# persists.
+# PORTED to `rust/slopdesk-invariants` — `rules::terminal_config`: keybind-grammar,
+# terminal-config-emitter, named-key-table, reset-backstop, pane-directory, keybindings-search,
+# client-send-keys and config-name-table. Two paths OUTLIVE their sections — the sections below
+# still name them — so the assignments stay, alone, where the sections were.
 SWIFT_TERMCONF=Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift
-if ! spells 'slopdesk_terminal_config_string' "${SWIFT_TERMCONF}" > /dev/null; then
-  fail "${SWIFT_TERMCONF} no longer builds through slopdesk_terminal_config_string — that emitter is rust/slopdesk-terminal's config"
-fi
-if hit=$(spells 'font-family = |font-feature = |scrollback-limit = |selection-foreground|window-padding-balance' \
-  "${SWIFT_TERMCONF}" Sources/SlopDeskVideoProtocol/Settings/TerminalFontSettings.swift); then
-  fail "${hit} spells a libghostty config line in Swift — config.rs decides which key a preference actuates"
-fi
-if hit=$(spells 'func isValidHex|func formatSize|func fallbackFamilies|bytesPerScrollbackLine|clampCellHeightPercent' \
-  "${SWIFT_TERMCONF}"); then
-  fail "${hit} re-derives a config rule the crate owns — hex validity, number spelling and the clamp are config.rs's"
-fi
-if hit=$(spells 'baseFeatures|syntheticTokens|disablesFace|var thickens' \
-  Sources/SlopDeskVideoProtocol/Settings/TerminalFontSettings.swift); then
-  fail "${hit} maps a font preference to a libghostty token in Swift — the enum crosses as its RAW value"
-fi
-printf 'check-supervisor: one terminal config emitter, and Swift keeps only what it persists.\n'
 
 # ── The config file has one reader, and `validate` reports on THAT reading ──────────────────────
 # `slopdesk config validate` exists to say which lines the app will honour, so a second line reader
@@ -1987,91 +1795,6 @@ for site in "${SWIFT_TERMCONF}" "${SWIFT_LOADER}" "${SWIFT_ENVBRIDGE}"; do
 done
 printf 'check-supervisor: a number is spelled once, and every text door is measured once.\n'
 
-# ── One named-key table: what a chord may be SPELLED, and what it is STORED as ──────────────────
-# The grammar decides which spellings a `keybind` line may use; the near side decides which one each
-# folds to. Those are two halves of one table, and they were kept in step by hand in three places —
-# so `space`, which the dispatcher produces (⌃⇧Space enters Vi mode) and `mapKey` resolves, was
-# refused by the grammar outright: a chord the app can deliver that no config file could ask for.
-# The rows live in `NAMED_KEYS` now, `is_valid_base_key` and `canonical_base_key` are both read off
-# them, and the near side folds through the door rather than restating the aliases.
-SWIFT_KEYPREFS=Sources/SlopDeskVideoProtocol/Settings/KeybindingPreferences.swift
-for entry in slopdesk_keybind_canonical_key slopdesk_keybind_canonical_chord; do
-  if ! spells "${entry}" "${SWIFT_KEYPREFS}" > /dev/null; then
-    fail "${SWIFT_KEYPREFS} no longer folds through ${entry} — that table is keybind.rs's NAMED_KEYS"
-  fi
-done
-if hit=$(spells 'pgup|pgdn|leftarrow|rightarrow|uparrow|downarrow' \
-  "${SWIFT_KEYPREFS}" Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingOverrides.swift); then
-  fail "${hit} spells an alias key in Swift — a chord arrives already folded, so a second table can only drift"
-fi
-if ! spells 'const NAMED_KEYS' rust/slopdesk-terminal/src/keybind.rs > /dev/null; then
-  fail "rust/slopdesk-terminal/src/keybind.rs lost NAMED_KEYS — the accepted spellings and the stored one are one table"
-fi
-if ! spells '\("space", "space"\)' rust/slopdesk-terminal/src/keybind.rs > /dev/null; then
-  fail "rust/slopdesk-terminal/src/keybind.rs stopped accepting space — the dispatcher produces it, so no config line could ask for a chord the app delivers"
-fi
-printf 'check-supervisor: one named-key table — what a chord may be spelled, and what it is stored as.\n'
-
-# ── The off-screen rescue decides once, and it decides in Rust ──────────────────────────────────
-# The settle gate is the whole rescue: capture size is locked from the minted handle's frame, the
-# Dock restore reports intermediate frames that already claim to be on screen, and a mid-animation
-# mint crops the stream permanently because nothing re-targets afterwards. That tree existed twice,
-# once per language, and a second copy of it does not fail a test — it crops a pane. It lives in
-# `slopdesk-video`'s `mint_rescue` now, driven a step at a time because every effect it needs
-# suspends on the Swift side and no C ABI can call back into that and wait.
-SWIFT_RESCUE=Sources/SlopDeskVideoHost/OffScreenWindowMintRescue.swift
-for entry in slopdesk_mint_rescue_begin slopdesk_mint_rescue_advance; do
-  if ! spells "${entry}" "${SWIFT_RESCUE}" > /dev/null; then
-    fail "${SWIFT_RESCUE} no longer drives ${entry} — the decision tree is mint_rescue.rs's"
-  fi
-done
-if hit=$(spells 'func settledHandle|lastSighting|pollAttempts >|prior\.frame ==' "${SWIFT_RESCUE}"); then
-  fail "${hit} re-derives the settle gate in Swift — two consecutive agreeing frames is mint_rescue.rs's rule"
-fi
-if ! spells 'fn advance' rust/slopdesk-video/src/mint_rescue.rs > /dev/null; then
-  fail "rust/slopdesk-video/src/mint_rescue.rs lost advance — the rescue asks for one step and takes one observation"
-fi
-printf 'check-supervisor: the off-screen rescue decides once, and it decides in Rust.\n'
-
-# ── One discovery, one resend schedule ──────────────────────────────────────────────────────────
-# The window picker and the display switcher run the SAME one-shot discovery over a transient lane,
-# and it was written twice here and a third time in Rust that nothing reached. The schedule is the
-# part with arithmetic in it — and an interval of zero or less is not a schedule but a spin, which
-# the Swift loop had no answer for. It comes from `slopdesk-video` now, and the two discoveries are
-# one function that differs only in which message it sends.
-SWIFT_DISCOVERY=Sources/SlopDeskVideoClient/VideoWindowDiscovery.swift
-if ! spells 'slopdesk_video_request_send_offsets' "${SWIFT_DISCOVERY}" > /dev/null; then
-  fail "${SWIFT_DISCOVERY} no longer takes its resend schedule from slopdesk_video_request_send_offsets"
-fi
-if hit=$(spells 'ContinuousClock\.now < deadline|advanced\(by: timeout\)' "${SWIFT_DISCOVERY}"); then
-  fail "${hit} walks its own deadline again — the schedule is mux_client_pool.rs's request_send_offsets"
-fi
-if hit=$(spells 'OneShotDiscovery|DiscoveryKind' rust/slopdesk-video/src/mux_client_pool.rs); then
-  fail "${hit} is a discovery gate no caller reaches — the reply is extracted where it is decoded, in Swift"
-fi
-printf 'check-supervisor: one discovery, and one resend schedule.\n'
-
-# ── The raise rule is read once, off one event ──────────────────────────────────────────────────
-# Raising is the expensive half of injecting — six to ten synchronous accessibility calls the input
-# consumer awaits before the click is posted — and the four predicates that decide it (always,
-# re-arm, latch-exempt, and the raise itself) were four Swift functions mirroring four Rust ones
-# nothing reached. They are one reading of one event now: `slopdesk_input_raise_flags` answers all
-# four as bits, so they cannot disagree about which arm they were shown, and the frontmost-app
-# policy crosses with a presence flag rather than a sentinel pid.
-SWIFT_RAISE=Sources/SlopDeskVideoHost/VideoSessionLogic.swift
-for entry in 'slopdesk_input_raise_flags' 'slopdesk_input_should_raise'; do
-  if ! spells "${entry}" "${SWIFT_RAISE}" > /dev/null; then
-    fail "${SWIFT_RAISE} no longer takes its raise decision from ${entry}"
-  fi
-done
-if hit=$(spells 'case \.mouseDown = event|case \.scroll = event|case \.mouseUp = event' "${SWIFT_RAISE}"); then
-  fail "${hit} reads an arm to decide a raise again — the rule is input_routing.rs, through one door"
-fi
-if hit=$(spells 'fn route_input|enum InputDecision' rust/slopdesk-video/src/input_routing.rs); then
-  fail "${hit} folds the streaming gate, the decode and the raise back together — each has one home"
-fi
-printf 'check-supervisor: the raise rule is read once, off one event.\n'
-
 # ── One motion run rule, and it names events rather than carrying them ──────────────────────────
 # The coalescer decided a run twice: `InputMotionCoalescer` in Swift and `coalesce_motion` in Rust
 # that nothing reached. The two halves that can drift are the run KEY (a move and a drag never
@@ -2092,30 +1815,6 @@ for entry in 'fn coalesce_plan' 'fn run_key' 'RunKey::Scroll'; do
   fi
 done
 printf 'check-supervisor: one motion run rule, and it answers a plan.\n'
-
-# ── The ledger and the accumulator cross by VALUE, and hold no rule ─────────────────────────────
-# Both are stateful folds whose owners COPY them — the injector holds one under a lock, the session
-# CARRIES one across a reconnect, a test folds one of its own — so neither can be a handle: a handle
-# they copied would be two ledgers by the second copy (docs/55 §4b). The state crosses instead. The
-# ledger is twelve bits, three buttons and nine modifier keycodes, and the modifier BIT is a key's
-# position in the far side's own table, which is why that table is not spelled here either.
-SWIFT_LEDGER=Sources/SlopDeskVideoHost/VideoSessionLogic.swift
-for entry in 'slopdesk_input_balance_plan' 'slopdesk_scroll_planner_plan' 'slopdesk_scroll_planner_clear'; do
-  if ! spells "${entry}" "${SWIFT_LEDGER}" > /dev/null; then
-    fail "${SWIFT_LEDGER} no longer folds through ${entry}"
-  fi
-done
-if hit=$(spells 'held\.insert|held\.remove|heldModifierKeys\.insert|heldModifierKeys\.remove' "${SWIFT_LEDGER}"); then
-  fail "${hit} keeps a held set of its own again — the ledger is input_routing.rs's, twelve bits wide"
-fi
-if hit=$(spells 'accumDx|accumTemplate|appendPendingFlush' "${SWIFT_LEDGER}"); then
-  fail "${hit} accumulates scroll in Swift again — the metering is ScrollCoalescePlanner, in Rust"
-fi
-SWIFT_MODIFIERS=Sources/SlopDeskVideoProtocol/InputModifierKeys.swift
-if ! spells 'slopdesk_input_modifier_key_codes' "${SWIFT_MODIFIERS}" > /dev/null; then
-  fail "${SWIFT_MODIFIERS} spells the held-modifier table again — the ledger's bits are its order"
-fi
-printf 'check-supervisor: the ledger and the accumulator cross by value, and hold no rule.\n'
 
 # ── The swipe-nav operating point is parsed ONCE, and it is a handle ────────────────────────────
 # One parse of the SLOPDESK_SWIPE_NAV* family answers both the path that fires ⌘[/⌘] and the status
@@ -2144,86 +1843,6 @@ if hit=$(grep -rn 'slopdesk_swipe_is_navigable\|slopdesk_swipe_extra_apps\|slopd
   fail "${hit} answers the allowlist apart from an operating point again"
 fi
 printf 'check-supervisor: the swipe-nav operating point is parsed once, and it is a handle.\n'
-
-# ── The client's gesture policies are asked, not spelled ────────────────────────────────────────
-# Four rules that belong to a view no test may instantiate — no Metal, no VT. The two stateful ones
-# cross BY VALUE because their owner is a SwiftUI view the framework copies at will, and a handle it
-# copied would be one accumulator serving two gestures; the denylist is a handle because it carries
-# a runtime extension SET, the swipe-nav config's reason exactly (docs/55 §4b).
-SWIFT_PINCH=Sources/SlopDeskVideoClient/PinchZoomKeyPlanner.swift
-SWIFT_PINNER=Sources/SlopDeskVideoClient/ScrollRoutePinner.swift
-SWIFT_POINTER=Sources/SlopDeskVideoClient/BackgroundPointerPolicy.swift
-SWIFT_ZOOM_RESET=Sources/SlopDeskVideoClient/PinchZeroPolicy.swift
-if ! spells 'slopdesk_pinch_planner_plan' "${SWIFT_PINCH}" > /dev/null; then
-  fail "${SWIFT_PINCH} accumulates the pinch again — the residual and its step cap are client_gestures.rs's"
-fi
-if hit=$(spells 'stepThreshold|maxStepsPerEvent|residual [-+]=' "${SWIFT_PINCH}"); then
-  fail "${hit} spells a pinch threshold again — the ladder is one number, over there"
-fi
-if ! spells 'slopdesk_scroll_pin_route' "${SWIFT_PINNER}" > /dev/null; then
-  fail "${SWIFT_PINNER} re-derives the route again — the pin is client_gestures.rs's"
-fi
-if hit=$(spells 'scrollPhase == 1|scrollPhase == 128|scrollPhase == 8|momentumPhase == 3' "${SWIFT_PINNER}"); then
-  fail "${hit} names a phase code again — which phase begins or ends a gesture is the pin's rule"
-fi
-for entry in 'slopdesk_gesture_forwards_pointer' 'slopdesk_gesture_background_click'; do
-  if ! spells "${entry}" "${SWIFT_POINTER}" > /dev/null; then
-    fail "${SWIFT_POINTER} no longer asks ${entry} — a background surface's two gates are one rule"
-  fi
-done
-if ! spells 'slopdesk_zoom_reset_allowed' "${SWIFT_ZOOM_RESET}" > /dev/null; then
-  fail "${SWIFT_ZOOM_RESET} answers the denylist again — it is a handle, parsed once"
-fi
-if hit=$(spells 'unsafeAppNames|"Xcode"' "${SWIFT_ZOOM_RESET}"); then
-  fail "${hit} names an unsafe app again — the list lives beside the chord rule it protects"
-fi
-printf 'check-supervisor: the client gesture policies are asked, not spelled.\n'
-
-# ── The paced-send schedule is one answer, and the datagrams stay put ───────────────────────────
-# The lane's sleeps and its abort generation are Swift concurrency and stay there; the chunk
-# boundaries, their ABSOLUTE deadlines and the skip-the-lane test are `send_pacing`'s. The frame's
-# datagrams never cross — a chunk names the caller's own array by index. What this pins hardest is
-# the one-shot test: the session used to spell it to pick the inline path and the lane spelled it
-# again to send in one shot, with a comment at the first promising it "mirrors" the second.
-SWIFT_SEND_LANE=Sources/SlopDeskVideoHost/VideoSendLane.swift
-for entry in 'slopdesk_send_pace_plan' 'slopdesk_send_may_inline'; do
-  if ! spells "${entry}" "${SWIFT_SEND_LANE}" > /dev/null; then
-    fail "${SWIFT_SEND_LANE} no longer asks ${entry} — the schedule is send_pacing.rs's"
-  fi
-done
-if hit=$(spells 'gapNanos == 0|min\(i \+ job\.chunkFragments|count <= job\.chunkFragments' "${SWIFT_SEND_LANE}"); then
-  fail "${hit} splits the job into chunks again — the boundaries and the one-shot test are one answer"
-fi
-SWIFT_SESSION_SEND=Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift
-if hit=$(spells 'let singleShot' "${SWIFT_SESSION_SEND}"); then
-  fail "${hit} mirrors the lane's one-shot test again — ask trySendInline, which asks the door"
-fi
-printf 'check-supervisor: the paced-send schedule is one answer, and the datagrams stay put.\n'
-
-# ── The host session machine is the handshake's other end, and it holds no rule twice ───────────
-# `client_session` already crosses the client's half of the hello negotiation; `session_state` is
-# the host's, and it crosses the same way — the machine by value (nine scalars an actor field
-# copies), the acknowledgement as its ENCODED BYTES, and the three size resolvers as pre-resolved
-# ANSWERS rather than callbacks, because exactly one can matter per message and the message's own
-# variant decides which. What this pins hardest is the rules that were spelled on BOTH sides: the
-# accept/reject path, the resize clamp, the stale-epoch test and the two stream-settings bands.
-SWIFT_SESSION_LOGIC=Sources/SlopDeskVideoHost/VideoSessionLogic.swift
-for entry in 'slopdesk_video_session_new' 'slopdesk_video_session_start' 'slopdesk_video_session_stop' \
-  'slopdesk_video_session_control' 'slopdesk_video_session_media_flowing' \
-  'slopdesk_video_session_clamp_capture' 'slopdesk_video_session_stale_epoch' \
-  'slopdesk_video_fps_cap_from_wire' 'slopdesk_video_bitrate_ceiling_from_wire' \
-  'slopdesk_video_effective_fps'; do
-  if ! spells "${entry}" "${SWIFT_SESSION_LOGIC}" > /dev/null; then
-    fail "${SWIFT_SESSION_LOGIC} no longer asks ${entry} — the host session's law is session_state.rs's"
-  fi
-done
-if hit=$(spells 'epoch <= lastApplied|clampAxis|fpsCapRange|bitrateCeilingRange' "${SWIFT_SESSION_LOGIC}"); then
-  fail "${hit} spells a session rule again — the epoch test, the clamp and both bands are one answer"
-fi
-if hit=$(spells 'case \.hello|nextStreamID \+= 1|protocolVersion == ' "${SWIFT_SESSION_LOGIC}"); then
-  fail "${hit} decides the handshake again — accepting, rejecting and minting a stream id are the law's"
-fi
-printf 'check-supervisor: the host session machine crosses by value, and the handshake is decided once.\n'
 
 # ── One key vocabulary, whichever grammar names it ──────────────────────────────────────────────
 # `send_keys` reads the table for the `<Token>` grammar a preset, a template, a re-run and a text
@@ -2275,23 +1894,6 @@ if ! spells 'pub const fn lenient' rust/slopdesk-sanitize/src/vtscan.rs > /dev/n
   fail "rust/slopdesk-sanitize/src/vtscan.rs lost the lenient terminator policy — a render cannot wait for a continuation the way a replay pass can"
 fi
 printf 'check-supervisor: one VT grammar for plain text, read two ways.\n'
-
-# ── The reset backstop is built from the set the strip pass reads ───────────────────────────────
-# `sanitizeSuffix` is appended by a restore the passes did NOT run on, which is exactly when a mode
-# they track must still be turned off. All fourteen were spelled out on the near side, with nothing
-# connecting that literal to `TRACKED_MODES` — so a mode added to the pass would have gone missing
-# from the backstop that exists to catch what the pass missed.
-SWIFT_TRANSCRIPTS=Sources/SlopDeskHost/ScrollbackTranscripts.swift
-if ! spells 'slopdesk_input_mode_reset' "${SWIFT_TRANSCRIPTS}" > /dev/null; then
-  fail "${SWIFT_TRANSCRIPTS} spells the reset again — it is built from inputmode.rs's TRACKED_MODES"
-fi
-if hit=$(spells '\?1000l|\?2004l|\?2048l' "${SWIFT_TRANSCRIPTS}"); then
-  fail "${hit} names a tracked mode in Swift — the backstop and the pass read one array"
-fi
-if ! spells 'pub fn reset_suffix' rust/slopdesk-sanitize/src/inputmode.rs > /dev/null; then
-  fail "rust/slopdesk-sanitize/src/inputmode.rs lost reset_suffix — the backstop is built, not written"
-fi
-printf 'check-supervisor: the reset backstop is built from the set the strip pass reads.\n'
 
 # ── One shell word, wherever a path is typed into a live shell ─────────────────────────────────
 # The POSIX `'…'` quoting was written EIGHT times: seven Swift copies and one private to the Rust
@@ -2665,23 +2267,6 @@ if ! spells 'slopdesk_sync_input_keyboard_only' "${SWIFT_SYNC_INPUT}" > /dev/nul
 fi
 printf 'check-supervisor: one grammar for where an escape ends, and six copies is not it.\n'
 
-# ── One rule for what a pane's DIRECTORY is, and what it is called ─────────────────────────────
-# `looksLikeTransientPluginCwd` guards fourteen Swift call sites — every sink that can poison the
-# directory a split or a relaunch inherits — and `looks_like_transient_plugin_cwd` guards the Rust
-# `tab_ordering` that sorts the same panes into project sections. Both were live, in both languages,
-# neither reading the other: the sinks and the ordering could disagree about which directory is
-# poison, and a sidebar row could disagree with its own section header about a folder's name.
-SWIFT_PANE_SPEC=Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift
-if hit=$(spells 'contains\("---"\)|hasSuffix\("/"\)|split\(separator: "/"\)\.last' "${SWIFT_PANE_SPEC}"); then
-  fail "${hit} classifies a cwd in Swift again — slopdesk-workspace::PaneSpec owns both rules"
-fi
-for entry in 'slopdesk_ws_transient_plugin_cwd' 'slopdesk_ws_cwd_display_name'; do
-  if ! spells "${entry}" "${SWIFT_PANE_SPEC}" > /dev/null; then
-    fail "${SWIFT_PANE_SPEC} no longer asks ${entry} — the cwd rules are one implementation"
-  fi
-done
-printf 'check-supervisor: one rule for a pane directory, and one name for it.\n'
-
 # ── And ONE encoder for the screend frame ──────────────────────────────────────────────────────
 # `docs/DECISIONS.md` recorded in stage 17 that each protocol's client end moves into Rust, so the
 # round trip becomes a TEST rather than an agreement two files keep by review. dropd's Swift
@@ -2742,62 +2327,8 @@ for half in 'pub fn split_ranges' 'pub fn to_avcc' 'pub fn h264_parameter_sets' 
   fi
 done
 printf 'check-supervisor: one reader for the scrcpy stream, and one walk over Annex-B.\n'
-
-# ── And ONE writer for the scrcpy control channel ──────────────────────────────────────────
-# scrcpy publishes no wire specification — its own documentation says the protocol is defined by the
-# unit tests on both sides — so every layout was transcribed by hand, and the Swift copy laid each
-# field out with a local `appendBigEndian`: the same idiom already banned for the screend frame.
-SWIFT_ANDROID_CONTROL=Sources/SlopDeskDevicePanels/Android/AndroidControlMessage.swift
-if hit=$(spells 'mutating func appendBigEndian|appendPosition|truncatingIfNeeded:|func truncateUTF8|FixedPoint\(' "${SWIFT_ANDROID_CONTROL}"); then
-  fail "${hit} lays out a scrcpy control message in Swift again — slopdesk-androidd owns every layout"
-fi
-if ! spells 'slopdesk_android_control_encode' "${SWIFT_ANDROID_CONTROL}" > /dev/null; then
-  fail "${SWIFT_ANDROID_CONTROL} no longer asks slopdesk_android_control_encode — one implementation"
-fi
-# THE invariant this protocol has. The bridge gives the client ONE full-duplex connection, and
-# scrcpy's three device→client messages are all REPLIES: to GET_CLIPBOARD, to a SET_CLIPBOARD with a
-# non-zero sequence, or to UHID. Send one and the device writes a clipboard message into a stream the
-# client is parsing as H.264. So those four types have no variant to name, on either side.
-RUST_ANDROID_CONTROL=rust/slopdesk-androidd/src/control.rs
-# `spells` strips `//` lines, so this reads DECLARATIONS and not the prose that explains why the
-# four are absent — which is the whole reason that prose can stay.
-if hit=$(spells 'GET_CLIPBOARD|Uhid' "${RUST_ANDROID_CONTROL}"); then
-  fail "${hit} names a reply-bearing control type — a device reply lands inside the video stream"
-fi
-# The sequence is a literal zero in the encoder, not a parameter with a default anyone can pass.
-if ! spells '0_u64\.to_be_bytes\(\)' "${RUST_ANDROID_CONTROL}" > /dev/null; then
-  fail "${RUST_ANDROID_CONTROL}: SET_CLIPBOARD's sequence stopped being the constant zero"
-fi
-# The bodiless set is closed on BOTH sides: a Swift enum with four cases, a Rust enum with four
-# variants. An open `UInt8` on either would put GET_CLIPBOARD one literal away.
-if ! spells 'enum AndroidBodilessMessage: UInt8' "${SWIFT_ANDROID_CONTROL}" > /dev/null; then
-  fail "${SWIFT_ANDROID_CONTROL}: the bodiless messages stopped being a closed enum"
-fi
-# ── A. The scrcpy control encoder does not MEASURE before it FILLS ─────────────────────────────
-# It used to call the door twice for every message — once with a null output to learn the length,
-# once to fill — which ran the far-side encode twice for an answer that is a CONSTANT on the six
-# arms that carry no body. docs/55 §4 is explicit that a short buffer leaves the output untouched
-# and still reports the true length, so the guess-then-retry shape is the supported one and the
-# probe was pure loss. Measured against a stand-in door carrying the real encoder's work
-# (24 ns/message, measured in slopdesk-androidd): 320 ns/message before, 205 ns after — on the
-# path `AndroidScreenNSView.scrollWheel` drives at 60–120 Hz, two to four messages per re-grip.
-#
-# BREAK-TEST 2026-08-22: clean on the live tree; FIRES when a
-#   `slopdesk_android_control_encode(&request, text.baseAddress, text.count, nil, 0)` line is
-#   appended to the file. Verified with the real `spells` semantics.
-if hit=$(spells ', nil, 0\)' "${SWIFT_ANDROID_CONTROL}"); then
-  fail "${hit} probes the control encoder with a null output again — docs/55 §4 says a short buffer writes NOTHING, so guess and retry"
-fi
-
-# ── B. …and the guess it tries first is named ──────────────────────────────────────────────────
-# Not a shared constant — nothing is wrong if the door outgrows it — but a named one is what stops
-# the retry quietly becoming the common path when somebody sizes it at 8.
-#
-# BREAK-TEST 2026-08-22: present on the live tree; FIRES when the declaration is renamed.
-if ! spells 'private static let firstGuessBytes' "${SWIFT_ANDROID_CONTROL}" > /dev/null; then
-  fail "${SWIFT_ANDROID_CONTROL}: the first-guess buffer stopped being a named constant"
-fi
-printf 'check-supervisor: one writer for the scrcpy control channel, and no reply-bearing type.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::device_streams`: scrcpy-control and wait-scan.
+SWIFT_WAIT=Sources/SlopDeskHost/AgentControlListener.swift
 
 # ── And ONE grammar per device console, neither of them in Swift ───────────────────────────────
 # Two files parsed a device's own log output — `logcat -v time` and `log stream --style compact` —
@@ -2944,28 +2475,6 @@ if ! spells 'pub fn matches' rust/slopdesk-rowscan/src/find.rs > /dev/null; then
   fail "rust/slopdesk-rowscan/src/find.rs lost matches() — ⌘F has nowhere to ask"
 fi
 printf 'check-supervisor: the find bar asks the same non-backtracking engine.\n'
-
-# ── `wait --until` runs an agent's pattern on the PTY read loop, so it may not backtrack ───────
-# The third and worst of the untrusted-pattern sites: the pattern is an agent's, the text is
-# whatever holds the far side of the PTY, and the match runs on the thread every pane's bytes come
-# through. A pathological match there stalls the whole host, not one window. The carry, the overlap
-# window and the accumulator's cap are the crate's now — a second copy of any of them in Swift is
-# two implementations of an incremental scan, which is how the strip and the holdback drifted before.
-# `ANSIStripper` is NOT banned here: the read/output verbs in the same file strip a finished string
-# through the same door, which is the one implementation, not a second one.
-SWIFT_WAIT=Sources/SlopDeskHost/AgentControlListener.swift
-if hit=$(spells 'NSRegularExpression|maxCarryBytes|overlapWindow' "${SWIFT_WAIT}"); then
-  fail "${hit} scans the wait stream in Swift again — slopdesk-rowscan::waituntil owns the scan"
-fi
-for entry in 'slopdesk_wait_scan_new' 'slopdesk_wait_scan_ingest' 'slopdesk_wait_scan_free'; do
-  if ! spells "${entry}" "${SWIFT_WAIT}" > /dev/null; then
-    fail "${SWIFT_WAIT} no longer asks ${entry} — the wait scan is one implementation"
-  fi
-done
-if ! spells '^slopdesk-sanitize = ' rust/slopdesk-rowscan/Cargo.toml > /dev/null; then
-  fail "rust/slopdesk-rowscan dropped slopdesk-sanitize — the wait scan would need its own stripper"
-fi
-printf 'check-supervisor: the wait stream is scanned once, off the read loop critical path.\n'
 
 # ── One vocabulary of secret shapes, for the title and for the paste ───────────────────────────
 # Ten compiled NSRegularExpressions masked credentials out of untrusted titles, and a second Swift
@@ -6187,28 +5696,6 @@ if ! spells 'didSet \{ liveChordTable = nil \}' "${BINDING_OVERRIDES}" > /dev/nu
   fail "${BINDING_OVERRIDES}: activeOverrides no longer invalidates the memo on write — a rebind would not take effect until relaunch"
 fi
 printf 'check-supervisor: the chord table is built once and held; the key event reads it, not rebuilds it.\n'
-
-# ── The keybindings search filters through the door, not through `contains` ─────────────────────
-# `String.contains(_: String)` is grapheme-aware search. Measured against the shipped xcframework:
-# 825ns over a 35-byte title, 1,652ns over a 70-byte keyword run, against 29ns and 53ns for the same
-# containment as bytes. Four spellings across 85 rows is 415µs on every keystroke typed into the
-# editor's search field, and the whole of it is that one call. `slopdesk_ws_binding_row_matches`
-# takes the table in one blob and answers positions.
-#
-# The ban is on the FOLD coming back, not on the door going away: a reader that re-derives a row's
-# glyph or canonical per keystroke is the same defect with the door still declared.
-#
-# BREAK-TESTED against the real tree, 2026-08-22: restoring
-# `if binding.title.lowercased().contains(q) { return true }` in `matches` fails the first rule;
-# removing the `surviving` batch face fails the second. Both pass on the tree as it stands.
-BINDING_SEARCH=Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift
-if hit=$(spells 'lowercased\(\)\.contains\(' "${BINDING_SEARCH}"); then
-  fail "${hit} folds and searches a binding row in Swift again — the filter crosses once for the whole table (slopdesk_ffi::binding_search)"
-fi
-if ! spells 'func surviving\(' "${BINDING_SEARCH}" > /dev/null; then
-  fail "${BINDING_SEARCH}: the whole-table filter face is gone — a per-row door is 85 crossings and 85 blobs where one of each will do"
-fi
-printf 'check-supervisor: the keybindings search crosses once for the whole table.\n'
 # ── The mirror's whole topology is projected ONCE per revision ──────────────────────────────────
 # `HostWorkspaceMirror.topology` is a computed property: every read copies the entire entry map and
 # re-runs `WorkspaceTopology.init(entries:)` over every cell in the document. Measured in a scratch
@@ -7789,50 +7276,6 @@ if hit=$(spells 'isNumber|runStart|sawDigit' "${SWIFT_CODEOPEN}"); then
   fail "${hit} re-derives the suffix scan — the crate answers it, and the path is the remainder"
 fi
 printf 'check-supervisor: one line:col splitter, and the host asks it.\n'
-
-# ── One key vocabulary, on the CLIENT's send-keys too ───────────────────────────────────────────
-# The existing "One key vocabulary" block pins the HOST's face (`ControlKeyMap.swift`). The client's
-# `pane send-keys` had a second table of its own — nine names — and every other name the vocabulary
-# knows fell through it into a `nil` the caller dropped while still answering success, so `--key f5`
-# reported a keystroke delivered to a pane that received nothing. Same door, same ban on spelling a
-# sequence, plus the refusal being answerable: a `Bool` here cannot say "that is not a key" without
-# borrowing "pane not found".
-SWIFT_CLIENT_KEYS=Sources/SlopDeskClientCore/Control/WorkspaceControlBackend.swift
-if ! spells 'slopdesk_ws_key_token' "${SWIFT_CLIENT_KEYS}" > /dev/null; then
-  fail "${SWIFT_CLIENT_KEYS} answers a key name again — the vocabulary is send_keys.rs's"
-fi
-if hit=$(spells '0x1B, 0x5B|case "enter"|case "pageup"|& 0x1F' "${SWIFT_CLIENT_KEYS}"); then
-  fail "${hit} spells a key sequence again — a second table is how the client lost f5 and pgup"
-fi
-if ! spells 'unknownKey' "${SWIFT_CLIENT_KEYS}" > /dev/null; then
-  fail "${SWIFT_CLIENT_KEYS} swallowed the refusal again — an unrecognised key must fail the request"
-fi
-printf 'check-supervisor: the client send-keys asks the one vocabulary, and can refuse.\n'
-
-# ── A config action name resolves once, and goto_tab is bounded on BOTH halves of the line ──────
-# The name table and the `goto_tab` bound were written in Swift and in Rust, and they disagreed: the
-# Swift bounded the argument to 1…9 (there are nine per-digit bindings), the grammar accepted any
-# integer, so `cmd+1:goto_tab:99` validated in the keybinding editor and then resolved to nothing.
-# Both halves hold the bound now — the grammar so the line does not validate, the resolver so
-# nothing unbindable reaches the registry — and the nine ids are the resolver's list, so the bound
-# and the table it guards cannot drift apart.
-SWIFT_CONFIGNAMES=Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceActionConfigNames.swift
-if ! spells 'slopdesk_ws_binding_id_for_config_name' "${SWIFT_CONFIGNAMES}" > /dev/null; then
-  fail "${SWIFT_CONFIGNAMES} resolves a config name in Swift again — that table is keybind.rs's"
-fi
-# Code shapes only, not prose: the doc comment above the resolver legitimately NAMES the bound and
-# an id while explaining where they went, so the patterns are the dictionary entry, the interpolated
-# id and the range check rather than the words themselves.
-if hit=$(spells '"new_tab": "|"pane\.select\.\\\(|\(1\.\.\.9\)\.contains' "${SWIFT_CONFIGNAMES}"); then
-  fail "${hit} spells a config name, a binding id or the goto_tab bound again — all three are Rust's"
-fi
-if ! spells 'Ok\(1\.\.=9\)' rust/slopdesk-terminal/src/keybind.rs > /dev/null; then
-  fail "rust/slopdesk-terminal/src/keybind.rs stopped bounding goto_tab — a line that cannot fire must not validate"
-fi
-if ! spells 'SELECT_PANE_BINDING_IDS: \[&str; 9\]' rust/slopdesk-workspace/src/keybind.rs > /dev/null; then
-  fail "rust/slopdesk-workspace/src/keybind.rs no longer bounds goto_tab by its own row list — the list IS the bound"
-fi
-printf 'check-supervisor: one config-name table, and goto_tab is bounded where it is read.\n'
 
 # ── A ring wraps through the one ring rule ──────────────────────────────────────────────────────
 # `(i ± 1 + n) % n` was hand-rolled in three places beside `slopdesk_list_wrapped_index`, which the

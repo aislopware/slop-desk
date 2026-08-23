@@ -6,16 +6,20 @@
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
 pub mod crate_policy;
+pub mod device_streams;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
+pub mod terminal_config;
 pub mod terminal_surface;
 pub mod video_client;
 pub mod video_control;
 pub mod video_host;
+pub mod video_seams;
 pub mod video_wire;
+pub mod window_placement;
 pub mod wire_codecs;
 pub mod workspace_document;
 
@@ -378,6 +382,126 @@ pub fn registry() -> Vec<Rule> {
             name: "big-endian-helpers",
             origin: "docs/20 §2",
             check: wire_codecs::big_endian_helpers,
+        },
+        Rule {
+            name: "cursor-overlay-and-progress",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::cursor_lands_where_click_does,
+        },
+        Rule {
+            name: "client-session",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::client_session_decides_once_hello,
+        },
+        Rule {
+            name: "client-view",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::pane_pans_scales_adopts_snaps,
+        },
+        Rule {
+            name: "client-jitter",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::buffer_sized_by_one_estimate,
+        },
+        Rule {
+            name: "client-input",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::click_lands_where_cursor_no,
+        },
+        Rule {
+            name: "scroll-hint",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::scroll_hint_one_encoding_far,
+        },
+        Rule {
+            name: "client-gestures",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::client_gesture_policies_are_asked,
+        },
+        Rule {
+            name: "paced-send",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::paced_send_schedule_one_answer,
+        },
+        Rule {
+            name: "host-session-machine",
+            origin: "scripts/check-supervisor.sh",
+            check: video_seams::host_session_machine_crosses_by,
+        },
+        Rule {
+            name: "parked-window",
+            origin: "scripts/check-supervisor.sh",
+            check: window_placement::parked_window_placed_by_one,
+        },
+        Rule {
+            name: "off-screen-rescue",
+            origin: "scripts/check-supervisor.sh",
+            check: window_placement::off_screen_rescue_decides_once,
+        },
+        Rule {
+            name: "discovery-and-resend",
+            origin: "scripts/check-supervisor.sh",
+            check: window_placement::one_discovery_one_resend_schedule,
+        },
+        Rule {
+            name: "raise-rule",
+            origin: "scripts/check-supervisor.sh",
+            check: window_placement::raise_rule_read_once_off,
+        },
+        Rule {
+            name: "ledger-and-accumulator",
+            origin: "scripts/check-supervisor.sh",
+            check: window_placement::ledger_accumulator_cross_by_value,
+        },
+        Rule {
+            name: "keybind-grammar",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_config::one_keybind_grammar_no_callback,
+        },
+        Rule {
+            name: "terminal-config-emitter",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_config::one_terminal_config_emitter_swift,
+        },
+        Rule {
+            name: "named-key-table",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_config::one_named_key_table_what,
+        },
+        Rule {
+            name: "reset-backstop",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_config::reset_backstop_built_from_set,
+        },
+        Rule {
+            name: "pane-directory",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_config::one_rule_for_pane_directory,
+        },
+        Rule {
+            name: "keybindings-search",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_config::keybindings_search_crosses_once_for,
+        },
+        Rule {
+            name: "client-send-keys",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_config::client_send_keys_asks_one,
+        },
+        Rule {
+            name: "config-name-table",
+            origin: "scripts/check-supervisor.sh",
+            check: terminal_config::one_config_name_table_goto,
+        },
+        Rule {
+            name: "scrcpy-control",
+            origin: "scripts/check-supervisor.sh",
+            check: device_streams::one_writer_for_scrcpy_control,
+        },
+        Rule {
+            name: "wait-scan",
+            origin: "scripts/check-supervisor.sh",
+            check: device_streams::wait_stream_scanned_once_off,
         },
     ]
 }

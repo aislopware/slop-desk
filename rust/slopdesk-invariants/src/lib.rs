@@ -110,6 +110,18 @@ pub(crate) mod tests {
             self
         }
 
+        /// Adds a line to a file already written, leaving what satisfied the rule in place.
+        ///
+        /// A break-test for a BAN needs the offending line to arrive in a file that still passes
+        /// everything else — a `write` would take the doors out with it, and the rule would then
+        /// fail for the reason the test was not asking about.
+        pub fn append(&self, path: &str, contents: &str) -> &Self {
+            let full = self.0.join(path);
+            let mut held = fs::read_to_string(&full).unwrap_or_default();
+            held.push_str(contents);
+            self.write(path, &held)
+        }
+
         /// Indexes what has been written so far.
         #[must_use]
         pub fn tree(&self) -> Tree {
