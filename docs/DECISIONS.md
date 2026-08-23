@@ -16844,3 +16844,44 @@ logged `String(describing:)` and ran the same recovery. What a caller genuinely 
 four things, each asking for something different: deliver, drop in silence, ask for a keyframe
 without tearing down, and fail. Collapsing any two of those has a visible symptom, which is why they
 cross as separate codes rather than as one status the caller has to interpret.
+
+**The ScreenCaptureKit calls moved to Rust; the 2 350-line file did not.** `WindowCapturer.swift`
+looked like a large port and was a small one — of its 2 350 lines only about 250 ever touched
+ScreenCaptureKit. `slopdesk-apple-sck` took exactly those: shareable content, the three content
+filters, the stream configuration, start/stop/reconfigure, and the per-sample status read. The
+frame-DECISION pipeline — backlog pacer, encode-load governor, adaptive QP, scroll reprojection, the
+static-IDR timer, the cadence gate — stayed in Swift, because none of it calls a framework; it is
+arithmetic over numbers the capture callback hands it, and moving it would have been a rewrite
+motivated by line count rather than by an effect on the system. What DID leave with the calls is
+every rule they are made under: the delivery ceiling, the queue depth, the surface depth, which
+filter a parked window wants, whether a resize may happen in place, where a moved window's crop
+belongs. Those are now `slopdesk_video::capture_config`, `forbid(unsafe_code)`, tested headless. The
+Swift they replace conceded in its own header that its `start()` was never called from a test — an
+`SCStream` needs a window server and a Screen-Recording grant — so the split put the testable half
+where tests can reach it and left the untestable half as thin as the framework allows.
+
+**`slopdesk-apple-sck` costs NEITHER Core Foundation admission, and that is not luck.** `docs/57` §2
+budgets one `CFRetained::from_raw` and one `CFRetained::retain` across the whole family. Capture
+looked certain to spend one: it reads `CMSampleBufferGetImageBuffer` and the sample-attachments
+array on every frame, both of which are get-rule CF returns in C. In `objc2-core-media` 0.3.2 they
+are generated returning `CFRetained` already, so the ownership question was answered by the binding.
+The lesson is the order of operations — READ the generated signature before budgeting an admission,
+because the admission is for the calls objc2 has not modelled, not for CF-shaped calls in general.
+
+**The doors block, so Swift routes them through a queue of its own.** ScreenCaptureKit's lifecycle is
+completion handlers end to end, and a C door cannot return a Swift continuation. `handoff.rs` blocks
+on `Mutex` + `Condvar` with a ten-second ceiling, which makes `slopdesk_capture_start` and its
+siblings synchronous and slow. Rather than hide that, `WindowCapturer` owns a serial
+`controlQueue` and every door call crosses it under `withCheckedContinuation`, so a start that waits
+on the window server never occupies the session actor. The delivery queues are the opposite: they
+come from the CALLER and the crate never makes one, because the frame queue being the same serial
+queue as the static-IDR timer IS the discipline that lets the callback and the timer share a cached
+frame with no lock.
+
+**`Package.swift` had to name ScreenCaptureKit once the Swift stopped importing it.** The link was
+implicit while `WindowCapturer.swift` said `import ScreenCaptureKit`; when that became
+`import CSlopDeskFFI` the build failed on `_SCStreamFrameInfoStatus`. Classes are not the problem —
+objc2 resolves those at runtime — but an `extern` CONSTANT is a link-time symbol, and a `#[link]`
+attribute in Rust does not survive `xcodebuild -create-xcframework`. So the framework is listed in
+`ffiCLibraries` with `.when(platforms: [.macOS])`. Any later `slopdesk-apple-*` crate that reads a
+framework constant will need the same one-line entry, and the symptom will be identical.

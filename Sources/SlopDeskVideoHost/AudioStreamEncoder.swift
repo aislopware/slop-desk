@@ -18,8 +18,8 @@ import SlopDeskVideoProtocol
 /// AudioConverter encode→decode proof), not by XCTest. ``encodePCM(_:frameCount:)`` is the
 /// headless-testable core the loopback drives directly (no CMSampleBuffer needed).
 public final class AudioStreamEncoder {
-    /// Fixed wire sample rate (Hz) — the SCStream tap is configured to exactly this
-    /// (``WindowCapturer/makeConfiguration(width:height:fps:captureScale:fullRange:)``).
+    /// Fixed wire sample rate (Hz) — the SCStream tap is configured to exactly this, through
+    /// `SlopDeskCaptureDesc.audio_sample_rate` (`slopdesk-apple-sck`'s `tap` builds the stream).
     public static let sampleRate: UInt32 = 48000
     /// Fixed wire channel count (interleaved stereo).
     public static let channelCount = 2

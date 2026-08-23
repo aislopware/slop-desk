@@ -4,7 +4,7 @@ Full detail split out of `CLAUDE.md` to keep that file small. `CLAUDE.md` carrie
 
 ## Gates — which one reaches which path
 
-Clean checkout builds headless with no prerequisite: `swift build`/`swift test` never see libghostty / VideoToolbox / ScreenCaptureKit; libghostty only in Xcode app targets (`TerminalSurface` seam), built via `ThirdParty/ghostty/build-libghostty.sh` (Zig; never blocks headless core).
+Clean checkout builds headless with no prerequisite: `swift build`/`swift test` never see libghostty, and reach VideoToolbox / ScreenCaptureKit only as SDK frameworks `Package.swift` links on macOS (the calls are Rust's — `slopdesk-apple-vt`, `slopdesk-apple-sck` — behind `CSlopDeskFFI`); libghostty only in Xcode app targets (`TerminalSurface` seam), built via `ThirdParty/ghostty/build-libghostty.sh` (Zig; never blocks headless core).
 
 | Gate | When / what it uniquely covers |
 |------|-------------------------------|

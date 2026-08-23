@@ -188,7 +188,9 @@ because the spike proved it costs NONE: the whole injection path is safe `objc2`
 window-server rows cost three `unsafe` blocks each, and every one of the six names a framework rule —
 an `extern` key constant, an element type C's `CFArrayRef` does not carry, an out-pointer enumerator.
 `vt` is the first row whose Swift original was mostly RULES rather than calls, and it is split
-accordingly — see the sixth correction.
+accordingly — see the sixth correction. `sck` is the first that cost NEITHER §2 admission and still
+called a framework all the way through: `objc2-core-media` already returns `CFRetained` from every
+accessor it needs, so the ownership question was answered by the binding rather than by us.
 
 | Crate | Wraps | Replaces | State |
 | --- | --- | --- | --- |
@@ -199,7 +201,7 @@ accordingly — see the sixth correction.
 | `slopdesk-apple-cursor` | `NSCursor` + the offscreen `NSBitmapImageRep` render | `CursorSampler`'s two AppKit reads | **landed** (increment 89) — costs **two** `unsafe` blocks |
 | `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder` **(done)**, `VideoDecoder` **(done)** | **landed** (increments 92, 93) — costs both §2 admissions, the shim's third convention, and the family's only iOS edge |
-| `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer` | planned |
+| `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer`'s stream **(done)** | **landed** (increment 94) — costs **neither** §2 admission |
 | `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder`, `AudioPlaybackEngine` | planned |
 | `slopdesk-apple-power` | `IOKit.pwr_mgt` | `PreventSleepAssertion`, `HostDisplayWake` | **deferred** — §1 |
 
@@ -407,3 +409,53 @@ of that face was the decoder, so the face went and the doors went with it — th
 wrapped is unchanged and keeps its own tests, and the shim now calls it directly. This is the second
 time in two increments that collapsing a Swift face into Rust orphaned the doors that face existed
 to call, and both times `check-ffi-doors` is what said so.
+
+**The `sck` row was the biggest file and the smallest port, and both halves of that are the point.**
+`WindowCapturer.swift` was 2 350 lines. About 250 of them called ScreenCaptureKit; the rest is the
+frame-decision pipeline — the backlog pacer, the encode-load governor, the adaptive quantiser
+measurement, the scroll reprojection, the static-IDR timer, the cadence gate — which is about
+SlopDesk and not about the framework, and which stayed. What moved is the stream (the filter, the
+configuration, the lifecycle, the per-sample status read) and the rules that fed it. Those rules were
+the reason the row was worth doing at all: the delivery ceiling, the surface depth, the crisp quiet
+window, the poll tick, the mode selector and the in-place-resize gate had all been split out BY HAND
+into `static func resolve*` helpers whose only purpose was to be testable, because the type around
+them cannot be instantiated without a window server and a Screen-Recording grant. In
+`slopdesk_video::capture_config` that is not a workaround, it is where they live, and the pin that
+keeps a child window from softening the whole pane — the one piece that had never been extracted —
+came with them.
+
+**Neither §2 admission was spent, and the reason generalises.** `objc2-core-media` 0.3.2 returns
+`CFRetained` from `image_buffer()`, `sample_attachments_array()` and their neighbours, so there is
+no `CFRetained::from_raw` and no `CFRetained::retain` anywhere in the crate. What `unsafe` remains is
+the framework's own contract — `objc2-screen-capture-kit` generates almost everything `unsafe`
+because ScreenCaptureKit's header states no nullability and no thread affinity — plus one `extern`
+static and one `cast_unchecked` naming the element type C's `CFArrayRef` cannot carry. The lesson
+for the rows still open is to check what the bindings already return before budgeting an admission
+for it.
+
+**Every entry point BLOCKS, and the caller's actor is what pays for that.** The framework's whole
+lifecycle is completion handlers. A door that took a callback per lifecycle step would push a state
+machine across the boundary for no gain, so each one waits on its handler behind a `Mutex` +
+`Condvar` with a ten-second ceiling and answers a status. That makes the Swift side's job explicit
+rather than incidental: `WindowCapturer` owns a `controlQueue` and every door call is `await`ed
+through it, because the session that asks is an actor and an actor that blocks stops serving every
+other message. The three DELIVERY callbacks are the encoder's convention verbatim, on the queues the
+caller named — and the frame queue being the caller's is load-bearing, since sharing it with the
+static-IDR timer IS the discipline that lets both touch one cached frame with no lock.
+
+**`ScreenCaptureKit` had to be named in `Package.swift`, for the AppKit reason.** The crate reads
+`SCStreamFrameInfoStatus` to tell a frame carrying new pixels from the framework's idle-skip, and an
+`extern` constant is a symbol the linker must resolve — unlike a class, which `objc2` looks up
+through the runtime. It was implicit until this row, because `WindowCapturer.swift` used to
+`import ScreenCaptureKit` itself. The failure it prevents is one undefined symbol at the final link
+of every macOS product, long after both the crate and `make ffi` are green.
+
+**The ban this row earned had to be NARROWER than the two before it.** Nothing else in Swift touches
+VideoToolbox, so `hevc-encode-is-rusts` could sweep the whole framework. Here the window feed,
+`slopdesk-framewatch` and `slopdesk-vd-probe` all still enumerate through `SCShareableContent`,
+`SCWindow` and `SCDisplay` — a read of what exists, not a capture — so `capture-is-rusts` bans the
+STREAM vocabulary and exempts two files by name: the measurement harness, which runs two streams at
+once and would otherwise be measuring the port with the port, and the preview glue, which asks
+`SCScreenshotManager` for one still. The lifecycle method names are deliberately absent from the ban
+as well: `startCapture` and `stopCapture` are also two effect cases in `VideoSessionLogic`'s state
+machine, which is Swift's and staying.

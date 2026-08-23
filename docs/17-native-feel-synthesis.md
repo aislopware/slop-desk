@@ -128,7 +128,7 @@ Solves "fast vs readable" for coding (extends "4:4:4 dropped, sharp text only vi
 
 ### 3.5 Idle-skip + damage tracking (refine)
 
-- In `didOutputSampleBuffer` read `SCStreamFrameInfo.status`; if `== .idle` → **return immediately** (no IOSurface, no encode, no send). **Zero-cost damage check** (≡ X11 DAMAGE DeltaRectangles); keeps the **encoder slot free** so the next real frame (keystroke) gets HW immediately. >90% of frames in a coding session are static.
+- On each delivered sample read `SCStreamFrameInfo.status`; if `== .idle` → **return immediately** (no IOSurface, no encode, no send). Since increment 94 that read is `slopdesk-apple-sck`'s, one framework call before the frame ever crosses into Swift — an idle frame is dropped without a door call at all. **Zero-cost damage check** (≡ X11 DAMAGE DeltaRectangles); keeps the **encoder slot free** so the next real frame (keystroke) gets HW immediately. >90% of frames in a coding session are static.
 - Heartbeat **IDR ~every 1s** on an idle window (so a reconnecting/loss-recovering client catches a frame).
 
 ### 3.6 Transport + loss: UDP seq + FEC + LTR (refine)

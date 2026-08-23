@@ -9408,8 +9408,16 @@ fi
 if ! grep -q 'slopdesk_inject_pointer(' <<< "${macos_only_region}"; then
   fail "slopdesk_ffi.h declares a CoreGraphics door outside the macOS-only region — iOS has no CGEvent at all, so an ungated declaration is not a wasted byte, it is a link failure on two of the three slices (docs/57 §3)"
 fi
-if ! grep -A 12 "target.'cfg(target_os = \"macos\")'.dependencies" rust/slopdesk-ffi/Cargo.toml |
-  grep -q 'slopdesk-apple-cgevent'; then
+# The macOS-gated dependency TABLE, not a fixed window after its header. This was `grep -A 12` and
+# the twelfth line was reached the moment a crate arrived with a comment above it — the gate then
+# failed on a `Cargo.toml` that was perfectly gated, naming the wrong defect. Read to the next
+# table header instead, which is where the section actually ends.
+ffi_macos_edges=$(
+  awk '/^\[target\..cfg\(target_os = "macos"\).\.dependencies\]/ { inside = 1; next }
+       /^\[/ { inside = 0 }
+       inside' rust/slopdesk-ffi/Cargo.toml
+)
+if ! grep -q 'slopdesk-apple-cgevent' <<< "${ffi_macos_edges}"; then
   fail "rust/slopdesk-ffi/Cargo.toml: the slopdesk-apple-cgevent edge is not target-gated — the macOS-only bijection is three spellings (the cfg, the header region, the Cargo edge) and build-ffi.sh only checks what the library exports (docs/57 §3)"
 fi
 
@@ -9493,9 +9501,8 @@ for door in slopdesk_cgwindow_frontmost_pid slopdesk_cgdisplay_list; do
     fail "slopdesk_ffi.h declares ${door} outside the macOS-only region — iOS has no WindowServer at all, so an ungated declaration is not a wasted byte, it is a link failure on two of the three slices (docs/57 §3)"
   fi
 done
-for edge in slopdesk-apple-cgwindow slopdesk-apple-cgdisplay; do
-  if ! grep -A 12 "target.'cfg(target_os = \"macos\")'.dependencies" rust/slopdesk-ffi/Cargo.toml |
-    grep -q "${edge}"; then
+for edge in slopdesk-apple-cgwindow slopdesk-apple-cgdisplay slopdesk-apple-sck; do
+  if ! grep -q "${edge}" <<< "${ffi_macos_edges}"; then
     fail "rust/slopdesk-ffi/Cargo.toml: the ${edge} edge is not target-gated — the macOS-only bijection is three spellings (the cfg, the header region, the Cargo edge) and build-ffi.sh only checks what the library exports (docs/57 §3)"
   fi
 done

@@ -335,6 +335,11 @@ pub fn registry() -> Vec<Rule> {
             check: rust_boundaries::hevc_decode_is_rusts,
         },
         Rule {
+            name: "capture-is-rusts",
+            origin: "docs/57 §5",
+            check: rust_boundaries::capture_is_rusts,
+        },
+        Rule {
             name: "agent-vocabularies",
             origin: "docs/55",
             check: rust_boundaries::agent_vocabularies,

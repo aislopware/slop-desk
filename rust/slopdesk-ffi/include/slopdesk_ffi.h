@@ -8726,6 +8726,132 @@ int32_t slopdesk_video_encoder_const_qp(void);
 // and must not silently invert into the coarsest. 0 out when absent or not a number.
 int32_t slopdesk_video_encoder_qp_knob(const uint8_t *raw, size_t len, int32_t fallback);
 
+// ---- The capture stream -------------------------------------------------------------
+//
+// ScreenCaptureKit: asking the window server for a window's or a display's pixels, and
+// nothing about what to do with them. The frame-decision pipeline the deliveries feed —
+// the backlog pacer, the adaptive-QP measurement, the scroll reprojection, the static-IDR
+// timer — is the caller's and stays there.
+//
+// The callback convention is the encoder's above, term for term: borrowed pointers valid
+// only for the duration of the call, registered once at _start and never changed, and a
+// context that outlives the handle.
+//
+// THE QUEUES ARE THE CALLER'S, and that is load-bearing. The frame queue must be the same
+// serial queue the caller's static-IDR timer runs on — that sharing IS the discipline
+// that lets the capture callback and the timer touch one cached frame with no lock. The
+// audio queue is a second one so a slow synchronous encode cannot delay a 10 ms buffer.
+//
+// The window is named by CGWindowID, never by an SCWindow pointer: the mint flow moves a
+// window onto the virtual display AFTER the object a caller enumerated was made, so that
+// object's frame is the pre-move one and a display-local crop computed from it is wrong.
+// The far side re-resolves by id, which makes that the only path rather than a correction
+// inside one.
+typedef struct SlopDeskCapture SlopDeskCapture;
+
+// Which content filter to build. A capture region overrides this — a region spans the
+// window AND the dialog it put up, and DISPLAY_INCLUDING is the only mode that
+// composites both.
+#define SLOPDESK_CAPTURE_MODE_WINDOW 0
+#define SLOPDESK_CAPTURE_MODE_DISPLAY_EXCLUDING 1
+#define SLOPDESK_CAPTURE_MODE_DISPLAY_INCLUDING 2
+
+// A frame carrying NEW pixels. image_buffer is a CVImageBufferRef borrowed for the call
+// ONLY — the surface behind it goes back to the framework's pool when this returns, so
+// anything kept must be copied or retained. The presentation time arrives as its two
+// CMTime fields rather than as a struct: no caller of this reads the flags or the epoch.
+typedef void (*SlopDeskCaptureFrameFn)(void *context, const void *image_buffer,
+                                       int64_t value, int32_t timescale);
+
+// An audio buffer, as a CMSampleBufferRef borrowed for the call only.
+typedef void (*SlopDeskCaptureAudioFn)(void *context, const void *sample_buffer);
+
+// The stream stopped ITSELF — the shared window closed, the display was unplugged, the
+// Screen-Recording grant was revoked, the window server reset. NEVER called for a
+// deliberate slopdesk_capture_stop.
+typedef void (*SlopDeskCaptureStoppedFn)(void *context);
+
+// Everything _start needs, as one record rather than fifteen arguments: the fields are
+// read together, several are meaningless without their neighbour, and a mis-ordered
+// argument list of same-typed scalars is the failure this shape cannot have.
+typedef struct {
+  double capture_scale;  // window points x this = the output buffer's pixels
+  double region_x;       // the four region_* are read only when has_region is true,
+  double region_y;       // and are in the region display's LOCAL points
+  double region_width;
+  double region_height;
+  uint32_t window_id;   // 0 selects the whole display named below
+  uint32_t display_id;  // the display to capture, or the region's display
+  int32_t mode;         // one of the SLOPDESK_CAPTURE_MODE_* above
+  int32_t pixel_width;
+  int32_t pixel_height;
+  int32_t fps;                 // the ENCODE rate; the delivery ceiling is resolved from it
+  int32_t audio_sample_rate;   // 0 for no audio tap at all
+  int32_t audio_channel_count; // read only when the sample rate is non-zero
+  bool full_range;             // the full-range NV12 variant rather than the video-range one
+  bool has_region;
+} SlopDeskCaptureDesc;
+
+// Brings a capture stream up. NULL when it could not start, with status_out — when
+// non-NULL — carrying either a ScreenCaptureKit error code or one of the far side's own
+// sentinels: -1 no answer inside the wait limit, -2 nothing shareable (no grant, no
+// window server), -3 nothing matching the id, -4 not reconfigurable.
+//
+// BLOCKS on the framework, and needs a window server plus a Screen-Recording grant.
+SlopDeskCapture *slopdesk_capture_start(const SlopDeskCaptureDesc *desc, void *context,
+                                        SlopDeskCaptureFrameFn frame,
+                                        SlopDeskCaptureAudioFn audio,
+                                        SlopDeskCaptureStoppedFn stopped,
+                                        const void *frame_queue, const void *audio_queue,
+                                        int32_t *status_out);
+
+// Stops the capture and waits for the framework to confirm; 0 is success. Separate from
+// _free because a caller stops on its teardown path and frees when the last reference
+// goes, and those are not the same moment.
+int32_t slopdesk_capture_stop(SlopDeskCapture *handle);
+
+// Releases the handle. Does NOT stop the stream — call _stop first.
+void slopdesk_capture_free(SlopDeskCapture *handle);
+
+// Re-origins a display-anchored crop after the window moved, in GLOBAL points. 1 when the
+// move was under half a point and not worth a reconfigure, 0 when the live stream took the
+// new crop, negative otherwise. Force a keyframe after a 0: the crop jump lands mid-GOP as
+// a whole-frame delta, and an anchor right after it is what keeps a late-joining client
+// from decoding half of each.
+int32_t slopdesk_capture_reanchor(SlopDeskCapture *handle, double x, double y);
+
+// Resizes a display-anchored capture in place, keeping the crop's origin; 0 is success.
+// -4 for a stream this is not allowed on — the caller restart-fallbacks. On a framework
+// refusal the stream keeps running at the OLD size rather than dying.
+int32_t slopdesk_capture_resize(SlopDeskCapture *handle, int32_t pixel_width,
+                                int32_t pixel_height);
+
+// Whether the crop is anchored to a DISPLAY rather than to the window's backing store,
+// and whether it is a poller-owned union region — an in-place resize must not touch one.
+bool slopdesk_capture_is_display_anchored(const SlopDeskCapture *handle);
+bool slopdesk_capture_is_union_anchored(const SlopDeskCapture *handle);
+
+// The capture rules, with no stream in the room. _hz is the same resolution _start
+// applies, exposed because the caller's cadence gate takes its tolerance from it, so the
+// two cannot disagree. Seconds, not milliseconds, wherever a duration is answered.
+//
+// The surface queue depth is NOT here. It is resolved inside _start and written straight
+// onto the SCStreamConfiguration; no caller compares against it the way the cadence gate
+// compares against _hz, so a second way to ask would be a face with no reader.
+int32_t slopdesk_capture_hz(int32_t fps);
+double slopdesk_capture_heartbeat_seconds(void);
+double slopdesk_capture_quiet_window(double heartbeat);
+double slopdesk_capture_idr_tick(void);
+bool slopdesk_capture_can_resize_in_place(bool enabled, bool display_anchored,
+                                          bool union_owned);
+
+// Which filter to build, as one of the SLOPDESK_CAPTURE_MODE_* above. The request arrives
+// as TEXT from the caller rather than being read on the far side, because the caller
+// resolves it through a settings overlay in front of the environment — a graphical setting
+// can force the capture filter, and an empty overlay reads exactly like a bare lookup.
+int32_t slopdesk_capture_mode(const uint8_t *raw, size_t len,
+                              bool prefer_display_anchored);
+
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END
 

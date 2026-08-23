@@ -1,45 +1,37 @@
 #if os(macOS)
 import CoreMedia
 import CoreVideo
+import CSlopDeskFFI
 import Foundation
 import OSLog
-import ScreenCaptureKit
 import SlopDeskVideoProtocol
 
-/// Captures a single GUI window via ScreenCaptureKit, configured to the MEASURED
-/// spike configs (doc 02 §3.1, doc 17 §3.1, doc 18 §D).
+/// The frame-decision pipeline behind one captured window: what to do with each frame the capture
+/// stream delivers, and when to synthesise one it did not.
 ///
-/// ⚠️ **HANG-SAFETY:** an `SCStream` cannot start without a window-server +
-/// Screen-Recording TCC session (docs/research/spikes/vtbench/RESULTS.md). This type
-/// is COMPILED and code-reviewed but its `start()` is NEVER called from a test or a
-/// headless context — only from a real GUI host app with the TCC grant.
+/// The capture stream ITSELF — the content filter, the configuration, the framework lifecycle, the
+/// read of what each delivered sample buffer is — lives in `slopdesk-apple-sck` behind
+/// `slopdesk_capture_*`, and every rule those calls are made under (the delivery ceiling, the
+/// surface depth, which filter a parked window wants, whether a resize may happen in place) lives
+/// in `slopdesk_video::capture_config`. What is left here is the part that is genuinely about
+/// SlopDesk rather than about the framework: the backlog pacer, the adaptive quantiser
+/// measurement, the scroll reprojection, the static-IDR timer and the cadence gate.
 ///
-/// Config rationale (each cites the measured spike / doc):
-/// - `pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange` (NV12) →
-///   zero-copy hand-off to `VTCompressionSession`, no BGRA→NV12 step (doc 02 §3.1).
-/// - `showsCursor = false` + `showsMouseClicks = false` → the cursor is stripped
-///   from per-window capture (MEASURED PASS, RESULTS.md "D — cursor strip"); the
-///   client renders it from the side-channel (doc 17 §3.3).
-/// - `minimumFrameInterval = CMTime(1, 30)` → cap ~30fps (macOS 15+ silently
-///   defaults to 1/60; must set explicitly — doc 02 §3.1).
-/// - `queueDepth = 3` → low-latency 2-3 frames in flight (doc 02 §3.1); release the
-///   `CMSampleBuffer` surface IMMEDIATELY after handing the `CVPixelBuffer` to the
-///   encoder, within `minimumFrameInterval × (queueDepth − 1)` (WWDC22 s10155).
-/// - Idle-skip: `SCStreamFrameInfo.status == .idle` → return immediately, no encode,
-///   no send (doc 17 §3.5). >90% of coding frames are static.
+/// ⚠️ **HANG-SAFETY:** a capture stream cannot start without a window-server + Screen-Recording TCC
+/// session (docs/research/spikes/vtbench/RESULTS.md). ``start(windowID:pixelWidth:pixelHeight:region:)``
+/// is NEVER called from a test or a headless context — only from a real GUI host app with the grant.
+///
+/// - Idle-skip: a frame the framework marks anything but complete carries no new pixels and never
+///   reaches this type at all (doc 17 §3.5). >90% of coding frames are static.
 /// - Heartbeat IDR (``heartbeatIDRInterval``) so a reconnecting / loss-recovering client catches a frame.
-public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
+public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// Heartbeat IDR cadence (seconds): periodic forced keyframe so a late-joining / loss-recovering
     /// client gets a decode anchor. 2.5 s rather than 1 s — on a never-idle window every heartbeat is a
     /// 50-135 KB IDR burst (the crisp path never fires there), so a tight cadence risks burst loss for
     /// ZERO benefit to an in-sync client; 2.5 s drops most periodic bursts while keeping a prompt
     /// insurance anchor (DETECTED loss recovers via the recovery channel, not this heartbeat). Env
     /// `SLOPDESK_HEARTBEAT_S`, clamped [0.25, 60].
-    public static let heartbeatIDRInterval: TimeInterval = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_HEARTBEAT_S"], let v = Double(s), v >= 0.25,
-           v <= 60 { return v }
-        return 2.5
-    }()
+    public static let heartbeatIDRInterval: TimeInterval = slopdesk_capture_heartbeat_seconds()
 
     /// Force a periodic heartbeat IDR on the LIVE (active-motion) path. DEFAULT OFF, because on a
     /// never-idle window that heartbeat is a 50-135 KB IDR through `encodeCompactKeyframe`, whose two
@@ -53,7 +45,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     static let motionHeartbeatEnabled = ProcessInfo.processInfo.environment["SLOPDESK_MOTION_HEARTBEAT"] == "1"
 
     /// APP-AUDIO master gate (`SLOPDESK_AUDIO`, default ON; `=0` masters the feature off). Gates the
-    /// SCStream audio-tap CONFIGURATION (`capturesAudio` + the second `.audio` stream output) here,
+    /// capture audio-tap CONFIGURATION (the sample rate in the start description, which is what
+    /// adds the second audio output) here,
     /// and the whole encode→send lane session-side. The per-session client toggle (`audioControl`)
     /// deliberately never touches the stream config — an `updateConfiguration` mid-stream costs a
     /// visible capture hitch — so OFF just drops `.audio` buffers at the delegate
@@ -275,17 +268,6 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// frame is never dropped).
     static let scrollMotionSustainFrames = 2
 
-    /// SCStream `queueDepth` (default 5). The VT encode runs synchronously on the capture sample-handler
-    /// queue, so a deeper SCK surface queue keeps a single slow (fat scroll-burst) encode from stalling
-    /// the next capture delivery (the measured capture-gap). `SLOPDESK_CAPTURE_QUEUE_DEPTH` overrides
-    /// (clamp 2…12).
-    static let captureQueueDepth: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_CAPTURE_QUEUE_DEPTH"], let v = Int(s) {
-            return min(12, max(2, v))
-        }
-        return 5
-    }()
-
     /// ENCODE DECOUPLING (DEFAULT ON; `SLOPDESK_ENCODE_OFFQUEUE=0` reverts to inline encode). The VT
     /// encode otherwise runs SYNCHRONOUSLY in the SCStream sample handler, so during heavy scroll a
     /// per-frame encode that spikes past the ~16ms budget makes the handler fall progressively behind →
@@ -432,7 +414,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// synchronous video encode can't delay a ~10 ms audio buffer (and the audio path never
     /// touches frameQueue-owned state).
     private let audioQueue = DispatchQueue(label: "slopdesk.video.capture.audio", qos: .userInteractive)
-    private var stream: SCStream?
+    /// The live capture stream, or nil before ``start(windowID:pixelWidth:pixelHeight:region:)`` and
+    /// after ``stop()``. Confined to the session-actor lifecycle paths (start / stop / resize).
+    private var capture: OpaquePointer?
+    /// This capturer, RETAINED across the C boundary for exactly as long as `capture` lives — the
+    /// door's terms are that the context outlives the handle, and the callbacks run on the two
+    /// queues below rather than on whatever released the last Swift reference.
+    private var captureContext: UnsafeMutableRawPointer?
     private let frameHandler: FrameHandler
 
     /// APP-AUDIO forward gate + sink under one lock: the session actor toggles/installs off-queue
@@ -1067,18 +1055,19 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// Capture frame-rate cap (fps). Default 60 for smooth scroll/motion; idle-skip keeps a static
     /// window near-zero regardless. Used to build the `minimumFrameInterval`.
     private let fps: Int
-    /// The resolved SCStream delivery ceiling (Hz) — see ``resolveCaptureHz(envValue:fps:)``.
+    /// The resolved capture delivery ceiling (Hz) — `slopdesk_capture_hz`, which is the same rule
+    /// the stream itself is configured with, so the two cannot disagree.
     /// Stored so the cadence gate's tolerance (half a delivery slot) matches the actual config.
     private let captureHz: Int
-    /// Capture pixel scale (window points × this = the output buffer pixels). Needed to express
-    /// `sourceRect` in POINTS (`pixelDim / captureScale`) — the source crop is point-space while
-    /// `config.width/height` are pixel-space.
+    /// Capture pixel scale: window points × this = the output buffer's pixels. The far side needs
+    /// it because the crop it pins is point-space while the buffer it fills is pixel-space, so this
+    /// is what divides the two back apart.
     private let captureScale: Double
     /// Capture NV12 in the FULL-RANGE pixel-format variant when true, else the VideoRange variant.
-    /// Threaded into ``makeConfiguration``; default false ⇒ VideoRange.
+    /// Crosses as `SlopDeskCaptureDesc.full_range`; default false ⇒ VideoRange.
     private let fullRange: Bool
-    /// Prefer display-anchored capture (`.displayIncluding`) over the per-window compositor
-    /// (`.window`) when no env override is set — see ``resolveCaptureMode(envValue:preferDisplayAnchored:)``.
+    /// Prefer display-anchored capture over the per-window compositor when no env override is set —
+    /// see `slopdesk_capture_mode`.
     /// The live session passes `true`: display-anchored is ≈15ms lower glass-to-glass (one 60Hz slot)
     /// AND occlusion-proof (composites only the target window + children), so it is the default for
     /// every served window. `SLOPDESK_DISPLAY_CAPTURE=window` forces the per-window path; the init
@@ -1094,10 +1083,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     ) {
         self.preferDisplayAnchored = preferDisplayAnchored
         self.fps = max(1, fps)
-        captureHz = Self.resolveCaptureHz(
-            envValue: ProcessInfo.processInfo.environment["SLOPDESK_CAPTURE_HZ"],
-            fps: max(1, fps),
-        )
+        captureHz = Int(slopdesk_capture_hz(Int32(clamping: max(1, fps))))
         governedFPS = max(1, fps)
         encodeLoadPacer = EncodeLoadPacer(baseFps: max(1, fps))
         encodePacedFPS = max(1, fps)
@@ -1110,230 +1096,17 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // recovery-suppression window. SLOPDESK_QUIET_MS.
         staticIDRDecider = StaticIDRDecider(
             heartbeat: Self.heartbeatIDRInterval,
-            quietWindow: Self.resolveQuietWindow(
-                envValue: ProcessInfo.processInfo.environment["SLOPDESK_QUIET_MS"],
-                heartbeat: Self.heartbeatIDRInterval,
-            ),
+            quietWindow: slopdesk_capture_quiet_window(Self.heartbeatIDRInterval),
         )
         super.init()
     }
-
-    /// Builds the MEASURED-config `SCStreamConfiguration` for a single window.
-    ///
-    /// ⚠️ `width`/`height` are PIXEL dimensions (window points × `captureScale`) — they become
-    /// `config.width`/`config.height` directly, and `sourceRect` is derived back in POINTS by
-    /// dividing by `captureScale`. So at `captureScale = 2` (the VD-parked path) the buffer is the
-    /// window's Retina backing size and the crop is the window's point rect (contentScale = 2 → sharp).
-    /// At `captureScale = 1` (the default / off-VD path) pixels == points. The `helloAck`
-    /// captureWidth/Height and the cursor mapping stay in POINTS (= pixels / captureScale), so the
-    /// client's `VideoScaleMath` denominator is correct. A caller passing POINTS here with
-    /// `captureScale = 2` would crop only the top-left quarter — pass PIXELS.
-    public static func makeConfiguration(
-        width: Int,
-        height: Int,
-        fps: Int = 30,
-        captureScale: Double = 1.0,
-        fullRange: Bool = false,
-    ) -> SCStreamConfiguration {
-        let config = SCStreamConfiguration()
-        // NV12 zero-copy (doc 02 §3.1). The luma RANGE is carried by the pixel-format VARIANT
-        // (FullRange vs VideoRange) — THIS is the capture-side range knob; VT reads it to stamp the
-        // SPS `video_full_range_flag`. R8/RG8 plane layout is identical for both NV12 variants, so the
-        // client's makeTexture is unaffected either way. Default: VideoRange.
-        config.pixelFormat = fullRange
-            ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-            : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        config.showsCursor = false // client-side cursor (RESULTS.md D)
-        // showMouseClicks gates the click "ripple" overlay (default NO; only applies
-        // to BGRA capture per the SDK header — a no-op for our NV12 path, set for
-        // intent).
-        config.showMouseClicks = false
-        // Cap at `fps` (default 30 — a coding tool, not a game stream; 60 reachable via --fps for
-        // smoother motion). NOTE the capture ceiling stays at 2× the encode fps (≈60Hz @ fps=30 — see
-        // resolveCaptureHz) so a changed frame (e.g. a typed character) is still picked up within ~16ms
-        // and not quantized to the 33ms encode slot; only the ENCODE rate (and thus bitrate) drops.
-        // macOS 15+ silently defaults to 1/60; idle-skip keeps a static window near-zero regardless (doc 02 §3.1).
-        // A capture min-interval EQUAL to the encode fps QUANTIZES when SCK may deliver a fresh composite
-        // (a change landing just after a slot waits out the rest of it), so the ceiling is 2× the encode
-        // fps (`SLOPDESK_CAPTURE_HZ`, see resolveCaptureHz): SCK hands over a changed frame sooner WITHOUT
-        // raising the encode rate (delivery stays content-driven; idle windows still deliver nothing).
-        // ⚠️ Decouple the CAPTURE side only — `--fps 120` (raising both) measures WORSE glass-to-glass
-        // (+18ms p50). At a 1× (60Hz) ceiling SCK's slot quantization beats against the source
-        // compositor's commit time and eats ~3fps (framewatch: eff 57.2 vs 60.0fps, p99 cadence 24.2 vs
-        // 19.8ms), with 144-161 clustered ~30ms double-slot capture gaps per scroll session — zero at 2×
-        // (14.6k-frame HW session). Encode fps (and thus bitrate) is unaffected.
-        let captureHz = resolveCaptureHz(
-            envValue: ProcessInfo.processInfo.environment["SLOPDESK_CAPTURE_HZ"],
-            fps: fps,
-        )
-        config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(captureHz))
-        // The encode runs SYNCHRONOUSLY on this SCStream sample-handler queue, so one fat scroll-burst
-        // frame's `VTCompressionSessionEncodeFrame` blocks the next capture delivery as soon as it
-        // over-runs ~`interval × (depth−1)` (a measured 61ms capture-gap at depth 3). A deeper queue lets
-        // SCK buffer more surfaces while an encode is in flight, so a single slow frame becomes a brief
-        // blur instead of a capture freeze. `SLOPDESK_CAPTURE_QUEUE_DEPTH` overrides.
-        config.queueDepth = Self.captureQueueDepth
-        config.width = width
-        config.height = height
-        config.colorSpaceName = CGColorSpace.sRGB
-        // ── BLUR-ON-TOOLTIP ────────────────────────────────────────────────────────────────
-        // With `SCContentFilter(desktopIndependentWindow:)`, SCK composites the target window's
-        // CHILD/associated windows into the captured BOUNDING rect (SCStreamFrameInfoBoundingRect =
-        // "smallest box containing all captured windows"). Chrome's link-URL status bubble is a
-        // child window that pops up at the bottom-left and EXTENDS that rect past the window frame.
-        // Because `config.width/height` are pinned to the window's own point size, SCK hardware-scales
-        // the now-larger union rect DOWN to fit the fixed buffer (contentScale drops below 1.0) — so
-        // the ENTIRE composited frame, all static text included, is sampled into fewer pixels and the
-        // whole pane goes soft, snapping back to sharp the instant the bubble hides. This is upstream
-        // of the encoder — no encoder knob touches it (HW A/B: raising the live bitrate 12→40 Mbps left
-        // keyframes at a constant ~52 KB; lowering the QP ceiling 32→22 changed nothing) because the
-        // detail is gone BEFORE encode.
-        //
-        // We KEEP child windows (so the URL tooltip / popovers still render) but PIN the sampled
-        // region to the window's own frame via `sourceRect`: SCK then maps exactly (0,0,W,H) points
-        // 1:1 into the fixed pixel buffer no matter how far a child window pushes the union rect, so
-        // contentScale stays at 1.0 (sharp). A child window that overlaps the frame is shown; the part
-        // (if any) below the frame edge is simply cropped — never downscaled. `sourceRect` is in
-        // POINTS, so divide the pixel dims by `captureScale`.
-        // ⚠️ Residual, `.window` mode only: with child windows included the crop anchors a couple of
-        // points off the window's own top-left (a child window's geometry nudges the capture origin),
-        // so the image sits a hair to the right while the child is up (HW-probed dx=+1px). A VD-parked
-        // window defaults to `.displayIncluding`, whose crop is DISPLAY-anchored (dx=0) and still keeps
-        // the tooltip — see ``CaptureMode``.
-        let pointW = Double(width) / max(1.0, captureScale)
-        let pointH = Double(height) / max(1.0, captureScale)
-        config.sourceRect = CGRect(x: 0, y: 0, width: pointW, height: pointH)
-        if #available(macOS 14.0, *) {
-            config.ignoreShadowsSingleWindow = true // don't let the window's drop-shadow pad the rect
-            config.ignoreGlobalClipSingleWindow = true // don't pad the rect to the global clip
-        }
-        // APP-AUDIO (`SLOPDESK_AUDIO`, default ON): tap the captured content's audio alongside the
-        // pixels — 48 kHz stereo, the fixed wire contract (``AudioStreamConfig``). Configured at
-        // BUILD time only; the per-session enable toggle never reaches `updateConfiguration`
-        // (disabled just drops `.audio` buffers at the delegate — see
-        // ``setAudioForwardingEnabled(_:)``). `excludesCurrentProcessAudio` keeps this process's
-        // own output out of the tap (no feedback loop if the host ever plays audio itself).
-        if audioCaptureEnabled {
-            config.capturesAudio = true
-            config.excludesCurrentProcessAudio = true
-            config.sampleRate = Int(AudioStreamEncoder.sampleRate)
-            config.channelCount = AudioStreamEncoder.channelCount
-        }
-        return config
-    }
-
-    /// PURE capture-ceiling resolution (split out of ``makeConfiguration`` so it is unit-testable):
-    /// `SLOPDESK_CAPTURE_HZ` overrides, clamped [15, 240]; default 2× the encode fps, ceilinged at
-    /// 240 (see the capture-ceiling note in ``makeConfiguration`` — decouple the capture side only).
-    static func resolveCaptureHz(envValue: String?, fps: Int) -> Int {
-        if let envValue, let v = Int(envValue) { return min(240, max(15, v)) }
-        return min(240, max(1, fps) * 2)
-    }
-
-    /// PURE quiet-window resolution (CRISP re-sharpen latency).
-    ///
-    /// How long after the last real `.complete` frame the static-IDR timer waits before emitting the
-    /// crisp near-lossless re-anchor. Lower = text sharpens sooner after a scroll/motion burst stops;
-    /// too low risks firing crisp during a one-frame pause MID-motion. 300ms is the re-sharpen target.
-    /// `SLOPDESK_QUIET_MS` overrides (MILLISECONDS), clamped [50ms, heartbeat] — never longer than the
-    /// heartbeat, since a longer window stretches the timer-path recovery suppression (see
-    /// `StaticIDRDecider`).
-    static func resolveQuietWindow(envValue: String?, heartbeat: TimeInterval) -> TimeInterval {
-        let floor = 0.05
-        let ceil = max(floor, heartbeat)
-        if let envValue, let ms = Double(envValue) {
-            return min(ceil, max(floor, ms / 1000.0))
-        }
-        return min(ceil, max(floor, 0.3))
-    }
-
-    /// PURE static-IDR poll-tick resolution. The frameQueue timer polls the decider (recovery latch +
-    /// idle service + the crisp re-anchor) every tick; the decider only EMITS when due, so sub-cadence
-    /// ticks are cheap no-ops. 80ms keeps worst-case time-to-crisp ≈ quietWindow + tick ≈ 0.38s.
-    /// `SLOPDESK_IDR_TICK_MS` overrides (MILLISECONDS), clamped [20ms, 1s].
-    static func resolveIDRPollTick(envValue: String?) -> TimeInterval {
-        let floor = 0.02
-        let ceil = 1.0
-        if let envValue, let ms = Double(envValue) {
-            return min(ceil, max(floor, ms / 1000.0))
-        }
-        return 0.08
-    }
-
-    /// Creates the content filter for one desktop-independent window. Captures the
-    /// window's backing store at origin (0,0) so in-window coordinates are direct
-    /// (doc 18 §B note).
-    public static func makeFilter(window: SCWindow) -> SCContentFilter {
-        SCContentFilter(desktopIndependentWindow: window)
-    }
-
-    /// How the SCStream sources the window's pixels.
-    public enum CaptureMode: Equatable, Sendable {
-        /// `SCContentFilter(desktopIndependentWindow:)` — follows the window anywhere, but the
-        /// capture is anchored to the BOUNDING rect (window ∪ child windows), so a child window
-        /// (Chrome's link-URL bubble) that overhangs the frame nudges the crop origin and the
-        /// whole image shifts ~1px while the child is up (the sourceRect-pin tradeoff).
-        case window
-        /// `SCContentFilter(display:excludingWindows:[])` cropped to the window frame
-        /// (display-local points). Immune to the child-window nudge, ~5ms faster p50 (framewatch
-        /// signed A/B, n=51) — but EVERYTHING overlapping the rect is captured, so it is only
-        /// correct when the window is alone on the display.
-        case displayExcluding
-        /// `SCContentFilter(display:including:[window])` cropped to the window frame. The crop is
-        /// display-anchored (no child-window nudge) AND only the target window + its children are
-        /// composited (occlusion-proof — N windows stacked on the shared VD can't bleed). Child
-        /// windows ride along per the SDK ("display bound windows… Child windows are included by
-        /// default"), kept explicit via `includeChildWindows`. Non-included area is empty per the
-        /// SDK ("Display including content filters do not contain the desktop and dock").
-        /// LATENCY (framewatch flasher, Studio loopback VD 2×, 3×~92 paired flips): glass-to-glass
-        /// p50 35.8/36.0ms vs `.window` 50.7/51.2ms (≈ one 60Hz slot saved — the per-window composite
-        /// path costs it), p90 equal (~53ms); matches `.displayExcluding` (35.7ms) — the include-list
-        /// adds nothing measurable.
-        case displayIncluding
-    }
-
-    /// PURE mode resolution (unit-tested). `SLOPDESK_DISPLAY_CAPTURE` forces a mode for A/B:
-    /// `window`/`0` → `.window`, `1`/`display` → `.displayExcluding`, `include` → `.displayIncluding`.
-    /// Unset: `.displayIncluding` when the daemon parked the window on the virtual display
-    /// (`preferDisplayAnchored` — HW-verified: kills the tooltip 1px shift, keeps the tooltip, no
-    /// multi-window bleed), else `.window` (off-VD the window may move/overlap freely).
-    static func resolveCaptureMode(envValue: String?, preferDisplayAnchored: Bool) -> CaptureMode {
-        switch envValue {
-        case "window",
-             "0": .window
-        case "1",
-             "display": .displayExcluding
-        case "include",
-             "display-include": .displayIncluding
-        default: preferDisplayAnchored ? .displayIncluding : .window
-        }
-    }
-
-    /// Display-anchor state for `.displayExcluding`/`.displayIncluding` (nil in `.window` mode):
-    /// the crop is a FIXED display-local rect, so a window MOVE makes it stale — the session feeds
-    /// geometry-watcher moves to ``updateDisplayAnchoredOrigin(windowFrameCG:)`` to re-anchor.
-    /// Guarded by `anchorLock` (set on start's executor, read from the session actor's geometry path).
-    private struct DisplayAnchor { let displayBounds: CGRect
-        let config: SCStreamConfiguration
-        let isUnion: Bool
-    }
-
-    private var displayAnchor: DisplayAnchor?
-    private let anchorLock = NSLock()
-    /// Serialize + coalesce display-anchor re-origins. The session fires a fresh `Task` per geometry
-    /// message, so without this several could read/mutate the shared `DisplayAnchor.config` and call
-    /// `updateConfiguration` on one SCStream concurrently (a check-then-act race + torn config writes).
-    /// `reanchorInFlight` admits exactly one driver; newer frames overwrite `reanchorPending` so the
-    /// driver always converges to the LATEST position. Guarded by `anchorLock`.
-    private var reanchorInFlight = false
-    private var reanchorPending: CGRect?
 
     /// An explicit display-anchored capture region (the DIALOG-EXPAND feature): when set, the crop
     /// is `displayLocalRect` (points) on `displayID` instead of the live window frame, so the
     /// captured surface spans the window ∪ its associated dialog. `globalRect` is the same region in
     /// global points — the session uses it to re-origin the input/cursor mapping into the dialog
     /// area. Built by `slopdesk_video::capture_region` and threaded through
-    /// ``start(window:pixelWidth:pixelHeight:region:)``.
+    /// ``start(windowID:pixelWidth:pixelHeight:region:)``.
     public struct CaptureRegionOverride: Sendable {
         public let displayID: CGDirectDisplayID
         public let displayLocalRect: CGRect
@@ -1345,138 +1118,212 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         }
     }
 
+    /// Why an in-place resize was refused — the caller restart-fallbacks on any of these.
+    public enum CannotResizeInPlace: Error {
+        case noStream
+        case notDisplayAnchored
+        case unionOwned
+        /// The framework refused the reconfigure, carrying its own status. The live stream keeps
+        /// running at the OLD size rather than dying, so the caller may restart at its leisure.
+        case refused(Int32)
+    }
+
+    // MARK: The capture stream
+
+    /// Serialises the callers that ask a display-anchored crop to change.
+    ///
+    /// The far side owns the live configuration and answers whether it is anchored, so all that is
+    /// left on this side is admitting one driver at a time: the session fires a fresh `Task` per
+    /// geometry message, and without this several could reconfigure one stream at once.
+    /// `reanchorInFlight` admits exactly one driver, and newer frames overwrite `reanchorPending`
+    /// so the driver always converges to the LATEST position.
+    private let anchorLock = NSLock()
+    private var reanchorInFlight = false
+    private var reanchorPending: CGRect?
+
+    /// Where every BLOCKING door call is made.
+    ///
+    /// The far side waits on the framework's own completion handler rather than handing a second
+    /// callback back across the boundary — one state machine instead of two — so a lifecycle call
+    /// blocks for as long as the framework takes (~120 ms for a start). The caller is a session
+    /// actor, and an actor that blocks stops serving every other message, so the wait happens here
+    /// and the caller awaits it.
+    private let controlQueue = DispatchQueue(label: "slopdesk.video.capture.control", qos: .userInitiated)
+
+    /// Awaits one blocking door call on ``controlQueue``.
+    ///
+    /// Every pointer crosses into the closure as its BIT PATTERN and is rebuilt inside. Swift's
+    /// concurrency checker will not carry a raw pointer into a `@Sendable` closure, and it is right
+    /// not to in general — the promise that makes these safe is the door's own (the handle is
+    /// `Mutex`-guarded on the far side, the queues are retained by the stream, the context is
+    /// retained for the handle's whole life), which is not a promise the type system can see.
+    private func onControlQueue<T: Sendable>(_ body: @escaping @Sendable () -> T) async -> T {
+        await withCheckedContinuation { continuation in
+            controlQueue.async { continuation.resume(returning: body()) }
+        }
+    }
+
+    /// The live handle as a bit pattern, for the closure above. Nil before start and after stop.
+    private var captureBits: UInt? {
+        capture.map { UInt(bitPattern: UnsafeRawPointer($0)) }
+    }
+
+    /// A frame carrying NEW pixels, on `frameQueue`. The surface is borrowed for the call only.
+    private static let frameDoor: SlopDeskCaptureFrameFn = { context, imageBuffer, value, timescale in
+        guard let context, let imageBuffer else { return }
+        let capturer = Unmanaged<WindowCapturer>.fromOpaque(context).takeUnretainedValue()
+        let pixelBuffer = Unmanaged<CVPixelBuffer>.fromOpaque(imageBuffer).takeUnretainedValue()
+        capturer.deliver(pixelBuffer: pixelBuffer, pts: CMTime(value: value, timescale: timescale))
+    }
+
+    /// An audio buffer, on `audioQueue` — its own serial output, so it never queues behind a
+    /// synchronous video encode.
+    private static let audioDoor: SlopDeskCaptureAudioFn = { context, sampleBuffer in
+        guard let context, let sampleBuffer else { return }
+        let capturer = Unmanaged<WindowCapturer>.fromOpaque(context).takeUnretainedValue()
+        capturer.deliver(audio: Unmanaged<CMSampleBuffer>.fromOpaque(sampleBuffer).takeUnretainedValue())
+    }
+
+    /// CAPTURE-DEATH: the stream stopped ITSELF (shared window/app closed, display unplugged,
+    /// Screen-Recording grant revoked, window server reset). Never fired for a deliberate ``stop()``.
+    private static let stoppedDoor: SlopDeskCaptureStoppedFn = { context in
+        guard let context else { return }
+        let capturer = Unmanaged<WindowCapturer>.fromOpaque(context).takeUnretainedValue()
+        capturer.log.error("capture stream stopped with an error")
+        capturer.handleCaptureFailure()
+    }
+
+    /// Which content filter to build, as one of the door's `SLOPDESK_CAPTURE_MODE_*` constants.
+    ///
+    /// Resolved through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can force the
+    /// capture filter; an EMPTY overlay reads exactly like a bare `ProcessInfo` lookup.
+    private static func captureMode(preferDisplayAnchored: Bool) -> Int32 {
+        let requested = Array((EnvConfig.string("SLOPDESK_DISPLAY_CAPTURE") ?? "").utf8)
+        return requested.withUnsafeBufferPointer {
+            slopdesk_capture_mode($0.baseAddress, $0.count, preferDisplayAnchored)
+        }
+    }
+
     /// Starts capturing the given window at an explicit PIXEL size (`pixelWidth`×`pixelHeight`).
-    /// Passing the window's backing-pixel size (points × display scale) captures at native
-    /// Retina resolution — sharp text — instead of the soft point-resolution default. ⚠️
-    /// Requires a window-server + Screen-Recording TCC session — NEVER call from a test.
+    /// Passing the window's backing-pixel size (points × display scale) captures at native Retina
+    /// resolution — sharp text — instead of the soft point-resolution default. ⚠️ Requires a
+    /// window-server + Screen-Recording TCC session — NEVER call from a test.
+    ///
+    /// The window is named by ID, not by an enumerated object: the mint flow AX-moves the window
+    /// onto the virtual display AFTER whatever the caller enumerated was made, so that object's
+    /// frame is the PRE-move one and a display-local crop computed from it would be wrong. The far
+    /// side re-resolves by id, which makes that the only path rather than a correction inside one.
     ///
     /// `region` (DIALOG-EXPAND): when non-nil, the display-anchored crop is pinned to that explicit
     /// union rect (window ∪ dialog) instead of the live window frame — `pixelWidth`/`pixelHeight`
     /// must already match `region.globalRect.size × captureScale`. nil ⇒ the normal window-frame crop.
     public func start(
-        window: SCWindow,
+        windowID: CGWindowID,
         pixelWidth: Int,
         pixelHeight: Int,
         region: CaptureRegionOverride? = nil,
     ) async throws {
-        let config = Self.makeConfiguration(
-            width: pixelWidth,
-            height: pixelHeight,
-            fps: fps,
-            captureScale: captureScale,
-            fullRange: fullRange,
+        let crop = region?.displayLocalRect ?? .zero
+        try await bringUp(
+            SlopDeskCaptureDesc(
+                capture_scale: captureScale,
+                region_x: crop.origin.x,
+                region_y: crop.origin.y,
+                region_width: crop.size.width,
+                region_height: crop.size.height,
+                window_id: windowID,
+                display_id: region?.displayID ?? 0,
+                mode: Self.captureMode(preferDisplayAnchored: preferDisplayAnchored),
+                pixel_width: Int32(clamping: pixelWidth),
+                pixel_height: Int32(clamping: pixelHeight),
+                fps: Int32(clamping: fps),
+                audio_sample_rate: Self.audioCaptureEnabled ? Int32(clamping: AudioStreamEncoder.sampleRate) : 0,
+                audio_channel_count: Int32(clamping: AudioStreamEncoder.channelCount),
+                full_range: fullRange,
+                has_region: region != nil,
+            ),
+            describing: "window \(windowID)\(region != nil ? " [union]" : "")",
         )
-        var filter = Self.makeFilter(window: window)
-        // A union region only makes sense in the display-including mode (it relies on
-        // includeChildWindows compositing the dialog); force that mode when a region is supplied.
-        let mode: CaptureMode = region != nil ? .displayIncluding
-            // Resolved through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can force the
-            // capture filter; an EMPTY overlay reads exactly like a bare `ProcessInfo` lookup.
-            : Self.resolveCaptureMode(
-                envValue: EnvConfig.string("SLOPDESK_DISPLAY_CAPTURE"),
-                preferDisplayAnchored: preferDisplayAnchored,
-            )
-        if mode != .window {
-            // Re-resolve the SCWindow by id: the mint flow AX-moves the window onto the VD AFTER
-            // the `window` passed here was enumerated, so its `.frame` is the PRE-move one — the
-            // display-local crop must come from the live (post-move) frame.
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            let liveWindow = content.windows.first(where: { $0.windowID == window.windowID }) ?? window
-            // Region override carries its own display; else pick the display under the window centre.
-            let display: SCDisplay?
-            if let region {
-                display = content.displays.first(where: { $0.displayID == region.displayID })
-            } else {
-                let center = CGPoint(x: liveWindow.frame.midX, y: liveWindow.frame.midY)
-                display = content.displays.first(where: { HostDisplays.bounds(of: $0.displayID).contains(center) })
-            }
-            if let display {
-                let db = HostDisplays.bounds(of: display.displayID)
-                if let region {
-                    config.sourceRect = region.displayLocalRect
-                } else {
-                    config.sourceRect = CGRect(
-                        x: liveWindow.frame.minX - db.minX,
-                        y: liveWindow.frame.minY - db.minY,
-                        width: Double(pixelWidth) / max(1.0, captureScale),
-                        height: Double(pixelHeight) / max(1.0, captureScale),
-                    )
-                }
-                switch mode {
-                case .displayExcluding:
-                    filter = SCContentFilter(display: display, excludingWindows: [])
-                case .displayIncluding:
-                    filter = SCContentFilter(display: display, including: [liveWindow])
-                    if #available(macOS 14.2, *) { config.includeChildWindows = true }
-                case .window:
-                    break
-                }
-                anchorLock.withLock { displayAnchor = DisplayAnchor(
-                    displayBounds: db,
-                    config: config,
-                    isUnion: region != nil,
-                ) }
-                log
-                    .notice(
-                        "capture mode \(String(describing: mode))\(region != nil ? " [union]" : ""): display \(display.displayID) sourceRect \(Int(config.sourceRect.origin.x)),\(Int(config.sourceRect.origin.y)) \(Int(config.sourceRect.width))x\(Int(config.sourceRect.height))pt",
-                    )
-            } else {
-                log.error("display-anchored capture: no display contains window center — falling back to window filter")
-            }
-        }
-        let stream = SCStream(filter: filter, configuration: config, delegate: self)
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)
-        // APP-AUDIO: a SECOND output on its own serial queue, so audio delivery never queues
-        // behind a synchronous video encode on `frameQueue`.
-        if Self.audioCaptureEnabled {
-            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
-        }
-        try await stream.startCapture()
-        self.stream = stream
-        log.info("WindowCapturer started for window \(window.windowID)")
-        startIDRTimer()
     }
 
     /// Starts capturing a WHOLE display (the full-desktop pane) at an explicit PIXEL size
-    /// (`pixelWidth`×`pixelHeight` — the display's point size × `captureScale`). The filter is
-    /// `SCContentFilter(display:excludingWindows: [])` — everything on the display, dock and
-    /// desktop included — and the `makeConfiguration` sourceRect pin `(0, 0, w/scale, h/scale)`
-    /// IS the full display here, so no crop/anchor state is needed (a display never moves; the
-    /// window path's re-anchor machinery stays inert). ⚠️ Same TCC/window-server requirements
-    /// as ``start(window:pixelWidth:pixelHeight:region:)`` — NEVER call from a test.
-    public func start(display: SCDisplay, pixelWidth: Int, pixelHeight: Int) async throws {
-        let config = Self.makeConfiguration(
-            width: pixelWidth,
-            height: pixelHeight,
-            fps: fps,
-            captureScale: captureScale,
-            fullRange: fullRange,
+    /// (`pixelWidth`×`pixelHeight` — the display's point size × `captureScale`). Everything on the
+    /// display is captured, dock and desktop included, and the source-rect pin IS the full display
+    /// here — so no crop/anchor state is needed (a display never moves; the window path's re-anchor
+    /// machinery stays inert). ⚠️ Same TCC/window-server requirements as the window path.
+    public func start(displayID: CGDirectDisplayID, pixelWidth: Int, pixelHeight: Int) async throws {
+        try await bringUp(
+            SlopDeskCaptureDesc(
+                capture_scale: captureScale,
+                region_x: 0,
+                region_y: 0,
+                region_width: 0,
+                region_height: 0,
+                // A zero window id IS what selects the whole display — the two cannot both be asked for.
+                window_id: 0,
+                display_id: displayID,
+                mode: SLOPDESK_CAPTURE_MODE_DISPLAY_EXCLUDING,
+                pixel_width: Int32(clamping: pixelWidth),
+                pixel_height: Int32(clamping: pixelHeight),
+                fps: Int32(clamping: fps),
+                audio_sample_rate: Self.audioCaptureEnabled ? Int32(clamping: AudioStreamEncoder.sampleRate) : 0,
+                audio_channel_count: Int32(clamping: AudioStreamEncoder.channelCount),
+                full_range: fullRange,
+                has_region: false,
+            ),
+            describing: "display \(displayID)",
         )
-        let filter = SCContentFilter(display: display, excludingWindows: [])
-        let stream = SCStream(filter: filter, configuration: config, delegate: self)
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)
-        // APP-AUDIO: same second output as the window path — whole-display audio for the
-        // full-desktop pane.
-        if Self.audioCaptureEnabled {
-            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
+    }
+
+    /// The shared bring-up: retain this capturer across the boundary, block on the framework off the
+    /// caller's actor, and arm the static-IDR timer. The retain is the door's stated term — the
+    /// context must outlive the handle — and is released in ``stop()`` after the handle is freed.
+    private func bringUp(_ desc: SlopDeskCaptureDesc, describing target: String) async throws {
+        let context = Unmanaged.passRetained(self).toOpaque()
+        let contextBits = UInt(bitPattern: context)
+        let frameBits = UInt(bitPattern: Unmanaged.passUnretained(frameQueue).toOpaque())
+        let audioBits = UInt(bitPattern: Unmanaged.passUnretained(audioQueue).toOpaque())
+        let (handle, status) = await onControlQueue { () -> (UInt, Int32) in
+            var status: Int32 = 0
+            var desc = desc
+            let created = slopdesk_capture_start(
+                &desc,
+                UnsafeMutableRawPointer(bitPattern: contextBits),
+                Self.frameDoor,
+                Self.audioDoor,
+                Self.stoppedDoor,
+                UnsafeRawPointer(bitPattern: frameBits),
+                UnsafeRawPointer(bitPattern: audioBits),
+                &status,
+            )
+            return (UInt(bitPattern: created.map { UnsafeRawPointer($0) }), status)
         }
-        try await stream.startCapture()
-        self.stream = stream
-        log.info("WindowCapturer started for display \(display.displayID)")
+        guard let created = OpaquePointer(bitPattern: handle) else {
+            Unmanaged<WindowCapturer>.fromOpaque(context).release()
+            throw CaptureStartError.refused(status)
+        }
+        capture = created
+        captureContext = context
+        log.info("WindowCapturer started for \(target)")
         startIDRTimer()
     }
 
-    /// VIDEO-HOST-1: a heartbeat timer on `frameQueue` so every tick is serialized against
-    /// the SCStream callback — no lock needed for `cachedPixelBuffer` / the decider. On a
-    /// static window (only `.idle` frames) this is the ONLY path that can produce an IDR for
-    /// a joining / loss-recovering client.
+    /// The capture stream would not come up — a framework error code, or one of the door's own
+    /// sentinels: -1 no answer inside the wait limit, -2 nothing shareable (no Screen-Recording
+    /// grant, no window server), -3 nothing matching the id.
+    public enum CaptureStartError: Error { case refused(Int32) }
+
+    /// VIDEO-HOST-1: a heartbeat timer on `frameQueue` so every tick is serialized against the
+    /// capture callback — no lock needed for `cachedPixelBuffer` / the decider. On a static window
+    /// (no delivered frames at all) this is the ONLY path that can produce an IDR for a joining /
+    /// loss-recovering client.
     ///
     /// The poll is DECOUPLED from the heartbeat: with a multi-second heartbeat the timer must still
     /// poll the recovery latch + service a truly-idle window promptly. The decider only EMITS when
     /// due, so sub-cadence ticks are cheap no-ops. At an 80ms tick the crisp re-anchor lands
     /// ≈ quietWindow + tick (~0.38s) after motion stops. SLOPDESK_IDR_TICK_MS.
     private func startIDRTimer() {
-        let tick = Self.resolveIDRPollTick(envValue: ProcessInfo.processInfo.environment["SLOPDESK_IDR_TICK_MS"])
+        let tick = slopdesk_capture_idr_tick()
         let leewayMs = max(8, Int((tick * 1000.0) / 4.0))
         let timer = DispatchSource.makeTimerSource(queue: frameQueue)
         timer.schedule(deadline: .now() + tick, repeating: tick, leeway: .milliseconds(leewayMs))
@@ -1486,14 +1333,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     }
 
     /// Re-anchors a display-anchored crop after the window MOVED (geometry-watcher feed from the
-    /// session). No-op in `.window` mode (nil anchor) or for sub-half-point deltas. The crop jump
-    /// lands mid-GOP as a whole-frame delta, so force a keyframe right after for a clean re-anchor.
-    /// Rare + user-driven (a title-bar drag), never per-frame.
+    /// session). A no-op in per-window mode, on a poller-owned union crop, and for sub-half-point
+    /// deltas — the far side decides which. Rare + user-driven (a title-bar drag), never per-frame.
     public func updateDisplayAnchoredOrigin(windowFrameCG frame: CGRect) async {
         // Coalesce + serialize: record the latest frame, and only the FIRST caller becomes the driver
         // that applies updates — overlapping callers just hand off their frame and return. The driver
         // loops until no newer frame is pending, so we always converge to the latest position without
-        // racing on the shared `DisplayAnchor.config` or issuing concurrent `updateConfiguration`s.
+        // issuing concurrent reconfigures for positions the window has already left.
         let shouldDrive = anchorLock.withLock { () -> Bool in
             reanchorPending = frame
             if reanchorInFlight { return false }
@@ -1513,101 +1359,72 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         }
     }
 
-    /// The actual single-threaded re-anchor (only ever run by the `updateDisplayAnchoredOrigin`
-    /// driver, so the shared `DisplayAnchor.config` mutation + `updateConfiguration` are race-free).
+    /// The actual single-threaded re-anchor (only ever run by the ``updateDisplayAnchoredOrigin``
+    /// driver). The crop jump lands mid-GOP as a whole-frame delta, so a keyframe right after it is
+    /// what keeps a late-joining client from decoding half of each.
     private func applyReanchor(windowFrameCG frame: CGRect) async {
-        let anchor = anchorLock.withLock { displayAnchor }
-        guard let anchor, let stream else { return }
-        // In union mode the crop spans window ∪ dialog and is owned by the session's union poller —
-        // a plain window-frame re-origin would drop the dialog. Skip; the poller re-targets instead.
-        guard !anchor.isUnion else { return }
-        let newOrigin = CGPoint(
-            x: frame.minX - anchor.displayBounds.minX,
-            y: frame.minY - anchor.displayBounds.minY,
-        )
-        let current = anchor.config.sourceRect.origin
-        guard abs(newOrigin.x - current.x) >= 0.5 || abs(newOrigin.y - current.y) >= 0.5 else { return }
-        anchor.config.sourceRect = CGRect(origin: newOrigin, size: anchor.config.sourceRect.size)
-        do {
-            try await stream.updateConfiguration(anchor.config)
+        guard let handle = captureBits else { return }
+        let origin = frame.origin
+        let status = await onControlQueue {
+            slopdesk_capture_reanchor(OpaquePointer(bitPattern: handle), origin.x, origin.y)
+        }
+        switch status {
+        case 0:
             requestKeyframe()
-            log.notice("display-anchored crop re-anchored to \(Int(newOrigin.x)),\(Int(newOrigin.y))pt (window moved)")
-        } catch {
-            log.error("display-anchored re-anchor failed: \(String(describing: error))")
+            log.notice("display-anchored crop re-anchored to \(Int(origin.x)),\(Int(origin.y))pt (window moved)")
+        case let refused where refused < 0:
+            log.error("display-anchored re-anchor failed: \(refused)")
+        default:
+            break // the move was under half a point, or there was no anchor to rewrite
         }
     }
 
-    /// True when this capturer crops a DISPLAY (`.displayIncluding`/`.displayExcluding`) — i.e. it
-    /// owns a live `DisplayAnchor` config that an in-place `updateConfiguration` size change can drive.
-    /// `.window` mode (nil anchor) returns false. Read from the session actor; `anchorLock`-guarded.
-    public var isDisplayAnchored: Bool { anchorLock.withLock { displayAnchor != nil } }
-
-    /// True when the crop is a DIALOG-EXPAND union region (poller-owned) — an in-place resize must
-    /// NOT touch it (the poller re-targets); the caller restart-fallbacks instead. `anchorLock`-guarded.
-    public var isUnionAnchored: Bool { anchorLock.withLock { displayAnchor?.isUnion ?? false } }
-
-    /// PURE gate (unit-tested): an in-place `updateConfiguration` resize is allowed only when the flag
-    /// is on, the capture is display-anchored (the live default, with a serialized config driver), and
-    /// the crop is NOT a poller-owned union. Everything else restart-fallbacks. Widen per-mode after HW proof.
-    static func canResizeInPlace(flagEnabled: Bool, isDisplayAnchored: Bool, isUnion: Bool) -> Bool {
-        flagEnabled && isDisplayAnchored && !isUnion
+    /// True when this capturer crops a DISPLAY — i.e. it owns a live configuration that an in-place
+    /// size change can drive. Per-window mode returns false. Read from the session actor.
+    public var isDisplayAnchored: Bool {
+        capture.map { slopdesk_capture_is_display_anchored($0) } ?? false
     }
 
-    /// Why an in-place resize was refused — the caller restart-fallbacks on any of these.
-    public enum CannotResizeInPlace: Error { case noStream, notDisplayAnchored, unionOwned }
+    /// True when the crop is a DIALOG-EXPAND union region (poller-owned) — an in-place resize must
+    /// NOT touch it (the poller re-targets); the caller restart-fallbacks instead.
+    public var isUnionAnchored: Bool {
+        capture.map { slopdesk_capture_is_union_anchored($0) } ?? false
+    }
 
-    /// IN-PLACE resize: reconfigure the LIVE SCStream to `pixelWidth`×`pixelHeight` via
-    /// `updateConfiguration` — NO restart, so SCK's ~120ms `startCapture` spin-up is avoided. Rebuilds
-    /// the config at the new size, preserves the live display-anchored crop ORIGIN at the new point
-    /// size, and stores the rebuilt config back so a later window-MOVE re-anchor uses the new size.
-    /// THROWS `CannotResizeInPlace` for `.window`/union/no-stream (caller restart-fallbacks); on a thrown
-    /// `updateConfiguration` the live stream keeps running at the OLD size (no dead stream). The filter is
-    /// unchanged (same window+display), so only the config (size + sourceRect) is updated.
+    /// IN-PLACE resize: reconfigure the LIVE stream to `pixelWidth`×`pixelHeight` — NO restart, so
+    /// the framework's ~120ms spin-up is avoided. The far side rebuilds the configuration at the new
+    /// size and preserves the display-anchored crop ORIGIN at the new point size; the filter is
+    /// untouched (same window, same display), so only the size and the crop move.
+    ///
+    /// THROWS for per-window / union / no-stream (caller restart-fallbacks); on a refused
+    /// reconfigure the live stream keeps running at the OLD size (no dead stream).
     public func updateSize(pixelWidth: Int, pixelHeight: Int) async throws {
-        guard let stream else { throw CannotResizeInPlace.noStream }
+        guard let handle = captureBits else { throw CannotResizeInPlace.noStream }
         // Claim the single-driver gate so a CONCURRENT window-MOVE re-anchor defers (records pending)
-        // instead of issuing a second `updateConfiguration` on this stream mid-resize. Best-effort: if a
-        // re-anchor is ALREADY driving, this resize's config write still wins last + the next geometry
-        // re-anchor reads the new-size anchor below and self-heals — a documented rare residual (this
-        // path is env-gated + HW-validation-gated). Clear the gate + drop any stale pending move at the end.
+        // instead of issuing a second reconfigure on this stream mid-resize. Clear the gate + drop
+        // any stale pending move at the end.
         anchorLock.withLock { reanchorInFlight = true }
         defer { anchorLock.withLock { reanchorInFlight = false
             reanchorPending = nil
         } }
-        guard let anchor = anchorLock.withLock({ displayAnchor }) else { throw CannotResizeInPlace.notDisplayAnchored }
-        guard !anchor.isUnion else { throw CannotResizeInPlace.unionOwned }
-        let pointW = Double(pixelWidth) / max(1.0, captureScale)
-        let pointH = Double(pixelHeight) / max(1.0, captureScale)
-        let newConfig = Self.makeConfiguration(
-            width: pixelWidth,
-            height: pixelHeight,
-            fps: fps,
-            captureScale: captureScale,
-            fullRange: fullRange,
-        )
-        // Preserve the live crop ORIGIN (top-left fixed across an AX resize) at the NEW point size,
-        // and the display-including child-window compositing.
-        newConfig.sourceRect = CGRect(
-            origin: anchor.config.sourceRect.origin,
-            size: CGSize(width: pointW, height: pointH),
-        )
-        if #available(macOS 14.2, *) { newConfig.includeChildWindows = anchor.config.includeChildWindows }
-        try await stream.updateConfiguration(newConfig)
-        // Persist the rebuilt (new-size) config so a later MOVE re-anchor crops at the right size.
-        anchorLock.withLock {
-            displayAnchor = DisplayAnchor(displayBounds: anchor.displayBounds, config: newConfig, isUnion: false)
+        guard isDisplayAnchored else { throw CannotResizeInPlace.notDisplayAnchored }
+        guard !isUnionAnchored else { throw CannotResizeInPlace.unionOwned }
+        let width = Int32(clamping: pixelWidth)
+        let height = Int32(clamping: pixelHeight)
+        let status = await onControlQueue {
+            slopdesk_capture_resize(OpaquePointer(bitPattern: handle), width, height)
         }
-        log.notice("in-place resize: updateConfiguration to \(pixelWidth)x\(pixelHeight) px (no restart)")
+        guard status == 0 else { throw CannotResizeInPlace.refused(status) }
+        log.notice("in-place resize: reconfigured to \(pixelWidth)x\(pixelHeight) px (no restart)")
     }
 
     public func stop() async {
-        anchorLock.withLock { displayAnchor = nil }
         // VIDEO-HOST-1: cancel the timer + release the cached copy on `frameQueue` (the timer's
         // queue) BEFORE stopping capture, so no tick can race teardown. `cachedPixelBuffer = nil`
         // is sufficient — ARC releases the managed copy; no manual CVPixelBufferRelease.
-        // CAPTURE-DEATH: runs BEFORE the `stream` guard below, so even a never-started (or
-        // already-failed) capturer latches `captureStopped` — a late `didStopWithError` racing a
-        // deliberate stop must never fire `onCaptureFailed` afterwards (double-teardown guard);
+        // CAPTURE-DEATH: runs BEFORE the handle guard below, so even a never-started (or
+        // already-failed) capturer latches `captureStopped` — a late capture-death callback racing
+        // a deliberate stop must never fire `onCaptureFailed` afterwards (double-teardown guard);
         // the `frameQueue.sync` serializes this latch against ``handleCaptureFailure()``'s hop.
         frameQueue.sync {
             captureStopped = true
@@ -1620,62 +1437,48 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             pendingGatedFlush = nil
             cachedPixelBuffer = nil
         }
-        guard let stream else { return }
-        // On the post-failure path the stream is already dead — `stopCapture` then just throws
-        // (swallowed) and the reference is released under the same actor discipline as always.
-        try? await stream.stopCapture()
-        self.stream = nil
+        guard let handle = capture, let handleBits = captureBits else { return }
+        capture = nil
+        let context = captureContext
+        captureContext = nil
+        // On the post-failure path the stream is already dead — the stop then answers a framework
+        // error, which is nothing to act on: the teardown is the same either way and the
+        // capture-death callback has already fired.
+        _ = await onControlQueue { slopdesk_capture_stop(OpaquePointer(bitPattern: handleBits)) }
+        slopdesk_capture_free(handle)
+        // The door's terms are that the context outlives the handle, so the retain taken at
+        // ``bringUp`` is released HERE — after the free, never before.
+        if let context { Unmanaged<WindowCapturer>.fromOpaque(context).release() }
     }
 
-    // MARK: SCStreamOutput
+    // MARK: Deliveries
 
-    public func stream(
-        _: SCStream,
-        didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
-        of type: SCStreamOutputType,
-    ) {
-        if type == .audio {
-            // Delivered on `audioQueue` (its own serial output), so no frameQueue-owned state is
-            // touched here. One lock read per ~10 ms buffer covers gate + sink together; a
-            // disabled session drops the buffer BEFORE any extract/encode work.
-            let handler: (@Sendable (CMSampleBuffer) -> Void)? = audioLock.withLock {
-                audioForwardingEnabled ? audioSampleHandler : nil
-            }
-            handler?(sampleBuffer)
-            return
+    /// One audio buffer, on `audioQueue` — its own serial output, so no frameQueue-owned state is
+    /// touched here. One lock read per ~10 ms buffer covers gate + sink together; a disabled
+    /// session drops the buffer BEFORE any extract/encode work.
+    private func deliver(audio sampleBuffer: CMSampleBuffer) {
+        let handler: (@Sendable (CMSampleBuffer) -> Void)? = audioLock.withLock {
+            audioForwardingEnabled ? audioSampleHandler : nil
         }
-        guard type == .screen else { return }
+        handler?(sampleBuffer)
+    }
 
-        // Idle-skip (doc 17 §3.5): read SCStreamFrameInfo.status; on .idle return
-        // immediately — no IOSurface touch, no encode, no send. This keeps the
-        // encoder slot free for the next real (keystroke-driven) frame.
-        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
-            sampleBuffer,
-            createIfNecessary: false,
-        ) as? [[SCStreamFrameInfo: Any]],
-            let info = attachments.first,
-            let statusRaw = info[.status] as? Int,
-            let status = SCFrameStatus(rawValue: statusRaw)
-        else {
-            return
-        }
-        guard status == .complete else {
-            // .idle / .blank / .suspended / .started → no NEW pixels to encode, so skip.
-            // ⚠️ VIDEO-HOST-1 (docs/25 §4): on a STATIC window only `.idle` frames arrive, so the
-            // forced-keyframe latch (`takePendingForcedKeyframe`) AND the heartbeat IDR — BOTH
-            // below this guard — never run; a client that requests loss-recovery (or joins) while
-            // the host window is unchanging would get no IDR and freeze on the last good frame.
-            // That is why `start()` arms a heartbeat timer on `frameQueue` (see StaticIDRDecider)
-            // that re-encodes the cached last-`.complete` COPY (`copyPixelBuffer`) as a forced IDR
-            // via `onIDRTimerTick` — the latch + heartbeat get a second drainer while the live path
-            // is quiet. The SCStream IOSurface / queue-depth interaction is unobservable headlessly,
-            // so only the pure decider/PTS pieces are unit-tested; the rest needs a real GUI + TCC.
-            return
-        }
-
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-
+    /// One frame carrying NEW pixels, on `frameQueue`. The surface is borrowed for the call only —
+    /// it goes back to the framework's pool when this returns, within
+    /// `minimumFrameInterval × (queueDepth − 1)` (WWDC22 s10155) — so anything kept is copied.
+    ///
+    /// Idle-skip (doc 17 §3.5) happens on the FAR side: a frame the framework marks anything but
+    /// complete carries no new pixels and never reaches this method, so there is no IOSurface touch,
+    /// no encode and no send for it. >90% of coding frames are that.
+    ///
+    /// ⚠️ VIDEO-HOST-1 (docs/25 §4): on a STATIC window NOTHING arrives here, so the
+    /// forced-keyframe latch (`takePendingForcedKeyframe`) AND the heartbeat IDR — both below —
+    /// never run; a client that requests loss-recovery (or joins) while the host window is
+    /// unchanging would get no IDR and freeze on the last good frame. That is why `start()` arms a
+    /// heartbeat timer on `frameQueue` (see StaticIDRDecider) that re-encodes the cached last real
+    /// COPY (`copyPixelBuffer`) as a forced IDR via `onIDRTimerTick` — the latch + heartbeat get a
+    /// second drainer while the live path is quiet.
+    private func deliver(pixelBuffer: CVPixelBuffer, pts: CMTime) {
         // `now` (computed here for both the heartbeat block and the static-IDR caching below).
         let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
 
@@ -2102,33 +1905,29 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         encodeBelowGate(pixelBuffer: buf, encodePTS: syntheticPTS(), now: now, governed: governed)
     }
 
-    // MARK: SCStreamDelegate
+    // MARK: CAPTURE-DEATH
 
-    public func stream(_: SCStream, didStopWithError error: Error) {
-        // CAPTURE-DEATH: the stream is DEAD (shared window/app closed, display unplugged,
-        // Screen-Recording TCC revoked, WindowServer/GPU reset). Logging alone is NOT enough — the
-        // IDR timer would keep re-encoding the stale `cachedPixelBuffer` as periodic heartbeat/crisp
-        // IDRs, so the client "decodes video" (a frozen frame) with no error and its stall scrim
-        // never engages. Quiesce + notify.
-        log.error("SCStream stopped with error: \(error.localizedDescription)")
-        handleCaptureFailure()
-    }
-
-    /// CAPTURE-DEATH quiesce. The `SCStreamDelegate` callback fires on SCStream's own private
-    /// queue, NOT `frameQueue`, so hop onto `frameQueue` (async — never block SCK's delegate
-    /// queue) where the IDR timer / cached frame / gated flush all live; the hop also serializes
+    /// CAPTURE-DEATH quiesce. The stream is DEAD (shared window/app closed, display unplugged,
+    /// Screen-Recording grant revoked, window server / GPU reset). Logging alone is NOT enough —
+    /// the IDR timer would keep re-encoding the stale `cachedPixelBuffer` as periodic
+    /// heartbeat/crisp IDRs, so the client "decodes video" (a frozen frame) with no error and its
+    /// stall scrim never engages.
+    ///
+    /// The capture-death callback fires on the framework's own private queue, NOT `frameQueue`, so
+    /// hop onto `frameQueue` (async — never block that queue) where the IDR timer / cached frame /
+    /// gated flush all live; the hop also serializes
     /// against ``stop()``'s `frameQueue.sync` teardown, so whichever side runs first wins and the
     /// other no-ops via the one-shot latches. `onCaptureFailed` is then invoked ON `frameQueue`
     /// (the `onScrollOffset` discipline — the session's closure hops onto its actor itself).
     ///
-    /// The dead `SCStream` REFERENCE is deliberately NOT nil'd here: `stream` is confined to the
-    /// session-actor lifecycle paths (`start`/`stop`/resize), so a delegate-queue write would race
-    /// them. The wired session callback tears the session down through the existing bye path →
-    /// ``stop()``, which releases the reference under that discipline (`stopCapture` on an
-    /// already-dead stream just throws — swallowed).
+    /// The dead handle is deliberately NOT freed here: `capture` is confined to the session-actor
+    /// lifecycle paths (`start`/`stop`/resize), so a callback-queue write would race them. The
+    /// wired session callback tears the session down through the existing bye path → ``stop()``,
+    /// which frees it under that discipline (stopping an already-dead stream just answers a
+    /// framework error, which is nothing to act on).
     ///
     /// `internal` (not `private`) so the headless regression test can drive the failure path —
-    /// a real SCStream can never exist under XCTest (hang-safety) and `init` creates none.
+    /// a real capture stream can never exist under XCTest (hang-safety) and `init` creates none.
     func handleCaptureFailure() {
         frameQueue.async { [weak self] in
             guard let self else { return }
@@ -2139,7 +1938,6 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             pendingGatedFlush?.cancel()
             pendingGatedFlush = nil
             cachedPixelBuffer = nil // no more synthetic re-encodes of the stale last frame — ever
-            anchorLock.withLock { displayAnchor = nil }
             onCaptureFailed?()
         }
     }
@@ -2147,7 +1945,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     // MARK: VIDEO-HOST-1 pixel-buffer copy
 
     /// Deep-copies an NV12 `CVPixelBuffer` into a fresh IOSurface-backed buffer the capturer
-    /// owns indefinitely, so the SCStream-delivered surface can be returned to the pool
+    /// owns indefinitely, so the framework-delivered surface can be returned to the pool
     /// immediately (WWDC22 s10155 — permanently retaining one would shrink the live pool by a
     /// slot and risk a capture stall). Returns nil on alloc/lock failure (the caller then simply
     /// has no cached buffer → the decider returns false, no synthetic IDR — safe). The copy is

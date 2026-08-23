@@ -108,6 +108,10 @@ slopdesk-git = { path = "../slopdesk-git" }
 # only route a macOS-only crate may take into this graph.
 slopdesk-apple-cgevent = { path = "../slopdesk-apple-cgevent" }
 slopdesk-apple-cgdisplay = { path = "../slopdesk-apple-cgdisplay" }
+# The capture doors' other half — `ScreenCaptureKit`, called through `objc2`. Gated with the rest of
+# the family, and for the strongest reason in it: `ScreenCaptureKit` does not exist on iOS at all,
+# so an ungated edge would fail to link rather than merely cost bytes. Capture is the HOST's.
+slopdesk-apple-sck = { path = "../slopdesk-apple-sck" }
 slopdesk-apple-cgwindow = { path = "../slopdesk-apple-cgwindow" }
 slopdesk-apple-app = { path = "../slopdesk-apple-app" }
 # The cursor side-channel's shape read — `NSCursor` and the offscreen PNG render, through `objc2`.

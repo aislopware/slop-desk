@@ -2095,17 +2095,17 @@ public actor SlopDeskVideoHostSession {
         //    encoder-ref swap race entirely.
         let logCallback = log
         // IN-PLACE FAST PATH (SLOPDESK_INPLACE_RESIZE, per-mode gated): reconfigure the LIVE
-        // SCStream to the new size via `updateConfiguration` + swap the encoder box, instead of
-        // tearing the stream down and paying SCK's ~120ms `startCapture` spin-up (the resize freeze).
-        // On ANY failure (updateConfiguration throws, unproven mode, union/DIALOG-EXPAND) it falls
+        // capture stream to the new size in place + swap the encoder box, instead of tearing the
+        // stream down and paying the framework's ~120ms spin-up (the resize freeze).
+        // On ANY failure (a refused reconfigure, unproven mode, union/DIALOG-EXPAND) it falls
         // through to the byte-identical restart path below — correctness never regresses.
         if Self.inPlaceResizeEnabled,
            let liveCapturer = capturer, liveCapturer === oldCapturer,
            let box = encoderBox,
-           WindowCapturer.canResizeInPlace(
-               flagEnabled: Self.inPlaceResizeEnabled,
-               isDisplayAnchored: liveCapturer.isDisplayAnchored,
-               isUnion: liveCapturer.isUnionAnchored,
+           slopdesk_capture_can_resize_in_place(
+               Self.inPlaceResizeEnabled,
+               liveCapturer.isDisplayAnchored,
+               liveCapturer.isUnionAnchored,
            )
         {
             // Swap the encoder FIRST (new-size buffers must hit the new-size encoder) — the fresh VT
@@ -2212,7 +2212,7 @@ public actor SlopDeskVideoHostSession {
         guard let captureWindow = window else { return }
         do {
             nonisolated(unsafe) let w = captureWindow
-            try await newCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+            try await newCapturer.start(windowID: w.windowID, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
             dbg(
                 "resize: new SCStream started (\(pixelWidth)x\(pixelHeight) px @\(captureScale)×, \(achievedWidth)x\(achievedHeight) pt) epoch=\(epoch)",
             )
@@ -2380,7 +2380,7 @@ public actor SlopDeskVideoHostSession {
         guard let captureWindow = window else { return }
         do {
             nonisolated(unsafe) let w = captureWindow
-            try await rebuiltCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+            try await rebuiltCapturer.start(windowID: w.windowID, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
             dbg(
                 "resizeCapture epoch=\(epoch) — recovered: old-size capture restarted (\(pixelWidth)x\(pixelHeight) px)",
             )
@@ -2579,10 +2579,10 @@ public actor SlopDeskVideoHostSession {
             // still the instance THIS invocation installed.
             if let window {
                 nonisolated(unsafe) let w = window
-                try await capturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+                try await capturer.start(windowID: w.windowID, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
             } else if let display {
                 nonisolated(unsafe) let d = display
-                try await capturer.start(display: d, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+                try await capturer.start(displayID: d.displayID, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
             }
             dbg(
                 "SCStream capture started (\(pixelWidth)x\(pixelHeight) px @\(captureScale)×, \(width)x\(height) pt) — awaiting frames",
@@ -3179,7 +3179,12 @@ public actor SlopDeskVideoHostSession {
         guard let captureWindow = window else { return }
         do {
             nonisolated(unsafe) let w = captureWindow
-            try await newCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight, region: override)
+            try await newCapturer.start(
+                windowID: w.windowID,
+                pixelWidth: pixelWidth,
+                pixelHeight: pixelHeight,
+                region: override,
+            )
             dbg(
                 "dialog-expand: capture region \(regionGlobal == nil ? "→ window frame" : "→ union") \(pointW)x\(pointH)pt (\(pixelWidth)x\(pixelHeight)px) epoch=\(epoch)",
             )
@@ -3327,7 +3332,7 @@ public actor SlopDeskVideoHostSession {
         guard let captureWindow = window else { return }
         do {
             nonisolated(unsafe) let w = captureWindow
-            try await fallbackCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+            try await fallbackCapturer.start(windowID: w.windowID, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
             dbg("dialog-expand recovery: degraded to plain window capture \(pointW)x\(pointH)pt epoch=\(epoch)")
         } catch {
             log.error("dialog-expand recovery: plain window capturer start failed: \(String(describing: error))")

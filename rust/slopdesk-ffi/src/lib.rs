@@ -57,6 +57,10 @@ pub mod binding_search;
 pub mod blob;
 pub mod block_rerun;
 pub mod blocks;
+// macOS only: behind it is `ScreenCaptureKit`, and there is no window server on a client slice to
+// point it at. See the module.
+#[cfg(target_os = "macos")]
+pub mod capture;
 pub mod capture_region;
 // macOS only, both: behind them is the `WindowServer`, which no iOS slice has. See each module.
 #[cfg(target_os = "macos")]

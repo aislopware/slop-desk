@@ -162,6 +162,7 @@ pub mod ax_probe;
 pub mod blob;
 pub mod blob_list;
 pub mod bytes;
+pub mod capture_config;
 pub mod capture_recovery;
 pub mod capture_region;
 pub mod client_gestures;

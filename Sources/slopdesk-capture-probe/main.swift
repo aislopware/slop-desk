@@ -319,7 +319,7 @@ let task = Task {
                 }
             }
             nonisolated(unsafe) let w0 = window
-            try await capturer.start(window: w0, pixelWidth: pixelW, pixelHeight: pixelH)
+            try await capturer.start(windowID: w0.windowID, pixelWidth: pixelW, pixelHeight: pixelH)
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             sflag.run = false
             await capturer.stop()
@@ -386,7 +386,7 @@ let task = Task {
             } catch { FileHandle.standardError.write(Data("png write failed: \(error)\n".utf8)) }
         }
         nonisolated(unsafe) let w = window // single-owner hand-off, same as the session's start path
-        try await capturer.start(window: w, pixelWidth: pixelW, pixelHeight: pixelH)
+        try await capturer.start(windowID: w.windowID, pixelWidth: pixelW, pixelHeight: pixelH)
         try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         await capturer.stop()
         let total = state.lock.withLock { state.saved }

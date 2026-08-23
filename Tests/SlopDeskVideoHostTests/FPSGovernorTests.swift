@@ -472,24 +472,3 @@ final class SelfHealCadenceTests: XCTestCase {
         )
     }
 }
-
-#if canImport(VideoToolbox) && canImport(ScreenCaptureKit)
-/// Pure-refactor regression guard for the capture-ceiling resolution that moved out of
-/// `WindowCapturer.makeConfiguration` (the cadence gate's tolerance is half of this).
-final class ResolveCaptureHzTests: XCTestCase {
-    func testDefaultIsTwiceEncodeFpsCeilinged240() {
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: nil, fps: 60), 120)
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: nil, fps: 120), 240)
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: nil, fps: 200), 240)
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: nil, fps: 1), 2)
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: nil, fps: 0), 2, "fps clamps ≥ 1")
-    }
-
-    func testEnvOverrideClamps() {
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: "90", fps: 60), 90)
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: "1", fps: 60), 15, "floor 15")
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: "1000", fps: 60), 240, "ceiling 240")
-        XCTAssertEqual(WindowCapturer.resolveCaptureHz(envValue: "abc", fps: 60), 120, "garbage env → default")
-    }
-}
-#endif

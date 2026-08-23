@@ -58,6 +58,14 @@ let ffiCLibraries: [LinkerSetting] = [
     .linkedFramework("VideoToolbox"),
     .linkedFramework("CoreMedia"),
     .linkedFramework("CoreVideo"),
+    // ScreenCaptureKit, for the AppKit reason above and macOS-only for the strongest reason in this
+    // list: the framework does not exist on iOS at all. `slopdesk-apple-sck` reads
+    // `SCStreamFrameInfoStatus` — an extern CONSTANT, not a class — to tell a frame carrying new
+    // pixels from the framework's idle-skip, and one object per crate means every macOS product that
+    // calls any door needs it resolvable even though only the video host ever captures anything.
+    // `-dead_strip` removes what none of them reach. It was implicit until the capturer collapsed:
+    // `WindowCapturer.swift` used to `import ScreenCaptureKit` itself.
+    .linkedFramework("ScreenCaptureKit", .when(platforms: [.macOS])),
 ]
 let package = Package(
     name: "SlopDesk",

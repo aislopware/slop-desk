@@ -514,6 +514,105 @@ pub fn hevc_decode_is_rusts(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// CAPTURE is `slopdesk-apple-sck`, and `WindowCapturer.swift` is the frame pipeline over it.
+///
+/// The third row of `docs/57` §5's video group, and the one whose ban has to be NARROW. The other
+/// two could sweep a whole framework because nothing else in Swift touches `VideoToolbox`; here the
+/// window feed, `slopdesk-framewatch` and `slopdesk-vd-probe` all still ENUMERATE through
+/// `SCShareableContent`, `SCWindow` and `SCDisplay`, which is a read of what exists and not a
+/// capture. So the ban is on the STREAM: the filter, the configuration, the two protocols, the
+/// lifecycle calls and the per-sample attachment vocabulary. A rule that fired on the tree it ships
+/// with gets deleted rather than fixed.
+///
+/// Two of the banned strings are attachment READS rather than calls, and they are the ones worth
+/// having. `SCStreamFrameInfo` and `SCFrameStatus` are how a caller tells a frame carrying new
+/// pixels from the framework's idle-skip, and a Swift respelling of that read is how the whole
+/// pipeline grows back: everything downstream of it — the pacer, the adaptive quantiser, the scroll
+/// reprojection — is already here, and only the SOURCE moved.
+///
+/// The face is checked by content the way the two above are. It must call the door, and it must not
+/// hold the four things the far side owns: the delivery ceiling, the surface depth, the crop
+/// arithmetic and the in-place-resize gate. Each of the four is a clamp that was untestable where
+/// it sat — this file cannot be instantiated without a window server and a Screen-Recording grant —
+/// and a re-transcription has to spell one of these shapes to exist at all.
+#[must_use]
+pub fn capture_is_rusts(tree: &Tree) -> Report {
+    const CAPTURER: &str = "Sources/SlopDeskVideoHost/WindowCapturer.swift";
+    // The STREAM, not the framework — see the note above. The lifecycle METHOD names are
+    // deliberately absent: `startCapture` and `stopCapture` are also the names of two effect cases
+    // in `VideoSessionLogic`'s state machine, which is Swift's and staying, so banning the words
+    // would fire on the tree this rule ships with.
+    const STREAM: &str = concat!(
+        r"SCStream\(",
+        "|SCStreamConfiguration",
+        "|SCContentFilter",
+        "|SCStreamOutput",
+        "|SCStreamDelegate",
+        "|SCStreamFrameInfo",
+        "|SCFrameStatus",
+        "|addStreamOutput"
+    );
+    let claims = [
+        Claim::NoneUnder {
+            roots: &["Sources", "Tests"],
+            extensions: SWIFT,
+            pattern: STREAM,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            // Two files name the stream vocabulary without being a capture stream. `framewatch` is
+            // the glass-to-glass measurement harness: it runs two streams at once and compares
+            // their delivery, so porting it would mean measuring the port with the port. The
+            // preview glue asks `SCScreenshotManager` for ONE still image — a different API that
+            // happens to take a filter and a configuration to describe the shot.
+            exempt: &[
+                "Sources/slopdesk-framewatch/main.swift",
+                "Sources/slopdesk-videohostd/WindowPreviewGlue.swift",
+            ],
+            message: "a Swift capture stream is back in {files} — slopdesk-apple-sck holds the filter, the \
+                      configuration and the whole lifecycle, slopdesk_video::capture_config resolves every \
+                      clamp, and slopdesk_capture_* is the whole door. Enumerating through \
+                      SCShareableContent is still Swift's; capturing is not (docs/57 §5)",
+        },
+        Claim::Names {
+            path: CAPTURER,
+            needle: "import CSlopDeskFFI",
+            message: "Sources/SlopDeskVideoHost/WindowCapturer.swift no longer calls the Rust capture \
+                      stream — the port was undone (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: CAPTURER,
+            pattern: "func resolveCaptureHz|func resolveQuietWindow|func \
+                      resolveIDRPollTick|captureQueueDepth",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/WindowCapturer.swift resolves a capture clamp again — the \
+                      delivery ceiling is TWICE the encode rate and the surface queue is five because both \
+                      were measured, and the measurements live next to the numbers in \
+                      rust/slopdesk-video::capture_config (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: CAPTURER,
+            pattern: "func resolveCaptureMode|func canResizeInPlace|enum CaptureMode",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/WindowCapturer.swift picks the content filter again — which \
+                      filter a parked window wants, and whether a resize may happen in place, are \
+                      rust/slopdesk-video::capture_config's and are exercised headless there (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: CAPTURER,
+            // `DisplayAnchor` is spelled with its `struct` keyword because `preferDisplayAnchored`,
+            // `isDisplayAnchored` and the resize error's `notDisplayAnchored` all still live here —
+            // ASKING whether a crop is display-anchored is this file's, HOLDING the crop is not.
+            pattern: r"sourceRect|includeChildWindows|struct DisplayAnchor",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/WindowCapturer.swift spells the crop again — the pin that \
+                      keeps a child window from softening the whole pane, and the display-local origin a \
+                      moved window re-anchors to, are rust/slopdesk-video::capture_config's (docs/57 §5)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 /// The two agent vocabularies, compared by CASE COUNT across the boundary.
 ///
 /// The Swift enums declare the cases and the crate answers every question about them by

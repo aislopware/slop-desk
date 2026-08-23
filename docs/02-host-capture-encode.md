@@ -8,6 +8,16 @@ Host pipeline: **ScreenCaptureKit (capture one window)** → **VideoToolbox (low
 
 ## 1. Capture with ScreenCaptureKit
 
+> **The calls in §1 are Rust's, not Swift's (increment 94).** `rust/slopdesk-apple-sck` makes every
+> ScreenCaptureKit call through `objc2` — enumerating shareable content, the three content filters,
+> the stream configuration, start/stop/reconfigure, and reading what each sample buffer IS. Every
+> RULE those calls are made under lives one crate further out in `slopdesk_video::capture_config`,
+> which is `forbid(unsafe_code)` and runs headless under `cargo test`. Swift's `WindowCapturer` keeps
+> only the frame-decision pipeline (pacer, governor, adaptive QP, reprojection, IDR timer) and calls
+> the `slopdesk_capture_*` doors. The snippets below stay as a reading of the FRAMEWORK's contract —
+> that contract is unchanged; the language holding it is not. See
+> [57-apple-frameworks-in-rust.md](57-apple-frameworks-in-rust.md).
+
 ### 1.1 Enumerating windows
 
 ```swift
