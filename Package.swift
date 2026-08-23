@@ -66,6 +66,21 @@ let ffiCLibraries: [LinkerSetting] = [
     // `-dead_strip` removes what none of them reach. It was implicit until the capturer collapsed:
     // `WindowCapturer.swift` used to `import ScreenCaptureKit` itself.
     .linkedFramework("ScreenCaptureKit", .when(platforms: [.macOS])),
+    // The audio row's two, and UNGATED for the VideoToolbox reason: `slopdesk-apple-audio` splits
+    // its encoder from its decoder the way `slopdesk-apple-vt` does, so both iOS slices link the
+    // decoder half. AudioToolbox carries the `AudioConverter` calls AND — through its AudioUnit
+    // umbrella — the `AudioComponentFindNext`/`AudioUnitRender` pair `cpal` opens the output stream
+    // with; CoreAudio carries the device enumeration. These were implicit until the audio row
+    // collapsed: `AudioStreamEncoder.swift`, `AudioStreamDecoder.swift` and
+    // `AudioPlaybackEngine.swift` each used to `import AudioToolbox` themselves.
+    //
+    // `AudioUnit` is NOT listed, and the omission is load-bearing rather than an oversight: macOS
+    // ships a standalone `AudioUnit.framework` and iOS does not — it is a header group inside
+    // AudioToolbox there — so naming it links on the Mac and fails the iOS app's FINAL link with
+    // `ld: framework 'AudioUnit' not found`, long after `make ffi` and every test are green. This is
+    // the `docs/57` §5 failure mode again, in its other direction.
+    .linkedFramework("AudioToolbox"),
+    .linkedFramework("CoreAudio"),
 ]
 let package = Package(
     name: "SlopDesk",

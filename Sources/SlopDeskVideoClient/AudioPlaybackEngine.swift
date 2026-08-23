@@ -1,205 +1,90 @@
-#if canImport(AudioToolbox)
-import AudioToolbox
 import CSlopDeskFFI
 import Foundation
-import OSLog
-#if os(iOS) && canImport(AVFAudio)
-import AVFAudio
-#endif
 
-/// The client's audio OUTPUT: one system output AudioUnit (macOS `kAudioUnitSubType_HALOutput`,
-/// iOS `kAudioUnitSubType_RemoteIO`) whose render callback consumes interleaved Float32 from a
-/// lock-free ``AudioSampleRing``. One instance per locked `(sampleRate, channels)` — a config
-/// change that moves either rebuilds the engine (the session's job).
+/// The face of client audio playback. Every decision behind it is Rust's.
 ///
-/// ⚠️ **GUI/DEVICE-ONLY**: starting the AU opens a real HAL/RemoteIO I/O proc — NEVER
-/// constructed in a test (repo hang-safety; same class as `SCStream`/VT sessions). The buffering
-/// POLICY it drives (``AudioJitterBuffer`` + ``AudioPlaybackPump`` + ``AudioSampleRing``) is
-/// pure and IS unit-tested.
+/// Three files were behind this one: `AudioPlaybackEngine` (205 lines of `AUHAL`/`RemoteIO` — the
+/// component description, the stream format write, the render callback, the iOS `AVAudioSession`
+/// category) and `AudioJitterBuffer` (363 more — a Swift face over the jitter stage, a lock-free
+/// `AudioSampleRing`, and an `AudioPlaybackPump` that asked the stage for its budgets and moved
+/// samples between the two). All of it is `rust/slopdesk-audio-out` now: the ring is `rtrb`, the
+/// pump is arithmetic the stage already published, and the output unit is `cpal`.
 ///
-/// Threading contract (`@unchecked Sendable`):
-/// - The PRODUCER side (``enqueue(seq:samples:)`` / ``flushBuffered()``) and the AU lifecycle
-///   (``start()`` / ``stop()`` / ``invalidate()``) are confined to the session's serial
-///   `audioQueue` — the same single-owner discipline as ``VideoDecoder`` on the decode queue.
-/// - The render callback shares ONLY `ring` with the producer — a wait-free SPSC hand-off.
-///   The real-time thread must never block on a lock a preemptible pusher can hold (priority
-///   inversion = audible dropout), so there is NO lock anywhere on this path.
-final class AudioPlaybackEngine: @unchecked Sendable {
-    private let log = Logger(subsystem: "slopdesk.video.client", category: "AudioPlaybackEngine")
+/// That crate is `forbid(unsafe_code)`, which is the point of picking `cpal` over another
+/// `AudioToolbox` wrapper: the one real-time deadline in the client now carries no hand-written
+/// unsafe at all.
+///
+/// **One behaviour this port had to ADD rather than move.** `AUHAL` converted from the wire rate to
+/// the device's own; `cpal` does not, so the far side resamples on the producer side. On every Mac
+/// and iOS output this has been pointed at, the device offers 48 kHz and the conversion is literally
+/// a copy — it matters only on a device pinned to 44.1 kHz, where the alternative is playing
+/// everything a semitone sharp.
+///
+/// Threading: NO internal threading past the handle. Every method runs on the CALLER's queue — the
+/// client session confines this to its serial audio queue — and the render thread holds the other
+/// half of a wait-free SPSC hand-off and nothing else. It never reaches the stage, so there is no
+/// lock for a real-time deadline to miss. `@unchecked Sendable` is the promise that carries that
+/// confinement past the compiler, unchanged from the Swift original.
+public final class AudioPlaybackEngine: @unchecked Sendable {
+    /// The wire rate this engine was locked to. A config that moves it REBUILDS the engine: the
+    /// resampler's ratio, the hand-off's capacity and the device's stream all derive from the pair.
+    public let sampleRate: Double
+    /// The wire channel count this engine was locked to.
+    public let channels: Int
 
-    /// The stream format the engine was built for (the session compares a new config against it).
-    let sampleRate: Double
-    let channels: Int
+    private var handle: OpaquePointer?
 
-    /// Producer-side jitter stage + hand-off pump. audioQueue-confined — the render callback
-    /// never touches it (a mutable struct read cross-thread would violate exclusivity anyway).
-    private var pump: AudioPlaybackPump
-    /// The SPSC hand-off the render callback drains — the ONE thing shared with the real-time
-    /// thread. Held strongly here: ``invalidate()`` / `deinit` stop the AU (AudioOutputUnitStop
-    /// waits out an in-flight render) before this reference — and with it the ring's storage —
-    /// can go away, so the unretained refcon never dangles.
-    private let ring: AudioSampleRing
-
-    /// The output AU (`nil` until the first ``start()`` builds it; `nil` again after
-    /// ``invalidate()``). audioQueue-confined.
-    private var unit: AudioComponentInstance?
-    private var running = false
-
-    init(sampleRate: Double, channels: Int) {
+    public init(sampleRate: Double, channels: Int) {
         self.sampleRate = sampleRate
         self.channels = max(1, channels)
-        let stage = AudioJitterBuffer(channels: self.channels)
-        // Hand-off STORAGE = a high-water worth of ~10 ms frames, but the pump tops the fill up
-        // only to the stage's target depth: the render side needs ~2 frames of headroom, and any
-        // backlog beyond that must stay STAGED, where the pump's combined depth bound can still
-        // shed it (samples committed to the ring are the consumer's — the producer can never
-        // take them back). The spare capacity is slack so a flush's not-yet-skipped span never
-        // blocks the re-primed hand-off.
-        let samplesPerFrame = max(1, Int(sampleRate / 100)) * self.channels
-        ring = AudioSampleRing(
-            capacity: slopdesk_audio_high_water_samples(stage.highWaterFrames, samplesPerFrame),
-        )
-        pump = AudioPlaybackPump(stage: stage, ring: ring, samplesPerFrame: samplesPerFrame)
+        handle = slopdesk_audio_player_new(sampleRate, self.channels)
     }
 
     deinit {
-        // Defensive teardown for a dropped-without-invalidate reference: the render callback
-        // holds `self` unretained, so the unit must stop (AudioOutputUnitStop waits out an
-        // in-flight render cycle) before the memory goes away.
-        invalidate()
+        // Freeing stops the stream and JOINS its device thread, so nothing outlives this call.
+        if let handle { slopdesk_audio_player_free(handle) }
     }
 
-    /// One decoded frame from the audio decode queue → the jitter stage (reorder/late/overflow
-    /// policy lives in ``AudioJitterBuffer``), then whatever is playable hands off to the ring.
-    func enqueue(seq: UInt32, samples: [Float]) {
-        pump.enqueue(seq: seq, samples: samples)
+    /// Whether a real output device was found. False means this engine is permanently mute — which
+    /// is what a headless machine answers, and is not a fault to report.
+    public var hasDevice: Bool {
+        guard let handle else { return false }
+        return slopdesk_audio_player_has_device(handle)
     }
 
-    /// Drops everything buffered (local disable) — playback falls silent NOW, not after the
-    /// ring drains.
-    func flushBuffered() {
-        pump.flush()
-    }
-
-    /// Starts output (idempotent). Builds the AU lazily on first start; a build/start failure
-    /// leaves the engine silent-but-inert (logged) and the next start retries — audio is an
-    /// accessory, never worth failing the session over.
-    func start() {
-        guard !running else { return }
-        if unit == nil { unit = makeOutputUnit() }
-        guard let unit else { return }
-        #if os(iOS) && canImport(AVFAudio)
-        // Playback category so the stream is audible with the mute switch on; mix — a coding
-        // tool must not silence the user's own audio. Best-effort (a refusal just means the
-        // system default category rules apply).
-        try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
-        #endif
-        let status = AudioOutputUnitStart(unit)
-        guard status == noErr else {
-            log.error("audio output start failed (\(status))")
-            return
+    /// One decoded frame, keyed by its wire sequence. The stage re-orders and late-drops on it.
+    public func enqueue(seq: UInt32, samples: [Float]) {
+        guard let handle, !samples.isEmpty else { return }
+        samples.withUnsafeBufferPointer { buffer in
+            slopdesk_audio_player_enqueue(handle, seq, buffer.baseAddress, buffer.count)
         }
-        running = true
     }
 
-    /// Stops output (idempotent). The AU is kept for a cheap restart; the ring keeps its
-    /// frontier so a re-enable resumes cleanly.
-    func stop() {
-        guard running, let unit else { return }
-        AudioOutputUnitStop(unit)
-        running = false
+    /// Starts output. Idempotent — which is what lets the host's ~1 s config re-send restart a
+    /// stopped engine without this caller tracking whether it is already running.
+    public func start() {
+        guard let handle else { return }
+        slopdesk_audio_player_start(handle)
     }
 
-    /// Full teardown (session bye/stop/config rebuild): stop + dispose the AU. The engine is
-    /// dead afterwards — the session builds a fresh one for the next config.
-    func invalidate() {
-        stop()
-        guard let unit else { return }
-        AudioUnitUninitialize(unit)
-        AudioComponentInstanceDispose(unit)
-        self.unit = nil
+    /// Stops output, keeping the device for a cheap restart. Idempotent.
+    public func stop() {
+        guard let handle else { return }
+        slopdesk_audio_player_stop(handle)
     }
 
-    #if os(macOS)
-    /// AUHAL — the device output unit (defaults to the system default output device).
-    private static let outputSubType = kAudioUnitSubType_HALOutput
-    #else
-    /// RemoteIO — the iOS hardware I/O unit.
-    private static let outputSubType = kAudioUnitSubType_RemoteIO
-    #endif
-
-    /// Builds + initialises the output AU: interleaved Float32 on input scope bus 0 (the ring's
-    /// exact sample layout — one buffer per render, no deinterleave step) and the pull-from-ring
-    /// render callback. `nil` on any refusal (logged; the caller degrades to silence).
-    private func makeOutputUnit() -> AudioComponentInstance? {
-        var desc = AudioComponentDescription(
-            componentType: kAudioUnitType_Output,
-            componentSubType: Self.outputSubType,
-            componentManufacturer: kAudioUnitManufacturer_Apple,
-            componentFlags: 0,
-            componentFlagsMask: 0,
-        )
-        guard let component = AudioComponentFindNext(nil, &desc) else {
-            log.error("no system output audio component")
-            return nil
-        }
-        var instance: AudioComponentInstance?
-        var status = AudioComponentInstanceNew(component, &instance)
-        guard status == noErr, let unit = instance else {
-            log.error("audio output instantiation failed (\(status))")
-            return nil
-        }
-        var format = AudioStreamDecoder.floatPCMDescription(sampleRate: sampleRate, channels: channels)
-        status = AudioUnitSetProperty(
-            unit,
-            kAudioUnitProperty_StreamFormat,
-            kAudioUnitScope_Input,
-            0,
-            &format,
-            UInt32(MemoryLayout<AudioStreamBasicDescription>.size),
-        )
-        if status == noErr {
-            // Unretained refCon: `invalidate()` (or deinit) stops the unit before this engine
-            // can be released, so the callback never sees a dangling pointer.
-            var callback = AURenderCallbackStruct(
-                inputProc: Self.renderCallback,
-                inputProcRefCon: Unmanaged.passUnretained(self).toOpaque(),
-            )
-            status = AudioUnitSetProperty(
-                unit,
-                kAudioUnitProperty_SetRenderCallback,
-                kAudioUnitScope_Input,
-                0,
-                &callback,
-                UInt32(MemoryLayout<AURenderCallbackStruct>.size),
-            )
-        }
-        if status == noErr { status = AudioUnitInitialize(unit) }
-        guard status == noErr else {
-            log.error("audio output configuration failed (\(status))")
-            AudioComponentInstanceDispose(unit)
-            return nil
-        }
-        return unit
+    /// Drops everything buffered — the pane falls silent on the next render pass rather than after
+    /// a ring drain, which is what "silent NOW" can honestly mean.
+    public func flushBuffered() {
+        guard let handle else { return }
+        slopdesk_audio_player_flush(handle)
     }
 
-    /// The real-time render pull: a wait-free SPSC consume plus a zero-fill of the shortfall
-    /// (priming / underrun silence — the conceal the jitter policy calls for). No lock, no
-    /// allocation, no syscall: the render deadline can never wait on the (preemptible) decode
-    /// side, so a busy pusher costs zero render-thread stall.
-    private static let renderCallback: AURenderCallback = { inRefCon, _, _, _, _, ioData in
-        guard let ioData else { return noErr }
-        let engine = Unmanaged<AudioPlaybackEngine>.fromOpaque(inRefCon).takeUnretainedValue()
-        let buffers = UnsafeMutableAudioBufferListPointer(ioData)
-        for buffer in buffers {
-            guard let base = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-            let count = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
-            let out = UnsafeMutableBufferPointer(start: base, count: count)
-            let copied = engine.ring.consume(into: out)
-            if copied < count { (base + copied).update(repeating: 0, count: count - copied) }
-        }
-        return noErr
+    /// Retires this engine for good. A retired engine is inert, not broken: every method above
+    /// answers a no-op afterwards, so a racing enqueue from an in-flight decode cannot fault.
+    public func invalidate() {
+        guard let handle else { return }
+        self.handle = nil
+        slopdesk_audio_player_free(handle)
     }
 }
-#endif

@@ -50,7 +50,14 @@ pub mod annexb;
 // macOS only: `NSRunningApplication`, which no iOS slice has. See the module.
 #[cfg(target_os = "macos")]
 pub mod app;
-pub mod audio_jitter;
+// Apple only, both, and for the same reason `decoder`/`encoder` are: they are the audio row's other
+// half. `audio_codec` gates its ENCODER half to macOS inside the module, exactly as
+// `slopdesk-apple-audio` does — every client decodes, only the host encodes. `audio_player` is the
+// client's speakers and rides the same cfg because its `cpal` edge does.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub mod audio_codec;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub mod audio_player;
 pub mod binding_config;
 pub mod binding_rows;
 pub mod binding_search;

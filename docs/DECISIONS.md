@@ -16885,3 +16885,90 @@ objc2 resolves those at runtime — but an `extern` CONSTANT is a link-time symb
 attribute in Rust does not survive `xcodebuild -create-xcframework`. So the framework is listed in
 `ffiCLibraries` with `.when(platforms: [.macOS])`. Any later `slopdesk-apple-*` crate that reads a
 framework constant will need the same one-line entry, and the symptom will be identical.
+
+---
+
+## The audio row is Rust's, and one of its two crates is the family's only raw-pointer exemption
+
+**2026-08-23.** Four Swift files — `AudioStreamEncoder` (395), `AudioStreamDecoder` (245),
+`AudioPlaybackEngine` (205) and `AudioJitterBuffer` (363) — are three faces that marshal. What was
+behind them is `rust/slopdesk-apple-audio` (the `AudioConverter` calls) and `rust/slopdesk-audio-out`
+(the ring, the pump and the output stream). The `slopdesk_audio_stage_*` door family, fifteen
+entries, went with them; so did `slopdesk_audio_decode_pcm_s16le`, whose only caller was the Swift
+decoder.
+
+### Why the stage's door was in the wrong place, having been in the right shape
+
+`docs/55` §4b argued the stage should be a HANDLE and that argument still holds: its whole product
+is the samples, so they live where the decisions are. What that reasoning did not settle is how much
+of the pipeline the handle should cover. It covered the middle. A Swift `AudioPlaybackPump` asked
+the stage for a priming latch, a target sample budget, a high-water budget, a starvation test and a
+shed bound, and then moved samples into a Swift `AudioSampleRing` for an `AUHAL` render callback to
+drain. Every answer the door gave was correct in isolation. Their ORDER was a law spelled on the
+near side out of doors — prime, pull, shed, starve, drop-oldest — and could be spelled wrong there
+without any door refusing.
+
+So the boundary moved up rather than the shape changing: the same handle, two verbs (here is frame
+N; play), and no order left for a caller to get wrong. **A handle with a large surface is a law
+moved without its sequencing.**
+
+### cpal, and why the playback path ended up with no hand-written unsafe at all
+
+Two ways to open an output stream were on the table. Wrapping `AudioUnit` in a fifth
+`slopdesk-apple-*` crate keeps everything in one family, and costs a render callback holding a raw
+`AudioBufferList` on a real-time thread — the worst place in the system to be arguing about pointer
+provenance. `cpal` is `dasp`/RustAudio's, is what essentially every Rust audio program on macOS
+uses, and hands the callback a `&mut [f32]`.
+
+The dependency was checked rather than assumed. cpal 0.18 reaches CoreAudio through
+`objc2-core-audio` and `objc2-audio-toolbox` — the same `objc2` family this repo already pins — and
+NOT through `coreaudio-sys`, which would have meant bindgen and a libclang build dependency. That
+correction is what settled it: the edge adds no toolchain the tree did not already have.
+
+`rtrb` is the hand-off ring, replacing `AudioSampleRing`'s two atomics and raw storage.
+`slopdesk-audio-out` is `forbid(unsafe_code)`, which means the one real-time deadline in the client
+now carries no hand-written unsafe — a strictly better position than the Swift it replaced, which
+had a raw render callback and an `@unchecked Sendable` promise around it.
+
+**One behaviour this port had to ADD rather than move.** `AUHAL` converted from the wire rate to the
+device's own; `cpal` does not. So `slopdesk-audio-out` resamples on the producer side, linearly,
+carrying phase across calls. On every Mac and iOS output this has been pointed at the device offers
+48 kHz and the conversion is a copy; it matters only on a device pinned to 44.1 kHz, where the
+alternative is playing everything a semitone sharp.
+
+### The §2 exemption, and why it is a ratchet rather than a category
+
+`docs/57` §2 bans hand-written raw-pointer work in the `slopdesk-apple-*` family and says the
+obligation belongs in `slopdesk-ffi` when a framework call needs one. That escape hatch does not
+exist for audio: `slopdesk-ffi` already depends on the `apple-*` crates, so `apple-audio → ffi` is a
+dependency cycle.
+
+And the obligation is unavoidable, because Core Audio hands out SAMPLE MEMORY rather than objects.
+`AudioBufferList` is a C flexible-array member — a header with a count and a trailing array the
+caller allocates and sizes — which is a shape Rust has no type for. AVFAudio does not escape it
+either: `AVAudioPCMBuffer::floatChannelData` is `*mut NonNull<c_float>`, and
+`AVAudioSourceNodeRenderBlock` hands over `*mut AudioBufferList`. The higher-level framework wraps
+the pointer in an allocation, not in a type.
+
+So §2 was widened for exactly one crate, and the amendment is written as a RATCHET: `apple-family`
+counts the raw-pointer sites in `slopdesk-apple-audio` against a fixed number and fails BOTH ways —
+above it, because a crate that grew a site did so in a commit that should have said what the site is
+for, and at zero, because an exemption nothing spends should be deleted rather than left for the
+next crate to notice. The counting pattern is deliberately wider than the ban's — it adds `.read(`,
+`.write(`, `.add(` and `.offset(` — since a ratchet that missed `pointer.read()` would let the
+exempt crate grow sites the count never saw. **A ratchet with slack is a budget.**
+
+One judgment call is recorded here rather than left for a reader to find: reading the
+`AudioStreamBasicDescription` out of a `CMFormatDescription` is `asbd_pointer.read()`, and that is a
+framework-owned `#[repr(C)]` POD rather than literal sample memory. It is inside the exemption and
+counted by it. The alternative — reinterpreting the bytes as `f32` without validating the format
+first — is strictly worse, which is the whole reason that read exists.
+
+### The loopback's `--audio` arm is `cargo test` now
+
+`slopdesk-loopback-validate --audio` existed because of a hang: XCTest must never build a real
+`AudioConverter`, so the only encode→decode proof in the tree ran as a separate executable nobody
+ran by default. That constraint was Swift's, not AudioToolbox's.
+`slopdesk-apple-audio`'s round-trip test builds both converters, encodes a synthetic tone and
+asserts the wire cadence, in `cargo test`, with no window server and no grant — so the loopback arm
+was deleted rather than kept as a second proof of the same thing.

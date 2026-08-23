@@ -5246,9 +5246,13 @@ fi
 # RULE C — THE CARVE-OUT, NAMED, WITH ITS REASON, AND SELF-INVALIDATING.
 #
 # `FramePacer` (NSView vs UIView display link), `VideoWindowPipeline` (the `HostView` typealias +
-# NSScreen), `ClientCursorCompositor` (NSCursor vs the position-overlay sublayer), `MetalVideoRenderer`
-# (`displaySyncEnabled`, which iOS has no spelling for) and `AudioPlaybackEngine` (AUHAL vs RemoteIO).
-# Five actuators, five different APIs, no drawing in any of them.
+# NSScreen), `ClientCursorCompositor` (NSCursor vs the position-overlay sublayer) and
+# `MetalVideoRenderer` (`displaySyncEnabled`, which iOS has no spelling for). Four actuators, four
+# different APIs, no drawing in any of them.
+#
+# `AudioPlaybackEngine` was the fifth, and it LEFT rather than being dropped: its arm was AUHAL vs
+# RemoteIO, and `rust/slopdesk-audio-out` opens the output stream through `cpal` on both platforms,
+# so there is no longer a per-platform spelling for this carve-out to name.
 #
 # ⚠️ IT FAILS BOTH WAYS ON PURPOSE. An entry that no longer carries the arm this carve-out exists for is
 # a gate that has quietly stopped checking anything — the same stale-ledger failure `ui_test_edges`
@@ -5259,7 +5263,6 @@ declare -a video_actuators=(
   "Sources/SlopDeskVideoClient/VideoWindowPipeline.swift"
   "Sources/SlopDeskVideoClient/ClientCursorCompositor.swift"
   "Sources/SlopDeskVideoClient/MetalVideoRenderer.swift"
-  "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift"
 )
 for actuator in "${video_actuators[@]}"; do
   if [[ ! -e "${actuator}" ]]; then
@@ -5277,7 +5280,7 @@ while IFS= read -r file; do
 done < <(repo_files 'Sources/SlopDeskVideoClient/*.swift' 'Sources/SlopDeskVideoClient/**/*.swift')
 if [[ -n "${video_stray}" ]]; then
   printf '%s' "${video_stray}" >&2
-  fail "a platform arm outside the five named actuators — if the file draws, it belongs in a half (docs/56 §3)"
+  fail "a platform arm outside the four named actuators — if the file draws, it belongs in a half (docs/56 §3)"
 fi
 
 # RULE D — THE TWO HALVES ACCEPT THE SAME SEAM SINKS.
@@ -6793,33 +6796,60 @@ if hit=$(spells 'EnvConfig\.(int|double)\(' ${env_config_corpus}); then
   fail "${hit} calls EnvConfig.int/.double again — that generic reject pair had zero callers and is deleted; ask a door"
 fi
 
-# ── The s16le → Float32 convert, which was written out twice and compared never ──────────────────
-# `AudioStreamDecoder.decodePCM` and `slopdesk_video::audio_wire::decode_pcm_s16le` were the same
-# loop byte for byte, down to the same validate-then-DROP rule for a ragged tail — and the Rust half
-# had no caller outside its own tests. That is `docs/55` §8's exact shape, and the reason it needed
-# a gate rather than a note is that this pair CANNOT be caught disagreeing: a full-scale sample is
-# `-1.0` either way, and a drifted normalisation is just audio that is slightly quieter than it
-# should be. Nobody files that.
+# ── The audio row, which is Rust's from the capture tap to the speakers ─────────────────────────
+# This started as ONE rule about ONE loop: `AudioStreamDecoder.decodePCM` and
+# `slopdesk_video::audio_wire::decode_pcm_s16le` were the same s16le widen byte for byte, down to
+# the same validate-then-DROP rule for a ragged tail, and the Rust half had no caller outside its
+# own tests. What made that pair need a gate rather than a note is that it CANNOT be caught
+# disagreeing: a full-scale sample is `-1.0` either way, and a drifted normalisation is just audio
+# that is slightly quieter than it should be. Nobody files that.
 #
-# The door writes in place into the caller's buffer and answers a SAMPLE count. The Vec-returning
-# Rust form was deleted rather than kept beside it: at one call per 10 ms frame the allocation, not
-# the crossing, was the entire cost.
+# The rest of the row turned out to be the same shape at a larger size. Four Swift files — an
+# `AudioConverter` encoder, an `AudioConverter` decoder, an `AUHAL`/`RemoteIO` output unit and a
+# lock-free ring with a pump around it — were about 1200 lines, of which the part that HAD to be
+# Swift was none. They are `rust/slopdesk-apple-audio` and `rust/slopdesk-audio-out` now, and what
+# is left in Swift is three faces that marshal.
 #
-# The ban is on the hand-assembled sample — the little-endian pair, the sign reinterpretation, and
-# the full-scale divisor — because those three are what a re-implementation is made of, and any one
-# of them appearing in this file means the loop has grown back.
+# So the gate is on the FACES: each must still ask its door, and none may import an audio framework
+# again, because an `import AudioToolbox` in one of these files is what a re-implementation starts
+# as. The ban list is the frameworks rather than the code shapes, which is both narrower to write
+# and impossible to satisfy while re-growing the loop.
 #
-# BREAK-TESTED 2026-08-22 (`cp` to /tmp, restore from the copy): pasting
-# `Int16(bitPattern: UInt16(lo) | UInt16(hi) << 8)` back fires
-#   check-supervisor: FAIL — Sources/SlopDeskVideoClient/AudioStreamDecoder.swift widens a PCM sample by hand again — the convert and its ragged-tail drop are audio_wire.rs's
-# and deleting the door call fires the presence rule. Shipped tree silent on both.
-SWIFT_AUDIO_DECODER=Sources/SlopDeskVideoClient/AudioStreamDecoder.swift
-if ! spells 'slopdesk_audio_decode_pcm_s16le\(' "${SWIFT_AUDIO_DECODER}" > /dev/null; then
-  fail "${SWIFT_AUDIO_DECODER} stopped asking the door to widen its samples — that loop lives in audio_wire.rs"
-fi
-if hit=$(spells 'bitPattern:|<< 8|32768|32767' "${SWIFT_AUDIO_DECODER}"); then
-  fail "${hit} widens a PCM sample by hand again — the convert and its ragged-tail drop are audio_wire.rs's"
-fi
+# BREAK-TESTED 2026-08-23 (`cp` to /tmp, restore from the copy): adding `import AudioToolbox` to
+# `AudioStreamDecoder.swift` fires
+#   check-supervisor: FAIL — Sources/SlopDeskVideoClient/AudioStreamDecoder.swift imports an audio framework again — the AudioToolbox calls are slopdesk-apple-audio's
+# and deleting the `slopdesk_audio_decoder_decode(` call fires the presence rule. Shipped tree
+# silent on both.
+declare -A audio_faces=(
+  ["Sources/SlopDeskVideoHost/AudioStreamEncoder.swift"]='slopdesk_audio_encoder_push_sample_buffer\('
+  ["Sources/SlopDeskVideoClient/AudioStreamDecoder.swift"]='slopdesk_audio_decoder_decode\('
+  ["Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift"]='slopdesk_audio_player_enqueue\('
+)
+for face in "${!audio_faces[@]}"; do
+  if [[ ! -e "${face}" ]]; then
+    fail "audio_faces names ${face}, which does not exist — the face moved and this ledger did not"
+  fi
+  if ! spells "${audio_faces[${face}]}" "${face}" > /dev/null; then
+    fail "${face} stopped asking its door — the audio row's calls are slopdesk-apple-audio's and slopdesk-audio-out's"
+  fi
+  if hit=$(spells '^import (AudioToolbox|AudioUnit|CoreAudio|AVFAudio)$' "${face}"); then
+    fail "${hit} imports an audio framework again — the AudioToolbox calls are slopdesk-apple-audio's"
+  fi
+done
+
+# The ring, the pump and the Swift stage face went with them, and the paths are the unambiguous
+# fact — a re-added `AudioJitterBuffer.swift` would carry whatever names its author picked.
+declare -a audio_gone=(
+  Sources/SlopDeskVideoClient/AudioJitterBuffer.swift
+  Tests/SlopDeskVideoClientTests/AudioJitterBufferTests.swift
+  Tests/SlopDeskVideoClientTests/AudioSampleRingTests.swift
+  Tests/SlopDeskVideoClientTests/AudioPlaybackPumpTests.swift
+)
+for gone in "${audio_gone[@]}"; do
+  if [[ -e "${gone}" ]]; then
+    fail "${gone} is back — the jitter stage, its ring and its pump are rust/slopdesk-audio-out"
+  fi
+done
 
 # ── The two length prefixes, and the sentinel that a signed `Int` swallowed ──────────────────────
 # `ScreenClient.exchange` shifted four untrusted bytes together by hand, checked them against a

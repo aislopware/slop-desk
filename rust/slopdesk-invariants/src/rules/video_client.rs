@@ -147,50 +147,86 @@ pub fn decode_admission(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// The audio jitter STAGE — `audio_jitter`, through the door of the same name.
+/// The audio ROW — the codec through `slopdesk-apple-audio`, the speakers through
+/// `slopdesk-audio-out`.
 ///
-/// This one is a HANDLE, and the reason is the mirror of the sequencer's: the stage's whole product
-/// IS the samples, so they live where the decisions are. Exactly one free per new, and the free is
-/// the owner's `deinit` — a handle whose Swift owner stops freeing it leaks a stage per session,
-/// which no test would notice.
+/// This rule used to be about the jitter STAGE alone, and the stage was the only Rust in the row:
+/// fifteen door entries existed so a Swift `AudioPlaybackPump` could drive it, between a Swift
+/// `AudioStreamDecoder` and a Swift `AUHAL`/`RemoteIO` render callback. The comment here said the
+/// SPSC hand-off ring stayed Swift on purpose, "raw storage partitioned by two atomics", and that
+/// moving it would need a DECISIONS entry rather than a commit. It got one: `rtrb` is that ring,
+/// `cpal` is that render callback, and neither is code this repo maintains.
 ///
-/// The SPSC hand-off ring stays Swift ON PURPOSE — it is raw storage partitioned by two atomics so
-/// a real-time render thread never blocks on the producer, and it belongs to the runtime that owns
-/// the audio unit. If it ever grows a door entry, that decision needs a DECISIONS entry, not a
-/// commit.
+/// So what the row keeps in Swift is three FACES that marshal, and what this rule asks is that they
+/// stay faces. Each names its door; a face that stops calling one has grown an implementation.
+///
+/// Two BANS ride along, both on state a re-implementation is made of. The stage's ordering law —
+/// a block list, a play frontier, a sample budget — is `audio_jitter`'s wherever it appears in
+/// `Sources`. The encoder's is `audio_source`'s: an interleaved accumulator carrying a sub-block
+/// remainder, and the channel fold that fills it.
 #[must_use]
-pub fn audio_stage(tree: &Tree) -> Report {
-    const SWIFT_AUDIO: &str = "Sources/SlopDeskVideoClient/AudioJitterBuffer.swift";
+pub fn audio_row(tree: &Tree) -> Report {
+    const SWIFT_ENCODER: &str = "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift";
+    const SWIFT_DECODER: &str = "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift";
+    const SWIFT_PLAYER: &str = "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift";
 
     let claims = [
         Claim::Doors {
-            path: SWIFT_AUDIO,
+            path: SWIFT_ENCODER,
             entries: &[
-                "slopdesk_audio_stage_new",
-                "slopdesk_audio_stage_free",
-                "slopdesk_audio_stage_shape",
-                "slopdesk_audio_stage_stats",
-                "slopdesk_audio_stage_primed",
-                "slopdesk_audio_stage_pending_frames",
-                "slopdesk_audio_stage_available_samples",
-                "slopdesk_audio_stage_push",
-                "slopdesk_audio_stage_pull",
-                "slopdesk_audio_stage_drain_available",
-                "slopdesk_audio_stage_note_consumer_starved",
-                "slopdesk_audio_stage_drop_oldest_pending",
-                "slopdesk_audio_stage_clear",
-                "slopdesk_audio_stage_shed_to_depth_bound",
-                "slopdesk_audio_ring_target_samples",
-                "slopdesk_audio_consumer_starved",
+                "slopdesk_audio_encoder_new",
+                "slopdesk_audio_encoder_free",
+                "slopdesk_audio_encoder_config",
+                "slopdesk_audio_encoder_cookie",
+                "slopdesk_audio_encoder_reset",
+                "slopdesk_audio_encoder_push_sample_buffer",
+                "slopdesk_audio_source_constant",
             ],
-            message: "Sources/SlopDeskVideoClient/AudioJitterBuffer.swift no longer calls {entry} — the \
-                      jitter stage is rust/slopdesk-video's",
+            message: "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift no longer calls {entry} — the \
+                      AAC-ELD encode is rust/slopdesk-apple-audio's",
+        },
+        Claim::Doors {
+            path: SWIFT_DECODER,
+            entries: &[
+                "slopdesk_audio_decoder_new",
+                "slopdesk_audio_decoder_free",
+                "slopdesk_audio_decoder_decode",
+            ],
+            message: "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift no longer calls {entry} — the \
+                      decode is rust/slopdesk-apple-audio's",
+        },
+        Claim::Doors {
+            path: SWIFT_PLAYER,
+            entries: &[
+                "slopdesk_audio_player_new",
+                "slopdesk_audio_player_free",
+                "slopdesk_audio_player_enqueue",
+                "slopdesk_audio_player_flush",
+                "slopdesk_audio_player_start",
+                "slopdesk_audio_player_stop",
+            ],
+            message: "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift no longer calls {entry} — the \
+                      output stream is rust/slopdesk-audio-out's",
+        },
+        // Each handle is freed by its owner's `deinit`; a face that stops leaks one per session,
+        // and for the player that is a device thread as well as an allocation.
+        Claim::Names {
+            path: SWIFT_ENCODER,
+            needle: "if let handle { slopdesk_audio_encoder_free",
+            message: "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift no longer frees its encoder in \
+                      deinit — one _free per _new (docs/55)",
         },
         Claim::Names {
-            path: SWIFT_AUDIO,
-            needle: "deinit { slopdesk_audio_stage_free",
-            message: "Sources/SlopDeskVideoClient/AudioJitterBuffer.swift's owner no longer frees its stage \
-                      in deinit — one _free per _new (docs/55)",
+            path: SWIFT_DECODER,
+            needle: "if let handle { slopdesk_audio_decoder_free",
+            message: "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift no longer frees its decoder in \
+                      deinit — one _free per _new (docs/55)",
+        },
+        Claim::Names {
+            path: SWIFT_PLAYER,
+            needle: "if let handle { slopdesk_audio_player_free",
+            message: "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift no longer frees its player in \
+                      deinit — one _free per _new, and this one joins a device thread (docs/55)",
         },
         // A Swift block list is a second reorder law and a second play frontier; the pump's two
         // sample budgets and its starvation test are the door's too.
@@ -205,11 +241,31 @@ pub fn audio_stage(tree: &Tree) -> Report {
             message: "a Swift jitter block list or play frontier is back in {files} — that law lives in \
                       audio_jitter.rs",
         },
-        Claim::Lacks {
-            path: SWIFT_AUDIO,
-            pattern: r"slopdesk_audio_ring_new|slopdesk_audio_ring_produce|slopdesk_audio_ring_consume",
+        // The encoder's half of the same ban: the remainder the capture cadence leaves behind, and
+        // the fold that turns whatever ScreenCaptureKit delivered into the wire's stereo.
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"func encodePCM\(|func packS16LE\(|aacInputProc\b|func resetAccumulator\(|func resetConverterState\(",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "the SPSC hand-off ring crossed the door — that is a design change (docs/55, DECISIONS)",
+            exempt: &[],
+            message: "a Swift audio accumulator or channel fold is back in {files} — that law lives in \
+                      audio_source.rs",
+        },
+        // The hand-off ring is `rtrb` and the output stream is `cpal`. A door for either would mean
+        // the near side had grown a producer or a render callback again.
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"slopdesk_audio_ring_|slopdesk_audio_stage_",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} reaches for a ring or stage door — both are inside rust/slopdesk-audio-out \
+                      now, and a door for either is a design change (DECISIONS)",
         },
     ];
     check_all(tree, &claims)
@@ -605,43 +661,82 @@ mod tests {
         );
     }
 
-    /// A handle whose Swift owner stops freeing it leaks a stage per session, which no test
-    /// notices.
+    /// A handle whose Swift owner stops freeing it leaks one per session, which no test notices —
+    /// and for the player it leaks a device thread as well as an allocation.
     #[test]
-    fn an_audio_stage_that_is_never_freed_is_caught() {
+    fn an_audio_handle_that_is_never_freed_is_caught() {
         let fixture = Fixture::new("audio-free");
-        fixture.write(
-            "Sources/SlopDeskVideoClient/AudioJitterBuffer.swift",
-            &format!("{AUDIO_DOORS}deinit {{ slopdesk_audio_stage_free(handle) }}\n"),
-        );
-        assert!(super::audio_stage(&fixture.tree()).is_clean());
+        write_audio_row(&fixture);
+        assert!(super::audio_row(&fixture.tree()).is_clean());
 
-        fixture.write("Sources/SlopDeskVideoClient/AudioJitterBuffer.swift", AUDIO_DOORS);
-        let report = super::audio_stage(&fixture.tree());
+        // The player's deinit, and only the player's, drops its free.
+        fixture.write(
+            "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift",
+            PLAYER_DOORS,
+        );
+        let report = super::audio_row(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("one _free per _new")),
+                .any(|v| v.contains("joins a device thread")),
             "{report:?}"
         );
     }
 
-    /// The SPSC ring crossing the door is a DESIGN change, not a commit — so it fails even though
-    /// every other door is still called.
+    /// A face that stops calling its door has grown an implementation behind it.
     #[test]
-    fn the_spsc_ring_crossing_the_door_is_caught() {
-        let fixture = Fixture::new("spsc-ring");
+    fn a_face_that_stops_asking_its_door_is_caught() {
+        let fixture = Fixture::new("audio-door");
+        write_audio_row(&fixture);
         fixture.write(
-            "Sources/SlopDeskVideoClient/AudioJitterBuffer.swift",
+            "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift",
+            "deinit { if let handle { slopdesk_audio_decoder_free(handle) } \
+             }\nslopdesk_audio_decoder_new(x)\n",
+        );
+        let report = super::audio_row(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk_audio_decoder_decode")),
+            "{report:?}"
+        );
+    }
+
+    /// The ring and the stage are inside `slopdesk-audio-out` now. A door for either would mean the
+    /// near side had grown a producer or a render callback back, which is a DESIGN change.
+    #[test]
+    fn reaching_for_a_ring_or_stage_door_is_caught() {
+        let fixture = Fixture::new("spsc-ring");
+        write_audio_row(&fixture);
+        fixture.write(
+            "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift",
             &format!(
-                "{AUDIO_DOORS}deinit {{ slopdesk_audio_stage_free(handle) \
+                "{PLAYER_DOORS}deinit {{ if let handle {{ slopdesk_audio_player_free(handle) }} \
                  }}\nslopdesk_audio_ring_produce(x)\n"
             ),
         );
-        let report = super::audio_stage(&fixture.tree());
+        let report = super::audio_row(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("design change")),
+            "{report:?}"
+        );
+    }
+
+    /// The encoder's accumulator and channel fold are `audio_source`'s, wherever in `Sources` they
+    /// reappear — the ban is not scoped to the file that used to hold them.
+    #[test]
+    fn a_returning_swift_audio_accumulator_is_caught() {
+        let fixture = Fixture::new("audio-accumulator");
+        write_audio_row(&fixture);
+        fixture.write(
+            "Sources/SlopDeskVideoHost/SomethingElse.swift",
+            "func encodePCM(_ s: [Float]) {}\n",
+        );
+        let report = super::audio_row(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("audio_source.rs")),
             "{report:?}"
         );
     }
@@ -670,23 +765,50 @@ mod tests {
         );
     }
 
-    const AUDIO_DOORS: &str = "\
-slopdesk_audio_stage_new(x)
-slopdesk_audio_stage_free(x)
-slopdesk_audio_stage_shape(x)
-slopdesk_audio_stage_stats(x)
-slopdesk_audio_stage_primed(x)
-slopdesk_audio_stage_pending_frames(x)
-slopdesk_audio_stage_available_samples(x)
-slopdesk_audio_stage_push(x)
-slopdesk_audio_stage_pull(x)
-slopdesk_audio_stage_drain_available(x)
-slopdesk_audio_stage_note_consumer_starved(x)
-slopdesk_audio_stage_drop_oldest_pending(x)
-slopdesk_audio_stage_clear(x)
-slopdesk_audio_stage_shed_to_depth_bound(x)
-slopdesk_audio_ring_target_samples(x)
-slopdesk_audio_consumer_starved(x)
+    /// The three faces, each calling every door its `Claim::Doors` names and freeing its handle.
+    fn write_audio_row(fixture: &Fixture) {
+        fixture
+            .write(
+                "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift",
+                &format!(
+                    "{ENCODER_DOORS}deinit {{ if let handle {{ slopdesk_audio_encoder_free(handle) }} }}\n"
+                ),
+            )
+            .write(
+                "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift",
+                &format!(
+                    "{DECODER_DOORS}deinit {{ if let handle {{ slopdesk_audio_decoder_free(handle) }} }}\n"
+                ),
+            )
+            .write(
+                "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift",
+                &format!(
+                    "{PLAYER_DOORS}deinit {{ if let handle {{ slopdesk_audio_player_free(handle) }} }}\n"
+                ),
+            );
+    }
+
+    const ENCODER_DOORS: &str = "\
+slopdesk_audio_encoder_new(x)
+slopdesk_audio_encoder_free(x)
+slopdesk_audio_encoder_config(x)
+slopdesk_audio_encoder_cookie(x)
+slopdesk_audio_encoder_reset(x)
+slopdesk_audio_encoder_push_sample_buffer(x)
+slopdesk_audio_source_constant(x)
+";
+    const DECODER_DOORS: &str = "\
+slopdesk_audio_decoder_new(x)
+slopdesk_audio_decoder_free(x)
+slopdesk_audio_decoder_decode(x)
+";
+    const PLAYER_DOORS: &str = "\
+slopdesk_audio_player_new(x)
+slopdesk_audio_player_free(x)
+slopdesk_audio_player_enqueue(x)
+slopdesk_audio_player_flush(x)
+slopdesk_audio_player_start(x)
+slopdesk_audio_player_stop(x)
 ";
     const POOL_DOORS: &str = "\
 slopdesk_video_pool_new(x)

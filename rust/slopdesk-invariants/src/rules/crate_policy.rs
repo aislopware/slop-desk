@@ -27,6 +27,18 @@ const HAND_WRITTEN: [&str; 3] = [
     "rust/slopdesk-gfsimd/Cargo.toml",
 ];
 
+/// The ONE `slopdesk-apple-*` crate exempt from the raw-pointer ban. See [`apple_family`].
+const SAMPLE_MEMORY_CRATE: &str = "rust/slopdesk-apple-audio";
+
+/// How many raw-pointer sites that exemption is worth today.
+///
+/// Two slice constructions over a captured buffer's runs, one flexible-array read of the buffer
+/// list, one copy of the stream description, and the pointer arithmetic and slot writes the two
+/// converter callbacks are, on both ends of the wire. The number is a RATCHET rather than a budget:
+/// it is what the crate needs EXACTLY, and it moves only in a commit that says what the new site is
+/// for. Slack here would be a budget to spend quietly, which is the thing a ratchet is not.
+const SAMPLE_MEMORY_SITE_CAP: usize = 19;
+
 /// Every crate is `unsafe_code = "forbid"` except two named families.
 ///
 /// rustc enforces the level a crate states. What it cannot notice is the SHAPE drifting back: a new
@@ -136,6 +148,84 @@ pub fn unsafe_policy(tree: &Tree) -> Report {
 /// one place where a Copy-rule pointer becomes an owned value, so every typed reader is a caller of
 /// that helper rather than a second obligation — and a second `from_raw` fails the gate with the
 /// same message as a `transmute` would.
+///
+/// ## The amendment, and why it is one crate and not a category
+/// `slopdesk-apple-audio` is exempt from the raw-pointer ban, and it is the ONLY crate that is.
+/// Every other framework in this family hands out OBJECTS — `objc2` models those, and the binding
+/// answers the ownership question, so the crate never has to. Core Audio hands out SAMPLE MEMORY:
+/// `AudioConverterFillComplexBuffer` takes a C input proc whose whole job is to publish a
+/// `(pointer, length)` through an `AudioBufferList`, `CMSampleBuffer` delivers captured audio the
+/// same way, and `AVAudioConverter`'s block API reaches the same samples through
+/// `floatChannelData`, which is a `*mut NonNull<c_float>`. There is no version of that crate
+/// without raw-pointer work, and the operation cannot move to `slopdesk-ffi` either —
+/// `slopdesk-ffi` already depends on this family, so the reverse edge is a cycle.
+///
+/// What keeps this from being the hole a category would be is the SITE COUNT, the same instrument
+/// the two Core Foundation admissions use. The exemption is a ratchet, not a door: the count below
+/// is what the crate needs today, and a change that wants one more has to move it here and say why
+/// in the same commit. Every other §2 obligation still applies to that crate and is still checked —
+/// `unsafe_op_in_unsafe_fn`, the `objc2` edge, and one `CFRetained::from_raw`.
+/// What one crate's sources spend, in the four counts §2 argues about.
+#[derive(Default)]
+struct Spend {
+    /// Whether any Rust source was read at all. A ban that reads nothing passes for the wrong
+    /// reason.
+    read_any: bool,
+    /// A raw-pointer operation outside both admissions, in a crate that is not the exempt one.
+    hand_written: bool,
+    /// The exempt crate's ratchet count. Always zero elsewhere.
+    sample_memory_sites: usize,
+    /// `CFRetained::from_raw`, the Copy/Create-rule admission. At most one per crate.
+    copy_rule_sites: usize,
+    /// `CFRetained::retain`, the Get-rule admission. At most one per crate, independently.
+    get_rule_sites: usize,
+}
+
+/// Counts one crate's `src` tree. Split out of [`apple_family`] because the WALK and the VERDICTS
+/// are two different arguments, and only the verdicts read as a policy.
+fn scan_spend(tree: &Tree, src: &str, sample_memory: bool) -> Spend {
+    let mut spend = Spend::default();
+    for (path, file) in tree.under(src) {
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        spend.read_any = true;
+        for line in file.code().lines() {
+            // The admission is recognised BEFORE the ban, and by the qualified path only. A bare
+            // `from_raw` is still a raw-pointer operation whatever it is reconstructing.
+            if line.contains("CFRetained::from_raw") {
+                spend.copy_rule_sites += 1;
+                continue;
+            }
+            // The Get-rule twin: a framework hands out a BORROWED +0 pointer valid only for the
+            // call — a callback's sample buffer, a delegate's argument — and taking a reference of
+            // one's own is how it outlives that call. Qualified path only, for the same reason:
+            // `something.retain()` on a live typed reference asserts nothing and is not this
+            // admission.
+            if line.contains("CFRetained::retain") {
+                spend.get_rule_sites += 1;
+                continue;
+            }
+            let raw = crate::text::matches_line(
+                line,
+                r"transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)",
+            );
+            if sample_memory {
+                // Counted rather than waved through — see the amendment note above. The pattern is
+                // WIDER here than the ban's, on purpose: the ban catches the qualified spellings,
+                // and a ratchet that missed `pointer.read()` would let the exempt crate grow raw
+                // sites the count never saw.
+                if raw || crate::text::matches_line(line, r"\.(read|write|add|offset)\(") {
+                    spend.sample_memory_sites += 1;
+                }
+                continue;
+            }
+            spend.hand_written |= raw;
+        }
+    }
+    spend
+}
+
 #[must_use]
 pub fn apple_family(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -168,37 +258,14 @@ pub fn apple_family(tree: &Tree) -> Report {
 
         let crate_dir = manifest.trim_end_matches("/Cargo.toml");
         let src = format!("{crate_dir}/src");
-        let mut read_any = false;
-        let mut hand_written = false;
-        let mut copy_rule_sites = 0_usize;
-        let mut get_rule_sites = 0_usize;
-        for (path, file) in tree.under(&src) {
-            if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
-                continue;
-            }
-            read_any = true;
-            for line in file.code().lines() {
-                // The admission is recognised BEFORE the ban, and by the qualified path only. A bare
-                // `from_raw` is still a raw-pointer operation whatever it is reconstructing.
-                if line.contains("CFRetained::from_raw") {
-                    copy_rule_sites += 1;
-                    continue;
-                }
-                // The Get-rule twin: a framework hands out a BORROWED +0 pointer valid only for the
-                // call — a callback's sample buffer, a delegate's argument — and taking a reference
-                // of one's own is how it outlives that call. Qualified path only, for the same
-                // reason: `something.retain()` on a live typed reference asserts nothing and is not
-                // this admission.
-                if line.contains("CFRetained::retain") {
-                    get_rule_sites += 1;
-                    continue;
-                }
-                hand_written |= crate::text::matches_line(
-                    line,
-                    r"transmute|from_raw|slice::from_raw_parts|ptr::(read|write|copy)",
-                );
-            }
-        }
+        let sample_memory = crate_dir == SAMPLE_MEMORY_CRATE;
+        let Spend {
+            read_any,
+            hand_written,
+            sample_memory_sites,
+            copy_rule_sites,
+            get_rule_sites,
+        } = scan_spend(tree, &src, sample_memory);
         report.fail_if(
             !read_any,
             format!("{src} holds no Rust source — the ban below reads nothing and would pass"),
@@ -209,6 +276,22 @@ pub fn apple_family(tree: &Tree) -> Report {
                 "{crate_dir} hand-writes a raw-pointer operation — the objc2 family may write unsafe only \
                  to CALL an unsafe binding; a transmute or a from_raw is a Rust obligation and belongs in \
                  slopdesk-posix or slopdesk-ffi (docs/57 §2)",
+            ),
+        );
+        report.fail_if(
+            sample_memory && sample_memory_sites == 0,
+            format!(
+                "{crate_dir} is the ONE crate exempt from the raw-pointer ban and writes none — the \
+                 exemption exists because Core Audio publishes SAMPLE MEMORY as (pointer, length); a crate \
+                 that no longer needs it should lose it, not keep it (docs/57 §2's amendment)",
+            ),
+        );
+        report.fail_if(
+            sample_memory_sites > SAMPLE_MEMORY_SITE_CAP,
+            format!(
+                "{crate_dir} touches raw pointers at {sample_memory_sites} sites — the sample-memory \
+                 amendment is a RATCHET at {SAMPLE_MEMORY_SITE_CAP}, so a new site moves the cap here and \
+                 says why in the same commit (docs/57 §2's amendment)",
             ),
         );
         report.fail_if(
@@ -355,6 +438,14 @@ fn root_members(tree: &Tree, report: &mut Report) -> BTreeSet<String> {
 mod tests {
     use crate::tests::Fixture;
 
+    /// A manifest shaped like the objc2 family's: the `objc2` edge, and the two lint levels the
+    /// permission costs. Shared, because three of the cases below write a SECOND crate of the
+    /// family into the fixture and the shape has to be the same one `policy_fixture` lays down.
+    const APPLE_MANIFEST: &str = "[workspace]\n[dependencies]\nobjc2 = \"0.6\"\n[lints.rust]\nunsafe_code = \
+                                  \"deny\"\nunsafe_op_in_unsafe_fn = \
+                                  \"deny\"\n[lints.clippy]\nsuboptimal_flops = \"allow\"\nimprecise_flops = \
+                                  \"allow\"\n";
+
     /// A new crate that says nothing at all inherits `allow` — the hole stage 28 closed. rustc
     /// cannot notice it, because there is no crate stating a level for rustc to enforce.
     #[test]
@@ -453,6 +544,73 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("raw-pointer operation")),
+            "{report:?}"
+        );
+    }
+
+    /// The amendment is one crate, and it is a RATCHET rather than a door: the exempt crate may
+    /// write raw-pointer work, and a site past the cap fails exactly as a transmute elsewhere does.
+    #[test]
+    fn the_sample_memory_crate_is_exempt_up_to_its_cap() {
+        let fixture = policy_fixture("apple-sample-memory");
+        let one = "pub fn read() { let _ = unsafe { std::slice::from_raw_parts(base, len) }; }\n";
+        fixture.write(
+            &format!("{}/Cargo.toml", super::SAMPLE_MEMORY_CRATE),
+            APPLE_MANIFEST,
+        );
+        fixture.write(&format!("{}/src/lib.rs", super::SAMPLE_MEMORY_CRATE), one);
+        assert!(
+            super::apple_family(&fixture.tree()).is_clean(),
+            "the one exempt crate may publish sample memory"
+        );
+
+        // The same line in any OTHER crate of the family is still the ban's business.
+        fixture.write("rust/slopdesk-apple-cgevent/src/lib.rs", one);
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk-apple-cgevent") && v.contains("raw-pointer operation")),
+            "{report:?}"
+        );
+    }
+
+    /// A ratchet with slack is a budget. One site past the cap has to fail, or the count says
+    /// nothing about what the crate actually needs.
+    #[test]
+    fn a_sample_memory_site_past_the_cap_is_caught() {
+        let fixture = policy_fixture("apple-sample-cap");
+        fixture.write(
+            &format!("{}/Cargo.toml", super::SAMPLE_MEMORY_CRATE),
+            APPLE_MANIFEST,
+        );
+        let over = "pub fn read() { let _ = unsafe { std::slice::from_raw_parts(base, len) }; }\n"
+            .repeat(super::SAMPLE_MEMORY_SITE_CAP + 1);
+        fixture.write(&format!("{}/src/lib.rs", super::SAMPLE_MEMORY_CRATE), &over);
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("RATCHET")),
+            "{report:?}"
+        );
+    }
+
+    /// An exemption nothing spends is an exemption to delete, and it reads for years like a crate
+    /// that needs it.
+    #[test]
+    fn an_unspent_sample_memory_exemption_is_caught() {
+        let fixture = policy_fixture("apple-sample-unspent");
+        fixture.write(
+            &format!("{}/Cargo.toml", super::SAMPLE_MEMORY_CRATE),
+            APPLE_MANIFEST,
+        );
+        fixture.write(
+            &format!("{}/src/lib.rs", super::SAMPLE_MEMORY_CRATE),
+            "pub fn f() {}\n",
+        );
+        let report = super::apple_family(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("writes none")),
             "{report:?}"
         );
     }
@@ -585,9 +743,6 @@ mod tests {
         const EXEMPT: &str = "[workspace]\n[lints.rust]\nunsafe_code = \
                               \"deny\"\n[lints.clippy]\nsuboptimal_flops = \"allow\"\nimprecise_flops = \
                               \"allow\"\n";
-        const APPLE: &str = "[workspace]\n[dependencies]\nobjc2 = \"0.6\"\n[lints.rust]\nunsafe_code = \
-                             \"deny\"\nunsafe_op_in_unsafe_fn = \"deny\"\n[lints.clippy]\nsuboptimal_flops \
-                             = \"allow\"\nimprecise_flops = \"allow\"\n";
 
         let fixture = Fixture::new(name);
         // The root carries a members list because the inheritance rule is read out of it: a
@@ -600,7 +755,7 @@ mod tests {
             .write("rust/slopdesk-posix/Cargo.toml", EXEMPT)
             .write("rust/slopdesk-ffi/Cargo.toml", EXEMPT)
             .write("rust/slopdesk-gfsimd/Cargo.toml", EXEMPT)
-            .write("rust/slopdesk-apple-cgevent/Cargo.toml", APPLE)
+            .write("rust/slopdesk-apple-cgevent/Cargo.toml", APPLE_MANIFEST)
             .write("rust/slopdesk-apple-cgevent/src/lib.rs", "pub fn f() {}\n")
             .write("rust/slopdesk-wire/Cargo.toml", CLEAN);
         fixture

@@ -398,6 +398,18 @@ answer with, and it takes a HANDLE. The two ports landed the same day and are th
 worked examples this document has: same shape, opposite answer, and the question that separated them
 was never the size.
 
+**A follow-up the audio half earned on 2026-08-23, and it is about WHERE, not how.** The stage was
+right to be a handle and wrong about where the handle sat. Its door was mid-pipeline — fifteen
+entries, because a Swift pump had to ask it for a priming latch, two sample budgets, a starvation
+test and a shed bound, then move samples into a Swift ring for a Swift render callback. Every one of
+those answers was correct in isolation; what could not be checked was their ORDER, which was a law
+spelled on the near side out of doors and could be spelled wrong there without any door refusing.
+The stage is now inside `slopdesk-audio-out`, which owns the ring (`rtrb`) and the output stream
+(`cpal`) as well, and the door above it has two verbs a caller cannot misorder: here is frame N, and
+play. **A handle with a large surface is a law you moved without moving its sequencing.** The
+size question was still not the one that mattered; this time the one that mattered was how many ways
+the near side could put the answers together.
+
 The presentation queue (`present_queue`) is the third of the set and it falls on the sequencer's
 side, one step further out: what it carries is not even an id the caller minted for a payload, it is
 a handle the caller minted for a `CVImageBuffer` it goes on holding. The law picks which handle this
@@ -1173,7 +1185,7 @@ the same defect this section is about, one register up.)
 | the device panels' row predicate, spelled **six** times | — | `localizedCaseInsensitiveContains` over "does any field of this row hold what was typed", in `AndroidPresentation` twice and once in each of the four simulator views — only ONE of the six was ever reached by a test, which is this class in its purest form: the copy a test holds is not the copy the other shell runs — **ported 2026-08-22** onto the door the keybindings editor already had |
 | `StaticIDRDecider.shouldReencode` vs `recovery_routing::StaticIdrDecider::should_reencode` | — | the quiet window, the recovery override and the synthetic-only heartbeat, written twice, with the Swift copy the one on the host's per-timer-tick path — **ported 2026-08-22**; the four anchors are the whole state, so they cross as scalars and the Rust half stopped being unreachable |
 | `AgentBadgeGates.allOn` / `CommandBadgeGates.allOn` vs `badge::Gates::ALL_ON` | — | one all-on baseline asserted independently by two Swift structs and never consulted by the ungated ladder, so no input could reach both — **ported 2026-08-22** |
-| `AudioJitterBuffer.pull(frameCount:)` vs `audio_jitter::pull_frames` | — | **UNREACHED PORT — the Rust half has no caller.** See below; it has already drifted |
+| `AudioJitterBuffer.pull(frameCount:)` vs `audio_jitter::pull_frames` | — | was **UNREACHED PORT — the Rust half has no caller**, and the drift is moot now: the near side that would have called it is gone. `rust/slopdesk-audio-out` drives the stage, and Swift asks for a PLAYER — **ported 2026-08-23** |
 | `VideoClientSessionLogic.route(channel:data:mediaFlowing:)` vs `client_session::route_datagram` | — | **UNREACHED PORT — the Rust half has no caller.** The six-way table and the drop-vs-ignore split, written twice |
 | `SimulatorScreenLayout`'s hand-rolled clamp vs `slopdesk_panel_clamped_device_point` | Rust | a drag off the right edge of a 200-point frame reported `x = 200` into a surface whose columns are `0..<200`, so the host scaled it off the far side of the framebuffer; the Android lane had gone through the door since the door existed and the simulator lane spelled it TWICE — **ported 2026-08-22**, confirmed by probe before anything was touched: `(9999, 9999)` answered `(200.0, 400.0)` by hand and `(199, 399)` by the rule |
 | `VideoPreferences`' four QP/FEC defaults vs `qp_control` and `adaptive_fec` | — | `26`, `40`, `1`, `5` as literals directly beneath the doc comment forbidding literals there, against doors that already vended every one; a retune leaves Settings SHOWING the old number, and "reset to default" then WRITES it into the overlay as an explicit override — the gesture meant to get out of the daemon's way is the one that pins it to a value nobody chose — **ported 2026-08-22** |

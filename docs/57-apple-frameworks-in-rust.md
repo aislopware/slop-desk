@@ -128,6 +128,45 @@ and each call site's remaining job is the one thing a reader can actually check 
 of them: *does this function's name contain `Copy` or `Create`?* The cap is unchanged and
 `apple-family` still counts two qualified paths; what moved is where the crate spends them.
 
+**And ONE crate is exempt from the raw-pointer ban, because Core Audio hands out SAMPLE MEMORY
+rather than objects.** `slopdesk-apple-audio` may write `slice::from_raw_parts`, `.read()`, `.add()`
+and their kin; every other crate in the family may not, and the exemption does not generalise to a
+second crate without a change to this paragraph.
+
+The reason is a difference in what the framework gives you, not in what the crate wants. Everywhere
+else in this family the thing crossing is an OBJECT — a `CGEvent`, an `AXUIElement`, a
+`CMSampleBuffer` — and `objc2` has a type for it, so the two CF admissions above are the whole gap
+between what the C signature says and what Apple's convention means. Core Audio has no object.
+`AudioBufferList` is a C flexible-array member: a header with a count and a trailing array the
+caller both allocates and sizes, which is a shape Rust has no type for at all.
+`AudioConverterFillComplexBuffer` fills one through a callback, `CMSampleBuffer`'s
+`audio_buffer_list_with_retained_block_buffer` writes into one the caller supplied, and what comes
+back is `mData: *mut c_void` with a byte length beside it. There is no reading of that as a `&[f32]`
+which does not go through `slice::from_raw_parts`.
+
+Three routes were checked before widening the rule, and each fails on its own terms:
+
+- **Move the obligation to `slopdesk-ffi`, as §2 says to.** `slopdesk-ffi` already depends on the
+  `apple-*` crates, so `apple-audio → ffi` is a dependency CYCLE. The rule's own escape hatch does
+  not exist here.
+- **Use AVFAudio's object wrappers instead.** `AVAudioPCMBuffer::floatChannelData` is
+  `*mut NonNull<c_float>` and `AVAudioSourceNodeRenderBlock` hands over `*mut AudioBufferList`. The
+  higher-level framework does not hide the flexible-array member; it hands over the same pointer
+  with an extra allocation in front of it.
+- **Give up and keep the encode in Swift.** That is the thing this whole family exists to stop, and
+  it costs about 640 lines of Swift making the same pointer arguments with no `# Safety` note, no
+  leak test and no gate counting the sites.
+
+So the exemption is real, and what keeps it from being a door is that it is a RATCHET rather than a
+category. `apple-family` counts the raw-pointer sites in that crate against a fixed number and fails
+BOTH ways: above it, because a crate that grew a site did so in a commit that should have said what
+the site is for; at zero, because an exemption nothing spends should be deleted rather than left
+lying around for the next crate to notice. The counting pattern is deliberately WIDER than the ban's
+— it adds `.read(`, `.write(`, `.add(` and `.offset(` — since a ratchet that missed `pointer.read()`
+would let the exempt crate grow sites the count never saw. Everything else in §2 still binds it: the
+`deny(unsafe_op_in_unsafe_fn)`, the `# Safety` note naming the AudioToolbox or CoreMedia rule per
+block, the leak test, and the ban on logic.
+
 **Every `unsafe` block names the FRAMEWORK rule it satisfies**, not a Rust rule. `// SAFETY: the
 buffer outlives the call` is the wrong comment here — the binding already proved that. The right one
 is `// SAFETY: kAXRaiseAction is a documented action on a window element; a stale element is a
@@ -202,7 +241,7 @@ accessor it needs, so the ownership question was answered by the binding rather 
 | `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder` **(done)**, `VideoDecoder` **(done)** | **landed** (increments 92, 93) — costs both §2 admissions, the shim's third convention, and the family's only iOS edge |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer`'s stream **(done)** | **landed** (increment 94) — costs **neither** §2 admission |
-| `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder`, `AudioPlaybackEngine` | planned |
+| `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder` | **done** — the §2 exemption above; `AudioPlaybackEngine` went to `slopdesk-audio-out` (cpal) instead |
 | `slopdesk-apple-power` | `IOKit.pwr_mgt` | `PreventSleepAssertion`, `HostDisplayWake` | **deferred** — §1 |
 
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s

@@ -1,245 +1,87 @@
-#if canImport(AudioToolbox)
-import AudioToolbox
 import CSlopDeskFFI
 import Foundation
-import OSLog
 import SlopDeskVideoProtocol
 
-/// Building the decoder for a received ``AudioStreamConfig`` failed — the config is dropped
-/// (validate-then-drop; the host keeps re-sending, so a transient failure self-heals).
-public enum AudioStreamDecoderError: Error {
-    /// `AudioConverterNew` refused the format (no AAC-ELD decoder available).
-    case converterCreationFailed(OSStatus)
-    /// The AAC magic cookie was rejected — without it the converter would emit garbage.
-    case magicCookieRejected(OSStatus)
+/// The framework refused this config. One case where there were three.
+///
+/// `unsupportedFormat`, `converterCreateFailed` and `cookieRejected` all described the same thing to
+/// every catch site — no decoder for this config — and the one caller matched none of them: it logs
+/// "audio config rejected" and drops the config, because the host re-sends it about a second apart
+/// and a transient refusal self-heals on the next copy. A distinction nothing reads is not a
+/// distinction to carry across a boundary.
+public struct AudioStreamDecoderError: Error {
+    /// What the far side answered, for the log line. Zero when this build does not speak the format.
+    public let status: OSStatus
 }
 
-/// Decodes one wire audio payload (an AAC-ELD access unit, or a block of s16le PCM) to
-/// interleaved Float32 — the ``AudioJitterBuffer``'s sample format. One instance per locked
-/// ``AudioStreamConfig``; a config CHANGE rebuilds the decoder (the session's job).
+/// The face of the app-audio decoder. Every decision behind it is Rust's.
 ///
-/// PUBLIC because the loopback harness (`slopdesk-loopback-validate --audio`) drives the real
-/// AudioConverter through it headlessly — AudioConverter is an in-process codec (no
-/// window-server / TCC), safe off-GUI. ⚠️ XCTest still NEVER constructs one (repo hang-safety
-/// discipline); unit coverage stays on the pure ring/router types.
+/// This was 245 lines: an `AudioConverter` built from the config, the magic cookie pushed into it as
+/// a decompression property, an `AudioConverterComplexInputDataProc` handing over one access unit
+/// with a packet description whose address had to outlive the callback, and — for the PCM arm — a
+/// sample-format convert that already existed in Rust and was called through a door. All of it is
+/// `rust/slopdesk-apple-audio` now, and the door answers samples.
 ///
-/// `@unchecked Sendable`: the converter and its scratch buffers are touched from exactly ONE
-/// serial queue (the session's `audioQueue`; the loopback's single thread) — the annotation only
-/// lets the reference cross the actor → queue dispatch, mirroring ``VideoDecoder``.
+/// Threading: NO internal threading. Every method runs on the CALLER's queue — the client session
+/// confines this to its serial audio queue, which is the single-owner discipline the far side's
+/// handle requires. `@unchecked Sendable` is the promise that carries that confinement past the
+/// compiler, and it is unchanged from the Swift original — a decoder is BUILT on the audio queue,
+/// installed onto the session actor, and then only ever called back on the queue that built it.
 public final class AudioStreamDecoder: @unchecked Sendable {
-    private static let log = Logger(subsystem: "slopdesk.video.client", category: "AudioStreamDecoder")
-
-    /// The config this decoder was built for (the session compares a re-sent config against it).
-    public let config: AudioStreamConfig
-
+    /// Interleaved channel count this decoder answers, for sizing the destination.
     private let channels: Int
-    /// `nil` for ``AudioWireFormat/pcmS16LE`` (no codec — just a sample-format convert).
-    private var converter: AudioConverterRef?
+    private var handle: OpaquePointer?
+    /// The destination, reused across calls. One decode answers at most four wire blocks' worth of
+    /// samples — the far side's own ceiling — so this is sized once and never grows.
+    private var scratch: [Float]
 
-    /// Output frames one `decode` call can produce. AAC-ELD emits 480 frames per access unit at
-    /// 48 kHz; ×4 headroom costs a few KB and makes a converter that flushes more inert.
-    private static let maxOutputFrames = 1920
-
-    /// Decoded-sample scratch, reused across calls (decode runs on one serial queue).
-    private let scratch: UnsafeMutablePointer<Float>
-    private let scratchCapacity: Int
-
-    // In-flight input for the converter's pull callback (valid only inside one
-    // `AudioConverterFillComplexBuffer` call; the callback runs synchronously within it).
-    private var inflightBytes: UnsafeRawPointer?
-    private var inflightByteCount: UInt32 = 0
-    /// Heap-allocated (not a stored struct property) so the pull callback can hand the converter
-    /// a pointer with a guaranteed-stable address.
-    private let inflightPacket: UnsafeMutablePointer<AudioStreamPacketDescription>
-    private var inflightServed = false
-
-    /// The pull callback's "that was the whole packet" status: any non-zero value private to
-    /// this decoder — `AudioConverterFillComplexBuffer` surfaces it once input runs out, which
-    /// is the NORMAL end of a one-packet decode, not an error.
-    private static let noMoreData: OSStatus = -1
-
+    /// Builds a decoder for one wire config, or throws the framework's refusal.
+    ///
+    /// The refusal is a real answer, not an error to retry: "this machine has no AAC-ELD decoder"
+    /// does not become true a frame later. The caller drops the config and lets the host's ~1 s
+    /// re-send decide whether to try again.
     public init(config: AudioStreamConfig) throws {
-        self.config = config
-        channels = Int(config.channels)
-        scratchCapacity = Self.maxOutputFrames * channels
-        scratch = UnsafeMutablePointer<Float>.allocate(capacity: scratchCapacity)
-        inflightPacket = UnsafeMutablePointer<AudioStreamPacketDescription>.allocate(capacity: 1)
-        switch config.format {
-        case .pcmS16LE:
-            converter = nil
-        case .aacEld:
-            var inDesc = AudioStreamBasicDescription(
-                mSampleRate: Float64(config.sampleRate),
-                mFormatID: kAudioFormatMPEG4AAC_ELD,
-                mFormatFlags: 0,
-                mBytesPerPacket: 0,
-                mFramesPerPacket: 480,
-                mBytesPerFrame: 0,
-                mChannelsPerFrame: UInt32(config.channels),
-                mBitsPerChannel: 0,
-                mReserved: 0,
+        channels = max(1, Int(config.channels))
+        scratch = [Float](repeating: 0, count: Self.maxSamples(channels: channels))
+        var cookie = [UInt8](config.cookie)
+        handle = cookie.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_audio_decoder_new(
+                config.format.rawValue,
+                config.sampleRate,
+                config.channels,
+                buffer.baseAddress,
+                buffer.count,
             )
-            var outDesc = Self.floatPCMDescription(sampleRate: Float64(config.sampleRate), channels: channels)
-            var ref: AudioConverterRef?
-            let status = AudioConverterNew(&inDesc, &outDesc, &ref)
-            guard status == noErr, let ref else {
-                scratch.deallocate()
-                inflightPacket.deallocate()
-                throw AudioStreamDecoderError.converterCreationFailed(status)
-            }
-            if !config.cookie.isEmpty {
-                let cookieStatus = config.cookie.withUnsafeBytes { raw -> OSStatus in
-                    guard let base = raw.baseAddress else { return noErr }
-                    return AudioConverterSetProperty(
-                        ref,
-                        kAudioConverterDecompressionMagicCookie,
-                        UInt32(raw.count),
-                        base,
-                    )
-                }
-                guard cookieStatus == noErr else {
-                    AudioConverterDispose(ref)
-                    scratch.deallocate()
-                    inflightPacket.deallocate()
-                    throw AudioStreamDecoderError.magicCookieRejected(cookieStatus)
-                }
-            }
-            converter = ref
         }
+        guard handle != nil else { throw AudioStreamDecoderError(status: 0) }
     }
 
     deinit {
-        if let converter { AudioConverterDispose(converter) }
-        scratch.deallocate()
-        inflightPacket.deallocate()
+        if let handle { slopdesk_audio_decoder_free(handle) }
     }
 
-    /// Decodes one wire frame payload to interleaved Float32. Empty result = drop the frame
-    /// (corrupt payload / converter hiccup) — the jitter ring conceals a missing frame anyway,
-    /// so a decode miss is deliberately indistinguishable from wire loss.
+    /// One wire payload in, interleaved normalised floats out.
+    ///
+    /// An empty answer means DROP: a corrupt access unit, a payload that is not a whole number of
+    /// interleaved frames, or a decoder that refused. The caller conceals it exactly as it conceals
+    /// wire loss, which is the only thing it could do with a partial one.
     public func decode(_ payload: Data) -> [Float] {
-        switch config.format {
-        case .pcmS16LE: decodePCM(payload)
-        case .aacEld: decodeAACELD(payload)
-        }
-    }
-
-    /// Interleaved Float32 output description (the jitter ring / output AU format).
-    static func floatPCMDescription(sampleRate: Float64, channels: Int) -> AudioStreamBasicDescription {
-        let bytesPerFrame = UInt32(MemoryLayout<Float>.size * channels)
-        return AudioStreamBasicDescription(
-            mSampleRate: sampleRate,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: bytesPerFrame,
-            mFramesPerPacket: 1,
-            mBytesPerFrame: bytesPerFrame,
-            mChannelsPerFrame: UInt32(channels),
-            mBitsPerChannel: 32,
-            mReserved: 0,
-        )
-    }
-
-    /// s16le → Float32: a pure sample-format convert, through the door.
-    ///
-    /// A payload that is not whole interleaved frames is corrupt → drop (validate-then-drop; never a
-    /// partial frame into the ring, which would offset every later sample by one channel and turn
-    /// one bad datagram into permanently swapped stereo).
-    ///
-    /// **The convert itself used to be spelled here**, byte for byte the same as
-    /// `slopdesk_video::audio_wire`'s and including that drop rule, while the Rust half sat with no
-    /// caller outside its own tests. Both doors either side of it already crossed —
-    /// `slopdesk_audio_decode` hands back a payload SPAN and `slopdesk_audio_stage_push` takes
-    /// `const float *` — so this loop was the last arithmetic on the audio path with an
-    /// implementation in each language, which is `docs/55` §8's entire subject. It cannot be caught
-    /// disagreeing, because a full-scale sample is `-1.0` either way and a drifted one is just
-    /// quieter audio.
-    ///
-    /// The buffer is sized by ARITHMETIC rather than by a probe: whenever there is an answer at all
-    /// it is exactly `payload.count / 2` samples, so the first guess is a bound rather than an
-    /// estimate and the §4c null-output probe (which would run the whole convert twice) is not
-    /// needed.
-    private func decodePCM(_ payload: Data) -> [Float] {
-        var out = [Float](repeating: 0, count: payload.count / 2)
-        let written = payload.withUnsafeBytes { raw -> Int in
-            out.withUnsafeMutableBufferPointer { room in
-                slopdesk_audio_decode_pcm_s16le(
-                    raw.baseAddress?.assumingMemoryBound(to: UInt8.self), raw.count,
-                    channels, room.baseAddress, room.count,
-                )
+        guard let handle, !payload.isEmpty else { return [] }
+        let written = payload.withUnsafeBytes { bytes -> Int in
+            guard let base = bytes.bindMemory(to: UInt8.self).baseAddress else { return 0 }
+            return scratch.withUnsafeMutableBufferPointer { room in
+                slopdesk_audio_decoder_decode(handle, base, bytes.count, room.baseAddress, room.count)
             }
         }
-        guard written == out.count, written > 0 else { return [] }
-        return out
+        // Above the destination is the door's "nothing written, here is the room needed". It cannot
+        // happen — the scratch is the far side's own ceiling — so treating it as a drop is right.
+        guard written > 0, written <= scratch.count else { return [] }
+        return Array(scratch[..<written])
     }
 
-    /// One AAC-ELD access unit through the converter. The converter keeps decoder state across
-    /// calls (frames of one stream), so it is NOT reset per frame — only after an error, so a
-    /// corrupt access unit cannot poison every later frame.
-    private func decodeAACELD(_ payload: Data) -> [Float] {
-        guard let converter, !payload.isEmpty else { return [] }
-        return payload.withUnsafeBytes { raw -> [Float] in
-            guard let base = raw.baseAddress else { return [] }
-            inflightBytes = base
-            inflightByteCount = UInt32(raw.count)
-            inflightPacket.pointee = AudioStreamPacketDescription(
-                mStartOffset: 0,
-                mVariableFramesInPacket: 0,
-                mDataByteSize: UInt32(raw.count),
-            )
-            inflightServed = false
-            var ioFrames = UInt32(Self.maxOutputFrames)
-            var outBuffers = AudioBufferList(
-                mNumberBuffers: 1,
-                mBuffers: AudioBuffer(
-                    mNumberChannels: UInt32(channels),
-                    mDataByteSize: UInt32(scratchCapacity * MemoryLayout<Float>.size),
-                    mData: UnsafeMutableRawPointer(scratch),
-                ),
-            )
-            let status = AudioConverterFillComplexBuffer(
-                converter,
-                Self.pullInput,
-                Unmanaged.passUnretained(self).toOpaque(),
-                &ioFrames,
-                &outBuffers,
-                nil,
-            )
-            inflightBytes = nil
-            // `noMoreData` is the pull callback reporting the single packet is exhausted — the
-            // normal end of a one-packet decode; whatever frames were produced are valid.
-            guard status == noErr || status == Self.noMoreData, ioFrames > 0 else {
-                if status != noErr, status != Self.noMoreData {
-                    Self.log.error("AAC-ELD decode failed (\(status)) — resetting converter")
-                    AudioConverterReset(converter)
-                }
-                return []
-            }
-            return Array(UnsafeBufferPointer(start: scratch, count: Int(ioFrames) * channels))
-        }
-    }
-
-    /// The converter's input pull: serves the ONE in-flight access unit, then reports
-    /// end-of-data (``noMoreData``) so the converter returns what it decoded. A zero-capture
-    /// closure (C function pointer); the decoder rides in as the `userData` context.
-    private static let pullInput: AudioConverterComplexInputDataProc = { _, ioNumPackets, ioData, outDesc, userData in
-        guard let userData else {
-            ioNumPackets.pointee = 0
-            return AudioStreamDecoder.noMoreData
-        }
-        let decoder = Unmanaged<AudioStreamDecoder>.fromOpaque(userData).takeUnretainedValue()
-        guard !decoder.inflightServed, let bytes = decoder.inflightBytes else {
-            ioNumPackets.pointee = 0
-            return AudioStreamDecoder.noMoreData
-        }
-        decoder.inflightServed = true
-        ioNumPackets.pointee = 1
-        ioData.pointee.mNumberBuffers = 1
-        ioData.pointee.mBuffers.mNumberChannels = UInt32(decoder.channels)
-        ioData.pointee.mBuffers.mDataByteSize = decoder.inflightByteCount
-        ioData.pointee.mBuffers.mData = UnsafeMutableRawPointer(mutating: bytes)
-        outDesc?.pointee = decoder.inflightPacket
-        return noErr
+    /// The far side's per-call ceiling: four wire blocks. Read through the source constants so the
+    /// two sides cannot disagree about the block size.
+    private static func maxSamples(channels: Int) -> Int {
+        Int(slopdesk_audio_source_constant(2)) * channels * 4
     }
 }
-#endif

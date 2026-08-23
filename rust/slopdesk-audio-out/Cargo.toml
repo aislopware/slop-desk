@@ -1,0 +1,124 @@
+# `slopdesk-audio-out` — the client's audio OUTPUT, end to end, with no `unsafe` anywhere in it.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## Why this is NOT a `slopdesk-apple-*` crate
+# It reaches the same HAL and RemoteIO units the Swift `AudioPlaybackEngine` did, but it reaches
+# them through `cpal`, whose output callback hands out a `&mut [f32]` rather than an
+# `AudioBufferList`. That single difference is what lets the whole playback path — the device
+# lifecycle, the hand-off ring, the pump, the render callback — be `forbid(unsafe_code)`. The
+# family exists for framework areas that cannot be reached safely; this one can, so it is not in it.
+#
+# `cpal` was weighed rather than assumed: Apache-2.0, actively maintained under RustAudio, and as of
+# 0.18 its Apple backend goes through `objc2-core-audio` and `objc2-audio-toolbox` at the same 0.3.2
+# pins this repository already carries — there is no `bindgen` in the graph and no second binding
+# generator to keep in step. It builds clean on all three slices this repo assembles.
+#
+# ## What lives here
+# Everything between "a decoded 10 ms frame arrives" and "the device asked for N samples": the
+# starvation glue, the SPSC hand-off, the device lifecycle, and — because `cpal` does not resample —
+# the rate conversion to whatever the device actually runs at. Every buffering DECISION above it is
+# `slopdesk-video`'s `audio_jitter`, unchanged and shared with the loopback harness.
+#
+# ## The render callback allocates nothing and locks nothing
+# A render callback that blocks on a mutex a preempted pusher holds is a priority-inversion dropout,
+# which is the failure this whole shape exists to avoid. What crosses to the real-time thread is an
+# `rtrb` SPSC consumer and two atomics; the pump, the stage and the resampler stay on the producer
+# side. `rtrb` is the same evaluation as `cpal`: a wait-free SPSC ring whose whole public surface is
+# safe, so the discipline is checked by the compiler rather than by a comment.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-audio-out"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The slopdesk client's audio output device, hand-off ring and pump — no unsafe"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_audio_out"
+path = "src/lib.rs"
+
+[dependencies]
+# The device. Caret rather than exact: unlike the `objc2` family this one documents an MSRV policy,
+# and its Apple backend is the thing being depended on rather than a generated ABI surface.
+cpal = "0.18"
+# The wait-free SPSC hand-off. Its `push_partial_slice` / `pop_partial_slice` are the entire
+# producer and consumer surface used here, and both are safe.
+rtrb = "0.4"
+# Every buffering decision: prime, conceal, reorder, high water, the combined depth bound. This
+# crate contributes no policy of its own — it asks.
+slopdesk-video = { path = "../slopdesk-video" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is FORBID here, not deny: this crate is
+# outside both `unsafe` families and no downstream `allow` may lift it.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# `device`, `pump` and `resample` are private modules whose items are `pub(crate)` because they are
+# the crate's internal vocabulary, not its API — the same shape `slopdesk-apple-vt` and
+# `slopdesk-apple-sck` disable this for.
+redundant_pub_crate = "allow"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

@@ -3671,11 +3671,9 @@ final class AudioStreamSender: @unchecked Sendable {
                 // The sub-frame remainder left by the last pre-disable buffer is stale by now —
                 // starting clean keeps the first fresh frame free of an old-audio shard. The
                 // converter's own internal codec state (bit reservoir / window history) is just as
-                // stale after an arbitrarily long disable window — reset both together so the first
-                // post-resume frame is a clean encoder start, not a continuation of audio from long
-                // before the gap.
-                encoder?.resetAccumulator()
-                encoder?.resetConverterState()
+                // stale after an arbitrarily long disable window. ONE call resets both, because
+                // resetting either alone emits a fresh block continuing audio from before the gap.
+                encoder?.reset()
             }
             enabled = on
         }

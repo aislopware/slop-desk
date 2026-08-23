@@ -94,6 +94,8 @@
 //! - [`decode_admission`] / [`hevc_parameter_sets`] — what reaches the client's decoder and in what
 //!   order, each rule closing a measured failure class; and the parameter sets it must be
 //!   configured from before the first slice.
+//! - [`audio_source`] — the capture side's three pure rules: the fold to the stereo wire layout,
+//!   the 480-frame chunking, and the `s16le` pack. The mirror of `audio_wire`'s decode half.
 //! - [`audio_jitter`] — every buffering decision on the audio path: prime, conceal, reorder and
 //!   skip forward, because stale audio is worse than a click and latency is never the answer.
 //! - [`trendline`] — congestion read from the queue's SLOPE rather than its level, which is visible
@@ -157,6 +159,7 @@ pub mod adaptive_fec;
 pub mod adaptive_qp;
 pub mod annexb;
 pub mod audio_jitter;
+pub mod audio_source;
 pub mod audio_wire;
 pub mod ax_probe;
 pub mod blob;
@@ -242,6 +245,7 @@ pub mod ycbcr;
 pub use adaptive_fec::TierState;
 pub use adaptive_qp::{QpCurve, QpDecision};
 pub use audio_jitter::{AudioJitterBuffer, AudioJitterStats};
+pub use audio_source::BlockAccumulator;
 pub use audio_wire::{AudioChannelMessage, AudioStreamConfig, AudioWireFormat};
 pub use blob::{BlobAssembler, BlobChunk, CompleteBlob, OneShotBlobFetch};
 pub use bytes::{ByteReader, ByteWriter};

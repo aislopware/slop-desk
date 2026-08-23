@@ -205,9 +205,9 @@ pub fn registry() -> Vec<Rule> {
             check: video_client::decode_admission,
         },
         Rule {
-            name: "video-audio-stage",
+            name: "video-audio-row",
             origin: "docs/55 §4b",
-            check: video_client::audio_stage,
+            check: video_client::audio_row,
         },
         Rule {
             name: "video-present-queue",

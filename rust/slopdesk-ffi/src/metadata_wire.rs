@@ -15,11 +15,10 @@
 //! codec frame, an AAC cookie — for the reason `docs/55-ffi-boundary.md` §4 gives: the caller is
 //! still holding the bytes it just handed over.
 
-use core::ffi::{c_float, c_uchar};
+use core::ffi::c_uchar;
 
 use slopdesk_video::audio_wire::{
     AudioChannelMessage, AudioStreamConfig, AudioWireFormat, decode_config_parts, decode_parts,
-    decode_pcm_s16le_into, pcm_s16le_sample_count,
 };
 use slopdesk_video::error::VideoProtocolError;
 use slopdesk_video::geometry::{VideoPoint, VideoRect, VideoSize};
@@ -399,52 +398,6 @@ pub unsafe extern "C" fn slopdesk_audio_decode(
     METADATA_DECODE_OK
 }
 
-/// The codec-free fallback's whole decoder: interleaved s16le to the interleaved floats the jitter
-/// ring holds.
-///
-/// This closes the one step the two doors either side of it left in Swift.
-/// [`slopdesk_audio_decode`] hands back a payload SPAN and `slopdesk_audio_stage_push` takes
-/// `const float *`, so the sample-format convert between them was the last arithmetic on the audio
-/// path with an implementation in each language — byte for byte the same, drop-on-ragged-tail rule
-/// included, which is `docs/55` §8's whole subject.
-///
-/// The answer is a SAMPLE count, not a byte count, because the destination is `float *` and a
-/// caller counting bytes would divide by four to use it. `0` is §4's "no answer" and means DROP the
-/// frame: a payload that is not a whole number of interleaved frames, or a channel-less config. A
-/// count above `cap` leaves the destination untouched, but no caller should reach it — the exact
-/// size is `payload_len / 2` whenever there is an answer at all, which is an arithmetic bound
-/// rather than an estimate, so the honest call is one call with a buffer that size.
-///
-/// # Safety
-/// `(payload, payload_len)` must be null or describe live readable memory, and `(out, cap)` null or
-/// live writable memory for `cap` floats, both for the whole call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_audio_decode_pcm_s16le(
-    payload: *const c_uchar,
-    payload_len: usize,
-    channels: usize,
-    out: *mut c_float,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, discharged by Swift's `withUnsafeBytes`.
-    let bytes = unsafe { borrow(payload, payload_len) };
-    let Some(needed) = pcm_s16le_sample_count(bytes.len(), channels) else {
-        return 0;
-    };
-    if out.is_null() || cap < needed {
-        // Nothing written. The caller's first guess is exact, so this arm is the hostile-input one.
-        return needed;
-    }
-    // SAFETY: non-null, and writable for `cap >= needed` floats by the caller's obligation, which
-    // Swift discharges with `withUnsafeMutableBufferPointer` over a buffer it just sized.
-    let room = unsafe { core::slice::from_raw_parts_mut(out, needed) };
-    decode_pcm_s16le_into(bytes, channels, room).unwrap_or(0)
-}
-
 /// Serialises one audio datagram.
 ///
 /// `span` is the frame payload for a frame message and the AAC cookie for a config one. Returns
@@ -511,16 +464,14 @@ pub const extern "C" fn slopdesk_audio_constant(index: u8) -> usize {
 #[expect(
     unsafe_code,
     clippy::indexing_slicing,
-    clippy::float_cmp,
-    reason = "the tests call the C entry points, a panic in a test is the failure report, and a \
-              sample-format convert is pinned by EXACT bit patterns or it is not pinned at all"
+    reason = "the tests call the C entry points, and a panic in a test is the failure report"
 )]
 mod tests {
     use super::{
         METADATA_DECODE_MALFORMED, METADATA_DECODE_OK, METADATA_DECODE_TRUNCATED, SlopDeskAudioMessage,
         SlopDeskSwipeNavStatus, SlopDeskWindowGeometry, slopdesk_audio_constant, slopdesk_audio_decode,
-        slopdesk_audio_decode_pcm_s16le, slopdesk_audio_encode, slopdesk_swipe_nav_allows_chip,
-        slopdesk_swipe_nav_constant, slopdesk_swipe_nav_status_decode, slopdesk_swipe_nav_status_encode,
+        slopdesk_audio_encode, slopdesk_swipe_nav_allows_chip, slopdesk_swipe_nav_constant,
+        slopdesk_swipe_nav_status_decode, slopdesk_swipe_nav_status_encode,
         slopdesk_window_geometry_constant, slopdesk_window_geometry_decode, slopdesk_window_geometry_encode,
     };
 
@@ -701,58 +652,5 @@ mod tests {
         let refused = unsafe { slopdesk_audio_decode(wire.as_ptr(), wire.len(), &raw mut back) };
         assert_ne!(refused, METADATA_DECODE_OK);
         assert_eq!(back, SlopDeskAudioMessage::default());
-    }
-
-    /// The s16le convert through the raw pointers Swift uses, including the bit patterns the ring
-    /// is golden against and the ragged tail that must drop rather than half-fill.
-    #[test]
-    fn the_pcm_convert_answers_samples_and_drops_a_ragged_tail() {
-        let frame = [0x00_u8, 0x80, 0x00, 0x00, 0xFF, 0x7F, 0x00, 0x40];
-        let mut room = [0.0_f32; 4];
-        // SAFETY: both buffers are live locals for the length of the call.
-        let written = unsafe {
-            slopdesk_audio_decode_pcm_s16le(frame.as_ptr(), frame.len(), 2, room.as_mut_ptr(), room.len())
-        };
-        assert_eq!(written, 4);
-        assert_eq!(room, [-1.0, 0.0, 32767.0 / 32768.0, 0.5]);
-
-        let ragged = [0x00_u8, 0x00, 0xFF, 0x7F, 0x11];
-        let mut untouched = [7.0_f32; 4];
-        // SAFETY: both buffers are live locals for the length of the call.
-        let dropped = unsafe {
-            slopdesk_audio_decode_pcm_s16le(
-                ragged.as_ptr(),
-                ragged.len(),
-                2,
-                untouched.as_mut_ptr(),
-                untouched.len(),
-            )
-        };
-        assert_eq!(
-            dropped, 0,
-            "not whole interleaved frames is a DROP, not a short fill"
-        );
-        assert_eq!(untouched, [7.0; 4]);
-
-        // SAFETY: a null pointer with a zero length is the documented empty case.
-        assert_eq!(
-            unsafe { slopdesk_audio_decode_pcm_s16le(core::ptr::null(), 0, 2, core::ptr::null_mut(), 0) },
-            0
-        );
-
-        // A destination one sample short reports the true size and writes nothing.
-        let mut cramped = [3.0_f32; 3];
-        // SAFETY: both buffers are live locals for the length of the call.
-        let needed = unsafe {
-            slopdesk_audio_decode_pcm_s16le(
-                frame.as_ptr(),
-                frame.len(),
-                2,
-                cramped.as_mut_ptr(),
-                cramped.len(),
-            )
-        };
-        assert_eq!(needed, 4);
-        assert_eq!(cramped, [3.0; 3]);
     }
 }

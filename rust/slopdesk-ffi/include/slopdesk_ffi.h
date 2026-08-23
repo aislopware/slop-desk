@@ -5043,69 +5043,89 @@ SlopDeskDecodeBudgetAdmit slopdesk_decode_budget_admit(SlopDeskDecodeBudget budg
 SlopDeskDecodeBudget      slopdesk_decode_budget_complete(SlopDeskDecodeBudget budget, size_t bytes);
 
 /* ---------------------------------------------------------------------------- *
- * The audio jitter STAGE: every buffering decision between the decoder and whatever plays.
+ * The audio DECODER, and the PLAYER behind it.
  *
- * WHY THIS ONE IS A HANDLE AND THE DECODER'S ADMISSION IS NOT. Both hold a queue of frames. The
- * difference is what the LAW reads. The decode sequencer never looks at a compressed byte, so its
- * door moves frame ids and the caller keeps the payloads. This stage's whole product IS the
- * samples — it hands back a steady stream of them, in an order it chose, split at offsets it chose
- * — so the samples live where the decisions are. Rust owns the stage, the caller holds an opaque
- * token, and samples cross once each way through (ptr, len): one memcpy of ten milliseconds of
- * audio per push, under half a megabyte a second at the push cadence.
+ * These two doors are the whole client audio path. What used to sit here was the jitter STAGE
+ * alone — fifteen entry points that existed so Swift could drive a pump around it, with an
+ * `AudioStreamDecoder`, an `AudioSampleRing`, an `AudioPlaybackPump` and an `AUHAL`/`RemoteIO`
+ * render callback on the near side. None of that had to be Swift, so none of it is: the ring is
+ * `rtrb`, the pump is arithmetic the stage already published, and the output unit is `cpal`.
  *
- * Exactly one _free per _new, and NULL is inert at every entry point — a failed new cannot become
- * a crash in deinit. No two calls on one handle may overlap: the mutators take the object
- * exclusively, so a concurrent call is aliasing, not a lost update. The Swift owner confines it to
- * one thread, which is the same discipline the Swift original documented.
+ * WHY THE DOOR MOVED UP. The stage's own boundary was mid-pipeline, which meant the ORDER of the
+ * pieces — prime, pull, shed, starve, drop-oldest — was a law spelled on the near side out of
+ * doors, and could be spelled wrong there without any door refusing. Now the near side says
+ * "here is frame N" and "play", and there is no order left to get wrong.
  *
- * WHAT IS NOT HERE: the lock-free hand-off ring the render callback drains. That is raw storage
- * partitioned by two atomic counters, the one structure in the audio path that exists to keep a
- * real-time thread from ever blocking on the producer, and it belongs to the runtime that owns the
- * audio unit. The pump's own arithmetic IS here, as pure entries.
+ * Exactly one _free per _new on each, and NULL is inert at every entry point — a failed new cannot
+ * become a crash in deinit. No two calls on one handle may overlap: the mutators take the object
+ * exclusively, so a concurrent call is aliasing rather than a lost update. The Swift owner confines
+ * each to its serial audio queue, which is the discipline the Swift original documented.
+ *
+ * WHAT IS NOT HERE: the render thread. It holds the far half of a wait-free SPSC hand-off and
+ * nothing else — it never reaches the stage, so there is no lock for a real-time deadline to miss.
  * ---------------------------------------------------------------------------- */
 
-typedef struct SlopDeskAudioStage SlopDeskAudioStage;
+// One of the capture tap's three fixed numbers: 0 = sample rate (Hz), 1 = channel count,
+// 2 = frames per wire block. 0 for an index this build does not know.
+//
+// A door rather than three Swift constants because the capture tap is CONFIGURED from these —
+// SlopDeskCaptureDesc carries the rate and the channel count straight into ScreenCaptureKit — while
+// the encoder's block cadence is derived from them on the far side. Two copies of a number that
+// must agree is the one thing no test can catch.
+size_t slopdesk_audio_source_constant(uint8_t index);
 
-typedef struct {
-  uint64_t frames_pushed;
-  uint64_t late_dropped;       /* arrived at or behind the play frontier */
-  uint64_t duplicate_dropped;  /* a re-delivery of a pending frame */
-  uint64_t overflow_dropped;   /* skipped forward past the high-water mark */
-  uint64_t underruns;          /* ran dry mid-play; priming silence is not one */
-  uint64_t silence_samples;
-} SlopDeskAudioStageStats;
+typedef struct SlopDeskAudioDecoder SlopDeskAudioDecoder;
 
-typedef struct {
-  size_t channels;
-  size_t target_depth_frames;
-  size_t high_water_frames;
-} SlopDeskAudioStageShape;
+// A decoder for one wire config. `format` is a SLOPDESK_AUDIO_FORMAT_* code and the cookie is the
+// AAC magic cookie the host announced — empty for the PCM arm, which is a real answer rather than
+// a missing one. NULL means REFUSED: a format this build does not speak, or a machine whose
+// AudioToolbox declined to build the converter. A refusal does not become true a frame later, so
+// the caller latches it and the lane stays silent instead of asking sixty times a second.
+SlopDeskAudioDecoder *slopdesk_audio_decoder_new(uint8_t format, uint32_t sample_rate,
+                                                 uint8_t channels, const uint8_t *cookie,
+                                                 size_t cookie_len);
+void slopdesk_audio_decoder_free(SlopDeskAudioDecoder *handle);
 
-SlopDeskAudioStage *slopdesk_audio_stage_new(size_t channels, size_t target_depth_frames,
-                                             size_t high_water_frames);
-void                slopdesk_audio_stage_free(SlopDeskAudioStage *handle);
+// One wire payload in, interleaved normalised floats out. Answers a SAMPLE count, not a byte
+// count — `out` is `float *`, so bytes would be the wrong unit to compare `cap` against, and the
+// one a caller would get wrong. 0 is §4's "no answer" and means DROP the frame. A return greater
+// than `cap` leaves the destination untouched and reports the room needed.
+size_t slopdesk_audio_decoder_decode(SlopDeskAudioDecoder *handle, const uint8_t *payload,
+                                     size_t payload_len, float *out, size_t cap);
 
-SlopDeskAudioStageShape slopdesk_audio_stage_shape(SlopDeskAudioStage *handle);
-SlopDeskAudioStageStats slopdesk_audio_stage_stats(SlopDeskAudioStage *handle);
-bool   slopdesk_audio_stage_primed(SlopDeskAudioStage *handle);
-size_t slopdesk_audio_stage_pending_frames(SlopDeskAudioStage *handle);
-size_t slopdesk_audio_stage_available_samples(SlopDeskAudioStage *handle);
+typedef struct SlopDeskAudioPlayer SlopDeskAudioPlayer;
 
-void   slopdesk_audio_stage_push(SlopDeskAudioStage *handle, uint32_t seq,
-                                 const float *samples, size_t samples_len);
-void   slopdesk_audio_stage_pull(SlopDeskAudioStage *handle, float *out, size_t out_len);
-size_t slopdesk_audio_stage_drain_available(SlopDeskAudioStage *handle, float *out, size_t out_len);
-void   slopdesk_audio_stage_note_consumer_starved(SlopDeskAudioStage *handle);
-void   slopdesk_audio_stage_drop_oldest_pending(SlopDeskAudioStage *handle);
-void   slopdesk_audio_stage_clear(SlopDeskAudioStage *handle);
-size_t slopdesk_audio_stage_shed_to_depth_bound(SlopDeskAudioStage *handle, size_t ring_fill,
-                                                size_t samples_per_frame);
+// A player for one (rate, channels), silent until _start. Never NULL unless allocation itself
+// failed: a machine with NO output device answers a player that works and stays mute — headless is
+// the normal way to arrive there, not a fault — and _has_device is how a caller can tell.
+//
+// A config change that moves either number REBUILDS the player. The resampler's ratio, the
+// hand-off's capacity and the device's own stream are all derived from the pair, and nothing here
+// reconfigures in place.
+SlopDeskAudioPlayer *slopdesk_audio_player_new(double sample_rate, size_t channels);
+void slopdesk_audio_player_free(SlopDeskAudioPlayer *handle);
 
-/* The pump's arithmetic — pure, so the near side spells none of it. */
-size_t slopdesk_audio_ring_target_samples(size_t target_depth_frames, size_t samples_per_frame);
-size_t slopdesk_audio_high_water_samples(size_t high_water_frames, size_t samples_per_frame);
-bool   slopdesk_audio_consumer_starved(bool primed, bool emitted_since_prime,
-                                       uint64_t shortfall_now, uint64_t last_shortfall);
+// Whether a real output device was found. false means this player is permanently MUTE, which is
+// what a headless machine answers and is not a fault to report.
+//
+// The rate it settled on is deliberately not asked: it is the wire rate wherever the device offers
+// it, and a difference is the producer-side resampler doing its job. `AUHAL` did that conversion
+// itself; `cpal` does not, which is the one behaviour this port had to add rather than move.
+bool slopdesk_audio_player_has_device(SlopDeskAudioPlayer *handle);
+
+// One decoded frame, keyed by its wire sequence. The samples are COPIED — one memcpy of ten
+// milliseconds of audio per push, under half a megabyte a second at the wire cadence, and there is
+// no arrangement that avoids it without putting the ordering law back on the near side.
+void slopdesk_audio_player_enqueue(SlopDeskAudioPlayer *handle, uint32_t seq,
+                                   const float *samples, size_t samples_len);
+// Drops everything buffered — the pane falls silent on the next render pass rather than after the
+// hand-off drains, which is what "silent now" can honestly mean when the producer cannot take back
+// what it already committed.
+void slopdesk_audio_player_flush(SlopDeskAudioPlayer *handle);
+// Both idempotent, which is what lets the host's ~1 s config re-send restart a stopped player
+// without the caller tracking whether it is already running.
+void slopdesk_audio_player_start(SlopDeskAudioPlayer *handle);
+void slopdesk_audio_player_stop(SlopDeskAudioPlayer *handle);
 
 /* ---------------------------------------------------------------------------- *
  * Which decoded frame this refresh shows, and when.
@@ -6144,20 +6164,6 @@ uint32_t slopdesk_audio_decode(const uint8_t *bytes, size_t len, SlopDeskAudioMe
 size_t slopdesk_audio_encode(SlopDeskAudioMessage message, const uint8_t *span, size_t span_len,
                              uint8_t *out, size_t cap);
 size_t slopdesk_audio_constant(uint8_t index);
-// S16LE PCM widened to normalised float, written in place into the caller's buffer. The answer is
-// a SAMPLE count, not a byte count — `out` is `float *`, so bytes would be the wrong unit to
-// compare `cap` against, and the one a caller would get wrong.
-//
-// 0 means REFUSED and nothing was written: an empty payload, zero channels, or a length that is
-// not a whole number of frames — a ragged tail is a torn packet, never a short sample. A return
-// greater than `cap` is the room needed, and per the door convention nothing was written then
-// either. A null `out` with `cap` 0 is the legal way to ask the size first, though a caller
-// sizing at `payload_len / 2` is already exact for every well-formed payload.
-//
-// This REPLACED a Vec-returning Rust form rather than joining it: at one call per 10 ms audio
-// frame the allocation, not the crossing, was the whole cost.
-size_t slopdesk_audio_decode_pcm_s16le(const uint8_t *payload, size_t payload_len, size_t channels,
-                                       float *out, size_t cap);
 
 /* ---------------------------------------------------------------------------- *
  * The cursor side-channel, and the AVCC NAL-unit split.
@@ -8851,6 +8857,51 @@ bool slopdesk_capture_can_resize_in_place(bool enabled, bool display_anchored,
 // can force the capture filter, and an empty overlay reads exactly like a bare lookup.
 int32_t slopdesk_capture_mode(const uint8_t *raw, size_t len,
                               bool prefer_display_anchored);
+
+// ---- The AAC-ELD audio encoder ---------------------------------------------------
+//
+// The other half of the decoder above, and macOS-only for the same reason the HEVC
+// encoder is: only the HOST encodes. iOS HAS AudioToolbox, so an ungated declaration
+// would LINK and merely bloat every client slice with a host-only codec — which is
+// worse than a link error, because nothing would fail.
+//
+// _push_sample_buffer takes the CMSampleBufferRef ScreenCaptureKit handed its callback
+// and does everything downstream of it: the channel fold to stereo, the 480-frame
+// block accumulation, and the encode. It calls `sink` once per COMPLETED wire payload,
+// which is zero, one or two per buffer — the arity is why this door is a callback and
+// the decoder's is an (out, cap) pair. The span handed to `sink` is alive only for that
+// call; copy it or send it, do not retain it.
+
+typedef struct SlopDeskAudioEncoder SlopDeskAudioEncoder;
+
+typedef void (*SlopDeskAudioPayloadFn)(void *context, const uint8_t *bytes, size_t len);
+
+typedef struct {
+  uint8_t  format;       /* a SLOPDESK_AUDIO_FORMAT_* code */
+  uint32_t sample_rate;
+  uint8_t  channels;
+  size_t   cookie_len;   /* fetch the bytes with _cookie */
+} SlopDeskAudioEncoderConfig;
+
+SlopDeskAudioEncoder *slopdesk_audio_encoder_new(uint8_t format, uint32_t bitrate_bps);
+void slopdesk_audio_encoder_free(SlopDeskAudioEncoder *handle);
+
+// The wire config, when there is one. false means "do not send a config packet yet": the PCM arm
+// answers from the first call, the AAC arm only once its converter has built. A NULL `out` is a
+// presence probe and answers true without writing.
+bool   slopdesk_audio_encoder_config(SlopDeskAudioEncoder *handle,
+                                     SlopDeskAudioEncoderConfig *out);
+// The magic cookie the client decoder is initialised from, under §4's size-then-fetch convention.
+// Empty for the PCM arm — there is no codec to describe.
+size_t slopdesk_audio_encoder_cookie(SlopDeskAudioEncoder *handle, uint8_t *out, size_t cap);
+// Whether the converter REFUSED to build: a permanently silent lane, not a transient.
+bool   slopdesk_audio_encoder_failed(SlopDeskAudioEncoder *handle);
+// Drops the sub-block remainder AND the codec's carried state — the enable transition.
+void   slopdesk_audio_encoder_reset(SlopDeskAudioEncoder *handle);
+
+size_t slopdesk_audio_encoder_push_sample_buffer(SlopDeskAudioEncoder *handle,
+                                                 const void *sample_buffer,
+                                                 SlopDeskAudioPayloadFn sink, void *context);
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END
