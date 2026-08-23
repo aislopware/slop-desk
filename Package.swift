@@ -908,7 +908,7 @@ let package = Package(
 
         // (The differential-parity oracle for the detect engine is `slopdesk-screend explain` —
         // docs/52. It was a Swift executable target here only because the rule ladder was in Swift;
-        // the ladder moved, so scripts/herdr-differential.py drives the Rust binary directly.)
+        // the ladder moved, so `slopdesk-herdr differential` drives the Rust binary directly.)
 
         // Headless closed-loop validation harness: synthetic CVPixelBuffer -> REAL HW
         // VideoEncoder -> VideoPacketizer (FEC tier + isLTR + hostSendTs) -> deterministic

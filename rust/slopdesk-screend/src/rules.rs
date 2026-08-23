@@ -174,8 +174,8 @@ fn matches(gate: &CompiledGate, inherited: &str, input: &Input) -> bool {
 
 /// One rule's evaluation trace.
 ///
-/// `scripts/herdr-differential.py` diffs these against upstream's own `agent explain --json`, so
-/// every field name and every number here is a wire contract with that script — including
+/// `slopdesk-herdr differential` diffs these against upstream's own `agent explain --json`, so
+/// every field name and every number here is a wire contract with that harness — including
 /// `region_bytes`, which is what proves a region RESOLVER agrees rather than merely a verdict.
 #[derive(Debug, serde::Serialize)]
 pub struct EvaluatedRule {

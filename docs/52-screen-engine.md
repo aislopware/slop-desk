@@ -100,7 +100,7 @@ rust/slopdesk-screend/
   manifests/*.toml   herdr's nineteen manifests, VERBATIM, `include_str!`d
 ```
 
-`main.rs` carries one subcommand, `explain`, which `scripts/herdr-differential.py` runs next to
+`main.rs` carries one subcommand, `explain`, which `slopdesk-herdr differential` runs next to
 upstream's own `herdr agent explain --json`. It lives on this binary because the ladder does; it
 replaced a whole Swift executable target that existed only because the ladder used to be in Swift.
 

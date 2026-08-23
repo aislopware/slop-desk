@@ -1,5 +1,5 @@
 # Strict formatter / linter / static-analysis entrypoints for the whole repo.
-# Configs: .swiftformat .swiftlint.yml ruff.toml .shellcheckrc rust/rustfmt.toml rust/Cargo.toml
+# Configs: .swiftformat .swiftlint.yml .shellcheckrc rust/rustfmt.toml rust/Cargo.toml
 #
 #   make fmt    — auto-format everything (writes)
 #   make fix    — fmt + apply every safe lint autofix (writes)
@@ -57,8 +57,12 @@ SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
 # that shrinks when a file is new is exactly backwards. Every `.sh` we own lives in `scripts/` (the
 # 25 tracked ones all do) plus the one under `ThirdParty/tools`, and a glob says so without a list.
 SHELL_FILES  := $(wildcard scripts/*.sh) ThirdParty/tools/provision.sh
-PY_FILES     := $(wildcard scripts/*.py)
 SHFMT_FLAGS  := -i 2 -ci -sr
+# There is no PY_FILES, and no ruff. Every Python script this repo had is now Rust — the four
+# lint gates are rules in `rust/slopdesk-invariants`, the three operator tools are binaries in
+# `rust/slopdesk-devtools`. A `$(wildcard scripts/*.py)` left behind would be a lint scope that
+# silently un-empties the day someone drops a script in, which is the shape of gate this file
+# already warns about twice below.
 
 # Every Rust WORKSPACE ROOT: `rust/` itself, plus each crate that declares its own `[workspace]` and
 # is therefore invisible to `cargo --workspace` run at the root. Derived for the same reason the
@@ -77,8 +81,8 @@ help: ## Show this help
 
 # ---------------------------------------------------------------------------- #
 # Formatting (writes)
-.PHONY: fmt fmt-swift fmt-shell fmt-python fmt-rust
-fmt: fmt-swift fmt-shell fmt-python fmt-rust ## Auto-format all languages
+.PHONY: fmt fmt-swift fmt-shell fmt-rust
+fmt: fmt-swift fmt-shell fmt-rust ## Auto-format all languages
 
 # `.swiftformat` states the division of labour: SwiftFormat owns formatting, SwiftLint owns lint.
 # The division does not survive contact with `leading_whitespace`. SwiftFormat cannot remove a blank
@@ -102,9 +106,6 @@ fmt-swift: ## Format Swift (SwiftFormat, then SwiftLint's correctable rules)
 fmt-shell: ## Format shell (shfmt)
 	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -w $(SHELL_FILES); fi
 
-fmt-python: ## Format Python (ruff format)
-	@if [ -n "$(PY_FILES)" ]; then ruff format $(PY_FILES); fi
-
 # rustfmt.toml turns on nightly-only options (wrap_comments, group_imports, format_strings …).
 # Only the FORMATTER needs nightly; the crate itself builds and tests on stable.
 # EVERY workspace, matching `lint-rust` — the daemons each have their own (see the note there), and a
@@ -120,13 +121,12 @@ fix: fmt ## Format + apply all safe lint autofixes
 	@# Every workspace, for the reason `fmt-rust` and `lint-rust` are: `cd rust && … --workspace`
 	@# autofixes the root's four members and leaves the other sixteen crates for `make lint` to fail on.
 	-@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo clippy --workspace --all-targets --fix --allow-dirty --allow-staged) || true; done
-	-[ -n "$(PY_FILES)" ] && ruff check --fix $(PY_FILES)
 	-[ -n "$(SHELL_FILES)" ] && shellcheck -f diff $(SHELL_FILES) | git apply --allow-empty 2>/dev/null
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-python lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor lint-invariants
-LINTERS := lint-swift lint-shell lint-python lint-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor lint-invariants
+.PHONY: lint lint-swift lint-shell lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor lint-invariants
+LINTERS := lint-swift lint-shell lint-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor lint-invariants
 
 # The seven linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
 # and serially they were the inner loop's largest fixed cost: 55 s, of which `lint-supervisor` alone
@@ -200,15 +200,11 @@ invariants-test: ## cargo test for the ratchets and their break-tests
 # The `if` form is load-bearing. A `[ -n … ] && cmd` chain exits nonzero on an EMPTY file
 # list, and the `|| true` that silences THAT silences every real diagnostic with it: the tool
 # prints its findings and the gate still passes. `if` yields 0 for the empty list and the
-# tool's own exit status otherwise. Same tools, flags and file sets as the CI `shell-python`
-# job, so local green implies CI green rather than the reverse.
+# tool's own exit status otherwise. Same tools, flags and file set as the CI `shell` job, so local
+# green implies CI green rather than the reverse.
 lint-shell: ## shellcheck + shfmt --diff
 	@if [ -n "$(SHELL_FILES)" ]; then shellcheck $(SHELL_FILES); fi
 	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -d $(SHELL_FILES); fi
-
-lint-python: ## ruff check + ruff format --check
-	@if [ -n "$(PY_FILES)" ]; then ruff check $(PY_FILES); fi
-	@if [ -n "$(PY_FILES)" ]; then ruff format --check $(PY_FILES); fi
 
 # Rust: clippy at all/pedantic/nursery/cargo + a curated restriction slice, every group DENY
 # (rust/Cargo.toml `[workspace.lints]`), so `-D warnings` is the belt to those braces. `--all-targets`
@@ -268,7 +264,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-macos-apps check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
+.PHONY: check quick check-ios check-macos-apps check-ios-tests build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install devtools devtools-test dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
 check: lint build test miri golden check-ios check-macos-apps ## lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -453,6 +449,16 @@ screend-test: ## cargo test for the screen engine
 
 screend-install: ## Build + (re)install the com.slopdesk.screend LaunchAgent
 	bash scripts/install-screend.sh
+
+# The operator tools (rust/slopdesk-devtools): the herdr sync + parity harness, the Swift access
+# raiser, the input synclient. Not part of `build` — nothing ships them and no gate runs them, so
+# they are built when a harness asks for them (`herdr-sync.sh`, `video-input-test.sh`) and not on
+# the inner loop. Their tests DO run in `test-rust`, via the workspace glob.
+devtools: ## Build the operator tools (rust/slopdesk-devtools)
+	cd rust/slopdesk-devtools && cargo build --release
+
+devtools-test: ## cargo test for the operator tools
+	cd rust/slopdesk-devtools && cargo test
 
 # PATH 4's daemon (docs/53): the file-drop endpoint clients dial DIRECTLY on `terminalPort + 2`.
 # hostd no longer binds that port or sees a body byte — superd spawns dropd and keeps it, so an
@@ -788,7 +794,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test invariants-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the running-application reads + the cursor shape + the accessibility tree + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + sidecar versions + code-server profile) + swift test with the green-tree cache
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the running-application reads + the cursor shape + the accessibility tree + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + sidecar versions + code-server profile + the operator tools) + swift test with the green-tree cache
 	bash scripts/pre-push-test.sh
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the
@@ -856,7 +862,7 @@ provision-check: ## Report which pinned deps are present; download nothing
 # product: a formula drifting a minor version changes a lint message, it does not put the panel on
 # a workbench three releases old. The deps that DO decide product behaviour are in `provision`.
 install-tools: hooks ## Install all required tools (brew) and the git hooks
-	brew install swiftlint swiftformat shellcheck shfmt ruff prek git-cliff xcodegen
+	brew install swiftlint swiftformat shellcheck shfmt prek git-cliff xcodegen
 
 hooks: ## Install the prek git hooks (pre-commit + pre-push)
 	prek install

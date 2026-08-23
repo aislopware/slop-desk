@@ -33,7 +33,9 @@ env SLOPDESK_INPUT_TRACE=1 SLOPDESK_APP_SUPPORT_DIR="${STATE}" \
   .build/release/slopdesk-videohostd --window-id "${WID}" --media-port 9000 --cursor-port 9001 --scale 2 > "${HLOG}" 2>&1 &
 echo "host pid $! (wid=${WID})"
 sleep 2.5
-python3 "$(dirname "${BASH_SOURCE[0]}")/video-input-synclient.py" "$@"
+SYNCLIENT="$(pwd)/rust/slopdesk-devtools/target/release/slopdesk-synclient"
+[[ -x "${SYNCLIENT}" ]] || (cd rust/slopdesk-devtools && cargo build --release)
+"${SYNCLIENT}" "$@"
 sleep 1.5
 echo "=== INJECTED ORDER ==="
 grep "inject #" "${HLOG}" | sed -E 's/.*\[inject #([0-9]+)\]: /#\1 /' | tr '\n' ' '

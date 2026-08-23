@@ -5,9 +5,9 @@
 //! `prompt_box_body` by construction, so the veto never saw the thing it was written to stop.
 //!
 //! This is the structural fix, plus the two `claude` rules it earns. It is not specific to those
-//! rules, and it costs herdr parity for the `claude` manifest only (`scripts/herdr-differential.py`
-//! names them in `DIVERGED_RULES`; `scripts/gen-bundled-manifests.py` refuses to overwrite a
-//! manifest carrying the marker these rules are commented with).
+//! rules, and it costs herdr parity for the `claude` manifest only (`slopdesk-herdr differential`
+//! names them in `DIVERGED_RULES`; `slopdesk-herdr manifests` refuses to overwrite a manifest
+//! carrying the marker these rules are commented with).
 #![expect(
     clippy::expect_used,
     reason = "a panic in a test is the failure report, not a fault"

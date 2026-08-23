@@ -325,8 +325,9 @@ all — but a hook-free pane has no tier 1, and for that pane these guards ARE t
 - Tier 2 never changes the status under coverage — only the watchdog can, and only by first
   revoking coverage.
 - The tier is keyed on the FEED, never on `AgentKind`.
-- The bundled manifests are a herdr port diffed by `scripts/herdr-differential.py` — but parity is
-  no longer the goal. `DIVERGED_RULES` in that script names the RULES we have deliberately made
+- The bundled manifests are a herdr port diffed by `slopdesk-herdr differential`
+  (`rust/slopdesk-devtools`) — but parity is no longer the goal. `DIVERGED_RULES` in that crate
+  names the RULES we have deliberately made
   BETTER than upstream (today `claude`'s `live_prompt_box` and `legacy_no_prompt_blocker`), and
   divergence is scoped to the rule: every other rule of a diverged agent stays under test, because
   "we improved one rule" must not retire the guard on the twenty we did not touch. A mismatch is

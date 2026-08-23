@@ -5,7 +5,7 @@
 //! — the same "the restart is the reload" discipline the rest of the tree runs on.
 //!
 //! One subcommand breaks that shape, deliberately: `explain`, the differential-parity oracle that
-//! `scripts/herdr-differential.py` runs next to upstream's own `herdr agent explain --json`. It
+//! `slopdesk-herdr differential` runs next to upstream's own `herdr agent explain --json`. It
 //! needs the compiled rule ladder and nothing else — no socket, no daemon — and it lives on this
 //! binary because the ladder does. (It replaced a whole Swift executable target, which existed only
 //! because the ladder used to be in Swift.)

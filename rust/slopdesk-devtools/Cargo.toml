@@ -1,0 +1,75 @@
+# `slopdesk-devtools` — the operator tools that used to be Python.
+#
+# ## Why one crate and not three
+# These three programs have nothing in common at the domain level: one re-syncs an upstream
+# vendor's manifests and diffs two detect engines, one rewrites Swift access modifiers, one
+# speaks the media wire over loopback UDP. What they DO share is the only property that decides
+# where code lives here — they are short-lived operator tools that ship in nothing. None is a
+# gate (`slopdesk-invariants` is where a gate goes), none is linked into the app, none is
+# `execve`d by a daemon. Splitting them into three workspaces would triple the clippy and
+# `cargo fmt` passes `make lint` walks to buy a boundary nobody crosses.
+#
+# ## Its own workspace, for the usual reason
+# Profiles are workspace-global. The differential harness forks two release binaries some tens of
+# thousands of times and holds the whole corpus in memory; `rust/Cargo.toml`'s `opt-level = "z"`
+# startup-tuned profile is exactly wrong for it, and that profile is the entire reason the
+# short-lived programs share a workspace in the first place.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-devtools"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Operator tools: the herdr sync + parity harness, the Swift access raiser, the input synclient"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_devtools"
+path = "src/lib.rs"
+
+[[bin]]
+name = "slopdesk-herdr"
+path = "src/bin/herdr.rs"
+
+[[bin]]
+name = "slopdesk-swift-access"
+path = "src/bin/swift_access.rs"
+
+[[bin]]
+name = "slopdesk-synclient"
+path = "src/bin/synclient.rs"
+
+[dependencies]
+# The access raiser is a line scanner over SwiftFormat-clean source, which is what makes a regex
+# the right reader rather than a shortcut — and the same DFA-backed crate the invariants gate
+# takes, for the same reason: a pattern cannot blow up on input a foreign repo chose.
+regex = "1"
+# The differential forks two binaries per case and there are tens of thousands of cases. The work
+# is entirely wait, and the cases are independent by construction.
+rayon = "1"
+# Both engines answer in JSON and the diff is FIELD-level. Hand-rolling a reader for a document
+# upstream controls is the classic place to be wrong, and the projection has to compare values
+# structurally — `"1.0"` and `1.0` are not the same answer.
+serde_json = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+# Disabled, with reasons:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, the fused
+#   multiply-add `CLAUDE.md` forbids. The synclient's `x1 + (x2 - x1) * t` is a coordinate that
+#   crosses the wire, so rounding it once instead of twice changes bytes the host receives.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
+[profile.release]
+opt-level = 3

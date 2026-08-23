@@ -6,13 +6,13 @@
 #
 #   1. fetch upstream, show what changed under src/detect since the pin
 #   2. check out the target commit and re-sync rust/slopdesk-screend/manifests/*.toml
-#      verbatim (gen-bundled-manifests.py — fails loudly if the manifest SET changed)
+#      verbatim (`slopdesk-herdr manifests` — fails loudly if the manifest SET changed)
 #   3. list src/detect *.rs changes — engine-code changes need a manual port, but even an
 #      unread one cannot slip through: step 5 diffs the real binaries
 #   4. build the herdr oracle binary (vendored libghostty-vt needs Zig 0.15.2 + the xcrun
 #      SDK shim from ThirdParty/ghostty — see libghostty build recipe) and slopdesk's own
 #      oracle, `slopdesk-screend explain`
-#   5. run scripts/herdr-differential.py: ~10k generated screens through BOTH engines,
+#   5. run `slopdesk-herdr differential`: ~10k generated screens through BOTH engines,
 #      field-level diff of the full evaluation traces (winner, per-rule matched flags,
 #      region bytes + previews)
 #   6. run the screend parity test suite
@@ -67,8 +67,12 @@ DIRTY="$(git -C "${HERDR_DIR}" status --porcelain -- src)"
 [[ -z "${DIRTY}" ]] || fail "herdr checkout has local src changes — clean it first"
 git -C "${HERDR_DIR}" checkout --quiet "${TARGET_SHA}"
 
+log "building the operator tools (slopdesk-herdr)…"
+(cd "${REPO_ROOT}/rust/slopdesk-devtools" && cargo build --release)
+DEVTOOLS="${REPO_ROOT}/rust/slopdesk-devtools/target/release"
+
 log "re-syncing rust/slopdesk-screend/manifests/*.toml from upstream…"
-python3 "${REPO_ROOT}/scripts/gen-bundled-manifests.py" --herdr-dir "${HERDR_DIR}"
+"${DEVTOOLS}/slopdesk-herdr" manifests --repo-root "${REPO_ROOT}" --herdr-dir "${HERDR_DIR}"
 
 RS_CHANGES="$(git -C "${HERDR_DIR}" diff --name-only "${PIN}" "${TARGET_SHA}" -- 'src/detect/*.rs' 'src/detect/manifest/*.rs' || true)"
 if [[ -n "${RS_CHANGES}" ]]; then
@@ -93,7 +97,7 @@ log "building the ported engine's oracle (slopdesk-screend explain)…"
 (cd "${REPO_ROOT}/rust/slopdesk-screend" && cargo build --release)
 
 log "running the differential parity harness…"
-python3 "${REPO_ROOT}/scripts/herdr-differential.py" --herdr-dir "${HERDR_DIR}"
+"${DEVTOOLS}/slopdesk-herdr" differential --repo-root "${REPO_ROOT}" --herdr-dir "${HERDR_DIR}"
 
 log "running the screend parity test suite…"
 (cd "${REPO_ROOT}/rust/slopdesk-screend" && cargo test | tail -12)
