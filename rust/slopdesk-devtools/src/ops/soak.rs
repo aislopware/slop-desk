@@ -18,6 +18,10 @@
 //! threshold. It is NOT a CI gate — it needs a real PTY and ~80 seconds of wall clock. Run it after
 //! touching the fan-out, the subscriber set, the out-FIFO, the queue gate, or the retention buffer.
 //!
+//! One precondition it cannot supply for itself: an installed `slopdesk-superd`. hostd does not
+//! fork shells — superd does, so that a pane can outlive the host serving it — so without one every
+//! pane this harness opens is refused and no property can even be attempted. `make superd-install`.
+//!
 //! ## What the port changed, and the one thing it could not
 //! The FIFO-plus-`sleep 100000` dance is gone: a client's stdin is a pipe this process holds open
 //! for the whole run, which is what the FIFO was imitating. The pid FILE is gone too — it existed
@@ -166,15 +170,26 @@ struct Member {
     child: Child,
     stdin: ChildStdin,
     out: PathBuf,
+    errors: PathBuf,
 }
 
 impl Member {
     /// Write to the pane, unbuffered — the harness's next step depends on the shell seeing it.
+    ///
+    /// A client that has already died turns this into `EPIPE`, and `EPIPE` on its own names neither
+    /// the client nor the reason. So the failure carries the client's OWN stderr: the precondition
+    /// this harness cannot supply is an installed `slopdesk-superd`, and without one every client
+    /// exits during the handshake with `mux: channel refused by host` — which is the line that says
+    /// "run `make superd-install`", where a broken pipe says nothing at all.
     fn feed(&mut self, text: &str) -> Result<(), String> {
         self.stdin
             .write_all(text.as_bytes())
             .and_then(|()| self.stdin.flush())
-            .map_err(|error| format!("{}: {error}", self.name))
+            .map_err(|error| {
+                let said = fs::read_to_string(&self.errors).unwrap_or_default();
+                let last = said.lines().last().unwrap_or("(it said nothing)");
+                format!("{}: {error} — the client said: {last}", self.name)
+            })
     }
 
     /// Everything the client has printed so far.
@@ -250,8 +265,8 @@ impl Soak {
     fn start_client(&self, name: &str, session: &str) -> Result<Member, String> {
         let out = self.work.join(format!("{name}.out"));
         let sink = fs::File::create(&out).map_err(|error| format!("{}: {error}", out.display()))?;
-        let errors = fs::File::create(self.work.join(format!("{name}.err")))
-            .map_err(|error| format!("{name}.err: {error}"))?;
+        let said = self.work.join(format!("{name}.err"));
+        let errors = fs::File::create(&said).map_err(|error| format!("{name}.err: {error}"))?;
         let mut child = Command::new(&self.client)
             .args([
                 "--host",
@@ -277,6 +292,7 @@ impl Soak {
             child,
             stdin,
             out,
+            errors: said,
         })
     }
 
