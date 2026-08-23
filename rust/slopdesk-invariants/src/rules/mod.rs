@@ -23,6 +23,7 @@ pub mod host_probes;
 pub mod hot_paths;
 pub mod ink_floor;
 pub mod latency_ratchets;
+pub mod macui_memos;
 pub mod overlay_split;
 pub mod pane_wiring;
 pub mod panel_floor;
@@ -906,6 +907,51 @@ pub fn registry() -> Vec<Rule> {
             name: "catalog-indexed-once",
             origin: "docs/55 §8",
             check: held_values::a_catalog_is_indexed_not_rescanned,
+        },
+        Rule {
+            name: "macui-git-ladder",
+            origin: "docs/55 §8",
+            check: macui_memos::the_git_line_stays_measured,
+        },
+        Rule {
+            name: "macui-corpus-once",
+            origin: "docs/55 §8",
+            check: macui_memos::open_quickly_builds_its_corpus_once,
+        },
+        Rule {
+            name: "macui-unthemed-cache",
+            origin: "docs/55 §8",
+            check: macui_memos::the_canvas_remembers_unthemed_leaves,
+        },
+        Rule {
+            name: "macui-leaf-kind",
+            origin: "docs/55 §8",
+            check: macui_memos::the_gui_leaf_remembers_its_kind,
+        },
+        Rule {
+            name: "macui-pane-count",
+            origin: "docs/55 §8",
+            check: macui_memos::the_container_counts_without_arrays,
+        },
+        Rule {
+            name: "macui-terminal-reach",
+            origin: "docs/55 §8",
+            check: macui_memos::the_terminal_reach_is_a_set,
+        },
+        Rule {
+            name: "macui-glyph-guard",
+            origin: "docs/55 §8",
+            check: macui_memos::the_plate_guards_its_glyph_name,
+        },
+        Rule {
+            name: "macui-spinner-dots",
+            origin: "docs/55 §8",
+            check: macui_memos::both_spinners_fill_through_coregraphics,
+        },
+        Rule {
+            name: "macui-divider-readout",
+            origin: "docs/55 §8",
+            check: macui_memos::the_divider_hides_before_it_cuts,
         },
         Rule {
             name: "video-path-lends",
