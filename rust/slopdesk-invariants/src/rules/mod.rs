@@ -7,19 +7,24 @@
 
 pub mod agent_fold;
 pub mod byte_scanners;
+pub mod chrome_split;
 pub mod cli_config;
 pub mod client_layers;
 pub mod client_memos;
 pub mod code_panel;
 pub mod crate_policy;
+pub mod cross_twins;
 pub mod device_frames;
 pub mod device_streams;
 pub mod host_probes;
 pub mod hot_paths;
 pub mod overlay_split;
+pub mod pane_wiring;
+pub mod panel_floor;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
+pub mod settings_catalog;
 pub mod split_surfaces;
 pub mod superd_bodies;
 pub mod supervisor_envelope;
@@ -771,6 +776,76 @@ pub fn registry() -> Vec<Rule> {
             name: "stage-d-ledger",
             origin: "scripts/check-supervisor.sh",
             check: overlay_split::the_stage_d_ledger_is_empty,
+        },
+        Rule {
+            name: "split-navigator",
+            origin: "scripts/check-supervisor.sh",
+            check: chrome_split::one_navigator_per_platform,
+        },
+        Rule {
+            name: "split-titlebar-band",
+            origin: "scripts/check-supervisor.sh",
+            check: chrome_split::one_titlebar_band_one_connection_reading,
+        },
+        Rule {
+            name: "split-panel-chrome",
+            origin: "scripts/check-supervisor.sh",
+            check: chrome_split::one_panel_chrome_one_tab_reading,
+        },
+        Rule {
+            name: "device-panel-floor",
+            origin: "scripts/check-supervisor.sh",
+            check: panel_floor::the_device_panel_floor_builds_for_the_phone,
+        },
+        Rule {
+            name: "device-panels-both-platforms",
+            origin: "scripts/check-supervisor.sh",
+            check: panel_floor::both_device_panels_draw_on_both_platforms,
+        },
+        Rule {
+            name: "code-panel-crosses",
+            origin: "scripts/check-supervisor.sh",
+            check: panel_floor::the_code_panel_crosses,
+        },
+        Rule {
+            name: "terminal-pane-wiring",
+            origin: "scripts/check-supervisor.sh",
+            check: pane_wiring::one_terminal_wiring_and_its_teardown_order,
+        },
+        Rule {
+            name: "escape-monitor",
+            origin: "scripts/check-supervisor.sh",
+            check: pane_wiring::one_escape_monitor_installed_and_removed_once,
+        },
+        Rule {
+            name: "phone-key-path",
+            origin: "scripts/check-supervisor.sh",
+            check: pane_wiring::the_phone_key_path_is_rust,
+        },
+        Rule {
+            name: "tree-repair",
+            origin: "scripts/check-supervisor.sh",
+            check: cross_twins::one_tree_repair_in_rust,
+        },
+        Rule {
+            name: "cross-language-twins",
+            origin: "scripts/check-supervisor.sh",
+            check: cross_twins::four_cross_language_twins,
+        },
+        Rule {
+            name: "loop-shaped-crossings",
+            origin: "scripts/check-supervisor.sh",
+            check: cross_twins::the_loop_shaped_crossings_are_whole_collection_doors,
+        },
+        Rule {
+            name: "settings-option-groups",
+            origin: "scripts/check-supervisor.sh",
+            check: settings_catalog::the_option_groups_cross_whole_and_once,
+        },
+        Rule {
+            name: "settings-constant-answers",
+            origin: "scripts/check-supervisor.sh",
+            check: settings_catalog::the_cheat_sheet_and_menu_bar_hold_their_constants,
         },
         Rule {
             name: "untrusted-regex-engine",

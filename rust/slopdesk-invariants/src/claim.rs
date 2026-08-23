@@ -246,6 +246,23 @@ pub enum Claim {
         /// The sentence, with `{entry}` where the name goes.
         message: &'static str,
     },
+    /// SOME file under `root` must mention every one of these names — the shell's
+    /// `grep -rq "$name" Sources/Some/Dir/`.
+    ///
+    /// Separate from [`Claim::Mentions`] because the claim is about the HALF, not the file: "the
+    /// Mac's navigator reads `SidebarSections`" is true wherever in that column it is read, and
+    /// pinning it to one file would make an ordinary split of a big view look like a regression.
+    /// A corpus that strips to nothing fails rather than passing, for the reason
+    /// [`Claim::NoneUnder`] refuses one: a drained directory satisfies "no file mentions it" and
+    /// "some file mentions it" cannot be answered at all.
+    MentionsUnder {
+        /// The directory to read, recursively.
+        root: &'static str,
+        /// Each name, as a literal.
+        names: &'static [&'static str],
+        /// The sentence, with `{entry}` where the name goes.
+        message: &'static str,
+    },
     /// A file must match a pattern at least `minimum` times.
     ///
     /// For a rule that cannot name what it is looking for: "every tunable falls back to a field of
@@ -340,6 +357,81 @@ pub enum Claim {
         /// arriving from the other side.
         exempt: &'static [&'static str],
         /// The sentence, with `{files}` where the offenders go.
+        message: &'static str,
+    },
+    /// No FILE under `roots` may match `pattern` — unless it also matches `rescued_by`.
+    ///
+    /// The file-level sibling of [`Claim::NoneUnder`], and the two are not interchangeable. A ban on
+    /// "this file is macOS-only" cannot be asked line-wise: the offending shape is one line PRESENT
+    /// and another line ABSENT, which no single line can carry. Where `NoneUnder`'s `unless`
+    /// excuses a line, this excuses a FILE.
+    NoFileUnder {
+        /// Path prefixes to scan.
+        roots: &'static [&'static str],
+        /// Only files with one of these extensions are read.
+        extensions: &'static [&'static str],
+        /// The pattern that makes a file an offender.
+        pattern: &'static str,
+        /// The pattern that excuses one, if any.
+        rescued_by: Option<&'static str>,
+        /// Which view to read.
+        view: View,
+        /// Paths that may match, each because somebody decided so.
+        exempt: &'static [&'static str],
+        /// The sentence, with `{files}` where the offenders go.
+        message: &'static str,
+    },
+    /// A pattern must appear between two other patterns — the shell's `awk '/a/,/b/'` with a `grep`
+    /// inside it.
+    ///
+    /// For the handful of rules whose subject is ORDER, which no type can express. The one this was
+    /// written for: `clearSecureInput` releases the process-global `EnableSecureEventInput` FIRST
+    /// and only then reaches for the model, so the teardown line must sit ABOVE the guard. Below it,
+    /// the release is skipped for exactly the pane that needs it most — one whose model has already
+    /// gone — and the lock outlives the app's own window, taking the keyboard out of every other app.
+    Within {
+        /// Repo-relative path.
+        path: &'static str,
+        /// The line the range opens on.
+        start: &'static str,
+        /// The line it closes on.
+        end: &'static str,
+        /// What must appear inside it.
+        pattern: &'static str,
+        /// Which view to read.
+        view: View,
+        /// What an absence means.
+        message: &'static str,
+    },
+    /// These roots must together hold at least `minimum` files of these extensions.
+    ///
+    /// The floor under a ban, and it exists because this gate has died quietly three times by
+    /// resolving to an empty file list. A ban over nothing passes; a ban over nothing that SAYS so
+    /// is a ban. Written as a separate claim rather than folded into [`Claim::NoneUnder`] because
+    /// the number is a judgement — "well clear of what these directories hold today" — and it
+    /// belongs beside the rule that needs it rather than defaulted for every rule that does not.
+    Populated {
+        /// Path prefixes to count under.
+        roots: &'static [&'static str],
+        /// Only files with one of these extensions are counted.
+        extensions: &'static [&'static str],
+        /// The floor.
+        minimum: usize,
+        /// The sentence, with `{found}` where the count goes.
+        message: &'static str,
+    },
+    /// A file's FIRST line of code may not be one of these.
+    ///
+    /// "Wrapped whole in `#if os(macOS)`" is a claim about position, not presence: a gate INSIDE the
+    /// file is ordinary per-platform code, and a gate as the opening line is the wrapper that makes
+    /// the whole file compile to nothing on the other platform — a green build over a missing
+    /// feature. Only the opening line can tell those apart.
+    Opening {
+        /// Repo-relative path.
+        path: &'static str,
+        /// The lines that may not open the file, compared after trimming.
+        forbidden: &'static [&'static str],
+        /// What an opening match means.
         message: &'static str,
     },
     /// Two sets, extracted from two places, must be equal.
@@ -453,6 +545,19 @@ impl Claim {
                     for name in *names {
                         report.fail_if(!source.text.contains(*name), fill(message, "entry", name));
                     }
+                }
+            },
+            Self::MentionsUnder { root, names, message } => {
+                let corpus: Vec<_> = tree.under(root).collect();
+                if corpus.is_empty() {
+                    report.fail(format!(
+                        "{root} holds no files — a drained directory cannot answer {message}"
+                    ));
+                    return;
+                }
+                for name in *names {
+                    let read = corpus.iter().any(|(_, source)| source.text.contains(*name));
+                    report.fail_if(!read, fill(message, "entry", name));
                 }
             },
             Self::AtLeast {
@@ -589,6 +694,91 @@ impl Claim {
                 if !offenders.is_empty() {
                     let named: Vec<&str> = offenders.iter().map(String::as_str).collect();
                     report.fail(fill(message, "files", &named.join(", ")));
+                }
+            },
+            Self::NoFileUnder {
+                roots,
+                extensions,
+                pattern,
+                rescued_by,
+                view,
+                exempt,
+                message,
+            } => {
+                let mut offenders = BTreeSet::new();
+                for root in *roots {
+                    for (path, source) in tree.under(root) {
+                        let display = path.to_string_lossy().into_owned();
+                        let excused = exempt.iter().any(|entry| {
+                            *entry == display || (entry.ends_with('/') && display.starts_with(*entry))
+                        });
+                        let matching_extension = path
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .is_some_and(|ext| extensions.contains(&ext));
+                        if excused || !matching_extension {
+                            continue;
+                        }
+                        let haystack = view.of(source);
+                        if !text::matches(&haystack, pattern) {
+                            continue;
+                        }
+                        if rescued_by.is_some_and(|rescue| text::matches(&haystack, rescue)) {
+                            continue;
+                        }
+                        offenders.insert(display);
+                    }
+                }
+                if !offenders.is_empty() {
+                    let named: Vec<&str> = offenders.iter().map(String::as_str).collect();
+                    report.fail(fill(message, "files", &named.join(", ")));
+                }
+            },
+            Self::Within {
+                path,
+                start,
+                end,
+                pattern,
+                view,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, path, message) {
+                    let block = text::range(&view.of(source), start, end);
+                    report.fail_if(!text::matches(&block, pattern), message.to_owned());
+                }
+            },
+            Self::Populated {
+                roots,
+                extensions,
+                minimum,
+                message,
+            } => {
+                let found = roots
+                    .iter()
+                    .flat_map(|root| tree.under(root))
+                    .filter(|(path, _)| {
+                        path.extension()
+                            .and_then(|ext| ext.to_str())
+                            .is_some_and(|ext| extensions.contains(&ext))
+                    })
+                    .count();
+                report.fail_if(found < *minimum, fill(message, "found", &found.to_string()));
+            },
+            Self::Opening {
+                path,
+                forbidden,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, path, message) {
+                    let opens = source
+                        .text
+                        .lines()
+                        .map(str::trim)
+                        .find(|line| !line.is_empty() && !line.starts_with("//"));
+                    report.fail_if(
+                        opens.is_some_and(|line| forbidden.contains(&line)),
+                        message.to_owned(),
+                    );
                 }
             },
             Self::SameSet { label, swift, rust } => {
