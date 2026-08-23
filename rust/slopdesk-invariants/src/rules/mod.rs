@@ -15,6 +15,7 @@ pub mod code_panel;
 pub mod crate_policy;
 pub mod cross_twins;
 pub mod device_frames;
+pub mod device_law;
 pub mod device_streams;
 pub mod host_probes;
 pub mod hot_paths;
@@ -848,6 +849,21 @@ pub fn registry() -> Vec<Rule> {
             name: "settings-constant-answers",
             origin: "scripts/check-supervisor.sh",
             check: settings_catalog::the_cheat_sheet_and_menu_bar_hold_their_constants,
+        },
+        Rule {
+            name: "device-panel-law",
+            origin: "scripts/check-supervisor.sh",
+            check: device_law::one_device_panel_law,
+        },
+        Rule {
+            name: "client-pasteboard-and-open",
+            origin: "scripts/check-supervisor.sh",
+            check: device_law::one_pasteboard_and_one_open,
+        },
+        Rule {
+            name: "small-rules-spelled-once",
+            origin: "scripts/check-supervisor.sh",
+            check: device_law::the_small_rules_are_spelled_once,
         },
         Rule {
             name: "panel-vocabulary",
