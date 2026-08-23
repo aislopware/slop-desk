@@ -1966,92 +1966,14 @@ fi
 # built from a table at run time (`android-level-array`); and the cursor style's one label, the
 # catalog's (`one-cursor-label`).
 
-# ── 1. No second traversal check in Swift ─────────────────────────────────────────────────────────
-# CATCHES: a Swift file deciding for itself whether a path contains `..`. That predicate is exactly
-# what the three deleted implementations each spelled differently, and the two spellings that were
-# wrong were wrong in ways no test in their own file could see. `PathConfinement` is the only Swift
-# that may hold an opinion about a path component, and it holds it by asking Rust.
-if grep -rnE '(containsTraversal|contains\("\.\."\)|hasPrefix\("\.\./"\)|== "\.\."|components\(\).*"\.\.")' \
-  Sources/ --include='*.swift' 2> /dev/null; then
-  fail "a Swift file is deciding about a '..' component itself — path confinement is
-  slopdesk_path_confine's answer alone (rust/slopdesk-probe/src/path_confine.rs)."
-fi
-
-# ── 2. No string-prefix containment in the host ───────────────────────────────────────────────────
-# CATCHES: the exact shape `CodeBridgeServer.contains` had — `path.hasPrefix(root)` — which treats
-# `/a/repo-evil` as a child of `/a/repo` unless a separator guard is bolted on beside it, and which
-# says nothing at all about `..`. A containment answer that is a string comparison is a bug whose
-# next reader will assume the guard is somewhere.
-if grep -rnE '\.hasPrefix\((root|projectRoot|cwd|folder|workspaceRoot)\b' Sources/ \
-  --include='*.swift' 2> /dev/null; then
-  fail "a Swift file is testing containment with hasPrefix — use PathConfinement.isWithin, which
-  is component-wise and refuses '..'."
-fi
-
-# ── 3. The three deleted helpers stay deleted ─────────────────────────────────────────────────────
-# CATCHES: the port being half-reverted. `pathComponents`/`isWithin([String],root:)` were the
-# decoder's own splitter and prefix match; a `contains(root:path:)` with a BODY is the bridge's
-# string test coming back. All three compiled and all three passed their tests while disagreeing
-# with each other, so their absence is the only durable evidence the port happened.
-if grep -rnE 'static func (pathComponents|isWithin)\(_ ' Sources/ --include='*.swift' 2> /dev/null; then
-  fail "MetadataResponseBuilder's own path splitter/prefix match is back — the rule is
-  rust/slopdesk-probe/src/path_confine.rs."
-fi
-if grep -rn 'func contains(root:' Sources/ --include='*.swift' -A 3 2> /dev/null | grep -q 'hasPrefix'; then
-  fail "CodeBridgeServer.contains has a body again — it must forward to PathConfinement.isWithin."
-fi
-
-# ── 4. The rule stays LEXICAL ─────────────────────────────────────────────────────────────────────
-# CATCHES: someone "fixing" the documented symlink residual with `canonicalize`. That is not a fix
-# and the module says why at length: it needs the path to EXIST (so a missing file becomes a refusal
-# rather than a clean not-found), it refuses legitimate paths whose ROOT is itself a symlink (/tmp on
-# macOS), and it still loses to a symlink swap between the check and the open. Changing this is a
-# design decision, not a patch, and it must not arrive as a one-line diff.
-# (Comment lines are excluded: the module's own prose names `canonicalize` several times, to say
-#  why it is NOT used. A ban that fires on its own rationale is a ban that gets deleted.)
-if grep -rnE 'canonicalize' rust/slopdesk-probe/src/ 2> /dev/null | grep -vE ':[0-9]+:[[:space:]]*//'; then
-  fail "slopdesk-probe reached for canonicalize — path confinement is LEXICAL on purpose; see the
-  'residual' section of rust/slopdesk-probe/src/path_confine.rs before changing it."
-fi
-
-# ── 5. The rule has exactly one home ──────────────────────────────────────────────────────────────
-# CATCHES: a second Rust crate growing its own confinement. `path_confine` is reached two ways — the
-# probe calls it directly, hostd calls it through the door — and both must land on the same file.
-CONFINE_HOMES=$(grep -rlE 'fn (confine|is_confinable_absolute)\(' rust/ --include='*.rs' 2> /dev/null |
-  grep -v '/target/' | grep -v 'slopdesk-ffi/src/path_confine.rs' || true)
-if [[ "${CONFINE_HOMES}" != "rust/slopdesk-probe/src/path_confine.rs" ]]; then
-  fail "path confinement must live in exactly one file (rust/slopdesk-probe/src/path_confine.rs);
-  found: ${CONFINE_HOMES:-nothing}"
-fi
-
-# ── 6. The door is declared where Swift can reach it ──────────────────────────────────────────────
-# CATCHES: the `pub mod`/header/module trio drifting. `build-ffi.sh` already checks every declared
-# symbol against every slice, so this only has to catch the case it cannot: a module that exists and
-# is not exported, which fails as a LINK error in the app rather than in the gate.
-for symbol in slopdesk_path_confine slopdesk_path_is_confinable_absolute; do
-  grep -q "${symbol}" rust/slopdesk-ffi/include/slopdesk_ffi.h ||
-    fail "${symbol} is missing from slopdesk_ffi.h — Swift cannot link the confinement rule."
-done
-grep -q '^pub mod path_confine;' rust/slopdesk-ffi/src/lib.rs ||
-  fail "rust/slopdesk-ffi/src/lib.rs does not export path_confine — the header promises a symbol
-  the library will not carry."
-
-# A1 — the mux-type VOCABULARY is asked once and a byte outside it is REFUSED.
-#
-# CATCHES: a `default:` arm in the near-side rebuild that answers a frame for a type byte the door
-# never accepted. It used to answer `.windowAdjust`, which is flow-control CREDIT: had the two type
-# lists stopped agreeing, an unrecognised byte would have granted a peer a send window out of a
-# struct field nothing filled. `unpack` in rust/slopdesk-ffi/src/mux_envelope.rs answers `None` for
-# that input, and the face must answer the same. Pinned POSITIVELY — as a `MuxFrameType(rawValue:)`
-# lookup with a refusal behind it — because banning `default:` in the file would also ban the one
-# legitimate `default:` in the verdict switch, and a pattern ban can see a shape but never an intent.
-mux_envelope_swift=Sources/SlopDeskProtocol/Mux/MuxEnvelope.swift
-if ! grep -q 'MuxFrameType(rawValue: flat.mux_type)' "${mux_envelope_swift}"; then
-  fail "${mux_envelope_swift} stopped refusing an unknown mux type — the type list is Rust's"
-fi
-if ! grep -q '_ => None' rust/slopdesk-ffi/src/mux_envelope.rs; then
-  fail "rust/slopdesk-ffi/src/mux_envelope.rs stopped refusing an unknown mux type — the face mirrors it"
-fi
+# PORTED to `rust/slopdesk-invariants` — `rules::path_confinement`: no Swift file deciding about a
+# `..` component, testing containment with a prefix, or growing the decoder's splitter back, with the
+# bridge's `contains(root:)` body caught as the two-line WINDOW it is (`no-second-path-opinion`); the
+# rule staying LEXICAL — `canonicalize` banned in code but not in the prose that explains why — and
+# having exactly one home under `rust/`, floored by asserting that home still declares it
+# (`confinement-lexical-and-singular`); the `pub mod`/header trio that keeps the door linkable
+# (`confinement-door-reachable`); and the mux-type vocabulary asked once with an unknown byte refused
+# on both sides (`mux-type-refused`).
 
 # A3 — an undecodable Android stream ENDS rather than defaulting.
 #

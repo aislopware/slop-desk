@@ -29,6 +29,7 @@ pub mod overlay_split;
 pub mod pane_wiring;
 pub mod panel_floor;
 pub mod panel_predicates;
+pub mod path_confinement;
 pub mod panel_shells;
 pub mod rust_boundaries;
 pub mod screend;
@@ -955,6 +956,26 @@ pub fn registry() -> Vec<Rule> {
             name: "macui-divider-readout",
             origin: "docs/55 §8",
             check: macui_memos::the_divider_hides_before_it_cuts,
+        },
+        Rule {
+            name: "no-second-path-opinion",
+            origin: "docs/55 §6",
+            check: path_confinement::no_second_path_opinion_in_swift,
+        },
+        Rule {
+            name: "confinement-lexical-and-singular",
+            origin: "docs/55 §6",
+            check: path_confinement::the_confinement_rule_is_lexical_and_singular,
+        },
+        Rule {
+            name: "confinement-door-reachable",
+            origin: "docs/55 §2",
+            check: path_confinement::the_confinement_door_is_reachable,
+        },
+        Rule {
+            name: "mux-type-refused",
+            origin: "docs/20 §4",
+            check: path_confinement::an_unknown_mux_type_is_refused,
         },
         Rule {
             name: "one-panel-predicate",
