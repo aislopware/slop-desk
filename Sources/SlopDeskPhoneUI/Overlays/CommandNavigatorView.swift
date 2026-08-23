@@ -22,7 +22,7 @@
 // Nothing else left this file: the card IS a drawing, `Platform::Both`, and its second renderer is a
 // later batch rather than a deletion.
 //
-// `Slate.*` tokens ONLY (raw font/colour/radius literals fail `scripts/check-ds-leaks.sh`). Cross-platform:
+// `Slate.*` tokens ONLY (raw font/colour/radius literals fail the `design-token-leaks` gate). Cross-platform:
 // the ⌃⌘O chord is macOS-only, but the overlay + its keyboard handling compile for iOS too (the toolbar /
 // menu surfaces it there), so this whole file builds under `bash scripts/check-ios.sh`.
 

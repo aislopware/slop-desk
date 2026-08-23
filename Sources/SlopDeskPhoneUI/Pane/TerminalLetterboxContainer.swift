@@ -13,7 +13,7 @@
 // The geometry is a pure value (``SlopDeskTerminal/TerminalLetterbox``) so it carries unit tests the
 // SwiftUI path cannot — INCLUDING the placement's five-way degrade-to-full-bleed, which used to be a
 // `private func` here and so was geometry `swift build` never even compiled (only `check-ios.sh` did).
-// `Slate.*` tokens ONLY — raw literals fail `scripts/check-ds-leaks.sh`. No libghostty / Metal is
+// `Slate.*` tokens ONLY — raw literals fail the `design-token-leaks` gate. No libghostty / Metal is
 // touched: the surface is placed and transformed, never reached into.
 
 #if os(iOS)

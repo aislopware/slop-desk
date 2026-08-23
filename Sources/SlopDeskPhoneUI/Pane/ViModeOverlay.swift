@@ -18,7 +18,7 @@
 // `PanelTabs.labelling`. `ViewThatFits` had to BUILD all three candidates to compare them and has no
 // AppKit equivalent at all, so an AppKit card could only have re-derived the ladder from prose.
 //
-// `Slate.*` tokens ONLY — raw font / radius / colour literals fail `scripts/check-ds-leaks.sh`. No
+// `Slate.*` tokens ONLY — raw font / radius / colour literals fail the `design-token-leaks` gate. No
 // libghostty / Metal / VideoToolbox is touched (CLAUDE.md rule #6): plain SwiftUI chips driven by the
 // pane model's observables.
 //

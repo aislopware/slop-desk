@@ -37,7 +37,7 @@
 // stated ONCE — accent border + accent wash + semibold label. No checkmark, no shimmer, no second marker.
 //
 // Colour + type come from ``SettingsInk`` / ``SettingsType`` (system semantics, not the terminal theme);
-// geometry rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
+// geometry rides `Slate.Metric` (raw font/radius/height literals fail the `design-token-leaks` gate).
 
 #if os(iOS)
 import SFSafeSymbols

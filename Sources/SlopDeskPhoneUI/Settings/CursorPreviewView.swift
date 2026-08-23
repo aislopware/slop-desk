@@ -18,7 +18,7 @@
 // pinned headlessly by `CursorColorHexTests`); what stays here is the `Color` glue, because `Color.resolve(in:)`
 // is SwiftUI's and the Mac reads its own well through `NSColor.usingColorSpace(.sRGB)`.
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
-// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
+// rides `Slate.Metric` (raw font/radius/height literals fail the `design-token-leaks` gate).
 
 #if os(iOS)
 import SlopDeskClientCore

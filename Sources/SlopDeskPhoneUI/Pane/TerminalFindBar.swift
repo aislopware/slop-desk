@@ -13,7 +13,7 @@
 // steps `navigate_search:`. The full argument is in the model's header.
 //
 // Anatomy matches `find.png` (top-trailing of the focused pane, floating card, `Slate.*` tokens ONLY —
-// raw font / radius literals fail `scripts/check-ds-leaks.sh`):
+// raw font / radius literals fail the `design-token-leaks` gate):
 //   [ query field ][ Aa case pill ][ ab whole-word pill ][ .* regex pill ][ N of M ][ ∧ prev ][ ∨ next ]
 //   [ ▣ search-all-tabs ][ × close ]
 // (`rectangle.stack` "search all tabs" escalates to cross-tab Global Search ⇧⌘F — see

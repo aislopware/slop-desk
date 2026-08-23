@@ -435,8 +435,8 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
 ## Structure, type, motion (closed ladders)
 
 - **Metrics**: 8pt grid; closed height ladder (`heightControl` 24 → `heightDrawer` 180); closed
-  radius family; `check-ds-leaks.sh` enforces no raw font/radius/height literals in
-  `Sources/SlopDeskClientUI`.
+  radius family; the `design-token-leaks` invariant enforces no raw font/radius/height literals in
+  `Sources/SlopDeskPhoneUI`.
 - **Alpha** (`Slate.Opacity`, round 13): the closed translucency scale — `faint` 0.12 (accent
   muted wash) / `wash` 0.15 (selection dose) / `dim` 0.35 (de-emphasised ink on a plate) /
   `muted` 0.6 (soft hairlines, secondary badge ink) / `scrim` 0.88 (HUD backdrop over live

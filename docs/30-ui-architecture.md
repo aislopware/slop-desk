@@ -263,7 +263,8 @@ Two sibling gates, re-verified:
 - **Live GUI proof** (real Aqua + TCC, isolated `HOME`/`CFFIXED_USER_HOME`) is `scripts/check-macos.sh`.
   The old text's ":7799" is wrong — the `--connect` e2e host daemon binds `127.0.0.1:47420`
   (`scripts/check-macos.sh:52`, `:74`, `:314`).
-- **The text-only design-system ratchet** is `scripts/check-ds-leaks.sh`, and its target moved with the
-  split: it now guards `Sources/SlopDeskPhoneUI` against a raw font-size or corner-radius literal
-  bypassing the `Slate.*` scale (`scripts/check-ds-leaks.sh:4-5`). It is not "repointed at the rebuilt
-  overlay surfaces" — that phrasing predates the token layer's third life.
+- **The text-only design-system ratchet** is the `design-token-leaks` rule in
+  `rust/slopdesk-invariants` (`src/rules/design_ratchets.rs`, ported from the `check-ds-leaks.sh` that
+  used to hold it), and its target moved with the split: it guards `Sources/SlopDeskPhoneUI` against a
+  raw font-size, corner-radius or fixed-height literal bypassing the `Slate.*` scale. It is not
+  "repointed at the rebuilt overlay surfaces" — that phrasing predates the token layer's third life.

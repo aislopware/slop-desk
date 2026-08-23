@@ -23,7 +23,7 @@
 //
 // `Slate.*` tokens for chrome; the badge is a FIXED yellow plate with BLACK text (the hint-mode spec's "yellow
 // background / black text" — theme-independent so it reads over any terminal background, the secure-input-pill
-// rationale). check-ds-leaks forbids only raw font-size / radius literals, not these colours.
+// rationale). the `design-token-leaks` gate forbids only raw font-size / radius literals, not these colours.
 //
 // Every DECISION and every WORD in this file is ``HintPresentation``'s (`SlopDeskClientCore`): the arm
 // predicate, the per-letter fade rule, the uppercasing, the dim predicate over

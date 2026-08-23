@@ -5,7 +5,7 @@
 // window on macOS (system chrome)" — described a shared view that no longer exists; see the ⚠️ below.
 //
 // Anatomy matches `screenshots/global-search.png` (`Slate.*` tokens ONLY — raw font / colour / radius literals
-// fail `scripts/check-ds-leaks.sh`):
+// fail the `design-token-leaks` gate):
 //   ┌ query field [ Aa ][ .* ] ────────────────────────────────────────┐
 //   │ N results — M tabs                                               │
 //   │ ▸ <terminal-glyph> <group title (tab)>                           │

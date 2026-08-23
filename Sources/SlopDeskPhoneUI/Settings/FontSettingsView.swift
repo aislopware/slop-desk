@@ -37,7 +37,7 @@
 // (``SettingsFontFallbackList``) and the installed-family enumeration (``InstalledFontFamilies``, still
 // CoreText, still nonisolated and cross-platform). Nothing here re-decides one of them.
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
-// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
+// rides `Slate.Metric` (raw font/radius/height literals fail the `design-token-leaks` gate).
 
 #if os(iOS)
 import SFSafeSymbols

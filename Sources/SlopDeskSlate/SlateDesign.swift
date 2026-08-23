@@ -47,7 +47,7 @@
 //     Identity hues stay OFF chrome glyphs; the status dot set is the only other colour the sidebar
 //     speaks.
 //   - The metric / type ladders are unchanged: 8pt grid, closed height ladder, JetBrains Mono
-//     instrument voice (`check-ds-leaks.sh` still enforces the closed scales).
+//     instrument voice (the `design-token-leaks` gate still enforces the closed scales).
 
 #if canImport(SwiftUI)
 import QuartzCore // CAMediaTimingFunction — ``SlateCurve``'s CoreAnimation rung, on BOTH platforms
@@ -1334,7 +1334,7 @@ package enum Slate {
         package static let islandChipInset: CGFloat = space4 + space2
 
         // The HEIGHT LADDER (MERIDIAN C1) — the closed vertical rhythm, every step a multiple of 4.
-        // View code picks a rung, never a raw `frame(height: N)` literal (`check-ds-leaks.sh` enforces it).
+        // View code picks a rung, never a raw `frame(height: N)` literal (the `design-token-leaks` gate enforces it).
         /// Popover/menu rows, chips, the titlebar clusters, plate buttons.
         package static let heightControl: CGFloat = 24
         /// Bars: the pane header, title-menu rows.
@@ -1533,7 +1533,7 @@ package enum Slate {
 
     /// Typography scale — one named role per size; UI = system, instrument/rail = JetBrains Mono (SF Mono
     /// when absent). A closed scale (no raw `.font(.system(size:))` literals in view code —
-    /// `scripts/check-ds-leaks.sh` enforces it).
+    /// the `design-token-leaks` gate enforces it).
     package enum Typeface {
         /// Large empty-state / placeholder glyph (build-status / empty pane).
         package static let display: CGFloat = 40

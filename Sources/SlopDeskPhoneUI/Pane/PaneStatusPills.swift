@@ -16,7 +16,7 @@
 //
 // WHICH chips are up, and in what order, is ``PaneStatusPillPresentation/visible(_:)``'s — not this
 // file's and not the leaf's. `Slate.*` tokens ONLY — raw font / radius / colour literals fail
-// `scripts/check-ds-leaks.sh`. No libghostty / Metal / VideoToolbox is touched (CLAUDE.md rule #6):
+// the `design-token-leaks` gate. No libghostty / Metal / VideoToolbox is touched (CLAUDE.md rule #6):
 // these are plain SwiftUI chips driven by the pane model's OBSERVABLE mirrors
 // (``TerminalViewModel/readOnlyBadgeActive`` / ``copyModeBadgeActive``), never the
 // `@ObservationIgnored` `isReadOnly`/`isCopyMode` flags the renderer's keyDown path reads.

@@ -26,7 +26,7 @@
 // degenerates into a caption per row, while the palette's results are ranked WITHIN category, so its rows
 // genuinely arrive in runs. Same rule, opposite outcome.
 //
-// `Slate.*` for DIMENSION, ``SlateOverlayInk`` for COLOUR (raw literals fail `scripts/check-ds-leaks.sh`).
+// `Slate.*` for DIMENSION, ``SlateOverlayInk`` for COLOUR (raw literals fail the `design-token-leaks` gate).
 
 #if os(iOS)
 import SFSafeSymbols

@@ -52,7 +52,7 @@
 // the dead card's nearly-elapsed timer. The host is ALWAYS mounted (it renders nothing when `toasts` is
 // empty) so an arriving toast animates in without a parent re-mount.
 //
-// `Slate.*` tokens ONLY (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`); no springs
+// `Slate.*` tokens ONLY (raw font/radius/height literals fail the `design-token-leaks` gate); no springs
 // anywhere (`Slate.Anim` is cubic-bezier only). No AppKit / `NSEvent` here, so `.onHover` simply never
 // fires on the phone — which is why the ✕ is unconditional on a sticky card.
 

@@ -35,7 +35,7 @@ It is cheap because nothing in it re-does work whose inputs did not move:
 
 The one thing to remember: `quick`'s speed is entirely a claim that a stamp is honest. When a verdict looks wrong, `build-ffi.sh --force` / `check-ios.sh --force` re-run unconditionally, and `make check` is always the answer of record.
 
-Ratchets inside `make lint`: `check-ds-leaks.sh` (Slate tokens live in `Sources/SlopDeskSlate/SlateDesign.swift`), `check-menu-shortcutless.sh` (no `.keyboardShortcut` in `WorkspaceCommands.swift`), `check-supervisor.sh` (row above).
+Ratchets inside `make lint`: `slopdesk-invariants` rules `design-token-leaks` (Slate tokens live in `Sources/SlopDeskSlate/SlateDesign.swift`) and `menu-shortcutless` (no `.keyboardShortcut` in `WorkspaceCommands.swift`), plus `check-supervisor.sh` (row above).
 
 SIMD detail: the frame hash is scalar (`rust/slopdesk-video/src/frame_hash.rs`), **not** NEON — only the GF(2⁸) multiply kernel has one, and it lives alone in `rust/slopdesk-gfsimd`, the third `unsafe` crate. Two suites pin it: `rust/slopdesk-gfsimd/tests/differential.rs` for kernel ≡ scalar twin, and the cross-region cases in `rust/slopdesk-video/src/gf256.rs` for the seam the kernel cannot see on its own — a region whose tail straddles a 16-byte chunk.
 

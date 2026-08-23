@@ -15,7 +15,7 @@
 // In-Place — over the "green / terminal half" and "blue / pane half" split, plus a tall ellipse hugging each
 // side edge (Split Left / Split Right) whose off-edge half is clipped away. The hovered zone glows
 // status-green; the rest sit as faint washes and a disabled zone reads as a barely-there neutral. `Slate.*`
-// tokens only (raw colour / size literals fail `scripts/check-ds-leaks.sh`) — and the ALPHAS are the
+// tokens only (raw colour / size literals fail the `design-token-leaks` gate) — and the ALPHAS are the
 // verdict's, not this file's, so the two renderers cannot disagree about how faint "at rest" is.
 
 #if os(iOS)

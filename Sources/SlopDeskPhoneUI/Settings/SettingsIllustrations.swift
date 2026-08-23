@@ -14,7 +14,7 @@
 //
 // GEOMETRY: the mark dimensions live in the private `Art` table below, NOT as inline literals — the diagrams
 // share one visual beat (bar thickness, gap, dot size) so a row of cards reads as one system, and
-// `scripts/check-ds-leaks.sh` keeps raw `.frame(height:)` numbers out of the view tree.
+// the `design-token-leaks` gate keeps raw `.frame(height:)` numbers out of the view tree.
 //
 // Cross-platform (pure SwiftUI shapes — no AppKit), so the iOS settings sheet draws the same cards.
 

@@ -90,7 +90,7 @@ enum SettingsInk {
 
 /// The Settings surface's type scale, as system TEXT STYLES rather than point sizes — so the page follows the
 /// OS text-size setting like every other settings surface on the platform, and so no call site has to name
-/// a number (`scripts/check-ds-leaks.sh` bans raw `.font(.system(size: N))` for exactly that reason).
+/// a number (the `design-token-leaks` gate bans raw `.font(.system(size: N))` for exactly that reason).
 enum SettingsType {
     /// Row titles, field text, list values — the default reading size.
     static let body: Font = .body

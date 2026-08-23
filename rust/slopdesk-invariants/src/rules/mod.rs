@@ -18,6 +18,7 @@ pub mod crate_defaults;
 pub mod crate_policy;
 pub mod cross_twins;
 pub mod crossed_tables;
+pub mod design_ratchets;
 pub mod device_frames;
 pub mod device_law;
 pub mod device_streams;
@@ -1583,6 +1584,16 @@ pub fn registry() -> Vec<Rule> {
             name: "ban-union-is-whole",
             origin: "scripts/check-supervisor.sh",
             check: gate_health::the_ban_union_contains_every_ban,
+        },
+        Rule {
+            name: "design-token-leaks",
+            origin: "check-ds-leaks.sh (deleted), DESIGN.md",
+            check: design_ratchets::design_tokens_are_not_bypassed,
+        },
+        Rule {
+            name: "menu-shortcutless",
+            origin: "check-menu-shortcutless.sh (deleted), docs/DECISIONS.md E1",
+            check: design_ratchets::the_menu_bar_owns_no_chord,
         },
     ]
 }

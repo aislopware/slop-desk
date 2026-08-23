@@ -60,6 +60,9 @@ jobs:
           rustup toolchain install nightly --component rustfmt miri
           rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
       - run: make lint-rust
+      # The cross-language ratchets, including the design-token and menu-shortcut ones that used to
+      # be shell scripts in the `swift-lint` job. They read text and need no Swift toolchain.
+      - run: make lint-invariants
       - run: make test-rust
       - run: make miri
 
@@ -70,9 +73,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: brew install swiftlint swiftformat
+      # The design-token and menu-shortcut ratchets used to run here as two shell scripts; they are
+      # `slopdesk-invariants` rules now and run in the `rust` job, which needs no Swift toolchain.
       - run: make lint-swift
-      - run: make lint-ds-leaks
-      - run: make lint-menu-shortcutless
 
   # The compiling half. `make ffi` FIRST and not optionally: SwiftPM cannot resolve a graph whose
   # `binaryTarget` path is absent, so this is the step that makes `swift build` possible at all.

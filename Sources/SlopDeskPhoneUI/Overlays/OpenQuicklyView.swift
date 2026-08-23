@@ -16,7 +16,7 @@
 // visible row, `⌘K` toggles Actions, `⌘0/⌘W/⌘R/⌘Z/⌘G/⌘J` jump to a pill, `↑`/`↓` move, `↩` runs the row,
 // `Esc` closes. Presented as a NATIVE `.sheet` by `OverlayHostView` (the system provides the window chrome);
 // this view carries only its content. `Slate.*` tokens ONLY (raw font/colour/radius literals fail
-// check-ds-leaks).
+// the `design-token-leaks` gate).
 //
 // ⚠️ THE PHONE's, since docs/56 stage D: the Mac draws this picker in AppKit
 // (``SlopDeskMacUI/MacOpenQuicklyView``), it was the last CARD to move, and nothing on this floor is

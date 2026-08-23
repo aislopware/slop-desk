@@ -27,7 +27,7 @@
 //      say "press this"; a cap does.
 //
 // ⚠️ THE INK IS NEUTRAL, NOT THE TERMINAL'S. `Slate` supplies every DIMENSION here (raw font/radius/height
-// literals fail `scripts/check-ds-leaks.sh`) and the mono FACE, but none of its colour. A floating card is
+// literals fail the `design-token-leaks` gate) and the mono FACE, but none of its colour. A floating card is
 // not part of the workspace's world: the profile's greys are tinted violet, and a dialog wearing them
 // reads as a stained panel rather than as a neutral surface hovering over coloured work. So the family's
 // ink comes from the SYSTEM's semantic colours (``SlateOverlayInk``), which are neutral by construction.

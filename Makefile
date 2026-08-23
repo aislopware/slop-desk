@@ -125,16 +125,16 @@ fix: fmt ## Format + apply all safe lint autofixes
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-rust lint-rust-clippy test-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor lint-invariants
-LINTERS := lint-swift lint-shell lint-rust lint-ds-leaks lint-menu-shortcutless lint-supervisor lint-invariants
+.PHONY: lint lint-swift lint-shell lint-rust lint-rust-clippy test-rust lint-supervisor lint-invariants
+LINTERS := lint-swift lint-shell lint-rust lint-supervisor lint-invariants
 
-# The seven linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
+# The five linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
 # and serially they were the inner loop's largest fixed cost: 55 s, of which `lint-supervisor` alone
-# is 35 s. Overlapping the other six with it is free wall clock — measured 55 s → 36 s.
+# is 35 s. Overlapping the other four with it is free wall clock — measured 55 s → 36 s.
 #
 # Not a plain prerequisite list under `make -j`: the top-level `make` is not invoked with one, and a
 # prerequisite list only runs in parallel if the make expanding it was told to. And not `-j` here
-# either, because this repo's make is 3.81 (Apple's), which has no `--output-sync` — seven linters
+# either, because this repo's make is 3.81 (Apple's), which has no `--output-sync` — five linters
 # interleaving diagnostics line by line is a gate whose failures cannot be read. So each runs into
 # its OWN log, and the logs are replayed IN THE DECLARED ORDER once every one has finished. The
 # output is byte-identical to the serial gate's; only the waiting changed.
@@ -142,7 +142,7 @@ LINTERS := lint-swift lint-shell lint-rust lint-ds-leaks lint-menu-shortcutless 
 # `wait` on a KNOWN pid, for the reason `build-ffi.sh` and `check-supervisor.sh` say: a bare `wait`
 # yields zero however the jobs died, and a lint gate that passes on a dead linter is worse than a
 # slow one. Every linter is waited on before the exit status is returned, so one failure does not
-# leave six tools running against a tree the next command is about to edit.
+# leave four tools running against a tree the next command is about to edit.
 lint: ## Run every linter strictly
 	@dir=$$(mktemp -d -t slopdesk-lint); trap 'rm -rf "$$dir"' EXIT; \
 	for t in $(LINTERS); do \
@@ -159,16 +159,12 @@ lint-swift: ## SwiftFormat --lint + SwiftLint --strict
 	swiftformat $(SWIFTFMT_PATHS) --lint
 	swiftlint --strict --quiet
 
-# Design-system leak RATCHET: fail on a new raw .font(.system(size:)) / integer cornerRadius: in a view
-# file (text-only, no compile — runs in the lint gate, not the build gate). See scripts/check-ds-leaks.sh.
-lint-ds-leaks: ## Design-system token-leak ratchet (raw font/radius literals)
-	bash scripts/check-ds-leaks.sh
-
-# Menu-bar shortcut-LESS RATCHET (E1 N6): fail on a `.keyboardShortcut(` in the discoverability-only
-# WorkspaceCommands.swift — the NSEvent dispatcher owns chords (text-only, no compile). See the script.
-lint-menu-shortcutless: ## Menu-bar shortcut-less ratchet (no .keyboardShortcut in WorkspaceCommands)
-	bash scripts/check-menu-shortcutless.sh
-
+# PORTED — the design-token leak ratchet and the menu-bar shortcut-less ratchet were two shell
+# scripts and are two rules in `rust/slopdesk-invariants` (`design_ratchets`: `design-token-leaks`,
+# `menu-shortcutless`). Both were a `grep -rnE` for a banned shape plus a `grep -vE` dropping
+# comment-only lines, which is `View::Code` and a `NoneUnder`/`Lacks` claim; the fail-closed
+# `[[ -d ]]`/`[[ -f ]]` guards are a `Populated` floor and an `Exists`.
+#
 # PORTED — the dead-FFI-door ratchet, the one-walk ban filter's superset check and the
 # transcribed-constant ratchet were three Python scripts and are seven rules in
 # `rust/slopdesk-invariants` (`gate_health`, `shared_constants`). `lint-invariants` runs them with

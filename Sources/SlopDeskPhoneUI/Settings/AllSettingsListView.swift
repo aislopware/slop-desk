@@ -23,7 +23,7 @@
 // bindings are the one thing that cannot descend) + the cross-tab jump (reported by section id). Cross-tab
 // HIGHLIGHT of the target control is deferred (only the jump itself ships here).
 // Colour + type: `SettingsInk` / `SettingsType` (SYSTEM semantics — not the terminal theme); geometry
-// rides `Slate.Metric` (raw font/radius/height literals fail `scripts/check-ds-leaks.sh`).
+// rides `Slate.Metric` (raw font/radius/height literals fail the `design-token-leaks` gate).
 
 #if os(iOS)
 import Defaults
