@@ -93,7 +93,9 @@ final class MacPaneContainer: NSView {
         )
         super.init(frame: .zero)
         build()
-        mountLeaf()
+        // No separate mount: ``attach()`` runs ``follow()``, and the leaf is mounted from INSIDE that
+        // arm now — so the one construction site is also the one that re-runs when the pane's session
+        // materialises. A second mount here would build the leaf against a handle read outside the arm.
         attach()
     }
 
@@ -236,9 +238,7 @@ final class MacPaneContainer: NSView {
 
     /// Routed by KIND: a terminal pane over the terminal-renderer seam, a `.desktop` pane over the
     /// `VideoWindowFactory` seam with its cap-enforced activation lifecycle.
-    private func mountLeaf() {
-        let live = store.handle(for: paneID) as? LivePaneSession
-        let kind = live?.kind ?? store.tree.activeSession?.specs[paneID]?.kind ?? .terminal
+    private func mountLeaf(live: LivePaneSession?, kind: PaneKind) {
         if kind == leafKind, let leaf {
             (leaf as? MacTerminalLeafView)?.setLive(live)
             (leaf as? MacGuiLeafView)?.setLive(live)
@@ -280,8 +280,24 @@ final class MacPaneContainer: NSView {
         var showsCorner = false
         var recedes = false
         var cwd: String?
+        var live: LivePaneSession?
+        var kind: PaneKind = .terminal
 
         withObservationTracking {
+            // THE PANE'S SESSION, READ INSIDE THE ARM. The registry it comes out of is `@Observable`
+            // state on the store, so reading it here is what makes a session MINTED OR SWAPPED under
+            // a stable pane id reach the leaf. Read outside the arm it registers no dependency: the
+            // leaf then keeps whatever handle happened to be current at mount, and on the ordinary
+            // launch — where `reconcileTree()` has already run — nothing ever says otherwise, so the
+            // miss is silent. Same reason the drop receiver takes a CLOSURE rather than a value (see
+            // `init`).
+            live = store.handle(for: paneID) as? LivePaneSession
+            // Routed by KIND, and the fallback reads the spec, so a `.desktop` pane that arrives with
+            // the document rebuilds into the video leaf instead of staying a terminal.
+            kind = live?.kind ?? store.tree.activeSession?.specs[paneID]?.kind ?? .terminal
+            // Registers the resize veil's third signal. `applyScrim()` re-reads it — this read is what
+            // makes a change to it INVALIDATE, which nothing else in this view was doing.
+            _ = live?.awaitingResizeReflow
             // A hidden tab's pane is not the subject of anything, so both marks read from the SAME
             // `isFocused` this container was pushed rather than from the store — the canvas already
             // resolved the zoom-hidden and sidebar-owns-keyboard arms before pushing it.
@@ -303,7 +319,7 @@ final class MacPaneContainer: NSView {
             }
         }
 
-        mountLeaf()
+        mountLeaf(live: live, kind: kind)
         (leaf as? MacTerminalLeafView)?.setCwd(cwd)
         MacPaneFade.set(focusCorner, shown: showsCorner)
         MacPaneFade.set(recedeVeil, shown: recedes, curve: Slate.Motion.smallFade)
