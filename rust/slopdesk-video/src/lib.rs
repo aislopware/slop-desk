@@ -176,6 +176,8 @@ pub mod cursor_overlay;
 pub mod cursor_sampling;
 pub mod decode_admission;
 pub mod encoder_ceiling;
+pub mod encoder_config;
+pub mod encoder_state;
 pub mod error;
 pub mod escape_monitor;
 pub mod fec;
