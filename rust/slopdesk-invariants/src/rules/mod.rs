@@ -10,6 +10,7 @@ pub mod apple_floors;
 pub mod byte_scanners;
 pub mod chrome_split;
 pub mod cli_config;
+pub mod cli_vocabulary;
 pub mod client_layers;
 pub mod client_memos;
 pub mod code_panel;
@@ -1584,6 +1585,31 @@ pub fn registry() -> Vec<Rule> {
             name: "ban-union-is-whole",
             origin: "scripts/check-supervisor.sh",
             check: gate_health::the_ban_union_contains_every_ban,
+        },
+        Rule {
+            name: "opaque-cap-inequality",
+            origin: "check-supervisor.sh, docs/55 §8",
+            check: shared_constants::the_opaque_cap_carries_its_inequality,
+        },
+        Rule {
+            name: "cli-core-is-one-law",
+            origin: "check-supervisor.sh CLI block, docs/55 §8",
+            check: cli_vocabulary::the_cli_core_is_one_law,
+        },
+        Rule {
+            name: "cli-help-has-one-author",
+            origin: "check-supervisor.sh CLI block, docs/55 §8",
+            check: cli_vocabulary::the_cli_help_has_one_author,
+        },
+        Rule {
+            name: "cli-dispatch-matches-availability",
+            origin: "check-supervisor.sh CLI block, docs/55 §8",
+            check: cli_vocabulary::the_dispatch_switch_matches_availability,
+        },
+        Rule {
+            name: "ui-shell-cli-docs",
+            origin: "check-supervisor.sh CLI block, docs/55 §8",
+            check: cli_vocabulary::the_ui_shell_docs_describe_the_shipped_cli,
         },
         Rule {
             name: "design-token-leaks",

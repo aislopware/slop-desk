@@ -1014,6 +1014,80 @@ pub fn every_allowlist_entry_is_alive(tree: &Tree) -> Report {
     report
 }
 
+/// The probe reads at least as much as the builder is willing to cap
+///
+/// Ported from `scripts/check-supervisor.sh`, and it is the one pair in this file whose rule is an
+/// INEQUALITY rather than an equality — which is why it could not be a [`Claim`] and is written
+/// out.
+///
+/// `slopdesk-probe`'s `MAX_OPAQUE_READ_BYTES` is how much of a `git diff` (or any opaque payload)
+/// it will read off the wire; `MetadataResponseBuilder.defaultMaxOpaquePayloadBytes` is the ceiling
+/// the host trims to. The trim only fires if the builder is HANDED more than its cap, so the probe
+/// must read at least that much for `cappedOpaque()` to see `count > max`, trim, and set its
+/// "was truncated" flag.
+///
+/// Lower the Rust number alone and the builder never sees an over-long payload, so it never trims
+/// and never flags — the client renders a SILENTLY SHORT `git diff` as if it were the whole thing.
+/// Raise it alone and a pathological diff spikes per-request memory before any cap applies. Neither
+/// is a crash and neither is visible from one side.
+///
+/// A door is the wrong instrument here, and that is worth saying: hostd FORKS the probe, so this
+/// crosses a PROCESS boundary rather than the FFI. `docs/DECISIONS.md` recorded the arrangement as
+/// Swift-only, before the probe was Rust — the record went stale rather than the design going
+/// wrong.
+///
+/// There used to be a THIRD spelling, `HostMetadataProbe.maxCaptureBytes`, deliberately outside
+/// this rule: the stop condition on hostd's own `lsof` drain, the same number asking a different
+/// question. It is gone — the pane census is `rust/slopdesk-panecensus` and its port scan rides
+/// `slopdesk_probe::run::capture`, so the drain that had its own ceiling now shares this one.
+///
+/// [`Claim`]: crate::claim::Claim
+#[must_use]
+pub fn the_opaque_cap_carries_its_inequality(tree: &Tree) -> Report {
+    /// Where the probe declares how much it will read.
+    const PROBE: (&str, &str) = (
+        "rust/slopdesk-probe/src/run.rs",
+        r"MAX_OPAQUE_READ_BYTES: usize = ([0-9 *+]+);",
+    );
+    /// Where the host declares what it trims to.
+    const BUILDER: (&str, &str) = (
+        "Sources/SlopDeskHost/MetadataResponseBuilder.swift",
+        r"defaultMaxOpaquePayloadBytes = ([0-9 *+]+)",
+    );
+
+    let mut report = Report::new();
+    // Both sides are read even when the first is unreadable, so the diagnostic names every side
+    // that has gone quiet rather than the first one.
+    let read = |(path, pattern): (&'static str, &'static str), report: &mut Report| {
+        report
+            .source(tree, path, "one side of the opaque cap lives there")
+            .and_then(|source| text::capture_first(&source.text, pattern))
+            .and_then(|written| numeric(&written).map(|value| (written, value)))
+    };
+    let probe = read(PROBE, &mut report);
+    let builder = read(BUILDER, &mut report);
+    let (Some((probe_written, probe_value)), Some((builder_written, builder_value))) = (probe, builder)
+    else {
+        report.fail(
+            "the opaque cap could not be read from both sides — this rule stopped checking anything \
+             (docs/55 §8)"
+                .to_owned(),
+        );
+        return report;
+    };
+
+    report.fail_if(
+        probe_value < builder_value,
+        format!(
+            "slopdesk-probe reads {probe_written} ({}) but MetadataResponseBuilder caps at \
+             {builder_written} ({}) — the probe must read at least the cap, or the truncation flag never \
+             fires and the client renders a silently short payload as the whole thing (docs/55 §8)",
+            shown(probe_value),
+            shown(builder_value)
+        ),
+    );
+    report
+}
 #[cfg(test)]
 mod tests {
     use super::{Declaration, declarations, discriminants, numeric, ordinal_shims, shown};
