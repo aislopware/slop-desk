@@ -18,6 +18,7 @@ pub mod cross_twins;
 pub mod device_frames;
 pub mod device_law;
 pub mod device_streams;
+pub mod held_values;
 pub mod host_probes;
 pub mod hot_paths;
 pub mod ink_floor;
@@ -885,6 +886,26 @@ pub fn registry() -> Vec<Rule> {
             name: "leaf-seam-shapes",
             origin: "docs/56 stage F, P4",
             check: ui_seams::one_seam_two_shapes_one_installer,
+        },
+        Rule {
+            name: "audio-row-is-rusts",
+            origin: "docs/57 §5",
+            check: held_values::the_audio_row_is_rusts,
+        },
+        Rule {
+            name: "length-prefix-parsed-once",
+            origin: "docs/55 §4",
+            check: held_values::a_length_prefix_is_parsed_once,
+        },
+        Rule {
+            name: "one-emission-order",
+            origin: "docs/55 §4c",
+            check: held_values::the_document_has_one_emission_order,
+        },
+        Rule {
+            name: "catalog-indexed-once",
+            origin: "docs/55 §8",
+            check: held_values::a_catalog_is_indexed_not_rescanned,
         },
         Rule {
             name: "video-path-lends",
