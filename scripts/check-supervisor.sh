@@ -1698,38 +1698,8 @@ if hit=$(spells '3600|86400|604_800|2_592_000|= 16$|sorted \{|lowercased\(\)\.co
   fail "${hit} spells a frecency threshold, weight, sort or jump match again — those live in frecency.rs and jump.rs"
 fi
 printf 'check-supervisor: the folders rank once, and a jump reads that rank.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::workspace_layout`: watch-vocabulary.
 
-# What `slopdesk watch` DECIDES and what it PRINTS — `rust/slopdesk-agent`'s `watch` and
-# `rust/slopdesk-wire`'s `osc`. The bytes are pinned to the crate the host's sniffer parses WITH, so
-# the wrapper cannot emit a sequence the host would drop; the exit codes are pinned because a
-# second at-rest set would make `watch:claude` return on a state the app calls busy.
-SWIFT_WATCH=Sources/SlopDeskCLICore/WatchClaudeOutcome.swift
-SWIFT_WATCH_BYTES=Sources/SlopDeskCLICore/WatchProgress.swift
-SWIFT_WATCH_MARKER=Sources/SlopDeskProtocol/WatchNotificationMarker.swift
-for pair in \
-  "${SWIFT_WATCH}:slopdesk_watch_observation" \
-  "${SWIFT_WATCH}:slopdesk_watch_is_at_rest" \
-  "${SWIFT_WATCH}:slopdesk_watch_block_deadline_nanos" \
-  "${SWIFT_WATCH}:slopdesk_watch_decide" \
-  "${SWIFT_WATCH_BYTES}:slopdesk_watch_spinner_bytes" \
-  "${SWIFT_WATCH_BYTES}:slopdesk_watch_finish_bytes" \
-  "${SWIFT_WATCH_BYTES}:slopdesk_watch_progress_bytes" \
-  "${SWIFT_WATCH_BYTES}:slopdesk_watch_exit_progress_state" \
-  "${SWIFT_WATCH_BYTES}:slopdesk_watch_finish_message" \
-  "${SWIFT_WATCH_BYTES}:slopdesk_osc_notification_bytes" \
-  "${SWIFT_WATCH_BYTES}:slopdesk_watch_finish_notification_bytes" \
-  "${SWIFT_WATCH_MARKER}:slopdesk_watch_notification_marker"; do
-  if ! grep -q "${pair#*:}(" "${pair%%:*}"; then
-    fail "${pair%%:*} no longer calls ${pair#*:} — the watch vocabulary is slopdesk-agent's and slopdesk-wire's"
-  fi
-done
-if hit=$(spells 'case \.idle,|0x1B|0x07|"9;4;|777;notify|watch: ' "${SWIFT_WATCH}" "${SWIFT_WATCH_BYTES}" "${SWIFT_WATCH_MARKER}"); then
-  fail "${hit} spells a watch at-rest set or escape sequence again — those live in watch.rs and osc.rs"
-fi
-if spells 'slopdesk:watch-finish' "${SWIFT_WATCH_MARKER}" > /dev/null; then
-  fail "${SWIFT_WATCH_MARKER} spells the sentinel again — it is osc.rs's WATCH_NOTIFICATION_MARKER"
-fi
-printf 'check-supervisor: what watch decides and what it prints come from the crates that parse them back.\n'
 # PORTED to `rust/slopdesk-invariants` — `rules::video_seams`: cursor-overlay-and-progress,
 # client-session, client-view, client-jitter, client-input, scroll-hint, client-gestures,
 # paced-send and host-session-machine. Each was a face naming its doors and a ban on the state a
@@ -2682,40 +2652,10 @@ if [[ -n "${drop_dupes}" ]]; then
   fail "a drop-zone proportion grew back in the overlay — rust/slopdesk-workspace/src/drop_zone.rs owns them"
 fi
 printf 'check-supervisor: the drop overlay draws and hit-tests one shape.\n'
-
-# ── One dwell, and the top edge stays the remote's ────────────────────────────────────────────
-# The dwell that decides who owns the top edge in borderless fullscreen lives in
-# `slopdesk_workspace::chrome`. A Swift copy of the phase machine would be a second answer to "may
-# the local menu bar take this click", and the wrong one steals a click from the remote menu bar —
-# which reads as a dropped click, not as a policy bug.
-if ! grep -q 'slopdesk_ws_dwell_update' Sources/SlopDeskClientCore/App/BorderlessDwellGate.swift; then
-  fail "BorderlessDwellGate stopped calling slopdesk_ws_dwell_update — the top edge has two owners"
-fi
-if spells 'dwellSeconds *[:=] *0\.5|revealZonePoints *[:=] *2\b' Sources/SlopDeskClientCore/App/BorderlessDwellGate.swift > /dev/null 2>&1; then
-  fail "a dwell distance grew back in Swift — rust/slopdesk-settings/src/chrome.rs owns them"
-fi
-printf 'check-supervisor: one dwell decides who owns the top edge.\n'
-
-# ── One pixel→weight conversion, and the seam owns it ─────────────────────────────────────────
-# `Δweight = Δpixel / parent_span * flex_sum` is the inverse of the partition the solver tiles with,
-# so it can only be right against the seam's OWN span and flex sum. Written out anywhere else it
-# takes those from whatever is in scope — which is how the seam came to trail the cursor at half
-# speed. It lives on `SplitDividerHandle` now, sourced from `slopdesk_workspace::split_layout`, and
-# nothing else — not a view, not a test helper — may spell the formula again.
-if ! grep -q 'slopdesk_ws_divider_weight_delta' Sources/SlopDeskWorkspaceModel/Domain/Tree/SplitLayoutSolver.swift; then
-  fail "SplitDividerHandle stopped calling slopdesk_ws_divider_weight_delta — the seam trails the cursor"
-fi
-if ! grep -q 'slopdesk_ws_divider_percents' Sources/SlopDeskWorkspaceModel/Domain/Tree/SplitLayoutSolver.swift; then
-  fail "SplitDividerHandle stopped calling slopdesk_ws_divider_percents — the ratio readout has two answers"
-fi
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-drag_dupes=$(spells 'Double\(span\)|/ *Double\(.*[Ss]pan\)|axisSpan|PaneMath' \
-  $(repo_files 'Sources/**/*.swift' 'Tests/**/*.swift') 2> /dev/null || true)
-if [[ -n "${drag_dupes}" ]]; then
-  printf '%s\n' "${drag_dupes}" >&2
-  fail "the pixel→weight conversion grew back in Swift — SplitDividerHandle.weightDelta is the one"
-fi
-printf 'check-supervisor: one pixel-to-weight conversion, and the seam owns it.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::workspace_layout`: borderless-dwell and
+# divider-weight. The second is the first TREE-WIDE ban to move: `Claim::NoneUnder` takes the
+# roots and the extension where the shell took a `repo_files` glob, and refuses a corpus that
+# strips to nothing, which is the failure a glob over a drained target arrives at silently.
 
 # ── One cheat sheet, two layouts ──────────────────────────────────────────────────────────────
 # docs/56 stage D's first surface: the Mac's ⌘/ sheet is an `NSPanel` and the phone's is a native
@@ -6557,24 +6497,9 @@ if [[ -n "${SECTION_REFILTER}" ]]; then
   fail "a face filters SettingsCatalog.sections itself (${SECTION_REFILTER}) — ask SettingsCatalog.sections(matching:), which is the taxonomy's own search"
 fi
 printf 'check-supervisor: the settings taxonomy and the search over it are one rule.\n'
-
-# 7. A RAIL RENDER READS ITS BADGE SETTINGS ONCE, NOT ONCE PER ROW. `chrome(...)` asks the store for
-#    `commandBadgeGates` — three `UserDefaults` reads behind a computed property with NO per-pane
-#    override — and for `agentBadgeGates`, three more whenever the pane has no override, which is the
-#    ordinary case. A list built row by row therefore re-read the same two globals per row. Measured,
-#    `swiftc -O`, two runs agreeing inside 0.3%: one `UserDefaults` bool read is 305 ns, a row's six
-#    are 1.85 µs, and a 24-row rail render spent 44.5 µs on settings that cannot change while it
-#    draws. The batch entry reads them once and resolves the active session and its tab list once too.
-#    BREAK-TESTED twice: deleting the batch overload fires the entry arm, and deleting the
-#    `commandGates` parameter from `chrome` fires the threading arm.
-SWIFT_RAIL_BUILDER=Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift
-if ! grep -q 'func liveChrome(for rows: \[RailRow\]' "${SWIFT_RAIL_BUILDER}"; then
-  fail "${SWIFT_RAIL_BUILDER} lost the batched liveChrome — a rail render goes back to 6 UserDefaults reads per row (44.5 µs at 24 rows)"
-fi
-if ! grep -q 'commandGates ?? store.commandBadgeGates' "${SWIFT_RAIL_BUILDER}"; then
-  fail "${SWIFT_RAIL_BUILDER}: chrome() no longer accepts pre-read command gates — the batch entry has nothing to hand it and the per-row reads come back"
-fi
-printf 'check-supervisor: a rail render reads its badge gates once, not once per row.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::workspace_layout`: rail-badge-gates. A
+# PERFORMANCE claim, kept the way the shell kept it: the measurement is in the rule's doc and
+# what is enforced is that the call site which earned it still exists.
 
 # 8. NO PRODUCTION API EXISTS FOR A TEST'S SAKE. `SearchMixer.availableFilters` was a `public var`
 #    whose only reader anywhere in the tree — after the Mac and phone sweeps both finished without

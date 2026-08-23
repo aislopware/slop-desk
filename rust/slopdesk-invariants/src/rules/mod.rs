@@ -22,6 +22,7 @@ pub mod video_wire;
 pub mod window_placement;
 pub mod wire_codecs;
 pub mod workspace_document;
+pub mod workspace_layout;
 
 use crate::Rule;
 
@@ -502,6 +503,26 @@ pub fn registry() -> Vec<Rule> {
             name: "wait-scan",
             origin: "scripts/check-supervisor.sh",
             check: device_streams::wait_stream_scanned_once_off,
+        },
+        Rule {
+            name: "watch-vocabulary",
+            origin: "scripts/check-supervisor.sh",
+            check: workspace_layout::what_watch_decides_what_prints,
+        },
+        Rule {
+            name: "borderless-dwell",
+            origin: "scripts/check-supervisor.sh",
+            check: workspace_layout::one_dwell_decides_who_owns,
+        },
+        Rule {
+            name: "divider-weight",
+            origin: "scripts/check-supervisor.sh",
+            check: workspace_layout::one_pixel_weight_conversion_seam,
+        },
+        Rule {
+            name: "rail-badge-gates",
+            origin: "scripts/check-supervisor.sh",
+            check: workspace_layout::rail_render_reads_its_badge,
         },
     ]
 }
