@@ -70,7 +70,7 @@ pub fn one_vt_grammar_for_plain_text(tree: &Tree) -> Report {
 /// it; another kept its copy rather than widen a daemon's dependency graph for four lines. The graph
 /// never had to widen — the face lives in the value-model leaf every one of them already links.
 ///
-/// The half that bans a second copy lives in `scripts/check-invariants.py`
+/// The half that bans a second copy lives in [`repo_invariants`](super::repo_invariants)
 /// (`shell_quoting_has_one_owner`), because the shell's version here could not fail: it piped 742
 /// paths into `xargs grep -ln`, which prints the offender and still exits non-zero when the last
 /// batch is clean.

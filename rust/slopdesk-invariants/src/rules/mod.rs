@@ -36,6 +36,7 @@ pub mod panel_shells;
 pub mod path_confinement;
 pub mod phone_parity;
 pub mod rate_and_range;
+pub mod repo_invariants;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
@@ -1475,6 +1476,76 @@ pub fn registry() -> Vec<Rule> {
             name: "nerd-font-splitter",
             origin: "scripts/check-supervisor.sh",
             check: hot_paths::nerd_font_run_splitter_linear,
+        },
+        Rule {
+            name: "live-docs-cite-real-files",
+            origin: "CLAUDE.md §Read before you touch",
+            check: repo_invariants::live_docs_cite_files_that_exist,
+        },
+        Rule {
+            name: "comments-cite-real-files",
+            origin: "CLAUDE.md §Read before you touch",
+            check: repo_invariants::source_comments_cite_files_that_exist,
+        },
+        Rule {
+            name: "injected-sinks-are-bound",
+            origin: "docs/55 §6",
+            check: repo_invariants::every_injected_sink_has_someone_who_binds_it,
+        },
+        Rule {
+            name: "no-app-layer-crypto",
+            origin: "CLAUDE.md §Rules",
+            check: repo_invariants::no_app_layer_crypto,
+        },
+        Rule {
+            name: "no-swiftpm-build-plugin",
+            origin: "CLAUDE.md §Rules",
+            check: repo_invariants::no_swiftpm_build_plugin,
+        },
+        Rule {
+            name: "no-fused-multiply-add",
+            origin: "CLAUDE.md §Rules",
+            check: repo_invariants::no_fused_multiply_add,
+        },
+        Rule {
+            name: "scripts-set-pipefail",
+            origin: "docs/46",
+            check: repo_invariants::every_script_sets_pipefail,
+        },
+        Rule {
+            name: "shebang-scripts-executable",
+            origin: "docs/46",
+            check: repo_invariants::a_script_with_a_shebang_is_executable,
+        },
+        Rule {
+            name: "release-ships-every-sidecar",
+            origin: "docs/49",
+            check: repo_invariants::the_release_ships_every_sidecar_the_host_needs,
+        },
+        Rule {
+            name: "every-sidecar-is-pinned",
+            origin: "docs/49",
+            check: repo_invariants::every_shipped_sidecar_carries_its_own_version,
+        },
+        Rule {
+            name: "formula-installs-every-binary",
+            origin: "docs/49",
+            check: repo_invariants::the_formula_installs_every_binary_the_release_ships,
+        },
+        Rule {
+            name: "no-stranded-rust-module",
+            origin: "CLAUDE.md §Rules",
+            check: repo_invariants::no_rust_module_is_written_and_then_never_called,
+        },
+        Rule {
+            name: "pkill-never-reaches-the-host",
+            origin: "CLAUDE.md §Rules",
+            check: repo_invariants::pkill_never_reaches_the_developers_host,
+        },
+        Rule {
+            name: "shell-quoting-one-owner",
+            origin: "docs/46",
+            check: repo_invariants::shell_quoting_has_one_owner,
         },
     ]
 }

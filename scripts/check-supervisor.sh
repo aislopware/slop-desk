@@ -31,16 +31,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# The Python half is started HERE and collected at the very bottom, because it shares nothing with
-# the shell half — it reads the same trees and writes only its own verdict — and it is a third of
-# this gate's wall clock (~13 s of ~50 s). Run last-in-line it was 13 s nobody could overlap; run
-# alongside, it finishes while the shell is still walking `Sources/`. Its output is buffered to a
-# file rather than left on the terminal, so an interleave cannot split one of its diagnostics
-# across a line of ours; the wait below replays it verbatim and exits on its status.
-INVARIANTS_LOG="$(mktemp -t check-invariants)"
-trap 'rm -f "${INVARIANTS_LOG}"' EXIT
-python3 scripts/check-invariants.py > "${INVARIANTS_LOG}" 2>&1 &
-INVARIANTS_PID=$!
+# PORTED — the fourteen token bans that ran here as a background `python3 scripts/check-invariants.py`
+# are rules in `rust/slopdesk-invariants` (`repo_invariants.rs`), collected with every other rule by
+# `make lint-invariants`. The overlap this file bought by starting them early is gone with them: the
+# crate walks the tree once and runs 294 rules over it under rayon.
 
 # ── ONE tree walk for every "this Swift must stay deleted" ban in this file ────────────────────
 # The bans below each asked `grep -r … Sources/` for a list that is EMPTY every time the gate
@@ -861,7 +855,6 @@ printf 'check-supervisor: the ui-shell docs describe the CLI the crate actually 
 #   because "a gate PRESENT and its phone half ABSENT" is not a property any single line has, and
 #   `Opening`, because "wrapped whole" is about POSITION — a gate further in is ordinary code.
 
-
 # PORTED to `rust/slopdesk-invariants` — `rules::client_layers`: client-core-draws-nothing.
 
 # PORTED to `rust/slopdesk-invariants` — `rules::pane_wiring`: terminal-pane-wiring,
@@ -869,14 +862,10 @@ printf 'check-supervisor: the ui-shell docs describe the CLI the crate actually 
 #   ORDER, which no type can express; `Populated` for the file-count floor the `Pane/**/*.swift`
 #   pathspec bug needed; `Opening` was already here from the panel floor.
 
-
-
 # PORTED to `rust/slopdesk-invariants` — `rules::cross_twins`: tree-repair,
 #   cross-language-twins, loop-shaped-crossings. One claim did NOT come across: the shell PRINTED a
 #   note when `withTheDocumentsBlindSpotsClosed` disappeared. A note passes either way, so it
 #   recorded an intention rather than checking one; the rule's doc carries the exit instead.
-
-
 
 # PORTED to `rust/slopdesk-invariants` — `rules::settings_catalog`: settings-option-groups,
 #   settings-constant-answers. The shell asked its `titlesByID` claim only IF WorkspaceCommands.swift
@@ -895,15 +884,12 @@ printf 'check-supervisor: the ui-shell docs describe the CLI the crate actually 
 # PORTED to `rust/slopdesk-invariants` — `rules::device_law`: device-panel-law,
 #   client-pasteboard-and-open, small-rules-spelled-once.
 
-
 # PORTED to `rust/slopdesk-invariants` — `rules::ui_split`: ui-split-shape, video-surface-split,
 #   video-halves-agree.
 
 # PORTED to `rust/slopdesk-invariants` — `rules::ui_seams`: ui-test-edges, canvas-registration,
 #   leaf-seam-shapes. The gate now WALKS `ThirdParty/ghostty/integration` — four files, the embedder
 #   Swift no `Package.swift` target compiles — because the terminal seam has no other registrar.
-
-
 
 # PORTED to `rust/slopdesk-invariants` — `rules::ink_floor`: the accent ring's alpha and the grab
 # pill on the floor (`frameworkless-value-floor`), the Mac scene injecting no environment it does not
@@ -1286,20 +1272,6 @@ fi
 
 printf 'check-supervisor: no dangling doc link, no doc citing a file that is gone, no gate that dies quietly.\n'
 
-# The token bans live in Python, and this is where their status joins the count. Each of them is
-# "this spelling must not appear in code", which in shell is a `grep` — and three separate silent
-# failures came out of writing them that way: a pipeline that hides its status, a pattern that
-# matched the gate's own failure message, and a comment-stripper that eats a URL. See the module
-# docstring in `scripts/check-invariants.py`.
-#
-# It has been running since the top of this file (see the note there). `wait` on a KNOWN pid yields
-# that job's exit status, which is the whole reason the pid was kept — a bare `wait` yields zero
-# however the job died, and this gate would then pass on a broken invariant.
-wait "${INVARIANTS_PID}" && invariants_status=0 || invariants_status=$?
-cat "${INVARIANTS_LOG}"
-[[ ${invariants_status} -eq 0 ]] ||
-  fail "scripts/check-invariants.py reported a broken invariant — its own output names which"
-
 if [[ "${failures}" -ne 0 ]]; then
   printf 'check-supervisor: %d contract violation(s)\n' "${failures}" >&2
   exit 1
@@ -1343,7 +1315,6 @@ printf 'check-supervisor: the opaque cap carries its inequality — slopdesk-pro
 # (`android-keycode-ratchet`), as the new `Claim::Overlap` — two DERIVED sets, the intersection
 # against a high-water mark of zero, failing above it AND below it so ground gained is held, with both
 # sides floored non-empty because at zero a broken extraction reads exactly like success.
-
 
 # PORTED to `rust/slopdesk-invariants` — `rules::two_shells`: the three rules that ask whether the
 # two UI shells wrote the same thing twice, rather than whether either wrote it in the wrong place.

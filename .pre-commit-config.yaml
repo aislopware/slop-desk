@@ -198,7 +198,7 @@ repos:
         stages: [pre-push]
 
       # The cross-language ratchet: which Swift files must stay deleted, socket paths,
-      # relinquish-vs-terminate, the FFI staleness gate, and `check-invariants.py` folded in.
+      # relinquish-vs-terminate and the FFI staleness gate.
       #
       # It reached the tree only through `make lint` / `make check`, both of which are typed by
       # hand — the same "a gate nobody runs" shape as the Miri audit that paid for the third
@@ -210,7 +210,7 @@ repos:
       # that violates it stages as a change to some unrelated file, or to none. It costs ~39 s and
       # prek runs it beside `swift-test`, so on a push that also touches Swift it is free.
       - id: supervisor
-        name: cross-language contract ratchet (check-supervisor.sh + check-invariants.py)
+        name: cross-language contract ratchet (check-supervisor.sh)
         entry: make lint-supervisor
         language: system
         always_run: true

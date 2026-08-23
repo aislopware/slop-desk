@@ -365,7 +365,7 @@ jobs:
           # formula in it was whatever the last hand-edit left — and for four releases that was a
           # `bin.install` naming three of the twelve binaries, so a `brew install` had no superd and
           # therefore a host that could not open a pane. `packaging/homebrew/` is the source of
-          # truth now, `check-invariants.py` derives its install list from `shipped-tools.sh`, and
+          # truth now, `rust/slopdesk-invariants` derives its install list from `shipped-tools.sh`, and
           # this job's only remaining freedom is the version and the two SHAs.
           cp packaging/homebrew/Formula/slopdesk.rb tap/Formula/slopdesk.rb
           cp packaging/homebrew/Casks/slopdesk.rb tap/Casks/slopdesk.rb

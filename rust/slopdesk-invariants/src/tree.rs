@@ -66,6 +66,9 @@ pub struct Source {
     /// The file with whole-line comments removed. Lazily built, because most files are read only
     /// by a rule that wants the raw text.
     code: OnceLock<String>,
+    /// The file with EVERY comment blanked by a tokenizer that knows a string literal from a slash
+    /// pair. Lazily built, because only the token bans ask for it.
+    statements: OnceLock<String>,
 }
 
 impl Source {
@@ -74,6 +77,7 @@ impl Source {
             text,
             style,
             code: OnceLock::new(),
+            statements: OnceLock::new(),
         }
     }
 
@@ -95,6 +99,115 @@ impl Source {
             out
         })
     }
+
+    /// The file with every comment blanked, string literals intact and line numbering preserved.
+    ///
+    /// [`Source::code`] is line-based and cannot see a TRAILING comment, which is the whole gap the
+    /// token bans fall into: `let x = 1 // never call .addingProduct(` reads as a call to a ban that
+    /// strips whole lines. Nor can a regex close that gap — three separate silent failures came out
+    /// of trying, and all three were the shape of the tool rather than the pattern:
+    ///
+    /// * a `//` stripper mangles `https://…` inside a string literal;
+    /// * a ban's own failure MESSAGE is a string literal, so a raw read reports the gate itself;
+    /// * a `/* … */` spanning lines has no line-wise spelling at all.
+    ///
+    /// So this is a scanner, not a pattern. String and character literals SURVIVE — a ban that
+    /// erased them would miss a token spelled inside one, and this repo has bans that want exactly
+    /// that. Newlines survive too, so a report can still cite a line number.
+    ///
+    /// Rust raw strings are handled by their hash count: `r##"…"##` ends only at a quote followed by
+    /// two hashes, which is why an ordinary scanner walking for the next `"` cuts them in half.
+    #[must_use]
+    pub fn statements(&self) -> &str {
+        match self.style {
+            CommentStyle::None => &self.text,
+            // A hash language keeps the LINE-based answer, because a trailing `#` inside a quoted
+            // shell word is common enough that blanking it would be the URL bug wearing the other
+            // hat. What differs from `code()` is that the comment line is BLANKED rather than
+            // dropped: this view promises line numbering, and a rule reporting `path:line:` on a
+            // shell script has to be able to trust it.
+            CommentStyle::Hash => self.statements.get_or_init(|| {
+                let mut out = String::with_capacity(self.text.len());
+                for line in self.text.lines() {
+                    if !line.trim_start().starts_with('#') {
+                        out.push_str(line);
+                    }
+                    out.push('\n');
+                }
+                out
+            }),
+            CommentStyle::Slashes => self.statements.get_or_init(|| blank_comments(&self.text)),
+        }
+    }
+}
+
+/// Every comment in a slash-commented source, replaced by spaces; newlines and literals kept.
+fn blank_comments(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let rest = &text[index..];
+        if let Some(width) = raw_string_width(rest) {
+            out.push_str(&rest[..width]);
+            index += width;
+        } else if rest.starts_with('"') || rest.starts_with('\'') {
+            let width = literal_width(rest);
+            out.push_str(&rest[..width]);
+            index += width;
+        } else if rest.starts_with("//") {
+            let width = rest.find('\n').unwrap_or(rest.len());
+            out.extend(std::iter::repeat_n(' ', width));
+            index += width;
+        } else if rest.starts_with("/*") {
+            let width = rest.find("*/").map_or(rest.len(), |end| end + 2);
+            for character in rest[..width].chars() {
+                out.push(if character == '\n' { '\n' } else { ' ' });
+            }
+            index += width;
+        } else {
+            let character = rest.chars().next().unwrap_or('\n');
+            out.push(character);
+            index += character.len_utf8();
+        }
+    }
+    out
+}
+
+/// The byte width of a Rust raw string at the head of `rest`, or `None` if there is not one.
+fn raw_string_width(rest: &str) -> Option<usize> {
+    let bytes = rest.as_bytes();
+    if bytes.first() != Some(&b'r') {
+        return None;
+    }
+    let hashes = bytes[1..].iter().take_while(|byte| **byte == b'#').count();
+    if bytes.get(1 + hashes) != Some(&b'"') {
+        return None;
+    }
+    let closer = format!("\"{}", "#".repeat(hashes));
+    let opened = 2 + hashes;
+    Some(rest[opened..].find(&closer).map_or(rest.len(), |end| opened + end + closer.len()))
+}
+
+/// The byte width of an ordinary string or character literal at the head of `rest`.
+///
+/// An UNTERMINATED one runs to the end of its line rather than the end of the file: a lone
+/// apostrophe in a comment is the common case (`don't`), and letting it swallow the rest of the
+/// file would blank half the source. The comment is already gone by then, so this only ever sees
+/// one in code — where a lifetime tick (`&'a str`) is exactly that shape.
+const fn literal_width(rest: &str) -> usize {
+    let quote = rest.as_bytes()[0];
+    let mut index = 1;
+    let bytes = rest.as_bytes();
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'\n' => return index,
+            byte if byte == quote => return index + 1,
+            _ => index += 1,
+        }
+    }
+    rest.len()
 }
 
 /// The repository as a map from repo-relative path to contents.
@@ -133,8 +246,8 @@ const ROOTS: [&str; 9] = [
 
 /// Extensions held in memory. A file outside this set is still WALKED — its path is known, so a
 /// rule can assert that it exists — but its bytes are not read until asked for.
-const TEXT_EXTENSIONS: [&str; 10] = [
-    "swift", "rs", "sh", "py", "md", "h", "toml", "json", "plist", "rb",
+const TEXT_EXTENSIONS: [&str; 12] = [
+    "swift", "rs", "sh", "py", "md", "h", "toml", "json", "plist", "rb", "awk", "pin",
 ];
 
 impl Tree {
@@ -152,9 +265,9 @@ impl Tree {
                 walk(root, &dir, &mut files)?;
             }
         }
-        // The two top-level files rules ask about by name. They are outside ROOTS because they are
-        // not directories, and naming them is cheaper than a whole extra walk of the repo root.
-        for name in ["Makefile", "Package.swift", "CLAUDE.md", "DESIGN.md"] {
+        // The top-level files rules ask about by name. They are outside ROOTS because they are not
+        // directories, and naming them is cheaper than a whole extra walk of the repo root.
+        for name in ["Makefile", "Package.swift", "CLAUDE.md", "DESIGN.md", "README.md"] {
             let path = root.join(name);
             if let Ok(text) = fs::read_to_string(&path) {
                 let relative = PathBuf::from(name);

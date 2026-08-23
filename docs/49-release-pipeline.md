@@ -249,7 +249,7 @@ decided the version was allowed to move; the comparison an upgrade makes is on `
 
 Two gates keep the number honest, and they are deliberately in different places:
 
-* `check-invariants.py` — every shipped cargo tool has a pin entry, and every pin entry names a
+* `every-sidecar-is-pinned` (`rust/slopdesk-invariants`) — every shipped cargo tool has a pin entry, and every pin entry names a
   shipped tool. Runs in `make check`.
 * `package-release.sh` — asks every **built** binary `--version` and refuses to package on a
   disagreement with the pin. The same question the CLI gate has always asked, now asked of all twelve,
@@ -371,7 +371,7 @@ They moved because the tap was edited in place and nothing could check it. For f
 `bin.install` named three of the twelve binaries — `slopdesk`, `slopdesk-hostd`, `slopdesk-ctl` —
 so a `brew install` produced a host with no superd and therefore no pane, which is the exact bug
 `the_release_ships_every_sidecar_the_host_needs` was written to end, surviving one step further
-down the pipeline in a file that gate could not see. `check-invariants.py` now derives the
+down the pipeline in a file that gate could not see. `rust/slopdesk-invariants` now derives the
 formula's install list from `scripts/shipped-tools.sh` as well, and checks that `MANIFEST.json` is
 installed alongside it.
 
@@ -495,7 +495,7 @@ why one function walks for a per-crate `target/` and the other only looks beside
 `executable.parent()/slopdesk-hook`, so the two must land in the same directory. That is also why
 the formula puts everything in one flat `bin` rather than tucking the daemons into `libexec`.
 
-`check-invariants.py` derives the required set from the `RustServicePaths.locate`/`locateBeside`
+`rust/slopdesk-invariants` derives the required set from the `RustServicePaths.locate`/`locateBeside`
 call sites and compares it with the tool arrays in `package-release.sh`, so a seventh daemon cannot
 be forgotten the way six were. It reads the ARRAYS, not the file: a first draft grepped the script
 whole and the comment naming every daemon satisfied it on its own.

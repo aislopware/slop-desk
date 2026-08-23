@@ -5,12 +5,12 @@
 #   These arrays used to live inside `scripts/package-release.sh`, which was fine while packaging
 #   was the only thing that needed them. It no longer is: `tool-stamps.sh` needs the same set to
 #   hash each tool's sources, `bump-tool-versions.sh` needs it to decide which versions may move,
-#   and `check-invariants.py` reads it to prove the host resolves no sidecar the release omits.
+#   and `rust/slopdesk-invariants` reads it to prove the host resolves no sidecar the release omits.
 #   Four readers of one list is three chances for a seventh daemon to be added to some of them.
 #
 #   So the list moved here and the readers all point at this file. That is the same bargain the
 #   rest of the tree strikes — `build-ffi.sh` derives its input crates from the cargo graph,
-#   `check-invariants.py` derives the wanted set from the `RustServicePaths` call sites — one
+#   `rust/slopdesk-invariants` derives the wanted set from the `RustServicePaths` call sites — one
 #   place says a thing, everything else asks.
 #
 # THE TARBALL USED TO BE THREE BINARIES, and that was a host that could not open a pane. superd

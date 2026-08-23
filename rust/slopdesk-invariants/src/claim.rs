@@ -34,6 +34,9 @@ pub enum View {
     /// Comment-stripped, and only up to the first `#[cfg(test)]`. For a ban whose proof is a test
     /// that must spell the banned thing.
     CodeBeforeTests,
+    /// Every comment blanked by a tokenizer, string literals intact. For a TOKEN ban, where the
+    /// banned spelling can appear at the end of a line of real code.
+    Statements,
 }
 
 impl View {
@@ -44,6 +47,7 @@ impl View {
             Self::CodeBeforeTests => {
                 std::borrow::Cow::Owned(text::before(source.code(), r"#\[cfg\(test\)\]"))
             },
+            Self::Statements => std::borrow::Cow::Borrowed(source.statements()),
         }
     }
 }

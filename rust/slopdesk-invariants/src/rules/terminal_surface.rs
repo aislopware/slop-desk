@@ -306,7 +306,7 @@ fn span_rect(metrics: &Metrics, row: usize, col_start: usize, col_end: usize) ->
             .write("rust/slopdesk-terminal/src/link_hit.rs", rust);
         assert!(super::grid_geometry(&fixture.tree()).is_clean());
 
-        // The banned token is assembled rather than spelled: `check-invariants.py` bans a fused
+        // The banned token is assembled rather than spelled: `no-fused-multiply-add` bans a fused
         // multiply-add ANYWHERE in the tree, and a break-test that seeds one has to seed it without
         // being one. Same reason the shell's own break-tests could only be prose.
         let fused = format!(

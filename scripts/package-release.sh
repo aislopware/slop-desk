@@ -56,7 +56,7 @@ SKIP_NOTARIZE="${SLOPDESK_SKIP_NOTARIZE:-0}"
 # What the CLI tarball ships, in three lists because they are BUILT three ways. Everything after
 # staging treats them as one set. The lists live in `scripts/shipped-tools.sh` because four scripts
 # need them now — this one to build and stage, `tool-stamps.sh` to hash each tool's sources,
-# `bump-tool-versions.sh` to move the versions that earned it, and `check-invariants.py` to prove
+# `bump-tool-versions.sh` to move the versions that earned it, and `rust/slopdesk-invariants` to prove
 # the host resolves no sidecar the release omits.
 # shellcheck source=scripts/shipped-tools.sh
 source "${REPO_ROOT}/scripts/shipped-tools.sh"

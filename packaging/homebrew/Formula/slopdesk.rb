@@ -4,7 +4,7 @@
 # below has to agree with `scripts/shipped-tools.sh`, and a file in another repository agrees with
 # nothing. It did not: the tap installed three of the twelve tools for four releases, so a `brew`
 # install had no superd — and a host without superd cannot open a pane, because superd forks the
-# shells and owns every PTY master (`docs/51`). `check-invariants.py` now derives the list below
+# shells and owns every PTY master (`docs/51`). `rust/slopdesk-invariants` now derives the list below
 # from the same arrays `package-release.sh` packs, so the two cannot drift again.
 #
 # The release workflow's `tap` job COPIES this file into the tap and rewrites two lines — `version`

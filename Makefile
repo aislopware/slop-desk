@@ -848,7 +848,8 @@ release: ## Cut a release: version + CHANGELOG.md + the six version sites + comm
 #
 # NOT part of `check` or `quick`, deliberately: a sidecar whose sources changed since the last
 # release is the ordinary state of `main`, so a gate here would be red almost always and mean
-# nothing when it was. The gate that DOES run is in `check-invariants.py` — every shipped sidecar
+# nothing when it was. The gate that DOES run is `every-sidecar-is-pinned` in
+# `rust/slopdesk-invariants` — every shipped sidecar
 # must have a pin entry — and the one that refuses to ship a lie is in `package-release.sh`, which
 # asks each built binary its version and compares it with the pin.
 tool-versions: ## Show which sidecars changed since the last release, and the bump each would take
