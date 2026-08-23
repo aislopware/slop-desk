@@ -4,10 +4,10 @@
 //! Ported from `scripts/check-supervisor.sh`. These are the columns whose halves could disagree in
 //! the most ways, so everything two frameworks could argue about was lifted to `SlopDeskClientCore`
 //! FIRST and what is left in either half is drawing and events. Each rule here pairs a BAN (the
-//! shared `SwiftUI` original stays deleted, no sigil is respelt) with a READER — because a ban alone
-//! cannot tell a half that PORTED a reading from one that DELETED it, and a navigator that simply
-//! stopped drawing git passes every ban in the file while the parity rule the whole split rests on
-//! quietly stops holding.
+//! shared `SwiftUI` original stays deleted, no sigil is respelt) with a READER — because a ban
+//! alone cannot tell a half that PORTED a reading from one that DELETED it, and a navigator that
+//! simply stopped drawing git passes every ban in the file while the parity rule the whole split
+//! rests on quietly stops holding.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
@@ -28,13 +28,13 @@ const PHONE_PANEL: &str = "Sources/SlopDeskPhoneUI/Panel/PhonePanelSheet.swift";
 /// first. This gate is what keeps that true.
 ///
 /// `SlateTabRow.swift` must stay DELETED. It was the shared `SwiftUI` row both platforms drew; the
-/// Mac's row is `MacSidebarRowView` and the phone's is `IOSSidebarLiveRow`, and a third would be the
-/// cross-language mirror `CLAUDE.md`'s one-implementation rule bans.
+/// Mac's row is `MacSidebarRowView` and the phone's is `IOSSidebarLiveRow`, and a third would be
+/// the cross-language mirror `CLAUDE.md`'s one-implementation rule bans.
 ///
-/// THE PHONE IS ASSERTED THE SAME WAY, and it is not symmetry for its own sake: the sigil ban cannot
-/// tell a half that ported the git line from one that deleted it. A navigator that simply stopped
-/// drawing git passes every ban here — no second dialect, no respelt sigil, nothing to catch — while
-/// "the phone differs in LAYOUT only" quietly stops holding.
+/// THE PHONE IS ASSERTED THE SAME WAY, and it is not symmetry for its own sake: the sigil ban
+/// cannot tell a half that ported the git line from one that deleted it. A navigator that simply
+/// stopped drawing git passes every ban here — no second dialect, no respelt sigil, nothing to
+/// catch — while "the phone differs in LAYOUT only" quietly stops holding.
 #[must_use]
 pub fn one_navigator_per_platform(tree: &Tree) -> Report {
     let claims = [
@@ -111,19 +111,19 @@ pub fn one_navigator_per_platform(tree: &Tree) -> Report {
 
 /// One titlebar band, one connection reading
 ///
-/// The window runs `.hiddenTitleBar`, so the BAND is the chrome — and being the chrome, it is always
-/// mounted, which is the same recurring cost that moved the navigator. Both its halves crossed:
-/// `MacTabStrip` for the tabs and `MacConnectionIsland` for the status.
+/// The window runs `.hiddenTitleBar`, so the BAND is the chrome — and being the chrome, it is
+/// always mounted, which is the same recurring cost that moved the navigator. Both its halves
+/// crossed: `MacTabStrip` for the tabs and `MacConnectionIsland` for the status.
 ///
 /// The two `SwiftUI` originals must stay DELETED. `SlateTitlebar` was a full-bleed overlay that had
 /// to be handed `allowsHitTesting` back a layer at a time to stop claiming the terminal's clicks —
 /// the exact hazard an `NSView` sibling does not have — and `WorkspaceTabStrip` was the tab list it
 /// carried. Neither has a phone mount to come back for: the phone has no titlebar at all.
 ///
-/// What the two connection halves could disagree about is not the palette — it is which readings may
-/// CLIMB at all (the link on its round trip, memory on the kernel's pressure verdict, disk on an
-/// absolute byte floor; CPU never), and a second answer to that is an instrument that cries wolf on
-/// one platform and stays silent on the other.
+/// What the two connection halves could disagree about is not the palette — it is which readings
+/// may CLIMB at all (the link on its round trip, memory on the kernel's pressure verdict, disk on
+/// an absolute byte floor; CPU never), and a second answer to that is an instrument that cries wolf
+/// on one platform and stays silent on the other.
 #[must_use]
 pub fn one_titlebar_band_one_connection_reading(tree: &Tree) -> Report {
     let claims = [
@@ -145,8 +145,8 @@ pub fn one_titlebar_band_one_connection_reading(tree: &Tree) -> Report {
             unless: &[],
             view: View::Raw,
             exempt: &[],
-            message: "a SwiftUI titlebar/tab-strip type is back ({files}) — the band is MacTitlebarBand, the \
-                      strip MacTabStrip",
+            message: "a SwiftUI titlebar/tab-strip type is back ({files}) — the band is MacTitlebarBand, \
+                      the strip MacTabStrip",
         },
         Claim::Mentions {
             path: "Sources/SlopDeskMacUI/Chrome/MacConnectionIsland.swift",
@@ -181,15 +181,15 @@ pub fn one_titlebar_band_one_connection_reading(tree: &Tree) -> Report {
 
 /// One panel chrome, one tab reading
 ///
-/// The right panel's CHROME crossed whole: the strip over the surfaces, the rail the collapsed panel
-/// leaves behind, and the four tabs both of them draw. The SURFACES stayed `SwiftUI` on purpose
-/// (three of the four are already `AppKit` under a thin wrapper, and the phone will want them on its
-/// own layout) — which is exactly why the chrome had to move: a strip that reloads a surface must
-/// outlive the view that draws it.
+/// The right panel's CHROME crossed whole: the strip over the surfaces, the rail the collapsed
+/// panel leaves behind, and the four tabs both of them draw. The SURFACES stayed `SwiftUI` on
+/// purpose (three of the four are already `AppKit` under a thin wrapper, and the phone will want
+/// them on its own layout) — which is exactly why the chrome had to move: a strip that reloads a
+/// surface must outlive the view that draws it.
 ///
-/// The two `SwiftUI` originals must stay DELETED. `PanelRail` was the collapsed panel's stand-in and
-/// `AndroidRobotMark` the one mark no icon set ships; the mark is a `CGPath` in `ClientCore` now, so
-/// a `SwiftUI` copy would be a second drawing of the same head.
+/// The two `SwiftUI` originals must stay DELETED. `PanelRail` was the collapsed panel's stand-in
+/// and `AndroidRobotMark` the one mark no icon set ships; the mark is a `CGPath` in `ClientCore`
+/// now, so a `SwiftUI` copy would be a second drawing of the same head.
 ///
 /// THE PHONE'S PANEL IS A LAYOUT, NOT A SECOND PANEL. Its bar is its own (a cover has no split item
 /// to hide, so it closes instead), but everything under the bar is the Mac's: the same four
@@ -215,8 +215,8 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
             unless: &[],
             view: View::Raw,
             exempt: &[],
-            message: "a SwiftUI panel-chrome type is back ({files}) — the tabs are MacPanelTabPlate, the mark \
-                      AndroidMarkPath",
+            message: "a SwiftUI panel-chrome type is back ({files}) — the tabs are MacPanelTabPlate, the \
+                      mark AndroidMarkPath",
         },
         // The four TABS are one list, in ClientCore, because they were written twice — once across
         // the strip and once down the rail — and the two had to agree on the mark, the word AND the
@@ -231,8 +231,8 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
         Claim::Mentions {
             path: "Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift",
             names: &["PanelTabs"],
-            message: "MacPanelTabGroup stopped reading {entry} — the panel's four tabs are ClientCore's, cut \
-                      once",
+            message: "MacPanelTabGroup stopped reading {entry} — the panel's four tabs are ClientCore's, \
+                      cut once",
         },
         Claim::Mentions {
             path: PHONE_PANEL,
@@ -272,8 +272,8 @@ pub fn one_panel_chrome_one_tab_reading(tree: &Tree) -> Report {
                 "Sources/SlopDeskMacUI/Panel/Simulator/",
                 "Sources/SlopDeskMacUI/Panel/Android/",
             ],
-            message: "a panel tab turns its VIEW again ({files}) — turn the content, or the rail's hit areas \
-                      overlap",
+            message: "a panel tab turns its VIEW again ({files}) — turn the content, or the rail's hit \
+                      areas overlap",
         },
     ];
     check_all(tree, &claims)
@@ -295,7 +295,10 @@ mod tests {
             )
             .write(super::MAC_HEADER, "SidebarGitLine\n")
             .write(super::MAC_ROW, "MacSidebarRowView\n")
-            .write("Sources/SlopDeskSlate/StatusPresentation.swift", "TabBadgeReading\n");
+            .write(
+                "Sources/SlopDeskSlate/StatusPresentation.swift",
+                "TabBadgeReading\n",
+            );
     }
 
     #[test]
@@ -311,7 +314,10 @@ mod tests {
         // A half that PORTED the git line and one that DELETED it look the same to the sigil ban —
         // which is why the reader is asserted beside it.
         navigator(&fixture);
-        fixture.write(super::PHONE_NAVIGATOR, "#if os(iOS)\nSidebarRowPresentation\nSidebarRowMenu\n");
+        fixture.write(
+            super::PHONE_NAVIGATOR,
+            "#if os(iOS)\nSidebarRowPresentation\nSidebarRowMenu\n",
+        );
         assert!(!super::one_navigator_per_platform(&fixture.tree()).is_clean());
 
         // A sigil respelt in a half.
@@ -331,7 +337,10 @@ mod tests {
                 "Sources/SlopDeskMacUI/Chrome/MacConnectionIsland.swift",
                 "ConnectionReading\n",
             )
-            .write("Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift", "ConnectionReading\n")
+            .write(
+                "Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift",
+                "ConnectionReading\n",
+            )
             .write(
                 "Sources/SlopDeskMacUI/Chrome/MacTabStrip.swift",
                 "SidebarRowPresentation\n",
@@ -349,30 +358,48 @@ mod tests {
         assert!(super::one_titlebar_band_one_connection_reading(&fixture.tree()).is_clean());
 
         // The band that stopped being a moat.
-        fixture.write("Sources/SlopDeskMacUI/Chrome/MacTitlebarBand.swift", "final class Band {}\n");
+        fixture.write(
+            "Sources/SlopDeskMacUI/Chrome/MacTitlebarBand.swift",
+            "final class Band {}\n",
+        );
         assert!(!super::one_titlebar_band_one_connection_reading(&fixture.tree()).is_clean());
 
         // The deleted SwiftUI strip, back.
         titlebar(&fixture);
-        fixture.write("Sources/SlopDeskPhoneUI/Chrome/SlateTitlebar.swift", "struct SlateTitlebar {}\n");
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Chrome/SlateTitlebar.swift",
+            "struct SlateTitlebar {}\n",
+        );
         assert!(!super::one_titlebar_band_one_connection_reading(&fixture.tree()).is_clean());
 
         // And a half that stopped reading the alarm ladder.
         titlebar(&fixture);
-        fixture.write("Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift", "Text(\"link\")\n");
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Chrome/ConnectionPill.swift",
+            "Text(\"link\")\n",
+        );
         assert!(!super::one_titlebar_band_one_connection_reading(&fixture.tree()).is_clean());
     }
 
     fn panel(fixture: &Fixture) {
         fixture
             .write("Sources/SlopDeskMacUI/Panel/MacPanelStrip.swift", "PanelTabs\n")
-            .write("Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift", "PanelTabs\n")
+            .write(
+                "Sources/SlopDeskMacUI/Panel/MacPanelTabGroup.swift",
+                "PanelTabs\n",
+            )
             .write(
                 super::PHONE_PANEL,
                 "PanelTabs\nCodePanelSurfaces(store: store)\nAndroidMarkPath\n",
             )
-            .write("Sources/SlopDeskPhoneUI/WorkspaceRootView.swift", "codeSidebarCollapsed\n")
-            .write("Sources/SlopDeskMacUI/Panel/MacPanelTabPlate.swift", "AndroidMarkPath\n");
+            .write(
+                "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
+                "codeSidebarCollapsed\n",
+            )
+            .write(
+                "Sources/SlopDeskMacUI/Panel/MacPanelTabPlate.swift",
+                "AndroidMarkPath\n",
+            );
     }
 
     #[test]

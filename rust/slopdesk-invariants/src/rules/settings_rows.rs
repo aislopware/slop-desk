@@ -1,9 +1,10 @@
 //! What a setting IS: one row table, one alphabet per key, one page shape, one chord editor.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Where `settings_catalog` covers what a control OFFERS,
-//! this covers the row itself — its label, its key, the page it sits on and the recorder that edits
-//! its chord. Every one of them is `slopdesk-settings`' table and a Swift marshaller over it, and
-//! every one of them has a way of drifting that compiles, runs, renders and fails no test.
+//! Ported from `scripts/check-supervisor.sh`. Where `settings_catalog` covers what a control
+//! OFFERS, this covers the row itself — its label, its key, the page it sits on and the recorder
+//! that edits its chord. Every one of them is `slopdesk-settings`' table and a Swift marshaller
+//! over it, and every one of them has a way of drifting that compiles, runs, renders and fails no
+//! test.
 
 use crate::claim::{Claim, Extract, SWIFT, View, check_all};
 use crate::report::Report;
@@ -11,7 +12,8 @@ use crate::tree::Tree;
 
 const ROWS_SWIFT: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift";
 const SETTINGS_KEY: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/SettingsKey.swift";
-const CONFIG_BRIDGE: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/PreferencesStore+ConfigBridge.swift";
+const CONFIG_BRIDGE: &str =
+    "Sources/SlopDeskWorkspaceCore/Workspace/Store/PreferencesStore+ConfigBridge.swift";
 const ROWS_RUST: &str = "rust/slopdesk-settings/src/settings_rows.rs";
 const LAYOUT_RUST: &str = "rust/slopdesk-settings/src/settings_layout.rs";
 const LAYOUT_SWIFT: &str = "Sources/SlopDeskClientCore/Settings/SettingsLayout.swift";
@@ -117,8 +119,8 @@ pub fn a_setting_is_named_once(tree: &Tree) -> Report {
 ///
 /// The third speller is `PreferencesStore+ConfigBridge`: three `switch` statements over the same
 /// five names, none of which goes through `RenderKey`. A `switch` over a `String` has a `default:`
-/// arm, so `case "font-siz":` neither fails to compile nor fails to run — it stops matching, and the
-/// row goes on rendering its current value while the write that was supposed to follow it lands
+/// arm, so `case "font-siz":` neither fails to compile nor fails to run — it stops matching, and
+/// the row goes on rendering its current value while the write that was supposed to follow it lands
 /// nowhere.
 ///
 /// The dot/dash split is the classifier for the `SettingsKey` half, and it is CHECKED rather than
@@ -144,11 +146,8 @@ pub fn a_settings_key_is_spelled_once(tree: &Tree) -> Report {
         },
         Claim::Subset {
             label: "render key ⊆ row key",
-            subject: Extract::code(
-                ROWS_SWIFT,
-                r#"^        public static let [A-Za-z]* = "(.*)"$"#,
-            )
-            .within(r"public enum RenderKey \{", r"^    \}$"),
+            subject: Extract::code(ROWS_SWIFT, r#"^        public static let [A-Za-z]* = "(.*)"$"#)
+                .within(r"public enum RenderKey \{", r"^    \}$"),
             universe: row_keys(),
             message: "the RenderKey {orphans} names no row in settings_rows.rs — the two spellings of that \
                       key have drifted, and a view asking for a row that does not exist renders as nothing",
@@ -186,14 +185,14 @@ pub fn a_settings_key_is_spelled_once(tree: &Tree) -> Report {
 /// `slopdesk_workspace::settings_layout`. `SettingsLayout.swift` is the near side and
 /// `rust/slopdesk-ffi/src/settings_layout.rs` is the marshalling.
 ///
-/// ONE door, on both sides. It used to be TEN, addressed positionally — a group count, then a title,
-/// a timing and a row count per group, then six more per row — which is `1 + 3G + 6R` crossings to
-/// answer one question, asked from inside a body both renderers re-evaluate whenever a `@Default` on
-/// the page changes. Each of those doors RE-DERIVED the whole page to reach one member, so laying
-/// out Appearance made ~166 crossings doing ~166 filters and ~330 allocations to read 23 `&'static`
-/// rows. Nothing failed while it did, because every answer was RIGHT; the only trace was the frame
-/// rate under a slider drag on that page. A door is born in the header and in the shim, so the ban
-/// on its return is in both — either can be edited on its own.
+/// ONE door, on both sides. It used to be TEN, addressed positionally — a group count, then a
+/// title, a timing and a row count per group, then six more per row — which is `1 + 3G + 6R`
+/// crossings to answer one question, asked from inside a body both renderers re-evaluate whenever a
+/// `@Default` on the page changes. Each of those doors RE-DERIVED the whole page to reach one
+/// member, so laying out Appearance made ~166 crossings doing ~166 filters and ~330 allocations to
+/// read 23 `&'static` rows. Nothing failed while it did, because every answer was RIGHT; the only
+/// trace was the frame rate under a slider drag on that page. A door is born in the header and in
+/// the shim, so the ban on its return is in both — either can be edited on its own.
 ///
 /// The door is matched with a word boundary rather than as a substring, because a plain substring
 /// passes on a door RENAMED to `…_pagev2`, which is exactly the shape a "just one more door" change
@@ -297,8 +296,8 @@ pub fn a_settings_page_is_shaped_once(tree: &Tree) -> Report {
                 "every_row_of_every_page_matches_the_table_the_index_doors_read",
                 "every_page_fits_the_near_sides_first_guess",
             ],
-            message: "the FFI shim dropped {entry} — the page delivery is then pinned by nothing \
-                      (docs/55 §4)",
+            message: "the FFI shim dropped {entry} — the page delivery is then pinned by nothing (docs/55 \
+                      §4)",
         },
         Claim::LacksWithin {
             path: "Sources/SlopDeskPhoneUI/Settings/SettingsControls.swift",
@@ -327,8 +326,7 @@ pub fn a_settings_page_is_shaped_once(tree: &Tree) -> Report {
             template: "slateFormSection(\"{needle}\")",
             view: View::Code,
             exempt: &[],
-            message: "{files} TYPED a group header the layout table already holds — render it from the \
-                      table",
+            message: "{files} TYPED a group header the layout table already holds — render it from the table",
         },
     ];
     check_all(tree, &claims)
@@ -336,17 +334,17 @@ pub fn a_settings_page_is_shaped_once(tree: &Tree) -> Report {
 
 /// One chord editor, drawn twice
 ///
-/// Key Bindings is `Platform::Both`, so it is the one BESPOKE group the Mac draws itself rather than
-/// hosting: its recorder is an `NSEvent` monitor scoped to the Settings window, and a monitor is not
-/// a view. Two drawings over one registry is fine; two answers to "what did the user just press" or
-/// "does this row match the search" is not, and neither fails loudly — a second capture table just
-/// quietly records a chord the dispatcher will never fire.
+/// Key Bindings is `Platform::Both`, so it is the one BESPOKE group the Mac draws itself rather
+/// than hosting: its recorder is an `NSEvent` monitor scoped to the Settings window, and a monitor
+/// is not a view. Two drawings over one registry is fine; two answers to "what did the user just
+/// press" or "does this row match the search" is not, and neither fails loudly — a second capture
+/// table just quietly records a chord the dispatcher will never fire.
 ///
 /// The Mac reads an `NSEvent` and asks `KeybindingCapture` (`slopdesk_video::key_naming`, off a
 /// macOS virtual key code); the phone reads a `UIKey` and asks `PhoneKey.captureOutcome`
 /// (`slopdesk_workspace::phone_key`, off its HID usage). The two tables live in crates that cannot
-/// see each other, so their agreement is a test in `slopdesk-ffi`, which can — and that test is what
-/// stops a phone rebind from being written under a spelling the Mac's lookup never builds.
+/// see each other, so their agreement is a test in `slopdesk-ffi`, which can — and that test is
+/// what stops a phone rebind from being written under a spelling the Mac's lookup never builds.
 ///
 /// The two override writers must PRESERVE `textBindings` / `unbinds`. Rebuilding the model as
 /// `KeybindingPreferences(overrides:)` defaults both to empty, so a single rebind in Settings
@@ -383,8 +381,7 @@ pub fn one_chord_editor_drawn_twice(tree: &Tree) -> Report {
         Claim::Names {
             path: "rust/slopdesk-ffi/src/phone_key.rs",
             needle: "the_two_recorders_agree_on_every_key_both_can_name",
-            message: "the recorders' agreement test is gone — the two capture tables can now drift \
-                      silently",
+            message: "the recorders' agreement test is gone — the two capture tables can now drift silently",
         },
         Claim::NoneOf {
             paths: &[MAC_CHORDS, PHONE_CHORDS],
@@ -418,8 +415,8 @@ mod tests {
             .write("rust/slopdesk-ffi/include/slopdesk_ffi.h", &doors)
             .write(
                 super::ROWS_RUST,
-                "        key: \"controls.copyOnSelect\",\n        label: \"Copy on Select\",\n\
-                 \x20       key: \"font-family\",\n        label: \"Font\",\n",
+                "        key: \"controls.copyOnSelect\",\n        label: \"Copy on Select\",\n\x20       \
+                 key: \"font-family\",\n        label: \"Font\",\n",
             );
         views(fixture);
         fixture
@@ -453,7 +450,8 @@ mod tests {
         assert!(!super::a_setting_is_named_once(&fixture.tree()).is_clean());
     }
 
-    /// The corpus draining is the failure mode the shell had three times: a ban over no files passes.
+    /// The corpus draining is the failure mode the shell had three times: a ban over no files
+    /// passes.
     #[test]
     fn a_drained_renderer_corpus_fails_rather_than_passing() {
         let fixture = Fixture::new("settings-rows-drained");
@@ -505,8 +503,8 @@ mod tests {
         keys(&fixture);
         fixture.write(
             super::ROWS_RUST,
-            "        key: \"controls.copyOnSelect\",\n        key: \"font-family\",\n\
-             \x20       key: \"plainname\",\n",
+            "        key: \"controls.copyOnSelect\",\n        key: \"font-family\",\n\x20       key: \
+             \"plainname\",\n",
         );
         assert!(!super::a_settings_key_is_spelled_once(&fixture.tree()).is_clean());
     }
@@ -532,13 +530,14 @@ mod tests {
         fixture
             .write(
                 super::LAYOUT_SWIFT,
-                "slopdesk_settings_layout_page(0, true, &out, 4096)\n    private static let inlineCapacity = 4096\n",
+                "slopdesk_settings_layout_page(0, true, &out, 4096)\n    private static let inlineCapacity \
+                 = 4096\n",
             )
             .write(
                 super::LAYOUT_FFI,
-                "const SWIFT_FIRST_GUESS: usize = 4096;\n\
-                 fn every_row_of_every_page_matches_the_table_the_index_doors_read() {}\n\
-                 fn every_page_fits_the_near_sides_first_guess() {}\n",
+                "const SWIFT_FIRST_GUESS: usize = 4096;\nfn \
+                 every_row_of_every_page_matches_the_table_the_index_doors_read() {}\nfn \
+                 every_page_fits_the_near_sides_first_guess() {}\n",
             )
             .write(
                 super::HEADER,
@@ -562,24 +561,27 @@ mod tests {
         // A positional door back in the header.
         fixture.write(
             super::HEADER,
-            "size_t slopdesk_settings_layout_page(uint8_t i, bool mac, uint8_t *out, size_t cap);\n\
-             size_t slopdesk_settings_layout_row_key(uint8_t g, uint8_t r);\n",
+            "size_t slopdesk_settings_layout_page(uint8_t i, bool mac, uint8_t *out, size_t cap);\nsize_t \
+             slopdesk_settings_layout_row_key(uint8_t g, uint8_t r);\n",
         );
         assert!(!super::a_settings_page_is_shaped_once(&fixture.tree()).is_clean());
 
         // The buffer drifting on one side.
         page(&fixture);
-        fixture.write(super::LAYOUT_FFI, "const SWIFT_FIRST_GUESS: usize = 2048;\n\
-             fn every_row_of_every_page_matches_the_table_the_index_doors_read() {}\n\
-             fn every_page_fits_the_near_sides_first_guess() {}\n");
+        fixture.write(
+            super::LAYOUT_FFI,
+            "const SWIFT_FIRST_GUESS: usize = 2048;\nfn \
+             every_row_of_every_page_matches_the_table_the_index_doors_read() {}\nfn \
+             every_page_fits_the_near_sides_first_guess() {}\n",
+        );
         assert!(!super::a_settings_page_is_shaped_once(&fixture.tree()).is_clean());
 
         // The compile-time gate growing back inside `current`.
         page(&fixture);
         fixture.write(
             "Sources/SlopDeskPhoneUI/Settings/SettingsControls.swift",
-            "enum Half {\n    static var current: Self {\n        #if os(macOS)\n        .mac\n\
-             \x20       #else\n        .phone\n        #endif\n    }\n}\n",
+            "enum Half {\n    static var current: Self {\n        #if os(macOS)\n        .mac\n\x20       \
+             #else\n        .phone\n        #endif\n    }\n}\n",
         );
         assert!(!super::a_settings_page_is_shaped_once(&fixture.tree()).is_clean());
 
@@ -629,8 +631,8 @@ mod tests {
         // The audit bug: a rebind that clears every literal-byte binding.
         fixture.write(
             super::PHONE_CHORDS,
-            "WorkspaceBindingRegistry KeybindingsEditorModel PhoneKey.captureOutcome\n\
-             store.keybindings = KeybindingPreferences(overrides: next)\n",
+            "WorkspaceBindingRegistry KeybindingsEditorModel PhoneKey.captureOutcome\nstore.keybindings = \
+             KeybindingPreferences(overrides: next)\n",
         );
         assert!(!super::one_chord_editor_drawn_twice(&fixture.tree()).is_clean());
 

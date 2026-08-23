@@ -16,9 +16,9 @@ const POOL: &str = "Sources/SlopDeskClientCore/CodeSidebar/CodeSidebarWebViewPoo
 /// The device-panel floor is platform-neutral
 ///
 /// Every file in `SlopDeskDevicePanels` was once wrapped whole in `#if os(macOS)` — inherited from
-/// the days the panels were a Mac-only surface, never from a Mac-only dependency. The module imports
-/// `Foundation`, `CoreGraphics`, `CoreMedia` and `Network`; the phone has all four. The gates cost
-/// nothing to add and hid the whole parity gap behind a green build.
+/// the days the panels were a Mac-only surface, never from a Mac-only dependency. The module
+/// imports `Foundation`, `CoreGraphics`, `CoreMedia` and `Network`; the phone has all four. The
+/// gates cost nothing to add and hid the whole parity gap behind a green build.
 ///
 /// So no platform gate goes back in. `SimulatorKeyMap` is the one that will tempt someone — its
 /// table is keyed on macOS virtual key codes — and its answer is `AndroidKeyMap`'s: spell the
@@ -60,15 +60,15 @@ pub fn the_device_panel_floor_builds_for_the_phone(tree: &Tree) -> Report {
 /// carry both halves in one file, `#if os(macOS)` … `#elseif os(iOS)`. A bare `#if os(macOS)` in
 /// those directories is the old Mac-only shape coming back.
 ///
-/// ONE VOCABULARY, TWO NUMBERINGS. A Mac reports a virtual key code and an iPad a USB HID usage; the
-/// NAMES they resolve to, and every rule about what to do with them, are cut once — in
+/// ONE VOCABULARY, TWO NUMBERINGS. A Mac reports a virtual key code and an iPad a USB HID usage;
+/// the NAMES they resolve to, and every rule about what to do with them, are cut once — in
 /// `slopdesk_devicepanel::panel_key`, which both panels reach through one door apiece. What this
-/// used to check was that the two HID TABLES existed in Swift. They are gone: the numbering rides as
-/// the door's `hid` flag, and the HID side is derived from the remote-desktop path's own usage →
+/// used to check was that the two HID TABLES existed in Swift. They are gone: the numbering rides
+/// as the door's `hid` flag, and the HID side is derived from the remote-desktop path's own usage →
 /// keycode map rather than written a second time. So the check inverts — the tables must stay
-/// DELETED (a reappearance would compile and pass its own tests) and the two ENTRY POINTS that carry
-/// the iPad's numbering must stay reachable, because a port that quietly dropped the HID half would
-/// leave an iPad keyboard typing nothing.
+/// DELETED (a reappearance would compile and pass its own tests) and the two ENTRY POINTS that
+/// carry the iPad's numbering must stay reachable, because a port that quietly dropped the HID half
+/// would leave an iPad keyboard typing nothing.
 #[must_use]
 pub fn both_device_panels_draw_on_both_platforms(tree: &Tree) -> Report {
     let claims = [
@@ -161,17 +161,17 @@ pub fn both_device_panels_draw_on_both_platforms(tree: &Tree) -> Report {
 /// Mac-only.
 ///
 /// Five files now, across THREE targets, and the split is the rule. Below both UI halves, in
-/// `SlopDeskClientCore`: the DECISIONS in `CodeSidebarFocusPolicy` (pure, and the only place a focus
-/// rule may be written), the POOL in `CodeSidebarWebViewPool` (projects and their warm pages), and
-/// the PAGE in `CodeSidebarPage` (the mint, and the Mac's responder-seam subclass). The MOUNT is
-/// per-half and always was. And one target up in `SlopDeskMacUI`: the keyboard DUEL in
+/// `SlopDeskClientCore`: the DECISIONS in `CodeSidebarFocusPolicy` (pure, and the only place a
+/// focus rule may be written), the POOL in `CodeSidebarWebViewPool` (projects and their warm
+/// pages), and the PAGE in `CodeSidebarPage` (the mint, and the Mac's responder-seam subclass). The
+/// MOUNT is per-half and always was. And one target up in `SlopDeskMacUI`: the keyboard DUEL in
 /// `CodeSidebar/MacCodeSidebarKeyboard.swift`. `docs/56` increments 42, 43, 45 and 51 are the four
 /// moves.
 ///
-/// THE POOL CARRIES NO GATE AT ALL, which is stronger than the four whole-file bans and is the point
-/// of increments 42–43. A gate reappearing there is not a gate problem; it is the signal that
-/// whatever it guards belongs in the keyboard file or the page file instead, and a comment saying so
-/// is not a pin.
+/// THE POOL CARRIES NO GATE AT ALL, which is stronger than the four whole-file bans and is the
+/// point of increments 42–43. A gate reappearing there is not a gate problem; it is the signal that
+/// whatever it guards belongs in the keyboard file or the page file instead, and a comment saying
+/// so is not a pin.
 #[must_use]
 pub fn the_code_panel_crosses(tree: &Tree) -> Report {
     let claims = [
@@ -315,8 +315,14 @@ mod tests {
                 "rust/slopdesk-devicepanel/src/panel_key.rs",
                 "hid_virtual_key::virtual_key(usage)\n",
             )
-            .write("Sources/SlopDeskVideoClient/HIDVirtualKeyMap.swift", "slopdesk_panel_key\n")
-            .write("Sources/SlopDeskVideoClient/TouchPointerPlan.swift", "slopdesk_touch_plan\n");
+            .write(
+                "Sources/SlopDeskVideoClient/HIDVirtualKeyMap.swift",
+                "slopdesk_panel_key\n",
+            )
+            .write(
+                "Sources/SlopDeskVideoClient/TouchPointerPlan.swift",
+                "slopdesk_touch_plan\n",
+            );
     }
 
     #[test]

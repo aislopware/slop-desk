@@ -51,9 +51,9 @@ pub fn cached(pattern: &str) -> &'static Regex {
 /// A string promoted to `'static`, built once per distinct value.
 ///
 /// Every field of a [`Claim`](crate::claim::Claim) is `&'static str`, which is right for the ninety
-/// per cent of rules whose patterns and sentences are literals. A handful are not: a rule that walks
-/// a table of nineteen phrases would otherwise have to hand-write the same two sentences nineteen
-/// times, and the table is the thing a reader wants to see.
+/// per cent of rules whose patterns and sentences are literals. A handful are not: a rule that
+/// walks a table of nineteen phrases would otherwise have to hand-write the same two sentences
+/// nineteen times, and the table is the thing a reader wants to see.
 ///
 /// Interned rather than leaked outright for the reason [`cached`] is: a rule runs once per process
 /// in the binary but repeatedly across a test suite, and a leak per CALL would grow without bound

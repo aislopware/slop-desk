@@ -5,11 +5,12 @@
 //! happened nine times over: a helper, a copy string or a constant that is in the RIGHT target on
 //! both sides of the split and spelled twice.
 //!
-//! `ensureEndpoint` sat in both panel files with a static dedupe key each, pointed at ONE host-global
-//! settings file. The Open Quickly picker assembled the same five corpora and snapshotted the same
-//! eighteen lines of focused pane in both halves. Every label on the Connect form was typed twice —
-//! including three port prompts that were one slot off the real defaults on BOTH sides, which is
-//! precisely how a duplicate hides a bug: the two copies agreed, so nothing disagreed with them.
+//! `ensureEndpoint` sat in both panel files with a static dedupe key each, pointed at ONE
+//! host-global settings file. The Open Quickly picker assembled the same five corpora and
+//! snapshotted the same eighteen lines of focused pane in both halves. Every label on the Connect
+//! form was typed twice — including three port prompts that were one slot off the real defaults on
+//! BOTH sides, which is precisely how a duplicate hides a bug: the two copies agreed, so nothing
+//! disagreed with them.
 //!
 //! So these three ask a different question from every rule around them. Not "is this import
 //! missing" — a duplicated helper imports fine — but "does this body / this sentence / this number
@@ -33,84 +34,82 @@ const BOTH: &[&str] = &[MAC, PHONE];
 /// the debt list are all [`Claim::NoCloneAcross`]'s, which is where the reasoning for each lives;
 /// what is here is the ledger itself.
 ///
-/// Two of the seven pairs — `CodePanelSurfaces`, `SlopDeskPhoneApp` — have their floor types written
-/// already, `CodeServerEnsure` and `ClientNotificationSinks`, and are waiting only on the phone-side
-/// edit. The rest are waiting on a floor file nobody has written yet, the GUI/video pane leaf being
-/// the largest and the next one worth doing.
+/// Two of the seven pairs — `CodePanelSurfaces`, `SlopDeskPhoneApp` — have their floor types
+/// written already, `CodeServerEnsure` and `ClientNotificationSinks`, and are waiting only on the
+/// phone-side edit. The rest are waiting on a floor file nobody has written yet, the GUI/video pane
+/// leaf being the largest and the next one worth doing.
 ///
 /// BREAK-TEST (2026-08-22): copied `KeybindingsEditorReading.swift`'s `conflictLines(_:)` body back
-/// into BOTH `MacKeybindingsEditor.swift` and `KeybindingsEditorView.swift` as private methods — the
-/// exact shape the dedup removed. Rule FIRED, naming both sites. Restored both files by `cp` from
-/// /tmp; rule green. Also verified the inverse: with the tree as it stands the rule finds exactly the
-/// seven ledgered pairs, i.e. it is not passing by finding nothing.
+/// into BOTH `MacKeybindingsEditor.swift` and `KeybindingsEditorView.swift` as private methods —
+/// the exact shape the dedup removed. Rule FIRED, naming both sites. Restored both files by `cp`
+/// from /tmp; rule green. Also verified the inverse: with the tree as it stands the rule finds
+/// exactly the seven ledgered pairs, i.e. it is not passing by finding nothing.
 #[must_use]
 pub fn no_body_crosses_the_ui_split(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[Claim::NoCloneAcross {
-            left: MAC,
-            right: PHONE,
-            extensions: SWIFT,
-            window: 8,
-            known: &[
-                // GUI/video pane leaf — the largest remaining pair, and the next one worth a floor.
-                (
-                    "Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift",
-                    "Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift",
-                ),
-                (
-                    "Sources/SlopDeskMacUI/Pane/MacPromptJumpFlashOverlay.swift",
-                    "Sources/SlopDeskPhoneUI/Pane/PromptJumpFlashOverlay.swift",
-                ),
-                (
-                    "Sources/SlopDeskMacUI/Pane/MacTerminalFindBar.swift",
-                    "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
-                ),
-                (
-                    "Sources/SlopDeskMacUI/Pane/MacTerminalLeafView.swift",
-                    "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift",
-                ),
-                // Waiting on `CodeServerEnsure` being called from the phone half.
-                (
-                    "Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift",
-                    "Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift",
-                ),
-                (
-                    "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift",
-                    "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
-                ),
-                // Waiting on `ClientNotificationSinks` being called from the phone half.
-                (
-                    "Sources/SlopDeskMacUI/SlopDeskMacApp.swift",
-                    "Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift",
-                ),
-            ],
-            floor: 50,
-            message: "eight identical lines in both UI targets ({pairs}) — one implementation, never \
-                      two (docs/56 §3, CLAUDE.md)",
-        }],
-    )
+    check_all(tree, &[Claim::NoCloneAcross {
+        left: MAC,
+        right: PHONE,
+        extensions: SWIFT,
+        window: 8,
+        known: &[
+            // GUI/video pane leaf — the largest remaining pair, and the next one worth a floor.
+            (
+                "Sources/SlopDeskMacUI/Pane/MacGuiLeafView.swift",
+                "Sources/SlopDeskPhoneUI/Pane/GuiLeafView.swift",
+            ),
+            (
+                "Sources/SlopDeskMacUI/Pane/MacPromptJumpFlashOverlay.swift",
+                "Sources/SlopDeskPhoneUI/Pane/PromptJumpFlashOverlay.swift",
+            ),
+            (
+                "Sources/SlopDeskMacUI/Pane/MacTerminalFindBar.swift",
+                "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+            ),
+            (
+                "Sources/SlopDeskMacUI/Pane/MacTerminalLeafView.swift",
+                "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift",
+            ),
+            // Waiting on `CodeServerEnsure` being called from the phone half.
+            (
+                "Sources/SlopDeskMacUI/Panel/MacCodePanelSurfaces.swift",
+                "Sources/SlopDeskPhoneUI/CodeSidebar/CodePanelSurfaces.swift",
+            ),
+            (
+                "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift",
+                "Sources/SlopDeskPhoneUI/WorkspaceRootView.swift",
+            ),
+            // Waiting on `ClientNotificationSinks` being called from the phone half.
+            (
+                "Sources/SlopDeskMacUI/SlopDeskMacApp.swift",
+                "Sources/SlopDeskPhoneUI/SlopDeskPhoneApp.swift",
+            ),
+        ],
+        floor: 50,
+        message: "eight identical lines in both UI targets ({pairs}) — one implementation, never two \
+                  (docs/56 §3, CLAUDE.md)",
+    }])
 }
 
 /// A named sentence has one speller
 ///
-/// Every literal below was typed once per shell and now lives in the shared logic target; a UI target
-/// that spells one raw again has re-forked it. Named individually rather than counted, because the
-/// failure can then say WHERE the sentence lives, and because the ban is what makes the floor symbol
-/// the only way to reach the words.
+/// Every literal below was typed once per shell and now lives in the shared logic target; a UI
+/// target that spells one raw again has re-forked it. Named individually rather than counted,
+/// because the failure can then say WHERE the sentence lives, and because the ban is what makes the
+/// floor symbol the only way to reach the words.
 ///
-/// This is not a style rule. A user-facing string spelled twice is a translation bug that has already
-/// happened — the day one half is reworded the two platforms ship different copy for the same control
-/// and nothing notices. The keybindings editor alone had ten, including a destructive confirmation
-/// whose title, body and both buttons were duplicated.
+/// This is not a style rule. A user-facing string spelled twice is a translation bug that has
+/// already happened — the day one half is reworded the two platforms ship different copy for the
+/// same control and nothing notices. The keybindings editor alone had ten, including a destructive
+/// confirmation whose title, body and both buttons were duplicated.
 ///
-/// Each ban is PAIRED with a claim that its owner still spells the phrase, which is the one thing the
-/// shell did by hand and recorded in a comment. A ban on a sentence nobody says any more forbids
-/// nothing, and it would go on passing for exactly as long as it took somebody to reword the floor.
+/// Each ban is PAIRED with a claim that its owner still spells the phrase, which is the one thing
+/// the shell did by hand and recorded in a comment. A ban on a sentence nobody says any more
+/// forbids nothing, and it would go on passing for exactly as long as it took somebody to reword
+/// the floor.
 ///
-/// BREAK-TEST (2026-08-22): reverted `MacConnectSheet.swift`'s title to the literal `"Connect to Host"`
-/// and `KeybindingsEditorView.swift`'s dialog title to `"Reset all key bindings?"`. Rule FIRED on
-/// both, each naming its floor symbol. Restored by `cp` from /tmp; rule green.
+/// BREAK-TEST (2026-08-22): reverted `MacConnectSheet.swift`'s title to the literal `"Connect to
+/// Host"` and `KeybindingsEditorView.swift`'s dialog title to `"Reset all key bindings?"`. Rule
+/// FIRED on both, each naming its floor symbol. Restored by `cp` from /tmp; rule green.
 #[must_use]
 pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
     /// The connect form's own words.
@@ -166,7 +165,11 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
             TOAST,
             "ToastPresentation.jumpHint",
         ),
-        ("Search across all tabs…", SEARCH, "GlobalSearchPresentation.queryPrompt"),
+        (
+            "Search across all tabs…",
+            SEARCH,
+            "GlobalSearchPresentation.queryPrompt",
+        ),
         ("Search for commands…", PALETTE, "PalettePresentation.queryPrompt"),
     ];
 
@@ -177,34 +180,31 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
         // to see here.
         let quoted = text::intern(format!("\"{phrase}"));
         let says = text::intern(format!(
-            "{owner} no longer spells \"{phrase}\" — the ban below forbids a sentence the floor has \
-             stopped saying, so it now forbids nothing (docs/56 §3)"
+            "{owner} no longer spells \"{phrase}\" — the ban below forbids a sentence the floor has stopped \
+             saying, so it now forbids nothing (docs/56 §3)"
         ));
         let banned = text::intern(format!(
             "a UI target respells copy that {symbol} owns ({{files}}) — a sentence typed twice is a \
              translation bug (docs/56 §3)"
         ));
-        report.absorb(check_all(
-            tree,
-            &[
-                Claim::Matches {
-                    path: owner,
-                    pattern: quoted,
-                    view: View::Code,
-                    message: says,
-                },
-                Claim::NoneUnder {
-                    roots: BOTH,
-                    extensions: SWIFT,
-                    pattern: quoted,
-                    all: &[],
-                    unless: &[],
-                    view: View::Code,
-                    exempt: &[],
-                    message: banned,
-                },
-            ],
-        ));
+        report.absorb(check_all(tree, &[
+            Claim::Matches {
+                path: owner,
+                pattern: quoted,
+                view: View::Code,
+                message: says,
+            },
+            Claim::NoneUnder {
+                roots: BOTH,
+                extensions: SWIFT,
+                pattern: quoted,
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: banned,
+            },
+        ]));
     }
     report
 }
@@ -214,23 +214,24 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
 /// A COUNT, so the rule above does not only catch what it already knows: how many distinct
 /// capitalised phrase literals are spelled in BOTH shells.
 ///
-/// Capitalised and at least four characters is the user-facing filter. An SF Symbol name, a defaults
-/// key and a JSON field are lowercase or dotted, and a bare `"OK"` is the platform's word rather than
-/// ours.
+/// Capitalised and at least four characters is the user-facing filter. An SF Symbol name, a
+/// defaults key and a JSON field are lowercase or dotted, and a bare `"OK"` is the platform's word
+/// rather than ours.
 ///
-/// ⚠️ RE-PIN AFTER A DELIBERATE MERGE, never raise to make a change fit. The remaining 33 are the GUI
-/// pane control block (ten of them, the next floor file worth writing), the panel strip's three
-/// reload tooltips, the `SLOPDESK_AUTOCONNECT_HOST` gate name spelled in three places — docs/46 says
-/// one accessor — and the bare system verbs, Done / Cancel / Close / Back / Next / Settings, which
-/// are deliberately NOT merged: those are the platform's words for the platform's buttons, and one
-/// constant behind them would buy an indirection and no agreement.
+/// ⚠️ RE-PIN AFTER A DELIBERATE MERGE, never raise to make a change fit. The remaining 33 are the
+/// GUI pane control block (ten of them, the next floor file worth writing), the panel strip's three
+/// reload tooltips, the `SLOPDESK_AUTOCONNECT_HOST` gate name spelled in three places — docs/46
+/// says one accessor — and the bare system verbs, Done / Cancel / Close / Back / Next / Settings,
+/// which are deliberately NOT merged: those are the platform's words for the platform's buttons,
+/// and one constant behind them would buy an indirection and no agreement.
 ///
 /// BREAK-TEST (2026-08-22), both directions. UP: replaced `ConnectForm.videoPortsLabel` with the
-/// literal `"Advanced Transport Options"` in BOTH `MacConnectSheet.swift` and `ConnectHostView.swift`
-/// — a phrase the named ban has never heard of, so only the ceiling can see it. Count read 34, rule
-/// FIRED naming both numbers and printing the whole shared set. Restored by `cp`; count read 33,
-/// green. DOWN: renamed ONE side of an existing pair, `"FPS cap"` to `"Frames per second cap"` in
-/// `MacGuiPaneControls.swift`. Count fell to 32 and the rule stayed green — it bites upward only.
+/// literal `"Advanced Transport Options"` in BOTH `MacConnectSheet.swift` and
+/// `ConnectHostView.swift` — a phrase the named ban has never heard of, so only the ceiling can see
+/// it. Count read 34, rule FIRED naming both numbers and printing the whole shared set. Restored by
+/// `cp`; count read 33, green. DOWN: renamed ONE side of an existing pair, `"FPS cap"` to `"Frames
+/// per second cap"` in `MacGuiPaneControls.swift`. Count fell to 32 and the rule stayed green — it
+/// bites upward only.
 #[must_use]
 pub fn the_shared_vocabulary_only_shrinks(tree: &Tree) -> Report {
     /// A quoted phrase that starts with a capital and runs at least four characters. `\n` is in the
@@ -247,22 +248,19 @@ pub fn the_shared_vocabulary_only_shrinks(tree: &Tree) -> Report {
         }
     }
 
-    check_all(
-        tree,
-        &[Claim::OverlapUnder {
-            label: "phrases",
-            left: phrases(MAC),
-            right: phrases(PHONE),
-            ceiling: 33,
-            // Under the SMALLER side's reading. The two shells are deliberately asymmetric here —
-            // the Mac spells nearly twice the phrases the phone does, most of them menu-bar items
-            // that have no phone surface — so a floor set near the larger one would fail on an
-            // ordinary edit rather than on a pattern going stale.
-            floor: 40,
-            message: "{found} phrases are spelled in BOTH UI targets, ceiling {ceiling} — a new one \
-                      belongs in SlopDeskClientCore (docs/56 §3): {shared}",
-        }],
-    )
+    check_all(tree, &[Claim::OverlapUnder {
+        label: "phrases",
+        left: phrases(MAC),
+        right: phrases(PHONE),
+        ceiling: 33,
+        // Under the SMALLER side's reading. The two shells are deliberately asymmetric here —
+        // the Mac spells nearly twice the phrases the phone does, most of them menu-bar items
+        // that have no phone surface — so a floor set near the larger one would fail on an
+        // ordinary edit rather than on a pattern going stale.
+        floor: 40,
+        message: "{found} phrases are spelled in BOTH UI targets, ceiling {ceiling} — a new one belongs in \
+                  SlopDeskClientCore (docs/56 §3): {shared}",
+    }])
 }
 
 #[cfg(test)]
@@ -271,8 +269,9 @@ mod tests {
 
     use crate::tests::Fixture;
 
-    /// Eight substantive lines, plus the padding that makes each side a corpus rather than a pair of
-    /// files. The floor is 50 per side, so the padding is what the rule spends most of its reading on.
+    /// Eight substantive lines, plus the padding that makes each side a corpus rather than a pair
+    /// of files. The floor is 50 per side, so the padding is what the rule spends most of its
+    /// reading on.
     fn shells(fixture: &Fixture, mac_body: &str, phone_body: &str) {
         for (root, body) in [
             ("Sources/SlopDeskMacUI", mac_body),
@@ -295,14 +294,11 @@ mod tests {
     /// that forgot them would be seven lines and no finding.
     fn body(tail: &str) -> String {
         format!(
-            "import SwiftUI\n@MainActor\nfunc conflictLines(_ rows: [Row]) -> [String] {{\n\
-             \x20   var seen: [String: Int] = [:]\n    let ordered = rows.sorted()\n\
-             \x20   for row in ordered {{\n\
-             \x20       seen[row.chord, default: 0] += 1\n    }}\n\
-             \x20   let clashing = seen.filter {{ $0.value > 1 }}\n\
-             \x20   let names = clashing.keys.sorted()\n\
-             \x20   // a re-worded comment cannot hide a clone\n\
-             \x20   return names.isEmpty ? [] : names\n    {tail}\n}}\n"
+            "import SwiftUI\n@MainActor\nfunc conflictLines(_ rows: [Row]) -> [String] {{\n\x20   var seen: \
+             [String: Int] = [:]\n    let ordered = rows.sorted()\n\x20   for row in ordered {{\n\x20       \
+             seen[row.chord, default: 0] += 1\n    }}\n\x20   let clashing = seen.filter {{ $0.value > 1 \
+             }}\n\x20   let names = clashing.keys.sorted()\n\x20   // a re-worded comment cannot hide a \
+             clone\n\x20   return names.isEmpty ? [] : names\n    {tail}\n}}\n"
         )
     }
 
@@ -314,7 +310,10 @@ mod tests {
     /// ledger's own both-ways behaviour is exercised where it can be parameterised, on
     /// [`crate::claim::Claim::NoCloneAcross`] directly.
     fn cloned(report: &crate::report::Report) -> bool {
-        report.violations().iter().any(|line| line.contains("eight identical lines"))
+        report
+            .violations()
+            .iter()
+            .any(|line| line.contains("eight identical lines"))
     }
 
     #[test]
@@ -342,7 +341,12 @@ mod tests {
         fixture.write("Sources/SlopDeskMacUI/Leaf.swift", "struct Leaf {}\n");
         fixture.write("Sources/SlopDeskPhoneUI/Leaf.swift", "struct Leaf {}\n");
         let found = super::no_body_crosses_the_ui_split(&fixture.tree());
-        assert!(found.violations().iter().any(|line| line.contains("would pass by reading nothing")));
+        assert!(
+            found
+                .violations()
+                .iter()
+                .any(|line| line.contains("would pass by reading nothing"))
+        );
     }
 
     /// A shell holding one phrase per line, and the floor file that owns the sentence.
@@ -350,11 +354,10 @@ mod tests {
         fixture
             .write(
                 "Sources/SlopDeskClientCore/Overlays/ConnectPresentation.swift",
-                "public enum ConnectForm {\n    public static let title = \"Connect to Host\"\n\
-                 \x20   public static let hostPrompt = \"host.local or 10.0.0.7\"\n\
-                 \x20   public static let videoPortsLabel = \"Video ports\"\n\
-                 \x20   public static let mediaPortLabel = \"Media port\"\n\
-                 \x20   public static let cursorPortLabel = \"Cursor port\"\n}\n",
+                "public enum ConnectForm {\n    public static let title = \"Connect to Host\"\n\x20   \
+                 public static let hostPrompt = \"host.local or 10.0.0.7\"\n\x20   public static let \
+                 videoPortsLabel = \"Video ports\"\n\x20   public static let mediaPortLabel = \"Media \
+                 port\"\n\x20   public static let cursorPortLabel = \"Cursor port\"\n}\n",
             )
             .write("Sources/SlopDeskMacUI/MacConnectSheet.swift", mac)
             .write("Sources/SlopDeskPhoneUI/ConnectHostView.swift", phone);
@@ -363,11 +366,7 @@ mod tests {
     #[test]
     fn a_respelled_sentence_is_red() {
         let fixture = Fixture::new("owned-copy");
-        copy(
-            &fixture,
-            "Text(ConnectForm.title)\n",
-            "Text(ConnectForm.title)\n",
-        );
+        copy(&fixture, "Text(ConnectForm.title)\n", "Text(ConnectForm.title)\n");
         // Only the connect form's five are exercised here; the other owners are absent, and an
         // absent owner is itself a failure, so this asserts on the connect claims by name.
         let found = super::owned_copy_has_one_speller(&fixture.tree());
@@ -380,7 +379,12 @@ mod tests {
             "Text(ConnectForm.title)\n",
         );
         let found = super::owned_copy_has_one_speller(&fixture.tree());
-        assert!(found.violations().iter().any(|line| line.contains("ConnectForm.title")));
+        assert!(
+            found
+                .violations()
+                .iter()
+                .any(|line| line.contains("ConnectForm.title"))
+        );
     }
 
     #[test]
@@ -393,9 +397,17 @@ mod tests {
                 "Sources/SlopDeskClientCore/Overlays/ConnectPresentation.swift",
                 "public enum ConnectForm {\n    public static let title = \"Connect to a Host\"\n}\n",
             )
-            .write("Sources/SlopDeskMacUI/MacConnectSheet.swift", "Text(ConnectForm.title)\n");
+            .write(
+                "Sources/SlopDeskMacUI/MacConnectSheet.swift",
+                "Text(ConnectForm.title)\n",
+            );
         let found = super::owned_copy_has_one_speller(&fixture.tree());
-        assert!(found.violations().iter().any(|line| line.contains("stopped saying")));
+        assert!(
+            found
+                .violations()
+                .iter()
+                .any(|line| line.contains("stopped saying"))
+        );
     }
 
     /// Two shells that share `shared` phrases, each above the floor on its own words.
@@ -440,7 +452,10 @@ mod tests {
         // that has been cleaned up; its own fixture, because writes accumulate.
         let fixture = Fixture::new("shared-vocabulary-drained");
         fixture.write("Sources/SlopDeskMacUI/Leaf.swift", "Text(\"Bitrate ceiling\")\n");
-        fixture.write("Sources/SlopDeskPhoneUI/Leaf.swift", "Text(\"Bitrate ceiling\")\n");
+        fixture.write(
+            "Sources/SlopDeskPhoneUI/Leaf.swift",
+            "Text(\"Bitrate ceiling\")\n",
+        );
         assert!(!super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
     }
 }

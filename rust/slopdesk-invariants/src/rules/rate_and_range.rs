@@ -18,8 +18,8 @@ const SETTINGS_CATALOG_RS: &str = "rust/slopdesk-settings/src/settings_catalog.r
 ///
 /// The spend door hands the bucket back BY VALUE, so the near side owns the four doubles between
 /// calls — and for a year it also decided what a NEW one holds. That is not an assignment: a bucket
-/// that rests empty rather than full swallows the first explicit notification of every attach, and a
-/// rate limiter is the last place anyone looks for a missing banner.
+/// that rests empty rather than full swallows the first explicit notification of every attach, and
+/// a rate limiter is the last place anyone looks for a missing banner.
 ///
 /// Three arms. The face is floored by name first, because its two bans read nothing at all if the
 /// file moved. Either constructor door being dropped can only mean the four fields are being filled
@@ -30,34 +30,30 @@ const SETTINGS_CATALOG_RS: &str = "rust/slopdesk-settings/src/settings_catalog.r
 /// fail a test if it came back.
 #[must_use]
 pub fn an_anti_flood_bucket_comes_from_the_crate(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::Exists {
-                path: NOTIFIER,
-                message: "the bucket's Swift face moved, so the bans below stopped checking \
-                          anything (docs/55 §6)",
-            },
-            Claim::Mentions {
-                path: NOTIFIER,
-                names: &[
-                    "slopdesk_ws_notify_rate_limiter",
-                    "slopdesk_ws_notify_explicit_rate_limiter",
-                ],
-                message: "the notifier stopped calling {entry} — a resting bucket is \
-                          RateLimiter::new / ::explicit in rust/slopdesk-workspace's notify \
-                          (docs/55 §6)",
-            },
-            Claim::Lacks {
-                path: NOTIFIER,
-                pattern: r"SlopDeskWsNotifyRateLimiter\(|refillPerSecond: Double = |capacity: Double = ",
-                view: View::Code,
-                message: "the notifier builds or defaults a bucket again — the burst, the refill \
-                          rate and 'a new bucket rests full' are notify.rs's EXPLICIT_BURST / \
-                          EXPLICIT_REFILL_PER_SECOND / RateLimiter::new (docs/55 §4, §8)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Exists {
+            path: NOTIFIER,
+            message: "the bucket's Swift face moved, so the bans below stopped checking anything (docs/55 \
+                      §6)",
+        },
+        Claim::Mentions {
+            path: NOTIFIER,
+            names: &[
+                "slopdesk_ws_notify_rate_limiter",
+                "slopdesk_ws_notify_explicit_rate_limiter",
+            ],
+            message: "the notifier stopped calling {entry} — a resting bucket is RateLimiter::new / \
+                      ::explicit in rust/slopdesk-workspace's notify (docs/55 §6)",
+        },
+        Claim::Lacks {
+            path: NOTIFIER,
+            pattern: r"SlopDeskWsNotifyRateLimiter\(|refillPerSecond: Double = |capacity: Double = ",
+            view: View::Code,
+            message: "the notifier builds or defaults a bucket again — the burst, the refill rate and 'a \
+                      new bucket rests full' are notify.rs's EXPLICIT_BURST / EXPLICIT_REFILL_PER_SECOND / \
+                      RateLimiter::new (docs/55 §4, §8)",
+        },
+    ])
 }
 
 /// A vocabulary pin needs a COUNT as well as a map
@@ -65,26 +61,23 @@ pub fn an_anti_flood_bucket_comes_from_the_crate(tree: &Tree) -> Report {
 /// `Stepper::ALL` is what the round-trip test walks, and it is hand-maintained. The test already
 /// catches a seventh case added to `from_index` but not to `ALL` — `from_index(ALL.len())` would
 /// answer `Some` where it asserts `None`. What NOTHING catches is the other order: a case added to
-/// the enum and to `index` (which is an exhaustive match, so the compiler forces it) but left out of
-/// both `from_index` and `ALL`. Then the suite walks six of seven and passes, and the seventh
+/// the enum and to `index` (which is an exhaustive match, so the compiler forces it) but left out
+/// of both `from_index` and `ALL`. Then the suite walks six of seven and passes, and the seventh
 /// stepper's door answers `found: false` — a settings field rendered with no range at all.
 ///
 /// So the pin is the enum's variant count against the length `ALL` declares. Both sides are
-/// EXTRACTIONS, which is why [`Claim::Census`] refuses two empties rather than calling them equal: a
-/// rename that broke either reading would otherwise leave `"" == ""` looking like the healthiest
+/// EXTRACTIONS, which is why [`Claim::Census`] refuses two empties rather than calling them equal:
+/// a rename that broke either reading would otherwise leave `"" == ""` looking like the healthiest
 /// result this can print.
 #[must_use]
 pub fn the_stepper_vocabulary_is_counted(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[Claim::Census {
-            label: "Stepper cases vs ALL",
-            cases: Extract::code(SETTINGS_CATALOG_RS, r"^    ([A-Z][A-Za-z]*),$")
-                .within(r"^pub enum Stepper \{", r"^\}"),
-            declared: Extract::code(SETTINGS_CATALOG_RS, r"const ALL: \[Self; ([0-9]+)\]")
-                .within(r"^impl Stepper \{", r"^\}"),
-        }],
-    )
+    check_all(tree, &[Claim::Census {
+        label: "Stepper cases vs ALL",
+        cases: Extract::code(SETTINGS_CATALOG_RS, r"^    ([A-Z][A-Za-z]*),$")
+            .within(r"^pub enum Stepper \{", r"^\}"),
+        declared: Extract::code(SETTINGS_CATALOG_RS, r"const ALL: \[Self; ([0-9]+)\]")
+            .within(r"^impl Stepper \{", r"^\}"),
+    }])
 }
 
 #[cfg(test)]
@@ -96,9 +89,8 @@ mod tests {
         let fixture = Fixture::new("bucket-notifier");
         fixture.write(
             super::NOTIFIER,
-            "// Not SlopDeskWsNotifyRateLimiter(capacity:refill:) — the burst is notify.rs's.\n\
-             let bucket = slopdesk_ws_notify_rate_limiter()\n\
-             let explicit = slopdesk_ws_notify_explicit_rate_limiter()\n",
+            "// Not SlopDeskWsNotifyRateLimiter(capacity:refill:) — the burst is notify.rs's.\nlet bucket = \
+             slopdesk_ws_notify_rate_limiter()\nlet explicit = slopdesk_ws_notify_explicit_rate_limiter()\n",
         );
         // The prose names the construction it replaced, so the ban reads code.
         assert!(super::an_anti_flood_bucket_comes_from_the_crate(&fixture.tree()).is_clean());
@@ -106,17 +98,17 @@ mod tests {
         // A bucket that rests empty swallows the first explicit notification of every attach.
         fixture.write(
             super::NOTIFIER,
-            "let bucket = SlopDeskWsNotifyRateLimiter(capacity: 5, tokens: 0)\n\
-             let explicit = slopdesk_ws_notify_explicit_rate_limiter()\n",
+            "let bucket = SlopDeskWsNotifyRateLimiter(capacity: 5, tokens: 0)\nlet explicit = \
+             slopdesk_ws_notify_explicit_rate_limiter()\n",
         );
         assert!(!super::an_anti_flood_bucket_comes_from_the_crate(&fixture.tree()).is_clean());
 
         // The policy as a default argument — of two spellings, the looser is the one that runs.
         fixture.write(
             super::NOTIFIER,
-            "let bucket = slopdesk_ws_notify_rate_limiter()\n\
-             let explicit = slopdesk_ws_notify_explicit_rate_limiter()\n\
-             init(capacity: Double = 5, refillPerSecond: Double = 0.5) {}\n",
+            "let bucket = slopdesk_ws_notify_rate_limiter()\nlet explicit = \
+             slopdesk_ws_notify_explicit_rate_limiter()\ninit(capacity: Double = 5, refillPerSecond: Double \
+             = 0.5) {}\n",
         );
         assert!(!super::an_anti_flood_bucket_comes_from_the_crate(&fixture.tree()).is_clean());
 
@@ -133,9 +125,8 @@ mod tests {
         fixture.write(
             super::SETTINGS_CATALOG_RS,
             &format!(
-                "pub enum Stepper {{\n{cases}}}\n\n\
-                 impl Stepper {{\n    pub(crate) const ALL: [Self; {declared}] = [\n\
-                 \x20       Self::WindowCells,\n    ];\n}}\n"
+                "pub enum Stepper {{\n{cases}}}\n\nimpl Stepper {{\n    pub(crate) const ALL: [Self; \
+                 {declared}] = [\n\x20       Self::WindowCells,\n    ];\n}}\n"
             ),
         );
     }
@@ -167,8 +158,8 @@ mod tests {
         let fixture = Fixture::new("stepper-census-stale");
         fixture.write(
             super::SETTINGS_CATALOG_RS,
-            "pub enum Rung {\n    WindowCells,\n}\n\nimpl Rung {\n\
-             \x20   pub(crate) const ALL: [Self; 1] = [Self::WindowCells];\n}\n",
+            "pub enum Rung {\n    WindowCells,\n}\n\nimpl Rung {\n\x20   pub(crate) const ALL: [Self; 1] = \
+             [Self::WindowCells];\n}\n",
         );
         assert!(!super::the_stepper_vocabulary_is_counted(&fixture.tree()).is_clean());
     }

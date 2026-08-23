@@ -4,13 +4,14 @@
 //! Ported from `scripts/check-supervisor.sh`. Each surface is drawn by two views and worded by one
 //! type. What is banned in the views is not "a string" but a SECOND DERIVATION — an excerpt cut, a
 //! verb table, a confirmation's shape — because those drift silently: one half quietly grows an
-//! action the other has not got, and nothing is red until somebody notices their phone is different.
+//! action the other has not got, and nothing is red until somebody notices their phone is
+//! different.
 //!
 //! Three claims did NOT come across. The shell asked `grep -A4 'draws:' MacWorkspaceRootView.swift`
 //! for `.peekReply`, `.globalSearch` and `.palette`; `draws:` exists nowhere in the tree and that
-//! file no longer names `OverlayHostView` at all, so all three had been matching nothing and passing
-//! for it. The claim that carries the same meaning and is live — the host is not mounted over the
-//! Mac's split at all — is [`the_stage_d_ledger_is_empty`].
+//! file no longer names `OverlayHostView` at all, so all three had been matching nothing and
+//! passing for it. The claim that carries the same meaning and is live — the host is not mounted
+//! over the Mac's split at all — is [`the_stage_d_ledger_is_empty`].
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
@@ -31,22 +32,23 @@ const MAC_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift";
 
 /// The shared overlay host holds no AMBIENT layer, and the ⌃⇥ walk has two halves
 ///
-/// `docs/56` stage D's dividend, and the reason it is a gate: an ALWAYS-MOUNTED full-bleed `SwiftUI`
-/// layer claims every hit inside its bounds, and the only way to survive that is a hit-testing flag
-/// someone has to keep honest. That is what `allowsHitTesting` on this file means and why it stays
-/// banned — a layer mounted only while its state is live needs no such flag.
+/// `docs/56` stage D's dividend, and the reason it is a gate: an ALWAYS-MOUNTED full-bleed
+/// `SwiftUI` layer claims every hit inside its bounds, and the only way to survive that is a
+/// hit-testing flag someone has to keep honest. That is what `allowsHitTesting` on this file means
+/// and why it stays banned — a layer mounted only while its state is live needs no such flag.
 ///
-/// The ⌃⇥ CARD is NOT that hazard and is no longer forbidden. It was, on the reading that "the phone
-/// has no modifier stream to open the gesture with, so a second half could never render" — which was
-/// about the OPENING CHORD and was never the only way in: the binding row is `Platform::Both`
-/// (`rust/slopdesk-workspace/src/binding_rows.rs`) and the palette carries the same row. The phone
-/// opened the gesture, `PaneRecedeScrim` veiled every pane off `store.paneSwitcher`, and nothing
-/// drew — a veiled workspace with no way to step, commit or cancel. So the gate is inverted: the
-/// phone's half must EXIST, and both halves must keep reading the shared row builder and
-/// measurements.
+/// The ⌃⇥ CARD is NOT that hazard and is no longer forbidden. It was, on the reading that "the
+/// phone has no modifier stream to open the gesture with, so a second half could never render" —
+/// which was about the OPENING CHORD and was never the only way in: the binding row is
+/// `Platform::Both` (`rust/slopdesk-workspace/src/binding_rows.rs`) and the palette carries the
+/// same row. The phone opened the gesture, `PaneRecedeScrim` veiled every pane off
+/// `store.paneSwitcher`, and nothing drew — a veiled workspace with no way to step, commit or
+/// cancel. So the gate is inverted: the phone's half must EXIST, and both halves must keep reading
+/// the shared row builder and measurements.
 ///
 /// Comment lines are stripped first: the file's header is where the history is RECORDED, and it has
-/// to be free to name what left (and what came back) without the gate reading prose as a regression.
+/// to be free to name what left (and what came back) without the gate reading prose as a
+/// regression.
 #[must_use]
 pub fn the_overlay_host_holds_no_ambient_layer(tree: &Tree) -> Report {
     let claims = [
@@ -54,8 +56,8 @@ pub fn the_overlay_host_holds_no_ambient_layer(tree: &Tree) -> Report {
             path: PHONE_HOST,
             pattern: "allowsHitTesting",
             view: View::Code,
-            message: "the shared overlay host grew an ambient layer again — an always-mounted host eats \
-                      the split's clicks",
+            message: "the shared overlay host grew an ambient layer again — an always-mounted host eats the \
+                      split's clicks",
         },
         Claim::Exists {
             path: PHONE_SWITCHER,
@@ -143,9 +145,9 @@ pub fn one_peek_card_two_frameworks(tree: &Tree) -> Report {
 /// `slopdesk_agent::attention`.
 ///
 /// ⚠️ THE UNIT IS A GRAPHEME CLUSTER, AND THE FIELD SHOWS DOTS. Walked as scalars, a decomposed `é`
-/// types a bare `e` and reports one skip — a DIFFERENT password, accepted, with nothing on screen to
-/// say so. `unicode-segmentation` is what makes the cluster the unit, and it is not an optimisation
-/// anyone may drop as unused.
+/// types a bare `e` and reports one skip — a DIFFERENT password, accepted, with nothing on screen
+/// to say so. `unicode-segmentation` is what makes the cluster the unit, and it is not an
+/// optimisation anyone may drop as unused.
 #[must_use]
 pub fn the_keystroke_table_and_peek_rules_are_rusts(tree: &Tree) -> Report {
     let claims = [
@@ -194,9 +196,9 @@ pub fn the_keystroke_table_and_peek_rules_are_rusts(tree: &Tree) -> Report {
 /// degrade to a flat excerpt, never trap, never guess a run — has to be one rule or the half that
 /// re-wrote it indexes out of bounds on the first scrollback line containing an emoji.
 ///
-/// The mode pills are a VALUE both surfaces read, which is the only way the locked "the find bar and
-/// the global-search query bar render the pills IDENTICALLY" invariant survives one of them becoming
-/// an `NSView`.
+/// The mode pills are a VALUE both surfaces read, which is the only way the locked "the find bar
+/// and the global-search query bar render the pills IDENTICALLY" invariant survives one of them
+/// becoming an `NSView`.
 #[must_use]
 pub fn one_global_search_two_frameworks(tree: &Tree) -> Report {
     let claims = [
@@ -243,13 +245,21 @@ pub fn one_picker_two_frameworks(tree: &Tree) -> Report {
     let claims = [
         Claim::Mentions {
             path: MAC_PICKER,
-            names: &["OpenQuicklyPresentation", "OpenQuicklyActions", "OpenQuicklyMetrics"],
+            names: &[
+                "OpenQuicklyPresentation",
+                "OpenQuicklyActions",
+                "OpenQuicklyMetrics",
+            ],
             message: "MacOpenQuickly.swift stopped reading {entry} — two pickers, and the drift would be \
                       silent",
         },
         Claim::Mentions {
             path: PHONE_PICKER,
-            names: &["OpenQuicklyPresentation", "OpenQuicklyActions", "OpenQuicklyMetrics"],
+            names: &[
+                "OpenQuicklyPresentation",
+                "OpenQuicklyActions",
+                "OpenQuicklyMetrics",
+            ],
             message: "OpenQuicklyView.swift stopped reading {entry} — two pickers, and the drift would be \
                       silent",
         },
@@ -259,8 +269,8 @@ pub fn one_picker_two_frameworks(tree: &Tree) -> Report {
             paths: &[MAC_PICKER, PHONE_PICKER],
             pattern: r#""Split Right"|"Reopen Tab"|"Copy Session ID"|"No matches"|"Quick Select"|"Change Directory""#,
             view: View::Code,
-            message: "{files} respells a picker verb or hint — every one of them is OpenQuicklyPresentation's \
-                      or OpenQuicklyActions's",
+            message: "{files} respells a picker verb or hint — every one of them is \
+                      OpenQuicklyPresentation's or OpenQuicklyActions's",
         },
         // The fzf mark is cut in ONE place for all four surfaces that draw one (the palette and the
         // picker, each drawn twice). A half walking `titleRanges` itself is a fifth cut waiting to
@@ -309,7 +319,8 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
             path: PHONE_HOST,
             pattern: "draws",
             view: View::Code,
-            message: "the transitional `draws` ledger is back in OverlayHostView — every card has left the Mac",
+            message: "the transitional `draws` ledger is back in OverlayHostView — every card has left the \
+                      Mac",
         },
         Claim::Lacks {
             path: MAC_ROOT,
@@ -343,7 +354,10 @@ pub fn the_stage_d_ledger_is_empty(tree: &Tree) -> Report {
                       silent",
         },
         Claim::NoneOf {
-            paths: &["Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift", PHONE_HOST],
+            paths: &[
+                "Sources/SlopDeskMacUI/Overlays/MacCloseConfirmation.swift",
+                PHONE_HOST,
+            ],
             pattern: r#""A process is still running|"This window has multiple tabs|Closing it will close the project"#,
             view: View::Code,
             message: "{files} respells the close-confirmation copy — every line of it is \
@@ -398,7 +412,10 @@ mod tests {
                 super::PHONE_SWITCHER,
                 "PaneSwitcherRowsBuilder\nPaneSwitcherMetrics\ncommitPaneSwitcher()\n",
             )
-            .write(super::MAC_SWITCHER, "PaneSwitcherRowsBuilder\nPaneSwitcherMetrics\n");
+            .write(
+                super::MAC_SWITCHER,
+                "PaneSwitcherRowsBuilder\nPaneSwitcherMetrics\n",
+            );
     }
 
     #[test]
@@ -454,7 +471,10 @@ mod tests {
                     "Sources/SlopDeskWorkspaceCore/Workspace/Domain/PeekReply.swift",
                     "slopdesk_workspace_peek\n",
                 )
-                .write("rust/slopdesk-workspace/Cargo.toml", "unicode-segmentation = \"1\"\n")
+                .write(
+                    "rust/slopdesk-workspace/Cargo.toml",
+                    "unicode-segmentation = \"1\"\n",
+                )
                 .write(
                     "rust/slopdesk-workspace/src/keystroke_replay.rs",
                     "use unicode_segmentation::UnicodeSegmentation;\n",
@@ -483,13 +503,19 @@ mod tests {
             fixture
                 .write(super::MAC_SEARCH, "GlobalSearchPresentation\nFindModePill\n")
                 .write(super::PHONE_SEARCH, "GlobalSearchPresentation\nFindModePill\n")
-                .write("Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift", "FindModePill\n");
+                .write(
+                    "Sources/SlopDeskPhoneUI/Pane/TerminalFindBar.swift",
+                    "FindModePill\n",
+                );
         };
         seed(&fixture);
         assert!(super::one_global_search_two_frameworks(&fixture.tree()).is_clean());
 
         // A half re-deriving the UTF-16 walk.
-        fixture.append(super::PHONE_SEARCH, "let i = range.lowerBound.samePosition(in: text)\n");
+        fixture.append(
+            super::PHONE_SEARCH,
+            "let i = range.lowerBound.samePosition(in: text)\n",
+        );
         assert!(!super::one_global_search_two_frameworks(&fixture.tree()).is_clean());
 
         // And the find bar respelling a pill.

@@ -55,8 +55,8 @@ pub fn the_drop_overlay_draws_one_shape(tree: &Tree) -> Report {
 /// spell out the table — so the rows, the glyph gating and the column deal are `CheatSheetContent`,
 /// over `slopdesk_cheat_sheet_columns`. Two ways this decays, and the gate catches both: a half
 /// that stops reading the shared source (a second table, drifting from the dispatcher's chords),
-/// and the shared `SwiftUI` host mounting the card again (the Mac would then show it twice, over its
-/// own panel).
+/// and the shared `SwiftUI` host mounting the card again (the Mac would then show it twice, over
+/// its own panel).
 #[must_use]
 pub fn one_cheat_sheet_two_layouts(tree: &Tree) -> Report {
     let claims = [
@@ -100,11 +100,11 @@ pub fn one_cheat_sheet_two_layouts(tree: &Tree) -> Report {
 
 /// One notification card, two corners
 ///
-/// `docs/56` stage D's second surface, and the one that took the last ALWAYS-MOUNTED `SwiftUI` layer
-/// off the macOS window root. The Mac's corner is an `NSPanel` sized to the column, the phone's is
-/// an overlay on its own root, and what a card SAYS belongs to neither: the headline (over
-/// `slopdesk_ws_notify_toast_headline`), the spine budget, the mark's rung/glyph and the dwell are
-/// `ToastPresentation`.
+/// `docs/56` stage D's second surface, and the one that took the last ALWAYS-MOUNTED `SwiftUI`
+/// layer off the macOS window root. The Mac's corner is an `NSPanel` sized to the column, the
+/// phone's is an overlay on its own root, and what a card SAYS belongs to neither: the headline
+/// (over `slopdesk_ws_notify_toast_headline`), the spine budget, the mark's rung/glyph and the
+/// dwell are `ToastPresentation`.
 ///
 /// The third claim is the fusion bug `TabBadgeResolver` had, pinned before it can happen twice: a
 /// half that re-derives the phrase from the pair keys on flavour alone sooner or later, and

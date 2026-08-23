@@ -2,9 +2,9 @@
 //! the spelling of a number, and the swipe-nav operating point.
 //!
 //! Ported from `scripts/check-supervisor.sh`. Three of these four failed the same way before they
-//! were one implementation: a validator called a line good and the loader dropped it, an env overlay
-//! spelled `60` and the config text spelled `60.0`, a committed chip promised a gesture the host
-//! swallowed. None of them is a crash, and each is invisible from either side alone.
+//! were one implementation: a validator called a line good and the loader dropped it, an env
+//! overlay spelled `60` and the config text spelled `60.0`, a committed chip promised a gesture the
+//! host swallowed. None of them is a crash, and each is invisible from either side alone.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
@@ -58,18 +58,21 @@ pub fn folders_rank_once_and_a_jump_reads_it(tree: &Tree) -> Report {
 
 /// The config file has one reader, and `validate` reports on THAT reading
 ///
-/// `slopdesk config validate` exists to say which lines the app will honour, so a second line reader
-/// is not a duplicate — it is a validator that can call a line good and a loader that then drops it.
-/// The two disagreed on exactly one byte: the crate trimmed a carriage return and the loader did
-/// not, so every binding in a CRLF file was reported valid and silently ignored. One reader now
-/// (`slopdesk_cli_config_keybind_value`), and the loader's default path comes from the same door
-/// that prints `slopdesk config path`.
+/// `slopdesk config validate` exists to say which lines the app will honour, so a second line
+/// reader is not a duplicate — it is a validator that can call a line good and a loader that then
+/// drops it. The two disagreed on exactly one byte: the crate trimmed a carriage return and the
+/// loader did not, so every binding in a CRLF file was reported valid and silently ignored. One
+/// reader now (`slopdesk_cli_config_keybind_value`), and the loader's default path comes from the
+/// same door that prints `slopdesk config path`.
 #[must_use]
 pub fn the_config_file_has_one_reader(tree: &Tree) -> Report {
     let claims = [
         Claim::Mentions {
             path: SWIFT_LOADER,
-            names: &["slopdesk_cli_config_keybind_value", "slopdesk_cli_config_default_path"],
+            names: &[
+                "slopdesk_cli_config_keybind_value",
+                "slopdesk_cli_config_default_path",
+            ],
             message: "KeybindConfigLoader.swift no longer reads the config file through {entry} — that \
                       reading is slopdesk-cli's config",
         },
@@ -101,10 +104,10 @@ pub fn the_config_file_has_one_reader(tree: &Tree) -> Report {
 /// `SLOPDESK_PLAYOUT_MS=60` and `font-size = 13` are the same question — what a user types for this
 /// number — and it had two answers, one per language, differing only in the limit at which an
 /// integer stops being written as one. The rule lives in `rust/slopdesk-terminal`'s `config` now,
-/// taking that limit as an argument, so the env overlay and the libghostty config text cannot drift;
-/// the limit is not a number either Swift file spells. The measure-then-fill dance around every text
-/// door is the same shape, and a measure that disagrees with its fill is a truncated answer —
-/// written once in `lentText` so the two calls cannot drift either.
+/// taking that limit as an argument, so the env overlay and the libghostty config text cannot
+/// drift; the limit is not a number either Swift file spells. The measure-then-fill dance around
+/// every text door is the same shape, and a measure that disagrees with its fill is a truncated
+/// answer — written once in `lentText` so the two calls cannot drift either.
 #[must_use]
 pub fn a_number_is_spelled_once(tree: &Tree) -> Report {
     let claims = [
@@ -118,21 +121,21 @@ pub fn a_number_is_spelled_once(tree: &Tree) -> Report {
             path: SWIFT_ENVBRIDGE,
             pattern: r"v\.rounded\(\)|1e15",
             view: View::Code,
-            message: "EnvBridge.swift re-derives the number spelling in Swift — the integrality test and its \
-                      limit belong to config.rs",
+            message: "EnvBridge.swift re-derives the number spelling in Swift — the integrality test and \
+                      its limit belong to config.rs",
         },
         Claim::Names {
             path: "rust/slopdesk-terminal/src/config.rs",
             needle: "fn number_text",
-            message: "rust/slopdesk-terminal/src/config.rs lost number_text — the env overlay and the config \
-                      text spell a number by it",
+            message: "rust/slopdesk-terminal/src/config.rs lost number_text — the env overlay and the \
+                      config text spell a number by it",
         },
         Claim::NoneOf {
             paths: &[SWIFT_TERMCONF, SWIFT_LOADER, SWIFT_ENVBRIDGE],
             pattern: "repeating: 0, count: needed",
             view: View::Code,
-            message: "{files} measures a text door by hand again — lentText asks and fills so the two cannot \
-                      disagree",
+            message: "{files} measures a text door by hand again — lentText asks and fills so the two \
+                      cannot disagree",
         },
     ];
     check_all(tree, &claims)
@@ -182,7 +185,8 @@ pub fn the_swipe_nav_operating_point_is_a_handle(tree: &Tree) -> Report {
         Claim::NoneUnder {
             roots: &["rust/slopdesk-ffi", "Sources"],
             extensions: &["rs", "h", "swift"],
-            pattern: "slopdesk_swipe_is_navigable|slopdesk_swipe_extra_apps|slopdesk_swipe_fire_travel_from_env",
+            pattern:
+                "slopdesk_swipe_is_navigable|slopdesk_swipe_extra_apps|slopdesk_swipe_fire_travel_from_env",
             all: &[],
             unless: &[],
             view: View::Code,
@@ -201,8 +205,8 @@ mod tests {
         fixture
             .write(
                 super::SWIFT_FRECENCY,
-                "slopdesk_folder_weight(\nslopdesk_folder_recency_weight(\nslopdesk_folder_score(\n\
-                 slopdesk_folder_ranked(\n",
+                "slopdesk_folder_weight(\nslopdesk_folder_recency_weight(\nslopdesk_folder_score(\\
+                 nslopdesk_folder_ranked(\n",
             )
             .write(super::SWIFT_JUMP, "slopdesk_jump_resolve(\n");
     }
@@ -265,7 +269,10 @@ mod tests {
 
         // The measure-then-fill dance, re-typed at a call site.
         numbers(&fixture);
-        fixture.append(super::SWIFT_TERMCONF, "var out = [UInt8](repeating: 0, count: needed)\n");
+        fixture.append(
+            super::SWIFT_TERMCONF,
+            "var out = [UInt8](repeating: 0, count: needed)\n",
+        );
         assert!(!super::a_number_is_spelled_once(&fixture.tree()).is_clean());
     }
 
@@ -273,9 +280,9 @@ mod tests {
         fixture
             .write(
                 super::SWIFT_SWIPE_CONFIG,
-                "slopdesk_swipe_nav_config_parse\nslopdesk_swipe_nav_config_eligible\n\
-                 slopdesk_swipe_nav_config_window_eligible\nslopdesk_swipe_nav_config_status\n\
-                 slopdesk_swipe_nav_config_window_status\n",
+                "slopdesk_swipe_nav_config_parse\nslopdesk_swipe_nav_config_eligible\\
+                 nslopdesk_swipe_nav_config_window_eligible\nslopdesk_swipe_nav_config_status\\
+                 nslopdesk_swipe_nav_config_window_status\n",
             )
             .write("Tests/Placeholder.swift", "kept so the ban has a haystack\n")
             .write("rust/slopdesk-ffi/src/lib.rs", "kept so the ban has a haystack\n");

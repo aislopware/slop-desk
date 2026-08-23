@@ -27,12 +27,12 @@ const GEOMETRY: &str = "Sources/SlopDeskDevicePanels/Shared/DevicePanelGeometry.
 /// ## The clamp, which is why the ban and the four callers are both here
 /// `clampedDevicePoint` asks `slopdesk_panel_clamped_device_point`, which clamps to the LAST
 /// ADDRESSABLE POINT inside the fitted rect. The Android views have gone through it since it
-/// existed. Both simulator views spelled the clamp themselves, and both copies clamped to the fitted
-/// rect's SIZE instead — one point past the end on each axis. A drag to the right edge of a
+/// existed. Both simulator views spelled the clamp themselves, and both copies clamped to the
+/// fitted rect's SIZE instead — one point past the end on each axis. A drag to the right edge of a
 /// 200-point frame reported `x = 200` into a surface whose columns are `0..<200`, and the host
 /// scales that straight off the far side of the framebuffer. Confirmed by PROBE before anything was
-/// touched: same point, same rect `CGRect(x: 50, y: 20, width: 200, height: 400)`, hand-rolled Swift
-/// answered `(200.0, 400.0)` and the shared rule answered `(199, 399)`.
+/// touched: same point, same rect `CGRect(x: 50, y: 20, width: 200, height: 400)`, hand-rolled
+/// Swift answered `(200.0, 400.0)` and the shared rule answered `(199, 399)`.
 ///
 /// A ban alone would be satisfied by a view that stopped clamping altogether, which is the other
 /// half of the same bug: a drag leaving the frame would be dropped, and the gesture would freeze at
@@ -46,8 +46,8 @@ const GEOMETRY: &str = "Sources/SlopDeskDevicePanels/Shared/DevicePanelGeometry.
 /// What the panels DRAW is the same argument: the empty stage, its caption, the empty-list notice
 /// and the loading-veil asymmetry are one design decision each, recorded in the singular in
 /// `docs/DECISIONS.md` and written down twice. The measured veil DELAYS stay per panel (400 ms vs
-/// 600 ms, two pieces of hardware). Checked positively, because the veil and the notice are ordinary
-/// `SwiftUI` whose ingredients are used everywhere else.
+/// 600 ms, two pieces of hardware). Checked positively, because the veil and the notice are
+/// ordinary `SwiftUI` whose ingredients are used everywhere else.
 #[must_use]
 pub fn one_device_panel_law(tree: &Tree) -> Report {
     /// A file that must still ask a shared law for its answer.
@@ -101,8 +101,8 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
             needle: law,
             // The sentence names the path itself, since a table cannot carry a placeholder the claim
             // does not fill.
-            message: "a device panel stopped calling a shared law — the two panels agree by sharing, not \
-                      by luck",
+            message: "a device panel stopped calling a shared law — the two panels agree by sharing, not by \
+                      luck",
         }
         .check(tree, &mut report);
     }
@@ -116,14 +116,14 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &[PANEL_SHARED],
-            message: "{files} grew a device-panel law back outside Sources/SlopDeskDevicePanels/Shared — \
-                      it is shared",
+            message: "{files} grew a device-panel law back outside Sources/SlopDeskDevicePanels/Shared — it \
+                      is shared",
         },
         Claim::Names {
             path: GEOMETRY,
             needle: "slopdesk_panel_fitted_rect",
-            message: "the device panels stopped calling slopdesk_panel_fitted_rect — a click lands where \
-                      it is drawn",
+            message: "the device panels stopped calling slopdesk_panel_fitted_rect — a click lands where it \
+                      is drawn",
         },
         Claim::Names {
             path: "rust/slopdesk-devicepanel/src/geometry.rs",
@@ -167,13 +167,13 @@ pub fn one_device_panel_law(tree: &Tree) -> Report {
 /// appends to whatever the last writer declared. The PLATFORM fork is inside the funnel too; it was
 /// written out at four call sites before it was written once.
 ///
-/// The clipboard SYNC engines are not in scope: they write an INJECTED board (a named one in tests),
-/// which is why they take a `pasteboard` parameter at all.
+/// The clipboard SYNC engines are not in scope: they write an INJECTED board (a named one in
+/// tests), which is why they take a `pasteboard` parameter at all.
 ///
 /// The two device panels' capture write is that same funnel, not a third `writeObjects` pair. It is
 /// `writeImage`, which answers a `Bool` rather than the decoded image — that return type is what
-/// lets a panel MODEL say "copy this frame" without naming a platform image type, and is why the two
-/// models could leave the view target at all (`docs/56`).
+/// lets a panel MODEL say "copy this frame" without naming a platform image type, and is why the
+/// two models could leave the view target at all (`docs/56`).
 ///
 /// The system-open fork has the same one home, on the CLIENT. The host's `HostPathActionPerformer`
 /// is deliberately out of scope: it READS the return of `NSWorkspace.open` to answer `.ok`/`.error`
@@ -229,11 +229,11 @@ pub fn one_pasteboard_and_one_open(tree: &Tree) -> Report {
 /// is dropped on the server's idle timer minutes in. That was measured once and written down twice,
 /// and there is no error anywhere in the failure.
 ///
-/// `VideoDecoder.stampDisplayImmediately` is deliberately NOT one of these: it is a different target
-/// with a lower dependency floor (`SlopDeskVideoProtocol` carries no media framework on purpose) and
-/// a different reason — Parsec-parity present-on-decode before a VT submit, not marking a panel's
-/// sample for an `AVSampleBufferDisplayLayer`. Sharing it would widen a leaf's purpose for three
-/// lines of `CoreFoundation`.
+/// `VideoDecoder.stampDisplayImmediately` is deliberately NOT one of these: it is a different
+/// target with a lower dependency floor (`SlopDeskVideoProtocol` carries no media framework on
+/// purpose) and a different reason — Parsec-parity present-on-decode before a VT submit, not
+/// marking a panel's sample for an `AVSampleBufferDisplayLayer`. Sharing it would widen a leaf's
+/// purpose for three lines of `CoreFoundation`.
 ///
 /// One discriminant-to-enum mapping per enum: `docs/55` §6 makes the case list a contract, and a
 /// `SLOPDESK_MODE_EVENT_*` added to one reader and not the other is that contract silently
@@ -289,16 +289,46 @@ mod tests {
 
     fn panels(fixture: &Fixture) -> &Fixture {
         for (path, law) in [
-            ("Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift", "SimulatorScreenLayout.clampedDevicePoint"),
-            ("Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift", "SimulatorScreenLayout.clampedDevicePoint"),
-            ("Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift", "AndroidScreenLayout.clampedDevicePoint"),
-            ("Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift", "AndroidScreenLayout.clampedDevicePoint"),
-            ("Sources/SlopDeskPhoneUI/Panel/Android/AndroidStageView.swift", "DevicePanelChrome.veil"),
-            ("Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorStageView.swift", "DevicePanelChrome.veil"),
-            ("Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift", "DevicePanelChrome.notice"),
-            ("Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift", "DevicePanelChrome.notice"),
-            ("Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift", "DevicePanelSampleBuffer.dimensions"),
-            ("Sources/SlopDeskDevicePanels/Simulator/SimulatorVideoFormat.swift", "DevicePanelSampleBuffer.dimensions"),
+            (
+                "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
+                "SimulatorScreenLayout.clampedDevicePoint",
+            ),
+            (
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorScreenView.swift",
+                "SimulatorScreenLayout.clampedDevicePoint",
+            ),
+            (
+                "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
+                "AndroidScreenLayout.clampedDevicePoint",
+            ),
+            (
+                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidScreenView.swift",
+                "AndroidScreenLayout.clampedDevicePoint",
+            ),
+            (
+                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidStageView.swift",
+                "DevicePanelChrome.veil",
+            ),
+            (
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorStageView.swift",
+                "DevicePanelChrome.veil",
+            ),
+            (
+                "Sources/SlopDeskPhoneUI/Panel/Android/AndroidDeviceList.swift",
+                "DevicePanelChrome.notice",
+            ),
+            (
+                "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+                "DevicePanelChrome.notice",
+            ),
+            (
+                "Sources/SlopDeskDevicePanels/Android/AndroidVideoFormat.swift",
+                "DevicePanelSampleBuffer.dimensions",
+            ),
+            (
+                "Sources/SlopDeskDevicePanels/Simulator/SimulatorVideoFormat.swift",
+                "DevicePanelSampleBuffer.dimensions",
+            ),
         ] {
             fixture.write(path, &format!("{law}(point, in: fitted)\n"));
         }

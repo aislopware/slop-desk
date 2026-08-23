@@ -28,14 +28,14 @@ const PHONE_HALF: &str = "Sources/SlopDeskVideoClientPhone";
 ///
 /// A file in a UI target that names no view framework compiles perfectly well — it is simply logic
 /// sitting where only one of the two halves can reach it, which is how the same model ends up
-/// written twice. The test is textual and deliberately blunt: `import SwiftUI`, `AppKit` or `UIKit`,
-/// or belong in `SlopDeskClientCore`.
+/// written twice. The test is textual and deliberately blunt: `import SwiftUI`, `AppKit` or
+/// `UIKit`, or belong in `SlopDeskClientCore`.
 ///
-/// A PLATFORM GATE IN A PLATFORM TARGET means the file is in the wrong target. These targets are one
-/// platform's and nothing else builds them, so every `#if os(...)` in one is dead text that reads as
-/// a live rule. The ONE allowed gate is a phone target's whole-file `#if os(iOS)`, which is how an
-/// iOS-only view declares itself to `swift build` (`SwiftPM` compiles every target on the host
-/// triple).
+/// A PLATFORM GATE IN A PLATFORM TARGET means the file is in the wrong target. These targets are
+/// one platform's and nothing else builds them, so every `#if os(...)` in one is dead text that
+/// reads as a live rule. The ONE allowed gate is a phone target's whole-file `#if os(iOS)`, which
+/// is how an iOS-only view declares itself to `swift build` (`SwiftPM` compiles every target on the
+/// host triple).
 ///
 /// ⚠️ TWO PATHS PER SIDE, NOT ONE, since the video carve. `SlopDeskVideoClientMac` is the `AppKit`
 /// half of a surface that until the carve WAS an `#if os(macOS)` arm — the single most likely place
@@ -49,13 +49,13 @@ const PHONE_HALF: &str = "Sources/SlopDeskVideoClientPhone";
 ///
 /// ⚠️ THE VACUITY FLOOR IS PER-TARGET, and that is not tidiness. This walks two targets, and ONE
 /// combined floor would stay green if `SlopDeskVideoClientPhone` globbed to zero files, because
-/// `SlopDeskPhoneUI` alone clears it — a gate that passes by reading nothing. The video half's floor
-/// is small because the half IS small.
+/// `SlopDeskPhoneUI` alone clears it — a gate that passes by reading nothing. The video half's
+/// floor is small because the half IS small.
 ///
-/// NEITHER HALF IMPORTS THE OTHER. `Package.swift` already makes that a link error; this catches the
-/// edit that would ADD the dependency there, which is the moment a shared view ancestor becomes
-/// possible. Two halves, so exactly two edges — increment 63 collapsed four into two, because two of
-/// them named the draining floor by its old name and one then read as a target forbidden from
+/// NEITHER HALF IMPORTS THE OTHER. `Package.swift` already makes that a link error; this catches
+/// the edit that would ADD the dependency there, which is the moment a shared view ancestor becomes
+/// possible. Two halves, so exactly two edges — increment 63 collapsed four into two, because two
+/// of them named the draining floor by its old name and one then read as a target forbidden from
 /// importing ITSELF, which is not a rule and which no file can violate.
 #[must_use]
 pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
@@ -128,8 +128,8 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "{files} reached for the phone half — the two halves share no view ancestor \
-                      (docs/56 §3)",
+            message: "{files} reached for the phone half — the two halves share no view ancestor (docs/56 \
+                      §3)",
         },
         Claim::NoneUnder {
             roots: &["Sources/SlopDeskPhoneUI"],
@@ -139,8 +139,7 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "{files} reached for the Mac half — the two halves share no view ancestor \
-                      (docs/56 §3)",
+            message: "{files} reached for the Mac half — the two halves share no view ancestor (docs/56 §3)",
         },
     ];
     check_all(tree, &claims)
@@ -148,44 +147,45 @@ pub fn the_ui_split_holds_its_shape(tree: &Tree) -> Report {
 
 /// The video surface stays split, and the engine under it holds no views
 ///
-/// `SlopDeskVideoClient` was the one view target the split never reached. Thirty-three files, and ONE
-/// of them — `VideoWindowView.swift` — carried a 2,514-line `#if os(macOS)` / `#elseif os(iOS)`
+/// `SlopDeskVideoClient` was the one view target the split never reached. Thirty-three files, and
+/// ONE of them — `VideoWindowView.swift` — carried a 2,514-line `#if os(macOS)` / `#elseif os(iOS)`
 /// two-armed conditional: an `AppKit` implementation and a `UIKit` one in the same file, linked by
-/// both shells. That is the exact shape this section exists to abolish, and it hid a live parity gap
-/// for a release: the swipe-peel chip was MOUNTED on both platforms and DRIVEN on one, so a
-/// two-finger swipe on the phone navigated the remote app with no chip and no haptic while the shared
-/// overlay sat permanently dark — and the stale doc comment that caused it ("never set on iOS, no
-/// trackpad scroll phases") had been false since the phone started sending phase-carrying scroll.
+/// both shells. That is the exact shape this section exists to abolish, and it hid a live parity
+/// gap for a release: the swipe-peel chip was MOUNTED on both platforms and DRIVEN on one, so a
+/// two-finger swipe on the phone navigated the remote app with no chip and no haptic while the
+/// shared overlay sat permanently dark — and the stale doc comment that caused it ("never set on
+/// iOS, no trackpad scroll phases") had been false since the phone started sending phase-carrying
+/// scroll.
 ///
 /// ## Rule A — the engine holds no views
-/// THE SHAPE, NOT A COUNT. Four files here legitimately carry `#if os(macOS)` and are named in Rule C;
-/// each is `docs/56` §3's second bullet — "a framework call is not a view; a `some View` is" — an
-/// ACTUATOR picking an API, not a surface drawn twice. Counting their directives would pin a number
-/// that cannot say which fact it counted. What is banned is the thing they are not: a view
+/// THE SHAPE, NOT A COUNT. Four files here legitimately carry `#if os(macOS)` and are named in Rule
+/// C; each is `docs/56` §3's second bullet — "a framework call is not a view; a `some View` is" —
+/// an ACTUATOR picking an API, not a surface drawn twice. Counting their directives would pin a
+/// number that cannot say which fact it counted. What is banned is the thing they are not: a view
 /// DECLARATION.
 ///
-/// ⚠️ THE PATTERN MATCHES A DECLARATION, NOT A MENTION, and the difference is not pedantry. This rule
-/// was first written with a bare `: *NSView\b`, and its very first finding was `FramePacer.swift` —
-/// on `start(view: NSView)`, a PARAMETER, which is the exact case Rule C excuses `FramePacer` for.
-/// Two rules disagreeing about the same file is how an allowlist grows an entry that hides a real
-/// violation later: the cheap fix is to widen Rule C, and a Rule C wide enough to satisfy Rule A no
-/// longer says anything.
+/// ⚠️ THE PATTERN MATCHES A DECLARATION, NOT A MENTION, and the difference is not pedantry. This
+/// rule was first written with a bare `: *NSView\b`, and its very first finding was
+/// `FramePacer.swift` — on `start(view: NSView)`, a PARAMETER, which is the exact case Rule C
+/// excuses `FramePacer` for. Two rules disagreeing about the same file is how an allowlist grows an
+/// entry that hides a real violation later: the cheap fix is to widen Rule C, and a Rule C wide
+/// enough to satisfy Rule A no longer says anything.
 ///
 /// ## Rule B — the two-armed file stays gone
-/// Deliberately NOT routed through the deleted-Swift union: that union's patterns are grepped across
-/// all of `Sources/`, and `VideoLayerView` / `MetalLayerBackedView` / `VideoWindowView` are the
-/// LEGITIMATE type names in the phone half (the house convention gives the Mac the `Mac` prefix and
-/// the phone the bare name — `MacGuiLeafView` vs `GuiLeafView`, sixty such pairs). A union entry
-/// would false-positive forever, which is how a ban gets deleted for being noisy. The PATH is the
-/// unambiguous fact, so the path is what this checks.
+/// Deliberately NOT routed through the deleted-Swift union: that union's patterns are grepped
+/// across all of `Sources/`, and `VideoLayerView` / `MetalLayerBackedView` / `VideoWindowView` are
+/// the LEGITIMATE type names in the phone half (the house convention gives the Mac the `Mac` prefix
+/// and the phone the bare name — `MacGuiLeafView` vs `GuiLeafView`, sixty such pairs). A union
+/// entry would false-positive forever, which is how a ban gets deleted for being noisy. The PATH is
+/// the unambiguous fact, so the path is what this checks.
 ///
 /// ## Rule C — the carve-out, named, with its reason, and self-invalidating
-/// `FramePacer` (`NSView` vs `UIView` display link), `VideoWindowPipeline` (the `HostView` typealias
-/// plus `NSScreen`), `ClientCursorCompositor` (`NSCursor` vs the position-overlay sublayer) and
-/// `MetalVideoRenderer` (`displaySyncEnabled`, which iOS has no spelling for). Four actuators, four
-/// different APIs, no drawing in any of them. `AudioPlaybackEngine` was the fifth and it LEFT rather
-/// than being dropped: its arm was AUHAL vs `RemoteIO`, and `rust/slopdesk-audio-out` opens the output
-/// stream through `cpal` on both platforms.
+/// `FramePacer` (`NSView` vs `UIView` display link), `VideoWindowPipeline` (the `HostView`
+/// typealias plus `NSScreen`), `ClientCursorCompositor` (`NSCursor` vs the position-overlay
+/// sublayer) and `MetalVideoRenderer` (`displaySyncEnabled`, which iOS has no spelling for). Four
+/// actuators, four different APIs, no drawing in any of them. `AudioPlaybackEngine` was the fifth
+/// and it LEFT rather than being dropped: its arm was AUHAL vs `RemoteIO`, and
+/// `rust/slopdesk-audio-out` opens the output stream through `cpal` on both platforms.
 ///
 /// ⚠️ IT FAILS BOTH WAYS ON PURPOSE. An entry that no longer carries the arm this carve-out exists
 /// for is a gate that has quietly stopped checking anything. An allowlist nobody re-validates is
@@ -208,8 +208,8 @@ pub fn the_video_surface_stays_split(tree: &Tree) -> Report {
             view: View::Raw,
             // The sentence names the path itself, since a table cannot carry a placeholder the claim
             // does not fill.
-            message: "a named video actuator no longer carries the platform arm this carve-out exists \
-                      for — drop it from the ledger (docs/56 §3)",
+            message: "a named video actuator no longer carries the platform arm this carve-out exists for — \
+                      drop it from the ledger (docs/56 §3)",
         }
         .check(tree, &mut report);
     }
@@ -272,16 +272,16 @@ pub fn the_video_surface_stays_split(tree: &Tree) -> Report {
 /// the feature on the platform that lost it. `RemotePaneContext` is the single source both halves
 /// transcribe; this asserts the transcriptions agree.
 ///
-/// ⚠️ THE EXTRACTION IS THE STORED SEAM PROPERTIES, not every `on…Ready|Changed` token in the target.
-/// A token grep also scoops up the `VideoWindowPipeline` callbacks each half subscribes to, which are
-/// a DIFFERENT contract with a different asymmetry — Rule E owns those. Written the broad way this
-/// rule failed on three symbols that were none of its business while saying nothing about the one
-/// that was: a gate that conflates two ledgers reports each one's exceptions as the other's noise,
-/// and gets relaxed until it means nothing.
+/// ⚠️ THE EXTRACTION IS THE STORED SEAM PROPERTIES, not every `on…Ready|Changed` token in the
+/// target. A token grep also scoops up the `VideoWindowPipeline` callbacks each half subscribes to,
+/// which are a DIFFERENT contract with a different asymmetry — Rule E owns those. Written the broad
+/// way this rule failed on three symbols that were none of its business while saying nothing about
+/// the one that was: a gate that conflates two ledgers reports each one's exceptions as the other's
+/// noise, and gets relaxed until it means nothing.
 ///
-/// ⚠️ THE EXCEPTION IS THE FEATURE. `onSystemKeyInjectorReady` is genuinely absent from the phone half
-/// and should be: its argument is a raw `NSEvent.ModifierFlags` bit pattern whose only producer is
-/// `SystemKeyCaptureController`'s `CGEventTap`, and neither exists in the iOS SDK —
+/// ⚠️ THE EXCEPTION IS THE FEATURE. `onSystemKeyInjectorReady` is genuinely absent from the phone
+/// half and should be: its argument is a raw `NSEvent.ModifierFlags` bit pattern whose only
+/// producer is `SystemKeyCaptureController`'s `CGEventTap`, and neither exists in the iOS SDK —
 /// `PaneImmersiveCapture.isSupported` is already false there, so publishing a sink would light
 /// `RemoteWindowModel.canInjectSystemKeys` for a capture that can never run. Adding a name to this
 /// ledger must cost a sentence saying why.
@@ -290,19 +290,19 @@ pub fn the_video_surface_stays_split(tree: &Tree) -> Report {
 /// `VideoWindowPipeline` publishes its own `on…` callbacks, distinct from the seam sinks: these are
 /// the ENGINE talking back to whichever half mounted it. One is subscribed by the Mac half and not
 /// the phone, and it is a REAL floor — `onRemoteCursorChanged` does not exist on iOS, because
-/// `VideoWindowPipeline` declares it inside `#if os(macOS)` to carry an `NSCursor`, and the reason it
-/// carries one is that `NSCursor(image:hotSpot:)` takes an arbitrary bitmap while `UIPointerStyle`
-/// does not. The two halves answer "what shape is the host cursor" differently ON PURPOSE: macOS
-/// paints the shape onto the local pointer and adds no overlay, and the phone keeps the position
-/// overlay it already composites and hides the local pointer over it.
+/// `VideoWindowPipeline` declares it inside `#if os(macOS)` to carry an `NSCursor`, and the reason
+/// it carries one is that `NSCursor(image:hotSpot:)` takes an arbitrary bitmap while
+/// `UIPointerStyle` does not. The two halves answer "what shape is the host cursor" differently ON
+/// PURPOSE: macOS paints the shape onto the local pointer and adds no overlay, and the phone keeps
+/// the position overlay it already composites and hides the local pointer over it.
 ///
-/// TWO ENTRIES ARE GONE, and both left the same way — the gate went red and named the one to delete.
-/// `onSwipeNavStatusChanged` was never a floor, it was a bug: what was missing was never the drawing
-/// but the DRIVER, and the premise that kept it missing ("a touch produces no scroll phases") was
-/// false in the file that stated it. `onServerCursorVisibilityChanged` was a floor written on a false
-/// premise: `TARGETED_DEVICE_FAMILY` is "1,2", so an iPad with a trackpad always had a cursor, and
-/// the tree had zero `UIPointerInteraction` — a whole input modality missing on a first-class device,
-/// not a layout difference.
+/// TWO ENTRIES ARE GONE, and both left the same way — the gate went red and named the one to
+/// delete. `onSwipeNavStatusChanged` was never a floor, it was a bug: what was missing was never
+/// the drawing but the DRIVER, and the premise that kept it missing ("a touch produces no scroll
+/// phases") was false in the file that stated it. `onServerCursorVisibilityChanged` was a floor
+/// written on a false premise: `TARGETED_DEVICE_FAMILY` is "1,2", so an iPad with a trackpad always
+/// had a cursor, and the tree had zero `UIPointerInteraction` — a whole input modality missing on a
+/// first-class device, not a layout difference.
 ///
 /// Failing both ways matters more here than anywhere else in this section: a ledger that only fails
 /// on regression is half a ledger, and both of those deletions were the half that catches a FIX.
@@ -359,7 +359,8 @@ mod tests {
         for index in 0..count {
             fixture.write(
                 &format!("Sources/SlopDeskPhoneUI/Views/View{index}.swift"),
-                "#if os(iOS)\nimport SwiftUI\nstruct V: View { var body: some View { Text(\"\") } }\n#endif\n",
+                "#if os(iOS)\nimport SwiftUI\nstruct V: View { var body: some View { Text(\"\") } \
+                 }\n#endif\n",
             );
         }
         for index in 0..3 {
@@ -529,9 +530,20 @@ mod tests {
 
     /// Fourteen shared sink names plus the one platform floor, and eight shared pipeline callbacks.
     const SHARED_SINKS: &[&str] = &[
-        "onPaneReady", "onPaneClosed", "onFocusChanged", "onSizeChanged", "onCursorMoved",
-        "onScrollPhase", "onKeyDown", "onKeyUp", "onDropReady", "onPasteReady", "onTitleChanged",
-        "onBadgeChanged", "onZoomChanged", "onTeardown",
+        "onPaneReady",
+        "onPaneClosed",
+        "onFocusChanged",
+        "onSizeChanged",
+        "onCursorMoved",
+        "onScrollPhase",
+        "onKeyDown",
+        "onKeyUp",
+        "onDropReady",
+        "onPasteReady",
+        "onTitleChanged",
+        "onBadgeChanged",
+        "onZoomChanged",
+        "onTeardown",
     ];
     const SHARED_PIPE: &[&str] = &[
         "onFrame", "onStall", "onResize", "onAudio", "onStats", "onError", "onReady", "onClosed",

@@ -14,8 +14,7 @@ use crate::tree::Tree;
 /// The palette's catalog — the Swift half of the verb id space.
 const SWIFT_PALETTE: &str = "Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift";
 /// The registry — the Swift half of the chord id space.
-const SWIFT_BINDINGS: &str =
-    "Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift";
+const SWIFT_BINDINGS: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingRegistry.swift";
 /// Where a chord's overrides and the memo of the resolved table live.
 const BINDING_OVERRIDES: &str =
     "Sources/SlopDeskWorkspaceCore/Workspace/Domain/WorkspaceBindingOverrides.swift";
@@ -23,12 +22,12 @@ const BINDING_OVERRIDES: &str =
 /// A tear-off is two ordered steps, and the canvas drag decides once
 ///
 /// `PaneCanvasDragController.commitDestination` records the drop placement on the drag coordinator
-/// BEFORE `store.detachPaneToWindow`, because `detachedPanes` changes SYNCHRONOUSLY inside that call
-/// and the satellite-window coordinator reads the placement as it opens the window. Reversed, the
-/// window still opens — it just opens at the centre-cascade instead of under the cursor, and only
-/// when the reader wins the race. An occasional wrong-place window is the worst failure shape there
-/// is, and until this declaration descended out of `SplitContainer` it was pinned by nothing but a
-/// comment.
+/// BEFORE `store.detachPaneToWindow`, because `detachedPanes` changes SYNCHRONOUSLY inside that
+/// call and the satellite-window coordinator reads the placement as it opens the window. Reversed,
+/// the window still opens — it just opens at the centre-cascade instead of under the cursor, and
+/// only when the reader wins the race. An occasional wrong-place window is the worst failure shape
+/// there is, and until this declaration descended out of `SplitContainer` it was pinned by nothing
+/// but a comment.
 ///
 /// ## And no renderer may spell it again
 /// The canvas has two drawings; each one CALLS this controller. A renderer naming a commit verb
@@ -71,8 +70,8 @@ pub fn the_canvas_drag_decides_once(tree: &Tree) -> Report {
             first: r"recordPlacement\(",
             second: r"detachPaneToWindow\(",
             view: View::Code,
-            message: "the tear-off detaches BEFORE recording the placement — the satellite opens at \
-                      the cascade, and only sometimes (docs/56 §3)",
+            message: "the tear-off detaches BEFORE recording the placement — the satellite opens at the \
+                      cascade, and only sometimes (docs/56 §3)",
         },
     ];
     for (verb, pattern) in VERBS {
@@ -96,20 +95,20 @@ pub fn the_canvas_drag_decides_once(tree: &Tree) -> Report {
                          PaneCanvasDragController's one decision (docs/56 §3)"
                     },
                     "resolveTreeExternalDestination" => {
-                        "a canvas renderer calls resolveTreeExternalDestination() itself — the \
-                         canvas drag is PaneCanvasDragController's one decision (docs/56 §3)"
+                        "a canvas renderer calls resolveTreeExternalDestination() itself — the canvas drag \
+                         is PaneCanvasDragController's one decision (docs/56 §3)"
                     },
                     "resolveSpringLoadedTreeDestination" => {
-                        "a canvas renderer calls resolveSpringLoadedTreeDestination() itself — the \
-                         canvas drag is PaneCanvasDragController's one decision (docs/56 §3)"
+                        "a canvas renderer calls resolveSpringLoadedTreeDestination() itself — the canvas \
+                         drag is PaneCanvasDragController's one decision (docs/56 §3)"
                     },
                     "updateSolvedLayout" => {
                         "a canvas renderer calls updateSolvedLayout() itself — the canvas drag is \
                          PaneCanvasDragController's one decision (docs/56 §3)"
                     },
                     _ => {
-                        "a canvas renderer calls updateContainerBounds() itself — the canvas drag \
-                         is PaneCanvasDragController's one decision (docs/56 §3)"
+                        "a canvas renderer calls updateContainerBounds() itself — the canvas drag is \
+                         PaneCanvasDragController's one decision (docs/56 §3)"
                     },
                 },
             });
@@ -126,42 +125,39 @@ pub fn the_canvas_drag_decides_once(tree: &Tree) -> Report {
 /// nothing.
 ///
 /// `slopdesk_workspace::palette_rows` is where that fact lives now, and it can only close the hole
-/// if it names the SAME verbs the catalog serves. An id on one side only is the failure: a Swift row
-/// the table never heard of is listed unconditionally (the far side fails OPEN on purpose, so a typo
-/// cannot delete a verb in silence), and a Rust row no catalog serves is a rule about nothing.
+/// if it names the SAME verbs the catalog serves. An id on one side only is the failure: a Swift
+/// row the table never heard of is listed unconditionally (the far side fails OPEN on purpose, so a
+/// typo cannot delete a verb in silence), and a Rust row no catalog serves is a rule about nothing.
 ///
 /// And the gate does not come back. A row whose platform is DATA has no business branching on one:
 /// `detachPane`'s run arm carried the `#if` this table replaced, and re-adding one anywhere in the
 /// catalog would make a row half-listed again.
 #[must_use]
 pub fn a_palette_verb_names_its_platform_once(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::SameSet {
-                label: "palette verb ids",
-                swift: Extract::raw(SWIFT_PALETTE, r#"id: "(action\.[A-Za-z]+)""#),
-                rust: Extract::raw(
-                    "rust/slopdesk-workspace/src/palette_rows.rs",
-                    r#"row\("(action\.[A-Za-z]+)""#,
-                ),
-            },
-            Claim::Lacks {
-                path: SWIFT_PALETTE,
-                pattern: r"^[[:space:]]*#if os\(",
-                view: View::Raw,
-                message: "a platform gate is back in the palette catalog — a row's platform is DATA \
-                          (palette_rows.rs)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::SameSet {
+            label: "palette verb ids",
+            swift: Extract::raw(SWIFT_PALETTE, r#"id: "(action\.[A-Za-z]+)""#),
+            rust: Extract::raw(
+                "rust/slopdesk-workspace/src/palette_rows.rs",
+                r#"row\("(action\.[A-Za-z]+)""#,
+            ),
+        },
+        Claim::Lacks {
+            path: SWIFT_PALETTE,
+            pattern: r"^[[:space:]]*#if os\(",
+            view: View::Raw,
+            message: "a platform gate is back in the palette catalog — a row's platform is DATA \
+                      (palette_rows.rs)",
+        },
+    ])
 }
 
 /// …and every keybinding is reachable from it, without a keyboard
 ///
 /// The palette listed 33 verbs; the registry declares 77. On a Mac the gap is invisible — the menu
-/// bar reaches every binding — so it survived. A phone has no menu bar, so with no hardware keyboard
-/// attached the palette IS the command surface and ~45 verbs could not be said at all.
+/// bar reaches every binding — so it survived. A phone has no menu bar, so with no hardware
+/// keyboard attached the palette IS the command surface and ~45 verbs could not be said at all.
 ///
 /// The fix is a DERIVATION, not a second catalog, and that is what this pins. `registryRows` reads
 /// `WorkspaceBindingRegistry.bindings` (already platform-filtered, so no gate of its own), and
@@ -169,8 +165,8 @@ pub fn a_palette_verb_names_its_platform_once(tree: &Tree) -> Report {
 /// cannot rot, because there is no join anyone maintains. Written out as a literal set, it would go
 /// stale the first time a row changed hands and nothing would say so.
 ///
-/// The REACH itself — every binding runs from some row — is `PaletteReachesEveryBindingTests`, which
-/// can ask the types. This checks the SHAPE that keeps that test cheap to satisfy honestly.
+/// The REACH itself — every binding runs from some row — is `PaletteReachesEveryBindingTests`,
+/// which can ask the types. This checks the SHAPE that keeps that test cheap to satisfy honestly.
 ///
 /// A row that names a registry verb must RUN that verb, not a second spelling of it. Twenty-four
 /// rows used to carry a `.store` closure restating their `route` arm line for line, and one had
@@ -193,15 +189,15 @@ pub fn every_keybinding_is_reachable_from_the_palette(tree: &Tree) -> Report {
             path: SWIFT_PALETTE,
             pattern: r"static let registryRows: \[PaletteItem\] = WorkspaceBindingRegistry\.bindings",
             view: View::Code,
-            message: "the palette no longer DERIVES its registry rows — a transcribed list goes \
-                      stale in silence (docs/56 §3.6)",
+            message: "the palette no longer DERIVES its registry rows — a transcribed list goes stale in \
+                      silence (docs/56 §3.6)",
         },
         Claim::Matches {
             path: SWIFT_PALETTE,
             pattern: r"static let coveredActions: Set<WorkspaceAction> = Set\(declared\.compactMap",
             view: View::Code,
-            message: "the palette no longer reads its covered actions off its own rows — the join \
-                      between the two id spaces has become one somebody maintains (docs/56 §3.6)",
+            message: "the palette no longer reads its covered actions off its own rows — the join between \
+                      the two id spaces has become one somebody maintains (docs/56 §3.6)",
         },
     ];
     for (verb, pattern) in REVIVED {
@@ -222,9 +218,7 @@ pub fn every_keybinding_is_reachable_from_the_palette(tree: &Tree) -> Report {
                 "togglePinWindow" => {
                     "togglePinWindow is a PaletteAction again — the row IS the verb (`.binding`)"
                 },
-                "closeWindow" => {
-                    "closeWindow is a PaletteAction again — the row IS the verb (`.binding`)"
-                },
+                "closeWindow" => "closeWindow is a PaletteAction again — the row IS the verb (`.binding`)",
                 _ => "openCheatSheet is a PaletteAction again — the row IS the verb (`.binding`)",
             },
         });
@@ -234,10 +228,11 @@ pub fn every_keybinding_is_reachable_from_the_palette(tree: &Tree) -> Report {
 
 /// …and a keybinding names its platform once, in the other id space
 ///
-/// The registry is four surfaces at once — cheat sheet, keybindings editor, `ctl` verb list, and the
-/// CHORD TABLE. That last one is why a listed-and-inert binding is worse than a listed-and-inert
-/// palette row: a bound chord does not reach the terminal, so ⌥⌘P was taken from the PTY to run a
-/// macOS-only `#if` with nothing in its else. Same pin as the palette's, over `binding_rows.rs`.
+/// The registry is four surfaces at once — cheat sheet, keybindings editor, `ctl` verb list, and
+/// the CHORD TABLE. That last one is why a listed-and-inert binding is worse than a
+/// listed-and-inert palette row: a bound chord does not reach the terminal, so ⌥⌘P was taken from
+/// the PTY to run a macOS-only `#if` with nothing in its else. Same pin as the palette's, over
+/// `binding_rows.rs`.
 ///
 /// The nine generated `pane.select.N` slots are minted by a loop and are deliberately undeclared —
 /// they are `Both`, and the table declares the ONE collapsed representative `pane.selectN` — so the
@@ -252,47 +247,44 @@ pub fn a_keybinding_names_its_platform_once(tree: &Tree) -> Report {
     const BINDING_ROUTING: &str =
         "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceBindingRouting.swift";
 
-    check_all(
-        tree,
-        &[
-            Claim::SameSet {
-                label: "binding row ids",
-                swift: Extract::raw(SWIFT_BINDINGS, r#"id: "([a-z]+\.[A-Za-z0-9]+)""#),
-                rust: Extract::raw(
-                    "rust/slopdesk-workspace/src/binding_rows.rs",
-                    r#"row\("([a-z]+\.[A-Za-z0-9]+)""#,
-                ),
-            },
-            Claim::Lacks {
-                path: SWIFT_BINDINGS,
-                pattern: r"^[[:space:]]*#if os\(",
-                view: View::Raw,
-                message: "a platform gate is back in the binding registry — a row's platform is \
-                          DATA (binding_rows.rs)",
-            },
-            Claim::Lacks {
-                path: BINDING_ROUTING,
-                pattern: r"^[[:space:]]*#if os\(",
-                view: View::Raw,
-                message: "a platform gate is back in the binding routing — a row's platform is \
-                          DATA (binding_rows.rs)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::SameSet {
+            label: "binding row ids",
+            swift: Extract::raw(SWIFT_BINDINGS, r#"id: "([a-z]+\.[A-Za-z0-9]+)""#),
+            rust: Extract::raw(
+                "rust/slopdesk-workspace/src/binding_rows.rs",
+                r#"row\("([a-z]+\.[A-Za-z0-9]+)""#,
+            ),
+        },
+        Claim::Lacks {
+            path: SWIFT_BINDINGS,
+            pattern: r"^[[:space:]]*#if os\(",
+            view: View::Raw,
+            message: "a platform gate is back in the binding registry — a row's platform is DATA \
+                      (binding_rows.rs)",
+        },
+        Claim::Lacks {
+            path: BINDING_ROUTING,
+            pattern: r"^[[:space:]]*#if os\(",
+            view: View::Raw,
+            message: "a platform gate is back in the binding routing — a row's platform is DATA \
+                      (binding_rows.rs)",
+        },
+    ])
 }
 
 /// …and the chord table is a CONSTANT, held rather than rebuilt
 ///
 /// The registry's table is 85 rows and its readers are the keyboard's. `resolvedChordTable` walked
 /// it once per key event, and `binding(for:)` — which the walk called per row — read `allBindings`
-/// again, so a computed `allBindings` meant 86 fresh 85-element arrays per keystroke, each retaining
-/// four strings per element. Measured at 128µs of pure allocation per key event on an M-series Mac,
-/// on the GLOBAL `.keyDown` monitor and on `TerminalKeyInterceptor`'s default resolver — which is to
-/// say on every key typed into any pane.
+/// again, so a computed `allBindings` meant 86 fresh 85-element arrays per keystroke, each
+/// retaining four strings per element. Measured at 128µs of pure allocation per key event on an
+/// M-series Mac, on the GLOBAL `.keyDown` monitor and on `TerminalKeyInterceptor`'s default
+/// resolver — which is to say on every key typed into any pane.
 ///
-/// THIS IS THE DRIFT CLASS `docs/55` §8 NAMES, one register down: nothing a test can see changes when
-/// `let` goes back to `var`. Every assertion still passes, every chord still resolves, and the only
-/// symptom is input latency nobody attributes to a keyword. So the four shapes that make it a
+/// THIS IS THE DRIFT CLASS `docs/55` §8 NAMES, one register down: nothing a test can see changes
+/// when `let` goes back to `var`. Every assertion still passes, every chord still resolves, and the
+/// only symptom is input latency nobody attributes to a keyword. So the four shapes that make it a
 /// constant are pinned by spelling.
 ///
 /// BREAK-TESTED against the real tree, 2026-08-22: reverting `allBindings` to a computed property
@@ -300,39 +292,36 @@ pub fn a_keybinding_names_its_platform_once(tree: &Tree) -> Report {
 /// the second; deleting the `liveChordTable` memo fails the last two.
 #[must_use]
 pub fn the_chord_table_is_held_not_rebuilt(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::Matches {
-                path: SWIFT_BINDINGS,
-                pattern: r"static let allBindings: \[WorkspaceBinding\] = bindings \+ selectPaneBindings",
-                view: View::Code,
-                message: "allBindings is not a stored `let` — a computed one re-concatenates 85 \
-                          rows per READ, and the chord table reads it 86 times per key event",
-            },
-            Claim::Lacks {
-                path: SWIFT_BINDINGS,
-                pattern: r"allBindings\.first \{ \$0\.action ==",
-                view: View::Code,
-                message: "the registry scans the whole table for one action again — that is the \
-                          O(n) half of the O(n²) per key event; byAction is the index",
-            },
-            Claim::Matches {
-                path: BINDING_OVERRIDES,
-                pattern: r"if let liveChordTable \{ return liveChordTable \}",
-                view: View::Code,
-                message: "resolvedChordTable no longer reads its memo — it is a pure function of a \
-                          `let` and a write-once var, rebuilt on every keystroke the app sees",
-            },
-            Claim::Matches {
-                path: BINDING_OVERRIDES,
-                pattern: r"didSet \{ liveChordTable = nil \}",
-                view: View::Code,
-                message: "activeOverrides no longer invalidates the memo on write — a rebind would \
-                          not take effect until relaunch",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Matches {
+            path: SWIFT_BINDINGS,
+            pattern: r"static let allBindings: \[WorkspaceBinding\] = bindings \+ selectPaneBindings",
+            view: View::Code,
+            message: "allBindings is not a stored `let` — a computed one re-concatenates 85 rows per READ, \
+                      and the chord table reads it 86 times per key event",
+        },
+        Claim::Lacks {
+            path: SWIFT_BINDINGS,
+            pattern: r"allBindings\.first \{ \$0\.action ==",
+            view: View::Code,
+            message: "the registry scans the whole table for one action again — that is the O(n) half of \
+                      the O(n²) per key event; byAction is the index",
+        },
+        Claim::Matches {
+            path: BINDING_OVERRIDES,
+            pattern: r"if let liveChordTable \{ return liveChordTable \}",
+            view: View::Code,
+            message: "resolvedChordTable no longer reads its memo — it is a pure function of a `let` and a \
+                      write-once var, rebuilt on every keystroke the app sees",
+        },
+        Claim::Matches {
+            path: BINDING_OVERRIDES,
+            pattern: r"didSet \{ liveChordTable = nil \}",
+            view: View::Code,
+            message: "activeOverrides no longer invalidates the memo on write — a rebind would not take \
+                      effect until relaunch",
+        },
+    ])
 }
 
 #[cfg(test)]
@@ -386,9 +375,9 @@ mod tests {
         fixture
             .write(
                 super::SWIFT_PALETTE,
-                "PaletteItem(id: \"action.detachPane\")\nPaletteItem(id: \"action.splitRight\")\n\
-                 static let registryRows: [PaletteItem] = WorkspaceBindingRegistry.bindings\n\
-                 static let coveredActions: Set<WorkspaceAction> = Set(declared.compactMap { item in\n",
+                "PaletteItem(id: \"action.detachPane\")\nPaletteItem(id: \"action.splitRight\")\nstatic let \
+                 registryRows: [PaletteItem] = WorkspaceBindingRegistry.bindings\nstatic let \
+                 coveredActions: Set<WorkspaceAction> = Set(declared.compactMap { item in\n",
             )
             .write(
                 "rust/slopdesk-workspace/src/palette_rows.rs",
@@ -404,20 +393,20 @@ mod tests {
         // A verb the platform table never heard of would be listed unconditionally.
         fixture.write(
             super::SWIFT_PALETTE,
-            "PaletteItem(id: \"action.detachPane\")\nPaletteItem(id: \"action.splitRight\")\n\
-             PaletteItem(id: \"action.pinWindow\")\n\
-             static let registryRows: [PaletteItem] = WorkspaceBindingRegistry.bindings\n\
-             static let coveredActions: Set<WorkspaceAction> = Set(declared.compactMap { item in\n",
+            "PaletteItem(id: \"action.detachPane\")\nPaletteItem(id: \
+             \"action.splitRight\")\nPaletteItem(id: \"action.pinWindow\")\nstatic let registryRows: \
+             [PaletteItem] = WorkspaceBindingRegistry.bindings\nstatic let coveredActions: \
+             Set<WorkspaceAction> = Set(declared.compactMap { item in\n",
         );
         assert!(!super::a_palette_verb_names_its_platform_once(&fixture.tree()).is_clean());
 
         // And a gate back in the catalog, which makes a row half-listed again.
         fixture.write(
             super::SWIFT_PALETTE,
-            "PaletteItem(id: \"action.detachPane\")\nPaletteItem(id: \"action.splitRight\")\n\
-             #if os(macOS)\n#endif\n\
-             static let registryRows: [PaletteItem] = WorkspaceBindingRegistry.bindings\n\
-             static let coveredActions: Set<WorkspaceAction> = Set(declared.compactMap { item in\n",
+            "PaletteItem(id: \"action.detachPane\")\nPaletteItem(id: \"action.splitRight\")\n#if \
+             os(macOS)\n#endif\nstatic let registryRows: [PaletteItem] = \
+             WorkspaceBindingRegistry.bindings\nstatic let coveredActions: Set<WorkspaceAction> = \
+             Set(declared.compactMap { item in\n",
         );
         assert!(!super::a_palette_verb_names_its_platform_once(&fixture.tree()).is_clean());
     }
@@ -428,8 +417,8 @@ mod tests {
         fixture
             .write(
                 super::SWIFT_PALETTE,
-                "static let registryRows: [PaletteItem] = WorkspaceBindingRegistry.bindings\n\
-                 static let coveredActions: Set<WorkspaceAction> = Set(declared.compactMap { item in\n",
+                "static let registryRows: [PaletteItem] = WorkspaceBindingRegistry.bindings\nstatic let \
+                 coveredActions: Set<WorkspaceAction> = Set(declared.compactMap { item in\n",
             )
             .write(
                 "Sources/SlopDeskClientCore/Palette/PaletteModel.swift",

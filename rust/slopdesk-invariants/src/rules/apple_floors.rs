@@ -8,8 +8,8 @@
 //! Every ban here reads [`View::Code`], and that is load-bearing rather than tidy. The files still
 //! NAME these calls in prose, and should: the comments carry the hardware measurements that decided
 //! the tablet path and the suppression interval, why the feed uses `CGWindowList` over
-//! `SCShareableContent`, and why the probe walks displays out of process. A gate that could not tell
-//! a call from a sentence about one would force that knowledge out of the file to stay green.
+//! `SCShareableContent`, and why the probe walks displays out of process. A gate that could not
+//! tell a call from a sentence about one would force that knowledge out of the file to stay green.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
@@ -23,9 +23,9 @@ const FFI_MANIFEST: &str = "rust/slopdesk-ffi/Cargo.toml";
 const MACOS_REGION: (&str, &str) = ("MACOS-ONLY BEGIN", "MACOS-ONLY END");
 /// The manifest's macOS-gated dependency table.
 ///
-/// Ended at the NEXT table header rather than a fixed window. This was `grep -A 12`, and the twelfth
-/// line was reached the moment a crate arrived with a comment above it — the gate then failed on a
-/// `Cargo.toml` that was perfectly gated, naming the wrong defect.
+/// Ended at the NEXT table header rather than a fixed window. This was `grep -A 12`, and the
+/// twelfth line was reached the moment a crate arrived with a comment above it — the gate then
+/// failed on a `Cargo.toml` that was perfectly gated, naming the wrong defect.
 const MACOS_EDGES: (&str, &str) = (
     r#"^\[target\.'cfg\(target_os = "macos"\)'\.dependencies\]"#,
     r"^\[",
@@ -35,8 +35,8 @@ const INJECTOR: &str = "Sources/SlopDeskVideoHost/InputInjector.swift";
 
 /// The host synthesises no event of its own
 ///
-/// Every injected `CGEvent` is built and posted by `rust/slopdesk-apple-cgevent`, the first crate of
-/// the `objc2` family. `InputInjector` still ORCHESTRATES — it owns the bounds, the balance, the
+/// Every injected `CGEvent` is built and posted by `rust/slopdesk-apple-cgevent`, the first crate
+/// of the `objc2` family. `InputInjector` still ORCHESTRATES — it owns the bounds, the balance, the
 /// resampler, the raise chain — but it no longer builds an event, sets a field on one, warps a
 /// cursor or posts anything.
 ///
@@ -59,59 +59,54 @@ const INJECTOR: &str = "Sources/SlopDeskVideoHost/InputInjector.swift";
 /// restored from /tmp; PASS.
 #[must_use]
 pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::Exists {
-                path: "rust/slopdesk-apple-cgevent/src/inject.rs",
-                message: "InputInjector has no Rust behind it — the host synthesises no event of \
-                          its own (docs/57 §5, docs/56 increment 84)",
-            },
-            Claim::Exists {
-                path: "rust/slopdesk-ffi/src/inject.rs",
-                message: "InputInjector has no door behind it — the host synthesises no event of \
-                          its own (docs/57 §5, docs/56 increment 84)",
-            },
-            Claim::Lacks {
-                path: INJECTOR,
-                pattern: r"CGEvent\(|\.setIntegerValueField|\.post\(tap:|\.postToPid\(|CGWarpMouseCursorPosition|CGAssociateMouseAndMouseCursorPosition|CGEventSource\(",
-                view: View::Code,
-                message: "InputInjector builds a CGEvent itself — synthesis, field-setting, the warp \
-                          and the post are slopdesk-apple-cgevent's, and a second copy here is where \
-                          the click-state rule and the untagged-keyboard rule drift apart \
-                          (docs/57 §5)",
-            },
-            Claim::Lacks {
-                path: INJECTOR,
-                pattern: r"func (clampToInt32|scaledScrollDelta)",
-                view: View::Code,
-                message: "InputInjector keeps its own narrowing — clamp_to_i32 is slopdesk-video's, \
-                          and a Swift copy is the trapping Int32(_:) coming back under a new name on \
-                          a path that parses hostile datagrams (docs/57 §5)",
-            },
-            Claim::Within {
-                path: HEADER,
-                start: MACOS_REGION.0,
-                end: MACOS_REGION.1,
-                pattern: r"slopdesk_inject_pointer\(",
-                view: View::Raw,
-                message: "slopdesk_ffi.h declares a CoreGraphics door outside the macOS-only region \
-                          — iOS has no CGEvent at all, so an ungated declaration is not a wasted \
-                          byte, it is a link failure on two of the three slices (docs/57 §3)",
-            },
-            Claim::Within {
-                path: FFI_MANIFEST,
-                start: MACOS_EDGES.0,
-                end: MACOS_EDGES.1,
-                pattern: "slopdesk-apple-cgevent",
-                view: View::Code,
-                message: "rust/slopdesk-ffi/Cargo.toml: the slopdesk-apple-cgevent edge is not \
-                          target-gated — the macOS-only bijection is three spellings (the cfg, the \
-                          header region, the Cargo edge) and build-ffi.sh only checks what the \
-                          library exports (docs/57 §3)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Exists {
+            path: "rust/slopdesk-apple-cgevent/src/inject.rs",
+            message: "InputInjector has no Rust behind it — the host synthesises no event of its own \
+                      (docs/57 §5, docs/56 increment 84)",
+        },
+        Claim::Exists {
+            path: "rust/slopdesk-ffi/src/inject.rs",
+            message: "InputInjector has no door behind it — the host synthesises no event of its own \
+                      (docs/57 §5, docs/56 increment 84)",
+        },
+        Claim::Lacks {
+            path: INJECTOR,
+            pattern: r"CGEvent\(|\.setIntegerValueField|\.post\(tap:|\.postToPid\(|CGWarpMouseCursorPosition|CGAssociateMouseAndMouseCursorPosition|CGEventSource\(",
+            view: View::Code,
+            message: "InputInjector builds a CGEvent itself — synthesis, field-setting, the warp and the \
+                      post are slopdesk-apple-cgevent's, and a second copy here is where the click-state \
+                      rule and the untagged-keyboard rule drift apart (docs/57 §5)",
+        },
+        Claim::Lacks {
+            path: INJECTOR,
+            pattern: r"func (clampToInt32|scaledScrollDelta)",
+            view: View::Code,
+            message: "InputInjector keeps its own narrowing — clamp_to_i32 is slopdesk-video's, and a Swift \
+                      copy is the trapping Int32(_:) coming back under a new name on a path that parses \
+                      hostile datagrams (docs/57 §5)",
+        },
+        Claim::Within {
+            path: HEADER,
+            start: MACOS_REGION.0,
+            end: MACOS_REGION.1,
+            pattern: r"slopdesk_inject_pointer\(",
+            view: View::Raw,
+            message: "slopdesk_ffi.h declares a CoreGraphics door outside the macOS-only region — iOS has \
+                      no CGEvent at all, so an ungated declaration is not a wasted byte, it is a link \
+                      failure on two of the three slices (docs/57 §3)",
+        },
+        Claim::Within {
+            path: FFI_MANIFEST,
+            start: MACOS_EDGES.0,
+            end: MACOS_EDGES.1,
+            pattern: "slopdesk-apple-cgevent",
+            view: View::Code,
+            message: "rust/slopdesk-ffi/Cargo.toml: the slopdesk-apple-cgevent edge is not target-gated — \
+                      the macOS-only bijection is three spellings (the cfg, the header region, the Cargo \
+                      edge) and build-ffi.sh only checks what the library exports (docs/57 §3)",
+        },
+    ])
 }
 
 /// The host decodes no window record of its own
@@ -119,10 +114,10 @@ pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
 /// `CGWindowListCopyWindowInfo` answers a `CFArray` of `CFDictionary`, and reading one is a decode:
 /// eight optional fields, each of which can be absent or of the wrong type. Four Swift call sites
 /// wrote that decode independently and DISAGREED about what absence means — one defaulted
-/// `kCGWindowLayer` to `Int.min`, another to `-1`, a third dropped the record, and the fourth read a
-/// missing owner pid as `-1` and went on to compare it. `rust/slopdesk-apple-cgwindow` decodes once
-/// and drops an incomplete record, which is the only one of the four answers that cannot elect a
-/// frontmost app or move a window on a malformed record.
+/// `kCGWindowLayer` to `Int.min`, another to `-1`, a third dropped the record, and the fourth read
+/// a missing owner pid as `-1` and went on to compare it. `rust/slopdesk-apple-cgwindow` decodes
+/// once and drops an incomplete record, which is the only one of the four answers that cannot elect
+/// a frontmost app or move a window on a malformed record.
 ///
 /// The display half is the same shape: three call sites ran the same two-call enumeration by hand,
 /// two sizing from a counting call and one hard-coding sixteen — a silent truncation at seventeen
@@ -142,8 +137,8 @@ pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
 /// window record themselves". Separately restored `NSWorkspace.shared.frontmostApplication` in
 /// `WindowFeedGlue` ⇒ FAIL "read a frozen frontmost". Separately deleted the cgwindow crate ⇒ FAIL
 /// "has no Rust behind it". Separately moved the declarations out of the MACOS-ONLY region ⇒ FAIL
-/// "declares a `WindowServer` door outside the macOS-only region". Separately ungated a Cargo edge ⇒
-/// FAIL "is not target-gated". All five restored from /tmp; PASS.
+/// "declares a `WindowServer` door outside the macOS-only region". Separately ungated a Cargo edge
+/// ⇒ FAIL "is not target-gated". All five restored from /tmp; PASS.
 #[must_use]
 pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
     /// The crates and doors this port stands on.
@@ -154,8 +149,7 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
         "rust/slopdesk-ffi/src/cgdisplay.rs",
     ];
     /// The doors that must sit inside the header's macOS-only region.
-    const GATED_DOORS: &[&str] =
-        &[r"slopdesk_cgwindow_frontmost_pid\(", r"slopdesk_cgdisplay_list\("];
+    const GATED_DOORS: &[&str] = &[r"slopdesk_cgwindow_frontmost_pid\(", r"slopdesk_cgdisplay_list\("];
     /// The crate edges that must be target-gated in the shim's manifest.
     const GATED_EDGES: &[&str] = &[
         "slopdesk-apple-cgwindow",
@@ -165,14 +159,11 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
 
     let mut report = Report::new();
     for required in REQUIRED {
-        report.absorb(check_all(
-            tree,
-            &[Claim::Exists {
-                path: required,
-                message: "the host has no Rust behind its window reads — the WindowServer decode \
-                          lives in one place (docs/57 §5, docs/56 increment 85)",
-            }],
-        ));
+        report.absorb(check_all(tree, &[Claim::Exists {
+            path: required,
+            message: "the host has no Rust behind its window reads — the WindowServer decode lives in one \
+                      place (docs/57 §5, docs/56 increment 85)",
+        }]));
     }
     report.absorb(check_all(
         tree,
@@ -209,35 +200,28 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
         ],
     ));
     for door in GATED_DOORS {
-        report.absorb(check_all(
-            tree,
-            &[Claim::Within {
-                path: HEADER,
-                start: MACOS_REGION.0,
-                end: MACOS_REGION.1,
-                pattern: door,
-                view: View::Raw,
-                message: "slopdesk_ffi.h declares a WindowServer door outside the macOS-only region \
-                          — iOS has no WindowServer at all, so an ungated declaration is not a \
-                          wasted byte, it is a link failure on two of the three slices (docs/57 §3)",
-            }],
-        ));
+        report.absorb(check_all(tree, &[Claim::Within {
+            path: HEADER,
+            start: MACOS_REGION.0,
+            end: MACOS_REGION.1,
+            pattern: door,
+            view: View::Raw,
+            message: "slopdesk_ffi.h declares a WindowServer door outside the macOS-only region — iOS has \
+                      no WindowServer at all, so an ungated declaration is not a wasted byte, it is a link \
+                      failure on two of the three slices (docs/57 §3)",
+        }]));
     }
     for edge in GATED_EDGES {
-        report.absorb(check_all(
-            tree,
-            &[Claim::Within {
-                path: FFI_MANIFEST,
-                start: MACOS_EDGES.0,
-                end: MACOS_EDGES.1,
-                pattern: edge,
-                view: View::Code,
-                message: "rust/slopdesk-ffi/Cargo.toml: an apple-family edge is not target-gated — \
-                          the macOS-only bijection is three spellings (the cfg, the header region, \
-                          the Cargo edge) and build-ffi.sh only checks what the library exports \
-                          (docs/57 §3)",
-            }],
-        ));
+        report.absorb(check_all(tree, &[Claim::Within {
+            path: FFI_MANIFEST,
+            start: MACOS_EDGES.0,
+            end: MACOS_EDGES.1,
+            pattern: edge,
+            view: View::Code,
+            message: "rust/slopdesk-ffi/Cargo.toml: an apple-family edge is not target-gated — the \
+                      macOS-only bijection is three spellings (the cfg, the header region, the Cargo edge) \
+                      and build-ffi.sh only checks what the library exports (docs/57 §3)",
+        }]));
     }
     report
 }
@@ -253,18 +237,19 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
 ///
 /// They live in `slopdesk_video::capture_region` and `::window_list` now, over a `CGRect` algebra
 /// read off CoreGraphics by probe — an edge touch intersects at the seam, a NaN coordinate resolves
-/// to the other rect, an empty rect still contributes its corner to a union — and the 23 vectors are
-/// replayed by the Rust integration suite, which `golden-check.sh` independently requires to exist.
+/// to the other rect, an empty rect still contributes its corner to a union — and the 23 vectors
+/// are replayed by the Rust integration suite, which `golden-check.sh` independently requires to
+/// exist.
 ///
 /// The doors are PORTABLE, and that arm is the MIRROR of the two rules above rather than a copy of
 /// them: these decide rather than read, so a declaration inside the MACOS-ONLY region would drop
 /// them from the iOS slices for no reason and hide that they are pure.
 ///
 /// BREAK-TEST: reintroduced `enum CaptureRegionMath` in `WindowGeometryWatcher` ⇒ FAIL "decide a
-/// capture region themselves". Separately deleted `rust/slopdesk-video/src/capture_region.rs` ⇒ FAIL
-/// "has no Rust behind its capture region". Separately moved `slopdesk_capture_union_region` inside
-/// the MACOS-ONLY region ⇒ FAIL "declares a portable decider inside the macOS-only region". All
-/// three restored from /tmp; PASS.
+/// capture region themselves". Separately deleted `rust/slopdesk-video/src/capture_region.rs` ⇒
+/// FAIL "has no Rust behind its capture region". Separately moved `slopdesk_capture_union_region`
+/// inside the MACOS-ONLY region ⇒ FAIL "declares a portable decider inside the macOS-only region".
+/// All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
     /// The rules and the doors over them.
@@ -282,14 +267,11 @@ pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
 
     let mut report = Report::new();
     for required in REQUIRED {
-        report.absorb(check_all(
-            tree,
-            &[Claim::Exists {
-                path: required,
-                message: "the host has no Rust behind its capture region — the 23 golden-pinned \
-                          union and retarget vectors are replayed against it (docs/56 increment 86)",
-            }],
-        ));
+        report.absorb(check_all(tree, &[Claim::Exists {
+            path: required,
+            message: "the host has no Rust behind its capture region — the 23 golden-pinned union and \
+                      retarget vectors are replayed against it (docs/56 increment 86)",
+        }]));
     }
     report.absorb(check_all(
         tree,
@@ -308,30 +290,25 @@ pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
         }],
     ));
     for door in PORTABLE_DOORS {
-        report.absorb(check_all(
-            tree,
-            &[
-                Claim::Matches {
-                    path: HEADER,
-                    pattern: door,
-                    view: View::Raw,
-                    message: "slopdesk_ffi.h does not declare a capture decider the Swift face calls \
-                              — a missing declaration is a link failure the moment anyone rebuilds \
-                              (docs/55 §3)",
-                },
-                Claim::LacksWithin {
-                    path: HEADER,
-                    start: MACOS_REGION.0,
-                    end: MACOS_REGION.1,
-                    pattern: door,
-                    view: View::Raw,
-                    message: "slopdesk_ffi.h declares a portable decider inside the macOS-only \
-                              region — it reads no WindowServer and its answers are golden-pinned on \
-                              every slice, so gating it hides that it is pure and costs the iOS \
-                              slices a door for nothing (docs/57 §3)",
-                },
-            ],
-        ));
+        report.absorb(check_all(tree, &[
+            Claim::Matches {
+                path: HEADER,
+                pattern: door,
+                view: View::Raw,
+                message: "slopdesk_ffi.h does not declare a capture decider the Swift face calls — a \
+                          missing declaration is a link failure the moment anyone rebuilds (docs/55 §3)",
+            },
+            Claim::LacksWithin {
+                path: HEADER,
+                start: MACOS_REGION.0,
+                end: MACOS_REGION.1,
+                pattern: door,
+                view: View::Raw,
+                message: "slopdesk_ffi.h declares a portable decider inside the macOS-only region — it \
+                          reads no WindowServer and its answers are golden-pinned on every slice, so gating \
+                          it hides that it is pure and costs the iOS slices a door for nothing (docs/57 §3)",
+            },
+        ]));
     }
     report
 }
@@ -359,13 +336,12 @@ mod tests {
             .write(super::HEADER, header)
             .write(
                 super::FFI_MANIFEST,
-                "[dependencies]\nslopdesk-wire = { path = \"../slopdesk-wire\" }\n\n\
-                 [target.'cfg(target_os = \"macos\")'.dependencies]\n\
-                 slopdesk-apple-cgevent = { path = \"../slopdesk-apple-cgevent\" }\n\
-                 slopdesk-apple-cgdisplay = { path = \"../slopdesk-apple-cgdisplay\" }\n\
-                 slopdesk-apple-sck = { path = \"../slopdesk-apple-sck\" }\n\
-                 slopdesk-apple-cgwindow = { path = \"../slopdesk-apple-cgwindow\" }\n\n\
-                 [profile.release]\nopt-level = 3\n",
+                "[dependencies]\nslopdesk-wire = { path = \"../slopdesk-wire\" }\n\n[target.'cfg(target_os \
+                 = \"macos\")'.dependencies]\nslopdesk-apple-cgevent = { path = \
+                 \"../slopdesk-apple-cgevent\" }\nslopdesk-apple-cgdisplay = { path = \
+                 \"../slopdesk-apple-cgdisplay\" }\nslopdesk-apple-sck = { path = \"../slopdesk-apple-sck\" \
+                 }\nslopdesk-apple-cgwindow = { path = \"../slopdesk-apple-cgwindow\" \
+                 }\n\n[profile.release]\nopt-level = 3\n",
             )
             .write(super::INJECTOR, injector);
     }
@@ -373,21 +349,20 @@ mod tests {
     /// A header with the gated doors inside the region and the portable deciders outside it.
     fn header(gated: &str, portable: &str) -> String {
         format!(
-            "void slopdesk_free(void *p);\n{portable}\n\
-             // MACOS-ONLY BEGIN\n{gated}\n// MACOS-ONLY END\n\
-             void slopdesk_wire_decode(const uint8_t *p, size_t n);\n"
+            "void slopdesk_free(void *p);\n{portable}\n// MACOS-ONLY BEGIN\n{gated}\n// MACOS-ONLY \
+             END\nvoid slopdesk_wire_decode(const uint8_t *p, size_t n);\n"
         )
     }
 
     /// Every door, in the place it belongs.
     fn placed() -> String {
         header(
-            "void slopdesk_inject_pointer(int32_t x, int32_t y);\n\
-             int32_t slopdesk_cgwindow_frontmost_pid(void);\n\
-             size_t slopdesk_cgdisplay_list(uint32_t *out, size_t cap);",
-            "bool slopdesk_capture_union_region(const double *a, double *out);\n\
-             bool slopdesk_capture_region_decision(const double *a, double *out);\n\
-             bool slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
+            "void slopdesk_inject_pointer(int32_t x, int32_t y);\nint32_t \
+             slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, size_t \
+             cap);",
+            "bool slopdesk_capture_union_region(const double *a, double *out);\nbool \
+             slopdesk_capture_region_decision(const double *a, double *out);\nbool \
+             slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
         )
     }
 
@@ -397,8 +372,8 @@ mod tests {
         floors(
             &fixture,
             &placed(),
-            "// The suppression interval is why this used to call CGEvent(mouseEventSource:).\n\
-             let plan = slopdesk_inject_pointer(x, y)\n",
+            "// The suppression interval is why this used to call CGEvent(mouseEventSource:).\nlet plan = \
+             slopdesk_inject_pointer(x, y)\n",
         );
         // The prose still names the call, and must — the measurements that decided the tablet path
         // live there. A gate that read comments would force them out of the file.
@@ -413,7 +388,11 @@ mod tests {
 
         // The trapping Int32(_:) coming back under a new name, on a path that parses hostile
         // datagrams.
-        floors(&fixture, &placed(), "static func clampToInt32(_ v: Double) -> Int32 { 0 }\n");
+        floors(
+            &fixture,
+            &placed(),
+            "static func clampToInt32(_ v: Double) -> Int32 { 0 }\n",
+        );
         assert!(!super::the_host_synthesises_no_event(&fixture.tree()).is_clean());
     }
 
@@ -422,12 +401,11 @@ mod tests {
         // Its own fixture, because writes accumulate and this case moves a declaration.
         let fixture = Fixture::new("apple-region");
         let ungated = header(
-            "int32_t slopdesk_cgwindow_frontmost_pid(void);\n\
-             size_t slopdesk_cgdisplay_list(uint32_t *out, size_t cap);",
-            "void slopdesk_inject_pointer(int32_t x, int32_t y);\n\
-             bool slopdesk_capture_union_region(const double *a, double *out);\n\
-             bool slopdesk_capture_region_decision(const double *a, double *out);\n\
-             bool slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
+            "int32_t slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, \
+             size_t cap);",
+            "void slopdesk_inject_pointer(int32_t x, int32_t y);\nbool slopdesk_capture_union_region(const \
+             double *a, double *out);\nbool slopdesk_capture_region_decision(const double *a, double \
+             *out);\nbool slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
         );
         floors(&fixture, &ungated, "let plan = slopdesk_inject_pointer(x, y)\n");
         assert!(!super::the_host_synthesises_no_event(&fixture.tree()).is_clean());
@@ -439,8 +417,8 @@ mod tests {
         floors(&fixture, &placed(), "let plan = slopdesk_inject_pointer(x, y)\n");
         fixture.write(
             "Sources/slopdesk-videohostd/WindowFeedGlue.swift",
-            "// The feed needs three AppKit reads per pid that no door can answer.\n\
-             let info = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID)\n",
+            "// The feed needs three AppKit reads per pid that no door can answer.\nlet info = \
+             CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID)\n",
         );
         // The ONE exemption, named so it is a decision on the record.
         assert!(super::the_host_decodes_no_window_record(&fixture.tree()).is_clean());
@@ -450,7 +428,12 @@ mod tests {
             "let info = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID)\n",
         );
         let found = super::the_host_decodes_no_window_record(&fixture.tree());
-        assert!(found.violations().iter().any(|line| line.contains("WindowGeometryWatcher")));
+        assert!(
+            found
+                .violations()
+                .iter()
+                .any(|line| line.contains("WindowGeometryWatcher"))
+        );
     }
 
     #[test]
@@ -476,12 +459,11 @@ mod tests {
         floors(
             &fixture,
             &header(
-                "void slopdesk_inject_pointer(int32_t x, int32_t y);\n\
-                 int32_t slopdesk_cgwindow_frontmost_pid(void);\n\
-                 size_t slopdesk_cgdisplay_list(uint32_t *out, size_t cap);\n\
-                 bool slopdesk_capture_union_region(const double *a, double *out);",
-                "bool slopdesk_capture_region_decision(const double *a, double *out);\n\
-                 bool slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
+                "void slopdesk_inject_pointer(int32_t x, int32_t y);\nint32_t \
+                 slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, \
+                 size_t cap);\nbool slopdesk_capture_union_region(const double *a, double *out);",
+                "bool slopdesk_capture_region_decision(const double *a, double *out);\nbool \
+                 slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
             ),
             "let plan = slopdesk_inject_pointer(x, y)\n",
         );

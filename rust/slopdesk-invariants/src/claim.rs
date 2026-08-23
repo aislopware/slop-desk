@@ -206,8 +206,8 @@ fn serde_field_names(haystack: &str) -> BTreeSet<String> {
 /// One side of a [`Claim::SameSetUnder`]: a directory, read file by file, through one pattern.
 ///
 /// Separate from [`Extract`] because the subject is a TARGET rather than a file. "Both video halves
-/// accept the same seam sinks" is true of the half wherever in it the sinks are declared, and pinning
-/// it to one file would make an ordinary split of a big adapter look like a divergence.
+/// accept the same seam sinks" is true of the half wherever in it the sinks are declared, and
+/// pinning it to one file would make an ordinary split of a big adapter look like a divergence.
 #[derive(Clone, Copy)]
 pub struct Corpus {
     /// The directory to read, recursively.
@@ -268,8 +268,8 @@ impl ByteMap {
         let marks = text::count_lines(&view, self.marker);
         if marks != 1 {
             report.fail(format!(
-                "{label}: the marker in {} matches {marks} times, not once — a range restarts on \
-                 every match and APPENDS a second enum's rows to the first (docs/55)",
+                "{label}: the marker in {} matches {marks} times, not once — a range restarts on every \
+                 match and APPENDS a second enum's rows to the first (docs/55)",
                 self.path,
             ));
             return None;
@@ -387,10 +387,10 @@ pub enum Claim {
     },
     /// A file must match a pattern EXACTLY this many times.
     ///
-    /// [`Claim::AtLeast`]'s stricter sibling, and the difference is the whole rule where it is used:
-    /// the phone's code poll is one `.task(id:)` OUTSIDE the state switch, and the first draft hung
-    /// one on three of the four branches. Three reads correctly and cancels the poll on every
-    /// transition the poll itself caused. A floor of one would have passed it.
+    /// [`Claim::AtLeast`]'s stricter sibling, and the difference is the whole rule where it is
+    /// used: the phone's code poll is one `.task(id:)` OUTSIDE the state switch, and the first
+    /// draft hung one on three of the four branches. Three reads correctly and cancels the poll
+    /// on every transition the poll itself caused. A floor of one would have passed it.
     Exactly {
         /// Repo-relative path.
         path: &'static str,
@@ -405,12 +405,12 @@ pub enum Claim {
     },
     /// A file may match a pattern at most `maximum` times — [`Claim::AtLeast`] from the other side.
     ///
-    /// A CEILING rather than a ban, for the one shape a ban cannot state: a memo's own miss path has
-    /// to read the expensive thing, so the rule is not "nobody reads it" but "only the memo does,
-    /// and only where it must". `HostWorkspaceMirror.topology` copies the whole entry map and
-    /// re-projects every cell; `mirroredTopology` memoizes it against `workspaceMirrorRevision`, and
-    /// its miss path is the two reads that are allowed. A third puts the projection back on some
-    /// caller's path with green tests and no compile error.
+    /// A CEILING rather than a ban, for the one shape a ban cannot state: a memo's own miss path
+    /// has to read the expensive thing, so the rule is not "nobody reads it" but "only the memo
+    /// does, and only where it must". `HostWorkspaceMirror.topology` copies the whole entry map
+    /// and re-projects every cell; `mirroredTopology` memoizes it against
+    /// `workspaceMirrorRevision`, and its miss path is the two reads that are allowed. A third
+    /// puts the projection back on some caller's path with green tests and no compile error.
     AtMost {
         /// Repo-relative path.
         path: &'static str,
@@ -505,10 +505,10 @@ pub enum Claim {
     },
     /// No FILE under `roots` may match `pattern` — unless it also matches `rescued_by`.
     ///
-    /// The file-level sibling of [`Claim::NoneUnder`], and the two are not interchangeable. A ban on
-    /// "this file is macOS-only" cannot be asked line-wise: the offending shape is one line PRESENT
-    /// and another line ABSENT, which no single line can carry. Where `NoneUnder`'s `unless`
-    /// excuses a line, this excuses a FILE.
+    /// The file-level sibling of [`Claim::NoneUnder`], and the two are not interchangeable. A ban
+    /// on "this file is macOS-only" cannot be asked line-wise: the offending shape is one line
+    /// PRESENT and another line ABSENT, which no single line can carry. Where `NoneUnder`'s
+    /// `unless` excuses a line, this excuses a FILE.
     NoFileUnder {
         /// Path prefixes to scan.
         roots: &'static [&'static str],
@@ -528,10 +528,10 @@ pub enum Claim {
     /// No BODY may appear under both of two roots — a clone detector, with a debt list.
     ///
     /// Every other ban here forbids a shape somebody wrote down. This one forbids a coincidence: a
-    /// helper, a copy string or a constant that is in the RIGHT target on both sides of the UI split
-    /// and spelled twice. No import is missing, no platform gate is wrong, and nothing fails to
-    /// build — the two copies agree, so nothing disagrees with them, which is exactly how a
-    /// duplicated bug hides. It stayed hidden nine times over.
+    /// helper, a copy string or a constant that is in the RIGHT target on both sides of the UI
+    /// split and spelled twice. No import is missing, no platform gate is wrong, and nothing
+    /// fails to build — the two copies agree, so nothing disagrees with them, which is exactly
+    /// how a duplicated bug hides. It stayed hidden nine times over.
     ///
     /// A file is normalised to its SUBSTANTIVE lines first: trailing `//` comments cut, indentation
     /// dropped, and lines that are only punctuation or that open with `import` / `@` / `#if` thrown
@@ -543,11 +543,11 @@ pub enum Claim {
     /// six the rule fired on thin forwarders, three one-line bodies each calling the SAME shared
     /// floor type, which is the FIX rendering as a violation. At eight only real blocks survive.
     ///
-    /// `known` IS A DEBT LIST, NOT A CARVE-OUT. Each pair is a clone still in the tree, named so the
-    /// rule can be green about everything else; a pair leaves by being deduplicated, never by being
-    /// tolerated. It is checked BOTH ways, like every ledger here: a pair that has stopped being a
-    /// clone is a line that has stopped excusing anything, and leaving it would let the clone grow
-    /// back under its own permission.
+    /// `known` IS A DEBT LIST, NOT A CARVE-OUT. Each pair is a clone still in the tree, named so
+    /// the rule can be green about everything else; a pair leaves by being deduplicated, never
+    /// by being tolerated. It is checked BOTH ways, like every ledger here: a pair that has
+    /// stopped being a clone is a line that has stopped excusing anything, and leaving it would
+    /// let the clone grow back under its own permission.
     NoCloneAcross {
         /// One root, by path prefix.
         left: &'static str,
@@ -625,18 +625,18 @@ pub enum Claim {
     },
     /// EVERY file under `roots` must match each pattern exactly the stated number of times.
     ///
-    /// A per-file shape, which no ban and no whole-corpus count can state. The rule it exists for is
-    /// "a phone UI file carries the one whole-file `#if os(iOS)` and nothing else": two directives in
-    /// total, one of them the opening gate, one of them the `#endif`. Any other arrangement — a
-    /// second gate, an inner `#else`, a file with no gate at all — is dead scaffolding around code
-    /// that now always runs.
+    /// A per-file shape, which no ban and no whole-corpus count can state. The rule it exists for
+    /// is "a phone UI file carries the one whole-file `#if os(iOS)` and nothing else": two
+    /// directives in total, one of them the opening gate, one of them the `#endif`. Any other
+    /// arrangement — a second gate, an inner `#else`, a file with no gate at all — is dead
+    /// scaffolding around code that now always runs.
     ///
-    /// ⚠️ THIS REPLACED A PER-FILE COUNT OF ONE THING, and the reason is worth keeping. Increment 58
-    /// pinned "exactly one `#if os(` in `SettingsControls.swift`" because `Half.current` was the
-    /// shared target's single admission that it drew both halves. Increment 63 dissolved that
-    /// admission, and the count STILL READ 1 — the whole-file guard had taken the slot. A rule stated
-    /// as a COUNT of a thing cannot tell you WHICH thing it counted, so this one names every shape it
-    /// wants and how many of each.
+    /// ⚠️ THIS REPLACED A PER-FILE COUNT OF ONE THING, and the reason is worth keeping. Increment
+    /// 58 pinned "exactly one `#if os(` in `SettingsControls.swift`" because `Half.current` was
+    /// the shared target's single admission that it drew both halves. Increment 63 dissolved
+    /// that admission, and the count STILL READ 1 — the whole-file guard had taken the slot. A
+    /// rule stated as a COUNT of a thing cannot tell you WHICH thing it counted, so this one
+    /// names every shape it wants and how many of each.
     PerFileCounts {
         /// Path prefixes to scan.
         roots: &'static [&'static str],
@@ -656,9 +656,10 @@ pub enum Claim {
     ///
     /// For the handful of rules whose subject is ORDER, which no type can express. The one this was
     /// written for: `clearSecureInput` releases the process-global `EnableSecureEventInput` FIRST
-    /// and only then reaches for the model, so the teardown line must sit ABOVE the guard. Below it,
-    /// the release is skipped for exactly the pane that needs it most — one whose model has already
-    /// gone — and the lock outlives the app's own window, taking the keyboard out of every other app.
+    /// and only then reaches for the model, so the teardown line must sit ABOVE the guard. Below
+    /// it, the release is skipped for exactly the pane that needs it most — one whose model has
+    /// already gone — and the lock outlives the app's own window, taking the keyboard out of
+    /// every other app.
     Within {
         /// Repo-relative path.
         path: &'static str,
@@ -675,13 +676,14 @@ pub enum Claim {
     },
     /// A pattern may NOT appear between two other patterns — [`Claim::Within`] negated.
     ///
-    /// The shell's `grep -A 2 'x' | grep -q '#if'`, and it is a range rather than a file ban because
-    /// the thing forbidden is ordinary everywhere else in the same file. `Half.current` is the case:
-    /// `#if os(macOS)` is perfectly normal Swift, and normal in that file, and a compile-time fork
-    /// INSIDE that one property is the gate the settings table was written to delete.
+    /// The shell's `grep -A 2 'x' | grep -q '#if'`, and it is a range rather than a file ban
+    /// because the thing forbidden is ordinary everywhere else in the same file. `Half.current`
+    /// is the case: `#if os(macOS)` is perfectly normal Swift, and normal in that file, and a
+    /// compile-time fork INSIDE that one property is the gate the settings table was written to
+    /// delete.
     ///
-    /// An empty range fails rather than passing. A ban over a declaration that has been renamed away
-    /// has nothing left to ban.
+    /// An empty range fails rather than passing. A ban over a declaration that has been renamed
+    /// away has nothing left to ban.
     LacksWithin {
         /// Repo-relative path.
         path: &'static str,
@@ -702,9 +704,9 @@ pub enum Claim {
     /// `PaneCanvasDragController` records the drop placement on the drag coordinator and only THEN
     /// asks the store to detach, because `detachedPanes` changes SYNCHRONOUSLY inside that call and
     /// the satellite-window coordinator reads the placement as it opens the window. Reversed, the
-    /// window still opens — it just opens at the centre-cascade instead of under the cursor, and only
-    /// when the reader wins the race. An occasional wrong-place window is the worst failure shape
-    /// there is, and no type in either language can hold the ordering.
+    /// window still opens — it just opens at the centre-cascade instead of under the cursor, and
+    /// only when the reader wins the race. An occasional wrong-place window is the worst
+    /// failure shape there is, and no type in either language can hold the ordering.
     ///
     /// Either pattern going unmatched fails: a file that stopped spelling one of the two steps has
     /// not satisfied the order, it has stopped having one.
@@ -739,10 +741,10 @@ pub enum Claim {
     },
     /// A file's FIRST line of code may not be one of these.
     ///
-    /// "Wrapped whole in `#if os(macOS)`" is a claim about position, not presence: a gate INSIDE the
-    /// file is ordinary per-platform code, and a gate as the opening line is the wrapper that makes
-    /// the whole file compile to nothing on the other platform — a green build over a missing
-    /// feature. Only the opening line can tell those apart.
+    /// "Wrapped whole in `#if os(macOS)`" is a claim about position, not presence: a gate INSIDE
+    /// the file is ordinary per-platform code, and a gate as the opening line is the wrapper
+    /// that makes the whole file compile to nothing on the other platform — a green build over
+    /// a missing feature. Only the opening line can tell those apart.
     Opening {
         /// Repo-relative path.
         path: &'static str,
@@ -763,12 +765,13 @@ pub enum Claim {
     /// Every member of one extracted set must be a member of another — the shell's
     /// `comm -23 <(a) <(b)`.
     ///
-    /// ONE DIRECTION, which is the whole reason this is not [`Claim::SameSet`]. Three of the settings
-    /// comparisons are honestly asymmetric: eleven `SettingsKey` constants are internal state with no
-    /// row by design, and the config bridge covers the terminal keys and not the video ones. A
-    /// two-way gate over either would need an allowlist of the exceptions, and an allowlist is the
-    /// thing that goes stale. One direction still catches a typo on EITHER side — the two spellings
-    /// stop being equal, so the subject's member stops being found.
+    /// ONE DIRECTION, which is the whole reason this is not [`Claim::SameSet`]. Three of the
+    /// settings comparisons are honestly asymmetric: eleven `SettingsKey` constants are
+    /// internal state with no row by design, and the config bridge covers the terminal keys and
+    /// not the video ones. A two-way gate over either would need an allowlist of the
+    /// exceptions, and an allowlist is the thing that goes stale. One direction still catches a
+    /// typo on EITHER side — the two spellings stop being equal, so the subject's member stops
+    /// being found.
     Subset {
         /// What the relation is called in the diagnostic.
         label: &'static str,
@@ -825,10 +828,10 @@ pub enum Claim {
     /// supposed to agree at all, and the rule is about how much of one has not yet left the other.
     ///
     /// FAILING BELOW THE MARK is the half that makes it a ratchet rather than a ceiling. A count
-    /// that has fallen is ground gained, and a gate that accepts it silently lets the same ground be
-    /// lost again next week without anyone noticing; the failure says "lower the mark". At a mark of
-    /// zero that arm is unreachable by construction — a count cannot be negative — and it is kept
-    /// anyway, because the mark is the thing that moves.
+    /// that has fallen is ground gained, and a gate that accepts it silently lets the same ground
+    /// be lost again next week without anyone noticing; the failure says "lower the mark". At a
+    /// mark of zero that arm is unreachable by construction — a count cannot be negative — and
+    /// it is kept anyway, because the mark is the thing that moves.
     ///
     /// Both sides are floored non-empty first. At a mark of zero an EMPTY intersection is the
     /// expected answer, so an extraction that broke would read exactly like success.
@@ -847,16 +850,16 @@ pub enum Claim {
     /// Two DIRECTORIES may share at most `ceiling` members — [`Claim::Overlap`] over corpora.
     ///
     /// The ceiling that keeps a named ban from only catching what it already knows. Naming the
-    /// sentences that must not be typed twice is exact and says WHERE each one lives, but it can only
-    /// ever forbid the duplicates somebody has already found; a COUNT of how much vocabulary the two
-    /// sides still share makes every NEW duplicate a failure without anyone having to predict which
-    /// sentence it will be.
+    /// sentences that must not be typed twice is exact and says WHERE each one lives, but it can
+    /// only ever forbid the duplicates somebody has already found; a COUNT of how much
+    /// vocabulary the two sides still share makes every NEW duplicate a failure without anyone
+    /// having to predict which sentence it will be.
     ///
     /// ONE-WAY, unlike [`Claim::Overlap`], and that is the deliberate difference between them. The
     /// overlap here is dozens rather than nought, and it moves under every ordinary edit to either
-    /// side — a rename on one half alone drops it — so a downward arm would fire on work that is not
-    /// a regression and would train its reader to re-pin without reading. Re-pin after a deliberate
-    /// merge; never raise to make a change fit.
+    /// side — a rename on one half alone drops it — so a downward arm would fire on work that is
+    /// not a regression and would train its reader to re-pin without reading. Re-pin after a
+    /// deliberate merge; never raise to make a change fit.
     OverlapUnder {
         /// What the two sets are called in the diagnostic.
         label: &'static str,
@@ -891,14 +894,15 @@ pub enum Claim {
     /// Two DIRECTORIES must name the same set, minus a ledger of exceptions that FAILS BOTH WAYS.
     ///
     /// The one real cost of duplicating an adapter across the UI split: two lists of a dozen-odd
-    /// closures that can drift, and a sink wired on one half and forgotten on the other is invisible
-    /// until somebody uses the feature on the platform that lost it.
+    /// closures that can drift, and a sink wired on one half and forgotten on the other is
+    /// invisible until somebody uses the feature on the platform that lost it.
     ///
     /// `left_only` is the asymmetry that is genuinely a platform floor, and it is checked in BOTH
     /// directions: an entry the left no longer holds is a line that has stopped excusing anything,
-    /// and an entry the right has since GROWN is a divergence that was fixed while the ledger went on
-    /// reading as a standing decision. A ledger that only fails on regression is half a ledger — two
-    /// of this rule's original entries left because the gate caught the FIX, not the break.
+    /// and an entry the right has since GROWN is a divergence that was fixed while the ledger went
+    /// on reading as a standing decision. A ledger that only fails on regression is half a
+    /// ledger — two of this rule's original entries left because the gate caught the FIX, not
+    /// the break.
     ///
     /// The floor is on the left reading alone, because the left is the side the exceptions are
     /// measured against: an extraction that goes stale there compares an empty set to an empty set
@@ -1289,8 +1293,8 @@ impl Claim {
                 );
                 if ours.files < *floor || theirs.files < *floor {
                     report.fail(format!(
-                        "only {}/{} files globbed under {left} and {right} (floor {floor}) — this \
-                         claim would pass by reading nothing",
+                        "only {}/{} files globbed under {left} and {right} (floor {floor}) — this claim \
+                         would pass by reading nothing",
                         ours.files, theirs.files,
                     ));
                     return;
@@ -1312,14 +1316,17 @@ impl Claim {
                     .filter(|(pair, _)| !known.contains(pair))
                     .map(|(_, (here, there))| format!("{here} == {there}"))
                     .collect();
-                report.fail_if(!strangers.is_empty(), fill(message, "pairs", &strangers.join(", ")));
+                report.fail_if(
+                    !strangers.is_empty(),
+                    fill(message, "pairs", &strangers.join(", ")),
+                );
                 for pair in *known {
                     report.fail_if(
                         !pairs.contains_key(pair),
                         format!(
-                            "the clone ledger names {} and {}, which no longer share a body — the \
-                             debt is PAID, so drop the entry rather than leaving it to excuse the \
-                             clone growing back (docs/56 §3)",
+                            "the clone ledger names {} and {}, which no longer share a body — the debt is \
+                             PAID, so drop the entry rather than leaving it to excuse the clone growing \
+                             back (docs/56 §3)",
                             pair.0, pair.1,
                         ),
                     );
@@ -1344,10 +1351,8 @@ impl Claim {
                     ));
                     return;
                 }
-                let quotations: Vec<String> = words
-                    .iter()
-                    .map(|word| fill(template, "needle", word))
-                    .collect();
+                let quotations: Vec<String> =
+                    words.iter().map(|word| fill(template, "needle", word)).collect();
                 let mut offenders = BTreeSet::new();
                 for root in *roots {
                     for (path, source) in tree.under(root) {
@@ -1386,8 +1391,8 @@ impl Claim {
                 };
                 if rungs.is_empty() {
                     report.fail(format!(
-                        "no {label} rungs parsed out of {} — this claim would pass by demanding \
-                         nothing of anybody",
+                        "no {label} rungs parsed out of {} — this claim would pass by demanding nothing of \
+                         anybody",
                         needles.path
                     ));
                     return;
@@ -1395,8 +1400,8 @@ impl Claim {
                 let present: Vec<&&str> = halves.iter().filter(|half| tree.has(half)).collect();
                 if present.is_empty() {
                     report.fail(format!(
-                        "not one of the {} renderers of {label} is in the tree — the table is \
-                         resolved by nobody and this claim reads as green",
+                        "not one of the {} renderers of {label} is in the tree — the table is resolved by \
+                         nobody and this claim reads as green",
                         halves.len()
                     ));
                     return;
@@ -1559,8 +1564,7 @@ impl Claim {
                 mark,
                 message,
             } => {
-                let (Some(ours), Some(theirs)) = (left.set(tree, report), right.set(tree, report))
-                else {
+                let (Some(ours), Some(theirs)) = (left.set(tree, report), right.set(tree, report)) else {
                     return;
                 };
                 if ours.is_empty() || theirs.is_empty() {
@@ -1574,8 +1578,11 @@ impl Claim {
                     ));
                     return;
                 }
-                let mut shared: Vec<&str> =
-                    ours.iter().filter(|m| theirs.contains(*m)).map(String::as_str).collect();
+                let mut shared: Vec<&str> = ours
+                    .iter()
+                    .filter(|m| theirs.contains(*m))
+                    .map(String::as_str)
+                    .collect();
                 shared.sort_unstable();
                 let found = shared.len();
                 if found > *mark {
@@ -1586,8 +1593,8 @@ impl Claim {
                     ));
                 } else if found < *mark {
                     report.fail(format!(
-                        "the {label} overlap is down to {found} from {mark} — lower the mark to \
-                         {found} so the ground gained is held"
+                        "the {label} overlap is down to {found} from {mark} — lower the mark to {found} so \
+                         the ground gained is held"
                     ));
                 }
             },
@@ -1599,8 +1606,7 @@ impl Claim {
             } => {
                 // Both sides are read before either is judged, so a diagnostic names every missing
                 // file rather than the first one.
-                let (Some(members), Some(holder)) =
-                    (subject.set(tree, report), universe.set(tree, report))
+                let (Some(members), Some(holder)) = (subject.set(tree, report), universe.set(tree, report))
                 else {
                     return;
                 };
@@ -1667,8 +1673,8 @@ impl Claim {
                 let (ours, theirs) = (left.set(tree), right.set(tree));
                 if ours.len() < *floor || theirs.len() < *floor {
                     report.fail(format!(
-                        "only {}/{} {label} read under {} and {} (floor {floor}) — this ceiling would \
-                         hold by reading nothing",
+                        "only {}/{} {label} read under {} and {} (floor {floor}) — this ceiling would hold \
+                         by reading nothing",
                         ours.len(),
                         theirs.len(),
                         left.root,
@@ -1676,8 +1682,11 @@ impl Claim {
                     ));
                     return;
                 }
-                let shared: Vec<&str> =
-                    ours.iter().filter(|m| theirs.contains(*m)).map(String::as_str).collect();
+                let shared: Vec<&str> = ours
+                    .iter()
+                    .filter(|m| theirs.contains(*m))
+                    .map(String::as_str)
+                    .collect();
                 let found = shared.len();
                 report.fail_if(
                     found > *ceiling,
@@ -1814,7 +1823,9 @@ impl Claim {
                     // rather than a satisfied ban.
                     report.fail_if(
                         block.is_empty(),
-                        format!("Package.swift no longer declares {target} — {message} is a ban over nothing"),
+                        format!(
+                            "Package.swift no longer declares {target} — {message} is a ban over nothing"
+                        ),
                     );
                     report.fail_if(
                         block.contains(dependency),
@@ -1825,18 +1836,14 @@ impl Claim {
             Self::SameByteMap { label, swift, rust } => {
                 // Both sides are read before either is judged, so a marker that lost its uniqueness
                 // on one side is reported alongside whatever the other side says.
-                let (ours, theirs) = (
-                    swift.read(tree, report, label),
-                    rust.read(tree, report, label),
-                );
+                let (ours, theirs) = (swift.read(tree, report, label), rust.read(tree, report, label));
                 let (Some(ours), Some(theirs)) = (ours, theirs) else {
                     return;
                 };
                 if ours.is_empty() || theirs.is_empty() {
                     report.fail(format!(
-                        "{label}: one side's byte map read as EMPTY ({} of {}, {} of {}) — the \
-                         switch moved or changed shape, so this claim stopped checking anything \
-                         (docs/55)",
+                        "{label}: one side's byte map read as EMPTY ({} of {}, {} of {}) — the switch moved \
+                         or changed shape, so this claim stopped checking anything (docs/55)",
                         ours.len(),
                         swift.path,
                         theirs.len(),
@@ -1847,14 +1854,18 @@ impl Claim {
                 let disagreeing: Vec<String> = ours
                     .iter()
                     .filter(|(name, byte)| theirs.get(*name) != Some(*byte))
-                    .chain(theirs.iter().filter(|(name, byte)| ours.get(*name) != Some(*byte)))
+                    .chain(
+                        theirs
+                            .iter()
+                            .filter(|(name, byte)| ours.get(*name) != Some(*byte)),
+                    )
                     .map(|(name, byte)| format!("{name}={byte}"))
                     .collect();
                 report.fail_if(
                     !disagreeing.is_empty(),
                     format!(
-                        "{label}: the two languages disagree about which byte a case crosses as — \
-                         {} (docs/55)",
+                        "{label}: the two languages disagree about which byte a case crosses as — {} \
+                         (docs/55)",
                         disagreeing.join(" "),
                     ),
                 );
@@ -1888,20 +1899,15 @@ struct Shingles {
 
 /// Every `window`-line body under `root`, normalised so only a real duplicate collides.
 ///
-/// The normalisation is the whole rule: a trailing `//` comment is cut, indentation goes, and a line
-/// that is only punctuation is dropped. Without those a reformat hides a clone and a run of closing
-/// braces manufactures one. `import`, `@attribute` and `#if` lines go too — two view files
+/// The normalisation is the whole rule: a trailing `//` comment is cut, indentation goes, and a
+/// line that is only punctuation is dropped. Without those a reformat hides a clone and a run of
+/// closing braces manufactures one. `import`, `@attribute` and `#if` lines go too — two view files
 /// legitimately import the same six modules, and that is a coincidence of the split rather than a
 /// duplicated decision.
 ///
 /// The first sighting wins, so the diagnostic names where a body was introduced rather than
 /// wherever the walk happened to end.
-fn shingles(
-    tree: &Tree,
-    root: &str,
-    extensions: &[&str],
-    window: usize,
-) -> Shingles {
+fn shingles(tree: &Tree, root: &str, extensions: &[&str], window: usize) -> Shingles {
     let noise = text::cached(r"^[^\p{L}\p{N}]*$");
     let carried = text::cached(r"^(import|@|#(if|else|elseif|endif))");
     let comment = text::cached(r"//.*$");
@@ -1932,9 +1938,11 @@ fn shingles(
                 .map(|(_, line)| line.as_str())
                 .collect::<Vec<_>>()
                 .join(" ~ ");
-            out.windows.entry(joined).or_insert_with(|| Site {
-                path: display.clone(),
-                site: format!("{display}:{}", body[start].0),
+            out.windows.entry(joined).or_insert_with(|| {
+                Site {
+                    path: display.clone(),
+                    site: format!("{display}:{}", body[start].0),
+                }
             });
         }
     }
@@ -1994,9 +2002,9 @@ pub const RUST: &[&str] = &["rs"];
 /// Where this gate's own rule tables live, exempted from every tree-wide ban that reads `rust/`.
 ///
 /// A ban has to WRITE DOWN the thing it forbids, so the file stating "no second base64 alphabet"
-/// contains a base64 alphabet. The shell never had to say this: it searched `rust/*/src` and its own
-/// text was in `scripts/`. Moving the rules into a crate under `rust/` brought the gate inside its
-/// own corpus, and a gate that reports itself reports nothing anybody can act on.
+/// contains a base64 alphabet. The shell never had to say this: it searched `rust/*/src` and its
+/// own text was in `scripts/`. Moving the rules into a crate under `rust/` brought the gate inside
+/// its own corpus, and a gate that reports itself reports nothing anybody can act on.
 ///
 /// This is narrow on purpose — the RULES directory, not the crate. `claim.rs`, `text.rs` and
 /// `tree.rs` are ordinary Rust that scans bytes for a living, and they stay inside every ban.
@@ -2191,7 +2199,10 @@ mod tests {
 
     /// Four substantive lines, tail included, under a comment and an import that are both dropped.
     fn body(tail: &str) -> String {
-        format!("import SwiftUI\n// a re-worded comment cannot hide a clone\nlet a = 1\nlet b = 2\nlet c = 3\n{tail}\n")
+        format!(
+            "import SwiftUI\n// a re-worded comment cannot hide a clone\nlet a = 1\nlet b = 2\nlet c = \
+             3\n{tail}\n"
+        )
     }
 
     /// The clone ledger is a debt list, so it fails BOTH ways.
@@ -2251,8 +2262,8 @@ mod tests {
         shells(
             &fixture,
             &body("let d = 4"),
-            "import Combine\nimport SwiftUI\n// entirely different prose\n    let a = 1\n\
-             \x20 let b = 2\n\tlet c = 3\nlet d = 4\n",
+            "import Combine\nimport SwiftUI\n// entirely different prose\n    let a = 1\n\x20 let b = \
+             2\n\tlet c = 3\nlet d = 4\n",
         );
         assert!(!check_all(&fixture.tree(), &claims).is_clean());
 

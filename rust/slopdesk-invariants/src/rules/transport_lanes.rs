@@ -17,18 +17,18 @@ const SWIFT_FRAME: &str = "Sources/SlopDeskSupervisor/SupervisorFrame.swift";
 /// And ONE grammar per device console, neither of them in Swift
 ///
 /// Two files parsed a device's own log output — `logcat -v time` and `log stream --style compact` —
-/// over text a program on the far side of a device wrote, thousands of lines a minute, on the socket
-/// read path. Both asked `Character.isNumber`/`isUppercase`, which are Unicode property lookups per
-/// grapheme cluster, and both built four `String`s a row out of a `String` the row was a slice of.
-/// They were also the SAME parser twice: four fields, the same verbatim fallback, one field name
-/// apart. `slopdesk-devicelog` owns both grammars and one `DeviceLogLine` carries both consoles'
-/// rows.
+/// over text a program on the far side of a device wrote, thousands of lines a minute, on the
+/// socket read path. Both asked `Character.isNumber`/`isUppercase`, which are Unicode property
+/// lookups per grapheme cluster, and both built four `String`s a row out of a `String` the row was
+/// a slice of. They were also the SAME parser twice: four fields, the same verbatim fallback, one
+/// field name apart. `slopdesk-devicelog` owns both grammars and one `DeviceLogLine` carries both
+/// consoles' rows.
 ///
 /// The two doors answer byte offsets INTO THE CALLER'S OWN LINE — that is the whole reason nothing
 /// crosses back but six numbers and a severity. Copying the line into a fresh `[UInt8]` first threw
-/// that away: a heap buffer per row, on a path a booting device drives at hundreds of rows a second.
-/// Measured (`swiftc -O`, stand-in door): 154 ns/row before, 94 ns after — 39% of the marshalling,
-/// and the parse behind it is 56 ns.
+/// that away: a heap buffer per row, on a path a booting device drives at hundreds of rows a
+/// second. Measured (`swiftc -O`, stand-in door): 154 ns/row before, 94 ns after — 39% of the
+/// marshalling, and the parse behind it is 56 ns.
 #[must_use]
 pub fn one_grammar_per_device_console(tree: &Tree) -> Report {
     let claims = [
@@ -68,7 +68,8 @@ pub fn one_grammar_per_device_console(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "{files} brought back a per-console row type — one console row serves both device panels",
+            message: "{files} brought back a per-console row type — one console row serves both device \
+                      panels",
         },
         Claim::Names {
             path: SWIFT_DEVICE_LOG,
@@ -101,8 +102,8 @@ pub fn one_grammar_per_device_console(tree: &Tree) -> Report {
 ///
 /// superd writes these frames and hostd reads them, and the LAYOUT was written out twice: superd's
 /// `frame.rs` in Rust and `SupervisorFrame.swift` in Swift, each module's own doc calling the other
-/// a mirror. Two hand-written spellings of one byte layout, agreeing by inspection, in the one place
-/// where a disagreement shows up as a DESYNCHRONISED SOCKET rather than as a wrong value.
+/// a mirror. Two hand-written spellings of one byte layout, agreeing by inspection, in the one
+/// place where a disagreement shows up as a DESYNCHRONISED SOCKET rather than as a wrong value.
 /// `slopdesk-superwire` is the spelling; each side keeps only its own syscalls, because the
 /// descriptor has to land in the reading process.
 ///
@@ -237,8 +238,8 @@ pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &["Sources/SlopDeskArena/"],
-            message: "an arena reader or interner grew back in a Swift face ({files}) — ArenaText is the one \
-                      of each",
+            message: "an arena reader or interner grew back in a Swift face ({files}) — ArenaText is the \
+                      one of each",
         },
         Claim::Depends {
             target: "SlopDeskProtocol",
@@ -301,8 +302,8 @@ pub fn one_nwconnection_byte_channel(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &["Sources/SlopDeskNet/"],
-            message: "a second NWConnection byte channel grew back ({files}) — SlopDeskNet::NWByteChannel is \
-                      the one lane",
+            message: "a second NWConnection byte channel grew back ({files}) — SlopDeskNet::NWByteChannel \
+                      is the one lane",
         },
         Claim::Depends {
             target: "SlopDeskInspector",
@@ -373,8 +374,8 @@ mod tests {
         fixture
             .write(
                 super::SWIFT_DEVICE_LOG,
-                "slopdesk_logcat_parse\nslopdesk_unified_log_parse\ntext.withUTF8\n\
-                 enum DeviceLogSeverity: UInt8 {}\nSwift.min(Int(offset), bytes.count)\n",
+                "slopdesk_logcat_parse\nslopdesk_unified_log_parse\ntext.withUTF8\nenum DeviceLogSeverity: \
+                 UInt8 {}\nSwift.min(Int(offset), bytes.count)\n",
             )
             .write("rust/slopdesk-devicelog/src/logcat.rs", "pub fn parse\n")
             .write("rust/slopdesk-devicelog/src/unified.rs", "pub fn parse\n");
@@ -404,18 +405,38 @@ mod tests {
         assert!(!super::one_grammar_per_device_console(&fixture.tree()).is_clean());
     }
 
+    /// Everything the frame seam's fixture must spell, one line each.
+    ///
+    /// A LIST rather than one long literal, and that is not style: as a single string it wrapped
+    /// across lines with `\` continuations, rustfmt could not settle on where, and two of the
+    /// re-wraps landed mid-escape — turning `\n` into a literal backslash and an `n`. The fixture
+    /// still passed, one separator short of what it claimed to seed, which is the shape of an
+    /// assertion that has quietly stopped asserting.
+    const FRAME_SEAM: [&str; 11] = [
+        "slopdesk_supervisor_tag",
+        "slopdesk_supervisor_is_known_tag",
+        "slopdesk_supervisor_header",
+        "slopdesk_supervisor_body_length",
+        "slopdesk_supervisor_parse_output",
+        "slopdesk_supervisor_parse_pane_json",
+        "slopdesk_supervisor_max_body",
+        "FileDescriptorPassing.receive",
+        "FileDescriptorWrite.all",
+        "FileDescriptorRead.exactly",
+        "Swift.min(Int(offset), body.count)",
+    ];
+
     fn frame(fixture: &Fixture) {
         fixture
+            .write(super::SWIFT_FRAME, &format!("{}\n", FRAME_SEAM.join("\n")))
             .write(
-                super::SWIFT_FRAME,
-                "slopdesk_supervisor_tag\nslopdesk_supervisor_is_known_tag\nslopdesk_supervisor_header\n\
-                 slopdesk_supervisor_body_length\nslopdesk_supervisor_parse_output\n\
-                 slopdesk_supervisor_parse_pane_json\nslopdesk_supervisor_max_body\n\
-                 FileDescriptorPassing.receive\nFileDescriptorWrite.all\nFileDescriptorRead.exactly\n\
-                 Swift.min(Int(offset), body.count)\n",
+                "rust/slopdesk-superd/Cargo.toml",
+                "\nslopdesk-superwire = { path = \"..\" }\n",
             )
-            .write("rust/slopdesk-superd/Cargo.toml", "\nslopdesk-superwire = { path = \"..\" }\n")
-            .write("rust/slopdesk-superd/src/frame.rs", "kept so the ban has a haystack\n");
+            .write(
+                "rust/slopdesk-superd/src/frame.rs",
+                "kept so the ban has a haystack\n",
+            );
     }
 
     #[test]
@@ -448,7 +469,10 @@ mod tests {
                     "rust/slopdesk-wire/src/framing.rs",
                     "deferred_compaction: usize,\n",
                 )
-                .write("rust/slopdesk-video/src/bytes.rs", "pub const fn truncating_u32(\n");
+                .write(
+                    "rust/slopdesk-video/src/bytes.rs",
+                    "pub const fn truncating_u32(\n",
+                );
         };
         seed(&fixture);
         assert!(super::one_receive_buffer_and_one_narrowing(&fixture.tree()).is_clean());
@@ -460,7 +484,10 @@ mod tests {
         assert!(!super::one_receive_buffer_and_one_narrowing(&fixture.tree()).is_clean());
 
         seed(&fixture);
-        fixture.write("rust/slopdesk-superd/src/n.rs", "fn saturating_u16(v: usize) -> u16 { 0 }\n");
+        fixture.write(
+            "rust/slopdesk-superd/src/n.rs",
+            "fn saturating_u16(v: usize) -> u16 { 0 }\n",
+        );
         assert!(!super::one_receive_buffer_and_one_narrowing(&fixture.tree()).is_clean());
     }
 
@@ -471,7 +498,10 @@ mod tests {
 
         let mut text = String::new();
         for (target, _) in edges {
-            let _ = writeln!(text, "        .library(name: \"{target}\", targets: [\"{target}\"]),");
+            let _ = writeln!(
+                text,
+                "        .library(name: \"{target}\", targets: [\"{target}\"]),"
+            );
         }
         for (target, deps) in edges {
             text.push_str("        .target(\n");
@@ -521,7 +551,13 @@ mod tests {
         seed(&fixture);
         let dropped: Vec<_> = ARENA
             .iter()
-            .map(|(target, deps)| if *target == "SlopDeskCLICore" { (*target, &[][..]) } else { (*target, *deps) })
+            .map(|(target, deps)| {
+                if *target == "SlopDeskCLICore" {
+                    (*target, &[][..])
+                } else {
+                    (*target, *deps)
+                }
+            })
             .collect();
         fixture.write("Package.swift", &manifest(&dropped));
         assert!(!super::one_arena_reader_and_one_interner(&fixture.tree()).is_clean());
@@ -531,12 +567,10 @@ mod tests {
     fn the_byte_channel_is_one_actor() {
         let fixture = Fixture::new("transport-nwchannel");
         let seed = |fixture: &Fixture| {
-            fixture
-                .write("Package.swift", &manifest(ARENA))
-                .write(
-                    "Sources/SlopDeskNet/NWByteChannel.swift",
-                    "connection.receive(minimumIncompleteLength: 1\n",
-                );
+            fixture.write("Package.swift", &manifest(ARENA)).write(
+                "Sources/SlopDeskNet/NWByteChannel.swift",
+                "connection.receive(minimumIncompleteLength: 1\n",
+            );
         };
         seed(&fixture);
         assert!(super::one_nwconnection_byte_channel(&fixture.tree()).is_clean());
@@ -553,14 +587,23 @@ mod tests {
         let fixture = Fixture::new("transport-write-loop");
         let seed = |fixture: &Fixture| {
             fixture
-                .write("Sources/SlopDeskTTY/FileDescriptorWrite.swift", "Darwin.write(fd, p, n)\n")
-                .write("Sources/SlopDeskSupervisor/SupervisorFrame.swift", "func readExactly(\n")
+                .write(
+                    "Sources/SlopDeskTTY/FileDescriptorWrite.swift",
+                    "Darwin.write(fd, p, n)\n",
+                )
+                .write(
+                    "Sources/SlopDeskSupervisor/SupervisorFrame.swift",
+                    "func readExactly(\n",
+                )
                 .write("Sources/SlopDeskScreen/ScreenClient.swift", "func readExactly(\n");
         };
         seed(&fixture);
         assert!(super::one_write_loop_and_one_read_exactly(&fixture.tree()).is_clean());
 
-        fixture.write("Sources/SlopDeskHost/Ctl.swift", "let n = write(fd, buffer, count)\n");
+        fixture.write(
+            "Sources/SlopDeskHost/Ctl.swift",
+            "let n = write(fd, buffer, count)\n",
+        );
         assert!(!super::one_write_loop_and_one_read_exactly(&fixture.tree()).is_clean());
 
         // The two named readers keep theirs; a third does not.

@@ -1,8 +1,8 @@
 //! One search predicate, one minted voice, one level array, one cursor label.
 //!
 //! Ported from `scripts/check-supervisor.sh`. Four rules about the device panels and the design
-//! floor under them, and each guards a copy that a test cannot catch parting from its twin: the copy
-//! a test holds is not the copy the other shell runs, the memo and the builder agree by
+//! floor under them, and each guards a copy that a test cannot catch parting from its twin: the
+//! copy a test holds is not the copy the other shell runs, the memo and the builder agree by
 //! construction, the two spellings of one setting sit a scroll apart on the same page.
 
 use crate::claim::{Claim, Extract, View, check_all};
@@ -24,13 +24,13 @@ const ANDROID_KEYCODE_RUST: &str = "rust/slopdesk-devicepanel/src/panel_key.rs";
 
 /// ONE search-box predicate for both device panels, both drawings
 ///
-/// `localizedCaseInsensitiveContains` was spelled SIX times over "does any field of this row contain
-/// what was typed" — twice in `AndroidPresentation` (the list, the console) and once each in the
-/// four simulator views, two `SwiftUI` and two `AppKit`. Only one of the six was ever reached by a
-/// test, which is the drift class `docs/55` §8 is about: the copy a test holds is not the copy the
-/// other shell runs, and nothing can notice them parting. They route through `DeviceRowFilter` →
-/// `slopdesk_ws_binding_row_matches` → `slopdesk_workspace::binding_search` now, which is the rule
-/// the palette, Settings and the keybindings editor were already using.
+/// `localizedCaseInsensitiveContains` was spelled SIX times over "does any field of this row
+/// contain what was typed" — twice in `AndroidPresentation` (the list, the console) and once each
+/// in the four simulator views, two `SwiftUI` and two `AppKit`. Only one of the six was ever
+/// reached by a test, which is the drift class `docs/55` §8 is about: the copy a test holds is not
+/// the copy the other shell runs, and nothing can notice them parting. They route through
+/// `DeviceRowFilter` → `slopdesk_ws_binding_row_matches` → `slopdesk_workspace::binding_search`
+/// now, which is the rule the palette, Settings and the keybindings editor were already using.
 ///
 /// It is also 8–13× off. Scratch `swiftc -O` harness against the shipped `macos-arm64` slice, at
 /// `SimulatorSidebarModel.logCapacity` = 600 console rows, two runs agreeing, blob build INCLUDED:
@@ -40,18 +40,19 @@ const ANDROID_KEYCODE_RUST: &str = "rust/slopdesk-devicepanel/src/panel_key.rs";
 /// | needle hits | 873.8 / 876.9 µs | 111.6 / 110.4 µs |
 /// | needle misses | 1661.8 / 1624.6 µs | 131.2 / 128.5 µs |
 ///
-/// A miss is the state every keystroke passes through, and the drawer repaints on every arriving log
-/// line.
+/// A miss is the state every keystroke passes through, and the drawer repaints on every arriving
+/// log line.
 ///
-/// The ban is by FILE, not tree-wide: `Sources/slopdesk-capture-probe` matches one window title with
-/// it and is a dev tool, not a panel. The corpus is floored first — a ban over a file that was
+/// The ban is by FILE, not tree-wide: `Sources/slopdesk-capture-probe` matches one window title
+/// with it and is a dev tool, not a panel. The corpus is floored first — a ban over a file that was
 /// renamed away passes silently, and this one names seven files across three targets, which is
 /// exactly the shape that rots.
 ///
-/// One thing worth recording about how it read while it was landing: the rule was RED for the length
-/// of the change, naming `SimulatorConsoleView.swift` while the four simulator-view edits were still
-/// pending, because the two UI targets belonged to other owners. A ban that spans targets one agent
-/// cannot edit reads as a false positive exactly once, at the half-applied moment, and is not one.
+/// One thing worth recording about how it read while it was landing: the rule was RED for the
+/// length of the change, naming `SimulatorConsoleView.swift` while the four simulator-view edits
+/// were still pending, because the two UI targets belonged to other owners. A ban that spans
+/// targets one agent cannot edit reads as a false positive exactly once, at the half-applied
+/// moment, and is not one.
 #[must_use]
 pub fn one_device_panel_predicate(tree: &Tree) -> Report {
     /// Every file that used to spell the predicate, plus the one that asks for it now.
@@ -67,26 +68,27 @@ pub fn one_device_panel_predicate(tree: &Tree) -> Report {
 
     let mut claims: Vec<Claim> = CORPUS
         .iter()
-        .map(|path| Claim::Exists {
-            path,
-            message: "a renamed file would let the device-panel filter ban below pass without \
-                      reading anything",
+        .map(|path| {
+            Claim::Exists {
+                path,
+                message: "a renamed file would let the device-panel filter ban below pass without reading \
+                          anything",
+            }
         })
         .collect();
     claims.push(Claim::NoneOf {
         paths: CORPUS,
         pattern: r"localizedCaseInsensitiveContains",
         view: View::Code,
-        message: "a device panel spells localizedCaseInsensitiveContains again ({files}) — the \
-                  search predicate is DeviceRowFilter, and it was six copies of three lines",
+        message: "a device panel spells localizedCaseInsensitiveContains again ({files}) — the search \
+                  predicate is DeviceRowFilter, and it was six copies of three lines",
     });
     claims.push(Claim::Matches {
         path: ROW_FILTER,
         pattern: r"slopdesk_ws_binding_row_matches\(",
         view: View::Raw,
-        message: "DeviceRowFilter no longer calls slopdesk_ws_binding_row_matches — the predicate \
-                  is rust/slopdesk-workspace/src/binding_search.rs and is not to be re-spelled in \
-                  Swift",
+        message: "DeviceRowFilter no longer calls slopdesk_ws_binding_row_matches — the predicate is \
+                  rust/slopdesk-workspace/src/binding_search.rs and is not to be re-spelled in Swift",
     });
     check_all(tree, &claims)
 }
@@ -98,9 +100,11 @@ pub fn one_device_panel_predicate(tree: &Tree) -> Report {
 /// defect rather than a slow function: `macDevicePanelLabel` picks between
 /// `.systemFont(ofSize:weight:)` and this one on a single ternary, and `+systemFont:` is cached BY
 /// THE FRAMEWORK while `NSFont(descriptor:size:)` builds a CoreText font from scratch every time.
-/// Nothing in either language recorded that one arm of that ternary was two hundred times the other.
+/// Nothing in either language recorded that one arm of that ternary was two hundred times the
+/// other.
 ///
-/// Measured in a scratch `swiftc -O` harness (NOT in the tree; two runs agreeing to 1.5%), per call:
+/// Measured in a scratch `swiftc -O` harness (NOT in the tree; two runs agreeing to 1.5%), per
+/// call:
 ///
 /// | arm | cost |
 /// | --- | --- |
@@ -111,8 +115,8 @@ pub fn one_device_panel_predicate(tree: &Tree) -> Report {
 /// | `MacPaneDivider`'s three runs, per divider/frame | 21 400 ns → 69 ns (~310×) |
 ///
 /// Those three are the ratio readout's leading/dot/trailing runs, which reach here through
-/// `macInstrumentString`; `applyReadout` cuts them for a hidden readout for exactly this reason, and
-/// that guard covers N−1 seams but not the one being dragged.
+/// `macInstrumentString`; `applyReadout` cuts them for a hidden readout for exactly this reason,
+/// and that guard covers N−1 seams but not the one being dragged.
 ///
 /// THE FAILURE MODE THE GATE EXISTS FOR is that none of this is visible to a test: every call
 /// returns the correct font, the memo and the builder agree by construction, and the only trace is
@@ -129,42 +133,38 @@ pub fn one_device_panel_predicate(tree: &Tree) -> Report {
 /// first.
 #[must_use]
 pub fn the_instrument_voice_is_minted_once(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::Matches {
-                path: SLATE_DESIGN,
-                pattern: r"^ *if let struck = mintedInstruments\[rung\] \{ return struck \}$",
-                view: View::Raw,
-                message: "instrumentNative stopped reading mintedInstruments — it is 7.1 µs a call \
-                          cold and 30 ns out of the table",
-            },
-            Claim::Matches {
-                path: SLATE_DESIGN,
-                pattern: r"^ *@MainActor private static var mintedInstruments: \[InstrumentRung: SlateNativeFont\] = \[:\]$",
-                view: View::Raw,
-                message: "mintedInstruments lost its @MainActor (or its type) — the only \
-                          alternatives are a lock or no memo at all",
-            },
-            Claim::Exactly {
-                path: SLATE_DESIGN,
-                pattern: r"fontDescriptor\.withFamily\(mono\)",
-                count: 1,
-                view: View::Raw,
-                message: "the instrument face is built in {found} places, not 1 — mintInstrument is \
-                          the only one allowed, and 0 means this extraction has gone stale",
-            },
-            Claim::LacksWithin {
-                path: SLATE_DESIGN,
-                start: r"^ *package static func instrumentNative\(",
-                end: r"^ *\}$",
-                pattern: r"fontDescriptor",
-                view: View::Raw,
-                message: "instrumentNative mints a font outside mintInstrument — the memo is being \
-                          walked around",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Matches {
+            path: SLATE_DESIGN,
+            pattern: r"^ *if let struck = mintedInstruments\[rung\] \{ return struck \}$",
+            view: View::Raw,
+            message: "instrumentNative stopped reading mintedInstruments — it is 7.1 µs a call cold and 30 \
+                      ns out of the table",
+        },
+        Claim::Matches {
+            path: SLATE_DESIGN,
+            pattern: r"^ *@MainActor private static var mintedInstruments: \[InstrumentRung: SlateNativeFont\] = \[:\]$",
+            view: View::Raw,
+            message: "mintedInstruments lost its @MainActor (or its type) — the only alternatives are a \
+                      lock or no memo at all",
+        },
+        Claim::Exactly {
+            path: SLATE_DESIGN,
+            pattern: r"fontDescriptor\.withFamily\(mono\)",
+            count: 1,
+            view: View::Raw,
+            message: "the instrument face is built in {found} places, not 1 — mintInstrument is the only \
+                      one allowed, and 0 means this extraction has gone stale",
+        },
+        Claim::LacksWithin {
+            path: SLATE_DESIGN,
+            start: r"^ *package static func instrumentNative\(",
+            end: r"^ *\}$",
+            pattern: r"fontDescriptor",
+            view: View::Raw,
+            message: "instrumentNative mints a font outside mintInstrument — the memo is being walked around",
+        },
+    ])
 }
 
 /// The Android console's level filter is androidd's array, not a second list
@@ -175,30 +175,27 @@ pub fn the_instrument_voice_is_minted_once(tree: &Tree) -> Report {
 /// just had no way to ask for fatal. The set crosses through `slopdesk_android_log_level_letter`
 /// now, and this is what keeps it crossing.
 ///
-/// The named constants (`.info`, `.fatal`) are allowed, and `AndroidLogLevelTests` pins each against
-/// the crossed set. What is NOT allowed is the type going back to an `enum`, because an enum's case
-/// list cannot be built from a table at run time — that keyword IS the second copy.
+/// The named constants (`.info`, `.fatal`) are allowed, and `AndroidLogLevelTests` pins each
+/// against the crossed set. What is NOT allowed is the type going back to an `enum`, because an
+/// enum's case list cannot be built from a table at run time — that keyword IS the second copy.
 #[must_use]
 pub fn the_android_level_filter_is_androidds(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::Matches {
-                path: ANDROID_LOG_LEVEL,
-                pattern: r"slopdesk_android_log_level_letter",
-                view: View::Raw,
-                message: "AndroidLogLevel no longer reads androidd's level array — the menu is a \
-                          second list again (docs/48)",
-            },
-            Claim::Lacks {
-                path: ANDROID_LOG_LEVEL,
-                pattern: r"^ *(package|public|internal)? *enum +AndroidLogLevel",
-                view: View::Raw,
-                message: "AndroidLogLevel is an enum again — a case list cannot come from \
-                          androidd's array, so it is a second copy of it",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Matches {
+            path: ANDROID_LOG_LEVEL,
+            pattern: r"slopdesk_android_log_level_letter",
+            view: View::Raw,
+            message: "AndroidLogLevel no longer reads androidd's level array — the menu is a second list \
+                      again (docs/48)",
+        },
+        Claim::Lacks {
+            path: ANDROID_LOG_LEVEL,
+            pattern: r"^ *(package|public|internal)? *enum +AndroidLogLevel",
+            view: View::Raw,
+            message: "AndroidLogLevel is an enum again — a case list cannot come from androidd's array, so \
+                      it is a second copy of it",
+        },
+    ])
 }
 
 /// The cursor style has ONE label
@@ -212,47 +209,41 @@ pub fn the_android_level_filter_is_androidds(tree: &Tree) -> Report {
 /// survived, and the check is about the CODE.
 #[must_use]
 pub fn the_cursor_style_has_one_label(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[Claim::Lacks {
-            path: TERMINAL_PREFS,
-            pattern: r"Block \(hollow\)|displayName",
-            view: View::Code,
-            message: "TerminalPreferences names a cursor style again — the label is \
-                      settings_catalog's CURSOR_STYLES (docs/56)",
-        }],
-    )
+    check_all(tree, &[Claim::Lacks {
+        path: TERMINAL_PREFS,
+        pattern: r"Block \(hollow\)|displayName",
+        view: View::Code,
+        message: "TerminalPreferences names a cursor style again — the label is settings_catalog's \
+                  CURSOR_STYLES (docs/56)",
+    }])
 }
 
 /// The Android keycode table only ever shrinks
 ///
-/// `FunctionalKey::android_keycode` in `panel_key.rs` is the one table that says what Android number
-/// a functional key is. `AndroidKeycode.swift` used to spell thirteen of those numbers a second
-/// time, and every one of them was reached by nothing: the panel's live path gets its keycode from
-/// the door (`AndroidKeycode(bigEndian(...))`), and the only named constants anything presses are
-/// `.home` and `.appSwitch`, which the Rust table does not carry.
+/// `FunctionalKey::android_keycode` in `panel_key.rs` is the one table that says what Android
+/// number a functional key is. `AndroidKeycode.swift` used to spell thirteen of those numbers a
+/// second time, and every one of them was reached by nothing: the panel's live path gets its
+/// keycode from the door (`AndroidKeycode(bigEndian(...))`), and the only named constants anything
+/// presses are `.home` and `.appSwitch`, which the Rust table does not carry.
 ///
-/// A dead duplicate of a live number is worse than a live one — it reads as authoritative and it can
-/// never be caught disagreeing, because no input ever reaches both copies (`docs/55` §8). So the
-/// SHAPE is pinned rather than the names: how many literals the Swift face spells that the crate
-/// already answers, against a mark that only goes down.
+/// A dead duplicate of a live number is worse than a live one — it reads as authoritative and it
+/// can never be caught disagreeing, because no input ever reaches both copies (`docs/55` §8). So
+/// the SHAPE is pinned rather than the names: how many literals the Swift face spells that the
+/// crate already answers, against a mark that only goes down.
 ///
-/// The count is ZERO and the mark is set there, so the ratchet has reached its floor. Both sides are
-/// DERIVED: a list of banned numbers maintained here would drift from the Rust table the first time
-/// a key was added, which is the same defect the rule exists to catch.
+/// The count is ZERO and the mark is set there, so the ratchet has reached its floor. Both sides
+/// are DERIVED: a list of banned numbers maintained here would drift from the Rust table the first
+/// time a key was added, which is the same defect the rule exists to catch.
 #[must_use]
 pub fn the_android_keycode_table_only_shrinks(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[Claim::Overlap {
-            label: "Android keycodes",
-            left: Extract::raw(ANDROID_KEYCODE_RUST, r"Some\(([0-9]+)\)"),
-            right: Extract::raw(ANDROID_KEYCODE_SWIFT, r"Self\(([0-9]+)\)"),
-            mark: 0,
-            message: "AndroidKeycode.swift spells {found} keycode(s) panel_key.rs already answers \
-                      ({shared}) — the table only shrinks (docs/55 §8)",
-        }],
-    )
+    check_all(tree, &[Claim::Overlap {
+        label: "Android keycodes",
+        left: Extract::raw(ANDROID_KEYCODE_RUST, r"Some\(([0-9]+)\)"),
+        right: Extract::raw(ANDROID_KEYCODE_SWIFT, r"Self\(([0-9]+)\)"),
+        mark: 0,
+        message: "AndroidKeycode.swift spells {found} keycode(s) panel_key.rs already answers ({shared}) — \
+                  the table only shrinks (docs/55 §8)",
+    }])
 }
 
 #[cfg(test)]
@@ -269,12 +260,15 @@ mod tests {
             "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorConsoleView.swift",
             "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift",
         ] {
-            fixture.write(path, "let visible = rows.filter { DeviceRowFilter.matches($0, needle) }\n");
+            fixture.write(
+                path,
+                "let visible = rows.filter { DeviceRowFilter.matches($0, needle) }\n",
+            );
         }
         fixture.write(
             super::ROW_FILTER,
-            "static func matches(_ row: Row, _ needle: String) -> Bool {\n\
-             slopdesk_ws_binding_row_matches(row.fields, needle) }\n",
+            "static func matches(_ row: Row, _ needle: String) -> Bool \
+             {\nslopdesk_ws_binding_row_matches(row.fields, needle) }\n",
         );
     }
 
@@ -339,19 +333,17 @@ mod tests {
         // right, which is why no test sees it.
         fixture.write(
             super::SLATE_DESIGN,
-            "        package static func instrumentNative(\n\
-             \x20           _ size: CGFloat, weight: SlateNativeFont.Weight = .regular,\n\
-             \x20       ) -> SlateNativeFont {\n\
-             \x20           let rung = InstrumentRung(size: size, weight: weight)\n\
-             \x20           if let struck = mintedInstruments[rung] { return struck }\n\
-             \x20           let d = SlateNativeFont.systemFont(ofSize: size, weight: weight).fontDescriptor\n\
-             \x20           return SlateNativeFont(descriptor: d, size: size)!\n\
-             \x20       }\n\
-             \x20       @MainActor private static var mintedInstruments: [InstrumentRung: SlateNativeFont] = [:]\n\
-             \x20       private static func mintInstrument(_ s: CGFloat, weight w: SlateNativeFont.Weight) -> SlateNativeFont {\n\
-             \x20           let d = SlateNativeFont.systemFont(ofSize: s, weight: w).fontDescriptor.withFamily(mono)\n\
-             \x20           return SlateNativeFont(descriptor: d, size: s) ?? .systemFont(ofSize: s)\n\
-             \x20       }\n",
+            "        package static func instrumentNative(\n\x20           _ size: CGFloat, weight: \
+             SlateNativeFont.Weight = .regular,\n\x20       ) -> SlateNativeFont {\n\x20           let rung \
+             = InstrumentRung(size: size, weight: weight)\n\x20           if let struck = \
+             mintedInstruments[rung] { return struck }\n\x20           let d = \
+             SlateNativeFont.systemFont(ofSize: size, weight: weight).fontDescriptor\n\x20           return \
+             SlateNativeFont(descriptor: d, size: size)!\n\x20       }\n\x20       @MainActor private \
+             static var mintedInstruments: [InstrumentRung: SlateNativeFont] = [:]\n\x20       private \
+             static func mintInstrument(_ s: CGFloat, weight w: SlateNativeFont.Weight) -> SlateNativeFont \
+             {\n\x20           let d = SlateNativeFont.systemFont(ofSize: s, weight: \
+             w).fontDescriptor.withFamily(mono)\n\x20           return SlateNativeFont(descriptor: d, size: \
+             s) ?? .systemFont(ofSize: s)\n\x20       }\n",
         );
         assert!(!super::the_instrument_voice_is_minted_once(&fixture.tree()).is_clean());
 
@@ -359,9 +351,8 @@ mod tests {
         slate(&fixture);
         fixture.append(
             super::SLATE_DESIGN,
-            "        private static func other() -> NSFontDescriptor {\n\
-             \x20           SlateNativeFont.systemFont(ofSize: 12).fontDescriptor.withFamily(mono)\n\
-             \x20       }\n",
+            "        private static func other() -> NSFontDescriptor {\n\x20           \
+             SlateNativeFont.systemFont(ofSize: 12).fontDescriptor.withFamily(mono)\n\x20       }\n",
         );
         assert!(!super::the_instrument_voice_is_minted_once(&fixture.tree()).is_clean());
 
@@ -388,19 +379,16 @@ mod tests {
         let fixture = Fixture::new("panel-levels");
         fixture.write(
             super::ANDROID_LOG_LEVEL,
-            "package struct AndroidLogLevel {\n\
-             \x20   let letter = slopdesk_android_log_level_letter(index)\n\
-             }\n",
+            "package struct AndroidLogLevel {\n\x20   let letter = \
+             slopdesk_android_log_level_letter(index)\n}\n",
         );
         assert!(super::the_android_level_filter_is_androidds(&fixture.tree()).is_clean());
 
         // An enum's case list cannot come from a table at run time, so the keyword IS the copy.
         fixture.write(
             super::ANDROID_LOG_LEVEL,
-            "package enum AndroidLogLevel: String {\n\
-             \x20   case verbose = \"V\"\n\
-             \x20   let letter = slopdesk_android_log_level_letter(index)\n\
-             }\n",
+            "package enum AndroidLogLevel: String {\n\x20   case verbose = \"V\"\n\x20   let letter = \
+             slopdesk_android_log_level_letter(index)\n}\n",
         );
         assert!(!super::the_android_level_filter_is_androidds(&fixture.tree()).is_clean());
     }
@@ -410,16 +398,16 @@ mod tests {
         let fixture = Fixture::new("panel-cursor");
         fixture.write(
             super::TERMINAL_PREFS,
-            "/// The picker used to read \"Block (hollow)\" here and \"Hollow\" in the catalog.\n\
-             public enum CursorStyle: String { case blockHollow }\n",
+            "/// The picker used to read \"Block (hollow)\" here and \"Hollow\" in the catalog.\npublic \
+             enum CursorStyle: String { case blockHollow }\n",
         );
         // The doc quotes both spellings to record which one survived; the check is about the CODE.
         assert!(super::the_cursor_style_has_one_label(&fixture.tree()).is_clean());
 
         fixture.write(
             super::TERMINAL_PREFS,
-            "public enum CursorStyle: String { case blockHollow\n\
-             \x20   var displayName: String { \"Block (hollow)\" } }\n",
+            "public enum CursorStyle: String { case blockHollow\n\x20   var displayName: String { \"Block \
+             (hollow)\" } }\n",
         );
         assert!(!super::the_cursor_style_has_one_label(&fixture.tree()).is_clean());
     }
@@ -430,8 +418,8 @@ mod tests {
         fixture
             .write(
                 super::ANDROID_KEYCODE_RUST,
-                "match self {\n    Self::Up => Some(19),\n    Self::Down => Some(20),\n\
-                 \x20   Self::Enter => Some(66),\n}\n",
+                "match self {\n    Self::Up => Some(19),\n    Self::Down => Some(20),\n\x20   Self::Enter \
+                 => Some(66),\n}\n",
             )
             .write(
                 super::ANDROID_KEYCODE_SWIFT,
@@ -443,13 +431,15 @@ mod tests {
         // input ever reaches both copies.
         fixture.write(
             super::ANDROID_KEYCODE_SWIFT,
-            "static let home = Self(3)\nstatic let appSwitch = Self(187)\n\
-             static let enter = Self(66)\n",
+            "static let home = Self(3)\nstatic let appSwitch = Self(187)\nstatic let enter = Self(66)\n",
         );
         assert!(!super::the_android_keycode_table_only_shrinks(&fixture.tree()).is_clean());
 
         // And a broken extraction, which at a mark of zero reads exactly like success.
-        fixture.write(super::ANDROID_KEYCODE_SWIFT, "static let home = Self(rawValue: 3)\n");
+        fixture.write(
+            super::ANDROID_KEYCODE_SWIFT,
+            "static let home = Self(rawValue: 3)\n",
+        );
         assert!(!super::the_android_keycode_table_only_shrinks(&fixture.tree()).is_clean());
     }
 }

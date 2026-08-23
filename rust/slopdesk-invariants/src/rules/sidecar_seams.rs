@@ -1,9 +1,10 @@
-//! One decision per master, two lifecycles over five sidecars, and four shapes nobody may write twice.
+//! One decision per master, two lifecycles over five sidecars, and four shapes nobody may write
+//! twice.
 //!
 //! Ported from `scripts/check-supervisor.sh`. What links these is the failure they all share: two
-//! copies of one contract that agree today. The pair does not diverge on the change that creates it —
-//! it diverges on the seventh channel, the next daemon, the one manager somebody edits alone — so the
-//! moment to catch it is while there is still only one copy.
+//! copies of one contract that agree today. The pair does not diverge on the change that creates it
+//! — it diverges on the seventh channel, the next daemon, the one manager somebody edits alone — so
+//! the moment to catch it is while there is still only one copy.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
@@ -32,14 +33,14 @@ const VIDEO_CHANNEL: &str = "Sources/SlopDeskVideoProtocol/VideoChannel.swift";
 /// name, and the two steps are not one decision. The reaper removes a pane and drops its master the
 /// instant the child dies, and a child like `exit 0` is usually already dead by the time the reply
 /// is assembled — so the second lookup either found nothing (an `ok` reply carrying no descriptor,
-/// which hostd reports as `missingDescriptor` for a child that really ran) or found a raw number the
-/// reaper had closed and the kernel had reissued to something else, which hostd would have adopted
-/// in silence.
+/// which hostd reports as `missingDescriptor` for a child that really ran) or found a raw number
+/// the reaper had closed and the kernel had reissued to something else, which hostd would have
+/// adopted in silence.
 ///
 /// Both windows close the same way: take the duplicate where the pane is decided, hand it back
-/// OWNED, and let the wire BORROW it — see `docs/51` §2.3. Which is why the ban on `fn master_fd` is
-/// as load-bearing as the three positive pins: the lookup is what races, so the lookup is what may
-/// not exist, however carefully its next author guards it.
+/// OWNED, and let the wire BORROW it — see `docs/51` §2.3. Which is why the ban on `fn master_fd`
+/// is as load-bearing as the three positive pins: the lookup is what races, so the lookup is what
+/// may not exist, however carefully its next author guards it.
 #[must_use]
 pub fn a_master_crosses_owned(tree: &Tree) -> Report {
     /// The three spellings that say "decided where the pane is, handed back owned".
@@ -51,27 +52,28 @@ pub fn a_master_crosses_owned(tree: &Tree) -> Report {
 
     let mut claims: Vec<Claim> = OWNED
         .iter()
-        .map(|entry| Claim::Matches {
-            path: REGISTRY,
-            pattern: entry,
-            view: View::Code,
-            message: "superd's registry no longer hands its caller an owned master duplicate — see \
-                      docs/51 §2.3",
+        .map(|entry| {
+            Claim::Matches {
+                path: REGISTRY,
+                pattern: entry,
+                view: View::Code,
+                message: "superd's registry no longer hands its caller an owned master duplicate — see \
+                          docs/51 §2.3",
+            }
         })
         .collect();
     claims.push(Claim::Lacks {
         path: REGISTRY,
         pattern: r"fn master_fd",
         view: View::Code,
-        message: "superd's registry looks a master up by pane id again — that lookup races the \
-                  reaper (docs/51 §2.3)",
+        message: "superd's registry looks a master up by pane id again — that lookup races the reaper \
+                  (docs/51 §2.3)",
     });
     claims.push(Claim::Matches {
         path: FRAME,
         pattern: r"descriptor: Option<BorrowedFd<'_>>",
         view: View::Code,
-        message: "the frame takes a descriptor it cannot prove is still open — BorrowedFd is the \
-                  proof",
+        message: "the frame takes a descriptor it cannot prove is still open — BorrowedFd is the proof",
     });
     check_all(tree, &claims)
 }
@@ -85,11 +87,11 @@ pub fn a_master_crosses_owned(tree: &Tree) -> Report {
 /// other two wrote it after, and the dropd/inspectord parse accepted a `:0` announce that
 /// androidd's rejected.
 ///
-/// Both lifecycles live in `SupervisedServiceLifecycle.swift` now: `ProbedPortService` (the OS picks
-/// the port, `ensure` never waits) and `AnnouncedPortService` (hostd picks it, so the announce is
-/// WAITED for and VERIFIED). What stays with each manager is what the daemons genuinely disagree
-/// about — the socket name, the announce marker, the argv, the env override, and whether a spawn
-/// that threw reads `unavailable` or `starting`.
+/// Both lifecycles live in `SupervisedServiceLifecycle.swift` now: `ProbedPortService` (the OS
+/// picks the port, `ensure` never waits) and `AnnouncedPortService` (hostd picks it, so the
+/// announce is WAITED for and VERIFIED). What stays with each manager is what the daemons genuinely
+/// disagree about — the socket name, the announce marker, the argv, the env override, and whether a
+/// spawn that threw reads `unavailable` or `starting`.
 ///
 /// The last arm is not about duplication at all. Each manager keeps exactly one lock, and it is the
 /// service's: a second `NSLock` beside a `ProbedPortService` is two critical sections gating one
@@ -98,9 +100,9 @@ pub fn a_master_crosses_owned(tree: &Tree) -> Report {
 /// narrowing from the shell — a glob that stops matching is a ban that stops running, and these
 /// three are the ones that hold a `ProbedPortService`.
 ///
-/// The four-shape ban reads the WHOLE target, subdirectories included, where the shell read only its
-/// top level. That is a tightening the live tree already satisfies, and the reason to take it is
-/// that a manager moved one directory down is exactly how the shape comes back unwatched.
+/// The four-shape ban reads the WHOLE target, subdirectories included, where the shell read only
+/// its top level. That is a tightening the live tree already satisfies, and the reason to take it
+/// is that a manager moved one directory down is exactly how the shape comes back unwatched.
 #[must_use]
 pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
     /// The three types the five managers share.
@@ -118,12 +120,14 @@ pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
 
     let mut claims: Vec<Claim> = PIECES
         .iter()
-        .map(|piece| Claim::Matches {
-            path: LIFECYCLE,
-            pattern: piece,
-            view: View::Code,
-            message: "SupervisedServiceLifecycle.swift no longer holds one of its two lifecycles — \
-                      the five managers share one of each",
+        .map(|piece| {
+            Claim::Matches {
+                path: LIFECYCLE,
+                pattern: piece,
+                view: View::Code,
+                message: "SupervisedServiceLifecycle.swift no longer holds one of its two lifecycles — the \
+                          five managers share one of each",
+            }
         })
         .collect();
     claims.push(Claim::NoneUnder {
@@ -134,16 +138,14 @@ pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
         unless: &[],
         view: View::Code,
         exempt: &[LIFECYCLE],
-        message: "a sidecar manager grew its own probe latch, spawn generation or port parse back \
-                  ({files})",
+        message: "a sidecar manager grew its own probe latch, spawn generation or port parse back ({files})",
     });
     for manager in MANAGERS {
         claims.push(Claim::Lacks {
             path: manager,
             pattern: r"let lock = NSLock\(\)",
             view: View::Code,
-            message: "a sidecar manager took a second lock beside ProbedPortService — use its \
-                      locked(_:)",
+            message: "a sidecar manager took a second lock beside ProbedPortService — use its locked(_:)",
         });
     }
     check_all(tree, &claims)
@@ -153,9 +155,10 @@ pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
 ///
 /// `DeadlineLatch` is five lines with three load-bearing details in them, and each reads as noise
 /// until the one time it is missing: the cancel comes FIRST (a re-arm during a live drag otherwise
-/// stacks one timer per layout pass), `Task.isCancelled` is checked AFTER the sleep (`try?` swallows
-/// the cancellation throw, so a cancelled timer would run its body anyway), and the caller's closure
-/// is `[weak self]`. Four models had it written out; a fifth must ask for the latch instead.
+/// stacks one timer per layout pass), `Task.isCancelled` is checked AFTER the sleep (`try?`
+/// swallows the cancellation throw, so a cancelled timer would run its body anyway), and the
+/// caller's closure is `[weak self]`. Four models had it written out; a fifth must ask for the
+/// latch instead.
 ///
 /// The banned shape is narrow on purpose — a `Task` holding a SLEEP and then a cancellation check —
 /// so a repeating loop (`while !Task.isCancelled { … await sleep }`) does not match it: that is a
@@ -163,13 +166,13 @@ pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
 /// a file-level ban with a multi-line pattern: the introducer and the guard are two lines that only
 /// mean something together, and no single line carries the shape.
 ///
-/// Scoped to the three targets that can SEE the latch. `SlopDeskVideoHost` and `SlopDeskVideoClient`
-/// hold one-shots of the same shape and depend on nothing that could carry `DeadlineLatch` down to
-/// them, so pinning them here would only demand an impossible import.
+/// Scoped to the three targets that can SEE the latch. `SlopDeskVideoHost` and
+/// `SlopDeskVideoClient` hold one-shots of the same shape and depend on nothing that could carry
+/// `DeadlineLatch` down to them, so pinning them here would only demand an impossible import.
 ///
-/// The six arming sites are pinned positively for the reason every shared helper needs it: the timer
-/// is shared, the state is not, and a caller that quietly grows its own back passes the ban above by
-/// spelling the sleep differently.
+/// The six arming sites are pinned positively for the reason every shared helper needs it: the
+/// timer is shared, the state is not, and a caller that quietly grows its own back passes the ban
+/// above by spelling the sleep differently.
 #[must_use]
 pub fn one_re_armable_deadline(tree: &Tree) -> Report {
     /// Each caller and the latch it arms.
@@ -220,16 +223,15 @@ pub fn one_re_armable_deadline(tree: &Tree) -> Report {
         rescued_by: None,
         view: View::Raw,
         exempt: &[LATCH],
-        message: "a cancel-and-re-arm deadline grew back ({files}) — DeadlineLatch.arm owns the \
-                  three details",
+        message: "a cancel-and-re-arm deadline grew back ({files}) — DeadlineLatch.arm owns the three \
+                  details",
     }];
     for (caller, latch) in SHARES {
         claims.push(Claim::Matches {
             path: caller,
             pattern: latch,
             view: View::Code,
-            message: "a caller stopped arming a DeadlineLatch — the timer is shared, the state is \
-                      not",
+            message: "a caller stopped arming a DeadlineLatch — the timer is shared, the state is not",
         });
     }
     check_all(tree, &claims)
@@ -273,16 +275,16 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
         unless: &[],
         view: View::Code,
         exempt: &[PASTEBOARD_CLIP],
-        message: "a second pasteboard↔clip conversion grew back ({files}) — PasteboardClip reads \
-                  and writes both ends",
+        message: "a second pasteboard↔clip conversion grew back ({files}) — PasteboardClip reads and writes \
+                  both ends",
     }];
     for (end, direction) in SHARES {
         claims.push(Claim::Matches {
             path: end,
             pattern: direction,
             view: View::Code,
-            message: "a clipboard end stopped calling PasteboardClip — the two ends agree by \
-                      sharing, not by luck",
+            message: "a clipboard end stopped calling PasteboardClip — the two ends agree by sharing, not \
+                      by luck",
         });
     }
     check_all(tree, &claims)
@@ -290,9 +292,9 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
 
 /// Every JSON sidecar sorts its keys, and `WorkspaceCore` has one encoder
 ///
-/// Not tidiness: `docs/22` §8's round-trip tests compare BYTES, and Swift's default key order is not
-/// stable across runs, so an encoder that omits `.sortedKeys` writes a perfectly good file and turns
-/// a passing test into one that fails on a Tuesday.
+/// Not tidiness: `docs/22` §8's round-trip tests compare BYTES, and Swift's default key order is
+/// not stable across runs, so an encoder that omits `.sortedKeys` writes a perfectly good file and
+/// turns a passing test into one that fails on a Tuesday.
 ///
 /// A CONDITIONAL check rather than a ban, because a `JSONEncoder` is ordinary Foundation used in
 /// plenty of places that never touch disk: the file that names `outputFormatting` is the one that
@@ -303,32 +305,29 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
 /// a second encoder no matter how it is spelled.
 #[must_use]
 pub fn one_sidecar_encoder(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::NoFileUnder {
-                roots: &["Sources/"],
-                extensions: &["swift"],
-                pattern: r"outputFormatting",
-                rescued_by: Some(r"\.sortedKeys"),
-                view: View::Code,
-                exempt: &[],
-                message: "a sidecar encoder set outputFormatting without .sortedKeys ({files}) — \
-                          docs/22 §8 compares bytes",
-            },
-            Claim::NoneUnder {
-                roots: &["Sources/SlopDeskWorkspaceCore/"],
-                extensions: &["swift"],
-                pattern: r"outputFormatting",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[SIDECAR_JSON],
-                message: "a second sidecar encoder grew back in WorkspaceCore ({files}) — \
-                          SidecarJSON.encoder is the one",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::NoFileUnder {
+            roots: &["Sources/"],
+            extensions: &["swift"],
+            pattern: r"outputFormatting",
+            rescued_by: Some(r"\.sortedKeys"),
+            view: View::Code,
+            exempt: &[],
+            message: "a sidecar encoder set outputFormatting without .sortedKeys ({files}) — docs/22 §8 \
+                      compares bytes",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources/SlopDeskWorkspaceCore/"],
+            extensions: &["swift"],
+            pattern: r"outputFormatting",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[SIDECAR_JSON],
+            message: "a second sidecar encoder grew back in WorkspaceCore ({files}) — SidecarJSON.encoder \
+                      is the one",
+        },
+    ])
 }
 
 /// The two client-side debug gates are read in ONE file
@@ -344,20 +343,17 @@ pub fn one_sidecar_encoder(tree: &Tree) -> Report {
 /// ban against documenting the flag.
 #[must_use]
 pub fn one_debug_gate_spelling(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[Claim::NoneUnder {
-            roots: &["Sources/"],
-            extensions: &["swift"],
-            pattern: r"SLOPDESK_BLOCKS_DEBUG|SLOPDESK_WORKSPACE_DEBUG",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[DEBUG_TRACE],
-            message: "a debug gate is read outside DebugTrace ({files}) — one gate, one spelling, \
-                      one tag grammar",
-        }],
-    )
+    check_all(tree, &[Claim::NoneUnder {
+        roots: &["Sources/"],
+        extensions: &["swift"],
+        pattern: r"SLOPDESK_BLOCKS_DEBUG|SLOPDESK_WORKSPACE_DEBUG",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[DEBUG_TRACE],
+        message: "a debug gate is read outside DebugTrace ({files}) — one gate, one spelling, one tag \
+                  grammar",
+    }])
 }
 
 /// The channel tag is ONE enum, and its raw values are the wire
@@ -384,28 +380,24 @@ pub fn one_channel_tag(tree: &Tree) -> Report {
         "case audio = 6",
     ];
 
-    check_all(
-        tree,
-        &[
-            Claim::NoneUnder {
-                roots: &["Sources/", "Tests/"],
-                extensions: &["swift"],
-                pattern: r"enum VideoChannel",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[VIDEO_CHANNEL],
-                message: "a second VideoChannel grew back ({files}) — SlopDeskVideoProtocol owns \
-                          the tag both sides send",
-            },
-            Claim::Mentions {
-                path: VIDEO_CHANNEL,
-                names: TAGS,
-                message: "VideoChannel lost '{entry}' — the raw values are the wire tags \
-                          (doc 17 §3.3)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::NoneUnder {
+            roots: &["Sources/", "Tests/"],
+            extensions: &["swift"],
+            pattern: r"enum VideoChannel",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[VIDEO_CHANNEL],
+            message: "a second VideoChannel grew back ({files}) — SlopDeskVideoProtocol owns the tag both \
+                      sides send",
+        },
+        Claim::Mentions {
+            path: VIDEO_CHANNEL,
+            names: TAGS,
+            message: "VideoChannel lost '{entry}' — the raw values are the wire tags (doc 17 §3.3)",
+        },
+    ])
 }
 
 #[cfg(test)]
@@ -417,15 +409,10 @@ mod tests {
         fixture
             .write(
                 super::REGISTRY,
-                "fn spawn() -> Result<(PaneRecord, OwnedFd), RegistryError> {\n\
-                 let d = duplicate_master(&spawned.master)?;\n\
-                 let a = duplicate_master(&pane.master)?;\n\
-                 }\n",
+                "fn spawn() -> Result<(PaneRecord, OwnedFd), RegistryError> {\nlet d = \
+                 duplicate_master(&spawned.master)?;\nlet a = duplicate_master(&pane.master)?;\n}\n",
             )
-            .write(
-                super::FRAME,
-                "fn send(descriptor: Option<BorrowedFd<'_>>) {}\n",
-            );
+            .write(super::FRAME, "fn send(descriptor: Option<BorrowedFd<'_>>) {}\n");
     }
 
     #[test]
@@ -435,7 +422,10 @@ mod tests {
         assert!(super::a_master_crosses_owned(&fixture.tree()).is_clean());
 
         // The lookup is what races the reaper, so the lookup is what may not exist.
-        fixture.append(super::REGISTRY, "fn master_fd(&self, pane: &str) -> RawFd { 0 }\n");
+        fixture.append(
+            super::REGISTRY,
+            "fn master_fd(&self, pane: &str) -> RawFd { 0 }\n",
+        );
         assert!(!super::a_master_crosses_owned(&fixture.tree()).is_clean());
 
         // And a raw number on the wire is one nobody can prove is still open.
@@ -448,10 +438,9 @@ mod tests {
     fn lifecycles(fixture: &Fixture) {
         fixture.write(
             super::LIFECYCLE,
-            "final class ProbedPortService { private let lock = NSLock()\n\
-             var lastProbe: Instant?\nprivate var spawnGeneration = 0 }\n\
-             final class AnnouncedPortService { func awaitAnnouncedPort() async -> UInt16? { nil } }\n\
-             enum AnnouncedPort {}\n",
+            "final class ProbedPortService { private let lock = NSLock()\nvar lastProbe: Instant?\nprivate \
+             var spawnGeneration = 0 }\nfinal class AnnouncedPortService { func awaitAnnouncedPort() async \
+             -> UInt16? { nil } }\nenum AnnouncedPort {}\n",
         );
         for manager in [
             "Sources/SlopDeskHost/AndroidServiceManager.swift",
@@ -492,9 +481,8 @@ mod tests {
     fn latches(fixture: &Fixture) {
         fixture.write(
             super::LATCH,
-            "func arm() {\ntask?.cancel()\ntask = Task { [weak self] in\n\
-             try? await Task.sleep(for: delay)\nguard !Task.isCancelled else { return }\n\
-             body() }\n}\n",
+            "func arm() {\ntask?.cancel()\ntask = Task { [weak self] in\ntry? await Task.sleep(for: \
+             delay)\nguard !Task.isCancelled else { return }\nbody() }\n}\n",
         );
         for (caller, latch) in [
             (
@@ -531,9 +519,8 @@ mod tests {
         // The window, written out again by a fifth model.
         fixture.write(
             "Sources/SlopDeskClientCore/Pane/PaneDragCoordinator.swift",
-            "springLoadTask.arm(after: .milliseconds(600))\n\
-             task = Task { [weak self] in\ntry? await Task.sleep(for: delay)\n\
-             guard !Task.isCancelled else { return } }\n",
+            "springLoadTask.arm(after: .milliseconds(600))\ntask = Task { [weak self] in\ntry? await \
+             Task.sleep(for: delay)\nguard !Task.isCancelled else { return } }\n",
         );
         assert!(!super::one_re_armable_deadline(&fixture.tree()).is_clean());
 
@@ -541,9 +528,8 @@ mod tests {
         latches(&fixture);
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Video/RemoteWindowModel.swift",
-            "reflowDeadline.arm(after: .milliseconds(16))\n\
-             Task { [weak self] in\nwhile !Task.isCancelled {\ntry? await Task.sleep(for: tick)\n\
-             poll() } }\n",
+            "reflowDeadline.arm(after: .milliseconds(16))\nTask { [weak self] in\nwhile !Task.isCancelled \
+             {\ntry? await Task.sleep(for: tick)\npoll() } }\n",
         );
         assert!(super::one_re_armable_deadline(&fixture.tree()).is_clean());
 
@@ -581,8 +567,8 @@ mod tests {
 
         fixture.write(
             "Sources/SlopDeskHost/HostClipboardPerformer.swift",
-            "PasteboardClip.read(board, concealed: false)\nPasteboardClip.write(clip, to: board)\n\
-             let tiff = board.data(forType: .tiff)\n",
+            "PasteboardClip.read(board, concealed: false)\nPasteboardClip.write(clip, to: board)\nlet tiff \
+             = board.data(forType: .tiff)\n",
         );
         assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
 
@@ -634,13 +620,13 @@ mod tests {
         fixture
             .write(
                 super::DEBUG_TRACE,
-                "let blocks = env[\"SLOPDESK_BLOCKS_DEBUG\"] == \"1\"\n\
-                 let workspace = env[\"SLOPDESK_WORKSPACE_DEBUG\"] == \"1\"\n",
+                "let blocks = env[\"SLOPDESK_BLOCKS_DEBUG\"] == \"1\"\nlet workspace = \
+                 env[\"SLOPDESK_WORKSPACE_DEBUG\"] == \"1\"\n",
             )
             .write(
                 "Sources/SlopDeskMacUI/Pane/MacPromptJumpFlashOverlay.swift",
-                "/// gated by `SLOPDESK_BLOCKS_DEBUG == \"1\"` — the paint end.\n\
-                 guard DebugTrace.blocks else { return }\n",
+                "/// gated by `SLOPDESK_BLOCKS_DEBUG == \"1\"` — the paint end.\nguard DebugTrace.blocks \
+                 else { return }\n",
             );
         // A doc comment that CITES the gate is not a second reader of it.
         assert!(super::one_debug_gate_spelling(&fixture.tree()).is_clean());
@@ -657,27 +643,24 @@ mod tests {
         let fixture = Fixture::new("seams-channel");
         fixture.write(
             super::VIDEO_CHANNEL,
-            "public enum VideoChannel: UInt8 {\ncase control = 0\ncase video = 1\n\
-             case geometry = 2\ncase cursor = 3\ncase input = 4\ncase recovery = 5\n\
-             case audio = 6\n}\n",
+            "public enum VideoChannel: UInt8 {\ncase control = 0\ncase video = 1\ncase geometry = 2\ncase \
+             cursor = 3\ncase input = 4\ncase recovery = 5\ncase audio = 6\n}\n",
         );
         assert!(super::one_channel_tag(&fixture.tree()).is_clean());
 
         // Renumbering re-routes a channel on the far side with nothing failing to compile.
         fixture.write(
             super::VIDEO_CHANNEL,
-            "public enum VideoChannel: UInt8 {\ncase control = 0\ncase video = 1\n\
-             case geometry = 2\ncase cursor = 3\ncase input = 4\ncase audio = 5\n\
-             case recovery = 6\n}\n",
+            "public enum VideoChannel: UInt8 {\ncase control = 0\ncase video = 1\ncase geometry = 2\ncase \
+             cursor = 3\ncase input = 4\ncase audio = 5\ncase recovery = 6\n}\n",
         );
         assert!(!super::one_channel_tag(&fixture.tree()).is_clean());
 
         // And the byte-identical copy that agrees until a seventh channel lands on one side.
         fixture.write(
             super::VIDEO_CHANNEL,
-            "public enum VideoChannel: UInt8 {\ncase control = 0\ncase video = 1\n\
-             case geometry = 2\ncase cursor = 3\ncase input = 4\ncase recovery = 5\n\
-             case audio = 6\n}\n",
+            "public enum VideoChannel: UInt8 {\ncase control = 0\ncase video = 1\ncase geometry = 2\ncase \
+             cursor = 3\ncase input = 4\ncase recovery = 5\ncase audio = 6\n}\n",
         );
         fixture.write(
             "Sources/SlopDeskVideoHost/HostChannels.swift",

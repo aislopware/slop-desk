@@ -1,10 +1,10 @@
 //! What Settings OFFERS: one Rust table, one memoised reader, and no view that spells a choice.
 //!
 //! Ported from `scripts/check-supervisor.sh`. The choices, their labels, their honest captions, the
-//! taxonomy and the ladders' stops and readouts are `slopdesk_workspace::settings_catalog`. They had
-//! already been lifted once, out of view bodies into a Swift catalog, and the argument for lifting
-//! them did not stop at the view boundary: the table has no framework in it, and the two halves of
-//! the UI split were about to read it from two.
+//! taxonomy and the ladders' stops and readouts are `slopdesk_workspace::settings_catalog`. They
+//! had already been lifted once, out of view bodies into a Swift catalog, and the argument for
+//! lifting them did not stop at the view boundary: the table has no framework in it, and the two
+//! halves of the UI split were about to read it from two.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
@@ -44,9 +44,9 @@ const CATALOG_DOORS: &[&str] = &[
 /// `body` or an `NSView` rebuild — the phone's all-settings list paid it per keystroke.
 ///
 /// TWO properties, and the second is the one a future edit is likely to lose. The group must cross
-/// in one delivery, AND the delivery must be read into a `static let`: a `tokens(_:)` that went back
-/// to calling the door per read would still be one crossing and still be 10 µs of allocation on
-/// every render pass, with nothing on either side saying so.
+/// in one delivery, AND the delivery must be read into a `static let`: a `tokens(_:)` that went
+/// back to calling the door per read would still be one crossing and still be 10 µs of allocation
+/// on every render pass, with nothing on either side saying so.
 ///
 /// And no settings RENDERER may open the option-group door itself. The catalog face is the one
 /// reader, the same way neither settings renderer opens the layout-page door: a second reader is a
@@ -102,8 +102,8 @@ pub fn the_option_groups_cross_whole_and_once(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "{files} opens the option-group door itself — the choices are SettingsCatalog's to read \
-                      once, not a renderer's to re-read per body",
+            message: "{files} opens the option-group door itself — the choices are SettingsCatalog's to \
+                      read once, not a renderer's to re-read per body",
         },
     ];
     check_all(tree, &claims)
@@ -203,14 +203,23 @@ mod tests {
 
         // And a door the header stopped naming.
         catalog(&fixture);
-        fixture.write("rust/slopdesk-ffi/include/slopdesk_ffi.h", "slopdesk_settings_ladder\n");
+        fixture.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi.h",
+            "slopdesk_settings_ladder\n",
+        );
         assert!(!super::the_option_groups_cross_whole_and_once(&fixture.tree()).is_clean());
     }
 
     fn constants(fixture: &Fixture) {
         fixture
-            .write(super::CHEAT_SHEET, "    public static let sections: [Section] = build()\n")
-            .write(super::MENU_COMMANDS, "private static let titlesByID: [ID: String] = [:]\n");
+            .write(
+                super::CHEAT_SHEET,
+                "    public static let sections: [Section] = build()\n",
+            )
+            .write(
+                super::MENU_COMMANDS,
+                "private static let titlesByID: [ID: String] = [:]\n",
+            );
     }
 
     #[test]
@@ -220,7 +229,10 @@ mod tests {
         assert!(super::the_cheat_sheet_and_menu_bar_hold_their_constants(&fixture.tree()).is_clean());
 
         // One keyword is the whole defect.
-        fixture.write(super::CHEAT_SHEET, "    public static var sections: [Section] { build() }\n");
+        fixture.write(
+            super::CHEAT_SHEET,
+            "    public static var sections: [Section] { build() }\n",
+        );
         assert!(!super::the_cheat_sheet_and_menu_bar_hold_their_constants(&fixture.tree()).is_clean());
 
         constants(&fixture);

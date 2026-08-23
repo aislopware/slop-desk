@@ -26,8 +26,8 @@ const PHONE_KEY: &str = "Sources/SlopDeskWorkspaceCore/iOS/PhoneKey.swift";
 /// THE TEARDOWN ORDER is the one thing here that is not obvious from reading either half.
 /// `clearSecureInput` releases the PROCESS-GLOBAL `EnableSecureEventInput` FIRST and only then
 /// reaches for the model. Behind the guard it would be skipped for exactly the pane that needs it
-/// most — one whose model has already gone — and the lock would outlive the app's own window, taking
-/// the keyboard out of every other app.
+/// most — one whose model has already gone — and the lock would outlive the app's own window,
+/// taking the keyboard out of every other app.
 #[must_use]
 pub fn one_terminal_wiring_and_its_teardown_order(tree: &Tree) -> Report {
     let claims = [
@@ -42,8 +42,8 @@ pub fn one_terminal_wiring_and_its_teardown_order(tree: &Tree) -> Report {
         Claim::NoneUnder {
             roots: &["Sources/SlopDeskPhoneUI", "Sources/SlopDeskMacUI"],
             extensions: SWIFT,
-            pattern: "class CommandNavigatorChrome|func runAutotypeIfRequested|func connectIfNeeded|\
-                      func reconcileSecureInput",
+            pattern: "class CommandNavigatorChrome|func runAutotypeIfRequested|func connectIfNeeded|func \
+                      reconcileSecureInput",
             all: &[],
             unless: &[],
             view: View::Code,
@@ -81,20 +81,20 @@ pub fn one_terminal_wiring_and_its_teardown_order(tree: &Tree) -> Report {
 ///
 /// Cancelling a pane move on ⎋ needs a LOCAL event monitor, which is an `AppKit` resource with a
 /// paired install/remove and no `SwiftUI` expression. It lived inside an `NSViewRepresentable`'s
-/// coordinator, where the pairing was invisible and the `AppKit` rewrite would have had to reproduce
-/// it from scratch. The controller is what lets the `AppKit` column and the `SwiftUI` leaf share ONE
-/// monitor rather than tapping the event stream twice.
+/// coordinator, where the pairing was invisible and the `AppKit` rewrite would have had to
+/// reproduce it from scratch. The controller is what lets the `AppKit` column and the `SwiftUI`
+/// leaf share ONE monitor rather than tapping the event stream twice.
 ///
 /// The file-count floor is not decoration. The shell's pathspec for these directories was
 /// `Pane/**/*.swift`, git reads `**` as spanning one or more directory levels, `Pane/` is flat, so
-/// the glob matched ZERO files and the gate passed while checking nothing — the third time this gate
-/// has died quietly by resolving to an empty list. A ban over nothing passes; a ban over nothing
-/// that SAYS so is a ban.
+/// the glob matched ZERO files and the gate passed while checking nothing — the third time this
+/// gate has died quietly by resolving to an empty list. A ban over nothing passes; a ban over
+/// nothing that SAYS so is a ban.
 ///
-/// `Sources/SlopDeskMacUI/Pane` is listed before it exists, and that is the point: wave R creates it
-/// eleven batches deep, and a ban whose scope omits the directory the new renderers land in goes
-/// stale exactly when it starts mattering. Roots that match nothing cost nothing — the floor is what
-/// makes an empty corpus loud, and the other two clear it on their own.
+/// `Sources/SlopDeskMacUI/Pane` is listed before it exists, and that is the point: wave R creates
+/// it eleven batches deep, and a ban whose scope omits the directory the new renderers land in goes
+/// stale exactly when it starts mattering. Roots that match nothing cost nothing — the floor is
+/// what makes an empty corpus loud, and the other two clear it on their own.
 #[must_use]
 pub fn one_escape_monitor_installed_and_removed_once(tree: &Tree) -> Report {
     const PANE_VIEWS: &[&str] = &[
@@ -153,8 +153,8 @@ pub fn one_escape_monitor_installed_and_removed_once(tree: &Tree) -> Report {
 
 /// The phone's key path is Rust, and its Swift is a marshaller
 ///
-/// Four Swift files used to hold it — a C0 fold, an arrow table, a routing switch, a threshold and a
-/// travel accumulator — and every one of them was a rule about bytes with no view in it. They are
+/// Four Swift files used to hold it — a C0 fold, an arrow table, a routing switch, a threshold and
+/// a travel accumulator — and every one of them was a rule about bytes with no view in it. They are
 /// `slopdesk_workspace::phone_key` now, reached through `slopdesk_phone_*`, and `PhoneKey.swift` is
 /// what is left: the vocabulary the responder builds a press in, and the crossing.
 ///
@@ -163,9 +163,9 @@ pub fn one_escape_monitor_installed_and_removed_once(tree: &Tree) -> Report {
 /// one that would drift silently, because both halves would keep passing their own tests.
 ///
 /// The RESPONDER is the other place a rule would grow, and the likelier one: it is the file holding
-/// a live `UIKey`, so a table there would look local rather than duplicated. It must spell no escape
-/// sequence and no HID number — `UIKeyboardHIDUsage`'s own cases are the only spelling of a usage
-/// allowed, and what each one MEANS is `slopdesk_workspace::phone_key`'s alone.
+/// a live `UIKey`, so a table there would look local rather than duplicated. It must spell no
+/// escape sequence and no HID number — `UIKeyboardHIDUsage`'s own cases are the only spelling of a
+/// usage allowed, and what each one MEANS is `slopdesk_workspace::phone_key`'s alone.
 #[must_use]
 pub fn the_phone_key_path_is_rust(tree: &Tree) -> Report {
     let claims = [
@@ -279,12 +279,10 @@ mod tests {
 ";
 
     fn wiring(fixture: &Fixture) {
-        fixture
-            .write(super::WIRING, CLEAR)
-            .write(
-                "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift",
-                "wiring.wire(store)\nwiring.clear()\n",
-            );
+        fixture.write(super::WIRING, CLEAR).write(
+            "Sources/SlopDeskPhoneUI/Pane/TerminalLeafView.swift",
+            "wiring.wire(store)\nwiring.clear()\n",
+        );
     }
 
     #[test]
@@ -297,8 +295,8 @@ mod tests {
         // out of every other app.
         fixture.write(
             super::WIRING,
-            "    func clearSecureInput() {\n        guard let model = live?.terminalModel else { return }\n\
-             \x20       secureInput.teardown()\n    }\n",
+            "    func clearSecureInput() {\n        guard let model = live?.terminalModel else { return \
+             }\n\x20       secureInput.teardown()\n    }\n",
         );
         assert!(!super::one_terminal_wiring_and_its_teardown_order(&fixture.tree()).is_clean());
 
@@ -314,8 +312,8 @@ mod tests {
     fn monitor(fixture: &Fixture) {
         fixture.write(
             super::ESCAPE_MONITOR,
-            "func arm(onCancel: @escaping () -> Void) { addLocalMonitorForEvents() }\n\
-             func disarm() { removeMonitor(token) }\n",
+            "func arm(onCancel: @escaping () -> Void) { addLocalMonitorForEvents() }\nfunc disarm() { \
+             removeMonitor(token) }\n",
         );
         for index in 0..20 {
             fixture.write(
@@ -342,8 +340,8 @@ mod tests {
         let empty = Fixture::new("pane-escape-monitor-drained");
         empty.write(
             super::ESCAPE_MONITOR,
-            "func arm(onCancel: @escaping () -> Void) { addLocalMonitorForEvents() }\n\
-             func disarm() { removeMonitor(token) }\n",
+            "func arm(onCancel: @escaping () -> Void) { addLocalMonitorForEvents() }\nfunc disarm() { \
+             removeMonitor(token) }\n",
         );
         assert!(!super::one_escape_monitor_installed_and_removed_once(&empty.tree()).is_clean());
     }
@@ -355,13 +353,13 @@ mod tests {
             .write("rust/slopdesk-ffi/include/slopdesk_ffi.h", &doors)
             .write(
                 super::PHONE_HOST,
-                "PhoneKey.routesToKeyEncoding\nPhoneKey.encode\nPhoneKey.keyChord\n\
-                 PhoneKey.foldArmedControl\nPhoneKey.showsAccessoryBar\n",
+                "PhoneKey.routesToKeyEncoding\nPhoneKey.encode\nPhoneKey.keyChord\nPhoneKey.\
+                 foldArmedControl\nPhoneKey.showsAccessoryBar\n",
             )
             .write(
                 "Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeyChord.swift",
-                "shift = Self(rawValue: 1 << 0)\ncontrol = Self(rawValue: 1 << 1)\n\
-                 option = Self(rawValue: 1 << 2)\ncommand = Self(rawValue: 1 << 3)\n",
+                "shift = Self(rawValue: 1 << 0)\ncontrol = Self(rawValue: 1 << 1)\noption = Self(rawValue: \
+                 1 << 2)\ncommand = Self(rawValue: 1 << 3)\n",
             );
     }
 
@@ -377,7 +375,10 @@ mod tests {
 
         // A door the header stopped naming — Swift cannot reach it, and nothing else would say so.
         phone_key(&fixture);
-        fixture.write("rust/slopdesk-ffi/include/slopdesk_ffi.h", "slopdesk_phone_key_encode\n");
+        fixture.write(
+            "rust/slopdesk-ffi/include/slopdesk_ffi.h",
+            "slopdesk_phone_key_encode\n",
+        );
         assert!(!super::the_phone_key_path_is_rust(&fixture.tree()).is_clean());
 
         // And the modifier word renumbered.

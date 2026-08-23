@@ -23,15 +23,16 @@ const SWIFT_TERMPREFS: &str = "Sources/SlopDeskVideoProtocol/Settings/TerminalPr
 
 /// One badge ladder for a tab row
 ///
-/// Ten precedence rungs over four independent signals, with two placements that are the whole reason
-/// it is a rule: the AGENT finish above the busy tiers (claude holds the OSC-133 block open for its
-/// whole lifetime), a COMMAND's exit below them. It was pure Swift with no Rust twin at all.
+/// Ten precedence rungs over four independent signals, with two placements that are the whole
+/// reason it is a rule: the AGENT finish above the busy tiers (claude holds the OSC-133 block open
+/// for its whole lifetime), a COMMAND's exit below them. It was pure Swift with no Rust twin at
+/// all.
 ///
 /// The KIND is a second file: `TabBadgeResolver` needs the store's badge gates and stayed, the
-/// discriminant does not and descended to the value model, where `SlopDeskSlate` can name it without
-/// naming a store. The census is bounded on the enum's own line for the reason the pill-ink arm is:
-/// an open address also matches `TabBadgeKindRung`, so the enum renamed out from under the claim
-/// would keep counting nine.
+/// discriminant does not and descended to the value model, where `SlopDeskSlate` can name it
+/// without naming a store. The census is bounded on the enum's own line for the reason the pill-ink
+/// arm is: an open address also matches `TabBadgeKindRung`, so the enum renamed out from under the
+/// claim would keep counting nine.
 #[must_use]
 pub fn one_badge_ladder_for_a_tab_row(tree: &Tree) -> Report {
     let claims = [
@@ -48,7 +49,8 @@ pub fn one_badge_ladder_for_a_tab_row(tree: &Tree) -> Report {
         Claim::Names {
             path: SWIFT_BADGE,
             needle: "slopdesk_agent_tab_badge",
-            message: "TabBadge.swift stopped asking the door — it is a face over the ladder, not a second one",
+            message: "TabBadge.swift stopped asking the door — it is a face over the ladder, not a second \
+                      one",
         },
         Claim::Census {
             label: "the TabBadgeKind / TabBadge::ALL case count",
@@ -74,10 +76,10 @@ pub fn one_badge_ladder_for_a_tab_row(tree: &Tree) -> Report {
 /// owns both halves now; Swift marshals.
 ///
 /// The Swift MARSHALLER over that reader is gone too, and this rule names no file it must still
-/// exist in. It could not: a body now crosses as raw bytes inside the fold that reads it, so a Swift
-/// file whose whole job was to turn a body into an event is a decode with nothing left to hand its
-/// answer to. The standalone `slopdesk_hook_event_parse` door went with it — a door nothing calls is
-/// a second way to ask what `slopdesk_agent_detector_hook` already answers.
+/// exist in. It could not: a body now crosses as raw bytes inside the fold that reads it, so a
+/// Swift file whose whole job was to turn a body into an event is a decode with nothing left to
+/// hand its answer to. The standalone `slopdesk_hook_event_parse` door went with it — a door
+/// nothing calls is a second way to ask what `slopdesk_agent_detector_hook` already answers.
 #[must_use]
 pub fn one_reading_of_a_hook_body(tree: &Tree) -> Report {
     let claims = [
@@ -125,7 +127,12 @@ pub fn one_reading_of_a_hook_body(tree: &Tree) -> Report {
         },
         Claim::Mentions {
             path: "rust/slopdesk-hookevent/src/lib.rs",
-            names: &["pub fn parse", "fn classify", "fn stop_label", "fn question_label"],
+            names: &[
+                "pub fn parse",
+                "fn classify",
+                "fn stop_label",
+                "fn question_label",
+            ],
             message: "rust/slopdesk-hookevent/src/lib.rs lost {entry} — one body, one reading, one meaning",
         },
     ];
@@ -134,19 +141,20 @@ pub fn one_reading_of_a_hook_body(tree: &Tree) -> Report {
 
 /// And ONE state machine per pane
 ///
-/// The fusion landed, and the machine it replaced kept compiling anyway: `ForegroundProcessDetector`,
-/// holding its own `ClaudeStatusMachine`, its own basename edge anchor and its own status dedupe
-/// anchor, constructed by nothing in `Sources/` and kept alive by a test file of its own. It was
-/// TWO, not one: `AgentHookHandler` beside the hook listener did the same thing for the same reason.
+/// The fusion landed, and the machine it replaced kept compiling anyway:
+/// `ForegroundProcessDetector`, holding its own `ClaudeStatusMachine`, its own basename edge anchor
+/// and its own status dedupe anchor, constructed by nothing in `Sources/` and kept alive by a test
+/// file of its own. It was TWO, not one: `AgentHookHandler` beside the hook listener did the same
+/// thing for the same reason.
 ///
-/// Counted rather than named, because the failure is arithmetic — and the count is now ZERO, because
-/// the FUSION itself moved: `rust/slopdesk-agent::detector` owns the two dedupe anchors, the
-/// stickiness clock and its two absence suppressors, the block-class carry, the intent latch and the
-/// title ownership record, and it is the only thing anywhere that constructs a machine.
+/// Counted rather than named, because the failure is arithmetic — and the count is now ZERO,
+/// because the FUSION itself moved: `rust/slopdesk-agent::detector` owns the two dedupe anchors,
+/// the stickiness clock and its two absence suppressors, the block-class carry, the intent latch
+/// and the title ownership record, and it is the only thing anywhere that constructs a machine.
 /// `ClaudePaneDetector` is the handle over it plus the `WireMessage` shapes, which is the one part
 /// that has to stay Swift. Each rule pattern carries its open paren: without it `fn topic_line`
-/// matches `fn topic_lineX`, and a rule renamed out of existence would satisfy the claim that exists
-/// to notice exactly that.
+/// matches `fn topic_lineX`, and a rule renamed out of existence would satisfy the claim that
+/// exists to notice exactly that.
 #[must_use]
 pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
     let claims = [
@@ -164,14 +172,15 @@ pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
         Claim::Names {
             path: SWIFT_DETECTOR,
             needle: "slopdesk_agent_detector_new(",
-            message: "ClaudePaneDetector.swift stopped opening the Rust detector — it is the handle over the \
-                      fusion, not a second one",
+            message: "ClaudePaneDetector.swift stopped opening the Rust detector — it is the handle over \
+                      the fusion, not a second one",
         },
         // A handle holds no fold state. Each name below WAS a field here, and each is now an anchor
         // the crate owns; one reappearing means the Swift face started deciding again, in parallel.
         Claim::Lacks {
             path: SWIFT_DETECTOR,
-            pattern: "lastEmittedName|lastEmittedIntent|lastEmittedStatus =|hookAuthority|lastNotificationKind|agentOwnsTitle|lastAuthoritativeAt",
+            pattern: "lastEmittedName|lastEmittedIntent|lastEmittedStatus \
+                      =|hookAuthority|lastNotificationKind|agentOwnsTitle|lastAuthoritativeAt",
             view: View::Code,
             message: "ClaudePaneDetector.swift grew fold state back — every anchor belongs to \
                       rust/slopdesk-agent::detector (docs/50)",
@@ -191,13 +200,15 @@ pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
                 "fn topic_line(",
                 "fn block_kind(",
             ],
-            message: "rust/slopdesk-agent/src/detector.rs lost {entry} — the fusion is one place or it is two",
+            message: "rust/slopdesk-agent/src/detector.rs lost {entry} — the fusion is one place or it is \
+                      two",
         },
         // The probe file is the shim half of that split, and it must stay a shim: the moment it
         // folds a signal or holds an emit anchor it has become the reducer again, under a new name.
         Claim::Lacks {
             path: SWIFT_FOREGROUND,
-            pattern: "ClaudeStatusMachine|lastEmitted|struct Emission|mutating func sample|mutating func tick",
+            pattern: "ClaudeStatusMachine|lastEmitted|struct Emission|mutating func sample|mutating func \
+                      tick",
             view: View::Code,
             message: "ForegroundProcessProbes.swift decides something — the probes resolve a NAME, \
                       ClaudePaneDetector folds it (docs/50)",
@@ -276,10 +287,10 @@ pub fn one_vocabulary_of_secret_shapes(tree: &Tree) -> Report {
 
 /// What a fresh install carries is spelled once
 ///
-/// The product defaults sat in a Swift `init`'s default arguments AND in the config crate's own test
-/// fixture, six values apiece with nothing connecting the two lists. A fixture that restates the
-/// other language's constants is the cross-language mirror `CLAUDE.md` bans, and the two colours
-/// were already the same literal in both files.
+/// The product defaults sat in a Swift `init`'s default arguments AND in the config crate's own
+/// test fixture, six values apiece with nothing connecting the two lists. A fixture that restates
+/// the other language's constants is the cross-language mirror `CLAUDE.md` bans, and the two
+/// colours were already the same literal in both files.
 #[must_use]
 pub fn what_a_fresh_install_carries(tree: &Tree) -> Report {
     let claims = [
@@ -348,7 +359,10 @@ mod tests {
                 super::SWIFT_BADGE_KIND,
                 "public enum TabBadgeRung: UInt8 {\n    case none\n}\n",
             )
-            .write("rust/slopdesk-agent/src/badge.rs", "pub const EVERY: [Self; 1] = [];\n");
+            .write(
+                "rust/slopdesk-agent/src/badge.rs",
+                "pub const EVERY: [Self; 1] = [];\n",
+            );
         assert!(!super::one_badge_ladder_for_a_tab_row(&fixture.tree()).is_clean());
 
         // And the ladder walked in Swift again.
@@ -401,8 +415,8 @@ mod tests {
             )
             .write(
                 "rust/slopdesk-agent/src/detector.rs",
-                "fn sample(\nfn hook(\nfn report(\nfn tick(\nfn screen(\nfn title(\nfn user_input(\n\
-                 fn reestablish_on_reattach(\nfn intent_line(\nfn topic_line(\nfn block_kind(\n",
+                "fn sample(\nfn hook(\nfn report(\nfn tick(\nfn screen(\nfn title(\nfn user_input(\nfn \
+                 reestablish_on_reattach(\nfn intent_line(\nfn topic_line(\nfn block_kind(\n",
             );
     }
 
@@ -435,8 +449,8 @@ mod tests {
                 .write(super::SWIFT_REDACTOR, "slopdesk_ws_redact_secrets\n")
                 .write(
                     super::SWIFT_SECRET_PASTE,
-                    "slopdesk_ws_paste_risk\nslopdesk_ws_looks_secret\npublic enum PasteRisk {\n    \
-                     case none\n    case likely\n}\n",
+                    "slopdesk_ws_paste_risk\nslopdesk_ws_looks_secret\npublic enum PasteRisk {\n    case \
+                     none\n    case likely\n}\n",
                 )
                 .write(
                     "rust/slopdesk-workspace/src/secrets.rs",
@@ -465,8 +479,8 @@ mod tests {
                 .write(super::SWIFT_TERMPREFS, "slopdesk_terminal_factory_text\n")
                 .write(
                     "rust/slopdesk-terminal/src/config.rs",
-                    "pub const fn factory\nFACTORY_A\nFACTORY_B\nFACTORY_C\nFACTORY_D\nFACTORY_E\n\
-                     FACTORY_F\nFACTORY_G\n",
+                    "pub const fn \
+                     factory\nFACTORY_A\nFACTORY_B\nFACTORY_C\nFACTORY_D\nFACTORY_E\nFACTORY_F\nFACTORY_G\n",
                 );
         };
         seed(&fixture);

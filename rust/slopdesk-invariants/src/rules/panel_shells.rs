@@ -133,10 +133,10 @@ pub fn one_panel_vocabulary_four_surfaces(tree: &Tree) -> Report {
 /// with no design token and no layout decision in them. A representable back in the phone's target
 /// would be a second mount racing the same layer.
 ///
-/// ⚠️ ONE MODIFIER FOLD, WITHIN THE PANELS. `AndroidScreenNSView` carried a private six-line copy for
-/// exactly one increment, because the shared one sat one target UP while the view was still in the
-/// phone's half. Both are in the floor now; a second walk in either panel target is that copy back.
-/// Scoped to the panel targets on purpose — `SlopDeskVideoHost/InputInjector` and
+/// ⚠️ ONE MODIFIER FOLD, WITHIN THE PANELS. `AndroidScreenNSView` carried a private six-line copy
+/// for exactly one increment, because the shared one sat one target UP while the view was still in
+/// the phone's half. Both are in the floor now; a second walk in either panel target is that copy
+/// back. Scoped to the panel targets on purpose — `SlopDeskVideoHost/InputInjector` and
 /// `SlopDeskVideoClient/VideoWindowView` fold the same flags for the GUI-video path, which is a
 /// different direction over a different wire, and naming them here would be pinning a coincidence.
 #[must_use]
@@ -195,20 +195,18 @@ pub fn two_device_panels_drawn_twice(tree: &Tree) -> Report {
             rescued_by: Some(r"#if os\(iOS\)"),
             view: View::Raw,
             exempt: &[],
-            message: "{files} lost its iOS gate — the Mac draws these in AppKit now (docs/56, \
-                      increment 52)",
+            message: "{files} lost its iOS gate — the Mac draws these in AppKit now (docs/56, increment 52)",
         },
         Claim::Names {
             path: "Sources/SlopDeskDevicePanels/Simulator/SimulatorScreenSurface.swift",
             needle: "NSView",
-            message: "SimulatorScreenSurface no longer holds the display-layer NSView (docs/56, \
-                      increment 52)",
+            message: "SimulatorScreenSurface no longer holds the display-layer NSView (docs/56, increment \
+                      52)",
         },
         Claim::Names {
             path: "Sources/SlopDeskDevicePanels/Android/AndroidScreenNSView.swift",
             needle: "NSView",
-            message: "AndroidScreenNSView no longer holds the display-layer NSView (docs/56, \
-                      increment 52)",
+            message: "AndroidScreenNSView no longer holds the display-layer NSView (docs/56, increment 52)",
         },
         // Comments STRIPPED first: both files' headers name the representable they lost, and a gate
         // that cannot quote the rule it guards is a gate nobody may document.
@@ -255,15 +253,15 @@ pub fn two_device_panels_drawn_twice(tree: &Tree) -> Report {
 ///
 /// Increment 53. The two `AppKit` halves each grew a `Mac*Parts.swift`, and eleven of the shells in
 /// them were the same file twice: the keyed loop, the two label helpers, the section header, the
-/// plate tray, the glyph button, the spinner, the search plate, the veil, the row shell and the flow
-/// grid. They are `MacDevicePanelParts.swift` now.
+/// plate tray, the glyph button, the spinner, the search plate, the veil, the row shell and the
+/// flow grid. They are `MacDevicePanelParts.swift` now.
 ///
 /// THE TYPE IS THE SIGNATURE, and it is the only thing standing between this merge and the device
-/// abstraction increment 52b banned. A shell taking `String`, `NSView`, `SFSymbol` or nothing at all
-/// is CHROME and belongs in one file; a function taking a `SimulatorDevice`, a `SimulatorFact`, an
-/// `AndroidDevice`, an `AndroidFact` or either `Ink` is PROTOCOL and may never be folded — the two
-/// panels share not one byte of wire, so a common device vocabulary would be an abstraction over a
-/// coincidence.
+/// abstraction increment 52b banned. A shell taking `String`, `NSView`, `SFSymbol` or nothing at
+/// all is CHROME and belongs in one file; a function taking a `SimulatorDevice`, a `SimulatorFact`,
+/// an `AndroidDevice`, an `AndroidFact` or either `Ink` is PROTOCOL and may never be folded — the
+/// two panels share not one byte of wire, so a common device vocabulary would be an abstraction
+/// over a coincidence.
 ///
 /// The other direction: a shell that went down must not grow back beside one caller. Each of the
 /// nine is a `Mac*` name that may be DECLARED exactly once, and a re-minted copy compiles perfectly
@@ -272,10 +270,10 @@ pub fn two_device_panels_drawn_twice(tree: &Tree) -> Report {
 /// Increment 55 is the same argument one floor out. The four-attribute dictionary that makes a caps
 /// micro-heading — the instrument face at `Typeface.small`, `.uppercased()`, and
 /// `Typeface.instrumentTracking` kerning — was open-coded SIX times, and five of them even carried
-/// their own copy of the "wide enough to read as engraving" comment. `MacCapsLabel.swift` is the one
-/// recipe, and the kerning constant is the tell that cannot be faked: any seventh copy has to spell
-/// `instrumentTracking` to look the same. The INK is deliberately not pinned — an overlay's ladder is
-/// not a page's, and the six sites disagree on purpose.
+/// their own copy of the "wide enough to read as engraving" comment. `MacCapsLabel.swift` is the
+/// one recipe, and the kerning constant is the tell that cannot be faked: any seventh copy has to
+/// spell `instrumentTracking` to look the same. The INK is deliberately not pinned — an overlay's
+/// ladder is not a page's, and the six sites disagree on purpose.
 #[must_use]
 pub fn one_set_of_shells_and_one_caps_heading(tree: &Tree) -> Report {
     let claims = [
@@ -376,7 +374,10 @@ pub fn one_design_floor_two_renderers(tree: &Tree) -> Report {
             "Sources/SlopDeskPhoneUI/DesignSystem/StatusDotView.swift",
             "AgentSpinner",
         ),
-        ("Sources/SlopDeskMacUI/Overlays/MacAgentGlyph.swift", "AgentSpinner"),
+        (
+            "Sources/SlopDeskMacUI/Overlays/MacAgentGlyph.swift",
+            "AgentSpinner",
+        ),
         (
             "Sources/SlopDeskPhoneUI/DesignSystem/VectorIconView.swift",
             "SVGPath",
@@ -417,8 +418,8 @@ pub fn one_design_floor_two_renderers(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &[],
-            message: "{files} imported a UI target from the design floor — it is BELOW both halves, and \
-                      the layering says so",
+            message: "{files} imported a UI target from the design floor — it is BELOW both halves, and the \
+                      layering says so",
         },
         Claim::MentionsUnder {
             root: "Sources/SlopDeskMacUI",
@@ -438,15 +439,19 @@ mod tests {
         fixture
             .write(
                 super::PHONE_SURFACES,
-                "CodePanelPresentation CodeOpenGateReading\n\
-                 CodePanelPresentation.workbench(state)\n.task(id: pollKey) { await poll() }\n",
+                "CodePanelPresentation \
+                 CodeOpenGateReading\nCodePanelPresentation.workbench(state)\n.task(id: pollKey) { await \
+                 poll() }\n",
             )
             .write(
                 super::MAC_SURFACES,
                 "CodePanelPresentation\nCodePanelPresentation.workbench(state)\n",
             )
             .write(super::MAC_EMPTY_STATES, "CodeOpenGateReading\n")
-            .write(super::PRESENTATION, "package static let clippedTitleBarHeight = 30.0\n")
+            .write(
+                super::PRESENTATION,
+                "package static let clippedTitleBarHeight = 30.0\n",
+            )
     }
 
     #[test]
@@ -458,9 +463,8 @@ mod tests {
         // The bug's signature: a task per branch, restarting the loop it caused.
         fixture.write(
             super::PHONE_SURFACES,
-            "CodePanelPresentation CodeOpenGateReading\n\
-             CodePanelPresentation.workbench(state)\n\
-             .task(id: pollKey) { await poll() }\n.task(id: pollKey) { await poll() }\n",
+            "CodePanelPresentation CodeOpenGateReading\nCodePanelPresentation.workbench(state)\n.task(id: \
+             pollKey) { await poll() }\n.task(id: pollKey) { await poll() }\n",
         );
         assert!(!super::one_panel_vocabulary_four_surfaces(&fixture.tree()).is_clean());
 
@@ -483,10 +487,22 @@ mod tests {
 
     fn panels(fixture: &Fixture) -> &Fixture {
         for (path, face) in [
-            ("Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorSurface.swift", "SimulatorSidebarModel"),
-            ("Sources/SlopDeskMacUI/Panel/Android/MacAndroidSurface.swift", "AndroidSidebarModel"),
-            ("Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift", "SimulatorPresentation"),
-            ("Sources/SlopDeskMacUI/Panel/Android/MacAndroidDeviceList.swift", "AndroidPresentation"),
+            (
+                "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorSurface.swift",
+                "SimulatorSidebarModel",
+            ),
+            (
+                "Sources/SlopDeskMacUI/Panel/Android/MacAndroidSurface.swift",
+                "AndroidSidebarModel",
+            ),
+            (
+                "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorDeviceList.swift",
+                "SimulatorPresentation",
+            ),
+            (
+                "Sources/SlopDeskMacUI/Panel/Android/MacAndroidDeviceList.swift",
+                "AndroidPresentation",
+            ),
         ] {
             fixture.write(path, &format!("{face}\n"));
         }
@@ -534,7 +550,10 @@ mod tests {
 
     fn shells(fixture: &Fixture) -> &Fixture {
         fixture
-            .write(super::MAC_SHARED_PARTS, "final class MacDevicePanelLoop: NSView {}\n")
+            .write(
+                super::MAC_SHARED_PARTS,
+                "final class MacDevicePanelLoop: NSView {}\n",
+            )
             .write(
                 "Sources/SlopDeskMacUI/Panel/Simulator/MacSimulatorParts.swift",
                 "SimulatorPresentation.copyTitle\n",
@@ -545,8 +564,8 @@ mod tests {
             )
             .write(
                 super::MAC_CAPS_RECIPE,
-                "let tracking = Typeface.instrumentTracking\n\
-                 macCapsString(words, color: color, weight: weight)\n",
+                "let tracking = Typeface.instrumentTracking\nmacCapsString(words, color: color, weight: \
+                 weight)\n",
             )
     }
 
@@ -590,13 +609,22 @@ mod tests {
 
     fn floor(fixture: &Fixture) -> &Fixture {
         fixture
-            .write("Sources/SlopDeskSlate/SlateDesign.swift", "enum Slate { static let ink = 1 }\n")
+            .write(
+                "Sources/SlopDeskSlate/SlateDesign.swift",
+                "enum Slate { static let ink = 1 }\n",
+            )
             .write(
                 "Sources/SlopDeskPhoneUI/DesignSystem/StatusDotView.swift",
                 "AgentSpinner.phase(at: now)\n",
             )
-            .write("Sources/SlopDeskMacUI/Overlays/MacAgentGlyph.swift", "AgentSpinner.phase(at: now)\n")
-            .write("Sources/SlopDeskPhoneUI/DesignSystem/VectorIconView.swift", "SVGPath.parse(d)\n")
+            .write(
+                "Sources/SlopDeskMacUI/Overlays/MacAgentGlyph.swift",
+                "AgentSpinner.phase(at: now)\n",
+            )
+            .write(
+                "Sources/SlopDeskPhoneUI/DesignSystem/VectorIconView.swift",
+                "SVGPath.parse(d)\n",
+            )
             .write(
                 "Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift",
                 "import SlopDeskSlate\nSVGPath.parse(d)\n",
@@ -618,12 +646,18 @@ mod tests {
 
         // The floor climbing is a cycle in the layering.
         floor(&fixture);
-        fixture.write("Sources/SlopDeskSlate/SlateDesign.swift", "import SlopDeskPhoneUI\n");
+        fixture.write(
+            "Sources/SlopDeskSlate/SlateDesign.swift",
+            "import SlopDeskPhoneUI\n",
+        );
         assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
 
         // And the Mac reading the ladder from the draining target instead of the floor.
         floor(&fixture);
-        fixture.write("Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift", "SVGPath.parse(d)\n");
+        fixture.write(
+            "Sources/SlopDeskMacUI/Columns/MacSidebarRow.swift",
+            "SVGPath.parse(d)\n",
+        );
         assert!(!super::one_design_floor_two_renderers(&fixture.tree()).is_clean());
     }
 }

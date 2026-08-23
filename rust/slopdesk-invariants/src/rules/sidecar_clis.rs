@@ -3,8 +3,8 @@
 //! Ported from `scripts/check-supervisor.sh` §§13–16c. `slopdesk-ctl`, `slopdesk-codeseed`,
 //! `slopdesk-agenthooks` and `slopdesk-probe` are contracts six through nine, and they share the
 //! failure that makes them worth a gate at all: NOTHING ERRORS. A renamed verb is a clean
-//! `unknown method` or a `usage()` and a non-zero exit, which every caller here reads as an ordinary
-//! "no", and both suites stay green while the feature is simply gone.
+//! `unknown method` or a `usage()` and a non-zero exit, which every caller here reads as an
+//! ordinary "no", and both suites stay green while the feature is simply gone.
 //!
 //! So the verb sets are compared as SETS, from the two switches themselves — never as a list
 //! maintained here, which would go stale in exactly the direction that hides the drift.
@@ -67,8 +67,8 @@ const POINTER_DOOR: &str = "rust/slopdesk-ffi/src/pointer_shape.rs";
 /// clean error is exactly what makes this drift silent in the way that matters: the agent that ran
 /// `slopdesk-ctl read` sees a failed command, not a broken build, and both suites stay green.
 ///
-/// `subscribe` is spelled apart from the rest on both sides — the host handles it BEFORE the request
-/// switch, because it hijacks the connection into a stream, and the CLI sends it from
+/// `subscribe` is spelled apart from the rest on both sides — the host handles it BEFORE the
+/// request switch, because it hijacks the connection into a stream, and the CLI sends it from
 /// `Control::stream`, reached by both the `subscribe` and `events` subcommands. The shell added the
 /// string to both extracted sets by hand, which covered nothing: adding one member to both sides of
 /// an equality cannot fail. Here each side is asserted to still SPELL it, which is what the note in
@@ -84,55 +84,52 @@ const POINTER_DOOR: &str = "rust/slopdesk-ffi/src/pointer_shape.rs";
 /// PASS.
 #[must_use]
 pub fn the_ctl_verb_sets_are_one_alphabet(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::SameSet {
-                label: "ctl verbs",
-                swift: Extract::code(CTL_LISTENER, r#"^        case "([a-z-]+)":$"#),
-                rust: Extract::code(CTL_COMMANDS, r#"ctl\.call\(\s*"([a-z-]+)""#),
-            },
-            Claim::Matches {
-                path: CTL_LISTENER,
-                pattern: r#""subscribe""#,
-                view: View::Code,
-                message: "AgentControlListener no longer answers the streaming verb — `subscribe` \
-                          is handled BEFORE the request switch, so the verb-set comparison cannot \
-                          see it and it is asserted here or nowhere (docs/50)",
-            },
-            Claim::Matches {
-                path: CTL_COMMANDS,
-                pattern: r#""subscribe""#,
-                view: View::Code,
-                message: "rust/slopdesk-ctl no longer sends the streaming verb — `subscribe` leaves \
-                          Control::stream rather than ctl.call, so the verb-set comparison cannot \
-                          see it and it is asserted here or nowhere (docs/50)",
-            },
-            Claim::Absent {
-                path: "Sources/SlopDeskCtlCore",
-                message: "the agent CLI is rust/slopdesk-ctl, and the Swift executable plus its core \
-                          were deleted in the same change (docs/DECISIONS.md, the ctl port)",
-            },
-            Claim::Absent {
-                path: "Sources/slopdesk-ctl",
-                message: "the agent CLI is rust/slopdesk-ctl, built by `make ctl` \
-                          (docs/DECISIONS.md, the ctl port)",
-            },
-            Claim::Absent {
-                path: "Tests/SlopDeskCtlTests",
-                message: "the agent CLI's tests are the Rust crate's — a Swift suite here is the \
-                          cross-language mirror the tree forbids (docs/DECISIONS.md)",
-            },
-            Claim::Lacks {
-                path: "Package.swift",
-                pattern: r#""SlopDeskCtlCore""#,
-                view: View::Code,
-                message: "Package.swift declares SlopDeskCtlCore again — the agent CLI is Rust, and \
-                          the two NDJSON line helpers the `slopdesk` CLI still needed moved into \
-                          ClientControlProtocol (docs/DECISIONS.md)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::SameSet {
+            label: "ctl verbs",
+            swift: Extract::code(CTL_LISTENER, r#"^        case "([a-z-]+)":$"#),
+            rust: Extract::code(CTL_COMMANDS, r#"ctl\.call\(\s*"([a-z-]+)""#),
+        },
+        Claim::Matches {
+            path: CTL_LISTENER,
+            pattern: r#""subscribe""#,
+            view: View::Code,
+            message: "AgentControlListener no longer answers the streaming verb — `subscribe` is handled \
+                      BEFORE the request switch, so the verb-set comparison cannot see it and it is \
+                      asserted here or nowhere (docs/50)",
+        },
+        Claim::Matches {
+            path: CTL_COMMANDS,
+            pattern: r#""subscribe""#,
+            view: View::Code,
+            message: "rust/slopdesk-ctl no longer sends the streaming verb — `subscribe` leaves \
+                      Control::stream rather than ctl.call, so the verb-set comparison cannot see it and it \
+                      is asserted here or nowhere (docs/50)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskCtlCore",
+            message: "the agent CLI is rust/slopdesk-ctl, and the Swift executable plus its core were \
+                      deleted in the same change (docs/DECISIONS.md, the ctl port)",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-ctl",
+            message: "the agent CLI is rust/slopdesk-ctl, built by `make ctl` (docs/DECISIONS.md, the ctl \
+                      port)",
+        },
+        Claim::Absent {
+            path: "Tests/SlopDeskCtlTests",
+            message: "the agent CLI's tests are the Rust crate's — a Swift suite here is the cross-language \
+                      mirror the tree forbids (docs/DECISIONS.md)",
+        },
+        Claim::Lacks {
+            path: "Package.swift",
+            pattern: r#""SlopDeskCtlCore""#,
+            view: View::Code,
+            message: "Package.swift declares SlopDeskCtlCore again — the agent CLI is Rust, and the two \
+                      NDJSON line helpers the `slopdesk` CLI still needed moved into ClientControlProtocol \
+                      (docs/DECISIONS.md)",
+        },
+    ])
 }
 
 /// The profile seeder's subcommands are one alphabet
@@ -141,67 +138,64 @@ pub fn the_ctl_verb_sets_are_one_alphabet(tree: &Tree) -> Report {
 /// subcommand per question, and reads one JSON object back. Which makes the drift quieter than any
 /// wire's — a renamed subcommand is `usage()` on stdout and a non-zero exit, `CodeSeed.ask`
 /// answering `nil`, and, for `launch-args`, the code panel reporting itself UNAVAILABLE. Nothing is
-/// logged, because an unavailable panel is exactly what a host with no seeder is supposed to report.
+/// logged, because an unavailable panel is exactly what a host with no seeder is supposed to
+/// report.
 ///
 /// `sync-font` is spelled across lines on the Swift side — its three flags follow it in the array —
 /// so the extraction reads `ask([` and the first quoted string after it, wherever the wrap put it.
 ///
-/// The resources are the seeder's INPUT, and a second copy under the Swift target is a second answer
-/// to "what does a pristine settings file say".
+/// The resources are the seeder's INPUT, and a second copy under the Swift target is a second
+/// answer to "what does a pristine settings file say".
 ///
 /// BREAK-TEST: renamed `"missing-extensions"` in the seeder's switch ⇒ FAIL "codeseed
 /// subcommands". Separately restored `static let seededUserSettings` under Sources/ ⇒ FAIL "a Swift
-/// profile seeder is back". Separately added `.copy("Resources")` to Package.swift ⇒ FAIL "bundles a
-/// Resources directory again". All three restored from /tmp; PASS.
+/// profile seeder is back". Separately added `.copy("Resources")` to Package.swift ⇒ FAIL "bundles
+/// a Resources directory again". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_codeseed_subcommands_are_one_alphabet(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::SameSet {
-                label: "codeseed subcommands",
-                swift: Extract::code(CODESEED_FACE, r#"ask\(\[\s*"([a-z-]+)""#),
-                rust: Extract::code(CODESEED_MAIN, r#"^        "([a-z-]+)" =>"#),
-            },
-            Claim::NoneUnder {
-                roots: &["Sources"],
-                extensions: SWIFT,
-                pattern: r"(static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[],
-                message: "a Swift profile seeder is back in Sources/ — slopdesk-codeseed owns the \
-                          code-server profile, and the ~2.7k lines it replaced went in one change \
-                          (docs/DECISIONS.md, stage 22): {files}",
-            },
-            Claim::Absent {
-                path: "Sources/SlopDeskHost/CodeServerManagerSeedHistory.swift",
-                message: "the seed history lives in rust/slopdesk-codeseed (docs/DECISIONS.md, \
-                          stage 22)",
-            },
-            Claim::Absent {
-                path: "Sources/SlopDeskHost/Resources",
-                message: "the seed inputs are rust/slopdesk-codeseed/resources, and a second copy \
-                          is a second answer to what a pristine settings file says",
-            },
-            Claim::Lacks {
-                path: "Package.swift",
-                pattern: r#"\.copy\("Resources"\)"#,
-                view: View::Code,
-                message: "Package.swift bundles a Resources directory again — the seed inputs are \
-                          rust/slopdesk-codeseed/resources (docs/DECISIONS.md, stage 22)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::SameSet {
+            label: "codeseed subcommands",
+            swift: Extract::code(CODESEED_FACE, r#"ask\(\[\s*"([a-z-]+)""#),
+            rust: Extract::code(CODESEED_MAIN, r#"^        "([a-z-]+)" =>"#),
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(static (let|var|func)|let|var|func) (seededUserSettings|obsoleteSeeds|themeExtension[A-Za-z]*|bridgeExtension[A-Za-z]*|registerExtension|unregisterExtension|bundledMarketplaceExtensions|retiredExtensions|ownThemeResources)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift profile seeder is back in Sources/ — slopdesk-codeseed owns the code-server \
+                      profile, and the ~2.7k lines it replaced went in one change (docs/DECISIONS.md, stage \
+                      22): {files}",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskHost/CodeServerManagerSeedHistory.swift",
+            message: "the seed history lives in rust/slopdesk-codeseed (docs/DECISIONS.md, stage 22)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskHost/Resources",
+            message: "the seed inputs are rust/slopdesk-codeseed/resources, and a second copy is a second \
+                      answer to what a pristine settings file says",
+        },
+        Claim::Lacks {
+            path: "Package.swift",
+            pattern: r#"\.copy\("Resources"\)"#,
+            view: View::Code,
+            message: "Package.swift bundles a Resources directory again — the seed inputs are \
+                      rust/slopdesk-codeseed/resources (docs/DECISIONS.md, stage 22)",
+        },
+    ])
 }
 
 /// The hooks installer's subcommands are one alphabet, and the relay stays empty-handed
 ///
 /// The EIGHTH contract, forked like the seeder rather than dialled, and drifting in two ways at
-/// once. A renamed subcommand is `usage()` and a non-zero exit, which `AgentHooks.ask` reads as "not
-/// installed" — the Settings row then shows a green offer to install something that fails. Nothing
-/// logs.
+/// once. A renamed subcommand is `usage()` and a non-zero exit, which `AgentHooks.ask` reads as
+/// "not installed" — the Settings row then shows a green offer to install something that fails.
+/// Nothing logs.
 ///
 /// The MARKER is the installed basename. `hook_path` joins `HOOK_MARKER` rather than spelling
 /// `slopdesk-agent` a second time, so the two cannot drift; what is pinned is that the CONSTRUCTION
@@ -209,80 +203,75 @@ pub fn the_codeseed_subcommands_are_one_alphabet(tree: &Tree) -> Report {
 /// stops matching what an install wrote.
 ///
 /// The relay takes NO dependencies. `serde_json` is the installer's, and it stays out of the binary
-/// Claude Code forks twice per tool call only because nothing the relay's `main` reaches can see it.
-/// A `use serde_json` in the relay's own two files would not fail a build, a test or a lint — it
-/// would just make every tool call slower, which is the one regression this tree has no other way to
-/// notice.
+/// Claude Code forks twice per tool call only because nothing the relay's `main` reaches can see
+/// it. A `use serde_json` in the relay's own two files would not fail a build, a test or a lint —
+/// it would just make every tool call slower, which is the one regression this tree has no other
+/// way to notice.
 ///
 /// BREAK-TEST: renamed `"uninstall"` in the installer's switch ⇒ FAIL "agenthooks subcommands".
 /// Separately rewrote `hook_path` to join the literal ⇒ FAIL "no longer builds the installed name
-/// from `HOOK_MARKER`". Separately added `use serde_json;` to the relay's `main.rs` ⇒ FAIL "reaches a
-/// dependency". All three restored from /tmp; PASS.
+/// from `HOOK_MARKER`". Separately added `use serde_json;` to the relay's `main.rs` ⇒ FAIL "reaches
+/// a dependency". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::SameSet {
-                label: "agenthooks subcommands",
-                swift: Extract::code(AGENTHOOKS_FACE, r#"(?:ask|answer)\(\["([a-z]+)"\]\)"#),
-                rust: Extract::code(AGENTHOOKS_MAIN, r#"^        "([a-z]+)" =>"#),
-            },
-            Claim::Within {
-                path: HOOK_INSTALL,
-                start: HOOK_PATH.0,
-                end: HOOK_PATH.1,
-                pattern: r#"join\("hooks"\)"#,
-                view: View::Code,
-                message: "install::hook_path no longer joins the hooks directory — the merge \
-                          sentinel and the installed basename must be one constant \
-                          (docs/DECISIONS.md, stage 23)",
-            },
-            Claim::Within {
-                path: HOOK_INSTALL,
-                start: HOOK_PATH.0,
-                end: HOOK_PATH.1,
-                pattern: r"\.join\(HOOK_MARKER\)",
-                view: View::Code,
-                message: "install::hook_path no longer builds the installed name from HOOK_MARKER — \
-                          the day the literal is written back in is the day an uninstall silently \
-                          stops matching what an install wrote (docs/DECISIONS.md, stage 23)",
-            },
-            Claim::Lacks {
-                path: "rust/slopdesk-hook/src/main.rs",
-                pattern: r"^\s*use +(serde|serde_json)\b",
-                view: View::Code,
-                message: "the hook relay reaches a dependency — its cost IS process startup, it is \
-                          forked twice per tool call, and this would fail no build, test or lint \
-                          (docs/DECISIONS.md, stage 23)",
-            },
-            Claim::Lacks {
-                path: "rust/slopdesk-hook/src/lib.rs",
-                pattern: r"^\s*use +(serde|serde_json)\b",
-                view: View::Code,
-                message: "the hook relay reaches a dependency — its cost IS process startup, it is \
-                          forked twice per tool call, and this would fail no build, test or lint \
-                          (docs/DECISIONS.md, stage 23)",
-            },
-            Claim::NoneUnder {
-                roots: &["Sources"],
-                extensions: SWIFT,
-                pattern: r"(enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[],
-                message: "a Swift hooks installer is back in Sources/ — slopdesk-agenthooks owns \
-                          ~/.claude/settings.json, and the merge, the marker, the event list and \
-                          the paths moved in one change (docs/DECISIONS.md, stage 23): {files}",
-            },
-            Claim::Absent {
-                path: "Sources/SlopDeskHost/AgentInstaller.swift",
-                message: "the merge lives in rust/slopdesk-hook/src/install.rs \
-                          (docs/DECISIONS.md, stage 23)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::SameSet {
+            label: "agenthooks subcommands",
+            swift: Extract::code(AGENTHOOKS_FACE, r#"(?:ask|answer)\(\["([a-z]+)"\]\)"#),
+            rust: Extract::code(AGENTHOOKS_MAIN, r#"^        "([a-z]+)" =>"#),
+        },
+        Claim::Within {
+            path: HOOK_INSTALL,
+            start: HOOK_PATH.0,
+            end: HOOK_PATH.1,
+            pattern: r#"join\("hooks"\)"#,
+            view: View::Code,
+            message: "install::hook_path no longer joins the hooks directory — the merge sentinel and the \
+                      installed basename must be one constant (docs/DECISIONS.md, stage 23)",
+        },
+        Claim::Within {
+            path: HOOK_INSTALL,
+            start: HOOK_PATH.0,
+            end: HOOK_PATH.1,
+            pattern: r"\.join\(HOOK_MARKER\)",
+            view: View::Code,
+            message: "install::hook_path no longer builds the installed name from HOOK_MARKER — the day the \
+                      literal is written back in is the day an uninstall silently stops matching what an \
+                      install wrote (docs/DECISIONS.md, stage 23)",
+        },
+        Claim::Lacks {
+            path: "rust/slopdesk-hook/src/main.rs",
+            pattern: r"^\s*use +(serde|serde_json)\b",
+            view: View::Code,
+            message: "the hook relay reaches a dependency — its cost IS process startup, it is forked twice \
+                      per tool call, and this would fail no build, test or lint (docs/DECISIONS.md, stage \
+                      23)",
+        },
+        Claim::Lacks {
+            path: "rust/slopdesk-hook/src/lib.rs",
+            pattern: r"^\s*use +(serde|serde_json)\b",
+            view: View::Code,
+            message: "the hook relay reaches a dependency — its cost IS process startup, it is forked twice \
+                      per tool call, and this would fail no build, test or lint (docs/DECISIONS.md, stage \
+                      23)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(enum|struct|final class|static (let|var|func)) (AgentInstaller|hookMarker|installedEvents|hookCommand|entryIsOurs)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift hooks installer is back in Sources/ — slopdesk-agenthooks owns \
+                      ~/.claude/settings.json, and the merge, the marker, the event list and the paths \
+                      moved in one change (docs/DECISIONS.md, stage 23): {files}",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskHost/AgentInstaller.swift",
+            message: "the merge lives in rust/slopdesk-hook/src/install.rs (docs/DECISIONS.md, stage 23)",
+        },
+    ])
 }
 
 /// The probe's subcommands are one alphabet, and emptiness is an answer
@@ -306,65 +295,60 @@ pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
 /// "Swift spawns git or infocmp again". All four restored from /tmp; PASS.
 #[must_use]
 pub fn the_probe_subcommands_are_one_alphabet(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::SameSet {
-                label: "probe subcommands",
-                swift: Extract::code(PROBE_FACE, r#"(?:ask|askBytes)\(\["([a-z-]+)""#),
-                rust: Extract::code(PROBE_MAIN, r#"^        "([a-z-]+)" =>"#),
-            },
-            Claim::Lacks {
-                path: PROBE_FACE,
-                pattern: r"\bdata\b[A-Za-z0-9_.]*\.isEmpty|\.isEmpty *\? *nil",
-                view: View::Code,
-                message: "HostProbe folds an empty answer into a missing one — emptiness is the \
-                          probe's exit code's job, and branching on the byte count turns every \
-                          unchanged file into a .notFound without failing a build, a test or a lint \
-                          (docs/DECISIONS.md, stage 24)",
-            },
-            Claim::NoneUnder {
-                roots: &["Sources"],
-                extensions: SWIFT,
-                pattern: r"(struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[],
-                message: "a Swift git/session/terminfo parser is back in Sources/ — slopdesk-probe \
-                          owns porcelain, the slug, the diff bases and the TERM table \
-                          (docs/DECISIONS.md, stages 24 and 25): {files}",
-            },
-            Claim::NoneUnder {
-                roots: &["Sources"],
-                extensions: SWIFT,
-                pattern: r#""/usr/bin/(git|infocmp)""#,
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[],
-                message: "Swift spawns git or infocmp again — both belong inside slopdesk-probe, \
-                          and `lsof` is the one subprocess left on this side \
-                          (docs/DECISIONS.md, stages 24 and 25): {files}",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::SameSet {
+            label: "probe subcommands",
+            swift: Extract::code(PROBE_FACE, r#"(?:ask|askBytes)\(\["([a-z-]+)""#),
+            rust: Extract::code(PROBE_MAIN, r#"^        "([a-z-]+)" =>"#),
+        },
+        Claim::Lacks {
+            path: PROBE_FACE,
+            pattern: r"\bdata\b[A-Za-z0-9_.]*\.isEmpty|\.isEmpty *\? *nil",
+            view: View::Code,
+            message: "HostProbe folds an empty answer into a missing one — emptiness is the probe's exit \
+                      code's job, and branching on the byte count turns every unchanged file into a \
+                      .notFound without failing a build, a test or a lint (docs/DECISIONS.md, stage 24)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(struct|static (let|var|func)|private static func) (parseBranchHeader|parseStatusLine|statusNibble|packStatus|claudeProjectSlug|gitToplevel|gitStashCount|gitDiffArgumentPlan|resolveGitDiff|jsonlSessions|claudeSessions|opencodeSessions|sessionRoots|GhosttyTerminfoProbe|terminfoEntryExists|isGhosttyResolvable|effectiveTerm|liveProbe|runInfocmp)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift git/session/terminfo parser is back in Sources/ — slopdesk-probe owns \
+                      porcelain, the slug, the diff bases and the TERM table (docs/DECISIONS.md, stages 24 \
+                      and 25): {files}",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r#""/usr/bin/(git|infocmp)""#,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "Swift spawns git or infocmp again — both belong inside slopdesk-probe, and `lsof` is \
+                      the one subprocess left on this side (docs/DECISIONS.md, stages 24 and 25): {files}",
+        },
+    ])
 }
 
 /// The git status is linked, not forked, and it is asked in exactly one place
 ///
 /// `gitStatus` left the probe entirely: `rust/slopdesk-git` opens the repository once and answers
-/// from libgit2, linked into hostd through `slopdesk_git_status`. What that removed was FIVE process
-/// spawns per debounced `FSEvents` tick per watched repo — four `git` runs inside one fork of the
-/// probe — so a `git status` reappearing anywhere on this path is not a style question, it is the
-/// cost coming back.
+/// from libgit2, linked into hostd through `slopdesk_git_status`. What that removed was FIVE
+/// process spawns per debounced `FSEvents` tick per watched repo — four `git` runs inside one fork
+/// of the probe — so a `git status` reappearing anywhere on this path is not a style question, it
+/// is the cost coming back.
 ///
 /// Three things are pinned, because the port has three ways to be undone quietly. The face could be
-/// rewritten around a `Process` and every test would still pass, the answer being identical and only
-/// the spawns differing. A face that grew a fallback parser would be the two-implementations shape
-/// CLAUDE.md forbids, and would only show up under an unusual repo. And the verb-set rule above
-/// compares hostd's asks with the probe's arms, so a revived `git-status` arm passes it the moment
-/// somebody adds the Swift side back — this names the arm itself.
+/// rewritten around a `Process` and every test would still pass, the answer being identical and
+/// only the spawns differing. A face that grew a fallback parser would be the two-implementations
+/// shape CLAUDE.md forbids, and would only show up under an unusual repo. And the verb-set rule
+/// above compares hostd's asks with the probe's arms, so a revived `git-status` arm passes it the
+/// moment somebody adds the Swift side back — this names the arm itself.
 ///
 /// The porcelain PAIR is spelled once, in the crate that reads it off libgit2's bitflags. The shell
 /// banned two names that no longer exist anywhere: both functions were renamed when they moved into
@@ -380,85 +364,81 @@ pub fn the_probe_subcommands_are_one_alphabet(tree: &Tree) -> Report {
 /// back outside". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_git_status_is_linked_and_asked_once(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::Matches {
-                path: GIT_FACE,
-                pattern: r"slopdesk_git_status",
-                view: View::Code,
-                message: "HostGitStatus no longer calls slopdesk_git_status — the git line is back \
-                          on a subprocess, which is five spawns per debounced FSEvents tick per \
-                          watched repo and identical output (docs/55)",
-            },
-            Claim::Matches {
-                path: GIT_STATUS,
-                pattern: r"pub fn of_path",
-                view: View::Code,
-                message: "rust/slopdesk-git no longer answers of_path — the status engine moved \
-                          without its ratchet (docs/DECISIONS.md)",
-            },
-            Claim::Lacks {
-                path: PROBE_MAIN,
-                pattern: r#""git-status""#,
-                view: View::Code,
-                message: "slopdesk-probe answers git-status again — the status engine is \
-                          rust/slopdesk-git, LINKED, and the verb-set rule would accept this arm \
-                          the moment somebody added the Swift side back (docs/DECISIONS.md)",
-            },
-            Claim::Matches {
-                path: GIT_PORCELAIN,
-                pattern: r"pub const fn nibble\(character: char\) -> u8",
-                view: View::Code,
-                message: "rust/slopdesk-git::porcelain no longer holds the nibble table — the \
-                          client mirrors its inverse to name a change category, so it is a wire \
-                          contract and it has one master (docs/DECISIONS.md)",
-            },
-            Claim::Matches {
-                path: GIT_PORCELAIN,
-                pattern: r"pub const fn pack\(x: char, y: char\) -> u8",
-                view: View::Code,
-                message: "rust/slopdesk-git::porcelain no longer packs the porcelain pair into one \
-                          byte — golden/golden_vectors.json freezes that byte (docs/DECISIONS.md)",
-            },
-            Claim::NoneUnder {
-                roots: &["rust"],
-                extensions: &["rs"],
-                pattern: r"fn nibble\(character: char\) -> u8|fn pack\(x: char, y: char\) -> u8",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                // This crate is exempt because its own fixture for the ban has to SPELL the thing
-                // banned — a rule that cannot be tested without failing itself is a rule with no
-                // break-test, which is the one property every rule here is supposed to have.
-                exempt: &["rust/slopdesk-git/", "rust/slopdesk-invariants/"],
-                message: "the porcelain nibble table is back outside slopdesk-git::porcelain — one \
-                          table, one crate, because the old probe's copy lived beside a parser that \
-                          is gone: {files}",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Matches {
+            path: GIT_FACE,
+            pattern: r"slopdesk_git_status",
+            view: View::Code,
+            message: "HostGitStatus no longer calls slopdesk_git_status — the git line is back on a \
+                      subprocess, which is five spawns per debounced FSEvents tick per watched repo and \
+                      identical output (docs/55)",
+        },
+        Claim::Matches {
+            path: GIT_STATUS,
+            pattern: r"pub fn of_path",
+            view: View::Code,
+            message: "rust/slopdesk-git no longer answers of_path — the status engine moved without its \
+                      ratchet (docs/DECISIONS.md)",
+        },
+        Claim::Lacks {
+            path: PROBE_MAIN,
+            pattern: r#""git-status""#,
+            view: View::Code,
+            message: "slopdesk-probe answers git-status again — the status engine is rust/slopdesk-git, \
+                      LINKED, and the verb-set rule would accept this arm the moment somebody added the \
+                      Swift side back (docs/DECISIONS.md)",
+        },
+        Claim::Matches {
+            path: GIT_PORCELAIN,
+            pattern: r"pub const fn nibble\(character: char\) -> u8",
+            view: View::Code,
+            message: "rust/slopdesk-git::porcelain no longer holds the nibble table — the client mirrors \
+                      its inverse to name a change category, so it is a wire contract and it has one master \
+                      (docs/DECISIONS.md)",
+        },
+        Claim::Matches {
+            path: GIT_PORCELAIN,
+            pattern: r"pub const fn pack\(x: char, y: char\) -> u8",
+            view: View::Code,
+            message: "rust/slopdesk-git::porcelain no longer packs the porcelain pair into one byte — \
+                      golden/golden_vectors.json freezes that byte (docs/DECISIONS.md)",
+        },
+        Claim::NoneUnder {
+            roots: &["rust"],
+            extensions: &["rs"],
+            pattern: r"fn nibble\(character: char\) -> u8|fn pack\(x: char, y: char\) -> u8",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            // This crate is exempt because its own fixture for the ban has to SPELL the thing
+            // banned — a rule that cannot be tested without failing itself is a rule with no
+            // break-test, which is the one property every rule here is supposed to have.
+            exempt: &["rust/slopdesk-git/", "rust/slopdesk-invariants/"],
+            message: "the porcelain nibble table is back outside slopdesk-git::porcelain — one table, one \
+                      crate, because the old probe's copy lived beside a parser that is gone: {files}",
+        },
+    ])
 }
 
 /// The pointer tables are one table, and the raw value crosses unparsed
 ///
 /// `slopdesk_terminal::pointer` owns both of libghostty's pointer actions. This is pinned harder
-/// than its size suggests, because EVERY way it breaks is silent: a resize handle showing a hand, or
-/// a pointer hidden with no gesture that brings it back. Nothing fails to compile, nothing crashes,
-/// and `check-macos.sh` is the only thing that would ever have noticed.
+/// than its size suggests, because EVERY way it breaks is silent: a resize handle showing a hand,
+/// or a pointer hidden with no gesture that brings it back. Nothing fails to compile, nothing
+/// crashes, and `check-macos.sh` is the only thing that would ever have noticed.
 ///
-/// `OSCPointerShape` (34 cases) and `MouseVisibility` existed only so a Swift `switch` had something
-/// to switch over, which made THREE copies of one declaration order — libghostty's header, the
-/// mirror, the table — where any two could drift while compiling. The raw `int32_t` travels now, and
-/// a revived mirror reads like tidying while restoring the drift.
+/// `OSCPointerShape` (34 cases) and `MouseVisibility` existed only so a Swift `switch` had
+/// something to switch over, which made THREE copies of one declaration order — libghostty's
+/// header, the mirror, the table — where any two could drift while compiling. The raw `int32_t`
+/// travels now, and a revived mirror reads like tidying while restoring the drift.
 ///
-/// `PointerShapeToken`'s discriminants ARE the wire, so they are spelled with explicit raw values on
-/// both sides and asserted THROUGH the door. A case reordered under implicit numbering is a cursor
-/// swapped for another cursor with nothing to notice it.
+/// `PointerShapeToken`'s discriminants ARE the wire, so they are spelled with explicit raw values
+/// on both sides and asserted THROUGH the door. A case reordered under implicit numbering is a
+/// cursor swapped for another cursor with nothing to notice it.
 ///
 /// The ban's roots are `Sources`, `Tests` and `ThirdParty/ghostty/integration` — the same three the
-/// tree walks. The shell reached the last of those through a bare `ThirdParty/`, which read all 8 GB
-/// of the vendored checkout through single-threaded grep and cost four minutes of a thirty-nine
+/// tree walks. The shell reached the last of those through a bare `ThirdParty/`, which read all 8
+/// GB of the vendored checkout through single-threaded grep and cost four minutes of a thirty-nine
 /// second gate; here it is not a scope decision at all, because the walk never held the rest.
 ///
 /// BREAK-TEST: deleted `slopdesk_pointer_mouse_visible` from the visibility face ⇒ FAIL "stopped
@@ -467,54 +447,49 @@ pub fn the_git_status_is_linked_and_asked_once(tree: &Tree) -> Report {
 /// "stopped pinning its raw values". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_pointer_tables_are_one_table(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::Matches {
-                path: POINTER_SHAPE,
-                pattern: r"slopdesk_pointer_",
-                view: View::Code,
-                message: "PointerShapeMapping stopped asking the door — a pointer table decided in \
-                          Swift is a second table, and every way it breaks is silent (docs/56, \
-                          increment 50)",
-            },
-            Claim::Matches {
-                path: POINTER_VISIBILITY,
-                pattern: r"slopdesk_pointer_",
-                view: View::Code,
-                message: "MouseVisibilityMapping stopped asking the door — a pointer hidden with no \
-                          gesture that brings it back fails nothing and crashes nothing (docs/56, \
-                          increment 50)",
-            },
-            Claim::NoneUnder {
-                roots: &["Sources", "Tests", "ThirdParty/ghostty/integration"],
-                extensions: SWIFT,
-                pattern: r"enum OSCPointerShape|enum MouseVisibility[^M]",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[],
-                message: "a Swift mirror of a libghostty pointer enum is back — the raw int crosses \
-                          now, and a mirror restores three copies of one declaration order where \
-                          any two could drift while compiling (docs/56, increment 50): {files}",
-            },
-            Claim::Matches {
-                path: POINTER_SHAPE,
-                pattern: r"case arrow = 0",
-                view: View::Code,
-                message: "PointerShapeToken stopped pinning its raw values — its discriminants ARE \
-                          the wire, and a case reordered under implicit numbering is a cursor \
-                          swapped for another cursor (docs/56, increment 50)",
-            },
-            Claim::Matches {
-                path: POINTER_DOOR,
-                pattern: r"the_supported_shapes_cross_as_the_discriminants_swift_is_pinned_to",
-                view: View::Code,
-                message: "the door's discriminant test is gone — Swift's enum and Rust's can now \
-                          renumber apart (docs/56, increment 50)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Matches {
+            path: POINTER_SHAPE,
+            pattern: r"slopdesk_pointer_",
+            view: View::Code,
+            message: "PointerShapeMapping stopped asking the door — a pointer table decided in Swift is a \
+                      second table, and every way it breaks is silent (docs/56, increment 50)",
+        },
+        Claim::Matches {
+            path: POINTER_VISIBILITY,
+            pattern: r"slopdesk_pointer_",
+            view: View::Code,
+            message: "MouseVisibilityMapping stopped asking the door — a pointer hidden with no gesture \
+                      that brings it back fails nothing and crashes nothing (docs/56, increment 50)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources", "Tests", "ThirdParty/ghostty/integration"],
+            extensions: SWIFT,
+            pattern: r"enum OSCPointerShape|enum MouseVisibility[^M]",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift mirror of a libghostty pointer enum is back — the raw int crosses now, and a \
+                      mirror restores three copies of one declaration order where any two could drift while \
+                      compiling (docs/56, increment 50): {files}",
+        },
+        Claim::Matches {
+            path: POINTER_SHAPE,
+            pattern: r"case arrow = 0",
+            view: View::Code,
+            message: "PointerShapeToken stopped pinning its raw values — its discriminants ARE the wire, \
+                      and a case reordered under implicit numbering is a cursor swapped for another cursor \
+                      (docs/56, increment 50)",
+        },
+        Claim::Matches {
+            path: POINTER_DOOR,
+            pattern: r"the_supported_shapes_cross_as_the_discriminants_swift_is_pinned_to",
+            view: View::Code,
+            message: "the door's discriminant test is gone — Swift's enum and Rust's can now renumber apart \
+                      (docs/56, increment 50)",
+        },
+    ])
 }
 
 #[cfg(test)]
@@ -553,42 +528,38 @@ mod tests {
         }
     }
 
-    const CTL_LISTENER_BODY: &str = "func handle(_ method: String) {\n    if method == \"subscribe\" \
-                                     { return stream() }\n    switch method {\n        \
-                                     case \"read\":\n        case \"write\":\n        \
-                                     case \"resize\":\n    }\n}\n";
-    const CTL_COMMANDS_BODY: &str = "fn read(ctl: &Ctl) {\n    let obj = ctl.call(\"read\", p())?;\n}\n\
-                                     fn write(ctl: &Ctl) {\n    let obj = ctl.call(\n        \
-                                     \"write\",\n        p(),\n    )?;\n}\n\
-                                     fn resize(ctl: &Ctl) {\n    let obj = ctl.call(\"resize\", p())?;\n}\n\
-                                     fn stream(ctl: &Ctl) {\n    ctl.stream(\"subscribe\")\n}\n";
+    const CTL_LISTENER_BODY: &str = "func handle(_ method: String) {\n    if method == \"subscribe\" { \
+                                     return stream() }\n    switch method {\n        case \"read\":\n        \
+                                     case \"write\":\n        case \"resize\":\n    }\n}\n";
+    const CTL_COMMANDS_BODY: &str =
+        "fn read(ctl: &Ctl) {\n    let obj = ctl.call(\"read\", p())?;\n}\nfn write(ctl: &Ctl) {\n    let \
+         obj = ctl.call(\n        \"write\",\n        p(),\n    )?;\n}\nfn resize(ctl: &Ctl) {\n    let obj \
+         = ctl.call(\"resize\", p())?;\n}\nfn stream(ctl: &Ctl) {\n    ctl.stream(\"subscribe\")\n}\n";
 
     const CODESEED_FACE_BODY: &str = "func seed() {\n    ask([\"seed\"])\n    ask([\"paths\"])\n    \
                                       ask([\n        \"sync-font\",\n        \"--size\",\n    ])\n}\n";
     const CODESEED_MAIN_BODY: &str = "fn main() {\n    match verb {\n        \"seed\" => a(),\n        \
-                                      \"paths\" => b(),\n        \"sync-font\" => c(),\n        \
-                                      _ => usage(),\n    }\n}\n";
+                                      \"paths\" => b(),\n        \"sync-font\" => c(),\n        _ => \
+                                      usage(),\n    }\n}\n";
 
-    const AGENTHOOKS_FACE_BODY: &str = "func status() {\n    ask([\"status\"])\n    \
-                                        answer([\"install\"])\n    answer([\"uninstall\"])\n}\n";
+    const AGENTHOOKS_FACE_BODY: &str =
+        "func status() {\n    ask([\"status\"])\n    answer([\"install\"])\n    answer([\"uninstall\"])\n}\n";
     const AGENTHOOKS_MAIN_BODY: &str = "fn main() {\n    match verb {\n        \"status\" => a(),\n        \
-                                        \"install\" => b(),\n        \"uninstall\" => c(),\n        \
-                                        _ => usage(),\n    }\n}\n";
-    const HOOK_INSTALL_BODY: &str = "pub const HOOK_MARKER: &str = \"slopdesk-agent\";\n\
-                                     pub fn hook_path(home: &Path) -> PathBuf {\n    \
+                                        \"install\" => b(),\n        \"uninstall\" => c(),\n        _ => \
+                                        usage(),\n    }\n}\n";
+    const HOOK_INSTALL_BODY: &str = "pub const HOOK_MARKER: &str = \"slopdesk-agent\";\npub fn \
+                                     hook_path(home: &Path) -> PathBuf {\n    \
                                      config_base(home).join(\"hooks\").join(HOOK_MARKER)\n}\n";
 
-    const PROBE_FACE_BODY: &str = "func probe() {\n    ask([\"list-dir\", path])\n    \
-                                   askBytes([\"git-diff\", path])\n}\n";
+    const PROBE_FACE_BODY: &str =
+        "func probe() {\n    ask([\"list-dir\", path])\n    askBytes([\"git-diff\", path])\n}\n";
     const PROBE_MAIN_BODY: &str = "fn main() {\n    match verb {\n        \"list-dir\" => a(),\n        \
                                    \"git-diff\" => b(),\n        _ => usage(),\n    }\n}\n";
 
-    const PORCELAIN_BODY: &str = "pub const fn nibble(character: char) -> u8 {\n    0\n}\n\
-                                  pub const fn pack(x: char, y: char) -> u8 {\n    \
-                                  (nibble(x) << 4) | nibble(y)\n}\n";
-    const POINTER_SHAPE_BODY: &str = "enum PointerShapeToken: Int32 {\n    case arrow = 0\n    \
-                                      case text = 1\n}\nfunc token(_ raw: Int32) -> \
-                                      PointerShapeToken? {\n    \
+    const PORCELAIN_BODY: &str = "pub const fn nibble(character: char) -> u8 {\n    0\n}\npub const fn \
+                                  pack(x: char, y: char) -> u8 {\n    (nibble(x) << 4) | nibble(y)\n}\n";
+    const POINTER_SHAPE_BODY: &str = "enum PointerShapeToken: Int32 {\n    case arrow = 0\n    case text = \
+                                      1\n}\nfunc token(_ raw: Int32) -> PointerShapeToken? {\n    \
                                       PointerShapeToken(rawValue: slopdesk_pointer_shape_token(raw))\n}\n";
 
     /// A clean error is what makes this drift silent, so the SET is what is compared.
@@ -676,16 +647,12 @@ mod tests {
         clis(&fixture);
         fixture.write(
             super::HOOK_INSTALL,
-            "pub const HOOK_MARKER: &str = \"slopdesk-agent\";\n\
-             pub fn hook_path(home: &Path) -> PathBuf {\n    \
-             config_base(home).join(\"hooks\").join(\"slopdesk-agent\")\n}\n",
+            "pub const HOOK_MARKER: &str = \"slopdesk-agent\";\npub fn hook_path(home: &Path) -> PathBuf \
+             {\n    config_base(home).join(\"hooks\").join(\"slopdesk-agent\")\n}\n",
         );
         let report = super::the_hooks_installer_is_one_alphabet(&fixture.tree());
         assert!(
-            report
-                .violations()
-                .iter()
-                .any(|v| v.contains("from HOOK_MARKER")),
+            report.violations().iter().any(|v| v.contains("from HOOK_MARKER")),
             "{report:?}"
         );
     }
@@ -721,7 +688,10 @@ mod tests {
 
         fixture.write(
             super::PROBE_MAIN,
-            &PROBE_MAIN_BODY.replace("\"git-diff\" => b(),", "\"git-diff\" => b(),\n        \"git-status\" => s(),"),
+            &PROBE_MAIN_BODY.replace(
+                "\"git-diff\" => b(),",
+                "\"git-diff\" => b(),\n        \"git-status\" => s(),",
+            ),
         );
         let report = super::the_git_status_is_linked_and_asked_once(&fixture.tree());
         assert!(

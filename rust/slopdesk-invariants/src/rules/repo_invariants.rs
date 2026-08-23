@@ -8,8 +8,8 @@
 //! failures came out of writing that as a `grep`.
 //!
 //! * `repo_files … | xargs grep -ln` PRINTS the offender and still exits non-zero, because `xargs`
-//!   splits the paths into batches and reports the LAST batch's status. The surrounding
-//!   `if hit=$(…)` is then false exactly when there is something to report.
+//!   splits the paths into batches and reports the LAST batch's status. The surrounding `if
+//!   hit=$(…)` is then false exactly when there is something to report.
 //! * A `grep` for `pkill` matched the gate's own failure MESSAGE, so the check reported itself and
 //!   could never be made to pass.
 //! * Stripping comments with `sed -E 's,//.*,,'` also mangles `https://…` inside a string literal.
@@ -128,8 +128,7 @@ pub fn no_app_layer_crypto(tree: &Tree) -> Report {
 #[must_use]
 pub fn no_swiftpm_build_plugin(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let Some(manifest) = report.source(tree, "Package.swift", "the SwiftPM manifest is the gate")
-    else {
+    let Some(manifest) = report.source(tree, "Package.swift", "the SwiftPM manifest is the gate") else {
         return report;
     };
     let found = hits(
@@ -186,9 +185,7 @@ pub fn pkill_never_reaches_the_developers_host(tree: &Tree) -> Report {
     let found: Vec<String> = hits(&shells, r"pkill\s+-f")
         .into_iter()
         .filter(|line| {
-            line.contains("slopdesk-hostd")
-                && !line.contains("--port")
-                && !line.contains("DerivedData")
+            line.contains("slopdesk-hostd") && !line.contains("--port") && !line.contains("DerivedData")
         })
         .collect();
     sites(
@@ -266,8 +263,7 @@ pub fn a_script_with_a_shebang_is_executable(tree: &Tree) -> Report {
             }
             // The one fact about a file this tree does not hold. Every other gate reads bytes; a
             // mode bit is metadata, so it is asked of the filesystem at the path the tree knows.
-            std::fs::metadata(tree.root().join(path))
-                .is_ok_and(|data| data.permissions().mode() & 0o111 == 0)
+            std::fs::metadata(tree.root().join(path)).is_ok_and(|data| data.permissions().mode() & 0o111 == 0)
         })
         .map(|(path, _)| path.display().to_string())
         .collect();
@@ -299,12 +295,11 @@ fn shipped(tree: &Tree, report: &mut Report, arrays: &str, name_pattern: &str) -
     let Some(tools) = report.source(tree, SHIPPED_TOOLS, "the shipped tool arrays live there") else {
         return BTreeSet::new();
     };
-    let bodies = text::capture_all(
-        &tools.text,
-        &format!(r"(?s)^(?:{arrays})=\((.*?)\)"),
-    );
+    let bodies = text::capture_all(&tools.text, &format!(r"(?s)^(?:{arrays})=\((.*?)\)"));
     if bodies.is_empty() {
-        report.fail(format!("{SHIPPED_TOOLS}: the release tool arrays are gone — this gate is blind"));
+        report.fail(format!(
+            "{SHIPPED_TOOLS}: the release tool arrays are gone — this gate is blind"
+        ));
         return BTreeSet::new();
     }
     bodies
@@ -342,7 +337,10 @@ pub fn the_release_ships_every_sidecar_the_host_needs(tree: &Tree) -> Report {
         for capture in locate.captures_iter(&source.text) {
             if let Some(literal) = capture.name("literal") {
                 wanted.insert(literal.as_str().to_owned());
-            } else if capture.name("symbol").is_some_and(|it| it.as_str() == "binaryName") {
+            } else if capture
+                .name("symbol")
+                .is_some_and(|it| it.as_str() == "binaryName")
+            {
                 wanted.extend(constants.iter().cloned());
             }
         }
@@ -390,8 +388,7 @@ pub fn every_shipped_sidecar_carries_its_own_version(tree: &Tree) -> Report {
     if carried.is_empty() {
         return report;
     }
-    let Some(pin) = report.source(tree, TOOL_PIN, "every sidecar would be unversioned without it")
-    else {
+    let Some(pin) = report.source(tree, TOOL_PIN, "every sidecar would be unversioned without it") else {
         return report;
     };
     let pinned: BTreeSet<String> = pin
@@ -407,8 +404,7 @@ pub fn every_shipped_sidecar_carries_its_own_version(tree: &Tree) -> Report {
     disagreeing.extend(pinned.difference(&carried).cloned());
     sites(
         &mut report,
-        "scripts/tool-stamps.pin and the shipped cargo tools disagree — run \
-         scripts/bump-tool-versions.sh",
+        "scripts/tool-stamps.pin and the shipped cargo tools disagree — run scripts/bump-tool-versions.sh",
         &disagreeing,
     );
     report
@@ -435,7 +431,9 @@ pub fn the_formula_installs_every_binary_the_release_ships(tree: &Tree) -> Repor
         return report;
     };
     let Some(block) = text::capture_first(&formula.text, r"(?s)bin\.install\b(.*?)\n\n") else {
-        report.fail(format!("{FORMULA}: the formula has no bin.install — this gate is blind"));
+        report.fail(format!(
+            "{FORMULA}: the formula has no bin.install — this gate is blind"
+        ));
         return report;
     };
     let installed = text::capture_set(&block, r#""(slopdesk(?:-[a-z]+)?)""#);
@@ -451,8 +449,7 @@ pub fn the_formula_installs_every_binary_the_release_ships(tree: &Tree) -> Repor
     }
     if !formula.text.contains(r#"prefix.install "MANIFEST.json""#) {
         report.fail(format!(
-            "{FORMULA}: the formula installs no MANIFEST.json — `slopdesk sidecars` cannot say what \
-             changed"
+            "{FORMULA}: the formula installs no MANIFEST.json — `slopdesk sidecars` cannot say what changed"
         ));
         return report;
     }
@@ -522,7 +519,10 @@ pub fn no_rust_module_is_written_and_then_never_called(tree: &Tree) -> Report {
             for name in names.split(',') {
                 let name = name.trim().split(" as ").next().unwrap_or_default().trim();
                 if !name.is_empty() && name != "self" {
-                    exported.entry(module.clone()).or_default().insert(name.to_owned());
+                    exported
+                        .entry(module.clone())
+                        .or_default()
+                        .insert(name.to_owned());
                 }
             }
         }
@@ -668,8 +668,8 @@ const DELETION_HEADINGS: [&str; 3] = ["What this deleted", "Deleted", "Removed"]
 /// A doc a reader is SENT to must not name a path that is not there.
 ///
 /// The failure is not tidiness. `docs/45` claimed a mitigation —
-/// "`…/HostOutputSnifferGoldenGuardTests.swift` asserts the frozen vector still round-trips" — for a
-/// test that had moved to Rust with the sniffer. A reader checking whether the blind spot was
+/// "`…/HostOutputSnifferGoldenGuardTests.swift` asserts the frozen vector still round-trips" — for
+/// a test that had moved to Rust with the sniffer. A reader checking whether the blind spot was
 /// covered would grep, find nothing, and conclude it was not.
 #[must_use]
 pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
@@ -677,7 +677,9 @@ pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
     let mut found = Vec::new();
     for name in LIVE_DOCS {
         let Some(source) = tree.get(name) else {
-            found.push(format!("{name}: the live-doc list names a file that does not exist"));
+            found.push(format!(
+                "{name}: the live-doc list names a file that does not exist"
+            ));
             continue;
         };
         let spans = text::cached(r"`([^`\s]+)`");
@@ -692,9 +694,10 @@ pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
                 continue;
             }
             for span in spans.captures_iter(line) {
-                let raw = span[1].trim_matches('(').trim_end_matches(['.', ',', ':', ';', ')']);
-                if !PATH_ROOTS.iter().any(|root| raw.starts_with(root))
-                    || raw.contains(['*', '{', '}', '…'])
+                let raw = span[1]
+                    .trim_matches('(')
+                    .trim_end_matches(['.', ',', ':', ';', ')']);
+                if !PATH_ROOTS.iter().any(|root| raw.starts_with(root)) || raw.contains(['*', '{', '}', '…'])
                 {
                     continue;
                 }
@@ -729,8 +732,8 @@ pub fn live_docs_cite_files_that_exist(tree: &Tree) -> Report {
 }
 
 /// A backticked path is a SOURCE citation only when it ends in one of these — a comment saying "see
-/// `Foo/Bar.swift`" is making a checkable claim, whereas `Sources/SlopDeskMacUI/Pane` is a place and
-/// `SlopDeskError/badFrame` is a `DocC` symbol link that happens to carry a slash.
+/// `Foo/Bar.swift`" is making a checkable claim, whereas `Sources/SlopDeskMacUI/Pane` is a place
+/// and `SlopDeskError/badFrame` is a `DocC` symbol link that happens to carry a slash.
 const CITED_SUFFIXES: [&str; 9] = [
     ".swift", ".rs", ".py", ".sh", ".h", ".toml", ".json", ".yml", ".awk",
 ];
@@ -750,12 +753,12 @@ const CITED_ROOTS: [&str; 8] = [
 
 /// The directory names a citation may START with and still be a claim about THIS tree.
 ///
-/// Without this the gate reads every `foo/bar.rs` in a comment as a repo path, and the ones that are
-/// not are exactly the ones worth quoting: libghostty upstream (`Helpers/Cursor.swift`), a system
-/// header (`Carbon/HIToolbox/Events.h`), a runtime file such as slopdesk/config.toml. None is in
-/// the tree and none of them should be — a gate that demanded they were would be demanding the
-/// comment lie. So the addressable set is the repo roots plus whatever sits one level inside the
-/// three source roots, which is derived, never listed.
+/// Without this the gate reads every `foo/bar.rs` in a comment as a repo path, and the ones that
+/// are not are exactly the ones worth quoting: libghostty upstream (`Helpers/Cursor.swift`), a
+/// system header (`Carbon/HIToolbox/Events.h`), a runtime file such as slopdesk/config.toml. None
+/// is in the tree and none of them should be — a gate that demanded they were would be demanding
+/// the comment lie. So the addressable set is the repo roots plus whatever sits one level inside
+/// the three source roots, which is derived, never listed.
 fn addressable_first_segments(tree: &Tree) -> BTreeSet<String> {
     let mut segments: BTreeSet<String> = CITED_ROOTS.iter().map(|root| (*root).to_owned()).collect();
     for root in ["Sources", "Tests", "Apps"] {
@@ -775,8 +778,8 @@ fn addressable_first_segments(tree: &Tree) -> BTreeSet<String> {
 /// codebase were not, and a rename walks straight through them. Increment 63 folded the shared
 /// `SwiftUI` target into `SlopDeskPhoneUI` and left nine live citations of `SlopDeskClientUI/…`
 /// behind — each one a sentence telling a reader where the other half of a decision lives, and each
-/// one resolving to nothing. A `DocC` link into a deleted module is worse than no link: it renders as
-/// prose and reads as a fact.
+/// one resolving to nothing. A `DocC` link into a deleted module is worse than no link: it renders
+/// as prose and reads as a fact.
 ///
 /// The rule is SHAPE, not a name list, which is why it cannot decay: a backticked token with a
 /// slash in it and a source suffix on the end IS a path claim, so it must resolve — as a repo path
@@ -789,7 +792,11 @@ pub fn source_comments_cite_files_that_exist(tree: &Tree) -> Report {
     for path in tree.paths() {
         let display = path.display().to_string();
         if CITED_SUFFIXES.iter().any(|suffix| display.ends_with(suffix)) {
-            let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
             known.entry(name).or_default().push(display);
         }
     }
@@ -805,7 +812,11 @@ pub fn source_comments_cite_files_that_exist(tree: &Tree) -> Report {
                     continue;
                 }
                 let tail = cited.trim_start_matches(['.', '/']);
-                if !tail.split('/').next().is_some_and(|head| addressable.contains(head)) {
+                if !tail
+                    .split('/')
+                    .next()
+                    .is_some_and(|head| addressable.contains(head))
+                {
                     continue;
                 }
                 let name = tail.rsplit('/').next().unwrap_or_default();
@@ -834,9 +845,9 @@ mod tests {
     use super::{
         a_script_with_a_shebang_is_executable, every_injected_sink_has_someone_who_binds_it,
         every_script_sets_pipefail, live_docs_cite_files_that_exist, no_app_layer_crypto,
-        no_fused_multiply_add, no_rust_module_is_written_and_then_never_called,
-        no_swiftpm_build_plugin, pkill_never_reaches_the_developers_host,
-        source_comments_cite_files_that_exist, the_formula_installs_every_binary_the_release_ships,
+        no_fused_multiply_add, no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
+        pkill_never_reaches_the_developers_host, source_comments_cite_files_that_exist,
+        the_formula_installs_every_binary_the_release_ships,
     };
     use crate::tests::Fixture;
 
@@ -861,7 +872,10 @@ mod tests {
             &format!("let x = a{FUSED_SWIFT} // two roundings, honest\n"),
         );
         let report = no_fused_multiply_add(&fixture.tree());
-        assert!(!report.is_clean(), "a fusion at the head of a commented line is still a fusion");
+        assert!(
+            !report.is_clean(),
+            "a fusion at the head of a commented line is still a fusion"
+        );
     }
 
     /// The other half of the same claim: the gate must not fire on prose that NAMES the ban, which
@@ -873,7 +887,10 @@ mod tests {
             "Sources/A/Prose.swift",
             &format!("// never write a{FUSED_SWIFT} here\nlet x = a * b + c\n"),
         );
-        fixture.write("rust/x/src/lib.rs", &format!("/// not even a{FUSED_RUST}\npub fn f() {{}}\n"));
+        fixture.write(
+            "rust/x/src/lib.rs",
+            &format!("/// not even a{FUSED_RUST}\npub fn f() {{}}\n"),
+        );
         assert!(no_fused_multiply_add(&fixture.tree()).is_clean());
     }
 
@@ -938,14 +955,23 @@ mod tests {
     #[test]
     fn a_module_reached_by_nobody_is_red_and_a_reexport_is_not_a_caller() {
         let fixture = Fixture::new("stranded");
-        fixture.write("rust/slopdesk-x/src/lib.rs", "pub mod solver;\npub use solver::Solver;\n");
+        fixture.write(
+            "rust/slopdesk-x/src/lib.rs",
+            "pub mod solver;\npub use solver::Solver;\n",
+        );
         fixture.write("rust/slopdesk-x/src/solver.rs", "pub struct Solver;\n");
         assert!(!no_rust_module_is_written_and_then_never_called(&fixture.tree()).is_clean());
 
         let wired = Fixture::new("stranded-wired");
-        wired.write("rust/slopdesk-x/src/lib.rs", "pub mod solver;\npub use solver::Solver;\n");
+        wired.write(
+            "rust/slopdesk-x/src/lib.rs",
+            "pub mod solver;\npub use solver::Solver;\n",
+        );
         wired.write("rust/slopdesk-x/src/solver.rs", "pub struct Solver;\n");
-        wired.write("rust/slopdesk-x/src/run.rs", "use crate::Solver;\npub fn go(s: Solver) {}\n");
+        wired.write(
+            "rust/slopdesk-x/src/run.rs",
+            "use crate::Solver;\npub fn go(s: Solver) {}\n",
+        );
         assert!(no_rust_module_is_written_and_then_never_called(&wired.tree()).is_clean());
     }
 
@@ -975,8 +1001,14 @@ mod tests {
         assert!(!every_injected_sink_has_someone_who_binds_it(&fixture.tree()).is_clean());
 
         let bound = Fixture::new("sinks-bound");
-        bound.write("Sources/A/Model.swift", "public var onRequestCopyMode: (() -> Void)?\n");
-        bound.write("Sources/A/View.swift", "model.onRequestCopyMode = { self.copy() }\n");
+        bound.write(
+            "Sources/A/Model.swift",
+            "public var onRequestCopyMode: (() -> Void)?\n",
+        );
+        bound.write(
+            "Sources/A/View.swift",
+            "model.onRequestCopyMode = { self.copy() }\n",
+        );
         assert!(every_injected_sink_has_someone_who_binds_it(&bound.tree()).is_clean());
     }
 
@@ -1006,7 +1038,10 @@ mod tests {
     #[test]
     fn a_live_doc_citing_a_missing_path_is_red_and_a_deletion_section_is_not() {
         let fixture = with_live_docs("live-docs");
-        fixture.write("CLAUDE.md", &format!("see {TICK}Sources/A/Gone.swift{TICK} for the seam\n"));
+        fixture.write(
+            "CLAUDE.md",
+            &format!("see {TICK}Sources/A/Gone.swift{TICK} for the seam\n"),
+        );
         assert!(!live_docs_cite_files_that_exist(&fixture.tree()).is_clean());
 
         let deleting = with_live_docs("live-docs-deleted");

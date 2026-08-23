@@ -103,9 +103,9 @@ impl Source {
     /// The file with every comment blanked, string literals intact and line numbering preserved.
     ///
     /// [`Source::code`] is line-based and cannot see a TRAILING comment, which is the whole gap the
-    /// token bans fall into: `let x = 1 // never call .addingProduct(` reads as a call to a ban that
-    /// strips whole lines. Nor can a regex close that gap — three separate silent failures came out
-    /// of trying, and all three were the shape of the tool rather than the pattern:
+    /// token bans fall into: `let x = 1 // never call .addingProduct(` reads as a call to a ban
+    /// that strips whole lines. Nor can a regex close that gap — three separate silent failures
+    /// came out of trying, and all three were the shape of the tool rather than the pattern:
     ///
     /// * a `//` stripper mangles `https://…` inside a string literal;
     /// * a ban's own failure MESSAGE is a string literal, so a raw read reports the gate itself;
@@ -115,8 +115,9 @@ impl Source {
     /// erased them would miss a token spelled inside one, and this repo has bans that want exactly
     /// that. Newlines survive too, so a report can still cite a line number.
     ///
-    /// Rust raw strings are handled by their hash count: `r##"…"##` ends only at a quote followed by
-    /// two hashes, which is why an ordinary scanner walking for the next `"` cuts them in half.
+    /// Rust raw strings are handled by their hash count: `r##"…"##` ends only at a quote followed
+    /// by two hashes, which is why an ordinary scanner walking for the next `"` cuts them in
+    /// half.
     #[must_use]
     pub fn statements(&self) -> &str {
         match self.style {
@@ -126,16 +127,18 @@ impl Source {
             // hat. What differs from `code()` is that the comment line is BLANKED rather than
             // dropped: this view promises line numbering, and a rule reporting `path:line:` on a
             // shell script has to be able to trust it.
-            CommentStyle::Hash => self.statements.get_or_init(|| {
-                let mut out = String::with_capacity(self.text.len());
-                for line in self.text.lines() {
-                    if !line.trim_start().starts_with('#') {
-                        out.push_str(line);
+            CommentStyle::Hash => {
+                self.statements.get_or_init(|| {
+                    let mut out = String::with_capacity(self.text.len());
+                    for line in self.text.lines() {
+                        if !line.trim_start().starts_with('#') {
+                            out.push_str(line);
+                        }
+                        out.push('\n');
                     }
-                    out.push('\n');
-                }
-                out
-            }),
+                    out
+                })
+            },
             CommentStyle::Slashes => self.statements.get_or_init(|| blank_comments(&self.text)),
         }
     }
@@ -186,7 +189,11 @@ fn raw_string_width(rest: &str) -> Option<usize> {
     }
     let closer = format!("\"{}", "#".repeat(hashes));
     let opened = 2 + hashes;
-    Some(rest[opened..].find(&closer).map_or(rest.len(), |end| opened + end + closer.len()))
+    Some(
+        rest[opened..]
+            .find(&closer)
+            .map_or(rest.len(), |end| opened + end + closer.len()),
+    )
 }
 
 /// The byte width of an ordinary string or character literal at the head of `rest`.
@@ -219,9 +226,9 @@ pub struct Tree {
 /// The directories a rule may ask about, and the extensions worth holding in memory.
 ///
 /// Deliberately NOT the whole repository: `.build`, `target`, `.git` and the rest of `ThirdParty`
-/// are together larger than everything a rule reads, and walking them would trade the win this crate
-/// exists for. A rule that needs a file outside these reads it with [`Tree::read`], which is the
-/// escape hatch and says so at the call site.
+/// are together larger than everything a rule reads, and walking them would trade the win this
+/// crate exists for. A rule that needs a file outside these reads it with [`Tree::read`], which is
+/// the escape hatch and says so at the call site.
 ///
 /// `ThirdParty/ghostty/integration` is the ONE exception, and it is four files: the embedder Swift,
 /// which is the only registrar of the terminal seam and is compiled by no `Package.swift` target.

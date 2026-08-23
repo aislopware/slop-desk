@@ -74,9 +74,9 @@ const HOMEBREW_FORMULA: &str = "packaging/homebrew/Formula/slopdesk.rb";
 /// dropd's client end holds no layout of its own
 ///
 /// PATH 4 (`docs/53`). The client half is `rust/slopdesk-dropd`'s `client` module;
-/// `Sources/SlopDeskFileTransfer` calls it through the door in `rust/slopdesk-ffi/src/file_transfer.rs`
-/// and holds nothing. So the four numbers are not compared across two spellings — there is one
-/// spelling, and what is pinned is that Swift still READS it.
+/// `Sources/SlopDeskFileTransfer` calls it through the door in
+/// `rust/slopdesk-ffi/src/file_transfer.rs` and holds nothing. So the four numbers are not compared
+/// across two spellings — there is one spelling, and what is pinned is that Swift still READS it.
 ///
 /// A "just this one field" big-endian helper is how a second implementation grows back one accessor
 /// at a time, and a literal cap in the face is drift starting: a cap the client believes and a cap
@@ -99,72 +99,68 @@ pub fn the_drop_client_holds_no_layout(tree: &Tree) -> Report {
         "slopdesk_drop_decoder_next",
         "slopdesk_drop_decoder_buffered",
     ];
-    check_all(
-        tree,
-        &[
-            Claim::Mentions {
-                path: DROP_FFI,
-                names: DOORS,
-                message: "rust/slopdesk-ffi/src/file_transfer.rs no longer exports {entry} — PATH \
-                          4's client door has moved (docs/55)",
-            },
-            Claim::MentionsUnder {
-                root: DROP_DIR,
-                names: DOORS,
-                message: "Sources/SlopDeskFileTransfer stopped calling {entry} — the client end is \
-                          dropd's (docs/53, docs/55)",
-            },
-            Claim::NoneUnder {
-                roots: &[DROP_DIR],
-                extensions: SWIFT,
-                pattern: r"func appendBE|struct ByteReader|BigEndianReader",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[],
-                message: "a byte reader/writer is back in Sources/SlopDeskFileTransfer — dropd's \
-                          client module owns the layout, and a one-field helper is the second \
-                          implementation growing back one accessor at a time: {files}",
-            },
-            Claim::Lacks {
-                path: DROP_PROTOCOL_FACE,
-                pattern: r"16 \* 1024 \* 1024|256 \* 1024|20 \* 1024|UInt8 = [0-9]",
-                view: View::Code,
-                message: "FileTransferProtocol.swift respells a dropd constant — read \
-                          slopdesk_drop_constant instead, because a cap the client believes and a \
-                          cap the host enforces that drift apart is a bug neither side's tests can \
-                          see (docs/53)",
-            },
-            Claim::NoneUnder {
-                roots: &["Sources"],
-                extensions: SWIFT,
-                pattern: r"(enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[],
-                message: "a Swift file-drop receiver is back in Sources/ — dropd owns the receiving \
-                          end, and a 'small fallback for when dropd is missing' is the \
-                          cross-language mirror the tree forbids: when dropd is absent hostd logs \
-                          it and there is no file transfer, which is the whole design \
-                          (docs/53): {files}",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Mentions {
+            path: DROP_FFI,
+            names: DOORS,
+            message: "rust/slopdesk-ffi/src/file_transfer.rs no longer exports {entry} — PATH 4's client \
+                      door has moved (docs/55)",
+        },
+        Claim::MentionsUnder {
+            root: DROP_DIR,
+            names: DOORS,
+            message: "Sources/SlopDeskFileTransfer stopped calling {entry} — the client end is dropd's \
+                      (docs/53, docs/55)",
+        },
+        Claim::NoneUnder {
+            roots: &[DROP_DIR],
+            extensions: SWIFT,
+            pattern: r"func appendBE|struct ByteReader|BigEndianReader",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a byte reader/writer is back in Sources/SlopDeskFileTransfer — dropd's client module \
+                      owns the layout, and a one-field helper is the second implementation growing back one \
+                      accessor at a time: {files}",
+        },
+        Claim::Lacks {
+            path: DROP_PROTOCOL_FACE,
+            pattern: r"16 \* 1024 \* 1024|256 \* 1024|20 \* 1024|UInt8 = [0-9]",
+            view: View::Code,
+            message: "FileTransferProtocol.swift respells a dropd constant — read slopdesk_drop_constant \
+                      instead, because a cap the client believes and a cap the host enforces that drift \
+                      apart is a bug neither side's tests can see (docs/53)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(enum|struct|final class|class|actor|protocol) (FileTransferServer|FileReceiveLogic|FileDropSink|DiskFileDropSink|FileNameSanitizer|LoopbackFileTransferChannel)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift file-drop receiver is back in Sources/ — dropd owns the receiving end, and a \
+                      'small fallback for when dropd is missing' is the cross-language mirror the tree \
+                      forbids: when dropd is absent hostd logs it and there is no file transfer, which is \
+                      the whole design (docs/53): {files}",
+        },
+    ])
 }
 
 /// dropd's type bytes are one alphabet, read from both directions
 ///
 /// The type BYTE is the whole discriminator, and the two ends are two modules of one crate rather
-/// than two languages — which narrows the skew but does not close it, because they are still written
-/// and edited apart. Skew a request byte and dropd decodes an offer's id out of a chunk body; skew a
-/// reply byte and the client's decoder throws `unknownType` on a perfectly good `complete` and
-/// reports a failed upload that is sitting finished on disk.
+/// than two languages — which narrows the skew but does not close it, because they are still
+/// written and edited apart. Skew a request byte and dropd decodes an offer's id out of a chunk
+/// body; skew a reply byte and the client's decoder throws `unknownType` on a perfectly good
+/// `complete` and reports a failed upload that is sitting finished on disk.
 ///
 /// Both spellings of a written request byte are read. A chunk's type byte is written by
-/// `write_chunk_payload` — the slice writer both the borrowed and the owned path go through — not by
-/// the match arm, so sweeping only `encode_request_payload` would quietly stop covering type 3, the
-/// one frame that carries a body. A gate that silently covers four of five types is worse than none.
+/// `write_chunk_payload` — the slice writer both the borrowed and the owned path go through — not
+/// by the match arm, so sweeping only `encode_request_payload` would quietly stop covering type 3,
+/// the one frame that carries a body. A gate that silently covers four of five types is worse than
+/// none.
 ///
 /// The request direction is a SUBSET and the reply direction an EQUALITY, and that asymmetry is the
 /// wire's: the daemon may decode a request the shipped client does not yet send, but a reply the
@@ -192,42 +188,38 @@ pub fn the_drop_type_bytes_are_one_alphabet(tree: &Tree) -> Report {
     /// with `out.push(`, so reading raw costs nothing here.
     const WRITTEN: Extract =
         Extract::raw(DROP_CLIENT, r"^ *out\.push\(([0-9]+)\);$").also(&[r"^ *\*kind = ([0-9]+);$"]);
-    check_all(
-        tree,
-        &[
-            Claim::PinnedSet {
-                label: "dropd request type bytes",
-                from: WRITTEN,
-                expect: &["1", "2", "3", "4", "5"],
-            },
-            Claim::Subset {
-                label: "dropd request type",
-                subject: WRITTEN,
-                universe: Extract::raw(DROP_PROTOCOL, r"^ *([0-9]+) => \{$"),
-                message: "the client encodes request type {orphans} but \
-                          rust/slopdesk-dropd/src/protocol.rs has no arm decoding it — dropd would \
-                          read an offer's id out of a chunk body (docs/53)",
-            },
-            // Both sides are Rust here; the field names are the shape's, not the languages'.
-            Claim::SameSet {
-                label: "dropd reply type bytes",
-                swift: Extract::raw(DROP_CLIENT, r"^ *([0-9]+) => \{$")
-                    .within(r"pub fn decode_reply_payload", r"^\}$"),
-                rust: Extract::raw(DROP_PROTOCOL, r"^ *out\.push\(([0-9]+)\);$")
-                    .within(r"pub fn encode_reply_payload", r"^\}$"),
-            },
-            Claim::Pinned {
-                label: "dropd's wire version",
-                from: Extract::code(DROP_PROTOCOL, r"VERSION: u8 = ([0-9]+);$"),
-                expect: "1",
-            },
-            Claim::Pinned {
-                label: "dropd's frame ceiling",
-                from: Extract::code(DROP_PROTOCOL, r"MAX_FRAME_PAYLOAD: usize = (.*);$"),
-                expect: "16 * 1024 * 1024",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::PinnedSet {
+            label: "dropd request type bytes",
+            from: WRITTEN,
+            expect: &["1", "2", "3", "4", "5"],
+        },
+        Claim::Subset {
+            label: "dropd request type",
+            subject: WRITTEN,
+            universe: Extract::raw(DROP_PROTOCOL, r"^ *([0-9]+) => \{$"),
+            message: "the client encodes request type {orphans} but rust/slopdesk-dropd/src/protocol.rs has \
+                      no arm decoding it — dropd would read an offer's id out of a chunk body (docs/53)",
+        },
+        // Both sides are Rust here; the field names are the shape's, not the languages'.
+        Claim::SameSet {
+            label: "dropd reply type bytes",
+            swift: Extract::raw(DROP_CLIENT, r"^ *([0-9]+) => \{$")
+                .within(r"pub fn decode_reply_payload", r"^\}$"),
+            rust: Extract::raw(DROP_PROTOCOL, r"^ *out\.push\(([0-9]+)\);$")
+                .within(r"pub fn encode_reply_payload", r"^\}$"),
+        },
+        Claim::Pinned {
+            label: "dropd's wire version",
+            from: Extract::code(DROP_PROTOCOL, r"VERSION: u8 = ([0-9]+);$"),
+            expect: "1",
+        },
+        Claim::Pinned {
+            label: "dropd's frame ceiling",
+            from: Extract::code(DROP_PROTOCOL, r"MAX_FRAME_PAYLOAD: usize = (.*);$"),
+            expect: "16 * 1024 * 1024",
+        },
+    ])
 }
 
 /// The Android bridge's ops and device fields cross both ways
@@ -235,13 +227,13 @@ pub fn the_drop_type_bytes_are_one_alphabet(tree: &Tree) -> Report {
 /// The Android panel (`docs/48`). Like dropd the CLIENT dials the bridge port directly, having
 /// learned it from metadata verb 22 — but unlike every other pair here the wire is line-JSON, so a
 /// skew is not a misparsed length: it is a request the daemon answers `bad request` to, or a reply
-/// field the panel silently renders as absent. Both read as "the Android tab is broken" with nothing
-/// in either language's tests to say why.
+/// field the panel silently renders as absent. Both read as "the Android tab is broken" with
+/// nothing in either language's tests to say why.
 ///
 /// The senders are a DIRECTORY. Three connection types each write their own ops, and pinning the
 /// subject to whichever file holds most of them would make an ordinary split of a connection look
-/// like a new verb appearing. The floor is what notices one of the three going stale — a union stays
-/// non-empty while a sender falls silent.
+/// like a new verb appearing. The floor is what notices one of the three going stale — a union
+/// stays non-empty while a sender falls silent.
 ///
 /// `AndroidDevice` is deliberately absent from the ban below: the CLIENT's row type is the far end
 /// of the protocol, which is exactly what the one-implementation rule allows.
@@ -252,45 +244,41 @@ pub fn the_drop_type_bytes_are_one_alphabet(tree: &Tree) -> Report {
 /// All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_android_bridge_agrees_both_ways(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::SubsetUnder {
-                label: "bridge ops",
-                subject: Corpus {
-                    root: ANDROID_DIR,
-                    extensions: SWIFT,
-                    pattern: r#""op": "([a-z]+)""#,
-                    view: View::Code,
-                },
-                universe: Extract::code(ANDROID_SERVER, r#"^ *"([a-z]+)" =>"#),
-                floor: 5,
-                message: "the panel sends op '{orphans}' but rust/slopdesk-androidd/src/server.rs \
-                          has no arm serving it — the daemon answers `bad request` and the tab just \
-                          reads as broken (docs/48)",
-            },
-            Claim::Subset {
-                label: "bridge device field",
-                subject: Extract::code(ANDROID_DEVICE, r#"^ *[a-zA-Z]*: entry\["([a-zA-Z]+)"\]"#),
-                universe: Extract::code(ANDROID_PROTOCOL, r#""([a-zA-Z]+)""#),
-                message: "the panel decodes device field '{orphans}' but \
-                          rust/slopdesk-androidd/src/protocol.rs never encodes it — the panel \
-                          renders what it finds, which is what makes a quietly emptied column \
-                          silent (docs/48)",
-            },
-            Claim::NoneUnder {
-                roots: &["Sources"],
+    check_all(tree, &[
+        Claim::SubsetUnder {
+            label: "bridge ops",
+            subject: Corpus {
+                root: ANDROID_DIR,
                 extensions: SWIFT,
-                pattern: r"(enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b",
-                all: &[],
-                unless: &[],
+                pattern: r#""op": "([a-z]+)""#,
                 view: View::Code,
-                exempt: &[],
-                message: "a Swift Android bridge is back in Sources/ — androidd owns adb and the \
-                          pump (docs/48): {files}",
             },
-        ],
-    )
+            universe: Extract::code(ANDROID_SERVER, r#"^ *"([a-z]+)" =>"#),
+            floor: 5,
+            message: "the panel sends op '{orphans}' but rust/slopdesk-androidd/src/server.rs has no arm \
+                      serving it — the daemon answers `bad request` and the tab just reads as broken \
+                      (docs/48)",
+        },
+        Claim::Subset {
+            label: "bridge device field",
+            subject: Extract::code(ANDROID_DEVICE, r#"^ *[a-zA-Z]*: entry\["([a-zA-Z]+)"\]"#),
+            universe: Extract::code(ANDROID_PROTOCOL, r#""([a-zA-Z]+)""#),
+            message: "the panel decodes device field '{orphans}' but rust/slopdesk-androidd/src/protocol.rs \
+                      never encodes it — the panel renders what it finds, which is what makes a quietly \
+                      emptied column silent (docs/48)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(enum|struct|final class|class|actor|protocol) (AndroidBridgeServer|AndroidBridgeManager|AndroidToolchain|AndroidScrcpySession|AndroidDeviceCatalog|AndroidEmulatorConsole|AndroidSocket|AndroidListener|AndroidBridgeRequest)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift Android bridge is back in Sources/ — androidd owns adb and the pump \
+                      (docs/48): {files}",
+        },
+    ])
 }
 
 /// The inspector's frame has one spelling, and Swift reaches it
@@ -327,51 +315,48 @@ pub fn the_inspector_frame_has_one_spelling(tree: &Tree) -> Report {
         "slopdesk_inspector_decoder_append",
         "slopdesk_inspector_decoder_next",
     ];
-    check_all(
-        tree,
-        &[
-            Claim::Mentions {
-                path: INSPECTOR_FFI,
-                names: SHARED,
-                message: "rust/slopdesk-ffi/src/inspector.rs no longer exports {entry} — the \
-                          inspector's client door has moved (docs/55)",
-            },
-            Claim::Mentions {
-                path: INSPECTOR_FFI,
-                names: &["slopdesk_inspector_decoder_buffered"],
-                message: "rust/slopdesk-ffi/src/inspector.rs no longer exports {entry} — the one \
-                          door with no Swift caller is still the door's own assertion that a \
-                          drained splitter compacted (docs/55)",
-            },
-            Claim::Mentions {
-                path: INSPECTOR_FACE,
-                names: SHARED,
-                message: "Sources/SlopDeskInspector/InspectorWire.swift stopped calling {entry} — \
-                          the frame is inspectord's (docs/54, docs/55)",
-            },
-            Claim::Lacks {
-                path: INSPECTOR_FACE,
-                pattern: r"appendBE|readPrefix|readBESeq|struct ByteReader|16 \* 1024 \* 1024|UInt8 = [0-9]",
-                view: View::Code,
-                message: "InspectorWire.swift respells the inspector frame — read \
-                          slopdesk_inspector_constant instead, because a length prefix read by hand \
-                          is the second implementation growing back one line at a time (docs/54)",
-            },
-            Claim::NoneUnder {
-                roots: &["Sources"],
-                extensions: SWIFT,
-                pattern: r"(enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b",
-                all: &[],
-                unless: &[],
-                view: View::Code,
-                exempt: &[],
-                message: "a Swift inspector producer is back in Sources/ — inspectord owns the \
-                          fold, and `InspectorSource` is named here because it was the HOST end of \
-                          the wire (InspectorClient, InspectorViewModel and the event types are the \
-                          far end, which is allowed) (docs/54): {files}",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Mentions {
+            path: INSPECTOR_FFI,
+            names: SHARED,
+            message: "rust/slopdesk-ffi/src/inspector.rs no longer exports {entry} — the inspector's client \
+                      door has moved (docs/55)",
+        },
+        Claim::Mentions {
+            path: INSPECTOR_FFI,
+            names: &["slopdesk_inspector_decoder_buffered"],
+            message: "rust/slopdesk-ffi/src/inspector.rs no longer exports {entry} — the one door with no \
+                      Swift caller is still the door's own assertion that a drained splitter compacted \
+                      (docs/55)",
+        },
+        Claim::Mentions {
+            path: INSPECTOR_FACE,
+            names: SHARED,
+            message: "Sources/SlopDeskInspector/InspectorWire.swift stopped calling {entry} — the frame is \
+                      inspectord's (docs/54, docs/55)",
+        },
+        Claim::Lacks {
+            path: INSPECTOR_FACE,
+            pattern: r"appendBE|readPrefix|readBESeq|struct ByteReader|16 \* 1024 \* 1024|UInt8 = [0-9]",
+            view: View::Code,
+            message: "InspectorWire.swift respells the inspector frame — read slopdesk_inspector_constant \
+                      instead, because a length prefix read by hand is the second implementation growing \
+                      back one line at a time (docs/54)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(enum|struct|final class|class|actor|protocol) (TranscriptParser|TranscriptTailer|TranscriptLine|LineAccumulator|SubagentWatcher|EventBuilder|InspectorEngine|InspectorReplayLog|InspectorSource|InspectorServer)\b",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a Swift inspector producer is back in Sources/ — inspectord owns the fold, and \
+                      `InspectorSource` is named here because it was the HOST end of the wire \
+                      (InspectorClient, InspectorViewModel and the event types are the far end, which is \
+                      allowed) (docs/54): {files}",
+        },
+    ])
 }
 
 /// The inspector's three tags and its ceiling are one alphabet
@@ -391,59 +376,53 @@ pub fn the_inspector_frame_has_one_spelling(tree: &Tree) -> Report {
 /// PASS.
 #[must_use]
 pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::Matches {
-                path: INSPECTOR_WIRE,
-                pattern: r"TAG_EVENT: u8 = 1;",
-                view: View::Code,
-                message: "rust/slopdesk-inspectord/src/wire.rs no longer writes tag 1 for an event \
-                          — an unknown tag is SKIPPED at both ends, so nothing errors and the panel \
-                          just stays empty (docs/54)",
-            },
-            Claim::Matches {
-                path: INSPECTOR_WIRE,
-                pattern: r"TAG_KEEP_ALIVE: u8 = 2;",
-                view: View::Code,
-                message: "rust/slopdesk-inspectord/src/wire.rs no longer writes tag 2 for a \
-                          keep-alive — an unknown tag is SKIPPED at both ends, so nothing errors \
-                          and the feed just stops (docs/54)",
-            },
-            Claim::Matches {
-                path: INSPECTOR_WIRE,
-                pattern: r"TAG_SUBSCRIBE: u8 = 3;",
-                view: View::Code,
-                message: "rust/slopdesk-inspectord/src/wire.rs no longer spells the client's \
-                          subscribe tag as 3 (docs/54)",
-            },
-            Claim::Matches {
-                path: INSPECTOR_WIRE,
-                pattern: r"TAG_EVENT => Ok\(ClientFrame::Event",
-                view: View::Code,
-                message: "wire.rs's decode_client no longer reads tag 1 as an event — the client \
-                          end must decode exactly the two host → client tags and refuse its own \
-                          (docs/54)",
-            },
-            Claim::Matches {
-                path: INSPECTOR_WIRE,
-                pattern: r"TAG_KEEP_ALIVE => Ok\(ClientFrame::KeepAlive\)",
-                view: View::Code,
-                message: "wire.rs's decode_client no longer reads tag 2 as a keep-alive — the \
-                          client end must decode exactly the two host → client tags and refuse its \
-                          own (docs/54)",
-            },
-            Claim::Matches {
-                path: INSPECTOR_WIRE,
-                pattern: r"MAX_FRAME_PAYLOAD: usize = 16 \* 1024 \* 1024;",
-                view: View::Code,
-                message: "the inspector's frame cap is not the 16 MiB ceiling the other four paths \
-                          use — a LOWER cap refuses a large replay frame the daemon just built, a \
-                          HIGHER one has the client throw frameTooLarge, which is the one \
-                          unrecoverable decode error (docs/54)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::Matches {
+            path: INSPECTOR_WIRE,
+            pattern: r"TAG_EVENT: u8 = 1;",
+            view: View::Code,
+            message: "rust/slopdesk-inspectord/src/wire.rs no longer writes tag 1 for an event — an unknown \
+                      tag is SKIPPED at both ends, so nothing errors and the panel just stays empty \
+                      (docs/54)",
+        },
+        Claim::Matches {
+            path: INSPECTOR_WIRE,
+            pattern: r"TAG_KEEP_ALIVE: u8 = 2;",
+            view: View::Code,
+            message: "rust/slopdesk-inspectord/src/wire.rs no longer writes tag 2 for a keep-alive — an \
+                      unknown tag is SKIPPED at both ends, so nothing errors and the feed just stops \
+                      (docs/54)",
+        },
+        Claim::Matches {
+            path: INSPECTOR_WIRE,
+            pattern: r"TAG_SUBSCRIBE: u8 = 3;",
+            view: View::Code,
+            message: "rust/slopdesk-inspectord/src/wire.rs no longer spells the client's subscribe tag as 3 \
+                      (docs/54)",
+        },
+        Claim::Matches {
+            path: INSPECTOR_WIRE,
+            pattern: r"TAG_EVENT => Ok\(ClientFrame::Event",
+            view: View::Code,
+            message: "wire.rs's decode_client no longer reads tag 1 as an event — the client end must \
+                      decode exactly the two host → client tags and refuse its own (docs/54)",
+        },
+        Claim::Matches {
+            path: INSPECTOR_WIRE,
+            pattern: r"TAG_KEEP_ALIVE => Ok\(ClientFrame::KeepAlive\)",
+            view: View::Code,
+            message: "wire.rs's decode_client no longer reads tag 2 as a keep-alive — the client end must \
+                      decode exactly the two host → client tags and refuse its own (docs/54)",
+        },
+        Claim::Matches {
+            path: INSPECTOR_WIRE,
+            pattern: r"MAX_FRAME_PAYLOAD: usize = 16 \* 1024 \* 1024;",
+            view: View::Code,
+            message: "the inspector's frame cap is not the 16 MiB ceiling the other four paths use — a \
+                      LOWER cap refuses a large replay frame the daemon just built, a HIGHER one has the \
+                      client throw frameTooLarge, which is the one unrecoverable decode error (docs/54)",
+        },
+    ])
 }
 
 /// Every announce line is one string, and it names the build that is running
@@ -451,8 +430,8 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
 /// dropd, inspectord and androidd OUTLIVE hostd — hostd re-learns their port by replaying superd's
 /// ring from offset 0 (`docs/51` §6.7), which is what the marker half of this rule is about. Reword
 /// a marker on one side and hostd waits out its timeout, kills a perfectly healthy service and
-/// respawns it on every restart; for androidd, whose port is ephemeral, the panel reports `starting`
-/// forever instead.
+/// respawns it on every restart; for androidd, whose port is ephemeral, the panel reports
+/// `starting` forever instead.
 ///
 /// The VERSION of the build that is running rides the same line, first in the parenthetical, for
 /// exactly that reason: it is the only channel that describes a child this hostd did not start
@@ -466,9 +445,9 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
 ///
 /// BREAK-TEST: reworded dropd's `announceMarker` on the Swift side ⇒ FAIL "is not what
 /// rust/slopdesk-dropd/src/server.rs prints". Separately changed androidd's version marker to `"v"`
-/// ⇒ FAIL against all three servers. Separately deleted `parseAnnouncedVersion` from the inspector's
-/// manager ⇒ FAIL "no longer reads the running daemon's version". All three restored from /tmp;
-/// PASS.
+/// ⇒ FAIL against all three servers. Separately deleted `parseAnnouncedVersion` from the
+/// inspector's manager ⇒ FAIL "no longer reads the running daemon's version". All three restored
+/// from /tmp; PASS.
 #[must_use]
 pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -477,52 +456,48 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
         (ANDROID_MANAGER, ANDROID_SERVER, "androidd"),
         (INSPECTOR_MANAGER, INSPECTOR_SERVER, "inspectord"),
     ] {
-        report.absorb(check_all(
-            tree,
-            &[
-                Claim::SameValue {
-                    label: text::intern(format!("{daemon}'s announce marker")),
-                    swift: Extract::code(manager, r#"let announceMarker = "(.*)"$"#),
-                    rust: Extract::code(server, r#"ANNOUNCE_PREFIX: &str = "(.*)";$"#),
-                },
-                Claim::Matches {
-                    path: server,
-                    pattern: r"ANNOUNCE_VERSION_PREFIX\}\{\}",
-                    view: View::Code,
-                    message: text::intern(format!(
-                        "rust/slopdesk-{daemon}/src/server.rs no longer announces a version after \
-                         the marker — hostd would report `unknown` and go on running last week's \
-                         daemon behind this week's number (docs/49)"
-                    )),
-                },
-                Claim::Matches {
-                    path: server,
-                    pattern: r#"env!\("CARGO_PKG_VERSION"\)"#,
-                    view: View::Code,
-                    message: text::intern(format!(
-                        "rust/slopdesk-{daemon}/src/server.rs no longer announces its OWN \
-                         compile-time version — a daemon reporting the version it read off disk \
-                         compares equal to it forever, which is the failure inverted (docs/49)"
-                    )),
-                },
-                Claim::Matches {
-                    path: manager,
-                    pattern: r"func parseAnnouncedVersion\(fromLogLine",
-                    view: View::Code,
-                    message: text::intern(format!(
-                        "{manager} no longer reads the running daemon's version off its announce \
-                         line — a manager that stopped parsing reads nil, which the audit reports \
-                         as 'unknown' rather than failing, so it is asserted here or nowhere \
-                         (docs/49)"
-                    )),
-                },
-                Claim::SameValue {
-                    label: text::intern(format!("{daemon}'s announce version marker")),
-                    swift: Extract::code(LIFECYCLE, r#"^ *static let marker = "(.*)"$"#),
-                    rust: Extract::code(server, r#"ANNOUNCE_VERSION_PREFIX: &str = "(.*)";$"#),
-                },
-            ],
-        ));
+        report.absorb(check_all(tree, &[
+            Claim::SameValue {
+                label: text::intern(format!("{daemon}'s announce marker")),
+                swift: Extract::code(manager, r#"let announceMarker = "(.*)"$"#),
+                rust: Extract::code(server, r#"ANNOUNCE_PREFIX: &str = "(.*)";$"#),
+            },
+            Claim::Matches {
+                path: server,
+                pattern: r"ANNOUNCE_VERSION_PREFIX\}\{\}",
+                view: View::Code,
+                message: text::intern(format!(
+                    "rust/slopdesk-{daemon}/src/server.rs no longer announces a version after the marker — \
+                     hostd would report `unknown` and go on running last week's daemon behind this week's \
+                     number (docs/49)"
+                )),
+            },
+            Claim::Matches {
+                path: server,
+                pattern: r#"env!\("CARGO_PKG_VERSION"\)"#,
+                view: View::Code,
+                message: text::intern(format!(
+                    "rust/slopdesk-{daemon}/src/server.rs no longer announces its OWN compile-time version \
+                     — a daemon reporting the version it read off disk compares equal to it forever, which \
+                     is the failure inverted (docs/49)"
+                )),
+            },
+            Claim::Matches {
+                path: manager,
+                pattern: r"func parseAnnouncedVersion\(fromLogLine",
+                view: View::Code,
+                message: text::intern(format!(
+                    "{manager} no longer reads the running daemon's version off its announce line — a \
+                     manager that stopped parsing reads nil, which the audit reports as 'unknown' rather \
+                     than failing, so it is asserted here or nowhere (docs/49)"
+                )),
+            },
+            Claim::SameValue {
+                label: text::intern(format!("{daemon}'s announce version marker")),
+                swift: Extract::code(LIFECYCLE, r#"^ *static let marker = "(.*)"$"#),
+                rust: Extract::code(server, r#"ANNOUNCE_VERSION_PREFIX: &str = "(.*)";$"#),
+            },
+        ]));
     }
     report
 }
@@ -551,69 +526,65 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
 /// from /tmp; PASS.
 #[must_use]
 pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
-    check_all(
-        tree,
-        &[
-            Claim::PinnedSet {
-                label: "sidecar restart policies",
-                from: Extract::code(SIDECARS, r"^    (Automatic|SelfRetiring|OperatorChoice|NotResident),$"),
-                expect: &["Automatic", "NotResident", "OperatorChoice", "SelfRetiring"],
-            },
-            Claim::Matches {
-                path: SIDECARS,
-                pattern: r"pub fn policy\(tool: &str\) -> RestartPolicy",
-                view: View::Code,
-                message: "rust/slopdesk-sidecars no longer holds the policy table — it has two \
-                          callers in two languages, which is the exact shape a Swift copy skews \
-                          quietly in (docs/49)",
-            },
-            Claim::Matches {
-                path: SIDECARS_MANIFEST,
-                pattern: r"pub fn plan\(",
-                view: View::Code,
-                message: "rust/slopdesk-sidecars/src/manifest.rs no longer holds the manifest diff \
-                          (docs/49)",
-            },
-            Claim::Lacks {
-                path: SIDECAR_AUDIT,
-                pattern: r#"case "slopdesk-(dropd|screend|superd)""#,
-                view: View::Code,
-                message: "SidecarVersionAudit decides about a tool by NAME again — the table is \
-                          rust/slopdesk-sidecars, and a case added here alone decodes to \
-                          operatorChoice and reports 'your call' about a daemon that should have \
-                          been restarted (docs/49)",
-            },
-            Claim::Mentions {
-                path: FFI_HEADER,
-                names: &[
-                    "slopdesk_sidecar_audit",
-                    "slopdesk_sidecar_version_banner",
-                    "slopdesk_sidecar_upgrade_plan",
-                ],
-                message: "{entry} is not declared in slopdesk_ffi.h — Swift cannot reach the policy \
-                          (docs/55)",
-            },
-            Claim::Matches {
-                path: SIDECAR_AUDIT,
-                pattern: r"slopdesk_sidecar_audit\(",
-                view: View::Code,
-                message: "SidecarVersionAudit no longer asks the door for its verdict (docs/49)",
-            },
-            Claim::Matches {
-                path: SIDECAR_CLI,
-                pattern: r"slopdesk_sidecar_upgrade_plan\(",
-                view: View::Code,
-                message: "CLISidecars no longer asks the door for the upgrade plan (docs/49)",
-            },
-            Claim::Matches {
-                path: HOMEBREW_FORMULA,
-                pattern: r#"sidecars", "--record""#,
-                view: View::Code,
-                message: "the formula no longer records the manifest — every upgrade would read as \
-                          a first install, which is a table that never says anything (docs/49)",
-            },
-        ],
-    )
+    check_all(tree, &[
+        Claim::PinnedSet {
+            label: "sidecar restart policies",
+            from: Extract::code(
+                SIDECARS,
+                r"^    (Automatic|SelfRetiring|OperatorChoice|NotResident),$",
+            ),
+            expect: &["Automatic", "NotResident", "OperatorChoice", "SelfRetiring"],
+        },
+        Claim::Matches {
+            path: SIDECARS,
+            pattern: r"pub fn policy\(tool: &str\) -> RestartPolicy",
+            view: View::Code,
+            message: "rust/slopdesk-sidecars no longer holds the policy table — it has two callers in two \
+                      languages, which is the exact shape a Swift copy skews quietly in (docs/49)",
+        },
+        Claim::Matches {
+            path: SIDECARS_MANIFEST,
+            pattern: r"pub fn plan\(",
+            view: View::Code,
+            message: "rust/slopdesk-sidecars/src/manifest.rs no longer holds the manifest diff (docs/49)",
+        },
+        Claim::Lacks {
+            path: SIDECAR_AUDIT,
+            pattern: r#"case "slopdesk-(dropd|screend|superd)""#,
+            view: View::Code,
+            message: "SidecarVersionAudit decides about a tool by NAME again — the table is \
+                      rust/slopdesk-sidecars, and a case added here alone decodes to operatorChoice and \
+                      reports 'your call' about a daemon that should have been restarted (docs/49)",
+        },
+        Claim::Mentions {
+            path: FFI_HEADER,
+            names: &[
+                "slopdesk_sidecar_audit",
+                "slopdesk_sidecar_version_banner",
+                "slopdesk_sidecar_upgrade_plan",
+            ],
+            message: "{entry} is not declared in slopdesk_ffi.h — Swift cannot reach the policy (docs/55)",
+        },
+        Claim::Matches {
+            path: SIDECAR_AUDIT,
+            pattern: r"slopdesk_sidecar_audit\(",
+            view: View::Code,
+            message: "SidecarVersionAudit no longer asks the door for its verdict (docs/49)",
+        },
+        Claim::Matches {
+            path: SIDECAR_CLI,
+            pattern: r"slopdesk_sidecar_upgrade_plan\(",
+            view: View::Code,
+            message: "CLISidecars no longer asks the door for the upgrade plan (docs/49)",
+        },
+        Claim::Matches {
+            path: HOMEBREW_FORMULA,
+            pattern: r#"sidecars", "--record""#,
+            view: View::Code,
+            message: "the formula no longer records the manifest — every upgrade would read as a first \
+                      install, which is a table that never says anything (docs/49)",
+        },
+    ])
 }
 
 #[cfg(test)]
@@ -630,10 +601,7 @@ mod tests {
             (super::INSPECTOR_FFI, INSPECTOR_SHIM),
             (super::INSPECTOR_WIRE, INSPECTOR_WIRE_BODY),
             (super::INSPECTOR_FACE, INSPECTOR_FACE_BODY),
-            (
-                "Sources/SlopDeskFileTransfer/FileTransferClient.swift",
-                DROP_FACE,
-            ),
+            ("Sources/SlopDeskFileTransfer/FileTransferClient.swift", DROP_FACE),
             (
                 super::DROP_PROTOCOL_FACE,
                 "enum Wire { static let kind = slopdesk_drop_constant(0) }\n",
@@ -678,22 +646,17 @@ mod tests {
     const INSPECTOR_LINE: &str = "inspectord: listening on 0.0.0.0:";
 
     /// The eight dropd doors, as the shim and as the face that calls them.
-    const DOOR_SHIM: &str = "pub extern \"C\" fn slopdesk_drop_encode_request() {}\n\
-                             pub extern \"C\" fn slopdesk_drop_decode_reply() {}\n\
-                             pub extern \"C\" fn slopdesk_drop_constant() {}\n\
-                             pub extern \"C\" fn slopdesk_drop_decoder_new() {}\n\
-                             pub extern \"C\" fn slopdesk_drop_decoder_free() {}\n\
-                             pub extern \"C\" fn slopdesk_drop_decoder_append() {}\n\
-                             pub extern \"C\" fn slopdesk_drop_decoder_next() {}\n\
-                             pub extern \"C\" fn slopdesk_drop_decoder_buffered() {}\n";
-    const DROP_FACE: &str = "let a = slopdesk_drop_encode_request()\n\
-                             let b = slopdesk_drop_decode_reply()\n\
-                             let c = slopdesk_drop_constant(0)\n\
-                             let d = slopdesk_drop_decoder_new()\n\
-                             let e = slopdesk_drop_decoder_free(d)\n\
-                             let f = slopdesk_drop_decoder_append(d)\n\
-                             let g = slopdesk_drop_decoder_next(d)\n\
-                             let h = slopdesk_drop_decoder_buffered(d)\n";
+    const DOOR_SHIM: &str =
+        "pub extern \"C\" fn slopdesk_drop_encode_request() {}\npub extern \"C\" fn \
+         slopdesk_drop_decode_reply() {}\npub extern \"C\" fn slopdesk_drop_constant() {}\npub extern \"C\" \
+         fn slopdesk_drop_decoder_new() {}\npub extern \"C\" fn slopdesk_drop_decoder_free() {}\npub extern \
+         \"C\" fn slopdesk_drop_decoder_append() {}\npub extern \"C\" fn slopdesk_drop_decoder_next() \
+         {}\npub extern \"C\" fn slopdesk_drop_decoder_buffered() {}\n";
+    const DROP_FACE: &str = "let a = slopdesk_drop_encode_request()\nlet b = \
+                             slopdesk_drop_decode_reply()\nlet c = slopdesk_drop_constant(0)\nlet d = \
+                             slopdesk_drop_decoder_new()\nlet e = slopdesk_drop_decoder_free(d)\nlet f = \
+                             slopdesk_drop_decoder_append(d)\nlet g = slopdesk_drop_decoder_next(d)\nlet h \
+                             = slopdesk_drop_decoder_buffered(d)\n";
 
     /// Five request bytes across the two writers, four reply arms.
     const DROP_CLIENT_BODY: &str = "fn write_chunk_payload(kind: &mut u8) {\n    *kind = 3;\n}\n\
@@ -712,50 +675,42 @@ mod tests {
                                       out.push(6);\n    out.push(7);\n    out.push(8);\n    \
                                       out.push(9);\n}\n";
 
-    const ANDROID_PROTOCOL_BODY: &str = "pub fn encode(d: &Device) -> String {\n    \
-                                         json!({\"serial\": d.serial, \"model\": d.model})\n}\n";
+    const ANDROID_PROTOCOL_BODY: &str =
+        "pub fn encode(d: &Device) -> String {\n    json!({\"serial\": d.serial, \"model\": d.model})\n}\n";
 
-    const INSPECTOR_SHIM: &str = "pub extern \"C\" fn slopdesk_inspector_encode_subscribe() {}\n\
-                                  pub extern \"C\" fn slopdesk_inspector_decode_payload() {}\n\
-                                  pub extern \"C\" fn slopdesk_inspector_constant() {}\n\
-                                  pub extern \"C\" fn slopdesk_inspector_decoder_new() {}\n\
-                                  pub extern \"C\" fn slopdesk_inspector_decoder_free() {}\n\
-                                  pub extern \"C\" fn slopdesk_inspector_decoder_append() {}\n\
-                                  pub extern \"C\" fn slopdesk_inspector_decoder_next() {}\n\
-                                  pub extern \"C\" fn slopdesk_inspector_decoder_buffered() {}\n";
-    const INSPECTOR_FACE_BODY: &str = "let a = slopdesk_inspector_encode_subscribe()\n\
-                                       let b = slopdesk_inspector_decode_payload()\n\
-                                       let c = slopdesk_inspector_constant(0)\n\
-                                       let d = slopdesk_inspector_decoder_new()\n\
-                                       let e = slopdesk_inspector_decoder_free(d)\n\
-                                       let f = slopdesk_inspector_decoder_append(d)\n\
-                                       let g = slopdesk_inspector_decoder_next(d)\n";
-    const INSPECTOR_WIRE_BODY: &str = "pub const MAX_FRAME_PAYLOAD: usize = 16 * 1024 * 1024;\n\
-                                       const TAG_EVENT: u8 = 1;\nconst TAG_KEEP_ALIVE: u8 = 2;\n\
-                                       const TAG_SUBSCRIBE: u8 = 3;\n\
-                                       pub fn decode_client(tag: u8) -> Result<ClientFrame> {\n    \
-                                       match tag {\n        TAG_EVENT => Ok(ClientFrame::Event(0..1)),\n        \
-                                       TAG_KEEP_ALIVE => Ok(ClientFrame::KeepAlive),\n        \
-                                       _ => Err(()),\n    }\n}\n";
+    const INSPECTOR_SHIM: &str =
+        "pub extern \"C\" fn slopdesk_inspector_encode_subscribe() {}\npub extern \"C\" fn \
+         slopdesk_inspector_decode_payload() {}\npub extern \"C\" fn slopdesk_inspector_constant() {}\npub \
+         extern \"C\" fn slopdesk_inspector_decoder_new() {}\npub extern \"C\" fn \
+         slopdesk_inspector_decoder_free() {}\npub extern \"C\" fn slopdesk_inspector_decoder_append() \
+         {}\npub extern \"C\" fn slopdesk_inspector_decoder_next() {}\npub extern \"C\" fn \
+         slopdesk_inspector_decoder_buffered() {}\n";
+    const INSPECTOR_FACE_BODY: &str =
+        "let a = slopdesk_inspector_encode_subscribe()\nlet b = slopdesk_inspector_decode_payload()\nlet c \
+         = slopdesk_inspector_constant(0)\nlet d = slopdesk_inspector_decoder_new()\nlet e = \
+         slopdesk_inspector_decoder_free(d)\nlet f = slopdesk_inspector_decoder_append(d)\nlet g = \
+         slopdesk_inspector_decoder_next(d)\n";
+    const INSPECTOR_WIRE_BODY: &str =
+        "pub const MAX_FRAME_PAYLOAD: usize = 16 * 1024 * 1024;\nconst TAG_EVENT: u8 = 1;\nconst \
+         TAG_KEEP_ALIVE: u8 = 2;\nconst TAG_SUBSCRIBE: u8 = 3;\npub fn decode_client(tag: u8) -> \
+         Result<ClientFrame> {\n    match tag {\n        TAG_EVENT => Ok(ClientFrame::Event(0..1)),\n        \
+         TAG_KEEP_ALIVE => Ok(ClientFrame::KeepAlive),\n        _ => Err(()),\n    }\n}\n";
 
     /// A daemon's announce line, marker and compile-time version both.
     fn announcing(prefix: &str) -> String {
         format!(
-            "pub const ANNOUNCE_PREFIX: &str = \"{prefix}\";\n\
-             pub const ANNOUNCE_VERSION_PREFIX: &str = \"(v\";\n\
-             fn announce(port: u16) {{\n    println!(\n        \
-             \"{{ANNOUNCE_PREFIX}}{{port}} {{ANNOUNCE_VERSION_PREFIX}}{{}})\",\n        \
-             env!(\"CARGO_PKG_VERSION\"),\n    );\n}}\n"
+            "pub const ANNOUNCE_PREFIX: &str = \"{prefix}\";\npub const ANNOUNCE_VERSION_PREFIX: &str = \
+             \"(v\";\nfn announce(port: u16) {{\n    println!(\n        \"{{ANNOUNCE_PREFIX}}{{port}} \
+             {{ANNOUNCE_VERSION_PREFIX}}{{}})\",\n        env!(\"CARGO_PKG_VERSION\"),\n    );\n}}\n"
         )
     }
 
     /// androidd's listener: the announce line, then the seven arms the panel's ops need.
     fn android_server() -> String {
         format!(
-            "{}pub fn serve(op: &str) {{\n    match op {{\n        \"list\" => a(),\n        \
-             \"boot\" => b(),\n        \"shutdown\" => c(),\n        \"console\" => d(),\n        \
-             \"screenshot\" => e(),\n        \"logcat\" => f(),\n        \"open\" => g(),\n        \
-             _ => bad(),\n    }}\n}}\n",
+            "{}pub fn serve(op: &str) {{\n    match op {{\n        \"list\" => a(),\n        \"boot\" => \
+             b(),\n        \"shutdown\" => c(),\n        \"console\" => d(),\n        \"screenshot\" => \
+             e(),\n        \"logcat\" => f(),\n        \"open\" => g(),\n        _ => bad(),\n    }}\n}}\n",
             announcing(ANDROID_LINE)
         )
     }
@@ -763,8 +718,8 @@ mod tests {
     /// A supervisor that knows a marker and reads the version off the line.
     fn manager(marker: &str) -> String {
         format!(
-            "enum Manager {{\n    static let announceMarker = \"{marker}\"\n    \
-             static func parseAnnouncedVersion(fromLogLine line: String) -> String? {{ nil }}\n}}\n"
+            "enum Manager {{\n    static let announceMarker = \"{marker}\"\n    static func \
+             parseAnnouncedVersion(fromLogLine line: String) -> String? {{ nil }}\n}}\n"
         )
     }
 
@@ -982,8 +937,8 @@ mod tests {
 
         fixture.write(
             super::SIDECAR_AUDIT,
-            "func verdict(tool: String) {\n    switch tool {\n    case \"slopdesk-dropd\":\n        \
-             return .automatic\n    default:\n        return slopdesk_sidecar_audit(tool)\n    }\n}\n",
+            "func verdict(tool: String) {\n    switch tool {\n    case \"slopdesk-dropd\":\n        return \
+             .automatic\n    default:\n        return slopdesk_sidecar_audit(tool)\n    }\n}\n",
         );
         let report = super::the_sidecar_version_policy_is_one_table(&fixture.tree());
         assert!(
@@ -1036,14 +991,14 @@ mod tests {
             )
             .write(
                 super::FFI_HEADER,
-                "size_t slopdesk_sidecar_audit(const uint8_t *t, size_t n);\n\
-                 size_t slopdesk_sidecar_version_banner(const uint8_t *b, size_t n);\n\
-                 size_t slopdesk_sidecar_upgrade_plan(const uint8_t *p, size_t n);\n",
+                "size_t slopdesk_sidecar_audit(const uint8_t *t, size_t n);\nsize_t \
+                 slopdesk_sidecar_version_banner(const uint8_t *b, size_t n);\nsize_t \
+                 slopdesk_sidecar_upgrade_plan(const uint8_t *p, size_t n);\n",
             )
             .write(
                 super::HOMEBREW_FORMULA,
-                "class Slopdesk < Formula\n  def post_install\n    system bin/\"slopdesk\", \
-                 \"sidecars\", \"--record\"\n  end\nend\n",
+                "class Slopdesk < Formula\n  def post_install\n    system bin/\"slopdesk\", \"sidecars\", \
+                 \"--record\"\n  end\nend\n",
             );
     }
 }

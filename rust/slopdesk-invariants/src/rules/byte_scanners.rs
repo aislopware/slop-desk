@@ -1,10 +1,10 @@
 //! The scanners that walk untrusted bytes — the plain-text VT pass, the escape grammar, the width
 //! table, the shell word, the find scan, the base64 codec and the `\xNN`/`%NN` reading.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every one of these was written more than once, and the
-//! counts are the point: six escape scanners, eight shell quoters, fourteen narrowing casts, three
-//! base64 codecs, four `hex_nibble`s. None of the copies was wrong on its own; what made them a
-//! defect was that they answered the same bytes differently, and the bytes came off a socket or a
+//! Ported from `scripts/check-supervisor.sh`. Every one of these was written more than once, and
+//! the counts are the point: six escape scanners, eight shell quoters, fourteen narrowing casts,
+//! three base64 codecs, four `hex_nibble`s. None of the copies was wrong on its own; what made them
+//! a defect was that they answered the same bytes differently, and the bytes came off a socket or a
 //! clipboard rather than out of a test.
 
 use crate::claim::{Claim, GATE_RULES, View, check_all};
@@ -66,9 +66,10 @@ pub fn one_vt_grammar_for_plain_text(tree: &Tree) -> Report {
 /// One shell word, wherever a path is typed into a live shell
 ///
 /// The POSIX `'…'` quoting was written EIGHT times: seven Swift copies and one private to the Rust
-/// template emitter. One of the seven called itself the single source of truth while four sat beside
-/// it; another kept its copy rather than widen a daemon's dependency graph for four lines. The graph
-/// never had to widen — the face lives in the value-model leaf every one of them already links.
+/// template emitter. One of the seven called itself the single source of truth while four sat
+/// beside it; another kept its copy rather than widen a daemon's dependency graph for four lines.
+/// The graph never had to widen — the face lives in the value-model leaf every one of them already
+/// links.
 ///
 /// The half that bans a second copy lives in [`repo_invariants`](super::repo_invariants)
 /// (`shell_quoting_has_one_owner`), because the shell's version here could not fail: it piped 742
@@ -86,21 +87,21 @@ pub fn one_shell_word_wherever_a_path_is_typed(tree: &Tree) -> Report {
             path: "Sources/SlopDeskWorkspaceCore/Terminal/PasteTransform.swift",
             pattern: "private static func isShellSafe|allSatisfy",
             view: View::Code,
-            message: "PasteTransform.swift spells the shlex safe set again — bare-if-safe is a reading of the \
-                      same door",
+            message: "PasteTransform.swift spells the shlex safe set again — bare-if-safe is a reading of \
+                      the same door",
         },
         Claim::Names {
             path: "rust/slopdesk-ids/src/shell_quoting.rs",
             needle: "pub fn shlex_quoted",
-            message: "rust/slopdesk-ids/src/shell_quoting.rs lost shlex_quoted — the paste's bare reading is \
-                      the same rule",
+            message: "rust/slopdesk-ids/src/shell_quoting.rs lost shlex_quoted — the paste's bare reading \
+                      is the same rule",
         },
         Claim::Lacks {
             path: "rust/slopdesk-workspace/src/templates.rs",
             pattern: "fn shell_quoted",
             view: View::Code,
-            message: "templates.rs is the emitter's private copy again — it asks shell_quoting like everyone \
-                      else",
+            message: "templates.rs is the emitter's private copy again — it asks shell_quoting like \
+                      everyone else",
         },
     ];
     check_all(tree, &claims)
@@ -111,9 +112,9 @@ pub fn one_shell_word_wherever_a_path_is_typed(tree: &Tree) -> Report {
 /// One clustering was not enough, because there were still two tables saying how wide a cluster IS.
 /// `slopdesk-sanitize` knew the Arabic, Hebrew and Thai combining marks; the link scan's copy knew
 /// the `Default_Ignorable` set and painted U+1F300..U+1FAFF wide over three ranges of narrow
-/// pictographs. A screen model measuring a Thai line one way while the cursor, the underline and the
-/// hint badge measure it another is the same drift one layer down. The CJK sentinel is the cheapest
-/// tell that a third table has appeared: nothing measures East Asian width without it.
+/// pictographs. A screen model measuring a Thai line one way while the cursor, the underline and
+/// the hint badge measure it another is the same drift one layer down. The CJK sentinel is the
+/// cheapest tell that a third table has appeared: nothing measures East Asian width without it.
 #[must_use]
 pub fn one_width_table_under_that_clustering(tree: &Tree) -> Report {
     let claims = [
@@ -147,8 +148,8 @@ pub fn one_width_table_under_that_clustering(tree: &Tree) -> Report {
 /// `vtscan` exists because the Swift originals hand-rolled the CSI/string-sequence walk four times
 /// and a bug in the parameter ranges was fixable in four places. `slopdesk-altscreen` then made a
 /// FIFTH copy — in the crate that decides, from evicted bytes, whether tens of MiB of alt-screen
-/// churn replays into a user's scrollback. Two scanners disagreeing about where one sequence ends is
-/// how that crate and the replay passes reach different answers about the same bytes.
+/// churn replays into a user's scrollback. Two scanners disagreeing about where one sequence ends
+/// is how that crate and the replay passes reach different answers about the same bytes.
 ///
 /// The ban is on the two function NAMES rather than on the ranges: `0x40..=0x7E` is the ECMA-48
 /// final byte and appears in the shared scanner itself, but nothing walks a sequence without
@@ -201,8 +202,8 @@ pub fn one_grammar_for_where_an_escape_ends(tree: &Tree) -> Report {
 ///
 /// Find-in-terminal took a pattern the user retypes on every keystroke and ran it, backtracking,
 /// over the whole scrollback. Same hazard as Hint Mode, reached far more often. The scan is
-/// `slopdesk-rowscan::find` now, and the columns it answers in are UTF-16 units because that is what
-/// the highlighting surface indexes — the door does not convert, so neither may this face.
+/// `slopdesk-rowscan::find` now, and the columns it answers in are UTF-16 units because that is
+/// what the highlighting surface indexes — the door does not convert, so neither may this face.
 #[must_use]
 pub fn the_find_bar_asks_the_same_engine(tree: &Tree) -> Report {
     let claims = [
@@ -216,8 +217,8 @@ pub fn the_find_bar_asks_the_same_engine(tree: &Tree) -> Report {
         Claim::Names {
             path: SWIFT_FIND,
             needle: "slopdesk_find_matches",
-            message: "TerminalSearchController.swift no longer asks slopdesk_find_matches — the find scan is \
-                      one implementation",
+            message: "TerminalSearchController.swift no longer asks slopdesk_find_matches — the find scan \
+                      is one implementation",
         },
         Claim::Names {
             path: "rust/slopdesk-rowscan/src/find.rs",
@@ -231,13 +232,14 @@ pub fn the_find_bar_asks_the_same_engine(tree: &Tree) -> Report {
 /// One base64, and one secret notation
 ///
 /// Three hand-written base64 codecs lived in this tree — an encoder and a decoder inside superd
-/// agreeing with each other by inspection, and a third pair in the wire's state file — each carrying
-/// a copy of the standard alphabet and its own reading of what padding is legal. A codec that is
-/// "small enough to read" is still one implementation per copy. The `base64` crate is the one
-/// implementation now, and the alphabet is what gives a fourth copy away.
+/// agreeing with each other by inspection, and a third pair in the wire's state file — each
+/// carrying a copy of the standard alphabet and its own reading of what padding is legal. A codec
+/// that is "small enough to read" is still one implementation per copy. The `base64` crate is the
+/// one implementation now, and the alphabet is what gives a fourth copy away.
 ///
-/// The secret shapes are regular expressions in the notation the world publishes them in, not a byte
-/// loop with its own reading of `\b`. The scanner they replaced was wrong twice during its own port.
+/// The secret shapes are regular expressions in the notation the world publishes them in, not a
+/// byte loop with its own reading of `\b`. The scanner they replaced was wrong twice during its own
+/// port.
 #[must_use]
 pub fn one_base64_and_one_secret_notation(tree: &Tree) -> Report {
     let claims = [
@@ -301,8 +303,8 @@ pub fn one_reading_of_an_escape(tree: &Tree) -> Report {
             unless: &[],
             view: View::Code,
             exempt: &["rust/slopdesk-sanitize/src/escape.rs", GATE_RULES],
-            message: "an escape decoder grew back outside slopdesk-sanitize::escape ({files}) — one reading, \
-                      whoever wrote the bytes",
+            message: "an escape decoder grew back outside slopdesk-sanitize::escape ({files}) — one \
+                      reading, whoever wrote the bytes",
         },
         Claim::Names {
             path: "rust/slopdesk-superd/Cargo.toml",
@@ -334,7 +336,10 @@ mod tests {
                     "slopdesk_plaintext_strip\nslopdesk_plaintext_holdback\n",
                 )
                 .write(super::SWIFT_WAIT, "kept so the ban has a haystack\n")
-                .write("rust/slopdesk-sanitize/src/plaintext.rs", "pub fn holdback_start\n")
+                .write(
+                    "rust/slopdesk-sanitize/src/plaintext.rs",
+                    "pub fn holdback_start\n",
+                )
                 .write("rust/slopdesk-sanitize/src/vtscan.rs", "pub const fn lenient\n");
         };
         seed(&fixture);
@@ -359,7 +364,10 @@ mod tests {
                     "kept so the ban has a haystack\n",
                 )
                 .write("rust/slopdesk-ids/src/shell_quoting.rs", "pub fn shlex_quoted\n")
-                .write("rust/slopdesk-workspace/src/templates.rs", "kept so the ban has a haystack\n");
+                .write(
+                    "rust/slopdesk-workspace/src/templates.rs",
+                    "kept so the ban has a haystack\n",
+                );
         };
         seed(&fixture);
         assert!(super::one_shell_word_wherever_a_path_is_typed(&fixture.tree()).is_clean());
@@ -369,7 +377,10 @@ mod tests {
 
         // The emitter's private copy, back.
         seed(&fixture);
-        fixture.append("rust/slopdesk-workspace/src/templates.rs", "fn shell_quoted(path: &str)\n");
+        fixture.append(
+            "rust/slopdesk-workspace/src/templates.rs",
+            "fn shell_quoted(path: &str)\n",
+        );
         assert!(!super::one_shell_word_wherever_a_path_is_typed(&fixture.tree()).is_clean());
     }
 
@@ -378,7 +389,10 @@ mod tests {
         let fixture = Fixture::new("byte-scanners-width");
         let seed = |fixture: &Fixture| {
             fixture
-                .write("rust/slopdesk-sanitize/src/width.rs", "pub const fn scalar_width\n0x4E00\n")
+                .write(
+                    "rust/slopdesk-sanitize/src/width.rs",
+                    "pub const fn scalar_width\n0x4E00\n",
+                )
                 .write(
                     "rust/slopdesk-terminal/src/link.rs",
                     "use slopdesk_sanitize::width::scalar_width\n",
@@ -402,14 +416,20 @@ mod tests {
         let seed = |fixture: &Fixture| {
             fixture
                 .write("rust/slopdesk-sanitize/src/vtscan.rs", "pub fn parse_csi\n")
-                .write("rust/slopdesk-altscreen/src/lib.rs", "use slopdesk_sanitize::vtscan\n")
+                .write(
+                    "rust/slopdesk-altscreen/src/lib.rs",
+                    "use slopdesk_sanitize::vtscan\n",
+                )
                 .write(super::SWIFT_SYNC_INPUT, "slopdesk_sync_input_keyboard_only\n");
         };
         seed(&fixture);
         assert!(super::one_grammar_for_where_an_escape_ends(&fixture.tree()).is_clean());
 
         // A fifth copy in Rust.
-        fixture.append("rust/slopdesk-altscreen/src/lib.rs", "fn parse_csi(bytes: &[u8])\n");
+        fixture.append(
+            "rust/slopdesk-altscreen/src/lib.rs",
+            "fn parse_csi(bytes: &[u8])\n",
+        );
         assert!(!super::one_grammar_for_where_an_escape_ends(&fixture.tree()).is_clean());
 
         // And the sixth, in Swift, on the input path.
@@ -472,7 +492,10 @@ mod tests {
         let seed = |fixture: &Fixture| {
             fixture
                 .write("rust/slopdesk-sanitize/src/escape.rs", "fn hex_nibble(b: u8)\n")
-                .write("rust/slopdesk-superd/Cargo.toml", "\nslopdesk-sanitize = { path = \"..\" }\n")
+                .write(
+                    "rust/slopdesk-superd/Cargo.toml",
+                    "\nslopdesk-sanitize = { path = \"..\" }\n",
+                )
                 .write(
                     "rust/slopdesk-terminal/Cargo.toml",
                     "\nslopdesk-sanitize = { path = \"..\" }\n",
@@ -481,7 +504,10 @@ mod tests {
         seed(&fixture);
         assert!(super::one_reading_of_an_escape(&fixture.tree()).is_clean());
 
-        fixture.write("rust/slopdesk-superd/src/seg.rs", "fn hex_value(b: u8) -> u8 { 0 }\n");
+        fixture.write(
+            "rust/slopdesk-superd/src/seg.rs",
+            "fn hex_value(b: u8) -> u8 { 0 }\n",
+        );
         assert!(!super::one_reading_of_an_escape(&fixture.tree()).is_clean());
 
         seed(&fixture);
