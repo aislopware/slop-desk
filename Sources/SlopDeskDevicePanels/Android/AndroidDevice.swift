@@ -47,35 +47,16 @@ package struct AndroidDevice: Equatable, Identifiable {
     /// `tag.id` for an AVD on disk. Resolved to a glyph in ``AndroidDeviceKind``, not here.
     package var formFactor: String?
 
-    /// Running AND reachable. A device that is `unauthorized` is attached but will refuse every
-    /// shell, so it must not offer a mirror button that can only fail.
-    package var isRunning: Bool { serial != nil && state == "device" }
-
-    /// Attached but not usable — the state that needs an explanation rather than an action. The user
-    /// has to accept a debugging prompt on the device itself; nothing this panel sends can do it.
-    package var isAttachedButUnusable: Bool { serial != nil && state != "device" }
-
-    /// The screen's physical proportions, when known. Used to draw the frame before the first video
-    /// packet names a size — otherwise a freshly-opened device is a blank rectangle of the wrong
-    /// shape for as long as the encoder takes to start.
-    package var aspectRatio: Double? {
-        guard let width, let height, width > 0, height > 0 else { return nil }
-        return Double(width) / Double(height)
-    }
-
-    /// The one-line fact under the headline: what this device IS, in the terms someone picking one
-    /// out of a list needs. Assembled from whatever is known rather than templated, so a row missing
-    /// a field reads as a shorter sentence instead of one with a hole in it.
-    package var summary: String {
-        var parts: [String] = []
-        if let release { parts.append("Android " + release) }
-        else if let apiLevel { parts.append("API \(apiLevel)") }
-        if let width, let height { parts.append("\(width)×\(height)") }
-        if !isEmulator, let manufacturer, let model, !model.hasPrefix(manufacturer) {
-            parts.append(manufacturer)
-        }
-        return parts.joined(separator: " · ")
-    }
+    // ⚠️ `isRunning`, `isAttachedButUnusable`, `aspectRatio` and `summary` ARE NOT HERE. They are
+    // `slopdesk_devicepanel::android`, reached through the extension at the foot of
+    // `AndroidPresentation.swift` — the first three as ONE bitfield over the raw `(serial, state,
+    // isEmulator)` triple, because they are four reads of the same two fields and asking them
+    // separately would cross `adb`'s state word four times per row per redraw.
+    //
+    // What is left here is DECODING, which is the whole job of this type: the bridge's JSON in, a
+    // record out. A rule spelled beside a decode is a rule the panel's other half cannot be tested
+    // against, and `isRunning` was already spelled twice inside one file pair before there was a
+    // second renderer.
 
     /// Decode the bridge's `list` reply. `nil` only when the envelope itself is not an object or
     /// reports failure — a malformed DEVICE inside is skipped instead, so one bad entry cannot blank

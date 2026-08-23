@@ -993,6 +993,7 @@ version = "0.1.0"
 name = "slopdesk-devicepanel"
 version = "0.1.0"
 dependencies = [
+ "slopdesk-devicelog",
  "slopdesk-video",
  "slopdesk-wire",
  "slopdesk-workspace",

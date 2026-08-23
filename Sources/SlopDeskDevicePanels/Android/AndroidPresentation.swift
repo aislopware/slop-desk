@@ -1,59 +1,60 @@
-// AndroidPresentation — what the Android panel's five surfaces SAY, and every fold either renderer
-// would otherwise have taken on its own.
+// AndroidPresentation — the Swift FACE of `slopdesk_devicepanel::android`.
 //
-// docs/56 stage D, increment 52b, and the same lift increments 47, 49 and 51 did for the checklist,
-// the bespoke settings pages and the code panel's four surfaces. The list, the stage, the header, the
-// running card and the console had ONE renderer until the Mac drew them in AppKit, so every word in
-// them and every phase→drawing answer had a single speller BY ACCIDENT. There are two renderers now,
-// so the words and the folds sit here and are single-spelled ON PURPOSE.
+// Every word this panel says and every fold behind its five surfaces is Rust now. What is left here
+// is marshalling and two actuations: the tables are read out of the crate ONCE into `static let`s,
+// and the folds are one door call each.
 //
-// ## Why the folds and not just the words
+// ## What moved, and what the move was for
 //
-// A copy string drifts LOUDLY — somebody reads the phone's screen and the Mac's and sees two
-// sentences. An ORDERING drifts silently, and this panel already has three of them that would have
-// gone unnoticed for a release:
+// docs/56 stage D lifted these rules out of two renderers into one Swift file, because the list, the
+// stage, the header, the running card and the console had a single speller BY ACCIDENT until the Mac
+// drew them in AppKit. That fixed the two-RENDERER drift and left the two-LANGUAGE one: the rules
+// were Swift, the Android bridge's codec and both console grammars were already Rust, and
+// `CLAUDE.md`'s default is that a rule lives in Rust unless SwiftUI or AppKit is the reason it
+// cannot. None of these is a drawing. So:
 //
-//   * `canEnter(_:)` — the predicate that decides whether a tap on a device opens its mirror at all.
-//     It was spelled TWICE inside one file pair already (``AndroidDeviceList``'s `enter(_:)` and
-//     ``AndroidRunningCard``'s tap gate), which is exactly one spelling away from a Mac that opens a
-//     booting emulator and a phone that refuses it.
-//   * `stage(...)` — loading OUTRANKS stalled, which outranks streaming, and the loading caption then
-//     asks a SECOND question (is the DEVICE still coming up, or only the mirror). Drawn twice from a
-//     prose description, the two halves would have disagreed about which veil a booting AVD gets.
-//   * `menu(for:)` — a verb table. One half quietly grows a verb the other has not got, and nothing
-//     is red until somebody notices their phone's context menu is shorter than their Mac's.
+//   * `canEnter` / `isRunning` / `isAttachedButUnusable` / `stoppable` → `android::*`, and they cross
+//     as ONE bitfield over the RAW `(has_serial, state, is_emulator)` triple. The rule is
+//     `has_serial && state == "device"`; half of it spelled at a call site is the drift this port
+//     exists to end, and `AndroidDevice` no longer spells any of it.
+//   * `stage(...)` → `android::stage`, whose four-flag order IS the rule (loading outranks stalled,
+//     and the loading caption then asks a SECOND question), with 62 lines of Rust tests on it.
+//   * `menu(for:)`, the two trays, the console plate, the fact line, every sentence → one delivery
+//     each, framed as `[u32 length][UTF-8 bytes]` runs. ``DevicePanelBlob`` is the cursor.
 //
-// ## What is NOT here
+// ## What is still Swift, and why each one is
 //
-// **No ink, no metric, no font.** `SlopDeskSlate` DEPENDS on `SlopDeskClientCore`, which this target
-// sits under, so a token read from here would be a cycle rather than a widening. A reading names its
-// own SILHOUETTE (an `SFSymbol`, which both halves already resolve — `Image(systemSymbol:)` on one
-// side, `NSImage(systemSymbolName:)` over `.rawValue` on the other) and its own INK ROLE
-// (``AndroidInk``), and each renderer spells the hue. The two MEASURED lengths that are not tokens —
-// the veil's delay and the fallback aspect — live here, because they were measured once.
+// **``run(_:on:isDisplayOff:)`` and ``run(_:device:on:enter:)``.** A verb→call table over
+// `AndroidSidebarModel`, which is a `@MainActor` observable object with `Task`s in it. The KIND that
+// picks the branch crosses; the branch itself is Swift because everything it touches is.
 //
-// **No layout.** Where the trays sit, how a card is framed, which container scrolls: that is the
-// renderer's, and the two frameworks are entitled to disagree about it (docs/56 §3, "layout diverges;
-// capability does not").
+// **``matches(_:query:)`` and ``visible(_:filter:)``.** Already Rust, through ``DeviceRowFilter`` —
+// what stays is which FIELDS a row lends, which is this panel's own fact about its own record.
 //
-// **Nothing shared with the SIMULATOR panel.** The two surfaces look alike and share not one byte of
-// protocol — `scrcpy` over `adb` against `baguette`'s websocket, Annex-B against AVC, packed control
-// messages against JSON envelopes — so a common device vocabulary here would be an abstraction over a
-// coincidence. What they genuinely share is already below them (``DevicePanelRules``,
-// ``DevicePanelGeometry``, ``DeviceLogLine``), lifted one fact at a time and never as a family.
+// **The ink and stage enums.** They are the shape a `switch` in a SwiftUI body reads; the crate
+// answers the byte that picks the case. A hue is still neither side's — `SlopDeskSlate` sits ABOVE
+// this target, so the role descends and each renderer spells the colour.
+//
+// ## The one thing the crossing costs
+//
+// SF Symbols cross as NAMES. `SFSymbol` is `RawRepresentable` with a public `init(rawValue:)`, so a
+// crossed name reconstitutes and every call site keeps its type — but the compile-time check
+// `SFSafeSymbols` gave a Swift literal is gone, because the literal is gone. ``DevicePanelSymbolTests``
+// is that check, relocated: it resolves every crossed name through `NSImage(systemSymbolName:)`.
 
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 // MARK: - The one ink vocabulary the panel speaks in
 
 /// A text ROLE, resolved to a hue by whichever half is drawing.
 ///
 /// Four rungs and one alarm, which is the whole ladder this panel uses. It is a role rather than a
-/// colour for the reason at the head of this file, and it is deliberately NOT the design floor's own
-/// enum: `SlopDeskSlate` sits above this target, so naming its ladder here would invert the
+/// colour because `SlopDeskSlate` sits above this target, so naming its ladder here would invert the
 /// dependency the split is built on.
 package enum AndroidInk: Equatable, Sendable {
     /// The thing being read — a device's name, a log message's own line.
@@ -68,6 +69,19 @@ package enum AndroidInk: Equatable, Sendable {
     case icon
     /// The one hue this panel spends, and only on a fault.
     case err
+
+    /// The role for a crate byte. A byte no build wrote reads as ``tertiary``, which is the rung that
+    /// RECEDES — the safe answer, because the alternative spends the panel's one alarm colour on
+    /// something nothing is known about.
+    package init(crateByte: UInt8) {
+        switch Int32(crateByte) {
+        case SLOPDESK_ANDROID_INK_PRIMARY: self = .primary
+        case SLOPDESK_ANDROID_INK_SECONDARY: self = .secondary
+        case SLOPDESK_ANDROID_INK_ICON: self = .icon
+        case SLOPDESK_ANDROID_INK_ERR: self = .err
+        default: self = .tertiary
+        }
+    }
 }
 
 // MARK: - The stage
@@ -89,37 +103,25 @@ package enum AndroidStageReading: Equatable, Sendable {
 /// One control on the stage's toolbar: what it DOES, what it looks like, and what the pointer is told.
 ///
 /// A verb rather than a closure because the two renderers build their plates differently and must not
-/// each decide which glyph means Recents. The actuation is ``AndroidPresentation/run(_:on:)``, so the
-/// switch from verb to model call is written once as well — a table of eight `case`s repeated in two
-/// frameworks is the same drift as a table of eight strings.
+/// each decide which glyph means Recents. The actuation is ``AndroidPresentation/run(_:on:isDisplayOff:)``,
+/// so the switch from verb to model call is written once as well.
 package struct AndroidStageVerb: Equatable, Sendable {
     package let action: AndroidStageAction
     /// The glyph at rest.
     package let symbol: SFSymbol
     package let help: String
-    /// The glyph and the sentence while the thing this verb turns on is ON. `nil` for the six verbs
-    /// that do not latch.
-    package let latchedSymbol: SFSymbol?
-    package let latchedHelp: String?
-
-    package init(
-        action: AndroidStageAction, symbol: SFSymbol, help: String,
-        latchedSymbol: SFSymbol? = nil, latchedHelp: String? = nil,
-    ) {
-        self.action = action
-        self.symbol = symbol
-        self.help = help
-        self.latchedSymbol = latchedSymbol
-        self.latchedHelp = latchedHelp
-    }
+    /// The glyph and the sentence while the thing this verb turns on is ON. A verb that does not latch
+    /// repeats its own pair, which is why the crate needs no presence flag for it.
+    package let latchedSymbol: SFSymbol
+    package let latchedHelp: String
 
     /// The glyph for a latch state — the same answer for a verb that cannot latch.
     package func symbol(latched: Bool) -> SFSymbol {
-        latched ? latchedSymbol ?? symbol : symbol
+        latched ? latchedSymbol : symbol
     }
 
     package func help(latched: Bool) -> String {
-        latched ? latchedHelp ?? help : help
+        latched ? latchedHelp : help
     }
 }
 
@@ -138,6 +140,22 @@ package enum AndroidStageAction: Hashable, Sendable {
     /// The DEVICE's own backlight, not the mirror's — see the verb's help.
     case displayPower
     case console
+
+    /// `nil` for a byte no build of the crate wrote, which drops the plate rather than mounting one
+    /// whose press would do something else.
+    init?(crateByte: UInt8) {
+        switch Int32(crateByte) {
+        case SLOPDESK_ANDROID_ACTION_BACK: self = .back
+        case SLOPDESK_ANDROID_ACTION_HOME: self = .home
+        case SLOPDESK_ANDROID_ACTION_RECENTS: self = .recents
+        case SLOPDESK_ANDROID_ACTION_ROTATE: self = .rotate
+        case SLOPDESK_ANDROID_ACTION_CAPTURE: self = .capture
+        case SLOPDESK_ANDROID_ACTION_PASTE_CLIPBOARD: self = .pasteClipboard
+        case SLOPDESK_ANDROID_ACTION_DISPLAY_POWER: self = .displayPower
+        case SLOPDESK_ANDROID_ACTION_CONSOLE: self = .console
+        default: return nil
+        }
+    }
 }
 
 // MARK: - The device list
@@ -159,14 +177,22 @@ package enum AndroidDeviceVerb: Equatable, Sendable {
     case copySerial(String)
     case copyName(String)
 
+    /// The crate's title for this verb. The two copy verbs carry their own text and the crate does
+    /// not: the serial and the name are the caller's own row, which is the panel boundary's ordinary
+    /// rule (`docs/55` §8).
     package var title: String {
+        AndroidVocabulary.menuTitles[menuSlot]
+    }
+
+    /// Where this verb's title sits in the crate's menu-title run.
+    private var menuSlot: Int {
         switch self {
-        case .openScreen: "Open Screen"
-        case .copyScreenshot: "Copy Screenshot"
-        case .shutDown: "Shut Down"
-        case .start: "Start"
-        case .copySerial: "Copy Serial"
-        case .copyName: "Copy Name"
+        case .openScreen: Int(SLOPDESK_ANDROID_MENU_OPEN_SCREEN)
+        case .copyScreenshot: Int(SLOPDESK_ANDROID_MENU_COPY_SCREENSHOT)
+        case .shutDown: Int(SLOPDESK_ANDROID_MENU_SHUT_DOWN)
+        case .start: Int(SLOPDESK_ANDROID_MENU_START)
+        case .copySerial: Int(SLOPDESK_ANDROID_MENU_COPY_SERIAL)
+        case .copyName: Int(SLOPDESK_ANDROID_MENU_COPY_NAME)
         }
     }
 }
@@ -193,18 +219,6 @@ package struct AndroidFact: Equatable, Sendable, Identifiable {
     package let showsLabel: Bool
 
     package var id: String { label }
-
-    package init(
-        _ label: String, _ text: String, copies: String? = nil, ink: AndroidInk,
-        isMeasured: Bool = false, showsLabel: Bool = true,
-    ) {
-        self.label = label
-        self.text = text
-        self.copies = copies ?? text
-        self.ink = ink
-        self.isMeasured = isMeasured
-        self.showsLabel = showsLabel
-    }
 }
 
 // MARK: - The console
@@ -220,14 +234,78 @@ package enum AndroidLogVerb: Hashable, Sendable {
 
     package var title: String {
         switch self {
-        case .copyLine: "Copy Line"
-        case .copyConsole: "Copy Console"
-        case let .filterByTag(tag): "Filter by \(tag)"
+        case .copyLine: AndroidVocabulary.words[26]
+        case .copyConsole: AndroidVocabulary.words[27]
+        case let .filterByTag(tag):
+            AndroidVocabulary.phrase(SLOPDESK_ANDROID_PHRASE_FILTER_BY_TAG, value: tag)
         }
     }
 }
 
-// MARK: - The folds
+// MARK: - The face
+
+/// The crate's tables and its one templated sentence, read out ONCE and reachable from anywhere.
+///
+/// Deliberately NOT inside ``AndroidPresentation``, which is `@MainActor` because two of its folds
+/// drive `AndroidSidebarModel`. A word is not main-actor state — ``AndroidLogVerb/title`` and
+/// ``AndroidDeviceVerb/title`` are plain value members, and isolating the table they read would put
+/// an actor hop behind a `String` that has been fixed since process start.
+enum AndroidVocabulary {
+    /// Every fixed word, in the order `slopdesk_android_words` documents. Read ONCE — a door per
+    /// string inside a SwiftUI body was measured too expensive when the settings catalogue did it,
+    /// and this table is 28 strings that never change within a process.
+    ///
+    /// PADDED, never trusted: ``DevicePanelBlob/texts(_:)`` fills a short delivery with empties
+    /// rather than shifting, so a crate and a face that disagree about the layout lose ONE word
+    /// instead of wearing each other's from the gap onward.
+    static let words: [String] = {
+        var blob = DevicePanelBlob { out, cap in slopdesk_android_words(out, cap) }
+        return blob.texts(28)
+    }()
+
+    /// The seven ``AndroidDeviceMenuEntry`` titles, in the crate's byte order. Slot `0` is the
+    /// separator's and is empty by construction.
+    static let menuTitles = Array(words[19..<26])
+
+    /// Every toolbar plate the crate publishes, with the tray it belongs to.
+    private static let plates: [(tray: Int32, verb: AndroidStageVerb)] = {
+        var blob = DevicePanelBlob { out, cap in slopdesk_android_stage_verbs(out, cap) }
+        let count = blob.count16()
+        var plates: [(tray: Int32, verb: AndroidStageVerb)] = []
+        plates.reserveCapacity(count)
+        for _ in 0..<count {
+            let tray = Int32(blob.byte())
+            let action = AndroidStageAction(crateByte: blob.byte())
+            let strings = blob.texts(4)
+            guard let action else { continue }
+            plates.append((tray, AndroidStageVerb(
+                action: action,
+                symbol: SFSymbol(rawValue: strings[0]),
+                help: strings[1],
+                latchedSymbol: SFSymbol(rawValue: strings[2]),
+                latchedHelp: strings[3],
+            )))
+        }
+        return plates
+    }()
+
+    /// The plates of one tray, in the crate's order. The TRAY byte is what lets this side rebuild
+    /// three groups from one list without knowing the counts — a plate moving between trays is a
+    /// design decision, and it belongs where the rest of the design decisions are.
+    static func tray(_ id: Int32) -> [AndroidStageVerb] {
+        plates.filter { $0.tray == id }.map(\.verb)
+    }
+
+    /// One door rather than six, because six doors that each format one value into one template
+    /// would be six sites restating the same marshalling.
+    static func phrase(_ id: Int32, value: String = "", count: Int = 0) -> String {
+        devicePanelLend(value) { bytes, len in
+            wsDelivered(capacity: 128) { out, cap in
+                slopdesk_android_phrase(UInt8(id), bytes, len, count, out, cap)
+            } ?? ""
+        }
+    }
+}
 
 @MainActor
 package enum AndroidPresentation {
@@ -235,35 +313,16 @@ package enum AndroidPresentation {
 
     /// How long the model may be loading before the veil admits it.
     ///
-    /// 600 ms rather than the simulator stage's 400, and measured: a warm emulator's first keyframe
-    /// arrives 0.83 s after the request (2026-08-04), because the host has to push the server jar,
-    /// start `app_process` and wait for the device's encoder. So the veil DOES appear on an ordinary
-    /// selection here — unlike the simulator's 0.09 s case, where any delay at all would have made it
-    /// a flash. What the delay still buys is the second selection: a device opened, left and reopened
-    /// while the panel is warm comes back faster than this, and flashing grey over it would be the
-    /// failure state drawn onto the ordinary case.
-    ///
-    /// Here rather than at either renderer because it is a MEASUREMENT, and a number measured once
-    /// that two files carry is a number that gets tuned in one of them.
-    package static let veilDelay: Duration = .milliseconds(600)
-
-    /// The stream is over waiting and there is still no video.
-    ///
-    /// Distinct from "loading" by the model's own deadline and from "streaming" by
-    /// ``AndroidSidebarModel/hasVideo``, which is what makes the stage always resolve into one of
-    /// three definite things.
-    package static func isStalled(
-        hasSelection: Bool, isAwaitingStream: Bool, hasVideo: Bool,
-    ) -> Bool {
-        hasSelection && !isAwaitingStream && !hasVideo
-    }
+    /// 600 ms rather than the simulator stage's 400, and MEASURED — the crate carries the number and
+    /// the measurement together, so a value measured once is not a value two files can re-tune.
+    package static let veilDelay: Duration = .milliseconds(Int(slopdesk_android_veil_delay_ms()))
 
     /// What stands over the picture, from the veil's own (delayed) state and the model's.
     ///
-    /// ⚠️ THE ORDER IS THE RULE. Loading outranks stalled: the two are reachable in the same frame
-    /// while a reattempt is in flight, and answering "no video" over a mirror that is being reopened
-    /// puts a failure on the ordinary case. `showsLoading` is the VIEW's delayed mirror of
-    /// ``AndroidSidebarModel/isAwaitingStream`` rather than the model's own flag — see ``veilDelay``.
+    /// ⚠️ THE ORDER IS THE RULE, and it is the crate's: loading outranks stalled, because the two are
+    /// reachable in the same frame while a reattempt is in flight and answering "no video" over a
+    /// mirror that is being reopened puts a failure on the ordinary case. `showsLoading` is the VIEW's
+    /// delayed mirror of ``AndroidSidebarModel/isAwaitingStream`` rather than the model's own flag.
     ///
     /// - Parameter deviceIsRunning: `false` only for a device that is still coming up, which is the
     ///   one distinction the caption is allowed to make. `nil` when there is no selected device to
@@ -272,21 +331,20 @@ package enum AndroidPresentation {
         showsLoading: Bool, hasSelection: Bool, isAwaitingStream: Bool, hasVideo: Bool,
         deviceIsRunning: Bool?,
     ) -> AndroidStageReading {
-        if showsLoading {
-            // TWO DIFFERENT WAITS WITH TWO DIFFERENT OWNERS: a mirror the HOST is starting, and a
-            // device that is still booting. The model keeps the veil up through both, and the second
-            // can be tens of seconds — far too long to blame on "the mirror".
-            return .loading(caption: deviceIsRunning == false
-                ? "Starting the device…"
-                : "Starting the mirror…")
+        let reading = slopdesk_android_stage(
+            showsLoading, hasSelection, isAwaitingStream, hasVideo,
+            deviceIsRunning != nil, deviceIsRunning ?? false,
+        )
+        let caption = AndroidVocabulary.words[15 + Int(reading)]
+        switch Int32(reading) {
+        case SLOPDESK_ANDROID_STAGE_STALLED:
+            return .stalled(caption: caption, retry: AndroidVocabulary.words[3])
+        case SLOPDESK_ANDROID_STAGE_STARTING_DEVICE,
+             SLOPDESK_ANDROID_STAGE_STARTING_MIRROR:
+            return .loading(caption: caption)
+        default:
+            return .streaming
         }
-        guard isStalled(
-            hasSelection: hasSelection, isAwaitingStream: isAwaitingStream, hasVideo: hasVideo,
-        ) else { return .streaming }
-        // A stalled mirror is the one failure here that a second attempt genuinely fixes — the jar is
-        // pushed, the server is up, the encoder never started — so the stage offers the retry rather
-        // than making someone go back to the list and pick the same row again.
-        return .stalled(caption: "No video from this device.", retry: "Try Again")
     }
 
     /// Android's three navigation keys, in the platform's own order — Back, Home, Recents, left to
@@ -297,61 +355,24 @@ package enum AndroidPresentation {
     /// — pulling the shade down, swiping between apps — is deliberately absent from every tray:
     /// `scrcpy` injects real touch events, so those gestures work on the frame itself, and a plate
     /// that duplicates a gesture is a plate that can be pressed by mistake.
-    package static let navigationTray: [AndroidStageVerb] = [
-        // `BACK_OR_SCREEN_ON` rather than a bare `KEYCODE_BACK`: on a sleeping device the same press
-        // wakes it, which is what the hardware key does and what anyone pressing it means.
-        AndroidStageVerb(action: .back, symbol: .chevronBackward, help: "Back"),
-        AndroidStageVerb(action: .home, symbol: .circle, help: "Home"),
-        AndroidStageVerb(action: .recents, symbol: .squareOnSquare, help: "Recent Apps"),
-    ]
+    package static let navigationTray = AndroidVocabulary.tray(SLOPDESK_ANDROID_TRAY_NAVIGATION)
 
     /// The second tray: the host-side and protocol-side settings, which have no gesture at all.
-    package static let actionTray: [AndroidStageVerb] = [
-        // ONE rotate, not a pair. `scrcpy`'s `ROTATE_DEVICE` is a toggle between the device's natural
-        // orientation and the other one — there is no left and right to offer, and a pair of arrows
-        // would be two buttons doing the same thing.
-        AndroidStageVerb(action: .rotate, symbol: .rotateRight, help: "Rotate"),
-        AndroidStageVerb(action: .capture, symbol: .cameraViewfinder, help: "Copy Screenshot"),
-        // The clipboard hop, ONE WAY. The panel can PUSH the client's clipboard to the device and
-        // deliberately cannot pull the device's back — a `GET_CLIPBOARD` makes the device write a
-        // reply into the byte stream this panel is decoding as video. See ``AndroidControlMessage``.
-        AndroidStageVerb(
-            action: .pasteClipboard, symbol: .documentOnClipboard,
-            // Not "the Mac's clipboard", which is what this said while there was one renderer: the
-            // surface draws on a phone now, and a help string that names the wrong machine is the
-            // cheapest possible drift.
-            help: "Paste the clipboard into the device",
-        ),
-        // The device's own backlight, which the mirror does not need. A phone on a desk lighting up
-        // the room while somebody mirrors it is a real annoyance, and the stream is unaffected.
-        AndroidStageVerb(
-            action: .displayPower, symbol: .lightbulb,
-            help: "Turn the device's screen off",
-            latchedSymbol: .lightbulbSlash,
-            latchedHelp: "Turn the device's screen back on",
-        ),
-    ]
+    package static let actionTray = AndroidVocabulary.tray(SLOPDESK_ANDROID_TRAY_ACTION)
 
     /// The console plate, deliberately OFF the trays. It LATCHES, and a latched plate is drawn as a
     /// lit key, which reads as lit only against the panel's own tone. Sitting it on a tray would put a
     /// lit key inside a lit tray and cost exactly the signal it exists to carry.
-    package static let consoleVerb = AndroidStageVerb(
-        action: .console, symbol: .listBulletRectangle, help: "Show logcat",
-        latchedSymbol: .listBulletRectangle, latchedHelp: "Hide logcat",
-    )
+    package static let consoleVerb = AndroidVocabulary.tray(SLOPDESK_ANDROID_TRAY_CONSOLE)[0]
 
     /// What the panel says when the paste verb finds nothing to paste. A report rather than a silent
     /// no-op, because pressing a plate and getting nothing at all reads as a broken button.
-    package static let emptyClipboardReport = "The clipboard has no text."
+    package static let emptyClipboardReport = AndroidVocabulary.words[4]
 
     /// Run a toolbar verb against the live model.
     ///
-    /// Here rather than at either renderer because the verb→call table is a TABLE: eight cases, half
-    /// of them one-liners, and the half that is not (the clipboard's guard, the pair of
-    /// `AndroidControlMessage` sends behind Back) is where two hand-written switches would diverge
-    /// first. What stays with each half is the LATCH — `displayPower` and `console` are view state on
-    /// one side and a stored property on the other — so the caller flips its own and passes the
-    /// result in.
+    /// One of the two folds that stay Swift: every branch touches `AndroidSidebarModel`, which is a
+    /// `@MainActor` observable with `Task`s in it. What crosses is the KIND that picks the branch.
     ///
     /// - Parameter isDisplayOff: the latch AFTER the press, so the call says what the device should do
     ///   rather than what the button just did.
@@ -379,21 +400,20 @@ package enum AndroidPresentation {
 
     // MARK: The device list
 
-    package static let searchPlaceholder = "Search devices"
+    package static let searchPlaceholder = AndroidVocabulary.words[0]
 
     /// The empty list's two sentences, which are two different failures and must not be one.
-    package static let noDevices = "No Android devices or emulators on the host."
+    package static let noDevices = AndroidVocabulary.words[1]
 
     package static func noMatches(_ query: String) -> String {
-        "No devices match “\(query)”."
+        AndroidVocabulary.phrase(SLOPDESK_ANDROID_PHRASE_NO_MATCHES, value: query)
     }
 
     /// The filter, over every field somebody would type: the name, the model, the serial and the
     /// platform version.
     ///
-    /// Case-folded by ``DeviceRowFilter``, which is where the predicate and the reason for it live —
-    /// including why it is no longer `localizedCaseInsensitiveContains`, and the correction that
-    /// that call was never diacritic-insensitive the way this comment used to claim.
+    /// The predicate is ``DeviceRowFilter``'s — already Rust. What stays here is WHICH fields an
+    /// Android row lends it, which is this panel's own fact about its own record.
     package static func matches(_ devices: [AndroidDevice], query: String) -> [AndroidDevice] {
         DeviceRowFilter.surviving(devices, query: query) { device, fields in
             fields.add(device.name)
@@ -409,10 +429,9 @@ package enum AndroidPresentation {
     /// A BOOTING emulator may be entered — the stage knows how to wait for a device, and "click, then
     /// watch it come up" is strictly better than "watch the list until clicking works". A physical
     /// device that is attached-but-unusable may NOT: its fix is an authorization dialog on its own
-    /// screen, which is not something waiting can do, so the card stays un-clickable rather than
-    /// opening onto a wait that can never end.
+    /// screen, which is not something waiting can do.
     package static func canEnter(_ device: AndroidDevice) -> Bool {
-        device.isRunning || device.isEmulator && device.serial != nil
+        device.flags & UInt8(SLOPDESK_ANDROID_DEVICE_CAN_ENTER) != 0
     }
 
     /// The trailing text on a row that is not running: the platform version where the heading has not
@@ -422,59 +441,70 @@ package enum AndroidPresentation {
     /// definition, not a lookalike's — and it is what tells two similarly-named AVDs apart when they
     /// share a system image.
     package static func subtitle(for device: AndroidDevice, showsVersion: Bool) -> String? {
-        if showsVersion, let version = device.versionLabel { return version }
-        guard let width = device.width, let height = device.height else { return nil }
-        return "\(width) × \(height)"
+        devicePanelLend(device.versionLabel ?? "") { label, labelLen in
+            wsDelivered(capacity: 64) { out, cap in
+                slopdesk_android_subtitle(
+                    label, labelLen, showsVersion && device.versionLabel != nil,
+                    Int64(device.width ?? 0), Int64(device.height ?? 0), out, cap,
+                )
+            }
+        }
     }
 
     /// The one verb an idle row offers, as a sentence.
     package static func startHelp(_ device: AndroidDevice) -> String {
-        "Start \(device.name)"
+        AndroidVocabulary.phrase(SLOPDESK_ANDROID_PHRASE_START_HELP, value: device.name)
     }
 
     /// The card's stop plate. A physical device is somebody's phone: this panel mirrors it and does
     /// not power it off, so the plate is simply ABSENT rather than present-and-refusing.
     package static func shutDownHelp(_ device: AndroidDevice) -> String {
-        "Shut down \(device.name)"
+        AndroidVocabulary.phrase(SLOPDESK_ANDROID_PHRASE_SHUT_DOWN_HELP, value: device.name)
     }
 
     /// The emulators a section heading's stop-all control may act on.
     ///
-    /// Emulators only, and COUNTED as such: a physical device is not something this panel may power
-    /// off, so a control that named every attached device would promise a verb it refuses for half of
-    /// them. Offered only where more than one is up, because that is the only place it is a different
-    /// verb from the card's own stop button.
+    /// Emulators only, and the crate says which: a physical device is not something this panel may
+    /// power off, so a control that named every attached device would promise a verb it refuses for
+    /// half of them.
     package static func stoppable(in devices: [AndroidDevice]) -> [AndroidDevice] {
-        devices.filter { $0.isRunning && $0.isEmulator }
+        devices.filter { $0.flags & UInt8(SLOPDESK_ANDROID_DEVICE_IS_STOPPABLE) != 0 }
     }
 
     package static func shutDownAllHelp(count: Int) -> String {
-        "Shut down all \(count) running emulators"
+        AndroidVocabulary.phrase(SLOPDESK_ANDROID_PHRASE_SHUT_DOWN_ALL_HELP, count: count)
     }
 
     /// A device's context menu, in order.
     ///
-    /// A TABLE rather than a pair of `if` blocks per renderer, for the reason at the head of this
-    /// file: one half growing a verb the other has not got is silent until somebody compares two
-    /// screens. The separator is part of the table because where the line falls is the same kind of
-    /// decision as which verbs are above it.
+    /// A TABLE, and the crate's: one half growing a verb the other has not got is silent until
+    /// somebody compares two screens. The separator is part of the table because where the line falls
+    /// is the same kind of decision as which verbs are above it. The two copy verbs take their text
+    /// from the ROW — the crate answers kinds, because the caller already holds the strings.
     package static func menu(for device: AndroidDevice) -> [AndroidDeviceMenuEntry] {
-        var entries: [AndroidDeviceMenuEntry] = []
-        if device.isRunning {
-            entries.append(.verb(.openScreen))
-            entries.append(.verb(.copyScreenshot))
-            if device.isEmulator { entries.append(.verb(.shutDown)) }
-        } else if device.avdName != nil {
-            entries.append(.verb(.start))
+        let kinds = devicePanelLend(device.state) { state, stateLen in
+            devicePanelKinds(capacity: 8) { out, cap in
+                slopdesk_android_device_menu(
+                    device.serial != nil, state, stateLen, device.isEmulator,
+                    device.avdName != nil, out, cap,
+                )
+            }
         }
-        entries.append(.separator)
-        if let serial = device.serial { entries.append(.verb(.copySerial(serial))) }
-        entries.append(.verb(.copyName(device.name)))
-        return entries
+        return kinds.compactMap { kind in
+            switch Int32(kind) {
+            case SLOPDESK_ANDROID_MENU_SEPARATOR: .separator
+            case SLOPDESK_ANDROID_MENU_OPEN_SCREEN: .verb(.openScreen)
+            case SLOPDESK_ANDROID_MENU_COPY_SCREENSHOT: .verb(.copyScreenshot)
+            case SLOPDESK_ANDROID_MENU_SHUT_DOWN: .verb(.shutDown)
+            case SLOPDESK_ANDROID_MENU_START: .verb(.start)
+            case SLOPDESK_ANDROID_MENU_COPY_SERIAL: device.serial.map { .verb(.copySerial($0)) }
+            case SLOPDESK_ANDROID_MENU_COPY_NAME: .verb(.copyName(device.name))
+            default: nil
+            }
+        }
     }
 
-    /// Run a menu verb. Same argument as ``run(_:on:isDisplayOff:)`` — the verb→call table is the part
-    /// that drifts, and the two copy verbs carry their own text so neither half re-reads the device.
+    /// Run a menu verb. The other fold that stays Swift, for ``run(_:on:isDisplayOff:)``'s reason.
     ///
     /// `enter` is the ONE verb handed back rather than run here, and deliberately: opening a device is
     /// the panel's drill between its two depths, and each half carries that move in its own framework
@@ -509,28 +539,35 @@ package enum AndroidPresentation {
 
     /// 9:19.5 — the proportions of essentially every current Android phone, and the right guess for a
     /// device that has not said.
-    package static let fallbackAspect: CGFloat = 9.0 / 19.5
+    package static let fallbackAspect = CGFloat(slopdesk_android_fallback_aspect())
 
     /// The card's screen box at a fixed art HEIGHT, from the device's own aspect ratio, so what varies
     /// between two cards is the shape and nothing else.
     ///
     /// Clamped so an unreported or absurd ratio cannot produce a box wider than the card. The three
     /// lengths are the CALLER's — they are design tokens, and `SlopDeskSlate` sits above this target —
-    /// which leaves exactly the arithmetic here: the fallback, the multiply, and the order of the
-    /// clamp. That order is the part worth sharing; the numbers are already single-spelled in Slate.
+    /// which leaves the arithmetic to the crate: the fallback, the multiply, and the ORDER of the
+    /// clamp, done in IEEE `max`/`min` so one NaN upstream cannot survive as a NaN width.
     package static func artWidth(
         for device: AndroidDevice, art: CGFloat, floor: CGFloat, cap: CGFloat,
     ) -> CGFloat {
-        let ratio = device.aspectRatio.map { CGFloat($0) } ?? fallbackAspect
-        let width = art * ratio
-        // `.maximum`/`.minimum`, never `min`/`max` — the stdlib pair compares with `<` and hands back
-        // whichever operand won, which makes one NaN anywhere upstream survive as a NaN width.
-        return CGFloat.minimum(CGFloat.maximum(width, floor), cap)
+        CGFloat(slopdesk_android_art_width(
+            device.aspectRatio ?? 0, Double(art), Double(floor), Double(cap),
+        ))
     }
 
     /// The card's tooltip: a verb for a device that can be opened, and its STATE for one that cannot.
     package static func cardHelp(_ device: AndroidDevice) -> String {
-        device.isRunning ? "Open \(device.name)" : "\(device.name) — \(explain(device))"
+        devicePanelLend(device.name) { name, nameLen in
+            devicePanelLend(device.state) { state, stateLen in
+                wsDelivered(capacity: 128) { out, cap in
+                    slopdesk_android_card_help(
+                        name, nameLen, device.serial != nil, state, stateLen, device.isEmulator,
+                        out, cap,
+                    )
+                } ?? ""
+            }
+        }
     }
 
     /// The device's state as a sentence, with the one reading `adb`'s word alone would get wrong: an
@@ -538,30 +575,23 @@ package enum AndroidPresentation {
     /// seconds of launch and the guest's `adbd` answers ~21 s later (measured 2026-08-07) — and "Not
     /// responding" over a card that is doing exactly what was asked reads as a fault.
     package static func explain(_ device: AndroidDevice) -> String {
-        if device.isEmulator, device.state == "offline" { return "Starting up…" }
-        return explain(state: device.state)
+        explain(state: device.state, isEmulator: device.isEmulator)
     }
 
     /// `adb`'s state word as a sentence. The words are `adb`'s own and mean nothing to most readers —
     /// `unauthorized` in particular reads as a permissions error on the HOST, when what it means is
-    /// that a dialog is waiting on the device's screen.
-    package static func explain(state: String) -> String {
-        switch state {
-        case "unauthorized": "Waiting for you to allow debugging on the device"
-        case "offline": "Not responding"
-        case "authorizing": "Authorizing…"
-        case "connecting": "Connecting…"
-        case "recovery": "In recovery mode"
-        case "sideload": "In sideload mode"
-        case "bootloader": "In the bootloader"
-        case "device": "Ready"
-        default: state
+    /// that a dialog is waiting on the device's screen. A word this build has not seen answers ITSELF.
+    package static func explain(state: String, isEmulator: Bool = false) -> String {
+        devicePanelLend(state) { bytes, len in
+            wsDelivered(capacity: 64) { out, cap in
+                slopdesk_android_explain(bytes, len, isEmulator, out, cap)
+            } ?? ""
         }
     }
 
     // MARK: The header
 
-    package static let backHelp = "All Devices"
+    package static let backHelp = AndroidVocabulary.words[2]
 
     /// The facts under the device's name, ordered by how often each is the thing being checked: the
     /// screen, then the density and ABI where they are known, then the SERIAL — which is what every
@@ -572,60 +602,56 @@ package enum AndroidPresentation {
     /// REQUEST and not about the device; printing both would be two resolutions in one line, one of
     /// them wrong for every purpose anyone would use it for.
     package static func facts(for device: AndroidDevice) -> [AndroidFact] {
-        var facts: [AndroidFact] = []
-        if let width = device.width, let height = device.height {
-            facts.append(AndroidFact(
-                "Screen", "\(width) × \(height)", ink: .secondary, isMeasured: true,
-            ))
+        var blob = devicePanelLend(device.abi ?? "") { abi, abiLen in
+            devicePanelLend(device.serial ?? "") { serial, serialLen in
+                DevicePanelBlob { out, cap in
+                    slopdesk_android_facts(
+                        Int64(device.width ?? 0), Int64(device.height ?? 0),
+                        Int64(device.density ?? 0), abi, abiLen, serial, serialLen, out, cap,
+                    )
+                }
+            }
         }
-        if let density = device.density {
-            // `420 dpi` rather than the bucket's name (`xxhdpi`): the number is what a layout is
-            // reasoned about in, and the bucket is derivable from it while the reverse is not.
-            facts.append(AndroidFact("Density", "\(density) dpi", ink: .tertiary, isMeasured: true))
+        return (0..<blob.count16()).map { _ in
+            let ink = AndroidInk(crateByte: blob.byte())
+            let isMeasured = blob.byte() != 0
+            let showsLabel = blob.byte() != 0
+            let strings = blob.texts(3)
+            return AndroidFact(
+                label: strings[0], text: strings[1], copies: strings[2],
+                ink: ink, isMeasured: isMeasured, showsLabel: showsLabel,
+            )
         }
-        if let abi = device.abi, !abi.isEmpty {
-            // Unlabelled: `arm64-v8a` names itself, and it is here because a native build that refuses
-            // to install is almost always this line disagreeing with the APK.
-            facts.append(AndroidFact("ABI", abi, ink: .tertiary, showsLabel: false))
-        }
-        if let serial = device.serial {
-            facts.append(AndroidFact(
-                "Serial", serial, copies: serial, ink: .tertiary, isMeasured: true,
-            ))
-        }
-        return facts
     }
 
     /// What a fact's own Copy verb is called. The LABEL names the fact, so the item reads "Copy
     /// Resolution" rather than "Copy" — which is the whole reason a fact carries a label at all.
     package static func copyTitle(_ fact: AndroidFact) -> String {
-        "Copy \(fact.label)"
+        AndroidVocabulary.phrase(SLOPDESK_ANDROID_PHRASE_COPY_TITLE, value: fact.label)
     }
 
     // MARK: The console
 
     /// The drawer's caps title. `Logcat`, not "Console": the panel carries the tool's own name because
     /// what it shows is the tool's own output, filter spec and all.
-    package static let consoleTitle = "Logcat"
-    package static let consoleFilterPlaceholder = "Filter"
-    package static let consoleLevelHelp = "Minimum priority — changing it restarts logcat"
-    package static let consoleClearHelp = "Clear Console"
-    package static let consoleHideHelp = "Hide Console"
+    package static let consoleTitle = AndroidVocabulary.words[5]
+    package static let consoleFilterPlaceholder = AndroidVocabulary.words[6]
+    package static let consoleLevelHelp = AndroidVocabulary.words[7]
+    package static let consoleClearHelp = AndroidVocabulary.words[8]
+    package static let consoleHideHelp = AndroidVocabulary.words[9]
 
     /// The drawer's three plates, as silhouettes. A GLYPH descends for the same reason a word does —
-    /// it is what the control says — and it can, because `SFSymbol` is a name rather than an image and
-    /// both halves already resolve it (`Image(systemSymbol:)` on one side, `NSImage(systemSymbolName:)`
-    /// over `.rawValue` on the other).
+    /// it is what the control says — and it can, because an SF Symbol is a NAME rather than an image.
     ///
     /// FOLLOW KEEPS ONE GLYPH ACROSS ITS LATCH, unlike the stage's display-power plate. The latch is
     /// already drawn — a latched plate is a lit key — and swapping the arrow for a slashed arrow would
     /// say "off" twice while making the lit state harder to recognise at a glance.
-    package static let consoleFollowSymbol = SFSymbol.arrowDownToLine
-    package static let consoleClearSymbol = SFSymbol.trash
-    package static let consoleHideSymbol = SFSymbol.xmark
+    package static let consoleFollowSymbol = SFSymbol(rawValue: AndroidVocabulary.words[10])
+    package static let consoleClearSymbol = SFSymbol(rawValue: AndroidVocabulary.words[11])
+    package static let consoleHideSymbol = SFSymbol(rawValue: AndroidVocabulary.words[12])
 
     package static func consoleFollowHelp(isFollowing: Bool) -> String {
-        isFollowing ? "Following new output" : "Follow new output"
+        isFollowing ? AndroidVocabulary.words[13] : AndroidVocabulary.words[14]
     }
 
     /// Case-insensitive substring over the whole row — TAG INCLUDED, since "which tag is spamming
@@ -647,26 +673,35 @@ package enum AndroidPresentation {
     package static func consoleEmptyMessage(
         hasLines: Bool, isLogStarted: Bool, level: AndroidLogLevel, filter: String,
     ) -> String {
-        if hasLines { return "Nothing matches “\(filter)”." }
-        return isLogStarted
-            ? "Waiting for output at \(level.title.lowercased()) priority…"
-            : "Connecting to logcat…"
+        devicePanelLend(level.title) { title, titleLen in
+            devicePanelLend(filter) { needle, needleLen in
+                wsDelivered(capacity: 128) { out, cap in
+                    slopdesk_android_console_empty_message(
+                        hasLines, isLogStarted, title, titleLen, needle, needleLen, out, cap,
+                    )
+                } ?? ""
+            }
+        }
     }
 
     /// One row as plain text — what Copy hands over, for one line and for the whole console.
-    package static func plain(_ line: DeviceLogLine) -> String {
-        [line.time, line.name, line.message]
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
+    package static func plain(_ line: DeviceLogLine) -> String { line.plain }
 
     /// A log row's menu. The tag item appears only where there IS a tag, and it is the one filter
     /// action worth a slot: a tag is what somebody actually wants to isolate, and typing it into the
     /// field is the step this removes.
     package static func menu(for line: DeviceLogLine) -> [AndroidLogVerb] {
-        var verbs: [AndroidLogVerb] = [.copyLine, .copyConsole]
-        if !line.name.isEmpty { verbs.append(.filterByTag(line.name)) }
-        return verbs
+        let kinds = devicePanelKinds(capacity: 4) { out, cap in
+            slopdesk_android_log_menu(!line.name.isEmpty, out, cap)
+        }
+        return kinds.compactMap { kind in
+            switch Int32(kind) {
+            case SLOPDESK_ANDROID_LOG_COPY_LINE: .copyLine
+            case SLOPDESK_ANDROID_LOG_COPY_CONSOLE: .copyConsole
+            case SLOPDESK_ANDROID_LOG_FILTER_BY_TAG: .filterByTag(line.name)
+            default: nil
+            }
+        }
     }
 
     /// The tag's ink. COLOUR ONLY FOR A FAILURE — everything healthy is a grey, and the only
@@ -674,22 +709,65 @@ package enum AndroidPresentation {
     /// warning level on an ordinary Android device is dozens of lines a minute of framework noise, so
     /// tinting it would spend the alarm colour on the state of nothing being wrong.
     ///
-    /// It is a ROLE rather than a colour, and it descends rather than staying with either console for
-    /// a reason the simulator's twin does not share: `plain` recedes HERE because it holds `logcat`'s
-    /// V and D, and does NOT recede over there because `Df` is that grammar's ordinary default. Two
-    /// consoles over one severity scale is exactly the pair that drifts once the two are drawn by two
-    /// frameworks.
+    /// The crate answers it rather than this file for a reason the simulator's twin does not share:
+    /// `plain` recedes HERE because it holds `logcat`'s V and D, and does NOT recede over there
+    /// because `Df` is that grammar's ordinary default. Two consoles over one severity scale is
+    /// exactly the pair that drifts, and it is only legible as a difference because both matches are
+    /// exhaustive over the same Rust enum.
     package static func logInk(_ severity: DeviceLogSeverity) -> AndroidInk {
-        switch severity {
-        case .fatal,
-             .error: .err
-        case .warning,
-             .info: .secondary
-        // `logcat`'s V and D both land in `plain`, and both should recede. `debug` is the unified
-        // log's bucket and `logcat` never answers it — it is here so this switch stays exhaustive over
-        // one shared ink scale rather than over an alphabet only Android has.
-        case .debug,
-             .plain: .tertiary
+        AndroidInk(crateByte: slopdesk_android_log_ink(severity.rawValue))
+    }
+}
+
+// MARK: - The device's own state, asked once
+
+package extension AndroidDevice {
+    /// The four things the panel asks about this device's state, as the crate's bitfield.
+    ///
+    /// ONE crossing rather than four: they are four reads of the SAME two fields, and a caller that
+    /// asked them separately would cross `adb`'s state word four times per row per redraw.
+    var flags: UInt8 {
+        devicePanelLend(state) { bytes, len in
+            slopdesk_android_device_flags(serial != nil, bytes, len, isEmulator)
+        }
+    }
+
+    /// Running AND reachable. A device that is `unauthorized` is attached but will refuse every
+    /// shell, so it must not offer a mirror button that can only fail.
+    var isRunning: Bool {
+        flags & UInt8(SLOPDESK_ANDROID_DEVICE_IS_RUNNING) != 0
+    }
+
+    /// Attached but not usable — the state that needs an explanation rather than an action. The user
+    /// has to accept a debugging prompt on the device itself; nothing this panel sends can do it.
+    var isAttachedButUnusable: Bool {
+        flags & UInt8(SLOPDESK_ANDROID_DEVICE_IS_ATTACHED_BUT_UNUSABLE) != 0
+    }
+
+    /// The screen's physical proportions, or `nil` for a device that has not reported them. Used to
+    /// draw the frame before the first video packet names a size — otherwise a freshly-opened device
+    /// is a blank rectangle of the wrong shape for as long as the encoder takes to start.
+    var aspectRatio: Double? {
+        let ratio = slopdesk_android_aspect_ratio(Int64(width ?? 0), Int64(height ?? 0))
+        return ratio > 0 ? ratio : nil
+    }
+
+    /// The one-line fact under the headline: what this device IS, in the terms someone picking one out
+    /// of a list needs. Assembled from whatever is known rather than templated, so a row missing a
+    /// field reads as a shorter sentence instead of one with a hole in it.
+    var summary: String {
+        devicePanelLend(release ?? "") { release, releaseLen in
+            devicePanelLend(manufacturer ?? "") { maker, makerLen in
+                devicePanelLend(model ?? "") { model, modelLen in
+                    wsDelivered(capacity: 128) { out, cap in
+                        slopdesk_android_summary(
+                            release, releaseLen, Int64(apiLevel ?? 0),
+                            Int64(width ?? 0), Int64(height ?? 0), isEmulator,
+                            maker, makerLen, model, modelLen, out, cap,
+                        )
+                    } ?? ""
+                }
+            }
         }
     }
 }

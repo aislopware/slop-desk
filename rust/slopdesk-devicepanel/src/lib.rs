@@ -31,9 +31,19 @@
 //! [`panel_key`] is the third: which keys have no character of their own, what each server calls
 //! them, and what to do with the ones that do. It replaced FOUR Swift tables with two, because two
 //! of the four were a join `slopdesk-workspace` could already perform.
+//!
+//! ## And what the two panels SAY
+//!
+//! [`android`] and [`simulator`] are the fourth, and the one place the "answers, not identities"
+//! rule above is deliberately not the whole story. Each panel is drawn by TWO renderers — `SwiftUI`
+//! on the phone, `AppKit` on the Mac — so its copy, its verb tables and its silhouettes had one
+//! speller by accident and now have one on purpose. They are two modules and not one for the
+//! reason each header states: the surfaces look alike and share not one byte of protocol.
 
+pub mod android;
 pub mod geometry;
 pub mod panel_key;
+pub mod simulator;
 
 use slopdesk_wire::metadata::{ServiceEndpoint, ServiceState};
 

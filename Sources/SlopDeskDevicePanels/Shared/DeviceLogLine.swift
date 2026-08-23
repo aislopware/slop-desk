@@ -22,6 +22,7 @@
 
 import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 /// How loud a row is, which is the only question a console answers at a glance.
 ///
@@ -65,6 +66,27 @@ package struct DeviceLogLine: Identifiable, Equatable {
     package var name = ""
     package var message = ""
     package var severity: DeviceLogSeverity = .plain
+
+    /// The row as one uninterpreted line — what Copy hands over, for one row and for the whole
+    /// console.
+    ///
+    /// The row's own layout puts the three fields in columns; the copy joins them with a space and
+    /// DROPS the empty ones, so an unparsed banner copies as itself rather than with two leading
+    /// spaces. Both consoles spelled this identically beside their own presentation folds; it is
+    /// `slopdesk_devicelog::plain` now, and one crossing rather than two spellings.
+    package var plain: String {
+        devicePanelLend(time) { time, timeLen in
+            devicePanelLend(name) { name, nameLen in
+                devicePanelLend(message) { message, messageLen in
+                    wsDelivered(capacity: 256) { out, cap in
+                        slopdesk_device_log_plain(
+                            time, timeLen, name, nameLen, message, messageLen, out, cap,
+                        )
+                    } ?? ""
+                }
+            }
+        }
+    }
 
     /// One `logcat -v time` line.
     package static func logcat(_ text: String) -> Self {

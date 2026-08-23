@@ -72,6 +72,34 @@ pub enum Severity {
     Fatal = 5,
 }
 
+impl Severity {
+    /// The byte a C door carries this as.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// The severity for `byte`, or `None` for a value no build of this crate wrote.
+    ///
+    /// The inverse of [`Self::as_byte`], and the door for a caller that stored a rung rather than a
+    /// row — a console's minimum-priority picker, an ink asked for after the parse. A caller that
+    /// takes `None` as [`Severity::Plain`] is taking the tier that RECEDES, which is the safe
+    /// reading: the alternative spends a console's one alarm colour on a line nothing is known
+    /// about.
+    #[must_use]
+    pub const fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Self::Plain),
+            1 => Some(Self::Debug),
+            2 => Some(Self::Info),
+            3 => Some(Self::Warning),
+            4 => Some(Self::Error),
+            5 => Some(Self::Fatal),
+            _ => None,
+        }
+    }
+}
+
 /// One parsed row: a severity and three slices of the line it came from.
 ///
 /// An unrecognised line is not an error. It answers [`Severity::Plain`], an empty `time` and
@@ -101,5 +129,50 @@ impl Line {
             message: 0..len,
             severity: Severity::Plain,
         }
+    }
+}
+
+/// One row as plain text — what Copy hands over, for one line and for the whole console.
+///
+/// The row's own layout puts the three fields in columns; the copy joins them with a space and
+/// DROPS the empty ones, so an unparsed banner copies as itself rather than with two leading
+/// spaces. Both consoles spelled this, identically, beside their own presentation folds.
+///
+/// It takes the three fields rather than a [`Line`] and its haystack because the caller that wants
+/// it holds a row it has already cut — a model's accumulated console, not a byte slice it is still
+/// parsing.
+#[must_use]
+pub fn plain(time: &str, name: &str, message: &str) -> String {
+    [time, name, message]
+        .into_iter()
+        .filter(|field| !field.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod plain_tests {
+    use super::plain;
+
+    #[test]
+    fn an_unparsed_banner_copies_as_itself() {
+        assert_eq!(
+            plain("", "", "--------- beginning of crash"),
+            "--------- beginning of crash"
+        );
+    }
+
+    #[test]
+    fn a_parsed_row_copies_as_its_three_columns() {
+        assert_eq!(
+            plain("13:50:19.565", "ActivityManager", "Start proc"),
+            "13:50:19.565 ActivityManager Start proc"
+        );
+    }
+
+    #[test]
+    fn a_row_missing_one_column_has_no_gap_where_it_was() {
+        assert_eq!(plain("13:50:19.565", "", "boom"), "13:50:19.565 boom");
+        assert!(plain("", "", "").is_empty());
     }
 }

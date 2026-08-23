@@ -7891,6 +7891,16 @@ bool slopdesk_logcat_parse(const unsigned char *line, size_t len,
 bool slopdesk_unified_log_parse(const unsigned char *line, size_t len,
                                 SlopDeskDeviceLogLine *out);
 
+// One row as plain text — what Copy Line and Copy Console hand over. The row's
+// own layout puts the three fields in columns; the copy joins them with a space
+// and DROPS the empty ones, so an unparsed banner copies as itself rather than
+// with two leading spaces. Both consoles had spelled this beside their own
+// presentation folds. 0 for a row whose three fields are all empty.
+size_t slopdesk_device_log_plain(const unsigned char *time, size_t time_len,
+                                 const unsigned char *name, size_t name_len,
+                                 const unsigned char *message, size_t message_len,
+                                 unsigned char *out, size_t cap);
+
 // ---------------------------------------------------------------------------
 // The Android console's LEVEL FILTER — `slopdesk_androidd::protocol`.
 //
@@ -8050,6 +8060,373 @@ uint32_t slopdesk_panel_system_edge(SlopDeskVideoPoint point, SlopDeskVideoRect 
 // size past 65535 would wrap and place every touch at the origin.
 uint16_t slopdesk_panel_clamp_u16(double value);
 int32_t slopdesk_panel_clamp_i32(double value);
+
+// ---------------------------------------------------------------------------
+// What the two device panels SAY — `slopdesk_devicepanel::android` and
+// `::simulator`.
+//
+// The section above is the panel boundary's ordinary rule: every answer is a
+// KIND, because the caller already holds the string it is about. That still
+// holds for every FOLD below — the stage, the menus, the inks, a device's own
+// flags. It does not hold for the panels' COPY, and `slopdesk_settings_options`
+// is where that was settled: a table of literals read once into a Swift
+// `static let` is not an identity the caller has, it is the single spelling two
+// renderers must share. Each panel is drawn by SwiftUI on the phone and AppKit
+// on the Mac, so its words had one speller by accident and now have one on
+// purpose.
+//
+// Every table crosses in ONE delivery, never a door per string. The framing is
+// a run of `[uint32 length][UTF-8 bytes]`, BIG-ENDIAN — this is read across a C
+// boundary, where a width that followed the target would be a bug waiting for a
+// 32-bit build — and a table with a variable row count puts a `[uint16 count]`
+// ahead of it. The field ORDER is the contract; each door states its own.
+//
+// SF SYMBOLS CROSS AS NAMES. That is what keeps a verb table whole rather than
+// split across two languages, and it costs the compile-time check `SFSafeSymbols`
+// gave a Swift literal — so the near side has a test that resolves every crossed
+// name through `NSImage(systemSymbolName:)`, which is that check, relocated.
+
+// A text ROLE, resolved to a hue by whichever half is drawing. Four rungs and
+// one alarm: a colour cannot descend here, because the design floor sits above
+// the panel on the Swift side.
+#define SLOPDESK_ANDROID_INK_PRIMARY 0
+#define SLOPDESK_ANDROID_INK_SECONDARY 1
+#define SLOPDESK_ANDROID_INK_TERTIARY 2
+#define SLOPDESK_ANDROID_INK_ICON 3
+#define SLOPDESK_ANDROID_INK_ERR 4
+
+// What stands over the mirroring stage. The two loading answers are separate
+// because that IS the distinction: a mirror the host is starting and a device
+// still booting are two waits with two owners, and the second is tens of
+// seconds. The caption for each is field `15 + answer` of the words door.
+#define SLOPDESK_ANDROID_STAGE_STREAMING 0
+#define SLOPDESK_ANDROID_STAGE_STARTING_DEVICE 1
+#define SLOPDESK_ANDROID_STAGE_STARTING_MIRROR 2
+#define SLOPDESK_ANDROID_STAGE_STALLED 3
+
+// The eight things the stage's toolbar can ask of a device. A plate's identity
+// on both halves, so a help string changing cannot rebuild a control the
+// pointer is inside.
+#define SLOPDESK_ANDROID_ACTION_BACK 0
+#define SLOPDESK_ANDROID_ACTION_HOME 1
+#define SLOPDESK_ANDROID_ACTION_RECENTS 2
+#define SLOPDESK_ANDROID_ACTION_ROTATE 3
+#define SLOPDESK_ANDROID_ACTION_CAPTURE 4
+#define SLOPDESK_ANDROID_ACTION_PASTE_CLIPBOARD 5
+#define SLOPDESK_ANDROID_ACTION_DISPLAY_POWER 6
+#define SLOPDESK_ANDROID_ACTION_CONSOLE 7
+
+// Which tray a plate sits on. The console plate sits on NEITHER: it latches,
+// and a latched plate is a lit key, which reads as lit only against the panel's
+// own tone rather than inside a lit tray.
+#define SLOPDESK_ANDROID_TRAY_NAVIGATION 0
+#define SLOPDESK_ANDROID_TRAY_ACTION 1
+#define SLOPDESK_ANDROID_TRAY_CONSOLE 2
+
+// One entry of a device's context menu. SEPARATOR is a case rather than an
+// absent row, because the rule is about the LINE. The two copy verbs carry no
+// text: the serial and the name are the caller's own row.
+#define SLOPDESK_ANDROID_MENU_SEPARATOR 0
+#define SLOPDESK_ANDROID_MENU_OPEN_SCREEN 1
+#define SLOPDESK_ANDROID_MENU_COPY_SCREENSHOT 2
+#define SLOPDESK_ANDROID_MENU_SHUT_DOWN 3
+#define SLOPDESK_ANDROID_MENU_START 4
+#define SLOPDESK_ANDROID_MENU_COPY_SERIAL 5
+#define SLOPDESK_ANDROID_MENU_COPY_NAME 6
+
+// The four things the panel asks about one device's state, as a bitfield —
+// four reads of the SAME two fields, so a caller that asked them separately
+// would cross `adb`'s state word four times per row per redraw.
+#define SLOPDESK_ANDROID_DEVICE_IS_RUNNING 1
+#define SLOPDESK_ANDROID_DEVICE_IS_ATTACHED_BUT_UNUSABLE 2
+#define SLOPDESK_ANDROID_DEVICE_CAN_ENTER 4
+#define SLOPDESK_ANDROID_DEVICE_IS_STOPPABLE 8
+
+// Which sentence the phrase door is being asked for. One door rather than five,
+// because five doors that each format one value into one template would be five
+// sites restating the same marshalling.
+#define SLOPDESK_ANDROID_PHRASE_NO_MATCHES 0
+#define SLOPDESK_ANDROID_PHRASE_START_HELP 1
+#define SLOPDESK_ANDROID_PHRASE_SHUT_DOWN_HELP 2
+#define SLOPDESK_ANDROID_PHRASE_SHUT_DOWN_ALL_HELP 3
+#define SLOPDESK_ANDROID_PHRASE_COPY_TITLE 4
+#define SLOPDESK_ANDROID_PHRASE_FILTER_BY_TAG 5
+
+// The panel's fixed words, in one delivery. 28 length-prefixed fields, in the
+// order the module doc lists: 15 loose words, then the four stage captions in
+// byte order, then the seven menu titles in byte order, then the two constant
+// log verbs. The two captionless entries (STREAMING, SEPARATOR) are empty BY
+// CONSTRUCTION.
+size_t slopdesk_android_words(unsigned char *out, size_t cap);
+
+// A log row's menu, in order, one SLOPDESK_ANDROID_LOG_* byte per row. The tag
+// item appears only where there IS a tag.
+#define SLOPDESK_ANDROID_LOG_COPY_LINE 0
+#define SLOPDESK_ANDROID_LOG_COPY_CONSOLE 1
+#define SLOPDESK_ANDROID_LOG_FILTER_BY_TAG 2
+size_t slopdesk_android_log_menu(bool has_name, unsigned char *out, size_t cap);
+
+// Every plate the stage's toolbar draws. `[uint16 count]`, then per plate
+// `[uint8 tray][uint8 action]` and four length-prefixed strings — the glyph and
+// sentence at rest, then the pair while latched. A verb that does not latch
+// repeats its own pair, so the near side needs no presence flag.
+size_t slopdesk_android_stage_verbs(unsigned char *out, size_t cap);
+
+// How long the model may be loading before the veil admits it. 600 rather than
+// the simulator's 400, and measured: a warm emulator's first keyframe arrives
+// 0.83 s after the request, because the host has to push the server jar, start
+// `app_process` and wait for the device's encoder.
+uint32_t slopdesk_android_veil_delay_ms(void);
+
+// 9:19.5 — the proportions of a device that has not reported a screen.
+double slopdesk_android_fallback_aspect(void);
+
+// The RAW fields cross, never a caller-computed `is_running`: the rule is
+// `has_serial && state == "device"`, and half of it spelled at the call site is
+// the drift this whole port exists to end.
+uint8_t slopdesk_android_device_flags(bool has_serial, const unsigned char *state,
+                                      size_t state_len, bool is_emulator);
+
+// `has_device` false is "no selected device to ask", and then the wait is the
+// mirror's by definition. Loading OUTRANKS stalled — the two are reachable in
+// one frame while a reattempt is in flight.
+uint8_t slopdesk_android_stage(bool shows_loading, bool has_selection,
+                               bool is_awaiting_stream, bool has_video,
+                               bool has_device, bool device_is_running);
+
+// A device's context menu, in order, one SLOPDESK_ANDROID_MENU_* byte per row.
+size_t slopdesk_android_device_menu(bool has_serial, const unsigned char *state,
+                                    size_t state_len, bool is_emulator,
+                                    bool has_avd_name, unsigned char *out,
+                                    size_t cap);
+
+// The header's fact line. `[uint16 count]`, then per fact
+// `[uint8 ink][uint8 is_measured][uint8 shows_label]` and three length-prefixed
+// strings: the label, the drawn text, and what Copy hands over. A dimension or
+// density of 0 or less, or an empty abi/serial, is "the host did not report it".
+size_t slopdesk_android_facts(int64_t width, int64_t height, int64_t density,
+                              const unsigned char *abi, size_t abi_len,
+                              const unsigned char *serial, size_t serial_len,
+                              unsigned char *out, size_t cap);
+
+// `adb`'s state word as a sentence — with the one reading the word alone gets
+// wrong: an EMULATOR that is `offline` is almost always a boot in progress.
+size_t slopdesk_android_explain(const unsigned char *state, size_t state_len,
+                                bool is_emulator, unsigned char *out, size_t cap);
+
+// The card's tooltip: a verb for a device that can be opened, its STATE for one
+// that cannot.
+size_t slopdesk_android_card_help(const unsigned char *name, size_t name_len,
+                                  bool has_serial, const unsigned char *state,
+                                  size_t state_len, bool is_emulator,
+                                  unsigned char *out, size_t cap);
+
+// The one-line fact under the headline, assembled from whatever is known rather
+// than templated — so a row missing a field reads as a shorter sentence instead
+// of one with a hole in it.
+size_t slopdesk_android_summary(const unsigned char *release, size_t release_len,
+                                int64_t api_level, int64_t width, int64_t height,
+                                bool is_emulator,
+                                const unsigned char *manufacturer,
+                                size_t manufacturer_len,
+                                const unsigned char *model, size_t model_len,
+                                unsigned char *out, size_t cap);
+
+// The trailing text on a row that is not running. 0 for a row with neither a
+// version to print nor a screen to fall back on.
+size_t slopdesk_android_subtitle(const unsigned char *version_label,
+                                 size_t version_label_len, bool shows_version,
+                                 int64_t width, int64_t height,
+                                 unsigned char *out, size_t cap);
+
+// Three states, three sentences — and a live filter answers FIRST, because rows
+// exist and the reader is the reason none are showing.
+size_t slopdesk_android_console_empty_message(bool has_lines, bool is_log_started,
+                                              const unsigned char *level_title,
+                                              size_t level_title_len,
+                                              const unsigned char *filter,
+                                              size_t filter_len,
+                                              unsigned char *out, size_t cap);
+
+// One sentence that carries a value, chosen by SLOPDESK_ANDROID_PHRASE_*. Each
+// phrase reads exactly one of `value`/`count` and ignores the other. A byte no
+// build wrote answers 0 rather than a sentence nobody asked for.
+size_t slopdesk_android_phrase(uint8_t phrase, const unsigned char *value,
+                               size_t value_len, size_t count,
+                               unsigned char *out, size_t cap);
+
+// The tag's ink. COLOUR ONLY FOR A FAILURE — a warning is a grey too, because
+// `logcat` at warning level is dozens of lines a minute of framework noise. An
+// unknown severity byte recedes rather than alarms.
+uint8_t slopdesk_android_log_ink(uint8_t severity_byte);
+
+// The device's screen proportions, or 0 for a device that has not reported
+// them — which is what the art-width door's fallback means.
+double slopdesk_android_aspect_ratio(int64_t width, int64_t height);
+
+// The card's screen box at a fixed art HEIGHT. The three lengths are the
+// caller's design tokens; what is here is the fallback, the multiply, and the
+// ORDER of the clamp.
+double slopdesk_android_art_width(double ratio, double art, double floor,
+                                  double cap);
+
+// ---------------------------------------------------------------------------
+// And what the Simulators surface says — `slopdesk_devicepanel::simulator`.
+//
+// The same shape, and two sections rather than one for the reason the panels
+// are two modules in the wrapped crate: they look alike and share not one byte of protocol,
+// so a common vocabulary here would be an abstraction over a coincidence.
+
+// ALARM IS THE ONLY COLOUR THIS PANEL HAS. Three of its surfaces broke that
+// rule independently before 2026-08-04 — a green "Live" dot, green info lines,
+// a coloured status pill — and what the removals left behind is worth stating
+// where both halves read it: a hue means SOMETHING IS WRONG, and nothing else.
+#define SLOPDESK_SIMULATOR_INK_PRIMARY 0
+#define SLOPDESK_SIMULATOR_INK_SECONDARY 1
+#define SLOPDESK_SIMULATOR_INK_TERTIARY 2
+#define SLOPDESK_SIMULATOR_INK_ALARM 3
+
+// The stage's three definite situations. The caption for each is field
+// `16 + answer` of the words door; LIVE's is empty by construction.
+#define SLOPDESK_SIMULATOR_STAGE_LIVE 0
+#define SLOPDESK_SIMULATOR_STAGE_STARTING 1
+#define SLOPDESK_SIMULATOR_STAGE_STALLED 2
+
+// One entry of a device's context menu. The menu differs by exactly one branch.
+#define SLOPDESK_SIMULATOR_VERB_OPEN_SCREEN 0
+#define SLOPDESK_SIMULATOR_VERB_COPY_SCREENSHOT 1
+#define SLOPDESK_SIMULATOR_VERB_SHUTDOWN 2
+#define SLOPDESK_SIMULATOR_VERB_BOOT 3
+#define SLOPDESK_SIMULATOR_VERB_SEPARATOR 4
+#define SLOPDESK_SIMULATOR_VERB_COPY_UDID 5
+#define SLOPDESK_SIMULATOR_VERB_COPY_NAME 6
+
+// The four ways a simulated device can be held. The wire spellings are the
+// SERVER's own, measured against a live one rather than guessed: it rejects the
+// whole body on one bad field, so a plausible synonym costs the entire request.
+#define SLOPDESK_SIMULATOR_ORIENTATION_PORTRAIT 0
+#define SLOPDESK_SIMULATOR_ORIENTATION_LANDSCAPE_LEFT 1
+#define SLOPDESK_SIMULATOR_ORIENTATION_LANDSCAPE_RIGHT 2
+#define SLOPDESK_SIMULATOR_ORIENTATION_PORTRAIT_UPSIDE_DOWN 3
+
+// Which sentence the phrase door is being asked for.
+#define SLOPDESK_SIMULATOR_PHRASE_NO_MATCHES 0
+#define SLOPDESK_SIMULATOR_PHRASE_BOOT_HELP 1
+#define SLOPDESK_SIMULATOR_PHRASE_OPEN_HELP 2
+#define SLOPDESK_SIMULATOR_PHRASE_SHUTDOWN_HELP 3
+#define SLOPDESK_SIMULATOR_PHRASE_SHUTDOWN_ALL_HELP 4
+#define SLOPDESK_SIMULATOR_PHRASE_COPY_TITLE 5
+#define SLOPDESK_SIMULATOR_PHRASE_LOCATION_PINNED 6
+#define SLOPDESK_SIMULATOR_PHRASE_UNREADABLE_DROP 7
+
+// The surface's fixed words, in one delivery. 34 length-prefixed fields: 16
+// loose words, the three stage captions, the seven verb titles, then the four
+// orientation titles and the four wire spellings — every run in byte order.
+size_t slopdesk_simulator_words(unsigned char *out, size_t cap);
+
+// Every plate the toolbar and the console strip draw. `[uint16 count]`, then per
+// plate two length-prefixed strings: the SF Symbol's name and the tooltip. The
+// latching plates cross as a PAIR, off then on.
+size_t slopdesk_simulator_plates(unsigned char *out, size_t cap);
+
+// 400, and measured: a booted device's first keyframe lands 0.09 s after the
+// socket opens, so a veil with no delay would flash grey over the bezel on every
+// selection. The Android bridge's 600 was measured against its own 0.83 s, and
+// merging the two would throw away both measurements.
+uint32_t slopdesk_simulator_veil_delay_ms(void);
+
+// The floor between two-finger envelopes. Measured: `touch2-move` occupies the
+// server for 25 ms, a thousand times what a `touch1-move` costs.
+uint32_t slopdesk_simulator_pinch_interval_ms(void);
+
+// `shows_loading` FIRST — it is the delayed mirror of the model's awaiting flag
+// and outranks a stall that has not been waited out. Asked in any other order
+// the stage shows "no video" for the 90 ms before every selection's keyframe.
+uint8_t slopdesk_simulator_stage(bool is_selected, bool shows_loading,
+                                 bool is_awaiting_stream, bool has_video);
+
+// A device's context menu, in order, one SLOPDESK_SIMULATOR_VERB_* byte per row.
+size_t slopdesk_simulator_device_menu(bool is_booted, unsigned char *out,
+                                      size_t cap);
+
+// THE TRANSITION OUTRANKS THE SUPPRESSION: a device spends seconds in `Booting`,
+// and showing its runtime through that is the panel claiming nothing is
+// happening while something is. 0 for a settled row whose heading already names
+// its runtime.
+size_t slopdesk_simulator_row_subtitle(const unsigned char *state, size_t state_len,
+                                       bool is_booted, const unsigned char *runtime,
+                                       size_t runtime_len, bool shows_runtime,
+                                       unsigned char *out, size_t cap);
+
+// The header's fact line, framed exactly as the Android door's. Orientation and
+// position appear ONLY when they have something to say — a portrait device and a
+// device using live GPS are the ordinary case.
+size_t slopdesk_simulator_facts(const unsigned char *udid, size_t udid_len,
+                                bool has_resolution, double width, double height,
+                                uint8_t orientation_byte,
+                                const unsigned char *pinned_readout,
+                                size_t pinned_readout_len, unsigned char *out,
+                                size_t cap);
+
+// A quarter turn, wrapping — the orientation AFTER the turn. An orientation byte
+// no build wrote reads as upright, which is the ordinary case: every rule that
+// branches on orientation treats portrait as "nothing to say".
+uint8_t slopdesk_simulator_orientation_turned(uint8_t orientation_byte,
+                                              bool turn_right);
+bool slopdesk_simulator_orientation_is_landscape(uint8_t orientation_byte);
+
+// How far the PANEL must turn the picture, in degrees clockwise. The
+// framebuffer never rotates: a rotated device still streams its portrait
+// buffer, with its interface drawn sideways INSIDE it.
+double slopdesk_simulator_orientation_view_angle(uint8_t orientation_byte);
+
+// `1206 × 2622` — THE MULTIPLICATION SIGN, not a lowercase x. This sits in a row
+// of measured figures, and a letter standing in for an operator is the detail
+// that makes a panel look improvised.
+size_t slopdesk_simulator_pixels(double width, double height, unsigned char *out,
+                                 size_t cap);
+
+// The leading block of a UDID, cut on a CHARACTER boundary. The full value is 36
+// characters and would own the line; Copy hands over the whole thing.
+size_t slopdesk_simulator_shortened_udid(const unsigned char *udid, size_t udid_len,
+                                         unsigned char *out, size_t cap);
+
+// A bezel button's tooltip, spelled out from the server's wire token — and
+// titled FROM the token when it is one this build has not seen.
+size_t slopdesk_simulator_button_label(const unsigned char *id, size_t id_len,
+                                       unsigned char *out, size_t cap);
+
+// The box a TURNED device has to fit into, as [width, height]. A rotation does
+// not change layout on either framework, so fitting a quarter-turned phone
+// against the panel's real bounds overflows the column sideways. `out` takes two
+// doubles.
+void slopdesk_simulator_footprint(double width, double height, bool turned,
+                                  double *out);
+
+// Aspect-FIT, and never above 1: a bezel blown past its artwork is a soft,
+// resampled device body. 0 for a degenerate size, which is a bezel not drawn.
+double slopdesk_simulator_bezel_fit(double content_width, double content_height,
+                                    double width, double height);
+
+// Three states, three sentences; the filter answers first, or a narrowed console
+// reads as a dead one.
+size_t slopdesk_simulator_console_empty_message(bool has_lines, bool is_started,
+                                                const unsigned char *level_title,
+                                                size_t level_title_len,
+                                                const unsigned char *filter,
+                                                size_t filter_len,
+                                                unsigned char *out, size_t cap);
+
+// One sentence that carries a value, chosen by SLOPDESK_SIMULATOR_PHRASE_*.
+size_t slopdesk_simulator_phrase(uint8_t phrase, const unsigned char *value,
+                                 size_t value_len, size_t count,
+                                 unsigned char *out, size_t cap);
+
+// The process name's ink. Info is a GREY (user-directed 2026-08-04): a busy
+// device emits hundreds of info lines a second, so tinting it spent the
+// console's one alarm colour on the state of nothing being wrong. Debug still
+// recedes — the one place this differs from the Android console's answer.
+uint8_t slopdesk_simulator_log_ink(uint8_t severity_byte);
 
 // ---------------------------------------------------------------------------
 // The superd control socket's framing — `slopdesk_superwire`.

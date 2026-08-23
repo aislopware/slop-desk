@@ -1,47 +1,52 @@
-// SimulatorPresentation — what the Simulators surface SAYS, and which of its situations a state picks.
+// SimulatorPresentation — the Swift FACE of `slopdesk_devicepanel::simulator`.
 //
-// docs/56 stage D, increment 52a, and the same lift increments 47, 49 and 51 did for the checklist, the
-// bespoke settings pages and the panel's own body. The seven surfaces below the Simulators tab —
-// the list, the running card, the stage, the device header, the console drawer, the location popover
-// and the bezel — had ONE renderer until the Mac drew them itself, so every word in them and every
-// fold behind them had a single speller BY ACCIDENT. There are two renderers now, so the words and the
-// folds moved down here and are single-spelled ON PURPOSE.
+// Every word the Simulators surface says, every fold behind its seven surfaces and all of its bezel
+// arithmetic is Rust now. What is left here is marshalling, the enums a `switch` in a view body
+// reads, and the one asynchronous rule that is genuinely a view's.
 //
-// ## Why this file, and not one beside each drawing
+// ## What moved, and what the move was for
 //
-// The precedent is ``CodePanelPresentation``, and the argument is the one increment 51 made about
-// ORDER: `workbench(…)`'s four questions are not interchangeable, and drawn twice from a prose
-// description that ordering had ALREADY drifted between the two halves. The same shape recurs here at
-// least four times — the row's subtitle suppression, the stage's three states, the console's three
-// empty sentences, and which facts the header prints — and each is a rule a second renderer would
-// re-derive from the same paragraph and get subtly wrong.
+// docs/56 stage D lifted these rules out of two renderers into one Swift file, because the list, the
+// running card, the stage, the header, the console drawer, the location popover and the bezel had a
+// single speller BY ACCIDENT until the Mac drew them itself. That fixed the two-RENDERER drift and
+// left the two-LANGUAGE one: the rules were Swift while the console's own grammar was already Rust,
+// and `CLAUDE.md`'s default is that a rule lives in Rust unless SwiftUI or AppKit is the reason it
+// cannot. None of these is a drawing. So:
 //
-// It sits in `SlopDeskDevicePanels` rather than in `SlopDeskClientCore` because everything it names is
-// this target's: ``SimulatorDevice``, ``SimulatorOrientation``, ``SimulatorCoordinate``,
-// ``DeviceLogSeverity``. `CodePanelPresentation` took the dependency the other way for the opposite
-// reason — it needed `CodeSidebarPhase` too, and one vocabulary spread over two targets would have
-// needed a third file to hold the shared record.
+//   * `rowSubtitle` → `simulator::row_subtitle`, whose ⚠️ THE TRANSITION OUTRANKS THE SUPPRESSION is
+//     the ordering a second renderer would have re-derived from prose and got backwards.
+//   * `stage`, `menu`, `facts`, `buttonLabel`, `pixels`, `shortenedUDID` → one door each.
+//   * `footprint` and `fit` → `simulator::{footprint, bezel_fit}`. Geometry crosses because it is
+//     arithmetic about ARTWORK rather than a design token, and the clamp is done in IEEE `min`, so
+//     one NaN upstream cannot survive as a NaN scale.
+//   * The orientation cycle, its wire spellings, its titles and its view angle → `simulator::
+//     Orientation`. The wire spellings are the SERVER's own, measured against a live one; it rejects
+//     the whole body on one bad field, so a plausible synonym costs the entire request.
 //
-// ## What is NOT here
+// ## What is still Swift, and why each one is
 //
-// **No ink, no metric, no font.** `SlopDeskSlate` DEPENDS on this target, so a token read from here
-// would be a cycle rather than a widening — the residue increments 47 and 49 both recorded. What
-// descends instead is a ROLE (``SimulatorInk``) and a SILHOUETTE (an `SFSymbol`, which is a name, not
-// a picture); each renderer spells the hue and mounts the image type its framework has. The measured
-// GEOMETRY that is not a design token — the bezel's fit, the footprint swap a turned device needs —
-// does descend, because those are facts about the artwork rather than rungs on a ladder.
+// **``loadingVeil(isAwaiting:)``.** A `Task.sleep` and a cancellation check — structured concurrency
+// on the renderer's own task, which is exactly the "it must be Swift" case. The NUMBER it waits is
+// the crate's.
 //
-// **No view, no `some View`.** This target declares no `View` type at all and the supervisor greps for
-// it. A record here is a value; drawing it is the half's own problem.
+// **``matches(_:query:)`` and ``Console/visible(_:filter:)``.** Already Rust, through
+// ``DeviceRowFilter`` — what stays is which FIELDS a row lends it.
 //
-// **No socket, no poll, no `.task`.** Those are ``SimulatorSidebarModel``'s. The one asynchronous rule
-// that IS here — ``loadingVeil(isAwaiting:)`` — is here because it is a DECISION about what a reader
-// is shown and when, and getting it wrong is a grey rectangle flashed over every selection on one
-// platform only.
+// **The ink, stage and verb enums.** They are the shape a `switch` in a view body reads; the crate
+// answers the byte that picks the case. A hue is still neither side's — `SlopDeskSlate` DEPENDS on
+// this target, so a colour cannot descend and each renderer spells its own.
+//
+// ## The one thing the crossing costs
+//
+// SF Symbols cross as NAMES, so ``SimulatorPlateReading`` reconstitutes an `SFSymbol` from a
+// `rawValue` and every call site keeps its type. What is gone is the compile-time check
+// `SFSafeSymbols` gave a Swift literal; ``DevicePanelSymbolTests`` is that check, relocated.
 
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 import SFSafeSymbols
+import SlopDeskWorkspaceModel
 
 // MARK: - The one ink vocabulary the surfaces speak in
 
@@ -60,16 +65,27 @@ package enum SimulatorInk: Equatable, Sendable {
     case secondary
     case tertiary
     case alarm
+
+    /// The role for a crate byte. A byte no build wrote reads as ``tertiary``, the rung that recedes
+    /// — the safe answer, because the alternative spends this panel's one alarm colour on something
+    /// nothing is known about.
+    package init(crateByte: UInt8) {
+        switch Int32(crateByte) {
+        case SLOPDESK_SIMULATOR_INK_PRIMARY: self = .primary
+        case SLOPDESK_SIMULATOR_INK_SECONDARY: self = .secondary
+        case SLOPDESK_SIMULATOR_INK_ALARM: self = .alarm
+        default: self = .tertiary
+        }
+    }
 }
 
 // MARK: - One control on the toolbar, the console strip or the header
 
 /// A plate's SILHOUETTE and its tooltip — the two halves of a control that are not a drawing.
 ///
-/// The symbol travels as an `SFSymbol` rather than as a `String` for the reason
-/// ``SimulatorDeviceKind/symbol`` already travels that way: it is a closed set the compiler can check,
-/// and a mistyped glyph name is a plate that silently draws nothing. ``symbolName`` is the same value
-/// spelled for `NSImage(systemSymbolName:)`, so the AppKit half needs no second lookup table.
+/// The symbol arrives as a NAME and is reconstituted here, so the call sites keep the closed type
+/// they had. ``symbolName`` is the same value spelled for `NSImage(systemSymbolName:)`, so the
+/// AppKit half needs no second lookup table.
 package struct SimulatorPlateReading: Equatable, Sendable {
     package let symbol: SFSymbol
     package let help: String
@@ -104,18 +120,6 @@ package struct SimulatorFact: Equatable, Sendable {
     /// Whether the label is DRAWN ahead of the value. False for a fact that only appears when it is
     /// abnormal — its presence is the news, and the width is worth more to its neighbours.
     package let showsLabel: Bool
-
-    package init(
-        _ label: String, _ text: String, copies: String? = nil, ink: SimulatorInk,
-        isMeasured: Bool = false, showsLabel: Bool = true,
-    ) {
-        self.label = label
-        self.text = text
-        self.copies = copies ?? text
-        self.ink = ink
-        self.isMeasured = isMeasured
-        self.showsLabel = showsLabel
-    }
 }
 
 // MARK: - What the stage is showing
@@ -147,16 +151,67 @@ package enum SimulatorDeviceVerb: Hashable, Sendable, CaseIterable {
     case copyUDID
     case copyName
 
-    /// `nil` for the separator, which has no words.
+    /// `nil` for the separator, which has no words. The crate's slot for it is empty BY
+    /// CONSTRUCTION, which is what this reads.
     package var title: String? {
+        let title = SimulatorVocabulary.words[19 + Int(crateByte)]
+        return title.isEmpty ? nil : title
+    }
+
+    var crateByte: Int32 {
         switch self {
-        case .openScreen: "Open Screen"
-        case .copyScreenshot: "Copy Screenshot"
-        case .shutdown: "Shut Down"
-        case .boot: "Boot"
-        case .separator: nil
-        case .copyUDID: "Copy UDID"
-        case .copyName: "Copy Name"
+        case .openScreen: SLOPDESK_SIMULATOR_VERB_OPEN_SCREEN
+        case .copyScreenshot: SLOPDESK_SIMULATOR_VERB_COPY_SCREENSHOT
+        case .shutdown: SLOPDESK_SIMULATOR_VERB_SHUTDOWN
+        case .boot: SLOPDESK_SIMULATOR_VERB_BOOT
+        case .separator: SLOPDESK_SIMULATOR_VERB_SEPARATOR
+        case .copyUDID: SLOPDESK_SIMULATOR_VERB_COPY_UDID
+        case .copyName: SLOPDESK_SIMULATOR_VERB_COPY_NAME
+        }
+    }
+
+    /// `nil` for a byte no build of the crate wrote, which drops the row rather than mounting an
+    /// item whose press would do something else.
+    init?(crateByte: UInt8) {
+        guard let verb = Self.allCases.first(where: { $0.crateByte == Int32(crateByte) })
+        else { return nil }
+        self = verb
+    }
+}
+
+// MARK: - The crate's tables, read out once
+
+/// Every fixed string and every plate the crate publishes, read ONCE into a table.
+///
+/// A door per string inside a view body was measured too expensive when the settings catalogue did
+/// it, so each table crosses in ONE delivery. PADDED, never trusted: ``DevicePanelBlob/texts(_:)``
+/// fills a short delivery with empties rather than shifting, so a crate and a face that disagree
+/// about the layout lose ONE field instead of wearing each other's from the gap onward.
+enum SimulatorVocabulary {
+    /// The 34 fields `slopdesk_simulator_words` documents, in its order.
+    static let words: [String] = {
+        var blob = DevicePanelBlob { out, cap in slopdesk_simulator_words(out, cap) }
+        return blob.texts(34)
+    }()
+
+    /// The 14 plates `slopdesk_simulator_plates` documents. The latching ones cross as a PAIR, off
+    /// then on, which is why the accessors below index them two at a time.
+    static let plates: [SimulatorPlateReading] = {
+        var blob = DevicePanelBlob { out, cap in slopdesk_simulator_plates(out, cap) }
+        let count = blob.count16()
+        return (0..<count).map { _ in
+            let strings = blob.texts(2)
+            return SimulatorPlateReading(SFSymbol(rawValue: strings[0]), strings[1])
+        }
+    }()
+
+    /// One sentence that carries a value. One door rather than eight, because eight doors that each
+    /// format one value into one template would be eight sites restating the same marshalling.
+    static func phrase(_ id: Int32, value: String = "", count: Int = 0) -> String {
+        devicePanelLend(value) { bytes, len in
+            wsDelivered(capacity: 128) { out, cap in
+                slopdesk_simulator_phrase(UInt8(id), bytes, len, count, out, cap)
+            } ?? ""
         }
     }
 }
@@ -166,23 +221,22 @@ package enum SimulatorDeviceVerb: Hashable, Sendable, CaseIterable {
 package enum SimulatorPresentation {
     // MARK: The device list
 
-    package static let searchPlaceholder = "Search devices"
+    package static let searchPlaceholder = SimulatorVocabulary.words[0]
 
     /// What the list draws in place of rows when the HOST has none. Distinct from ``noMatches(_:)``
     /// because "there are no devices" and "your filter hid them all" are different sentences and the
     /// second one is actionable.
-    package static let noDevices = "No simulator devices on the host."
+    package static let noDevices = SimulatorVocabulary.words[1]
 
-    package static func noMatches(_ query: String) -> String { "No devices match “\(query)”." }
+    package static func noMatches(_ query: String) -> String {
+        SimulatorVocabulary.phrase(SLOPDESK_SIMULATOR_PHRASE_NO_MATCHES, value: query)
+    }
 
     /// The filter, over the two fields a shelf of simulators is told apart by: the device's name and
     /// its runtime.
     ///
-    /// The TWIN of ``AndroidPresentation/matches(_:query:)``, and it is here rather than inlined in
-    /// each list for the reason that one is: `SimulatorDeviceList` (SwiftUI) and
-    /// `MacSimulatorDeviceList` (AppKit) are two drawings of one panel, and a filter each of them
-    /// spelled itself is a rule only one of them could be tested against. The predicate underneath
-    /// is ``DeviceRowFilter``'s, shared with both consoles.
+    /// The predicate underneath is ``DeviceRowFilter``'s — already Rust, shared with both consoles
+    /// and the Android list. What stays here is which FIELDS a simulator row lends it.
     package static func matches(_ devices: [SimulatorDevice], query: String) -> [SimulatorDevice] {
         DeviceRowFilter.surviving(devices, query: query) { device, fields in
             fields.add(device.name)
@@ -198,69 +252,81 @@ package enum SimulatorPresentation {
     /// renderer that read only "does the heading already say the runtime" would draw the quiet answer
     /// for exactly the row worth watching.
     package static func rowSubtitle(_ device: SimulatorDevice, showsRuntime: Bool) -> String? {
-        let settled = device.state.isEmpty
-            || device.isBooted
-            || device.state.caseInsensitiveCompare("Shutdown") == .orderedSame
-        if !settled { return device.state }
-        return showsRuntime && !device.runtime.isEmpty ? device.runtime : nil
+        devicePanelLend(device.state) { state, stateLen in
+            devicePanelLend(device.runtime) { runtime, runtimeLen in
+                wsDelivered(capacity: 64) { out, cap in
+                    slopdesk_simulator_row_subtitle(
+                        state, stateLen, device.isBooted, runtime, runtimeLen, showsRuntime,
+                        out, cap,
+                    )
+                }
+            }
+        }
     }
 
     /// The verbs a device's context menu offers, in order. `Open Screen` and `Copy Screenshot` need a
     /// running device; `Boot` is the whole menu for one that is not.
+    ///
+    /// The UDID cut is below them: the UDID is what every other tool wants — `xcrun simctl`, a test
+    /// invocation, a bug report — and it is far too long to put in a row, which is the whole reason
+    /// that cut exists.
     package static func menu(for device: SimulatorDevice) -> [SimulatorDeviceVerb] {
-        let acts: [SimulatorDeviceVerb] = device.isBooted
-            ? [.openScreen, .copyScreenshot, .shutdown]
-            : [.boot]
-        // The UDID is what every other tool wants — `xcrun simctl`, a test invocation, a bug report —
-        // and it is far too long to put in a row, which is the whole reason this cut exists.
-        return acts + [.separator, .copyUDID, .copyName]
+        devicePanelKinds(capacity: 8) { out, cap in
+            slopdesk_simulator_device_menu(device.isBooted, out, cap)
+        }
+        .compactMap(SimulatorDeviceVerb.init(crateByte:))
     }
 
-    package static func bootHelp(_ device: SimulatorDevice) -> String { "Boot \(device.name)" }
-    package static func openHelp(_ device: SimulatorDevice) -> String { "Open \(device.name)" }
+    package static func bootHelp(_ device: SimulatorDevice) -> String {
+        SimulatorVocabulary.phrase(SLOPDESK_SIMULATOR_PHRASE_BOOT_HELP, value: device.name)
+    }
+
+    package static func openHelp(_ device: SimulatorDevice) -> String {
+        SimulatorVocabulary.phrase(SLOPDESK_SIMULATOR_PHRASE_OPEN_HELP, value: device.name)
+    }
+
     package static func shutdownHelp(_ device: SimulatorDevice) -> String {
-        "Shut down \(device.name)"
+        SimulatorVocabulary.phrase(SLOPDESK_SIMULATOR_PHRASE_SHUTDOWN_HELP, value: device.name)
     }
 
     /// Offered only once MORE THAN ONE device is up: with one running it is the same click as that
     /// card's own stop button under a longer name.
     package static func shutdownAllHelp(_ count: Int) -> String {
-        "Shut down all \(count) running devices"
+        SimulatorVocabulary.phrase(SLOPDESK_SIMULATOR_PHRASE_SHUTDOWN_ALL_HELP, count: count)
     }
 
     // MARK: The device header
 
-    package static let backHelp = "All Devices"
+    package static let backHelp = SimulatorVocabulary.words[2]
 
     /// `1206 × 2622`. The MULTIPLICATION SIGN, not a lowercase x — this sits in a row of measured
     /// figures and a letter standing in for an operator is the detail that makes a panel look
     /// improvised.
     package static func pixels(_ size: CGSize) -> String {
-        "\(Int(size.width.rounded())) × \(Int(size.height.rounded()))"
+        wsDelivered(capacity: 32) { out, cap in
+            slopdesk_simulator_pixels(Double(size.width), Double(size.height), out, cap)
+        } ?? ""
     }
 
     /// The leading block of a UDID, which is what a person reads to tell two devices apart. The full
-    /// value is 36 characters and would own the line; Copy hands over the whole thing.
-    package static func shortenedUDID(_ udid: String) -> String { String(udid.prefix(8)) }
+    /// value is 36 characters and would own the line; Copy hands over the whole thing. Cut on a
+    /// CHARACTER boundary, which is the crate's job rather than a `prefix(8)` here.
+    package static func shortenedUDID(_ udid: String) -> String {
+        devicePanelLend(udid) { bytes, len in
+            wsDelivered(capacity: 64) { out, cap in
+                slopdesk_simulator_shortened_udid(bytes, len, out, cap)
+            } ?? ""
+        }
+    }
 
     /// What a fact's own Copy verb is called. The LABEL names the fact, so the item reads "Copy
     /// Resolution" rather than "Copy" — which is the whole reason a fact carries a label at all.
-    ///
-    /// It is here rather than in the renderer for the reason every other word in this file is: the Mac
-    /// draws an `NSMenuItem` and the phone a `Button`, and a title spelled at each of them is a title
-    /// that can drift. Increment 53 found exactly that — the AppKit half had built the string itself
-    /// while the Android half, which is the same sentence, already asked ``AndroidPresentation``.
     package static func copyTitle(_ fact: SimulatorFact) -> String {
-        "Copy \(fact.label)"
+        SimulatorVocabulary.phrase(SLOPDESK_SIMULATOR_PHRASE_COPY_TITLE, value: fact.label)
     }
 
     package static func orientationTitle(_ orientation: SimulatorOrientation) -> String {
-        switch orientation {
-        case .portrait: "Portrait"
-        case .landscapeLeft: "Landscape Left"
-        case .landscapeRight: "Landscape Right"
-        case .portraitUpsideDown: "Upside Down"
-        }
+        SimulatorVocabulary.words[26 + Int(orientation.crateByte)]
     }
 
     /// The header's fact line, in order — and WHICH facts are present at all, which is the half a
@@ -285,33 +351,27 @@ package enum SimulatorPresentation {
         orientation: SimulatorOrientation,
         pinnedLocation: SimulatorCoordinate?,
     ) -> [SimulatorFact] {
-        var facts: [SimulatorFact] = []
-        if let resolution {
-            facts.append(SimulatorFact(
-                "Resolution", pixels(resolution), ink: .secondary, isMeasured: true,
-            ))
+        var blob = devicePanelLend(device.udid) { udid, udidLen in
+            devicePanelLend(pinnedLocation?.readout ?? "") { readout, readoutLen in
+                DevicePanelBlob { out, cap in
+                    slopdesk_simulator_facts(
+                        udid, udidLen, resolution != nil,
+                        Double(resolution?.width ?? 0), Double(resolution?.height ?? 0),
+                        orientation.crateByte, readout, readoutLen, out, cap,
+                    )
+                }
+            }
         }
-        if orientation != .portrait {
-            // Unlabelled: "Landscape Left" names itself, and it prints at all only because the device
-            // is not upright.
-            facts.append(SimulatorFact(
-                "Orientation", orientationTitle(orientation), copies: orientation.wireValue,
-                ink: .tertiary, showsLabel: false,
-            ))
+        return (0..<blob.count16()).map { _ in
+            let ink = SimulatorInk(crateByte: blob.byte())
+            let isMeasured = blob.byte() != 0
+            let showsLabel = blob.byte() != 0
+            let strings = blob.texts(3)
+            return SimulatorFact(
+                label: strings[0], text: strings[1], copies: strings[2],
+                ink: ink, isMeasured: isMeasured, showsLabel: showsLabel,
+            )
         }
-        if let pinnedLocation {
-            // "Simulated Location" is three words wide in a column that has none to spare, and the
-            // shorter label the toolbar plate already uses does the naming.
-            facts.append(SimulatorFact(
-                "Simulated Location", pinnedLocation.readout,
-                ink: .secondary, isMeasured: true, showsLabel: false,
-            ))
-        }
-        facts.append(SimulatorFact(
-            "UDID", shortenedUDID(device.udid), copies: device.udid,
-            ink: .tertiary, isMeasured: true,
-        ))
-        return facts
     }
 
     // MARK: The toolbar
@@ -328,61 +388,54 @@ package enum SimulatorPresentation {
     /// `pull-down-to-notification-center` and `lock`; only what this panel puts under the pointer
     /// changed.
     package enum Toolbar {
-        package static let rotateLeft = SimulatorPlateReading(.rotateLeft, "Rotate Left")
-        package static let rotateRight = SimulatorPlateReading(.rotateRight, "Rotate Right")
-        package static let home = SimulatorPlateReading(.house, "Home")
+        package static let rotateLeft = SimulatorVocabulary.plates[0]
+        package static let rotateRight = SimulatorVocabulary.plates[1]
+        package static let home = SimulatorVocabulary.plates[2]
         /// A TOGGLE, and the tooltip says so. Measured 2026-08-04 against a booted device: the verb is
         /// the swipe-up-and-hold gesture, so it opens the card stack from an app or the home screen
         /// and DISMISSES it when the stack is already up — and on a device with nothing backgrounded
         /// it does nothing visible, exactly like the hardware. Neither this nor
         /// `swipe-to-app-switcher` is an idempotent "show".
-        package static let appSwitcher = SimulatorPlateReading(
-            .squareOnSquare, "App Switcher — press again to dismiss",
-        )
-        package static let screenshot = SimulatorPlateReading(.cameraViewfinder, "Copy Screenshot")
+        package static let appSwitcher = SimulatorVocabulary.plates[3]
+        package static let screenshot = SimulatorVocabulary.plates[4]
 
         /// The demo status bar's plate, which is latched while the override is in force.
         package static func statusBar(isOverridden: Bool) -> SimulatorPlateReading {
-            SimulatorPlateReading(
-                .clock,
-                isOverridden ? "Restore the real status bar" : "Demo status bar (9:41)",
-            )
+            SimulatorVocabulary.plates[isOverridden ? 6 : 5]
         }
 
         /// Latched while a position is pinned, so the toolbar says the device is somewhere else
         /// without anyone opening the popover to find out. The header carries the actual coordinate;
         /// this is the glance.
         package static func location(isPinned: Bool) -> SimulatorPlateReading {
-            SimulatorPlateReading(.location, isPinned ? "Simulated location" : "Simulate a location")
+            SimulatorVocabulary.plates[isPinned ? 8 : 7]
         }
 
         /// A ruled list, not a terminal prompt: this opens a READER over the device's output, and the
         /// `>_` glyph promises a place to type. (`.terminal` is also the Terminal.app icon and
         /// deprecated at this target.)
         package static func console(isOpen: Bool) -> SimulatorPlateReading {
-            SimulatorPlateReading(
-                .listBulletRectangle, isOpen ? "Hide the device log" : "Show the device log",
-            )
+            SimulatorVocabulary.plates[isOpen ? 10 : 9]
         }
     }
 
     // MARK: The stage
 
-    package static let startingCaption = "Starting the stream…"
-    package static let stalledCaption = "No video from this device."
+    package static let startingCaption = SimulatorVocabulary.words[17]
+    package static let stalledCaption = SimulatorVocabulary.words[18]
 
     /// The stage's one TEXT button, and the one failure here that a second attempt genuinely fixes —
     /// the socket is fine, the encoder never started — so the stage offers it rather than making
     /// someone go back to the list and pick the same row again.
-    package static let retryTitle = "Try Again"
+    package static let retryTitle = SimulatorVocabulary.words[3]
 
     /// Which of the three things the stage is doing.
     ///
-    /// ⚠️ THE ORDER IS THE RULE. `showsLoading` first, because it is the DELAYED mirror of the model's
-    /// own awaiting flag (see ``loadingVeil(isAwaiting:)``) and outranks a stall that has not been
-    /// waited out yet; then the stall, which is defined by the model's deadline having passed with no
-    /// video; then live. Asked in any other order the stage shows "no video" for the 90 ms before the
-    /// first keyframe of every single selection.
+    /// ⚠️ THE ORDER IS THE RULE, and it is the crate's. `showsLoading` first, because it is the
+    /// DELAYED mirror of the model's own awaiting flag (see ``loadingVeil(isAwaiting:)``) and outranks
+    /// a stall that has not been waited out yet; then the stall, which is defined by the model's
+    /// deadline having passed with no video; then live. Asked in any other order the stage shows "no
+    /// video" for the 90 ms before the first keyframe of every single selection.
     ///
     /// - Parameters:
     ///   - showsLoading: the renderer's own delayed copy of `isAwaitingStream`, never the raw flag.
@@ -391,9 +444,13 @@ package enum SimulatorPresentation {
     package static func stage(
         isSelected: Bool, showsLoading: Bool, isAwaitingStream: Bool, hasVideo: Bool,
     ) -> SimulatorStageState {
-        if showsLoading { return .starting(startingCaption) }
-        if isSelected, !isAwaitingStream, !hasVideo { return .stalled(stalledCaption) }
-        return .live
+        let state = slopdesk_simulator_stage(isSelected, showsLoading, isAwaitingStream, hasVideo)
+        let caption = SimulatorVocabulary.words[16 + Int(state)]
+        switch Int32(state) {
+        case SLOPDESK_SIMULATOR_STAGE_STARTING: return .starting(caption)
+        case SLOPDESK_SIMULATOR_STAGE_STALLED: return .stalled(caption)
+        default: return .live
+        }
     }
 
     /// How long the model may be loading before the veil admits it.
@@ -401,8 +458,9 @@ package enum SimulatorPresentation {
     /// MEASURED: a booted device's first keyframe lands 0.09 s after the socket opens, so a veil with
     /// no delay would flash grey over the bezel on every single selection — the whole failure being
     /// drawn onto the ordinary case. This delay is the entire reason a renderer keeps its own copy of
-    /// the loading state instead of reading the model's.
-    package static let veilDelay: Duration = .milliseconds(400)
+    /// the loading state instead of reading the model's. The NUMBER is the crate's, because a value
+    /// measured once that two files carry is a value that gets re-tuned in one of them.
+    package static let veilDelay: Duration = .milliseconds(Int(slopdesk_simulator_veil_delay_ms()))
 
     /// Whether the veil should be showing: LATE on the way up, immediate on the way down. `nil` means
     /// the wait was cancelled and the caller must not write anything.
@@ -411,10 +469,11 @@ package enum SimulatorPresentation {
     /// cancels the previous run, so a pending veil for a stream that arrived in time never appears at
     /// all; waiting on the way DOWN would instead leave grey over a picture that is already there.
     ///
-    /// The SHAPE is shared with the Android stage (`DevicePanelChrome.loadingVeilState`) and the
-    /// NUMBER deliberately is not: 400 ms was measured against this server's 0.09 s first keyframe and
-    /// the bridge's 600 ms against its own 0.83 s, and merging them would throw away both
-    /// measurements. That is why the delay is baked in here rather than passed.
+    /// It stays Swift because it is structured concurrency on the RENDERER's own task — a sleep and a
+    /// cancellation check, which is the one shape a door cannot carry. The SHAPE is shared with the
+    /// Android stage (`DevicePanelChrome.loadingVeilState`) and the NUMBER deliberately is not: 400 ms
+    /// was measured against this server's 0.09 s first keyframe and the bridge's 600 ms against its
+    /// own 0.83 s, and merging them would throw away both measurements.
     package static func loadingVeil(isAwaiting: Bool) async -> Bool? {
         guard isAwaiting else { return false }
         try? await Task.sleep(for: veilDelay)
@@ -427,36 +486,39 @@ package enum SimulatorPresentation {
     /// and lets the server classify it; getting that taxonomy wrong locally would reject the one build
     /// someone wanted. The only local failure is not being able to read the bytes at all.
     package static func unreadableDrop(_ fileName: String) -> String {
-        "Could not read \(fileName)."
+        SimulatorVocabulary.phrase(SLOPDESK_SIMULATOR_PHRASE_UNREADABLE_DROP, value: fileName)
     }
 
     // MARK: The console drawer
 
     package enum Console {
-        package static let title = "Console"
-        package static let filterPlaceholder = "Filter"
-        package static let levelHelp = "Minimum log level — changing it re-subscribes"
-        package static let clear = SimulatorPlateReading(.trash, "Clear Console")
-        package static let hide = SimulatorPlateReading(.xmark, "Hide Console")
-        package static let copyLine = "Copy Line"
-        package static let copyConsole = "Copy Console"
+        package static let title = SimulatorVocabulary.words[4]
+        package static let filterPlaceholder = SimulatorVocabulary.words[5]
+        package static let levelHelp = SimulatorVocabulary.words[6]
+        package static let clear = SimulatorVocabulary.plates[11]
+        package static let hide = SimulatorVocabulary.plates[12]
+        package static let copyLine = SimulatorVocabulary.words[7]
+        package static let copyConsole = SimulatorVocabulary.words[8]
 
         /// FOLLOW IS A LATCH, not an inferred scroll position — the usual "stick to the bottom until
         /// the reader scrolls away" needs a scroll offset this deployment target does not report, and
         /// a latch is legible at rest and cannot disagree with reality.
+        ///
+        /// ONE GLYPH ACROSS THE LATCH, which is why the crate ships the plate once and the two
+        /// sentences beside it: a latched plate is already drawn as a lit key, and swapping the arrow
+        /// for a slashed arrow would say "off" twice.
         package static func follow(isFollowing: Bool) -> SimulatorPlateReading {
             SimulatorPlateReading(
-                .arrowDownToLine, isFollowing ? "Following new output" : "Follow new output",
+                SimulatorVocabulary.plates[13].symbol,
+                SimulatorVocabulary.words[isFollowing ? 9 : 10],
             )
         }
 
         /// Case-insensitive substring over the whole row — PROCESS INCLUDED, since "which process is
         /// spamming this" is as common a question as "where is my message".
         ///
-        /// The TWIN of ``AndroidPresentation/visible(_:filter:)``, over ``DeviceRowFilter``'s one
-        /// predicate. It is here rather than in each console for the same reason the list filter
-        /// above is: the SwiftUI drawer and the AppKit drawer were spelling it separately, and only
-        /// one of the two spellings was ever reached by a test.
+        /// The predicate is ``DeviceRowFilter``'s, shared with the Android console and both device
+        /// lists; what stays here is WHICH two fields a unified-log row lends it.
         package static func visible(_ lines: [DeviceLogLine], filter: String) -> [DeviceLogLine] {
             DeviceRowFilter.surviving(lines, query: filter) { line, fields in
                 fields.add(line.message)
@@ -471,20 +533,19 @@ package enum SimulatorPresentation {
         package static func empty(
             hasLines: Bool, isStarted: Bool, level: SimulatorLogLevel, filter: String,
         ) -> String {
-            if hasLines { return "Nothing matches “\(filter)”." }
-            return isStarted
-                ? "Waiting for output at \(level.title.lowercased()) level…"
-                : "Connecting to the device log…"
+            devicePanelLend(level.title) { title, titleLen in
+                devicePanelLend(filter) { needle, needleLen in
+                    wsDelivered(capacity: 128) { out, cap in
+                        slopdesk_simulator_console_empty_message(
+                            hasLines, isStarted, title, titleLen, needle, needleLen, out, cap,
+                        )
+                    } ?? ""
+                }
+            }
         }
 
-        /// One row as plain text — what Copy Line and Copy Console hand over. The row's own layout puts
-        /// the three fields in columns; the copy joins them with a space, and drops the empty ones so
-        /// an unparsed banner copies as itself rather than with two leading spaces.
-        package static func plain(_ line: DeviceLogLine) -> String {
-            [line.time, line.name, line.message]
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-        }
+        /// One row as plain text — what Copy Line and Copy Console hand over.
+        package static func plain(_ line: DeviceLogLine) -> String { line.plain }
 
         /// The process name's ink. COLOUR ONLY FOR A FAULT — everything healthy is a grey, and the only
         /// difference between the greys is how far back they sit.
@@ -493,38 +554,32 @@ package enum SimulatorPresentation {
         /// emits hundreds of info lines a second, so the rule spent the console's one alarm colour on
         /// the state of nothing being wrong, and a wall half-green made the handful of red lines it
         /// exists to surface no easier to find. Debug still recedes, because a debug line IS
-        /// lower-value than the default and luminance is the channel for that.
+        /// lower-value than the default and luminance is the channel for that — the ONE rung where
+        /// this answer differs from the Android console's, and it is only legible as a difference
+        /// because both matches are exhaustive over the same Rust severity scale.
         package static func ink(for severity: DeviceLogSeverity) -> SimulatorInk {
-            switch severity {
-            case .fatal,
-                 .error: .alarm
-            case .debug: .tertiary
-            // `warning` is `logcat`'s bucket and the unified log never answers it — it is here so this
-            // switch stays exhaustive over one shared ink scale rather than over an alphabet only the
-            // simulator has.
-            case .info,
-                 .warning,
-                 .plain: .secondary
-            }
+            SimulatorInk(crateByte: slopdesk_simulator_log_ink(severity.rawValue))
         }
     }
 
     // MARK: The location popover
 
     package enum Location {
-        package static let title = "Simulated Location"
+        package static let title = SimulatorVocabulary.words[11]
         /// The format every map app copies to the clipboard, shown as the placeholder because that is
         /// where a coordinate typed into this field almost always comes from.
-        package static let placeholder = "37.334886, -122.008988"
-        package static let set = "Set"
-        package static let clear = "Clear"
+        package static let placeholder = SimulatorVocabulary.words[12]
+        package static let set = SimulatorVocabulary.words[13]
+        package static let clear = SimulatorVocabulary.words[14]
         /// Absent while nothing is pinned — a control that undoes nothing is a control that has to be
         /// reasoned about before it is ignored — which is why this pair is a fold rather than two
         /// labels a renderer picks between.
-        package static let live = "The device is using live values."
+        package static let live = SimulatorVocabulary.words[15]
 
         package static func pinned(_ coordinate: SimulatorCoordinate) -> String {
-            "Pinned to \(coordinate.readout)"
+            SimulatorVocabulary.phrase(
+                SLOPDESK_SIMULATOR_PHRASE_LOCATION_PINNED, value: coordinate.readout,
+            )
         }
     }
 
@@ -537,7 +592,13 @@ package enum SimulatorPresentation {
     /// the column sideways. Swapping the bounds first is what makes a landscape device fill the panel
     /// the way a portrait one does.
     package static func footprint(_ bounds: CGSize, turned: Bool) -> CGSize {
-        turned ? CGSize(width: bounds.height, height: bounds.width) : bounds
+        var room = [Double](repeating: 0, count: 2)
+        room.withUnsafeMutableBufferPointer { out in
+            slopdesk_simulator_footprint(
+                Double(bounds.width), Double(bounds.height), turned, out.baseAddress,
+            )
+        }
+        return CGSize(width: room[0], height: room[1])
     }
 
     /// Aspect-FIT, and never above 1: a bezel blown past its artwork's own size is a soft, resampled
@@ -546,25 +607,20 @@ package enum SimulatorPresentation {
     /// It fits the BLEED rect, never the viewport — side buttons protrude past the body
     /// (``SimulatorChrome/bleed``), and fitting the viewport alone clips them at the panel's edge.
     package static func fit(_ content: CGSize, in bounds: CGSize) -> CGFloat {
-        guard content.width > 0, content.height > 0, bounds.width > 0, bounds.height > 0
-        else { return 0 }
-        return min(bounds.width / content.width, bounds.height / content.height, 1)
+        CGFloat(slopdesk_simulator_bezel_fit(
+            Double(content.width), Double(content.height),
+            Double(bounds.width), Double(bounds.height),
+        ))
     }
 
     /// The server's button ids are wire tokens (`volume-up`, `action`). Spelled out for the tooltip
     /// rather than shown raw — and titled from the id when it is one this build has not seen, so a new
     /// button is still labelled with something.
     package static func buttonLabel(for id: String) -> String {
-        switch id {
-        case "power": "Power"
-        case "volume-up": "Volume Up"
-        case "volume-down": "Volume Down"
-        case "action": "Action Button"
-        case "home": "Home"
-        case "lock": "Lock"
-        case "digital-crown": "Digital Crown"
-        case "side-button": "Side Button"
-        default: id.split(separator: "-").map(\.capitalized).joined(separator: " ")
+        devicePanelLend(id) { bytes, len in
+            wsDelivered(capacity: 64) { out, cap in
+                slopdesk_simulator_button_label(bytes, len, out, cap)
+            } ?? ""
         }
     }
 
@@ -574,8 +630,7 @@ package enum SimulatorPresentation {
     ///
     /// MEASURED 2026-08-04: `touch2-move` occupies the server for 25 ms, a thousand times what a
     /// `touch1-move` costs, so the two-finger path is rate-limited on BOTH halves — the Mac's
-    /// synthesized magnify and the phone's real second finger alike. Here rather than at either
-    /// surface because it is one measurement about the SERVER, and a number two files carry is a number
-    /// that gets re-tuned in one of them.
-    package static let pinchInterval: TimeInterval = 0.04
+    /// synthesized magnify and the phone's real second finger alike. The crate carries the number in
+    /// MILLISECONDS, which is the unit it was measured in; the division is this line and nowhere else.
+    package static let pinchInterval = Double(slopdesk_simulator_pinch_interval_ms()) / 1000
 }

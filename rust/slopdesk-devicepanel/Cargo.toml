@@ -52,6 +52,11 @@ slopdesk-workspace = { path = "../slopdesk-workspace" }
 # overlay already agree on — which is how a click ends up beside the pixel it was drawn for.
 slopdesk-video = { path = "../slopdesk-video" }
 
+# The ONE severity scale both consoles ink against. Each panel answers a different ink for the same
+# rung — `Plain` recedes on the Android side and does not on the simulator's — and that difference
+# is only legible as a difference because both matches are exhaustive over the same enum.
+slopdesk-devicelog = { path = "../slopdesk-devicelog" }
+
 # Linked into the app; every rule here is a `match` on a handful of scalars.
 [profile.release]
 opt-level = 3

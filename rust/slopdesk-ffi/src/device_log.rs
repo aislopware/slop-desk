@@ -27,7 +27,7 @@ use core::ffi::c_uchar;
 
 use slopdesk_devicelog::{Line, Severity, logcat, unified};
 
-use crate::borrow;
+use crate::{borrow, deliver};
 
 /// Uninked — `logcat`'s `V`/`D` and the unified log's `Df`, which are most of a busy device's
 /// output.
@@ -170,6 +170,49 @@ pub unsafe extern "C" fn slopdesk_unified_log_parse(
     // SAFETY: forwarded to the caller, who owns the record for this call.
     unsafe { place(out, record) };
     true
+}
+
+/// One row as plain text — what Copy Line and Copy Console hand over.
+///
+/// Takes the three CUT fields rather than the line it came from: the caller holds a row a model
+/// accumulated, not a byte slice it is still parsing. Invalid UTF-8 in any field reads as empty,
+/// which is the same non-answer an absent column already makes.
+///
+/// Returns the bytes NEEDED — `0` for a row whose three fields are all empty. A return larger than
+/// `cap` means nothing was written.
+///
+/// # Safety
+/// `time`, `name` and `message` must be null or point to their stated lengths in live bytes, and
+/// `out` must be null or point to `cap` writable bytes, all for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_device_log_plain(
+    time: *const c_uchar,
+    time_len: usize,
+    name: *const c_uchar,
+    name_len: usize,
+    message: *const c_uchar,
+    message_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let time = core::str::from_utf8(unsafe { borrow(time, time_len) }).unwrap_or_default();
+    // SAFETY: the caller's obligation, restated above.
+    let name = core::str::from_utf8(unsafe { borrow(name, name_len) }).unwrap_or_default();
+    // SAFETY: the caller's obligation, restated above.
+    let message = core::str::from_utf8(unsafe { borrow(message, message_len) }).unwrap_or_default();
+    // SAFETY: the caller's obligation, restated above.
+    unsafe {
+        deliver(
+            slopdesk_devicelog::plain(time, name, message).as_bytes(),
+            out,
+            cap,
+        )
+    }
 }
 
 #[cfg(test)]

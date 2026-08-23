@@ -45,6 +45,7 @@ pub mod adaptive_fec;
 pub mod agent;
 pub mod android_control;
 pub mod android_log_level;
+pub mod android_presentation;
 pub mod android_stream;
 pub mod annexb;
 // macOS only: `NSRunningApplication`, which no iOS slice has. See the module.
@@ -191,6 +192,7 @@ pub mod settings_layout;
 pub mod settings_options;
 pub mod settings_rows;
 pub mod sidecars;
+pub mod simulator_presentation;
 pub mod state_scalars;
 pub mod supervisor_frame;
 pub mod supervisor_paths;
@@ -316,6 +318,25 @@ pub(crate) const unsafe fn deliver(answer: &[u8], out: *mut c_uchar, cap: usize)
     // allocated inside this call.
     unsafe { std::ptr::copy_nonoverlapping(answer.as_ptr(), out, needed) };
     needed
+}
+
+/// Appends one length-prefixed field to a blob: four big-endian bytes, then that many UTF-8 bytes.
+///
+/// The one framing every door that answers a TABLE of words uses — `docs/55` §4's plain shape,
+/// repeated per field so the far side can cut the delivery with a single splitter. Big-endian
+/// because this is read across a C boundary where a width that followed the target would be a bug
+/// waiting for a 32-bit build.
+///
+/// A length that will not fit the prefix writes an EMPTY field rather than a lying one. Nothing in
+/// a `&'static` table can reach four gigabytes, but a prefix that disagreed with the bytes after it
+/// would desynchronise every field after it, which is a worse answer than a blank.
+pub(crate) fn push_text(blob: &mut Vec<u8>, text: &str) {
+    let Ok(length) = u32::try_from(text.len()) else {
+        blob.extend_from_slice(&0_u32.to_be_bytes());
+        return;
+    };
+    blob.extend_from_slice(&length.to_be_bytes());
+    blob.extend_from_slice(text.as_bytes());
 }
 
 /// Borrows a caller's record array for the duration of one call.
