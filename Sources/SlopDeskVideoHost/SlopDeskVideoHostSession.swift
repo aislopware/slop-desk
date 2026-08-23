@@ -3617,17 +3617,13 @@ final class EncodedFrameQueue: @unchecked Sendable {
 /// datagram needs no chunking (the cursor-channel discipline, sharing the media socket).
 final class AudioStreamSender: @unchecked Sendable {
     /// Wire codec pick: `SLOPDESK_AUDIO_CODEC=pcm` selects raw s16le (the codec-free A/B arm);
-    /// default AAC-ELD.
-    static let wireFormat: AudioWireFormat =
-        ProcessInfo.processInfo.environment["SLOPDESK_AUDIO_CODEC"] == "pcm" ? .pcmS16LE : .aacEld
-    /// AAC-ELD target bitrate (`SLOPDESK_AUDIO_BITRATE`, clamp 32k…320k, default 128k). The PCM
-    /// arm ignores it.
-    static let bitrateBps: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_AUDIO_BITRATE"], let v = Int(s) {
-            return min(320_000, max(32000, v))
-        }
-        return 128_000
-    }()
+    /// anything else, unset included, is AAC-ELD. Asked rather than compared here, because the
+    /// fallback is the interesting half — dropping to raw PCM on a misspelling is sixteen times the
+    /// bitrate on a link that was sized for the other number.
+    static let wireFormat = AudioWireFormat(rawValue: slopdesk_audio_wire_format()) ?? .aacEld
+    /// AAC-ELD target bitrate (`SLOPDESK_AUDIO_BITRATE`, clamped into its band). The PCM arm
+    /// ignores it. Never 0 — text that is not a number answers the default, not the floor.
+    static let bitrateBps = Int(slopdesk_audio_bitrate_bps())
 
     /// Config re-send cadence (seconds): UDP may drop any single copy and a client may lock on
     /// late, so the config is re-asserted ~1 s apart — piggybacked on the encode path (a stamp

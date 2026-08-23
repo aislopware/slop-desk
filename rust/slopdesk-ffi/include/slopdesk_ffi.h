@@ -8883,6 +8883,16 @@ typedef struct {
   size_t   cookie_len;   /* fetch the bytes with _cookie */
 } SlopDeskAudioEncoderConfig;
 
+// The two knobs _new takes, resolved from this process's environment rather than the caller's.
+//
+// _wire_format answers a SLOPDESK_AUDIO_FORMAT_* code: SLOPDESK_AUDIO_CODEC=pcm selects the
+// codec-free s16le arm and ANYTHING else — unset, misspelt, differently cased — is AAC-ELD, because
+// silently dropping to raw PCM is sixteen times the bitrate on a link sized for the other number.
+// _bitrate_bps answers SLOPDESK_AUDIO_BITRATE clamped into the band, and is never 0: text that is
+// not a number answers the default, not the floor.
+uint8_t  slopdesk_audio_wire_format(void);
+uint32_t slopdesk_audio_bitrate_bps(void);
+
 SlopDeskAudioEncoder *slopdesk_audio_encoder_new(uint8_t format, uint32_t bitrate_bps);
 void slopdesk_audio_encoder_free(SlopDeskAudioEncoder *handle);
 

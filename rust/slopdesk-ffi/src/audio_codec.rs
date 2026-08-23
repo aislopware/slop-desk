@@ -60,6 +60,37 @@ pub const extern "C" fn slopdesk_audio_source_constant(index: u8) -> usize {
     }
 }
 
+/// Which codec this process puts on the wire, as a `SLOPDESK_AUDIO_FORMAT_*` code.
+///
+/// A door rather than a Swift `== "pcm"` for the reason every env door here exists: the fallback is
+/// the interesting part. An unrecognised value must land on AAC-ELD, because silently dropping to
+/// raw PCM is sixteen times the bitrate on a link that was sized for the other number, and a caller
+/// spelling the comparison itself is a caller who can spell the fallback the other way round.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_audio_wire_format() -> u8 {
+    slopdesk_video::audio_source::wire_format(&|key| std::env::var(key).ok()).raw_value()
+}
+
+/// The AAC-ELD target bitrate this process resolved, already clamped. The PCM arm ignores it.
+///
+/// Never zero: text that is not a number answers the default rather than the floor, because "this
+/// is not a bitrate" and "this bitrate is too low" are different statements and answering 32 kbps
+/// to a typo is the request inverted with nothing said.
+#[cfg(target_os = "macos")]
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_audio_bitrate_bps() -> u32 {
+    slopdesk_video::audio_source::bitrate_bps(&|key| std::env::var(key).ok())
+}
+
 /// The decoder, as the caller's token.
 #[derive(Debug)]
 pub struct SlopDeskAudioDecoder {

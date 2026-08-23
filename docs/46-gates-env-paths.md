@@ -68,6 +68,7 @@ Not exhaustive — grep `SLOPDESK_`. **Default idiom:** `!= "0"` → default-ON;
 | `SLOPDESK_DISPLAY_CAPTURE` | `window` / `display` / `include` |
 | `SLOPDESK_PACER` | default present-on-arrival; `=deadline` for smoothness pacer |
 | `SLOPDESK_AUDIO` | host app-audio stream gate (default-ON); `_CODEC=pcm` bypasses AAC-ELD |
+| `SLOPDESK_AUDIO_CODEC` / `_BITRATE` | read in `slopdesk-video`'s `audio_source`, NOT in Swift — the sender asks `slopdesk_audio_wire_format()` / `slopdesk_audio_bitrate_bps()`. Only the exact word `pcm` picks the codec-free arm (an unknown value is not a codec, so it stays AAC-ELD); the bitrate is CLAMPED to 32–320 kbps, default 128, and a typo parses to nothing rather than to zero. the `video-audio-row` invariant (`make lint-invariants`) bans either name under `Sources` — a Swift `ProcessInfo` read would be a second clamp, and two clamps that must agree cannot be tested for |
 | `SLOPDESK_SEND_LANE` | default-ON. `=0` runs the send schedule inline on the session actor instead of on the dedicated lane. Documented as a byte-identical fallback and it was NOT: the inline path had no `keyframe` in scope, so it floored every frame at the delta pace floor — including a recovery IDR, whose delivery time IS the client's recovery time. Both paths now build one schedule (2026-08-22) |
 | `SLOPDESK_PACE` | default-ON (`=0` disables). Chunk pacing on the send path |
 | `SLOPDESK_PACE_US` | pins a STATIC inter-chunk gap in µs, for A/B against the adaptive one. An explicit value outranks `_PACE_ADAPTIVE` |

@@ -147,30 +147,14 @@ pub fn decode_admission(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// The audio ROW — the codec through `slopdesk-apple-audio`, the speakers through
-/// `slopdesk-audio-out`.
-///
-/// This rule used to be about the jitter STAGE alone, and the stage was the only Rust in the row:
-/// fifteen door entries existed so a Swift `AudioPlaybackPump` could drive it, between a Swift
-/// `AudioStreamDecoder` and a Swift `AUHAL`/`RemoteIO` render callback. The comment here said the
-/// SPSC hand-off ring stayed Swift on purpose, "raw storage partitioned by two atomics", and that
-/// moving it would need a DECISIONS entry rather than a commit. It got one: `rtrb` is that ring,
-/// `cpal` is that render callback, and neither is code this repo maintains.
-///
-/// So what the row keeps in Swift is three FACES that marshal, and what this rule asks is that they
-/// stay faces. Each names its door; a face that stops calling one has grown an implementation.
-///
-/// Two BANS ride along, both on state a re-implementation is made of. The stage's ordering law —
-/// a block list, a play frontier, a sample budget — is `audio_jitter`'s wherever it appears in
-/// `Sources`. The encoder's is `audio_source`'s: an interleaved accumulator carrying a sub-block
-/// remainder, and the channel fold that fills it.
-#[must_use]
-pub fn audio_row(tree: &Tree) -> Report {
-    const SWIFT_ENCODER: &str = "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift";
-    const SWIFT_DECODER: &str = "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift";
-    const SWIFT_PLAYER: &str = "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift";
+const SWIFT_ENCODER: &str = "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift";
+const SWIFT_DECODER: &str = "Sources/SlopDeskVideoClient/AudioStreamDecoder.swift";
+const SWIFT_PLAYER: &str = "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift";
+const SWIFT_SENDER: &str = "Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift";
 
-    let claims = [
+/// The faces ask their doors, and each of the three that hold one frees it in `deinit`.
+const fn audio_faces() -> [Claim; 7] {
+    [
         Claim::Doors {
             path: SWIFT_ENCODER,
             entries: &[
@@ -184,6 +168,16 @@ pub fn audio_row(tree: &Tree) -> Report {
             ],
             message: "Sources/SlopDeskVideoHost/AudioStreamEncoder.swift no longer calls {entry} — the \
                       AAC-ELD encode is rust/slopdesk-apple-audio's",
+        },
+        // The two knobs `_new` takes. They sit on the SENDER rather than the face, because the
+        // sender is what builds an encoder — and they are here rather than nowhere because the
+        // fallback is the whole decision: an unrecognised codec name must land on AAC-ELD, and a
+        // bitrate that is not a number must land on the default rather than the floor.
+        Claim::Doors {
+            path: SWIFT_SENDER,
+            entries: &["slopdesk_audio_wire_format", "slopdesk_audio_bitrate_bps"],
+            message: "Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift no longer calls {entry} — \
+                      the codec pick and the bitrate band are audio_source.rs's",
         },
         Claim::Doors {
             path: SWIFT_DECODER,
@@ -228,6 +222,12 @@ pub fn audio_row(tree: &Tree) -> Report {
             message: "Sources/SlopDeskVideoClient/AudioPlaybackEngine.swift no longer frees its player in \
                       deinit — one _free per _new, and this one joins a device thread (docs/55)",
         },
+    ]
+}
+
+/// And the state a re-implementation is made of stays out of `Sources`.
+const fn audio_bans() -> [Claim; 4] {
+    [
         // A Swift block list is a second reorder law and a second play frontier; the pump's two
         // sample budgets and its starvation test are the door's too.
         Claim::NoneUnder {
@@ -240,6 +240,20 @@ pub fn audio_row(tree: &Tree) -> Report {
             exempt: &[],
             message: "a Swift jitter block list or play frontier is back in {files} — that law lives in \
                       audio_jitter.rs",
+        },
+        // And the knobs themselves: a second reader of either variable is a second fallback rule,
+        // which is the part the doors above exist to own.
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"SLOPDESK_AUDIO_CODEC|SLOPDESK_AUDIO_BITRATE",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} reads an audio knob out of the environment — the codec pick and the bitrate \
+                      band are audio_source.rs's, behind slopdesk_audio_wire_format and \
+                      slopdesk_audio_bitrate_bps",
         },
         // The encoder's half of the same ban: the remainder the capture cadence leaves behind, and
         // the fold that turns whatever ScreenCaptureKit delivered into the wire's stereo.
@@ -267,7 +281,32 @@ pub fn audio_row(tree: &Tree) -> Report {
             message: "{files} reaches for a ring or stage door — both are inside rust/slopdesk-audio-out \
                       now, and a door for either is a design change (DECISIONS)",
         },
-    ];
+    ]
+}
+
+/// The audio ROW — the codec through `slopdesk-apple-audio`, the speakers through
+/// `slopdesk-audio-out`.
+///
+/// This rule used to be about the jitter STAGE alone, and the stage was the only Rust in the row:
+/// fifteen door entries existed so a Swift `AudioPlaybackPump` could drive it, between a Swift
+/// `AudioStreamDecoder` and a Swift `AUHAL`/`RemoteIO` render callback. The comment here said the
+/// SPSC hand-off ring stayed Swift on purpose, "raw storage partitioned by two atomics", and that
+/// moving it would need a DECISIONS entry rather than a commit. It got one: `rtrb` is that ring,
+/// `cpal` is that render callback, and neither is code this repo maintains.
+///
+/// So what the row keeps in Swift is four FACES that marshal, and what this rule asks is that they
+/// stay faces. Each names its door; a face that stops calling one has grown an implementation.
+///
+/// The BANS ride along, every one of them on state a re-implementation is made of. The stage's
+/// ordering law — a block list, a play frontier, a sample budget — is `audio_jitter`'s wherever it
+/// appears in `Sources`. The encoder's is `audio_source`'s: an interleaved accumulator carrying a
+/// sub-block remainder, and the channel fold that fills it. And the row's two knobs are read by
+/// `audio_source` too, so the environment name itself may not appear in `Sources` — a Swift
+/// `ProcessInfo` read of either is a second clamp, and two clamps that must agree cannot be
+/// tested for.
+#[must_use]
+pub fn audio_row(tree: &Tree) -> Report {
+    let claims: Vec<Claim> = audio_faces().into_iter().chain(audio_bans()).collect();
     check_all(tree, &claims)
 }
 
@@ -785,6 +824,10 @@ mod tests {
                 &format!(
                     "{PLAYER_DOORS}deinit {{ if let handle {{ slopdesk_audio_player_free(handle) }} }}\n"
                 ),
+            )
+            .write(
+                "Sources/SlopDeskVideoHost/SlopDeskVideoHostSession.swift",
+                "slopdesk_audio_wire_format()\nslopdesk_audio_bitrate_bps()\n",
             );
     }
 

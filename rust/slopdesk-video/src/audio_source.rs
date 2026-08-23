@@ -32,6 +32,51 @@ pub const FRAMES_PER_BLOCK: usize = 480;
 /// Interleaved samples in one complete wire frame.
 pub const SAMPLES_PER_BLOCK: usize = FRAMES_PER_BLOCK * CHANNEL_COUNT;
 
+/// The AAC-ELD target bitrate when nothing asks for another, in bits per second.
+pub const DEFAULT_BITRATE_BPS: u32 = 128_000;
+
+/// The bitrate band a request is clamped into.
+///
+/// Clamped rather than rejected, and the reason is the same one `encoder_config`'s QP knob gives:
+/// a request outside the band is a request, and answering a default instead is the opposite of what
+/// was asked for as often as not. Below 32 kbps AAC-ELD at 48 kHz stereo is not intelligible
+/// speech; above 320 kbps the codec stops improving and the datagram starts approaching the payload
+/// cap.
+pub const MIN_BITRATE_BPS: u32 = 32_000;
+/// The band's ceiling. See [`MIN_BITRATE_BPS`].
+pub const MAX_BITRATE_BPS: u32 = 320_000;
+
+/// Which codec this process puts on the wire.
+///
+/// `SLOPDESK_AUDIO_CODEC=pcm` selects the codec-free `s16le` arm — the A/B leg that answers "is
+/// this the encoder's fault" without a rebuild. Anything else, including an unset variable and a
+/// misspelling, is AAC-ELD: an unrecognised value must not silently drop the stream to raw PCM at
+/// sixteen times the bitrate.
+///
+/// Takes a lookup rather than reading the environment, so a test can state the input.
+pub fn wire_format(lookup: &dyn Fn(&str) -> Option<String>) -> crate::audio_wire::AudioWireFormat {
+    if lookup("SLOPDESK_AUDIO_CODEC").as_deref() == Some("pcm") {
+        crate::audio_wire::AudioWireFormat::PcmS16Le
+    } else {
+        crate::audio_wire::AudioWireFormat::AacEld
+    }
+}
+
+/// The AAC-ELD target bitrate this process resolved, clamped into the band. The PCM arm ignores it.
+///
+/// Text that is not a number falls back to the default rather than clamping to the floor: "this is
+/// not a bitrate" is a different statement from "this bitrate is too low", and treating them alike
+/// would answer 32 kbps to a typo.
+///
+/// Takes a lookup rather than reading the environment, so a test can state the input.
+pub fn bitrate_bps(lookup: &dyn Fn(&str) -> Option<String>) -> u32 {
+    lookup("SLOPDESK_AUDIO_BITRATE")
+        .and_then(|raw| raw.trim().parse::<u32>().ok())
+        .map_or(DEFAULT_BITRATE_BPS, |asked| {
+            asked.clamp(MIN_BITRATE_BPS, MAX_BITRATE_BPS)
+        })
+}
+
 /// The widest source layout worth believing.
 ///
 /// The tap is configured stereo, so anything past a sane surround layout is a corrupt format
@@ -194,9 +239,11 @@ mod tests {
     )]
 
     use super::{
-        BlockAccumulator, CHANNEL_COUNT, SAMPLES_PER_BLOCK, fold_interleaved_to_stereo,
-        fold_planar_to_stereo, pack_s16le, source_layout_is_readable,
+        BlockAccumulator, CHANNEL_COUNT, DEFAULT_BITRATE_BPS, MAX_BITRATE_BPS, MIN_BITRATE_BPS,
+        SAMPLES_PER_BLOCK, bitrate_bps, fold_interleaved_to_stereo, fold_planar_to_stereo, pack_s16le,
+        source_layout_is_readable, wire_format,
     };
+    use crate::audio_wire::AudioWireFormat;
 
     #[test]
     fn a_mono_source_reaches_both_ears() {
@@ -273,5 +320,35 @@ mod tests {
         // A fresh buffer starts a block at its own first sample, with no shard of the past spliced in.
         blocks.push(&vec![0.25; SAMPLES_PER_BLOCK]);
         assert_eq!(blocks.next_block().expect("a clean block")[0], 0.25);
+    }
+
+    /// An unrecognised codec name must not drop the stream to raw PCM at sixteen times the bitrate.
+    #[test]
+    fn only_the_exact_word_pcm_selects_the_codec_free_arm() {
+        let ask = |value: Option<&str>| {
+            let owned = value.map(str::to_owned);
+            wire_format(&move |_| owned.clone())
+        };
+        assert_eq!(ask(Some("pcm")), AudioWireFormat::PcmS16Le);
+        assert_eq!(ask(Some("PCM")), AudioWireFormat::AacEld);
+        assert_eq!(ask(Some("aac")), AudioWireFormat::AacEld);
+        assert_eq!(ask(None), AudioWireFormat::AacEld);
+    }
+
+    /// A number outside the band is CLAMPED and text that is not a number is not a bitrate at all —
+    /// answering the floor to a typo would be the request inverted with nothing said.
+    #[test]
+    fn a_bitrate_is_clamped_and_a_typo_is_not_a_bitrate() {
+        let ask = |value: Option<&str>| {
+            let owned = value.map(str::to_owned);
+            bitrate_bps(&move |_| owned.clone())
+        };
+        assert_eq!(ask(Some("64000")), 64_000);
+        assert_eq!(ask(Some(" 96000 ")), 96_000);
+        assert_eq!(ask(Some("1")), MIN_BITRATE_BPS);
+        assert_eq!(ask(Some("999999")), MAX_BITRATE_BPS);
+        assert_eq!(ask(Some("loud")), DEFAULT_BITRATE_BPS);
+        assert_eq!(ask(Some("")), DEFAULT_BITRATE_BPS);
+        assert_eq!(ask(None), DEFAULT_BITRATE_BPS);
     }
 }
