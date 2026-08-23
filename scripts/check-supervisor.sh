@@ -2397,37 +2397,7 @@ if ! spells 'Swift\.min\(Int\(offset\), body\.count\)' "${SWIFT_FRAME}" > /dev/n
   fail "${SWIFT_FRAME}: a span from the door is sliced unclamped — that is a trap, not a bad frame"
 fi
 printf 'check-supervisor: one spelling of the superd control frame, and the syscalls stay per side.\n'
-
-# ── One regex engine meets the untrusted rows, and it does not backtrack ───────────────────────
-# Hint Mode ran ten compiled NSRegularExpressions over rows a remote program wrote, bridged through
-# NSString, mapping columns with a third cell walk. Two things were wrong with that and this pins
-# both: the columns now come from the link scan's clustering, and the user's `hint-pattern` — a
-# regex a human pasted in, run against text an attacker influences — now runs on a finite automaton
-# whose match time is linear in the row. A backtracking engine here is a hang the user cannot
-# escape, so the Swift face must stay a marshaller.
-SWIFT_HINT=Sources/SlopDeskWorkspaceCore/Terminal/HintLabelAssigner.swift
-if hit=$(spells 'NSRegularExpression|NSString|force_try|displayCellWidth|boundedPrefix|overlapsAccepted' "${SWIFT_HINT}"); then
-  fail "${hit} scans for hint targets in Swift again — slopdesk-rowscan owns the scan"
-fi
-for entry in 'slopdesk_hint_scan' 'slopdesk_hint_scan_target' 'slopdesk_hint_scan_take_arena'; do
-  if ! spells "${entry}" "${SWIFT_HINT}" > /dev/null; then
-    fail "${SWIFT_HINT} no longer asks ${entry} — the hint scan is one implementation"
-  fi
-done
-# The LABELS deliberately stay Swift: list arithmetic over 26 letters, no text, no untrusted input.
-# If they ever grow a door, this line is where that decision gets argued rather than slipped in.
-for kept in 'static func labels' 'static func filter'; do
-  if ! spells "${kept}" "${SWIFT_HINT}" > /dev/null; then
-    fail "${SWIFT_HINT} lost ${kept} — the label arithmetic stays here on purpose (docs/55)"
-  fi
-done
-if ! spells '^regex = ' rust/slopdesk-rowscan/Cargo.toml > /dev/null; then
-  fail "rust/slopdesk-rowscan dropped the regex crate — a hand-written or backtracking matcher is the hang"
-fi
-if spells '^regex = ' rust/slopdesk-terminal/Cargo.toml > /dev/null; then
-  fail "rust/slopdesk-terminal took an external dependency — that crate is on the PTY hot path"
-fi
-printf 'check-supervisor: one regex engine over the untrusted rows, and it does not backtrack.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::hot_paths`: untrusted-regex-engine.
 
 # ── ⌘F is the second untrusted pattern, and it runs on the same engine ─────────────────────────
 # Find-in-terminal took a pattern the user retypes on every keystroke and ran it, backtracking,
@@ -3291,34 +3261,7 @@ if [[ -n "${focus_rules}" ]]; then
   fail "a code-panel focus rule grew back outside CodeSidebarFocusPolicy — it is pure on purpose"
 fi
 printf 'check-supervisor: the code panel crosses; only its keyboard stayed behind.\n'
-
-# ── SlopDeskClientCore IS THE PRESENTATION LOGIC, AND IT DRAWS NOTHING ────────────────────────────
-# The whole point of the layer is that the two renderers can both read it: `SlopDeskMacUI` builds
-# AppKit out of it and `SlopDeskPhoneUI` builds SwiftUI out of it, so a decision spelled here is
-# spelled once for both. One `import SwiftUI` ends that — not because SwiftUI is unavailable on the
-# Mac, but because the moment a `View`, a `@ViewBuilder` or a `Color` is reachable from this layer,
-# the next decision lands as a modifier instead of a function and the AppKit half has to re-spell it.
-# That is the exact shape of every pair docs/55 §8 lists.
-#
-# This rule was TRUE of the tree for the whole split and was never written down; three separate ports
-# were told it was a ratchet when it was only a habit. It goes in green — the count below is 0 today,
-# and the gate is what makes it stay 0.
-core_swiftui=$(grep -rln '^\s*import SwiftUI' Sources/SlopDeskClientCore/ 2> /dev/null || true)
-if [[ -n "${core_swiftui}" ]]; then
-  printf '%s\n' "${core_swiftui}" >&2
-  fail "SlopDeskClientCore imported SwiftUI — it is the logic BOTH renderers read, so it draws nothing (docs/56 §3)"
-fi
-# The same rule stated from the other side: no design ink either. `SlopDeskSlate` sits ABOVE this
-# layer, so a `Color`-returning table here cannot even compile — but a raw hex or an `.opacity(`
-# would, and that is the form the ink tables took before they were named.
-# shellcheck disable=SC2046 # `$(repo_files …)` expands to a FILE LIST on purpose
-core_ink=$(spells 'Color\(|\.opacity\(|NSColor\(|UIColor\(' \
-  $(repo_files 'Sources/SlopDeskClientCore/**/*.swift') 2> /dev/null || true)
-if [[ -n "${core_ink}" ]]; then
-  printf '%s\n' "${core_ink}" >&2
-  fail "SlopDeskClientCore spelled ink — the design floor is SlopDeskSlate, which sits ABOVE it (DESIGN.md)"
-fi
-printf 'check-supervisor: the presentation logic draws nothing; both renderers read it.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::client_layers`: client-core-draws-nothing.
 
 # ── ONE TERMINAL WIRING, AND ITS TEARDOWN ORDER IS PART OF IT ────────────────────────────────────
 # A terminal leaf's callbacks are five wire/clear PAIRS, and every one of them is a retain-cycle
@@ -6397,28 +6340,11 @@ elif ! grep -q 'in state\.entries where isPersisted' <<< "${WS_PERSISTING}"; the
   fail "${SWIFT_WS_FILE}: persisting() no longer walks state.entries directly — the filter reads neither the object id nor the value"
 fi
 printf 'check-supervisor: the persisted subset is a filter, not a sort.\n'
-
-# 3. THE PALETTE'S THREE RESULT PROPERTIES ARE ONE PASS. `paletteResults`, `rankedResults` and
-#    `selectableResults` each used to re-run the whole mixer: ~8 category sources, and per source a
-#    fresh tuple array, a fresh `[String?]` of three fields per row, and one `slopdesk_ws_search_rank`
-#    crossing whose blob is every title, subtitle and synonym concatenated. Measured over a 90-row
-#    catalog in 8 sources: ~150 µs PER READ (139–167) for a typed query, ~30 µs for the empty-query
-#    path. `moveSelection` reads `selectableResults` only for `.count`, so every ↑/↓ paid one pass
-#    before the body paid another, and the phone's `PaletteView` reads `rankedResults` twice per
-#    body — three passes per arrow key on the phone, two on the Mac. They now share one memo keyed on
-#    `(generation, query, filter, recents)`, and `mixerGeneration` is what makes a rebuilt mixer
-#    invalidate it. BREAK-TESTED twice: pointing `rankedResults` back at `mixer?.ranked(` fires its
-#    reader arm, and deleting the `&+= 1` line from `rebuildMixer` fires the generation arm.
+# PORTED to `rust/slopdesk-invariants` — `rules::hot_paths`: palette-ranking. The loop here
+# interpolated its item INTO the pattern, so it was never a list of names — it is one claim per
+# reader, each with the reader substituted in, which is what the shell was doing all along. The
+# path stays: sections below still name it.
 SWIFT_OVERLAYS=Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift
-for reader in paletteResults rankedResults selectableResults; do
-  if ! grep -qE "var ${reader}: \[[A-Za-z]+\] \{ memoizedResults\." "${SWIFT_OVERLAYS}"; then
-    fail "${SWIFT_OVERLAYS}: ${reader} no longer reads the memo — each read is a whole ~150 µs fzf pass, and three of them ride one arrow key"
-  fi
-done
-if ! grep -q 'mixerGeneration &+= 1' "${SWIFT_OVERLAYS}"; then
-  fail "${SWIFT_OVERLAYS}: rebuildMixer no longer bumps mixerGeneration — the memo would serve results from the PREVIOUS catalog"
-fi
-printf 'check-supervisor: the palette ranks once per query, not once per read.\n'
 
 # 4. THE PALETTE CATALOG IS INDEXED, NOT RESCANNED. `items(in:)` was `allRows.filter { $0.category
 #    == category }`, so one zero-state build ran eight full passes over ~90 rows and minted eight
@@ -6438,32 +6364,7 @@ if grep -q 'ActionsPaletteSource.allRows.first(where:' "${SWIFT_OVERLAYS}"; then
   fail "${SWIFT_OVERLAYS} scans the palette catalog per remembered id — ActionsPaletteSource.rowsByID answers in one lookup"
 fi
 printf 'check-supervisor: the palette catalog is indexed once, not filtered per read.\n'
-
-# ══════════════════════ ROUND TWO — the MacUI sweep's hand-over ══════════════════════
-# Four more, same instrument and same reason: each is a defect no test can see. Two of the six leads
-# handed over were REFUTED on measurement and are recorded as such in the report rather than pinned
-# here — a refutation is not a rule.
-
-# 5. THE NERD-FONT RUN SPLITTER IS LINEAR, AND SKIPS THE WALK ENTIRELY WHEN NOTHING IS A SYMBOL.
-#    `runs(of:)` had the obvious accumulator — read the last run back out of the array, append one
-#    character, write it back — and that is QUADRATIC without looking it: `out.last` hands back a
-#    COPY of the tuple, so the run's `String` is two-referenced for an instant and `append` copies the
-#    whole run before adding a character. Every `.slateNerdAware` string in three overlays walks this
-#    once per keystroke. Measured, `swiftc -O`, two runs agreeing: a plain 48-character title
-#    3,563 → 104 ns, a 240-character one 21,588 → 371 ns (58×). The scalar pre-scan is the other half
-#    and is what makes the ordinary case — no nerd glyph anywhere, which is almost every string —
-#    one scalar walk and one `String`, without entering the per-`Character` loop at all. It is also
-#    what stops the two splice sites' `registered` guard ORDER from mattering.
-#    BREAK-TESTED twice: restoring the `out.last` accumulator fires the shape ban, and deleting the
-#    `unicodeScalars.contains` line fires the pre-scan arm.
-SWIFT_NERD=Sources/SlopDeskFontFaces/NerdSymbolFont.swift
-if ! grep -q 'guard text.unicodeScalars.contains(where: isPrivateUse)' "${SWIFT_NERD}"; then
-  fail "${SWIFT_NERD}: runs(of:) lost its scalar pre-scan — every ordinary title pays a per-Character walk and a String per run again"
-fi
-if grep -qE 'if var last = out\.last|out\[out\.count - 1\] = ' "${SWIFT_NERD}"; then
-  fail "${SWIFT_NERD}: runs(of:) accumulates through out.last again — that shape is QUADRATIC in the run length (3,563 ns for a 48-char title against 104)"
-fi
-printf 'check-supervisor: the nerd-font run splitter is linear and skips the walk it does not need.\n'
+# PORTED to `rust/slopdesk-invariants` — `rules::hot_paths`: nerd-font-splitter.
 
 # 6. THE SETTINGS SECTION SEARCH IS THE TAXONOMY'S OWN RULE. `SettingsCatalog.sections` has crossed
 #    the boundary since it was written; the SEARCH over it had not, so each face wrote its own

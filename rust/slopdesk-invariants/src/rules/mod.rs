@@ -5,8 +5,10 @@
 //! the whole enforced set in one screen. A rule that is written but not registered is a rule that
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
+pub mod client_layers;
 pub mod crate_policy;
 pub mod device_streams;
+pub mod hot_paths;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
@@ -523,6 +525,26 @@ pub fn registry() -> Vec<Rule> {
             name: "rail-badge-gates",
             origin: "scripts/check-supervisor.sh",
             check: workspace_layout::rail_render_reads_its_badge,
+        },
+        Rule {
+            name: "client-core-draws-nothing",
+            origin: "scripts/check-supervisor.sh",
+            check: client_layers::presentation_logic_draws_nothing_both,
+        },
+        Rule {
+            name: "untrusted-regex-engine",
+            origin: "scripts/check-supervisor.sh",
+            check: hot_paths::one_regex_engine_over_untrusted,
+        },
+        Rule {
+            name: "palette-ranking",
+            origin: "scripts/check-supervisor.sh",
+            check: hot_paths::palette_ranks_once_per_query,
+        },
+        Rule {
+            name: "nerd-font-splitter",
+            origin: "scripts/check-supervisor.sh",
+            check: hot_paths::nerd_font_run_splitter_linear,
         },
     ]
 }
