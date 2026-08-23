@@ -21,6 +21,7 @@ pub mod device_streams;
 pub mod host_probes;
 pub mod hot_paths;
 pub mod ink_floor;
+pub mod latency_ratchets;
 pub mod overlay_split;
 pub mod pane_wiring;
 pub mod panel_floor;
@@ -42,6 +43,7 @@ pub mod transport_lanes;
 pub mod video_client;
 pub mod video_control;
 pub mod video_host;
+pub mod video_ports;
 pub mod video_seams;
 pub mod video_wire;
 pub mod window_placement;
@@ -883,6 +885,51 @@ pub fn registry() -> Vec<Rule> {
             name: "leaf-seam-shapes",
             origin: "docs/56 stage F, P4",
             check: ui_seams::one_seam_two_shapes_one_installer,
+        },
+        Rule {
+            name: "video-path-lends",
+            origin: "docs/55 §8",
+            check: video_ports::the_video_path_lends_what_it_holds,
+        },
+        Rule {
+            name: "scroll-phase-table",
+            origin: "docs/56 §3",
+            check: video_ports::the_scroll_phases_are_one_table,
+        },
+        Rule {
+            name: "quantiser-knob-clamps",
+            origin: "docs/55 §4",
+            check: video_ports::a_quantiser_knob_clamps_rather_than_rejects,
+        },
+        Rule {
+            name: "settings-sheet-defaults",
+            origin: "docs/55 §8",
+            check: video_ports::the_settings_sheet_shows_the_encoders_defaults,
+        },
+        Rule {
+            name: "env-knob-reject-rule",
+            origin: "docs/55 §4",
+            check: video_ports::the_reject_reading_of_an_env_knob_is_rusts,
+        },
+        Rule {
+            name: "mirror-topology-memo",
+            origin: "docs/55 §8",
+            check: latency_ratchets::the_mirror_topology_is_projected_once,
+        },
+        Rule {
+            name: "three-projections",
+            origin: "docs/55 §4c",
+            check: latency_ratchets::three_projections_read_once_per_pass,
+        },
+        Rule {
+            name: "index-doors-guess",
+            origin: "docs/55 §4",
+            check: latency_ratchets::the_index_doors_guess_they_do_not_probe,
+        },
+        Rule {
+            name: "scan-and-mirror-derive-once",
+            origin: "docs/55 §4c, §8",
+            check: latency_ratchets::the_scan_and_the_mirror_derive_once,
         },
         Rule {
             name: "canvas-drag-decides-once",
