@@ -56,7 +56,7 @@ INVARIANTS_PID=$!
 #
 # The union is BUILT from the bans, not maintained beside them: `make lint` runs
 # `scripts/check-ban-union.py`, which fails if any ban's pattern is missing from it.
-DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)|((struct|private struct) (RawWeightedChild|SpecEntry)\b|func (decodeRaw|decodeChildren|rawNode)\()|(\b(SplitNode|WeightedChild|SplitWeight|TreeWorkspace|DetachedPane|PaneSpec|VideoEndpoint|Session|Tab)\b *: *(any )?(Codable|Decodable|Encodable)\b)'
+DELETED_SWIFT_UNION='((enum|struct|final class) (GF256|NeonGf|ReedSolomonMatrix)\b)|((struct|enum|final class) StreamHasher\b|func (hashRow|hashNV12Scalar|rowHashes|rowHashesQuantized|borrowPlane|estimateVerticalShift|changedFraction|adaptiveMaxQP)\b)|(func (targetSeconds|stepSeconds|cgRectToCocoa|backingScaleFactor)\(|(struct|enum|final class) ScreenInfo\b)|((func|var) appendBE|(struct|enum|final class|class) BigEndianReader)|((enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b)|((enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-)|((let|var|func|case) *(bonusBoundary|bonusCamel123|bonusConsecutive|scoreGapStart|scoreGapExtension|bonusMatrix|bonusFor|backtrace)\b)|((enum|struct) *(HookPayload|StopInfo|ToolUseBlock|NotificationInfo|ClaudeHookBody|ClaudeHookEvent)\b|func +(mapToHookEvent|classifyNotification|stopLabel)\b)|(func +(skipEscapeSequence|isEraseToLineEnd|applySGR|extendedColour)\b)|((enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b)|((enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b)|(\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=)|(autoProgressCommands: \[String\]|autoProgressPrefixes)'
 DELETED_SWIFT_CANDIDATES=$(grep -rlE "${DELETED_SWIFT_UNION}" Sources/ 2> /dev/null || true)
 # The candidates matching ONE ban, or nothing. An empty candidate list answers without a grep.
 among_deleted() {
@@ -241,235 +241,17 @@ fi
 # SECTIONED one, because a field name that appears in two tables is two entries and a flat set
 # would call a swapped pair equal.
 
-# ── One answer to "may this cell touch the disk" ────────────────────────────────────────────────
-# The two paths and the policy ban are `workspace-state-file` in `rust/slopdesk-invariants`. What is
-# left here is the door list: dropping ANY of them is a decision coming back to this side.
-WS_FILE_SWIFT=Sources/SlopDeskWorkspaceModel/Codec/WorkspaceStateFile.swift
-# Every door the face must keep asking. Dropping ANY of them is a decision coming back to this side:
-# the predicate is the filter, the two codecs are the file's bytes, and the status probe is the
-# taxonomy — a transcribed refusal byte that drifted on one arm turns a corrupt row into a
-# mint-the-default, and the file nobody kept aside is the one nobody can look at.
-for door in slopdesk_ws_state_file_is_persisted slopdesk_ws_state_file_encode \
-  slopdesk_ws_state_file_decode slopdesk_ws_state_file_status; do
-  if ! grep -qF "${door}" "${WS_FILE_SWIFT}"; then
-    fail "${WS_FILE_SWIFT} stopped asking ${door} — one answer to what survives a restart (docs/55 §6)"
-  fi
-done
-# And what a marshaller cannot have. An encoder of its own is the whole file coming back; a version
-# literal is the no-migration rule spelled twice, where the smaller number refuses files the other
-# happily writes; a base64 call is the row codec; a pane-field name is the filter itself.
+# ── The two workspace files, the solvers, and every ABI enum's byte map ─────────────────────────
+# PORTED. `rules::workspace_files` holds all four: the state file's doors and its refusal taxonomy,
+# the workspace file's doors plus the `Codable` conformance ban that is the divider-renaming defect's
+# actual gate, the six solver faces and the 23 scanners banned beside them, and the eight
+# `case -> byte` maps.
 #
-# Comments are stripped first — naming what moved is how a boundary stays legible, and only CODE can
-# re-implement it. `spells` is not defined this early in the file, so this is the plain-grep form the
-# neighbouring gates use, and the same EMPTY trap applies: a haystack that read as nothing would
-# pass silently, which is why the file's existence is checked above.
-ws_file_code=$(grep -v '^[[:space:]]*//' "${WS_FILE_SWIFT}" 2> /dev/null) || true
-if grep -qE 'JSONEncoder|JSONDecoder|base64Encoded|version *= *[0-9]|WorkspacePaneField\.|WorkspaceProjectField\.' <<< "${ws_file_code}"; then
-  fail "${WS_FILE_SWIFT} decides something again — it marshals, and rust/slopdesk-wire's state_file rules (docs/55 §6)"
-fi
-# The far side, so the door cannot be a shim over a shim. The three refusal arms are the taxonomy a
-# caller reads, and the door may only carry the byte each arm names.
-for rule in 'pub fn is_persisted' 'pub fn persisting' 'pub fn encode' 'pub fn decode_bytes' \
-  'const fn code' 'Malformed,' 'VersionMismatch(i64)' 'MalformedRow,'; do
-  if ! grep -qF "${rule}" rust/slopdesk-wire/src/document/state_file.rs; then
-    fail "rust/slopdesk-wire/src/document/state_file.rs lost ${rule} — the rule and its taxonomy are one place (docs/55 §6)"
-  fi
-done
-printf 'check-supervisor: one answer to what survives a restart, and the Swift face only marshals it.\n'
-
-# ── One answer to "what arrangement did I leave" ────────────────────────────────────────────────
-# `SplitNode+Codable.swift` was 273 lines of Swift beside `slopdesk-workspace`'s `persist`, which had
-# been a finished port with no caller. The two did not merely duplicate — they DISAGREED, and the
-# disagreement is the one a person feels: for a divider the file does not name, Rust DERIVES the
-# `SplitNodeId` from the seam's position (`persist::derived_split_id`) while the Swift decoder minted
-# a fresh UUID, so every launch renamed every seam and every remembered divider position was lost.
-# Nothing crashed and no test failed; the arrangement just kept resetting.
-#
-# So the Swift half is deleted, `Codec/WorkspaceFile.swift` is the face, and both halves of that are
-# checked here — the file staying gone, and the face still being a marshaller rather than a decoder
-# growing back under a new name.
-WORKSPACE_FILE_SWIFT=Sources/SlopDeskWorkspaceModel/Codec/WorkspaceFile.swift
-if [[ -e Sources/SlopDeskWorkspaceModel/Domain/Tree/SplitNode+Codable.swift ]]; then
-  fail "SplitNode+Codable.swift is back — the workspace file's rule is rust/slopdesk-workspace's persist (docs/55 §6)"
-fi
-if [[ ! -e "${WORKSPACE_FILE_SWIFT}" ]]; then
-  fail "${WORKSPACE_FILE_SWIFT} is gone — the workspace file's door has no Swift face, so the bans below stopped checking anything (docs/55 §6)"
-fi
-ws_codec_revived=$(among_deleted '(struct|private struct) (RawWeightedChild|SpecEntry)\b|func (decodeRaw|decodeChildren|rawNode)\(')
-if [[ -n "${ws_codec_revived}" ]]; then
-  printf '%s\n' "${ws_codec_revived}" >&2
-  fail "a Swift workspace-file decoder is back in Sources/ — the tree's JSON lives in rust/slopdesk-workspace (docs/55 §6)"
-fi
-# The CONFORMANCE is the re-implementation, however small the body. `Codable` on any of these types
-# is a second encoder for the file by synthesis alone — and a synthesized one has no derivation, so
-# it brings the divider-renaming defect back exactly as it was. (`PaneKind`, `SplitAxis` and the
-# device-prefs template values stay `Codable` on purpose: those are vocabulary, `docs/55` §8.)
-ws_conformance_revived=$(among_deleted '\b(SplitNode|WeightedChild|SplitWeight|TreeWorkspace|DetachedPane|PaneSpec|VideoEndpoint|Session|Tab)\b *: *(any )?(Codable|Decodable|Encodable)\b')
-if [[ -n "${ws_conformance_revived}" ]]; then
-  printf '%s\n' "${ws_conformance_revived}" >&2
-  fail "a workspace tree type conforms to Codable again — one encoder, and it is persist::encode_file (docs/55 §6)"
-fi
-# Every door the face must keep asking. The pool probe is the load-bearing one: the crate holds no
-# entropy, so a caller that stopped asking how many ids a file needs would hand it a pool that runs
-# dry, and a dry pool REPEATS — two panes with one id, which the repair then re-mints apart on every
-# single load. That is the divider defect again, wearing the pane's clothes.
-for door in slopdesk_ws_workspace_file_minted_ids slopdesk_ws_workspace_file_encode \
-  slopdesk_ws_workspace_file_decode slopdesk_ws_workspace_file_status \
-  slopdesk_ws_workspace_file_max_panes; do
-  if ! grep -qF "${door}" "${WORKSPACE_FILE_SWIFT}"; then
-    fail "${WORKSPACE_FILE_SWIFT} stopped asking ${door} — one answer to the saved arrangement (docs/55 §6)"
-  fi
-  if ! grep -qF "${door}" rust/slopdesk-ffi/include/slopdesk_ffi.h; then
-    fail "rust/slopdesk-ffi/include/slopdesk_ffi.h does not declare ${door} — the header is hand-written and it is the ABI (docs/55 §2)"
-  fi
-done
-# What a marshaller cannot have, and what the store beneath it cannot go back to. A `JSONEncoder` on
-# either side is the whole file returning; comments are stripped first for the reason the neighbour
-# gives — naming what moved is how a boundary stays legible, and only CODE can re-implement it.
-for marshaller in "${WORKSPACE_FILE_SWIFT}" Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspacePersistence.swift; do
-  marshaller_code=$(grep -v '^[[:space:]]*//' "${marshaller}" 2> /dev/null) || true
-  if [[ -z "${marshaller_code}" ]]; then
-    fail "${marshaller} read as EMPTY — it moved or is all comments, so this ban stopped checking anything (docs/55 §6)"
-  fi
-  if grep -qE 'JSONEncoder|JSONDecoder|CodingKeys|schemaVersion *= *[0-9]' <<< "${marshaller_code}"; then
-    fail "${marshaller} decides the file's shape again — it marshals, and rust/slopdesk-workspace's persist rules (docs/55 §6)"
-  fi
-done
-# The far side, so the door cannot be a shim over a shim. The derivation is named because it is the
-# defect's actual fix: delete it and both languages agree again, on the wrong answer.
-for rule in 'fn derived_split_id' 'pub fn encode_file' 'pub fn decode_file' 'pub fn minted_ids_for' \
-  'Malformed,' 'VersionMismatch(i64)' 'TooManyPanes,'; do
-  if ! grep -qF "${rule}" rust/slopdesk-workspace/src/persist.rs; then
-    fail "rust/slopdesk-workspace/src/persist.rs lost ${rule} — the file's rule and its taxonomy are one place (docs/55 §6)"
-  fi
-done
-printf 'check-supervisor: one answer to the saved arrangement, and the seams keep their names.\n'
-
-for solver in Domain/SendKeysParser Domain/FocusResolver Domain/Tree/TabOrdering \
-  Domain/Tree/SplitLayoutSolver Domain/Tree/SplitNode+Ops \
-  Domain/Tree/WorkspaceTreeOps; do
-  solver_swift="Sources/SlopDeskWorkspaceModel/${solver}.swift"
-  if [[ "$(grep -c 'import CSlopDeskFFI' "${solver_swift}")" -eq 0 ]]; then
-    fail "${solver_swift} no longer calls the Rust crate — the port was undone (docs/55 §6)"
-  fi
-done
-# The scanners and comparators a re-implementation would need, and a wrapper cannot have. The
-# collator is listed because it is the ONE behaviour the port deliberately narrowed: the crate's
-# `natural_compare` does not fold diacritics, so a `localizedStandardCompare` reappearing here would
-# be a second answer to the sidebar's order rather than a refinement of it.
-# Comment lines are stripped first: naming the retired collator in a doc comment is how the
-# narrowing stays legible, and only CODE can re-implement it.
-solver_code=$(grep -rh '' Sources/SlopDeskWorkspaceModel/Domain --include='*.swift' |
-  grep -v '^[[:space:]]*//') || true
-# Same shape, same trap as `codec_code`: an empty haystack passes every ban below it silently.
-if [[ -z "${solver_code}" ]]; then
-  fail "Sources/SlopDeskWorkspaceModel/Domain read as EMPTY — the directory moved, so the ban list below stopped checking anything (docs/55 §6)"
-fi
-for ghost in 'localizedStandardCompare' 'func directionalNeighbor' 'func crossAxisOverlap' \
-  'func findClose' 'private static let esc' 'func moveCandidates' 'func resolveAxis' \
-  'struct AxisValues' 'func depenetrate' 'func intentArmed' 'func sweptHit' \
-  'func splitImpl' 'func removeImpl' 'func mergingSameAxis' 'func shiftWeight' \
-  'func enclosingSplitImpl' 'func insertBesideImpl' 'func evenPair' 'squareRoot()' \
-  'sumSizes' 'positionByID' 'func flatSplit' 'func evenChild' 'private static func tiled'; do
-  if grep -qF "${ghost}" <<< "${solver_code}"; then
-    fail "Sources/SlopDeskWorkspaceModel grew '${ghost}' back — the solvers live in rust/slopdesk-workspace (docs/55 §6)"
-  fi
-done
-# Four enums cross as a bare discriminant, so a case that means 4 on one side and 5 on the other
-# sends focus the wrong way, aligns to the wrong edge or re-tiles into the wrong layout — with every
-# test green, because each side is self-consistent. This compared the COUNT of cases for a long
-# time, which cannot see that at all: it is blind to a reorder, and blind to a case added correctly
-# to both enums and forgotten in the shim's decoder. The Rust half is now checked by the compiler
-# and by a round-trip test per enum (`ALL[i].index() == i`); what NEITHER can reach is Swift's
-# `ffiByte` switch, which is where the number is written for the third time. So the two maps are
-# compared here, case name against case name, rather than counted.
-#
-# Both sides are read as `name -> number` and lower-cased: Swift's `case .centerHorizontal: 4` and
-# the crate's `Self::CenterHorizontal => 4` are the same claim spelled two ways.
-printf 'check-supervisor: every ABI enum maps the same case to the same byte in both languages\n'
-compare_abi_enum() {
-  local label="$1" swift_file="$2" swift_marker="$3" rust_file="$4" rust_marker="$5"
-  local swift_map rust_map swift_marks rust_marks
-  # THE MARKER'S UNIQUENESS IS NOW CHECKED RATHER THAN ASKED FOR. The prose below this function has
-  # said "it must be unique within its file" since the day a second `RepairPass` marker in
-  # `tree_ops.rs` turned two gates red — but nothing enforced it, and the quiet case is the one that
-  # matters: a `sed` range whose opening address matches TWICE appends the second block to the first,
-  # so the gate holds one enum's cases against two enums' rows. Red is the LUCKY outcome. The unlucky
-  # one was live here on 2026-08-22: `NewTabPosition::as_byte` in `session.rs` carries a
-  # byte-identical signature to `PaneKind`'s, and the gate stayed green only because that body is
-  # `self as u8` and contributes no `Self::X => n` row at all. Giving it the explicit match its
-  # sibling has — which is what the gate ASKS every ABI enum for — would have poisoned PaneKind's
-  # comparison with `NewTabPosition`'s numbering, silently.
-  swift_marks=$(grep -c -- "${swift_marker}" "${swift_file}") || true
-  rust_marks=$(grep -c -- "${rust_marker}" "${rust_file}") || true
-  if [[ "${swift_marks}" != "1" || "${rust_marks}" != "1" ]]; then
-    fail "${label}: a marker is not unique in its file (swift ${swift_marks}x, rust ${rust_marks}x) — a sed range restarts on every match and APPENDS a second enum's rows to the first (docs/55)"
-    return
-  fi
-  # `|| true` on both: under `set -euo pipefail` a `grep` that matches nothing exits 1 and would
-  # kill the script HERE, silently, taking every check below it with it — the same trap the
-  # build-ffi call above is commented for. An empty map must reach the guard, not the exit.
-  swift_map=$(sed -n "/${swift_marker}/,/^ *}/p" "${swift_file}" |
-    grep -oE 'case \.[a-zA-Z]+: *[0-9]+' |
-    sed -E 's/case \.//; s/: */ /' | tr '[:upper:]' '[:lower:]' | sort || true)
-  rust_map=$(sed -n "/${rust_marker}/,/^ *}/p" "${rust_file}" |
-    grep -oE 'Self::[A-Za-z]+ *(\{[^}]*\}|\([^)]*\))? *=> *[0-9]+' |
-    sed -E 's/Self:://; s/ *(\{[^}]*\}|\([^)]*\))? *=> */ /' | tr '[:upper:]' '[:lower:]' | sort || true)
-  if [[ -z "${swift_map}" || -z "${rust_map}" ]]; then
-    fail "${label}: one side's byte map read as EMPTY — the switch moved or changed shape, so this gate stopped checking anything (docs/55)"
-    # Returning, so the comparison below does not ALSO report a disagreement: "one side is missing"
-    # and "the two sides differ" are different repairs, and naming both hides the real one.
-    return
-  fi
-  if [[ "${swift_map}" != "${rust_map}" ]]; then
-    printf 'swift:\n%s\nrust:\n%s\n' "${swift_map}" "${rust_map}" >&2
-    fail "${label}: the two languages disagree about which byte a case crosses as (docs/55)"
-  fi
-}
-compare_abi_enum "FocusDirection" \
-  Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension FocusDirection' \
-  rust/slopdesk-tree/src/focus.rs 'pub const fn index(self) -> u8'
-# The Rust marker is the DOC LINE, not the signature: `session.rs` holds two `as_byte` bodies with
-# identical signatures — PaneKind's and NewTabPosition's — and the uniqueness check above now refuses
-# the signature outright.
-compare_abi_enum "PaneKind" \
-  Sources/SlopDeskWorkspaceModel/WorkspaceSolverBridge.swift 'extension PaneKind' \
-  rust/slopdesk-tree/src/session.rs 'The on-wire byte, and the byte a client'
-compare_abi_enum "LayoutPreset/TileLayout" \
-  Sources/SlopDeskWorkspaceModel/Domain/Tree/WorkspaceTreeOps.swift 'var ffiByte: UInt8' \
-  rust/slopdesk-tree/src/tree_ops.rs 'pub const fn index(self) -> u8'
-# THE MARKER IS A `sed` ADDRESS, SO IT MUST BE UNIQUE WITHIN ITS FILE. A range restarts every time
-# its opening address matches again, so a SECOND occurrence below the first — including one inside a
-# doc comment, which `sed` reads as prose it cannot tell from code — APPENDS a second map to the
-# first rather than shadowing it, and the gate then holds one side's cases against both sides' rows.
-# That cost two red gates on 2026-08-20 when `RepairPass` was added to `tree_ops.rs` beside
-# `TileLayout`. Name a new marker for the case it belongs to, and do not spell it again in prose.
-compare_abi_enum "RepairPass" \
-  Sources/SlopDeskWorkspaceModel/Domain/Tree/TreeWorkspace.swift 'var ffiByte: UInt8' \
-  rust/slopdesk-tree/src/tree_ops.rs 'pub const fn ffi_byte(self) -> u8'
-# The PRIMARY wire's type byte, and the one this list should have started with. Swift writes the
-# tag onto the flat struct itself (`flat.message_type = messageType`), so its map is what goes out
-# on the wire, and Rust's `message_type()` is the same claim spelled a second time. A case numbered
-# differently at the two ends is not a decode error — it is a frame that decodes cleanly as the
-# WRONG message, which is the failure the metadata-verb gate two hundred lines up already exists for
-# (docs/20 §2).
-compare_abi_enum "WireMessage type byte" \
-  Sources/SlopDeskProtocol/WireMessage.swift 'var messageType: UInt8' \
-  rust/slopdesk-wire/src/message.rs 'pub const fn message_type(&self) -> u8'
-# The VIDEO wire's three type bytes. These travel a different socket from the one above and were
-# missed for the same reason the primary one was: nothing here named them, so their agreement was
-# only ever an accident of two people editing two files. The control map is the widest hand-written
-# byte map in the tree at 28 cases, and it is the one a new verb gets appended to — which is exactly
-# where a number gets reused (docs/20 §5).
-compare_abi_enum "VideoControl type byte" \
-  Sources/SlopDeskVideoProtocol/VideoControlCodec.swift 'public var messageType: UInt8' \
-  rust/slopdesk-video/src/video_control.rs 'pub const fn message_type(&self) -> u8'
-compare_abi_enum "RecoverySignaling type byte" \
-  Sources/SlopDeskVideoProtocol/RecoverySignaling.swift 'public var messageType: UInt8' \
-  rust/slopdesk-video/src/recovery.rs 'pub const fn message_type(&self) -> u8'
-compare_abi_enum "WindowGeometry type byte" \
-  Sources/SlopDeskVideoProtocol/WindowGeometryCodec.swift 'public var messageType: UInt8' \
-  rust/slopdesk-video/src/window_geometry.rs 'pub const fn message_type(&self) -> u8'
+# The byte maps are `Claim::SameByteMap`, which is the one shape this file could not state safely.
+# Its marker is a `sed` address, and a range restarts on every match — so a marker spelled twice
+# APPENDS a second enum's rows to the first. The shell asked for uniqueness in prose for two years
+# and enforced it only after `NewTabPosition` came within one explicit match arm of poisoning
+# `PaneKind`'s comparison silently. The claim CHECKS it, on both sides, before it reads a row.
 
 # ── The linked port's one failure mode: an artifact older than its source ───────────────────────
 # A socket port cannot go stale — the daemon either answers or does not. A LINKED port can: the
@@ -1416,8 +1198,8 @@ fi
 # ── No gate may die quietly ───────────────────────────────────────────────────────────────────
 # Every script here runs under `set -euo pipefail`, where `x=$(… | grep …)` that matches NOTHING
 # exits 1 and takes the whole run with it — no message, and a log that ends early reads exactly like
-# a log that passed. That is not hypothetical: it was fixed once in `compare_abi_enum`, re-entered,
-# and then found in twenty-three more assignments in this file alone, five of which sat directly
+# a log that passed. That is not hypothetical: it was fixed once in the ABI byte-map comparison
+# (since ported), re-entered, and then found in twenty-three more assignments here, five of which sat
 # above a guard whose message says "the extraction in this gate has gone stale" and which therefore
 # could never run in the case it was written for.
 #

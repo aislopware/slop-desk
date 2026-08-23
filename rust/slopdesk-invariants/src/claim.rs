@@ -17,7 +17,7 @@
 //! compares equal to another empty string — and they are the only bugs in a gate that cannot be
 //! noticed by reading its output.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::report::Report;
 use crate::text;
@@ -227,6 +227,57 @@ impl Corpus {
             })
             .flat_map(|(_, source)| text::capture_set(&self.view.of(source), self.pattern))
             .collect()
+    }
+}
+
+/// One side of a [`Claim::SameByteMap`]: an enum's `case -> byte` switch, inside a marker range.
+///
+/// Separate from [`Extract`] because it reads TWO capture groups rather than one, and because the
+/// marker is a `sed` address whose UNIQUENESS is part of the claim. A range restarts every time its
+/// opening address matches again, so a second occurrence below the first — including one inside a
+/// doc comment, which the range reader cannot tell from code — APPENDS a second enum's rows to the
+/// first, and the comparison then holds one enum's cases against two enums' numbering. Red is the
+/// lucky outcome; the unlucky one is a sibling whose body contributes no rows at all, which stays
+/// green while covering nothing.
+///
+/// Read [`View::Raw`] by default, and that is deliberate: one of these markers IS a doc line.
+#[derive(Clone, Copy)]
+pub struct ByteMap {
+    /// Repo-relative path.
+    pub path: &'static str,
+    /// The line that opens the switch. Must match exactly once in the file.
+    pub marker: &'static str,
+    /// The line that closes it.
+    pub end: &'static str,
+    /// The pattern whose first two capture groups are the case NAME and its byte.
+    pub pattern: &'static str,
+    /// Which view of the file to read.
+    pub view: View,
+}
+
+impl ByteMap {
+    /// The `name -> byte` map this switch declares, lower-cased so `centerHorizontal` and
+    /// `CenterHorizontal` are the same claim spelled two ways.
+    fn read(self, tree: &Tree, report: &mut Report, label: &str) -> Option<BTreeMap<String, String>> {
+        let source = report.source(tree, self.path, "one side of a byte map lives there")?;
+        let view = self.view.of(source);
+        let marks = text::count_lines(&view, self.marker);
+        if marks != 1 {
+            report.fail(format!(
+                "{label}: the marker in {} matches {marks} times, not once — a range restarts on \
+                 every match and APPENDS a second enum's rows to the first (docs/55)",
+                self.path,
+            ));
+            return None;
+        }
+        let mut map = BTreeMap::new();
+        for caps in text::cached(self.pattern).captures_iter(&text::range(&view, self.marker, self.end)) {
+            let (Some(name), Some(byte)) = (caps.get(1), caps.get(2)) else {
+                continue;
+            };
+            map.insert(name.as_str().to_lowercase(), byte.as_str().to_owned());
+        }
+        Some(map)
     }
 }
 
@@ -747,6 +798,21 @@ pub enum Claim {
         floor: usize,
         /// Why an orphan matters, with `{orphans}` where the unserved members go.
         message: &'static str,
+    },
+    /// Two enums must map the same CASE NAME to the same byte, in both languages.
+    ///
+    /// The shape a case COUNT cannot state, and counting is what this was for a long time. A count
+    /// is blind to a reorder, and blind to a case added correctly to both enums and forgotten in
+    /// the shim's decoder. Four of these cross as a bare discriminant, so a case meaning 4 on one
+    /// side and 5 on the other sends focus the wrong way or decodes a frame cleanly as the WRONG
+    /// message — with every test green, because each side is self-consistent.
+    SameByteMap {
+        /// What the enum is called in the diagnostic.
+        label: &'static str,
+        /// The Swift switch, which is what goes out on the wire.
+        swift: ByteMap,
+        /// The Rust switch, the same claim spelled a second time.
+        rust: ByteMap,
     },
     /// Two extracted sets may OVERLAP in at most `mark` members — a ratchet, failing both ways.
     ///
@@ -1751,6 +1817,43 @@ impl Claim {
                         format!("{target} depends on {dependency} again — {message}"),
                     );
                 }
+            },
+            Self::SameByteMap { label, swift, rust } => {
+                // Both sides are read before either is judged, so a marker that lost its uniqueness
+                // on one side is reported alongside whatever the other side says.
+                let (ours, theirs) = (
+                    swift.read(tree, report, label),
+                    rust.read(tree, report, label),
+                );
+                let (Some(ours), Some(theirs)) = (ours, theirs) else {
+                    return;
+                };
+                if ours.is_empty() || theirs.is_empty() {
+                    report.fail(format!(
+                        "{label}: one side's byte map read as EMPTY ({} of {}, {} of {}) — the \
+                         switch moved or changed shape, so this claim stopped checking anything \
+                         (docs/55)",
+                        ours.len(),
+                        swift.path,
+                        theirs.len(),
+                        rust.path,
+                    ));
+                    return;
+                }
+                let disagreeing: Vec<String> = ours
+                    .iter()
+                    .filter(|(name, byte)| theirs.get(*name) != Some(*byte))
+                    .chain(theirs.iter().filter(|(name, byte)| ours.get(*name) != Some(*byte)))
+                    .map(|(name, byte)| format!("{name}={byte}"))
+                    .collect();
+                report.fail_if(
+                    !disagreeing.is_empty(),
+                    format!(
+                        "{label}: the two languages disagree about which byte a case crosses as — \
+                         {} (docs/55)",
+                        disagreeing.join(" "),
+                    ),
+                );
             },
             Self::PinnedSet { label, from, expect } => {
                 let Some(found) = from.set(tree, report) else {

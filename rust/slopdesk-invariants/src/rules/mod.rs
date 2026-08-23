@@ -63,6 +63,7 @@ pub mod video_wire;
 pub mod window_placement;
 pub mod wire_codecs;
 pub mod workspace_document;
+pub mod workspace_files;
 pub mod workspace_layout;
 
 use crate::Rule;
@@ -964,6 +965,26 @@ pub fn registry() -> Vec<Rule> {
             name: "shared-vocabulary-ceiling",
             origin: "docs/56 §3",
             check: two_shells::the_shared_vocabulary_only_shrinks,
+        },
+        Rule {
+            name: "state-file-one-answer",
+            origin: "docs/55 §6",
+            check: workspace_files::one_answer_to_what_survives_a_restart,
+        },
+        Rule {
+            name: "workspace-file-one-answer",
+            origin: "docs/55 §6",
+            check: workspace_files::one_answer_to_the_saved_arrangement,
+        },
+        Rule {
+            name: "solvers-live-in-rust",
+            origin: "docs/55 §6",
+            check: workspace_files::the_solvers_live_in_rust,
+        },
+        Rule {
+            name: "abi-enum-byte-maps",
+            origin: "docs/55",
+            check: workspace_files::every_abi_enum_crosses_as_one_byte,
         },
         Rule {
             name: "drop-client-one-layout",
