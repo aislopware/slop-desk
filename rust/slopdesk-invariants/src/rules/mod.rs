@@ -46,6 +46,7 @@ pub mod supervisor_envelope;
 pub mod terminal_config;
 pub mod terminal_grammar;
 pub mod terminal_surface;
+pub mod two_shells;
 pub mod ui_seams;
 pub mod ui_split;
 pub mod transport_lanes;
@@ -869,6 +870,21 @@ pub fn registry() -> Vec<Rule> {
             name: "ui-split-shape",
             origin: "docs/56 §3",
             check: ui_split::the_ui_split_holds_its_shape,
+        },
+        Rule {
+            name: "no-cross-target-clone",
+            origin: "docs/56 §3",
+            check: two_shells::no_body_crosses_the_ui_split,
+        },
+        Rule {
+            name: "owned-copy-one-speller",
+            origin: "docs/56 §3",
+            check: two_shells::owned_copy_has_one_speller,
+        },
+        Rule {
+            name: "shared-vocabulary-ceiling",
+            origin: "docs/56 §3",
+            check: two_shells::the_shared_vocabulary_only_shrinks,
         },
         Rule {
             name: "video-surface-split",

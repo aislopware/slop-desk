@@ -470,6 +470,45 @@ pub enum Claim {
         /// The sentence, with `{files}` where the offenders go.
         message: &'static str,
     },
+    /// No BODY may appear under both of two roots — a clone detector, with a debt list.
+    ///
+    /// Every other ban here forbids a shape somebody wrote down. This one forbids a coincidence: a
+    /// helper, a copy string or a constant that is in the RIGHT target on both sides of the UI split
+    /// and spelled twice. No import is missing, no platform gate is wrong, and nothing fails to
+    /// build — the two copies agree, so nothing disagrees with them, which is exactly how a
+    /// duplicated bug hides. It stayed hidden nine times over.
+    ///
+    /// A file is normalised to its SUBSTANTIVE lines first: trailing `//` comments cut, indentation
+    /// dropped, and lines that are only punctuation or that open with `import` / `@` / `#if` thrown
+    /// away. A reformat and a re-worded comment therefore cannot hide a clone, a lone `}` cannot
+    /// manufacture one, and two view files importing the same six modules — a coincidence of the
+    /// split rather than a duplicated decision — is not a finding.
+    ///
+    /// `window` is EIGHT, and the reason is in the debt list's absence rather than its contents. At
+    /// six the rule fired on thin forwarders, three one-line bodies each calling the SAME shared
+    /// floor type, which is the FIX rendering as a violation. At eight only real blocks survive.
+    ///
+    /// `known` IS A DEBT LIST, NOT A CARVE-OUT. Each pair is a clone still in the tree, named so the
+    /// rule can be green about everything else; a pair leaves by being deduplicated, never by being
+    /// tolerated. It is checked BOTH ways, like every ledger here: a pair that has stopped being a
+    /// clone is a line that has stopped excusing anything, and leaving it would let the clone grow
+    /// back under its own permission.
+    NoCloneAcross {
+        /// One root, by path prefix.
+        left: &'static str,
+        /// The other.
+        right: &'static str,
+        /// Only files with one of these extensions are read.
+        extensions: &'static [&'static str],
+        /// How many consecutive substantive lines make a clone.
+        window: usize,
+        /// File pairs that are still clones, as `(left path, right path)`.
+        known: &'static [(&'static str, &'static str)],
+        /// The floor under each side's file count.
+        floor: usize,
+        /// The sentence, with `{pairs}` where the offending sites go.
+        message: &'static str,
+    },
     /// No line under `roots` may quote one of a set of strings READ OUT OF the tree.
     ///
     /// Every other ban here forbids a pattern written in this crate. This one forbids a list that
@@ -709,6 +748,33 @@ pub enum Claim {
         /// How many members may still be in both. Lower it whenever one goes; never raise it.
         mark: usize,
         /// Why an overlap matters, with `{shared}` where the common members go.
+        message: &'static str,
+    },
+    /// Two DIRECTORIES may share at most `ceiling` members — [`Claim::Overlap`] over corpora.
+    ///
+    /// The ceiling that keeps a named ban from only catching what it already knows. Naming the
+    /// sentences that must not be typed twice is exact and says WHERE each one lives, but it can only
+    /// ever forbid the duplicates somebody has already found; a COUNT of how much vocabulary the two
+    /// sides still share makes every NEW duplicate a failure without anyone having to predict which
+    /// sentence it will be.
+    ///
+    /// ONE-WAY, unlike [`Claim::Overlap`], and that is the deliberate difference between them. The
+    /// overlap here is dozens rather than nought, and it moves under every ordinary edit to either
+    /// side — a rename on one half alone drops it — so a downward arm would fire on work that is not
+    /// a regression and would train its reader to re-pin without reading. Re-pin after a deliberate
+    /// merge; never raise to make a change fit.
+    OverlapUnder {
+        /// What the two sets are called in the diagnostic.
+        label: &'static str,
+        /// One side.
+        left: Corpus,
+        /// The other.
+        right: Corpus,
+        /// How many members may be spelled under both.
+        ceiling: usize,
+        /// The floor under each side's own reading, so a broken pattern cannot read as agreement.
+        floor: usize,
+        /// The sentence, with `{found}`, `{ceiling}` and `{shared}`.
         message: &'static str,
     },
     /// Every member of an extracted set must match a pattern.
@@ -1114,6 +1180,57 @@ impl Claim {
                     report.fail(fill(message, "files", &named.join(", ")));
                 }
             },
+            Self::NoCloneAcross {
+                left,
+                right,
+                extensions,
+                window,
+                known,
+                floor,
+                message,
+            } => {
+                let (ours, theirs) = (
+                    shingles(tree, left, extensions, *window),
+                    shingles(tree, right, extensions, *window),
+                );
+                if ours.files < *floor || theirs.files < *floor {
+                    report.fail(format!(
+                        "only {}/{} files globbed under {left} and {right} (floor {floor}) — this \
+                         claim would pass by reading nothing",
+                        ours.files, theirs.files,
+                    ));
+                    return;
+                }
+                // Grouped by FILE PAIR rather than reported per shingle: the debt list is kept at
+                // that grain, and one clone spans as many windows as it has lines.
+                let mut pairs: std::collections::BTreeMap<(&str, &str), (&str, &str)> =
+                    std::collections::BTreeMap::new();
+                for (body, here) in &ours.windows {
+                    let Some(there) = theirs.windows.get(body) else {
+                        continue;
+                    };
+                    pairs
+                        .entry((here.path.as_str(), there.path.as_str()))
+                        .or_insert((here.site.as_str(), there.site.as_str()));
+                }
+                let strangers: Vec<String> = pairs
+                    .iter()
+                    .filter(|(pair, _)| !known.contains(pair))
+                    .map(|(_, (here, there))| format!("{here} == {there}"))
+                    .collect();
+                report.fail_if(!strangers.is_empty(), fill(message, "pairs", &strangers.join(", ")));
+                for pair in *known {
+                    report.fail_if(
+                        !pairs.contains_key(pair),
+                        format!(
+                            "the clone ledger names {} and {}, which no longer share a body — the \
+                             debt is PAID, so drop the entry rather than leaving it to excuse the \
+                             clone growing back (docs/56 §3)",
+                            pair.0, pair.1,
+                        ),
+                    );
+                }
+            },
             Self::NoneQuoting {
                 roots,
                 extensions,
@@ -1411,6 +1528,42 @@ impl Claim {
                     .collect();
                 report.fail_if(!orphans.is_empty(), fill(message, "orphans", &orphans.join(" ")));
             },
+            Self::OverlapUnder {
+                label,
+                left,
+                right,
+                ceiling,
+                floor,
+                message,
+            } => {
+                let (ours, theirs) = (left.set(tree), right.set(tree));
+                if ours.len() < *floor || theirs.len() < *floor {
+                    report.fail(format!(
+                        "only {}/{} {label} read under {} and {} (floor {floor}) — this ceiling would \
+                         hold by reading nothing",
+                        ours.len(),
+                        theirs.len(),
+                        left.root,
+                        right.root,
+                    ));
+                    return;
+                }
+                let shared: Vec<&str> =
+                    ours.iter().filter(|m| theirs.contains(*m)).map(String::as_str).collect();
+                let found = shared.len();
+                report.fail_if(
+                    found > *ceiling,
+                    fill(
+                        &fill(
+                            &fill(message, "found", &found.to_string()),
+                            "ceiling",
+                            &ceiling.to_string(),
+                        ),
+                        "shared",
+                        &shared.join(", "),
+                    ),
+                );
+            },
             Self::EachMatches {
                 label,
                 from,
@@ -1550,6 +1703,77 @@ impl Claim {
             },
         }
     }
+}
+
+/// Where one window of a body was first seen.
+struct Site {
+    /// The file, repo-relative.
+    path: String,
+    /// That file and the line the window opens on, as `path:line`.
+    site: String,
+}
+
+/// Every window of substantive lines under one root, and how many files it read.
+struct Shingles {
+    /// The file count, for the vacuity floor.
+    files: usize,
+    /// Each normalised window, against the FIRST place it was seen.
+    windows: std::collections::BTreeMap<String, Site>,
+}
+
+/// Every `window`-line body under `root`, normalised so only a real duplicate collides.
+///
+/// The normalisation is the whole rule: a trailing `//` comment is cut, indentation goes, and a line
+/// that is only punctuation is dropped. Without those a reformat hides a clone and a run of closing
+/// braces manufactures one. `import`, `@attribute` and `#if` lines go too — two view files
+/// legitimately import the same six modules, and that is a coincidence of the split rather than a
+/// duplicated decision.
+///
+/// The first sighting wins, so the diagnostic names where a body was introduced rather than
+/// wherever the walk happened to end.
+fn shingles(
+    tree: &Tree,
+    root: &str,
+    extensions: &[&str],
+    window: usize,
+) -> Shingles {
+    let noise = text::cached(r"^[^\p{L}\p{N}]*$");
+    let carried = text::cached(r"^(import|@|#(if|else|elseif|endif))");
+    let comment = text::cached(r"//.*$");
+    let mut out = Shingles {
+        files: 0,
+        windows: std::collections::BTreeMap::new(),
+    };
+    for (path, source) in tree.under(root) {
+        let matching_extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| extensions.contains(&ext));
+        if !matching_extension {
+            continue;
+        }
+        out.files += 1;
+        let display = path.to_string_lossy().into_owned();
+        let body: Vec<(usize, String)> = source
+            .text
+            .lines()
+            .enumerate()
+            .map(|(index, line)| (index + 1, comment.replace(line, "").trim().to_owned()))
+            .filter(|(_, line)| !noise.is_match(line) && !carried.is_match(line))
+            .collect();
+        for start in 0..(body.len() + 1).saturating_sub(window.max(1)) {
+            let joined = body[start..start + window]
+                .iter()
+                .map(|(_, line)| line.as_str())
+                .collect::<Vec<_>>()
+                .join(" ~ ");
+            out.windows.entry(joined).or_insert_with(|| Site {
+                path: display.clone(),
+                site: format!("{display}:{}", body[start].0),
+            });
+        }
+    }
+    out
 }
 
 /// The lines of one `Package.swift` target's declaration, dependency list and all.
@@ -1739,6 +1963,91 @@ mod tests {
         }];
         assert!(!check_all(&fixture.tree(), &reads_all).is_clean());
         let _ = RUST;
+    }
+
+    /// One file per shell, plus the padding a corpus floor needs.
+    fn shells(fixture: &Fixture, left: &str, right: &str) {
+        for (root, body) in [("Left", left), ("Right", right)] {
+            fixture.write(&format!("Sources/{root}/Leaf.swift"), body);
+            for index in 0..6 {
+                fixture.write(
+                    &format!("Sources/{root}/Filler{index}.swift"),
+                    &format!("struct Filler{index} {{ let n = {index} }}\n"),
+                );
+            }
+        }
+    }
+
+    /// Four substantive lines, tail included, under a comment and an import that are both dropped.
+    fn body(tail: &str) -> String {
+        format!("import SwiftUI\n// a re-worded comment cannot hide a clone\nlet a = 1\nlet b = 2\nlet c = 3\n{tail}\n")
+    }
+
+    /// The clone ledger is a debt list, so it fails BOTH ways.
+    #[test]
+    fn a_paid_clone_debt_must_leave_the_ledger() {
+        const LEDGER: &[(&str, &str)] = &[("Sources/Left/Leaf.swift", "Sources/Right/Leaf.swift")];
+
+        let fixture = Fixture::new("clone-ledger");
+        let claims = |known| {
+            [Claim::NoCloneAcross {
+                left: "Sources/Left/",
+                right: "Sources/Right/",
+                extensions: SWIFT,
+                window: 4,
+                known,
+                floor: 5,
+                message: "a body is written twice: {pairs}",
+            }]
+        };
+
+        // Ledgered, and still a clone: green, because the debt is on the record.
+        shells(&fixture, &body("let d = 4"), &body("let d = 4"));
+        assert!(check_all(&fixture.tree(), &claims(LEDGER)).is_clean());
+
+        // The same clone with no ledger entry is the finding this claim exists for.
+        let report = check_all(&fixture.tree(), &claims(&[]));
+        assert!(
+            report.violations().iter().any(|v| v.contains("written twice")),
+            "{report:?}"
+        );
+
+        // Deduplicated, and the ledger entry left behind: the debt is PAID, and an entry that has
+        // stopped excusing anything would go on excusing the clone growing back.
+        shells(&fixture, &body("let d = 4"), "let z = 9\n");
+        let report = check_all(&fixture.tree(), &claims(LEDGER));
+        assert!(
+            report.violations().iter().any(|v| v.contains("debt is PAID")),
+            "{report:?}"
+        );
+    }
+
+    /// A reformat and a re-worded comment cannot hide a clone; a run of braces cannot make one.
+    #[test]
+    fn normalisation_survives_a_reformat_and_refuses_punctuation() {
+        let fixture = Fixture::new("clone-normalise");
+        let claims = [Claim::NoCloneAcross {
+            left: "Sources/Left/",
+            right: "Sources/Right/",
+            extensions: SWIFT,
+            window: 4,
+            known: &[],
+            floor: 5,
+            message: "a body is written twice: {pairs}",
+        }];
+
+        // Re-indented, re-commented, and with a different import list — still the same body.
+        shells(
+            &fixture,
+            &body("let d = 4"),
+            "import Combine\nimport SwiftUI\n// entirely different prose\n    let a = 1\n\
+             \x20 let b = 2\n\tlet c = 3\nlet d = 4\n",
+        );
+        assert!(!check_all(&fixture.tree(), &claims).is_clean());
+
+        // Four lines of closing punctuation on each side, which is not a duplicated decision.
+        shells(&fixture, "let p = 1\n}\n}\n)\n]\n", "let q = 2\n}\n}\n)\n]\n");
+        assert!(check_all(&fixture.tree(), &claims).is_clean());
     }
 
     #[test]

@@ -48,6 +48,32 @@ pub fn cached(pattern: &str) -> &'static Regex {
     compiled
 }
 
+/// A string promoted to `'static`, built once per distinct value.
+///
+/// Every field of a [`Claim`](crate::claim::Claim) is `&'static str`, which is right for the ninety
+/// per cent of rules whose patterns and sentences are literals. A handful are not: a rule that walks
+/// a table of nineteen phrases would otherwise have to hand-write the same two sentences nineteen
+/// times, and the table is the thing a reader wants to see.
+///
+/// Interned rather than leaked outright for the reason [`cached`] is: a rule runs once per process
+/// in the binary but repeatedly across a test suite, and a leak per CALL would grow without bound
+/// while the set of distinct values stays tiny.
+#[must_use]
+pub fn intern(value: String) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    static CACHE: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut guard = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(held) = guard.get(value.as_str()) {
+        return held;
+    }
+    let held: &'static str = String::leak(value);
+    guard.insert(held);
+    held
+}
+
 /// Whether `haystack` contains a match — `grep -q`.
 #[must_use]
 pub fn matches(haystack: &str, pattern: &str) -> bool {
