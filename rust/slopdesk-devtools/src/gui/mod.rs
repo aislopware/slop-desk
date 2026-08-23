@@ -93,6 +93,14 @@ const REAP_PATIENCE: u32 = 16;
 /// The interval every poll in this family waits between samples.
 pub const TICK: Duration = Duration::from_millis(500);
 
+/// Where superd puts its sockets — `slopdesk_superwire::DIRECTORY_ENV_KEY`, spelled out.
+///
+/// A literal rather than a path dependency for the reason this whole crate is its own workspace:
+/// nothing here links anything that ships, and one `pub const` is not worth an edge into
+/// `rust/Cargo.toml`'s profile. It is the same call [`crate::ops::container`] already makes for the
+/// other four `SLOPDESK_*` container variables, and superd's `paths.rs` reads it back.
+const SUPERD_DIRECTORY_ENV_KEY: &str = "SLOPDESK_SUPERD_DIR";
+
 /// One line of narration, prefixed by the gate that is speaking.
 pub fn say(gate: &str, what: &str) {
     println!("==> [{gate}] {what}");
@@ -490,14 +498,24 @@ pub fn window_count(census: &Path, pid: u32) -> (u32, String) {
 pub struct DaemonChild {
     /// The child's pid.
     pub pid: i32,
-    /// True when the child is a session LEADER, which is what makes it a PTY and not a helper.
+    /// True when the child is a session LEADER **running a login shell** — see [`daemon_children`]
+    /// for why the second half of that is not redundant.
     pub pty: bool,
+    /// `argv[0]` as `ps` reports it, kept from the SAMPLE so a dump names what the count counted.
+    pub command: String,
 }
 
 /// Census `parent`'s live children, each labelled pty or helper.
 ///
+/// ⚠️ `parent` IS SUPERD, NEVER HOSTD. superd forks and holds every pane (`docs/51` §1) — that is
+/// the whole point of it — so hostd's own children are `slopdesk-screend` and a scattering of
+/// transient probes, and a pty count taken of hostd is STRUCTURALLY zero. It was hostd here until
+/// this was written, which is why every live-shell assertion in this family read 0 against a host
+/// whose log said it had attached three shells. Each gate now starts a superd of its own
+/// ([`Superd`]) and censuses THAT.
+///
 /// **A bare child count is wrong**, and it is what made two of these gates flaky — 2 of 8 runs red
-/// on a clean tree, 3 of 3 under an `FSEvents` burst. hostd forks non-PTY helpers as well as
+/// on a clean tree, 3 of 3 under an `FSEvents` burst. The daemon forks non-PTY helpers as well as
 /// shells: `TerminfoResolver` runs `/usr/bin/infocmp`, `HostMetadataProbe` runs `/usr/bin/git` and
 /// `/usr/sbin/lsof`, superd's shim probes `$ZDOTDIR` with a `--norcs` zsh. Each is a child for as
 /// long as it lives, and one fires REPEATEDLY inside a watch window: a gate's own work directory is
@@ -506,12 +524,20 @@ pub struct DaemonChild {
 /// `RepoStatusWatcher`'s debounced `git` probe. A settle cannot help: the helper is TRANSIENT, so a
 /// count that catches one is red for a reason no amount of waiting addresses.
 ///
-/// The discriminator is what `PTYProcess` does and `Foundation.Process` does not: the shell is
-/// forked with `login_tty(slave)`, i.e. `setsid()`, so it is a session leader —
+/// The first discriminator is what `PTYProcess` does and `Foundation.Process` does not: the shell
+/// is forked with `login_tty(slave)`, i.e. `setsid()`, so it is a session leader —
 /// `getsid(pid) == pid`. A `Process()` child gets its own process GROUP but stays in the daemon's
 /// session, so it is not. Demonstrated with two children of one parent that are the SAME binary
 /// (`/bin/sleep`), one spawned and one `forkpty`'d: `pgrep -P` counts 2, this counts 1 pty and
 /// 1 helper.
+///
+/// The second one is needed only because the parent moved. A SERVICE pane — `code-server`,
+/// `slopdesk-dropd`, `slopdesk-androidd` — is a pane like any other and therefore a session leader
+/// on a pty of its own, so session-leadership alone counts 2 to 3 daemons as shells and every
+/// `== panes` assertion fails from ABOVE. `argv[0]` separates them without a table to maintain:
+/// superd `execve`s a service by absolute path and a pane's shell as a LOGIN shell, which is the
+/// leading `-` on `-sh`. That is the same convention `getlogin`-era tooling has read for forty
+/// years, and it is what `ps` prints.
 #[must_use]
 pub fn daemon_children(parent: u32) -> Vec<DaemonChild> {
     // `pgrep` exits 1 when it matches NOTHING, and the shell's `|| true` around it was load-bearing
@@ -531,13 +557,35 @@ pub fn daemon_children(parent: u32) -> Vec<DaemonChild> {
             // A child that exited between the `pgrep` and this call is not live, and `getsid`
             // answering `ESRCH` is how that arrives — skipped, never counted as a helper.
             getsid(Some(Pid::from_raw(pid))).ok().map(|session| {
+                let command = proc::ask(
+                    "/bin/ps",
+                    &["-o", "command=", "-p", &pid.to_string()],
+                    Path::new("/"),
+                )
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
                 DaemonChild {
+                    pty: is_pane_shell(session.as_raw() == pid, &command),
                     pid,
-                    pty: session.as_raw() == pid,
+                    command,
                 }
             })
         })
         .collect()
+}
+
+/// Both halves of the discriminator [`daemon_children`] states, as a value.
+///
+/// `session_leader` alone was the whole rule while the census was taken of hostd, where the only
+/// leaders were shells. Taken of superd it also sees the SERVICE panes — `code-server`,
+/// `slopdesk-dropd`, `slopdesk-androidd` — each a real pane on a real pty, and counting those makes
+/// a three-pane layout answer 5. superd `execve`s a service by absolute path and a pane's shell as
+/// a LOGIN shell, so `argv[0]`'s leading `-` separates them with no list of service names to keep
+/// in step.
+#[must_use]
+fn is_pane_shell(session_leader: bool, command: &str) -> bool {
+    session_leader && command.starts_with('-')
 }
 
 /// The pty pids out of ONE census sample, ascending.
@@ -564,17 +612,11 @@ pub fn dump_children(census: &[DaemonChild]) {
         "--- the children of the daemon this census read (pty = a shell, helper = git/lsof/infocmp/…) ---",
     );
     for child in census {
-        let command = proc::ask(
-            "/bin/ps",
-            &["-o", "command=", "-p", &child.pid.to_string()],
-            Path::new("/"),
-        )
-        .unwrap_or_default();
         complain(&format!(
             "    {} {} {}",
             child.pid,
             if child.pty { "pty" } else { "helper" },
-            command.trim()
+            child.command
         ));
     }
 }
@@ -661,11 +703,132 @@ pub fn holds_udp(pid: u32, port: u16) -> bool {
     .is_some_and(|listing| listing.contains(&format!(":{port}")))
 }
 
+/// A `slopdesk-superd` private to ONE gate run, and the directory its sockets live in.
+///
+/// **Why a gate may not share the developer's superd.** superd is a `LaunchAgent`, held across
+/// logins, and it owns every pane on the machine — including the ones the developer is typing in.
+/// Three things follow, and all three were observed:
+///
+///  1. `launch-restore`'s fixture uses FIXED pane uuids (`1111…`, `2222…`, `3333…`), because the
+///     `workspace.json` it seeds has to name them. A run that ends in `SIGKILL` — which is how
+///     every one of these gates ends, by design — leaves those panes supervised, so the NEXT run's
+///     first dial is answered `refused("pane 1111… is already supervised")` and the gate reports "0
+///     shells" for a host that was never allowed to spawn one. Red for the life of the machine, and
+///     green again only after a superd restart nobody would think to do.
+///  2. Every run leaked its shells into the developer's daemon. Nine were parked there when this
+///     was written, one per gate run since boot.
+///  3. A pane census has to be taken of SOME superd, and "the one `pgrep` finds" is not an answer
+///     on a machine with a real one running.
+///
+/// Owning the daemon answers all three: the registry starts empty, the leak is bounded by [`Drop`],
+/// and the pid is known rather than searched for.
+///
+/// The socket directory is `/tmp/slopdesk-gate-<port>-sd`, keyed by the gate's own port so two
+/// gates cannot collide, and SHORT because `sockaddr_un.sun_path` is 104 bytes on Darwin and
+/// `bind(2)` truncates silently rather than failing — a work-directory path under this repo is
+/// already 73 of them before the socket's own name.
+#[derive(Debug)]
+pub struct Superd {
+    /// The running daemon.
+    child: Child,
+    /// `$SLOPDESK_SUPERD_DIR` — its control, hook and agent sockets, and its lock.
+    directory: PathBuf,
+    /// Where it is writing.
+    pub log: Log,
+}
+
+impl Superd {
+    /// Build and start a superd of this gate's own, and wait for its control socket.
+    ///
+    /// # Errors
+    /// When the daemon cannot be built or spawned, or does not bind in time.
+    pub fn start(root: &Path, work: &Path, port: u16) -> Result<Self, String> {
+        let crate_dir = root.join("rust/slopdesk-superd");
+        proc::run("cargo", &["build", "--release", "--quiet"], &crate_dir)?;
+        let binary = crate_dir.join("target/release/slopdesk-superd");
+
+        // The full RELEASE PATH, never the bare name: the developer's own superd is the same
+        // binary under `~/Library/Application Support/SlopDesk/bin`, it holds every live pane on
+        // this machine, and a `pkill slopdesk-superd` would take all of them down. The path is the
+        // discriminator, and it is the only thing standing between a leaked gate daemon and that.
+        kill_matching(&binary.display().to_string());
+        thread::sleep(TICK);
+
+        let directory = PathBuf::from(format!("/tmp/slopdesk-gate-{port}-sd"));
+        fresh(&directory)?;
+
+        let log = Log::at(work.join("superd.log"));
+        log.truncate()?;
+        let sink = fs::File::create(&log.path).map_err(|error| format!("{}: {error}", log.path.display()))?;
+        let errors = sink
+            .try_clone()
+            .map_err(|error| format!("{}: {error}", log.path.display()))?;
+
+        let child = Command::new(&binary)
+            .env(SUPERD_DIRECTORY_ENV_KEY, &directory)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(sink))
+            .stderr(Stdio::from(errors))
+            .spawn()
+            .map_err(|error| format!("slopdesk-superd: {error}"))?;
+        let superd = Self {
+            child,
+            directory,
+            log,
+        };
+
+        // The SOCKET, not the log line: hostd's first act is to connect to it, and a daemon that
+        // has printed "listening" has not necessarily returned from `bind` yet.
+        poll("slopdesk-superd to bind its control socket", 20, || {
+            superd.socket().exists()
+        })
+        .inspect_err(|_| superd.log.dump("superd log", 0))?;
+        Ok(superd)
+    }
+
+    /// The daemon's pid — what a PANE census is taken of.
+    #[must_use]
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// `$SLOPDESK_SUPERD_DIR`, for hostd's environment.
+    #[must_use]
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
+    /// The control socket hostd dials.
+    #[must_use]
+    fn socket(&self) -> PathBuf {
+        self.directory.join("slopdesk-superd.sock")
+    }
+}
+
+impl Drop for Superd {
+    fn drop(&mut self) {
+        // SIGKILL, and NOT [`reap`]'s ask-then-escalate. superd's whole job is to outlive the thing
+        // that signalled it — it is a `LaunchAgent` held across logins, and a hostd stopping is the
+        // ordinary case it must survive — so it does not stop on SIGTERM and [`reap`] spends its
+        // full eight-second patience finding that out, once per gate, under a line that reads like
+        // a daemon misbehaving. Taking its panes down with it is precisely what is wanted here: a
+        // shell that outlives the run is the leak this type exists to stop.
+        if let Ok(raw) = i32::try_from(self.child.id()) {
+            let _ = signal::kill(Pid::from_raw(raw), Signal::SIGKILL);
+        }
+        let _ = self.child.wait();
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
 /// A `slopdesk-hostd` a gate started, with the container and the logs that go with it.
 #[derive(Debug)]
 pub struct Hostd {
     /// The running daemon.
     child: Child,
+    /// The private supervisor this daemon's panes hang off. Declared AFTER `child` so it is
+    /// dropped after it: hostd relinquishes to a superd that is still listening.
+    superd: Superd,
     /// Where it is writing.
     pub log: Log,
 }
@@ -701,6 +864,7 @@ impl Hostd {
         fresh(&workspace)?;
         fs::create_dir_all(&home).map_err(|error| format!("{}: {error}", home.display()))?;
         let environment = crate::ops::container(&state)?;
+        let superd = Superd::start(root, work, port)?;
 
         let log = Log::at(work.join("hostd.log"));
         log.truncate()?;
@@ -716,6 +880,11 @@ impl Hostd {
             // The workspace directory is the ONE container variable this overrides: the daemon's
             // document has to be its own, and `container` points every path at one state directory.
             .env("SLOPDESK_WORKSPACE_STATE_DIR", &workspace)
+            // The fifth container variable, and the one `ops::container` cannot supply: it is
+            // keyed to a SOCKET path, which has 103 bytes to live in, and the state directory it
+            // builds the other four from is nowhere near short enough. See [`Superd`] for what
+            // sharing the developer's supervisor costs.
+            .env(SUPERD_DIRECTORY_ENV_KEY, superd.directory())
             .stdin(Stdio::null())
             .stdout(Stdio::from(sink))
             .stderr(Stdio::from(errors));
@@ -727,7 +896,7 @@ impl Hostd {
         let child = command
             .spawn()
             .map_err(|error| format!("slopdesk-hostd: {error}"))?;
-        let hostd = Self { child, log };
+        let hostd = Self { child, superd, log };
 
         let pid = hostd.pid();
         let bound = poll(&format!("slopdesk-hostd to bind :{port}"), 20, || {
@@ -740,10 +909,17 @@ impl Hostd {
         Ok(hostd)
     }
 
-    /// The daemon's pid — what a child census is taken of.
+    /// The daemon's pid.
     #[must_use]
     pub fn pid(&self) -> u32 {
         self.child.id()
+    }
+
+    /// The pid a PANE census is taken of — this run's private supervisor, NOT hostd. See
+    /// [`daemon_children`].
+    #[must_use]
+    pub fn superd_pid(&self) -> u32 {
+        self.superd.pid()
     }
 
     /// How many workspace-document channels the daemon has ACCEPTED.
@@ -840,11 +1016,36 @@ mod tests {
     #[test]
     fn the_pty_pids_of_a_census_are_sorted_and_exclude_helpers() {
         let census = [
-            super::DaemonChild { pid: 900, pty: true },
-            super::DaemonChild { pid: 100, pty: false },
-            super::DaemonChild { pid: 500, pty: true },
+            child(900, true, "-sh"),
+            child(100, false, "/usr/bin/git"),
+            child(500, true, "-sh"),
         ];
         assert_eq!(super::pty_pids(&census), [500, 900]);
+    }
+
+    /// A SERVICE pane is a session leader on a pty of its own — `code-server` and `slopdesk-dropd`
+    /// both are, verified with `ps -o sess` against a live superd — so leadership alone counts them
+    /// as shells and every `== panes` assertion fails from ABOVE. The login-shell `-` tells them
+    /// apart, and it is a rule with no table of service names to keep in step.
+    #[test]
+    fn a_service_pane_is_not_a_pane_shell() {
+        assert!(super::is_pane_shell(true, "-sh"));
+        assert!(!super::is_pane_shell(
+            true,
+            "/…/code-server/lib/node /…/code-server --auth none"
+        ));
+        assert!(!super::is_pane_shell(true, "/…/slopdesk-dropd --port 47425"));
+        // A helper stays a helper whatever it is called: `git` is in the daemon's own session.
+        assert!(!super::is_pane_shell(false, "-sh"));
+    }
+
+    /// The shape `daemon_children` builds, as a literal — `pty` is its verdict, not an input.
+    fn child(pid: i32, pty: bool, command: &str) -> super::DaemonChild {
+        super::DaemonChild {
+            pid,
+            pty,
+            command: command.to_owned(),
+        }
     }
 
     /// A suite names the gate AND this process, so two gates run back to back never share a domain

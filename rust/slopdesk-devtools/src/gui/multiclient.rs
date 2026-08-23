@@ -254,10 +254,10 @@ pub fn run(root: &Path) -> Result<(), String> {
     let _ = poll(
         "the live shell count to reach the pane count",
         LIVE_SHELL_SETTLE,
-        || live(&daemon_children(hostd.pid())) == panes,
+        || live(&daemon_children(hostd.superd_pid())) == panes,
     );
     // REACHED, then HELD — never a single read the instant `converge` returns.
-    let census = daemon_children(hostd.pid());
+    let census = daemon_children(hostd.superd_pid());
     if live(&census) != panes {
         return Err(census_failed(
             &hostd,
@@ -271,7 +271,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
     for second in 1..=LIVE_SHELL_HOLD {
         thread::sleep(Duration::from_secs(1));
-        let census = daemon_children(hostd.pid());
+        let census = daemon_children(hostd.superd_pid());
         if live(&census) != panes {
             return Err(census_failed(
                 &hostd,

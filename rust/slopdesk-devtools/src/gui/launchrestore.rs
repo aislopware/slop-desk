@@ -583,7 +583,7 @@ impl Gate<'_> {
             // …and the LIVE count, which fails differently again: a churn that re-dials without
             // spawning — a JOIN onto sessions the previous client still holds — leaves the
             // cumulative count untouched while the shells belong to somebody else.
-            let census = daemon_children(self.hostd.pid());
+            let census = daemon_children(self.hostd.superd_pid());
             let live = pty_pids(&census).len();
             if live != want {
                 dump_children(&census);
@@ -890,7 +890,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     );
     gate.hold_steady("phase A", panes, &client)?;
 
-    let census_a = daemon_children(gate.hostd.pid());
+    let census_a = daemon_children(gate.hostd.superd_pid());
     let pids_a = pty_pids(&census_a);
     if pids_a.len() != panes {
         dump_children(&census_a);
@@ -980,7 +980,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     );
     gate.hold_steady("phase B", panes, &client)?;
 
-    let census_b = daemon_children(gate.hostd.pid());
+    let census_b = daemon_children(gate.hostd.superd_pid());
     let pids_b = pty_pids(&census_b);
     if pids_b != pids_a {
         dump_children(&census_b);
@@ -1055,7 +1055,7 @@ pub fn run(root: &Path) -> Result<(), String> {
         &format!("phase C: the autosaved layout is now HOST truth — the {panes} divergent ids are gone ✅"),
     );
 
-    let census_c = daemon_children(gate.hostd.pid());
+    let census_c = daemon_children(gate.hostd.superd_pid());
     let pids_c = pty_pids(&census_c);
     if pids_c != pids_a {
         dump_children(&census_c);
