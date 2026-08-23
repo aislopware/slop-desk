@@ -199,6 +199,37 @@ fn serde_field_names(haystack: &str) -> BTreeSet<String> {
     out
 }
 
+/// One side of a [`Claim::SameSetUnder`]: a directory, read file by file, through one pattern.
+///
+/// Separate from [`Extract`] because the subject is a TARGET rather than a file. "Both video halves
+/// accept the same seam sinks" is true of the half wherever in it the sinks are declared, and pinning
+/// it to one file would make an ordinary split of a big adapter look like a divergence.
+#[derive(Clone, Copy)]
+pub struct Corpus {
+    /// The directory to read, recursively.
+    pub root: &'static str,
+    /// Only files with one of these extensions are read.
+    pub extensions: &'static [&'static str],
+    /// The pattern whose first capture group joins the set.
+    pub pattern: &'static str,
+    /// Which view of each file to read.
+    pub view: View,
+}
+
+impl Corpus {
+    /// Every first-capture-group under this root, deduplicated.
+    fn set(self, tree: &Tree) -> BTreeSet<String> {
+        tree.under(self.root)
+            .filter(|(path, _)| {
+                path.extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| self.extensions.contains(&ext))
+            })
+            .flat_map(|(_, source)| text::capture_set(&self.view.of(source), self.pattern))
+            .collect()
+    }
+}
+
 /// One assertion about the tree.
 ///
 /// Every variant carries the sentence it prints. That sentence is the rule's interface — it names
@@ -426,6 +457,34 @@ pub enum Claim {
         /// The sentence, with `{files}` where the offenders go.
         message: &'static str,
     },
+    /// EVERY file under `roots` must match each pattern exactly the stated number of times.
+    ///
+    /// A per-file shape, which no ban and no whole-corpus count can state. The rule it exists for is
+    /// "a phone UI file carries the one whole-file `#if os(iOS)` and nothing else": two directives in
+    /// total, one of them the opening gate, one of them the `#endif`. Any other arrangement — a
+    /// second gate, an inner `#else`, a file with no gate at all — is dead scaffolding around code
+    /// that now always runs.
+    ///
+    /// ⚠️ THIS REPLACED A PER-FILE COUNT OF ONE THING, and the reason is worth keeping. Increment 58
+    /// pinned "exactly one `#if os(` in `SettingsControls.swift`" because `Half.current` was the
+    /// shared target's single admission that it drew both halves. Increment 63 dissolved that
+    /// admission, and the count STILL READ 1 — the whole-file guard had taken the slot. A rule stated
+    /// as a COUNT of a thing cannot tell you WHICH thing it counted, so this one names every shape it
+    /// wants and how many of each.
+    PerFileCounts {
+        /// Path prefixes to scan.
+        roots: &'static [&'static str],
+        /// Only files with one of these extensions are read.
+        extensions: &'static [&'static str],
+        /// Each pattern and the number of LINES that must match it.
+        expect: &'static [(&'static str, usize)],
+        /// Which view to read.
+        view: View,
+        /// Paths that may differ, each because somebody decided so.
+        exempt: &'static [&'static str],
+        /// The sentence, with `{files}` where the offenders and their readings go.
+        message: &'static str,
+    },
     /// A pattern must appear between two other patterns — the shell's `awk '/a/,/b/'` with a `grep`
     /// inside it.
     ///
@@ -547,6 +606,33 @@ pub enum Claim {
         /// Why, with `{members}` where the offenders go.
         message: &'static str,
     },
+    /// Two DIRECTORIES must name the same set, minus a ledger of exceptions that FAILS BOTH WAYS.
+    ///
+    /// The one real cost of duplicating an adapter across the UI split: two lists of a dozen-odd
+    /// closures that can drift, and a sink wired on one half and forgotten on the other is invisible
+    /// until somebody uses the feature on the platform that lost it.
+    ///
+    /// `left_only` is the asymmetry that is genuinely a platform floor, and it is checked in BOTH
+    /// directions: an entry the left no longer holds is a line that has stopped excusing anything,
+    /// and an entry the right has since GROWN is a divergence that was fixed while the ledger went on
+    /// reading as a standing decision. A ledger that only fails on regression is half a ledger — two
+    /// of this rule's original entries left because the gate caught the FIX, not the break.
+    ///
+    /// The floor is on the left reading alone, because the left is the side the exceptions are
+    /// measured against: an extraction that goes stale there compares an empty set to an empty set
+    /// and reports agreement.
+    SameSetUnder {
+        /// What the two sets are called in the diagnostic.
+        label: &'static str,
+        /// The side allowed to hold the exceptions.
+        left: Corpus,
+        /// The side that must hold everything else.
+        right: Corpus,
+        /// Names the left may hold and the right must not.
+        left_only: &'static [&'static str],
+        /// The floor under the left reading.
+        floor: usize,
+    },
     /// Two single values, extracted from two places, must agree — the shell's `same`.
     SameValue {
         /// What the value is called in the diagnostic.
@@ -594,6 +680,20 @@ pub enum Claim {
         /// The dependency's name.
         dependency: &'static str,
         /// Why the edge exists.
+        message: &'static str,
+    },
+    /// A `Package.swift` target must NOT keep a dependency edge — [`Claim::Depends`] inverted.
+    ///
+    /// The manifest edge is cut for the reason the source one is: an import census is a convention,
+    /// a missing dependency is a compile error. Without this, deleting the two imports leaves the
+    /// phone half sitting in the Mac test target's `dependencies:`, and the next rig that wants one
+    /// `some View` gets it back with a one-line import that builds.
+    NotDepends {
+        /// The target's name, as spelled in the manifest.
+        target: &'static str,
+        /// The dependency that must be gone.
+        dependency: &'static str,
+        /// Why the edge was cut.
         message: &'static str,
     },
     /// A set extracted from one place must equal a literal set — for an alphabet that is the wire
@@ -898,6 +998,47 @@ impl Claim {
                     report.fail(fill(message, "files", &named.join(", ")));
                 }
             },
+            Self::PerFileCounts {
+                roots,
+                extensions,
+                expect,
+                view,
+                exempt,
+                message,
+            } => {
+                let mut offenders = BTreeSet::new();
+                for root in *roots {
+                    for (path, source) in tree.under(root) {
+                        let display = path.to_string_lossy().into_owned();
+                        let excused = exempt.iter().any(|entry| {
+                            *entry == display || (entry.ends_with('/') && display.starts_with(*entry))
+                        });
+                        let matching_extension = path
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            .is_some_and(|ext| extensions.contains(&ext));
+                        if excused || !matching_extension {
+                            continue;
+                        }
+                        let haystack = view.of(source);
+                        let readings: Vec<String> = expect
+                            .iter()
+                            .map(|(pattern, _)| text::count_lines(&haystack, pattern).to_string())
+                            .collect();
+                        let agrees = expect
+                            .iter()
+                            .zip(&readings)
+                            .all(|((_, want), got)| got == &want.to_string());
+                        if !agrees {
+                            offenders.insert(format!("{display} ({})", readings.join("/")));
+                        }
+                    }
+                }
+                if !offenders.is_empty() {
+                    let named: Vec<&str> = offenders.iter().map(String::as_str).collect();
+                    report.fail(fill(message, "files", &named.join(", ")));
+                }
+            },
             Self::Within {
                 path,
                 start,
@@ -1025,6 +1166,43 @@ impl Claim {
                     .collect();
                 report.fail_if(!stray.is_empty(), fill(message, "members", &stray.join(" ")));
             },
+            Self::SameSetUnder {
+                label,
+                left,
+                right,
+                left_only,
+                floor,
+            } => {
+                let (mut mine, theirs) = (left.set(tree), right.set(tree));
+                if mine.len() < *floor {
+                    report.fail(format!(
+                        "only {} {label} found under {} (floor {floor}) — this extraction has gone stale \
+                         and is now checking nothing",
+                        mine.len(),
+                        left.root,
+                    ));
+                    return;
+                }
+                for excused in *left_only {
+                    report.fail_if(
+                        !mine.contains(*excused),
+                        format!(
+                            "the {label} ledger names {excused}, which {} no longer holds either — the \
+                             asymmetry is gone, so delete the entry",
+                            left.root,
+                        ),
+                    );
+                    report.fail_if(
+                        theirs.contains(*excused),
+                        format!(
+                            "the {label} ledger excuses {excused}, but {} now holds it — delete the entry",
+                            right.root,
+                        ),
+                    );
+                    mine.remove(*excused);
+                }
+                report.same_set(label, &mine, &theirs);
+            },
             Self::SameValue { label, swift, rust } => {
                 // Both sides are read even when the first is absent, so a diagnostic names every
                 // missing file rather than the first one.
@@ -1071,6 +1249,26 @@ impl Claim {
                     report.fail_if(
                         block.is_empty() || !block.contains(dependency),
                         format!("{target} dropped {dependency} — {message}"),
+                    );
+                }
+            },
+            Self::NotDepends {
+                target,
+                dependency,
+                message,
+            } => {
+                if let Some(source) = report.source(tree, "Package.swift", message) {
+                    let manifest = View::Code.of(source);
+                    let block = target_block(&manifest, target);
+                    // An empty block is a target that has been renamed away, which is a stale ledger
+                    // rather than a satisfied ban.
+                    report.fail_if(
+                        block.is_empty(),
+                        format!("Package.swift no longer declares {target} — {message} is a ban over nothing"),
+                    );
+                    report.fail_if(
+                        block.contains(dependency),
+                        format!("{target} depends on {dependency} again — {message}"),
                     );
                 }
             },

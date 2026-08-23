@@ -105,11 +105,25 @@ pub struct Tree {
 
 /// The directories a rule may ask about, and the extensions worth holding in memory.
 ///
-/// Deliberately NOT the whole repository: `.build`, `target`, `.git` and `ThirdParty` are together
-/// larger than everything a rule reads, and walking them would trade the win this crate exists for.
-/// A rule that needs a file outside these reads it with [`Tree::read`], which is the escape hatch
-/// and says so at the call site.
-const ROOTS: [&str; 7] = ["Sources", "Tests", "Apps", "rust", "scripts", "docs", "golden"];
+/// Deliberately NOT the whole repository: `.build`, `target`, `.git` and the rest of `ThirdParty`
+/// are together larger than everything a rule reads, and walking them would trade the win this crate
+/// exists for. A rule that needs a file outside these reads it with [`Tree::read`], which is the
+/// escape hatch and says so at the call site.
+///
+/// `ThirdParty/ghostty/integration` is the ONE exception, and it is four files: the embedder Swift,
+/// which is the only registrar of the terminal seam and is compiled by no `Package.swift` target.
+/// The vendored `ThirdParty/ghostty` beside it stays out — the exception is the integration
+/// directory, not the dependency.
+const ROOTS: [&str; 8] = [
+    "Sources",
+    "Tests",
+    "Apps",
+    "rust",
+    "scripts",
+    "docs",
+    "golden",
+    "ThirdParty/ghostty/integration",
+];
 
 /// Extensions held in memory. A file outside this set is still WALKED — its path is known, so a
 /// rule can assert that it exists — but its bytes are not read until asked for.

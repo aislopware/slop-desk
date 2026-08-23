@@ -34,6 +34,8 @@ pub mod supervisor_envelope;
 pub mod terminal_config;
 pub mod terminal_grammar;
 pub mod terminal_surface;
+pub mod ui_seams;
+pub mod ui_split;
 pub mod transport_lanes;
 pub mod video_client;
 pub mod video_control;
@@ -849,6 +851,36 @@ pub fn registry() -> Vec<Rule> {
             name: "settings-constant-answers",
             origin: "scripts/check-supervisor.sh",
             check: settings_catalog::the_cheat_sheet_and_menu_bar_hold_their_constants,
+        },
+        Rule {
+            name: "ui-split-shape",
+            origin: "docs/56 §3",
+            check: ui_split::the_ui_split_holds_its_shape,
+        },
+        Rule {
+            name: "video-surface-split",
+            origin: "docs/56 §3",
+            check: ui_split::the_video_surface_stays_split,
+        },
+        Rule {
+            name: "video-halves-agree",
+            origin: "docs/56 §3",
+            check: ui_split::the_two_video_halves_agree,
+        },
+        Rule {
+            name: "ui-test-edges",
+            origin: "docs/56 §3.5 step 5",
+            check: ui_seams::a_test_target_is_the_same_edge,
+        },
+        Rule {
+            name: "canvas-registration",
+            origin: "docs/56 stage F, P5",
+            check: ui_seams::the_canvas_registers_itself_in_appkit,
+        },
+        Rule {
+            name: "leaf-seam-shapes",
+            origin: "docs/56 stage F, P4",
+            check: ui_seams::one_seam_two_shapes_one_installer,
         },
         Rule {
             name: "device-panel-law",
