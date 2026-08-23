@@ -6,6 +6,7 @@
 //! runs never, and the way to notice that is for the list to be short enough to read.
 
 pub mod agent_fold;
+pub mod apple_floors;
 pub mod byte_scanners;
 pub mod chrome_split;
 pub mod cli_config;
@@ -31,8 +32,9 @@ pub mod overlay_split;
 pub mod pane_wiring;
 pub mod panel_floor;
 pub mod panel_predicates;
-pub mod path_confinement;
 pub mod panel_shells;
+pub mod path_confinement;
+pub mod phone_parity;
 pub mod rate_and_range;
 pub mod rust_boundaries;
 pub mod screend;
@@ -870,6 +872,81 @@ pub fn registry() -> Vec<Rule> {
             name: "ui-split-shape",
             origin: "docs/56 §3",
             check: ui_split::the_ui_split_holds_its_shape,
+        },
+        Rule {
+            name: "phone-root-key-rung",
+            origin: "docs/56 §3",
+            check: phone_parity::the_phone_dispatches_chords_at_the_root,
+        },
+        Rule {
+            name: "phone-editing-chords",
+            origin: "docs/56 §3",
+            check: phone_parity::the_phones_terminal_takes_editing_chords,
+        },
+        Rule {
+            name: "one-config-one-behaviour",
+            origin: "docs/56 §3",
+            check: phone_parity::one_config_file_produces_one_behaviour,
+        },
+        Rule {
+            name: "code-panel-settles-once",
+            origin: "docs/56 §3",
+            check: phone_parity::the_code_panel_settles_once,
+        },
+        Rule {
+            name: "panel-named-surface",
+            origin: "docs/56 §3",
+            check: phone_parity::the_panel_opens_on_a_named_surface,
+        },
+        Rule {
+            name: "one-clear-key",
+            origin: "docs/56 §3",
+            check: phone_parity::one_clear_key_per_filter_field,
+        },
+        Rule {
+            name: "mirror-takes-typed-text",
+            origin: "docs/56 §3",
+            check: phone_parity::a_mirrored_device_takes_typed_text,
+        },
+        Rule {
+            name: "silent-paste-probe",
+            origin: "docs/56 increment 78",
+            check: phone_parity::the_paste_plate_asks_a_silent_question,
+        },
+        Rule {
+            name: "swipe-peel-two-drivers",
+            origin: "docs/56 §3",
+            check: phone_parity::the_swipe_peel_chip_has_two_drivers,
+        },
+        Rule {
+            name: "ipad-trackpad-pointer",
+            origin: "docs/56 §3",
+            check: phone_parity::an_ipad_trackpad_is_a_pointer,
+        },
+        Rule {
+            name: "pane-drop-one-rule",
+            origin: "docs/56 increment 82",
+            check: phone_parity::the_pane_move_drop_is_one_rule,
+        },
+        Rule {
+            name: "link-island-one-reading",
+            origin: "docs/56 increment 83",
+            check: phone_parity::the_link_island_is_one_reading,
+        },
+        Rule {
+            name: "host-synthesises-nothing",
+            origin: "docs/57 §5",
+            check: apple_floors::the_host_synthesises_no_event,
+        },
+        Rule {
+            name: "host-decodes-no-window",
+            origin: "docs/57 §5",
+            check: apple_floors::the_host_decodes_no_window_record,
+        },
+        Rule {
+            name: "host-decides-no-region",
+            origin: "docs/56 increment 86",
+            check: apple_floors::the_host_decides_no_capture_region,
         },
         Rule {
             name: "no-cross-target-clone",

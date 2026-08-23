@@ -15,7 +15,7 @@
 //! missing" — a duplicated helper imports fine — but "does this body / this sentence / this number
 //! appear on both sides of a split whose whole purpose is that it does not".
 
-use crate::claim::{Claim, Corpus, View, check_all};
+use crate::claim::{Claim, Corpus, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::text;
 use crate::tree::Tree;
@@ -26,8 +26,6 @@ const MAC: &str = "Sources/SlopDeskMacUI/";
 const PHONE: &str = "Sources/SlopDeskPhoneUI/";
 /// Both, as a ban's roots.
 const BOTH: &[&str] = &[MAC, PHONE];
-/// The one extension either shell is written in.
-const SWIFT: &[&str] = &["swift"];
 
 /// No body is written twice across the split
 ///
