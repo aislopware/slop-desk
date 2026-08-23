@@ -39,7 +39,9 @@ pub mod rate_and_range;
 pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
+pub mod sidecar_clis;
 pub mod sidecar_seams;
+pub mod sidecar_wires;
 pub mod settings_catalog;
 pub mod settings_rows;
 pub mod split_surfaces;
@@ -962,6 +964,71 @@ pub fn registry() -> Vec<Rule> {
             name: "shared-vocabulary-ceiling",
             origin: "docs/56 §3",
             check: two_shells::the_shared_vocabulary_only_shrinks,
+        },
+        Rule {
+            name: "drop-client-one-layout",
+            origin: "docs/53 §3",
+            check: sidecar_wires::the_drop_client_holds_no_layout,
+        },
+        Rule {
+            name: "drop-type-bytes",
+            origin: "docs/53 §3",
+            check: sidecar_wires::the_drop_type_bytes_are_one_alphabet,
+        },
+        Rule {
+            name: "android-bridge-both-ways",
+            origin: "docs/48 §4",
+            check: sidecar_wires::the_android_bridge_agrees_both_ways,
+        },
+        Rule {
+            name: "inspector-frame-one-spelling",
+            origin: "docs/54 §3",
+            check: sidecar_wires::the_inspector_frame_has_one_spelling,
+        },
+        Rule {
+            name: "inspector-tags-one-alphabet",
+            origin: "docs/54 §3",
+            check: sidecar_wires::the_inspector_tags_are_one_alphabet,
+        },
+        Rule {
+            name: "announce-lines-one-string",
+            origin: "docs/49 §6",
+            check: sidecar_wires::every_announce_line_is_one_string,
+        },
+        Rule {
+            name: "sidecar-version-policy",
+            origin: "docs/49 §6",
+            check: sidecar_wires::the_sidecar_version_policy_is_one_table,
+        },
+        Rule {
+            name: "ctl-verbs-one-alphabet",
+            origin: "docs/50 §5",
+            check: sidecar_clis::the_ctl_verb_sets_are_one_alphabet,
+        },
+        Rule {
+            name: "codeseed-one-alphabet",
+            origin: "docs/DECISIONS.md, stage 22",
+            check: sidecar_clis::the_codeseed_subcommands_are_one_alphabet,
+        },
+        Rule {
+            name: "agenthooks-one-alphabet",
+            origin: "docs/DECISIONS.md, stage 23",
+            check: sidecar_clis::the_hooks_installer_is_one_alphabet,
+        },
+        Rule {
+            name: "probe-one-alphabet",
+            origin: "docs/DECISIONS.md, stages 24 and 25",
+            check: sidecar_clis::the_probe_subcommands_are_one_alphabet,
+        },
+        Rule {
+            name: "git-status-linked-once",
+            origin: "docs/DECISIONS.md, stage 26",
+            check: sidecar_clis::the_git_status_is_linked_and_asked_once,
+        },
+        Rule {
+            name: "pointer-tables-one-table",
+            origin: "docs/56, increment 50",
+            check: sidecar_clis::the_pointer_tables_are_one_table,
         },
         Rule {
             name: "video-surface-split",

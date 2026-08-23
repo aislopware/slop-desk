@@ -724,6 +724,30 @@ pub enum Claim {
         /// Why an orphan matters, with `{orphans}` where the missing members go.
         message: &'static str,
     },
+    /// Every member a DIRECTORY sends must be held by one file's table.
+    ///
+    /// [`Claim::Subset`] with a [`Corpus`] on the sending side, for the shape where the senders are
+    /// spread over a target and the server is one switch. The Android panel is the case: three
+    /// connection types each write their own `op`s, and pinning the subject to whichever file
+    /// happens to hold most of them would make an ordinary split of a connection look like a new
+    /// verb appearing.
+    ///
+    /// The `floor` is the staleness guard the directory form needs and [`Claim::Subset`]'s
+    /// emptiness check cannot give: a corpus reads a set per FILE and unions them, so one file
+    /// whose extraction went stale is invisible — the union is still non-empty because the others
+    /// answered. A count is what notices.
+    SubsetUnder {
+        /// What the relation is called in the diagnostic.
+        label: &'static str,
+        /// The directory every member of which must be served.
+        subject: Corpus,
+        /// The one file that must serve them.
+        universe: Extract,
+        /// The fewest members the corpus may read before the extraction is presumed stale.
+        floor: usize,
+        /// Why an orphan matters, with `{orphans}` where the unserved members go.
+        message: &'static str,
+    },
     /// Two extracted sets may OVERLAP in at most `mark` members — a ratchet, failing both ways.
     ///
     /// The shell's `comm -12 <(a) <(b) | grep -c`, against a high-water mark that only ever goes
@@ -1528,6 +1552,40 @@ impl Claim {
                     .collect();
                 report.fail_if(!orphans.is_empty(), fill(message, "orphans", &orphans.join(" ")));
             },
+            Self::SubsetUnder {
+                label,
+                subject,
+                universe,
+                floor,
+                message,
+            } => {
+                let members = subject.set(tree);
+                let Some(holder) = universe.set(tree, report) else {
+                    return;
+                };
+                if members.len() < *floor {
+                    report.fail(format!(
+                        "only {} {label} found under {} (floor {floor}) — this extraction has gone stale \
+                         and is now checking nothing",
+                        members.len(),
+                        subject.root,
+                    ));
+                    return;
+                }
+                if holder.is_empty() {
+                    report.fail(format!(
+                        "{} serves no {label} at all — this claim has stopped checking anything",
+                        universe.path,
+                    ));
+                    return;
+                }
+                let orphans: Vec<&str> = members
+                    .iter()
+                    .filter(|member| !holder.contains(*member))
+                    .map(String::as_str)
+                    .collect();
+                report.fail_if(!orphans.is_empty(), fill(message, "orphans", &orphans.join(" ")));
+            },
             Self::OverlapUnder {
                 label,
                 left,
@@ -1887,6 +1945,52 @@ mod tests {
         let report = check_all(&fixture.tree(), &claims);
         assert!(
             report.violations().iter().any(|v| v.contains("is gone")),
+            "{report:?}"
+        );
+    }
+
+    /// A corpus subset unions its senders, so the floor — not emptiness — is what notices a
+    /// half-stale extraction: one file that stopped answering leaves the union non-empty.
+    #[test]
+    fn a_corpus_subset_reads_every_sender_and_floors_the_union() {
+        let fixture = Fixture::new("subset-under");
+        let claims = |floor| {
+            [Claim::SubsetUnder {
+                label: "bridge ops",
+                subject: super::Corpus {
+                    root: "Sources/Panel",
+                    extensions: SWIFT,
+                    pattern: r#""op": "([a-z]+)""#,
+                    view: View::Code,
+                },
+                universe: Extract::code("rust/d/src/server.rs", r#"^ *"([a-z]+)" =>"#),
+                floor,
+                message: "the panel sends {orphans} with no arm serving it",
+            }]
+        };
+        fixture
+            .write("Sources/Panel/Stream.swift", "let a = [\"op\": \"boot\"]\n")
+            .write("Sources/Panel/Log.swift", "let b = [\"op\": \"logcat\"]\n")
+            .write(
+                "rust/d/src/server.rs",
+                "match op {\n    \"boot\" => go(),\n    \"logcat\" => tail(),\n    _ => bad(),\n}\n",
+            );
+        assert!(check_all(&fixture.tree(), &claims(2)).is_clean());
+
+        // The second sender's op has no arm — named, not counted.
+        fixture.write("Sources/Panel/Log.swift", "let b = [\"op\": \"screenshot\"]\n");
+        let report = check_all(&fixture.tree(), &claims(2));
+        assert!(
+            report.violations().iter().any(|v| v.contains("screenshot")),
+            "{report:?}"
+        );
+
+        // And the union that fell below its floor says the extraction went stale, not that the
+        // daemon is fine — which is what it would say if only emptiness were checked.
+        fixture.write("Sources/Panel/Log.swift", "let b = [Op.screenshot]\n");
+        let report = check_all(&fixture.tree(), &claims(2));
+        assert!(
+            report.violations().iter().any(|v| v.contains("floor 2")),
             "{report:?}"
         );
     }

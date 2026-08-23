@@ -43,7 +43,7 @@ impl CommentStyle {
     fn of(path: &Path) -> Self {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("swift" | "rs" | "h") => Self::Slashes,
-            Some("sh" | "py" | "toml") => Self::Hash,
+            Some("sh" | "py" | "toml" | "rb") => Self::Hash,
             _ => Self::None,
         }
     }
@@ -114,7 +114,12 @@ pub struct Tree {
 /// which is the only registrar of the terminal seam and is compiled by no `Package.swift` target.
 /// The vendored `ThirdParty/ghostty` beside it stays out — the exception is the integration
 /// directory, not the dependency.
-const ROOTS: [&str; 8] = [
+///
+/// `packaging` is two Ruby files. It is walked because the install side is half of a contract whose
+/// other half is in Rust: the formula's `post_install` records the manifest the NEXT upgrade plan
+/// diffs against, and a formula that stopped recording leaves every upgrade reading as a first
+/// install (`docs/49`).
+const ROOTS: [&str; 9] = [
     "Sources",
     "Tests",
     "Apps",
@@ -122,12 +127,15 @@ const ROOTS: [&str; 8] = [
     "scripts",
     "docs",
     "golden",
+    "packaging",
     "ThirdParty/ghostty/integration",
 ];
 
 /// Extensions held in memory. A file outside this set is still WALKED — its path is known, so a
 /// rule can assert that it exists — but its bytes are not read until asked for.
-const TEXT_EXTENSIONS: [&str; 9] = ["swift", "rs", "sh", "py", "md", "h", "toml", "json", "plist"];
+const TEXT_EXTENSIONS: [&str; 10] = [
+    "swift", "rs", "sh", "py", "md", "h", "toml", "json", "plist", "rb",
+];
 
 impl Tree {
     /// Walks the repository rooted at `root` and reads every source file under [`ROOTS`].
