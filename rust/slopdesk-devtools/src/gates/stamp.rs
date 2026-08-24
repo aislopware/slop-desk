@@ -26,9 +26,9 @@
 //! links, read out of the app's own spec and expanded through the package graph. `SlopDeskHost` is
 //! in no iOS app's closure, so a hostd edit no longer costs an iOS typecheck, and the phone UI is
 //! in no macOS app's, so a phone edit no longer costs two macOS builds. Anything the narrowing
-//! cannot bound — an unreadable spec, a product the graph does not vend, a missing description —
-//! falls back to the WHOLE source tree, because a scope that guessed low would be a green over code
-//! it never compiled.
+//! cannot bound — a spec it cannot open or cannot read whole, a description that will not parse, a
+//! product list nothing in the graph vends — falls back to the WHOLE source tree, because a scope
+//! that guessed low would be a green over code it never compiled.
 //!
 //! ## The paths are repo-RELATIVE
 //! The shell fed `shasum` absolute paths, so the digest was a property of WHERE the tree was
@@ -62,16 +62,21 @@ const GRAPH: &[&str] = &["Package.swift", "Package.resolved"];
 /// The gate's own logic is an input to its verdict: a stamp that survived an edit to the selection
 /// rules would cache a verdict the new rules never reached.
 ///
-/// These FOUR files and not the `gates/` tree, for the reason [`super::ffi`]'s own `SELF_FILES`
+/// These FIVE files and not the `gates/` tree, for the reason [`super::ffi`]'s own `SELF_FILES`
 /// gives: only what decides this verdict belongs here. The input set ([`inputs_for`]), the scope
-/// expansion ([`super::swift_graph`]), the two gates that consume them ([`super::xcode`]) and the
-/// entry point that dispatches — a sibling gate cannot change what type-checks, and while the whole
-/// tree was in the set, editing the golden gate or the FFI producer cost a twelve-minute rebuild of
-/// both app triples.
+/// expansion ([`super::swift_graph`]), the package description [`Scope::sources`] expands it
+/// THROUGH ([`super::touched`]), the two gates that consume them ([`super::xcode`]) and the entry
+/// point that dispatches — a sibling gate cannot change what type-checks, and while the whole tree
+/// was in the set, editing the golden gate or the FFI producer cost a twelve-minute rebuild of both
+/// app triples.
+///
+/// Anything this list forgets is a stamp that stays warm while the rule that computed it moved. Add
+/// a file here the moment a scope decision starts flowing through it.
 const SELF_FILES: &[&str] = &[
     "rust/slopdesk-devtools/src/bin/gate.rs",
     "rust/slopdesk-devtools/src/gates/stamp.rs",
     "rust/slopdesk-devtools/src/gates/swift_graph.rs",
+    "rust/slopdesk-devtools/src/gates/touched.rs",
     "rust/slopdesk-devtools/src/gates/xcode.rs",
 ];
 
@@ -104,7 +109,10 @@ impl Scope {
         }
         let mut products: Vec<String> = Vec::new();
         for app in self.apps() {
-            products.extend(products_named_in(&root.join(app).join("project.yml")));
+            let Some(named) = products_named_in(&root.join(app).join("project.yml")) else {
+                return vec!["Sources".to_owned()];
+            };
+            products.extend(named);
         }
         if products.is_empty() {
             return vec!["Sources".to_owned()];
@@ -116,19 +124,37 @@ impl Scope {
     }
 }
 
-/// Every `product:` an xcodegen spec names, in file order.
+/// Every `product:` an xcodegen spec names, in file order, or `None` when the spec cannot be read
+/// as a complete list.
 ///
-/// A line scan rather than a YAML parse: the key appears once per dependency, its value is one
-/// token, and a spec this cannot read answers nothing — which the caller reads as "widen".
-fn products_named_in(spec: &Path) -> Vec<String> {
-    let Ok(text) = fs::read_to_string(spec) else {
-        return Vec::new();
-    };
-    text.lines()
-        .filter_map(|line| line.trim().strip_prefix("product:"))
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-        .collect()
+/// A line scan rather than a YAML parse: the key appears once per dependency and its value is one
+/// token. What the scan must NOT do is answer confidently when it did not understand — xcodegen
+/// also accepts a bare `- package: X` with no `product:` under it, meaning "link everything that
+/// package vends". Every spec here spells the product out today, and a productless dependency would
+/// otherwise return a short list that narrowed the scope silently: a warm green over code the app
+/// does compile. So an unpaired `package:` answers `None`, and so does a spec that cannot be
+/// opened.
+fn products_named_in(spec: &Path) -> Option<Vec<String>> {
+    let text = fs::read_to_string(spec).ok()?;
+    let mut found: Vec<String> = Vec::new();
+    let mut awaiting = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(value) = trimmed.strip_prefix("product:") {
+            let value = value.trim();
+            if value.is_empty() {
+                return None;
+            }
+            found.push(value.to_owned());
+            awaiting = false;
+        } else if trimmed.starts_with("- package:") || trimmed.starts_with("package:") {
+            if awaiting {
+                return None;
+            }
+            awaiting = true;
+        }
+    }
+    if awaiting { None } else { Some(found) }
 }
 
 /// Every input path, repo-relative and sorted, exactly as the digest consumes them.
@@ -361,10 +387,34 @@ mod tests {
              SlopDeskClientCore\n      - package: SFSafeSymbols\n        product: SFSafeSymbols\n",
         )
         .unwrap();
-        assert_eq!(products_named_in(&spec), ["SlopDeskClientCore", "SFSafeSymbols"]);
+        assert_eq!(products_named_in(&spec).unwrap(), [
+            "SlopDeskClientCore",
+            "SFSafeSymbols"
+        ]);
         assert!(
-            products_named_in(&root.join("Apps/Nowhere/project.yml")).is_empty(),
-            "a spec that cannot be read names nothing, which the caller widens on"
+            products_named_in(&root.join("Apps/Nowhere/project.yml")).is_none(),
+            "a spec that cannot be read is not a spec that names nothing"
+        );
+    }
+
+    /// `- package: X` with no `product:` under it links EVERYTHING that package vends. A scan that
+    /// answered the short list would narrow the scope silently — green over code the app compiles.
+    #[test]
+    fn a_dependency_without_a_product_refuses_to_answer() {
+        let root = fixture("productless");
+        let spec = root.join("Apps/ClientApp-iOS/project.yml");
+        fs::create_dir_all(spec.parent().unwrap()).unwrap();
+        fs::write(
+            &spec,
+            "targets:\n  App:\n    dependencies:\n      - package: SlopDesk\n        product: \
+             SlopDeskClientCore\n      - package: Everything\n",
+        )
+        .unwrap();
+        assert!(products_named_in(&spec).is_none());
+        assert_eq!(
+            inputs_for(&root, Scope::Ios).unwrap(),
+            inputs_for(&root, Scope::Everything).unwrap(),
+            "a spec it could not read whole must stamp the union"
         );
     }
 
