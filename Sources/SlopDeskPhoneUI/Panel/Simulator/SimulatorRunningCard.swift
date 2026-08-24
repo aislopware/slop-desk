@@ -78,7 +78,7 @@ struct SimulatorRunningCard: View {
             if let screen {
                 screen
                     .resizable()
-                    .aspectRatio(contentMode: .fit)
+                    .scaledToFit()
                     // The framebuffer is a rectangle; every device that can run this is not. Clipping
                     // to the card's own radius is the smallest true thing to say about the body —
                     // the server's real `clipRadius` is part of the chrome data that falls back to
