@@ -1,5 +1,8 @@
 import CSlopDeskFFI
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // PhoneKey — the near side of the phone's key path.
 //
@@ -67,6 +70,26 @@ public enum PhoneKey {
             self.command = command
             self.shift = shift
         }
+
+        #if canImport(UIKit)
+        /// One `UIKey` as this vocabulary — the ONE reading of a press in the whole phone client,
+        /// so the responder rung and the terminal host cannot disagree about which key arrived.
+        ///
+        /// Gated on UIKit and nothing else: the TYPE is UIKit's, unlike every rule above it, and
+        /// a press built by hand in a test still travels the same fields on either platform.
+        public init(_ key: UIKey) {
+            // `keyCode` is a USB HID usage and the whole page fits, but a `rawValue` outside
+            // `UInt16` is the HID page's own "no event" rather than a crash worth taking.
+            self.init(
+                charactersIgnoringModifiers: key.charactersIgnoringModifiers,
+                hidUsage: UInt16(exactly: key.keyCode.rawValue) ?? 0,
+                control: key.modifierFlags.contains(.control),
+                option: key.modifierFlags.contains(.alternate),
+                command: key.modifierFlags.contains(.command),
+                shift: key.modifierFlags.contains(.shift),
+            )
+        }
+        #endif
 
         /// The flag word the doors read — `KeyChord.Modifiers`' own bits 0-3, plus the one thing that
         /// is not a modifier at all in bits 4-5: what ⌥ MEANS on this keyboard.

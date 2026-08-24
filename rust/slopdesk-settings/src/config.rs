@@ -473,6 +473,12 @@ mod tests {
         let resolved = resolve("[terminal]\nfont-size = 900\n");
         assert_eq!(resolved.value("terminal.font-size"), Some(&Value::Float(13.0)));
         assert!(resolved.diagnostics().iter().any(|line| line.contains("outside")));
+
+        // The floor, on a key where crossing it would produce a value the reader cannot act on: a
+        // negative busy delay is a dot that never reveals. The declared default stands instead.
+        let below = resolve("[badges]\nbusy-delay-seconds = -5.0\n");
+        assert_eq!(below.value("badges.busy-delay-seconds"), Some(&Value::Float(1.0)));
+        assert!(below.diagnostics().iter().any(|line| line.contains("outside")));
     }
 
     #[test]

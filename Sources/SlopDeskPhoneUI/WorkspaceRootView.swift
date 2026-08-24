@@ -31,9 +31,9 @@ public struct WorkspaceRootView: View {
     /// The two split-collapse flags + the window-pin flag, owned by the composition. The leading column's
     /// visibility is a two-way mapping onto `sidebarCollapsed` (see ``sidebarColumnVisibility``).
     let chrome: WorkspaceChromeState
-    /// The single live preferences store, injected once at the WindowGroup root (`\.preferencesStore`). Used
-    /// by the ``SettingsSheet`` (the gear). `nil` (no scene injection / a preview) → the gear presents
-    /// nothing.
+    /// The single live preferences store, injected once at the WindowGroup root (`\.preferencesStore`) and
+    /// RE-injected below, because a sheet does not inherit its presenter's custom environment values and
+    /// ``PhonePanelSheet`` reads this key. `nil` in a preview / pre-scene state.
     @Environment(\.preferencesStore) private var preferencesStore
     /// The live `auto-hide-tabs-panel` mode. COMPUTED, and it reads ``ConfigRevision/generation``
     /// first: `AppConfig` is a plain locked global, so the bare ``SettingsKey/autoHideTabsPanel``
@@ -45,8 +45,6 @@ public struct WorkspaceRootView: View {
         return SettingsKey.autoHideTabsPanel
     }
 
-    /// Whether the settings sheet is presented — flipped by the toolbar gear, read by the `.sheet`.
-    @State private var showSettings = false
     /// THE RIGHT PANEL'S THREE MODELS, held here because they must outlive the presentation the way the
     /// Mac's outlive its surface tree: a panel dismissed and re-opened would otherwise re-list every
     /// device and re-boot every stream, and the parking rules already assume an owner above the
@@ -65,12 +63,6 @@ public struct WorkspaceRootView: View {
             set: { SidebarColumnVisibility.apply($0, chrome: chrome) },
         )
     }
-
-    /// The app-owned Agents install-hooks controller, injected once at the WindowGroup root
-    /// (`\.agentHooksController`) and handed to the ``SettingsSheet`` so the Agents card + Agent-Behaviour
-    /// toggles are LIVE here (macOS's `Settings` scene injects it on its own side). `nil` (no scene
-    /// injection / a preview) → the card renders the disabled "Connect a session" state.
-    @Environment(\.agentHooksController) private var agentHooksController
 
     // `package`, not `public`: constructed only by `SlopDeskPhoneApp`, and `chrome` is the package-level
     // `WorkspaceChromeState`.
@@ -184,15 +176,6 @@ public struct WorkspaceRootView: View {
             )
             .preferencesStore(preferencesStore)
         }
-        // The toolbar gear presents the in-app settings sheet (iOS has no `Settings` scene). The sheet hosts
-        // the same cross-platform section structs as the macOS strip.
-        .sheet(isPresented: $showSettings) {
-            if let preferencesStore {
-                // Thread the app-owned controller into the sheet so the Agents card / behaviour toggles are
-                // live (a sheet does not inherit the presenter's custom environment values).
-                SettingsSheet(store: preferencesStore, agentHooks: agentHooksController, workspace: store)
-            }
-        }
     }
 
     /// Presentation binding for the right panel. Reads the shared chrome flag inverted — a panel that
@@ -273,9 +256,10 @@ public struct WorkspaceRootView: View {
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
         overlay.toggleCodeSidebar = { [chrome] in chrome.toggleCodeSidebar() }
         overlay.focusCodePanel = { [chrome] in chrome.revealCodeSidebar() }
-        // The palette's Settings row. macOS opens its `Settings` scene through the SwiftUI environment
-        // action; the phone has no such scene, so the row raises the same sheet the toolbar gear does.
-        overlay.openSettingsAction = { showSettings = true }
+        // NO settings action, and that is the whole policy: settings are a config FILE with defaults
+        // good enough that nobody has to open it. macOS's palette row opens that file in an editor;
+        // a phone has neither the editor nor the file, so the row is a graceful no-op there rather
+        // than a control that raises a surface which no longer exists.
     }
 
     /// Thin view-side glue over ``WorkspaceChromePolicy/applyAutoHide(mode:tabCount:chrome:)`` — read the
@@ -320,14 +304,6 @@ public struct WorkspaceRootView: View {
             // The `+` mints a focused terminal pane directly (the kind chooser is retired).
             Button { store.newTerminalPane(.newTab) } label: { Image(systemSymbol: .plus) }
                 .help("New Tab")
-        }
-        ToolbarItem(placement: .primaryAction) {
-            // The settings gear — iOS has no `Settings` scene (⌘, is macOS-only), so settings present as an
-            // in-app sheet. Disabled until the preferences store is injected (so the gear never opens an empty
-            // sheet in a preview / pre-scene state).
-            Button { showSettings = true } label: { Image(systemSymbol: .gearshape) }
-                .help("Settings")
-                .disabled(preferencesStore == nil)
         }
     }
 

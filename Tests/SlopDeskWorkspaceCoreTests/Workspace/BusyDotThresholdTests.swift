@@ -122,12 +122,9 @@ final class BusyDotThresholdTests: XCTestCase {
         XCTAssertTrue(store.paneShowsBusyDot(pane, now: start), "delay 0 ⇒ immediate reveal")
     }
 
-    /// A hostile/corrupt negative persisted value clamps to 0 (validate-then-default), never a
-    /// dot that can't reveal.
-    func testNegativePersistedDelayClampsToZero() {
-        stateSetting("badges.busy-delay-seconds", -5.0)
-        XCTAssertEqual(SettingsKey.tabBadgeBusyDelaySecondsValue, 0)
-    }
+    // (A hostile negative delay — a dot that can never reveal — is refused where every other bad
+    // value is refused: `rust/slopdesk-settings`'s `read_value`, which keeps the declared default
+    // and reports the line. Nothing on this side can produce one, so nothing on this side tests it.)
 
     // MARK: - the reveal repaint (one-shot)
 

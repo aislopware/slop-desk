@@ -555,7 +555,7 @@ final class GhosttyApp {
                         surface: surface,
                         text: str,
                         state: state,
-                        access: TerminalControls.from(defaults: .standard).clipboardRead,
+                        access: TerminalControls.from(config: .current).clipboardRead,
                     )
                 } else {
                     surface.completeClipboardRead(str, state: state, confirmed: true)

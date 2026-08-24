@@ -65,7 +65,7 @@ final class CLIConfigTests: XCTestCase {
             config.diagnostics[0].contains("no-such-key"),
             "the diagnostic names the key: \(config.diagnostics[0])",
         )
-        XCTAssertEqual(config.int("terminal.font-size"), 17, "the good row still loaded")
+        XCTAssertEqual(config.double("terminal.font-size"), 17, "the good row still loaded")
     }
 
     // MARK: - `config get`
@@ -80,7 +80,9 @@ final class CLIConfigTests: XCTestCase {
         copy-on-select = true
         scroll-multiplier = 2.5
         """)
-        XCTAssertEqual(CLIConfig.value(of: "terminal.font-size", in: config), "17")
+        // A point size is a REAL number in the table (a face can sit at 13.5), so it renders as one
+        // — `17`, pasted back, resolves to the same 17.0.
+        XCTAssertEqual(CLIConfig.value(of: "terminal.font-size", in: config), "17.0")
         XCTAssertEqual(CLIConfig.value(of: "terminal.font-family", in: config), "Berkeley Mono")
         XCTAssertEqual(CLIConfig.value(of: "controls.copy-on-select", in: config), "true")
         XCTAssertEqual(CLIConfig.value(of: "controls.scroll-multiplier", in: config), "2.5")
@@ -90,9 +92,9 @@ final class CLIConfigTests: XCTestCase {
     /// rather than a zero nobody chose. The video flags are the family that has no default.
     func testAnUnsetDefaultlessKeyIsNil() {
         let config = AppConfig.compiledDefaults
-        XCTAssertNil(CLIConfig.value(of: "video.bitrate-ceiling", in: config))
+        XCTAssertNil(CLIConfig.value(of: "video.qp-sharp", in: config))
         XCTAssertTrue(
-            config.declaredPaths.contains("video.bitrate-ceiling"),
+            config.declaredPaths.contains("video.qp-sharp"),
             "precondition: the key is declared — this is 'unset', not 'no such key'",
         )
     }
@@ -149,7 +151,10 @@ final class CLIConfigTests: XCTestCase {
                 continue
             }
             XCTAssertNotNil(section, "a row before any header: \(line)")
-            XCTAssertFalse(line.contains("."), "a dotted key escaped its section: \(line)")
+            // The KEY half only: a real-numbered VALUE legitimately carries a dot, and checking the
+            // whole line would call `font-size = 13.0` an escaped path.
+            let key = line.prefix { $0 != "=" }
+            XCTAssertFalse(key.contains("."), "a dotted key escaped its section: \(line)")
         }
         XCTAssertNotNil(section, "the compiled defaults render at least one section")
     }
