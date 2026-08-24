@@ -1,6 +1,6 @@
 //! The re-derivations a repaint must not grow back.
 //!
-//! Ported from `scripts/check-supervisor.sh`. None of these is visible to a test: every answer
+//! Ported from the deleted `check-supervisor.sh`. None of these is visible to a test: every answer
 //! stays correct, both halves stay self-consistent, and the only trace is the frame. What they have
 //! in common is the shape `docs/55` §4c names — a value that reads like a FIELD and is in fact a
 //! PROJECTION, sitting behind a computed `var` that a `body`, or a loop, reaches for more than

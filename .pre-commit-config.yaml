@@ -198,8 +198,8 @@ repos:
       # that violates it stages as a change to some unrelated file, or to none. It costs ~39 s and
       # prek runs it beside `swift-test`, so on a push that also touches Swift it is free.
       - id: supervisor
-        name: cross-language contract ratchet (check-supervisor.sh)
-        entry: make lint-supervisor
+        name: make-target reachability + the FFI stale gate (slopdesk-gate)
+        entry: make lint-reach
         language: system
         always_run: true
         pass_filenames: false

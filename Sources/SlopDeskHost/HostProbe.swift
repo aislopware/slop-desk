@@ -126,7 +126,7 @@ enum HostProbe {
     ///
     /// An exit of 0 is an answer EVEN WHEN IT IS EMPTY — an unchanged file has an empty diff, and
     /// folding that to `nil` would report `.notFound` for a file that is right there. A missing
-    /// subject is the probe's own exit code, which is why it has one; `check-supervisor.sh` §16 pins
+    /// subject is the probe's own exit code, which is why it has one; `slopdesk-invariants` pins
     /// this method against the tidy-up that collapses the two.
     private static func askBytes(_ arguments: [String]) -> Data? {
         guard let (data, status) = run(arguments), status == 0 else { return nil }

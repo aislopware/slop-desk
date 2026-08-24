@@ -1,9 +1,9 @@
 //! Two client memos that must keep asking rather than re-deriving — the palette ranking and the
 //! rail's title rung.
 //!
-//! Ported from `scripts/check-supervisor.sh`. A memo is exactly where a second implementation hides
-//! best: it is called once per keystroke, it is easy to write badly, and a ranking that disagrees
-//! with the one the row title used reads as the list being jumpy, never as two rules.
+//! Ported from the deleted `check-supervisor.sh`. A memo is exactly where a second implementation
+//! hides best: it is called once per keystroke, it is easy to write badly, and a ranking that
+//! disagrees with the one the row title used reads as the list being jumpy, never as two rules.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

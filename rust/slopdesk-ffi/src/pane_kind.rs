@@ -39,7 +39,7 @@
 //! through C only restates the case list. What that carve-out is about is a predicate over a
 //! vocabulary NOBODY ELSE CLASSIFIES. `PaneKind` is not that: this crate already asks
 //! `slopdesk_ws_pane_kind_is_video` on every restore, because the tree repair drops video panes,
-//! and `check-supervisor.sh` fails if the Swift face stops asking for it.
+//! and `slopdesk-invariants` fails if the Swift face stops asking for it.
 //!
 //! `can_receive_text` is the same classification's other half — which input funnel a kind has, a
 //! PTY's or the cursor-and-key side channel — and it was `self == .terminal` in Swift beside a

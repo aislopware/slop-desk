@@ -18,7 +18,7 @@
 // ``macCapsString(_:color:weight:)`` is the primitive. The other two want a label they can hand
 // straight to an `NSStackView`, so ``macCapsLabel(_:color:weight:)`` wraps it. The label spelling MUST
 // go through the string spelling; that is the whole point, and the ratchet in
-// `scripts/check-supervisor.sh` bans a seventh copy of the attribute dictionary anywhere in this target.
+// `rust/slopdesk-invariants` bans a seventh copy of the attribute dictionary anywhere in this target.
 //
 // NO DEFAULT COLOUR ROLE, deliberately. The six sites disagree — `Slate.Native.State.header` on a
 // device panel, `Slate.Native.Overlay.tertiary` on a summoned card, `Slate.Native.Text.tertiary` in
@@ -55,7 +55,7 @@ func macCapsString(
 /// than a seventh private copy: digits carry the instrument face, size and engraving exactly as a
 /// heading does, but `.uppercased()` on "50" is a no-op that would make the call site read as a
 /// heading it is not. Splitting the recipe here instead keeps ``Slate/Typeface/instrumentTracking``
-/// spelled in ONE file, which is the thing `check-supervisor.sh` actually pins — the alternative was
+/// spelled in ONE file, which is the thing `slopdesk-invariants` actually pins — the alternative was
 /// a second owner and a wider ban, i.e. paying for a distinction the kerning constant cannot see.
 ///
 /// The caps rule above still holds and is not relaxed by this: tracking on MIXED CASE reads as a

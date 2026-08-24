@@ -20,7 +20,7 @@ use crate::{borrow, deliver};
 /// Whether the half that identifies as `mac` lists the palette row `(id, len)`.
 ///
 /// An id no row declares is SHOWN — see the rule module: a typo must not silently delete a row, and
-/// `scripts/check-supervisor.sh` is what makes an undeclared id impossible.
+/// `rust/slopdesk-invariants` is what makes an undeclared id impossible.
 ///
 /// # Safety
 /// `(id, len)` must be null, or describe `len` live bytes for the call.

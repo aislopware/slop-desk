@@ -26,7 +26,7 @@
 // `ImageRenderer` snapshot path that reached them as a defaulted `SplitContainer` parameter threaded
 // down through `PaneContainer`. Nothing in `Sources/`, `Apps/` or `ThirdParty/` ever passed `true` —
 // the only `true` in the tree was in these gates' own tests, which is a branch kept alive by the
-// suite that pinned it. Deleted whole in increment 56d, ratcheted by `check-supervisor.sh`. If a
+// suite that pinned it. Deleted whole in increment 56d, ratcheted by `slopdesk-invariants`. If a
 // snapshot renderer is ever wanted again it gets ONE gate where the render starts, not a flag that
 // every predicate under the canvas has to carry and every AppKit rewrite has to re-type.
 

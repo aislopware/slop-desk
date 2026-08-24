@@ -219,7 +219,7 @@ final class SessionTemplateRepairDifferentialTests: XCTestCase {
     /// the table a set of constants in TWO languages, and this pair of tests asserted the two agreed
     /// — a drift of one byte in sixteen would otherwise surface as a duplicated menu row weeks later
     /// with nothing in any log, and nothing else in the repo could have seen it
-    /// (`check-supervisor.sh` pins names and numbers it was told about, and nobody told it about
+    /// (`slopdesk-invariants` pins names and numbers it was told about, and nobody told it about
     /// these).
     ///
     /// Since 2026-08-22 there is one table. ``SessionTemplate/builtIns`` IS this crossing, so an

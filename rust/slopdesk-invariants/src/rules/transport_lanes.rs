@@ -1,11 +1,11 @@
 //! The lanes bytes travel on — the two device consoles, the superd control frame, the receive
 //! buffer, `docs/55` §4c's arena, the `NWConnection` channel and the `write(2)` loop.
 //!
-//! Ported from `scripts/check-supervisor.sh`. These are the copies that were counted rather than
-//! argued about: six `write(2)` loops, eleven arena readers in Swift and seven more in the shim,
-//! fourteen narrowing casts, two byte channels that each took the same fd-leak fix three times. A
-//! second spelling of a byte LAYOUT is worse than a second spelling of a rule, because it shows up
-//! as a desynchronised socket rather than as a wrong value.
+//! Ported from the deleted `check-supervisor.sh`. These are the copies that were counted rather
+//! than argued about: six `write(2)` loops, eleven arena readers in Swift and seven more in the
+//! shim, fourteen narrowing casts, two byte channels that each took the same fd-leak fix three
+//! times. A second spelling of a byte LAYOUT is worse than a second spelling of a rule, because it
+//! shows up as a desynchronised socket rather than as a wrong value.
 
 use crate::claim::{Claim, GATE_RULES, View, check_all};
 use crate::report::Report;

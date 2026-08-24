@@ -16,7 +16,7 @@
 // `Apps/` or `ThirdParty/` ever passed `true` — the `true` cases below were, with one in
 // `GuiLeafReadOnlyPillTests`, the only ones in the tree. So the assertions were DELETED with the
 // parameter (increment 56d) rather than rewritten to keep passing: a case that is a branch's sole
-// producer does not cover the branch, it preserves it. `check-supervisor.sh` fails the build if the
+// producer does not cover the branch, it preserves it. `slopdesk-invariants` fails the build if the
 // flag comes back.
 
 import Foundation

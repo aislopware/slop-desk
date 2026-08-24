@@ -1,11 +1,12 @@
 //! One answer to "is this path inside that root", and it is lexical.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Three Swift implementations of this predicate existed
-//! at once, each spelled differently, and the two that were wrong were wrong in ways no test in
-//! their own file could see. `rust/slopdesk-probe/src/path_confine.rs` is the rule now. Every arm
-//! below is either "no second opinion grew back" or "the one that exists is still reachable" —
-//! together they are the only durable evidence the port happened, because all three of the deleted
-//! versions compiled and all three passed their own tests while disagreeing with each other.
+//! Ported from the deleted `check-supervisor.sh`. Three Swift implementations of this predicate
+//! existed at once, each spelled differently, and the two that were wrong were wrong in ways no
+//! test in their own file could see. `rust/slopdesk-probe/src/path_confine.rs` is the rule now.
+//! Every arm below is either "no second opinion grew back" or "the one that exists is still
+//! reachable" — together they are the only durable evidence the port happened, because all three of
+//! the deleted versions compiled and all three passed their own tests while disagreeing with each
+//! other.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
@@ -151,9 +152,9 @@ pub fn the_confinement_rule_is_lexical_and_singular(tree: &Tree) -> Report {
 
 /// The door is declared where Swift can reach it
 ///
-/// `build-ffi.sh` already checks every declared symbol against every slice, so this only has to
-/// catch the case it cannot: a module that exists and is not exported, which fails as a LINK error
-/// in the app rather than in the gate. The `pub mod`/header/module trio is what drifts.
+/// `slopdesk-gate ffi` already checks every declared symbol against every slice, so this only has
+/// to catch the case it cannot: a module that exists and is not exported, which fails as a LINK
+/// error in the app rather than in the gate. The `pub mod`/header/module trio is what drifts.
 #[must_use]
 pub fn the_confinement_door_is_reachable(tree: &Tree) -> Report {
     check_all(tree, &[
@@ -308,7 +309,7 @@ mod tests {
         assert!(super::the_confinement_door_is_reachable(&fixture.tree()).is_clean());
 
         // A module that exists and is not exported fails as a LINK error in the app, not here —
-        // which is the one case build-ffi.sh cannot catch.
+        // which is the one case slopdesk-gate ffi cannot catch.
         fixture.write(super::FFI_LIB, "pub mod mux_envelope;\n");
         assert!(!super::the_confinement_door_is_reachable(&fixture.tree()).is_clean());
     }

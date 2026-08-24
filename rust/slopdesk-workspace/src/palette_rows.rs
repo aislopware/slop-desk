@@ -28,7 +28,7 @@
 //!
 //! [`shown`] answers `true` for an id no row here declares. A typo must not delete a row from the
 //! palette — that failure is silent in exactly the way this module exists to stop. What makes an
-//! undeclared row impossible is `scripts/check-supervisor.sh`, which pins the two id sets equal in
+//! undeclared row impossible is `rust/slopdesk-invariants`, which pins the two id sets equal in
 //! both directions.
 //!
 //! GOLDEN-SAFE: metadata only. Nothing here reads or writes a value or touches a wire codec.

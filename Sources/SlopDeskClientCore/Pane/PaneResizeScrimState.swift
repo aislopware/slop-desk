@@ -30,7 +30,7 @@
 // the flag entered the canvas as a defaulted `SplitContainer` parameter, was threaded down through
 // `PaneContainer` to both leaves, and every caller in `Sources/`, `Apps/` and `ThirdParty/` took the
 // default. Only three unit tests — this file's neighbours — ever produced the value, so the branch
-// was a path that existed to be tested. It is gone (increment 56d), and `check-supervisor.sh` keeps
+// was a path that existed to be tested. It is gone (increment 56d), and `slopdesk-invariants` keeps
 // it gone; a snapshot path that comes back gets ONE gate at the render root, not a flag every
 // predicate below the canvas has to carry.
 

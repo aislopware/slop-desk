@@ -1,8 +1,8 @@
 //! Every video path that used to be Swift, and the shapes that would bring it back.
 //!
-//! Ported from `scripts/check-supervisor.sh`, the long stretch after §9. What all of these have in
-//! common is the failure mode: a Swift re-implementation of any of them would not fail a test. It
-//! would be a second implementation of the WIRE, and the byte-identity pins would keep passing
+//! Ported from the deleted `check-supervisor.sh`, the long stretch after §9. What all of these have
+//! in common is the failure mode: a Swift re-implementation of any of them would not fail a test.
+//! It would be a second implementation of the WIRE, and the byte-identity pins would keep passing
 //! right up until the two drifted — on one machine, mid-session, on the link that was already
 //! lossy.
 //!

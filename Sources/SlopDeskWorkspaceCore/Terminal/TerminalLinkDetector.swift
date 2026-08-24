@@ -128,7 +128,7 @@ public enum LinkSchemePolicy: Equatable, Hashable, Sendable {
 public enum TerminalLinkDetector {
     /// Hard cap on emitted matches per row (output bound, independent of `maxScanColumns`).
     ///
-    /// Agreement with `link::MAX_MATCHES_PER_ROW` is a `check-supervisor.sh` gate, not a comment.
+    /// Agreement with `link::MAX_MATCHES_PER_ROW` is a `slopdesk-invariants` gate, not a comment.
     public static let maxMatchesPerRow = 512
 
     /// Default per-row cell-scan ceiling — the anti-hang bound. Pinned against

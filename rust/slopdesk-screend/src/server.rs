@@ -341,7 +341,7 @@ fn encode_snapshot(model: &ScreenModel) -> (Status, Vec<u8>) {
 ///
 /// The RULE is [`crate::protocol::socket_path`] and only the environment lookup is here, because
 /// the client end resolves the same address and had been resolving it differently — see that
-/// function. No pid in the name either way (`check-supervisor.sh` ratchets it): a child that
+/// function. No pid in the name either way (`slopdesk-invariants` ratchets it): a child that
 /// inherited the path must still find the service after a restart.
 #[must_use]
 pub fn default_socket_path() -> PathBuf {

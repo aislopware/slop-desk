@@ -53,7 +53,7 @@ public enum InspectorCodec {
     // swiftlint:disable unused_declaration
     /// The frame's length-prefix width, READ from the crate rather than respelled here.
     ///
-    /// No Swift caller ON PURPOSE: `check-supervisor.sh` pins this reading, so the face is what
+    /// No Swift caller ON PURPOSE: `slopdesk-invariants` pins this reading, so the face is what
     /// stops the next reader from writing the number down on this side.
     static let prefixLength = Int(slopdesk_inspector_constant(1))
     // swiftlint:enable unused_declaration

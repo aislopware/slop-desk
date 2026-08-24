@@ -1,10 +1,10 @@
 //! screend's remaining three alphabets, the frame ceiling, the opaque budget, and the Swift that
 //! must stay deleted.
 //!
-//! Ported from `scripts/check-supervisor.sh`. What all of it guards is the same asymmetry: screend
-//! is a launch agent that outlives hostd's build, so every disagreement between the two ends is
-//! silent by construction — an old daemon serving a new client reports nothing, answers plausibly,
-//! and is wrong.
+//! Ported from the deleted `check-supervisor.sh`. What all of it guards is the same asymmetry:
+//! screend is a launch agent that outlives hostd's build, so every disagreement between the two
+//! ends is silent by construction — an old daemon serving a new client reports nothing, answers
+//! plausibly, and is wrong.
 
 use crate::claim::{Claim, Extract, SWIFT, View, check_all};
 use crate::report::Report;

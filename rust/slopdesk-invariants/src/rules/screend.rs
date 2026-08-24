@@ -1,6 +1,6 @@
 //! screend's address, its verb bytes and the number that stays retired.
 //!
-//! Ported from `scripts/check-supervisor.sh` §9. Same shape as superd's, same silence when it
+//! Ported from the deleted `check-supervisor.sh`. Same shape as superd's, same silence when it
 //! drifts (docs/52), and the address went the same way for the same reason: both ends resolved the
 //! DIRECTORY and disagreed about it, so the rule is `slopdesk_screenwire::socket_path` now and the
 //! checks pin its shape rather than two copies of the name.

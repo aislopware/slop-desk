@@ -12,7 +12,7 @@ better-update vault (org weebuild, env production)   ← p12 + notary creds + ta
         ▼
 GitHub Actions · aislopware/slop-desk · macos-26 · arm64
    libghostty  →  cached libghostty.xcframework          (Zig 0.15.2, ~40 min cold, ~0 warm)
-   package     →  scripts/build-ffi.sh                   (SlopDeskFFI.xcframework, 3 arm64 slices)
+   package     →  slopdesk-gate ffi                   (SlopDeskFFI.xcframework, 3 arm64 slices)
                →  slopdesk-release package               (build → stamp → sign → notarize)
    publish     →  GitHub Release v<version>
    tap         →  aislopware/homebrew-tap                (version + sha256 rewrite)
@@ -33,10 +33,10 @@ subcommand of `rust/slopdesk-devtools`'s release binary, which replaced nine she
 
 **Two linked artifacts, both gitignored, both built by the pipeline rather than checked out.**
 `libghostty.xcframework` has its own job (cached, because Zig costs ~40 minutes cold);
-`SlopDeskFFI.xcframework` is a step inside `package`, because `scripts/build-ffi.sh` stamps its own
+`SlopDeskFFI.xcframework` is a step inside `package`, because `slopdesk-gate ffi` stamps its own
 inputs and a runner is cold every time anyway. Neither is optional in the weak sense: `Package.swift`
 declares a `binaryTarget` at the FFI path, so SwiftPM cannot resolve the graph without the file —
-a missing step there fails the release before it compiles a line. `check-supervisor.sh` ratchets the
+a missing step there fails the release before it compiles a line. `slopdesk-invariants` ratchets the
 correspondence: every gitignored `binaryTarget` path must be produced by some step of this workflow.
 
 ## arm64 only — a constraint, not a default
@@ -323,7 +323,7 @@ distinct because they call for opposite fixes: a daemon that reports no version 
 and a restart resolves it; an install that reports no version is broken and a restart makes it
 worse.
 
-`scripts/check-supervisor.sh` ratchets all of it — the `buildVersion` field on both sides of
+`rust/slopdesk-invariants` ratchets all of it — the `buildVersion` field on both sides of
 superd's hello, `hello_payload` and its Swift parse for screend, and the four spellings of the
 announce version marker against the three managers that read it. A skew in any of them is the
 quietest failure in this tree: the parser finds no marker, reports `unknown`, and the host goes on

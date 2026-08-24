@@ -17,7 +17,7 @@
 // `SlopDeskSplitViewController`, whose two items are `NSHostingController`s over the columns). Stage
 // D drains those columns upward one surface at a time; this file is where they land.
 //
-// ⚠️ IT IS OFF THE DRAINING FLOOR (docs/56 §3.5, increment 56b), and `check-supervisor.sh` keeps it
+// ⚠️ IT IS OFF THE DRAINING FLOOR (docs/56 §3.5, increment 56b), and `slopdesk-invariants` keeps it
 // off. This file imported `SlopDeskClientUI` for exactly two things and no more: the sidebar toggle,
 // which is ``MacWindowSidebarToggle`` in AppKit now and DELETED from the shared target in the same
 // change (the phone never drew it — no window corner, no traffic lights, no split item), and the

@@ -15,7 +15,7 @@
 // `testTheStaticMirrorNeverDims` was its only producer of `true` — in the whole tree, not just in
 // this file. A branch whose sole caller is the test that asserts it is not a covered branch, it is a
 // feature the suite is keeping alive; the flag was deleted with the canvas plumbing it rode in on
-// (increment 56d), so the case was deleted rather than rewritten to pass. `check-supervisor.sh`
+// (increment 56d), so the case was deleted rather than rewritten to pass. `slopdesk-invariants`
 // fails the build if it grows back.
 
 import CoreGraphics

@@ -15,7 +15,7 @@
 //! ## macOS only, and the three spellings that keep it true
 //!
 //! The `cfg` in `lib.rs`, the `TARGET_OS_OSX` guard in `slopdesk_ffi.h`, and the `MACOS-ONLY`
-//! region `scripts/build-ffi.sh` reads out of that header. See
+//! region `slopdesk-gate ffi` reads out of that header. See
 //! `docs/57-apple-frameworks-in-rust.md` §3.
 
 use slopdesk_apple_cgwindow::{bounds_of, frontmost_pid, windows_in_front_of};

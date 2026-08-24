@@ -9,7 +9,7 @@
 //!
 //! This is the drift class docs/55 §8 catalogues, minus the one property that makes it easy to
 //! spot: it is not cross-LANGUAGE, so no gate that greps for a Swift spelling can see it, and
-//! `check-supervisor.sh` has nothing to compare a Rust file against another Rust file with. The
+//! `slopdesk-invariants` has nothing to compare a Rust file against another Rust file with. The
 //! arrow points wire → workspace and `state_codec` is below the fork, so neither can `use` the
 //! other without a cycle; `slopdesk-ffi` is the only crate that depends on both, which is why the
 //! question is asked here and can only be asked here.

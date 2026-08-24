@@ -1,9 +1,9 @@
 //! What `watch` decides and prints, the borderless dwell, the divider's pixel-to-weight
 //! conversion, and the rail render that reads its badge gates once.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Three are one-implementation rules of the ordinary
-//! kind. The fourth is a PERFORMANCE claim held the same way, because the only durable statement
-//! about a measurement is which call site still exists to make it.
+//! Ported from the deleted `check-supervisor.sh`. Three are one-implementation rules of the
+//! ordinary kind. The fourth is a PERFORMANCE claim held the same way, because the only durable
+//! statement about a measurement is which call site still exists to make it.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

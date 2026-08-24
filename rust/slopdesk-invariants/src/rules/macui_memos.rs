@@ -1,12 +1,12 @@
 //! Nine held values on the paths `AppKit` drives at the display's rate.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every rule here pins a HELD value — a cache, a guard,
-//! a stored list — whose absence changes nothing a test can see. The view draws the same pixels,
-//! the same rows come back, the same seam moves; only the clock moves, and only on the paths
-//! `AppKit` drives at the display's rate (a divider drag, a live window resize, a `CADisplayLink`
-//! tick, a keystroke in an overlay). That is the shape `docs/55` §8 catalogues: a fact re-derived
-//! because re-deriving it looked free at the call site. A green suite is exactly what a regression
-//! here looks like, so the pin has to be textual.
+//! Ported from the deleted `check-supervisor.sh`. Every rule here pins a HELD value — a cache, a
+//! guard, a stored list — whose absence changes nothing a test can see. The view draws the same
+//! pixels, the same rows come back, the same seam moves; only the clock moves, and only on the
+//! paths `AppKit` drives at the display's rate (a divider drag, a live window resize, a
+//! `CADisplayLink` tick, a keystroke in an overlay). That is the shape `docs/55` §8 catalogues: a
+//! fact re-derived because re-deriving it looked free at the call site. A green suite is exactly
+//! what a regression here looks like, so the pin has to be textual.
 //!
 //! The numbers below were measured on the author's machine against the shipped xcframework under
 //! `swiftc -O`, two agreeing runs each, with the FFI door floor (1.7 ns) as the unit of "free".

@@ -43,7 +43,7 @@
 // construction in ``SimulatorVideoFormat``, all pure and all testable without it.
 
 // ⚠️ THE GATE IS `canImport(AppKit)`, NEVER `os(macOS)`. This target is the phone's floor too, and
-// `check-supervisor.sh` fails the build on an `os(macOS)` here for exactly that reason: the question
+// `slopdesk-invariants` fails the build on an `os(macOS)` here for exactly that reason: the question
 // this file asks is "is there an `NSView` to subclass", which is a framework question, not a
 // product one.
 #if canImport(AppKit)

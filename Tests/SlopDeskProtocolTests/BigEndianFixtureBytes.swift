@@ -12,7 +12,7 @@ import Foundation
 // and decoder passes just as happily when both have drifted from the wire. `VideoWireFixtureBytes`
 // is the same helper for the same reason, one test target over.
 //
-// They must not go back to `Sources/`: `check-supervisor.sh` fails on a declaration of either there,
+// They must not go back to `Sources/`: `slopdesk-invariants` fails on a declaration of either there,
 // because a "just this one field" helper is how a second implementation of a wire grows back.
 
 extension Data {

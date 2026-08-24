@@ -1,10 +1,11 @@
 //! Tables the crate owns, and the Swift faces that must keep asking for them.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every rule here guards the same regression: a value
-//! the crate produces, spelled out again on the Swift side. Nothing fails when the two agree, and
-//! nothing fails when they stop — the host encodes at the old operating point, the fresh pane is
-//! born with a name the crate no longer mints, and the test that "checks" it compares against the
-//! literal rather than the answer. So the pin is on the CALL, and on the literal not growing back.
+//! Ported from the deleted `check-supervisor.sh`. Every rule here guards the same regression: a
+//! value the crate produces, spelled out again on the Swift side. Nothing fails when the two agree,
+//! and nothing fails when they stop — the host encodes at the old operating point, the fresh pane
+//! is born with a name the crate no longer mints, and the test that "checks" it compares against
+//! the literal rather than the answer. So the pin is on the CALL, and on the literal not growing
+//! back.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

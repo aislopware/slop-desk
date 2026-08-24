@@ -110,7 +110,7 @@ public final class InspectorServiceManager: @unchecked Sendable {
 
     /// The port out of `inspectord: listening on 0.0.0.0:<port> (transcript …)`, or `nil`.
     ///
-    /// A build that changes the marker fails `scripts/check-supervisor.sh`, which compares this
+    /// A build that changes the marker fails `rust/slopdesk-invariants`, which compares this
     /// string against `server.rs`.
     static func parseAnnouncedPort(fromLogLine line: String) -> UInt16? {
         AnnouncedPort.directlyAfter(announceMarker, in: line)

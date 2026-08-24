@@ -1,9 +1,9 @@
 //! The workspace document: its field numbers, its intent verbs, its two reaping rules, and the
 //! codec that is a face over `rust/slopdesk-workspace` rather than a second copy of it.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The SOLVERS moved to Rust and the document's value
-//! types stayed Swift on purpose — 262 files import them — so the line is INSIDE the module rather
-//! than around it, and every rule here is a per-file question.
+//! Ported from the deleted `check-supervisor.sh`. The SOLVERS moved to Rust and the document's
+//! value types stayed Swift on purpose — 262 files import them — so the line is INSIDE the module
+//! rather than around it, and every rule here is a per-file question.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;

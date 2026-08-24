@@ -579,7 +579,8 @@ pub const extern "C" fn slopdesk_ws_listen_waiting_errno_is_fatal(posix_errno: i
 ///
 /// The MAP is `FocusDirection::ALL`'s order and is not restated here. It used to be, and a hand
 /// map's fallback is not a refusal: a seventh direction added to both enums — which
-/// `check-supervisor` counts and would have passed — would have arrived here as `Next` and cycled.
+/// `slopdesk-invariants` counts and would have passed — would have arrived here as `Next` and
+/// cycled.
 fn direction_from(byte: u8) -> FocusDirection {
     FocusDirection::from_index(byte).unwrap_or(FocusDirection::Next)
 }
@@ -3201,7 +3202,7 @@ pub unsafe extern "C" fn slopdesk_ws_encode_video_target(
 // session's name and its detached panes are still worth keeping, so `normalizing_active` re-seeds
 // it a tab. That case therefore cannot reach this door, and the caller repairs it before encoding.
 // It is the only part of the pass that did not cross, it is named in `docs/55` §8 and pinned by
-// `check-supervisor.sh`, and the fix that removes it is a whole-`TreeWorkspace` codec in
+// `slopdesk-invariants`, and the fix that removes it is a whole-`TreeWorkspace` codec in
 // `slopdesk_workspace::persist` — which `derived_split_id`'s `## Owed` note is already headed for.
 //
 // A document with no workspace in it AT ALL does cross, and answers the re-seeded default: that is

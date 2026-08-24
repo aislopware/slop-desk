@@ -1,6 +1,6 @@
 //! A frameworkless value descends to the floor; a value with a colour in it stays paired.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The whole family here answers one question asked
+//! Ported from the deleted `check-supervisor.sh`. The whole family here answers one question asked
 //! seven times: when two renderers must agree about a number or an ink, where does the agreement
 //! live? If the value has no framework in it — an alpha is a `Double`, a corner radius is a
 //! `CGFloat` — it goes DOWN to `SlopDeskSlate` and both halves read one token. If it resolves to a

@@ -218,58 +218,40 @@ pub fn shell_quoting_has_one_owner(tree: &Tree) -> Report {
 // The scripts themselves
 // ------------------------------------------------------------------------------------------- //
 
-/// Without `pipefail` a pipeline reports the LAST command's status.
+/// Nothing under `scripts/` is a program any more.
 ///
-/// Every gate in this repo is a pipeline somewhere, so a script missing it is a gate that cannot
-/// fail. The check reads the WORD, not a flag spelling: two scripts say `set -uo pipefail`
-/// deliberately, and a first draft matching `set -euo pipefail` called both of them broken.
+/// The two rules this replaces — every script sets `pipefail`, every shebang carries the mode bit —
+/// were true and are now unaskable: the last shell script and the last Python script left the tree
+/// in the change that added this. A rule whose corpus is empty PASSES, and a check that cannot fail
+/// is worse than one that is missing, because the log says it ran.
 ///
-/// `scripts/` is the whole corpus because it is where every shell script in this tree lives —
-/// the two under `ThirdParty/` are the dependency's, and the Python excluded them by name.
+/// So the corpus becomes the rule. `scripts/` holds pins, fixtures and two Swift probes — data and
+/// source, nothing executable — and a `.sh`, `.py`, `.bash`, `.zsh` or `.awk` arriving anywhere
+/// this crate walks is the standing decision reversing itself by accident. Scripting is Rust: a
+/// `slopdesk-gate` verb, a `slopdesk-ops` harness, or a rule in this crate. That is not a style
+/// preference — a shell gate's decidable half cannot be unit-tested, which is how four of the
+/// ported ones turned out to have been reading an empty haystack for years.
+///
+/// `ThirdParty/` is out of scope and stays out: `build-libghostty.sh` is the dependency's own
+/// builder, and this tree does not walk it.
 #[must_use]
-pub fn every_script_sets_pipefail(tree: &Tree) -> Report {
+pub fn scripting_is_rust(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let missing: Vec<String> = collect(tree, &["scripts"], &["sh"])
-        .into_iter()
-        .filter(|(_, source)| !text::matches(&source.text, r"^\s*set\s+[^\n]*pipefail"))
-        .map(|(path, _)| path.display().to_string())
-        .collect();
-    sites(
-        &mut report,
-        "a shell script does not set pipefail — a death inside a pipe would read green",
-        &missing,
-    );
-    report
-}
-
-/// A shebang is a promise that `scripts/foo.sh --flag` works; the mode bit is what keeps it.
-///
-/// Four scripts had lost the bit and nothing noticed, because the Makefile invokes every one of
-/// them as `bash scripts/foo.sh` — the one spelling that works either way. What breaks is the
-/// spelling a script's own usage line and `docs/46` tell a human to type (`scripts/foo.sh --flag`),
-/// which is exactly the path no gate walks. So the shebang is the declaration and this is its
-/// check: `#!` on line one, no `x` bit, is a documented entry point that answers "permission
-/// denied". Derived from the file itself, so a new script is covered the day it is written.
-#[must_use]
-pub fn a_script_with_a_shebang_is_executable(tree: &Tree) -> Report {
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let mut report = Report::new();
-    let found: Vec<String> = collect(tree, &["scripts"], &["sh", "py", "awk"])
-        .into_iter()
-        .filter(|(path, source)| {
-            if !source.text.starts_with("#!") {
-                return false;
-            }
-            // The one fact about a file this tree does not hold. Every other gate reads bytes; a
-            // mode bit is metadata, so it is asked of the filesystem at the path the tree knows.
-            std::fs::metadata(tree.root().join(path)).is_ok_and(|data| data.permissions().mode() & 0o111 == 0)
+    let found: Vec<String> = tree
+        .paths()
+        .filter(|path| !path.starts_with("ThirdParty"))
+        .filter(|path| {
+            path.extension()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| matches!(value, "sh" | "bash" | "zsh" | "py" | "awk"))
         })
-        .map(|(path, _)| path.display().to_string())
+        .map(|path| path.display().to_string())
         .collect();
     sites(
         &mut report,
-        "a script declares a shebang but is not executable — running it by name fails",
+        "a shell or Python script is back in the tree — scripting is Rust (a slopdesk-gate verb, a \
+         slopdesk-ops harness, or a rule in this crate), because a shell gate's decidable half cannot be \
+         unit-tested",
         &found,
     );
     report
@@ -946,11 +928,10 @@ pub fn an_ops_harness_that_starts_a_daemon_contains_it(tree: &Tree) -> Report {
 #[cfg(test)]
 mod tests {
     use super::{
-        a_script_with_a_shebang_is_executable, an_ops_harness_that_starts_a_daemon_contains_it,
-        every_injected_sink_has_someone_who_binds_it, every_script_sets_pipefail,
+        an_ops_harness_that_starts_a_daemon_contains_it, every_injected_sink_has_someone_who_binds_it,
         live_docs_cite_files_that_exist, no_app_layer_crypto, no_fused_multiply_add,
         no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
-        pkill_never_reaches_the_developers_host, source_comments_cite_files_that_exist,
+        pkill_never_reaches_the_developers_host, scripting_is_rust, source_comments_cite_files_that_exist,
         the_formula_installs_every_binary_the_release_ships,
     };
     use crate::tests::Fixture;
@@ -1024,24 +1005,26 @@ mod tests {
         assert!(!no_swiftpm_build_plugin(&fixture.tree()).is_clean());
     }
 
+    /// The corpus IS the rule now: pins and fixtures are data, a script is a program.
     #[test]
-    fn a_script_without_pipefail_is_red() {
-        let fixture = Fixture::new("pipefail");
-        fixture.write("scripts/a.sh", "#!/usr/bin/env bash\nset -euo pipefail\nls\n");
-        assert!(every_script_sets_pipefail(&fixture.tree()).is_clean());
-        fixture.write("scripts/b.sh", "#!/usr/bin/env bash\nset -eu\nls\n");
-        assert!(!every_script_sets_pipefail(&fixture.tree()).is_clean());
-    }
+    fn a_script_anywhere_in_the_tree_is_red() {
+        let fixture = Fixture::new("scripting-is-rust");
+        fixture.write("scripts/tool-stamps.pin", "abc\n");
+        fixture.write("scripts/fixtures/probe.swift", "let x = 1\n");
+        assert!(scripting_is_rust(&fixture.tree()).is_clean());
 
-    /// A fixture file is written without the `x` bit, so a shebang in one is exactly the failure.
-    #[test]
-    fn a_shebang_without_the_mode_bit_is_red() {
-        let fixture = Fixture::new("shebang");
-        fixture.write("scripts/a.sh", "#!/usr/bin/env bash\nset -euo pipefail\n");
-        assert!(!a_script_with_a_shebang_is_executable(&fixture.tree()).is_clean());
-        let quiet = Fixture::new("shebang-none");
-        quiet.write("scripts/a.sh", "set -euo pipefail\n");
-        assert!(a_script_with_a_shebang_is_executable(&quiet.tree()).is_clean());
+        for (name, path) in [
+            ("shell", "scripts/gate.sh"),
+            ("python", "rust/helper.py"),
+            ("awk", "scripts/gate-death.awk"),
+        ] {
+            let back = Fixture::new(&format!("scripting-back-{name}"));
+            back.write(path, "#!/usr/bin/env bash\nset -euo pipefail\n");
+            assert!(
+                !scripting_is_rust(&back.tree()).is_clean(),
+                "{name} at {path} did not fire"
+            );
+        }
     }
 
     /// The gate reports the QUALIFIER, not the word: a harness reaping the host it started on its

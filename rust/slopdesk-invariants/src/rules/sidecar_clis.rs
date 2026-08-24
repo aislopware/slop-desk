@@ -1,6 +1,6 @@
 //! The four sidecars hostd FORKS, and the two tables it links instead.
 //!
-//! Ported from `scripts/check-supervisor.sh` §§13–16c. `slopdesk-ctl`, `slopdesk-codeseed`,
+//! Ported from the deleted `check-supervisor.sh` §§13–16c. `slopdesk-ctl`, `slopdesk-codeseed`,
 //! `slopdesk-agenthooks` and `slopdesk-probe` are contracts six through nine, and they share the
 //! failure that makes them worth a gate at all: NOTHING ERRORS. A renamed verb is a clean
 //! `unknown method` or a `usage()` and a non-zero exit, which every caller here reads as an

@@ -1,4 +1,4 @@
-//! `slopdesk-gate` — the seven gates that had to build, boot or execute something.
+//! `slopdesk-gate` — the gates that had to build, boot or execute something.
 //!
 //! One binary, one verb per gate, and the deciding half of each in [`slopdesk_devtools::gates`]
 //! with tests beside it. Every verb resolves the repo root the same way and prints its own failure;
@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use slopdesk_devtools::gates::{android, golden, prepush, touched, xcode};
+use slopdesk_devtools::gates::{android, ffi, golden, prepush, reach, supervisor, touched, xcode};
 use slopdesk_devtools::repo;
 
 /// What the binary answers to.
@@ -22,6 +22,9 @@ usage: slopdesk-gate [--repo-root DIR] <verb> [options]
   ios-tests [--device NAME] [--keep-booted]
                                         RUN the iOS tests on a simulator
   android                               the Android hardware gate (needs a device)
+  ffi [--check|--force]                 assemble SlopDeskFFI.xcframework (stamped)
+  reach                                 every workspace crate is reached by a make target
+  supervisor-tests                      the hostd/superd suites that need a live daemon
   help                                  this text
 ";
 
@@ -59,6 +62,9 @@ fn main() -> ExitCode {
         "macos-apps" => finish(xcode::macos_apps_typecheck(&root, has_flag(rest, "--force"))),
         "ios-tests" => ios_tests(&root, rest),
         "android" => finish(android::run(&root)),
+        "ffi" => ffi_gate(&root, rest),
+        "reach" => finish(reach::run(&root)),
+        "supervisor-tests" => finish(supervisor::run(&root)),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             ExitCode::SUCCESS
@@ -96,6 +102,20 @@ fn test_touched(root: &Path, arguments: &[String]) -> ExitCode {
         .cloned()
         .collect();
     finish(touched::run(root, dry_run, &explicit))
+}
+
+/// `ffi [--check|--force]` — the two flags are exclusive, and neither is the default.
+fn ffi_gate(root: &Path, arguments: &[String]) -> ExitCode {
+    let mode = match arguments.first().map(String::as_str) {
+        None => ffi::Mode::Build,
+        Some("--check") => ffi::Mode::Check,
+        Some("--force") => ffi::Mode::Force,
+        Some(other) => {
+            eprintln!("slopdesk-gate: unknown option for ffi: {other} (expected --check or --force)");
+            return ExitCode::from(2);
+        },
+    };
+    finish(ffi::run(root, mode))
 }
 
 /// `ios-tests [--device NAME] [--keep-booted]`.

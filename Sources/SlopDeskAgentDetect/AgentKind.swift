@@ -40,7 +40,7 @@ public enum AgentKind: String, CaseIterable, Sendable {
     /// The alias table it consults has ~40 entries across 21 agents and is ported from herdr; it
     /// lives in `rust/slopdesk-agent::kind` with the differential tests that prove it. What crosses
     /// is an index into ``allCases``, which is the same order as the crate's `AgentKind::ALL` —
-    /// `scripts/check-supervisor.sh` fails the build if the two ever disagree.
+    /// `rust/slopdesk-invariants` fails the build if the two ever disagree.
     public static func identify(processName: String) -> Self? {
         at(index: agentPredicateIndex(processName))
     }

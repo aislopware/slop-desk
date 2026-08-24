@@ -3,7 +3,7 @@
 // A THIN, headless token layer — `SlateNativeColor`/`Color`/`CGFloat`/`Animation` constants and
 // nothing that draws. It compiled into `SlopDeskClientUI` for as long as there was ONE UI target to
 // compile it into; it is its own target since docs/56 increment 28, because there are two now and the
-// AppKit half reads ~200 of these. `check-supervisor.sh` fails the build if a `some View` lands here:
+// AppKit half reads ~200 of these. `slopdesk-invariants` fails the build if a `some View` lands here:
 // a token is a value both frameworks read, and every mark with two renderers keeps them one floor up.
 //
 // Design DNA — ONE ISLAND (user-directed 2026-08-08, twice: first "re-implement the floating-island

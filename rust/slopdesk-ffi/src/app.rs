@@ -12,7 +12,7 @@
 //! ## macOS only, for the reason [`crate::cgwindow`] is
 //! There is no `NSRunningApplication` on iOS, so an ungated edge would not merely cost bytes, it
 //! would fail to link. The `cfg` in `lib.rs`, the `TARGET_OS_OSX` guard in `slopdesk_ffi.h` and the
-//! `MACOS-ONLY` region `scripts/build-ffi.sh` reads out of that header — `docs/57` §3.
+//! `MACOS-ONLY` region `slopdesk-gate ffi` reads out of that header — `docs/57` §3.
 
 use core::ffi::c_uchar;
 

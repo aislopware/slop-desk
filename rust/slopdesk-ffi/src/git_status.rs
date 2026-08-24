@@ -9,7 +9,7 @@
 //! answer as a metadata reply and never computes it, so building the library into the two iOS
 //! slices would cost every phone build the compile and every phone archive the bytes, for a door
 //! nothing on that platform can reach. The `cfg` here, the `TARGET_OS_OSX` guard in
-//! `slopdesk_ffi.h`, and the macOS-only region `scripts/build-ffi.sh` reads out of that header are
+//! `slopdesk_ffi.h`, and the macOS-only region `slopdesk-gate ffi` reads out of that header are
 //! three spellings of this one fact, and the script fails if the library and the header disagree
 //! about it on ANY slice.
 //!

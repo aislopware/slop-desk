@@ -46,7 +46,7 @@
 # ## TWO framework areas, on two different sets of slices
 # Compression is macOS-only: only the host encodes. Its doors are declared inside `slopdesk_ffi.h`'s
 # `MACOS-ONLY BEGIN/END` region, `slopdesk-ffi` gates its `encoder` module on macOS, and
-# `scripts/build-ffi.sh` requires those symbols PRESENT on the macOS slice and ABSENT on both iOS
+# `slopdesk-gate ffi` requires those symbols PRESENT on the macOS slice and ABSENT on both iOS
 # slices. iOS HAS VideoToolbox, so unlike `slopdesk-apple-cgevent` an ungated edge would LINK and
 # merely bloat — which is worse, not better, because nothing would fail. The gate is what catches it.
 #

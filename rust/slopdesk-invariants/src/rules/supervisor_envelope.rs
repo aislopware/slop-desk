@@ -1,8 +1,8 @@
 //! superd's rendezvous, version, verbs, listener kinds and frame envelope.
 //!
-//! Ported from `scripts/check-supervisor.sh` §§1–4. The prose below each rule is the shell's own,
-//! because the reason a rule exists does not change when the language does — and on the day one
-//! fires, that reason is the whole diagnostic.
+//! Ported from the deleted `check-supervisor.sh` §§1–4. The prose below each rule is the shell's
+//! own, because the reason a rule exists does not change when the language does — and on the day
+//! one fires, that reason is the whole diagnostic.
 //!
 //! What every rule here has in common: the failure it catches is SILENT at runtime. The two sides
 //! never exchange their socket paths (hostd has to FIND the control socket before it can say

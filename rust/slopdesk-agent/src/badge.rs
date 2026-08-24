@@ -32,7 +32,7 @@ const CAFFEINATE_BASENAMES: [&str; 1] = ["caffeinate"];
 
 /// The fused state a tab row carries.
 ///
-/// Declaration order is the FFI discriminant order, which `scripts/check-supervisor.sh` pins
+/// Declaration order is the FFI discriminant order, which `rust/slopdesk-invariants` pins
 /// against the Swift enum; it is deliberately not the precedence order, which is a rule and lives
 /// in [`resolve`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

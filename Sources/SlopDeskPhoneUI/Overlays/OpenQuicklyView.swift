@@ -26,7 +26,7 @@
 // chord table and — the largest piece — the per-row ⌘K ACTION TABLE and the default action ↩ runs
 // are all ``OpenQuicklyPresentation``'s and ``OpenQuicklyActions``'s. A verb table written twice
 // does not fail loudly when it drifts; it just quietly offers one surface a verb the other has not
-// got. `check-supervisor.sh` fails the build if either half grows its own copy.
+// got. `slopdesk-invariants` fails the build if either half grows its own copy.
 
 #if os(iOS)
 import Foundation

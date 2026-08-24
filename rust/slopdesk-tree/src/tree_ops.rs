@@ -1168,7 +1168,7 @@ impl RepairPass {
     /// something to be compared against rather than something to be trusted.
     ///
     /// **Named `ffi_byte`, not `index`, on purpose — and this comment may not spell the other name
-    /// in full either.** `scripts/check-supervisor.sh` lifts a byte map out of a file by `sed`-ing
+    /// in full either.** `rust/slopdesk-invariants` lifts a byte map out of a file by `sed`-ing
     /// from a marker line to the next closing brace, and its marker for [`TileLayout`] is that
     /// enum's own accessor signature, written out literally. A `sed` address range RESTARTS after
     /// it closes, so a SECOND occurrence anywhere below in this file does not shadow the first, it

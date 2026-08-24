@@ -1,11 +1,11 @@
 //! A verb names its platform once, and the surface that runs it decides once.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The palette, the binding registry and the canvas drag
-//! are three id spaces over one set of commands, and each was written twice at some point: a row
-//! that restated its own route, a chord whose platform was a compile-time `#if` invisible from the
-//! row, a renderer that re-derived the tear-off's ordering by hand. Every rule here says the same
-//! thing about one of them — the decision lives in ONE place, and where that place is a Rust table,
-//! the two id spaces must name the same rows.
+//! Ported from the deleted `check-supervisor.sh`. The palette, the binding registry and the canvas
+//! drag are three id spaces over one set of commands, and each was written twice at some point: a
+//! row that restated its own route, a chord whose platform was a compile-time `#if` invisible from
+//! the row, a renderer that re-derived the tear-off's ordering by hand. Every rule here says the
+//! same thing about one of them — the decision lives in ONE place, and where that place is a Rust
+//! table, the two id spaces must name the same rows.
 
 use crate::claim::{Claim, Extract, View, check_all};
 use crate::report::Report;

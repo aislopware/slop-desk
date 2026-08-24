@@ -10,7 +10,7 @@
 //
 // 2. THE MODE CHIPS ARE THE SHARED PILL, NOT A THIRD DRAWING. `MacGlobalSearch` already ships an
 //    AppKit `Aa` / `.*` chip, and the locked invariant is that the find bar and the global-search
-//    query bar render the pills IDENTICALLY. `check-supervisor.sh` pins the two halves that RESOLVE
+//    query bar render the pills IDENTICALLY. `slopdesk-invariants` pins the two halves that RESOLVE
 //    `FindTogglePillAppearance`; nothing stops a third renderer from resolving it a fourth way, and a
 //    hover plate one rung off in one of the two bars reads as correct in both until they are put side
 //    by side. This pins that the find bar mounts `MacFindTogglePillView` itself — the same class, not

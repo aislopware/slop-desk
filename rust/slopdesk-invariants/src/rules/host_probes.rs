@@ -1,9 +1,9 @@
 //! What hostd asks the artifact, and how — the foreground-process vocabulary, the binary search
 //! order, and the four doors that must never be probed for a length.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The last of these is the odd one: a null-output probe
-//! is a SUPPORTED call that costs the whole answer twice, so both calls agree, every result is
-//! correct, and the only trace is a git line that lands a beat late.
+//! Ported from the deleted `check-supervisor.sh`. The last of these is the odd one: a null-output
+//! probe is a SUPPORTED call that costs the whole answer twice, so both calls agree, every result
+//! is correct, and the only trace is a git line that lands a beat late.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

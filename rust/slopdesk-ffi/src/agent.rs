@@ -9,7 +9,7 @@
 //! published, and the 900-line state machine that folds all of it into one status.
 //!
 //! The vocabularies are therefore a CONTRACT between the two languages, pinned by
-//! `scripts/check-supervisor.sh` the way every other cross-language constant here is: the
+//! `rust/slopdesk-invariants` the way every other cross-language constant here is: the
 //! discriminants below are the wire, and a Swift enum that reorders its cases fails the gate rather
 //! than silently reporting `working` for `blocked`.
 //!

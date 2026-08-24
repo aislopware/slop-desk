@@ -144,17 +144,21 @@ jobs:
 
       # The OTHER linked artifact, and the pipeline did not know about it. `Package.swift` declares a
       # `binaryTarget` at `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework`, that path is gitignored
-      # (110 MB for the three slices, rewritten by every Rust edit — `scripts/build-ffi.sh` explains
-      # the choice), and no step here built it: SwiftPM cannot resolve the graph at all without the
-      # file, so the first tag cut after the FFI work lands would fail before it compiled a line.
-      # It never bit because the whole port is still uncommitted, which is exactly the window in
-      # which to notice. Same shape as the libghostty job above, minus the cache: the script stamps
-      # its own inputs and a runner is cold every time regardless.
+      # (110 MB for the three slices, rewritten by every Rust edit — `slopdesk-devtools`'
+      # `gates::ffi` explains the choice), and no step here built it: SwiftPM cannot resolve the
+      # graph at all without the file, so the first tag cut after the FFI work lands would fail
+      # before it compiled a line. It never bit because the whole port was still uncommitted, which
+      # is exactly the window in which to notice. Same shape as the libghostty job above, minus the
+      # cache: the gate stamps its own inputs and a runner is cold every time regardless.
+      #
+      # `make ffi` rather than a script path, and `linked-artifacts-are-built` in
+      # `rust/slopdesk-invariants` is what keeps this step honest: it derives the producer from the
+      # Makefile target that NAMES the artifact and fails if this workflow stops running it.
       - name: Build SlopDeskFFI.xcframework
         run: |
           set -euo pipefail
           rustup target add aarch64-apple-darwin aarch64-apple-ios aarch64-apple-ios-sim
-          scripts/build-ffi.sh
+          make ffi
 
       - name: Install XcodeGen
         run: |

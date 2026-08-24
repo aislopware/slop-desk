@@ -1,8 +1,8 @@
 //! The layer boundary the two renderers share — `SlopDeskClientCore` draws nothing, and spells no
 //! ink.
 //!
-//! Ported from `scripts/check-supervisor.sh`. This is the rule the macOS/iOS split rests on: the
-//! presentation logic is read by an `AppKit` renderer and a `SwiftUI` one, so a decision that
+//! Ported from the deleted `check-supervisor.sh`. This is the rule the macOS/iOS split rests on:
+//! the presentation logic is read by an `AppKit` renderer and a `SwiftUI` one, so a decision that
 //! arrives as a modifier instead of a function is a decision the other half has to re-spell.
 
 use crate::claim::{Claim, View, check_all};

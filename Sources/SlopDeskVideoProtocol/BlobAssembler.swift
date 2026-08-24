@@ -94,7 +94,7 @@ public final class BlobAssembler: @unchecked Sendable {
 /// with the consumer, on the far side of the door either way.
 public enum BlobImageValidator {
     /// The 8-byte PNG signature. No Swift caller today — ``validates(_:forKind:)`` is what the two
-    /// fetch paths ask. Kept because `check-supervisor` pins it: the face IS the door, and without one
+    /// fetch paths ask. Kept because `slopdesk-invariants` pins it: the face IS the door, and without one
     /// the next `data.prefix(8) == …` gets written in Swift instead of asked of the crate.
     public static func looksLikePNG(_ data: Data) -> Bool {
         data.withUnsafeBytes { bytes in

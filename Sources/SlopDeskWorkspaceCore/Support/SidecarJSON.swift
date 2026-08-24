@@ -18,7 +18,7 @@ import Foundation
 /// It stays inside this target rather than moving to a leaf below it. Three other targets write
 /// sidecars of their own (`HostLaunchRecord`, `WindowParkingSidecar`, `EnvBridge`), but they hold
 /// ONE encoder each, so there is nothing duplicated to remove — only a dependency edge to add, in
-/// three graphs whose narrowness is deliberate. `check-supervisor` pins the rule for all of them
+/// three graphs whose narrowness is deliberate. `slopdesk-invariants` pins the rule for all of them
 /// instead: whoever writes a sidecar sorts its keys.
 ///
 /// `WorkspaceStateFile` was a fourth until its rule moved to `rust/slopdesk-wire`. It holds no

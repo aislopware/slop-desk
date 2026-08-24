@@ -22,7 +22,7 @@
 // conditional — is now two sibling targets, `SlopDeskVideoClientMac` (AppKit) and
 // `SlopDeskVideoClientPhone` (UIKit), each linked by exactly one app shell. This target is the engine
 // underneath both: decode, pace, transport, and every DECISION the two halves share. A view growing
-// back here is a place for a third implementation to hide, which is why check-supervisor's Rule A
+// back here is a place for a third implementation to hide, which is why `slopdesk-invariants`'s Rule A (`rules::ui_split`)
 // bans one outright.
 
 /// Namespace marker for the GUI-video client module.

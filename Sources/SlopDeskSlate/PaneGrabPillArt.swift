@@ -18,7 +18,7 @@
 // the draining target must not reach up. A number both need therefore has exactly two futures —
 // spelled twice, or moved down — and 56e's ruling picks the second: when both renderers need the same
 // ARTWORK it goes to the floor rather than into a gate, because a gate can only report a drift that
-// has already shipped. Nothing here draws; a `some View` in this target fails `check-supervisor.sh`,
+// has already shipped. Nothing here draws; a `some View` in this target fails `slopdesk-invariants`,
 // which is the same line ``Slate/DropChip`` sits on.
 //
 // What is NOT here is the WORDING and the OUTCOME — `PaneDropRegister` (`SlopDeskClientCore`) owns

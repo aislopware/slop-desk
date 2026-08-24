@@ -163,7 +163,7 @@ final class ScreenPathsTests: XCTestCase {
     }
 
     /// No pid in the name. A child that inherited the path must still find the service after a
-    /// restart — the rule `scripts/check-supervisor.sh` ratchets for every socket in the tree.
+    /// restart — the rule `rust/slopdesk-invariants` ratchets for every socket in the tree.
     func testTheDefaultNameCarriesNoProcessIdentity() {
         let path = ScreenPaths.requestSocket(environment: [:])
         XCTAssertTrue(path.hasSuffix("/slopdesk-screend.sock"), path)

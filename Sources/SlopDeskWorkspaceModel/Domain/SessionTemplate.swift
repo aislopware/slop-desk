@@ -208,7 +208,7 @@ public extension SessionTemplate {
     /// What a mirror costs here is specific. The ids are fixed precisely so a re-seed MATCHES a row
     /// rather than appending one; a fourth template added to one side only would hand every device a
     /// different set depending on which side seeded it, and one changed byte in sixteen would surface
-    /// weeks later as a duplicated menu row with nothing in any log. `check-supervisor.sh` pins names
+    /// weeks later as a duplicated menu row with nothing in any log. `slopdesk-invariants` pins names
     /// and numbers it was told about, and nobody told it about these.
     ///
     /// `[]` is the crossing FAILING, never the crate declining to ship a table: the door writes a

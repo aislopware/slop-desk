@@ -1,10 +1,10 @@
 //! Two gates that must mean one thing by a marker, and three bytes no door could pin.
 //!
-//! Ported from `check-supervisor.sh`. Both rules exist because the alternative was tried and could
-//! not work: the marker could not be a shared constant while two SHELL scripts wrote it
-//! independently, and the liveness bytes cannot come from a door at all. The liveness arms read
-//! both sides as TEXT and refuse two empties, because an extraction that stopped matching would
-//! otherwise print the healthiest result this gate can print — and the marker rule, whose two
+//! Ported from the deleted `check-supervisor.sh`. Both rules exist because the alternative was
+//! tried and could not work: the marker could not be a shared constant while two SHELL scripts
+//! wrote it independently, and the liveness bytes cannot come from a door at all. The liveness arms
+//! read both sides as TEXT and refuse two empties, because an extraction that stopped matching
+//! would otherwise print the healthiest result this gate can print — and the marker rule, whose two
 //! spellings became one Rust constant, now pins the thing that keeps them one.
 
 use crate::claim::{Claim, Extract, check_all};

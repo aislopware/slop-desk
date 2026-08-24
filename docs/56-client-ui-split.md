@@ -81,7 +81,7 @@ in both its `NSColor`/`UIColor` and its `Color` spelling, `StatusDot`/`StatusMar
 nerd-font splice's AppKit half, the chrome field's jump-free configuration, and `StatusPresentation`
 — which is a palette ANSWER rather than a drawing. Every mark that has two renderers keeps them one
 floor up, one per framework (`StatusDotView` / `MacStatusMarkView`, `VectorIconView` /
-`MacVectorIconView`), and `check-supervisor.sh` fails the build if a `some View` appears in the floor.
+`MacVectorIconView`), and `slopdesk-invariants` fails the build if a `some View` appears in the floor.
 
 The cut between the third row and the fourth is the one worth stating, because it is the one that
 would otherwise blur: **`SlopDeskWorkspaceCore` is the domain, `SlopDeskClientCore` is what a UI asks
@@ -145,7 +145,7 @@ secondary windows, a 40-row rail under a mouse — are macOS-shaped problems.
 - **Layout diverges; capability does not.** A feature landing on one platform is owed to the other,
   laid out for it. What is NOT owed is the same arrangement.
 
-Three of these four are RATCHETED, in `scripts/check-supervisor.sh` (`make lint`): every file in a UI
+Three of these four are RATCHETED, in `rust/slopdesk-invariants` (`make lint`): every file in a UI
 target must name a view framework, `SlopDeskMacUI` may not carry a platform gate (and `SlopDeskPhoneUI`
 may carry only its own), and neither half may import the other or the draining floor import upward.
 Each of the three fails silently rather than loudly if it slips — a frameworkless file compiles, a dead
@@ -220,7 +220,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   from its own root. What the two halves share they share BELOW the view layer — `CheatSheetContent`
   (`SlopDeskClientCore`) carries the rows, the glyph gating and the column deal, the last over
   `slopdesk_cheat_sheet_columns` — and the LAYOUT is the only divergence: two columns on the Mac's 640pt
-  of paper, one on a hand-held sheet, from the same `dealt(_:into:)`. `check-supervisor.sh` gates both
+  of paper, one on a hand-held sheet, from the same `dealt(_:into:)`. `slopdesk-invariants` gates both
   failure modes: either half reaching past `CheatSheetContent` to the registry, and the shared host
   mounting the card again.
 
@@ -240,7 +240,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   (resolved from speaker + flavour together — the same flavour is "is done" for an agent and
   "finished" for a command), the spine budget, the mark's rung and glyph, and the dwell length. Each
   half keeps only its LAYOUT and its own view of the ink ladder — four lines mapping a named rung to
-  `Color` on the phone, to `NSColor` on the Mac. `check-supervisor.sh` gates the three decays: either
+  `Color` on the phone, to `NSColor` on the Mac. `slopdesk-invariants` gates the three decays: either
   half dropping `ToastPresentation`, either half re-deriving the phrase from `(source, flavor)`, and
   the shared host mounting the column again.
 
@@ -365,7 +365,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   set on `OverlayHostView` — TRANSITIONAL and shrink-only, the Mac's ledger of what stage D had
   lifted — so a card that had moved was drawn by AppKit and one that had not was still drawn there,
   with no `#if` choosing between them and never two live implementations of one card. **The ledger is
-  now empty and gone**: the host's whole card machinery is `#if os(iOS)`, and `check-supervisor.sh`
+  now empty and gone**: the host's whole card machinery is `#if os(iOS)`, and `slopdesk-invariants`
   fails the build if `draws` comes back.
 
   What did NOT leave, and never will, is the two surfaces that were never cards. Connect-to-Host is a
@@ -378,7 +378,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   else, and the hazard it was written around is gone with them: the host used to be a ZStack of an
   ambient chain carrying `allowsHitTesting(false)` — which suppresses hits for *everything* composed
   into it, including overlays attached further down, so a modal hung off the same chain took no
-  clicks at all — and the modal as its sibling. `check-supervisor.sh` gates the regression directly:
+  clicks at all — and the modal as its sibling. `slopdesk-invariants` gates the regression directly:
   no `allowsHitTesting` may reappear in that file. (It banned `PaneSwitcherOverlay` by name too, until
   increment 74 showed the ban was the reason the phone veiled its panes and drew nothing.)
   **The eighth is the NAVIGATOR COLUMN — the first COLUMN, and the first surface whose case rests on
@@ -566,7 +566,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   and the orphan repair — is walled off at the bottom of the class behind the only `#if` that survives.
   `CodeSidebarWebView` holds the MOUNT: a clipping container and a representable per platform, and the
   `CodeSidebarWKWebView` subclass under a macOS gate, because that subclass IS the responder seam. The
-  phone mints a plain `WKWebView`, and check-supervisor keeps the subclass's name out of every file but
+  phone mints a plain `WKWebView`, and slopdesk-invariants keeps the subclass's name out of every file but
   those two.
 
   A REMOUNT IS TWO THINGS AND THEY CAME APART HERE. It is a USE — what keeps a project ahead of the
@@ -623,7 +623,7 @@ nothing is ever implemented twice. No stage copies a file: a surface either move
   which is indistinguishable from an action that ran and had nothing to do. The same held for the
   Settings row (`openSettingsAction`, bound on the Mac to the `Settings` scene) and for the hardware
   chords: ⌘⇧L and ⌘⇧R reach the focused terminal surface first on iOS, so both died at a `nil` toggle
-  in `WorkspaceOverlayKeyToggles`, which carried overlays only. All of it is bound now, check-supervisor
+  in `WorkspaceOverlayKeyToggles`, which carried overlays only. All of it is bound now, slopdesk-invariants
   pairs the three hooks across the two roots, and `togglePinWindow` stays deliberately absent — a phone
   has one window and no window level. An action that is ABSENT on a platform is fine; an action that is
   listed and inert is not.
@@ -774,7 +774,7 @@ what a captionless row reads as are rules, and a rule spelled in two languages i
 `slopdesk_settings_density_token` names the density group's two tokens because density is the one
 group the store persists as a bare string, with no enum to round-trip through — without it the near
 side would spell `"compact"` itself, in the card art's test and in two `?? "comfortable"` fallbacks.
-`check-supervisor` ratchets both, that the two deleted files stay deleted, and that no settings view
+`slopdesk-invariants` ratchets both, that the two deleted files stay deleted, and that no settings view
 spells a choice's own words.
 
 ### Increment 18 — a setting is named once
@@ -796,7 +796,7 @@ target, for the same key. Thirty-one labels were like that, and two had already 
 was `"Hide Mouse While Typing"` in one place and `"Hide Mouse When Typing"` in the other,
 `"Long-Command Notification"` against `"Long-Command Completion"`. Nothing was broken by either; the
 list and the page simply called the same knob different things, and nobody was in a position to
-notice. `settingLabel(key)` is the near side of the fix and `check-supervisor` is the ratchet: it
+notice. `settingLabel(key)` is the near side of the fix and `slopdesk-invariants` is the ratchet: it
 parses the labels straight out of the Rust table and fails on any settings view that types one.
 
 THE DESCRIPTION DELIBERATELY DOES NOT CROSS. Measured before deciding: of the thirty-one shared rows,
@@ -862,7 +862,7 @@ the count, because every override is a place two strings can drift.
 
 ONE GATE IS LEFT, on purpose. `SettingsLayout.Half.current` is a single `#if os(macOS)` in
 `SettingsControls.swift`, and it exists only while one target still renders both halves; it dies when
-`SlopDeskMacUI` takes Settings, at which point each shell names its own half. `check-supervisor`
+`SlopDeskMacUI` takes Settings, at which point each shell names its own half. `slopdesk-invariants`
 ratchets that it stays exactly one, that the ten layout doors are called by the near side and named by
 the header, and that no view types a group header the table already holds.
 
@@ -986,7 +986,7 @@ It does, in six files under `Sources/SlopDeskMacUI/Settings`: a window with a re
 `NSSplitViewController`, a `.sourceList` navigator over `SettingsCatalog.sections`, a key → closure
 binding table, five AppKit controls that carry their own handler, a row builder, and a page that
 walks the groups. None of them spells a section title, a group header, a row label, an option name
-or a range — the same property `check-supervisor` ratchets on the SwiftUI side, holding here by
+or a range — the same property `slopdesk-invariants` ratchets on the SwiftUI side, holding here by
 construction rather than by a grep.
 
 **A control KIND is not a control.** `Control.cards` is answered by a tile grid on the phone and by
@@ -1070,7 +1070,7 @@ first-launch checklist uses — and `MacCloseConfirmation`, an `NSAlert` sheet.
 
 **What that removes is the last SwiftUI mount over the Mac's split**, which is the thing §3.5 was
 counting to. `MacWorkspaceRootView` no longer attaches `OverlayHostView` at all, and
-`check-supervisor.sh` fails the build if it comes back. The measurement behind the rule has not
+`slopdesk-invariants` fails the build if it comes back. The measurement behind the rule has not
 changed: an `NSHostingView` claims every hit inside its own bounds, so an always-mounted SwiftUI
 layer over the split makes the window click-dead everywhere its ink is not.
 
@@ -1085,7 +1085,7 @@ Two things moved BELOW the view layer on the way, because both halves ask them n
   shell), and on whether the close takes a project's last pane with it. Both can apply at once.
   Three branches and a join is exactly the amount of logic that drifts when two halves each carry it,
   so the Mac's `NSAlert` and the phone's `.alert` read the same `request(store:)` → `title` /
-  `message`. `check-supervisor.sh` fails either half that respells a line of it.
+  `message`. `slopdesk-invariants` fails either half that respells a line of it.
 
 With the host now the phone's alone, the four summoned cards inside it dropped their dead macOS arms
 — a fixed dialog width the phone never wanted, and an `.onExitCommand` twin for an `.onKeyPress`
@@ -1109,7 +1109,7 @@ table the dispatcher builds chords from, which is what makes a recorded chord th
 `UIKey` carries a HID usage instead, a different numbering, so a capture UI on the phone would have to
 invent a second answer to "what key is this". That is the duplicate the split exists to prevent, so
 the phone renders every row and its effective chord and offers the global reset, and nothing else.
-`check-supervisor.sh` pins both directions: the phone may not reach for `KeybindingCapture`, the Mac
+`slopdesk-invariants` pins both directions: the phone may not reach for `KeybindingCapture`, the Mac
 must, and neither half may respell the registry read or the search filter.
 
 > 🔁 **The second paragraph is void** (increment 30). "A second answer to what key is this" was the
@@ -1342,7 +1342,7 @@ decision or a sentence.
 The reason to move COPY, not just logic, is that here the copy IS the guard. A danger the mask can trip
 and no sentence names renders as a blank bullet — a warning that looks like a rendering bug. Deriving
 the lines from the same four bit constants in one file makes that unrepresentable, and
-`every_danger_the_mask_can_trip_has_a_sentence` asserts it. `check-supervisor` pins both halves: the
+`every_danger_the_mask_can_trip_has_a_sentence` asserts it. `slopdesk-invariants` pins both halves: the
 crate must keep `Ask` / `descriptions` / `preview`, and the sheet may not spell a heading, a button
 title or a preview cap of its own.
 
@@ -1501,7 +1501,7 @@ could not run.
 None of the palette's existing suites could see this, and the reason is structural: every actuator on
 the coordinator defaults to an empty closure, so **a row that is listed and inert is
 indistinguishable, at the keystroke, from a row that ran and had nothing to do** — and every one of
-those suites runs on a Mac, where all three are real. `check-supervisor.sh` already carried the rule
+those suites runs on a Mac, where all three are real. `slopdesk-invariants` already carried the rule
 in words ("an action that is absent on a platform is fine; an action that is listed and inert is
 not") and ratcheted three coordinator hooks by name, but a rule that has to name its instances only
 ever catches the instances someone thought of. `togglePinWindow` was excused there on the grounds
@@ -1562,7 +1562,7 @@ the readers. `BindingRowPlatformTests` pins that consequence directly: on a phon
 The nine generated `pane.select.N` slots are minted by a loop and are deliberately **undeclared** —
 they are `Both`, and the table declares the one collapsed representative (`pane.selectN`) the cheat
 sheet shows in their place. The supervisor's id-set pin excludes that family by name rather than by
-a grep that quietly fails to match it, and the routing gate is gone: `check-supervisor.sh` now fails
+a grep that quietly fails to match it, and the routing gate is gone: `slopdesk-invariants` now fails
 on any `#if os(` in either the registry or its routing.
 
 ### Increment 40 — one CGEventTap gate instead of seven, and the pane's last gate is data
@@ -1713,7 +1713,7 @@ on, that `WKWebView` IS the platform's view type on both halves.
 
 **2 gates → 0, and it is pinned that way.** The pool is the first file in the code-sidebar cluster to
 carry no `#if os(` at all, which is stronger than the four-file whole-file-gate ban above it and gets
-its own ratchet in `scripts/check-supervisor.sh`. The failure message says what a new gate would mean
+its own ratchet in `rust/slopdesk-invariants`. The failure message says what a new gate would mean
 rather than how to spell it away: whatever it guards belongs in `MacCodeSidebarKeyboard.swift` (up)
 or `CodeSidebarWebView.swift` (sideways), because those are the two files that already have halves.
 
@@ -1923,7 +1923,7 @@ that is `slopdesk_workspace::git_line` now, with `SidebarGitLine` in `SlopDeskCl
 crosses as a role, one GLYPH and a number. Putting `↑` next to `2` is not a decision anyone can
 disagree with; choosing `↑` is. That distinction is not theoretical here: increment 45 deleted a
 `PaneGitSummary.compactLine` that spelled a conflict `=` where the live renderer spelled it `~`, and
-the two compiled side by side for as long as both existed. `scripts/check-supervisor.sh` now bans a
+the two compiled side by side for as long as both existed. `rust/slopdesk-invariants` now bans a
 sigil literal in the face outright — a second dialect cannot be born without typing one of them.
 
 **The one string this side supplies is the branch**, because the text is the caller's own. It is a
@@ -2123,7 +2123,7 @@ device type appears in its signature. `MacDevicePanelLoop`, `macDevicePanelCapsL
 `SFSymbol` or nothing. What stayed takes a `SimulatorInk`, a `SimulatorDevice`, a `SimulatorFact` —
 or the Android four. The "Android is a fourth tab, not a second half of Simulators" rule is not bent
 by a spinner: the two panels share no byte of protocol, and a shared spinner is not a claim that they
-do. `check-supervisor.sh` now pins that line in both directions — no device type name may appear in
+do. `slopdesk-invariants` now pins that line in both directions — no device type name may appear in
 the merged file, and each merged class may be declared in exactly one place.
 
 **Two shells were supersets rather than duplicates, and taking the superset was pixel-neutral.**
@@ -2562,7 +2562,7 @@ asserting an equivalence, and the equivalence is the part to check.** Name the *
 reading two files structurally cannot see whether they answer the **same**, and the obvious test for
 that (compare the SwiftUI table's `Color` against the AppKit table's `NSColor`) has to name both UI
 halves at once, which §3.5 step 5 forbids and should keep forbidding. Neither deleting the invariant nor
-buying a third tracked exception is right. Split it instead: `check-supervisor.sh` pins that the two
+buying a third tracked exception is right. Split it instead: `slopdesk-invariants` pins that the two
 tables name **corresponding rungs**, and `SlateNativeTokenTests` pins that a corresponding rung **is the
 same colour**. Together they state what the illegal test wanted to, from inside the floor. **A
 cross-half invariant is usually two legal halves that meet at the token layer** — worth reaching for
@@ -2581,7 +2581,7 @@ before an exception, since the pair-ratchet's blind spot is structural and will 
 
 ### Increment 59 — the lint's own hang, and why the fold was scheduled to trigger it
 
-**`make lint` could not fail; it could only stop returning.** `check-supervisor.sh`'s `spells` helper
+**`make lint` could not fail; it could only stop returning.** `slopdesk-invariants`'s `spells` helper
 takes a pattern and a file list, and forty bans build that list from a
 `$(repo_files 'Sources/SomeTarget/**/*.swift')` splat. A splat matching nothing expands to nothing, at
 which point the inner `grep -lE` has no file operands, falls back to stdin, and blocks forever. Three of
@@ -2861,8 +2861,8 @@ a Focus category and the palette had nowhere to put it.
 | Gate | Where | What it pins |
 | --- | --- | --- |
 | `PaletteReachesEveryBindingTests` | `Tests/SlopDeskClientCoreTests` | every binding runs from some row; no verb listed twice; no id collision; every derived row lands in a section `commandOrder` walks; every hint chip equals the registry glyph |
-| derivation shape | `check-supervisor.sh` | `registryRows` reads `WorkspaceBindingRegistry.bindings` and `coveredActions` reads `declared` — a transcribed list would go stale in silence |
-| no seventh case | `check-supervisor.sh` | the six deleted `PaletteAction` cases stay deleted; a row that names a registry verb IS that verb |
+| derivation shape | `slopdesk-invariants` | `registryRows` reads `WorkspaceBindingRegistry.bindings` and `coveredActions` reads `declared` — a transcribed list would go stale in silence |
+| no seventh case | `slopdesk-invariants` | the six deleted `PaletteAction` cases stay deleted; a row that names a registry verb IS that verb |
 
 The reach test is asserted as a SHAPE, not a count — a new binding is reachable the day it is
 declared. That is the lesson increment 63 paid for five times over: a gate stated as a number goes
@@ -2899,7 +2899,7 @@ Two things about the phone's renderer are departures from the overlay family, bo
 
 The Mac's `PasteProtectionSheet` adopted the shared type in the follow-up: its private
 `informativeText` was, from the moment `ClipboardConfirmPresentation` existed, a second copy of the
-same join, and adoption was a pure deletion. `check-supervisor.sh` now pairs the two renderers on it
+same join, and adoption was a pure deletion. `slopdesk-invariants` now pairs the two renderers on it
 the way it already pairs `MacCloseConfirmation` and `OverlayHostView` on `CloseConfirmationCopy`:
 each half must READ the shared type, and neither may respell the bullet or the caption.
 
@@ -3196,7 +3196,7 @@ not looks alive from everywhere except the half that is silent.
 ### Increment 74 — the phone veiled every pane and drew nothing over them
 
 ⌃⇥ opened on the phone. `store.paneSwitcher` armed, `PaneRecedeScrim` veiled every pane, and the card
-that says WHICH pane you are walking towards did not exist — because `check-supervisor.sh` forbade
+that says WHICH pane you are walking towards did not exist — because `slopdesk-invariants` forbade
 it by name: "the ⌃⇥ readout is AppKit only". The ban's premise was that the phone has no modifier
 stream, so a SwiftUI half could never render. That is a statement about the opening CHORD, and the
 chord was never the only way in: the binding row is `Platform::Both` and the palette carries the same
@@ -3391,7 +3391,7 @@ repair minted, so asking again is asking the answer about itself. What Swift gen
 is how many identities the parse will spend, and it cannot know it because knowing needs the parse.
 That matters more than it sounds: the crate holds no entropy on purpose, and a pool that runs dry
 REPEATS its last entry — two panes with one id, re-minted apart on every load, which is the divider
-defect again wearing the pane's clothes. The size is asked of the file, and `check-supervisor.sh`
+defect again wearing the pane's clothes. The size is asked of the file, and `slopdesk-invariants`
 pins that it stays asked.
 
 **The asymmetry the port makes explicit**: a SplitNodeId is DERIVED because it names a seam inside
@@ -3482,7 +3482,7 @@ the two levels of body evaluation a render performs — the plate's own, then `S
 where the `@ViewBuilder` finally runs — then asserts the content provider was called ZERO times and the
 probe at least once, so "no content read" cannot be satisfied by a render that evaluated nothing.
 `ClipboardRingTests` pins the probe's agreement with what a paste would actually find, ring fallback
-included, in all four combinations. A `check-supervisor.sh` gate — no `currentLocalClipboard(` in a
+included, in all four combinations. A `slopdesk-invariants` gate — no `currentLocalClipboard(` in a
 `SlopDeskPhoneUI` file outside a closure body — would be a real ratchet on top of these, and is left
 unwritten here only because another change owns that file.
 
@@ -3550,7 +3550,7 @@ the navigation fired with no chip, no fill, no haptic, and — because the strea
 a peel — no way to tell a gesture the host accepted from one it dropped.
 
 **The gap was recorded rather than hidden, which is what made it findable.** Rule E of
-`check-supervisor.sh` compares the two halves' `VideoWindowPipeline` callbacks and holds the difference
+`slopdesk-invariants` compares the two halves' `VideoWindowPipeline` callbacks and holds the difference
 as a named ledger entry; `onSwipeNavStatusChanged` sat in `phone_absent_pipeline_sinks` with a comment
 saying why. That rule fails BOTH ways, so wiring the phone up was what forced the entry out, and the
 entry coming out is the record that it is closed.
@@ -3703,7 +3703,7 @@ the same route, and the arithmetic and its pin are for the first time in the sam
 `union.contains(frame) && union != frame ? union : frame`, then two separate hysteresis calls to
 choose between expanding and contracting. That is `region_decision` now, answering one of three
 verdicts, so the rule about what a union LARGER than the window means lives with the rule that
-measured it. The doors are portable, unlike the `cgwindow` ones next to them, and `check-supervisor`
+measured it. The doors are portable, unlike the `cgwindow` ones next to them, and `slopdesk-invariants`
 N.20 fails if anyone declares one inside the macOS-only region: these decide rather than read, and
 gating them would hide that.
 
@@ -3736,7 +3736,7 @@ the framework reports back is `min`'d against the capacity that was lent — cla
 **Two live bugs the port surfaced.** `WindowFeedGlue` seeded both the feed's `isFrontmostApp` flag and
 the AX observer from `NSWorkspace.shared.frontmostApplication`, which in a daemon that pumps no AppKit
 run loop is a snapshot frozen at first access — the exact freeze `HostFrontmostApp`'s own doc comment
-had warned about since increment 62. Both now read the WindowServer. `check-supervisor` N.19 makes
+had warned about since increment 62. Both now read the WindowServer. `slopdesk-invariants` N.19 makes
 that a gate: no `Sources/` file decodes a window record or reads a frozen frontmost, with two named
 exemptions that carry their reason.
 
@@ -3774,7 +3774,7 @@ which is why `clampToInt32` existed at all; the Rust it became saturates, and it
 `slopdesk-video` beside the rules that produce the deltas rather than in the class that posts them.
 And the macOS-only question got its answer checked rather than argued: the crate enters
 `slopdesk-ffi`'s graph by exactly the route `slopdesk-git` takes — target-gated dependency, doors
-inside the header's `MACOS-ONLY` region, `cfg`'d module — and `build-ffi.sh` requires the symbols
+inside the header's `MACOS-ONLY` region, `cfg`'d module — and `slopdesk-gate ffi` requires the symbols
 present on one slice and absent on the other two, which it did on the first build.
 
 ### Increment 83 — the link island, and the difference between one copy and one home
@@ -4050,10 +4050,10 @@ island moat, and by a differently-animating amount during a collapse.
    - **"whole-file `#if os(iOS)`" is not what happens to most of it.** 40 of the 101 files already
      carry an internal `#if os(macOS)`/`#if os(iOS)`. Those are not wrapped — they are *resolved*, the
      macOS arm deleted, because by then the Mac has its own renderer and the gate has one live side.
-     The supervisor's "one allowed gate" rule (`check-supervisor.sh`, the `SlopDeskPhoneUI` whole-file
+     The supervisor's "one allowed gate" rule (`slopdesk-invariants`, the `SlopDeskPhoneUI` whole-file
      exemption) is the shape the target must be left in, not the shape it is in now.
    - **Two test files cross the halves and no ratchet sees them.** `ui_edges` in
-     `check-supervisor.sh` globs `Sources/…` only, so `Tests/SlopDeskMacUITests/MacRailStatusRollupRender.swift:31`
+     `slopdesk-invariants` globs `Sources/…` only, so `Tests/SlopDeskMacUITests/MacRailStatusRollupRender.swift:31`
      and `MacChromeSnapshotRender.swift:44` both `@testable import SlopDeskClientUI` unopposed. They
      take `SlateProjectIsland`, `SlateSearchField`, `SlatePlateStyle` and `StatusDotView` — the SwiftUI
      design-system halves — into the **Mac's** snapshot harness. That is the same edge the gate exists

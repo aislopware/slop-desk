@@ -9,7 +9,7 @@ import CSlopDeskFFI
 /// warn before either happens.
 ///
 /// Case order is the discriminant order `slopdesk-workspace`'s `secrets::PasteRisk::ALL` gives, which
-/// `scripts/check-supervisor.sh` pins.
+/// `rust/slopdesk-invariants` pins.
 public enum PasteRisk: Sendable, Equatable {
     /// Nothing notable — paste freely.
     case ok

@@ -24,7 +24,7 @@ guessing one.
 - **`make quick` after every edit; `make check` once before pushing.** `quick` is `check` with the
   full suite swapped for `test-touched` (the test targets whose closure contains the change, and the
   full suite whenever a path cannot be attributed) and Miri omitted. Both are cheap on a warm tree
-  because the two expensive gates are CONTENT-STAMPED, not re-run: `build-ffi.sh` against the Rust
+  because the two expensive gates are CONTENT-STAMPED, not re-run: `slopdesk-gate ffi` against the Rust
   sources it links, `slopdesk-gate ios` against every input the iOS triple compiles. `--force` on either
   re-runs it when the stamp itself is in doubt. A *touched-target* green never writes the pre-push
   green-tree marker — only a full suite on a clean tree does — so `quick` cannot make a push skip
@@ -35,9 +35,9 @@ guessing one.
   outlive its caller, be `execve`d, or be dialled by two processes is a binary on a socket; one that
   is in-process by necessity and lifetime-coupled to its caller is an `.xcframework`, the way
   `libghostty` and `CSlopDeskFFI` already are. **cargo never runs inside `swift build`** — the
-  artifact is built by `make ffi` (`scripts/build-ffi.sh`) beforehand, never by a build plugin that
+  artifact is built by `make ffi` (`slopdesk-gate ffi`) beforehand, never by a build plugin that
   shells out. A linked port has one failure mode a socket port does not: an artifact older than its
-  sources, green tests and all. `build-ffi.sh --check` is in `make lint` for exactly that, and it
+  sources, green tests and all. `slopdesk-gate ffi --check` is in `make lint` for exactly that, and it
   derives its own inputs — a wrapped crate is covered by its `path = "../…"` edge to the shim, not
   by a list anyone maintains. See `docs/55-ffi-boundary.md`.
 - **One implementation, never two languages.** Porting means deleting the original in the same
@@ -77,6 +77,9 @@ guessing one.
   picks the version bump; the subject lands verbatim in the changelog. Never hand-edit
   `CHANGELOG.md` or bump a version by hand; `make release` owns every version site.
 
-`make lint-supervisor` (`scripts/check-supervisor.sh`) ratchets the cross-language contracts — which
-Swift files must stay deleted, socket paths, relinquish-vs-terminate. Its failure messages name the
-doc section, so those rules are not restated here.
+`make lint-invariants` (`rust/slopdesk-invariants`) ratchets the cross-language contracts — which
+Swift files must stay deleted, socket paths, relinquish-vs-terminate, every constant typed in both
+languages. Each rule carries a break-test that seeds the drift and asserts the rule fires, and each
+failure message names the doc section, so those rules are not restated here. `make lint-reach` is the
+half no rule can decide by reading: what a `make` target would RUN, and whether the linked artifact
+is older than its sources.

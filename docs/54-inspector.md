@@ -92,7 +92,7 @@ window a client is about to ask for is still there when it asks. Only a delibera
 An inspectord that will not start is logged loudly and is **non-fatal** — it must not tear down a
 healthy terminal server, exactly as a failed bind did not. There is then no inspector, and no
 fallback: a Swift producer "just for when inspectord is missing" is the cross-language mirror the
-tree forbids, and `scripts/check-supervisor.sh` §12 fails the build if one reappears.
+tree forbids, and `rust/slopdesk-invariants` fails the build if one reappears.
 
 ## 4. The wire
 
@@ -110,7 +110,7 @@ one end of it.
 
 Each end is written ONCE. `InspectorCodec` encodes tag 3 and decodes tags 1–2; `wire.rs` does the
 mirror — a tag 3 arriving at the client decodes as `unknownType`, not as a subscribe. That is the
-two-ENDS exemption to the one-implementation rule, and §12 of `check-supervisor.sh` is what keeps
+two-ENDS exemption to the one-implementation rule, and §12 of `slopdesk-invariants` is what keeps
 the halves from drifting.
 
 The event JSON is what Swift's **synthesized** `Codable` produces, which is a real constraint rather
@@ -194,7 +194,7 @@ that watches the directory.
 | `make inspectord` | build (release) |
 | `make inspectord-test` | 98 unit tests + the 2 corpus tests below |
 | `make lint-rust` | clippy `-D warnings` + `rustfmt --check`, sixth workspace |
-| `scripts/check-supervisor.sh` | §12 — the three tags, the 16 MiB cap, the announce line, no Swift producer |
+| `rust/slopdesk-invariants` | §12 — the three tags, the 16 MiB cap, the announce line, no Swift producer |
 | `swift test --filter InspectorTransportTests` | the client end against hand-built wire bytes |
 | `swift test --filter InspectorServiceManagerTests` | 8 — argv with and without a transcript, the announce parse, a missing binary, a survivor on the wrong port, a child that never announces, relinquish vs shutdown |
 | `swift test --filter InspectorGlueTests` | the view-model fold and `LivePaneSession` glue over the loopback |

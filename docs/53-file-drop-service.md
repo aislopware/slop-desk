@@ -80,7 +80,7 @@ across a host restart is simply not hostd's business any more. Only a deliberate
 A dropd that will not start is logged loudly and is **non-fatal** — it must not tear down a healthy
 terminal server, exactly as a failed bind did not. There is then no file transfer, and no fallback:
 a Swift receiver "just for when dropd is missing" is the cross-language mirror the tree forbids, and
-`scripts/check-supervisor.sh` §10 fails the build if one reappears.
+`rust/slopdesk-invariants` fails the build if one reappears.
 
 ## 4. The wire
 
@@ -111,7 +111,7 @@ Each end is written ONCE, and both are Rust. `client.rs` encodes 1–5 and decod
 does the mirror, and a test in the same crate walks every type through both — the two-ENDS exemption
 to the one-implementation rule, kept honest by a test rather than by review. `SlopDeskFileTransfer`
 is the Swift face of `client.rs`, reaching it through `rust/slopdesk-ffi`'s `file_transfer` door; it
-holds no byte layout and no constant of its own. §10 of `check-supervisor.sh` pins that: the door's
+holds no byte layout and no constant of its own. §10 of `slopdesk-invariants` pins that: the door's
 eight entries exist on both sides, no reader or writer has grown back under
 `Sources/SlopDeskFileTransfer`, and the four numbers are read from `slopdesk_drop_constant` rather
 than respelled.
@@ -165,7 +165,7 @@ what the tests use.
 | `make dropd` | build (release) |
 | `make dropd-test` | 28 Rust tests: 3 name, 8 protocol, 8 receive, 5 sink, 4 framing |
 | `make lint-rust` | clippy `-D warnings` + `rustfmt --check`, fourth workspace |
-| `scripts/check-supervisor.sh` | §10 — type bytes both ways, version, both caps, the announce line, no Swift receiver |
+| `rust/slopdesk-invariants` | §10 — type bytes both ways, version, both caps, the announce line, no Swift receiver |
 | `swift test --filter SlopDeskFileTransferTests` | 13 codec + 5 decoder + 5 end-to-end |
 | `swift test --filter FileDropServiceManagerTests` | 7 — argv, the announce parse, a missing binary, a survivor on the wrong port, a child that never announces, relinquish vs shutdown |
 | `make test` / `make test-touched` | all of it, and they BUILD dropd first |

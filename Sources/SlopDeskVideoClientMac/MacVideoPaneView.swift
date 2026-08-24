@@ -10,7 +10,7 @@
 // decision live once in `SlopDeskVideoClient`, most of them already in Rust behind the FFI.
 //
 // The seam contract — which sinks this half accepts — is ratcheted against the phone's in
-// `scripts/check-supervisor.sh`, so a sink wired here and forgotten there fails `make lint` rather
+// `rust/slopdesk-invariants`, so a sink wired here and forgotten there fails `make lint` rather
 // than shipping as a feature that works on one platform.
 
 import CSlopDeskFFI

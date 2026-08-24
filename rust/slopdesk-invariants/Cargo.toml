@@ -1,7 +1,7 @@
 # `slopdesk-invariants` — the cross-language ratchets, as a program rather than a shell script.
 #
 # ## What it replaces, and why the shape was the problem
-# `scripts/check-supervisor.sh` was 12 178 lines — 6 471 of code, 5 240 of comment — asserting about
+# `rust/slopdesk-invariants` was 12 178 lines — 6 471 of code, 5 240 of comment — asserting about
 # 1 100 invariants through 891 `grep`, 172 `sed` and 72 `awk` invocations. It took 2 m 29 s wall for
 # 92 s of user time at 87 % CPU: almost none of that was WORK. It was process spawn, and the same
 # source files being read off disk a thousand times over.

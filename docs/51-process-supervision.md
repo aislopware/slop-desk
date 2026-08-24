@@ -307,7 +307,7 @@ loudly — they hung. `poll` said readable, the pump had already taken the bytes
 parked in the kernel until the child died thirty seconds later. They now read the way hostd does,
 through `PaneOutput` (`Tests/SlopDeskHostTests/SupervisedPTYSupport.swift`), which is both correct
 and strictly stronger: matching is sequential from a cursor, so nothing is lost between two
-assertions the way it was with a raw fd. `scripts/check-supervisor.sh` ratchets the absence.
+assertions the way it was with a raw fd. `rust/slopdesk-invariants` ratchets the absence.
 
 ### Two things that are un-awaited, and must be
 
@@ -407,7 +407,7 @@ a second, pipe-flavoured spawn would put a second pre-exec window next to the di
 ### relinquish, not terminate
 The §5.5 line, drawn again: `HostServer.stop()` calls `relinquish()` (hostd stops listening, superd
 keeps the child), and only a deliberate stop calls `terminate()`. Both spellings compile and both
-read like cleanup, so `scripts/check-supervisor.sh` §8 ratchets it.
+read like cleanup, so `rust/slopdesk-invariants` ratchets it.
 
 ### Not adopted by `adoptSurvivingPanes`
 A `service:` id does not parse as a UUID, so the pane loop skips it — the managers adopt lazily on
@@ -419,7 +419,7 @@ The bridge socket path carried `getpid()`. That is §1's bug in a second place, 
 only became fatal here: a code-server that now survives a restart would keep dialling the address of
 the hostd that started it, forever, because a child cannot be told a new environment. The path is
 stable now (one bridge per user, which is what one code-server per user already implied), and
-`check-supervisor.sh` §7 ratchets every socket path in `Sources/`, not just superd's three.
+`slopdesk-invariants` ratchets every socket path in `Sources/`, not just superd's three.
 
 ---
 
@@ -786,7 +786,7 @@ than a review comment.
 
 ### The gate
 
-`scripts/check-supervisor.sh` checks the MANIFESTS, not the source: rustc already enforces `forbid`
+`rust/slopdesk-invariants` checks the MANIFESTS, not the source: rustc already enforces `forbid`
 per crate, and what it cannot notice is a new crate quietly spelling `deny` or stating no policy at
 all (which is `allow` by default). Every manifest under `rust/` must say `forbid`, inherit it with
 `[lints] workspace = true`, or be `slopdesk-posix` — and `libc::fork`/`libc::openpty` may not appear

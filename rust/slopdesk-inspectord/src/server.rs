@@ -37,7 +37,7 @@ pub const DEFAULT_KEEP_ALIVE: Duration = Duration::from_secs(15);
 /// The announce line's marker.
 ///
 /// Spelled identically in `Sources/SlopDeskHost/InspectorServiceManager.swift` and compared by
-/// `scripts/check-supervisor.sh` — this is how hostd re-learns the port after a restart, by
+/// `rust/slopdesk-invariants` — this is how hostd re-learns the port after a restart, by
 /// replaying superd's ring from offset 0 and reading the child's own words back.
 pub const ANNOUNCE_PREFIX: &str = "inspectord: listening on 0.0.0.0:";
 
@@ -48,7 +48,7 @@ pub const ANNOUNCE_PREFIX: &str = "inspectord: listening on 0.0.0.0:";
 /// version rides here rather than on a wire that has no handshake to add it to. FIRST in the
 /// parenthetical and `v`-prefixed so the position is stable however the rest of that text grows.
 /// Spelled identically in the other two announcing daemons and in `SidecarAnnounce.versionMarker`;
-/// `scripts/check-supervisor.sh` ratchets all four.
+/// `rust/slopdesk-invariants` ratchets all four.
 pub const ANNOUNCE_VERSION_PREFIX: &str = "(v";
 
 /// The exact line [`Server::announce`] prints.

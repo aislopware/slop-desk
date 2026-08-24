@@ -367,7 +367,7 @@ public struct EncodeLoadPacer: Sendable, Equatable {
     // swiftlint:disable unused_declaration
     /// The per-frame wall-clock budget (ms) at a given fps.
     ///
-    /// No Swift caller ON PURPOSE: `check-supervisor.sh` pins this door among the governor's three,
+    /// No Swift caller ON PURPOSE: `slopdesk-invariants` pins this door among the governor's three,
     /// so the per-frame budget stays one division in the crate rather than becoming a second
     /// `1000.0 / fps` wherever someone next needs it.
     static func budgetMs(_ fps: Int) -> Double { slopdesk_fps_budget_millis(Int64(fps)) }

@@ -326,7 +326,7 @@ impl Message<'_> {
                 out.push(kind::INJECT_TEXT);
                 // `body` was just cut to `MAX_TEXT`, so the conversion cannot narrow. No helper: a
                 // `truncating_u32` here would be a FIFTEENTH copy of a name that has meant two
-                // different things, and `check-supervisor.sh` bans it for exactly that.
+                // different things, and `slopdesk-invariants` bans it for exactly that.
                 out.extend_from_slice(&u32::try_from(body.len()).unwrap_or(u32::MAX).to_be_bytes());
                 out.extend_from_slice(body.as_bytes());
                 Some(out)

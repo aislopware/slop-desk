@@ -341,7 +341,7 @@ public extension TreeWorkspace {
 /// Which repair to ask the crate for.
 ///
 /// The CASE ORDER is the byte, and it is the crate's — `slopdesk_workspace::tree_ops::RepairPass`.
-/// `scripts/check-supervisor.sh` compares the two maps case-name against case-name, because a
+/// `rust/slopdesk-invariants` compares the two maps case-name against case-name, because a
 /// reorder here would silently ask for a different repair: "specs only" and "the whole launch
 /// restore" differ by whether a detached pane comes back, and both answer a perfectly valid tree.
 ///
@@ -356,7 +356,7 @@ enum RepairPass: CaseIterable {
     case normalized
     case launchRestore
 
-    /// The CASE index — the crate's `RepairPass` order, pinned by `scripts/check-supervisor.sh`.
+    /// The CASE index — the crate's `RepairPass` order, pinned by `rust/slopdesk-invariants`.
     var ffiByte: UInt8 {
         switch self {
         case .specs: 0
@@ -470,7 +470,7 @@ private extension TreeWorkspace {
     ///
     /// **Both are known duplicated decisions and are pinned as such** (`docs/55` §8): the
     /// differential suite holds each against the crate's own answer, and
-    /// `scripts/check-supervisor.sh` fails if a third repair grows beside them. The change that
+    /// `rust/slopdesk-invariants` fails if a third repair grows beside them. The change that
     /// DELETES this function is a whole-`TreeWorkspace` codec in `slopdesk_workspace::persist` — the
     /// file's own encoding, which loses nothing because losing nothing is what a persistence codec
     /// is for. `derived_split_id`'s `## Owed` note is already headed there.

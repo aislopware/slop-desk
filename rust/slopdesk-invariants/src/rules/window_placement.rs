@@ -1,8 +1,8 @@
 //! Where a window goes, and who decides — the parked placement, the off-screen rescue, the
 //! discovery cadence, the raise rule and the two accumulators that cross by value.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every one of these is arithmetic over a screen the
-//! test machine does not have, which is exactly why a second copy survives a green suite.
+//! Ported from the deleted `check-supervisor.sh`. Every one of these is arithmetic over a screen
+//! the test machine does not have, which is exactly why a second copy survives a green suite.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

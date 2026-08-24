@@ -49,7 +49,7 @@ public struct VideoRect: Equatable, Sendable {
     /// The area of intersection with `other` (0 when disjoint).
     ///
     /// No Swift caller: the multi-monitor screen pick that used to ask this now runs entirely inside
-    /// `rust/slopdesk-video`'s `coordinate_mapping`. The face stays because `check-supervisor` pins it
+    /// `rust/slopdesk-video`'s `coordinate_mapping`. The face stays because `slopdesk-invariants` pins it
     /// — the crate's NaN-ignoring maxima are what land a degenerate rect on a finite answer instead of
     /// poisoning the pick, and a Swift `max(0, …)` written in its place would not do that.
     public func intersectionArea(_ other: Self) -> Double {

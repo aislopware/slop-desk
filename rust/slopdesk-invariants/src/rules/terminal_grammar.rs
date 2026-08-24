@@ -1,11 +1,11 @@
 //! Five grammars over a stream of events — the motion run, the key vocabulary, the styled VT pass,
 //! the paste guard and the copy-mode clustering.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Each is a walk Swift can re-type in twenty lines and
-//! get ALMOST right: a cursor a cell off, a chord that cannot be typed, a warning that names the
-//! wrong danger, scrolled distance dropped where it should have summed. None of them crashes, and
-//! none of them fails a test that only ever exercised one side — which is why what is pinned here
-//! is the call, not the behaviour.
+//! Ported from the deleted `check-supervisor.sh`. Each is a walk Swift can re-type in twenty lines
+//! and get ALMOST right: a cursor a cell off, a chord that cannot be typed, a warning that names
+//! the wrong danger, scrolled distance dropped where it should have summed. None of them crashes,
+//! and none of them fails a test that only ever exercised one side — which is why what is pinned
+//! here is the call, not the behaviour.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

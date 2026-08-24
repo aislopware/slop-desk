@@ -35,7 +35,7 @@ pub const ANNOUNCE_PREFIX: &str = "dropd: listening on 0.0.0.0:";
 ///
 /// FIRST in the parenthetical and `v`-prefixed so the position is stable however the rest of that
 /// text grows. Spelled identically in the other two announcing daemons and in
-/// `SidecarAnnounce.versionMarker`; `scripts/check-supervisor.sh` ratchets all four.
+/// `SidecarAnnounce.versionMarker`; `rust/slopdesk-invariants` ratchets all four.
 pub const ANNOUNCE_VERSION_PREFIX: &str = "(v";
 
 /// Binds the upload port.

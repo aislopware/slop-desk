@@ -1,10 +1,10 @@
 //! `docs/56` stage D: the four modal surfaces the split draws twice, and the shared host that must
 //! stay the phone's alone.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Each surface is drawn by two views and worded by one
-//! type. What is banned in the views is not "a string" but a SECOND DERIVATION — an excerpt cut, a
-//! verb table, a confirmation's shape — because those drift silently: one half quietly grows an
-//! action the other has not got, and nothing is red until somebody notices their phone is
+//! Ported from the deleted `check-supervisor.sh`. Each surface is drawn by two views and worded by
+//! one type. What is banned in the views is not "a string" but a SECOND DERIVATION — an excerpt
+//! cut, a verb table, a confirmation's shape — because those drift silently: one half quietly grows
+//! an action the other has not got, and nothing is red until somebody notices their phone is
 //! different.
 //!
 //! Three claims did NOT come across. The shell asked `grep -A4 'draws:' MacWorkspaceRootView.swift`

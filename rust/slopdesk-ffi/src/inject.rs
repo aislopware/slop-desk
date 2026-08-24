@@ -19,7 +19,7 @@
 //! ## macOS only, and the three spellings that keep it true
 //!
 //! The `cfg` here, the `TARGET_OS_OSX` guard in `slopdesk_ffi.h`, and the `MACOS-ONLY` region
-//! `scripts/build-ffi.sh` reads out of that header. The script requires each symbol PRESENT on the
+//! `slopdesk-gate ffi` reads out of that header. The script requires each symbol PRESENT on the
 //! macOS slice and ABSENT on both iOS slices, so a `cfg` that stopped matching the header fails the
 //! build in whichever direction it drifted. See `docs/57-apple-frameworks-in-rust.md` §3.
 

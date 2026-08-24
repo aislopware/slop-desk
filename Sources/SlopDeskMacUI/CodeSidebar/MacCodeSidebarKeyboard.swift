@@ -18,7 +18,7 @@
 // nil there rather than compiling to an empty branch.
 //
 // IT REACHES THE POOL, NEVER THE PAGE'S CLASS. `CodeSidebarWKWebView` is the responder seam and
-// `check-supervisor.sh` keeps its name inside the two files that own it, so everything below speaks
+// `slopdesk-invariants` keeps its name inside the two files that own it, so everything below speaks
 // ``CodeSidebarPooledPage`` — the webview plus the three things a page can be asked to do.
 
 import AppKit

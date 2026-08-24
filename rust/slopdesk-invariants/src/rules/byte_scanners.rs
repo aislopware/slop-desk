@@ -1,11 +1,11 @@
 //! The scanners that walk untrusted bytes — the plain-text VT pass, the escape grammar, the width
 //! table, the shell word, the find scan, the base64 codec and the `\xNN`/`%NN` reading.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every one of these was written more than once, and
-//! the counts are the point: six escape scanners, eight shell quoters, fourteen narrowing casts,
-//! three base64 codecs, four `hex_nibble`s. None of the copies was wrong on its own; what made them
-//! a defect was that they answered the same bytes differently, and the bytes came off a socket or a
-//! clipboard rather than out of a test.
+//! Ported from the deleted `check-supervisor.sh`. Every one of these was written more than once,
+//! and the counts are the point: six escape scanners, eight shell quoters, fourteen narrowing
+//! casts, three base64 codecs, four `hex_nibble`s. None of the copies was wrong on its own; what
+//! made them a defect was that they answered the same bytes differently, and the bytes came off a
+//! socket or a clipboard rather than out of a test.
 
 use crate::claim::{Claim, GATE_RULES, View, check_all};
 use crate::report::Report;

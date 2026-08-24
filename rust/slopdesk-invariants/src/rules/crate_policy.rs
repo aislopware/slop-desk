@@ -1,8 +1,8 @@
 //! Which crates may write `unsafe`, and which lints every workspace must refuse.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Both rules read MANIFESTS rather than source, and for
-//! the same reason: rustc already enforces `unsafe_code = "forbid"` inside a crate that states it,
-//! and clippy already enforces a lint level a crate configures. What neither can notice is the
+//! Ported from the deleted `check-supervisor.sh`. Both rules read MANIFESTS rather than source, and
+//! for the same reason: rustc already enforces `unsafe_code = "forbid"` inside a crate that states
+//! it, and clippy already enforces a lint level a crate configures. What neither can notice is the
 //! POLICY drifting — a new crate that quietly says `deny` instead of `forbid`, or one that says
 //! nothing and inherits nothing, or a workspace that never opted out of a lint whose only offered
 //! fix breaks a repo invariant. Those are manifest facts, and a manifest is what this file reads.

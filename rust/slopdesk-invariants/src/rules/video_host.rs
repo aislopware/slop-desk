@@ -1,10 +1,10 @@
 //! The host's mux, its window feed, the four smallest send-path decisions, the four bounded
 //! accumulators and the aspect geometry.
 //!
-//! Ported from `scripts/check-supervisor.sh`. What every rule here guards is a verdict that must be
-//! SINGLE because two surfaces ask it: the router's lane sets and the client's, the picker's
-//! inclusion test and the feed's, the encoder's budget and the pacer's. A second copy agrees on the
-//! easy cases and diverges exactly where nobody is watching.
+//! Ported from the deleted `check-supervisor.sh`. What every rule here guards is a verdict that
+//! must be SINGLE because two surfaces ask it: the router's lane sets and the client's, the
+//! picker's inclusion test and the feed's, the encoder's budget and the pacer's. A second copy
+//! agrees on the easy cases and diverges exactly where nobody is watching.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

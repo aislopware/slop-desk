@@ -11,7 +11,7 @@
 // layer. The ALPHAS travel with the rung for the same reason the wording does — a half that owned
 // the number would be free to disagree about how faint "at rest" is.
 //
-// ⚠️ THE RUNG LOOKUPS ARE A PAIR, AND THE PAIR IS RATCHETED. `check-supervisor.sh` reads every case
+// ⚠️ THE RUNG LOOKUPS ARE A PAIR, AND THE PAIR IS RATCHETED. `slopdesk-invariants` reads every case
 // of `DropZoneInk` and `DropZoneLabelInk` out of the enum and requires this file AND
 // `PaneDropOverlay.swift` to answer each one explicitly. A `default:` arm would compile and would
 // silently ink a newly-added rung as whatever the fallback happened to be, in one renderer only —

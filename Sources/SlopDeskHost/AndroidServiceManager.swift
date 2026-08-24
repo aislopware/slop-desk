@@ -141,7 +141,7 @@ final class AndroidServiceManager: @unchecked Sendable {
 
     /// The port out of `androidd: listening on 0.0.0.0:<port> (adb …)`, or `nil`.
     ///
-    /// A build that changes the marker fails `scripts/check-supervisor.sh`, which compares this
+    /// A build that changes the marker fails `rust/slopdesk-invariants`, which compares this
     /// string against `server.rs`.
     static func parseAnnouncedPort(fromLogLine line: String) -> UInt16? {
         AnnouncedPort.directlyAfter(announceMarker, in: line)

@@ -1,8 +1,8 @@
 //! The two framings a device panel decodes — screend's request frame and the scrcpy video
 //! stream.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Both are byte layouts with a far side that does not
-//! live here, so a second speller produces a frame the other end drops without a word, or an
+//! Ported from the deleted `check-supervisor.sh`. Both are byte layouts with a far side that does
+//! not live here, so a second speller produces a frame the other end drops without a word, or an
 //! access unit that decodes to green.
 
 use crate::claim::{Claim, View, check_all};

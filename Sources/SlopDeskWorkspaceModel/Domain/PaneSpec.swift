@@ -221,7 +221,7 @@ public struct VideoPaneModes: Codable, Sendable, Equatable {
     /// carry a `VideoPaneModes` — five public fields, no methods, no callers, no tests and not even
     /// re-exported — for as long as this comment claimed otherwise. It had no rule in it and nothing
     /// reached it, so the pair could never be caught disagreeing; it was deleted on 2026-08-22 on
-    /// the rule that an unreached copy is worse than none, and `check-supervisor.sh` now fails if
+    /// the rule that an unreached copy is worse than none, and `slopdesk-invariants` now fails if
     /// one comes back. The sentence above is true today because the code was changed to match it.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)

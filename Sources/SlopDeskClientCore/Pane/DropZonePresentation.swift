@@ -110,7 +110,7 @@ package enum DropZonePresentation {
     /// hugs the left, and its label draws half outside the pane with nothing to notice. The failure
     /// is invisible to every other gate too — the point is still a well-formed `CGPoint`, both
     /// overlays still render, and the clip rectangle just eats the top half of the word. The ink
-    /// verdicts below are ratcheted by `scripts/check-supervisor.sh` so that a new zone cannot reach
+    /// verdicts below are ratcheted by `rust/slopdesk-invariants` so that a new zone cannot reach
     /// a renderer unanswered; exhaustiveness is that same obligation collected by the compiler
     /// instead of by a script, and it holds only while no arm absorbs the unwritten cases.
     package static func labelCenter(_ zone: DropZone, shape: DropZoneShape, in size: CGSize) -> CGPoint {

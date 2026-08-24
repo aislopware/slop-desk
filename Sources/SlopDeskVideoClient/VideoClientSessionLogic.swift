@@ -449,7 +449,7 @@ public enum ViewportPan {
 /// PORT CANDIDATE: this is a rule, so `CLAUDE.md`'s default says Rust. It stayed Swift for one
 /// scheduling reason and no design one — `rust/slopdesk-ffi/include/slopdesk_ffi.h` and
 /// `src/lib.rs` are the hand-maintained FFI surface and were being edited concurrently, and a new
-/// symbol there could not be built or verified without `build-ffi.sh`. It belongs beside
+/// symbol there could not be built or verified without `slopdesk-gate ffi`. It belongs beside
 /// ``ViewportPan``'s two entry points in `rust/slopdesk-video/src/client_view.rs`.
 public enum ViewportZoom {
     /// The floor — minify a window up to 4× larger than the pane into view.

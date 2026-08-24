@@ -15,7 +15,7 @@ import XCTest
 /// defaulted parameter threaded down through the pane canvas; no caller in `Sources/`, `Apps/` or
 /// `ThirdParty/` ever passed `true`, so the flag and every branch on it were deleted whole in
 /// increment 56d and the assertion that produced the only `true` went with them — deleted, not
-/// rewritten to pass, because it was the branch's sole reason to exist. `check-supervisor.sh` fails
+/// rewritten to pass, because it was the branch's sole reason to exist. `slopdesk-invariants` fails
 /// the build if the name comes back.
 ///
 /// Hang-safety (CLAUDE.md rule #6): NO `SCStream`/`VTCompression`/`VTDecompression`/Metal/`NSWindow`/`WKWebView`

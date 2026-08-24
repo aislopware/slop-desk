@@ -1,8 +1,8 @@
 //! What Settings OFFERS: one Rust table, one memoised reader, and no view that spells a choice.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The choices, their labels, their honest captions, the
-//! taxonomy and the ladders' stops and readouts are `slopdesk_workspace::settings_catalog`. They
-//! had already been lifted once, out of view bodies into a Swift catalog, and the argument for
+//! Ported from the deleted `check-supervisor.sh`. The choices, their labels, their honest captions,
+//! the taxonomy and the ladders' stops and readouts are `slopdesk_workspace::settings_catalog`.
+//! They had already been lifted once, out of view bodies into a Swift catalog, and the argument for
 //! lifting them did not stop at the view boundary: the table has no framework in it, and the two
 //! halves of the UI split were about to read it from two.
 

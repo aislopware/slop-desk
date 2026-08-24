@@ -44,7 +44,7 @@ SlopDeskDesignSystem` — and both ends of that chain are gone.
 - **`SlopDeskDesignSystem` is DELETED** (`657a8f44`, 2026-06-24). `grep -rl SlopDeskDesignSystem
   Sources/` returns zero files. The design floor is `SlopDeskSlate`
   (`Sources/SlopDeskSlate/SlateDesign.swift:1`), 10 files, and it holds **values only** —
-  `check-supervisor.sh` fails the build if a `some View` lands in it.
+  `slopdesk-invariants` fails the build if a `some View` lands in it.
 - **`SlopDeskClientUI` no longer exists as a target.** It was drained upward one surface at a time and
   then RENAMED to `SlopDeskPhoneUI` (`docs/56` §2, increment 63); the macOS half is
   `SlopDeskMacUI`. 103 Swift files each. The 33 files that still say the string `SlopDeskClientUI` all
@@ -152,7 +152,7 @@ reachable from Settings on both shells.
 - **The view types are two apiece.** `CommandPaletteView`, `ConfirmModal` → 0 files. Live:
   `MacPalette` / `PaletteView`, `MacCloseConfirmation` / `ClipboardConfirmCard`, `MacToastStack` /
   `ToastStackView`, `MacCheatSheetPanel` / `KeyboardCheatSheetView`, `MacPaneSwitcher` /
-  `PaneSwitcherOverlay`. `check-supervisor.sh:5702-5820` ratchets these pairs so one half cannot grow a
+  `PaneSwitcherOverlay`. `rust/slopdesk-invariants`' `cross-language-twins` ratchets these pairs so one half cannot grow a
   surface the other lacks.
 - **`PaletteDataSource` survived as a protocol**, not a type — the per-domain result providers plus the
   `SearchMixer` (`Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift:23`, `:39`).

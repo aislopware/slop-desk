@@ -127,11 +127,11 @@ Big-endian, `len` counts everything after itself, 64 MiB frame ceiling on both e
 
 **7 is RETIRED and stays unallocated.** It was `sanitize`; the passes are linked now (§3a). A
 future verb takes 10, because a hostd built before the extraction would otherwise send a 7 meaning
-"clean this replay" to a daemon that answers something else. `check-supervisor.sh` fails the build
+"clean this replay" to a daemon that answers something else. `slopdesk-invariants` fails the build
 if either enum allocates it again.
 
 `hello`'s reply carries two numbers that move for different reasons. `HELLO_BANNER` —
-`slopdesk-screend 1` — is the PROTOCOL identity, a ratcheted constant `check-supervisor.sh` compares
+`slopdesk-screend 1` — is the PROTOCOL identity, a ratcheted constant `slopdesk-invariants` compares
 against `ScreenWire.helloBanner`; it is matched as a **prefix**, never for equality. The third field
 is the version of the screend process that answered. screend is a LaunchAgent
 (`make screend-install`) and so outlives hostd's build: after an upgrade the binary on disk
@@ -216,7 +216,7 @@ replay — see §3a for what that could arm. The four verbs left in the table de
 or a refusal of something a person can see is missing (an unrendered reattach, a tick with no
 detection verdict), never to a stream that changes the client's state behind their back. Every one
 is still a PASSTHROUGH or a refusal and never a second parser: a Swift renderer standing by "just
-in case" is the cross-language mirror this tree forbids. `scripts/check-supervisor.sh` §9 fails the
+in case" is the cross-language mirror this tree forbids. `rust/slopdesk-invariants` fails the
 build if any of the six pass declarations reappears under `Sources/`.
 
 **The chunk boundary is a linked rule, since stage 26.** Holding back the trailing half of an
@@ -288,7 +288,7 @@ durable** — its per-pane grids are a cache the next repaint refills. So:
 | `SLOPDESK_SCREEND_BIN` | which binary the client starts, and which one the test fixture uses |
 | `SLOPDESK_SCREEND_IDLE_EXIT` | seconds screend stays up holding NO connection before exiting, default 120, `0` = never. Read by screend itself |
 
-No pid in the socket name — the rule `scripts/check-supervisor.sh` ratchets for every socket here.
+No pid in the socket name — the rule `rust/slopdesk-invariants` ratchets for every socket here.
 `$TMPDIR` on macOS is already per-user and `0700`, which is what makes an un-suffixed name safe.
 
 **The idle exit is what keeps an on-demand daemon from accumulating.** The criterion is an OPEN

@@ -1,13 +1,13 @@
 //! `docs/56` stage D's three ALWAYS-MOUNTED surfaces: the navigator, the titlebar band and the
 //! panel chrome.
 //!
-//! Ported from `scripts/check-supervisor.sh`. These are the columns whose halves could disagree in
-//! the most ways, so everything two frameworks could argue about was lifted to `SlopDeskClientCore`
-//! FIRST and what is left in either half is drawing and events. Each rule here pairs a BAN (the
-//! shared `SwiftUI` original stays deleted, no sigil is respelt) with a READER — because a ban
-//! alone cannot tell a half that PORTED a reading from one that DELETED it, and a navigator that
-//! simply stopped drawing git passes every ban in the file while the parity rule the whole split
-//! rests on quietly stops holding.
+//! Ported from the deleted `check-supervisor.sh`. These are the columns whose halves could disagree
+//! in the most ways, so everything two frameworks could argue about was lifted to
+//! `SlopDeskClientCore` FIRST and what is left in either half is drawing and events. Each rule here
+//! pairs a BAN (the shared `SwiftUI` original stays deleted, no sigil is respelt) with a READER —
+//! because a ban alone cannot tell a half that PORTED a reading from one that DELETED it, and a
+//! navigator that simply stopped drawing git passes every ban in the file while the parity rule the
+//! whole split rests on quietly stops holding.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;

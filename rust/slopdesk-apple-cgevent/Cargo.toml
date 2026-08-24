@@ -24,7 +24,7 @@
 #
 # ## macOS ONLY, and how that is kept true
 # `slopdesk-ffi` links this behind `[target.'cfg(target_os = "macos")'.dependencies]`, its doors are
-# declared inside `slopdesk_ffi.h`'s `MACOS-ONLY BEGIN/END` region, and `scripts/build-ffi.sh`
+# declared inside `slopdesk_ffi.h`'s `MACOS-ONLY BEGIN/END` region, and `slopdesk-gate ffi`
 # requires those symbols PRESENT on the macOS slice and ABSENT on both iOS slices. That is the same
 # three-way bijection `slopdesk-git` takes and the only route `docs/57` §3 permits.
 [workspace]

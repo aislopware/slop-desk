@@ -21,7 +21,7 @@ necessity, lifetime-coupled to its caller — is a linked library.
 
 ## 2. The artifact
 
-`scripts/build-ffi.sh` builds `rust/slopdesk-ffi` for three arm64 slices (`macos-arm64`,
+`slopdesk-gate ffi` builds `rust/slopdesk-ffi` for three arm64 slices (`macos-arm64`,
 `ios-arm64`, `ios-arm64-simulator` — `docs/49`, "arm64 only"), checks every symbol the header
 promises is actually in each slice, and assembles
 `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework`.
@@ -50,13 +50,13 @@ same stale archive.
 so an interrupted build leaves the artifact stale rather than falsely fresh. It hashes the `*.rs`,
 `Cargo.toml`, `*.h` and `module.modulemap` of the shim *and every crate it wraps* — `INPUT_CRATES`
 is the transitive closure of path dependencies from `rust/slopdesk-ffi`, read out of the Cargo
-graph rather than kept by hand — plus `scripts/build-ffi.sh` itself, which decides which slices
+graph rather than kept by hand — plus `slopdesk-gate ffi` itself, which decides which slices
 exist and which symbols each must carry. File names are inside the hash, so a rename or a deletion
 moves it too. Each crate's own `target/` is pruned: build scripts write `.rs` under it, and cargo
 mints a fresh one *during* the build being stamped, so an unpruned walk made the gate fire on its
 own output.
 
-`scripts/check-supervisor.sh` runs `build-ffi.sh --check`, which reports staleness without
+`make lint-reach` runs `slopdesk-gate ffi --check`, which reports staleness without
 building. That gate is in `make lint`.
 
 **SwiftPM does not watch the artifact.** A rebuilt `.a` alone does not make `swift test` relink —
@@ -268,7 +268,7 @@ reorders the array it already holds.
 
 cbindgen would have to run *somewhere*, and "somewhere" is either inside `swift build` (forbidden)
 or a step that can silently not have run. A short header a reviewer diffs against `src/lib.rs` is
-the cheaper guarantee — and `build-ffi.sh` checks every symbol declared in it against every slice,
+the cheaper guarantee — and `slopdesk-gate ffi` checks every symbol declared in it against every slice,
 so a header that drifts from the library fails the build rather than the app.
 
 ## 4b. The handle convention — and when it is allowed
@@ -330,7 +330,7 @@ What that split has to survive is the obvious objection: if the near side does t
 dialect really moved? It has, and the boundary is exactly where the disagreement can live.
 Concatenating a glyph with a number is not a choice; CHOOSING `~` over `=` for a conflict is, and
 that one had already been got wrong — a dead second Swift renderer spelled it `=` beside a live one
-spelling `~`, and both compiled until the copy was deleted. `scripts/check-supervisor.sh` bans a
+spelling `~`, and both compiled until the copy was deleted. `rust/slopdesk-invariants` bans a
 sigil literal in the Swift face for that reason, which is a cheaper pin than any test: a second
 dialect cannot be born without typing one of those glyphs.
 
@@ -598,7 +598,7 @@ another turning a payload into the event the status machine folds. Splitting an 
 from its MEANING is what let the two drift — a payload case could gain a field the adapter never
 read, and the rules that decide a pane's status (`AskUserQuestion` is a BLOCK, an interrupt is a
 FINISHED TURN, the idle nudge is not a raised hand) lived nowhere near the case they governed. One
-crate holds both halves now, and `scripts/check-supervisor.sh` fails if a second reading appears —
+crate holds both halves now, and `rust/slopdesk-invariants` fails if a second reading appears —
 including a Swift file that reaches for a standalone parse door again.
 
 ### The door only one platform has
@@ -613,7 +613,7 @@ nothing on that platform can reach.
 
 The hazard a platform gate introduces is that it is spelled THREE times — the header's `#if`, the
 module's `cfg`, and the manifest's `[target.'cfg(…)'.dependencies]` — and two of the three can stop
-agreeing without any compiler noticing. `build-ffi.sh` closes that: it reads the symbols out of the
+agreeing without any compiler noticing. `slopdesk-gate ffi` closes that: it reads the symbols out of the
 region's `MACOS-ONLY BEGIN`/`END` markers and requires them PRESENT on the macOS slice and ABSENT
 from the other two. A `cfg` that stops matching the header fails whichever direction it drifted —
 a phone archive that quietly grew a C library, or a macOS door Swift can no longer link.
@@ -904,7 +904,7 @@ Four doors were being probed this way. Measured from Swift against the shipped `
 What makes this class worth its own entry is that **no test can see it**. Both calls agree; every
 answer is correct; the suites are green either way. The only trace is a git line that lands a beat
 late and a phone mirror that drops frames on a busy host — which reads as a device problem, not as a
-doubled call. `check-supervisor.sh` bans the probe by name on these four and separately requires
+doubled call. `slopdesk-invariants` bans the probe by name on these four and separately requires
 each fixed site to still carry its first guess, because a regression that deletes the guess is the
 same regression arriving by a different edit.
 
@@ -1023,7 +1023,7 @@ and the Swift wrapper is the only caller.
 Everything past the marshalling runs in a crate that `forbid`s unsafe. So a bug in the domain logic
 cannot be a memory bug — it is a wrong answer, which tests catch.
 
-Two rules keep that true, both gated in `check-supervisor.sh`:
+Two rules keep that true, both gated in `slopdesk-invariants`:
 
 - **No `extern "C"` outside `rust/slopdesk-ffi`.** A C entry point in a domain crate would put
   argument marshalling next to the logic it marshals — how a pointer bug becomes a terminal bug —
@@ -1060,7 +1060,7 @@ gated:
 - **A one-line identity predicate stays.** `isBlocked` is `self == .needsPermission`; routing that
   through C would add a boundary crossing to restate the case list.
 
-The case lists are then a CONTRACT, because what crosses is a discriminant. `check-supervisor.sh`
+The case lists are then a CONTRACT, because what crosses is a discriminant. `slopdesk-invariants`
 compares the Swift case counts against `AgentKind::ALL` and `ClaudeStatus::ALL`, so an enum that
 grows or reorders a case fails the build rather than reporting `working` for `blocked`.
 
@@ -1130,7 +1130,7 @@ now one function with the Swift test's own case pinned to it.
 1. Write the logic in a domain crate. It stays `forbid(unsafe_code)`.
 2. Add the wrapper to `rust/slopdesk-ffi/src/lib.rs` — marshalling only — with a test that calls
    it through the raw pointers the way Swift does.
-3. Declare it in `include/slopdesk_ffi.h`. Nothing else to list: `build-ffi.sh` reads
+3. Declare it in `include/slopdesk_ffi.h`. Nothing else to list: `slopdesk-gate ffi` reads
    `REQUIRED_SYMBOLS` out of the header and checks every slice carries them, so a header that
    drifts from the library fails at `make ffi` rather than at app link.
 4. If the domain crate is new to the shim, give it a `path = "../…"` edge — that is what puts it in
@@ -1337,7 +1337,7 @@ encoder state machine moved to `slopdesk_video::encoder_state`, which calls `enc
 directly; a door exists to let the OTHER language ask, and there is no longer another language
 asking. The fold this section is about is untouched — it is one ramp in one module, which was always
 the point — and `hevc-codec-is-rusts` in `rust/slopdesk-invariants` keeps it from being respelled in
-Swift, where `check-supervisor.sh`'s section 1 used to.
+Swift, where `slopdesk-invariants`'s section 1 used to.
 
 Folding the two together introduced exactly one behavioural question, and it is worth recording
 because it is the general one: the Swift rounded the *interpolated ceiling*, the shared ramp rounds
@@ -1469,7 +1469,7 @@ static type: Int   value: -1
 v == .max ? false
 ```
 
-The guard is `guard count >= 0` now, and `check-supervisor.sh` bans the other spelling in both files
+The guard is `guard count >= 0` now, and `slopdesk-invariants` bans the other spelling in both files
 that read a `size_t` off a door.
 
 **Neither language could have caught this, and that is the part worth carrying.** The Rust half
@@ -1558,7 +1558,7 @@ One limit of the ratchet worth stating, because it was found the hard way: the g
 both faults. **Deleting the `??` therefore silences the gate without fixing the defect** — the throw is
 still there and the file is still lost. A pattern ban can see a shape, never an intent.
 
-**Why `check-supervisor.sh` never caught any of them.** Read what it pins, and it pins it well:
+**Why `slopdesk-invariants` never caught any of them.** Read what it pins, and it pins it well:
 `compare_abi_enum` over four enum→byte maps, the intent op numbers, "did this Swift file come back",
 "does `SplitLayoutSolver.swift` still `import CSlopDeskFFI`". Every one of those is **a name or a
 number**. It has no mechanism for *"these two functions produce the same output on the same input"*,

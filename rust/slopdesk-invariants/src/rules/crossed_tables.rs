@@ -1,6 +1,6 @@
 //! Six answers that cross a boundary, and the literals that must not grow back beside them.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Each rule here is a door that already answers a
+//! Ported from the deleted `check-supervisor.sh`. Each rule here is a door that already answers a
 //! question, plus the Swift or Rust spelling that used to answer it a second time. What they share
 //! is that no test can catch the pair parting: a defaulted codec draws a black rectangle, a
 //! re-spelled threshold makes a client quietly stop repairing, a fourth built-in row added on one

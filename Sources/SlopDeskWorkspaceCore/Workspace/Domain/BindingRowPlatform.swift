@@ -35,7 +35,7 @@ public enum BindingRowPlatform {
     ///
     /// An id the table does not declare is LISTED — including the nine generated `pane.select.N`
     /// slots, which are `Both` and are covered by the collapsed `pane.selectN` representative. A typo
-    /// must not unbind a chord without a word; `scripts/check-supervisor.sh` pins the two id sets
+    /// must not unbind a chord without a word; `rust/slopdesk-invariants` pins the two id sets
     /// equal in both directions.
     public static func lists(_ id: String) -> Bool {
         lists(id, mac: isMac)

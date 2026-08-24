@@ -63,7 +63,7 @@ slopdesk-inspectord = { path = "../slopdesk-inspectord" }
 # whether a client-named path is inside the pane's project root. hostd asks it through this crate's
 # door and the forked `slopdesk-probe` asks it directly, which is what makes the two layers of that
 # confinement one rule rather than two that merely looked alike. The edge is also what puts the rule
-# inside `build-ffi.sh`'s content stamp (`docs/55` §3); everything else in the crate is
+# inside `slopdesk-gate ffi`'s content stamp (`docs/55` §3); everything else in the crate is
 # filesystem-walking that no client links and `-dead_strip` removes.
 slopdesk-probe = { path = "../slopdesk-probe" }
 slopdesk-sanitize = { path = "../slopdesk-sanitize" }
@@ -76,7 +76,7 @@ slopdesk-altscreen = { path = "../slopdesk-altscreen" }
 slopdesk-wire = { path = "../slopdesk-wire" }
 slopdesk-workspace = { path = "../slopdesk-workspace" }
 # The three crates carved out of `slopdesk-workspace`. The shim names modules in all four directly,
-# so all four are direct edges — and each one is what puts that crate inside `build-ffi.sh`'s
+# so all four are direct edges — and each one is what puts that crate inside `slopdesk-gate ffi`'s
 # `INPUT_CRATES` closure (`docs/55` §3). A crate reached only through a re-export would be invisible
 # to the stamp.
 slopdesk-ids = { path = "../slopdesk-ids" }
@@ -89,14 +89,14 @@ slopdesk-tree = { path = "../slopdesk-tree" }
 # audiences: only the host COMPRESSES, and every client DECOMPRESSES. The crate gates its own
 # compression half to macOS, so what an iOS build links from here is the decoder and nothing else,
 # and `slopdesk_ffi.h` declares the decoder doors OUTSIDE its `TARGET_OS_OSX` region for the same
-# reason. `build-ffi.sh` still requires the ENCODER's symbols present on macOS and absent on the
+# reason. `slopdesk-gate ffi` still requires the ENCODER's symbols present on macOS and absent on the
 # other two slices, which is what keeps that internal gate from quietly stopping matching.
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
 # The SECOND, and for exactly the same reason: `AudioToolbox`'s two halves have opposite audiences.
 # Only the host ENCODES AAC-ELD and reads sample buffers out of `ScreenCaptureKit`; every client
 # DECODES. The crate gates its encoder and its `CMSampleBuffer` reader to macOS internally, so an iOS
-# slice links a decoder and nothing else, and `build-ffi.sh` asserts the encoder's symbols present on
+# slice links a decoder and nothing else, and `slopdesk-gate ffi` asserts the encoder's symbols present on
 # macOS and absent on the other two slices — the same bijection `slopdesk-apple-vt` carries.
 slopdesk-apple-audio = { path = "../slopdesk-apple-audio" }
 # The client's speakers. Not `apple-*` and not gated to Apple by anything but this edge: it is
@@ -108,7 +108,7 @@ slopdesk-audio-out = { path = "../slopdesk-audio-out" }
 # vendored inside `slopdesk-git`, and a client never asks the question — the git status arrives as a
 # metadata reply on both platforms. Gated by target rather than by feature so no phone build can opt
 # in by accident: `slopdesk_ffi.h` guards the declaration with `TARGET_OS_OSX`, and
-# `scripts/build-ffi.sh` requires the symbol on the macOS slice and requires it ABSENT on the other
+# `slopdesk-gate ffi` requires the symbol on the macOS slice and requires it ABSENT on the other
 # two, so this cfg cannot quietly stop matching the header.
 [target.'cfg(target_os = "macos")'.dependencies]
 slopdesk-git = { path = "../slopdesk-git" }

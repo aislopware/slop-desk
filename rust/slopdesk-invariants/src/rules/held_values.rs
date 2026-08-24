@@ -1,6 +1,6 @@
 //! A face that marshals, a length that is parsed once, and four projections that stay asked.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every rule here pins a defect NO test can see: a
+//! Ported from the deleted `check-supervisor.sh`. Every rule here pins a defect NO test can see: a
 //! projection that is correct at every size and only wrong in the clock, a guard that compiles and
 //! reads correctly and does nothing, a pair that cannot be caught disagreeing because both answers
 //! are plausible. A green suite is exactly what a regression here looks like, so the pin is

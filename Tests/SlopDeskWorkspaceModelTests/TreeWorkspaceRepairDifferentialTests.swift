@@ -7,7 +7,7 @@ import XCTest
 /// **This is the repo's first differential suite, and `docs/55` §8 is why it exists.** Every
 /// cross-language bug this project has found has one shape: a decision implemented twice, where the
 /// two disagree, and the disagreement is invisible because only one side is on the hot path.
-/// `check-supervisor.sh` pins names and numbers, which is exactly what such a pair never differs
+/// `slopdesk-invariants` pins names and numbers, which is exactly what such a pair never differs
 /// in — the eight known instances are all BEHAVIOURAL. So the pin has to be behavioural too: same
 /// input, both doors, same output.
 ///
@@ -334,7 +334,7 @@ final class TreeWorkspaceRepairDifferentialTests: XCTestCase {
 
     // MARK: - The pass vocabulary, walked rather than named
 
-    /// The half `check-supervisor.sh` structurally cannot check.
+    /// The half `slopdesk-invariants` structurally cannot check.
     ///
     /// Its `compare_abi_enum "RepairPass"` holds the two byte MAPS against each other, which catches
     /// a reorder and a renumber. It cannot catch a pass the crate ADDS, because a map this side never

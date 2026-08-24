@@ -1,6 +1,6 @@
 //! What a setting IS: one row table, one alphabet per key, one page shape, one chord editor.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Where `settings_catalog` covers what a control
+//! Ported from the deleted `check-supervisor.sh`. Where `settings_catalog` covers what a control
 //! OFFERS, this covers the row itself — its label, its key, the page it sits on and the recorder
 //! that edits its chord. Every one of them is `slopdesk-settings`' table and a Swift marshaller
 //! over it, and every one of them has a way of drifting that compiles, runs, renders and fails no
@@ -227,7 +227,7 @@ pub fn a_settings_page_is_shaped_once(tree: &Tree) -> Report {
             message: "SettingsLayout.swift stopped calling slopdesk_settings_layout_page — a page shape it \
                       holds itself is a table written twice (docs/56)",
         },
-        // Matched WITH its opening parenthesis, which is what `build-ffi.sh` greps the header for when
+        // Matched WITH its opening parenthesis, which is what `slopdesk-gate ffi` greps the header for when
         // it builds the symbol list every slice must carry — so this gate and that one cannot disagree
         // about what counts as a declaration.
         Claim::Matches {

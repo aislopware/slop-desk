@@ -23,7 +23,7 @@
 //! (`action.connect`, `action.copyPath`). A table keyed by one spelling could not answer for the
 //! other's rows, and a table keyed by both would be a join maintained by hand. Two tables, each
 //! complete over its own id space, each pinned to its own Swift list by
-//! `scripts/check-supervisor.sh` — that is what makes "a new verb must declare a platform" true on
+//! `rust/slopdesk-invariants` — that is what makes "a new verb must declare a platform" true on
 //! both sides rather than true on whichever side someone remembered.
 //!
 //! ## The nine generated select-pane rows
@@ -174,7 +174,7 @@ fn row_at(id: &str) -> Option<BindingRow> {
 ///
 /// An id no row declares is SHOWN. Failing closed here would let a typo unbind a chord in silence,
 /// which is a worse version of the defect this module exists to close;
-/// `scripts/check-supervisor.sh` is what makes an undeclared id impossible in the first place.
+/// `rust/slopdesk-invariants` is what makes an undeclared id impossible in the first place.
 #[must_use]
 pub fn shown(id: &str, mac: bool) -> bool {
     row_at(id).is_none_or(|row| row.platform.shown_on(mac))

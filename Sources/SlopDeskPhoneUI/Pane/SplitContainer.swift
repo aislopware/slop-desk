@@ -17,7 +17,7 @@
 // (`ContentColumn`, and `SatellitePaneContent` onto `PaneContainer`), not a preview, not a UI test —
 // so every one of those branches had exactly one reachable arm. It was deleted in increment 56d,
 // before the AppKit canvas rewrite could hand-write them all a second time, and
-// `scripts/check-supervisor.sh` fails the build if the name comes back. A snapshot renderer, if it is
+// `rust/slopdesk-invariants` fails the build if the name comes back. A snapshot renderer, if it is
 // ever wanted, gates ONCE where the render starts: a flag that reaches a leaf's `.task` and a pure
 // predicate in ClientCore is a second rendering mode maintained by everyone who touches the canvas.
 //

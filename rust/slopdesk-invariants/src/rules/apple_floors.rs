@@ -1,9 +1,9 @@
 //! The host synthesises, decodes and decides nothing of its own.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Three ports out of Swift and into the `objc2` family
-//! `docs/57` opens the unsafe gate for, and each is pinned the same way: the crate and the door
-//! exist, the Swift no longer does the work beside them, and the macOS-only BIJECTION is spelled in
-//! all three of its places.
+//! Ported from the deleted `check-supervisor.sh`. Three ports out of Swift and into the `objc2`
+//! family `docs/57` opens the unsafe gate for, and each is pinned the same way: the crate and the
+//! door exist, the Swift no longer does the work beside them, and the macOS-only BIJECTION is
+//! spelled in all three of its places.
 //!
 //! Every ban here reads [`View::Code`], and that is load-bearing rather than tidy. The files still
 //! NAME these calls in prose, and should: the comments carry the hardware measurements that decided
@@ -48,8 +48,9 @@ const INJECTOR: &str = "Sources/SlopDeskVideoHost/InputInjector.swift";
 /// close.
 ///
 /// The BIJECTION is three spellings — the `cfg`, the header region, the Cargo edge — and
-/// `build-ffi.sh` checks only the third leg, on all three slices. The first two are checked here,
-/// because a header that declares an iOS-reachable CoreGraphics door fails at LINK, far from here.
+/// `slopdesk-gate ffi` checks only the third leg, on all three slices. The first two are checked
+/// here, because a header that declares an iOS-reachable CoreGraphics door fails at LINK, far from
+/// here.
 ///
 /// BREAK-TEST: restored `CGEvent(mouseEventSource:` in `InputInjector` ⇒ FAIL "builds a `CGEvent`
 /// itself". Separately restored `static func clampToInt32` there ⇒ FAIL "keeps its own narrowing".
@@ -104,7 +105,7 @@ pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
             view: View::Code,
             message: "rust/slopdesk-ffi/Cargo.toml: the slopdesk-apple-cgevent edge is not target-gated — \
                       the macOS-only bijection is three spellings (the cfg, the header region, the Cargo \
-                      edge) and build-ffi.sh only checks what the library exports (docs/57 §3)",
+                      edge) and slopdesk-gate ffi only checks what the library exports (docs/57 §3)",
         },
     ])
 }
@@ -220,7 +221,7 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
             view: View::Code,
             message: "rust/slopdesk-ffi/Cargo.toml: an apple-family edge is not target-gated — the \
                       macOS-only bijection is three spellings (the cfg, the header region, the Cargo edge) \
-                      and build-ffi.sh only checks what the library exports (docs/57 §3)",
+                      and slopdesk-gate ffi only checks what the library exports (docs/57 §3)",
         }]));
     }
     report

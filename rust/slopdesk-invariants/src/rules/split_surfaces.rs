@@ -1,12 +1,12 @@
 //! The five surfaces the macOS/iOS split draws TWICE — the drop zone, the cheat sheet, the
 //! notification card, the palette, and the bespoke settings pages.
 //!
-//! Ported from `scripts/check-supervisor.sh`. `docs/56` stage D gave each of these two renderers on
-//! purpose: an `NSPanel` sized to a Mac window and a native card sized to a phone. What none of
-//! them may own is what the surface SAYS — the rows, the headline, the proportions, the option
-//! lists. A half that spells its own does not fail either half's tests, because each stays
-//! internally consistent; it fails the person who reads one label on the Mac and a different one on
-//! the phone.
+//! Ported from the deleted `check-supervisor.sh`. `docs/56` stage D gave each of these two
+//! renderers on purpose: an `NSPanel` sized to a Mac window and a native card sized to a phone.
+//! What none of them may own is what the surface SAYS — the rows, the headline, the proportions,
+//! the option lists. A half that spells its own does not fail either half's tests, because each
+//! stays internally consistent; it fails the person who reads one label on the Mac and a different
+//! one on the phone.
 //!
 //! The gate is therefore always the same two-sided shape: the shared content type must keep asking
 //! its Rust door, and each renderer must keep reading the shared content type. A third claim recurs

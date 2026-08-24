@@ -273,7 +273,7 @@ final class AndroidServiceManagerTests: XCTestCase {
 
     func testAnnounceParsingTakesTheDigitRunAndRejectsEverythingElse() {
         // A future build may add words after the port; changing the MARKER instead fails
-        // `scripts/check-supervisor.sh`, which compares this string against `server.rs`.
+        // `rust/slopdesk-invariants`, which compares this string against `server.rs`.
         XCTAssertEqual(
             AndroidServiceManager.parseAnnouncedPort(
                 fromLogLine: "androidd: listening on 0.0.0.0:51234 (adb /usr/bin/adb, emulator missing)",

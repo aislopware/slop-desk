@@ -62,7 +62,7 @@ public final class SupervisorConnection: @unchecked Sendable {
 /// There is no `listen` here. superd binds, in `rust/slopdesk-superd/src/server.rs`, and a Swift
 /// listener would only ever have been a test fake — a second superd, written in the language the
 /// real one deliberately is not, drifting from it silently. The client end is tested against the
-/// real daemon instead (`scripts/check-supervisor.sh`), which is the only test that can be wrong
+/// real daemon instead (`make supervisor-tests`), which is the only test that can be wrong
 /// in a way that matters.
 public enum SupervisorSocket {
     public enum SocketError: Error, Sendable {

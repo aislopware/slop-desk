@@ -1,9 +1,9 @@
 //! Three per-keystroke or per-row paths, each of which had a second implementation that was
 //! correct and slow.
 //!
-//! Ported from `scripts/check-supervisor.sh`. What is enforced is not the measurement — a number in
-//! a gate rots — but the call site that earned it: the engine that does not backtrack, the ranking
-//! that happens once per query, the splitter that skips the walk it does not need.
+//! Ported from the deleted `check-supervisor.sh`. What is enforced is not the measurement — a
+//! number in a gate rots — but the call site that earned it: the engine that does not backtrack,
+//! the ranking that happens once per query, the splitter that skips the walk it does not need.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

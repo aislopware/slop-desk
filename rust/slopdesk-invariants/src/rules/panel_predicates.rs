@@ -1,6 +1,6 @@
 //! One search predicate, one minted voice, one level array, one cursor label.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Four rules about the device panels and the design
+//! Ported from the deleted `check-supervisor.sh`. Four rules about the device panels and the design
 //! floor under them, and each guards a copy that a test cannot catch parting from its twin: the
 //! copy a test holds is not the copy the other shell runs, the memo and the builder agree by
 //! construction, the two spellings of one setting sit a scroll apart on the same page.

@@ -1,10 +1,10 @@
 //! One decision per master, two lifecycles over five sidecars, and four shapes nobody may write
 //! twice.
 //!
-//! Ported from `scripts/check-supervisor.sh`. What links these is the failure they all share: two
-//! copies of one contract that agree today. The pair does not diverge on the change that creates it
-//! — it diverges on the seventh channel, the next daemon, the one manager somebody edits alone — so
-//! the moment to catch it is while there is still only one copy.
+//! Ported from the deleted `check-supervisor.sh`. What links these is the failure they all share:
+//! two copies of one contract that agree today. The pair does not diverge on the change that
+//! creates it — it diverges on the seventh channel, the next daemon, the one manager somebody edits
+//! alone — so the moment to catch it is while there is still only one copy.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

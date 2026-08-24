@@ -10,7 +10,7 @@ import Foundation
 /// the two copies had already diverged on an over-long detect label.
 ///
 /// What stays here is the VOCABULARY — verb numbers, status numbers, flag bits, the banner — which
-/// `check-supervisor.sh` pins across the two languages the way it pins the other five daemons'.
+/// `slopdesk-invariants` pins across the two languages the way it pins the other five daemons'.
 ///
 /// ```text
 /// request  u32 len | u8 verb | u8 flags | u16 rows | u16 cols | u16 paneLen | pane… | raw…
@@ -114,7 +114,7 @@ public enum ScreenWire {
     /// Asked for rather than spelled. Both directions are governed by it — ``encodeRequest(verb:flags:rows:cols:pane:raw:)``
     /// refuses a body over it, and `ScreenClient.exchange` refuses a REPLY prefix over it — and both
     /// refusals are the door's now, so this constant exists for the one thing left that reads it as
-    /// a number: the error a caller is handed. `check-supervisor.sh` used to ratchet a literal here
+    /// a number: the error a caller is handed. `slopdesk-invariants` used to ratchet a literal here
     /// against `screenwire::MAX_FRAME`, which was the right gate for a spelling that should not have
     /// existed.
     public static let maximumFrameBytes = Int(slopdesk_screen_constant(0))

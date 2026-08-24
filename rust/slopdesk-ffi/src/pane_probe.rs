@@ -22,7 +22,7 @@
 //! ## macOS only
 //! Every reading behind these is a Darwin `proc_*` call or `lsof`, and the only caller is hostd.
 //! The `cfg` in `lib.rs`, the `TARGET_OS_OSX` guard in `slopdesk_ffi.h` and the `MACOS-ONLY` region
-//! `scripts/build-ffi.sh` reads out of that header are the three spellings that keep it true —
+//! `slopdesk-gate ffi` reads out of that header are the three spellings that keep it true —
 //! `docs/57` §3.
 
 use core::ffi::c_uchar;

@@ -1,6 +1,6 @@
 //! The input surface, the grid geometry twin, the link scan and the command blocks.
 //!
-//! Ported from `scripts/check-supervisor.sh`, the stretch after the terminal-mode tracker.
+//! Ported from the deleted `check-supervisor.sh`, the stretch after the terminal-mode tracker.
 
 use crate::claim::{Claim, Extract, SWIFT, View, check_all};
 use crate::report::Report;

@@ -27,7 +27,7 @@
 // SAYS — the caption's join, the "N of M" counter, the note for a pane with no reported question,
 // the zero-state line — because the other half would then have to agree with it rather than read
 // it. All four are ``PeekReplyPresentation``'s, and the header's glyph reading is
-// ``AgentReadout``'s, and `check-supervisor.sh` fails the build if either comes back.
+// ``AgentReadout``'s, and `slopdesk-invariants` fails the build if either comes back.
 
 #if os(iOS)
 import SlopDeskClientCore

@@ -1,9 +1,9 @@
 //! The three codecs, the framing, the mux, the demux rule, the git dialect and the two payload
 //! channels — every wire body in this repo is laid out once, in Rust.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The through-line is narrower than "a law lives once":
-//! it is that a BYTE LAYOUT spelled twice is two layouts that agree until one field moves. The
-//! bans here name the two primitives every hand-rolled codec in this repo was built out of —
+//! Ported from the deleted `check-supervisor.sh`. The through-line is narrower than "a law lives
+//! once": it is that a BYTE LAYOUT spelled twice is two layouts that agree until one field moves.
+//! The bans here name the two primitives every hand-rolled codec in this repo was built out of —
 //! `appendBE` and a big-endian reader — because a second wire never arrives as a codec. It arrives
 //! as "just this one field".
 

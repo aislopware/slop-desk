@@ -1,9 +1,9 @@
 //! The two crates that dress the embedded workbench, and the Swift that may only marshal for them.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The panel is dressed from BOTH sides — the host seeds
-//! code-server's settings before it boots, the client injects a sheet and four scripts into the
-//! page afterwards — and the two sides share no code on purpose. What is enforced here is the one
-//! fact that makes that split safe, plus the boundary that keeps the client half from growing a
+//! Ported from the deleted `check-supervisor.sh`. The panel is dressed from BOTH sides — the host
+//! seeds code-server's settings before it boots, the client injects a sheet and four scripts into
+//! the page afterwards — and the two sides share no code on purpose. What is enforced here is the
+//! one fact that makes that split safe, plus the boundary that keeps the client half from growing a
 //! second implementation.
 
 use crate::claim::{Claim, Extract, View, check_all};

@@ -21,7 +21,7 @@ import Foundation
 // WHICH subcommands exist, which of them run, and what each does is NOT written down here. It is
 // one table in `rust/slopdesk-cli`'s `vocabulary`, and this file only dispatches it. The switch at
 // the bottom must cover exactly `CLICompletions.subcommands` — the verbs the shells offer — and
-// `check-supervisor` holds the two to each other. Before that table, the vocabulary was spelled
+// `slopdesk-invariants` holds the two to each other. Before that table, the vocabulary was spelled
 // four times with nothing tying the copies together, and the drift reached users: `open`, `import`,
 // `export`, `features`, `state:claude` and `ipc` tab-completed in all five shells and then exited 2
 // with "not available yet". A completion is a promise the verb exists; those six are planned, so

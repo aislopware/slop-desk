@@ -398,7 +398,7 @@ public final class RemoteWindowModel {
     /// So ``canInjectSystemKeys`` is permanently `false` on the phone, BY CONSTRUCTION rather than by
     /// omission. Before the carve this read "published by `VideoWindowView`", which after the rename
     /// would have named the one half that never publishes it — the exact wrong-platform doc link the
-    /// note at the top of this file exists to prevent. check-supervisor's Rule D carries the same fact
+    /// note at the top of this file exists to prevent. `slopdesk-invariants`'s Rule D (`rules::ui_split`) carries the same fact
     /// as its single named exception.
     public var systemKeyInjector: ((_ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool) -> Void)?
 

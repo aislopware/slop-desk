@@ -1,8 +1,8 @@
 //! The terminal's configuration surface — the keybind grammar, the config emitter, the named-key
 //! table, the reset backstop, the pane directory, and the two tables a search crosses.
 //!
-//! Ported from `scripts/check-supervisor.sh`. A second speller here does not crash: it produces a
-//! chord that cannot be typed, a config the far side drops a line of, or a search that ranks the
+//! Ported from the deleted `check-supervisor.sh`. A second speller here does not crash: it produces
+//! a chord that cannot be typed, a config the far side drops a line of, or a search that ranks the
 //! same table two ways depending on which field asked.
 
 use crate::claim::{Claim, View, check_all};

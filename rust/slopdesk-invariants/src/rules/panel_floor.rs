@@ -1,10 +1,10 @@
 //! The floor both device panels and the code panel stand on, and the platform gates that must not
 //! come back onto it.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every rule here guards the same failure, which is why
-//! they share a module: a `#if os(macOS)` wrapped around a whole file COMPILES on the phone — to
-//! nothing. Forty-one empty files build green, so a gate is not a warning here, it is a parity gap
-//! with a passing test suite over it.
+//! Ported from the deleted `check-supervisor.sh`. Every rule here guards the same failure, which is
+//! why they share a module: a `#if os(macOS)` wrapped around a whole file COMPILES on the phone —
+//! to nothing. Forty-one empty files build green, so a gate is not a warning here, it is a parity
+//! gap with a passing test suite over it.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;

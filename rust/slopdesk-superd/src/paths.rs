@@ -13,7 +13,7 @@
 //! protocol error, it is silence. The other three are superd's alone: hostd is TOLD the hook and
 //! agent-control paths in the `hello` reply, and the lock file is none of its business. A Swift
 //! constant for any of them would be a second answer to "where is the hook socket", which is the
-//! drift that pid-keyed paths caused once. `scripts/check-supervisor.sh` pins both halves of that:
+//! drift that pid-keyed paths caused once. `rust/slopdesk-invariants` pins both halves of that:
 //! the shared name equal, the other three absent from `Sources/`.
 
 use std::env;

@@ -67,7 +67,7 @@ enum AnnouncedPort {
 /// audit never turns into "current".
 enum AnnouncedVersion {
     /// Spelled identically as `ANNOUNCE_VERSION_PREFIX` in the three announcing daemons' `server.rs`,
-    /// and compared by `scripts/check-supervisor.sh`.
+    /// and compared by `rust/slopdesk-invariants`.
     static let marker = "(v"
 
     /// The version between ``marker`` and the parenthetical's first `,` or `)`, searched from the

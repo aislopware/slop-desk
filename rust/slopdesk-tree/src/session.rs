@@ -67,7 +67,7 @@ impl PaneKind {
     /// The on-wire byte, and the byte a client's `ffiByte` must agree with.
     ///
     /// Spelled as a match rather than as `self as u8` so the map is one greppable claim per case:
-    /// `scripts/check-supervisor.sh` compares it against Swift's switch, and an implicit
+    /// `rust/slopdesk-invariants` compares it against Swift's switch, and an implicit
     /// discriminant is not something a gate can read.
     #[must_use]
     pub const fn as_byte(self) -> u8 {

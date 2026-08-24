@@ -34,7 +34,7 @@ package enum PaletteRowPlatform {
     /// Whether this half lists the row filed under `id`.
     ///
     /// An id the table does not declare is LISTED. A typo must not delete a row from the palette
-    /// without a word — `scripts/check-supervisor.sh` pins the two id sets equal in both directions,
+    /// without a word — `rust/slopdesk-invariants` pins the two id sets equal in both directions,
     /// which is what makes an undeclared id impossible in the first place.
     package static func lists(_ id: String) -> Bool {
         lists(id, mac: isMac)

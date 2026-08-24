@@ -248,7 +248,7 @@ public final class TerminalBlockModel {
     /// `DEFAULT_MAX_BLOCKS`) so the client can never hold a block the daemon already evicted (an
     /// over-old index just yields an empty type-29). Eviction drops the OLDEST (lowest-index) blocks.
     ///
-    /// Agreement with `blocks::MAX_BLOCKS` is a `check-supervisor.sh` gate, not a comment.
+    /// Agreement with `blocks::MAX_BLOCKS` is a `slopdesk-invariants` gate, not a comment.
     public static let maxBlocks = 64
 
     /// Cap on bookmarks per pane so a long-lived session can't grow the set unbounded. Over the cap, the

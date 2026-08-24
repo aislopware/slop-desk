@@ -25,14 +25,24 @@
 //! * [`android`] — the hardware gate's tool resolution, which has to reproduce production's own
 //!   search order or it proves the handshake against the wrong `adb`.
 //!
+//! Three more arrived with the last of the shell. [`ffi`] is `slopdesk-gate ffi`: the producer of
+//! the linked port, whose decidable halves — the header's declared symbols, the transitive crate
+//! closure, the two-direction bijection — were `grep -oE`, a recursive `grep | sed`, and a `comm`
+//! that could not be run without building three slices. [`reach`] is the four questions only `make
+//! -n` can answer, and [`supervisor`] is the hostd↔superd contract's toolchain half. With them the
+//! `scripts/` directory holds no code at all: two Swift probes, a set of pins and a fixture tree.
+//!
 //! ## The one thing that changed on the way over
 //! Both stampers now hash repo-RELATIVE paths, for the reason [`super::release::stamps`] does. The
 //! stamps live under `.build/`, so the first run after this port rebuilds once and is warm after.
 
 pub mod android;
+pub mod ffi;
 pub mod golden;
 pub mod prepush;
+pub mod reach;
 pub mod stamp;
+pub mod supervisor;
 pub mod swift_graph;
 pub mod touched;
 pub mod xcode;

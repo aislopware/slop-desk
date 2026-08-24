@@ -23,7 +23,7 @@
 // THE SEAM IS TWO NARROW PROTOCOLS AND NEITHER NAMES A FRAMEWORK. ``CodeSidebarKeyboard`` is the duel
 // as the pool sees it (a project root, a page — the pool's own vocabulary, so the AppKit stays on the
 // far side of it), and ``CodeSidebarKeyboardPage`` is a pooled page as the duel sees it. The second
-// one has to exist: the Mac's `WKWebView` subclass IS the responder seam, `check-supervisor.sh` keeps
+// one has to exist: the Mac's `WKWebView` subclass IS the responder seam, `slopdesk-invariants` keeps
 // its name inside the two files that own it, and the duel one target up therefore has to ask a page
 // for what it can do rather than for what it is.
 //

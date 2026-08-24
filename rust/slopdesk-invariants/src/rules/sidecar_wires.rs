@@ -1,9 +1,10 @@
 //! The three sidecar wires a SHIPPED client dials, and the line each daemon announces itself on.
 //!
-//! Ported from `scripts/check-supervisor.sh` §§10–12c. dropd, androidd and inspectord are the three
-//! two-ended protocols the client end dials DIRECTLY, which is what sets them apart from superd and
-//! screend: an iOS build shipped months ago is one end and a fresh daemon is the other, nothing
-//! negotiates, and every constant here is a value both sides simply have to have been born with.
+//! Ported from the deleted `check-supervisor.sh` §§10–12c. dropd, androidd and inspectord are the
+//! three two-ended protocols the client end dials DIRECTLY, which is what sets them apart from
+//! superd and screend: an iOS build shipped months ago is one end and a fresh daemon is the other,
+//! nothing negotiates, and every constant here is a value both sides simply have to have been born
+//! with.
 //!
 //! All three ends are Rust now — the client halves are crate modules and the Swift files are faces
 //! over FFI doors — so what these rules pin is no longer "two spellings agree". It is that there is

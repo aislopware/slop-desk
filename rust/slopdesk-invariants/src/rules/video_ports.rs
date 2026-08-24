@@ -1,6 +1,6 @@
 //! The video path lends what it holds, and each of its rules has one author.
 //!
-//! Ported from `scripts/check-supervisor.sh`. None of the defects below is visible to any test,
+//! Ported from the deleted `check-supervisor.sh`. None of the defects below is visible to any test,
 //! which is the entire reason they are pinned: an exported door with no caller reads as covered, a
 //! re-encode of bytes just parsed is correct and slow, and two languages spelling one table
 //! differently is a defect at zero calls per second where only one of the two answers is right.

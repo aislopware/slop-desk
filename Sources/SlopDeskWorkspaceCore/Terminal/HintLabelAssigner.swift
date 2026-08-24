@@ -182,7 +182,7 @@ public enum HintLabelAssigner {
     ///   - patterns: user `hint-pattern` regexes (+ their `{0}` action templates).
     ///   - maxScanColumns: per-row cell-scan ceiling (the anti-hang bound). The default is
     ///     ``TerminalLinkDetector/maxScanColumnsDefault``, which is the one spelling of
-    ///     `link::MAX_SCAN_COLUMNS` on this side and the one `check-supervisor.sh` ratchets. A bare
+    ///     `link::MAX_SCAN_COLUMNS` on this side and the one `slopdesk-invariants` ratchets. A bare
     ///     `4096` sat here instead until 2026-08-20 — a third copy of the bound, outside the gate's
     ///     scope, free to stay behind a tuning of the other two.
     public static func targets(

@@ -124,7 +124,18 @@ pub fn record(marker: &Path, value: &str) -> Result<(), String> {
 }
 
 /// Collect every file under `dir` that `keep` accepts, as a repo-relative path.
-fn walk(root: &Path, dir: &Path, into: &mut Vec<String>, keep: &dyn Fn(&Path) -> bool) -> Result<(), String> {
+///
+/// Shared with [`super::ffi`], whose input set is a different tree with a different filter but the
+/// same deterministic sorted walk.
+///
+/// # Errors
+/// When a directory in the tree cannot be read.
+pub(crate) fn walk(
+    root: &Path,
+    dir: &Path,
+    into: &mut Vec<String>,
+    keep: &dyn Fn(&Path) -> bool,
+) -> Result<(), String> {
     if !dir.is_dir() {
         return Ok(());
     }

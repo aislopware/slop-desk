@@ -1,8 +1,8 @@
 //! What the CLI and the settings surface READ — the folder ranking, the config file's one reader,
 //! the spelling of a number, and the swipe-nav operating point.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Three of these four failed the same way before they
-//! were one implementation: a validator called a line good and the loader dropped it, an env
+//! Ported from the deleted `check-supervisor.sh`. Three of these four failed the same way before
+//! they were one implementation: a validator called a line good and the loader dropped it, an env
 //! overlay spelled `60` and the config text spelled `60.0`, a committed chip promised a gesture the
 //! host swallowed. None of them is a crash, and each is invisible from either side alone.
 

@@ -1,7 +1,7 @@
 //! The two byte streams that leave this repo for something else — the scrcpy control channel and
 //! the agent wait scan.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Both are read by code nobody here maintains, so a
+//! Ported from the deleted `check-supervisor.sh`. Both are read by code nobody here maintains, so a
 //! second writer is a wire drift with no test on the other side of it.
 
 use crate::claim::{Claim, View, check_all};

@@ -1,10 +1,11 @@
 //! The client's own video seams — the cursor overlay, the session machine, the input
 //! normaliser, the scroll hint, the gesture policies, and the two send schedules.
 //!
-//! Ported from `scripts/check-supervisor.sh`. What these have in common is the failure they share:
-//! each is small enough to re-type at the call site rather than call, and each is wrong in a way
-//! that reads as "the remote machine feels off" rather than as a crash. A click half a letterbox
-//! bar from the cursor, a modifier that stays latched, a retry that hellos a window that is gone.
+//! Ported from the deleted `check-supervisor.sh`. What these have in common is the failure they
+//! share: each is small enough to re-type at the call site rather than call, and each is wrong in a
+//! way that reads as "the remote machine feels off" rather than as a crash. A click half a
+//! letterbox bar from the cursor, a modifier that stays latched, a retry that hellos a window that
+//! is gone.
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;

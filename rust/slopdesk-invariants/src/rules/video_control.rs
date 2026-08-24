@@ -1,6 +1,6 @@
 //! The host's admission laws, the rate law, the frame-rate axis and the presentation depth.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every one of these is a CONTROL LAW: a handful of
+//! Ported from the deleted `check-supervisor.sh`. Every one of these is a CONTROL LAW: a handful of
 //! branches that decide how much to send, how often, and when to give up and re-key. A second
 //! speller of any of them is a second control law that agrees on the easy cases and diverges on the
 //! link that was already in trouble — which is where nobody is watching, and where every test

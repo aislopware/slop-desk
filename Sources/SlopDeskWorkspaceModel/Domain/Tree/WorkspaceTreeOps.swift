@@ -209,7 +209,7 @@ public enum WorkspaceTreeOps {
         case mainHorizontal
         case tiled
 
-        /// The CASE index — the crate's enum order, pinned by `scripts/check-supervisor.sh`.
+        /// The CASE index — the crate's enum order, pinned by `rust/slopdesk-invariants`.
         var ffiByte: UInt8 {
             switch self {
             case .evenHorizontal: 0

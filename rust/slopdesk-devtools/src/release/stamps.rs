@@ -20,17 +20,18 @@
 //!   profile and the lint set live in the workspace, not in the member, and `opt-level = "z"`
 //!   decides what the binary IS.
 //!
-//! Derived from the cargo graph rather than a hand-kept list, for the reason `build-ffi.sh` gives
-//! at length: a list beside the code is a second list to forget, and forgetting THIS one does not
-//! fail loudly — it reports a changed daemon as unchanged, which is the one wrong answer that
+//! Derived from the cargo graph rather than a hand-kept list, for the reason `slopdesk-gate ffi`
+//! gives at length: a list beside the code is a second list to forget, and forgetting THIS one does
+//! not fail loudly — it reports a changed daemon as unchanged, which is the one wrong answer that
 //! silently skips the restart the change needed.
 //!
 //! ## What is deliberately NOT in a stamp
-//! THIS CODE. `build-ffi.sh` hashes itself because editing it changes the artifact it produces;
-//! editing this changes no binary at all. Self-inclusion would make every tool look changed on the
-//! day someone fixes a comment here, and every daemon would be restarted to ship nothing. The
-//! toolchain version is absent for a weaker reason: it genuinely does change the binary, but it
-//! changes EVERY binary at once, which is a product-version event and not a per-tool one.
+//! THIS CODE. `slopdesk-gate ffi` hashes itself because editing it changes the artifact it
+//! produces; editing this changes no binary at all. Self-inclusion would make every tool look
+//! changed on the day someone fixes a comment here, and every daemon would be restarted to ship
+//! nothing. The toolchain version is absent for a weaker reason: it genuinely does change the
+//! binary, but it changes EVERY binary at once, which is a product-version event and not a per-tool
+//! one.
 //!
 //! ## One difference from the shell this replaces, on purpose
 //! The shell fed `shasum` ABSOLUTE paths, and `shasum` prints the path beside the digest — so the
@@ -156,9 +157,9 @@ fn path_dependencies(manifest: &str) -> Vec<String> {
 
 /// Every file under `dir` that belongs in a stamp, repo-relative, unsorted.
 ///
-/// `target` is PRUNED, and that is load-bearing rather than tidiness — `build-ffi.sh` records the
-/// whole story: build scripts write real `.rs` under `target/`, and a triple built for the first
-/// time MINTS one, so an unpruned stamp would change as a consequence of being checked.
+/// `target` is PRUNED, and that is load-bearing rather than tidiness — `slopdesk-gate ffi` records
+/// the whole story: build scripts write real `.rs` under `target/`, and a triple built for the
+/// first time MINTS one, so an unpruned stamp would change as a consequence of being checked.
 fn walk(root: &Path, dir: &Path, into: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(dir) else { return };
     for entry in entries.flatten() {

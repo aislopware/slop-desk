@@ -17,7 +17,7 @@
 //!
 //! ## What is NOT here
 //! The verb numbers, the status numbers, the flag bits and the hello banner. Those are a
-//! VOCABULARY, not a layout, and `check-supervisor.sh` already pins them across the two languages
+//! VOCABULARY, not a layout, and `slopdesk-invariants` already pins them across the two languages
 //! the way it pins the other five daemons'. A door per constant would buy nothing the ratchet does
 //! not already guarantee, and would cost a call on a path that runs per scan.
 //!

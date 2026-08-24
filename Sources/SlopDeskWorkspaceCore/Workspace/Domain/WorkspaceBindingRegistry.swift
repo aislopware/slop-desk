@@ -982,7 +982,7 @@ public enum WorkspaceBindingRegistry {
     /// and its readers are the keyboard's: `resolvedChordTable` walks it once per key event and called
     /// ``binding(for:)`` per row, which read it AGAIN — 86 fresh 85-element arrays per keystroke, each
     /// retaining four strings per element. Measured at 210µs of allocation per key event on an M-series
-    /// Mac, all of it to rebuild a table whose inputs cannot change. `scripts/check-supervisor.sh` pins
+    /// Mac, all of it to rebuild a table whose inputs cannot change. `rust/slopdesk-invariants` pins
     /// the `let` because a `var` here costs nothing a test can see.
     public static let allBindings: [WorkspaceBinding] = bindings + selectPaneBindings
 

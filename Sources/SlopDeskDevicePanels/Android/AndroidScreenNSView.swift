@@ -33,7 +33,7 @@
 //
 // ⚠️ THE GATE IS `canImport(AppKit)`, NEVER `os(macOS)`. Every file in this target was once wrapped
 // whole in the latter, inherited from the days the panels were a Mac-only surface, and a build of
-// forty-one EMPTY files is a green build (docs/56 increment 11). `check-supervisor.sh` fails the build
+// forty-one EMPTY files is a green build (docs/56 increment 11). `slopdesk-invariants` fails the build
 // on an `os(macOS)` gate here for exactly that reason; what this file needs is the DEPENDENCY —
 // AppKit, which the iOS triple genuinely has not got — and saying so is what keeps the phone's half
 // (`AndroidScreenUIView`, still in the draining target with its representable) from being hidden

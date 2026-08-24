@@ -57,7 +57,7 @@ extension SplitNodeID {
 }
 
 package extension PaneKind {
-    /// The CASE index — the crate's `PaneKind` order, pinned by `scripts/check-supervisor.sh`.
+    /// The CASE index — the crate's `PaneKind` order, pinned by `rust/slopdesk-invariants`.
     ///
     /// The crate reads anything but `1` as a terminal, so a disagreement here degrades to the safe
     /// kind rather than opening a dead video pane. That is a floor, not a licence: the gate compares
@@ -71,7 +71,7 @@ package extension PaneKind {
 }
 
 extension FocusDirection {
-    /// The CASE index — the crate's enum order, pinned by `scripts/check-supervisor.sh`.
+    /// The CASE index — the crate's enum order, pinned by `rust/slopdesk-invariants`.
     var ffiByte: UInt8 {
         switch self {
         case .left: 0

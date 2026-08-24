@@ -1,9 +1,9 @@
 //! The two UI shells share a floor, not a clipboard.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every other rule in this crate catches a file in the
-//! WRONG target — frameworkless, or platform-gated. None of them can catch the thing that actually
-//! happened nine times over: a helper, a copy string or a constant that is in the RIGHT target on
-//! both sides of the split and spelled twice.
+//! Ported from the deleted `check-supervisor.sh`. Every other rule in this crate catches a file in
+//! the WRONG target — frameworkless, or platform-gated. None of them can catch the thing that
+//! actually happened nine times over: a helper, a copy string or a constant that is in the RIGHT
+//! target on both sides of the split and spelled twice.
 //!
 //! `ensureEndpoint` sat in both panel files with a static dedupe key each, pointed at ONE
 //! host-global settings file. The Open Quickly picker assembled the same five corpora and

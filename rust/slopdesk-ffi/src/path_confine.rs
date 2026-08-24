@@ -17,7 +17,7 @@
 //!
 //! The wrapped crate is `slopdesk-probe` because that crate IS the metadata RPC's Rust half — the
 //! confinement question was already being asked inside it. The `path = "../slopdesk-probe"` edge in
-//! this crate's manifest is also what puts the rule inside `build-ffi.sh`'s content stamp
+//! this crate's manifest is also what puts the rule inside `slopdesk-gate ffi`'s content stamp
 //! (`docs/55` §3), so a Swift caller cannot end up linked against last week's confinement.
 //!
 //! ## Why one door answers three questions

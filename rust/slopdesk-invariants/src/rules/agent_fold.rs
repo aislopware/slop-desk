@@ -1,13 +1,13 @@
 //! What decides a pane's AGENT state — the badge ladder, the hook body's one reading, the one
 //! detector per pane, the secret vocabulary, and what a fresh install carries.
 //!
-//! Ported from `scripts/check-supervisor.sh`. `docs/50` is the architecture; what is pinned here is
-//! the shape that architecture rules out. Two machines per pane FIGHT: both emit type-27 with no
-//! reconciliation, so a hook `.working` and a foreground-poll `.idle` clobber each other on the one
-//! control stream, and with neither owning `.tick(at:)` the `.done → .idle` decay never fires — a
-//! finished turn stays lit forever. Both of the machines that had to die kept COMPILING afterwards,
-//! constructed by nothing in `Sources/` and kept alive by a test file each: the shape `CLAUDE.md`
-//! names outright, a second implementation surviving as a test fake.
+//! Ported from the deleted `check-supervisor.sh`. `docs/50` is the architecture; what is pinned
+//! here is the shape that architecture rules out. Two machines per pane FIGHT: both emit type-27
+//! with no reconciliation, so a hook `.working` and a foreground-poll `.idle` clobber each other on
+//! the one control stream, and with neither owning `.tick(at:)` the `.done → .idle` decay never
+//! fires — a finished turn stays lit forever. Both of the machines that had to die kept COMPILING
+//! afterwards, constructed by nothing in `Sources/` and kept alive by a test file each: the shape
+//! `CLAUDE.md` names outright, a second implementation surviving as a test fake.
 
 use crate::claim::{Claim, Extract, View, check_all};
 use crate::report::Report;

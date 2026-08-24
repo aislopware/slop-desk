@@ -1,11 +1,11 @@
 //! Two renderers over one vocabulary: the code panel's four surfaces, the two device panels, the
 //! chrome they share and the design floor all three stand on.
 //!
-//! Ported from `scripts/check-supervisor.sh` (increments 51, 52, 53, 55). Every rule here is the
-//! same shape from a different angle — what a surface SAYS and which state it is IN are decisions
-//! that live one floor down, and only the drawing is per-half. The failure they guard against is
-//! never a build error: a second copy of a title, a shell or a caps recipe compiles, renders, and
-//! differs from its twin only on the screen nobody has open.
+//! Ported from the deleted `check-supervisor.sh` (increments 51, 52, 53, 55). Every rule here is
+//! the same shape from a different angle — what a surface SAYS and which state it is IN are
+//! decisions that live one floor down, and only the drawing is per-half. The failure they guard
+//! against is never a build error: a second copy of a title, a shell or a caps recipe compiles,
+//! renders, and differs from its twin only on the screen nobody has open.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;

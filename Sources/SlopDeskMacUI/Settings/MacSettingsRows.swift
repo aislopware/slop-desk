@@ -3,7 +3,7 @@
 // Every row here takes a `SettingsLayout.Row` and a `MacSettingAccess` and returns an `NSView`.
 // NOTHING in this file spells a label, a subtitle, an option name or a range: the first two are the
 // row's, the third is `SettingsCatalog.options(...)`, and the fourth is the ladder's or the stepper's.
-// That is the property `check-supervisor` ratchets on the SwiftUI side, and it holds here by the same
+// That is the property `slopdesk-invariants` ratchets on the SwiftUI side, and it holds here by the same
 // construction — a view that cannot reach a string cannot drift from it.
 //
 // A row's SHAPE is `Control`, which names a widget KIND and never a widget. So the Mac answers

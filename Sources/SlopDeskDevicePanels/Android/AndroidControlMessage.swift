@@ -8,7 +8,7 @@
 //
 // `scrcpy` publishes no wire specification — its own documentation says the control protocol is
 // defined by the unit tests on both sides — and this file used to hand-lay every field with a local
-// `appendBigEndian`, which is the same idiom `check-supervisor.sh` already bans for the screend
+// `appendBigEndian`, which is the same idiom `slopdesk-invariants` already bans for the screend
 // frame. `slopdesk-androidd` owns scrcpy's dialect and now owns both directions of it:
 // `stream` reads what the device sends, `control` writes what the panel sends.
 //

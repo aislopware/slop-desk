@@ -38,7 +38,7 @@
 # in CLAUDE.md — "a port ships over a socket, or as a linked library, pick by lifetime": the
 # in-process, lifetime-coupled ports are linked, as `CSlopDeskFFI` from
 # `ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework` (docs/55). cargo still never runs inside
-# `swift build`; `make ffi` (scripts/build-ffi.sh) assembles that artifact beforehand.
+# `swift build`; `make ffi` (`slopdesk-gate ffi`) assembles that artifact beforehand.
 # `swift build` therefore needs the xcframework to EXIST before it can resolve the package graph, so
 # a clean checkout runs `make ffi` — or any of `make build`/`test`/`check`, which depend on it —
 # once. `make build` additionally stages the relay and the CLI beside the host binary.
@@ -50,14 +50,12 @@ SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
 # ThirdParty/ghostty/ only: that tree is the vendored libghostty build recipe, carried close to
 # upstream's own shape. ThirdParty/tools/provision.sh is OURS and meets the same bar as scripts/.
 #
-# Read off the FILESYSTEM, not `git ls-files`. Tracking is not the same question as ownership, and
-# using it as a proxy silently dropped five scripts — `check-supervisor.sh` and `build-ffi.sh` among
-# them, the two this repo leans on hardest. They are untracked, so `git ls-files` never named them,
-# so shellcheck had never run on either and `make fmt-shell` had never touched them: a lint scope
-# that shrinks when a file is new is exactly backwards. Every `.sh` we own lives in `scripts/` plus
-# the one under `ThirdParty/tools`, and a glob says so without a list. The COUNT is deliberately not
-# written here: it falls every time a script becomes Rust, and a number in a comment is one more
-# thing to forget.
+# ONE file is left, and the count is the point: every gate, every operator harness and every step of
+# the release is Rust now, so `scripts/` holds pins, fixtures and two Swift probes — no program at
+# all. `provision.sh` stays because it is a bootstrap: it installs the toolchain a Rust gate would
+# need in order to run. `scripts/*.sh` is still globbed rather than dropped, so a script that comes
+# back is linted rather than silently unlinted — and `scripting-is-rust` in `rust/slopdesk-invariants`
+# fails the moment one does.
 SHELL_FILES  := $(wildcard scripts/*.sh) ThirdParty/tools/provision.sh
 SHFMT_FLAGS  := -i 2 -ci -sr
 # There is no PY_FILES, and no ruff. Every Python script this repo had is now Rust — the four
@@ -128,12 +126,14 @@ fix: fmt ## Format + apply all safe lint autofixes
 
 # ---------------------------------------------------------------------------- #
 # Linting (no writes) — the CI gate
-.PHONY: lint lint-swift lint-shell lint-rust lint-rust-clippy test-rust lint-supervisor lint-invariants
-LINTERS := lint-swift lint-shell lint-rust lint-supervisor lint-invariants
+.PHONY: lint lint-swift lint-shell lint-rust lint-rust-clippy test-rust lint-reach lint-invariants
+LINTERS := lint-swift lint-shell lint-rust lint-reach lint-invariants
 
 # The five linters run CONCURRENTLY. They read the tree and write nothing, so nothing orders them,
-# and serially they were the inner loop's largest fixed cost: 55 s, of which `lint-supervisor` alone
-# is 35 s. Overlapping the other four with it is free wall clock — measured 55 s → 36 s.
+# and serially they were the inner loop's largest fixed cost: 55 s, of which the cross-language
+# ratchets alone were 35 s. Overlapping the other four with them is free wall clock — measured
+# 55 s → 36 s. The ratchets are `lint-invariants` now and cost about half a second; what is left in
+# `lint-reach` is four `make -n` expansions and one content stamp.
 #
 # Not a plain prerequisite list under `make -j`: the top-level `make` is not invoked with one, and a
 # prerequisite list only runs in parallel if the make expanding it was told to. And not `-j` here
@@ -142,7 +142,7 @@ LINTERS := lint-swift lint-shell lint-rust lint-supervisor lint-invariants
 # its OWN log, and the logs are replayed IN THE DECLARED ORDER once every one has finished. The
 # output is byte-identical to the serial gate's; only the waiting changed.
 #
-# `wait` on a KNOWN pid, for the reason `build-ffi.sh` and `check-supervisor.sh` say: a bare `wait`
+# `wait` on a KNOWN pid, for the reason `gates::ffi` says: a bare `wait`
 # yields zero however the jobs died, and a lint gate that passes on a dead linter is worse than a
 # slow one. Every linter is waited on before the exit status is returned, so one failure does not
 # leave four tools running against a tree the next command is about to edit.
@@ -173,13 +173,23 @@ lint-swift: ## SwiftFormat --lint + SwiftLint --strict
 # `rust/slopdesk-invariants` (`gate_health`, `shared_constants`). `lint-invariants` runs them with
 # the rest of the registry over ONE tree walk, so there is nothing left for a separate target to do.
 
-# hostd ↔ superd CONTRACT ratchet: the constants that are necessarily typed in both languages
-# (rendezvous socket name, protocol version, verbs, frame tags, body cap, PTY read chunk) compared
-# textually, plus the "nothing in Sources/ reads a PTY master" invariant. Text-only, no compile, no
-# daemon — the skew it catches is invisible to both languages' own suites, because each side is
-# internally consistent. `scripts/check-supervisor.sh --tests` adds the runs that need a toolchain.
-lint-supervisor: ## hostd/superd cross-language contract ratchet
-	bash scripts/check-supervisor.sh
+# The four questions only `make -n` can answer, plus the stale-artifact gate.
+#
+# `check-supervisor.sh` is GONE — every constant it compared is a rule in `rust/slopdesk-invariants`
+# (`lint-invariants`), which reads the tree once and carries a break-test per rule. What could not
+# move there is what is here: three of these ask what a `make` target would RUN, which means
+# expanding a recipe, and the fourth asks whether the linked artifact is older than its Rust sources.
+# Neither is decidable by reading text.
+#
+# `make supervisor-tests` is the other half — the five sidecar suites and the Swift tests that drive
+# a real daemon. Behind its own target for the reason it was behind a `--tests` flag: the rules above
+# are what is worth running on every commit.
+lint-reach: ## every workspace crate is reached by a make target, and the FFI artifact is fresh
+	@cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- reach
+	@cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi --check
+
+supervisor-tests: ## the hostd/superd suites that need a live daemon (slow; not in `check`)
+	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- supervisor-tests
 
 # The same ratchets, as a program. Sections migrate here one at a time and the shell section is
 # DELETED in the commit that ports it, so there is never a period where both enforce the same rule.
@@ -286,10 +296,10 @@ check: lint build test miri golden check-ios check-macos-apps ## lint + build + 
 #
 # `build` is not omitted so much as implied: `test-touched` builds incrementally before selecting.
 #
-# Warm, on an untouched tree, this is seconds. The floor is `lint-supervisor` — ~31 s of ratchets
-# that read the whole tree. It was 44 s until the twenty-one "this Swift must stay deleted" bans
-# stopped walking `Sources/` twenty-one times for an answer that is empty whenever they pass (see
-# `DELETED_SWIFT_UNION`); what is left is the honest price of the cross-language contracts.
+# Warm, on an untouched tree, this is seconds. The floor used to be the shell ratchet — ~31 s of
+# greps over the whole tree, and 44 s before the "this Swift must stay deleted" bans stopped walking
+# `Sources/` once per ban. The whole set is `rust/slopdesk-invariants` now: one walk, 300-odd rules
+# under rayon, about half a second. The floor is `lint-swift`.
 # `ffi` and `lint` come first and in order — the artifact before anything that links it, and the
 # linters before the slow half, so a formatting slip fails in seconds rather than after the tests.
 # The slow half then runs CONCURRENTLY, ordered logs and known pids exactly as `lint` does: after a
@@ -319,7 +329,7 @@ quick: ffi lint ## The INNER LOOP: lint + only the tests the change reaches + go
 # head. This gate has existed for exactly that and was reachable from no target, no
 # hook and no workflow. It was also RED: two xcframeworks each shipped `Headers/module.modulemap`,
 # Xcode copies both to `$BUILT_PRODUCTS_DIR/include/`, and neither app had built on either platform
-# since (fixed in scripts/build-ffi.sh, which now nests its headers and asserts the nesting).
+# since (fixed in `gates::ffi`, which now nests its headers and asserts the nesting).
 #
 # `slopdesk-guigate macos` is the sibling and is deliberately NOT here: it drives a real window and
 # needs a logged-in GUI session, so it cannot run from a headless gate.
@@ -369,10 +379,13 @@ gui-launch-restore: ## GUI gate: restore `workspace.json` and re-dial the saved 
 
 # The three arm64 static slices the Swift clients link, from `rust/slopdesk-ffi`. FIRST, and not
 # optional: `Package.swift` declares a `binaryTarget` at that path, so SwiftPM cannot even resolve
-# the graph without it. The script stamps its inputs and exits in milliseconds when nothing changed,
+# the graph without it. The gate stamps its inputs and exits in milliseconds when nothing changed,
 # which is what makes it safe to put in front of every build.
+#
+# This target's own line is what `linked-artifacts-are-built` reads to learn who produces the
+# artifact, so the path in the help text is load-bearing rather than decorative.
 ffi: ## Build ThirdParty/slopdesk-ffi/SlopDeskFFI.xcframework (macos + ios + ios-sim arm64)
-	bash scripts/build-ffi.sh
+	@cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- ffi
 
 build: ffi hook ctl codeseed probe ## swift build (Swift + the linked Rust FFI slices) + the Rust hook relay, agent CLI, profile seeder and metadata probe
 	swift build

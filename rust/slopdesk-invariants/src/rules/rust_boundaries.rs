@@ -1,7 +1,7 @@
 //! The two operations that live in exactly one crate, and the three Swift modules that became
 //! faces over Rust rather than second copies of it.
 //!
-//! Ported from `scripts/check-supervisor.sh`. What the first pair have in common is that the
+//! Ported from the deleted `check-supervisor.sh`. What the first pair have in common is that the
 //! guarantee is attached to the LOCATION rather than to the code: a disassembly pin can only guard
 //! a symbol compiled beside it, and a C entry point next to the logic it marshals is a pointer bug
 //! one edit away from being a terminal bug. The rest are `import CSlopDeskFFI` plus a ban list,

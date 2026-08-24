@@ -1,6 +1,6 @@
 //! The two batch BODIES, the read chunk, and the three absences hostd owes superd.
 //!
-//! Ported from `scripts/check-supervisor.sh` §§4b–8.
+//! Ported from the deleted `check-supervisor.sh` §§4b–8.
 
 use crate::claim::{Claim, Extract, SWIFT, View, check_all};
 use crate::report::Report;

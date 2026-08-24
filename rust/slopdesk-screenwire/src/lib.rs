@@ -81,7 +81,7 @@ pub fn socket_path(socket_override: Option<&OsStr>, tmpdir: Option<&OsStr>) -> P
 /// the two binaries were not shipped together, which is a packaging bug.
 ///
 /// Ratcheted byte for byte against `SlopDeskScreen.ScreenProtocol.helloBanner` by
-/// `scripts/check-supervisor.sh`, so it is a constant on both sides and stays one. The running
+/// `rust/slopdesk-invariants`, so it is a constant on both sides and stays one. The running
 /// build's version is appended by [`hello_payload`] rather than folded in here, for exactly that
 /// reason: a constant a script compares cannot also carry a value that changes every release.
 pub const HELLO_BANNER: &[u8] = b"slopdesk-screend 1";

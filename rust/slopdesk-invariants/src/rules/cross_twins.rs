@@ -1,10 +1,10 @@
 //! One rule implemented in both languages, four times over — and the two crossings that were shaped
 //! like loops.
 //!
-//! Ported from `scripts/check-supervisor.sh`. In three of the four twins the two copies were not
-//! even reached by the same inputs — one side had the callers and the other had the tests — which
-//! is the arrangement in which a divergence can never show up as a red anything. What regrows a
-//! pair is not a whole function reappearing; it is one predicate, one cast or one line of index
+//! Ported from the deleted `check-supervisor.sh`. In three of the four twins the two copies were
+//! not even reached by the same inputs — one side had the callers and the other had the tests —
+//! which is the arrangement in which a divergence can never show up as a red anything. What regrows
+//! a pair is not a whole function reappearing; it is one predicate, one cast or one line of index
 //! arithmetic written by hand beside a door that already answers it.
 
 use crate::claim::{Claim, RUST, SWIFT, View, check_all};

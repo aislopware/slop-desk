@@ -74,7 +74,7 @@ public enum TabBadgeKind: Equatable, Sendable {
     }
 
     /// The discriminant `slopdesk-agent::badge`'s `TabBadge::ALL` gives this case. Declaration order
-    /// is the crossing order, and `scripts/check-supervisor.sh` fails the build if the two lists
+    /// is the crossing order, and `rust/slopdesk-invariants` fails the build if the two lists
     /// ever disagree.
     ///
     /// `package` rather than `internal`: `TabBadgeResolver` is one target up now, and it marshals

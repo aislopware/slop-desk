@@ -49,7 +49,7 @@ public enum WatchProgress {
     /// this can never emit a discriminant the host would drop.
     ///
     /// No Swift caller: ``spinnerBytes`` and ``finishBytes(exitCode:)`` are the two shapes `watch`
-    /// actually emits, and each has its own door. The face stays because `check-supervisor` pins it —
+    /// actually emits, and each has its own door. The face stays because `slopdesk-invariants` pins it —
     /// the byte framing is `rust/slopdesk-wire`'s `osc`, the same crate the HOST's sniffer parses with,
     /// and an uncalled face is what stops the next arbitrary state from being framed in Swift instead.
     static func progressBytes(state: ProgressState) -> [UInt8] {

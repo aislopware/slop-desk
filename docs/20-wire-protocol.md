@@ -1178,7 +1178,7 @@ loss is the normal case PATH 2 is built to tolerate.
 
 ### 10.1 Message table (`FileTransferRequest` / `FileTransferReply`, `Request` / `Reply` in Rust)
 
-Each end is written ONCE and the halves are gated against each other by `check-supervisor.sh` §10:
+Each end is written ONCE and the halves are gated against each other by `slopdesk-invariants`:
 `FileTransferCodec` encodes 1–5 and decodes 6–9, `rust/slopdesk-dropd/src/protocol.rs` does the
 mirror. A 1–5 arriving at the client is refused as unknown (the peer is not a dropd); a 6–9 arriving
 at dropd is decoded strictly and then ignored (a confused client, not a hostile one — hanging up

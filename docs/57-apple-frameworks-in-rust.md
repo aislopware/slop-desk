@@ -194,7 +194,7 @@ no-op, not a fault.`
 `slopdesk-ffi` builds three slices, two of them iOS, so a macOS-only edge is a link error waiting to
 happen — but the tree already carries one and enforces it. `slopdesk-git` vendors `libgit2`, is a
 `[target.'cfg(target_os = "macos")'.dependencies]` edge, and its door is declared inside the
-`MACOS-ONLY BEGIN/END` region of `slopdesk_ffi.h`. `build-ffi.sh` reads that region and requires the
+`MACOS-ONLY BEGIN/END` region of `slopdesk_ffi.h`. `slopdesk-gate ffi` reads that region and requires the
 symbol PRESENT on `aarch64-apple-darwin` and ABSENT on both iOS slices, so the three spellings of
 the fact — the header guard, the `#[cfg]` in `src/lib.rs`, the target-gated dependency — cannot
 drift apart without failing the build.
@@ -415,7 +415,7 @@ phone at all. VideoToolbox is the exception: iOS has it, and the two halves have
 with `#[cfg(target_os = "macos")]` and its Cargo edge widened to `cfg(any(macos, ios))`, which makes
 `decoder.rs` the only ungated `slopdesk-apple-*` door in the header and puts its declarations
 OUTSIDE the `MACOS-ONLY` region. What keeps the internal gate honest is the check that was already
-there: `build-ffi.sh` requires the ENCODER's symbols present on the macOS slice and absent on the
+there: `slopdesk-gate ffi` requires the ENCODER's symbols present on the macOS slice and absent on the
 other two, so a `#[cfg]` that quietly stopped matching fails a gate rather than merely bloating a
 phone.
 

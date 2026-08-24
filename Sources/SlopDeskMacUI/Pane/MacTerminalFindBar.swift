@@ -23,7 +23,7 @@
 //
 // THE MODE CHIPS ARE ``MacFindTogglePillView`` — the very view `MacGlobalSearch` already draws, reached
 // across this module rather than copied into it. Its own header carries the lock ("the find bar's chips
-// and these must read identically") and `check-supervisor.sh` pins `FindTogglePillAppearance` as a pair
+// and these must read identically") and `slopdesk-invariants` pins `FindTogglePillAppearance` as a pair
 // between the SwiftUI find bar and that file. A third AppKit spelling of the chip would have satisfied
 // every gate in the repo and still been the drift the lock exists to forbid, because nothing compares a
 // hover plate in one file with a hover plate in another. So there are two AppKit pill drawings in this

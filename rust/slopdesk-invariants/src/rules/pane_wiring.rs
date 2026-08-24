@@ -1,8 +1,8 @@
 //! What a terminal pane owns that is not a drawing: the callback wiring, the ⎋ event tap and the
 //! phone's key path.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Each of these was a resource with a PAIR — wire and
-//! clear, install and remove, press and release — living inside a `View` body or an
+//! Ported from the deleted `check-supervisor.sh`. Each of these was a resource with a PAIR — wire
+//! and clear, install and remove, press and release — living inside a `View` body or an
 //! `NSViewRepresentable`'s coordinator, where the pairing was invisible and the `AppKit` rewrite
 //! would have had to reproduce it from scratch. They descended whole; what is left in a renderer is
 //! two calls.

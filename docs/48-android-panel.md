@@ -84,7 +84,7 @@ the child gone and boots the installed binary, and starting a second one here wo
 for the panel's endpoint (`docs/49`).
 
 `HostServer.stop()` **relinquishes** it. That line used to be a `shutdown()`, which is the regression
-`scripts/check-supervisor.sh` §8 now ratchets alongside the code and simulator backends.
+`rust/slopdesk-invariants` now ratchets alongside the code and simulator backends.
 
 ### Not a fourth transport
 
@@ -387,6 +387,6 @@ or builds a display layer (hang-safety). The **sockets** are exercised only by
 `slopdesk-gate android` is what sets it, having first resolved the same `adb` and jar production
 would.
 
-`scripts/check-supervisor.sh` §11 ratchets what is typed on both sides of the wire: every `op` the
+`rust/slopdesk-invariants` ratchets what is typed on both sides of the wire: every `op` the
 panel can send has an arm in `server.rs`, every device field it decodes is one `protocol.rs` encodes,
 the announce marker matches, and no Swift Android bridge has come back.

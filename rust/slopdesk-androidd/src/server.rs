@@ -61,7 +61,7 @@ pub const ANNOUNCE_PREFIX: &str = "androidd: listening on 0.0.0.0:";
 /// rather than on a wire that has no handshake to add it to. FIRST in the parenthetical and
 /// `v`-prefixed so the position is stable however the rest of that text grows. Spelled identically
 /// in the other two announcing daemons and in `SidecarAnnounce.versionMarker`;
-/// `scripts/check-supervisor.sh` ratchets all four.
+/// `rust/slopdesk-invariants` ratchets all four.
 pub const ANNOUNCE_VERSION_PREFIX: &str = "(v";
 
 /// One `adb shell` round trip carries both halves of a device probe; this splits them. Eight
@@ -638,7 +638,7 @@ mod tests {
     #[test]
     fn the_announce_prefix_is_what_hostd_parses() {
         // Spelled identically in `AndroidServiceManager.announceMarker`, and compared by
-        // `scripts/check-supervisor.sh` — a build that changes one and not the other fails there.
+        // `rust/slopdesk-invariants` — a build that changes one and not the other fails there.
         assert_eq!(ANNOUNCE_PREFIX, "androidd: listening on 0.0.0.0:");
     }
 

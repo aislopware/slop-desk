@@ -9,7 +9,7 @@ import Foundation
 // friends are case lists a `switch` in a view can read, and they carry no decisions. A signal never
 // crosses as a signal any more: the pane detector calls the verb it means, one door per fold, so
 // there is no `SlopDeskAgentSignal` to build here. That split is what makes
-// "one implementation" true here rather than aspirational, and `scripts/check-supervisor.sh` pins
+// "one implementation" true here rather than aspirational, and `rust/slopdesk-invariants` pins
 // the discriminants below so a reordered Swift enum fails the build instead of quietly reporting
 // `working` for `blocked`.
 

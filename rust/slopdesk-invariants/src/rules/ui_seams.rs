@@ -1,7 +1,7 @@
 //! The edges the UI split leaves behind: a test target's imports, the manifest edge under them, the
 //! coordinator hooks both roots bind, the canvas registration, and the leaf seams' two shapes.
 //!
-//! Ported from `scripts/check-supervisor.sh` (`docs/56` §3.5 and stage F). What these have in
+//! Ported from the deleted `check-supervisor.sh` (`docs/56` §3.5 and stage F). What these have in
 //! common is that the failure is a QUIET one — an unbound hook, a second drop-target provider, half
 //! a seam registered — and every one of them happens somewhere no compiler and no test is looking.
 

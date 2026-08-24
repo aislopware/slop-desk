@@ -1,9 +1,9 @@
 //! Where a bucket comes from, and a vocabulary that needs a count as well as a map.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Two rules that look unrelated and are the same shape
-//! twice: a value the crate decides, decided a second time on the near side. In one case that is
-//! four doubles and the failure is a banner nobody sees; in the other it is a table length and the
-//! failure is a settings field rendered with no range at all.
+//! Ported from the deleted `check-supervisor.sh`. Two rules that look unrelated and are the same
+//! shape twice: a value the crate decides, decided a second time on the near side. In one case that
+//! is four doubles and the failure is a banner nobody sees; in the other it is a table length and
+//! the failure is a settings field rendered with no range at all.
 
 use crate::claim::{Claim, Extract, View, check_all};
 use crate::report::Report;

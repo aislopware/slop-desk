@@ -1,9 +1,9 @@
 //! The UI split holds its shape, and the video surface stays split with it (`docs/56` §3).
 //!
-//! Ported from `scripts/check-supervisor.sh`. Three boundaries, and each fails SILENTLY rather than
-//! loudly if it slips: a frameworkless file in a UI target compiles, a dead platform arm compiles,
-//! and a seam sink wired on one half and forgotten on the other compiles. None of them is a build
-//! error, and all of them are the same failure — one implementation becoming two.
+//! Ported from the deleted `check-supervisor.sh`. Three boundaries, and each fails SILENTLY rather
+//! than loudly if it slips: a frameworkless file in a UI target compiles, a dead platform arm
+//! compiles, and a seam sink wired on one half and forgotten on the other compiles. None of them is
+//! a build error, and all of them are the same failure — one implementation becoming two.
 
 use crate::claim::{Claim, Corpus, SWIFT, View, check_all};
 use crate::report::Report;

@@ -29,7 +29,7 @@
 // or how it CUTS a hit apart — the two zero-state lines, the mode pills' glyphs and help, the
 // panel's own dimensions, and the before/match/after slicing of an excerpt are all
 // ``GlobalSearchPresentation``'s / ``FindModePill``'s / ``GlobalSearchMetrics``'s, and
-// `check-supervisor.sh` fails the build if either half re-derives one. The excerpt slicing matters
+// `slopdesk-invariants` fails the build if either half re-derives one. The excerpt slicing matters
 // most: a UTF-16 range that lands inside a surrogate pair has no `String.Index`, and a half that
 // re-wrote that guard would eventually trap on the one scrollback line containing an emoji.
 

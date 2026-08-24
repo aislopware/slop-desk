@@ -1,11 +1,11 @@
 //! One device-panel law, one chrome, one pasteboard, one open — and the four small rules that were
 //! each measured once and written down twice.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The simulator panel and the Android panel differ in
-//! almost everything and should — one rotates on the client and the other on the device, one sends
-//! touches in the fitted rect's space and the other in the video's own pixel grid, because `scrcpy`
-//! DROPS a mismatched pair. What they never differed in is the ARITHMETIC, and every rule here says
-//! so about one piece of it.
+//! Ported from the deleted `check-supervisor.sh`. The simulator panel and the Android panel differ
+//! in almost everything and should — one rotates on the client and the other on the device, one
+//! sends touches in the fitted rect's space and the other in the video's own pixel grid, because
+//! `scrcpy` DROPS a mismatched pair. What they never differed in is the ARITHMETIC, and every rule
+//! here says so about one piece of it.
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;

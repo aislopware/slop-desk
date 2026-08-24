@@ -13,7 +13,7 @@
 //! ## What did NOT move
 //! The syscalls. `recvmsg` with `SCM_RIGHTS`, the write-until-gone loop and the read-exactly loop
 //! stay in Swift, because the descriptor has to land in the reading process and the lane already
-//! has a contract of its own in `check-supervisor.sh`. What crosses here is the LAYOUT: which tag,
+//! has a contract of its own in `slopdesk-invariants`. What crosses here is the LAYOUT: which tag,
 //! how long, and what the packed bodies mean.
 
 use core::ffi::c_uchar;

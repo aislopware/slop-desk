@@ -1,10 +1,10 @@
 //! The `slopdesk` CLI offers exactly the verbs it can run, and the docs describe that CLI.
 //!
-//! Ported from `scripts/check-supervisor.sh` sections 1–8, which were the largest single block left
-//! in the shell. The subject is one table — `SUBCOMMANDS` in `rust/slopdesk-cli/src/vocabulary.rs`
-//! — and the four other places that used to hold a copy of it: the Swift face's flag parser, the
-//! completion scripts, the dispatch switch in `main.swift`, and two `ui-shell` markdown sections
-//! that describe the surface in prose.
+//! Ported from the deleted `check-supervisor.sh` sections 1–8, which were the largest single block
+//! left in the shell. The subject is one table — `SUBCOMMANDS` in
+//! `rust/slopdesk-cli/src/vocabulary.rs` — and the four other places that used to hold a copy of
+//! it: the Swift face's flag parser, the completion scripts, the dispatch switch in `main.swift`,
+//! and two `ui-shell` markdown sections that describe the surface in prose.
 //!
 //! ## What the block is actually for
 //! The reported bug was six unimplemented verbs offered by all five shells, because

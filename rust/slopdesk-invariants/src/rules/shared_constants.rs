@@ -707,7 +707,7 @@ fn shared_pairs(tree: &Tree) -> Pairs {
     // shell that still holds sections plus every rule in this crate EXCEPT this file — see
     // `OWN_PATH`.
     let mut ratcheted = tree
-        .get("scripts/check-supervisor.sh")
+        .get("rust/slopdesk-invariants")
         .map(|held| held.text.clone())
         .unwrap_or_default();
     for (path, source) in tree.under("rust/slopdesk-invariants") {
@@ -1016,8 +1016,8 @@ pub fn every_allowlist_entry_is_alive(tree: &Tree) -> Report {
 
 /// The probe reads at least as much as the builder is willing to cap
 ///
-/// Ported from `scripts/check-supervisor.sh`, and it is the one pair in this file whose rule is an
-/// INEQUALITY rather than an equality — which is why it could not be a [`Claim`] and is written
+/// Ported from the deleted `check-supervisor.sh`, and it is the one pair in this file whose rule is
+/// an INEQUALITY rather than an equality — which is why it could not be a [`Claim`] and is written
 /// out.
 ///
 /// `slopdesk-probe`'s `MAX_OPAQUE_READ_BYTES` is how much of a `git diff` (or any opaque payload)

@@ -64,7 +64,7 @@ public enum ANSIStripper {
     /// about where a sequence ends.
     ///
     /// No Swift caller today, and kept for the reason ``BlobImageValidator/looksLikePNG(_:)`` is:
-    /// `check-supervisor` pins the pair, and the face IS the door. Without one, the next caller that
+    /// `slopdesk-invariants` pins the pair, and the face IS the door. Without one, the next caller that
     /// needs a cut point writes a second incremental scan in Swift — which is exactly how the strip
     /// and the holdback drifted apart before.
     public static func holdbackStart(in bytes: [UInt8]) -> Int {

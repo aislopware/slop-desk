@@ -1,7 +1,7 @@
 //! The phone's capabilities, which are not allowed to be the Mac's minus a few.
 //!
-//! Ported from `scripts/check-supervisor.sh`. The user's rule for this app is one sentence: the iOS
-//! app differs from the macOS app in LAYOUT and in nothing else. Every rule here pins one
+//! Ported from the deleted `check-supervisor.sh`. The user's rule for this app is one sentence: the
+//! iOS app differs from the macOS app in LAYOUT and in nothing else. Every rule here pins one
 //! capability that was Mac-only until it was closed, and each of them was Mac-only in the same way
 //! — not by a decision, but because the phone's renderer was written later and something did not
 //! get carried across. That is precisely the failure a ratchet catches and a review does not:

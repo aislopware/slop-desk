@@ -1,10 +1,10 @@
 //! The client's folds: the gradient, the decoder's admission, the audio stage, the present queue,
 //! the parameter sets, the two scroll laws, the swipe pair, the two reassemblies and the keepalive.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Every rule here is the same argument in a different
-//! costume: a law that decides what the viewer SEES lives once, in `rust/slopdesk-video`, and the
-//! Swift file that used to hold it is a face. What each rule adds on top of its door list is the
-//! ban — the shapes a re-implementation would grow back — because a door can be called AND
+//! Ported from the deleted `check-supervisor.sh`. Every rule here is the same argument in a
+//! different costume: a law that decides what the viewer SEES lives once, in `rust/slopdesk-video`,
+//! and the Swift file that used to hold it is a face. What each rule adds on top of its door list
+//! is the ban — the shapes a re-implementation would grow back — because a door can be called AND
 //! second-guessed, and the second guess is what diverges on the link that was already in trouble.
 
 use crate::claim::{Claim, SWIFT, View, check_all};

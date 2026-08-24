@@ -1,7 +1,7 @@
 //! The two files a workspace leaves behind, the solvers that read them, and the bytes their enums
 //! cross as.
 //!
-//! Ported from `scripts/check-supervisor.sh`. Three rules that share one subject: what the app
+//! Ported from the deleted `check-supervisor.sh`. Three rules that share one subject: what the app
 //! writes to disk, who decides its shape, and how the four enums that ride the wire are numbered.
 //!
 //! The middle one is here because of a defect that no test could see. `SplitNode+Codable.swift` was
