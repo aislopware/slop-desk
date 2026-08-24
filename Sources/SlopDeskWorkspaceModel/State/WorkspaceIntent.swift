@@ -313,15 +313,6 @@ public enum WorkspaceIntentArgs {
         }
     }
 
-    /// The dock edge as a byte: `0 leading · 1 trailing · 2 top · 3 bottom`. Named by SIDE rather
-    /// than by axis so the byte says which gutter the user dropped into; the axis follows from it
-    /// through ``PaneDropEdge/axis``, which stays the one place that mapping lives.
-    static func edgeByte(_ edge: PaneDropEdge) -> UInt8 {
-        switch edge {
-        case .left: 0
-        case .right: 1
-        case .top: 2
-        case .bottom: 3
-        }
-    }
+    /// The dock edge as a byte — ``PaneDropEdge/byte``, which every door taking an edge reads.
+    static func edgeByte(_ edge: PaneDropEdge) -> UInt8 { edge.byte }
 }

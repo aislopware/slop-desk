@@ -12,9 +12,11 @@
 // are two different speakers saying two different sentences ("Claude is done" vs "make check finished").
 // Fusing them into one flavour and letting the view guess is the exact mistake `TabBadgeResolver` made.
 
+import CSlopDeskFFI
 import Foundation
 import SlopDeskClient // SessionResumeOutcome (the fresh-vs-resumed reconnect verdict)
-import SlopDeskWorkspaceCore // SettingsKey.redactSecretsEnabled + SecretRedactor (OSC-text masking parity)
+import SlopDeskWorkspaceCore // SettingsKey.redactSecretsEnabled (the SETTING; the masker itself is Rust)
+import SlopDeskWorkspaceModel
 
 public struct Toast: Identifiable, Sendable, Equatable {
     /// Stable id — a newer toast with the same id replaces the older (warp `object_id` discipline).
@@ -93,16 +95,31 @@ public struct Toast: Identifiable, Sendable, Equatable {
 
     /// Builds the in-app toast for an explicit OSC 9/777 notification, masking secrets in the (untrusted)
     /// title + body at the single toast-construction site so both platforms benefit.
+    ///
+    /// The masking happens on the FAR side: the masker is already a Rust face, and a near side that
+    /// masked first would be a second implementation of the one rule. What stays here is the SETTING —
+    /// a `UserDefaults` read, which no door can make for us — handed over as a bool.
     public static func explicitOSC(paneIDRaw: UUID, title: String, body: String?) -> Self {
-        Self(
-            id: "pane.\(paneIDRaw.uuidString)",
-            flavor: .default,
-            // A program in the pane announced something — an EVENT at that pane, not an agent's lifecycle.
-            source: .command,
-            title: redactSecretsIfEnabled(title),
-            body: body.map { redactSecretsIfEnabled($0) },
-            paneKey: paneIDRaw.uuidString,
-        )
+        let key = paneIDRaw.uuidString
+        let titleBytes = Array(title.utf8)
+        let bodyBytes = Array((body ?? "").utf8)
+        let keyBytes = Array(key.utf8)
+        let redact = SettingsKey.redactSecretsEnabled
+        let blob = keyBytes.withUnsafeBufferPointer { pane in
+            titleBytes.withUnsafeBufferPointer { title in
+                bodyBytes.withUnsafeBufferPointer { bodyRun in
+                    wsAnswerBytes { out, cap in
+                        Int(slopdesk_ws_toast_explicit_osc(
+                            pane.baseAddress, pane.count,
+                            title.baseAddress, title.count,
+                            bodyRun.baseAddress, bodyRun.count,
+                            body != nil, redact, out, cap,
+                        ))
+                    }
+                }
+            }
+        }
+        return unpacked(blob, paneKey: key) ?? Self(id: "pane.\(key)", title: "", paneKey: key)
     }
 
     /// Builds the in-app toast for a finished LONG-running command (the background "your build finished" cue).
@@ -118,18 +135,22 @@ public struct Toast: Identifiable, Sendable, Equatable {
         exitCode: Int32?,
         durationMS: UInt32,
     ) -> Self {
-        let secs = Int((Double(durationMS) / 1000).rounded())
-        let cleanExit = (exitCode ?? 0) == 0
-        return Self(
-            id: "pane.\(paneIDKey)",
-            flavor: cleanExit ? .success : .error,
-            source: .command,
-            // The derived headline appends the verb ("\(title) finished" / "\(title) failed"), so a
-            // title-less pane falls back to the bare SUBJECT — never to a sentence that would double up.
-            title: paneTitle.isEmpty ? "Command" : redactSecretsIfEnabled(paneTitle),
-            body: "exit \(exitCode.map(String.init) ?? "?") · \(secs)s",
-            paneKey: paneIDKey,
-        )
+        let keyBytes = Array(paneIDKey.utf8)
+        let titleBytes = Array(paneTitle.utf8)
+        let redact = SettingsKey.redactSecretsEnabled
+        let blob = keyBytes.withUnsafeBufferPointer { pane in
+            titleBytes.withUnsafeBufferPointer { title in
+                wsAnswerBytes { out, cap in
+                    Int(slopdesk_ws_toast_long_command(
+                        pane.baseAddress, pane.count,
+                        title.baseAddress, title.count,
+                        exitCode ?? 0, exitCode != nil, durationMS, redact, out, cap,
+                    ))
+                }
+            }
+        }
+        return unpacked(blob, paneKey: paneIDKey)
+            ?? Self(id: "pane.\(paneIDKey)", title: "", paneKey: paneIDKey)
     }
 
     /// The in-app toast for a completed RECONNECT's fresh-vs-resumed verdict — the ONLY
@@ -142,31 +163,50 @@ public struct Toast: Identifiable, Sendable, Equatable {
     package static func sessionResume(
         paneIDKey: String, outcome: SlopDeskClient.SessionResumeOutcome,
     ) -> Self? {
-        switch outcome {
-        // The verdict is an explicit HEADLINE (no flavour+title suffix encodes "reattached vs fresh"),
-        // which frees the detail line to say what it MEANS for the user's context.
-        case .resumedSession:
-            Self(
-                id: "pane.\(paneIDKey)",
-                flavor: .success,
-                source: .command,
-                title: "Session reattached",
-                body: "Same shell — context preserved",
-                paneKey: paneIDKey,
-                headline: "Session reattached",
-            )
-        case .freshShell:
-            Self(
-                id: "pane.\(paneIDKey)",
-                flavor: .attention,
-                source: .command,
-                title: "Reconnected to a fresh shell",
-                body: "The previous session ended",
-                paneKey: paneIDKey,
-                headline: "Reconnected to a fresh shell",
-            )
-        case .undetermined:
-            nil
+        let index: UInt8 =
+            switch outcome {
+            case .undetermined: 0
+            case .freshShell: 1
+            case .resumedSession: 2
+            }
+        let keyBytes = Array(paneIDKey.utf8)
+        let blob = keyBytes.withUnsafeBufferPointer { pane in
+            wsAnswerBytes { out, cap in
+                Int(slopdesk_ws_toast_session_resume(pane.baseAddress, pane.count, index, out, cap))
+            }
         }
+        // `docs/55` §4's `0` is the undetermined verdict itself: a reconnect that has not resolved is
+        // not a user-facing edge, and a card for it would announce a fact nobody has yet.
+        return unpacked(blob, paneKey: paneIDKey)
+    }
+
+    // MARK: - Reading a card
+
+    /// One card's delivery: `[u8 flavor][u8 source][u8 flags]` then four runs — id, title, body,
+    /// headline. `nil` for §4's `0`.
+    ///
+    /// `flags` bit 0 is "the body is present", bit 1 "the headline is present". An absent line and an
+    /// empty one are DIFFERENT — a card with `Some("")` draws a blank second row and one with `nil`
+    /// draws none — and a length prefix alone cannot tell them apart.
+    private static func unpacked(_ blob: [UInt8], paneKey: String) -> Self? {
+        guard blob.count >= 3 else { return nil }
+        let flags = blob[2]
+        let text = wsRuns(Array(blob.dropFirst(3)), count: 4)
+        let flavor: Flavor =
+            switch blob[0] {
+            case 1: .success
+            case 2: .error
+            case 3: .attention
+            default: .default
+            }
+        return Self(
+            id: text[0],
+            flavor: flavor,
+            source: blob[1] == 1 ? .command : .agent,
+            title: text[1],
+            body: flags & 1 == 1 ? text[2] : nil,
+            paneKey: paneKey,
+            headline: flags & 2 == 2 ? text[3] : nil,
+        )
     }
 }

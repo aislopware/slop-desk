@@ -88,8 +88,9 @@ public struct GlobalSearchGroup: Equatable, Sendable {
 }
 
 /// The assembled global-search result set: the per-source `groups` (source order preserved, zero-hit sources
-/// dropped), the flat `totalMatches` count, and the `tabCount` (number of groups). ``summary`` renders the
-/// `N results — M tabs` line verbatim (em-dash separator — matches `docs/ui-shell/screenshots/global-search.png`).
+/// dropped), the flat `totalMatches` count, and the `tabCount` (number of groups). The `N results — M tabs`
+/// line those two numbers become is `GlobalSearchPresentation.summary`, which reads it from
+/// `slopdesk_workspace::global_search` along with the gate that decides whether it prints at all.
 public struct GlobalSearchResults: Equatable, Sendable {
     public let groups: [GlobalSearchGroup]
     public let totalMatches: Int
@@ -103,9 +104,6 @@ public struct GlobalSearchResults: Equatable, Sendable {
 
     /// An empty result set (empty query / nothing matched) — the `nil`-equivalent the overlay renders blank.
     public static let empty = Self(groups: [], totalMatches: 0, tabCount: 0)
-
-    /// The summary line shown beneath the query field: `"4 results — 3 tabs"` (em-dash, verbatim wording).
-    public var summary: String { "\(totalMatches) results — \(tabCount) tabs" }
 }
 
 /// Transient per-group collapse state for the Global Search surface (⇧⌘F): the set of result groups the

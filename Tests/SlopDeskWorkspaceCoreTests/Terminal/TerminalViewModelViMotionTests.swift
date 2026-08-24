@@ -171,11 +171,13 @@ final class TerminalViewModelViMotionTests: XCTestCase {
 
     // MARK: Visual modes (v / V / ⌃v) + selection extend
 
-    func testVisualModePillLabels() {
-        XCTAssertNil(TerminalViewModel.VisualMode.none.pillLabel, "plain nav has no visual-mode label")
-        XCTAssertEqual(TerminalViewModel.VisualMode.char.pillLabel, "VISUAL")
-        XCTAssertEqual(TerminalViewModel.VisualMode.line.pillLabel, "VISUAL LINE")
-        XCTAssertEqual(TerminalViewModel.VisualMode.block.pillLabel, "VISUAL BLOCK")
+    /// The pill's WORDS are pinned in `slopdesk_workspace::vi_hints` and their marshalling in
+    /// `ViKeyHintPresentationTests`; what is left for this side is the mode → index mapping it asks
+    /// with. A repeated index prints one mode's label over another's, and the far side — which sees
+    /// only a number — cannot notice.
+    func testEveryVisualModeAsksWithItsOwnIndex() {
+        let modes: [TerminalViewModel.VisualMode] = [.none, .char, .line, .block]
+        XCTAssertEqual(Set(modes.map(\.index)).count, modes.count, "one index per mode")
     }
 
     /// `v`/`V`/`⌃v` set the observable visual mode; the SAME key toggles back to plain navigation, a DIFFERENT

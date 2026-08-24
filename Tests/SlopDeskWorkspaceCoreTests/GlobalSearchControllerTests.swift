@@ -5,8 +5,9 @@ import XCTest
 
 /// The pure ⇧⌘F Global Search engine: runs ``TerminalSearchController/computeMatches`` over every
 /// terminal pane's scrollback mirror, drops zero-hit sources, groups by source, builds full-line excerpts with
-/// UTF-16 highlight ranges, and produces the `N results — M tabs` summary. All against in-memory sources — no
-/// view, no store, no libghostty.
+/// UTF-16 highlight ranges, and counts what survived. All against in-memory sources — no view, no store, no
+/// libghostty. The `N results — M tabs` LINE those counts become is `slopdesk_workspace::global_search`'s and
+/// is pinned there; what is asserted here is the counting.
 final class GlobalSearchControllerTests: XCTestCase {
     /// Mints a source with a fresh identity (UUID-backed) and the given title + buffer.
     private func source(_ title: String, _ lines: [String]) -> GlobalSearchSource {
@@ -33,7 +34,6 @@ final class GlobalSearchControllerTests: XCTestCase {
         XCTAssertEqual(results.groups.count, 2)
         XCTAssertEqual(results.totalMatches, 4)
         XCTAssertEqual(results.tabCount, 2)
-        XCTAssertEqual(results.summary, "4 results — 2 tabs")
         // Source order is preserved; the zero-hit "gamma" is absent (not merely empty).
         XCTAssertEqual(results.groups.map(\.groupTitle), ["alpha", "beta"])
         XCTAssertEqual(results.groups.map(\.hits.count), [2, 2])
@@ -143,7 +143,6 @@ final class GlobalSearchControllerTests: XCTestCase {
         XCTAssertEqual(results, .empty)
         XCTAssertEqual(results.totalMatches, 0)
         XCTAssertEqual(results.tabCount, 0)
-        XCTAssertEqual(results.summary, "0 results — 0 tabs")
     }
 
     // MARK: Click-to-line navigation

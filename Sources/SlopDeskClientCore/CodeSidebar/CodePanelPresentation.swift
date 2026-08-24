@@ -1,36 +1,34 @@
-// CodePanelPresentation — what the RIGHT panel's four surfaces SAY, and which of them a phase picks.
+// CodePanelPresentation — the near-side FACE of `slopdesk_codepanel::surface`.
 //
 // docs/56 stage D, increment 51, and the same lift increments 47 and 49 did for the checklist and the
 // bespoke settings pages. The four surfaces had ONE renderer until the Mac drew them itself, so every
 // word in them and every phase→surface answer had a single speller BY ACCIDENT. There are two
-// renderers now, so the words and the folds moved down here and are single-spelled ON PURPOSE.
+// renderers now, so the words and the folds moved down and are single-spelled ON PURPOSE — and once
+// they were values rather than a `switch` in a body, they moved the rest of the way across.
 //
-// ## Why this file, and not two
+// ## The three surfaces answer ONE layout
 //
-// The workbench's phase is `SlopDeskClientCore`'s (``CodeSidebarPhase``, beside the poll loop that
-// drives it) and the two device surfaces' is `SlopDeskDevicePanels`' (``DevicePanelPhase``, beside
-// theirs). One vocabulary spread over two targets would put the panel's empty-state RECORD in a third,
-// and then the three would have to agree about a glyph name. So this target took the dependency — the
-// direction was already legal (`SlopDeskDevicePanels` names no presentation type) and it buys the
-// panel one home rather than three files that must not drift.
-//
-// It sits beside ``PanelTabReading`` for the same reason that file exists: the four surfaces are drawn
-// twice, and what they say is not a fact about either drawing.
+// The workbench and the two device surfaces are the same four-state question asked about three
+// subjects, so they cross as the same `[u8 kind][u8 detail_is_command]` + three runs. A caller reads
+// exactly as many runs as `kind` says it has, and the ones that do not apply are EMPTY rather than
+// absent, which keeps the reader a straight line.
 //
 // ## What is NOT here
 //
 // **No ink, no metric, no font.** `SlopDeskSlate` DEPENDS on this target, so a token read from here
-// would be a cycle rather than a widening — the residue increment 47 recorded and increment 49
-// re-recorded. A surface names its own SILHOUETTE (an SF-Symbol name both halves ask for) and each
-// renderer spells the dim.
+// would be a cycle rather than a widening. A surface names its own SILHOUETTE (an SF-Symbol name both
+// halves ask for) and each renderer spells the dim.
 //
 // **No `.task`, no poll, no generation.** Those are the model's, and how a renderer keeps a loop alive
 // across a mount is exactly the thing the two frameworks disagree about: SwiftUI cancels a `.task` on
-// unmount, and AppKit's controller has to hold and cancel the `Task` itself. The DECISION — which key
-// restarts which loop — is here, because getting that wrong is a stalled panel on one platform only.
+// unmount, and AppKit's controller has to hold and cancel the `Task` itself. The two ANIMATION KEYS
+// that decide which loop restarts when are shared, because getting that wrong is a stalled panel on
+// one platform only — and they stay two doors, because the difference between them IS the rule.
 
+import CSlopDeskFFI
 import Foundation
 import SlopDeskDevicePanels
+import SlopDeskWorkspaceModel
 
 // MARK: - The one empty-state shape the panel speaks in
 
@@ -89,12 +87,18 @@ package enum DevicePanelSurfaceState: Equatable {
 /// whether this is the project worth booting an editor for, and two same-named checkouts are told
 /// apart only by the path above them.
 package enum CodeOpenGateReading {
-    package static let systemImage = "folder"
-    package static let openTitle = "Open Editor"
+    package static var systemImage: String { CodePanelPresentation.words[1] }
+    package static var openTitle: String { CodePanelPresentation.words[2] }
 
-    /// The heading — the folder's own name.
+    /// The heading — the folder's own name, or the whole path when it has none to take.
     package static func title(projectRoot: String) -> String {
-        URL(fileURLWithPath: projectRoot).lastPathComponent
+        let bytes = Array(projectRoot.utf8)
+        let blob = bytes.withUnsafeBufferPointer { root in
+            wsAnswerBytes { out, cap in
+                Int(slopdesk_code_gate_title(root.baseAddress, root.count, out, cap))
+            }
+        }
+        return wsRuns(blob, count: 1)[0]
     }
 }
 
@@ -107,25 +111,34 @@ package enum CodePanelPresentation {
     /// pinned in `ThirdParty/tools/tools.lock`, and the Homebrew formula froze at 4.112 — below the
     /// Code 1.121 floor this panel needs — before being deprecated outright. Sending someone to `brew`
     /// here hands them the broken one.
-    package static let provisionCommand = "bash ThirdParty/tools/provision.sh"
+    package static var provisionCommand: String { words[0] }
+
+    /// The panel's seven constants, in ONE crossing, once per process: the provision command, the
+    /// gate's image and title, the two device toast ids, the two device fallback subjects.
+    static let words: [String] = wsRuns(
+        wsAnswerBytes { out, cap in Int(slopdesk_code_panel_words(out, cap)) },
+        count: 7,
+    )
 
     /// The announced-but-empty fourth surface. The TAB is real — selecting it parks the workbench and
     /// cancels the ensure poll — and only the content is a placeholder.
-    package static let desktop = PanelEmptyState(
-        systemImage: "display",
-        title: "Desktop",
-        detail: "The host's window surface arrives here.",
-    )
+    ///
+    /// It rides the SHARED layout even though it has no phase, so this side has one reader for all
+    /// four surfaces rather than three and a special case.
+    package static let desktop: PanelEmptyState = Surface(
+        wsAnswerBytes { out, cap in Int(slopdesk_code_desktop_surface(out, cap)) },
+    ).emptyState
 
     // MARK: The workbench
 
     /// What the workbench surface shows, from the poll phase and what the focus resolves to.
     ///
-    /// The ORDER of the three questions is the whole rule and it is not interchangeable. The gate comes
-    /// first, because a project the user never opened must cost nothing at all — no ensure poll, no
-    /// proxy bind, no webview (user-directed 2026-08-07). Then the root, then the brief wait while the
-    /// host's `projectKey` push is in flight, and only then the no-project placeholder: rendering that
-    /// placeholder during the push is a panel that says "no project" about a pane that has one.
+    /// The ORDER of the questions is the whole rule and it is not interchangeable — the gate first,
+    /// because a project the user never opened must cost nothing at all (no ensure poll, no proxy
+    /// bind, no webview; user-directed 2026-08-07), then the root, then the brief wait while the
+    /// host's `projectKey` push is in flight, and only then the no-project placeholder. It is asked in
+    /// exactly one place for that reason, and the four gates cross as the four arguments in that
+    /// order.
     ///
     /// - Parameters:
     ///   - awaitingProjectKey: the focused pane has a SECTION identity (the cwd fallback) but no
@@ -137,39 +150,34 @@ package enum CodePanelPresentation {
         openedProjects: Set<String>,
         awaitingProjectKey: Bool,
     ) -> CodePanelWorkbenchState {
-        guard let root = activeProjectRoot else {
-            return awaitingProjectKey
-                ? .waiting("Resolving project…")
-                : .empty(PanelEmptyState(
-                    systemImage: "folder",
-                    title: "No project in focus",
-                    detail: "Focus a terminal pane to open its project here.",
-                ))
+        var readyIsThisRoot = false
+        var mountURL: URL?
+        if case let .ready(readyRoot, url) = phase, readyRoot == activeProjectRoot {
+            readyIsThisRoot = true
+            mountURL = url
         }
-        guard openedProjects.contains(root) else { return .gate(projectRoot: root) }
-        switch phase {
-        case let .ready(readyRoot, url) where readyRoot == root:
+        let blob = wsAnswerBytes { out, cap in
+            Int(slopdesk_code_workbench(
+                phase.byte,
+                activeProjectRoot != nil,
+                activeProjectRoot.map(openedProjects.contains) ?? false,
+                readyIsThisRoot,
+                awaitingProjectKey,
+                out, cap,
+            ))
+        }
+        let surface = Surface(blob)
+        switch surface.kind {
+        case 0: return .gate(projectRoot: activeProjectRoot ?? "")
+        case 1:
+            // The mount answer and the URL are the same `.ready` read twice; a mount without one is
+            // not reachable, and waiting is what a boot looks like from here anyway.
+            guard let root = activeProjectRoot, let url = mountURL else {
+                return .waiting(surface.label)
+            }
             return .workbench(projectRoot: root, url: url)
-        // ⚠️ A `.ready` carrying the PREVIOUS project is the render between a switch and its restarted
-        // poll. Mounting from it opened the old project's folder for the new root and stuck there
-        // (user-reported 2026-08-03; the pool re-loads on a host/port move only, never on the folder).
-        // It waits, exactly like a boot, because that is what it is.
-        case .ready,
-             .starting:
-            return .waiting("Starting code-server…")
-        case .unavailable:
-            return .empty(PanelEmptyState(
-                systemImage: "shippingbox",
-                title: "code-server not found on host",
-                detail: provisionCommand,
-                detailIsCommand: true,
-            ))
-        case .offline:
-            return .empty(PanelEmptyState(
-                systemImage: "bolt.slash",
-                title: "Host unreachable",
-                detail: "The editor opens once a pane is connected.",
-            ))
+        case 2: return .waiting(surface.label)
+        default: return .empty(surface.emptyState)
         }
     }
 
@@ -178,17 +186,7 @@ package enum CodePanelPresentation {
     /// What the Simulators surface shows. Machine-scoped, so unlike the workbench it has no project to
     /// key on and no waiting-for-`projectKey` state: one ensure loop, one device list, one live stream.
     package static func simulators(_ phase: DevicePanelPhase) -> DevicePanelSurfaceState {
-        devices(
-            phase,
-            starting: "Starting simulator server…",
-            missingTool: PanelEmptyState(
-                systemImage: "iphone.slash",
-                title: "baguette not found on host",
-                detail: provisionCommand,
-                detailIsCommand: true,
-            ),
-            offlineDetail: "Simulators appear once a pane is connected.",
-        )
+        deviceSurface(phase, android: false)
     }
 
     /// What the Android surface shows.
@@ -199,36 +197,47 @@ package enum CodePanelPresentation {
     /// present in any checkout. The emulator is deliberately not provisioned (system images are
     /// gigabytes behind a licence accept), so a host that wants AVDs still needs its own SDK.
     package static func android(_ phase: DevicePanelPhase) -> DevicePanelSurfaceState {
-        devices(
-            phase,
-            starting: "Opening the Android bridge…",
-            missingTool: PanelEmptyState(
-                systemImage: "cable.connector.slash",
-                title: "adb not found on host",
-                detail: provisionCommand,
-                detailIsCommand: true,
-            ),
-            offlineDetail: "Devices appear once a pane is connected.",
-        )
+        deviceSurface(phase, android: true)
     }
 
-    /// The shape both device surfaces share. They differ in three strings and in nothing else, which is
-    /// why the fold is written once and the strings are the arguments.
-    private static func devices(
-        _ phase: DevicePanelPhase,
-        starting: String,
-        missingTool: PanelEmptyState,
-        offlineDetail: String,
-    ) -> DevicePanelSurfaceState {
-        switch phase {
-        case .ready: .devices
-        case .starting: .waiting(starting)
-        case .unavailable: .empty(missingTool)
-        case .offline: .empty(PanelEmptyState(
-                systemImage: "bolt.slash",
-                title: "Host unreachable",
-                detail: offlineDetail,
-            ))
+    /// One door for both, because the two differ in three strings and in nothing else — a second door
+    /// would be a second place for the shared fold to drift.
+    private static func deviceSurface(_ phase: DevicePanelPhase, android: Bool) -> DevicePanelSurfaceState {
+        let blob = wsAnswerBytes { out, cap in
+            Int(slopdesk_code_device_surface(phase.byte, android, out, cap))
+        }
+        let surface = Surface(blob)
+        switch surface.kind {
+        case 1: return .devices
+        case 2: return .waiting(surface.label)
+        default: return .empty(surface.emptyState)
+        }
+    }
+
+    /// The shared delivery, cut back into its pieces.
+    private struct Surface {
+        let kind: UInt8
+        /// The waiting label, or the empty state's title — the first run either way.
+        let label: String
+        private let systemImage: String
+        private let detail: String
+        private let detailIsCommand: Bool
+
+        init(_ blob: [UInt8]) {
+            let text = wsRuns(Array(blob.dropFirst(2)), count: 3)
+            // A delivery too short to carry a kind is the empty state, which is the surface that
+            // says what went wrong rather than the one that mounts an editor.
+            kind = blob.first ?? 3
+            detailIsCommand = blob.count > 1 && blob[1] == 1
+            label = text[0]
+            systemImage = text[1]
+            detail = text[2]
+        }
+
+        var emptyState: PanelEmptyState {
+            PanelEmptyState(
+                systemImage: systemImage, title: label, detail: detail, detailIsCommand: detailIsCommand,
+            )
         }
     }
 
@@ -239,12 +248,8 @@ package enum CodePanelPresentation {
     /// A `.ready` service that respawns on a new port is the same surface and must not blink; server
     /// boot → devices is a real change of subject and cuts hard without an animation keyed on this.
     package static func phaseKey(_ phase: DevicePanelPhase) -> String {
-        switch phase {
-        case .ready: "ready"
-        case .starting: "starting"
-        case .unavailable: "unavailable"
-        case .offline: "offline"
-        }
+        let blob = wsAnswerBytes { out, cap in Int(slopdesk_code_phase_key(phase.byte, out, cap)) }
+        return wsRuns(blob, count: 1)[0]
     }
 
     /// The service's ADDRESS, or empty when there is not one.
@@ -254,8 +259,21 @@ package enum CodePanelPresentation {
     /// the ensure loop would tie the list's refresh rate to the server-boot retry rate, and those two
     /// want opposite cadences.
     package static func readyKey(_ phase: DevicePanelPhase) -> String {
-        guard case let .ready(host, port) = phase else { return "" }
-        return "\(host):\(port)"
+        var host = ""
+        var port: UInt16 = 0
+        if case let .ready(readyHost, readyPort) = phase {
+            host = readyHost
+            port = UInt16(truncatingIfNeeded: readyPort)
+        }
+        let bytes = Array(host.utf8)
+        let blob = bytes.withUnsafeBufferPointer { borrowed in
+            wsAnswerBytes { out, cap in
+                Int(slopdesk_code_ready_key(phase.byte, borrowed.baseAddress, borrowed.count, port, out, cap))
+            }
+        }
+        // The empty key is REAL here — it is what a non-ready phase answers — so §4's `0` maps to it
+        // rather than to a missing answer.
+        return blob.isEmpty ? "" : wsRuns(blob, count: 1)[0]
     }
 
     // MARK: What a device surface REPORTS, and where
@@ -263,14 +281,14 @@ package enum CodePanelPresentation {
     /// The Simulators surface's toast id. Its own, not shared with Android: the two surfaces can both
     /// have something to say about different devices, and one id would have one panel's report replace
     /// the other's.
-    package static let simulatorToastID = "simulator"
-    package static let androidToastID = "android"
+    package static var simulatorToastID: String { words[3] }
+    package static var androidToastID: String { words[4] }
 
     /// What the report is ABOUT when the selection has already been cleared — a verdict of "no longer
     /// running" sets the text and clears the selection in one write, and the card still has to say
     /// where it came from.
-    package static let simulatorFallbackSubject = "Simulators"
-    package static let androidFallbackSubject = "Android"
+    package static var simulatorFallbackSubject: String { words[5] }
+    package static var androidFallbackSubject: String { words[6] }
 
     // MARK: The one number the mount needs
 
@@ -286,8 +304,32 @@ package enum CodePanelPresentation {
     /// so the honest measurement is the laid-out box —
     /// `document.querySelector('#workbench\\.parts\\.titlebar').getBoundingClientRect().height`
     /// against a real workbench. It went 35 → 30 across Code 1.112 → 1.131; re-measure on every
-    /// code-server bump, because being wrong here clips the editor tab row instead. Here rather than at
-    /// either mount because both halves clip the same overhang, and a number measured once that two
-    /// files carry is a number that gets bumped in one of them.
-    package static let clippedTitleBarHeight = 30.0
+    /// code-server bump, because being wrong here clips the editor tab row instead.
+    package static let clippedTitleBarHeight = slopdesk_code_clipped_title_bar_height()
+}
+
+// MARK: - The phase byte both halves speak
+
+private extension CodeSidebarPhase {
+    /// `0` offline · `1` starting · `2` unavailable · `3` ready — the far side's own discriminant.
+    var byte: UInt8 {
+        switch self {
+        case .offline: 0
+        case .starting: 1
+        case .unavailable: 2
+        case .ready: 3
+        }
+    }
+}
+
+private extension DevicePanelPhase {
+    /// The same four, in the same order: the two phases are one vocabulary asked about two subjects.
+    var byte: UInt8 {
+        switch self {
+        case .offline: 0
+        case .starting: 1
+        case .unavailable: 2
+        case .ready: 3
+        }
+    }
 }

@@ -47,6 +47,7 @@ pub mod job;
 pub mod kind;
 pub mod machine;
 pub mod process;
+pub mod readout;
 pub mod screen;
 pub mod signal;
 pub mod sleep;

@@ -39,6 +39,7 @@
 
 pub mod blocks;
 pub mod config;
+pub mod context_menu;
 pub mod cursor_color;
 pub mod dedup;
 pub mod inputbox;

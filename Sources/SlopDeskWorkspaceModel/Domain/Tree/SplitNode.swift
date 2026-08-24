@@ -43,6 +43,22 @@ public enum PaneDropEdge: String, Sendable, Equatable, CaseIterable {
         }
     }
 
+    /// The edge as a byte: `0 leading · 1 trailing · 2 top · 3 bottom` —
+    /// `slopdesk_tree::PaneDropEdge`'s own discriminant, which is what every door that takes an edge
+    /// speaks in. Named by SIDE rather than by axis so the byte says which gutter the user dropped
+    /// into; the axis follows from it through ``axis``, which stays the one place that mapping lives.
+    ///
+    /// It sits on the enum rather than beside any one door, because a second door that also takes an
+    /// edge is a second chance to spell the table differently.
+    public var byte: UInt8 {
+        switch self {
+        case .left: 0
+        case .right: 1
+        case .top: 2
+        case .bottom: 3
+        }
+    }
+
     /// Whether the dropped pane is inserted BEFORE the target/root along the axis (`.left`/`.top`) or
     /// after it (`.right`/`.bottom`).
     public var insertsBefore: Bool {

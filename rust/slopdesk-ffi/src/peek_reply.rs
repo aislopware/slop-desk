@@ -28,7 +28,7 @@ use core::ffi::c_uchar;
 use slopdesk_workspace::peek_reply;
 
 use crate::link_detect::split;
-use crate::{borrow, deliver, records_of, saturating_u32};
+use crate::{borrow, deliver, push_text, records_of, saturating_u32};
 
 /// `[u32 BE length]` per line, after the count.
 const LENGTH: usize = 4;
@@ -141,12 +141,189 @@ pub unsafe extern "C" fn slopdesk_ws_peek_recent_lines(
     unsafe { deliver(&blob, out, cap) }
 }
 
+/// The card's fixed words, in one delivery.
+///
+/// ```text
+/// 3 × [u32 length][UTF-8 bytes]   // the card title, the empty-state line, the missing-question line
+/// ```
+///
+/// The three doors above answer TEXT as a bare run because each is one string with a size the
+/// caller cannot predict. These three are constants and are always wanted together, which is the
+/// group shape `docs/55` §6 describes — so they carry the length prefixes the other doors do not.
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's buffer"
+)]
+pub unsafe extern "C" fn slopdesk_ws_peek_words(out: *mut c_uchar, cap: usize) -> usize {
+    let mut blob = Vec::new();
+    for word in [
+        peek_reply::TITLE,
+        peek_reply::ALL_CAUGHT_UP,
+        peek_reply::MISSING_QUESTION,
+    ] {
+        push_text(&mut blob, word);
+    }
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// The card's position counter — `"2 of 5"` — or `0` when there is nothing to count.
+///
+/// ```text
+/// 1 × [u32 length][UTF-8 bytes]
+/// ```
+///
+/// `position` and `total` are read only when `has_position` is set.
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's buffer"
+)]
+pub unsafe extern "C" fn slopdesk_ws_peek_counter(
+    has_position: bool,
+    position: u32,
+    total: u32,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let Some(text) = peek_reply::counter(has_position.then_some((position, total))) else {
+        return 0;
+    };
+    let mut blob = Vec::new();
+    push_text(&mut blob, &text);
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// The transcript scroll's ceiling, in points.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_peek_scroll_max_height() -> f64 {
+    peek_reply::SCROLL_MAX_HEIGHT
+}
+
+/// The question a card prints, and whether it is the PLACEHOLDER rather than the agent's own words.
+///
+/// ```text
+/// [u8 is_placeholder]
+/// 1 × [u32 length][UTF-8 bytes]
+/// ```
+///
+/// The flag exists because an agent that happened to ask the placeholder's exact sentence must
+/// still be drawn as having asked it — the near side dims a placeholder, and dimming a real
+/// question would hide what the card is for.
+///
+/// # Safety
+/// `question` must be null or `question_len` live bytes; `(out, cap)` must be writable for `cap`
+/// bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and both pointers are the caller's"
+)]
+pub unsafe extern "C" fn slopdesk_ws_peek_question(
+    question: *const c_uchar,
+    question_len: usize,
+    has_question: bool,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
+    let question = String::from_utf8_lossy(unsafe { borrow(question, question_len) });
+    let (text, placeholder) = peek_reply::question(has_question.then_some(question.as_ref()));
+    let mut blob = vec![u8::from(placeholder)];
+    push_text(&mut blob, text);
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&blob, out, cap) }
+}
+
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the door is the only way to test the door")]
 mod tests {
+    use slopdesk_workspace::peek_reply;
+
     use super::{
-        LENGTH, slopdesk_ws_peek_quick_answer, slopdesk_ws_peek_recent_lines, slopdesk_ws_peek_reply_text,
+        LENGTH, slopdesk_ws_peek_counter, slopdesk_ws_peek_question, slopdesk_ws_peek_quick_answer,
+        slopdesk_ws_peek_recent_lines, slopdesk_ws_peek_reply_text, slopdesk_ws_peek_scroll_max_height,
+        slopdesk_ws_peek_words,
     };
+    use crate::testing::{delivered, runs};
+
+    #[test]
+    fn the_three_fixed_words_cross_in_their_documented_order() {
+        let blob = delivered(|out, cap| {
+            // SAFETY: `out` is a live local for the call.
+            unsafe { slopdesk_ws_peek_words(out, cap) }
+        });
+        let words = runs(&blob, 3);
+        assert_eq!(words.first().map(String::as_str), Some(peek_reply::TITLE));
+        assert_eq!(words.get(1).map(String::as_str), Some(peek_reply::ALL_CAUGHT_UP));
+        assert_eq!(
+            words.get(2).map(String::as_str),
+            Some(peek_reply::MISSING_QUESTION)
+        );
+    }
+
+    #[test]
+    fn the_counter_crosses_unchanged_including_its_silence() {
+        for position in [None, Some((0_u32, 0_u32)), Some((2, 5))] {
+            let (has, at, total) = position.map_or((false, 0, 0), |(at, total)| (true, at, total));
+            let blob = delivered(|out, cap| {
+                // SAFETY: `out` is a live local for the call.
+                unsafe { slopdesk_ws_peek_counter(has, at, total, out, cap) }
+            });
+            let expected = peek_reply::counter(position);
+            if blob.is_empty() {
+                assert_eq!(expected, None, "{position:?}");
+            } else {
+                assert_eq!(runs(&blob, 1).first().cloned(), expected, "{position:?}");
+            }
+        }
+    }
+
+    /// The placeholder flag survives an agent asking the placeholder's own sentence.
+    #[test]
+    fn the_question_crosses_with_its_provenance() {
+        for question in [
+            None,
+            Some(""),
+            Some("Proceed?"),
+            Some(peek_reply::MISSING_QUESTION),
+        ] {
+            let bytes = question.unwrap_or_default().as_bytes().to_vec();
+            let blob = delivered(|out, cap| {
+                // SAFETY: `bytes` and `out` are live locals for the call.
+                unsafe {
+                    slopdesk_ws_peek_question(bytes.as_ptr(), bytes.len(), question.is_some(), out, cap)
+                }
+            });
+            let (text, placeholder) = peek_reply::question(question);
+            let (flag, rest) = blob
+                .split_first()
+                .map_or((0xFF, [].as_slice()), |(flag, rest)| (*flag, rest));
+            assert_eq!(flag == 1, placeholder, "{question:?}");
+            assert_eq!(
+                runs(rest, 1).first().map(String::as_str),
+                Some(text),
+                "{question:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_scroll_ceiling_crosses_unchanged() {
+        assert!((slopdesk_ws_peek_scroll_max_height() - peek_reply::SCROLL_MAX_HEIGHT).abs() < f64::EPSILON);
+    }
 
     /// One §4 text door, sized then read.
     fn text(call: impl Fn(*mut u8, usize) -> usize) -> Option<String> {

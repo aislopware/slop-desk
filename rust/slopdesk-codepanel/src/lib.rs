@@ -21,4 +21,5 @@
 //! those tables into the iOS binary to fetch two strings.
 
 pub mod dressing;
+pub mod surface;
 pub mod tips;

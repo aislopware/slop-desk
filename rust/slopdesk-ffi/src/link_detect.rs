@@ -143,6 +143,22 @@ pub(crate) const fn kind_code(kind: DetectedLinkKind) -> u32 {
     }
 }
 
+/// The inverse of [`kind_code`] — the kind a wire constant names, or `None` for a code no kind has.
+///
+/// The inverse lives beside the forward map because that is the only way the two stay in step: a
+/// door that spelled its own `match` would keep answering after a seventh kind was added here.
+pub(crate) const fn kind_of(code: u32) -> Option<DetectedLinkKind> {
+    match code {
+        SLOPDESK_LINK_KIND_ABSOLUTE_PATH => Some(DetectedLinkKind::AbsolutePath),
+        SLOPDESK_LINK_KIND_TILDE_PATH => Some(DetectedLinkKind::TildePath),
+        SLOPDESK_LINK_KIND_RELATIVE_PATH => Some(DetectedLinkKind::RelativePath),
+        SLOPDESK_LINK_KIND_PATH_LINE_COL => Some(DetectedLinkKind::PathLineCol),
+        SLOPDESK_LINK_KIND_URL => Some(DetectedLinkKind::Url),
+        SLOPDESK_LINK_KIND_FILE_URL => Some(DetectedLinkKind::FileUrl),
+        _ => None,
+    }
+}
+
 /// Splits a `(blob, lengths)` pair into strings.
 ///
 /// Lossy because the boundary cannot promise UTF-8 and the scan must stay total; from Swift it is

@@ -118,8 +118,10 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
     const KEYS: &str = "Sources/SlopDeskClientCore/Settings/KeybindingsEditorReading.swift";
     /// A notification's.
     const TOAST: &str = "Sources/SlopDeskClientCore/Overlays/ToastPresentation.swift";
-    /// The cross-tab search field's.
-    const SEARCH: &str = "Sources/SlopDeskClientCore/Overlays/GlobalSearchPresentation.swift";
+    /// The cross-tab search field's. Rust, not Swift: the field's words crossed the FFI boundary
+    /// with the rest of the global-search reading, and the ban's paired claim has to follow the
+    /// floor wherever it moved or it starts guarding an empty room.
+    const SEARCH: &str = "rust/slopdesk-workspace/src/global_search.rs";
     /// The command palette's.
     const PALETTE: &str = "Sources/SlopDeskClientCore/Palette/PalettePresentation.swift";
 
@@ -168,7 +170,7 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
         (
             "Search across all tabs…",
             SEARCH,
-            "GlobalSearchPresentation.queryPrompt",
+            "slopdesk_workspace::global_search::QUERY_PROMPT",
         ),
         ("Search for commands…", PALETTE, "PalettePresentation.queryPrompt"),
     ];

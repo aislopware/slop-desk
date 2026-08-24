@@ -559,9 +559,19 @@ mod tests {
     /// NOT the same as everything the child will ever write: the child is a separate process, so
     /// the first read can land before `execve` has produced a byte and answer a short prefix — or
     /// on a loaded machine, nothing at all. Asserting on it makes a scheduling race look like a
-    /// broken `argv0`. Drain instead, and let the child end the loop: the parent already dropped
-    /// the slave in `spawn_pty`, so the last close is the child's exit and the master then answers
-    /// `EIO` (macOS's EOF for a master) rather than blocking forever.
+    /// broken `argv0`. Drain instead, until the NEEDLE arrives.
+    ///
+    /// The loop must not be ended by the child's exit, which is what it used to lean on: when the
+    /// last slave closes, macOS FLUSHES the tty's output queue and the master answers `EIO`, so a
+    /// child that finished before the parent's first read took its own output with it and this
+    /// returned `""`. That is a scheduling race — it fired during a `make check` whose Swift half
+    /// was compiling — dressed as a broken contract. Every caller therefore hands the child a
+    /// trailing `sleep` and kills it afterwards, the same shape the two terminal-fact tests below
+    /// already use, so the slave stays open and only the needle ends the loop.
+    ///
+    /// An implementation that never writes the needle hangs here rather than failing, which is the
+    /// bargain the polls below make too: a deadline that a loaded machine can exhaust is a suite
+    /// that goes red for being busy.
     fn drain_until(file: &mut std::fs::File, needle: &str) -> String {
         let mut text = String::new();
         let mut buffer = [0_u8; 256];
@@ -613,14 +623,19 @@ mod tests {
 
     #[test]
     fn spawned_child_writes_to_the_pty_master() {
-        let arguments = vec!["hello superd".to_owned()];
-        let spawned = spawn_pty(&plan("/bin/echo", &arguments)).unwrap();
+        // The `sleep` is what keeps the slave open past the parent's first read — see `drain_until`.
+        let arguments = vec!["-c".to_owned(), "echo 'hello superd'; sleep 60".to_owned()];
+        let spawned = spawn_pty(&plan("/bin/sh", &arguments)).unwrap();
 
         let mut file = std::fs::File::from(spawned.master);
         let text = drain_until(&mut file, "hello superd");
         assert!(text.contains("hello superd"), "{text:?}");
 
         // Only the forking process may reap, and this test IS it.
+        let _ignored = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(spawned.pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
         let _ignored = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(spawned.pid), None);
     }
 
@@ -628,7 +643,8 @@ mod tests {
     /// `-` and would otherwise silently start non-login.
     #[test]
     fn argv0_is_passed_independently_of_the_executable() {
-        let arguments = vec!["-c".to_owned(), "printf %s \"$0\"".to_owned()];
+        // The `sleep` is what keeps the slave open past the parent's first read — see `drain_until`.
+        let arguments = vec!["-c".to_owned(), "printf %s \"$0\"; sleep 60".to_owned()];
         let mut spawn_plan = plan("/bin/sh", &arguments);
         spawn_plan.argv0 = Some("-sh");
         let spawned = spawn_pty(&spawn_plan).unwrap();
@@ -636,6 +652,10 @@ mod tests {
         let mut file = std::fs::File::from(spawned.master);
         let text = drain_until(&mut file, "-sh");
         assert!(text.contains("-sh"), "{text:?}");
+        let _ignored = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(spawned.pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
         let _ignored = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(spawned.pid), None);
     }
 

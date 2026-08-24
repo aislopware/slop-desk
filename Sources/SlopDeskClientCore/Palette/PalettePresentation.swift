@@ -12,6 +12,7 @@
 // and ``SearchMixer``, one floor further down, and the palette has always read them rather than
 // owning them.
 
+import CSlopDeskFFI
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneSpec.cwdBadgePath — the badge's rule, in Rust
 
@@ -21,21 +22,25 @@ import SlopDeskWorkspaceModel // PaneSpec.cwdBadgePath — the badge's rule, in 
 ///
 /// Both are from `spec/user-interface__command-palette.md` — a centred panel at ~720pt with a
 /// results viewport that stops at ~7 rows so the card never grows to the height of the window.
+/// Both cross BY VALUE in one call, because a caller that asked separately could size the card by
+/// one spelling of the spec and its viewport by another.
 public enum PaletteMetrics {
     /// The card's fixed width. It does not track the window: a palette that stretched with a
     /// full-screen workspace would put its keycap column a screen away from its titles.
-    public static let panelWidth: Double = 720
+    public static let panelWidth: Double = card.panel_width
     /// The tallest the results viewport may be. Past this the list scrolls instead of the card
     /// growing.
-    public static let resultsMaxHeight: Double = 336
+    public static let resultsMaxHeight: Double = card.results_max_height
+
+    private static let card = slopdesk_ws_palette_card()
 
     /// One ⇞/⇟ stride: the rows one full viewport shows.
     ///
-    /// Derived from the SAME two numbers that size the viewport, so re-tuning the card re-tunes the
-    /// page rather than leaving a stride that no longer matches what the eye just skipped.
+    /// Derived on the far side from the SAME number that sizes the viewport, so re-tuning the card
+    /// re-tunes the page rather than leaving a stride that no longer matches what the eye just
+    /// skipped. A `rowHeight` the renderer has not measured yet still answers a stride that MOVES.
     public static func pageStride(rowHeight: Double) -> Int {
-        guard rowHeight > 0 else { return 1 }
-        return Swift.max(1, Int(resultsMaxHeight / rowHeight))
+        Int(slopdesk_ws_palette_page_stride(rowHeight))
     }
 }
 

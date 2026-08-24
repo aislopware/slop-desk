@@ -1,8 +1,10 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskClaudeCode
 import SlopDeskClient
 import SlopDeskProtocol
 import SlopDeskTerminal
+import SlopDeskWorkspaceModel
 #if canImport(AppKit)
 import AppKit
 #elseif canImport(UIKit)
@@ -474,13 +476,13 @@ public final class TerminalViewModel {
         case line
         case block
 
-        /// The pill label shown per visual mode; `nil` = not in a visual mode (the bare "VI" pill).
-        public var pillLabel: String? {
+        /// The mode's own index, which is what `slopdesk_ws_vi_mode_words` speaks in.
+        public var index: UInt8 {
             switch self {
-            case .none: nil
-            case .char: "VISUAL"
-            case .line: "VISUAL LINE"
-            case .block: "VISUAL BLOCK"
+            case .none: 0
+            case .char: 1
+            case .line: 2
+            case .block: 3
             }
         }
 
@@ -488,8 +490,22 @@ public final class TerminalViewModel {
         ///
         /// The `?? "VI"` used to be spelled at the pill, which made the enum's own answer incomplete:
         /// four cases, three labels, and the fourth left to whoever drew it. Two renderers is what
-        /// turns that into a defect rather than a shrug — see docs/56 §2.
-        public var pillLabelOrDefault: String { pillLabel ?? "VI" }
+        /// turns that into a defect rather than a shrug — see docs/56 §2, and the fold now lives in
+        /// `slopdesk_workspace::vi_hints::VisualMode::pill_label` where neither renderer can undo it.
+        ///
+        /// Four words, read once per process: the pill re-renders on every keystroke in vi mode.
+        public var pillLabelOrDefault: String { Self.pillLabels[Int(index)] ?? "" }
+
+        /// The four labels, in four crossings, once per process. Keyed by index, which is contiguous
+        /// from zero.
+        private static let pillLabels: [Int: String] = Dictionary(
+            uniqueKeysWithValues: [Self.none, .char, .line, .block].map { mode in
+                let blob = wsAnswerBytes { out, cap in
+                    Int(slopdesk_ws_vi_mode_words(mode.index, 0, false, out, cap))
+                }
+                return (Int(mode.index), wsRuns(blob, count: 2)[0])
+            },
+        )
 
         /// Whether a SELECTION is being extended, as opposed to plain scrollback navigation.
         ///

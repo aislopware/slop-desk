@@ -96,9 +96,55 @@ pub fn recent_lines(commands: &[&str], statuses: &[&str], limit: usize) -> Vec<S
         .collect()
 }
 
+/// The tallest either of the card's scrolling blocks — the expanded pending-tool input, the recent
+/// output tail — may grow to before it scrolls instead.
+///
+/// ONE number for both, because a card with two scroll wells of different heights reads as two
+/// unrelated panels rather than as one card.
+pub const SCROLL_MAX_HEIGHT: f64 = 132.0;
+
+/// The trailing caption when there is no queue to count — the card's name, standing where the
+/// counter would.
+pub const TITLE: &str = "Peek & Reply";
+
+/// The zero-state card's line, for the near-impossible race where the host clears the last status
+/// while the card is up.
+pub const ALL_CAUGHT_UP: &str = "Nothing needs your reply.";
+
+/// What the question block prints when the agent reported no question of its own.
+///
+/// A pane with no reported question still gets a card — the status said it was blocked — so the
+/// block prints this in the supporting ink rather than going blank.
+pub const MISSING_QUESTION: &str = "The agent is waiting for your input.";
+
+/// The `N of M` triage counter, or `None` when this is not a queue.
+///
+/// A pass-through of the attention chain's own answer into the one place the two halves both read
+/// it from — the counter REPLACES the static [`TITLE`] on the queue edge, a hard cut, never both at
+/// once.
+#[must_use]
+pub fn counter(position: Option<(u32, u32)>) -> Option<String> {
+    let (position, total) = position?;
+    Some(format!("{position} of {total}"))
+}
+
+/// The question block's text, and whether it is the card's own note rather than the agent's.
+///
+/// The caller reads the flag to know which ink to print it in; the two are answered together
+/// because a caller that derived the flag from the text would have to compare against
+/// [`MISSING_QUESTION`], and an agent that happened to ask that exact question would be drawn as a
+/// placeholder.
+#[must_use]
+pub const fn question(question: Option<&str>) -> (&str, bool) {
+    match question {
+        Some(text) => (text, false),
+        None => (MISSING_QUESTION, true),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{quick_answer, recent_lines, reply};
+    use super::{MISSING_QUESTION, counter, question, quick_answer, recent_lines, reply};
 
     #[test]
     fn a_plain_line_sends_itself_with_one_newline() {
@@ -185,5 +231,21 @@ mod tests {
             "a \u{b7} exit 0".to_owned()
         ]);
         assert!(recent_lines(&[], &["exit 0", "exit 1"], 4).is_empty());
+    }
+
+    /// The counter and the title are a hard cut: one or the other stands in that slot.
+    #[test]
+    fn the_counter_answers_only_for_a_queue() {
+        assert_eq!(counter(Some((2, 5))), Some("2 of 5".to_owned()));
+        assert_eq!(counter(None), None);
+    }
+
+    /// The flag rides WITH the text, so an agent that asks the placeholder's own question is still
+    /// drawn as having asked it.
+    #[test]
+    fn a_missing_question_is_flagged_rather_than_recognised_by_its_words() {
+        assert_eq!(question(None), (MISSING_QUESTION, true));
+        assert_eq!(question(Some("may I edit?")), ("may I edit?", false));
+        assert_eq!(question(Some(MISSING_QUESTION)), (MISSING_QUESTION, false));
     }
 }

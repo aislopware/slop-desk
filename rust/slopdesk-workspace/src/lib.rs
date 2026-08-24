@@ -42,6 +42,16 @@
 //! - [`secrets`] — the credential shapes, scanned for in anything a remote shell wrote.
 //! - [`templates`] — the two things that spawn panes, and the bytes they type into them.
 //! - [`workdir`] — where a freshly-opened pane starts, and why naming no directory is an answer.
+//! - [`status_pill`] — the pane's status chips: which are up, in what order, and what each says.
+//! - [`vi_hints`] — the copy-mode reference card's tables, its mode pill, and the width ladder it
+//!   re-flows on.
+//! - [`panel_tabs`] — the right panel's four tabs, and how many of them get to say their name.
+//! - [`drop_register`] — the one vocabulary a pane drop is announced in, over both drop grammars.
+//! - [`find_bar`] — what the in-pane find bar says, and the two rungs an INPUT DEVICE earns.
+//! - [`global_search`] — the cross-tab results surface, and the excerpt cut that must degrade
+//!   rather than trap.
+//! - [`toast`] — the three events that raise a notification card, and what each one says.
+//! - [`palette_card`] — how big the command palette is, and how far one page of it moves.
 //!
 //! ## Invariants
 //!
@@ -64,9 +74,12 @@ pub mod binding_search;
 pub mod cheat_sheet;
 pub mod connection;
 pub mod drop_action;
+pub mod drop_register;
 pub mod drop_zone;
+pub mod find_bar;
 pub mod frecency;
 pub mod git_line;
+pub mod global_search;
 pub mod hid_virtual_key;
 pub mod jump;
 pub mod keybind;
@@ -74,8 +87,10 @@ pub mod keystroke_replay;
 pub mod list_nav;
 pub mod listen;
 pub mod notify;
+pub mod palette_card;
 pub mod palette_rows;
 pub mod pane_drop;
+pub mod panel_tabs;
 pub mod peek_reply;
 pub mod persist;
 pub mod phone_key;
@@ -85,7 +100,10 @@ pub mod search_rank;
 pub mod secrets;
 pub mod send_keys;
 pub mod state_codec;
+pub mod status_pill;
 pub mod templates;
+pub mod toast;
+pub mod vi_hints;
 pub mod window_size;
 pub mod workdir;
 

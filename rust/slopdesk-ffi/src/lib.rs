@@ -43,6 +43,7 @@
 pub mod abr;
 pub mod adaptive_fec;
 pub mod agent;
+pub mod agent_readout;
 pub mod android_control;
 pub mod android_log_level;
 pub mod android_presentation;
@@ -84,7 +85,9 @@ pub mod client_jitter;
 pub mod client_session;
 pub mod client_view;
 pub mod code_panel;
+pub mod code_surface;
 pub mod connection;
+pub mod context_menu;
 pub mod cursor_color;
 pub mod cursor_overlay;
 // macOS only: `NSCursor` and the window server's cursor seed. The one handle here that two threads
@@ -103,12 +106,14 @@ pub mod device_geometry;
 pub mod device_log;
 pub mod device_panel;
 pub mod drop_action;
+pub mod drop_register;
 // macOS only: behind it is VideoToolbox's hardware HEVC encoder. iOS HAS VideoToolbox, so an
 // ungated edge here would LINK and merely bloat every client slice with a host-only encoder — which
 // is worse than a link error, because nothing would fail. See the module.
 #[cfg(target_os = "macos")]
 pub mod encoder;
 pub mod file_transfer;
+pub mod find_bar;
 pub mod find_matches;
 pub mod folders;
 // macOS only: Darwin `proc_*` and `KERN_PROCARGS2`, asked only by hostd. See the module.
@@ -118,6 +123,7 @@ pub mod frame_decoder;
 pub mod frame_rate;
 pub mod fuzzy;
 pub mod git_line;
+pub mod global_search;
 // macOS only: behind it is a vendored `libgit2`, and only hostd asks the question. See the module.
 #[cfg(target_os = "macos")]
 pub mod git_status;
@@ -159,6 +165,7 @@ pub mod new_tab_position;
 pub mod notify;
 pub mod notify_rate_limit;
 pub mod pacer_depth;
+pub mod palette_card;
 pub mod palette_rows;
 pub mod pane_drop;
 pub mod pane_kind;
@@ -167,6 +174,7 @@ pub mod pane_kind;
 #[cfg(target_os = "macos")]
 pub mod pane_probe;
 pub mod panel_key;
+pub mod panel_tabs;
 pub mod paste_safety;
 pub mod path_confine;
 pub mod peek_reply;
@@ -194,6 +202,7 @@ pub mod settings_rows;
 pub mod sidecars;
 pub mod simulator_presentation;
 pub mod state_scalars;
+pub mod status_pill;
 pub mod supervisor_frame;
 pub mod supervisor_paths;
 pub mod surface_gesture;
@@ -201,8 +210,10 @@ pub mod swipe_nav_config;
 pub mod swipe_recognizer;
 pub mod terminal_config;
 pub mod terminal_mode;
+pub mod toast;
 pub mod tool_path;
 pub mod trendline;
+pub mod vi_hints;
 pub mod video_control;
 pub mod video_fec;
 pub mod video_fragment;
@@ -488,6 +499,13 @@ pub unsafe extern "C" fn slopdesk_altscreen_reopen(
         deliver(&sequence, out, cap)
     }
 }
+
+/// The reads every group-delivery door's tests perform, written once.
+#[cfg(test)]
+// `pub` rather than `pub(crate)` only because the two lints disagree otherwise: a `pub(crate)`
+// item inside a private module is `redundant_pub_crate`, and a `pub` one is `unreachable_pub`.
+// The module is `#[cfg(test)]`, so nothing outside a test build can see it either way.
+pub mod testing;
 
 #[cfg(test)]
 // The fixtures here are known-good and built inline, so `unwrap` IS the assertion, and the tests
