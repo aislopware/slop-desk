@@ -97,6 +97,63 @@ impl Toolchain {
     }
 }
 
+/// The marker that identifies a checkout root: the PIN MANIFEST itself.
+///
+/// Looking for the lock rather than for `.git` means a checkout without the vendoring layer — or a
+/// bare `.git` somewhere up the tree that has nothing to do with this repo — does not produce a
+/// prefix path that cannot hold anything.
+pub const LOCK_RELATIVE_PATH: &str = "ThirdParty/tools/tools.lock";
+
+/// Where [`vendored_bin_dir`] hangs off a checkout root.
+const VENDORED_BIN_SUFFIX: &str = "ThirdParty/tools/.prefix/bin";
+
+/// Where [`scrcpy_server_jar`] hangs off a checkout root.
+const SCRCPY_SERVER_SUFFIX: &str = "ThirdParty/tools/vendor/scrcpy-server";
+
+/// Walks UP from `start` looking for a directory that holds [`LOCK_RELATIVE_PATH`].
+///
+/// ## Why the walk starts at a running binary and not at a compiled-in path
+/// `file!()` — and Swift's `#filePath` before it — bakes in the machine that COMPILED the daemon,
+/// which is wrong the moment a build is copied. Walking up from the executable and looking for the
+/// pin manifest is honest about what is actually on this disk: it works from `.build/release`, from
+/// `.build/debug`, from `SwiftPM`'s triple-nested output, and from a checkout that has been renamed
+/// or moved. It correctly finds NOTHING when the binary has been copied out of the tree — and
+/// falling through to the host's own installs is the right answer there, not pretending a prefix
+/// exists.
+///
+/// `start` is a FILE path (the executable); the walk begins at its parent. Bounded by reaching the
+/// filesystem root, which a symlinked checkout cannot defeat because each step strictly shortens an
+/// already-resolved path.
+#[must_use]
+pub fn repo_root(start: &Path) -> Option<PathBuf> {
+    let mut directory = start.parent()?;
+    loop {
+        if directory.join(LOCK_RELATIVE_PATH).is_file() {
+            return Some(directory.to_path_buf());
+        }
+        directory = directory.parent()?;
+    }
+}
+
+/// `ThirdParty/tools/.prefix/bin` for the checkout `start` sits inside, or `None` outside one.
+///
+/// This is the `vendored_bin` argument every locator above takes. hostd resolves it ONCE from its
+/// own executable path: the answer cannot change while the process lives.
+#[must_use]
+pub fn vendored_bin_dir(start: &Path) -> Option<PathBuf> {
+    repo_root(start).map(|root| root.join(VENDORED_BIN_SUFFIX))
+}
+
+/// The committed `scrcpy-server` jar for the checkout `start` sits inside, or `None` outside one.
+///
+/// Unlike the three programs the prefix holds, this one is IN git and is not executable — the
+/// device's own `app_process` runs it — so a PROVISIONED prefix is not required for the Android
+/// panel to mirror. A checkout is.
+#[must_use]
+pub fn scrcpy_server_jar(start: &Path) -> Option<PathBuf> {
+    repo_root(start).map(|root| root.join(SCRCPY_SERVER_SUFFIX))
+}
+
 /// The vendored prefix first when the tool is pinned there, then `PATH`, then every SDK root this
 /// host might have, each probed at `<root>/<subdirectory>/<name>`.
 #[must_use]
@@ -375,8 +432,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        capture, host_service_fallback_dirs, locate_scrcpy_server_jar, locate_sdk_tool, locate_tool, run,
-        sdk_roots,
+        LOCK_RELATIVE_PATH, capture, host_service_fallback_dirs, locate_scrcpy_server_jar, locate_sdk_tool,
+        locate_tool, repo_root, run, scrcpy_server_jar, sdk_roots, vendored_bin_dir,
     };
 
     fn environment(pairs: &[(&str, &str)]) -> HashMap<String, String> {
@@ -727,5 +784,73 @@ mod tests {
             run(Path::new("/nowhere/at/all"), &[], Duration::from_secs(1)),
             None
         );
+    }
+
+    // --- the checkout walk ------------------------------------------------------------------ //
+
+    /// A throwaway tree with the pin manifest at `root`, and a fake binary nested under it.
+    fn checkout(depth: usize) -> (PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("slopdesk-toolchain-walk-{depth}"));
+        drop(std::fs::remove_dir_all(&root));
+        let lock = root.join(LOCK_RELATIVE_PATH);
+        std::fs::create_dir_all(lock.parent().expect("the lock has a directory"))
+            .expect("a temp tree is creatable");
+        std::fs::write(&lock, b"pinned\n").expect("a temp file is writable");
+        let mut binary = root.clone();
+        for step in 0..depth {
+            binary = binary.join(format!("nested{step}"));
+        }
+        std::fs::create_dir_all(&binary).expect("a temp tree is creatable");
+        let binary = binary.join("slopdesk-hostd");
+        std::fs::write(&binary, b"").expect("a temp file is writable");
+        (root, binary)
+    }
+
+    #[test]
+    fn the_walk_finds_the_root_from_any_depth() {
+        for depth in [1_usize, 4] {
+            let (root, binary) = checkout(depth);
+            assert_eq!(repo_root(&binary).as_deref(), Some(root.as_path()));
+            assert_eq!(
+                vendored_bin_dir(&binary).as_deref(),
+                Some(root.join("ThirdParty/tools/.prefix/bin").as_path())
+            );
+            assert_eq!(
+                scrcpy_server_jar(&binary).as_deref(),
+                Some(root.join("ThirdParty/tools/vendor/scrcpy-server").as_path())
+            );
+            drop(std::fs::remove_dir_all(&root));
+        }
+    }
+
+    #[test]
+    fn a_binary_outside_a_checkout_finds_nothing() {
+        assert_eq!(repo_root(Path::new("/usr/local/bin/slopdesk-hostd")), None);
+        assert_eq!(vendored_bin_dir(Path::new("/usr/local/bin/slopdesk-hostd")), None);
+        assert_eq!(
+            scrcpy_server_jar(Path::new("/usr/local/bin/slopdesk-hostd")),
+            None
+        );
+    }
+
+    #[test]
+    fn a_directory_named_like_the_lock_is_not_a_lock() {
+        let root = std::env::temp_dir().join("slopdesk-toolchain-walk-dir");
+        drop(std::fs::remove_dir_all(&root));
+        std::fs::create_dir_all(root.join(LOCK_RELATIVE_PATH)).expect("a temp tree is creatable");
+        let binary = root.join("slopdesk-hostd");
+        std::fs::write(&binary, b"").expect("a temp file is writable");
+        assert_eq!(
+            repo_root(&binary),
+            None,
+            "the marker is a FILE; a directory wearing its name holds no pins"
+        );
+        drop(std::fs::remove_dir_all(&root));
+    }
+
+    #[test]
+    fn the_walk_terminates_at_the_filesystem_root() {
+        assert_eq!(repo_root(Path::new("/")), None, "`/` has no parent to climb to");
+        assert_eq!(repo_root(Path::new("relative")), None);
     }
 }

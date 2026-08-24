@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -11,32 +12,24 @@ import SlopDeskVideoProtocol
 /// `TERM=xterm-ghostty` as the Claude path (``ClaudeCodeProfile/Term/ghostty``) — one source of
 /// truth, not a divergent `xterm-256color` default. `curated(term:)` takes the value so callers can pick
 /// the documented `.xterm256` fallback.
+///
+/// The allowlist, the defaults layered on top and the two login-shell answers are a face over
+/// `slopdesk-muxsession`'s `spawn_env`, which is where the twelve mirrored keys are named and the
+/// reasons for each are argued. What stays here is what is genuinely hostd's: the `EnvConfig`
+/// overlay the `SLOPDESK_*` gates below resolve through, and the release-owned ``buildVersion``.
 public enum HostEnvironment {
     /// The default `TERM` for a spawned shell. Single source of truth shared with
     /// ``ClaudeCodeProfile`` (its `.ghostty` raw value): the client renders with libghostty,
     /// so a plain shell advertises the native ghostty TERM.
     public static let defaultTerm = ClaudeCodeProfile.Term.ghostty.rawValue
 
-    /// The terminal-program identity advertised to the child shell via `TERM_PROGRAM` (and the
-    /// Amazon-Q/Fig `CW_TERM`). We report OURSELVES, never the launcher's `TERM_PROGRAM`, so the
-    /// shell and any program inspecting it sees `slopdesk` rather than `Apple_Terminal`/`ghostty`.
-    public static let termProgram = "slopdesk"
-
     /// The build/marketing version advertised via `TERM_PROGRAM_VERSION`. Kept in step with the app
     /// target's `MARKETING_VERSION` (`Apps/ClientApp-macOS/project.yml`) and `CLIVersion.version`.
-    public static let buildVersion = "0.4.0"
-
-    /// The shell-integration opt-outs, forwarded from hostd's parent into the child.
     ///
-    /// Each is read downstream of this process — `SLOPDESK_SHELL_INTEGRATION` by superd, which
-    /// decides whether to generate the shim at all, and the other two by the generated `.zshrc`
-    /// inside the spawned zsh (`${SLOPDESK_OSC133:-1}`, `${SLOPDESK_SHELL_CURSOR:-1}`). None of
-    /// them is hostd's to interpret; hostd's only job is not to drop them.
-    public static let shellIntegrationEnvKeys = [
-        "SLOPDESK_SHELL_INTEGRATION",
-        "SLOPDESK_OSC133",
-        "SLOPDESK_SHELL_CURSOR",
-    ]
+    /// It is passed INTO the door rather than minted behind it: `make release` rewrites every place
+    /// the marketing version is typed, and a copy inside a crate the release tool does not scan
+    /// would be a version that silently stopped being bumped.
+    public static let buildVersion = "0.4.0"
 
     /// A curated child environment: inherit a safe allowlist from the parent and layer
     /// the terminal defaults on top. We deliberately do **not** forward the parent's
@@ -61,71 +54,54 @@ public enum HostEnvironment {
     )
         -> [String: String]
     {
+        // The parent crosses WHOLE, as KEY, VALUE runs, because the rule names twelve variables and
+        // passing twelve `(ptr, len)` pairs would put the closed list back on this side in the
+        // argument order — which is the drift the port exists to end. See `crate::spawn_env`.
+        var blob: [UInt8] = []
+        for (key, value) in parent {
+            hostPushRun(&blob, key)
+            hostPushRun(&blob, value)
+        }
+        var pairs = 0
+        let delivery = blob.withUnsafeBufferPointer { parentBytes in
+            lend(term) { termBytes in
+                lend(Self.buildVersion) { versionBytes in
+                    lend(agentSocketPath ?? "") { socketBytes in
+                        lend(paneID ?? "") { paneBytes in
+                            lend(controlSocketPath ?? "") { controlBytes in
+                                hostAnswerBytes(capacity: max(4096, blob.count + 1024)) { out, cap in
+                                    slopdesk_spawn_env(
+                                        parentBytes.baseAddress, parentBytes.count,
+                                        termBytes.baseAddress, termBytes.count,
+                                        versionBytes.baseAddress, versionBytes.count,
+                                        socketBytes.baseAddress, socketBytes.count,
+                                        paneBytes.baseAddress, paneBytes.count,
+                                        controlBytes.baseAddress, controlBytes.count,
+                                        out, cap, &pairs,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let runs = hostRuns(delivery, count: pairs * 2)
         var env: [String: String] = [:]
-
-        // Mirror identity / locale-ish vars from the parent when present.
-        //
-        // TERMINFO / TERMINFO_DIRS are mirrored because the host's terminfo probe
-        // (`slopdesk-probe terminfo`, which hostd forks with its OWN environment) honours them when
-        // deciding whether `xterm-ghostty`
-        // resolves. If the host was launched from a shell whose TERMINFO points at a non-standard dir
-        // holding the ghostty entry (Nix / Homebrew / per-user install), the probe says "resolvable" and
-        // we advertise `TERM=xterm-ghostty` — but a child lacking those vars searches only the default
-        // dirs, FAILS to find the entry, and every TUI degrades. Forwarding (only when present) makes the
-        // child's ncurses search the SAME dirs the probe used, so a "resolvable" verdict is honoured.
-        // NOTE: `TERM_PROGRAM` is deliberately NOT mirrored: the child must report OUR identity (set
-        // below), not the launcher's (`Apple_Terminal` / `ghostty`); a mirrored value would also let
-        // Amazon-Q/Fig `cwterm` re-exec mid-`.zshrc`.
-        for key in [
-            "HOME",
-            "USER",
-            "LOGNAME",
-            "SHELL",
-            "TMPDIR",
-            "LANG",
-            "LC_ALL",
-            "TERMINFO",
-            "TERMINFO_DIRS",
-        ] {
-            if let value = parent[key] { env[key] = value }
+        env.reserveCapacity(pairs)
+        for index in stride(from: 0, to: runs.count - 1, by: 2) {
+            env[runs[index]] = runs[index + 1]
         }
-
-        // Terminal defaults (UTF-8 end-to-end; [12] §1.4).
-        if env["LANG"] == nil { env["LANG"] = "en_US.UTF-8" }
-        env["TERM"] = term
-        env["COLORTERM"] = "truecolor"
-        env["NCURSES_NO_UTF8_ACS"] = "1"
-
-        // Terminal-program identity. Advertise OURSELVES unconditionally so the child shell reports
-        // `slopdesk` (not the launcher's `Apple_Terminal`/`ghostty`), and set `CW_TERM=slopdesk`
-        // so Amazon-Q/Fig's shell hooks recognise a supported host and do NOT `cwterm`-exec a nested
-        // pseudo-terminal mid-`.zshrc`. These are local PTY env only (never on the wire).
-        env["TERM_PROGRAM"] = Self.termProgram
-        env["TERM_PROGRAM_VERSION"] = Self.buildVersion
-        env["CW_TERM"] = Self.termProgram
-
-        // Conservative PATH so the shell can find its own profile / common tools even
-        // before the login profile augments it. (Not forwarded blindly from parent.)
-        env["PATH"] = parent["PATH"] ?? "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-        // Forward the three shell-integration opt-outs. All are read from the CHILD'S env, not
-        // hostd's: the whole-shim flag by superd, which owns the shim (`shellintegration.rs`), and
-        // the two feature flags by the generated `.zshrc` inside the spawned zsh. So a daemon-side
-        // setting only takes effect if it is carried across this allowlist. Forwarded ONLY when set
-        // — absent leaves each default-on branch unchanged.
-        for key in Self.shellIntegrationEnvKeys {
-            if let value = parent[key] { env[key] = value }
-        }
-
-        // Export the agent-hook socket path + pane id into the PTY env (Muxy's
-        // MUXY_SOCKET_PATH / MUXY_PANE_ID analog). The installed hook script
-        // (`rust/slopdesk-hook`) reads these to POST hook events to the host;
-        // absent → the hook is a silent no-op.
-        if let agentSocketPath { env[Self.agentSocketEnvKey] = agentSocketPath }
-        if let paneID { env[Self.agentPaneIDEnvKey] = paneID }
-        if let controlSocketPath { env[Self.agentControlSocketEnvKey] = controlSocketPath }
-
         return env
+    }
+
+    /// Lends `text`'s UTF-8 to `body` for the duration of the call — the `(ptr, len)` half of §4's
+    /// borrow convention, spelled once instead of six times in the nest above.
+    private static func lend<T>(
+        _ text: String,
+        _ body: (UnsafeBufferPointer<UInt8>) -> T,
+    ) -> T {
+        Array(text.utf8).withUnsafeBufferPointer(body)
     }
 
     /// The PTY env var carrying the agent-hook listener socket path. The installed
@@ -319,17 +295,26 @@ public enum HostEnvironment {
     }
 
     /// The user's login shell path: `$SHELL` if set and absolute, else `/bin/zsh`.
+    ///
+    /// The one dictionary read stays here and the VALUE crosses, the way `crate::tool_path` leaves
+    /// its three environment reads on the near side.
     public static func loginShell(parent: [String: String] = ProcessInfo.processInfo.environment)
         -> String
     {
-        if let shell = parent["SHELL"], shell.hasPrefix("/") { return shell }
-        return "/bin/zsh"
+        lend(parent["SHELL"] ?? "") { shell in
+            hostAnswerText(capacity: 256) { out, cap in
+                slopdesk_login_shell(shell.baseAddress, shell.count, out, cap)
+            }
+        }
     }
 
     /// The login-shell `argv[0]`: the shell's basename with a leading `-` (so it sources
     /// `.zprofile`/`.zshrc`; [12] §1.4).
     public static func loginArgv0(forShell shell: String) -> String {
-        let name = URL(fileURLWithPath: shell).lastPathComponent
-        return "-" + name
+        lend(shell) { bytes in
+            hostAnswerText(capacity: 256) { out, cap in
+                slopdesk_login_argv0(bytes.baseAddress, bytes.count, out, cap)
+            }
+        }
     }
 }

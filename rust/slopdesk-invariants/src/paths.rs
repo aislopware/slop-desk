@@ -22,5 +22,7 @@ pub const RUST_PROTOCOL: &str = "rust/slopdesk-superd/src/protocol.rs";
 pub const RUST_SUPERD_SERVER: &str = "rust/slopdesk-superd/src/server.rs";
 /// superd's shell-integration shim generator.
 pub const RUST_SHELLINT: &str = "rust/slopdesk-superd/src/shellintegration.rs";
+/// hostd's curated child environment — the allowlist a spawned login shell is handed.
+pub const RUST_SPAWN_ENV: &str = "rust/slopdesk-muxsession/src/spawn_env.rs";
 /// The control-socket reader on the agent's side.
 pub const RUST_CTL_LIB: &str = "rust/slopdesk-ctl/src/lib.rs";

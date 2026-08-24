@@ -22,7 +22,9 @@
 //!   is the whole reason a forked program's spawn helper is `pub`.
 //! - `hostVitals` is a DELTA between two tick snapshots, so it needs state that outlives a request.
 //!   A forked program has none, and giving it a file to keep a baseline in would be inventing
-//!   durability for a number that is meaningless after a gap.
+//!   durability for a number that is meaningless after a gap. It is LINKED instead, and it went to
+//!   `rust/slopdesk-panecensus` — the crate that already held the other Darwin readings this RPC
+//!   makes, and already links `slopdesk-posix` to make them.
 //! - `hostName` is one `ProcessInfo` field and is not worth a spawn.
 //!
 //! That split is the reason this is a fork rather than a daemon: nothing here remembers anything.

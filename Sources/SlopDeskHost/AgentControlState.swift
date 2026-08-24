@@ -1,57 +1,47 @@
+import CSlopDeskFFI
 import SlopDeskAgentDetect
 
-/// The pure mapping between the host-side ``ClaudeStatus`` (state machine verdict) and the
-/// stable wire string the agent-control NDJSON socket exposes (`idle` / `working` / `blocked`
-/// / `done`). Kept tiny and dependency-free so it is unit-testable with no socket and no PTY.
+/// The supervision vocabulary the agent-control NDJSON socket speaks: `idle` / `working` / `done`
+/// / `blocked`.
 ///
-/// ## Why a separate vocabulary
-/// The ctl surface is a SUPERVISION API for an orchestrator agent ("which pane needs me?"),
-/// so it uses the supervision word `blocked` (the Herdr/Warp term) for ``ClaudeStatus/needsPermission``
-/// rather than leaking the host's internal enum case names. The set is closed (validate-then-drop:
-/// the `report` verb rejects any string outside it).
+/// A face over `slopdesk-agent`'s `supervision`, which is where the two collapses are stated and
+/// tested — `needsPermission → "blocked"` (herdr's and Warp's term, because the socket's audience
+/// is another agent and an enum case name is not an API), and `none → "idle"` (for a supervisor, a
+/// pane with no agent is blocking nothing and running nothing).
 ///
-/// ## `.none` mapping
-/// A live pane whose detector has never sampled `claude` reports `.none` (no claude present).
-/// For the ctl supervision view a live pane with no agent is simply "idle" — there is nothing
-/// blocking and nothing running. We deliberately collapse `.none → "idle"` (rather than inventing
-/// an `"unknown"` token) so the closed set the `report` verb validates against stays exactly the
-/// four supervision states. Pinned by ``AgentControlStateTests``.
-///
-/// The collapse costs the stream one distinction, though: `.none` and `.idle` are the SAME string,
-/// so a pane whose agent EXITED emits `"idle"` — byte-identical to the `"idle"` it was already
-/// sitting at — and the subscriber's consecutive-duplicate dedupe swallows it. An orchestrator
-/// watching `events` could therefore never see an agent leave. ``presence(from:)`` carries that one
-/// bit alongside the state instead of widening the vocabulary.
+/// The `none → idle` collapse costs the stream one bit: a pane whose agent EXITED emits the same
+/// `"idle"` it already sat at, and the subscriber's consecutive-duplicate dedupe swallows it, so an
+/// orchestrator watching `events` could never see one leave. ``presence(from:)`` carries that bit
+/// beside the state rather than widening the closed set to five.
 public enum AgentControlState {
-    /// The four supervision state strings, in increasing urgency. The closed set the `report`
-    /// verb validates against (anything else is dropped).
-    public static let allStates: [String] = ["idle", "working", "done", "blocked"]
+    /// The four supervision states, in increasing urgency — the closed set the `report` verb
+    /// validates against and both error messages print.
+    public static let allStates: [String] = {
+        var count = 0
+        let blob = hostAnswerBytes(capacity: 256) { out, cap in
+            Int(slopdesk_agent_supervision_states(out, cap, &count))
+        }
+        return hostRuns(blob, count: count)
+    }()
 
     /// Maps a host ``ClaudeStatus`` to its ctl wire string.
-    /// `none`/`idle → "idle"`, `working → "working"`, `done → "done"`, `needsPermission → "blocked"`.
     public static func string(from status: ClaudeStatus) -> String {
-        switch status {
-        case .none,
-             .idle:
-            "idle"
-        case .working:
-            "working"
-        case .done:
-            "done"
-        case .needsPermission:
-            "blocked"
+        hostAnswerText(capacity: 32) { out, cap in
+            Int(slopdesk_agent_supervision_state(status.ffiByte, out, cap))
         }
     }
 
     /// Whether an agent is PRESENT in the pane at all — the bit ``string(from:)`` collapses away.
-    /// `false` only for ``ClaudeStatus/none``; every other status implies a detected agent.
     public static func presence(from status: ClaudeStatus) -> Bool {
-        status != .none
+        slopdesk_agent_supervision_presence(status.ffiByte)
     }
 
-    /// Whether `s` is one of the four known supervision states. Used by the `report` verb to
-    /// validate-then-drop an unknown state BEFORE touching any session.
+    /// Whether `s` is one of the four known supervision states. The `report` verb's
+    /// validate-then-drop guard, asked BEFORE it touches any session.
     public static func isValid(_ s: String) -> Bool {
-        allStates.contains(s)
+        let bytes = Array(s.utf8)
+        return bytes.withUnsafeBufferPointer { input in
+            slopdesk_agent_supervision_valid(input.baseAddress, input.count)
+        }
     }
 }

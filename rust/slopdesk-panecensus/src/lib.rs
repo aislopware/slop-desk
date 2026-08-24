@@ -16,10 +16,19 @@
 //! NOT, because hostd genuinely uses it: it is the confinement root every path-carrying verb is
 //! checked against.
 //!
+//! ## The one answer here that is not pane-anchored
+//! [`vitals`] is the machine's own pulse — CPU busy, memory in use, kernel pressure, free disk. It
+//! is in this crate rather than beside the other metadata verbs in `slopdesk-probe` because a
+//! forked program cannot hold the CPU BASELINE a percent is a delta against, and because the two
+//! things it needs — the Darwin readings and the wire's own record — are exactly what this crate
+//! already links. See that module for the three silences a vitals answer can be.
+//!
 //! ## Validate-then-drop, everywhere
 //! A pid that exits mid-census, a name that is not UTF-8, an `lsof` line that is not a port — each
 //! is SKIPPED. Nothing here fails a request: a pane whose PTY is gone reports an empty list, which
 //! is the honest answer and the one the client already renders.
+
+pub mod vitals;
 
 use slopdesk_wire::metadata::codec::{PortInfo, PortProtocol, ProcessInfo};
 

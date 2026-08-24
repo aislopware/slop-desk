@@ -1,11 +1,11 @@
-//! The eight things hostd used to do in Swift and a sidecar or a Rust crate does now, and the two
-//! flags that ask for two of them.
+//! The things hostd used to do in Swift and a sidecar or a Rust crate does now, and the two flags
+//! that ask for two of them.
 //!
 //! Every ban here is a port that DELETED its original (`CLAUDE.md`, one implementation). What makes
 //! each worth a ratchet rather than a comment is that the Swift version would still work — it would
 //! simply be a second reader, a second parser or a second copy of a list, drifting from the one
-//! that ships. None of the seven fails a test in either language, because each side stays
-//! internally consistent; the drift is between them.
+//! that ships. Not one of them fails a test in either language, because each side stays internally
+//! consistent; the drift is between them.
 //!
 //! **The project key, the logical-line split and the finished turn.** The `.git` ancestor walk, the
 //! `realpath` in front of it, the hard-newline split behind `read --unwrapped`, and the transition
@@ -144,6 +144,28 @@ fn engines_and_taps() -> Vec<Claim> {
 
 /// The bans for rules that became Rust FUNCTIONS rather than daemons: arithmetic and walks
 /// hostd used to do in Swift, each behind a door now.
+///
+/// **The curated spawn environment.** The allowlist NAMES twelve variables, and the whole point of
+/// the module is that the list is closed and lives in one place. A Swift copy would still spawn a
+/// working shell — it would simply mirror eleven keys, or set `TERM_PROGRAM` from the launcher, and
+/// the failure is an Amazon-Q/Fig hook re-execing a nested pseudo-terminal mid-`.zshrc` on the
+/// machines that have it and nowhere else.
+///
+/// **The host vitals.** Four Mach/`sysctl` readings and the arithmetic over them: which pages count
+/// as "used", whether a percent may be computed across a given window, and what a sparse pressure
+/// ladder means. Every one of those is a number a client DRAWS, and a second version of any of them
+/// disagrees quietly — an Activity-Monitor-shaped memory reading against one that counts the file
+/// cache differs by fifty points on a healthy Mac and neither side can tell which is wrong.
+///
+/// **The three-source pause fold.** The queue bound, the replay cap and the fan-out backlog, OR-ed,
+/// with the memory of what was last applied. What stays hostd's is the `NSLock` and the `setPaused`
+/// sink — the atomicity FIX #3 was about. The fold itself deciding differently on the two sides is
+/// a pane whose read loop is paused while its queue is empty, which is the exact freeze that fix
+/// exists to end.
+///
+/// **The vendored-prefix walk.** The marker, the upward loop and the two paths that hang off it sit
+/// next to the binary SEARCH ORDER whose second rung they fill. Split across languages, the rung
+/// and the thing that fills it could disagree about what a checkout root even is.
 fn rules_that_moved_to_rust() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
@@ -190,6 +212,50 @@ fn rules_that_moved_to_rust() -> Vec<Claim> {
             exempt: &[],
             message: "manifest TOML is back in {files} — it lives in rust/slopdesk-screend/manifests \
                       (docs/52)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r#""NCURSES_NO_UTF8_ACS"|"CW_TERM"|"TERMINFO_DIRS""#,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the curated spawn environment is back in {files} — rust/slopdesk-muxsession's \
+                      spawn_env names the twelve keys, and hostd passes the parent WHOLE",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"HOST_CPU_LOAD_INFO|HOST_VM_INFO64|host_statistics64?\(|memorystatus_vm_pressure_level|f_bavail",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the host-vitals readings are back in {files} — rust/slopdesk-posix makes the four \
+                      syscalls and rust/slopdesk-panecensus's vitals interprets them",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"outstanding >= capacity|replayPause \|\||fanoutBacklog >=",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the three-source pause fold is back in {files} — rust/slopdesk-wire's \
+                      mux::flow::PausableQueueGate ORs them and hostd owns only the lock and the sink",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"ThirdParty/tools",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the vendored-prefix walk is back in {files} — rust/slopdesk-androidd's toolchain owns \
+                      the marker and the two paths, next to the search order they fill",
         },
     ]
 }
@@ -258,6 +324,16 @@ mod tests {
             (
                 "finishedturn",
                 "        if next == .done { return previous != .done }\n",
+            ),
+            ("spawnenv", "    env[\"NCURSES_NO_UTF8_ACS\"] = \"1\"\n"),
+            (
+                "vitals",
+                "    let r = host_statistics(port, HOST_CPU_LOAD_INFO, p, &c)\n",
+            ),
+            ("pausefold", "    var wants: Bool { outstanding >= capacity }\n"),
+            (
+                "vendored",
+                "    let bin = root + \"/ThirdParty/tools/.prefix/bin\"\n",
             ),
         ] {
             let fixture = Fixture::new(&format!("deleted-host-{name}"));

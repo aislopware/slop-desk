@@ -1,46 +1,16 @@
-import SlopDeskAgentDetect
+import Foundation
 import XCTest
 @testable import SlopDeskHost
 
-/// Pins the pure ``ClaudeStatus`` → ctl-state-string mapping (P1 supervision API). No socket,
-/// no PTY — the mapping is a pure transform. Reverting the mapping to leak the enum case names
-/// (e.g. `needsPermission` instead of `blocked`) would fail these.
-final class AgentControlStateTests: XCTestCase {
-    func testBlockedMapsFromNeedsPermission() {
-        // The supervision vocabulary uses "blocked", NOT the host enum case "needsPermission".
-        XCTAssertEqual(AgentControlState.string(from: .needsPermission), "blocked")
-    }
-
-    func testWorkingDoneIdleMap() {
-        XCTAssertEqual(AgentControlState.string(from: .working), "working")
-        XCTAssertEqual(AgentControlState.string(from: .done), "done")
-        XCTAssertEqual(AgentControlState.string(from: .idle), "idle")
-    }
-
-    func testNoneCollapsesToIdle() {
-        // A live pane with no detected claude → "idle" (NOT "none"/"unknown"); pinned so the
-        // report-verb closed set stays exactly the four supervision states.
-        XCTAssertEqual(AgentControlState.string(from: .none), "idle")
-    }
-
-    func testAllStatesIsClosedSet() {
-        XCTAssertEqual(AgentControlState.allStates, ["idle", "working", "done", "blocked"])
-        for s in AgentControlState.allStates {
-            XCTAssertTrue(AgentControlState.isValid(s), "\(s) must validate")
-        }
-        XCTAssertFalse(AgentControlState.isValid("needsPermission"), "enum case name is NOT a wire state")
-        XCTAssertFalse(AgentControlState.isValid("none"), "none is not a supervision state")
-        XCTAssertFalse(AgentControlState.isValid(""), "empty is invalid")
-    }
-
-    /// Every ``ClaudeStatus`` case maps to a string in the closed set (total mapping).
-    func testMappingIsTotalIntoClosedSet() {
-        for status in ClaudeStatus.allCases {
-            let s = AgentControlState.string(from: status)
-            XCTAssertTrue(AgentControlState.isValid(s), "\(status) → \(s) must be in the closed set")
-        }
-    }
-
+/// Pins the agent-control socket's DISPATCH — which verb answers what, and in which order it
+/// validates — for a host with no panes. No socket, no PTY.
+///
+/// The supervision VOCABULARY that `report` validates against is not tested here: the mapping
+/// (`needsPermission → "blocked"`, `none → "idle"`), the closed set and the total-mapping claim are
+/// `slopdesk-agent`'s `supervision`, and ``AgentControlState`` is a face over its doors. Six cases
+/// that asserted them a second time in Swift were deleted with the port; what a Swift test can
+/// still see, and does below, is that an unknown state is refused BEFORE any session is touched.
+final class AgentControlDispatchTests: XCTestCase {
     /// `list-panes` on an empty host still emits a well-formed `panes` array (no `state` to read,
     /// but the verb must not crash). The state-bearing path is covered by the live-PTY test below.
     func testListPanesEmptyStillOK() {

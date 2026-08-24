@@ -17,11 +17,14 @@
 // No allocation crosses this boundary in either direction, so there is nothing to free. Passing
 // (NULL, 0) as the output is the supported way to ask for the length before allocating.
 //
-// THE HANDLE CONVENTION (SlopDeskReplay, SlopDeskVideoPacketizer, SlopDeskVideoReassembler)
+// THE HANDLE CONVENTION (SlopDeskReplay, SlopDeskVideoPacketizer, SlopDeskVideoReassembler,
+//                        SlopDeskHostVitalsSampler)
 //   Two things cannot cross per call: memory too big to copy, and a counter two sides would then
 //   have to agree about who advanced. A replay buffer is the first — up to 256 MiB of retained PTY
-//   output, appended per PTY chunk; the packetizer's streamSeq/frameID are the second. Rust owns
-//   both; the caller holds an opaque token.
+//   output, appended per PTY chunk; the packetizer's streamSeq/frameID are the second, and the
+//   vitals sampler's CPU baseline is the same shape as the second (a snapshot the NEXT call is
+//   measured against, which is a rule rather than a number). Rust owns all of them; the caller
+//   holds an opaque token.
 //     * exactly one _free per _new; NULL is inert everywhere.
 //     * NO TWO CALLS ON ONE HANDLE MAY OVERLAP — the mutators take &mut, so a concurrent call is
 //       aliasing UB. The Swift owner serialises under the lock it already held.
@@ -446,6 +449,24 @@ SlopDeskPeekQueue  slopdesk_agent_peek_queue(const uint8_t *statuses, const bool
 uint8_t slopdesk_agent_status_urgency(uint8_t status);
 uint8_t slopdesk_agent_status_from_urgency(uint8_t urgency);
 size_t  slopdesk_agent_status_display_label(uint8_t status, uint8_t *out, size_t cap);
+
+// The SUPERVISION vocabulary — what the `slopdesk-ctl` NDJSON socket says a pane's status IS.
+// A CLOSED set of four words in increasing urgency: idle, working, done, blocked. The socket's
+// audience is another AGENT, so it never leaks the host enum's case names, and `needsPermission`
+// reads as the supervision word `blocked` (herdr's and Warp's term).
+//
+// `none` and `idle` collapse onto "idle" on purpose: for a supervisor, a pane with no agent is
+// blocking nothing and running nothing. That loses ONE bit — a pane whose agent EXITED emits the
+// same "idle" it already sat at, and the subscriber's duplicate dedupe swallows it — so `presence`
+// carries that bit beside the word instead of widening the set to five.
+//
+// `valid` is the `report` verb's validate-then-drop guard, asked BEFORE it touches any session.
+// `states` delivers the four as `[uint32 big-endian length][UTF-8]` runs for the error messages
+// that print the set, with `count` receiving how many.
+size_t  slopdesk_agent_supervision_state(uint8_t status_byte, uint8_t *out, size_t cap);
+bool    slopdesk_agent_supervision_presence(uint8_t status_byte);
+bool    slopdesk_agent_supervision_valid(const uint8_t *name, size_t len);
+size_t  slopdesk_agent_supervision_states(uint8_t *out, size_t cap, size_t *count);
 
 // The temporal layer. hold_constant index: 0 pending-idle recheck, 1 pending-idle confirmations,
 // 2 pending-idle cap, 3 stable-visible refresh, 4 startup grace, 5 scan interval.
@@ -6636,6 +6657,47 @@ bool slopdesk_bounded_queue_dequeue(SlopDeskBoundedQueue *queue, int64_t bytes);
 
 int64_t slopdesk_mux_flow_constant(uint32_t index);
 
+// ---- The host PTY-read backpressure GATE --------------------------------------------
+//
+// The bounded queue above bounds enqueued-not-yet-SENT bytes. Two other sources can
+// want the same read loop paused: the replay buffer's retained-but-unacked cap, and
+// bytes sequenced that not even the FASTEST subscriber has shipped (docs/45 §8.6).
+// The loop must PAUSE if ANY asserts and RESUME only when ALL clear, which is why the
+// three are folded in ONE value rather than three the caller ORs itself: a stale
+// resume racing a fresh pause is the lost wakeup that froze a pane forever.
+//
+// `applied` is the memory that makes the fold idempotent. Every mutator writes it;
+// nothing else may.
+typedef struct SlopDeskPausableGate {
+  int64_t capacity;
+  int64_t outstanding;
+  int64_t fanout_backlog;
+  bool replay_pause;
+  bool applied;
+} SlopDeskPausableGate;
+
+// `changed` false — the common case — means do nothing at all. `paused` is meaningless
+// unless `changed`.
+typedef struct SlopDeskPauseVerdict {
+  bool changed;
+  bool paused;
+} SlopDeskPauseVerdict;
+
+SlopDeskPausableGate slopdesk_pausable_gate_new(int64_t capacity);
+
+SlopDeskPauseVerdict slopdesk_pausable_gate_enqueue(SlopDeskPausableGate *gate, int64_t bytes);
+
+SlopDeskPauseVerdict slopdesk_pausable_gate_dequeue(SlopDeskPausableGate *gate, int64_t bytes);
+
+SlopDeskPauseVerdict slopdesk_pausable_gate_set_replay_pause(SlopDeskPausableGate *gate, bool pause);
+
+SlopDeskPauseVerdict slopdesk_pausable_gate_set_fanout_backlog(SlopDeskPausableGate *gate,
+                                                               int64_t bytes);
+
+SlopDeskPauseVerdict slopdesk_pausable_gate_set_capacity(SlopDeskPausableGate *gate,
+                                                         int64_t new_capacity);
+
+
 // ---------------------------------------------------------------------------
 // The channel table (rust/slopdesk-ffi/src/mux_channels.rs).
 //
@@ -8558,6 +8620,100 @@ size_t slopdesk_git_status(const uint8_t *path, size_t len, uint8_t *out, size_t
 //
 // Blocking (a stat per ancestor): the caller keeps this off its PTY read loop.
 size_t slopdesk_project_key(const uint8_t *cwd, size_t cwd_len, uint8_t *out, size_t cap);
+
+// ---- What a pane's login shell is spawned with --------------------------------------
+
+// The curated child environment. The parent crosses WHOLE as `[uint32 big-endian
+// length][UTF-8]` runs in KEY, VALUE order, and the answer comes back in the same
+// framing with `pair_count` receiving how many PAIRS were written.
+//
+// Whole, rather than the three near-side reads `slopdesk_host_tool_path` uses, because
+// the allowlist NAMES twelve variables and the point of the rule is that the list is
+// closed and lives in one place — passing twelve pairs would put the list back into
+// the argument order on the Swift side.
+//
+// `term` and `version` are parameters: the caller picks TERM on the terminfo probe's
+// verdict, and the version is a `make release`-owned site that must not be minted a
+// second time inside a crate the release tool does not scan. Each of the three
+// trailing exports is ABSENT when its length is 0.
+//
+// The answer's order is lexicographic by key, so two spawns of one pane deliver
+// byte-identical bytes.
+size_t slopdesk_spawn_env(const uint8_t *parent, size_t parent_len,
+                          const uint8_t *term, size_t term_len,
+                          const uint8_t *version, size_t version_len,
+                          const uint8_t *agent_socket, size_t agent_socket_len,
+                          const uint8_t *pane_id, size_t pane_id_len,
+                          const uint8_t *control_socket, size_t control_socket_len,
+                          uint8_t *out, size_t cap, size_t *pair_count);
+
+// `$SHELL` when it is ABSOLUTE, else `/bin/zsh`. Absolute rather than merely non-empty
+// because this string goes to `posix_spawn`, which does no PATH search.
+size_t slopdesk_login_shell(const uint8_t *shell, size_t shell_len, uint8_t *out, size_t cap);
+
+// The login shell's argv[0]: the basename with a leading `-`, which is the only thing
+// that makes zsh/bash source `.zprofile`/`.zshrc`.
+size_t slopdesk_login_argv0(const uint8_t *shell, size_t shell_len, uint8_t *out, size_t cap);
+
+// ---- The vendored third-party prefix ------------------------------------------------
+
+// The checkout `start` sits inside, found by walking UP looking for
+// `ThirdParty/tools/tools.lock`. 0 — the same length an empty answer has — when it sits
+// in none, and falling through to PATH and the host's own installs is the right answer
+// there rather than a prefix that cannot hold anything.
+//
+// `start` is the RUNNING binary's path, passed rather than compiled in: a baked path
+// names the machine that built hostd, which is wrong the moment a build is copied.
+size_t slopdesk_vendored_repo_root(const uint8_t *start, size_t start_len,
+                                   uint8_t *out, size_t cap);
+
+// `<root>/ThirdParty/tools/.prefix/bin` — the `vendored_bin` rung of the search order
+// `slopdesk_host_tool_path` implements.
+size_t slopdesk_vendored_bin_dir(const uint8_t *start, size_t start_len,
+                                 uint8_t *out, size_t cap);
+
+// `<root>/ThirdParty/tools/vendor/scrcpy-server` — committed to the repo, and not an
+// executable: the device's own `app_process` runs it, so a PROVISIONED prefix is not
+// required for the Android panel to mirror. A checkout is.
+size_t slopdesk_vendored_scrcpy_server_jar(const uint8_t *start, size_t start_len,
+                                           uint8_t *out, size_t cap);
+
+// ---- The machine's own pulse ---------------------------------------------------------
+//
+// A CPU percent is a DELTA between two Mach tick snapshots, so an answer needs a
+// BASELINE that outlives the request — which is why this is the handle convention and
+// not a function. Exactly one free per new; no two calls on one handle may overlap.
+//
+// `disk_free_present` rather than the wire's `UINT32_MAX` sentinel: which magic number
+// means "unreadable" is the encoder's business, not every caller's.
+typedef struct SlopDeskHostVitals {
+  uint8_t cpu_percent;
+  uint8_t memory_percent;
+  uint8_t pressure_byte;
+  uint32_t disk_free_mib;
+  bool disk_free_present;
+} SlopDeskHostVitals;
+
+typedef struct SlopDeskHostVitalsSampler SlopDeskHostVitalsSampler;
+
+SlopDeskHostVitalsSampler *slopdesk_host_vitals_new(void);
+
+void slopdesk_host_vitals_free(SlopDeskHostVitalsSampler *handle);
+
+void slopdesk_host_vitals_reset(SlopDeskHostVitalsSampler *handle);
+
+// false — with `out` untouched — is the normal FIRST call (baseline priming), a refused
+// syscall, or a baseline the rules will not average across: older than 30 s spans a gap
+// the machine may have slept through, and younger than 1 s is quantization noise. The
+// verb replies `.error` and the client asks again on its next poll.
+//
+// `home` names the path whose VOLUME the free-space figure describes — on a modern Mac
+// `/` is a read-only system snapshot whose free space is a different, useless number.
+// `now_nanos` is the caller's monotonic clock: reading one in here would make the two
+// staleness rules untestable without sleeping.
+bool slopdesk_host_vitals_sample(SlopDeskHostVitalsSampler *handle,
+                                 const uint8_t *home, size_t home_len,
+                                 uint64_t now_nanos, SlopDeskHostVitals *out);
 
 // ---- What is running in a pane -----------------------------------------------------
 

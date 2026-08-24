@@ -135,6 +135,10 @@ pub mod hint_overlay;
 pub mod hint_scan;
 pub mod host_policy;
 pub mod host_state;
+// macOS only: Mach host statistics, `sysctl` and a `statfs` about the machine hostd runs on. A
+// client asks the HOST for this over the wire; it never asks itself. See the module.
+#[cfg(target_os = "macos")]
+pub mod host_vitals;
 // macOS only: behind it is CoreGraphics event synthesis, which no iOS slice has. See the module.
 #[cfg(target_os = "macos")]
 pub mod inject;
@@ -214,8 +218,13 @@ pub mod session_state;
 pub mod sidebar_row;
 pub mod sidecars;
 pub mod simulator_presentation;
+// macOS only: the environment a hostd pane's login shell is spawned into. There is no `posix_spawn`
+// and no login shell in an iOS slice. See the module.
+#[cfg(target_os = "macos")]
+pub mod spawn_env;
 pub mod state_scalars;
 pub mod status_pill;
+pub mod supervision;
 pub mod supervisor_frame;
 pub mod supervisor_paths;
 pub mod surface_gesture;
@@ -227,6 +236,10 @@ pub mod terminal_mode;
 pub mod toast;
 pub mod tool_path;
 pub mod trendline;
+// macOS only, with `tool_path`: the walk that produces the vendored prefix that search order's
+// second rung consumes. A phone has no checkout. See the module.
+#[cfg(target_os = "macos")]
+pub mod vendored_tools;
 pub mod vi_hints;
 pub mod video_control;
 pub mod video_fec;

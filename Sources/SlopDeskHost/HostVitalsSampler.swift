@@ -1,265 +1,77 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskProtocol
 
 /// The host machine's PULSE sampler — the `hostVitals` verb's engine (CPU busy %, memory in use %,
-/// kernel memory-pressure level). Process-wide singleton because the reading is host-global while the
-/// metadata probe is per-pane: ``MuxChannelSession/serveMetadata`` builds a fresh
-/// ``HostMetadataProbe`` per request, so the CPU baseline has to outlive it. Lock-protected — two
-/// panes' metadata queues can race.
+/// kernel memory-pressure level, free space on the home volume).
 ///
-/// **CPU is a DELTA, so the first answer is silence.** Mach hands out cumulative tick counters, not a
-/// rate; a percent only exists between two snapshots. The first request therefore banks the baseline
-/// and returns `nil` (the verb replies `.error`, the client asks again next poll). Two further guards
-/// keep the number honest rather than merely present:
+/// A face over `slopdesk-panecensus`'s `vitals`, which owns every rule and every reading: the
+/// baseline discipline (a CPU percent is a DELTA, so the first poll banks a snapshot and answers
+/// nothing), the staleness and minimum-window guards, the Activity-Monitor memory definition, the
+/// `statfs` saturation, and the four Mach/`sysctl` calls themselves (through `slopdesk-posix`).
+/// What stays here is the two things Rust must not hold: the process-wide singleton, and the lock
+/// that serialises the two panes' metadata queues that can race for it.
 ///
-/// - **Stale baseline → discard.** A snapshot older than ``maxBaselineAge`` spans a gap the client
-///   spent disconnected/asleep; averaging over it would report a machine that no longer exists. Rebank
-///   and stay silent for one poll.
-/// - **Too-fresh baseline → repeat the last answer.** Under ``minWindow`` the tick delta is mostly
-///   quantization noise, so a second caller arriving right behind the first gets the cached reading
-///   and the baseline does NOT move (otherwise two clients polling in lockstep would starve each
-///   other's window down to nothing).
+/// The sampler is a HANDLE rather than a value because the baseline has to outlive the request —
+/// hostd builds a fresh ``HostMetadataProbe`` per request while the reading is host-global. The
+/// three handle obligations of docs/55 §4 are met here: exactly one `free` per `new` (in `deinit`),
+/// no overlapping calls (the `NSLock`), and nothing allocated on one side and freed on the other.
 ///
-/// Memory needs no window — it is an instantaneous count.
-///
-/// Every syscall is checked (`KERN_SUCCESS`, exact struct size) and degrades to `nil`/`.normal`; the
-/// sampler never traps, never force-unwraps, and never blocks (no sleeping to manufacture a window).
+/// The clock crosses as a parameter, which keeps the window rules testable in Rust without
+/// sleeping. It must be a CONTINUOUS clock and not a suspending one: the staleness guard exists for
+/// the slept Mac, and `DispatchTime`/`SuspendingClock` stop while the machine is asleep, so an
+/// overnight gap would read as seconds old, the guard would never fire, and the first reading after
+/// wake would average a CPU percent across the sleep boundary instead of rebanking.
 final class HostVitalsSampler: @unchecked Sendable {
     /// The production singleton (one machine → one baseline).
     static let shared = HostVitalsSampler()
 
-    /// Older than this, a baseline describes a different situation — rebank instead of averaging
-    /// across the gap. Comfortably above the client's ~4 s poll so a normal cadence never trips it.
-    static let maxBaselineAge: Duration = .seconds(30)
-    /// Below this, the tick delta is noise — answer from the cache and keep the baseline.
-    static let minWindow: Duration = .seconds(1)
-
-    /// Mach's four aggregate CPU tick counters (all cores summed), as `HOST_CPU_LOAD_INFO` reports
-    /// them. `natural_t` (32-bit) counters that DO wrap — the delta math below is deliberately
-    /// wrapping, never a difference of widened values.
-    struct CPUTicks: Equatable, Sendable {
-        var user: UInt32
-        var system: UInt32
-        var idle: UInt32
-        var nice: UInt32
-    }
-
-    private struct Baseline {
-        var ticks: CPUTicks
-        var taken: ContinuousClock.Instant
-    }
-
     private let lock = NSLock()
-    private var baseline: Baseline?
-    /// The last percent actually computed — what a too-fresh repeat call gets.
-    private var cached: MetadataCodec.HostVitals?
+    private let handle: OpaquePointer
+    /// The zero the crossed nanosecond count is measured from. Only DIFFERENCES matter to the far
+    /// side, so any fixed origin does; taking one at init keeps the number small.
+    private let origin = ContinuousClock.now
 
-    // MARK: - Pure math (no syscall — these are what the unit tests drive)
-
-    /// The busy percent between two tick snapshots: `100 - idle/total`, rounded, clamped `0...100`.
-    /// `nil` when the window carries no ticks at all (identical snapshots — nothing to divide by).
-    ///
-    /// Deltas use WRAPPING subtraction (`&-`) because the counters are 32-bit and roll over on a
-    /// long-lived host; a widened subtraction would report a nonsense spike for one poll at wrap.
-    static func busyPercent(previous: CPUTicks, current: CPUTicks) -> UInt8? {
-        let user = UInt64(current.user &- previous.user)
-        let system = UInt64(current.system &- previous.system)
-        let idle = UInt64(current.idle &- previous.idle)
-        let nice = UInt64(current.nice &- previous.nice)
-        let total = user + system + idle + nice
-        guard total > 0 else { return nil }
-        let busy = total - idle
-        // Integer round-half-up: (busy * 100 + total/2) / total. Kept in integers so the percent the
-        // client renders is exactly the percent the host computed.
-        let percent = (busy * 100 + total / 2) / total
-        return UInt8(min(percent, 100))
-    }
-
-    /// Physical memory in use as a percent of installed RAM, rounded, clamped `0...100`. `0` when the
-    /// machine reports no RAM (an impossible reading that must not divide by zero).
-    static func memoryPercent(usedBytes: UInt64, totalBytes: UInt64) -> UInt8 {
-        guard totalBytes > 0 else { return 0 }
-        let percent = (min(usedBytes, totalBytes) * 100 + totalBytes / 2) / totalBytes
-        return UInt8(min(percent, 100))
-    }
-
-    /// Free space in MiB from a `statfs` pair, saturating at ``MetadataCodec/diskFreeUnknown`` − 1 so
-    /// a colossal (or garbage) reading can never land ON the unknown sentinel and blank the metric.
-    /// `nil` for a nonsense block size, which would otherwise multiply out to a meaningless figure.
-    static func freeMiB(blocksAvailable: UInt64, blockSize: UInt64) -> UInt32? {
-        guard blockSize > 0 else { return nil }
-        // Checked multiply: a torn/garbage `statfs` pair must saturate, not trap on overflow.
-        let (bytes, overflowed) = blocksAvailable.multipliedReportingOverflow(by: blockSize)
-        let mib = overflowed ? UInt64.max : bytes / (1024 * 1024)
-        return UInt32(min(mib, UInt64(MetadataCodec.diskFreeUnknown) - 1))
-    }
-
-    /// Maps the kernel's `kern.memorystatus_vm_pressure_level` (a SPARSE bitmask-flavoured ladder:
-    /// 1 normal, 2 warn, 4 critical) onto ``MetadataCodec/MemoryPressure``. Anything else — an
-    /// unreadable sysctl, a future level — reads `.normal`: an alarm this build cannot justify is
-    /// worse than no alarm.
-    static func pressure(sysctlLevel: Int32) -> MetadataCodec.MemoryPressure {
-        switch sysctlLevel {
-        case 2: .warn
-        case 4: .critical
-        default: .normal
+    init() {
+        // Rust returns null only if the allocation failed, and it aborts on allocation failure
+        // before it could — so this is unreachable rather than unhandled.
+        guard let handle = slopdesk_host_vitals_new() else {
+            preconditionFailure("slopdesk_host_vitals_new returned null")
         }
+        self.handle = handle
     }
 
-    // MARK: - Stateful core (readings injected — still no syscall)
+    deinit {
+        slopdesk_host_vitals_free(handle)
+    }
 
-    /// Folds one set of readings into a vitals answer, applying the baseline / staleness / cache
-    /// rules described in the type doc. `nil` = no reading to publish yet.
-    func vitals(
-        cpuTicks: CPUTicks,
-        memoryPercent: UInt8,
-        pressure: MetadataCodec.MemoryPressure,
-        diskFreeMiB: UInt32?,
-        now: ContinuousClock.Instant,
-    ) -> MetadataCodec.HostVitals? {
+    /// Reads the machine and folds one vitals answer. `nil` on a first call (baseline priming), on a
+    /// refused syscall, or across a window the module's own rules will not average over — the verb
+    /// replies `.error` and the client asks again on its next poll.
+    func sample() -> MetadataCodec.HostVitals? {
+        let home = Array(NSHomeDirectory().utf8)
+        let elapsed = origin.duration(to: ContinuousClock.now)
+        let now = UInt64(elapsed.components.seconds) * 1_000_000_000
+            + UInt64(elapsed.components.attoseconds / 1_000_000_000)
+        var out = SlopDeskHostVitals()
         lock.lock()
-        defer { lock.unlock() }
-        guard let previous = baseline else {
-            baseline = Baseline(ticks: cpuTicks, taken: now)
-            return nil
+        let answered = home.withUnsafeBufferPointer { path in
+            slopdesk_host_vitals_sample(handle, path.baseAddress, path.count, now, &out)
         }
-        let age = previous.taken.duration(to: now)
-        if age > Self.maxBaselineAge {
-            // The gap swallowed the window — rebank, stay silent, and drop the stale cache so the
-            // next answer is a fresh measurement rather than a number from before the gap.
-            baseline = Baseline(ticks: cpuTicks, taken: now)
-            cached = nil
-            return nil
-        }
-        if age < Self.minWindow {
-            // Too soon to re-measure. The memory and disk halves ARE instantaneous, so refresh them
-            // on the cached CPU percent rather than handing back a wholly frozen row.
-            guard let cached else { return nil }
-            let refreshed = MetadataCodec.HostVitals(
-                cpuPercent: cached.cpuPercent,
-                memoryPercent: memoryPercent,
-                pressure: pressure,
-                diskFreeMiB: diskFreeMiB,
-            )
-            self.cached = refreshed
-            return refreshed
-        }
-        guard let cpu = Self.busyPercent(previous: previous.ticks, current: cpuTicks) else {
-            // A window with zero ticks (a stopped clock, never seen in practice): keep the baseline
-            // so the NEXT poll measures across a longer window instead of resetting forever.
-            return cached
-        }
-        baseline = Baseline(ticks: cpuTicks, taken: now)
-        let vitals = MetadataCodec.HostVitals(
-            cpuPercent: cpu, memoryPercent: memoryPercent, pressure: pressure,
-            diskFreeMiB: diskFreeMiB,
+        lock.unlock()
+        guard answered else { return nil }
+        return MetadataCodec.HostVitals(
+            cpuPercent: out.cpu_percent,
+            memoryPercent: out.memory_percent,
+            pressureByte: out.pressure_byte,
+            diskFreeMiB: out.disk_free_present ? out.disk_free_mib : nil,
         )
-        cached = vitals
-        return vitals
     }
 
     /// Drops the baseline + cache (test seam; production keeps one sampler for the process life).
     func reset() {
         lock.lock()
-        baseline = nil
-        cached = nil
+        slopdesk_host_vitals_reset(handle)
         lock.unlock()
     }
-
-    // MARK: - The real readings (macOS syscalls; compiled + reviewed only, never unit-tested)
-
-    /// The production entry point: read the machine's counters and fold them through ``vitals``.
-    /// `nil` on a first call (baseline priming) or a refused syscall.
-    func sample() -> MetadataCodec.HostVitals? {
-        #if os(macOS)
-        guard let ticks = Self.readCPUTicks() else { return nil }
-        return vitals(
-            cpuTicks: ticks,
-            memoryPercent: Self.readMemoryPercent(),
-            pressure: Self.readPressure(),
-            diskFreeMiB: Self.readDiskFreeMiB(),
-            now: ContinuousClock.now,
-        )
-        #else
-        nil
-        #endif
-    }
-
-    #if os(macOS)
-    /// One send right for the process (`mach_host_self()` hands out a fresh right per call — taking
-    /// one and keeping it avoids leaking a port on every poll).
-    private static let hostPort: mach_port_t = mach_host_self()
-
-    /// `HOST_CPU_LOAD_INFO`: the four aggregate tick counters. `nil` on any non-`KERN_SUCCESS`.
-    private static func readCPUTicks() -> CPUTicks? {
-        var info = host_cpu_load_info_data_t()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size,
-        )
-        let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { reboundw in
-                host_statistics(hostPort, HOST_CPU_LOAD_INFO, reboundw, &count)
-            }
-        }
-        guard result == KERN_SUCCESS else { return nil }
-        return CPUTicks(
-            user: info.cpu_ticks.0,
-            system: info.cpu_ticks.1,
-            idle: info.cpu_ticks.2,
-            nice: info.cpu_ticks.3,
-        )
-    }
-
-    /// `HOST_VM_INFO64` folded into the Activity Monitor "Memory Used" definition: wired +
-    /// app-internal (minus purgeable) + compressed, over the installed RAM. The file cache is
-    /// deliberately EXCLUDED — macOS parks every free page in it, so counting it would pin the
-    /// readout near 100% on a perfectly healthy machine. `0` on a refused syscall (the pressure level
-    /// still carries the real signal).
-    private static func readMemoryPercent() -> UInt8 {
-        var info = vm_statistics64_data_t()
-        var count = mach_msg_type_number_t(
-            MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size,
-        )
-        let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { rebound in
-                host_statistics64(hostPort, HOST_VM_INFO64, rebound, &count)
-            }
-        }
-        guard result == KERN_SUCCESS else { return 0 }
-        // `host_page_size` rather than the `vm_kernel_page_size` global — the counts above are in VM
-        // pages, and a C global var is not concurrency-safe to read under strict concurrency.
-        var pageSizeBytes: vm_size_t = 0
-        guard host_page_size(hostPort, &pageSizeBytes) == KERN_SUCCESS else { return 0 }
-        let pageSize = UInt64(pageSizeBytes)
-        let interned = UInt64(info.internal_page_count)
-        let purgeable = UInt64(info.purgeable_count)
-        // Saturating: purgeable is a SUBSET of internal, but a torn read must not underflow.
-        let app = interned > purgeable ? interned - purgeable : 0
-        let pages = app + UInt64(info.wire_count) + UInt64(info.compressor_page_count)
-        return memoryPercent(
-            usedBytes: pages * pageSize,
-            totalBytes: Foundation.ProcessInfo.processInfo.physicalMemory,
-        )
-    }
-
-    /// `statfs` on the HOME directory's volume — the disk the user's repos, build products and
-    /// container images actually consume, which on a modern Mac is the Data volume rather than `/`
-    /// (a read-only system snapshot whose free space is a different, useless number). Uses
-    /// `f_bavail` (blocks free to a non-root process), not `f_bfree`, since the daemon is not root.
-    /// `nil` on a refused syscall → the client simply omits the metric.
-    private static func readDiskFreeMiB() -> UInt32? {
-        var stats = statfs()
-        guard statfs(Foundation.NSHomeDirectory(), &stats) == 0 else { return nil }
-        return freeMiB(blocksAvailable: stats.f_bavail, blockSize: UInt64(stats.f_bsize))
-    }
-
-    /// `kern.memorystatus_vm_pressure_level` — the kernel's own verdict. Unreadable → `.normal`.
-    private static func readPressure() -> MetadataCodec.MemoryPressure {
-        var level: Int32 = 0
-        var size = MemoryLayout<Int32>.size
-        let result = sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0)
-        guard result == 0, size == MemoryLayout<Int32>.size else { return .normal }
-        return pressure(sysctlLevel: level)
-    }
-    #endif
 }

@@ -72,24 +72,41 @@ impl Report {
         swift: &std::collections::BTreeSet<String>,
         rust: &std::collections::BTreeSet<String>,
     ) {
-        if swift.is_empty() || rust.is_empty() {
+        self.same_set_named(label, "Swift", swift, "Rust", rust);
+    }
+
+    /// [`Report::same_set`] with the two sides NAMED.
+    ///
+    /// Most cross-language pairs are one of each, and the default names say so. A few are not:
+    /// hostd's spawn allowlist and superd's shim declarations are both Rust now, in two crates, and
+    /// the rule between them is unchanged — a message reading "Swift alone has" would send whoever
+    /// hits it looking through Swift for a constant that is not there.
+    pub fn same_set_named(
+        &mut self,
+        label: &str,
+        left_name: &str,
+        left: &std::collections::BTreeSet<String>,
+        right_name: &str,
+        right: &std::collections::BTreeSet<String>,
+    ) {
+        if left.is_empty() || right.is_empty() {
             self.fail(format!(
                 "{label}: one side read as EMPTY — the extraction in this gate has gone stale and stopped \
                  comparing anything",
             ));
             return;
         }
-        if swift == rust {
+        if left == right {
             return;
         }
         let mut message = format!("{label} disagrees —");
-        let only_swift: Vec<_> = swift.difference(rust).cloned().collect();
-        let only_rust: Vec<_> = rust.difference(swift).cloned().collect();
-        if !only_swift.is_empty() {
-            let _ = write!(message, " Swift alone has {}", only_swift.join(" "));
+        let only_left: Vec<_> = left.difference(right).cloned().collect();
+        let only_right: Vec<_> = right.difference(left).cloned().collect();
+        if !only_left.is_empty() {
+            let _ = write!(message, " {left_name} alone has {}", only_left.join(" "));
         }
-        if !only_rust.is_empty() {
-            let _ = write!(message, " Rust alone has {}", only_rust.join(" "));
+        if !only_right.is_empty() {
+            let _ = write!(message, " {right_name} alone has {}", only_right.join(" "));
         }
         self.fail(message);
     }

@@ -41,6 +41,8 @@ pub mod fdpass;
 /// the same object as the function it guards.
 #[cfg(test)]
 mod fork_window_contract;
+/// The machine's own counters — Mach host statistics, `sysctl` scalars, `statfs`.
+pub mod hoststats;
 /// Reading another process.
 pub mod proc;
 /// `openpty` + `fork` + `execve`, and the descriptor flags around them.

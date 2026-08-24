@@ -7,9 +7,11 @@
 // no file in this repo recorded which version the panel had been written against.
 //
 // So they are pinned in `ThirdParty/tools/tools.lock` and provisioned into
-// `ThirdParty/tools/.prefix/bin` by `ThirdParty/tools/provision.sh`. This type is the read half:
-// it locates that prefix from the running binary and hands the path to the locators, which try it
-// FIRST and fall through to `PATH` / `~/.local/bin` / Homebrew when it is absent.
+// `ThirdParty/tools/.prefix/bin` by `ThirdParty/tools/provision.sh`. This type is the read half.
+//
+// A face over `slopdesk-androidd`'s `toolchain`, which owns the marker, the upward walk and the two
+// paths that hang off it — the same crate that owns the binary SEARCH ORDER the prefix is the
+// second rung of. What stays here is the one Foundation line the walk starts from.
 //
 // **hostd never provisions.** Nothing here downloads, extracts or writes — it stats. A host that
 // has not been provisioned reports the surface unavailable and names the script; it does not reach
@@ -26,45 +28,46 @@
 // Hang-safety: filesystem stats only, no processes and no sockets, so unit tests may call this —
 // and do, through the injected `startingAt:`.
 
+import CSlopDeskFFI
 import Foundation
 
 /// The provisioned third-party prefix, resolved from the running binary's location.
 enum VendoredTools {
-    /// The marker that identifies a repo root: the pin manifest itself. Looking for the LOCK rather
-    /// than for `.git` means a checkout without the vendoring layer (or a bare `.git` elsewhere up
-    /// the tree) does not produce a prefix path that cannot hold anything.
-    static let lockRelativePath = "ThirdParty/tools/tools.lock"
-
     /// `ThirdParty/tools/.prefix/bin` for the checkout this binary was built into, or `nil` when the
     /// binary does not sit inside one. Resolved once — the answer cannot change while the process
     /// lives, and every locator consults it.
-    static let binDirectory: String? = repoRoot().map { $0 + "/ThirdParty/tools/.prefix/bin" }
+    static let binDirectory: String? = path(slopdesk_vendored_bin_dir)
 
     /// The committed `scrcpy-server` jar, or `nil` outside a checkout. Unlike the other three this
     /// one is IN git (716 KB, and not an executable — the device's own `app_process` runs it), so a
     /// provisioned prefix is not required for the Android panel to mirror; a checkout is.
-    static let scrcpyServerJar: String? = repoRoot().map { $0 + "/ThirdParty/tools/vendor/scrcpy-server" }
+    static let scrcpyServerJar: String? = path(slopdesk_vendored_scrcpy_server_jar)
 
-    /// Walks up from `startingAt` looking for a directory containing ``lockRelativePath``.
+    /// The checkout root the running binary sits inside, or `nil` outside one.
     ///
     /// `Bundle.main.executableURL` rather than `CommandLine.arguments[0]`: the latter is whatever
     /// the caller passed as argv[0], which for a `nohup`'d hostd is a relative path against a
     /// working directory nobody promised.
-    ///
-    /// The walk is bounded by reaching `/` — a symlinked checkout cannot loop, because
-    /// `deletingLastPathComponent` on a resolved path strictly shortens it.
     static func repoRoot(
         startingAt start: String? = Bundle.main.executableURL?.resolvingSymlinksInPath().path,
-        fileManager: FileManager = .default,
+    ) -> String? {
+        path(slopdesk_vendored_repo_root, startingAt: start)
+    }
+
+    /// Runs one of the three walk doors and turns its EMPTY answer back into `nil`.
+    ///
+    /// Empty and absent are the same state on the far side and the same state here: both mean the
+    /// binary is outside a checkout, and every locator falls through to `PATH` and the host's own
+    /// installs. There is no third answer to distinguish.
+    private static func path(
+        _ door: (UnsafePointer<UInt8>?, Int, UnsafeMutablePointer<UInt8>?, Int) -> Int,
+        startingAt start: String? = Bundle.main.executableURL?.resolvingSymlinksInPath().path,
     ) -> String? {
         guard let start else { return nil }
-        var directory = URL(fileURLWithPath: start).deletingLastPathComponent()
-        while directory.path != "/" {
-            if fileManager.isReadableFile(atPath: directory.path + "/" + lockRelativePath) {
-                return directory.path
-            }
-            directory = directory.deletingLastPathComponent()
+        let bytes = Array(start.utf8)
+        let answer = bytes.withUnsafeBufferPointer { input in
+            hostAnswerText { out, cap in door(input.baseAddress, input.count, out, cap) }
         }
-        return nil
+        return answer.isEmpty ? nil : answer
     }
 }

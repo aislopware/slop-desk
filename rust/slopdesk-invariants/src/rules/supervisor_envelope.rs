@@ -10,8 +10,8 @@
 //! reported as "no daemon is running", which is also the healthy answer when no daemon is running.
 
 use crate::paths::{
-    RUST_CTL_LIB, RUST_PATHS, RUST_PROTOCOL, RUST_SHELLINT, RUST_SUPERD_SERVER, RUST_SUPERWIRE,
-    SWIFT_HOST_ENVIRONMENT, SWIFT_PATHS, SWIFT_PROTOCOL,
+    RUST_CTL_LIB, RUST_PATHS, RUST_PROTOCOL, RUST_SHELLINT, RUST_SPAWN_ENV, RUST_SUPERD_SERVER,
+    RUST_SUPERWIRE, SWIFT_HOST_ENVIRONMENT, SWIFT_PATHS, SWIFT_PROTOCOL,
 };
 use crate::report::Report;
 use crate::text;
@@ -175,23 +175,28 @@ pub fn control_socket_export(tree: &Tree) -> Report {
 /// key that was never set. A rename on either side turns the setting off and nothing says so — no
 /// prompt marks, no cwd tracking, no error (docs/51 §6.4).
 ///
-/// Both sides are whole SETS, and the Rust side is not a list typed out here. Every `*_ENV_KEY` the
+/// Both sides are whole SETS, and neither is a list typed out here. Every `*_ENV_KEY` the shim
 /// module declares must be forwarded EXCEPT the ones it writes itself: `REAL_ZDOTDIR_ENV_KEY` goes
 /// into the child's environment through `Shim::overrides`, so it travels superd→child and hostd has
 /// no business carrying it. That exclusion is read out of how the module USES the constant, not out
 /// of a name written here — which is what makes a fourth opt-out visible instead of invisible.
+///
+/// The forwarding side used to be `HostEnvironment.swift`'s `shellIntegrationEnvKeys`; it is
+/// `spawn_env`'s `SHELL_INTEGRATION_KEYS` since hostd's curation became a face over that module.
+/// Both ends being Rust does not retire the rule — the two crates are still two places, and a
+/// rename in either still turns the setting off with no error anywhere.
 #[must_use]
 pub fn shell_integration_env_keys(tree: &Tree) -> Report {
     let mut report = Report::new();
     let (Some(env), Some(shellint)) = (
-        report.source(tree, SWIFT_HOST_ENVIRONMENT, "hostd's env allowlist lives there"),
+        report.source(tree, RUST_SPAWN_ENV, "hostd's env allowlist lives there"),
         report.source(tree, RUST_SHELLINT, "superd's shim generator lives there"),
     ) else {
         return report;
     };
 
-    let swift = text::capture_set(
-        &text::range(&env.text, r"shellIntegrationEnvKeys = \[", r"\]"),
+    let forwarded = text::capture_set(
+        &text::range(&env.text, r"SHELL_INTEGRATION_KEYS: &\[&str\] = &\[", r"\];"),
         r#"(?m)^ *"([A-Z0-9_]*)","#,
     );
     // Each declared key's VALUE, minus the ones the module hands to the child itself.
@@ -206,7 +211,13 @@ pub fn shell_integration_env_keys(tree: &Tree) -> Report {
             })
             .collect();
 
-    report.same_set("shell-integration env keys", &swift, &rust);
+    report.same_set_named(
+        "shell-integration env keys",
+        "hostd's allowlist",
+        &forwarded,
+        "superd",
+        &rust,
+    );
     report
 }
 
@@ -690,21 +701,26 @@ fn build(overrides: &mut Map) {
 }
 "#;
 
+    /// hostd's export of the ctl socket — the anchor `control_socket_export` reads. Still Swift:
+    /// the KEY is hostd's own dictionary entry, written beside the pane id it tags.
     const HOST_ENV_OK: &str = r#"
 enum HostEnvironment {
-    static let shellIntegrationEnvKeys = [
-        "SLOPDESK_SHELL_INTEGRATION",
-        "SLOPDESK_OSC133",
-        "SLOPDESK_SHELL_CURSOR",
-    ]
-    static let controlSocketKey = "SLOPDESK_CONTROL_SOCKET"
+    static let agentControlSocketEnvKey = "SLOPDESK_CONTROL_SOCKET"
 }
+"#;
+
+    const SPAWN_ENV_OK: &str = r#"
+pub const SHELL_INTEGRATION_KEYS: &[&str] = &[
+    "SLOPDESK_SHELL_INTEGRATION",
+    "SLOPDESK_OSC133",
+    "SLOPDESK_SHELL_CURSOR",
+];
 "#;
 
     fn shellint_fixture(name: &str) -> Fixture {
         let fixture = Fixture::new(name);
         fixture
-            .write("Sources/SlopDeskHost/HostEnvironment.swift", HOST_ENV_OK)
+            .write("rust/slopdesk-muxsession/src/spawn_env.rs", SPAWN_ENV_OK)
             .write("rust/slopdesk-superd/src/shellintegration.rs", SHELLINT_RUST_OK);
         fixture
     }
@@ -731,7 +747,7 @@ enum HostEnvironment {
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("Rust alone has SLOPDESK_TITLE")),
+                .any(|v| v.contains("superd alone has SLOPDESK_TITLE")),
             "{report:?}",
         );
     }
@@ -759,6 +775,7 @@ enum HostEnvironment {
     #[test]
     fn dropping_the_control_socket_export_is_caught() {
         let fixture = shellint_fixture("ctl-export");
+        fixture.write("Sources/SlopDeskHost/HostEnvironment.swift", HOST_ENV_OK);
         fixture.write(
             "rust/slopdesk-ctl/src/lib.rs",
             "let key = \"SLOPDESK_CONTROL_SOCKET\";\n",

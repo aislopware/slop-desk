@@ -12,6 +12,7 @@
 //! - [`process`] — the narrower question the presence poll asks: is it `claude`, or something that
 //!   commonly WRAPS one?
 //! - [`status`] — the rolled-up status, its urgency order, and the wire qualifier byte.
+//! - [`supervision`] — the four stable words the `slopdesk-ctl` socket speaks that status IN.
 //! - [`attention`] — which pane is asking for the human: the notification EDGE, the oldest waiting
 //!   pane, and where one press of the jump chord goes.
 //! - [`signal`] — the semantic hook vocabulary and the signal envelope the machine folds.
@@ -52,6 +53,7 @@ pub mod screen;
 pub mod signal;
 pub mod sleep;
 pub mod status;
+pub mod supervision;
 pub mod watch;
 
 pub use detector::{Emission, PaneDetector, StatusTriple, block_kind, intent_line, topic_line};

@@ -34,7 +34,8 @@ pub use channels::{ChannelState, ChannelTable, DropReason, FrameKind, RoutingDec
 pub use decoder::MuxFrameDecoder;
 pub use envelope::{MIN_MUX_FRAME_LENGTH, MuxCloseReason, MuxFrame, MuxFrameType, PREFIX_LENGTH};
 pub use flow::{
-    BoundedQueuePolicy, ConsumeResult, FlowCreditPolicy, MuxFlowControl, ReceiveWindowAccountant,
+    BoundedQueuePolicy, ConsumeResult, FlowCreditPolicy, MuxFlowControl, PausableQueueGate,
+    ReceiveWindowAccountant,
 };
 
 /// What a mux channel is FOR — the `channel_class` byte of a

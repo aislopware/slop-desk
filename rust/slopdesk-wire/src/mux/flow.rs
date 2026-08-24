@@ -423,11 +423,229 @@ impl BoundedQueuePolicy {
     }
 }
 
+/// The host PTY-read backpressure gate: a [`BoundedQueuePolicy`] OR-ed with the two other sources
+/// that can want the read loop paused, and a memory of what was last APPLIED.
+///
+/// ### Why the three sources are folded in ONE place
+/// Each bounds a different pool of bytes, and each on its own is blind to the other two:
+///
+/// - **the queue** bounds enqueued-not-yet-SENT bytes;
+/// - **`replay_pause`** is the per-channel replay buffer's 256 MiB cap / 64 MiB offline gate —
+///   SENT-but-not-yet-ACKED retained bytes, which a client that consumes the wire and never acks
+///   grows unboundedly while the queue stays empty;
+/// - **`fanout_backlog`** is bytes sequenced that not even the FASTEST subscriber has shipped
+///   (docs/45 §8.6). Once a pane fans out the drain hands each frame to per-member outboxes and
+///   dequeues immediately — it must, or one parked member gives every other head-of-line — so the
+///   queue's `outstanding` returns to zero on every frame and that source can never assert again
+///   for the life of the pane. This restores the same bound from the other end, against the same
+///   [`BoundedQueuePolicy::capacity`] so the attached ↔ detached re-size moves both.
+///
+/// The loop must PAUSE if ANY asserts and RESUME only when ALL clear. Folding them separately is
+/// how a lost wakeup gets in: source A decides "pause", source B decides "resume" from stale
+/// accounting, B lands last, and the pane's output freezes forever with the queue under bound.
+///
+/// ### Why the answer is "did it CHANGE", not "should it be paused"
+/// The caller owns the action (it writes to a descriptor, or flips a flag another thread reads) and
+/// owns the lock the action must run under. What it cannot own is the memory of what it last
+/// applied, because that memory is what makes the fold idempotent: `applied` is the whole reason a
+/// clear on one source cannot spuriously resume a loop another source still wants paused. So the
+/// state lives here and every mutator answers `Some(paused)` exactly when the caller must act, and
+/// `None` when the fold decided nothing new.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PausableQueueGate {
+    queue: BoundedQueuePolicy,
+    replay_pause: bool,
+    fanout_backlog: i64,
+    applied: bool,
+}
+
+impl PausableQueueGate {
+    /// A gate over a queue of `capacity` bytes, both other sources inert, starting UNPAUSED (the
+    /// read loop runs until something says otherwise).
+    #[must_use]
+    pub const fn new(capacity: i64) -> Self {
+        Self {
+            queue: BoundedQueuePolicy::new(capacity),
+            replay_pause: false,
+            fanout_backlog: 0,
+            applied: false,
+        }
+    }
+
+    /// Rebuilds a gate whose four fields a caller held across a boundary — the same by-value
+    /// convention as [`BoundedQueuePolicy::restored`], for the same reason: this is four scalars
+    /// and no allocation, so the state fits in the call.
+    #[must_use]
+    pub const fn restored(
+        capacity: i64,
+        outstanding: i64,
+        replay_pause: bool,
+        fanout_backlog: i64,
+        applied: bool,
+    ) -> Self {
+        Self {
+            queue: BoundedQueuePolicy::restored(capacity, outstanding),
+            replay_pause,
+            fanout_backlog: if fanout_backlog > 0 { fanout_backlog } else { 0 },
+            applied,
+        }
+    }
+
+    /// The high-water mark the queue and the fan-out backlog are BOTH measured against.
+    #[must_use]
+    pub const fn capacity(&self) -> i64 {
+        self.queue.capacity()
+    }
+
+    /// Bytes enqueued and not yet sent — the inspection seam the host's tests read.
+    #[must_use]
+    pub const fn outstanding(&self) -> i64 {
+        self.queue.outstanding()
+    }
+
+    /// The replay-buffer source, as last set.
+    #[must_use]
+    pub const fn replay_pause(&self) -> bool {
+        self.replay_pause
+    }
+
+    /// The fan-out source, as last set.
+    #[must_use]
+    pub const fn fanout_backlog(&self) -> i64 {
+        self.fanout_backlog
+    }
+
+    /// What the caller last applied. Public so a restored gate can be checked against the action
+    /// the caller actually performed, never to drive one.
+    #[must_use]
+    pub const fn applied(&self) -> bool {
+        self.applied
+    }
+
+    /// The combined verdict over the three sources, without touching `applied`.
+    #[must_use]
+    pub const fn wants_pause(&self) -> bool {
+        self.queue.is_full() || self.replay_pause || self.fanout_backlog >= self.queue.capacity()
+    }
+
+    /// Folds the current verdict against what was last applied. `Some(paused)` means the caller
+    /// must act and this gate has already recorded that it will.
+    const fn settle(&mut self) -> Option<bool> {
+        let want = self.wants_pause();
+        if want == self.applied {
+            return None;
+        }
+        self.applied = want;
+        Some(want)
+    }
+
+    /// Accounts `count` enqueued bytes and re-folds.
+    pub const fn enqueue(&mut self, count: i64) -> Option<bool> {
+        self.queue.enqueue(count);
+        self.settle()
+    }
+
+    /// Accounts `count` dequeued (sent) bytes and re-folds.
+    pub const fn dequeue(&mut self, count: i64) -> Option<bool> {
+        self.queue.dequeue(count);
+        self.settle()
+    }
+
+    /// Sets the replay-buffer source and re-folds.
+    pub const fn set_replay_pause(&mut self, pause: bool) -> Option<bool> {
+        self.replay_pause = pause;
+        self.settle()
+    }
+
+    /// Sets the fan-out source and re-folds. `0` — an inline drain, or an empty subscriber set —
+    /// makes the source inert, so a pane that never fanned out is accounted exactly as before.
+    pub const fn set_fanout_backlog(&mut self, bytes: i64) -> Option<bool> {
+        self.fanout_backlog = if bytes > 0 { bytes } else { 0 };
+        self.settle()
+    }
+
+    /// Re-sizes the bound and re-folds. Raising above `outstanding` RESUMES a paused loop;
+    /// shrinking below it pauses — and both move the fan-out source too, since it is compared
+    /// against the same number.
+    pub const fn set_capacity(&mut self, new_capacity: i64) -> Option<bool> {
+        self.queue.set_capacity(new_capacity);
+        self.settle()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        BoundedQueuePolicy, ConsumeResult, FlowCreditPolicy, MuxFlowControl, ReceiveWindowAccountant,
+        BoundedQueuePolicy, ConsumeResult, FlowCreditPolicy, MuxFlowControl, PausableQueueGate,
+        ReceiveWindowAccountant,
     };
+
+    // --- PausableQueueGate ------------------------------------------------------------------ //
+
+    #[test]
+    fn a_gate_only_answers_on_a_change() {
+        let mut gate = PausableQueueGate::new(100);
+        assert_eq!(gate.enqueue(50), None, "under bound, nothing to apply");
+        assert_eq!(gate.enqueue(50), Some(true), "reaching capacity pauses");
+        assert_eq!(gate.enqueue(50), None, "already paused");
+        assert_eq!(gate.dequeue(10), None, "140 is still over the bound");
+        assert_eq!(gate.outstanding(), 140);
+    }
+
+    #[test]
+    fn draining_below_the_bound_resumes_exactly_once() {
+        let mut gate = PausableQueueGate::new(100);
+        assert_eq!(gate.enqueue(120), Some(true));
+        assert_eq!(gate.dequeue(21), Some(false), "99 < 100 resumes");
+        assert_eq!(gate.dequeue(50), None, "already resumed");
+    }
+
+    #[test]
+    fn a_clear_on_one_source_cannot_resume_a_loop_another_still_holds() {
+        let mut gate = PausableQueueGate::new(100);
+        assert_eq!(gate.set_replay_pause(true), Some(true));
+        assert_eq!(
+            gate.enqueue(200),
+            None,
+            "the queue agrees with a pause already applied"
+        );
+        assert_eq!(
+            gate.set_replay_pause(false),
+            None,
+            "the queue is still over bound"
+        );
+        assert_eq!(gate.dequeue(200), Some(false), "now every source is clear");
+    }
+
+    #[test]
+    fn the_fanout_source_is_measured_against_the_same_capacity() {
+        let mut gate = PausableQueueGate::new(1000);
+        assert_eq!(gate.set_fanout_backlog(999), None);
+        assert_eq!(gate.set_fanout_backlog(1000), Some(true));
+        assert_eq!(gate.set_capacity(4000), Some(false), "a bigger bound clears it");
+        assert_eq!(
+            gate.set_capacity(500),
+            Some(true),
+            "and a smaller one re-asserts it"
+        );
+    }
+
+    #[test]
+    fn a_negative_backlog_is_inert_rather_than_a_pause() {
+        let mut gate = PausableQueueGate::new(0);
+        assert_eq!(gate.set_fanout_backlog(-5), Some(true), "capacity 0 is full at 0");
+        assert_eq!(gate.fanout_backlog(), 0);
+    }
+
+    #[test]
+    fn a_restored_gate_folds_from_where_it_left_off() {
+        let mut gate = PausableQueueGate::restored(100, 150, false, 0, true);
+        assert!(gate.wants_pause());
+        assert_eq!(gate.dequeue(100), Some(false));
+        assert_eq!(gate.capacity(), 100);
+        assert!(!gate.replay_pause());
+        assert!(!gate.applied());
+    }
 
     // --- FlowCreditPolicy ------------------------------------------------------------------- //
 

@@ -2,11 +2,17 @@ import XCTest
 @testable import SlopDeskHost
 
 /// FIX #3 tests for ``PausableQueueGate`` — the host PTY-read backpressure gate that fuses the
-/// ``BoundedQueuePolicy`` accounting with the read-loop pause/resume action ATOMICALLY under one lock.
+/// three pause sources with the read-loop pause/resume ACTION atomically under one lock.
 ///
-/// No PTY, no HostServer, no socket: the gate's `setPaused` sink is a plain recording closure, so
-/// these are pure concurrency unit tests of the lost-wakeup fix (the action being atomic with the
-/// accounting), in the spirit of the pure decider tests for `BoundedQueuePolicy`.
+/// What is left here is the half that is Swift's. The FOLD — the queue bound, the replay source,
+/// the fan-out source, their OR, the "only fire the sink on a CHANGE" rule and the re-size — is
+/// `slopdesk-wire`'s `mux::flow::PausableQueueGate` and is tested there; eight cases that spelled
+/// its truth table a second time in Swift were deleted with the port. What no Rust test can see is
+/// the thing FIX #3 was actually about: that the ACTION runs while this side still holds the lock,
+/// so a stale pause cannot land after a concurrent resume and freeze the pane forever. That is a
+/// property of the `NSLock` and the sink, and it is what the three cases below hammer.
+///
+/// No PTY, no HostServer, no socket: the `setPaused` sink is a plain recording closure.
 final class PausableQueueGateTests: XCTestCase {
     /// Thread-safe recorder for the pause/resume sink + a count of transitions.
     private final class PauseRecorder: @unchecked Sendable {
@@ -26,20 +32,6 @@ final class PausableQueueGateTests: XCTestCase {
         }
     }
 
-    /// Basic behaviour: crossing the bound pauses; draining below it resumes.
-    func testPausesAtBoundAndResumesBelow() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
-
-        gate.enqueue(60)
-        XCTAssertFalse(rec.isPaused, "under capacity → not paused")
-        gate.enqueue(60) // outstanding 120 ≥ 100 → pause
-        XCTAssertTrue(rec.isPaused, "at/over capacity → paused")
-        gate.dequeue(60) // outstanding 60 < 100 → resume
-        XCTAssertFalse(rec.isPaused, "drained below capacity → resumed")
-        XCTAssertEqual(gate.outstanding, 60)
-    }
-
     /// FIX #3 STRESS: many concurrent enqueue/dequeue pairs under a drained queue. Because the pause
     /// action is applied ATOMICALLY with the accounting (under the gate lock), the final state MUST
     /// be NOT-paused (outstanding == 0 < capacity). The OLD non-atomic split (decide-then-unlock-
@@ -47,15 +39,15 @@ final class PausableQueueGateTests: XCTestCase {
     /// dequeue's resume, leaving the gate PAUSED while empty → the PTY read loop frozen forever.
     ///
     /// ### Why the totals are DRAINED rather than assumed to balance
-    /// `BoundedQueuePolicy.dequeue` CLAMPS outstanding at zero, so a dequeue that runs while the
-    /// queue is empty does not go negative — it discards its own bytes. Equal enqueue and dequeue
-    /// totals therefore net to zero only while no consumer ever outpaces the producers, and nothing
-    /// here can enforce that: the stagger below is a scheduling hint, and under a loaded machine a
-    /// consumer wins, its chunk is clamped away, and the run ends with a permanent positive residue.
-    /// Past `capacity` that residue means the gate is PAUSED — CORRECTLY, since the queue really is
-    /// full — and the assertion fires on a gate that did exactly what it promised. So the interleaved
-    /// load stays, and the queue is DRAINED explicitly afterwards; what is asserted is the property
-    /// the fix is about, on a queue that is empty because it was emptied.
+    /// The fold CLAMPS outstanding at zero, so a dequeue that runs while the queue is empty does not
+    /// go negative — it discards its own bytes. Equal enqueue and dequeue totals therefore net to
+    /// zero only while no consumer ever outpaces the producers, and nothing here can enforce that:
+    /// the stagger below is a scheduling hint, and under a loaded machine a consumer wins, its chunk
+    /// is clamped away, and the run ends with a permanent positive residue. Past `capacity` that
+    /// residue means the gate is PAUSED — CORRECTLY, since the queue really is full — and the
+    /// assertion fires on a gate that did exactly what it promised. So the interleaved load stays,
+    /// and the queue is DRAINED explicitly afterwards; what is asserted is the property the fix is
+    /// about, on a queue that is empty because it was emptied.
     func testConcurrentEnqueueDequeueNeverLeavesPausedWhileBelowCapacity() async {
         let rec = PauseRecorder()
         let capacity = 1024
@@ -138,106 +130,6 @@ final class PausableQueueGateTests: XCTestCase {
         )
     }
 
-    /// OFF-path parity: a gate is only built when flow control is ON (the session leaves `outputGate`
-    /// nil OFF). This pins that the gate itself never pauses on a sub-bound enqueue — so even if it
-    /// were consulted OFF (it is not), it would not spuriously backpressure a small write.
-    func testSubBoundEnqueueNeverPauses() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 64 * 1024) { rec.apply($0) }
-        for _ in 0..<100 { gate.enqueue(8) } // 800 bytes ≪ 64 KiB
-        XCTAssertFalse(rec.isPaused, "a small enqueue under the bound never pauses")
-        XCTAssertEqual(rec.transitions, 0, "no pause/resume churn for sub-bound writes (interactive path)")
-    }
-
-    // MARK: - Replay-buffer second pause source (R5 rank 2 — OR composition)
-
-    /// The ReplayBuffer source pauses the loop INDEPENDENT of the queue bound (the unbounded-retention
-    /// case: queue empty because the client consumes the wire, but retained-unacked bytes over the cap).
-    func testReplayPauseSourceAlonePausesAndResumes() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 1000) { rec.apply($0) }
-        gate.enqueue(10) // well under the queue bound
-        XCTAssertFalse(rec.isPaused)
-        gate.setReplayPause(true) // retained-byte cap crossed even though the queue is near-empty
-        XCTAssertTrue(rec.isPaused, "the replay source pauses the read loop independent of the queue bound")
-        gate.setReplayPause(false)
-        XCTAssertFalse(rec.isPaused, "clearing the replay source resumes (queue is below bound)")
-    }
-
-    /// Resume happens ONLY when BOTH sources clear — draining the queue while replay still wants pause
-    /// must NOT resume (the cross-source analogue of the FIX #3 lost-wakeup).
-    func testResumesOnlyWhenBothSourcesClear() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
-        gate.enqueue(120) // queue full → pause
-        gate.setReplayPause(true) // replay also wants pause
-        XCTAssertTrue(rec.isPaused)
-        gate.dequeue(120) // queue drains below bound, but replay still over cap
-        XCTAssertTrue(rec.isPaused, "queue cleared but replay still over cap → must remain paused")
-        gate.setReplayPause(false) // now both clear
-        XCTAssertFalse(rec.isPaused, "both sources clear → resume")
-        XCTAssertEqual(gate.outstanding, 0)
-    }
-
-    /// The FAN-OUT source pauses the loop independent of the other two: under fan-out the drain
-    /// dequeues the instant it hands a frame to the member outboxes, so `outstanding` sits near zero
-    /// and only "bytes the fastest member has not shipped" can bound the producer.
-    func testFanoutBacklogSourceAlonePausesAndResumes() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 1000) { rec.apply($0) }
-        gate.enqueue(10)
-        gate.dequeue(10) // the fan-out drain's shape: enqueued and immediately accounted as sent
-        XCTAssertFalse(rec.isPaused)
-        gate.setFanoutBacklog(1000) // nobody has shipped a capacity's worth
-        XCTAssertTrue(rec.isPaused, "the fan-out source pauses the read loop independent of the queue")
-        gate.setFanoutBacklog(999)
-        XCTAssertFalse(rec.isPaused, "the fastest member shipped back under the bound → resume")
-        gate.setFanoutBacklog(-5)
-        XCTAssertFalse(rec.isPaused, "a negative backlog clamps to zero rather than wrapping the compare")
-    }
-
-    /// Three-way OR: the loop resumes only when EVERY source clears, and the fan-out source holds it
-    /// paused on its own after the other two have.
-    func testFanoutBacklogKeepsLoopPausedAfterTheOtherSourcesClear() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
-        gate.enqueue(120)
-        gate.setReplayPause(true)
-        gate.setFanoutBacklog(150)
-        XCTAssertTrue(rec.isPaused)
-        gate.dequeue(120)
-        gate.setReplayPause(false)
-        XCTAssertTrue(rec.isPaused, "queue and replay cleared but nobody has shipped → remain paused")
-        gate.setFanoutBacklog(0)
-        XCTAssertFalse(rec.isPaused, "all three sources clear → resume")
-    }
-
-    /// The re-size applies to the fan-out source from the SAME constant: `detach()` raising the bound
-    /// to the "output while away" budget must release a fan-out pause exactly as it releases a queue one.
-    func testSetCapacityAppliesToTheFanoutSourceToo() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
-        gate.setFanoutBacklog(150)
-        XCTAssertTrue(rec.isPaused)
-        gate.setCapacity(200)
-        XCTAssertFalse(rec.isPaused, "raising the bound above the backlog resumes")
-        gate.setCapacity(100)
-        XCTAssertTrue(rec.isPaused, "shrinking it back under the backlog re-pauses")
-    }
-
-    /// Symmetric: replay clears first but the queue is still full → stay paused until the queue drains.
-    func testQueueKeepsLoopPausedAfterReplayClears() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
-        gate.setReplayPause(true)
-        gate.enqueue(120)
-        XCTAssertTrue(rec.isPaused)
-        gate.setReplayPause(false) // replay clears, queue still full
-        XCTAssertTrue(rec.isPaused, "replay cleared but queue still full → remain paused")
-        gate.dequeue(120)
-        XCTAssertFalse(rec.isPaused, "both clear → resume")
-    }
-
     /// Concurrency: hammer BOTH sources from many tasks, ending with both cleared. The atomic OR must
     /// leave the gate NOT paused (no cross-source lost-wakeup).
     func testConcurrentBothSourcesEndUnpausedWhenBothClear() async {
@@ -260,24 +152,5 @@ final class PausableQueueGateTests: XCTestCase {
             rec.isPaused,
             "both sources cleared ⇒ gate must NOT be left paused (no cross-source lost-wakeup)",
         )
-    }
-
-    /// setCapacity re-applies the pause state atomically: raising past `outstanding` RESUMES a
-    /// gate-paused loop (the detach() re-sizing), shrinking below re-pauses (the reattach
-    /// restore) — and the replay source still OR-composes.
-    func testSetCapacityResumesAndRepausesAtomically() {
-        let rec = PauseRecorder()
-        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
-        gate.enqueue(150)
-        XCTAssertTrue(rec.isPaused, "over the attached bound → paused")
-        gate.setCapacity(1_000_000) // detach: budget sizing
-        XCTAssertFalse(rec.isPaused, "raised bound un-pauses without any dequeue")
-        gate.setReplayPause(true)
-        gate.setCapacity(100) // reattach restore while replay also asserts
-        XCTAssertTrue(rec.isPaused)
-        gate.setReplayPause(false)
-        XCTAssertTrue(rec.isPaused, "queue is over the restored bound — must stay paused")
-        gate.dequeue(100)
-        XCTAssertFalse(rec.isPaused, "drain below the restored bound resumes")
     }
 }

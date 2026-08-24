@@ -39,52 +39,13 @@ final class VendoredToolsTests: XCTestCase {
 
     // MARK: - Repo-root resolution
 
-    func testRepoRootIsFoundByWalkingUpFromTheBinary() throws {
-        try makeExecutable("checkout/ThirdParty/tools/tools.lock")
-        let hostd = try makeExecutable("checkout/.build/release/slopdesk-hostd")
-
-        XCTAssertEqual(
-            VendoredTools.repoRoot(startingAt: hostd),
-            root.appendingPathComponent("checkout").path,
-        )
-    }
-
-    /// SwiftPM does not always emit into `.build/release`: a cross-compile or a plain `swift build`
-    /// lands under `.build/<triple>/release`. The walk is depth-agnostic precisely so a build layout
-    /// change is not a silent loss of the whole vendoring layer.
-    func testRepoRootIsFoundFromADeeperBuildLayout() throws {
-        try makeExecutable("checkout/ThirdParty/tools/tools.lock")
-        let hostd = try makeExecutable("checkout/.build/arm64-apple-macosx/release/slopdesk-hostd")
-
-        XCTAssertEqual(
-            VendoredTools.repoRoot(startingAt: hostd),
-            root.appendingPathComponent("checkout").path,
-        )
-    }
-
-    /// A hostd copied out of the tree has no vendored prefix, and saying so is the correct answer:
-    /// the locators then fall through to the host's own installs rather than pointing at a path that
-    /// cannot hold anything.
-    func testRepoRootIsNilForABinaryOutsideAnyCheckout() throws {
-        let stray = try makeExecutable("elsewhere/bin/slopdesk-hostd")
-
-        XCTAssertNil(VendoredTools.repoRoot(startingAt: stray))
-    }
-
-    /// The marker is the LOCK, not `.git` — a checkout predating the vendoring layer, or any
-    /// unrelated repository up the tree, must not resolve to a prefix.
-    func testRepoRootIgnoresACheckoutWithoutTheLock() throws {
-        try FileManager.default.createDirectory(
-            at: root.appendingPathComponent("checkout/.git"), withIntermediateDirectories: true,
-        )
-        let hostd = try makeExecutable("checkout/.build/release/slopdesk-hostd")
-
-        XCTAssertNil(VendoredTools.repoRoot(startingAt: hostd))
-    }
-
-    func testRepoRootIsNilWhenTheExecutablePathIsUnknown() {
-        XCTAssertNil(VendoredTools.repoRoot(startingAt: nil))
-    }
+    //
+    // The five cases that lived here (the walk finds the checkout, it is depth-agnostic across
+    // SwiftPM's build layouts, a binary outside a checkout answers nothing, the marker is the LOCK
+    // and not `.git`, an unknown executable path answers nothing) moved WITH the capability:
+    // the walk is `rust/slopdesk-androidd/src/toolchain.rs`, next to the binary search order whose
+    // second rung it fills, and there is no Swift copy of it. `VendoredTools` is a face over those
+    // three doors and holds only the `Bundle.main.executableURL` the walk starts from.
 
     // MARK: - Search order
 
@@ -193,8 +154,13 @@ final class VendoredToolsTests: XCTestCase {
             .deletingLastPathComponent() // repo
     }
 
+    /// Spelled out rather than read from a door: this is the FIXTURE these two cases open, the way
+    /// they also spell `ThirdParty/tools/vendor/` below. The path as an implementation constant is
+    /// `slopdesk_androidd::toolchain::LOCK_RELATIVE_PATH`, and `lint-invariants` pins the pair.
+    private static let lockRelativePath = "ThirdParty/tools/tools.lock"
+
     private static func lockRecords() throws -> [[String]] {
-        let lock = repoRoot.appendingPathComponent(VendoredTools.lockRelativePath)
+        let lock = repoRoot.appendingPathComponent(lockRelativePath)
         let text = try String(contentsOf: lock, encoding: .utf8)
         return text.split(separator: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
