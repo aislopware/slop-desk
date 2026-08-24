@@ -904,15 +904,10 @@ let package = Package(
         // docs/52. It was a Swift executable target here only because the rule ladder was in Swift;
         // the ladder moved, so `slopdesk-herdr differential` drives the Rust binary directly.)
 
-        // Headless closed-loop validation harness: synthetic CVPixelBuffer -> REAL HW
-        // VideoEncoder -> VideoPacketizer (FEC tier + isLTR + hostSendTs) -> deterministic
-        // fragment loss -> FrameReassembler (FEC recovery) -> REAL HW VideoDecoder, plus the
-        // pure WF-1..WF-8 controllers driven on synthetic telemetry. Runs from a normal
-        // (non-GUI, non-TCC) executable; its stdout IS the validation evidence. macOS-only.
-        .executableTarget(
-            name: "slopdesk-loopback-validate",
-            dependencies: ["SlopDeskVideoHost", "SlopDeskVideoClient", "SlopDeskVideoProtocol"],
-        ),
+        // (The closed-loop video harness is `rust/slopdesk-loopback-validate` — `make
+        // loopback-validate`, docs/46. It was a Swift executable target here only because the
+        // encoder, the wire and every controller it drives were reachable from Swift; they are
+        // Rust's now, so the harness drives them directly.)
 
         // Headless VideoToolbox encode/decode TIMING benchmark (perf work, not shipped product):
         // real VideoEncoder + VideoDecoder + packetizer/FEC at the ACTUAL host configs (resolution ×

@@ -198,6 +198,7 @@ pub mod keepalive;
 pub mod key_capture;
 pub mod key_naming;
 pub mod live_bitrate;
+pub mod loopback;
 pub mod ltr;
 pub mod mint_rescue;
 pub mod mux_client_pool;

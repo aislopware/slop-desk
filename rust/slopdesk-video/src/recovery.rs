@@ -25,6 +25,7 @@
 
 use crate::bytes::{ByteReader, ByteWriter};
 use crate::error::{Result, VideoProtocolError};
+use crate::reassembler::distance_wrapped;
 
 /// Wire sentinel for "the client has not decoded any frame yet".
 ///
@@ -623,6 +624,116 @@ const fn floor_at_one(value: usize) -> usize {
     if value < 1 { 1 } else { value }
 }
 
+/// The clock a client's forced-IDR escalation is measured against, and the loss it is measured for.
+///
+/// Loss is detected once per dropped frame, so re-anchoring on EVERY detection never reaches the
+/// escalation deadline under sustained loss: the guaranteed-recovery IDR would never fire and the
+/// stream could starve forever. Hence the clock is the time of the FIRST request of the current
+/// episode — armed only on ENTERING recovery, never re-armed by a later loss, and cleared either by
+/// a decoded keyframe or by a frame proving the chain re-anchored on its own.
+///
+/// ## Why a decoded keyframe cannot be the only way out
+/// The LTR-refresh recovery frame, and every self-heal cadence refresh, is a plain P-frame on the
+/// wire. A recovery that SUCCEEDED via refresh would leave the episode armed and fire a spurious
+/// IDR — LTR recovery saving no IDR at all. A delta referencing a lost frame cannot decode, so any
+/// frame strictly NEWER than every recorded loss decoding successfully proves the re-anchor,
+/// keyframe or not.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LtrEscalationTracker {
+    /// When the current episode's FIRST request went out, or `None` when none is outstanding.
+    first_request_time: Option<f64>,
+    /// The NEWEST (wrap-aware) frame id declared unrecoverably lost this episode.
+    ///
+    /// `None` when no loss was attributed — an IDR request from a hard decode failure arms the
+    /// episode with no frame id, and then only a keyframe can clear it.
+    max_lost_frame_id: Option<u32>,
+}
+
+impl LtrEscalationTracker {
+    /// A tracker with no episode outstanding.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            first_request_time: None,
+            max_lost_frame_id: None,
+        }
+    }
+
+    /// When the current episode's first request went out.
+    #[must_use]
+    pub const fn first_request_time(&self) -> Option<f64> {
+        self.first_request_time
+    }
+
+    /// The newest frame id attributed to the current episode.
+    #[must_use]
+    pub const fn max_lost_frame_id(&self) -> Option<u32> {
+        self.max_lost_frame_id
+    }
+
+    /// Whether a recovery episode is outstanding.
+    #[must_use]
+    pub const fn has_outstanding_request(&self) -> bool {
+        self.first_request_time.is_some()
+    }
+
+    /// Records one unrecoverably-lost frame, wrap-aware keep-newest. Called by the loss-detection
+    /// path BEFORE the request goes out.
+    pub const fn note_loss(&mut self, frame_id: u32) {
+        if let Some(current) = self.max_lost_frame_id
+            && distance_wrapped(frame_id, current) <= 0
+        {
+            return;
+        }
+        self.max_lost_frame_id = Some(frame_id);
+    }
+
+    /// A NON-keyframe decoded. Ends the episode iff it is strictly newer than every recorded loss
+    /// AND a loss was actually attributed. Answers whether the episode was cleared.
+    pub fn frame_decoded(&mut self, frame_id: u32) -> bool {
+        let cleared = self.first_request_time.is_some()
+            && self
+                .max_lost_frame_id
+                .is_some_and(|lost| distance_wrapped(frame_id, lost) > 0);
+        if cleared {
+            self.first_request_time = None;
+            self.max_lost_frame_id = None;
+        }
+        cleared
+    }
+
+    /// Records that a recovery request is going out at `now`, arming the clock ONLY when entering
+    /// recovery. A request sent while one is already outstanding must not move the clock.
+    pub const fn note_request_sent(&mut self, now: f64) {
+        if self.first_request_time.is_none() {
+            self.first_request_time = Some(now);
+        }
+    }
+
+    /// Whether to escalate to a forced IDR right now. Pure — the caller decides whether to act.
+    #[must_use]
+    pub fn should_escalate(&self, now: f64, rtt: f64, policy: &RecoveryPolicy, observing_loss: bool) -> bool {
+        self.first_request_time
+            .is_some_and(|first| policy.should_escalate_to_idr(now - first, rtt, observing_loss))
+    }
+
+    /// A keyframe decoded — the episode is over unconditionally, because a keyframe references
+    /// nothing. The next loss starts a fresh one.
+    pub const fn keyframe_decoded(&mut self) {
+        self.first_request_time = None;
+        self.max_lost_frame_id = None;
+    }
+
+    /// Re-anchors the clock AFTER a forced-IDR escalation actually fired, so the next escalation is
+    /// gated to one per deadline rather than one per subsequent dropped frame.
+    ///
+    /// DISTINCT from [`Self::note_request_sent`]: an ordinary request must not move the clock, or
+    /// the deadline never elapses at all. Only a fired escalation re-arms it.
+    pub const fn note_escalated(&mut self, now: f64) {
+        self.first_request_time = Some(now);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -921,5 +1032,255 @@ mod tests {
         assert!(window.is_observing_loss(0.1));
         // The bound is the point: a feed rate the client cannot control must not grow the ring.
         assert_eq!(window.events.len(), 4);
+    }
+}
+
+#[cfg(test)]
+mod escalation_tests {
+    use super::{LtrEscalationTracker, RecoveryPolicy};
+
+    /// 50 ms, so the plain deadline is 100 ms and the lossy one is `max(1·RTT, 60 ms, 1.5·RTT)` =
+    /// 75 ms — strictly under it, which is what makes the two clocks separable in one test.
+    const RTT: f64 = 0.05;
+
+    /// The escalation is a clock, and a clock that was never started cannot ring.
+    #[test]
+    fn nothing_escalates_before_the_first_request() {
+        let tracker = LtrEscalationTracker::new();
+        assert!(!tracker.has_outstanding_request());
+        assert!(!tracker.should_escalate(100.0, RTT, &RecoveryPolicy::default(), false));
+    }
+
+    /// THE defect this type exists for: repeated losses each send a request, and the clock stays
+    /// pinned to the FIRST one. Re-anchoring per loss meant the deadline was never reached and the
+    /// guaranteed-recovery IDR never fired at all.
+    #[test]
+    fn the_clock_stays_on_the_first_request_through_sustained_loss() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        assert!(tracker.has_outstanding_request());
+        assert_eq!(tracker.first_request_time(), Some(0.0));
+
+        for step in 1..=9_u32 {
+            let now = f64::from(step) / 100.0;
+            tracker.note_request_sent(now);
+            assert_eq!(tracker.first_request_time(), Some(0.0));
+            assert!(
+                !tracker.should_escalate(now, RTT, &policy, false),
+                "must not escalate at {now}s, inside the deadline measured from the first request"
+            );
+        }
+        assert!(tracker.should_escalate(0.10, RTT, &policy, false));
+    }
+
+    /// A decoded keyframe ends the episode outright, and the next loss opens a fresh window from
+    /// its own first request rather than inheriting the closed one's clock.
+    #[test]
+    fn a_decoded_keyframe_closes_the_episode_and_the_next_one_starts_clean() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        assert!(tracker.should_escalate(0.10, RTT, &policy, false));
+
+        tracker.keyframe_decoded();
+        assert!(!tracker.has_outstanding_request());
+        assert_eq!(tracker.first_request_time(), None);
+        assert!(!tracker.should_escalate(0.50, RTT, &policy, false));
+
+        tracker.note_request_sent(1.0);
+        assert_eq!(tracker.first_request_time(), Some(1.0));
+        assert!(!tracker.should_escalate(1.05, RTT, &policy, false));
+        assert!(tracker.should_escalate(1.10, RTT, &policy, false));
+    }
+
+    /// The forced IDR request the escalation itself sends goes through the same door as an
+    /// ordinary one, so that door must not move the clock either.
+    #[test]
+    fn a_forced_idr_request_does_not_move_the_clock() {
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        tracker.note_request_sent(0.10);
+        assert_eq!(tracker.first_request_time(), Some(0.0));
+    }
+
+    /// Once an escalation FIRES the drain loop re-anchors, and a second one waits a full deadline.
+    /// Without the re-anchor every subsequent dropped frame in the episode resent a `requestIdr`.
+    #[test]
+    fn a_fired_escalation_coalesces_the_ones_behind_it() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        assert!(tracker.should_escalate(0.10, RTT, &policy, false));
+
+        tracker.note_escalated(0.10);
+        assert_eq!(tracker.first_request_time(), Some(0.10));
+        assert!(!tracker.should_escalate(0.11, RTT, &policy, false));
+        assert!(!tracker.should_escalate(0.19, RTT, &policy, false));
+        assert!(tracker.should_escalate(0.20, RTT, &policy, false));
+    }
+
+    /// The re-anchor must not wedge the clock armed: a keyframe after an escalation still ends it.
+    #[test]
+    fn a_keyframe_after_an_escalation_still_closes_the_episode() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        assert!(tracker.should_escalate(0.10, RTT, &policy, false));
+        tracker.note_escalated(0.10);
+        tracker.keyframe_decoded();
+        assert!(!tracker.has_outstanding_request());
+        assert_eq!(tracker.first_request_time(), None);
+        assert!(!tracker.should_escalate(1.0, RTT, &policy, false));
+    }
+
+    /// The self-heal: the LTR-refresh recovery frame is a plain P-frame, so clearing only on a
+    /// keyframe fired a spurious IDR after every SUCCESSFUL refresh. A frame strictly newer than
+    /// the loss decoding proves the chain re-anchored; equal or older proves nothing.
+    #[test]
+    fn a_frame_newer_than_the_loss_heals_the_episode() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_loss(100);
+        tracker.note_request_sent(0.0);
+        assert!(tracker.has_outstanding_request());
+
+        assert!(!tracker.frame_decoded(99), "an older frame proves nothing");
+        assert!(tracker.has_outstanding_request());
+        assert!(!tracker.frame_decoded(100), "the boundary itself proves nothing");
+        assert!(tracker.has_outstanding_request());
+
+        assert!(tracker.frame_decoded(101));
+        assert!(!tracker.has_outstanding_request());
+        assert_eq!(tracker.max_lost_frame_id(), None);
+        assert!(!tracker.should_escalate(1.0, RTT, &policy, false));
+    }
+
+    /// With several losses in one episode the boundary is the NEWEST, and an out-of-order report
+    /// of an older one does not walk it backwards.
+    #[test]
+    fn the_boundary_is_the_newest_loss_however_they_arrive() {
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_loss(100);
+        tracker.note_request_sent(0.0);
+        tracker.note_loss(140);
+        tracker.note_request_sent(0.01);
+        tracker.note_loss(120);
+        assert_eq!(tracker.max_lost_frame_id(), Some(140));
+
+        assert!(
+            !tracker.frame_decoded(130),
+            "between losses, the chain is not proven past 140"
+        );
+        assert!(tracker.has_outstanding_request());
+        assert!(tracker.frame_decoded(141));
+        assert!(!tracker.has_outstanding_request());
+    }
+
+    /// An episode armed by a hard decode failure carries no frame id, and the decoder session it
+    /// invalidated is reconfigured only by an IDR — so a delta decode must be inert against it.
+    #[test]
+    fn an_episode_with_no_attributed_loss_yields_only_to_a_keyframe() {
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        assert_eq!(tracker.max_lost_frame_id(), None);
+        assert!(!tracker.frame_decoded(5000));
+        assert!(tracker.has_outstanding_request());
+        tracker.keyframe_decoded();
+        assert!(!tracker.has_outstanding_request());
+    }
+
+    /// The frame-id space wraps, and the heal comparison is the reassembler's own wrap-aware one.
+    #[test]
+    fn a_post_wrap_frame_heals_a_loss_from_before_the_wrap() {
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_loss(u32::MAX - 1);
+        tracker.note_request_sent(0.0);
+        assert!(
+            !tracker.frame_decoded(u32::MAX - 2),
+            "older across the wrap proves nothing"
+        );
+        assert!(tracker.frame_decoded(2), "a post-wrap frame is newer, and heals");
+        assert!(!tracker.has_outstanding_request());
+    }
+
+    /// While observing loss the halved clock fires at its floor, and the same instant without the
+    /// loss signal still waits the full deadline. The samples sit off the exact 75 ms boundary
+    /// because 1.5 × 0.05 is not exact in binary.
+    #[test]
+    fn observing_loss_escalates_at_the_lossy_deadline_and_only_then() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        assert!(!tracker.should_escalate(0.0749, RTT, &policy, true));
+        assert!(tracker.should_escalate(0.0751, RTT, &policy, true));
+        assert!(
+            !tracker.should_escalate(0.0751, RTT, &policy, false),
+            "the plain clock is still the full deadline at that instant"
+        );
+    }
+
+    /// No outstanding request never escalates, lossy or not.
+    #[test]
+    fn observing_loss_without_a_request_never_escalates() {
+        let tracker = LtrEscalationTracker::new();
+        assert!(!tracker.should_escalate(100.0, RTT, &RecoveryPolicy::default(), true));
+    }
+
+    /// The halved clock must not reopen the per-dropped-frame storm the re-anchor exists to close.
+    #[test]
+    fn the_lossy_clock_coalesces_after_a_re_anchor_too() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        assert!(tracker.should_escalate(0.0751, RTT, &policy, true));
+        tracker.note_escalated(0.0751);
+        assert!(!tracker.should_escalate(0.085, RTT, &policy, true));
+        assert!(!tracker.should_escalate(0.149, RTT, &policy, true));
+        assert!(tracker.should_escalate(0.1503, RTT, &policy, true));
+    }
+
+    /// The 60 ms floor flows through the tracker: at a 10 ms round trip a lossy escalation still
+    /// waits 60 ms, because a refresh physically cannot arrive faster.
+    #[test]
+    fn the_lossy_floor_holds_at_a_short_round_trip() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        assert!(!tracker.should_escalate(0.010, 0.01, &policy, true));
+        assert!(!tracker.should_escalate(0.059, 0.01, &policy, true));
+        assert!(tracker.should_escalate(0.060, 0.01, &policy, true));
+    }
+
+    /// The measured-defect pin: at the live path's 20 ms round trip the halved deadline never
+    /// drops under 60 ms. The old 30 ms floor measured 202 IDR requests against 100 refreshes.
+    #[test]
+    fn the_lossy_deadline_never_drops_below_the_floor_in_the_live_band() {
+        let policy = RecoveryPolicy::default();
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_request_sent(0.0);
+        for step in 0..60_u32 {
+            let now = f64::from(step) / 1000.0;
+            assert!(
+                !tracker.should_escalate(now, 0.02, &policy, true),
+                "must not escalate at {step} ms, under the floor"
+            );
+        }
+        assert!(tracker.should_escalate(0.060, 0.02, &policy, true));
+    }
+
+    /// A keyframe clears the loss boundary too, so a stale one can never leak into the episode
+    /// after it and heal something it has no evidence for.
+    #[test]
+    fn a_keyframe_clears_the_loss_boundary_as_well_as_the_clock() {
+        let mut tracker = LtrEscalationTracker::new();
+        tracker.note_loss(100);
+        tracker.note_request_sent(0.0);
+        tracker.keyframe_decoded();
+        assert_eq!(tracker.max_lost_frame_id(), None);
+
+        tracker.note_request_sent(1.0);
+        assert!(!tracker.frame_decoded(101));
+        assert!(tracker.has_outstanding_request());
     }
 }

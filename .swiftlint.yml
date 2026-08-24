@@ -34,10 +34,8 @@ excluded:
   - Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj
   - Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj
   - Apps/HostApp-macOS/HostApp-macOS.xcodeproj
-  # Validation harness: a closed-loop test instrument (not shipped product), test-adjacent
-  # like the Tests tree — its scaffolding/size is by design, so don't strict-lint it.
-  - Sources/slopdesk-loopback-validate
-  # Capture-cadence + latency diagnostic instruments (not shipped product) — same rationale as above.
+  # Capture-cadence + latency diagnostic instruments (not shipped product), test-adjacent like the
+  # Tests tree — their scaffolding/size is by design, so don't strict-lint them.
   - Sources/slopdesk-capture-probe
   - Sources/slopdesk-fake-client
   # Headless VT encode/decode TIMING benchmark (perf instrument, not shipped product).

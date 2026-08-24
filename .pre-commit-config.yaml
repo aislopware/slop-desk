@@ -105,7 +105,7 @@ repos:
         # `--force-exclude`: if every staged path were an excluded one, swiftlint would be handed a
         # file list it fully discards and exit 1 ("No lintable files found"). Dropping them here means
         # prek skips the hook outright instead.
-        exclude: '^Sources/slopdesk-(loopback-validate|capture-probe|fake-client)/'
+        exclude: '^Sources/slopdesk-(capture-probe|fake-client)/'
 
       - id: clippy
         name: cargo clippy -D warnings (every workspace)

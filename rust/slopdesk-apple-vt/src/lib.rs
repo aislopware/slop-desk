@@ -40,6 +40,8 @@ mod decompress;
 mod keys;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod owned;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod pixels;
 #[cfg(target_os = "macos")]
 mod sample;
 #[cfg(target_os = "macos")]
@@ -55,6 +57,8 @@ pub use keys::{Key, StringValue};
 pub use objc2_core_foundation::CFRetained;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub use objc2_core_video::CVImageBuffer;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub use pixels::{Locked, PixelBuffer, Plane};
 #[cfg(target_os = "macos")]
 pub use sample::{EncodedSample, FrameworkBytes};
 #[cfg(target_os = "macos")]

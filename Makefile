@@ -602,6 +602,17 @@ video: ## Build slopdesk-video (rust/slopdesk-video)
 video-test: ## cargo test for the FEC codec (unit + golden-vector parity against the Swift codec)
 	cd rust/slopdesk-video && cargo test
 
+# The headless closed-loop harness over the same protocol: a synthetic frame through the REAL
+# hardware encoder, the real packetizer at a chosen FEC tier, index-chosen fragment loss, the real
+# reassembler with its parity recovery, the real hardware decoder — and every pure controller on
+# synthetic telemetry beside it. No capture, no Metal, no window server, no grant, no clock and no
+# randomness, so a verdict that moved is a behaviour that moved. Nothing here is a unit test: the
+# reassembler, the recovery policies and the pacer have no golden vector, and this is what stands in
+# for one. Run `--smoke` after any wire or FEC change; the bare run before believing a controller.
+loopback-validate: ## Build + smoke the closed-loop video harness (rust/slopdesk-loopback-validate)
+	cd rust/slopdesk-loopback-validate && cargo build --release
+	rust/slopdesk-loopback-validate/target/release/slopdesk-loopback-validate --smoke
+
 # The one crate `slopdesk-video` links, and the third in the tree allowed to write `unsafe`: the
 # GF(2^8) byte-region kernels, in NEON. Read its `Cargo.toml` header for why the isolation is drawn
 # where it is. Its tests are a differential against the scalar twin, which is the only thing that

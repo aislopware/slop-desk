@@ -70,6 +70,74 @@ pub type SlopDeskEncodedFrameFn = Option<
     ),
 >;
 
+/// One finished frame, as VALUES rather than as a pointer and seven scalars.
+///
+/// The C door above is the boundary's shape; THIS is its shape for a Rust caller, and the two are
+/// the same door because the C one is written as an adapter onto this one. A harness that drove the
+/// encoder through the `extern "C"` form would have to hand-write a callback and a context pointer
+/// — the `unsafe` this crate exists to contain, escaping into a crate that is not allowed any.
+#[derive(Debug)]
+pub struct EncodedFrame<'a> {
+    /// The AVCC-framed bytes, borrowed for the call ONLY.
+    pub avcc: &'a [u8],
+    /// Whether the encoder made this an intra frame.
+    pub keyframe: bool,
+    /// Whether this was the near-lossless static refresh, which the wire tags differently.
+    pub crisp: bool,
+    /// The long-term-reference acknowledgement token, when the frame carries one.
+    pub ltr_token: Option<i64>,
+    /// Whether this encode asked to anchor on a reference the client acknowledged.
+    pub acked_anchored: bool,
+}
+
+/// Where finished frames go, for a Rust caller.
+///
+/// `Send + Sync` because the framework calls it on a thread of its own choosing, which is the same
+/// obligation the C door states about its context pointer — except that here the compiler holds the
+/// caller to it.
+pub trait EncodedFrameSink: Send + Sync + core::fmt::Debug {
+    /// One finished frame. The bytes are valid for the duration of this call and must be copied.
+    fn frame(&self, frame: &EncodedFrame<'_>);
+}
+
+/// The C door, expressed as one of the sinks above.
+///
+/// This is the whole of the adapter: the fn pointer and the context that the `extern "C"` form
+/// carries, in a type that answers the Rust trait. Everything downstream sees only the trait.
+#[derive(Debug)]
+struct CSink {
+    context: CallerContext,
+    deliver: SlopDeskEncodedFrameFn,
+}
+
+impl EncodedFrameSink for CSink {
+    /// # Safety
+    /// The pointer handed over is the caller's own borrowed slice, valid for this call by the
+    /// door's documented term, and the context is live for the life of the handle by the same.
+    #[expect(
+        unsafe_code,
+        reason = "calling the caller's function pointer IS this module's boundary"
+    )]
+    fn frame(&self, frame: &EncodedFrame<'_>) {
+        let Some(deliver) = self.deliver else {
+            return;
+        };
+        // SAFETY: the slice is live for this call, and the context is live by the door's term.
+        unsafe {
+            deliver(
+                self.context.0,
+                frame.avcc.as_ptr(),
+                frame.avcc.len(),
+                frame.keyframe,
+                frame.crisp,
+                frame.ltr_token.unwrap_or_default(),
+                frame.ltr_token.is_some(),
+                frame.acked_anchored,
+            );
+        }
+    }
+}
+
 /// The caller's opaque context pointer, carried to a framework thread.
 ///
 /// A newtype because a bare `*mut c_void` is neither `Send` nor `Sync`, and the promise that makes
@@ -95,8 +163,9 @@ unsafe impl Sync for CallerContext {}
 /// Everything the sink needs that does not change per frame.
 #[derive(Debug)]
 struct Delivery {
-    context: CallerContext,
-    deliver: SlopDeskEncodedFrameFn,
+    /// Where finished frames go. `None` is a legal encoder that discards its output, which is what
+    /// a caller that registered no callback asked for.
+    sink: Option<Arc<dyn EncodedFrameSink>>,
     /// Frames the framework declined to fit under the budget since the last encode. Read and
     /// cleared on the encode thread and folded into the drop-relief integrator there, so the
     /// framework's thread never touches the rate-control state.
@@ -120,35 +189,18 @@ struct FrameDelivery {
 const AVCC_LENGTH_BYTES: usize = 4;
 
 impl FrameDelivery {
-    /// Hands one run of bytes to the caller.
-    ///
-    /// # Safety
-    /// `bytes` must point at `len` initialised bytes that stay valid for this call. Both call sites
-    /// satisfy it: one is the framework's own buffer, held by a live [`EncodedSample`]; the other
-    /// is a `Vec` this module owns and is borrowing.
-    #[expect(
-        unsafe_code,
-        reason = "calling the caller's function pointer IS this module's boundary"
-    )]
-    fn hand_over(&self, sample: &EncodedSample, bytes: *const c_uchar, len: usize) {
-        let Some(deliver) = self.shared.deliver else {
+    /// Hands one run of bytes to the sink.
+    fn hand_over(&self, sample: &EncodedSample, avcc: &[u8]) {
+        let Some(sink) = self.shared.sink.as_ref() else {
             return;
         };
-        let token = sample.ltr_token();
-        // SAFETY: the pointer is live for this call by the caller's obligation above, and the
-        // context is live by the door's documented term.
-        unsafe {
-            deliver(
-                self.shared.context.0,
-                bytes,
-                len,
-                sample.is_keyframe(),
-                self.crisp,
-                token.unwrap_or_default(),
-                token.is_some(),
-                self.acked_anchored,
-            );
-        }
+        sink.frame(&EncodedFrame {
+            avcc,
+            keyframe: sample.is_keyframe(),
+            crisp: self.crisp,
+            ltr_token: sample.ltr_token(),
+            acked_anchored: self.acked_anchored,
+        });
     }
 }
 
@@ -171,7 +223,11 @@ impl FrameSink for FrameDelivery {
             // nothing, which the Swift shipped exactly the same way. If the framework left the
             // bytes in one run there is nothing to build.
             if let Some(run) = sample.contiguous_payload() {
-                self.hand_over(sample, run.bytes.as_ptr().cast_const(), run.len);
+                // SAFETY: framework memory, as above — the run belongs to `sample`, which is
+                // borrowed for the whole of this function.
+                self.hand_over(sample, unsafe {
+                    core::slice::from_raw_parts(run.bytes.as_ptr().cast_const(), run.len)
+                });
                 return;
             }
         }
@@ -197,7 +253,7 @@ impl FrameSink for FrameDelivery {
         if !sample.copy_payload_into(&mut scratch) {
             return;
         }
-        self.hand_over(sample, scratch.as_ptr(), scratch.len());
+        self.hand_over(sample, &scratch);
     }
 
     /// Counts a frame the framework declined to fit under the budget.
@@ -226,7 +282,208 @@ pub struct SlopDeskVideoEncoder {
     ltr_enabled: bool,
 }
 
+/// Everything a caller chooses about an encoder before it exists.
+///
+/// A struct rather than nine positional arguments, because the C door already spells them
+/// positionally and a Rust caller reading `true, false, true` at a call site would be guessing.
+#[derive(Clone, Copy, Debug)]
+pub struct EncoderSpec {
+    /// Frame width in pixels.
+    pub width: i32,
+    /// Frame height in pixels.
+    pub height: i32,
+    /// The starting target, in bits per second.
+    pub bitrate: i64,
+    /// The nominal frame rate the rate-control window is sized for.
+    pub fps: i64,
+    /// Whether the source carries full-range luma.
+    pub full_range: bool,
+    /// Whether to negotiate long-term references.
+    pub ltr_enabled: bool,
+    /// The one knob a graphical setting may override; every other one is resolved here.
+    pub qp_decouple: bool,
+}
+
 impl SlopDeskVideoEncoder {
+    /// Creates a hardware HEVC session and applies the whole low-latency configuration.
+    ///
+    /// Answers the framework's `OSStatus` on failure — there is nothing partial to hand back,
+    /// because a half-configured session encodes at a latency nobody chose and reports no fault.
+    ///
+    /// # Errors
+    /// The framework's status, when the session could not be created or a latency-critical
+    /// property was rejected.
+    pub fn create(spec: EncoderSpec, sink: Option<Arc<dyn EncodedFrameSink>>) -> Result<Self, i32> {
+        let config = Config::resolve(&|key| std::env::var(key).ok(), Some(spec.qp_decouple));
+        let state = EncoderState::new(
+            config,
+            spec.bitrate,
+            i64::from(spec.width),
+            i64::from(spec.height),
+            spec.fps.max(1),
+        );
+        let session = CompressionSession::create(spec.width, spec.height, Spec {
+            low_latency: true,
+            require_hardware: true,
+        })?;
+
+        // The latency contract. `RealTime` and `AllowFrameReordering` are the two properties whose
+        // silent failure would leave a session that looks configured and encodes like the default
+        // one, so they are the only ones that can refuse a create.
+        for key in [Key::RealTime, Key::AllowFrameReordering] {
+            let status = session.set_bool(key, key == Key::RealTime);
+            if status != NO_ERR {
+                return Err(status);
+            }
+        }
+        let _ = session.set_int(Key::ExpectedFrameRate, spec.fps.max(1));
+        let _ = session.set_bool(Key::PrioritizeEncodingSpeedOverQuality, config.speed_over_quality);
+        // Smallest pipeline delay the encoder will accept, probed in order. A rejection is EXPECTED
+        // — some encoders floor at one or two — and none accepted leaves the key unset, which is
+        // the framework's own unlimited default.
+        for delay in frame_delay_candidates(std::env::var("SLOPDESK_MAX_FRAME_DELAY").ok().as_deref()) {
+            if session.set_int(Key::MaxFrameDelayCount, delay) == NO_ERR {
+                break;
+            }
+        }
+        // Opt OUT of the efficiency clock policy: it trades encode latency for watts, and this
+        // trade goes the other way every time.
+        let _ = session.set_bool(Key::MaximizePowerEfficiency, false);
+        let _ = session.set_int(Key::MaxKeyFrameInterval, i64::from(i32::MAX));
+        let creation = state.creation_writes();
+        if let Some(rate) = creation.average_bitrate {
+            let status = session.set_int(Key::AverageBitRate, rate);
+            if status != NO_ERR {
+                return Err(status);
+            }
+        }
+        if let Some((bytes, seconds)) = creation.data_rate {
+            let status = session.set_data_rate_limits(bytes, seconds);
+            if status != NO_ERR {
+                return Err(status);
+            }
+        }
+        // Best-effort from here down. Each of these is rejected outright on some HEVC encoders, and
+        // aborting on one would leave the host with a stream of zero frames rather than a soft one.
+        let _ = session.disable_spatial_adaptive_qp();
+        if let Some(qp) = creation.max_qp {
+            let _ = session.set_int(Key::MaxAllowedFrameQP, i64::from(qp));
+        }
+        if spec.full_range {
+            // Gated, because an unconditional set changes the parameter-set bytes and costs the
+            // client a decoder rebuild on the first keyframe to say what the stream already said.
+            // The luma RANGE is not set here at all — it rides the source pixel buffer's variant.
+            let _ = session.set_string(Key::ColorPrimaries, StringValue::Primaries709);
+            let _ = session.set_string(Key::TransferFunction, StringValue::Transfer709);
+            let _ = session.set_string(Key::YCbCrMatrix, StringValue::Matrix709);
+        }
+        if spec.ltr_enabled {
+            let _ = session.set_bool(Key::EnableLtr, true);
+        }
+        let _ = session.prepare();
+        Ok(Self {
+            session,
+            state: Mutex::new(state),
+            tokens: Mutex::new(AckedTokens::new()),
+            shared: Arc::new(Delivery {
+                sink,
+                drops: AtomicI64::new(0),
+                scratch: Mutex::new(Vec::new()),
+            }),
+            ltr_enabled: spec.ltr_enabled,
+        })
+    }
+
+    /// Encodes one live frame. Answers the framework's status; zero is success.
+    pub fn encode_live(
+        &self,
+        image: &CVImageBuffer,
+        presentation: Timestamp,
+        force_keyframe: bool,
+        per_frame_max_qp: Option<i32>,
+    ) -> i32 {
+        self.encode(
+            image,
+            presentation,
+            force_keyframe,
+            false,
+            per_frame_max_qp,
+            false,
+        )
+    }
+
+    /// Encodes a cheap refresh anchored on an acknowledged long-term reference.
+    pub fn encode_ltr_refresh(&self, image: &CVImageBuffer, presentation: Timestamp) -> i32 {
+        self.encode(image, presentation, false, true, None, false)
+    }
+
+    /// Encodes the near-lossless static refresh, bracketed.
+    pub fn encode_crisp(&self, image: &CVImageBuffer, presentation: Timestamp) -> i32 {
+        let Ok(mut state) = self.state.lock() else {
+            return INVALID_SESSION;
+        };
+        let bracket = state.begin_crisp();
+        drop(state);
+        self.bracketed(image, presentation, bracket, true)
+    }
+
+    /// Encodes a recovery or heartbeat intra frame small enough to survive a burst, bracketed.
+    pub fn encode_compact(&self, image: &CVImageBuffer, presentation: Timestamp) -> i32 {
+        let Ok(mut state) = self.state.lock() else {
+            return INVALID_SESSION;
+        };
+        let bracket = state.begin_compact();
+        drop(state);
+        self.bracketed(image, presentation, bracket, false)
+    }
+
+    /// Actuates the live target bitrate. Answers whether it changed.
+    pub fn set_live_bitrate(&self, target: i64) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        let (changed, writes) = state.set_live_bitrate(target);
+        drop(state);
+        self.apply(writes);
+        changed
+    }
+
+    /// Actuates the link controller's constant quantiser. Answers whether it changed.
+    pub fn set_const_qp(&self, q: i32) -> bool {
+        self.state.lock().is_ok_and(|mut state| state.set_const_qp(q))
+    }
+
+    /// Records the controller's congestion verdict. Answers whether it changed.
+    pub fn set_link_congested(&self, congested: bool) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|mut state| state.set_link_congested(congested))
+    }
+
+    /// Hints the encoder's rate-control window at a new frame rate.
+    pub fn set_expected_frame_rate(&self, fps: i64) {
+        let _ = self.session.set_int(Key::ExpectedFrameRate, fps.max(1));
+    }
+
+    /// Stages a long-term-reference token the client acknowledged decoding.
+    pub fn stage_acked_token(&self, token: i64) {
+        if let Ok(mut tokens) = self.tokens.lock() {
+            let _ = tokens.stage(token);
+        }
+    }
+
+    /// Drops every staged token, because an intra frame just flushed the client's references.
+    pub fn clear_staged_tokens(&self) {
+        if let Ok(mut tokens) = self.tokens.lock() {
+            tokens.clear();
+        }
+    }
+
+    /// Blocks until every frame presented so far has reached the sink.
+    pub fn complete_frames(&self) -> i32 {
+        self.session.complete_frames()
+    }
+
     /// Issues a plan's property writes. Best-effort throughout, which is the Swift's own reading:
     /// a rejected mid-session quantiser change ships a normal frame rather than aborting a stream.
     fn apply(&self, writes: Writes) {
@@ -402,89 +659,31 @@ pub unsafe extern "C" fn slopdesk_video_encoder_new(
             unsafe { *status_out = status };
         }
     };
-    let config = Config::resolve(&|key| std::env::var(key).ok(), Some(qp_decouple));
-    let state = EncoderState::new(config, bitrate, i64::from(width), i64::from(height), fps.max(1));
-    let session = match CompressionSession::create(width, height, Spec {
-        low_latency: true,
-        require_hardware: true,
-    }) {
-        Ok(session) => session,
+    let sink: Arc<dyn EncodedFrameSink> = Arc::new(CSink {
+        context: CallerContext(context),
+        deliver,
+    });
+    match SlopDeskVideoEncoder::create(
+        EncoderSpec {
+            width,
+            height,
+            bitrate,
+            fps,
+            full_range,
+            ltr_enabled,
+            qp_decouple,
+        },
+        Some(sink),
+    ) {
+        Ok(encoder) => {
+            report(NO_ERR);
+            Box::into_raw(Box::new(encoder))
+        },
         Err(status) => {
             report(status);
-            return core::ptr::null_mut();
+            core::ptr::null_mut()
         },
-    };
-
-    // The latency contract. `RealTime` and `AllowFrameReordering` are the two properties whose
-    // silent failure would leave a session that looks configured and encodes like the default one,
-    // so they are the only ones that can refuse a create.
-    for key in [Key::RealTime, Key::AllowFrameReordering] {
-        let status = session.set_bool(key, key == Key::RealTime);
-        if status != NO_ERR {
-            report(status);
-            return core::ptr::null_mut();
-        }
     }
-    let _ = session.set_int(Key::ExpectedFrameRate, fps.max(1));
-    let _ = session.set_bool(Key::PrioritizeEncodingSpeedOverQuality, config.speed_over_quality);
-    // Smallest pipeline delay the encoder will accept, probed in order. A rejection is EXPECTED —
-    // some encoders floor at one or two — and none accepted leaves the key unset, which is the
-    // framework's own unlimited default.
-    for delay in frame_delay_candidates(std::env::var("SLOPDESK_MAX_FRAME_DELAY").ok().as_deref()) {
-        if session.set_int(Key::MaxFrameDelayCount, delay) == NO_ERR {
-            break;
-        }
-    }
-    // Opt OUT of the efficiency clock policy: it trades encode latency for watts, and this trade
-    // goes the other way every time.
-    let _ = session.set_bool(Key::MaximizePowerEfficiency, false);
-    let _ = session.set_int(Key::MaxKeyFrameInterval, i64::from(i32::MAX));
-    let creation = state.creation_writes();
-    if let Some(rate) = creation.average_bitrate {
-        let status = session.set_int(Key::AverageBitRate, rate);
-        if status != NO_ERR {
-            report(status);
-            return core::ptr::null_mut();
-        }
-    }
-    if let Some((bytes, seconds)) = creation.data_rate {
-        let status = session.set_data_rate_limits(bytes, seconds);
-        if status != NO_ERR {
-            report(status);
-            return core::ptr::null_mut();
-        }
-    }
-    // Best-effort from here down. Each of these is rejected outright on some HEVC encoders, and
-    // aborting on one would leave the host with a stream of zero frames rather than a soft one.
-    let _ = session.disable_spatial_adaptive_qp();
-    if let Some(qp) = creation.max_qp {
-        let _ = session.set_int(Key::MaxAllowedFrameQP, i64::from(qp));
-    }
-    if full_range {
-        // Gated, because an unconditional set changes the parameter-set bytes and costs the client
-        // a decoder rebuild on the first keyframe to say what the stream already said. The luma
-        // RANGE is not set here at all — it rides the source pixel buffer's own variant.
-        let _ = session.set_string(Key::ColorPrimaries, StringValue::Primaries709);
-        let _ = session.set_string(Key::TransferFunction, StringValue::Transfer709);
-        let _ = session.set_string(Key::YCbCrMatrix, StringValue::Matrix709);
-    }
-    if ltr_enabled {
-        let _ = session.set_bool(Key::EnableLtr, true);
-    }
-    let _ = session.prepare();
-    report(NO_ERR);
-    Box::into_raw(Box::new(SlopDeskVideoEncoder {
-        session,
-        state: Mutex::new(state),
-        tokens: Mutex::new(AckedTokens::new()),
-        shared: Arc::new(Delivery {
-            context: CallerContext(context),
-            deliver,
-            drops: AtomicI64::new(0),
-            scratch: Mutex::new(Vec::new()),
-        }),
-        ltr_enabled,
-    }))
 }
 
 /// Drains and tears down an encoder.
@@ -538,16 +737,14 @@ pub unsafe extern "C" fn slopdesk_video_encoder_encode_live(
     let (Some(encoder), Some(image)) = (unsafe { held(handle) }, unsafe { image(pixel_buffer) }) else {
         return INVALID_SESSION;
     };
-    encoder.encode(
+    encoder.encode_live(
         image,
         Timestamp {
             value: presentation_value,
             timescale: presentation_timescale,
         },
         force_keyframe,
-        false,
         has_per_frame_max_qp.then_some(per_frame_max_qp),
-        false,
     )
 }
 
@@ -574,17 +771,10 @@ pub unsafe extern "C" fn slopdesk_video_encoder_encode_ltr_refresh(
     let (Some(encoder), Some(image)) = (unsafe { held(handle) }, unsafe { image(pixel_buffer) }) else {
         return INVALID_SESSION;
     };
-    encoder.encode(
-        image,
-        Timestamp {
-            value: presentation_value,
-            timescale: presentation_timescale,
-        },
-        false,
-        true,
-        None,
-        false,
-    )
+    encoder.encode_ltr_refresh(image, Timestamp {
+        value: presentation_value,
+        timescale: presentation_timescale,
+    })
 }
 
 /// Encodes the near-lossless static refresh, bracketed.
@@ -607,20 +797,10 @@ pub unsafe extern "C" fn slopdesk_video_encoder_encode_crisp(
     let (Some(encoder), Some(image)) = (unsafe { held(handle) }, unsafe { image(pixel_buffer) }) else {
         return INVALID_SESSION;
     };
-    let Ok(mut state) = encoder.state.lock() else {
-        return INVALID_SESSION;
-    };
-    let bracket = state.begin_crisp();
-    drop(state);
-    encoder.bracketed(
-        image,
-        Timestamp {
-            value: presentation_value,
-            timescale: presentation_timescale,
-        },
-        bracket,
-        true,
-    )
+    encoder.encode_crisp(image, Timestamp {
+        value: presentation_value,
+        timescale: presentation_timescale,
+    })
 }
 
 /// Encodes a recovery or heartbeat intra frame small enough to survive a burst, bracketed.
@@ -645,20 +825,10 @@ pub unsafe extern "C" fn slopdesk_video_encoder_encode_compact(
     let (Some(encoder), Some(image)) = (unsafe { held(handle) }, unsafe { image(pixel_buffer) }) else {
         return INVALID_SESSION;
     };
-    let Ok(mut state) = encoder.state.lock() else {
-        return INVALID_SESSION;
-    };
-    let bracket = state.begin_compact();
-    drop(state);
-    encoder.bracketed(
-        image,
-        Timestamp {
-            value: presentation_value,
-            timescale: presentation_timescale,
-        },
-        bracket,
-        false,
-    )
+    encoder.encode_compact(image, Timestamp {
+        value: presentation_value,
+        timescale: presentation_timescale,
+    })
 }
 
 /// Actuates the live target bitrate. Answers whether it changed.
@@ -678,13 +848,7 @@ pub unsafe extern "C" fn slopdesk_video_encoder_set_live_bitrate(
     let Some(encoder) = (unsafe { held(handle) }) else {
         return false;
     };
-    let Ok(mut state) = encoder.state.lock() else {
-        return false;
-    };
-    let (changed, writes) = state.set_live_bitrate(target);
-    drop(state);
-    encoder.apply(writes);
-    changed
+    encoder.set_live_bitrate(target)
 }
 
 /// Actuates the link controller's constant quantiser. Answers whether it changed.
@@ -704,7 +868,7 @@ pub unsafe extern "C" fn slopdesk_video_encoder_set_const_qp(
     let Some(encoder) = (unsafe { held(handle) }) else {
         return false;
     };
-    encoder.state.lock().is_ok_and(|mut state| state.set_const_qp(q))
+    encoder.set_const_qp(q)
 }
 
 /// Records the controller's congestion verdict. Answers whether it changed.
@@ -724,10 +888,7 @@ pub unsafe extern "C" fn slopdesk_video_encoder_set_link_congested(
     let Some(encoder) = (unsafe { held(handle) }) else {
         return false;
     };
-    encoder
-        .state
-        .lock()
-        .is_ok_and(|mut state| state.set_link_congested(congested))
+    encoder.set_link_congested(congested)
 }
 
 /// Hints the encoder's rate-control window at a new frame rate.
@@ -750,7 +911,7 @@ pub unsafe extern "C" fn slopdesk_video_encoder_set_expected_frame_rate(
     let Some(encoder) = (unsafe { held(handle) }) else {
         return;
     };
-    let _ = encoder.session.set_int(Key::ExpectedFrameRate, fps.max(1));
+    encoder.set_expected_frame_rate(fps);
 }
 
 /// Stages a long-term-reference token the client acknowledged decoding.
@@ -770,9 +931,7 @@ pub unsafe extern "C" fn slopdesk_video_encoder_stage_acked_token(
     let Some(encoder) = (unsafe { held(handle) }) else {
         return;
     };
-    if let Ok(mut tokens) = encoder.tokens.lock() {
-        let _ = tokens.stage(token);
-    }
+    encoder.stage_acked_token(token);
 }
 
 /// Drops every staged token, because an intra frame just shipped and flushed the client's
@@ -790,9 +949,7 @@ pub unsafe extern "C" fn slopdesk_video_encoder_clear_staged_tokens(handle: *mut
     let Some(encoder) = (unsafe { held(handle) }) else {
         return;
     };
-    if let Ok(mut tokens) = encoder.tokens.lock() {
-        tokens.clear();
-    }
+    encoder.clear_staged_tokens();
 }
 
 /// Blocks until every frame presented so far has reached the callback.
@@ -810,7 +967,7 @@ pub unsafe extern "C" fn slopdesk_video_encoder_complete_frames(handle: *mut Slo
     let Some(encoder) = (unsafe { held(handle) }) else {
         return INVALID_SESSION;
     };
-    encoder.session.complete_frames()
+    encoder.complete_frames()
 }
 
 // ---- The three knobs the CAPTURER and the session builder need before an encoder exists ----

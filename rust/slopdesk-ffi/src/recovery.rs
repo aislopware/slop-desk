@@ -28,8 +28,8 @@ use core::ffi::c_uchar;
 
 use slopdesk_video::VideoProtocolError;
 use slopdesk_video::recovery::{
-    self, NetworkStatsReport, RecoveryMessage, RecoveryPolicy, RecoveryRequestRedundancy, is_observing_loss,
-    note_in_place,
+    self, LtrEscalationTracker, NetworkStatsReport, RecoveryMessage, RecoveryPolicy,
+    RecoveryRequestRedundancy, is_observing_loss, note_in_place,
 };
 use slopdesk_video::recovery_routing::StaticIdrDecider;
 
@@ -355,6 +355,167 @@ pub extern "C" fn slopdesk_recovery_should_escalate_to_idr(
         lossy_escalation_floor_rtt_multiple,
     }
     .should_escalate_to_idr(elapsed_since_request, rtt, observing_loss)
+}
+
+/// One client's escalation episode, crossing as a VALUE.
+///
+/// Two optionals and nothing else, so there is no handle to allocate, free or alias: the caller
+/// keeps the value and every door below answers the value that follows from it. `Option` has no C
+/// spelling, so each one crosses as a payload plus the flag that says whether it is there — reading
+/// a payload whose flag is false is a caller error, exactly as with the flat recovery message
+/// above.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlopDeskLtrEscalation {
+    /// When the episode's first request went out; meaningful only while `has_first_request`.
+    pub first_request_time: f64,
+    /// The newest frame id attributed to the episode; meaningful only while `has_max_lost`.
+    pub max_lost_frame_id: u32,
+    /// Whether an episode is outstanding.
+    pub has_first_request: bool,
+    /// Whether any loss was attributed to it.
+    pub has_max_lost: bool,
+}
+
+/// A decode fed to the episode: the value that follows, and whether it CLOSED the episode.
+///
+/// The two answers arrive together because a caller that took them separately would have to decide
+/// which one to trust when it re-derived the second from the first.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SlopDeskLtrEscalationDecode {
+    /// The episode after the decode.
+    pub state: SlopDeskLtrEscalation,
+    /// Whether that decode proved the chain re-anchored and ended the episode.
+    pub cleared: bool,
+}
+
+impl SlopDeskLtrEscalation {
+    /// The value read as the tracker it spells.
+    const fn tracker(self) -> LtrEscalationTracker {
+        let mut tracker = LtrEscalationTracker::new();
+        if self.has_max_lost {
+            tracker.note_loss(self.max_lost_frame_id);
+        }
+        if self.has_first_request {
+            tracker.note_escalated(self.first_request_time);
+        }
+        tracker
+    }
+
+    /// The tracker written back as the value that crosses.
+    fn of(tracker: &LtrEscalationTracker) -> Self {
+        Self {
+            first_request_time: tracker.first_request_time().unwrap_or(0.0),
+            max_lost_frame_id: tracker.max_lost_frame_id().unwrap_or(0),
+            has_first_request: tracker.has_outstanding_request(),
+            has_max_lost: tracker.max_lost_frame_id().is_some(),
+        }
+    }
+}
+
+/// An episode with nothing outstanding — what a keyframe decode also leaves behind, which is why
+/// there is no separate door for that: a keyframe references nothing, so it clears unconditionally.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ltr_escalation_clear() -> SlopDeskLtrEscalation {
+    SlopDeskLtrEscalation::of(&LtrEscalationTracker::new())
+}
+
+/// Records one unrecoverably-lost frame, wrap-aware keep-newest.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ltr_escalation_note_loss(
+    state: SlopDeskLtrEscalation,
+    frame_id: u32,
+) -> SlopDeskLtrEscalation {
+    let mut tracker = state.tracker();
+    tracker.note_loss(frame_id);
+    SlopDeskLtrEscalation::of(&tracker)
+}
+
+/// Arms the clock on the FIRST request of an episode, and on no later one.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ltr_escalation_note_request_sent(
+    state: SlopDeskLtrEscalation,
+    now: f64,
+) -> SlopDeskLtrEscalation {
+    let mut tracker = state.tracker();
+    tracker.note_request_sent(now);
+    SlopDeskLtrEscalation::of(&tracker)
+}
+
+/// Re-anchors the clock after an escalation FIRED, so the next one waits a full deadline.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ltr_escalation_note_escalated(
+    state: SlopDeskLtrEscalation,
+    now: f64,
+) -> SlopDeskLtrEscalation {
+    let mut tracker = state.tracker();
+    tracker.note_escalated(now);
+    SlopDeskLtrEscalation::of(&tracker)
+}
+
+/// Feeds a NON-keyframe decode to the episode.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ltr_escalation_frame_decoded(
+    state: SlopDeskLtrEscalation,
+    frame_id: u32,
+) -> SlopDeskLtrEscalationDecode {
+    let mut tracker = state.tracker();
+    let cleared = tracker.frame_decoded(frame_id);
+    SlopDeskLtrEscalationDecode {
+        state: SlopDeskLtrEscalation::of(&tracker),
+        cleared,
+    }
+}
+
+/// Whether a forced IDR is due right now. Pure — the caller decides whether to act, and re-anchors
+/// through [`slopdesk_ltr_escalation_note_escalated`] when it does.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ltr_escalation_should_escalate(
+    state: SlopDeskLtrEscalation,
+    idr_timeout_rtt_multiple: f64,
+    lossy_idr_timeout_rtt_multiple: f64,
+    lossy_escalation_floor: f64,
+    lossy_escalation_floor_rtt_multiple: f64,
+    now: f64,
+    rtt: f64,
+    observing_loss: bool,
+) -> bool {
+    state.tracker().should_escalate(
+        now,
+        rtt,
+        &RecoveryPolicy {
+            idr_timeout_rtt_multiple,
+            lossy_idr_timeout_rtt_multiple,
+            lossy_escalation_floor,
+            lossy_escalation_floor_rtt_multiple,
+        },
+        observing_loss,
+    )
 }
 
 /// The send-time offsets for one logical request. Returns how many offsets there ARE, writing them

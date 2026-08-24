@@ -36,7 +36,7 @@ use std::time::Instant;
 
 use slopdesk_apple_vt::{
     CFRetained, CVImageBuffer, DecodedSink, DecompressionSession, FormatDescription, INVALID_SESSION, NO_ERR,
-    SampleBuffer,
+    PixelBuffer, SampleBuffer,
 };
 use slopdesk_video::decoder_state::{Admission, DecoderState, display_immediate};
 use slopdesk_video::hevc_parameter_sets;
@@ -48,6 +48,45 @@ use slopdesk_video::hevc_parameter_sets;
 /// release. See the module header for why this door hands over rather than lending.
 pub type SlopDeskDecodedFrameFn =
     Option<unsafe extern "C" fn(context: *mut c_void, image_buffer: *mut c_void)>;
+
+/// Where decoded surfaces go, for a Rust caller.
+///
+/// The C door above is the boundary's shape; THIS is its shape for a Rust caller, and the two are
+/// the same door because the C one is written as an adapter onto this one. The surface arrives
+/// OWNED — a [`PixelBuffer`], which releases when it drops — so the hand-over rule the C form
+/// states in prose is a type here, and a caller that forgets it cannot compile.
+pub trait DecodedFrameSink: Send + Sync + core::fmt::Debug {
+    /// One decoded surface, owned by the callee.
+    fn frame(&self, image: PixelBuffer);
+}
+
+/// The C door, expressed as one of the sinks above.
+#[derive(Debug)]
+struct CSink {
+    context: CallerContext,
+    deliver: SlopDeskDecodedFrameFn,
+}
+
+impl DecodedFrameSink for CSink {
+    /// # Safety
+    /// `PixelBuffer::into_created` yields the +1 pointer this function stops owning, which is
+    /// exactly what the callback's contract says the callee now owns. Dropping the buffer instead —
+    /// the `else` arm — releases it, so a decoder built without a door leaks nothing.
+    #[expect(
+        unsafe_code,
+        reason = "calling the caller's function pointer IS this module's boundary"
+    )]
+    fn frame(&self, image: PixelBuffer) {
+        let Some(deliver) = self.deliver else {
+            drop(image);
+            return;
+        };
+        let raw = image.into_created();
+        // SAFETY: the context is live by the door's documented term, and `raw` is the +1 the
+        // callback's contract says the callee now owns.
+        unsafe { deliver(self.context.0, raw) };
+    }
+}
 
 /// The caller's opaque context pointer, carried to the callback.
 ///
@@ -81,33 +120,21 @@ unsafe impl Sync for CallerContext {}
 /// property of the empty flags rather than an accident.
 #[derive(Debug)]
 struct FrameDelivery {
-    context: CallerContext,
-    deliver: SlopDeskDecodedFrameFn,
+    /// Where the surface goes. `None` is a legal decoder that discards its pixels, which is what a
+    /// caller that registered no callback asked for.
+    sink: Option<Arc<dyn DecodedFrameSink>>,
     /// The handler's own status, or [`NO_ERR`] if it has not reported one.
     verdict: AtomicI32,
 }
 
 impl DecodedSink for FrameDelivery {
-    /// Hands the decoded surface to the caller at +1, or releases it if there is no caller.
-    ///
-    /// # Safety
-    /// `CFRetained::into_raw` yields a +1 pointer this function stops owning, and the callback's
-    /// documented term is that the callee releases it. The `else` arm is what keeps that true when
-    /// no callback was registered: dropping the `CFRetained` releases, so a decoder built without a
-    /// door leaks nothing.
-    #[expect(
-        unsafe_code,
-        reason = "calling the caller's function pointer IS this module's boundary"
-    )]
+    /// Hands the decoded surface to the sink, or releases it if there is none.
     fn decoded(&self, image: CFRetained<CVImageBuffer>) {
-        let Some(deliver) = self.deliver else {
+        let Some(sink) = self.sink.as_ref() else {
             drop(image);
             return;
         };
-        let raw = CFRetained::into_raw(image);
-        // SAFETY: the context is live by the door's documented term, and `raw` is the +1 the
-        // callback's contract says the callee now owns.
-        unsafe { deliver(self.context.0, raw.as_ptr().cast::<c_void>()) };
+        sink.frame(PixelBuffer::from_retained(image));
     }
 
     /// Records the handler's failure for the caller to read after the synchronous decode returns.
@@ -140,8 +167,8 @@ pub struct SlopDeskVideoDecoder {
     /// Guards the rules. Taken separately and never while `live` is held for a framework call, so
     /// the stats read at ~2 Hz never waits behind a decode.
     state: Mutex<DecoderState>,
-    context: CallerContext,
-    deliver: SlopDeskDecodedFrameFn,
+    /// Where decoded surfaces go, for the life of the handle.
+    sink: Option<Arc<dyn DecodedFrameSink>>,
     /// Whether the stream negotiated full-range luma. Read at every configure, so a client that
     /// sets it after a session exists gets the new range on the next parameter-set change.
     full_range: Mutex<bool>,
@@ -164,7 +191,64 @@ pub const SLOPDESK_DECODE_NEEDS_KEYFRAME: i32 = 2;
 /// A hard failure: invalidate, then ask. The framework's status is written to `status_out`.
 pub const SLOPDESK_DECODE_FAILED: i32 = 3;
 
+/// One decode's outcome, for a Rust caller.
+///
+/// The four `SLOPDESK_DECODE_*` integers below are this enum's C spelling; a Rust caller gets the
+/// enum, so a match that forgets an arm is a compile error rather than a frozen pane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecodeOutcome {
+    /// Pixels reached the sink.
+    Delivered,
+    /// The frame was empty and not a keyframe: dropped, and nothing to say.
+    Dropped,
+    /// Nothing can decode until a keyframe arrives; the session stands.
+    NeedsKeyframe,
+    /// A hard failure, carrying the framework's status. Invalidate, then ask.
+    Failed(i32),
+}
+
 impl SlopDeskVideoDecoder {
+    /// Creates a decoder. It has no session until the first keyframe gives it one.
+    #[must_use]
+    pub fn create(sink: Option<Arc<dyn DecodedFrameSink>>) -> Self {
+        Self {
+            live: Mutex::new(None),
+            state: Mutex::new(DecoderState::new()),
+            sink,
+            full_range: Mutex::new(false),
+            display_immediately: display_immediate(&|key| std::env::var(key).ok()),
+        }
+    }
+
+    /// Requests the FULL-RANGE NV12 output variant, or the video-range one.
+    pub fn set_full_range(&self, full_range: bool) {
+        if let Ok(mut range) = self.full_range.lock() {
+            *range = full_range;
+        }
+    }
+
+    /// Decodes one reassembled AVCC frame.
+    pub fn decode_frame(&self, avcc: &[u8], keyframe: bool) -> DecodeOutcome {
+        let mut status = NO_ERR;
+        match self.decode(avcc, keyframe, &mut status) {
+            SLOPDESK_DECODE_DELIVERED => DecodeOutcome::Delivered,
+            SLOPDESK_DECODE_DROPPED => DecodeOutcome::Dropped,
+            SLOPDESK_DECODE_NEEDS_KEYFRAME => DecodeOutcome::NeedsKeyframe,
+            _ => DecodeOutcome::Failed(status),
+        }
+    }
+
+    /// Tears the live session down so the NEXT keyframe rebuilds, even a byte-identical one.
+    pub fn invalidate_session(&self) {
+        self.invalidate();
+    }
+
+    /// The decode-wall average in milliseconds; `0` when nothing has decoded yet.
+    #[must_use]
+    pub fn millis_ewma(&self) -> f64 {
+        self.state.lock().map_or(0.0, |state| state.decode_ms_ewma())
+    }
+
     /// Builds a session from `sets` and installs it, replacing any live one.
     ///
     /// The cache is written only on success, so a failure leaves the rules describing the session
@@ -233,8 +317,7 @@ impl SlopDeskVideoDecoder {
         }
 
         let sink = Arc::new(FrameDelivery {
-            context: self.context,
-            deliver: self.deliver,
+            sink: self.sink.clone(),
             verdict: AtomicI32::new(NO_ERR),
         });
         let Ok(guard) = self.live.lock() else {
@@ -316,14 +399,10 @@ pub unsafe extern "C" fn slopdesk_video_decoder_new(
     context: *mut c_void,
     deliver: SlopDeskDecodedFrameFn,
 ) -> *mut SlopDeskVideoDecoder {
-    Box::into_raw(Box::new(SlopDeskVideoDecoder {
-        live: Mutex::new(None),
-        state: Mutex::new(DecoderState::new()),
+    Box::into_raw(Box::new(SlopDeskVideoDecoder::create(Some(Arc::new(CSink {
         context: CallerContext(context),
         deliver,
-        full_range: Mutex::new(false),
-        display_immediately: display_immediate(&|key| std::env::var(key).ok()),
-    }))
+    })))))
 }
 
 /// Tears a decoder down.
@@ -368,9 +447,7 @@ pub unsafe extern "C" fn slopdesk_video_decoder_set_full_range(
     let Some(decoder) = (unsafe { held(handle) }) else {
         return;
     };
-    if let Ok(mut range) = decoder.full_range.lock() {
-        *range = full_range;
-    }
+    decoder.set_full_range(full_range);
 }
 
 /// Decodes one reassembled AVCC frame, answering one of the four `SLOPDESK_DECODE_*` outcomes.
@@ -431,7 +508,7 @@ pub unsafe extern "C" fn slopdesk_video_decoder_invalidate(handle: *mut SlopDesk
     let Some(decoder) = (unsafe { held(handle) }) else {
         return;
     };
-    decoder.invalidate();
+    decoder.invalidate_session();
 }
 
 /// The decode-wall average in milliseconds; `0` when nothing has decoded yet.
@@ -452,7 +529,7 @@ pub unsafe extern "C" fn slopdesk_video_decoder_millis_ewma(handle: *mut SlopDes
     let Some(decoder) = (unsafe { held(handle) }) else {
         return 0.0;
     };
-    decoder.state.lock().map_or(0.0, |state| state.decode_ms_ewma())
+    decoder.millis_ewma()
 }
 
 #[cfg(test)]

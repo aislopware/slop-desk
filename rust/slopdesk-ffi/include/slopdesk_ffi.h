@@ -2279,6 +2279,39 @@ bool slopdesk_recovery_should_escalate_to_idr(double idr_timeout_rtt_multiple,
                                               double lossy_escalation_floor_rtt_multiple,
                                               double elapsed_since_request, double rtt,
                                               bool observing_loss);
+/* One client's forced-IDR escalation episode, crossing as a VALUE.
+ *
+ * Two optionals and nothing else, so there is no handle to own: the caller keeps the value and each
+ * door answers the value that follows from it. A payload whose `has_` flag is false is not a
+ * reading — it is zero, and reading it anyway is a caller error the flag already named. */
+typedef struct {
+  double   first_request_time;
+  uint32_t max_lost_frame_id;
+  bool     has_first_request;
+  bool     has_max_lost;
+} SlopDeskLtrEscalation;
+
+/* A non-keyframe decode fed to the episode: the value that follows, and whether it CLOSED it. */
+typedef struct {
+  SlopDeskLtrEscalation state;
+  bool                  cleared;
+} SlopDeskLtrEscalationDecode;
+
+SlopDeskLtrEscalation slopdesk_ltr_escalation_clear(void);
+SlopDeskLtrEscalation slopdesk_ltr_escalation_note_loss(SlopDeskLtrEscalation state,
+                                                        uint32_t frame_id);
+SlopDeskLtrEscalation slopdesk_ltr_escalation_note_request_sent(SlopDeskLtrEscalation state,
+                                                                double now);
+SlopDeskLtrEscalation slopdesk_ltr_escalation_note_escalated(SlopDeskLtrEscalation state,
+                                                             double now);
+SlopDeskLtrEscalationDecode slopdesk_ltr_escalation_frame_decoded(SlopDeskLtrEscalation state,
+                                                                  uint32_t frame_id);
+bool slopdesk_ltr_escalation_should_escalate(SlopDeskLtrEscalation state,
+                                             double idr_timeout_rtt_multiple,
+                                             double lossy_idr_timeout_rtt_multiple,
+                                             double lossy_escalation_floor,
+                                             double lossy_escalation_floor_rtt_multiple, double now,
+                                             double rtt, bool observing_loss);
 size_t slopdesk_recovery_send_offsets(size_t copies, double spacing, double *out, size_t cap);
 size_t slopdesk_recovery_clamped_copies(size_t copies);
 double slopdesk_recovery_all_copies_lost_probability(double per_datagram_loss, size_t copies);

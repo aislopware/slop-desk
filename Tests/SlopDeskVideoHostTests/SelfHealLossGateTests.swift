@@ -3,7 +3,7 @@ import XCTest
 @testable import SlopDeskVideoHost
 
 /// PURE self-heal cadence decision (``WindowCapturer/shouldSelfHeal``). Pins the clean-link loss-gate the
-/// Parsec RE motivated: with the gate OFF the every-Kth ``ForceLTRRefresh`` fires exactly as today
+/// Parsec RE motivated: with the gate OFF the every-Kth `ForceLTRRefresh` fires exactly as today
 /// (byte-identical); with the gate ON it is SUPPRESSED on a loss-free link and re-arms the instant the
 /// pushed loss EWMA crosses the threshold — no CoreMedia/VideoToolbox, just the heal-vs-skip arithmetic.
 final class SelfHealLossGateTests: XCTestCase {
