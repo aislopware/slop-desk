@@ -86,7 +86,7 @@ fn generate(root: &Path, spec: &str) -> Result<(), String> {
 /// # Errors
 /// When xcodegen is absent, the build fails, or the stamp cannot be written.
 pub fn ios_typecheck(root: &Path, force: bool) -> Result<(), String> {
-    let want = stamp::current(root)?;
+    let want = stamp::current_for(root, stamp::Scope::Ios)?;
     if !force && stamp::is_warm(&root.join(IOS_STAMP), &want) {
         println!("==> iOS typecheck OK (cached — no iOS-compiled input changed)");
         return Ok(());
@@ -114,20 +114,25 @@ pub fn ios_typecheck(root: &Path, force: bool) -> Result<(), String> {
 
     // Recomputed rather than reused: xcodegen rewrote the .xcodeproj above, and a source edited
     // while the build ran must not be recorded as checked.
-    stamp::record(&root.join(IOS_STAMP), &stamp::current(root)?)?;
+    stamp::record(
+        &root.join(IOS_STAMP),
+        &stamp::current_for(root, stamp::Scope::Ios)?,
+    )?;
     println!("==> iOS typecheck OK");
     Ok(())
 }
 
-/// The macOS app-shell typecheck, cached against the SAME input set as the iOS one.
+/// The macOS app-shell typecheck, cached against what THESE two shells compile.
 ///
-/// Deliberately identical rather than narrowed to `Apps/`: a change under `Sources/` can break a
-/// shell's call site without touching `Apps/` at all, which is exactly the bug this exists for.
+/// Narrowed to the closure of the products their specs name, never to `Apps/` alone: a change under
+/// `Sources/` can break a shell's call site without touching `Apps/` at all, which is exactly the
+/// bug this exists for. What the narrowing does drop is the phone: `SlopDeskPhoneUI` is in neither
+/// macOS shell's closure, so an iOS-only edit no longer costs two macOS builds.
 ///
 /// # Errors
 /// When xcodegen is absent, either build fails, or the stamp cannot be written.
 pub fn macos_apps_typecheck(root: &Path, force: bool) -> Result<(), String> {
-    let want = stamp::current(root)?;
+    let want = stamp::current_for(root, stamp::Scope::MacosApps)?;
     if !force && stamp::is_warm(&root.join(MACOS_STAMP), &want) {
         println!("==> macOS app typecheck OK (cached — no compiled input changed)");
         return Ok(());
@@ -155,7 +160,10 @@ pub fn macos_apps_typecheck(root: &Path, force: bool) -> Result<(), String> {
         )?;
     }
 
-    stamp::record(&root.join(MACOS_STAMP), &stamp::current(root)?)?;
+    stamp::record(
+        &root.join(MACOS_STAMP),
+        &stamp::current_for(root, stamp::Scope::MacosApps)?,
+    )?;
     println!("==> macOS app typecheck OK");
     Ok(())
 }

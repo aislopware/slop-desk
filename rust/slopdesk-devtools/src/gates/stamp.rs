@@ -21,6 +21,15 @@
 //! far side of a C header, and the one Rust change that CAN — deleting or re-signing an exported
 //! door — changes the header, which IS in the set, and breaks the macOS link first anyway.
 //!
+//! ## Each triple stamps only what IT compiles
+//! The set above is the union; a [`Scope`] narrows it to the `SwiftPM` products one app actually
+//! links, read out of the app's own spec and expanded through the package graph. `SlopDeskHost` is
+//! in no iOS app's closure, so a hostd edit no longer costs an iOS typecheck, and the phone UI is
+//! in no macOS app's, so a phone edit no longer costs two macOS builds. Anything the narrowing
+//! cannot bound — an unreadable spec, a product the graph does not vend, a missing description —
+//! falls back to the WHOLE source tree, because a scope that guessed low would be a green over code
+//! it never compiled.
+//!
 //! ## The paths are repo-RELATIVE
 //! The shell fed `shasum` absolute paths, so the digest was a property of WHERE the tree was
 //! checked out. Two checkouts of one commit stamped differently and each paid the eighty-five
@@ -34,13 +43,13 @@ use sha2::{Digest, Sha256};
 /// The file extensions the two typecheck gates compile or read.
 const COMPILED: &[&str] = &["swift", "yml", "plist", "metal", "h"];
 
-/// The trees walked for [`COMPILED`] files.
+/// The one tree outside `Sources`/`Apps` that both triples compile.
 ///
-/// `ThirdParty/ghostty/integration` is one of them because BOTH app specs list
+/// It is here because BOTH app specs list
 /// `GhosttySurface` as a source path: those files are members of no `Package.swift` target, so
 /// nothing else in this set covers them, and an edit there used to leave a warm stamp — the gate
 /// reporting green over a file it had not compiled since the change.
-const TREES: &[&str] = &["Sources", "Apps", "ThirdParty/ghostty/integration"];
+const GHOSTTY_TREE: &str = "ThirdParty/ghostty/integration";
 
 /// The C surface, whose module maps have no extension worth matching on.
 const FFI_TREE: &str = "ThirdParty/slopdesk-ffi";
@@ -59,13 +68,80 @@ const SELF_TREES: &[&str] = &["rust/slopdesk-devtools/src/gates"];
 /// This gate's own entry point.
 const SELF_FILES: &[&str] = &["rust/slopdesk-devtools/src/bin/gate.rs"];
 
+/// Which triple's inputs a stamp covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// Everything either triple compiles — the union, and the safe answer.
+    Everything,
+    /// Only what `Apps/ClientApp-iOS` links.
+    Ios,
+    /// Only what the two macOS app shells link.
+    MacosApps,
+}
+
+impl Scope {
+    /// The app directories this scope compiles, which carry the specs and the shells themselves.
+    const fn apps(self) -> &'static [&'static str] {
+        match self {
+            Self::Everything => &["Apps"],
+            Self::Ios => &["Apps/ClientApp-iOS", "Apps/Shared"],
+            Self::MacosApps => &["Apps/ClientApp-macOS", "Apps/HostApp-macOS", "Apps/Shared"],
+        }
+    }
+
+    /// The source trees this scope compiles: the closure of the products its specs name, or the
+    /// whole tree when that cannot be resolved.
+    fn sources(self, root: &Path) -> Vec<String> {
+        if matches!(self, Self::Everything) {
+            return vec!["Sources".to_owned()];
+        }
+        let mut products: Vec<String> = Vec::new();
+        for app in self.apps() {
+            products.extend(products_named_in(&root.join(app).join("project.yml")));
+        }
+        if products.is_empty() {
+            return vec!["Sources".to_owned()];
+        }
+        super::touched::graph(root)
+            .ok()
+            .and_then(|graph| graph.paths_for_products(&products))
+            .unwrap_or_else(|| vec!["Sources".to_owned()])
+    }
+}
+
+/// Every `product:` an xcodegen spec names, in file order.
+///
+/// A line scan rather than a YAML parse: the key appears once per dependency, its value is one
+/// token, and a spec this cannot read answers nothing — which the caller reads as "widen".
+fn products_named_in(spec: &Path) -> Vec<String> {
+    let Ok(text) = fs::read_to_string(spec) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|line| line.trim().strip_prefix("product:"))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
 /// Every input path, repo-relative and sorted, exactly as the digest consumes them.
 ///
 /// # Errors
 /// When a tree in the set cannot be walked.
 pub fn inputs(root: &Path) -> Result<Vec<String>, String> {
+    inputs_for(root, Scope::Everything)
+}
+
+/// The same, narrowed to one triple.
+///
+/// # Errors
+/// When a tree in the set cannot be walked.
+pub fn inputs_for(root: &Path, scope: Scope) -> Result<Vec<String>, String> {
     let mut found: Vec<String> = Vec::new();
-    for tree in TREES {
+    let mut trees: Vec<String> = scope.sources(root);
+    trees.extend(scope.apps().iter().map(|app| (*app).to_owned()));
+    trees.push(GHOSTTY_TREE.to_owned());
+    for tree in &trees {
         walk(root, &root.join(tree), &mut found, &|path| {
             path.extension()
                 .and_then(|value| value.to_str())
@@ -101,8 +177,16 @@ pub fn inputs(root: &Path) -> Result<Vec<String>, String> {
 /// # Errors
 /// When an input tree cannot be walked or a file that exists cannot be read.
 pub fn current(root: &Path) -> Result<String, String> {
+    current_for(root, Scope::Everything)
+}
+
+/// The same digest, over one triple's inputs.
+///
+/// # Errors
+/// When an input tree cannot be walked or a file that exists cannot be read.
+pub fn current_for(root: &Path, scope: Scope) -> Result<String, String> {
     let mut outer = Sha256::new();
-    for path in inputs(root)? {
+    for path in inputs_for(root, scope)? {
         let bytes = fs::read(root.join(&path)).unwrap_or_default();
         let mut inner = Sha256::new();
         inner.update(&bytes);
@@ -164,7 +248,7 @@ pub(crate) fn walk(
 mod tests {
     use std::fs;
 
-    use super::{current, inputs, is_warm, record};
+    use super::{Scope, current, inputs, inputs_for, is_warm, products_named_in, record};
 
     /// A tree just big enough to exercise the walk, the extension filter and the digest.
     fn fixture(name: &str) -> std::path::PathBuf {
@@ -222,6 +306,42 @@ mod tests {
         let before = current(&root).unwrap();
         fs::rename(root.join("Sources/A.swift"), root.join("Sources/Renamed.swift")).unwrap();
         assert_ne!(before, current(&root).unwrap());
+    }
+
+    /// The spec's own vocabulary: `product:` under each dependency, one token, order preserved.
+    #[test]
+    fn a_spec_yields_the_products_it_names() {
+        let root = fixture("products");
+        let spec = root.join("Apps/ClientApp-iOS/project.yml");
+        fs::create_dir_all(spec.parent().unwrap()).unwrap();
+        fs::write(
+            &spec,
+            "targets:\n  App:\n    dependencies:\n      - package: SlopDesk\n        product: \
+             SlopDeskClientCore\n      - package: SFSafeSymbols\n        product: SFSafeSymbols\n",
+        )
+        .unwrap();
+        assert_eq!(products_named_in(&spec), ["SlopDeskClientCore", "SFSafeSymbols"]);
+        assert!(
+            products_named_in(&root.join("Apps/Nowhere/project.yml")).is_empty(),
+            "a spec that cannot be read names nothing, which the caller widens on"
+        );
+    }
+
+    /// A scope that cannot bound itself covers the WHOLE tree — never less than the union.
+    #[test]
+    fn an_unreadable_spec_widens_to_everything() {
+        let root = fixture("widen");
+        // No `Apps/` at all, so no spec, no products, no package description to expand them with.
+        let narrowed = inputs_for(&root, Scope::Ios).unwrap();
+        assert!(
+            narrowed.contains(&"Sources/A.swift".to_owned()),
+            "the fallback dropped a source: {narrowed:?}"
+        );
+        assert_eq!(
+            narrowed,
+            inputs_for(&root, Scope::Everything).unwrap(),
+            "a scope that resolved nothing must stamp exactly what the union does"
+        );
     }
 
     #[test]

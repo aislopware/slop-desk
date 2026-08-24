@@ -76,6 +76,9 @@ struct Target {
 #[derive(Debug, Clone)]
 pub struct Graph {
     targets: Vec<Target>,
+    /// Product name → the targets it vends, for the callers that start from a PRODUCT: an Xcode app
+    /// spec names products, never targets.
+    products: BTreeMap<String, Vec<String>>,
 }
 
 impl Graph {
@@ -109,7 +112,66 @@ impl Graph {
                 }
             })
             .collect();
-        Ok(Self { targets })
+        let products = document
+            .get("products")
+            .and_then(Value::as_array)
+            .map(|listed| {
+                listed
+                    .iter()
+                    .map(|product| {
+                        let targets = product
+                            .get("targets")
+                            .and_then(Value::as_array)
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .filter_map(|value| value.as_str().map(str::to_owned))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        (string(product, "name"), targets)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Self { targets, products })
+    }
+
+    /// Every source PATH that compiling `products` reaches, transitively.
+    ///
+    /// A name this package does not vend is SKIPPED rather than fatal: an app spec also names
+    /// products of the packages it depends on (`SFSafeSymbols`), whose sources live in
+    /// `.build/checkouts` and can never be a path under `Sources/`. A LOCAL product renamed out
+    /// from under a spec is not a hole either — `Package.swift` is in the digest that this
+    /// scopes, so the rename moves every stamp, and the app it broke fails to build on the next
+    /// run.
+    ///
+    /// `None` when NOTHING resolved, which is a description this cannot read: the caller then falls
+    /// back to the whole source tree, because a scope it could not bound must not skip work.
+    #[must_use]
+    pub fn paths_for_products(&self, products: &[String]) -> Option<Vec<String>> {
+        let by_name: BTreeMap<&str, &Target> = self
+            .targets
+            .iter()
+            .map(|target| (target.name.as_str(), target))
+            .collect();
+        let mut wanted: BTreeSet<String> = BTreeSet::new();
+        for product in products {
+            let Some(vended) = self.products.get(product) else {
+                continue;
+            };
+            for target in vended {
+                wanted.extend(std::iter::once(target.clone()));
+                wanted.extend(self.closure(target));
+            }
+        }
+        let mut paths: Vec<String> = wanted
+            .iter()
+            .filter_map(|name| by_name.get(name.as_str()).map(|target| target.path.clone()))
+            .collect();
+        paths.sort_unstable();
+        paths.dedup();
+        if paths.is_empty() { None } else { Some(paths) }
     }
 
     /// Every test target's name.
@@ -234,11 +296,45 @@ mod tests {
          "target_dependencies": []},
         {"name": "SlopDeskWorkspaceCoreTests", "type": "test",
          "path": "Tests/SlopDeskWorkspaceCoreTests", "target_dependencies": []}
+      ],
+      "products": [
+        {"name": "UI", "targets": ["UI"]},
+        {"name": "Core", "targets": ["Core"]}
       ]
     }"#;
 
     fn graph() -> Graph {
         Graph::parse(DESCRIBE).unwrap()
+    }
+
+    /// A product's scope is its own path plus everything it links, and NOTHING else — which is what
+    /// lets one triple's stamp ignore the other's sources.
+    #[test]
+    fn a_products_scope_is_its_closure() {
+        let paths = graph()
+            .paths_for_products(&["UI".to_owned()])
+            .expect("UI is a product");
+        assert_eq!(paths, ["Sources/Core", "Sources/UI"]);
+        assert!(
+            !paths.iter().any(|path| path.contains("hostd")),
+            "an executable nothing vends is not in a product's closure: {paths:?}"
+        );
+    }
+
+    /// A name this package does not vend is another package's, and contributes no local path. When
+    /// that is ALL there was, the scope refuses to narrow rather than covering nothing.
+    #[test]
+    fn a_foreign_product_contributes_nothing_and_alone_refuses_to_narrow() {
+        assert_eq!(
+            graph().paths_for_products(&["UI".to_owned(), "SFSafeSymbols".to_owned()]),
+            Some(vec!["Sources/Core".to_owned(), "Sources/UI".to_owned()]),
+            "the foreign name is skipped, the local one still scopes"
+        );
+        assert!(
+            graph()
+                .paths_for_products(&["SFSafeSymbols".to_owned()])
+                .is_none()
+        );
     }
 
     fn select(paths: &[&str]) -> Selection {
