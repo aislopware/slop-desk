@@ -247,14 +247,19 @@ pub fn path_dependencies(manifest: &str) -> Vec<String> {
 
 /// Every input path the stamp consumes, repo-relative and sorted.
 ///
-/// `target` is PRUNED, and that is load-bearing rather than tidiness. Build scripts write real
-/// `.rs` under `target/<triple>/release/build/<crate>-<metadata-hash>/out/`, and the hash in that
-/// directory name is cargo's, not ours. Unpruned, the stamp counted 12 such files across the shim's
-/// closure — and since `cargo build --target aarch64-apple-ios` MINTS a fresh one for a triple it
-/// has not built before, it changed AFTER the wanted stamp was read and BEFORE it was written. A
-/// clean build therefore recorded a value the very next check disagreed with, so `make lint`
-/// announced the artifact stale seconds after building it: an input-hash gate made to fire on its
-/// own output. Sources only.
+/// `target` is PRUNED by [`stamp::walk`] itself, and that is load-bearing rather than tidiness.
+/// Build scripts write real `.rs` under
+/// `target/<triple>/release/build/<crate>-<metadata-hash>/out/`, and the hash in that directory
+/// name is cargo's, not ours. Unpruned, the stamp counted 12 such files across the shim's closure —
+/// and since `cargo build --target aarch64-apple-ios` MINTS a fresh one for a triple it has not
+/// built before, it changed AFTER the wanted stamp was read and BEFORE it was written. A clean
+/// build therefore recorded a value the very next check disagreed with, so `make lint` announced
+/// the artifact stale seconds after building it: an input-hash gate made to fire on its own output.
+/// Sources only.
+///
+/// Until 2026-08-25 the pruning was a `retain` over the RESULTS, so the walk still read all 592 000
+/// names under `rust/slopdesk-ffi/target` before throwing them away — 50 s on every `make ffi`,
+/// `build`, `test` and `quick`, warm or cold, for an answer the stamp already had.
 ///
 /// # Errors
 /// When the crate graph cannot be read, or an input tree cannot be walked.
@@ -273,7 +278,6 @@ pub fn stamp_inputs(root: &Path) -> Result<Vec<String>, String> {
             name == "Cargo.toml" || name == "module.modulemap" || matches!(extension, "rs" | "h")
         })?;
     }
-    found.retain(|path| !path.split('/').any(|component| component == "target"));
     for file in SELF_FILES {
         found.push(file.to_owned());
     }

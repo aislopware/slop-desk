@@ -222,21 +222,31 @@ lint-shell: ## shellcheck + shfmt --diff
 # needs `panic = "abort"`, superd needs `panic = "unwind"`, and profiles are workspace-global). It
 # is `exclude`d from rust/Cargo.toml, so `--workspace` does NOT reach it — hence the second pair of
 # invocations. Forgetting them is a silently unlinted daemon.
+#
+# The three per-workspace sweeps below fan OUT rather than looping. Sequentially they were 38 s
+# (clippy + fmt) and 16 s (tests) warm on an untouched tree — nineteen cargo freshness checks one
+# after another on a machine with ten idle cores. Each workspace owns its target/ (being separate
+# workspaces is the whole point), so there is no build lock to contend on. Each invocation's output
+# is BUFFERED and printed only if it failed, so a red sweep reads as one crate's report instead of
+# nineteen interleaved ones; xargs exits non-zero when any of them did.
 lint-rust: lint-rust-clippy ## clippy -D warnings (all targets) + rustfmt --check, all 17 Rust workspaces
-	@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo +nightly fmt --all -- --check) || exit 1; done
+	@printf '%s\n' $(RUST_WORKSPACES) | xargs -P 8 -I{} sh -c \
+	  'cd {} || exit 1; out=$$(cargo +nightly fmt --all -- --check 2>&1) || { printf "── {} ──\n%s\n" "$$out" >&2; exit 1; }'
 
 # Split out because the pre-commit hook wants clippy WITHOUT the `fmt --check`: prek runs hooks in
 # parallel, and the `rustfmt (apply)` hook is rewriting the very files a `--check` would be reading.
 lint-rust-clippy: ## clippy -D warnings across every Rust workspace (no fmt check)
-	@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo clippy --workspace --all-targets --all-features -- -D warnings) || exit 1; done
+	@printf '%s\n' $(RUST_WORKSPACES) | xargs -P 8 -I{} sh -c \
+	  'cd {} || exit 1; out=$$(cargo clippy --workspace --all-targets --all-features --quiet -- -D warnings 2>&1) || { printf "── {} ──\n%s\n" "$$out" >&2; exit 1; }'
 
 # The pre-commit hook's Rust test sweep, and the same `--workspace`-does-not-reach-them story: the
 # hook used to run `cd rust && cargo test --workspace` while firing on ANY `rust/**.{rs,toml}` change,
 # so a commit to fifteen of the seventeen crates ran the OTHER two crates' tests and reported green.
-# ~16 s warm for the lot, which is what makes it a commit-time gate rather than a push-time one. The
+# ~21 s warm for the lot, which is what makes it a commit-time gate rather than a push-time one. The
 # named per-crate targets below stay: they are how you run ONE crate, and `make test` composes them.
-test-rust: ## cargo test across every Rust workspace (~16 s warm)
-	@for ws in $(RUST_WORKSPACES); do (cd $$ws && cargo test --workspace --quiet) || exit 1; done
+test-rust: ## cargo test across every Rust workspace (~21 s warm, 55 s if run one at a time)
+	@printf '%s\n' $(RUST_WORKSPACES) | xargs -P 8 -I{} sh -c \
+	  'cd {} || exit 1; out=$$(cargo test --workspace --quiet 2>&1) || { printf "── {} ──\n%s\n" "$$out" >&2; exit 1; }'
 
 # SwiftLint analyzer rules need the compiler INVOCATIONS, which only a verbose build prints. Minutes,
 # not seconds — ~750 files, each re-parsed by a real frontend — so this stays out of `lint` and runs

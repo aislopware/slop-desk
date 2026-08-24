@@ -60,13 +60,20 @@ const GRAPH: &[&str] = &["Package.swift", "Package.resolved"];
 /// This gate's own source — the port's answer to the shell's `${SELF}`.
 ///
 /// The gate's own logic is an input to its verdict: a stamp that survived an edit to the selection
-/// rules would cache a verdict the new rules never reached. It is the `gates/` module tree and the
-/// binary over it, not the whole crate — the release pipeline shares this crate and cannot change
-/// what type-checks.
-const SELF_TREES: &[&str] = &["rust/slopdesk-devtools/src/gates"];
-
-/// This gate's own entry point.
-const SELF_FILES: &[&str] = &["rust/slopdesk-devtools/src/bin/gate.rs"];
+/// rules would cache a verdict the new rules never reached.
+///
+/// These FOUR files and not the `gates/` tree, for the reason [`super::ffi`]'s own `SELF_FILES`
+/// gives: only what decides this verdict belongs here. The input set ([`inputs_for`]), the scope
+/// expansion ([`super::swift_graph`]), the two gates that consume them ([`super::xcode`]) and the
+/// entry point that dispatches — a sibling gate cannot change what type-checks, and while the whole
+/// tree was in the set, editing the golden gate or the FFI producer cost a twelve-minute rebuild of
+/// both app triples.
+const SELF_FILES: &[&str] = &[
+    "rust/slopdesk-devtools/src/bin/gate.rs",
+    "rust/slopdesk-devtools/src/gates/stamp.rs",
+    "rust/slopdesk-devtools/src/gates/swift_graph.rs",
+    "rust/slopdesk-devtools/src/gates/xcode.rs",
+];
 
 /// Which triple's inputs a stamp covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,11 +162,6 @@ pub fn inputs_for(root: &Path, scope: Scope) -> Result<Vec<String>, String> {
             .unwrap_or_default();
         name == "module.modulemap" || path.extension().and_then(|value| value.to_str()) == Some("h")
     })?;
-    for tree in SELF_TREES {
-        walk(root, &root.join(tree), &mut found, &|path| {
-            path.extension().and_then(|value| value.to_str()) == Some("rs")
-        })?;
-    }
     for file in GRAPH.iter().chain(SELF_FILES) {
         found.push((*file).to_owned());
     }
@@ -212,6 +214,16 @@ pub fn record(marker: &Path, value: &str) -> Result<(), String> {
     fs::write(marker, format!("{value}\n")).map_err(|error| format!("{}: {error}", marker.display()))
 }
 
+/// Directories no stamp ever descends: build OUTPUT, and git's own object store.
+///
+/// PRUNED at the directory rather than filtered out of the results, which is the difference between
+/// a warm `make ffi` costing 50 s and costing 0.4 s. `rust/slopdesk-ffi/target` alone holds 48 GB
+/// across 592 000 files — three iOS/macOS slices of every dependency — and the walk that fed the
+/// FFI stamp read every one of their names before discarding them by path component. Nothing under
+/// any of these is an input to anything: a stamp asks what the SOURCES say, and an output that
+/// could change a stamp would be a gate firing on its own result.
+const PRUNED: &[&str] = &["target", ".build", ".git"];
+
 /// Collect every file under `dir` that `keep` accepts, as a repo-relative path.
 ///
 /// Shared with [`super::ffi`], whose input set is a different tree with a different filter but the
@@ -235,6 +247,13 @@ pub(crate) fn walk(
     paths.sort_unstable();
     for path in paths {
         if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default();
+            if PRUNED.contains(&name) {
+                continue;
+            }
             walk(root, &path, into, keep)?;
         } else if keep(&path) {
             let relative = path.strip_prefix(root).unwrap_or(&path);
@@ -279,6 +298,28 @@ mod tests {
         assert!(
             !found.iter().any(|path| path.rsplit('.').next() == Some("md")),
             "a doc reached the stamp: {found:?}"
+        );
+    }
+
+    /// Build output is not an input, and the walk must not even LOOK: `target/` holds tens of
+    /// gigabytes of slices, and reading their names cost fifty seconds a run.
+    #[test]
+    fn build_output_is_pruned_at_the_directory() {
+        let root = fixture("pruned");
+        fs::create_dir_all(root.join("Sources/target/deep")).unwrap();
+        fs::write(root.join("Sources/target/deep/Built.swift"), "generated\n").unwrap();
+        fs::create_dir_all(root.join("Sources/.build")).unwrap();
+        fs::write(root.join("Sources/.build/Cached.swift"), "cached\n").unwrap();
+        let found = inputs(&root).unwrap();
+        assert!(
+            !found
+                .iter()
+                .any(|path| path.contains("target") || path.contains(".build")),
+            "an output tree reached the stamp: {found:?}"
+        );
+        assert!(
+            found.contains(&"Sources/A.swift".to_owned()),
+            "the source went with it"
         );
     }
 
