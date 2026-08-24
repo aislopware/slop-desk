@@ -37,9 +37,9 @@
 // one remove, for Settings. It is not specific to a keybinding: the blob it reads is `count` rows
 // of `field_count` fields, and a console row lends two where a binding lends four. So this file
 // adds MARSHALLING and no rule, and the door it calls is the one that crate already exports. The
-// ABI name still says `ws_binding` because its first caller was the keybindings editor; renaming it
-// to something the device panels can read without a second glance means touching
-// `Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift` in the same change.
+// ABI name still says `ws_binding` because its first caller was the keybindings editor in Settings.
+// That editor is gone — a key binding is a `[keybind]` line in `config.toml` now — so this file is
+// the door's only caller, and the name is the one thing left pointing at where it came from.
 //
 // ## The fold is NOT `localizedCaseInsensitiveContains`, and that is the point
 //

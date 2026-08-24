@@ -94,10 +94,6 @@ name = "slopdesk-sanitize"
 version = "0.1.0"
 
 [[package]]
-name = "slopdesk-settings"
-version = "0.1.0"
-
-[[package]]
 name = "slopdesk-tree"
 version = "0.1.0"
 dependencies = [
@@ -129,7 +125,6 @@ dependencies = [
  "slopdesk-agent",
  "slopdesk-fuzzy",
  "slopdesk-ids",
- "slopdesk-settings",
  "slopdesk-tree",
  "unicode-segmentation",
 ]

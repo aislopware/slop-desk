@@ -9,14 +9,12 @@
 //! The measurements are `swiftc -O` against the shipped staticlib, two runs agreeing inside 4%
 //! each.
 
-use crate::claim::{Claim, SWIFT, View, check_all};
+use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
 /// Where the document's canonical order is asked for.
 const WS_STATE: &str = "Sources/SlopDeskWorkspaceModel/State/HostWorkspaceState.swift";
-/// The catalog whose search crossed the boundary.
-const SETTINGS_CATALOG: &str = "Sources/SlopDeskClientCore/Settings/SettingsCatalog.swift";
 
 /// The audio row is Rust's, from the capture tap to the speakers
 ///
@@ -249,114 +247,6 @@ pub fn the_document_has_one_emission_order(tree: &Tree) -> Report {
     ])
 }
 
-/// The palette catalog is indexed once, and the settings taxonomy owns its own search
-///
-/// ## The catalog
-/// `items(in:)` was `allRows.filter { $0.category == category }`, so one zero-state build ran eight
-/// full passes over ~90 rows and minted eight arrays; `recentPaletteItems()` linear-scanned
-/// `allRows` once per remembered id. Both are `static let` dictionaries built once. Measured on the
-/// whole zero-state build: 8.06–8.22 µs → 2.53–2.86 µs.
-///
-/// ## The taxonomy
-/// `SettingsCatalog.sections` has crossed the boundary since it was written; the SEARCH over it had
-/// not, so each face wrote its own `lowercased().contains(…)` over the answer. That is `docs/55`
-/// §8's drift class, and §8's point is that this class is NOT ranked by cost — eight sections
-/// filtered per keystroke is ~750 ns and would never on its own justify a door. What justifies it
-/// is that the question stops having two answers. The needle crosses RAW, which is the load-bearing
-/// half: a caller that lowercases or trims first has re-spelled the fold it was supposed to stop
-/// spelling.
-///
-/// The corpus arm stays armed over the whole of `Sources/` rather than scoped to `ClientCore`
-/// BECAUSE the fourth spelling is the finding: `MacSettingsNavigator` held it, lives outside the
-/// target this rule came from, and the arm was RED on the shipped tree until that call site landed
-/// centrally. A rule that only watched `ClientCore` would have passed on the day the drift started.
-///
-/// ## And no production API exists for a test's sake
-/// `SearchMixer.availableFilters` was a `public var` whose only reader anywhere in the tree — after
-/// the Mac and phone sweeps both finished without adding one — was a single assertion in
-/// `OverlayCoordinatorMountTests`. Under the one-implementation rule that is a hook held open, so
-/// it is deleted and the test reads the same fact off what the mixer PRODUCES, where a user could
-/// also see it. Banned tree-wide, so it fires wherever it comes back rather than only in the file
-/// it left.
-#[must_use]
-pub fn a_catalog_is_indexed_not_rescanned(tree: &Tree) -> Report {
-    /// The palette's catalog.
-    const PALETTE: &str = "Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift";
-    /// The coordinator that used to scan it per remembered id.
-    const OVERLAYS: &str = "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift";
-
-    check_all(tree, &[
-        Claim::Matches {
-            path: PALETTE,
-            pattern: "static let rowsByCategory",
-            view: View::Code,
-            message: "the palette catalog lost its category index — items(in:) would be a fresh scan of \
-                      allRows per read",
-        },
-        Claim::Matches {
-            path: PALETTE,
-            pattern: "static let rowsByID",
-            view: View::Code,
-            message: "the palette catalog lost its id index — the recents lookup would be a fresh scan of \
-                      allRows per remembered id",
-        },
-        Claim::Lacks {
-            path: PALETTE,
-            pattern: r"allRows\.filter|allRows\.first\(where:",
-            view: View::Code,
-            message: "the palette catalog scans allRows again — the categories and the ids are both indexed \
-                      once at load",
-        },
-        Claim::Lacks {
-            path: OVERLAYS,
-            pattern: r"ActionsPaletteSource\.allRows\.first\(where:",
-            view: View::Code,
-            message: "the coordinator scans the palette catalog per remembered id — \
-                      ActionsPaletteSource.rowsByID answers in one lookup",
-        },
-        Claim::Matches {
-            path: SETTINGS_CATALOG,
-            pattern: r"slopdesk_settings_sections_matching\(",
-            view: View::Code,
-            message: "the settings catalog no longer calls slopdesk_settings_sections_matching — the search \
-                      over the taxonomy is slopdesk-workspace's",
-        },
-        Claim::LacksWithin {
-            path: SETTINGS_CATALOG,
-            start: r"static func sections\(matching",
-            end: r"^    \}$",
-            pattern: r"lowercased\(\)|trimmingCharacters",
-            view: View::Code,
-            message: "sections(matching:) folds the needle before sending it — the fold is the far side's, \
-                      and folding twice is the rule spelled twice",
-        },
-        // Read RAW, the way the shell's `grep -rl` did: this is a corpus ban whose subject is a
-        // call shape, and the four files that ever held it do not discuss it in prose.
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"SettingsCatalog\.sections[^)]*\.filter",
-            all: &[],
-            unless: &[],
-            view: View::Raw,
-            exempt: &[],
-            message: "{files} filters SettingsCatalog.sections itself — ask \
-                      SettingsCatalog.sections(matching:), which is the taxonomy's own search",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: "var availableFilters",
-            all: &[],
-            unless: &[],
-            view: View::Raw,
-            exempt: &[],
-            message: "availableFilters is back in {files} — it had exactly one reader, a test; assert on \
-                      the zero state the mixer renders instead",
-        },
-    ])
-}
-
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -502,57 +392,5 @@ mod tests {
              }\n\x20       return HostWorkspaceState(entries: kept)\n    }\n",
         );
         assert!(!super::the_document_has_one_emission_order(&fixture.tree()).is_clean());
-    }
-
-    /// Both indexes, the door, and a needle that crosses raw.
-    fn indexed(fixture: &Fixture) {
-        fixture
-            .write(
-                "Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift",
-                "static let rowsByCategory: [Category: [Row]] = index(allRows)\nstatic let rowsByID: \
-                 [String: Row] = index(allRows)\n",
-            )
-            .write(
-                "Sources/SlopDeskClientCore/Overlays/OverlayCoordinator.swift",
-                "let row = ActionsPaletteSource.rowsByID[id]\n",
-            )
-            .write(
-                super::SETTINGS_CATALOG,
-                "    static func sections(matching needle: String) -> [Section] {\n\x20       \
-                 slopdesk_settings_sections_matching(needle)\n    }\n",
-            );
-    }
-
-    #[test]
-    fn a_rescanned_catalog_is_red() {
-        let fixture = Fixture::new("held-indexed");
-        indexed(&fixture);
-        assert!(super::a_catalog_is_indexed_not_rescanned(&fixture.tree()).is_clean());
-
-        // Eight full passes over ~90 rows for one zero-state build.
-        fixture.write(
-            "Sources/SlopDeskClientCore/Palette/PaletteDataSource.swift",
-            "static let rowsByCategory: [Category: [Row]] = index(allRows)\nstatic let rowsByID: [String: \
-             Row] = index(allRows)\nstatic func items(in c: Category) -> [Row] { allRows.filter { \
-             $0.category == c } }\n",
-        );
-        assert!(!super::a_catalog_is_indexed_not_rescanned(&fixture.tree()).is_clean());
-
-        // The needle folded before it crosses — the rule spelled twice.
-        indexed(&fixture);
-        fixture.write(
-            super::SETTINGS_CATALOG,
-            "    static func sections(matching needle: String) -> [Section] {\n\x20       \
-             slopdesk_settings_sections_matching(needle.lowercased())\n    }\n",
-        );
-        assert!(!super::a_catalog_is_indexed_not_rescanned(&fixture.tree()).is_clean());
-
-        // And the fourth spelling, in a target the rule would have missed if it were scoped.
-        indexed(&fixture);
-        fixture.write(
-            "Sources/SlopDeskMacUI/Settings/MacSettingsNavigator.swift",
-            "let hits = SettingsCatalog.sections.filter { $0.title.lowercased().contains(q) }\n",
-        );
-        assert!(!super::a_catalog_is_indexed_not_rescanned(&fixture.tree()).is_clean());
     }
 }

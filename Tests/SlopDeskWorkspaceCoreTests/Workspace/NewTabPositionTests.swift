@@ -1,3 +1,5 @@
+import SlopDeskTestSupport
+import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -12,9 +14,6 @@ import XCTest
 /// one. Pure value-type ops — no store, no `FakePaneSession`, no SwiftUI.
 @MainActor
 final class NewTabPositionTests: XCTestCase {
-    override func setUp() { SettingsKey.store.removeObject(forKey: SettingsKey.newTabPositionKey) }
-    override func tearDown() { SettingsKey.store.removeObject(forKey: SettingsKey.newTabPositionKey) }
-
     // MARK: - Fixtures
 
     /// A single-session workspace with `tabCount` single-leaf tabs (active = `active`). Returns the
@@ -149,25 +148,26 @@ final class NewTabPositionTests: XCTestCase {
         XCTAssertTrue(next.tree.isInvariantHeld())
     }
 
-    // MARK: - SettingsKey + Defaults bridge
+    // MARK: - The config row
 
-    func testNewTabPositionWireKeyAndDefault() {
-        XCTAssertEqual(SettingsKey.newTabPositionKey, "shell.newTabPosition")
+    func testTheNewTabPositionPathIsDeclaredAndDefaultsToAuto() {
+        XCTAssertTrue(AppConfig.compiledDefaults.declaredPaths.contains("shell.new-tab-position"))
+        stateCompiledDefaults()
         XCTAssertEqual(SettingsKey.newTabPosition, .auto, "default is auto (= append)")
     }
 
-    func testNewTabPositionDefaultsBridgeRoundTrips() {
-        SettingsKey.store.set(NewTabPosition.afterCurrent.rawValue, forKey: SettingsKey.newTabPositionKey)
+    func testNewTabPositionResolvesEachTokenAndRepairs() {
+        stateSetting("shell.new-tab-position", NewTabPosition.afterCurrent.rawValue)
         XCTAssertEqual(SettingsKey.newTabPosition, .afterCurrent)
-        SettingsKey.store.set(NewTabPosition.end.rawValue, forKey: SettingsKey.newTabPositionKey)
+        stateSetting("shell.new-tab-position", NewTabPosition.end.rawValue)
         XCTAssertEqual(SettingsKey.newTabPosition, .end)
-        // A stale / invalid raw value falls back to the key default (.auto) via the RawRepresentableBridge.
-        SettingsKey.store.set("garbage", forKey: SettingsKey.newTabPositionKey)
-        XCTAssertEqual(SettingsKey.newTabPosition, .auto, "invalid raw value falls back to auto")
+        // A token no case spells falls back to the row's default.
+        stateSetting("shell.new-tab-position", "garbage")
+        XCTAssertEqual(SettingsKey.newTabPosition, .auto, "an unknown token falls back to auto")
     }
 
-    /// The raw values are the `new-tab-position` config strings — pinned so a rename can't split-brain
-    /// the persisted setting from the value a future Shell-settings row writes.
+    /// The raw values are the `shell.new-tab-position` tokens a user types — pinned so a rename cannot
+    /// silently invalidate a file someone already wrote.
     func testRawValuesMatchSlateConfig() {
         XCTAssertEqual(NewTabPosition.auto.rawValue, "auto")
         XCTAssertEqual(NewTabPosition.end.rawValue, "end")

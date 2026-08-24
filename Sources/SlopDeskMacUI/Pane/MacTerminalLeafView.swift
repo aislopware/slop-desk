@@ -59,10 +59,10 @@
 // the clamp, the jump, the words, the two measurements) are shared, and only the drawing is twice.
 
 import AppKit
-import Defaults // the two secure-input settings are OBSERVED, not read once — see `followSettings()`
 import Foundation
 import SlopDeskClientCore // TerminalPaneWiring / TerminalLeafPolicy / PaneStatusPillPresentation
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
+import SlopDeskVideoProtocol // ConfigRevision — the config-file edge the tracked read arms on
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — the two task keys
 
@@ -155,14 +155,13 @@ final class MacTerminalLeafView: NSView {
     /// on the next, which reads as the pane getting slower the longer it is open and has no crash to
     /// find it by.
     private var generation = 0
-    /// The observed "Auto Secure Input" setting. Read live, because a Settings toggle must reconcile
-    /// every open pane at once — an engaged process-global lock that outlived the setting is the
-    /// carryover footgun the SwiftUI half's `onChange` exists for.
-    private var autoSecureInput = Defaults[.autoSecureInput]
-    /// The observed "Show Secure Input Indicator" setting — the chip gate, live for the same reason.
-    private var secureInputIndicator = Defaults[.secureInputIndicator]
-    /// The Defaults stream's consumer. Cancelled when the leaf leaves the tree.
-    private var settingsTask: Task<Void, Never>?
+    /// `controls.auto-secure-input`, as last ACTED on. Kept because the lock is reconciled on the
+    /// EDGE, not on the reading: a config edit to an unrelated key re-runs ``follow()`` and must not
+    /// re-engage a process-global lock the user turned off.
+    private var autoSecureInput = SettingsKey.autoSecureInputEnabled
+    /// `controls.secure-input-indicator` — the chip gate. No edge to speak of; re-reading the pill
+    /// conditions is the whole of applying it.
+    private var secureInputIndicator = SettingsKey.secureInputIndicatorEnabled
 
     /// The two `.task(id:)` keys, as last acted on. A task fires when its key MOVES, which is the
     /// whole of ``TerminalLeafPolicy``'s argument: a key that is already the pane's id while the gate
@@ -315,7 +314,6 @@ final class MacTerminalLeafView: NSView {
             autoSecureInput: autoSecureInput,
         )
         applyCwd()
-        followSettings()
         follow()
     }
 
@@ -325,8 +323,6 @@ final class MacTerminalLeafView: NSView {
         // Supersede every armed observation FIRST: a callback that lands after the wiring is cleared
         // would re-arm against a model this leaf no longer drives.
         generation &+= 1
-        settingsTask?.cancel()
-        settingsTask = nil
         dialTask?.cancel()
         dialTask = nil
         autotypeTask?.cancel()
@@ -561,8 +557,7 @@ final class MacTerminalLeafView: NSView {
     /// back — every read below is a property access on an object this leaf already holds.
     ///
     /// The generation check is the file's other observation rule: this method is called from the
-    /// callback AND from ``attach()``, ``setLive(_:)`` and the settings stream, and an arm cannot be
-    /// cancelled. A superseded arm must therefore drop its callback instead of re-arming from it.
+    /// callback AND from ``attach()`` and ``setLive(_:)``, and an arm cannot be cancelled. A superseded arm must therefore drop its callback instead of re-arming from it.
     private func follow() {
         generation &+= 1
         let generation = generation
@@ -573,8 +568,15 @@ final class MacTerminalLeafView: NSView {
         var navigatorVisible = false
         var dial: PaneID?
         var autotype: PaneID?
+        var auto = autoSecureInput
 
         withObservationTracking {
+            // The config-file edge. `AppConfig` is a plain locked global, so the two settings below
+            // are not observable on their own — the REVISION is, and reading it here is what makes
+            // a saved config file reconcile every open pane. See ``ConfigRevision``.
+            _ = ConfigRevision.shared.generation
+            auto = SettingsKey.autoSecureInputEnabled
+            secureInputIndicator = SettingsKey.secureInputIndicatorEnabled
             conditions = pillConditions()
             hintsToggled = live?.terminalModel?.showViKeyHints ?? false
             findVisible = wiring.findBar.visible && live?.terminalModel != nil
@@ -597,6 +599,15 @@ final class MacTerminalLeafView: NSView {
             }
         }
 
+        // The lock is reconciled only on the AUTO edge: the wiring re-syncs on a pane swap, so
+        // without this an engaged process-global lock would linger past the user turning
+        // `controls.auto-secure-input` off. Inline rather than a callback, because this method IS the
+        // observation callback — a hop back through it would recurse.
+        if auto != autoSecureInput {
+            autoSecureInput = auto
+            wiring.reconcileSecureInput(live: live, autoSecureInput: auto)
+            conditions = pillConditions()
+        }
         applyChrome(conditions: conditions, hintsToggled: hintsToggled, findVisible: findVisible)
         applyNavigator(navigatorVisible)
         applyTriggers(dial: dial, autotype: autotype)
@@ -617,40 +628,6 @@ final class MacTerminalLeafView: NSView {
             secureInputIndicator: secureInputIndicator,
             syncInput: live.map { store.syncInputArmed(for: $0.id) } ?? false,
         )
-    }
-
-    /// The two settings that must be LIVE rather than read at wire time, as an `AsyncStream`.
-    ///
-    /// `Defaults` is not `@Observable`, so it cannot ride ``follow()``'s tracking; this is the
-    /// AppKit reading of the SwiftUI half's two `@Default` properties plus its
-    /// `.onChange(of: autoSecureInput)`. `initial: true` seeds both on the first iteration, which is
-    /// what makes the stored values above safe to start from a plain read.
-    private func followSettings() {
-        settingsTask?.cancel()
-        settingsTask = Task { [weak self] in
-            for await (auto, indicator) in Defaults.updates(
-                .autoSecureInput, .secureInputIndicator,
-            ) {
-                guard let self else { return }
-                await MainActor.run {
-                    self.applySettings(autoSecureInput: auto, secureInputIndicator: indicator)
-                }
-            }
-        }
-    }
-
-    private func applySettings(autoSecureInput auto: Bool, secureInputIndicator indicator: Bool) {
-        let autoChanged = auto != autoSecureInput
-        autoSecureInput = auto
-        secureInputIndicator = indicator
-        // The lock is reconciled only on the AUTO edge: the wiring re-syncs on a pane swap, so
-        // without this an engaged process-global lock would linger past the user turning "Auto Secure
-        // Input" off. The INDICATOR needs no push — it is a chip gate, and re-reading the conditions
-        // below is the whole of it.
-        if autoChanged {
-            wiring.reconcileSecureInput(live: live, autoSecureInput: auto)
-        }
-        follow()
     }
 
     // MARK: - The chrome

@@ -43,7 +43,7 @@ package enum CodeFontSync {
     /// CoreText, not AppKit, and the gate that used to sit here was SCOPE rather than necessity: the
     /// question is "what are this face's vertical metrics", the phone's terminal asks it of the same
     /// faces, and answering `nil` off AppKit pinned the phone's editor at 1.32 forever — so the code
-    /// panel's lines never lined up with the terminal beside them on iOS. ``InstalledFontFamilies``
+    /// panel's lines never lined up with the terminal beside them on iOS. `slopdesk_settings::fonts`
     /// two files over already answers the neighbouring question this way, on both halves.
     ///
     /// `NSFont(name:size:)`'s `nil` was doing double duty — resolve AND metrics — and CoreText will

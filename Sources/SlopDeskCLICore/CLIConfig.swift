@@ -1,128 +1,133 @@
-import CSlopDeskFFI
 import Foundation
-import SlopDeskArena
+import SlopDeskVideoProtocol
 
-// `slopdesk config path | edit | validate` — the Swift face of `rust/slopdesk-cli`'s `config`.
-// These operate on the optional user config FILE (XDG-style: `~/.config/slopdesk/`), which is the
-// persisted source a launch-time bridge reads. The RUNNING-app config ops
-// (`get`/`set`/`unset`/`show`/`reload`, incl. `--transient`) go over the control socket instead;
-// only `path`/`edit`/`validate` are pure file ops (the `edit` $EDITOR spawn lives in the
-// compiled-only `main.swift`).
+// `slopdesk config path | edit | validate | schema | show | get <key>` — the reading half of the CLI.
 //
-// **The split is deliberate and documented: not every `config` subcommand acts on the
-// SAME file.** slopdesk's launch-time bridge (`KeybindConfigLoader`) reads ONLY the
-// `keybind = <chord>:<action>` lines of `config.toml`; every other key (font-size, theme, …) is
-// silently ignored there and instead lives in the running app's `PreferencesStore`, reached by
-// `get`/`set`/`unset`/`show`/`reload` over the socket. So `path`/`edit`/`validate` target the KEYBIND
-// config file, and `validate` checks the file against the REAL grammar the app honours: a line that
-// isn't a parseable `keybind` directive (e.g. `font-size = 14`) is flagged — never silently called
-// "valid" — because the app would ignore it. (The `config` help spells this split out explicitly.)
+// EVERY form here reads. There is no `set` and no `unset`: the file is the truth, and a program that
+// writes a user's config file makes a setting the user cannot see in their own file. That ruling is
+// why this module lost `resolvePath(override:environment:)`, `defaultPath(environment:)` and the
+// line-by-line `validate` it used to run — the path rules, the parse and the verdict are all
+// `slopdesk-settings`'s now, reached through ``AppConfig``, which the APP reads through as well. One
+// resolver, one set of defaults, one place a key is declared.
+//
+// The `edit` $EDITOR spawn lives in the compiled-only `main.swift`; what is here is pure.
 
 public enum CLIConfig {
-    /// Env override for the config-file location (the `--config-file` flag takes precedence over this).
-    public static let configFileEnvKey = CLICompletions
-        .answer { out, cap in slopdesk_cli_config_env_key(out, cap) }
-
-    /// Resolve the config-file path: explicit `--config-file` > ``configFileEnvKey`` env > the XDG
-    /// default. The ORDER is `config.rs`'s; the environment is read here and passed by value,
-    /// because asking the environment is I/O and the crate does none.
-    public static func resolvePath(
-        override: String?,
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-    ) -> String {
-        candidates(environment) { xdg, home, fallback in
-            let explicit = Array((override ?? "").utf8)
-            let fromEnv = Array((environment[configFileEnvKey] ?? "").utf8)
-            return explicit.withUnsafeBufferPointer { flag in
-                fromEnv.withUnsafeBufferPointer { env in
-                    CLICompletions.answer { out, cap in
-                        slopdesk_cli_config_path(
-                            flag.baseAddress, flag.count, env.baseAddress, env.count,
-                            xdg.baseAddress, xdg.count, home.baseAddress, home.count,
-                            fallback.baseAddress, fallback.count, out, cap,
-                        )
-                    }
-                }
-            }
-        }
+    /// Where the config file is: `--config-file` if given, else `$SLOPDESK_CONFIG_FILE`, else
+    /// `$XDG_CONFIG_HOME/slopdesk/config.toml`, else `~/.config/slopdesk/config.toml`.
+    public static func path(override: String? = nil) -> String {
+        AppConfig.resolvedPath(explicit: override)
     }
 
-    /// `$XDG_CONFIG_HOME/slopdesk/config.toml`, else `~/.config/slopdesk/config.toml` (XDG Base Directory convention).
-    public static func defaultPath(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-    ) -> String {
-        candidates(environment) { xdg, home, fallback in
-            CLICompletions.answer { out, cap in
-                slopdesk_cli_config_default_path(
-                    xdg.baseAddress, xdg.count, home.baseAddress, home.count,
-                    fallback.baseAddress, fallback.count, out, cap,
-                )
-            }
-        }
-    }
+    /// The environment variable that overrides that path — printed beside it so `config path` says
+    /// where the answer came from.
+    public static var environmentKey: String { AppConfig.fileEnvironmentKey }
 
-    /// One config-file syntax problem (1-based line number + reason).
-    public struct ValidationError: Equatable, Sendable {
-        public let line: Int
-        public let message: String
+    /// The JSON Schema describing every key, written out of the same table the file resolves
+    /// against. This is what `docs/config.schema.json` is checked against and what an editor reads
+    /// to complete a key and underline a value outside its range.
+    public static var schema: String { AppConfig.jsonSchema() }
 
-        public init(line: Int, message: String) {
-            self.line = line
-            self.message = message
-        }
-    }
-
-    /// Validate the file against the ACTUAL keybind-file grammar the launch bridge honours.
+    /// Everything wrong with the file at ``path``, in reading order — one sentence per problem.
     ///
-    /// The app's `KeybindConfigLoader` reads ONLY `keybind = <chord>:<action>` lines from `config.toml`
-    /// and silently ignores every other key, so a generic `key = value` check would falsely call a file
-    /// full of ignored keys (`font-size = 14`) "valid". `config.rs` validates the truth instead: blank
-    /// lines, `#` comments, and `[section]` headers are skipped; every OTHER line must be a
-    /// `keybind = <value>` assignment whose `<value>` parses as a binding directive.
+    /// Empty means the file is fine, AND empty means there is no file: an install without one is
+    /// the supported shape, so it cannot be an error. A refused value is reported here and DROPPED,
+    /// never fatal — the rest of the file still loads and the row's own default answers.
     ///
-    /// The grammar is `slopdesk-terminal`'s `keybind` — the same one ``KeybindGrammar`` parses live
-    /// bindings with — so the verdict tracks exactly what the app will honour. It used to cross back
-    /// as a C callback into Swift, once per line; both ends of that round trip are now the same
-    /// side of the door.
-    public static func validate(_ contents: String) -> [ValidationError] {
-        let bytes = Array(contents.utf8)
-        return bytes.withUnsafeBufferPointer { file -> [ValidationError] in
-            let shape = slopdesk_cli_config_validate(file.baseAddress, file.count, nil, 0, nil, 0)
-            let room = shape.count
-            guard room > 0 else { return [] }
-            var records = [SlopDeskCliConfigError](
-                repeating: SlopDeskCliConfigError(), count: shape.count,
-            )
-            var arena = Data(count: shape.arena_len)
-            records.withUnsafeMutableBufferPointer { out in
-                arena.withUnsafeMutableBytes { pool in
-                    _ = slopdesk_cli_config_validate(
-                        file.baseAddress, file.count,
-                        out.baseAddress, out.count, pool.baseAddress, pool.count,
-                    )
-                }
+    /// Two sources, because they are two different kinds of wrong. The table's own diagnostics are
+    /// per-ROW — an undeclared key, a value outside its range — and `slopdesk-settings` answers
+    /// them as it parses. The `[keybind]` conflicts are per-PAIR: no single row is wrong, and the
+    /// problem only exists once both have been folded to a canonical chord.
+    public static func diagnostics(override: String? = nil) -> [String] {
+        let config = loaded(override: override)
+        return config.diagnostics + KeybindConfigLoader.conflicts(table: config.keybinds)
+    }
+
+    /// The file at ``path(override:)``, resolved. One read per call — the CLI is a process that
+    /// answers one question and exits, so there is nothing to cache and nothing to invalidate.
+    public static func loaded(override: String? = nil) -> AppConfig {
+        AppConfig.load(path: path(override: override))
+    }
+
+    /// One resolved value, rendered bare (no quotes, no `key =`) so a shell can capture it, or `nil`
+    /// for a key the table does not declare.
+    ///
+    /// A key with NO default that the file never sets (the video and agent flags, whose numbers
+    /// belong to the daemon) is absent, not empty — the caller reports "unset" rather than printing
+    /// a zero nobody chose.
+    public static func value(of key: String, in config: AppConfig) -> String? {
+        if let flag = config.flags[key] { return flag ? "true" : "false" }
+        if let int = config.ints[key] { return String(int) }
+        if let float = config.floats[key] { return String(float) }
+        if let text = config.texts[key] { return text }
+        if let list = config.lists[key] { return list.joined(separator: ",") }
+        return nil
+    }
+
+    /// The WHOLE resolved configuration as TOML — every key with the value this machine is actually
+    /// running on, grouped under its section header in path order.
+    ///
+    /// Deliberately re-pasteable: `slopdesk config show > ~/.config/slopdesk/config.toml` yields a
+    /// file that resolves to exactly what was printed. That is the one honest way to answer "what am
+    /// I running on" for a program whose whole point is that it never wrote the file. The starter
+    /// file the app creates is the opposite shape — comments only — because a file full of defaults
+    /// pins them, and then a retuned default never reaches the person who took the sample.
+    public static func show(_ config: AppConfig) -> String {
+        var lines: [String] = []
+        var section = ""
+        for key in declaredKeys(config) {
+            guard let value = rendered(key, config) else { continue }
+            let head = key.prefix(while: { $0 != "." })
+            if head != section {
+                section = String(head)
+                if !lines.isEmpty { lines.append("") }
+                lines.append("[\(section)]")
             }
-            return records.map { record in
-                let message = ArenaText.text(
-                    arena, offset: Int(record.message.offset), length: Int(record.message.length),
-                )
-                return ValidationError(line: record.line, message: message)
-            }
+            lines.append("\(key.dropFirst(section.count + 1)) = \(value)")
+        }
+        appendFreeTable("keybind", config.keybinds, quotingKeys: true, into: &lines)
+        appendFreeTable("env", config.env, quotingKeys: false, into: &lines)
+        return lines.joined(separator: "\n")
+    }
+
+    /// Every declared path, sorted, so the rendering is stable across runs and diffable.
+    private static func declaredKeys(_ config: AppConfig) -> [String] {
+        var keys = Set(config.flags.keys)
+        keys.formUnion(config.ints.keys)
+        keys.formUnion(config.floats.keys)
+        keys.formUnion(config.texts.keys)
+        keys.formUnion(config.lists.keys)
+        return keys.sorted()
+    }
+
+    /// One value as TOML — strings and list members quoted, numbers and booleans bare.
+    private static func rendered(_ key: String, _ config: AppConfig) -> String? {
+        if let flag = config.flags[key] { return flag ? "true" : "false" }
+        if let int = config.ints[key] { return String(int) }
+        if let float = config.floats[key] { return String(float) }
+        if let text = config.texts[key] { return quoted(text) }
+        if let list = config.lists[key] { return "[\(list.map(quoted).joined(separator: ", "))]" }
+        return nil
+    }
+
+    /// The `[keybind]` / `[env]` tables, whose keys are the USER's own rather than the table's.
+    /// Omitted entirely when empty — printing an empty header would invite someone to fill it in
+    /// under a section name they then have to guess the grammar of.
+    private static func appendFreeTable(
+        _ name: String, _ table: [String: String], quotingKeys: Bool, into lines: inout [String],
+    ) {
+        guard !table.isEmpty else { return }
+        if !lines.isEmpty { lines.append("") }
+        lines.append("[\(name)]")
+        for key in table.keys.sorted() {
+            let value = table[key] ?? ""
+            lines.append("\(quotingKeys ? quoted(key) : key) = \(quoted(value))")
         }
     }
 
-    /// Lends the three environment values the path rules read, each as bytes for exactly one call.
-    private static func candidates(
-        _ environment: [String: String],
-        _ ask: (UnsafeBufferPointer<UInt8>, UnsafeBufferPointer<UInt8>, UnsafeBufferPointer<UInt8>) -> String,
-    ) -> String {
-        let xdg = Array((environment["XDG_CONFIG_HOME"] ?? "").utf8)
-        let home = Array((environment["HOME"] ?? "").utf8)
-        let fallback = Array(NSHomeDirectory().utf8)
-        return xdg.withUnsafeBufferPointer { xdg in
-            home.withUnsafeBufferPointer { home in
-                fallback.withUnsafeBufferPointer { fallback in ask(xdg, home, fallback) }
-            }
-        }
+    /// A TOML basic string: the two characters that can end it early, escaped, and nothing else —
+    /// every value that reaches here came back OUT of the parser, so it is already well-formed text.
+    private static func quoted(_ text: String) -> String {
+        "\"\(text.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
     }
 }

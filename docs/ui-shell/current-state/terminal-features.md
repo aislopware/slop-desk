@@ -136,7 +136,7 @@ covers what the **embedder** wired up, what is delegated to libghostty, and what
 - `Sources/SlopDeskVideoProtocol/Settings/TerminalPreferences.swift` — the user-facing render preferences (the value)
 - `Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift` — the marshalling shim only
 - `rust/slopdesk-terminal/src/config.rs` — **where every libghostty config key is spelled**
-- `rust/slopdesk-terminal/src/` — `paste`, `pointer`, `surface`, `tracker`, `mode`, `link`, `link_hit`, `link_action`, `vimotion`, `wrap_map`, `blocks`, `keybind`, `inputbox`, `cursor_color`, `dedup`
+- `rust/slopdesk-terminal/src/` — `paste`, `pointer`, `surface`, `tracker`, `mode`, `link`, `link_hit`, `link_action`, `vimotion`, `wrap_map`, `blocks`, `keybind`, `inputbox`, `dedup`
 - `rust/slopdesk-superd/src/sniffer.rs` — the ONE pass over the outbound PTY stream (title, bell, OSC 133, OSC 7, OSC 9/777/99, OSC 9;4)
 - `rust/slopdesk-superd/src/commandblocks.rs`, `blocks.rs`, `autoprogress.rs`, `shellintegration.rs` — command blocks + the synthetic progress badge
 - `Sources/SlopDeskClaudeCode/TerminalModeTracker.swift` — the client-side OSC 133 / CSI 1049 handle over `slopdesk_mode_tracker_*`

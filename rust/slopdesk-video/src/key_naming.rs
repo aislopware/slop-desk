@@ -1,31 +1,21 @@
-//! What one key event is CALLED, for the two surfaces that key bindings on it.
+//! What one key event is CALLED, for the dispatcher that keys bindings on it.
 //!
-//! A chord is looked up twice in this app: the dispatcher resolves a live keystroke against the
-//! binding table, and the Settings recorder captures one to persist. Both start from the same two
-//! signals — a hardware key code and the characters the layout produces with ⌘⌥⌃ folded out — and
-//! both must land on the SAME name, or a rebind captured in Settings never matches the chord the
-//! dispatcher builds. That is why the table lives here once instead of beside each caller.
+//! A live keystroke arrives as two signals — a hardware key code and the characters the layout
+//! produces with ⌘⌥⌃ folded out — and has to land on the name the binding table is keyed by. That
+//! table lives here once instead of beside each caller.
 //!
 //! ## The names are the config file's names
 //!
 //! [`NamedKey::canonical`] returns exactly the spellings `slopdesk_terminal::keybind` stores, so a
-//! chord captured in the recorder is a chord the config grammar can express. Nothing here depends
-//! on that crate — the agreement is pinned by a test where both are visible, in `slopdesk-ffi`.
+//! chord the dispatcher builds is a chord a `keybind` line in the config file can name. Nothing
+//! here depends on that crate — the agreement is pinned by a test where both are visible, in
+//! `slopdesk-ffi`.
 //!
-//! ## Two callers, two acceptance rules, on purpose
+//! ## The space bar is the one conditional row
 //!
-//! Space is a NAMED key for the dispatcher and no key at all for the recorder: ⌃⇧Space enters Vi
-//! mode, while a bare Space is typing that must reach the terminal — and a recorder that offered
-//! Space would let the user bind the space bar itself. And the recorder is stricter about printable
-//! characters than the dispatcher, because its answer is PERSISTED: a key it cannot spell back is a
-//! config line nobody can read, where the dispatcher merely fails to match this keystroke.
-
-use crate::key_capture::is_escape;
-
-/// `kVK_Delete` — Backspace, which CLEARS a binding rather than recording one.
-pub const KEY_CODE_DELETE: u16 = 51;
-/// `kVK_ForwardDelete` — the other clear key.
-pub const KEY_CODE_FORWARD_DELETE: u16 = 117;
+//! A bare or ⇧-only Space is typing that must reach the terminal; with ⌃, ⌥ or ⌘ held it is the
+//! Vi-mode chord instead. That is the whole of why [`dispatch_named_key`] takes a modifier flag
+//! where [`named_key`] does not.
 
 /// A non-printable key the workspace binds by name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +112,7 @@ impl NamedKey {
     }
 }
 
-/// The named key a hardware code is, EXCLUDING the space bar.
+/// The named key a hardware code is, before the space bar's conditional row.
 ///
 /// Return and keypad Enter fold onto one name: they are the same intent, and a binding made on one
 /// keyboard has to fire on the other.
@@ -173,61 +163,6 @@ pub fn dispatch_base_character(characters_ignoring_modifiers: &str) -> Option<ch
     lowercased(first)
 }
 
-/// The printable base character the RECORDER will persist.
-///
-/// Stricter than the dispatcher's by one clause: the character must be ASCII or a letter. The
-/// recorder's answer is written to a config file and read back by the chord grammar, so a key it
-/// cannot spell has to be refused at capture time rather than stored as a chord nobody can type.
-#[must_use]
-pub fn capture_base_character(characters_ignoring_modifiers: &str) -> Option<char> {
-    let first = dispatch_base_character(characters_ignoring_modifiers)?;
-    (first.is_ascii() || first.is_alphabetic()).then_some(first)
-}
-
-/// What capturing one keystroke in the chord recorder means.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CaptureOutcome {
-    /// Escape — stop recording and change nothing.
-    Cancel,
-    /// Backspace or Forward-Delete — CLEAR the binding, restoring the registry default.
-    Clear,
-    /// A pure modifier, a dead key, or anything unspellable: keep recording.
-    #[default]
-    Ignore,
-    /// Record this keystroke's base key as the override.
-    Bind,
-}
-
-/// What one captured keystroke does to the binding being recorded.
-///
-/// The clear keys are checked BEFORE the printable base: Backspace's characters are the DEL scalar,
-/// which is neither whitespace nor a control character by every naive test, so a recorder that
-/// asked for the base key first would store `\u{7f}` as a chord instead of clearing the binding.
-#[must_use]
-pub fn capture_outcome(key_code: u16, characters_ignoring_modifiers: &str) -> CaptureOutcome {
-    if is_escape(key_code) {
-        return CaptureOutcome::Cancel;
-    }
-    if key_code == KEY_CODE_DELETE || key_code == KEY_CODE_FORWARD_DELETE {
-        return CaptureOutcome::Clear;
-    }
-    if capture_base_key(key_code, characters_ignoring_modifiers).is_some() {
-        CaptureOutcome::Bind
-    } else {
-        CaptureOutcome::Ignore
-    }
-}
-
-/// The base key a captured keystroke would be stored under, or `None` when there is nothing to
-/// store.
-#[must_use]
-pub fn capture_base_key(key_code: u16, characters_ignoring_modifiers: &str) -> Option<String> {
-    named_key(key_code).map_or_else(
-        || capture_base_character(characters_ignoring_modifiers).map(String::from),
-        |named| Some(named.canonical().to_owned()),
-    )
-}
-
 /// Whether a character is a C0 control or DEL — never a base key, however printable it looks.
 const fn is_control(character: char) -> bool {
     let value = character as u32;
@@ -246,10 +181,7 @@ fn lowercased(character: char) -> Option<char> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CaptureOutcome, NamedKey, capture_base_character, capture_base_key, capture_outcome,
-        dispatch_base_character, dispatch_named_key, named_key,
-    };
+    use super::{NamedKey, dispatch_base_character, dispatch_named_key, named_key};
 
     #[test]
     fn the_two_surfaces_read_the_same_table() {
@@ -268,7 +200,7 @@ mod tests {
     fn the_space_bar_is_a_chord_only_with_a_non_shift_modifier() {
         assert_eq!(dispatch_named_key(49, true), Some(NamedKey::Space));
         assert_eq!(dispatch_named_key(49, false), None, "a bare space is typing");
-        assert_eq!(named_key(49), None, "the recorder never offers the space bar");
+        assert_eq!(named_key(49), None, "the unconditional table has no space row");
     }
 
     #[test]
@@ -310,32 +242,10 @@ mod tests {
     }
 
     #[test]
-    fn the_recorder_refuses_what_it_could_not_spell_back() {
-        assert_eq!(capture_base_character("é"), Some('é'), "a letter is spellable");
-        assert_eq!(capture_base_character("→"), None, "an arrow glyph is not");
-        assert_eq!(
-            dispatch_base_character("→"),
-            Some('→'),
-            "the dispatcher merely fails to match it, so it need not refuse it"
-        );
-    }
-
-    #[test]
-    fn backspace_clears_before_its_characters_are_ever_read() {
-        // The bug this ordering exists for: DEL is ASCII and not whitespace, so a base-key-first
-        // recorder stored it as a junk chord instead of clearing the binding.
-        assert_eq!(capture_outcome(51, "\u{7f}"), CaptureOutcome::Clear);
-        assert_eq!(capture_outcome(117, "\u{7f}"), CaptureOutcome::Clear);
-        assert_eq!(capture_outcome(53, ""), CaptureOutcome::Cancel);
-    }
-
-    #[test]
-    fn a_keystroke_with_nothing_to_store_keeps_recording() {
-        assert_eq!(capture_outcome(999, ""), CaptureOutcome::Ignore);
-        assert_eq!(capture_outcome(49, " "), CaptureOutcome::Ignore, "the space bar");
-        assert_eq!(capture_outcome(0, "a"), CaptureOutcome::Bind);
-        assert_eq!(capture_base_key(0, "A").as_deref(), Some("a"));
-        assert_eq!(capture_base_key(36, "\r").as_deref(), Some("return"));
-        assert_eq!(capture_base_key(999, "\u{7f}"), None);
+    fn a_glyph_no_config_line_could_spell_still_reaches_the_dispatcher() {
+        // The dispatcher does not have to REFUSE what the config grammar cannot write: a chord
+        // nobody can spell in `config.toml` is a chord nothing binds, so it simply fails to match.
+        assert_eq!(dispatch_base_character("→"), Some('→'));
+        assert_eq!(dispatch_base_character("é"), Some('é'));
     }
 }

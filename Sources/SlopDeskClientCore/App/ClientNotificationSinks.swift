@@ -73,8 +73,8 @@ package enum ClientNotificationSinks {
             let verdict = AgentSoundPolicy.sound(
                 needsInput: notice.needsInput,
                 sourcePaneFocused: notice.sourcePaneFocused,
-                soundTaskComplete: Defaults[.agentSoundTaskComplete],
-                soundAwaitInput: Defaults[.agentSoundAwaitInput],
+                soundTaskComplete: SettingsKey.agentSoundTaskCompleteEnabled,
+                soundAwaitInput: SettingsKey.agentSoundAwaitInputEnabled,
             )
             var banner: AgentSound?
             switch cue {

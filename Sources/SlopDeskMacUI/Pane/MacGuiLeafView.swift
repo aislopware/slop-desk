@@ -24,10 +24,10 @@
 // gutter here is wasted stream area rather than a reading margin. The chrome floats over it.
 
 import AppKit
-import Defaults
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate
+import SlopDeskVideoProtocol // ConfigRevision — the config-file edge the tracked read arms on
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
@@ -86,8 +86,9 @@ final class MacGuiLeafView: NSView {
     /// Supersedes an armed observation. An arm cannot be cancelled, so a stale callback drops itself.
     private var generation = 0
     private var isWired = false
-    private var settingsTask: Task<Void, Never>?
-    private var satelliteBackgroundPointer = Defaults[.satelliteBackgroundPointer]
+    /// `desktop.satellite-background-pointer`, re-read by ``follow()`` off ``ConfigRevision`` — it
+    /// re-pushes the GATE rather than remounting, which is the whole point of `setPaneGates`.
+    private var satelliteBackgroundPointer = SettingsKey.satelliteBackgroundPointerEnabled
 
     /// Last values of the four things the SwiftUI half gave an `.onChange` each. Optional-less: every
     /// one has a well-defined false/empty reading for a pane with no model.
@@ -212,7 +213,6 @@ final class MacGuiLeafView: NSView {
     private func attach() {
         guard !isWired else { return }
         isWired = true
-        followSettings()
         follow()
     }
 
@@ -220,8 +220,6 @@ final class MacGuiLeafView: NSView {
         guard isWired else { return }
         isWired = false
         generation &+= 1
-        settingsTask?.cancel()
-        settingsTask = nil
     }
 
     /// The pane is closed for good.
@@ -383,6 +381,10 @@ final class MacGuiLeafView: NSView {
         var chrome = Chrome()
 
         withObservationTracking {
+            // The config-file edge — `AppConfig` is a plain locked global, so the setting below is
+            // observable only through the revision. See ``ConfigRevision``.
+            _ = ConfigRevision.shared.generation
+            satelliteBackgroundPointer = SettingsKey.satelliteBackgroundPointerEnabled
             display = self.display
             activationKey = GuiPaneReadout.activationKey(
                 paneHash: live?.id.hashValue ?? 0,
@@ -577,21 +579,6 @@ final class MacGuiLeafView: NSView {
         guard show != showStats else { return }
         showStats = show
         if isWired { follow() }
-    }
-
-    /// The one setting that must be LIVE rather than read at mount. `Defaults` is not `@Observable`,
-    /// so it cannot ride ``follow()``'s tracking — this is the AppKit reading of the SwiftUI half's
-    /// `@Default(.satelliteBackgroundPointer)`, and it re-pushes the GATE rather than remounting,
-    /// which is the whole point of `setPaneGates` existing.
-    private func followSettings() {
-        settingsTask?.cancel()
-        settingsTask = Task { [weak self] in
-            for await value in Defaults.updates(.satelliteBackgroundPointer) {
-                guard let self else { return }
-                satelliteBackgroundPointer = value
-                push()
-            }
-        }
     }
 
     // MARK: - The file drop (PATH 4)

@@ -726,7 +726,7 @@ const CITED_SUFFIXES: [&str; 9] = [
 ];
 
 /// The roots a source citation may be written against. A comment cites either the full repo path or
-/// the tail of one (`SlopDeskPhoneUI/Settings/SettingsPages.swift`), and both must resolve.
+/// the tail of one (`SlopDeskPhoneUI/Pane/TerminalLeafView.swift`), and both must resolve.
 const CITED_ROOTS: [&str; 8] = [
     "Sources",
     "Tests",

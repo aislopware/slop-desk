@@ -24,11 +24,11 @@
 // `withObservationTracking` and nothing else.
 
 #if os(iOS)
-import Defaults // observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
 import Foundation
 import SlopDeskClientCore
 import SlopDeskSlate
 import SlopDeskTerminal // TerminalViewportSnapshotting — the letterbox reads the live cell advance.
+import SlopDeskVideoProtocol // ConfigRevision — what makes the two secure-input reads live
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // PaneID — the autotype seam's task key.
 import SwiftUI
@@ -61,16 +61,24 @@ struct TerminalLeafView: View {
     /// `@State`s this replaced did.
     @State private var wiring = TerminalPaneWiring()
 
-    /// The LIVE "Auto Secure Input" setting, OBSERVED (not just read at wire time) so a
-    /// Settings toggle reconciles every open pane at once. Reading it as `@Default` registers observation, so the
-    /// body re-renders on the change edge and ``onChange(of:)`` pushes the new value into this pane's
-    /// ``SecureKeyboardEntryController`` (releasing an engaged process-global lock when turned OFF) AND the model's
-    /// pill mirror — the "live" contract the Settings footer claims (watch for the carryover footgun).
-    @Default(.autoSecureInput) private var autoSecureInput
-    /// The LIVE "Show Secure Input Indicator" setting. OBSERVED so flipping it re-renders the
-    /// leaf and ``PaneStatusPillPresentation`` re-evaluates the secure-input pill at once — turning it
-    /// off mid-prompt without waiting for a pane swap or the next echo edge.
-    @Default(.secureInputIndicator) private var secureInputIndicator
+    /// The LIVE `controls.auto-secure-input` setting, re-read on every ``ConfigRevision`` bump rather
+    /// than once at wire time, so a saved config file reconciles every open pane at once. Reading the
+    /// revision registers the observation, so the body re-renders on the change edge and
+    /// ``onChange(of:)`` pushes the new value into this pane's ``SecureKeyboardEntryController``
+    /// (releasing an engaged process-global lock when turned OFF) AND the model's pill mirror — which
+    /// is what keeps the carryover footgun shut.
+    private var autoSecureInput: Bool {
+        _ = ConfigRevision.shared.generation
+        return SettingsKey.autoSecureInputEnabled
+    }
+
+    /// The LIVE `controls.secure-input-indicator` setting, live for the same reason: flipping it
+    /// re-renders the leaf and ``PaneStatusPillPresentation`` re-evaluates the secure-input pill at
+    /// once, rather than waiting for a pane swap or the next echo edge.
+    private var secureInputIndicator: Bool {
+        _ = ConfigRevision.shared.generation
+        return SettingsKey.secureInputIndicatorEnabled
+    }
 
     /// The single overlay coordinator, used ONLY to surface a transient error
     /// toast when a host open/reveal RPC fails — so the action is never a SILENT no-op. `nil` outside the app
@@ -119,8 +127,8 @@ struct TerminalLeafView: View {
         // swap, so without this an engaged process-global lock + the pill would linger past
         // the user turning "Auto Secure Input" OFF — the carryover footgun. Pushing the new value into BOTH the
         // controller (releases the lock on the OFF edge) AND the model's pill mirror reconciles them at once.
-        // The indicator change needs no push — `secureInputIndicator` as `@Default` already re-renders
-        // the pill gate; the reconcile keeps the model mirror authoritative if a future read moves off it.
+        // The indicator change needs no push — `secureInputIndicator` re-reads on the same edge and
+        // already re-renders the pill gate; the reconcile keeps the model mirror authoritative if a future read moves off it.
         .onChange(of: autoSecureInput) {
             wiring.reconcileSecureInput(live: live, autoSecureInput: autoSecureInput)
         }

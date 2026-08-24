@@ -47,7 +47,7 @@ pub mod rust_boundaries;
 pub mod screend;
 pub mod screend_wire;
 pub mod settings_catalog;
-pub mod settings_rows;
+pub mod settings_is_a_file;
 pub mod shared_constants;
 pub mod sidecar_clis;
 pub mod sidecar_seams;
@@ -530,11 +530,6 @@ pub fn registry() -> Vec<Rule> {
             check: terminal_config::one_rule_for_pane_directory,
         },
         Rule {
-            name: "keybindings-search",
-            origin: "check-supervisor.sh (deleted)",
-            check: terminal_config::keybindings_search_crosses_once_for,
-        },
-        Rule {
             name: "client-send-keys",
             origin: "check-supervisor.sh (deleted)",
             check: terminal_config::client_send_keys_asks_one,
@@ -663,11 +658,6 @@ pub fn registry() -> Vec<Rule> {
             name: "split-palette",
             origin: "check-supervisor.sh (deleted)",
             check: split_surfaces::one_palette_two_frameworks,
-        },
-        Rule {
-            name: "split-bespoke-settings",
-            origin: "check-supervisor.sh (deleted)",
-            check: split_surfaces::one_bespoke_settings_surface,
         },
         Rule {
             name: "cli-folder-frecency",
@@ -870,9 +860,9 @@ pub fn registry() -> Vec<Rule> {
             check: cross_twins::the_loop_shaped_crossings_are_whole_collection_doors,
         },
         Rule {
-            name: "settings-option-groups",
-            origin: "check-supervisor.sh (deleted)",
-            check: settings_catalog::the_option_groups_cross_whole_and_once,
+            name: "settings-is-a-file",
+            origin: "docs/58",
+            check: settings_is_a_file::the_settings_gui_stays_deleted,
         },
         Rule {
             name: "settings-constant-answers",
@@ -1100,11 +1090,6 @@ pub fn registry() -> Vec<Rule> {
             check: held_values::the_document_has_one_emission_order,
         },
         Rule {
-            name: "catalog-indexed-once",
-            origin: "docs/55 §8",
-            check: held_values::a_catalog_is_indexed_not_rescanned,
-        },
-        Rule {
             name: "macui-git-ladder",
             origin: "docs/55 §8",
             check: macui_memos::the_git_line_stays_measured,
@@ -1168,11 +1153,6 @@ pub fn registry() -> Vec<Rule> {
             name: "bucket-from-the-crate",
             origin: "docs/55 §6",
             check: rate_and_range::an_anti_flood_bucket_comes_from_the_crate,
-        },
-        Rule {
-            name: "stepper-census",
-            origin: "docs/55 §8",
-            check: rate_and_range::the_stepper_vocabulary_is_counted,
         },
         Rule {
             name: "undecodable-stream-ends",
@@ -1258,11 +1238,6 @@ pub fn registry() -> Vec<Rule> {
             name: "encoder-defaults",
             origin: "docs/55 §8",
             check: crate_defaults::the_encoder_defaults_are_the_crates,
-        },
-        Rule {
-            name: "settings-row-whole",
-            origin: "docs/55 §8",
-            check: crate_defaults::a_settings_row_crosses_whole,
         },
         Rule {
             name: "rail-relabel-once",
@@ -1453,26 +1428,6 @@ pub fn registry() -> Vec<Rule> {
             name: "design-floor",
             origin: "check-supervisor.sh (deleted)",
             check: panel_shells::one_design_floor_two_renderers,
-        },
-        Rule {
-            name: "settings-row-naming",
-            origin: "check-supervisor.sh (deleted)",
-            check: settings_rows::a_setting_is_named_once,
-        },
-        Rule {
-            name: "settings-key-spelling",
-            origin: "check-supervisor.sh (deleted)",
-            check: settings_rows::a_settings_key_is_spelled_once,
-        },
-        Rule {
-            name: "settings-page-shape",
-            origin: "check-supervisor.sh (deleted)",
-            check: settings_rows::a_settings_page_is_shaped_once,
-        },
-        Rule {
-            name: "chord-editor-twins",
-            origin: "check-supervisor.sh (deleted)",
-            check: settings_rows::one_chord_editor_drawn_twice,
         },
         Rule {
             name: "untrusted-regex-engine",

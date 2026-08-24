@@ -382,8 +382,8 @@ of a gap in the numbering.
   siblings, and that half is correct: the verb was absent from the table until 2026-08-22, which made it the
   one designed verb the CLI called a typo. **The rest of the row is false.** It claimed switching the active
   theme "ships today under the theme key" of the settings verb; the `theme` config key and the built-in
-  catalogue were deleted on 2026-08-08 with the theme picker, so `config set theme <name>` has nothing to
-  set. Switching the active theme is therefore NOT YET IMPLEMENTED, and cannot be until a theme surface
+  catalogue were deleted on 2026-08-08 with the theme picker, so a `theme` line in `config.toml` has
+  nothing to name. (The CLI only reads the file; nothing in the app writes a setting.) Switching the active theme is therefore NOT YET IMPLEMENTED, and cannot be until a theme surface
   exists to switch. The same false claim used to be repeated inside `vocabulary.rs` (the comment at the
   `theme` entry, and "Already ships in the app" on both `import` forms); all three were corrected on
   2026-08-22, so the code and this row now agree. The row also cited

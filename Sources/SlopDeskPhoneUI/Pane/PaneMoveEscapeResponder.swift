@@ -15,7 +15,7 @@
 // FOCUS — and a pane-move drag is a `DragGesture` that never takes any: the terminal the finger
 // started over still holds it, which is exactly why the Mac's half is a monitor rather than
 // `.onExitCommand`. UIKit has no monitor to install, so a key that no first responder is going to
-// deliver can only be read by BECOMING one. The shape is ``KeybindingCaptureHost``'s, which reads
+// deliver can only be read by BECOMING one. The shape is a zero-sized UIKit host's, which reads
 // hardware presses for the chord recorder the same way and for the same reason.
 //
 // ## Armed by the drag, and only where there is a key to press
@@ -48,7 +48,7 @@
 // still reaches the terminal. Here the keyboard is the drag's for its whole duration: a non-cancel
 // press goes on down this view's chain, which is the canvas's SIBLING and not the terminal's
 // ancestor, so it reaches nothing. That is the price of the only mechanism iOS offers, it is
-// bounded by the length of a held gesture, and it is the same trade ``KeybindingCaptureView``
+// bounded by the length of a held gesture, and it is the same trade a first-responder key reader
 // makes while a row records.
 
 #if os(iOS)
@@ -93,7 +93,7 @@ struct PaneMoveEscapeResponder: UIViewRepresentable {
     }
 }
 
-/// The responder itself. Deliberately NOT a `UIKeyInput`, for ``KeybindingCaptureView``'s reason:
+/// The responder itself. Deliberately NOT a `UIKeyInput`, for the reason above:
 /// becoming first responder must not raise the software keyboard — a keyboard that appeared because
 /// the user grabbed a pane would be the same layout shift the hardware-keyboard gate exists to
 /// avoid.

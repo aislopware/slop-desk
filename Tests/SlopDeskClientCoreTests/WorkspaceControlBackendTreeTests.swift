@@ -7,8 +7,8 @@
 // `cd /Users/x/My Project` / `less /tmp/my file.txt` raw, word-splitting on the space), and the scope
 // assertions fail on the pre-fix `isSystem: true`-for-everything `listFonts`. None is tautological.
 //
-// Hang-safe (CLAUDE.md rule #6): a tree-model store over a recording in-memory fake, an isolated
-// `PreferencesStore` + a temp-file `FolderFrecencyStore` — no socket, no GUI, no SCStream/VT/Metal/NSWindow.
+// Hang-safe (CLAUDE.md rule #6): a tree-model store over a recording in-memory fake and a temp-file
+// `FolderFrecencyStore` — no socket, no GUI, no SCStream/VT/Metal/NSWindow.
 
 import SlopDeskWorkspaceModel
 import XCTest
@@ -17,8 +17,8 @@ import XCTest
 
 @MainActor
 final class WorkspaceControlBackendTreeTests: XCTestCase {
-    /// The backend holds `preferences` + `folders` WEAKLY (the app owns them); the test must retain them for
-    /// the method's duration or `jump`/`learn` degrade to nil mid-test.
+    /// The backend holds `folders` WEAKLY (the app owns it); the test must retain it for the method's
+    /// duration or `jump`/`learn` degrade to nil mid-test.
     private var retained: [AnyObject] = []
 
     // The @objc XCTestCase override must keep the throwing signature (a non-throwing
@@ -37,19 +37,13 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
     private func makeBackend(
         _ store: WorkspaceStore,
         shimGrace: Duration = .milliseconds(1500),
-        _ name: String = #function,
     ) -> WorkspaceControlBackend {
-        let suite = "WorkspaceControlBackendTreeTests." + name
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        let prefs = PreferencesStore(defaults: defaults, sidecarURL: nil, applyOnInit: false)
         let folders = FolderFrecencyStore(
             fileURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("frecency-\(UUID().uuidString).json"),
         )
-        retained.append(prefs)
         retained.append(folders)
-        return WorkspaceControlBackend(store: store, preferences: prefs, folders: folders, shimLaunchGrace: shimGrace)
+        return WorkspaceControlBackend(store: store, folders: folders, shimLaunchGrace: shimGrace)
     }
 
     private func recording(_ store: WorkspaceStore, _ id: PaneID) throws -> RecordingPaneSession {

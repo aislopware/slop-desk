@@ -1,38 +1,37 @@
 //! # `slopdesk-settings`
 //!
-//! What Settings OFFERS, as data, plus the two projections the window chrome switches between.
+//! What slopdesk can be CONFIGURED to do, as data, plus the two projections the window chrome
+//! switches between.
 //!
-//! - [`settings_catalog`] — the sections, the choices in every group, and the scalar ladders' stops
-//!   and readouts.
-//! - [`settings_rows`] — the other half of the same page: every setting as a ROW, with the one
-//!   label and the one description it carries wherever it appears.
-//! - [`settings_layout`] — how those rows fall into pages, and what a page looks like once it has
-//!   them.
+//! - [`config`] — every setting: its path in `config.toml`, its domain, its default and its one
+//!   sentence; the resolver that reads a file against that table; and the JSON Schema written out
+//!   of it so an editor can complete and validate the file as it is typed.
 //! - [`chrome`] — what the window shows AROUND the panes: the tabs panel that must not fight a
 //!   manual collapse, the close prompt, and the Dock tile.
 //! - [`responsive`] — the one switch between the two projections, and the live-video ceiling that
 //!   scales with the machine behind it.
 //!
-//! ## Why this is not a module of `slopdesk-workspace`
+//! ## Why there is no Settings window any more
 //!
-//! Five thousand lines that decide nothing. A change in here changes a string, a stop or a default
-//! — never a behaviour — and while it sat beside the tree operations, anything that wanted to know
-//! a slider's default had the workspace document's domain rules underneath it.
+//! There was one — four thousand lines of pages, rows, controls and an index over them, in front of
+//! a first-launch flow that asked four questions. Every answer it collected was already written
+//! down as a DEFAULT in the table it read. So the window's whole job was to re-ask a question the
+//! table had answered better, and the onboarding asked it before the user had seen a terminal.
+//! Both are deleted. The install is the setup; the file is for the reader who wants to disagree,
+//! and the schema is what makes disagreeing pleasant.
 //!
 //! ## Invariants
 //!
 //! * **No `unsafe`, enforced by `forbid(unsafe_code)`.**
-//! * **No dependencies, ours or anyone else's.** The module graph says this crate earns the leaf
-//!   position rather than merely occupying it: nothing in here reaches for a pane, a tab or a
-//!   session. A catalogue that needed one would not be a catalogue.
-//! * **One deliberate cycle, and it is why this is one crate rather than two.** [`settings_layout`]
-//!   and [`settings_rows`] are mutually recursive — a row needs the page it lands on and a page
-//!   needs its rows — so the split line cannot pass between them.
-//! * **Total functions.** Nothing here indexes, unwraps or panics — the lint table denies all
-//!   three.
+//! * **Three dependencies, and each is here for the file.** `toml` parses it, `slopdesk-terminal`
+//!   owns the control vocabularies a choice key must not respell, and nothing else. The old "zero
+//!   dependencies" rule was a property of a catalogue that decided nothing; a config file that
+//!   parses a real document format cannot keep it, and pretending otherwise would mean a
+//!   hand-rolled parser beside the ecosystem's.
+//! * **Total functions.** Nothing here indexes, unwraps or panics — the lint table denies all three
+//!   — and [`config::resolve`] cannot fail at all: a file that is not TOML resolves to the defaults
+//!   plus a diagnostic, because a syntax error must never be the reason a terminal will not open.
 
 pub mod chrome;
+pub mod config;
 pub mod responsive;
-pub mod settings_catalog;
-pub mod settings_layout;
-pub mod settings_rows;

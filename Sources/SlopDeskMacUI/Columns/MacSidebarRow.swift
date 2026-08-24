@@ -2,7 +2,7 @@
 //
 // otty-bare: a title on one 32pt line and ONE trailing slot. The richness lives in the tooltip and
 // the context menu, both of which are values from below (``SidebarRowReading/tooltip`` and
-// ``SidebarRowMenu/entries(for:store:preventSleep:)``) rather than decisions taken here.
+// ``SidebarRowMenu/entries(for:store:)``) rather than decisions taken here.
 //
 // WHAT THIS VIEW OWNS is the four things a framework has to answer for itself:
 //
@@ -37,7 +37,6 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
     private let paneDrag: PaneDragCoordinator?
     /// Reads and writes the host-local prevent-sleep flag for the context menu. `nil` ⇒ the row is
     /// absent, never a dead control.
-    private let preventSleep: (get: () -> Bool, set: (Bool) -> Void)?
     /// The kind's generic title, for a row whose whole title chain comes up empty.
     private let fallbackTitle: String
 
@@ -67,12 +66,11 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
 
     init(
         row: RailRow, store: WorkspaceStore, paneDrag: PaneDragCoordinator?,
-        preventSleep: (get: () -> Bool, set: (Bool) -> Void)?, fallbackTitle: String,
+        fallbackTitle: String,
     ) {
         self.row = row
         self.store = store
         self.paneDrag = paneDrag
-        self.preventSleep = preventSleep
         self.fallbackTitle = fallbackTitle
         reading = SidebarRowPresentation.reading(
             for: row, store: store, fallbackTitle: fallbackTitle,
@@ -424,9 +422,7 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
-        for entry in SidebarRowMenu.entries(
-            for: row.id, store: store, preventSleep: preventSleep?.get(),
-        ) {
+        for entry in SidebarRowMenu.entries(for: row.id, store: store) {
             switch entry {
             case .separator:
                 menu.addItem(.separator())
@@ -458,10 +454,7 @@ final class MacSidebarRowView: NSView, NSTextFieldDelegate {
     @objc
     private func flipSwitch(_ sender: NSMenuItem) {
         guard let flag = sender.representedObject as? SidebarRowSwitch else { return }
-        SidebarRowMenu.flip(flag, paneID: row.id, store: store) { [preventSleep] in
-            guard let preventSleep else { return }
-            preventSleep.set(!preventSleep.get())
-        }
+        SidebarRowMenu.flip(flag, paneID: row.id, store: store)
     }
 
     // MARK: The rename field

@@ -4,8 +4,8 @@
 // success while no badge was ever set; each assertion below fails on that pre-fix backend (the override is
 // never written), so none is tautological.
 //
-// Hang-safe (CLAUDE.md rule #6): a tree-model store over the `MountTestPaneSession` fake, an isolated
-// `PreferencesStore` + a temp-file `FolderFrecencyStore` — no socket, no GUI, no video/SCStream/Metal.
+// Hang-safe (CLAUDE.md rule #6): a tree-model store over the `MountTestPaneSession` fake and a
+// temp-file `FolderFrecencyStore` — no socket, no GUI, no video/SCStream/Metal.
 
 import XCTest
 @testable import SlopDeskClientCore
@@ -19,16 +19,12 @@ final class WorkspaceControlBackendTabBadgeTests: XCTestCase {
         return store
     }
 
-    private func makeBackend(_ store: WorkspaceStore, _ name: String = #function) -> WorkspaceControlBackend {
-        let suite = "WorkspaceControlBackendTabBadgeTests." + name
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        let prefs = PreferencesStore(defaults: defaults, sidecarURL: nil, applyOnInit: false)
+    private func makeBackend(_ store: WorkspaceStore) -> WorkspaceControlBackend {
         let folders = FolderFrecencyStore(
             fileURL: FileManager.default.temporaryDirectory
                 .appendingPathComponent("frecency-\(UUID().uuidString).json"),
         )
-        return WorkspaceControlBackend(store: store, preferences: prefs, folders: folders)
+        return WorkspaceControlBackend(store: store, folders: folders)
     }
 
     /// `tab badge --kind` with NO tab id targets the FOCUSED tab and WRITES the per-tab override the rail +

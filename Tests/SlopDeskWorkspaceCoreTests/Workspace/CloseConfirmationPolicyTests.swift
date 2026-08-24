@@ -1,4 +1,6 @@
 import Foundation
+import SlopDeskTestSupport
+import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -59,18 +61,6 @@ final class CloseConfirmationPolicyTests: XCTestCase {
 /// ``SettingsKey/closeConfirmTab``. Drives a LIVE `.tree` store through the `FakePaneSession` seam.
 @MainActor
 final class CloseConfirmationStoreTests: XCTestCase {
-    private let keys = [SettingsKey.closeConfirmTabKey, SettingsKey.closeConfirmWindowKey]
-
-    override func setUp() {
-        super.setUp()
-        for key in keys { SettingsKey.store.removeObject(forKey: key) }
-    }
-
-    override func tearDown() {
-        for key in keys { SettingsKey.store.removeObject(forKey: key) }
-        super.tearDown()
-    }
-
     // MARK: - Fixtures
 
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
@@ -100,29 +90,29 @@ final class CloseConfirmationStoreTests: XCTestCase {
         return (TreeWorkspace(sessions: [session], activeSessionID: session.id), panes)
     }
 
-    // MARK: - SettingsKey defaults + wire keys + Defaults round-trip
+    // MARK: - The two rows: defaults, declared paths, repair
 
-    func testCloseConfirmDefaultsAndKeyStringsAndRepair() {
-        // Unset → default `.process` (the busy-only guard, byte-identical behaviour).
+    func testCloseConfirmDefaultsPathsAndRepair() {
+        // No config file → `.process` (the busy-only guard, byte-identical behaviour).
+        stateCompiledDefaults()
         XCTAssertEqual(SettingsKey.closeConfirmTab, .process)
         XCTAssertEqual(SettingsKey.closeConfirmWindow, .process)
-        // The wire key strings are the single source of truth shared with the Settings UI — a rename that
-        // split-brained the picker from these fire-sites fails here.
-        XCTAssertEqual(SettingsKey.closeConfirmTabKey, "shell.closeConfirm.tab")
-        XCTAssertEqual(SettingsKey.closeConfirmWindowKey, "shell.closeConfirm.window")
-        // An explicit config value round-trips through Defaults; an invalid stored value repairs.
-        SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmTabKey)
+        // The PATHS are what the user typed in their own file — a rename orphans their choice silently.
+        XCTAssertTrue(AppConfig.compiledDefaults.declaredPaths.contains("shell.close-confirm-tab"))
+        XCTAssertTrue(AppConfig.compiledDefaults.declaredPaths.contains("shell.close-confirm-window"))
+        // A stated token resolves; a token no case spells repairs.
+        stateSetting("shell.close-confirm-tab", "always")
         XCTAssertEqual(SettingsKey.closeConfirmTab, .always)
-        SettingsKey.store.set("multiple_tabs", forKey: SettingsKey.closeConfirmWindowKey)
+        stateSetting("shell.close-confirm-window", "multiple_tabs")
         XCTAssertEqual(SettingsKey.closeConfirmWindow, .multipleTabs)
-        SettingsKey.store.set("garbage", forKey: SettingsKey.closeConfirmWindowKey)
-        XCTAssertEqual(SettingsKey.closeConfirmWindow, .process, "an invalid stored value repairs to process")
+        stateSetting("shell.close-confirm-window", "garbage")
+        XCTAssertEqual(SettingsKey.closeConfirmWindow, .process, "an unknown token repairs to process")
     }
 
     // MARK: - requestCloseWindow parks per policy
 
     func testProcessPolicyIdleDoesNotParkWindowClose() {
-        SettingsKey.store.set("process", forKey: SettingsKey.closeConfirmWindowKey)
+        stateSetting("shell.close-confirm-window", "process")
         let (tree, _) = multiTabWorkspace(tabCount: 3)
         let store = makeTreeStore(restoringTree: tree)
 
@@ -132,7 +122,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     }
 
     func testProcessPolicyBusyPaneAnywhereInSessionParksWindowClose() {
-        SettingsKey.store.set("process", forKey: SettingsKey.closeConfirmWindowKey)
+        stateSetting("shell.close-confirm-window", "process")
         let (tree, panes) = multiTabWorkspace(tabCount: 3)
         let store = makeTreeStore(restoringTree: tree)
         let sessionID = store.tree.activeSession?.id
@@ -145,7 +135,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     }
 
     func testAlwaysPolicyParksEvenIdleSingleTab() {
-        SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmWindowKey)
+        stateSetting("shell.close-confirm-window", "always")
         let (tree, _) = multiTabWorkspace(tabCount: 1)
         let store = makeTreeStore(restoringTree: tree)
         let sessionID = store.tree.activeSession?.id
@@ -156,7 +146,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     }
 
     func testMultipleTabsPolicyParksOnlyAboveOneTab() {
-        SettingsKey.store.set("multiple_tabs", forKey: SettingsKey.closeConfirmWindowKey)
+        stateSetting("shell.close-confirm-window", "multiple_tabs")
 
         // 1 tab → no park (closing a single-tab window loses nothing the policy guards).
         let single = makeTreeStore(restoringTree: multiTabWorkspace(tabCount: 1).0)
@@ -173,7 +163,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     // MARK: - confirm / cancel resolve the parked window close
 
     func testConfirmPendingWindowCloseConsumesThePark() {
-        SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmWindowKey)
+        stateSetting("shell.close-confirm-window", "always")
         let (tree, _) = multiTabWorkspace(tabCount: 2)
         let store = makeTreeStore(restoringTree: tree)
         store.requestCloseWindow()
@@ -185,7 +175,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     }
 
     func testCancelPendingWindowCloseClearsWithoutClosing() {
-        SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmWindowKey)
+        stateSetting("shell.close-confirm-window", "always")
         let (tree, panes) = multiTabWorkspace(tabCount: 2)
         let store = makeTreeStore(restoringTree: tree)
         store.requestCloseWindow()
@@ -204,7 +194,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     /// same `.always` Tab policy DOES park the Close Tab gesture — the two affordances read different gates,
     /// which is the whole point of scoping them.
     func testAlwaysTabPolicyParksCloseTabButNotAnIdlePaneClose() {
-        SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmTabKey)
+        stateSetting("shell.close-confirm-tab", "always")
         let (tree, panes) = multiTabWorkspace(tabCount: 3)
         let store = makeTreeStore(restoringTree: tree)
 
@@ -238,7 +228,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     /// the `.process` busy-shell guard ALONE — it must NOT inherit the Tab policy: an idle non-cascading pane
     /// close needs no confirmation under `.always`.
     func testNonCascadingPaneCloseUsesProcessGuardOnly() throws {
-        SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmTabKey)
+        stateSetting("shell.close-confirm-tab", "always")
         // One tab split into TWO panes, so closing the active pane leaves the tab alive (a non-cascading close).
         let store = makeTreeStore(restoringTree: multiTabWorkspace(tabCount: 1).0)
         store.splitActivePane(axis: .horizontal, kind: .terminal)
@@ -256,7 +246,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     /// with its last pane (there is no such thing as a pane-less tab). The Tab policy belongs to the Close Tab
     /// affordance, not to ⌘W.
     func testCascadingPaneCloseStillUsesProcessGuardOnly() {
-        SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmTabKey)
+        stateSetting("shell.close-confirm-tab", "always")
         // Two single-pane tabs; the active tab's pane is its tab's sole leaf → closing it cascades the tab away.
         let (tree, panes) = multiTabWorkspace(tabCount: 2)
         let store = makeTreeStore(restoringTree: tree)
@@ -276,7 +266,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     /// against the WINDOW's tab count, and a pane close inherited the Tab policy at all. Closing one pane
     /// drops at most one tab, so neither input justifies a prompt: the pane must close immediately.
     func testMultipleTabsTabPolicyDoesNotPromptOnSolePaneCloseInMultiTabWindow() {
-        SettingsKey.store.set("multiple_tabs", forKey: SettingsKey.closeConfirmTabKey)
+        stateSetting("shell.close-confirm-tab", "multiple_tabs")
         let (tree, panes) = multiTabWorkspace(tabCount: 3)
         let store = makeTreeStore(restoringTree: tree)
 
@@ -290,7 +280,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
     /// The `.tab` scope's tab-count input is the number of tabs the close DESTROYS (one), not the window's
     /// tab count — so `multiple_tabs` never fires on a Close Tab either (closing one tab loses one tab).
     func testMultipleTabsTabPolicyDoesNotPromptOnCloseTab() {
-        SettingsKey.store.set("multiple_tabs", forKey: SettingsKey.closeConfirmTabKey)
+        stateSetting("shell.close-confirm-tab", "multiple_tabs")
         let store = makeTreeStore(restoringTree: multiTabWorkspace(tabCount: 3).0)
 
         XCTAssertFalse(

@@ -491,7 +491,7 @@ package enum RailRowsBuilder {
     }
 
     /// A finished command must have RUN at least this long (host-measured C→D wall clock) to title an
-    /// idle pane. Mirrors the busy-dot reveal default (1 s, ``SettingsKey/tabBadgeBusyDelaySeconds``):
+    /// idle pane. Mirrors the busy-dot reveal default (1 s, ``SettingsKey/tabBadgeBusyDelaySecondsValue``):
     /// a command that earns the dot earns the title. From the crate that enforces it.
     package static let commandTitleMinDurationMS: UInt32 = slopdesk_ws_command_title_min_duration_ms()
 

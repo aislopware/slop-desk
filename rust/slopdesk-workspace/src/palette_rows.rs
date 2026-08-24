@@ -13,7 +13,7 @@
 //! An action that is ABSENT on a platform is fine. An action that is LISTED and inert is not — it
 //! teaches the user that the palette lies, and it does it in the one surface whose whole job is to
 //! tell them what the app can do. So the platform is a FIELD on the row, exactly as it is a field
-//! on a settings group ([`slopdesk_settings::settings_layout::Platform`], reused here rather than
+//! on a settings group ([`crate::platform::Platform`], reused here rather than
 //! respelled): the Mac's palette asks for the rows a Mac draws, the phone's asks for the phone's,
 //! and neither carries a gate.
 //!
@@ -33,7 +33,7 @@
 //!
 //! GOLDEN-SAFE: metadata only. Nothing here reads or writes a value or touches a wire codec.
 
-use slopdesk_settings::settings_layout::Platform;
+use crate::platform::Platform;
 
 /// One palette row's platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,9 +125,8 @@ pub fn shown(id: &str, mac: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use slopdesk_settings::settings_layout::Platform;
-
     use super::{ROWS, row_at, shown};
+    use crate::platform::Platform;
 
     #[test]
     fn every_id_is_declared_once_and_reads_as_a_verb() {

@@ -64,7 +64,7 @@ final class MacChromeSnapshotRender: XCTestCase {
         // flips its own appearance so the ink resolves on dark glass) — a bare active row is
         // near-white on the cream, which is the fixture's fault and not the row's. A headerless
         // section draws no bed, so nothing else is added to the frame.
-        let island = MacSidebarIslandView(store: store, paneDrag: nil, preventSleep: nil)
+        let island = MacSidebarIslandView(store: store, paneDrag: nil)
         island.apply(
             section: SidebarSection(
                 id: "badges", header: nil, projectKey: nil, rows: RailRowsBuilder.rows(for: store),
@@ -97,7 +97,7 @@ final class MacChromeSnapshotRender: XCTestCase {
         let rows = RailRowsBuilder.rows(for: store)
         let column = stack()
         for (index, collapsed) in [false, true].enumerated() {
-            let island = MacSidebarIslandView(store: store, paneDrag: nil, preventSleep: nil)
+            let island = MacSidebarIslandView(store: store, paneDrag: nil)
             island.apply(
                 section: SidebarSection(
                     id: "\(index)", header: "slop-desk", projectKey: key, rows: rows,
@@ -155,7 +155,7 @@ final class MacChromeSnapshotRender: XCTestCase {
         let dir = try outputDirectory()
         let store = makeStore(seeds: Self.groupedSeeds, activeIndex: 0)
         let column = MacNavigatorColumn(
-            store: store, connection: Self.headlessConnection, onConnect: {}, preferences: nil,
+            store: store, connection: Self.headlessConnection, onConnect: {},
             paneDrag: nil, overlay: nil,
         )
         try render(column.view, width: 240, height: 470, to: dir, named: "navigator-grouped.png")
@@ -453,7 +453,7 @@ final class MacChromeSnapshotRender: XCTestCase {
 
     private func rowView(_ row: RailRow, store: WorkspaceStore) -> MacSidebarRowView {
         MacSidebarRowView(
-            row: row, store: store, paneDrag: nil, preventSleep: nil,
+            row: row, store: store, paneDrag: nil,
             fallbackTitle: PaneChooserRegistry.option(for: row.kind).title,
         )
     }

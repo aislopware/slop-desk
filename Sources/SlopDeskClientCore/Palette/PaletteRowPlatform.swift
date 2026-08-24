@@ -12,7 +12,7 @@ import SlopDeskWorkspaceModel
 //
 // ONE PLATFORM GATE, in ONE place, standing in for the three that were scattered through the catalog
 // and its routing. `ActionsPaletteSource.catalog` is a `static let` built once per process, and a
-// process is one slice, so the compiled slice IS the answer here — unlike ``SettingsLayout``, whose
+// process is one slice, so the compiled slice IS the answer here — unlike a layout table read by both slices at once, whose
 // renderer passes its own identity because the Mac's tests ask what the PHONE would draw. The one
 // `#if` below is the whole of it: nothing else in the palette branches on a platform any more.
 

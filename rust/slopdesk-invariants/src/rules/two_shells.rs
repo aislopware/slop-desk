@@ -40,16 +40,15 @@ const BOTH: &[&str] = &[MAC, PHONE];
 /// leaf being the largest and the next one worth doing.
 ///
 /// BREAK-TEST (2026-08-22): copied `KeybindingsEditorReading.swift`'s `conflictLines(_:)` body back
-/// into BOTH `MacKeybindingsEditor.swift` and `KeybindingsEditorView.swift` as private methods —
-/// the exact shape the dedup removed. Rule FIRED, naming both sites. Restored both files by `cp`
-/// from /tmp; rule green. Also verified the inverse: with the tree as it stands the rule finds
-/// exactly the seven ledgered pairs, i.e. it is not passing by finding nothing.
+/// into BOTH shells' editors as private methods — the exact shape the dedup removed. Rule FIRED,
+/// naming both sites. Restored both files by `cp` from /tmp; rule green. Also verified the inverse:
+/// with the tree as it stood the rule found exactly the seven ledgered pairs, i.e. it was not
+/// passing by finding nothing. That editor is gone with the rest of the settings GUI — a key
+/// binding is a `[keybind]` line now — so its nine sentences left the ledger with it.
 /// The connect form's own words. Rust, not Swift: the form's vocabulary crossed the FFI
 /// boundary with the rest of its reading, and the ban's paired claim has to follow the floor
 /// wherever it moved or it starts guarding an empty room — the same move `SEARCH` records.
 const CONNECT: &str = "rust/slopdesk-workspace/src/connect_form.rs";
-/// The keybindings editor's.
-const KEYS: &str = "Sources/SlopDeskClientCore/Settings/KeybindingsEditorReading.swift";
 /// A notification's.
 const TOAST: &str = "Sources/SlopDeskClientCore/Overlays/ToastPresentation.swift";
 /// The cross-tab search field's. Rust, not Swift: the field's words crossed the FFI boundary
@@ -85,35 +84,6 @@ const OWNED: &[(&str, &str, &str)] = &[
         "Cursor port",
         CONNECT,
         "slopdesk_workspace::connect_form::Word::CursorPortLabel",
-    ),
-    ("Keyboard Shortcuts", KEYS, "KeybindingsEditorCopy.title"),
-    (
-        "Click a shortcut to record a replacement",
-        KEYS,
-        "KeybindingsEditorCopy.subtitle",
-    ),
-    ("Search key bindings", KEYS, "KeybindingsEditorCopy.searchPrompt"),
-    ("Reset to Default", KEYS, "KeybindingsEditorCopy.resetAction"),
-    (
-        "Reset every customized shortcut to its default",
-        KEYS,
-        "KeybindingsEditorCopy.resetHelp",
-    ),
-    (
-        r"Reset all key bindings\?",
-        KEYS,
-        "KeybindingsEditorCopy.resetConfirmTitle",
-    ),
-    (
-        "This clears every customized shortcut",
-        KEYS,
-        "KeybindingsEditorCopy.resetConfirmBody",
-    ),
-    ("Shortcut conflicts", KEYS, "KeybindingsEditorCopy.conflictsTitle"),
-    (
-        "This shortcut conflicts with another command",
-        KEYS,
-        "KeybindingsEditorCopy.conflictHelp",
     ),
     ("Dismiss notification", TOAST, "ToastPresentation.dismissLabel"),
     (
@@ -242,12 +212,17 @@ pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
 /// defaults key and a JSON field are lowercase or dotted, and a bare `"OK"` is the platform's word
 /// rather than ours.
 ///
-/// ⚠️ RE-PIN AFTER A DELIBERATE MERGE, never raise to make a change fit. The remaining 33 are the
+/// ⚠️ RE-PIN AFTER A DELIBERATE MERGE, never raise to make a change fit. The remaining 28 are the
 /// GUI pane control block (ten of them, the next floor file worth writing), the panel strip's three
 /// reload tooltips, the `SLOPDESK_AUTOCONNECT_HOST` gate name spelled in three places — docs/46
-/// says one accessor — and the bare system verbs, Done / Cancel / Close / Back / Next / Settings,
-/// which are deliberately NOT merged: those are the platform's words for the platform's buttons,
-/// and one constant behind them would buy an indirection and no agreement.
+/// says one accessor — and the bare system verbs, Done / Cancel / Close, which are deliberately NOT
+/// merged: those are the platform's words for the platform's buttons, and one constant behind them
+/// would buy an indirection and no agreement.
+///
+/// RE-PINNED 2026-08-24, downward on both numbers: the settings GUI and the onboarding flow came
+/// out of both shells, which took the phone's whole reading from 60-odd phrases to 38 and the
+/// shared set from 33 to 28. The FLOOR moved with it — it exists so a pattern that has stopped
+/// matching cannot pass as a clean tree, and 40 was above the phone's entire vocabulary.
 ///
 /// BREAK-TEST (2026-08-22), both directions. UP: replaced `ConnectForm.videoPortsLabel` with the
 /// literal `"Advanced Transport Options"` in BOTH `MacConnectSheet.swift` and
@@ -276,12 +251,12 @@ pub fn the_shared_vocabulary_only_shrinks(tree: &Tree) -> Report {
         label: "phrases",
         left: phrases(MAC),
         right: phrases(PHONE),
-        ceiling: 33,
+        ceiling: 28,
         // Under the SMALLER side's reading. The two shells are deliberately asymmetric here —
         // the Mac spells nearly twice the phrases the phone does, most of them menu-bar items
         // that have no phone surface — so a floor set near the larger one would fail on an
         // ordinary edit rather than on a pattern going stale.
-        floor: 40,
+        floor: 34,
         message: "{found} phrases are spelled in BOTH UI targets, ceiling {ceiling} — a new one belongs in \
                   SlopDeskClientCore (docs/56 §3): {shared}",
     }])
@@ -469,17 +444,17 @@ mod tests {
     #[test]
     fn a_vocabulary_that_grew_is_red() {
         let fixture = Fixture::new("shared-vocabulary");
-        vocabulary(&fixture, 33);
+        vocabulary(&fixture, 28);
         assert!(super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
 
         // The break-test's UP direction: one phrase this rule's named sibling has never heard of,
         // typed on both sides. Only the ceiling can see it.
-        vocabulary(&fixture, 34);
+        vocabulary(&fixture, 29);
         assert!(!super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
 
         // And the DOWN direction, which stays green — it bites upward only, because the overlap
         // moves under every ordinary rename on one side.
-        vocabulary(&fixture, 32);
+        vocabulary(&fixture, 27);
         assert!(super::the_shared_vocabulary_only_shrinks(&fixture.tree()).is_clean());
     }
 

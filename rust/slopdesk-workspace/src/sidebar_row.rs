@@ -219,12 +219,16 @@ impl Verb {
     }
 }
 
-/// The row menu's checkboxes.
+/// The row menu's checkboxes: three PER-PANE badge overrides.
 ///
-/// The three BADGE switches are PER-PANE overrides, seeded from the pane's CURRENT effective gates
-/// so the first flip preserves the other two — an absent override follows the global default. The
-/// two NOTIFY switches and the sleep assertion are GLOBAL keys: notification fire-times and a
-/// host-local power assertion are not per-pane facts.
+/// Each is seeded from the pane's CURRENT effective gates, so the first flip preserves the other
+/// two, and an absent override follows the global answer the config file resolves to.
+///
+/// It used to carry three more — two notification toggles and the host-local sleep assertion — and
+/// they left with the settings GUI. Each was a SETTING wearing a context-menu row: a global answer
+/// reached through a right-click on one pane, written by the app into a store the user could not
+/// see. A per-pane badge override is a different thing entirely: it belongs to the pane, it dies
+/// with it, and there is nowhere in a config file to state it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Switch {
     /// Badge a pane whose agent is thinking.
@@ -233,24 +237,14 @@ pub enum Switch {
     BadgeWhenComplete,
     /// Badge a pane whose agent is blocked on a question.
     BadgeWhenAwaitingInput,
-    /// Speak when a task completes.
-    NotifyTaskComplete,
-    /// Speak when one blocks.
-    NotifyAwaitInput,
-    /// The host-LOCAL sleep assertion: it rides the sidecar, applies on reconnect, and is
-    /// default-OFF. Offered only when a live preferences store is threaded in.
-    PreventSleep,
 }
 
 impl Switch {
     /// Every switch, in index order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 3] = [
         Self::BadgeWhileProcessing,
         Self::BadgeWhenComplete,
         Self::BadgeWhenAwaitingInput,
-        Self::NotifyTaskComplete,
-        Self::NotifyAwaitInput,
-        Self::PreventSleep,
     ];
 
     /// Its title.
@@ -260,9 +254,6 @@ impl Switch {
             Self::BadgeWhileProcessing => "Badge While Processing",
             Self::BadgeWhenComplete => "Badge When Task Completes",
             Self::BadgeWhenAwaitingInput => "Badge When Awaiting Input",
-            Self::NotifyTaskComplete => "Notify When Task Completes",
-            Self::NotifyAwaitInput => "Notify When Awaiting Input",
-            Self::PreventSleep => "Prevent Sleep While Processing",
         }
     }
 
@@ -273,9 +264,6 @@ impl Switch {
             Self::BadgeWhileProcessing => 0,
             Self::BadgeWhenComplete => 1,
             Self::BadgeWhenAwaitingInput => 2,
-            Self::NotifyTaskComplete => 3,
-            Self::NotifyAwaitInput => 4,
-            Self::PreventSleep => 5,
         }
     }
 }
@@ -318,11 +306,12 @@ impl Entry {
 
 /// The menu for a row, in menu order.
 ///
-/// `prevent_sleep` is `false` for a preview or a pre-injection shell that has no live preferences
-/// store, and the sleep row and its separator are then simply ABSENT — never a dead control.
+/// Fixed now — it used to take a `prevent_sleep_offered` flag, because that one row was absent in a
+/// preview or a pre-injection shell that had no live preferences store. Nothing here is conditional
+/// any more: every entry is answerable from the pane alone.
 #[must_use]
-pub fn menu(prevent_sleep_offered: bool) -> Vec<Entry> {
-    let mut entries = vec![
+pub fn menu() -> Vec<Entry> {
+    vec![
         Entry::Action(Verb::Rename),
         Entry::Separator,
         Entry::Action(Verb::ClearBadge),
@@ -330,14 +319,7 @@ pub fn menu(prevent_sleep_offered: bool) -> Vec<Entry> {
         Entry::Toggle(Switch::BadgeWhileProcessing),
         Entry::Toggle(Switch::BadgeWhenComplete),
         Entry::Toggle(Switch::BadgeWhenAwaitingInput),
-        Entry::Toggle(Switch::NotifyTaskComplete),
-        Entry::Toggle(Switch::NotifyAwaitInput),
-    ];
-    if prevent_sleep_offered {
-        entries.push(Entry::Separator);
-        entries.push(Entry::Toggle(Switch::PreventSleep));
-    }
-    entries
+    ]
 }
 
 #[cfg(test)]
@@ -445,20 +427,27 @@ mod tests {
         assert_eq!(command_line("", None, Some("exit 1")).as_deref(), Some("exit 1"));
     }
 
-    /// The sleep row is absent rather than dead when nothing backs it.
+    /// Every switch this menu offers is answerable from the PANE. A row for a global setting would
+    /// be a control with no writer behind it, which is what the notify and sleep rows became.
     #[test]
-    fn the_sleep_switch_is_offered_only_when_it_is_live() {
-        let bare = menu(false);
-        assert!(!bare.contains(&Entry::Toggle(Switch::PreventSleep)));
-        let full = menu(true);
-        assert!(full.contains(&Entry::Toggle(Switch::PreventSleep)));
-        assert_eq!(full.len(), bare.len() + 2, "the row brings its own rule");
-        assert_eq!(full.last(), Some(&Entry::Toggle(Switch::PreventSleep)));
+    fn the_menu_offers_only_per_pane_switches() {
+        let entries = menu();
+        let toggles: Vec<Switch> = entries
+            .iter()
+            .filter_map(|entry| {
+                match entry {
+                    Entry::Toggle(switch) => Some(*switch),
+                    _ => None,
+                }
+            })
+            .collect();
+        assert_eq!(toggles, Switch::ALL.to_vec());
+        assert_eq!(toggles.len(), 3, "the three badge overrides, and nothing global");
     }
 
     #[test]
     fn no_two_entries_share_a_code_and_every_title_is_distinct() {
-        let mut codes: Vec<u8> = menu(true).iter().map(|entry| entry.code()).collect();
+        let mut codes: Vec<u8> = menu().iter().map(|entry| entry.code()).collect();
         codes.retain(|code| *code != Entry::Separator.code());
         codes.sort_unstable();
         let count = codes.len();

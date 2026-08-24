@@ -496,7 +496,7 @@ struct PaneMoveEscapeMonitor: View {
 
     var body: some View {
         PaneMoveEscapeResponder(isActive: isActive, onCancel: onCancel)
-            // Zero-sized and touch-transparent, the ``KeybindingCaptureHost`` way: the drag's own
+            // Zero-sized and touch-transparent, the zero-sized-host way: the drag's own
             // touches belong to the grab handle and the canvas, and a responder that took one would
             // be cancelling the gesture it exists to rescue.
             .frame(width: 0, height: 0)

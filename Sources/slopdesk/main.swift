@@ -550,120 +550,59 @@ func cmdPane(_ rest: [String]) -> Never {
 
 func cmdConfig(_ rest: [String]) -> Never {
     guard let sub = rest.first else {
-        die("config: requires get | set | unset | show | reload | path | edit | validate", code: 2)
+        die("config: requires path | edit | validate | schema | show | get", code: 2)
     }
     let args = Array(rest.dropFirst())
     switch sub {
-    case "get": cmdConfigGet(args)
-    case "set": cmdConfigSet(args)
-    case "unset": cmdConfigUnset(args)
-    case "show": cmdConfigShow(args)
-    case "reload": cmdConfigReload(args)
     case "path": cmdConfigPath(args)
     case "edit": cmdConfigEdit(args)
     case "validate": cmdConfigValidate(args)
+    case "schema": cmdConfigSchema(args)
+    case "show": cmdConfigShow(args)
+    case "get": cmdConfigGet(args)
+    // The two that are GONE, named so the error says why rather than "unknown subcommand". The file
+    // is the truth: a program that writes it makes a setting the user cannot see in their own file.
+    case "set",
+         "unset":
+        die("config \(sub): removed — edit \(CLIConfig.path(override: invocation.configFile)) instead", code: 2)
+    case "reload":
+        die("config reload: removed — the app re-reads the file on its own", code: 2)
     default: die("config: unknown subcommand '\(sub)'", code: 2)
     }
 }
 
+/// One resolved value, bare, so a shell can capture it. A key the table does not declare exits 2; a
+/// key it declares WITHOUT a default that the file never set exits 1 with "unset" — the two are
+/// different questions and a script wants to tell them apart.
 func cmdConfigGet(_ args: [String]) -> Never {
     guard let key = args.first, !key.hasPrefix("-") else { die("config get: requires <key>", code: 2) }
-    let result = requireResult(callClient(
-        method: ClientControlProtocol.Method.configGet,
-        params: ClientControlProtocol.configGetParams(key: key),
-    ))
-    if invocation.format == .json {
-        stdout(CLIFormatting.renderJSON(result) + "\n")
-    } else if let value = result["value"] as? String {
-        stdout(value + "\n")
+    if let extra = args.dropFirst().first { die("config get: unexpected argument '\(extra)'", code: 2) }
+    let config = CLIConfig.loaded(override: invocation.configFile)
+    guard config.declaredPaths.contains(key) else { die("config get: no such key '\(key)'", code: 2) }
+    guard let value = CLIConfig.value(of: key, in: config) else {
+        die("config get: '\(key)' is unset (the daemon's own default applies)", code: 1)
     }
+    stdout(value + "\n")
     exit(0)
 }
 
-func cmdConfigSet(_ args: [String]) -> Never {
-    var positionals: [String] = []
-    var transient = false
-    var reload = false
-    for arg in args {
-        switch arg {
-        case "--transient": transient = true
-        case "--reload": reload = true
-        default:
-            if arg.hasPrefix("-") { die("config set: unknown flag '\(arg)'", code: 2) }
-            positionals.append(arg)
-        }
-    }
-    guard positionals.count >= 2 else { die("config set: requires <key> <value>", code: 2) }
-    let key = positionals[0]
-    let value = positionals[1...].joined(separator: " ")
-    let result = requireResult(callClient(
-        method: ClientControlProtocol.Method.configSet,
-        params: ClientControlProtocol.configSetParams(key: key, value: value, transient: transient),
-    ))
-    if reload {
-        requireResult(callClient(
-            method: ClientControlProtocol.Method.configReload,
-            params: ClientControlProtocol.configReloadParams(),
-        ))
-    }
-    if invocation.format == .json { stdout(CLIFormatting.renderJSON(result) + "\n") }
-    exit(0)
-}
-
-func cmdConfigUnset(_ args: [String]) -> Never {
-    var key: String?
-    var transient = false
-    var reload = false
-    for arg in args {
-        switch arg {
-        case "--transient": transient = true
-        case "--reload": reload = true
-        default:
-            if arg.hasPrefix("-") { die("config unset: unknown flag '\(arg)'", code: 2) }
-            if key == nil { key = arg } else { die("config unset: unexpected argument '\(arg)'", code: 2) }
-        }
-    }
-    guard let key else { die("config unset: requires <key>", code: 2) }
-    // Destructive op: gate behind -y/--yes.
-    guard invocation.assumeYes else {
-        die("unset '\(key)' is destructive — pass -y/--yes to confirm", code: 1)
-    }
-    let result = requireResult(callClient(
-        method: ClientControlProtocol.Method.configUnset,
-        params: ClientControlProtocol.configUnsetParams(key: key, transient: transient),
-    ))
-    if reload {
-        requireResult(callClient(
-            method: ClientControlProtocol.Method.configReload,
-            params: ClientControlProtocol.configReloadParams(),
-        ))
-    }
-    if invocation.format == .json { stdout(CLIFormatting.renderJSON(result) + "\n") }
-    exit(0)
-}
-
+/// The whole resolved configuration as re-pasteable TOML.
 func cmdConfigShow(_ args: [String]) -> Never {
     if let extra = args.first { die("config show: unexpected argument '\(extra)'", code: 2) }
-    emitList(
-        method: ClientControlProtocol.Method.configShow,
-        params: ClientControlProtocol.configShowParams(),
-        key: "config",
-        render: CLIFormatting.config,
-    )
+    stdout(CLIConfig.show(CLIConfig.loaded(override: invocation.configFile)) + "\n")
+    exit(0)
 }
 
-func cmdConfigReload(_ args: [String]) -> Never {
-    if let extra = args.first { die("config reload: unexpected argument '\(extra)'", code: 2) }
-    requireResult(callClient(
-        method: ClientControlProtocol.Method.configReload,
-        params: ClientControlProtocol.configReloadParams(),
-    ))
+/// The JSON Schema every key is described by — the same text `docs/config.schema.json` holds.
+func cmdConfigSchema(_ args: [String]) -> Never {
+    if let extra = args.first { die("config schema: unexpected argument '\(extra)'", code: 2) }
+    stdout(CLIConfig.schema + "\n")
     exit(0)
 }
 
 func cmdConfigPath(_ args: [String]) -> Never {
     if let extra = args.first { die("config path: unexpected argument '\(extra)'", code: 2) }
-    stdout(CLIConfig.resolvePath(override: invocation.configFile) + "\n")
+    stdout(CLIConfig.path(override: invocation.configFile) + "\n")
     exit(0)
 }
 
@@ -671,7 +610,7 @@ func cmdConfigPath(_ args: [String]) -> Never {
 /// file first so the editor opens cleanly.
 func cmdConfigEdit(_ args: [String]) -> Never {
     if let extra = args.first { die("config edit: unexpected argument '\(extra)'", code: 2) }
-    let path = CLIConfig.resolvePath(override: invocation.configFile)
+    let path = CLIConfig.path(override: invocation.configFile)
     let url = URL(fileURLWithPath: path)
     try? FileManager.default.createDirectory(
         at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
@@ -694,20 +633,23 @@ func cmdConfigEdit(_ args: [String]) -> Never {
     }
 }
 
+/// Report every key the file gets wrong.
+///
+/// The verdict is the RESOLVER's, not a second grammar written here: the file is loaded exactly the
+/// way the app loads it and the diagnostics it produced are printed. So a key this prints nothing
+/// about is a key the app honours, and the two can never drift — the failure mode a hand-written
+/// line checker had, where `font-size = 14` validated and was then ignored.
 func cmdConfigValidate(_ args: [String]) -> Never {
     if let extra = args.first { die("config validate: unexpected argument '\(extra)'", code: 2) }
-    let path = CLIConfig.resolvePath(override: invocation.configFile)
+    let path = CLIConfig.path(override: invocation.configFile)
     guard FileManager.default.fileExists(atPath: path) else {
-        stdout("valid (no config file at \(path))\n")
+        stdout("valid (no config file at \(path) — the defaults are the whole configuration)\n")
         exit(0)
     }
-    guard let data = FileManager.default.contents(atPath: path),
-          let contents = String(data: data, encoding: .utf8)
-    else { die("config validate: cannot read \(path)") }
-    let errors = CLIConfig.validate(contents)
-    guard errors.isEmpty else {
-        for error in errors {
-            FileHandle.standardError.write(Data("\(programName): \(path):\(error.line): \(error.message)\n".utf8))
+    let problems = CLIConfig.diagnostics(override: invocation.configFile)
+    guard problems.isEmpty else {
+        for problem in problems {
+            FileHandle.standardError.write(Data("\(programName): \(path): \(problem)\n".utf8))
         }
         exit(1)
     }
@@ -743,44 +685,25 @@ func cmdFontList(_ rest: [String]) -> Never {
     )
 }
 
-/// `font apply "<name>"` — set the live terminal font family. Routes through the SAME running-app config path
-/// as `config set font-family <name>`, so an unknown/empty name is an honest
-/// `config set rejected` rather than a silent no-op.
-func cmdFontApply(_ rest: [String]) -> Never {
-    var name: String?
-    for arg in rest {
-        if arg.hasPrefix("-") { die("font apply: unknown flag '\(arg)'", code: 2) }
-        if name == nil { name = arg } else { die("font apply: unexpected argument '\(arg)'", code: 2) }
-    }
-    guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-        die("font apply: requires a font family <name>", code: 2)
-    }
-    let result = requireResult(callClient(
-        method: ClientControlProtocol.Method.configSet,
-        params: ClientControlProtocol.configSetParams(key: "font-family", value: name, transient: false),
-    ))
-    if invocation.format == .json {
-        stdout(CLIFormatting.renderJSON(result) + "\n")
-    } else {
-        stdout("applied font: \(name)\n")
-    }
-    exit(0)
-}
-
-/// `font import <path> [--apply]` — install a `.ttf`/`.otf`/`.ttc`/`.dfont` into `~/Library/Fonts` (the
-/// user-domain font dir macOS auto-activates), then, with `--apply`, resolve the file's family name via Core
-/// Text and route it through the `config set font-family` path. Local filesystem op (like `config edit`):
-/// the copy needs no running app; only `--apply` opens the control socket. Compiled-only (spawns FS I/O).
+/// `font import <path>` — install a `.ttf`/`.otf`/`.ttc`/`.dfont` into `~/Library/Fonts` (the user-domain
+/// font dir macOS auto-activates) and print the family name Core Text reads out of it.
+///
+/// It does NOT apply the font. `--apply` used to write `font-family` into the running app, and there is no
+/// writer any more — the config file is the only place a font is chosen. Printing the family name is the
+/// half a program can do for you: the name is the awkward part (it is not the filename), and pasting it
+/// under `[terminal]` is the part that belongs to the reader. Local filesystem op, no control socket.
 func cmdFontImport(_ rest: [String]) -> Never {
     var path: String?
-    var apply = false
     for arg in rest {
-        switch arg {
-        case "--apply": apply = true
-        default:
-            if arg.hasPrefix("-") { die("font import: unknown flag '\(arg)'", code: 2) }
-            if path == nil { path = arg } else { die("font import: unexpected argument '\(arg)'", code: 2) }
+        if arg == "--apply" {
+            die(
+                "font import: --apply is removed — put the printed family name under [terminal] in "
+                    + CLIConfig.path(override: invocation.configFile),
+                code: 2,
+            )
         }
+        if arg.hasPrefix("-") { die("font import: unknown flag '\(arg)'", code: 2) }
+        if path == nil { path = arg } else { die("font import: unexpected argument '\(arg)'", code: 2) }
     }
     guard let path, !path.isEmpty else { die("font import: requires a <path>", code: 2) }
     #if os(macOS)
@@ -805,25 +728,15 @@ func cmdFontImport(_ rest: [String]) -> Never {
         die("font import: failed to install into ~/Library/Fonts: \(error.localizedDescription)")
     }
     let family = fontFamilyName(ofFileAt: destURL)
-    if apply {
-        guard let family else {
-            die(
-                "font import: installed '\(destURL.lastPathComponent)' but could not read its family name to --apply",
-                code: 1,
-            )
-        }
-        requireResult(callClient(
-            method: ClientControlProtocol.Method.configSet,
-            params: ClientControlProtocol.configSetParams(key: "font-family", value: family, transient: false),
-        ))
-    }
     if invocation.format == .json {
-        var payload: [String: Any] = ["installed": destURL.path, "applied": apply]
+        var payload: [String: Any] = ["installed": destURL.path]
         if let family { payload["family"] = family }
         stdout(CLIFormatting.renderJSON(payload) + "\n")
     } else {
-        let famNote = family.map { " (\($0))" } ?? ""
-        stdout("imported font: \(destURL.lastPathComponent)\(famNote)\(apply ? " — applied" : "")\n")
+        stdout("imported font: \(destURL.lastPathComponent)\n")
+        if let family {
+            stdout("  [terminal]\n  font-family = \"\(family)\"\n")
+        }
     }
     exit(0)
     #else
@@ -833,7 +746,7 @@ func cmdFontImport(_ rest: [String]) -> Never {
 
 #if os(macOS)
 /// The family name of the font file at `url` (the first descriptor's `kCTFontFamilyNameAttribute`), or `nil`
-/// when Core Text cannot read it — used to drive `--apply` from an installed file.
+/// when Core Text cannot read it — the name `font import` prints for the reader to paste.
 func fontFamilyName(ofFileAt url: URL) -> String? {
     guard let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor],
           let first = descriptors.first else { return nil }
@@ -844,8 +757,13 @@ func fontFamilyName(ofFileAt url: URL) -> String? {
 func cmdFont(_ rest: [String]) -> Never {
     switch rest.first {
     case "list": cmdFontList(Array(rest.dropFirst()))
-    case "apply": cmdFontApply(Array(rest.dropFirst()))
     case "import": cmdFontImport(Array(rest.dropFirst()))
+    case "apply":
+        die(
+            "font apply: removed — set font-family under [terminal] in "
+                + CLIConfig.path(override: invocation.configFile),
+            code: 2,
+        )
     default: die("font: expected 'list', 'apply', or 'import'", code: 2)
     }
 }

@@ -1,20 +1,20 @@
-//! What a key event is called, in C — for the dispatcher and for the chord recorder.
+//! What a key event is called, in C — the dispatcher's vocabulary, marshalled.
 //!
-//! The rules are `slopdesk_video::key_naming`; what is here is the marshalling. Both doors answer a
-//! KIND, because the answer is a sum type: a named key, a printable character, or nothing at all.
-//! A `(out, cap) -> needed` return alone could not tell "no chord" from "a chord whose text did not
-//! fit", so the length rides beside the kind instead of being it.
+//! The rules are `slopdesk_video::key_naming`; what is here is the marshalling. The base-key door
+//! answers a KIND, because the answer is a sum type: a named key, a printable character, or nothing
+//! at all. A `(out, cap) -> needed` return alone could not tell "no chord" from "a chord whose text
+//! did not fit", so the length rides beside the kind instead of being it.
 //!
 //! ## Where the two vocabularies are pinned to each other
 //!
 //! `slopdesk_video` names the keys and `slopdesk_terminal::keybind` parses the config file that
-//! stores them, and neither depends on the other. This crate sees both, so the agreement is a test
-//! here: every canonical name the recorder can produce must survive `canonical_base_key` unchanged.
-//! Without it a rebind captured in Settings could persist under a spelling the grammar folds away.
+//! binds them, and neither depends on the other. This crate sees both, so the agreement is a test
+//! here: every canonical name the dispatcher can build must survive `canonical_base_key` unchanged.
+//! Without it a `keybind` line in `config.toml` could name a chord the dispatcher never matches.
 
 use core::ffi::c_uchar;
 
-use slopdesk_video::key_naming::{self, CaptureOutcome, NamedKey};
+use slopdesk_video::key_naming::{self, NamedKey};
 
 use crate::{borrow, deliver};
 
@@ -89,43 +89,6 @@ pub unsafe extern "C" fn slopdesk_key_chord_base(
     }
 }
 
-/// What capturing one keystroke means to the chord recorder.
-///
-/// `0` cancel · `1` clear · `2` ignore · `3` bind, with the bound base key's canonical text written
-/// to `(out, cap)` and its length in `needed`. Only a bind writes anything.
-///
-/// # Safety
-/// `(chars, chars_len)` must be null or describe that many live bytes; `(out, cap)` must be
-/// writable and `needed` null or writable.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_key_capture_outcome(
-    key_code: u16,
-    chars: *const c_uchar,
-    chars_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-    needed: *mut usize,
-) -> u8 {
-    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
-    let text = String::from_utf8_lossy(unsafe { borrow(chars, chars_len) });
-    let base = key_naming::capture_base_key(key_code, &text).unwrap_or_default();
-    if let Some(needed) = unsafe { needed.as_mut() } {
-        *needed = base.len();
-    }
-    // SAFETY: the caller's obligation; `deliver` writes at most `cap`.
-    unsafe { deliver(base.as_bytes(), out, cap) };
-    match key_naming::capture_outcome(key_code, &text) {
-        CaptureOutcome::Cancel => 0,
-        CaptureOutcome::Clear => 1,
-        CaptureOutcome::Ignore => 2,
-        CaptureOutcome::Bind => 3,
-    }
-}
-
 /// The canonical spelling of a named key, by case index — the token a chord is persisted and
 /// looked up under.
 ///
@@ -173,18 +136,15 @@ mod tests {
     use slopdesk_terminal::keybind::canonical_base_key;
     use slopdesk_video::key_naming::NamedKey;
 
-    use super::{
-        slopdesk_key_capture_outcome, slopdesk_key_chord_base, slopdesk_key_named_canonical,
-        slopdesk_key_named_index,
-    };
+    use super::{slopdesk_key_chord_base, slopdesk_key_named_canonical, slopdesk_key_named_index};
 
     #[test]
-    fn every_name_the_recorder_stores_is_one_the_config_grammar_keeps() {
+    fn every_name_the_dispatcher_builds_is_one_the_config_grammar_keeps() {
         for key in NamedKey::ALL {
             assert_eq!(
                 canonical_base_key(key.canonical()),
                 key.canonical(),
-                "a captured chord must persist under the spelling the grammar reads back"
+                "a chord must resolve under the spelling a `keybind` line is stored as"
             );
         }
     }
@@ -226,29 +186,6 @@ mod tests {
         assert_eq!(held.kind, 1);
         assert_eq!(held.named, NamedKey::Space.index());
         assert_eq!(bare.kind, 0, "a bare space is typing, not a chord");
-    }
-
-    #[test]
-    fn the_outcome_indexes_are_the_ones_the_header_names() {
-        let mut out = [0_u8; 16];
-        let mut needed = 0;
-        // SAFETY: two live buffers, borrowed for the call.
-        let outcome = |code: u16, chars: &str, out: &mut [u8], needed: &mut usize| unsafe {
-            slopdesk_key_capture_outcome(
-                code,
-                chars.as_ptr(),
-                chars.len(),
-                out.as_mut_ptr(),
-                out.len(),
-                needed,
-            )
-        };
-        assert_eq!(outcome(53, "", &mut out, &mut needed), 0, "cancel");
-        assert_eq!(outcome(51, "\u{7f}", &mut out, &mut needed), 1, "clear");
-        assert_eq!(outcome(999, "", &mut out, &mut needed), 2, "ignore");
-        assert_eq!(outcome(123, "", &mut out, &mut needed), 3, "bind");
-        assert_eq!(needed, "left".len());
-        assert_eq!(out.get(..needed), Some(b"left".as_slice()));
     }
 
     #[test]

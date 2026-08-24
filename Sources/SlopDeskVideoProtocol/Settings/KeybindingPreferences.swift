@@ -200,28 +200,4 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
     public func chord(for bindingID: String) -> KeyChord? {
         overrides[bindingID]
     }
-
-    /// Whether two DISTINCT binding ids resolve to the same chord (a conflict the UI highlights).
-    /// Only considers explicit overrides — reconciling against registry defaults is the registry's own
-    /// concern.
-    ///
-    /// ``textBindings`` and ``unbinds`` participate too — they own the SAME chord namespace as a
-    /// single-chord action override, so a text binding (or an unbind) on a chord that an action override
-    /// also resolves to is a real clash the UI must surface. They fold in under synthetic ids
-    /// (`"text:<canonical>"` / `"unbind:<canonical>"`) so a collision lists every contender on that chord.
-    public func conflicts() -> [String: [String]] {
-        var byCanonical: [String: [String]] = [:]
-        for (id, chord) in overrides {
-            byCanonical[chord.canonical, default: []].append(id)
-        }
-        // Text bindings and unbinds key by chord directly — fold each under a synthetic id so a clash with
-        // an action override (or with each other) shows up on the same canonical bucket.
-        for chord in textBindings.keys {
-            byCanonical[chord.canonical, default: []].append("text:\(chord.canonical)")
-        }
-        for chord in unbinds {
-            byCanonical[chord.canonical, default: []].append("unbind:\(chord.canonical)")
-        }
-        return byCanonical.filter { $0.value.count > 1 }
-    }
 }

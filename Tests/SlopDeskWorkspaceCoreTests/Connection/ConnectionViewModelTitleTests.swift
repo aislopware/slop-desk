@@ -1,4 +1,5 @@
 import SlopDeskClient
+import SlopDeskTestSupport
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -73,7 +74,6 @@ final class ConnectionViewModelTitleTests: XCTestCase {
     /// sources its row from `lastKnownTitle`). Revert-to-confirm-fail: the un-gated fold fires `onTitleChanged`
     /// regardless of the toggle, so the "OFF must not persist" assert fails on it.
     func testTitleShellControlledOffSuppressesPersistence() {
-        defer { SettingsKey.store.removeObject(forKey: SettingsKey.titleShellControlled) }
         let vm = makeVM()
         var received: [String] = []
         vm.onTitleChanged = { received.append($0) }
@@ -83,12 +83,12 @@ final class ConnectionViewModelTitleTests: XCTestCase {
         XCTAssertEqual(received, ["real-title"], "default ON persists the shell title")
 
         // Gate OFF → a remote title must NOT reach the persistence sink (no rail leak).
-        SettingsKey.store.set(false, forKey: SettingsKey.titleShellControlled)
+        stateSetting("controls.title-shell-controlled", false)
         vm.foldEventForTesting(.title("hijacked"))
         XCTAssertEqual(received, ["real-title"], "Title — Shell Controlled OFF must not persist a remote title")
 
         // Gate ON again → persistence resumes.
-        SettingsKey.store.set(true, forKey: SettingsKey.titleShellControlled)
+        stateSetting("controls.title-shell-controlled", true)
         vm.foldEventForTesting(.title("second"))
         XCTAssertEqual(received, ["real-title", "second"], "re-enabling resumes persistence")
     }

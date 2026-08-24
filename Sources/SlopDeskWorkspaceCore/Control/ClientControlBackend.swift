@@ -105,18 +105,6 @@ public struct ClientKeybindInfo: Sendable, Equatable {
     }
 }
 
-/// One key/value pair in a `config show` dump. An ARRAY (not a dict) so the dispatcher preserves the
-/// backend's ordering for the table view.
-public struct ClientConfigEntry: Sendable, Equatable {
-    public let key: String
-    public let value: String
-
-    public init(key: String, value: String) {
-        self.key = key
-        self.value = value
-    }
-}
-
 /// The outcome of a `jump`: the resolved path, and whether a `cd` was actually sent to the focused
 /// pane (`false` when `--no-cd` only printed it).
 public struct ClientJumpOutcome: Sendable, Equatable {
@@ -211,24 +199,6 @@ public protocol ClientControlBackend: AnyObject {
 
     /// Open a `view`/`edit` shim for `target` at `placement`. Returns `false` on failure.
     func open(target: String, mode: ClientControlOpenMode, placement: ClientControlProtocol.Placement) -> Bool
-
-    /// Read one config key; `nil` when the key is unset.
-    func configGet(key: String) -> String?
-
-    /// Write one config key. Returns `false` when the key/value is rejected — INCLUDING any `transient`
-    /// request (the dispatcher short-circuits `--transient` with an honest reason; slopdesk has no
-    /// apply-without-persist render layer — see ``configSet`` on the concrete backend).
-    func configSet(key: String, value: String, transient: Bool) -> Bool
-
-    /// Remove one config key. Returns `false` when the removal is rejected, including any `transient`
-    /// request (same no-ephemeral-layer reason as ``configSet(key:value:transient:)``).
-    func configUnset(key: String, transient: Bool) -> Bool
-
-    /// Broadcast the config-change notification. Returns `false` on failure.
-    func configReload() -> Bool
-
-    /// The full effective config, ordered for display.
-    func configShow() -> [ClientConfigEntry]
 
     /// Fonts filtered by monospace / family substring / scope.
     func listFonts(

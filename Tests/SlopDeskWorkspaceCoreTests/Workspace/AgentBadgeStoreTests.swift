@@ -1,5 +1,5 @@
-import Defaults
 import SlopDeskAgentDetect
+import SlopDeskTestSupport
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -68,12 +68,10 @@ final class AgentBadgeStoreTests: XCTestCase {
     /// A change to the GLOBAL settings key flows through ``WorkspaceStore/agentBadgeGates(for:)`` for a pane
     /// with no override — proving the SettingsKey → store wiring (not a hard-coded all-on).
     func testGlobalSettingChangeReachesUnoverriddenPane() throws {
-        let prior = Defaults[.agentBadgeWhileProcessing]
-        defer { Defaults[.agentBadgeWhileProcessing] = prior }
         let store = makeStore()
         let id = try firstPane(store)
 
-        Defaults[.agentBadgeWhileProcessing] = false
+        stateSetting("badges.agent-processing", false)
         XCTAssertFalse(
             store.agentBadgeGates(for: id).badgeWhileProcessing,
             "the global toggle reaches an un-overridden pane",
@@ -83,19 +81,9 @@ final class AgentBadgeStoreTests: XCTestCase {
     /// The context-menu toggle flips ONE bit, seeding from the pane's current EFFECTIVE gates so the other
     /// two are preserved (the first flip is relative to the global default, not a blank slate).
     func testToggleAgentBadgeGateFlipsOneBitFromEffective() throws {
-        let prior = (
-            Defaults[.agentBadgeWhileProcessing],
-            Defaults[.agentBadgeWhenComplete],
-            Defaults[.agentBadgeWhenAwaitingInput],
-        )
-        defer {
-            Defaults[.agentBadgeWhileProcessing] = prior.0
-            Defaults[.agentBadgeWhenComplete] = prior.1
-            Defaults[.agentBadgeWhenAwaitingInput] = prior.2
-        }
-        Defaults[.agentBadgeWhileProcessing] = true
-        Defaults[.agentBadgeWhenComplete] = true
-        Defaults[.agentBadgeWhenAwaitingInput] = true
+        stateSetting("badges.agent-processing", true)
+        stateSetting("badges.agent-complete", true)
+        stateSetting("badges.agent-awaiting-input", true)
 
         let store = makeStore()
         let id = try firstPane(store)

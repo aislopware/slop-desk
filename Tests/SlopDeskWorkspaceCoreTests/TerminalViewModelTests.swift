@@ -1,5 +1,6 @@
 import SlopDeskClient
 import SlopDeskTerminal
+import SlopDeskTestSupport
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -75,17 +76,16 @@ final class TerminalViewModelTests: XCTestCase {
     /// title updates as before. Revert-to-confirm-fail: the un-gated `.title` handler updates the title
     /// regardless of the toggle, so the "OFF must not change" assert fails on it.
     func testTitleShellControlledGatesTitleUpdate() {
-        defer { SettingsKey.store.removeObject(forKey: SettingsKey.titleShellControlled) }
         let model = TerminalViewModel()
         // Default ON → the title flows through.
         model.handle(.title("first"))
         XCTAssertEqual(model.title, "first", "default ON lets the title through")
         // Gate OFF → a new title event is DROPPED, the prior title preserved.
-        SettingsKey.store.set(false, forKey: SettingsKey.titleShellControlled)
+        stateSetting("controls.title-shell-controlled", false)
         model.handle(.title("hijacked"))
         XCTAssertEqual(model.title, "first", "Title — Shell Controlled OFF drops the OSC 0/2 title update")
         // Gate ON again → title updates resume.
-        SettingsKey.store.set(true, forKey: SettingsKey.titleShellControlled)
+        stateSetting("controls.title-shell-controlled", true)
         model.handle(.title("second"))
         XCTAssertEqual(model.title, "second", "Title — Shell Controlled ON resumes title updates")
     }

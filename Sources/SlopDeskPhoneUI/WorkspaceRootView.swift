@@ -12,11 +12,11 @@
 // build. It goes away with the target's rename to `SlopDeskPhoneUI`.
 
 #if os(iOS)
-import Defaults
 import SFSafeSymbols
 import SlopDeskAgentDetect
 import SlopDeskClientCore
 import SlopDeskSlate
+import SlopDeskVideoProtocol // ConfigRevision — what makes the config-backed reads below live
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -35,11 +35,16 @@ public struct WorkspaceRootView: View {
     /// by the ``SettingsSheet`` (the gear). `nil` (no scene injection / a preview) → the gear presents
     /// nothing.
     @Environment(\.preferencesStore) private var preferencesStore
-    /// The live `auto-hide-tabs-panel` mode. Read via `@Default` (NOT the plain
-    /// ``SettingsKey/autoHideTabsPanel`` accessor) so SwiftUI re-evaluates the body — re-firing the
-    /// `.onChange(of: autoHideTabsPanel)` observer below — when the user flips the Settings picker. Drives
-    /// the TABS panel auto-hide together with the active session's tab count.
-    @Default(.autoHideTabsPanel) private var autoHideTabsPanel
+    /// The live `auto-hide-tabs-panel` mode. COMPUTED, and it reads ``ConfigRevision/generation``
+    /// first: `AppConfig` is a plain locked global, so the bare ``SettingsKey/autoHideTabsPanel``
+    /// accessor registers no dependency and the body would never re-evaluate. Reading the revision
+    /// here is what re-fires the `.onChange(of: autoHideTabsPanel)` observer below when the user saves
+    /// their config file. Drives the vertical TABS panel auto-hide with the active session's tab count.
+    private var autoHideTabsPanel: AutoHideTabsPanelMode {
+        _ = ConfigRevision.shared.generation
+        return SettingsKey.autoHideTabsPanel
+    }
+
     /// Whether the settings sheet is presented — flipped by the toolbar gear, read by the `.sheet`.
     @State private var showSettings = false
     /// THE RIGHT PANEL'S THREE MODELS, held here because they must outlive the presentation the way the
@@ -101,9 +106,7 @@ public struct WorkspaceRootView: View {
         NavigationSplitView(
             columnVisibility: sidebarColumnVisibility,
         ) {
-            NavigatorColumn(
-                store: store, preferences: preferencesStore,
-            )
+            NavigatorColumn(store: store)
         } detail: {
             ContentColumn(store: store, connection: connection, chrome: chrome)
         }

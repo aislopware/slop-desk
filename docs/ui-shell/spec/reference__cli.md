@@ -32,9 +32,9 @@ For scenario examples see "Using the CLI in your Shell".
 - Global flags: `--format json`/`--json` (JSON output for scripting); `--no-headers` (strip table headers, for piping); `--socket <path>` (override auto-detected socket; multi-instance/testing); `--config-file <path>` (override config file location); `--timeout <ms>` (default 3000; IPC response wait); `-y`/`--yes` (skip destructive confirmations, e.g. `close`, `unset`).
 - `slopdesk open [path]` — new window, optional directory, command, title.
 - `slopdesk view <target>` opens a file or HTTP(S) URL read-only; `slopdesk edit <target>` opens it editable. Both accept placement: `--new-tab` (default), `--new-window`, or `--left`/`--right`/`--top`/`--bottom` to split the focused pane.
-- `slopdesk config get/set/unset/edit/show/path/validate/reload` manages the config file; `--reload` pushes changes to the running app; `--transient` applies to the running app only, no persist.
-- `slopdesk font list` filters: `--monospace`, `--family <name>` (substring), `--system`/`--user`. `slopdesk font apply "<name>"` writes `font-family` to config. `slopdesk font import ./Font.ttf --apply` copies into `~/.config/slopdesk/fonts/` and optionally applies.
-- `slopdesk theme list` filters `--color <dark|light|all>` (default `all`). `slopdesk theme import <path-or-url>` accepts SlopDesk `.toml`, iTerm2 `.itermcolors`, kitty/alacritty/ghostty color files; flags `--activate`, `--overwrite`. To switch active theme without importing: `slopdesk config set theme <name>`.
+- `slopdesk config path/edit/show/get/validate/schema` READS the config file — the CLI never writes it (`docs/58`). The app re-reads the file on every activation, so there is no `reload` verb; `config validate` reports every key the file gets wrong plus every chord written twice.
+- `slopdesk font list` filters: `--monospace`, `--family <name>` (substring), `--system`/`--user`. `slopdesk font import <path>` installs a font into `~/Library/Fonts` and prints its family name — to USE it, write `terminal.font-family` in `config.toml`.
+- `slopdesk theme list` filters `--color <dark|light|all>` (default `all`). `slopdesk theme import <path-or-url>` accepts SlopDesk `.toml`, iTerm2 `.itermcolors`, kitty/alacritty/ghostty color files; flags `--activate`, `--overwrite`. There is no way to switch the ACTIVE theme: the picker, the `theme` key and the built-in catalogue were deleted 2026-08-08 and the app has one appearance.
 - `slopdesk keybind list` lists all keybindings; `--action <substring>` filters by action.
 - Plurals `slopdesk windows`/`tabs`/`panes` are shortcuts for `... list`.
 - `slopdesk pane send-keys --pane <n> -- "text" key:Enter` sends literal text then named keys to a pane. `slopdesk pane capture --pane <n> --lines <n>` captures the last N lines.
@@ -60,15 +60,15 @@ No keybindings — pure CLI reference. See the Keybindings Reference (`/referenc
 
 ## Config keys
 
-No config keys directly — see the Configuration Reference. Config is managed via `slopdesk config` subcommands. CLI-adjacent config:
+No config keys directly. Every setting lives in `config.toml`, which the reader edits themselves —
+`docs/58-configuration.md` for the path, the schema and the reload. CLI-adjacent keys:
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `theme` | (built-in default) | Active color theme name; set via `slopdesk config set theme <name>` |
-| `font-family` | (system mono) | Active font family; set via `slopdesk font apply` or `slopdesk config set font-family` |
-| `font-size` | (built-in default) | Font size in points; can be set `--transient` (running app only) |
+| `terminal.font-family` | (system mono) | Active font family; `slopdesk font list` finds a name, `font import` installs a file |
+| `terminal.font-size` | (built-in default) | Font size in points |
 
-(Full config key list: Configuration Reference at `/reference/configuration`.)
+(`slopdesk config show` prints every key as resolved; `slopdesk config schema` prints the schema.)
 
 ## Visual spec
 

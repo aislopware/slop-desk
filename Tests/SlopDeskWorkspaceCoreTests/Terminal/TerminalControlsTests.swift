@@ -1,30 +1,25 @@
+import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the pure ``TerminalControls`` bundle — the `from(defaults:)` factory's key→field mapping
-/// (anti-mapping-error: every field is set to a NON-default value, so a swapped / dropped key fails), the
-/// control enums' raw values + non-failable repair + the bare-rawValue persistence the
-/// `Defaults.PreferRawRepresentable` bridge round-trips, and the `MouseShiftCapture.configValue` libghostty
-/// tokens the config builder emits. All headless — an injected `UserDefaults` suite isolates the round-trips
-/// from the dev machine's real defaults, and the suite is written through RAW `UserDefaults` (the file's
-/// established no-`import Defaults` convention, exactly like `SettingsKeyTests`).
+/// Pins the pure ``TerminalControls`` bundle — the `from(config:)` factory's path→field mapping
+/// (anti-mapping-error: every field is set to a NON-default value, so a swapped / dropped path fails), the
+/// control enums' raw values + non-failable repair — which is what makes a hand-edited token from a newer
+/// build survive — and the `MouseShiftCapture.configValue` libghostty tokens the config builder emits.
+///
+/// All headless, and every case builds its OWN ``AppConfig`` rather than moving the process-global: the
+/// factory takes the configuration as an argument precisely so the reading under test never has to be
+/// installed anywhere.
 @MainActor
 final class TerminalControlsTests: XCTestCase {
-    /// An isolated `UserDefaults` suite so the round-trips never touch `.standard`.
-    private func makeIsolatedDefaults(_ name: String = #function) -> UserDefaults {
-        let suite = "TerminalControlsTest." + name
-        let defaults = UserDefaults(suiteName: suite)!
-        defaults.removePersistentDomain(forName: suite)
-        return defaults
-    }
-
     // MARK: - Defaults / init parity
 
-    /// The struct's init defaults mirror the `Defaults.Keys` defaults, so `from(...)` on a FRESH suite (no
-    /// persisted value) equals a default-constructed `TerminalControls`. This pins the "factory terminal"
-    /// invariant and that the factory reads through the injected suite (not `.standard`).
-    func testFactoryFromFreshSuiteEqualsDefaults() {
-        let controls = TerminalControls.from(defaults: makeIsolatedDefaults())
+    /// The struct's init defaults mirror the config table's, so `from(...)` on the compiled-in answers
+    /// (a machine with NO config file) equals a default-constructed ``TerminalControls``. This pins the
+    /// "factory terminal" invariant — and it is the assertion that catches a default retuned in the
+    /// Rust table and not in the Swift struct.
+    func testFactoryFromCompiledDefaultsEqualsDefaults() {
+        let controls = TerminalControls.from(config: .compiledDefaults)
         XCTAssertEqual(controls, TerminalControls())
         // Spot-check the default values directly (independent of the init defaults).
         XCTAssertFalse(controls.copyOnSelect)
@@ -38,30 +33,29 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertEqual(controls.scrollMultiplier, 1.0)
     }
 
-    /// Anti-mapping-error: every persisted key is set to a value DISTINCT from its default, so a factory that
-    /// reads the wrong key (or drops one) produces a mismatch this catches. Revert-to-fail: swap any two
-    /// `defaults[...]` reads in `from(defaults:)` and a field below diverges. The enum keys are written as
-    /// their bare rawValue string (what the `RawRepresentableBridge` stores), proving the factory decodes
-    /// them through the bridge.
-    func testFactoryReadsEveryPersistedKey() {
-        let defaults = makeIsolatedDefaults()
-        defaults.set(true, forKey: SettingsKey.copyOnSelect)
-        defaults.set(false, forKey: SettingsKey.trimTrailingSpacesOnCopy)
-        defaults.set(false, forKey: SettingsKey.clearSelectionOnTyping)
-        defaults.set(true, forKey: SettingsKey.clearSelectionOnCopy)
-        defaults.set(false, forKey: SettingsKey.pasteProtection)
-        defaults.set(false, forKey: SettingsKey.pasteBracketedSafe)
-        defaults.set(ClipboardAccess.deny.rawValue, forKey: SettingsKey.clipboardReadKey)
-        defaults.set(ClipboardAccess.deny.rawValue, forKey: SettingsKey.clipboardWriteKey)
-        defaults.set(false, forKey: SettingsKey.mouseHideWhileTyping)
-        defaults.set(MouseShiftCapture.always.rawValue, forKey: SettingsKey.allowShiftClickKey)
-        defaults.set(false, forKey: SettingsKey.clickToMove)
-        defaults.set(false, forKey: SettingsKey.allowMouseCapture)
-        defaults.set(RightClickAction.copyOrPaste.rawValue, forKey: SettingsKey.rightClickActionKey)
-        defaults.set(false, forKey: SettingsKey.shiftArrowSelect)
-        defaults.set(2.5, forKey: SettingsKey.scrollMultiplier)
+    /// Anti-mapping-error: every declared path is answered with a value DISTINCT from its default, so a
+    /// factory that reads the wrong path (or drops one) produces a mismatch this catches. Revert-to-fail:
+    /// swap any two reads in `from(config:)` and a field below diverges. The enum rows are stated as their
+    /// bare token, which is what the user types in the file.
+    func testFactoryReadsEveryDeclaredPath() {
+        let config = AppConfig.compiledDefaults
+            .setting("controls.copy-on-select", true)
+            .setting("controls.trim-trailing-spaces", false)
+            .setting("controls.clear-selection-on-typing", false)
+            .setting("controls.clear-selection-on-copy", true)
+            .setting("controls.paste-protection", false)
+            .setting("controls.paste-bracketed-safe", false)
+            .setting("controls.clipboard-read", ClipboardAccess.deny.rawValue)
+            .setting("controls.clipboard-write", ClipboardAccess.deny.rawValue)
+            .setting("controls.mouse-hide-while-typing", false)
+            .setting("controls.shift-click", MouseShiftCapture.always.rawValue)
+            .setting("controls.click-to-move", false)
+            .setting("controls.allow-mouse-capture", false)
+            .setting("controls.right-click-action", RightClickAction.copyOrPaste.rawValue)
+            .setting("controls.shift-arrow-select", false)
+            .setting("controls.scroll-multiplier", 2.5)
 
-        let controls = TerminalControls.from(defaults: defaults)
+        let controls = TerminalControls.from(config: config)
         XCTAssertEqual(
             controls,
             TerminalControls(
@@ -84,22 +78,22 @@ final class TerminalControlsTests: XCTestCase {
         )
     }
 
-    /// A stale / hostile persisted enum token decodes through the factory and repairs to the default rather
-    /// than trapping (the non-failable `init(rawValue:)` the bridge relies on).
-    func testFactoryRepairsStaleEnumToken() {
-        let defaults = makeIsolatedDefaults()
-        defaults.set("future-token", forKey: SettingsKey.clipboardReadKey)
-        defaults.set("garbage", forKey: SettingsKey.allowShiftClickKey)
-        let controls = TerminalControls.from(defaults: defaults)
+    /// A token no case spells — a file hand-edited against a newer build — decodes through the factory
+    /// and repairs to the default rather than trapping (the non-failable `init(rawValue:)`).
+    func testFactoryRepairsAnUnknownEnumToken() {
+        let config = AppConfig.compiledDefaults
+            .setting("controls.clipboard-read", "future-token")
+            .setting("controls.shift-click", "garbage")
+        let controls = TerminalControls.from(config: config)
         XCTAssertEqual(controls.clipboardRead, .ask, "an invalid clipboard-read token repairs to ask")
         XCTAssertEqual(controls.allowShiftClick, .enabled, "an invalid shift-capture token repairs to enabled")
     }
 
     // MARK: - Enum raw values + repair
 
-    /// The control enums' raw values are slopdesk's own config tokens (the persisted strings + the
-    /// libghostty `clipboard-read/write` tokens). A rename here would split-brain persistence from the
-    /// config builder → pinned.
+    /// The control enums' raw values are the tokens the USER types in `config.toml` (and, for clipboard,
+    /// the ones libghostty reads). A rename here silently invalidates a file someone already wrote →
+    /// pinned.
     func testEnumRawValuesArePinned() {
         XCTAssertEqual(ClipboardAccess.allCases.map(\.rawValue), ["allow", "deny", "ask"])
         XCTAssertEqual(RightClickAction.contextMenu.rawValue, "context-menu")
@@ -110,9 +104,8 @@ final class TerminalControlsTests: XCTestCase {
         )
     }
 
-    /// Each enum's non-failable `init(rawValue:)` maps a known token to its case and repairs an unknown /
-    /// hostile token to the default (never traps) — the contract the `Defaults.PreferRawRepresentable` bridge
-    /// relies on.
+    /// Each enum's non-failable `init(rawValue:)` maps a known token to its case and repairs an unknown
+    /// one to the default (never traps) — what a file written against a newer build must survive.
     func testEnumInitRepairsUnknownToken() {
         XCTAssertEqual(ClipboardAccess(rawValue: "deny"), .deny)
         XCTAssertEqual(ClipboardAccess(rawValue: "garbage"), .ask)
@@ -173,10 +166,10 @@ final class TerminalControlsTests: XCTestCase {
         )
     }
 
-    /// `MouseShiftCapture.extendsSelection` is the binary projection the Settings ON/OFF toggle reads. It must
-    /// map BOTH "⇧ extends selection" forms (soft `.enabled`, hard `.always`) to ON and BOTH "⇧ goes to the
-    /// program" forms (soft `.disabled`, hard `.never`) to OFF — so a value persisted by the removed 4-way
-    /// picker (`.always` / `.never`) reads sanely instead of mis-projecting through a bare `== .enabled` check.
+    /// `MouseShiftCapture.extendsSelection` is the binary projection a caller that only wants ON/OFF reads.
+    /// It must map BOTH "⇧ extends selection" forms (soft `.enabled`, hard `.always`) to ON and BOTH "⇧ goes
+    /// to the program" forms (soft `.disabled`, hard `.never`) to OFF, so the two HARD tokens read sanely
+    /// instead of mis-projecting through a bare `== .enabled` check.
     func testMouseShiftCaptureExtendsSelectionProjection() {
         XCTAssertTrue(MouseShiftCapture.enabled.extendsSelection, "the soft default extends selection → ON")
         XCTAssertTrue(MouseShiftCapture.always.extendsSelection, "hard always-extend reads ON, not OFF")
@@ -184,7 +177,7 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertFalse(MouseShiftCapture.never.extendsSelection, "hard never-extend reads OFF")
     }
 
-    /// `OptionAsAlt`'s raw values are slopdesk's own kebab-readable persistence tokens; `configValue` is the
+    /// `OptionAsAlt`'s raw values are the kebab-readable tokens the file carries; `configValue` is the
     /// libghostty `macos-option-as-alt` token (`false`/`true`/`left`/`right`) the config builder emits.
     /// The two axes DIFFER (`both` persists as `both`, emits `true`), so this is a real oracle, not a restate of
     /// the rawValue. The factory keeps OFF (Option composes accented characters by default).
@@ -202,12 +195,11 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertEqual(TerminalControls().optionAsAlt.configValue, "false")
     }
 
-    /// `from(defaults:)` reads the persisted `optionAsAlt` key through the `RawRepresentableBridge`. Revert-to-
-    /// fail: drop the `optionAsAlt:` read in the factory and the field stays `.off` instead of the stored value.
+    /// `from(config:)` reads `controls.option-as-alt`. Revert-to-fail: drop the `optionAsAlt:` read in the
+    /// factory and the field stays `.off` instead of what the file says.
     func testFactoryReadsOptionAsAlt() {
-        let defaults = makeIsolatedDefaults()
-        defaults.set(OptionAsAlt.left.rawValue, forKey: SettingsKey.optionAsAltKey)
-        XCTAssertEqual(TerminalControls.from(defaults: defaults).optionAsAlt, .left)
+        let config = AppConfig.compiledDefaults.setting("controls.option-as-alt", OptionAsAlt.left.rawValue)
+        XCTAssertEqual(TerminalControls.from(config: config).optionAsAlt, .left)
     }
 
     // MARK: - OSC-52 read confirm decision

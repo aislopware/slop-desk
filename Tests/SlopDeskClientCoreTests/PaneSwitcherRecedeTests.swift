@@ -11,7 +11,7 @@
 // `RecordingPaneSession` fake — no socket, no video, no Metal.
 
 #if os(macOS)
-import Defaults
+import SlopDeskTestSupport
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
@@ -62,8 +62,7 @@ final class PaneSwitcherRecedeTests: XCTestCase {
     func testTheWalkLeavesExactlyTheHighlightedPaneLit() throws {
         let store = makeStore()
         let panes = try splitThreeWays(store)
-        Defaults[.paneSwitcherPreview] = true
-        defer { Defaults.reset(.paneSwitcherPreview) }
+        stateSetting("controls.pane-switcher-preview", true)
 
         store.openOrStepPaneSwitcher(forward: true, armedByModifier: true)
         let highlighted = try XCTUnwrap(store.paneSwitcher?.highlighted)
@@ -80,8 +79,7 @@ final class PaneSwitcherRecedeTests: XCTestCase {
     func testTheLitPaneMovesWithEachStep() throws {
         let store = makeStore()
         _ = try splitThreeWays(store)
-        Defaults[.paneSwitcherPreview] = true
-        defer { Defaults.reset(.paneSwitcherPreview) }
+        stateSetting("controls.pane-switcher-preview", true)
 
         store.openOrStepPaneSwitcher(forward: true, armedByModifier: true)
         let first = try receding(store)
@@ -98,8 +96,7 @@ final class PaneSwitcherRecedeTests: XCTestCase {
     func testThePreviewSettingDoesNotDecideWhetherAnythingRecedes() throws {
         let store = makeStore()
         let panes = try splitThreeWays(store)
-        Defaults[.paneSwitcherPreview] = false
-        defer { Defaults.reset(.paneSwitcherPreview) }
+        stateSetting("controls.pane-switcher-preview", false)
         let focused = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
 
         store.openOrStepPaneSwitcher(forward: true, armedByModifier: true)

@@ -3674,6 +3674,32 @@ the bands leave a centre box, and that the drawn rail is wider than the gutter t
 now `const { assert!(…) }`, checked where constants are, at compile time rather than one `cargo test`
 after the edit that broke them.
 
+### Increment 87 — Settings is a file, so increments 17–24 are history
+
+Increments 17, 21, 22, 23 and 24 built the settings surface twice over: the catalogue in Rust, the
+row table in Rust, the page layout in Rust, then an AppKit window on top of all three. Every one of
+those increments is still an accurate record of what was done and why — and the thing they were done
+TO no longer exists. On 2026-08-24 the settings GUI and the first-launch flow were deleted whole
+(`docs/58-configuration.md`, `docs/DECISIONS.md`), eighty-two files, and `config.toml` plus a
+generated JSON Schema replaced them.
+
+Read those five increments as history, not as the tree. What survived from them is the shape of the
+argument rather than the code: the answers belong in ONE Rust table and Swift holds none of its own,
+which is exactly what `rust/slopdesk-settings/src/config/table.rs` is. What died with the GUI is
+everything that existed to RENDER that table — `settings_catalog.rs`, `settings_layout.rs`,
+`settings_rows.rs`, their four FFI door families and both Swift faces.
+
+The two things worth carrying forward, because they were the whole point of increments 17–24 and
+they are still true:
+
+1. **A platform gate is a VALUE, not an `#if`.** The layout table's `Platform` column beat thirty-seven
+   `#if os(macOS)` directives in one 2102-line `body`. The key table's per-key platform column is the
+   same idea with the renderer removed.
+2. **The near side may not respell what the far side declares.** Increment 17's rule was that no
+   renderer names a section; the file-era rule is that `SettingsKey` holds no default of its own and
+   reads no path the table does not declare. `slopdesk-invariants`' `settings-is-a-file` `Subset`
+   claim is that rule, pointed at the two files that remain.
+
 ### Increment 86 — the capture region stops being CoreGraphics algebra written in Swift
 
 Increment 85 took the window server's read side. What it left behind was the DECIDING: `CaptureRegionMath` and

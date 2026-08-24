@@ -1,32 +1,21 @@
-// AppSupport — the macOS shell's app-level actuators: the quit drain, the window-close gate, and the
-// `openSettings` binder.
+// AppSupport — the macOS shell's app-level actuators: the quit drain and the window-close gate.
 //
-// All four types were the tail of `SlopDeskClientApp.swift` under one long `#if os(macOS)`. They land
-// here whole, with the gate deleted rather than moved: this target is macOS, so saying so again in the
-// file is noise (docs/56 §3).
+// They were the tail of `SlopDeskClientApp.swift` under one long `#if os(macOS)`. They land here
+// whole, with the gate deleted rather than moved: this target is macOS, so saying so again in the file
+// is noise (docs/56 §3).
 //
 // What they have in common is that each is an AppKit obligation the SwiftUI scene cannot express — a
 // termination reply that must be deferred until an async drain finishes, a `windowShouldClose` that
-// must ask the store and then answer synchronously, an `openSettings` action that is only readable
-// from inside a view — so each one is a shim between AppKit's protocol and the store's decision.
+// must ask the store and then answer synchronously — so each one is a shim between AppKit's protocol
+// and the store's decision.
+//
+// The `openSettings` binder used to live here too. It went with the settings scene: ⌘, opens
+// `config.toml` now, which needs no environment action and no shim.
 
 import AppKit
 import SlopDeskClientCore
 import SlopDeskWorkspaceCore
 import SwiftUI
-
-/// Binds ``OverlayCoordinator/openSettingsAction`` to the SwiftUI `openSettings`
-/// environment action so the palette "Open Settings" row + the agent footer's settings hook actually open the
-/// stock `Settings` scene (⌘, is otherwise the ONLY way in). `openSettings` is only readable from inside a
-/// View's environment, so this zero-effect modifier is where the app captures it; wired once on appear.
-struct SettingsOpenerInstaller: ViewModifier {
-    let overlay: OverlayCoordinator
-    @Environment(\.openSettings) private var openSettings
-
-    func body(content: Content) -> some View {
-        content.onAppear { overlay.openSettingsAction = { openSettings() } }
-    }
-}
 
 /// QUIT-DRAIN (orphaned-session leak — the clean-quit twin of the wifi-flap host detach/reattach fix): closing a
 /// busy pane (⌘W) drops it from the tree + registry SYNCHRONOUSLY, but the actual host disconnect

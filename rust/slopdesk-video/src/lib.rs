@@ -116,8 +116,6 @@
 //!   re-encode timer, and the scheduler that puts each finished message on its own channel.
 //! - [`key_capture`] — what the immersive tap does with one key, and the two chords that must stay
 //!   reachable no matter what the rest of it says.
-//! - [`escape_monitor`] — what a window-scoped local monitor does with an Escape, and which of the
-//!   surfaces claiming that key outranks the others.
 //! - [`key_naming`] — what one key event is CALLED, so the chord the dispatcher builds and the
 //!   chord the recorder persists are the same chord.
 //! - [`window_restore`] — which window a crashed daemon left stranded, and may therefore be moved
@@ -184,7 +182,6 @@ pub mod encoder_ceiling;
 pub mod encoder_config;
 pub mod encoder_state;
 pub mod error;
-pub mod escape_monitor;
 pub mod fec;
 pub mod fps_governor;
 pub mod fragment;

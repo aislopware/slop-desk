@@ -13,9 +13,8 @@
 # ## What is left here
 # Everything that puts a value in front of somebody. The rails and their titles, the palette and
 # the binding rows, the git line, the notification policy, the phone keyboard, the workspace file,
-# the templates that spawn panes. The three crates below it — `slopdesk-ids`, `slopdesk-tree`,
-# `slopdesk-settings` — know nothing about this one, and an edge back from any of them is the
-# inversion returning.
+# the templates that spawn panes. The two crates below it — `slopdesk-ids` and `slopdesk-tree` —
+# know nothing about this one, and an edge back from either is the inversion returning.
 #
 # ## Why it is worth moving at all
 # `Sources/SlopDeskWorkspaceModel` is the largest body of PURE logic left in Swift — tree ops,
@@ -41,13 +40,11 @@ name = "slopdesk_workspace"
 path = "src/lib.rs"
 
 [dependencies]
-# The three crates carved out of this one, all pointing DOWN. `slopdesk-ids` is the notation leaf —
+# The two crates carved out of this one, both pointing DOWN. `slopdesk-ids` is the notation leaf —
 # a uuid's text form, the JSON subset the two persistence files are written in, a shell word.
-# `slopdesk-tree` is the model `persist`, `rail_title`, `rail_list` and `templates` read. And
-# `slopdesk-settings` is what `binding_rows` and `palette_rows` list. None of the three names this
-# crate back.
+# `slopdesk-tree` is the model `persist`, `rail_title`, `rail_list` and `templates` read. Neither
+# names this crate back.
 slopdesk-ids = { path = "../slopdesk-ids" }
-slopdesk-settings = { path = "../slopdesk-settings" }
 slopdesk-tree = { path = "../slopdesk-tree" }
 
 # The badge vocabulary a sidebar row SPEAKS. `slopdesk-agent` already owns the ladder that fuses a

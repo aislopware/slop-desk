@@ -81,14 +81,18 @@ const E20_UNBUILT: &str = "NOT YET IMPLEMENTED";
 /// pick by lifetime". A CLI starts, does one thing and exits, so it is in-process by necessity: the
 /// crate is linked and `SlopDeskCLICore` is the face over it.
 ///
-/// The FLAG GRAMMAR, the completion SCRIPTS, the CONFIG-file rules, the output TABLES and the
-/// version BANNER. Each is a place a second parser grows back one convenience at a time, so each is
-/// checked from both sides: the door is still called, AND the face does not respell what the door
-/// answers. A door-only check passes a face that calls the crate and then ignores it.
+/// The FLAG GRAMMAR, the completion SCRIPTS, the output TABLES and the version BANNER. Each is a
+/// place a second parser grows back one convenience at a time, so each is checked from both sides:
+/// the door is still called, AND the face does not respell what the door answers. A door-only check
+/// passes a face that calls the crate and then ignores it.
 ///
 /// `--config-file` is named among the banned strings because the flag STRING is the parser's, not
-/// the face's; the XDG path and the feature line because a second copy of either is a CLI that
-/// disagrees with the file the app actually reads.
+/// the face's; the XDG path because a second copy of it is a CLI that disagrees with the file the
+/// app actually reads. The config file's own reading is NOT here: it moved out of `slopdesk-cli`
+/// entirely when the settings became one TOML table, and the app and the CLI now share
+/// `slopdesk-settings` through `AppConfig` — which "The config file has one reader" holds, in
+/// `cli_config.rs`, from both ends. What stays here is the BAN, because a CLI that re-derives the
+/// path is a regression whichever crate the reading lives in.
 #[must_use]
 pub fn the_cli_core_is_one_law(tree: &Tree) -> Report {
     check_all(tree, &[
@@ -105,16 +109,6 @@ pub fn the_cli_core_is_one_law(tree: &Tree) -> Report {
                 "slopdesk_cli_completion_script",
             ],
             message: "CLICompletions.swift no longer calls {entry} — the CLI's core is rust/slopdesk-cli",
-        },
-        Claim::Doors {
-            path: SWIFT_CLI_CONFIG,
-            entries: &[
-                "slopdesk_cli_config_env_key",
-                "slopdesk_cli_config_path",
-                "slopdesk_cli_config_default_path",
-                "slopdesk_cli_config_validate",
-            ],
-            message: "CLIConfig.swift no longer calls {entry} — the CLI's core is rust/slopdesk-cli",
         },
         Claim::Doors {
             path: SWIFT_CLI_FORMATTING,

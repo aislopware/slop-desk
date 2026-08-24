@@ -52,8 +52,6 @@ public struct SlopDeskPhoneApp: App {
     /// Serialises the scene-phase fan-outs: a background→active flip must not run its resume against a
     /// pause that has not finished, so each phase awaits the previous one's task.
     @State private var lifecycleTask: Task<Void, Never>?
-    /// Whether the first-launch sheet is up — set true once at launch when ``FirstLaunchModel/shouldPresent``.
-    @State private var presentFirstLaunch = false
     /// The clipboard-history poller, the same type the Mac shell runs. On this platform it consumes the
     /// board's `changeCount` and records nothing: iOS refuses an unattended CONTENT read, so the ring is
     /// filled by ``WorkspaceStore/currentLocalClipboard()`` on the paths the user asked to paste on.
@@ -73,7 +71,6 @@ public struct SlopDeskPhoneApp: App {
     private var connection: AppConnection { app.connection }
     private var preferences: PreferencesStore { app.preferences }
     private var overlayCoordinator: OverlayCoordinator { app.overlay }
-    private var agentHooks: AgentHooksController { app.agentHooks }
     private var chrome: WorkspaceChromeState { app.chrome }
 
     public init() {
@@ -181,8 +178,8 @@ public struct SlopDeskPhoneApp: App {
                 sound: AgentSoundPolicy.sound(
                     needsInput: notice.needsInput,
                     sourcePaneFocused: notice.sourcePaneFocused,
-                    soundTaskComplete: Defaults[.agentSoundTaskComplete],
-                    soundAwaitInput: Defaults[.agentSoundAwaitInput],
+                    soundTaskComplete: SettingsKey.agentSoundTaskCompleteEnabled,
+                    soundAwaitInput: SettingsKey.agentSoundAwaitInputEnabled,
                 ),
             )
         }
@@ -196,24 +193,8 @@ public struct SlopDeskPhoneApp: App {
             // Hand the single live PreferencesStore to deep views (the agent footer's notification
             // dismissal/enable persistence reads it via `\.preferencesStore`).
             .preferencesStore(preferences)
-            // The Agents install-hooks controller — the root view hands it to the settings SHEET, which
-            // is this platform's settings surface. Without the injection the Agents card is permanently
-            // `.disconnected` and the whole Agent-Behaviour toggle block is greyed out.
-            .agentHooksController(agentHooks)
             // The single overlay coordinator, so deep views reach it via `\.overlayCoordinator`.
             .overlayCoordinator(overlayCoordinator)
-            // The guided first-launch sheet — the cross-platform steps (the macOS-only ones drop out of
-            // `model.steps` on their own). Presents once on a fresh install and never under automation.
-            .sheet(isPresented: $presentFirstLaunch) {
-                FirstLaunchView(model: app.firstLaunch, store: preferences)
-                    .agentHooksController(agentHooks)
-            }
-            .task {
-                presentFirstLaunch = FirstLaunchModel.shouldPresent(
-                    hasCompleted: SettingsKey.hasCompletedFirstLaunchEnabled,
-                    automationActive: app.isAutomation,
-                )
-            }
             // Point the responder chain's tail at the live composition. On appear rather than in
             // `init()`: the adaptor's instance is not reachable before the scene's body runs, and a
             // rung with no store is inert by construction rather than by luck.
@@ -277,6 +258,10 @@ public struct SlopDeskPhoneApp: App {
                 await connection.pause()
                 if bgTask != .invalid { UIApplication.shared.endBackgroundTask(bgTask) }
             case .active:
+                // Coming back to the foreground is the moment a file dropped into the app's Documents
+                // directory (the one place a sandbox lets a config file in) becomes readable. A no-op
+                // when the file has not moved — see ``ConfigFile/reload(_:)``.
+                ConfigFile.reload(preferences)
                 await connection.resume()
                 await store.resumeAll()
             default:

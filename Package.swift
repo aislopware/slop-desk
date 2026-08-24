@@ -139,18 +139,18 @@ let package = Package(
     ],
     // External UI deps — attach ONLY to the UI targets so the headless core + wire/codec/controller
     // targets stay dependency-free (`swift test` / golden never fetch). Trades "clean checkout builds
-    // with no prerequisite" for SPM resolution; versions pinned in Package.resolved. KeyboardShortcuts
-    // is macOS-only → platform-conditioned.
+    // with no prerequisite" for SPM resolution; versions pinned in Package.resolved.
+    // `KeyboardShortcuts` left with the settings GUI (docs/58): its only caller was the chord
+    // recorder, and a config file has no recorder.
     dependencies: [
         .package(url: "https://github.com/siteline/swiftui-introspect.git", from: "26.0.1"),
         .package(url: "https://github.com/SFSafeSymbols/SFSafeSymbols.git", from: "7.0.0"),
-        // Pinned to 3.0.1: 3.0.0 CRASHES in release builds under the Swift 6.3 compiler (Xcode 26.5
-        // ships 6.3.2); 3.0.1 is the crash fix. macOS-only.
-        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "3.0.1"),
         // Type-safe UserDefaults for the global `SettingsKey` namespace. Depend ONLY on the `Defaults`
         // product — the macro/swift-syntax targets (`DefaultsMacros`) are not linked. Exempt from the
         // "UI deps attach only to ClientUI" rule: it's not UI, and lands on the headless
-        // `SlopDeskWorkspaceCore` (where `SettingsKey` lives) plus ClientUI's `@Default` views.
+        // `SlopDeskWorkspaceCore` only. Since the settings GUI was deleted (docs/58) it holds STATE
+        // and nothing else — four keys: the code sidebar's collapse + width, the opened code projects
+        // and the saved window frame. Every SETTING is `config.toml`, read through `AppConfig`.
         // 2026-07-11: un-HELD from 8.2.0 → 9.x (user call). This drags swift-syntax into
         // Package.resolved (Defaults declares it package-level for the `@ObservableDefault` macro we
         // don't use) — swift-syntax is FETCHED at resolve time but NOT built/linked into any product
@@ -622,14 +622,8 @@ let package = Package(
                 // pane's dragging destination fires on a real file drop. Foundation+Network leaf, no
                 // HW deps — does not widen the headless graph.
                 "SlopDeskFileTransfer",
-                // macOS-only: user-customizable global shortcuts + the recorder view.
-                .product(
-                    name: "KeyboardShortcuts",
-                    package: "KeyboardShortcuts",
-                    condition: .when(platforms: [.macOS]),
-                ),
-                // Type-safe UserDefaults — the `@Default(.key)` SwiftUI bindings in SettingsView (replacing
-                // the stringly-typed `@AppStorage`). Same pure-Foundation `Defaults` product as the core.
+                // Type-safe UserDefaults — the `@Default(.key)` SwiftUI bindings over the four STATE
+                // keys that survived the settings teardown. Same pure-Foundation product as the core.
                 .product(name: "Defaults", package: "Defaults"),
                 // `FuzzyMatcher` is a marshaller over `slopdesk_fuzzy_score` — fzf's `FuzzyMatchV2`
                 // lives in `rust/slopdesk-fuzzy`, and every search field in the app ranks through it.
@@ -1018,6 +1012,17 @@ let package = Package(
         // fail for reasons that had nothing to do with the code under it.
         .target(name: "SlopDeskBenchClock", path: "Tests/SlopDeskBenchClock"),
 
+        // How a test says "run this on a machine whose config file says X". A TEST-ONLY library, for
+        // `SlopDeskBenchClock`'s reasons and one more: it installs a PROCESS-GLOBAL (`AppConfig.current`)
+        // and registers the restore itself, so the discipline is in one place instead of being
+        // re-remembered in every suite that needs a non-default setting. Linking `XCTest`, it can
+        // never be reached from a product.
+        .target(
+            name: "SlopDeskTestSupport",
+            dependencies: ["SlopDeskVideoProtocol"],
+            path: "Tests/SlopDeskTestSupport",
+        ),
+
         // The user-facing `slopdesk` CLI core: global-flag parsing (`CLIArgs`), the `version`
         // summary builder, and the per-shell completion generator. PURE — no socket, no GUI, no
         // subprocess (the `slopdesk` executable's socket I/O + GUI launch are compiled-only and
@@ -1116,6 +1121,7 @@ let package = Package(
                 "SlopDeskTerminal",
                 "SlopDeskVideoProtocol",
                 "SlopDeskBenchClock",
+                "SlopDeskTestSupport",
             ],
         ),
         // docs/56: the DESIGN FLOOR's own suite, moved out of `SlopDeskClientUITests` with the code.
@@ -1166,7 +1172,7 @@ let package = Package(
             dependencies: [
                 "SlopDeskMacUI", "SlopDeskSlate", "SlopDeskClientCore",
                 "SlopDeskWorkspaceCore",
-                "SlopDeskWorkspaceModel", "SlopDeskVideoProtocol",
+                "SlopDeskWorkspaceModel", "SlopDeskVideoProtocol", "SlopDeskTestSupport",
                 // `SlopDeskTransport` is named for ONE thing: the navigator snapshot mounts the real
                 // column, which takes an `AppConnection`, which takes a `ConnectionRegistry`. The
                 // fixture hands it one that always refuses, so no socket is ever opened.
@@ -1200,7 +1206,7 @@ let package = Package(
             // drive the find bar's view-model headlessly. It arrived with increment 54.
             dependencies: [
                 "SlopDeskClientCore", "SlopDeskWorkspaceCore", "SlopDeskWorkspaceModel",
-                "SlopDeskProtocol", "SlopDeskClient", "SlopDeskTerminal",
+                "SlopDeskProtocol", "SlopDeskClient", "SlopDeskTerminal", "SlopDeskTestSupport",
                 // `NerdSymbolFontTests` and `CodeSidebarPageDressingTests` read the BUNDLE — the
                 // registration and the three TTF URLs the sidebar injects as data URIs.
                 "SlopDeskFontFaces",

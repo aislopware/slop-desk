@@ -1,3 +1,4 @@
+import SlopDeskTestSupport
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -59,37 +60,31 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         )
     }
 
-    /// The launch path reads the PERSISTED key end-to-end: setting `general.onLaunch` in `UserDefaults` (the
-    /// store the `@Default(.onLaunch)` picker binds) flips the resolved tree exactly as the app does
-    /// (`launchTree(behavior: SettingsKey.onLaunch, persistence:)`). This is the proof the dead accessor is
-    /// now wired: the persisted choice — not a hardcoded restore — drives the branch.
-    func testPersistedKeyDrivesLaunchBranch() throws {
+    /// The launch path reads the CONFIG FILE end-to-end: stating `general.on-launch` flips the resolved
+    /// tree exactly as the app does (`launchTree(behavior: SettingsKey.onLaunch, persistence:)`). This is
+    /// the proof the accessor is wired: the user's stated choice — not a hardcoded restore — drives the
+    /// branch.
+    func testTheConfiguredBehaviourDrivesTheLaunchBranch() throws {
         let marker = "Persisted-Key-Marker"
         let (persistence, dir) = try makeMarkedPersistence(marker: marker)
-        let key = SettingsKey.onLaunchKey
-        let prior = SettingsKey.store.string(forKey: key)
-        defer {
-            try? FileManager.default.removeItem(at: dir)
-            if let prior { SettingsKey.store.set(prior, forKey: key) }
-            else { SettingsKey.store.removeObject(forKey: key) }
-        }
+        defer { try? FileManager.default.removeItem(at: dir) }
 
         // Persisted "new-window" → the app-shaped read resolves to a fresh window (nil tree).
-        SettingsKey.store.set("new-window", forKey: key)
+        stateSetting("general.on-launch", "new-window")
         XCTAssertEqual(SettingsKey.onLaunch, .newWindow)
         XCTAssertNil(
             WorkspacePersistence.launchTree(behavior: SettingsKey.onLaunch, persistence: persistence),
-            "a persisted new-window key must seed a fresh window",
+            "a configured new-window must seed a fresh window",
         )
 
         // Persisted "restore-last-session" → the app-shaped read restores the marked tree.
-        SettingsKey.store.set("restore-last-session", forKey: key)
+        stateSetting("general.on-launch", "restore-last-session")
         XCTAssertEqual(SettingsKey.onLaunch, .restoreLastSession)
         XCTAssertEqual(
             WorkspacePersistence.launchTree(behavior: SettingsKey.onLaunch, persistence: persistence)?
                 .activeSession?.name,
             marker,
-            "a persisted restore-last-session key must restore the persisted tree",
+            "a configured restore-last-session must restore the persisted tree",
         )
     }
 
@@ -106,8 +101,8 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
     /// `workspace.json` with the fresh default tree; `launchTree(.newWindow)` therefore snapshots the existing
     /// `workspace.json` aside to the `.previous` sidecar FIRST, so the prior session stays recoverable.
     ///
-    /// This test simulates the full sequence the way the app actually runs it — persist a marked tree, persist
-    /// `general.onLaunch = new-window`, drive the SAME app-shaped launch read
+    /// This test simulates the full sequence the way the app actually runs it — persist a marked tree, state
+    /// `general.on-launch = "new-window"`, drive the SAME app-shaped launch read
     /// (`launchTree(behavior: SettingsKey.onLaunch, persistence:)`, exactly the call in `SlopDeskClientApp`),
     /// then emulate the store's first autosave overwriting `workspace.json` with a fresh default — and asserts
     /// the marked session is STILL recoverable. The proof is non-tautological: it writes the would-be-fresh
@@ -119,22 +114,16 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
     func testNewWindowLaunchPreservesPriorSessionInSidecar() throws {
         let marker = "Doomed-Session-Marker"
         let (persistence, dir) = try makeMarkedPersistence(marker: marker)
-        let key = SettingsKey.onLaunchKey
-        let prior = SettingsKey.store.string(forKey: key)
-        defer {
-            try? FileManager.default.removeItem(at: dir)
-            if let prior { SettingsKey.store.set(prior, forKey: key) }
-            else { SettingsKey.store.removeObject(forKey: key) }
-        }
+        defer { try? FileManager.default.removeItem(at: dir) }
 
-        // Drive the launch off the PERSISTED key — the real app shape (`launchTree(behavior: SettingsKey.onLaunch,
-        // persistence:)`). A persisted "new-window" choice resolves to a fresh window (nil → store seeds a fresh
-        // default) and must FIRST snapshot the saved session aside.
-        SettingsKey.store.set("new-window", forKey: key)
+        // Drive the launch off the CONFIG FILE — the real app shape (`launchTree(behavior:
+        // SettingsKey.onLaunch, persistence:)`). A stated "new-window" resolves to a fresh window (nil →
+        // store seeds a fresh default) and must FIRST snapshot the saved session aside.
+        stateSetting("general.on-launch", "new-window")
         XCTAssertEqual(SettingsKey.onLaunch, .newWindow)
         XCTAssertNil(
             WorkspacePersistence.launchTree(behavior: SettingsKey.onLaunch, persistence: persistence),
-            "a persisted new-window key seeds a fresh window (nil tree)",
+            "a configured new-window seeds a fresh window (nil tree)",
         )
 
         // Emulate the store's first debounced autosave: the live handle overwrites `workspace.json` with the

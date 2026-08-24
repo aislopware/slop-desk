@@ -32,7 +32,6 @@
 import AppKit
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
-import SlopDeskVideoProtocol // AgentPreferences — the `preventSleep` flag the row menu toggles
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
@@ -41,7 +40,6 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
     private let store: WorkspaceStore
     private let connection: AppConnection
     private let onConnect: () -> Void
-    private let preferences: PreferencesStore?
     private let paneDrag: PaneDragCoordinator?
     private let overlay: OverlayCoordinator?
 
@@ -75,12 +73,11 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
 
     init(
         store: WorkspaceStore, connection: AppConnection, onConnect: @escaping () -> Void,
-        preferences: PreferencesStore?, paneDrag: PaneDragCoordinator?, overlay: OverlayCoordinator?,
+        paneDrag: PaneDragCoordinator?, overlay: OverlayCoordinator?,
     ) {
         self.store = store
         self.connection = connection
         self.onConnect = onConnect
-        self.preferences = preferences
         self.paneDrag = paneDrag
         self.overlay = overlay
         super.init(nibName: nil, bundle: nil)
@@ -324,9 +321,7 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
         var next: [String: MacSidebarIslandView] = [:]
         for (index, section) in sections.enumerated() {
             let key = SidebarSections.collapseKey(section.projectKey)
-            let island = mounted[key] ?? MacSidebarIslandView(
-                store: store, paneDrag: paneDrag, preventSleep: preventSleepAccess,
-            )
+            let island = mounted[key] ?? MacSidebarIslandView(store: store, paneDrag: paneDrag)
             island.onToggle = { [weak self] in self?.toggle(key) }
             island.apply(
                 section: section, bed: section.header == nil ? nil : deal.indices[index],
@@ -349,17 +344,6 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
             }
         }
         syncNewTabSlot()
-    }
-
-    /// The row menu's host-LOCAL sleep flag, as a live pair. `nil` (no preferences store — a preview or
-    /// a pre-injection shell) hides the row rather than offering a dead control.
-    private var preventSleepAccess: (get: () -> Bool, set: (Bool) -> Void)? {
-        guard let preferences else { return nil }
-        return (
-            // `?? false` mirrors the daemon's default-OFF (`nil` ⇒ unset).
-            get: { preferences.agent.preventSleep ?? false },
-            set: { preferences.agent.preventSleep = $0 },
-        )
     }
 
     private func toggle(_ key: String) {
@@ -438,7 +422,6 @@ final class MacNavigatorColumn: NSViewController, NSTextFieldDelegate {
 final class MacSidebarIslandView: NSView {
     private let store: WorkspaceStore
     private let paneDrag: PaneDragCoordinator?
-    private let preventSleep: (get: () -> Bool, set: (Bool) -> Void)?
 
     private let stack = NSStackView()
     private var header: MacSidebarHeaderView?
@@ -453,13 +436,9 @@ final class MacSidebarIslandView: NSView {
 
     var onToggle: () -> Void = {}
 
-    init(
-        store: WorkspaceStore, paneDrag: PaneDragCoordinator?,
-        preventSleep: (get: () -> Bool, set: (Bool) -> Void)?,
-    ) {
+    init(store: WorkspaceStore, paneDrag: PaneDragCoordinator?) {
         self.store = store
         self.paneDrag = paneDrag
-        self.preventSleep = preventSleep
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
@@ -518,7 +497,7 @@ final class MacSidebarIslandView: NSView {
         var next: [PaneID: MacSidebarRowView] = [:]
         for row in wanted {
             let view = rows[row.id] ?? MacSidebarRowView(
-                row: row, store: store, paneDrag: paneDrag, preventSleep: preventSleep,
+                row: row, store: store, paneDrag: paneDrag,
                 fallbackTitle: PaneChooserRegistry.option(for: row.kind).title,
             )
             view.onSelect = { [weak self] in

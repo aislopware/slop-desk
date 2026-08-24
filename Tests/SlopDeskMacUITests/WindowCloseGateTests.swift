@@ -12,23 +12,18 @@
 // `NSWindow` in a test; the alert itself is AppKit plumbing, code-reviewed).
 
 #if os(macOS)
+import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskMacUI
 @testable import SlopDeskWorkspaceCore
 
 @MainActor
 final class WindowCloseGateTests: XCTestCase {
-    private let key = SettingsKey.closeConfirmWindowKey
-
-    override func setUp() {
-        super.setUp()
-        SettingsKey.store.removeObject(forKey: key)
-    }
-
-    override func tearDown() {
-        SettingsKey.store.removeObject(forKey: key)
-        super.tearDown()
-    }
+    /// `shell.close-confirm-window = "always"` — the policy that parks EVERY close. Stated as a
+    /// configuration and installed for the length of one body: ``AppConfig/current`` is a
+    /// process-global, so a test that left it moved would fail a later one instead of itself.
+    private static let alwaysConfirm = AppConfig.compiledDefaults
+        .setting("shell.close-confirm-window", "always")
 
     /// A live tree-model store with one default session (one terminal pane) — enough for `requestCloseWindow`
     /// to resolve an active session.
@@ -54,32 +49,35 @@ final class WindowCloseGateTests: XCTestCase {
     func testParkedCloseClosesWhenUserConfirms() {
         // `.always` parks every close; confirming MUST let the window close. The OLD delegate returned `false`
         // here unconditionally, with no resolution path — the window could never close. This is the bug pin.
-        SettingsKey.store.set("always", forKey: key)
         let store = makeStore()
 
-        let allowed = WindowCloseGate.resolve(store: store) { true }
+        let allowed = AppConfig.withCurrent(Self.alwaysConfirm) {
+            WindowCloseGate.resolve(store: store) { true }
+        }
 
         XCTAssertTrue(allowed, "confirming a parked close lets the window close — never trapped")
         XCTAssertNil(store.pendingWindowClose, "the park is consumed on confirm")
     }
 
     func testParkedCloseKeepsWindowOpenAndClearsParkWhenUserCancels() {
-        SettingsKey.store.set("always", forKey: key)
         let store = makeStore()
 
-        let allowed = WindowCloseGate.resolve(store: store) { false }
+        let allowed = AppConfig.withCurrent(Self.alwaysConfirm) {
+            WindowCloseGate.resolve(store: store) { false }
+        }
 
         XCTAssertFalse(allowed, "cancelling keeps the window open")
         XCTAssertNil(store.pendingWindowClose, "cancel clears the park (no stale block on the next attempt)")
     }
 
     func testConfirmIsPresentedExactlyOnceWhenParked() {
-        SettingsKey.store.set("always", forKey: key)
         let store = makeStore()
         var calls = 0
-        _ = WindowCloseGate.resolve(store: store) {
-            calls += 1
-            return true
+        AppConfig.withCurrent(Self.alwaysConfirm) {
+            _ = WindowCloseGate.resolve(store: store) {
+                calls += 1
+                return true
+            }
         }
         XCTAssertEqual(calls, 1, "the synchronous prompt is presented exactly once per close attempt")
     }

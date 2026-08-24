@@ -3,8 +3,12 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// The ``PreferencesStore`` APPLY paths (live env overlay, sidecar, terminal broadcast, keybinding
-/// overrides) + the ``WorkspaceBindingRegistry`` consulting ``KeybindingPreferences``. These prove the
-/// wiring, not just the round-trip (which `SettingsKeyTests` covers).
+/// overrides) + the ``WorkspaceBindingRegistry`` consulting ``KeybindingPreferences``.
+///
+/// Every case drives the store the way the app does: by handing it a resolved ``AppConfig``. The
+/// store has no setters any more — a setting is the FILE's, and the store's whole job is turning one
+/// reading into an effect — so a case that used to write `store.video = …` states the same thing as
+/// `config.setting("video.qp-sharp", 22)` and re-reads.
 @MainActor
 final class PreferencesStoreApplyTests: XCTestCase {
     private func makeIsolatedDefaults(_ name: String = #function) -> UserDefaults {
@@ -12,6 +16,22 @@ final class PreferencesStoreApplyTests: XCTestCase {
         let d = UserDefaults(suiteName: suite)!
         d.removePersistentDomain(forName: suite)
         return d
+    }
+
+    /// A store over `config`, with the two process-wide side effects isolated: an isolated defaults
+    /// suite and (unless a case asks for one) NO sidecar.
+    private func makeStore(
+        _ config: AppConfig = .compiledDefaults,
+        sidecar: URL? = nil,
+        applyOnInit: Bool = true,
+        _ name: String = #function,
+    ) -> PreferencesStore {
+        PreferencesStore(
+            defaults: makeIsolatedDefaults(name),
+            sidecarURL: sidecar,
+            applyOnInit: applyOnInit,
+            config: config,
+        )
     }
 
     override func tearDown() {
@@ -27,25 +47,41 @@ final class PreferencesStoreApplyTests: XCTestCase {
 
     // MARK: Live env overlay
 
-    func testVideoAndRawOverridesFoldIntoEnvConfigOverlay() {
+    /// The GOLDEN CANARY: an untouched install resolves every video and agent key to ABSENT, so the
+    /// overlay is empty and the 43-key corpus does not move. This is why those rows are declared
+    /// without a default rather than with today's number written in.
+    func testDefaultConfigLeavesTheOverlayEmpty() {
         EnvConfig.overlay = [:]
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
-        // Empty prefs ⇒ empty overlay (behaviour-preserving — the golden corpus is unaffected).
-        XCTAssertTrue(EnvConfig.overlay.isEmpty, "default prefs produce an empty overlay")
+        _ = makeStore()
+        XCTAssertTrue(EnvConfig.overlay.isEmpty, "a config file nobody wrote produces no overlay at all")
+    }
 
-        store.video = VideoPreferences(qpSharp: 22, fecM: 2)
+    func testVideoKeysAndTheEnvTableFoldIntoEnvConfigOverlay() {
+        EnvConfig.overlay = [:]
+        _ = makeStore(
+            AppConfig.compiledDefaults
+                .setting("video.qp-sharp", 22)
+                .setting("video.fec-m", 2),
+        )
         XCTAssertEqual(EnvConfig.overlay["SLOPDESK_QP_SHARP"], "22")
         XCTAssertEqual(EnvConfig.overlay["SLOPDESK_FEC_M"], "2")
+    }
 
-        // A raw override is folded LAST so it wins over a matching typed setting.
-        store.rawOverrides = ["SLOPDESK_QP_SHARP": "18", "SLOPDESK_CUSTOM": "x"]
-        XCTAssertEqual(EnvConfig.overlay["SLOPDESK_QP_SHARP"], "18", "raw override wins over the typed pref")
+    /// The `[env]` table folds LAST, so a hand-written `SLOPDESK_*` line beats the typed key that maps
+    /// to the same variable — and carries a variable no typed key names at all.
+    func testTheEnvTableWinsOverTheTypedKey() {
+        EnvConfig.overlay = [:]
+        _ = makeStore(
+            AppConfig.compiledDefaults
+                .setting("video.qp-sharp", 22)
+                .withEnv(["SLOPDESK_QP_SHARP": "18", "SLOPDESK_CUSTOM": "x"]),
+        )
+        XCTAssertEqual(EnvConfig.overlay["SLOPDESK_QP_SHARP"], "18", "[env] wins over the typed key")
         XCTAssertEqual(EnvConfig.overlay["SLOPDESK_CUSTOM"], "x")
     }
 
     func testEnvConfigResolvesTheOverlayValueAfterApply() {
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
-        store.agent = AgentPreferences(preventSleep: true)
+        _ = makeStore(AppConfig.compiledDefaults.setting("agent.prevent-sleep", true))
         // The prevent-sleep gate is default-OFF (== "1"); an explicit ON writes "1" into the overlay,
         // which `EnvConfig` then resolves.
         XCTAssertEqual(EnvConfig.string("SLOPDESK_AGENT_PREVENT_SLEEP"), "1")
@@ -54,57 +90,76 @@ final class PreferencesStoreApplyTests: XCTestCase {
 
     // MARK: Sidecar (video-prefs.json)
 
-    func testVideoChangeWritesTheSidecar() {
-        let tmp = FileManager.default.temporaryDirectory
+    private func temporarySidecar() -> URL {
+        FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-prefs-test-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: tmp) }
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: tmp)
-        store.video = VideoPreferences(fecM: 3, fecK: 6)
+    }
 
+    func testVideoKeysReachTheSidecar() {
+        let tmp = temporarySidecar()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        _ = makeStore(
+            AppConfig.compiledDefaults.setting("video.fec-m", 3).setting("video.fec-k", 6),
+            sidecar: tmp,
+        )
         let sidecar = EnvBridge.readSidecar(at: tmp)
         XCTAssertEqual(sidecar?.video.fecM, 3)
         XCTAssertEqual(sidecar?.video.fecK, 6)
-        // Its env contribution matches the typed prefs.
+        // Its env contribution matches the typed keys.
         XCTAssertEqual(sidecar?.toEnv()["SLOPDESK_FEC_M"], "3")
     }
 
-    /// Raw overrides typed in the free-text box are serialised into the sidecar the HOST daemon reads —
-    /// not only the client's in-process overlay — so a host-only knob actually reaches the daemon.
-    func testRawOverridesReachTheSidecar() {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-prefs-test-\(UUID().uuidString).json")
+    /// The `[env]` table is serialised into the sidecar the HOST daemon reads — not only the client's
+    /// in-process overlay — so a host-only knob actually reaches the daemon.
+    func testTheEnvTableReachesTheSidecar() {
+        let tmp = temporarySidecar()
         defer { try? FileManager.default.removeItem(at: tmp) }
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: tmp)
-        store.video = VideoPreferences(fecM: 2)
-        store.rawOverrides = ["SLOPDESK_FEC_M": "4", "SLOPDESK_HOST_ONLY": "z"]
-
+        _ = makeStore(
+            AppConfig.compiledDefaults
+                .setting("video.fec-m", 2)
+                .withEnv(["SLOPDESK_FEC_M": "4", "SLOPDESK_HOST_ONLY": "z"]),
+            sidecar: tmp,
+        )
         let sidecar = EnvBridge.readSidecar(at: tmp)
         XCTAssertEqual(sidecar?.rawOverrides, ["SLOPDESK_FEC_M": "4", "SLOPDESK_HOST_ONLY": "z"])
-        // Last-wins: the raw override beats the typed field for the shared key in the sidecar's overlay.
+        // Last-wins: the `[env]` line beats the typed key for the shared variable in the sidecar's overlay.
         XCTAssertEqual(sidecar?.toEnv()["SLOPDESK_FEC_M"], "4")
         XCTAssertEqual(sidecar?.toEnv()["SLOPDESK_HOST_ONLY"], "z")
     }
 
     // MARK: Terminal broadcast
 
-    func testTerminalChangeBumpsTheBroadcaster() {
+    func testTerminalKeysReachTheBroadcaster() {
         let before = TerminalConfigBroadcaster.shared.generation
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
-        // init published once (applyOnInit default ON).
-        XCTAssertGreaterThan(TerminalConfigBroadcaster.shared.generation, before)
-        let afterInit = TerminalConfigBroadcaster.shared.generation
-        store.terminal = TerminalPreferences(fontFamily: "Menlo", fontSize: 16)
-        XCTAssertGreaterThan(TerminalConfigBroadcaster.shared.generation, afterInit, "a change re-publishes")
+        _ = makeStore(
+            AppConfig.compiledDefaults
+                .setting("terminal.font-family", "Menlo")
+                .setting("terminal.font-size", 16.0),
+        )
+        XCTAssertGreaterThan(TerminalConfigBroadcaster.shared.generation, before, "init publishes once")
         XCTAssertTrue(TerminalConfigBroadcaster.shared.configString.contains("font-family = Menlo"))
         XCTAssertTrue(TerminalConfigBroadcaster.shared.configString.contains("font-size = 16"))
     }
 
+    /// ⌘± moves the LIVE size without touching the file — the one ephemeral thing the store holds.
+    /// ⌘0 puts it back, and the file's own answer is what it goes back TO.
+    func testFontSizeZoomIsEphemeralAndReturnsToTheFilesAnswer() {
+        let store = makeStore(AppConfig.compiledDefaults.setting("terminal.font-size", 14.0))
+        XCTAssertEqual(store.effectiveFontSize, 14)
+        store.increaseFontSize()
+        XCTAssertEqual(store.effectiveFontSize, 15)
+        XCTAssertTrue(TerminalConfigBroadcaster.shared.configString.contains("font-size = 15"))
+        store.resetFontSize()
+        XCTAssertEqual(store.effectiveFontSize, 14, "⌘0 returns to the size the config file states")
+        XCTAssertEqual(store.fontSizeDelta, 0)
+    }
+
     /// `applyTerminal()` resolves the fire-time Controls bundle and passes it to the builder, so the
     /// published config carries the control passthrough block — and `refreshTerminalControls()`
-    /// re-publishes it live. Asserts the KEY's PRESENCE (value depends on `Defaults.standard`, the global
-    /// toggle store), which is absent when the builder passes `controls: nil` — revert-to-confirm-fail.
+    /// re-publishes it live. Asserts the KEY's PRESENCE, which is absent when the builder passes
+    /// `controls: nil` — revert-to-confirm-fail.
     func testTerminalBroadcastCarriesTheControlPassthrough() {
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
+        let store = makeStore()
         let afterInit = TerminalConfigBroadcaster.shared.generation
         store.refreshTerminalControls()
         XCTAssertGreaterThan(TerminalConfigBroadcaster.shared.generation, afterInit, "refresh re-publishes")
@@ -114,72 +169,12 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertTrue(config.contains("keybind = shift+left="), "the ⇧+arrow select keybind is emitted")
     }
 
-    // MARK: Appearance (client chrome; NEVER touches the overlay/sidecar)
-
-    /// A default ``AppearancePreferences`` + a default ``PreferencesStore`` leaves ``EnvConfig/overlay``
-    /// empty — the GOLDEN CANARY. Appearance is pure client chrome; if it ever leaked into the overlay the
-    /// 43-key corpus would shift on a fresh install.
-    func testDefaultAppearanceLeavesOverlayEmpty() {
-        EnvConfig.overlay = [:]
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
-        XCTAssertEqual(store.appearance, AppearancePreferences(), "default appearance is all-nil")
-        XCTAssertTrue(EnvConfig.overlay.isEmpty, "default appearance must not write the env overlay")
-    }
-
-    func testAppearanceApplyWritesDensityWithoutOverlayOrSidecar() {
-        EnvConfig.overlay = [:]
-        let defaults = makeIsolatedDefaults()
-        // A temp sidecar URL that must NOT be written by an appearance change.
-        let sidecar = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-appearance-sidecar-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: sidecar) }
-
-        let store = PreferencesStore(defaults: defaults, sidecarURL: sidecar)
-        // init's applyVideoAndAgent already wrote the (default) sidecar; capture its bytes to prove an
-        // appearance change does NOT re-touch it.
-        let sidecarBefore = try? Data(contentsOf: sidecar)
-
-        store.appearance = AppearancePreferences(density: "compact")
-
-        // 1) Persists under settings.appearance.v1.
-        let blob = defaults.data(forKey: "settings.appearance.v1")
-        XCTAssertNotNil(blob)
-        let decoded = try? JSONDecoder().decode(AppearancePreferences.self, from: blob ?? Data())
-        XCTAssertEqual(decoded, AppearancePreferences(density: "compact"))
-        // 2) Writes SettingsKey.density.
-        XCTAssertEqual(defaults.string(forKey: SettingsKey.density), "compact")
-        // 3) Does NOT mutate the env overlay …
-        XCTAssertTrue(EnvConfig.overlay.isEmpty, "appearance must not touch EnvConfig.overlay")
-        // 4) … and does NOT re-touch the sidecar (the only writer is the video/agent apply path; an
-        //    appearance change leaves the sidecar bytes exactly as init left them).
-        let sidecarAfter = try? Data(contentsOf: sidecar)
-        XCTAssertEqual(sidecarAfter, sidecarBefore, "an appearance change must not rewrite the sidecar")
-    }
-
-    func testResetAllResetsAppearance() {
-        let defaults = makeIsolatedDefaults()
-        let store = PreferencesStore(defaults: defaults, sidecarURL: nil)
-        store.appearance = AppearancePreferences(density: "compact")
-        XCTAssertNotEqual(store.appearance, AppearancePreferences())
-        store.resetAll()
-        XCTAssertEqual(store.appearance, AppearancePreferences(), "resetAll restores the default appearance")
-    }
-
-    func testMalformedPersistedAppearanceDecodesToDefault() {
-        let defaults = makeIsolatedDefaults()
-        // Seed a malformed blob under the appearance key (a non-object → whole-struct decode fails).
-        defaults.set(Data("[1,2,3]".utf8), forKey: "settings.appearance.v1")
-        let store = PreferencesStore(defaults: defaults, sidecarURL: nil)
-        XCTAssertEqual(store.appearance, AppearancePreferences(), "a malformed blob decode-fails to default")
-    }
-
     // MARK: Keybinding overrides → the registry
 
-    func testStorePublishesKeybindingOverridesToTheRegistry() {
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
-        store.keybindings = KeybindingPreferences(overrides: [
-            "pane.splitRight": .init(key: "e", command: true, shift: true),
-        ])
+    /// The `[keybind]` table folds into the registry overrides at init — a named action resolved
+    /// through the registry, not a chord string the store keeps.
+    func testTheKeybindTableReachesTheRegistry() {
+        _ = makeStore(AppConfig.compiledDefaults.withKeybinds(["shift+cmd+e": "split_right"]))
         XCTAssertEqual(
             WorkspaceBindingRegistry.activeOverrides.chord(for: "pane.splitRight")?.canonical,
             "shift+cmd+e",

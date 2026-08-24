@@ -1,231 +1,208 @@
-import Defaults
 import Foundation
 import Observation
 
-// De-SwiftUI'd — UserDefaults-backed (no `@AppStorage`), headless in `SlopDeskWorkspaceCore`.
-// No `import SwiftUI` / `#if canImport(SwiftUI)` guard; `@MainActor`/`@Observable` come from Observation.
+// De-SwiftUI'd — headless in `SlopDeskWorkspaceCore`. No `import SwiftUI` / `#if canImport(SwiftUI)`
+// guard; `@MainActor` / `@Observable` come from Observation.
 import SlopDeskVideoProtocol
 
-// MARK: - PreferencesStore (the one live settings owner)
+// MARK: - PreferencesStore (what the settings MEAN, applied)
 
-/// The single live source of truth for the GUI Settings system. A `@MainActor @Observable`
-/// store owning the four `Codable` models — ``VideoPreferences``, ``TerminalPreferences``,
-/// ``AgentPreferences``, ``KeybindingPreferences`` — persisting each to `UserDefaults` (client/terminal
-/// prefs) PLUS the `video-prefs.json` sidecar (the daemon-at-launch bridge for video/agent host flags).
+/// The four apply paths, and the two pieces of per-session state that ride along with them.
+///
+/// It used to own the settings as well — six `Codable` models persisted to `UserDefaults`, mutated
+/// by a settings window, each with a `didSet` that re-applied. The settings are a FILE now
+/// (``AppConfig``), so what is left is the half that was always the interesting one: turning a
+/// resolved configuration into an effect on a running app.
 ///
 /// FOUR apply paths (see `DECISIONS.md`):
-///   1. **Live client/agent prefs → ``EnvConfig/overlay``.** `sharpen` + the CLIENT-read agent gates fold
-///      into the process-wide overlay, overriding the compile-time default WITHOUT an env var.
-///   2. **Video prefs → the `video-prefs.json` SIDECAR (no live apply).** The ~80 video flags are read at
-///      `static let` init and CANNOT live-reload; a change is written to the sidecar the HOST daemon reads
-///      at next launch — the UI marks these **"applies on reconnect."**
-///   3. **Terminal prefs → the live terminal reload.** Rebuilds the libghostty config string
+///   1. **Client-readable video / agent flags → ``EnvConfig/overlay``.** They fold into the
+///      process-wide overlay, overriding the compile-time default WITHOUT an env var. The `[env]`
+///      table folds LAST, so a hand-written `SLOPDESK_*` beats the typed key that maps to it.
+///   2. **Video / agent flags → the `video-prefs.json` SIDECAR (no live apply).** The host daemon
+///      reads them at `static let` init and cannot live-reload, so a change reaches it at the next
+///      launch. Applies on reconnect.
+///   3. **Terminal keys → the live terminal reload.** Rebuilds the libghostty config string
 ///      (``TerminalConfigBuilder``) and bumps ``TerminalConfigBroadcaster`` so the (Xcode-app-target-
 ///      only) `GhosttyTerminalView` re-applies it via `ghostty_config_load_string` + a PTY grid resize.
-///   4. **Keybinding prefs → the registry overrides.** Publishes the current ``KeybindingPreferences``
-///      to ``WorkspaceBindingRegistry`` (via ``WorkspaceBindingRegistry/activeOverrides``) so a chord
-///      resolves with the user override — the registry stays the single binding TABLE; this only supplies
-///      overrides.
+///   4. **The `[keybind]` table → the registry overrides.** Publishes them to
+///      ``WorkspaceBindingRegistry/activeOverrides`` so a chord resolves with the user override —
+///      the registry stays the single binding TABLE; this only supplies overrides.
 ///
-/// BEHAVIOR-PRESERVATION: a fresh install loads the model DEFAULTS — for video / agent the all-`nil` model
-/// ⇒ EMPTY ``EnvConfig`` overlay ⇒ no sidecar override ⇒ byte-identical to today (golden corpus unaffected).
-/// Terminal prefs have real defaults (render prefs), but the libghostty apply is compile-only — the
-/// headless build / golden never sees it.
+/// BEHAVIOR-PRESERVATION: a machine with no config file resolves the video and agent keys to
+/// ABSENT — the table declares them without a default on purpose, because their numbers belong to
+/// the daemon — so the overlay is empty, the sidecar carries no override, and the golden corpus is
+/// byte-identical to an install that never had a settings system at all.
 @preconcurrency
 @MainActor
 @Observable
 public final class PreferencesStore {
-    // MARK: Persisted models (the live source the UI binds)
+    // MARK: The resolved reading
 
-    /// Live, client-side terminal-render prefs (font / theme / cursor / scrollback). A `didSet` reloads.
-    public var terminal: TerminalPreferences {
-        didSet { if terminal != oldValue { persistTerminal()
-            applyTerminal()
-        } }
+    /// The configuration every apply path below reads. Re-read by ``reapplyLiveSettings()``; never
+    /// written, because nothing in this app writes a setting.
+    public private(set) var config: AppConfig
+
+    /// The terminal render preferences the config file resolves to — font, colours, cursor,
+    /// scrollback. A projection, rebuilt on reload, not a stored model with a `didSet`.
+    public var terminal: TerminalPreferences { TerminalPreferences(config) }
+
+    /// The video / FEC / pacer / capture host flags, as the file resolves them. Every field is
+    /// optional and an untouched install leaves all of them `nil`.
+    public var video: VideoPreferences { VideoPreferences(config) }
+
+    /// The agent detection gates, as the file resolves them.
+    public var agent: AgentPreferences { AgentPreferences(config) }
+
+    /// The user's `[keybind]` table, folded into binding overrides.
+    ///
+    /// Stored rather than computed because the fold resolves NAMED actions through the registry
+    /// (`cmd+t = "new_tab"` → `tab.new`), which crosses an FFI door per entry — cheap, but not
+    /// something to redo on every read. Rebuilt by ``reapplyLiveSettings()``, the only moment the
+    /// table can change.
+    public private(set) var keybindings: KeybindingPreferences
+
+    /// Fold a `[keybind]` table into overrides, resolving named actions against the registry.
+    ///
+    /// The resolver is supplied HERE and not inside ``KeybindConfigLoader`` because the loader lives
+    /// in `SlopDeskVideoProtocol`, which must not import this module — that layering is why the hook
+    /// is a closure. An unknown name resolves to `nil` and the entry is dropped.
+    private static func foldKeybinds(_ config: AppConfig) -> KeybindingPreferences {
+        KeybindConfigLoader.apply(table: config.keybinds) { named in
+            guard let bindingID = WorkspaceBindingRegistry.bindingID(
+                forConfigName: named.id, arg: named.arg,
+            ) else { return nil }
+            return (bindingID: bindingID, chord: named.chord)
+        }
     }
 
-    /// The video / FEC / pacer / capture host flags. A `didSet` writes the sidecar + folds the
-    /// client-readable subset into the overlay. "Applies on reconnect" for the host-read flags.
-    public var video: VideoPreferences {
-        didSet { if video != oldValue { persistVideo()
-            applyVideoAndAgent()
-        } }
-    }
+    // MARK: The runtime font-size delta (⌘+ / ⌘- / ⌘0)
 
-    /// Agent (Claude) detection gates (foreground watch / hooks). A `didSet` writes the sidecar.
-    public var agent: AgentPreferences {
-        didSet { if agent != oldValue { persistAgent()
-            applyVideoAndAgent()
-        } }
-    }
-
-    /// User keybinding overrides (`bindingID → chord`). A `didSet` republishes them to the registry.
-    public var keybindings: KeybindingPreferences {
-        didSet { if keybindings != oldValue { persistKeybindings()
-            applyKeybindings()
-        } }
-    }
-
-    /// CLIENT-chrome appearance (density). A `didSet` persists + applies. CRITICAL: pure client
-    /// chrome — NEVER folded into ``EnvConfig/overlay`` nor the sidecar (golden corpus untouched); writes
-    /// ``SettingsKey/density`` only.
-    /// Default (all-`nil`) ⇒ no behaviour change.
-    public var appearance: AppearancePreferences {
-        didSet { if appearance != oldValue { persistAppearance()
-            applyAppearance()
-        } }
-    }
-
-    /// Raw `SLOPDESK_*` overrides for power users (the Advanced panel). A sparse `[key: value]` that is
-    /// folded LAST into the ``EnvConfig`` overlay so an explicit raw override wins over the typed prefs.
-    /// Persisted separately; an empty map (the default) contributes nothing (behavior-preserving).
-    public var rawOverrides: [String: String] {
-        didSet { if rawOverrides != oldValue { persistRawOverrides()
-            applyVideoAndAgent()
-        } }
-    }
+    /// Point sizes ⌘± has moved the terminal from ``AppConfig``'s `terminal.font-size`.
+    ///
+    /// EPHEMERAL on purpose, and the one place this object holds a value at all. Zooming is a thing
+    /// you do to read a stack trace, not a preference you are stating; persisting it would mean a
+    /// font size that quietly disagrees with the file the user wrote, forever, with nothing on
+    /// screen explaining why. ⌘0 puts it back and so does a relaunch — the same shape Ghostty's own
+    /// runtime font size has.
+    public private(set) var fontSizeDelta: Double = 0
 
     // MARK: Dependencies (injectable for tests)
 
     private let defaults: UserDefaults
     private let sidecarURL: URL?
 
-    // MARK: UserDefaults keys
+    // MARK: UserDefaults keys — per-session STATE, never a setting
 
     enum Key {
-        static let terminal = "settings.terminal.v1"
-        static let video = "settings.video.v1"
-        static let agent = "settings.agent.v1"
-        static let keybindings = "settings.keybindings.v1"
-        static let appearance = "settings.appearance.v1"
-        static let rawOverrides = "settings.rawOverrides.v1"
-        static let blockBookmarks = "settings.blockBookmarks.v1"
+        /// The starred command blocks, `sessionUUID → [block index]`.
+        static let blockBookmarks = "state.blockBookmarks.v1"
         /// The completion counters this DEVICE has already read, scoped to the document epoch they
         /// were recorded under (``SeenCompletionEpochs``). Device-local by design: the host holds no
         /// per-client acknowledgement state, so every viewer answers "is this finish unread" for
         /// itself.
-        static let seenCompletionEpochs = "settings.seenCompletionEpochs.v1"
+        static let seenCompletionEpochs = "state.seenCompletionEpochs.v1"
     }
 
-    // MARK: Init / load
+    // MARK: Init / apply
 
-    /// Loads the persisted prefs (or model defaults on a fresh install) and applies them. `sidecarURL`
-    /// defaults to the shared `video-prefs.json` location; tests inject a temp URL (or `nil` to skip the
-    /// sidecar write). `applyOnInit` runs the apply paths once after load (default ON; a round-trip test
-    /// can pass `false` to avoid mutating the process overlay).
+    /// Reads the resolved configuration and applies it. `sidecarURL` defaults to the shared
+    /// `video-prefs.json` location; tests inject a temp URL (or `nil` to skip the sidecar write).
+    /// `applyOnInit` runs the apply paths once after load (default ON; a test that must not mutate
+    /// the process overlay passes `false`).
     public init(
         defaults: UserDefaults = SettingsKey.store,
         sidecarURL: URL? = EnvBridge.defaultSidecarURL(),
         applyOnInit: Bool = true,
+        config: AppConfig = AppConfig.current,
     ) {
         self.defaults = defaults
         self.sidecarURL = sidecarURL
-        terminal = Self.decode(TerminalPreferences.self, defaults, Key.terminal) ?? TerminalPreferences()
-        video = Self.decode(VideoPreferences.self, defaults, Key.video) ?? VideoPreferences()
-        agent = Self.decode(AgentPreferences.self, defaults, Key.agent) ?? AgentPreferences()
-        keybindings = Self.decode(KeybindingPreferences.self, defaults, Key.keybindings) ?? KeybindingPreferences()
-        appearance = Self.decode(AppearancePreferences.self, defaults, Key.appearance) ?? AppearancePreferences()
-        rawOverrides = (defaults.dictionary(forKey: Key.rawOverrides) as? [String: String]) ?? [:]
+        self.config = config
+        keybindings = Self.foldKeybinds(config)
         if applyOnInit {
             applyTerminal()
             applyVideoAndAgent()
             applyKeybindings()
-            applyAppearance()
         }
-    }
-
-    // MARK: Persist (model → UserDefaults)
-
-    private func persistTerminal() { Self.encode(terminal, defaults, Key.terminal) }
-    private func persistVideo() { Self.encode(video, defaults, Key.video) }
-    private func persistAgent() { Self.encode(agent, defaults, Key.agent) }
-    private func persistKeybindings() { Self.encode(keybindings, defaults, Key.keybindings) }
-    private func persistAppearance() { Self.encode(appearance, defaults, Key.appearance) }
-    private func persistRawOverrides() { defaults.set(rawOverrides, forKey: Key.rawOverrides) }
-
-    private static func encode(_ value: some Encodable, _ defaults: UserDefaults, _ key: String) {
-        if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: key) }
-    }
-
-    private static func decode<T: Decodable>(_: T.Type, _ defaults: UserDefaults, _ key: String) -> T? {
-        guard let data = defaults.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(T.self, from: data)
     }
 
     // MARK: Apply paths
 
-    /// Rebuild the libghostty config string from the live terminal prefs (+ any terminal keybind lines + the
-    /// fire-time Controls toggles) and bump the broadcaster so the (Xcode-only) `GhosttyTerminalView`
+    /// Rebuild the libghostty config string from the resolved terminal keys and the fire-time
+    /// Controls bundle, and bump the broadcaster so the (Xcode-only) `GhosttyTerminalView`
     /// re-applies it live.
     private func applyTerminal() {
         // The app's one terminal profile pins the CELL bg/fg (flat design) — `resolveTerminalColors`
-        // reads `SlateTheme.app` (GUI only; `nil` headless ⇒ the pref's own colours stand).
+        // reads `SlateTheme.app` (GUI only; `nil` headless ⇒ the config's own colours stand).
         let themeColors = AppearanceApplier.resolveTerminalColors?()
-        // Resolve the fire-time Controls bundle (`copy-on-select` / `clipboard-*` / `mouse-*` /
-        // ⇧+arrow select). The Controls toggles live in the global `SettingsKey.store` namespace (NOT the
-        // per-instance injected `defaults`, which stays test-isolated for the typed models), so read from
-        // `SettingsKey.store`; the builder maps an absent key to its declared default.
-        let controls = TerminalControls.from(defaults: SettingsKey.store)
+        var prefs = TerminalPreferences(config)
+        prefs.fontSize = Self.clampedFontSize(prefs.fontSize + fontSizeDelta)
         let config = TerminalConfigBuilder.string(
-            for: terminal,
+            for: prefs,
             backgroundOverride: themeColors?.background,
             foregroundOverride: themeColors?.foreground,
             // The active theme's ANSI palette + selection colour reach the terminal cells. Both are
-            // optional and validate-then-drop in the builder, so a `nil` themeColors (headless / no GUI hook)
-            // or a theme with no palette is byte-identical.
+            // optional and validate-then-drop in the builder, so a `nil` themeColors (headless / no
+            // GUI hook) or a theme with no palette is byte-identical.
             paletteOverride: themeColors?.palette,
             selectionBackgroundOverride: themeColors?.selectionBackground,
-            controls: Self.controlsConfig(from: controls),
+            controls: Self.controlsConfig(from: TerminalControls.from(config: config)),
         )
         TerminalConfigBroadcaster.shared.publish(config)
     }
 
-    /// Rebuild + publish the libghostty config from the live terminal prefs AND the current fire-time
-    /// Controls toggles, so a Controls change re-applies live. The Settings rows call this from their
-    /// `.onChange`: PreferencesStore stays isolated on its injected `UserDefaults`, but the Controls toggles
-    /// live in `Defaults.standard`, so an explicit refresh is the seam that re-reads them — no
-    /// `Defaults.observe` wiring in the store, by design, to keep it test-isolated.
+    /// Rebuild + publish the libghostty config from the current reading. The seam a surface calls
+    /// when it needs the terminal string re-derived without a reload.
     public func refreshTerminalControls() {
         applyTerminal()
     }
 
-    // MARK: Font-size zoom (⌘+ / ⌘- / ⌘0 — single source of truth)
+    // MARK: Font-size zoom (⌘+ / ⌘- / ⌘0)
 
-    /// The point-size step + clamp the ⌘± zoom shares with the Settings → Appearance → Text "Size" stepper
-    /// (`8...32`, step `1`), so the two stay on the SAME scale and never desync.
+    /// The point-size step ⌘± moves by, and the band it stays inside.
     static let fontSizeStep: Double = 1
     static let fontSizeRange: ClosedRange<Double> = 8...32
 
-    /// ⌘+ / ⌘= — bump the terminal font size one step. Mutates the SINGLE source of truth
-    /// (``terminal``.`fontSize`), whose `didSet` rebuilds the libghostty config + reflows the live surface —
-    /// the SAME path the Settings "Size" stepper drives, so both stay in sync. A font-SIZE change DOES reflow
-    /// the remote PTY grid (cell box resizes → SIGWINCH); that is correct, not a bug (only font FAMILY/STYLE
-    /// rebuilds are grid-preserving). Clamped to ``fontSizeRange``.
-    public func increaseFontSize() { setFontSize(terminal.fontSize + Self.fontSizeStep) }
+    /// ⌘+ / ⌘= — one step bigger. A font-SIZE change DOES reflow the remote PTY grid (the cell box
+    /// resizes → SIGWINCH); that is correct, not a bug — only font FAMILY/STYLE rebuilds are
+    /// grid-preserving.
+    public func increaseFontSize() { setFontSize(effectiveFontSize + Self.fontSizeStep) }
 
-    /// ⌘- — shrink the terminal font size one step (single source of truth; see ``increaseFontSize()``).
-    public func decreaseFontSize() { setFontSize(terminal.fontSize - Self.fontSizeStep) }
+    /// ⌘- — one step smaller.
+    public func decreaseFontSize() { setFontSize(effectiveFontSize - Self.fontSizeStep) }
 
-    /// ⌘0 — reset the terminal font size to the configured default (``TerminalPreferences`` default size).
-    public func resetFontSize() { setFontSize(TerminalPreferences().fontSize) }
-
-    /// Set the terminal font size, clamped NaN-faithfully to ``fontSizeRange`` (``Double/maximum(_:_:)`` /
-    /// ``Double/minimum(_:_:)``, never a bare ternary). A no-op when the clamped value is unchanged (so a ⌘±
-    /// at the clamp boundary doesn't churn the broadcaster). The `terminal` `didSet` persists + re-applies.
-    private func setFontSize(_ size: Double) {
-        let clamped = Double.maximum(
-            Self.fontSizeRange.lowerBound,
-            Double.minimum(Self.fontSizeRange.upperBound, size),
-        )
-        guard clamped != terminal.fontSize else { return }
-        terminal.fontSize = clamped
+    /// ⌘0 — back to the size the config file states.
+    public func resetFontSize() {
+        guard fontSizeDelta != 0 else { return }
+        fontSizeDelta = 0
+        applyTerminal()
     }
 
-    /// Map the WorkspaceCore fire-time ``TerminalControls`` bundle to the leaf ``TerminalControlsConfig`` the
-    /// (VideoProtocol) ``TerminalConfigBuilder`` consumes: boolean knobs pass straight through, multi-state
-    /// enums resolve to their libghostty token (`ClipboardAccess.rawValue` / `MouseShiftCapture.configValue`).
-    /// The mapping lives HERE (not the leaf) so the builder never imports WorkspaceCore — the one-way module
-    /// graph (WorkspaceCore → VideoProtocol) is preserved.
+    /// The size the terminal is drawing at right now: the file's answer plus whatever ⌘± has moved
+    /// it by.
+    public var effectiveFontSize: Double {
+        Self.clampedFontSize(TerminalPreferences(config).fontSize + fontSizeDelta)
+    }
+
+    /// Move the runtime size to `size`, clamped, and re-apply. A no-op at the clamp boundary, so a
+    /// ⌘± held down against the edge does not churn the broadcaster.
+    private func setFontSize(_ size: Double) {
+        let clamped = Self.clampedFontSize(size)
+        guard clamped != effectiveFontSize else { return }
+        fontSizeDelta = clamped - TerminalPreferences(config).fontSize
+        applyTerminal()
+    }
+
+    /// NaN-faithfully clamped to ``fontSizeRange`` (``Double/maximum(_:_:)`` /
+    /// ``Double/minimum(_:_:)``, never a bare ternary).
+    private static func clampedFontSize(_ size: Double) -> Double {
+        Double.maximum(fontSizeRange.lowerBound, Double.minimum(fontSizeRange.upperBound, size))
+    }
+
+    /// Map the fire-time ``TerminalControls`` bundle to the leaf ``TerminalControlsConfig`` the
+    /// (VideoProtocol) ``TerminalConfigBuilder`` consumes: boolean knobs pass straight through,
+    /// multi-state enums resolve to their libghostty token. The mapping lives HERE (not the leaf) so
+    /// the builder never imports WorkspaceCore — the one-way module graph is preserved.
     private static func controlsConfig(from controls: TerminalControls) -> TerminalControlsConfig {
         TerminalControlsConfig(
             copyOnSelect: controls.copyOnSelect,
@@ -247,205 +224,65 @@ public final class PreferencesStore {
         )
     }
 
-    /// Fold the video + agent prefs (and raw overrides) into the process-wide ``EnvConfig`` overlay for the
-    /// CLIENT-readable flags, and write the `video-prefs.json` SIDECAR for the host daemon.
+    /// Fold the video + agent keys and the `[env]` table into the process-wide ``EnvConfig`` overlay
+    /// for the CLIENT-readable flags, and write the `video-prefs.json` SIDECAR for the host daemon.
     ///
-    /// WITHIN the overlay: typed-prefs (video ∪ agent) THEN the raw power-user overrides on top, so a hand-
-    /// typed `SLOPDESK_*` in the raw-overrides box wins over the matching toggle. ACROSS tiers: a real
-    /// `ProcessInfo` env var STILL wins over the whole overlay (see `DECISIONS.md`, `env → overlay → default`) —
-    /// ``EnvConfig/string(_:)`` checks the real env var FIRST, so a deliberate `launchctl`/`--args` env on
-    /// the CLIENT is never clobbered by a persisted setting — consistent with the host sidecar's gap-fill.
+    /// WITHIN the overlay: the typed keys first, then `[env]` on top, so a hand-written
+    /// `SLOPDESK_*` line wins over the typed key that maps to it. ACROSS tiers: a real `ProcessInfo`
+    /// env var STILL wins over the whole overlay (see `DECISIONS.md`, `env → overlay → default`) —
+    /// ``EnvConfig/string(_:)`` checks the real env var FIRST, so a deliberate `launchctl` / `--args`
+    /// env on the CLIENT is never clobbered by a configured value.
     private func applyVideoAndAgent() {
         var overlay = EnvBridge.toEnv(video).merging(EnvBridge.toEnv(agent)) { _, new in new }
-        for (key, value) in rawOverrides where !key.isEmpty { overlay[key] = value }
+        for (key, value) in config.env where !key.isEmpty { overlay[key] = value }
         EnvConfig.overlay = overlay
         writeSidecar()
     }
 
-    /// Serialise the video + agent prefs to the `video-prefs.json` sidecar the HOST daemon reads at
-    /// launch. A nil `sidecarURL` (tests) skips the write. Failure is swallowed — a prefs write that
-    /// can't reach disk must not crash the UI (the typed defaults still hold).
+    /// Serialise the video + agent keys to the `video-prefs.json` sidecar the HOST daemon reads at
+    /// launch. A nil `sidecarURL` (tests) skips the write. Failure is swallowed — a write that
+    /// cannot reach disk must not crash the UI, and the compiled-in answers still hold.
     private func writeSidecar() {
         guard let url = sidecarURL else { return }
-        let sidecar = EnvBridge.VideoSidecar(video: video, agent: agent, rawOverrides: rawOverrides)
+        let sidecar = EnvBridge.VideoSidecar(video: video, agent: agent, rawOverrides: config.env)
         try? EnvBridge.writeSidecar(sidecar, to: url)
     }
 
-    /// Publish the live keybinding overrides to the registry so a chord resolves with the user
-    /// override when present (the registry stays the single binding TABLE; this supplies the overrides).
+    /// Publish the keybinding overrides to the registry so a chord resolves with the user override
+    /// when present (the registry stays the single binding TABLE; this supplies the overrides).
     private func applyKeybindings() {
         WorkspaceBindingRegistry.activeOverrides = keybindings
     }
 
-    /// Apply the CLIENT-chrome appearance: write ``SettingsKey/density`` when set.
+    /// Re-read ``AppConfig/current`` and re-fire the LIVE client apply paths — the effect behind
+    /// `slopdesk config reload`.
     ///
-    /// GOLDEN-SAFE BY CONSTRUCTION: appearance NEVER touches ``EnvConfig/overlay`` nor the sidecar — pure
-    /// client chrome. A `nil` density leaves the key untouched (default ``AppearancePreferences`` is a pure
-    /// no-op, behaviour-preserving). Since the theme picker was retired (user-directed 2026-08-08) this no
-    /// longer repoints any runtime token, so it also no longer rebuilds the terminal config — the one
-    /// appearance's cell palette is fixed, and the reload path below asks for that rebuild explicitly.
-    private func applyAppearance() {
-        if let density = appearance.density {
-            defaults.set(density, forKey: SettingsKey.density)
-        }
-    }
-
-    /// Re-fire the live CLIENT apply paths (density + terminal reflow + keybinding overrides) WITHOUT
-    /// mutating any model — the effect behind `slopdesk config reload`. Deliberately SKIPS
-    /// ``applyVideoAndAgent()``: those host flags are "applies on reconnect", and the path rewrites the
-    /// process-wide ``EnvConfig/overlay`` (a `nonisolated(unsafe)` static the realtime pipeline reads), so a
-    /// reload must not race-rewrite it.
+    /// Deliberately SKIPS ``applyVideoAndAgent()``: those host flags are "applies on reconnect", and
+    /// that path rewrites the process-wide ``EnvConfig/overlay`` (a `nonisolated(unsafe)` static the
+    /// realtime pipeline reads), so a reload must not race-rewrite it.
     public func reapplyLiveSettings() {
-        applyAppearance()
+        config = AppConfig.current
+        keybindings = Self.foldKeybinds(config)
         applyTerminal()
         applyKeybindings()
     }
 
-    // MARK: Convenience for the UI
-
-    /// Reset EVERY pref to its model default (the "Reset All Settings" affordance). The `didSet`s persist +
-    /// re-apply each typed model, so the process returns to behavior-preserving defaults (empty overlay, no
-    /// sidecar override), exactly as a fresh install. ALSO clears EVERY `.standard`-backed global
-    /// `Defaults.Keys` user setting — tab-reachable toggles AND advanced-only privilege/IPC keys — so it
-    /// returns the whole catalog (every Advanced → All Settings row) to default, not just the five typed
-    /// models (see `customization__advanced-settings.md`). Non-setting STATE keys (first-launch flag,
-    /// CLI-installed flag, window geometry, tab sort/grouping) are deliberately excluded — app state, not
-    /// user-editable settings.
-    ///
-    /// Everything it reaches lives in `UserDefaults` or in one of the typed models here. The advertised
-    /// rows that do NOT (``AllSettingsCatalog/deviceLocalKeys``) belong to ``WorkspaceStore`` and
-    /// `device-prefs.json`, so the affordance the panel actually invokes is
-    /// ``resetEverySetting(deviceLocal:)`` — this alone leaves them standing.
-    public func resetAll() {
-        terminal = TerminalPreferences()
-        video = VideoPreferences()
-        agent = AgentPreferences()
-        keybindings = KeybindingPreferences()
-        appearance = AppearancePreferences()
-        rawOverrides = [:]
-        Defaults.reset(Self.tabReachableDefaultsKeys)
-        Defaults.reset(Self.advancedOnlyDefaultsKeys)
-        defaults.removeObject(forKey: SettingsKey.density)
-        // The typed-model `didSet`s above ran `applyTerminal()` BEFORE `Defaults.reset(...)`, so the last
-        // libghostty config still carried the PRE-reset fire-time Controls (`copy-on-select` / `clipboard-*` /
-        // `mouse-*` / scroll-multiplier / option-as-alt); and if a typed model was already default, no
-        // re-publish happened at all. Rebuild from the now-DEFAULT Controls so the live terminal reflects the
-        // reset immediately (not only after the next settings change / relaunch).
-        refreshTerminalControls()
-    }
-
-    /// "Reset All Settings" as the alert states it — *every* advertised row, including the ones no
-    /// `Defaults.reset(_:)` can reach.
-    ///
-    /// A settings value lives in one of three places, and only two of them are here: `UserDefaults`,
-    /// a typed model on this store, or `device-prefs.json` behind ``WorkspaceStore``
-    /// (``AllSettingsCatalog/deviceLocalKeys``). ``resetAll()`` covers the first two. Splitting the
-    /// affordance across two objects and trusting each call site to remember both is what left
-    /// `follow-session-focus` standing through a reset that had just promised to clear it — so this is
-    /// the ONE entry point the panel calls, and `AllSettingsCatalogTests` pins that every advertised
-    /// key is reachable from it.
-    ///
-    /// - Parameter store: the app's ``WorkspaceStore``, or `nil` in a preview / an un-injected host —
-    ///   where there is no `device-prefs.json` to restore and the rest of the reset still stands.
-    public func resetEverySetting(deviceLocal store: WorkspaceStore?) {
-        resetAll()
-        store?.resetDeviceLocalSettings()
-    }
-
-    /// Reset the ADVANCED-ONLY settings — the keys with NO dedicated settings tab (the "Reset Advanced Only"
-    /// affordance). Per `customization__advanced-settings.md` this "restores only the advanced-only keys
-    /// (those not reachable from General, Shell, Appearance, or Key Bindings), leaving font, theme, and
-    /// keybinding choices intact."
-    ///
-    /// The advanced-only surface: the `video` / `agent` host flags, the raw `SLOPDESK_*` overrides, AND the
-    /// privilege `Defaults.Keys` that live ONLY in the Advanced panel (``advancedOnlyDefaultsKeys`` — the
-    /// title gate and the OSC-52 master + read/write tri-state). EVERY key in ``tabReachableDefaultsKeys``
-    /// IS reachable from a dedicated tab, so this
-    /// must NOT touch any of them, or it destroys the user's other-tab choices — which Reset-Advanced-Only
-    /// promises to leave intact.
-    public func resetAdvancedOnly() {
-        video = VideoPreferences()
-        agent = AgentPreferences()
-        rawOverrides = [:]
-        Defaults.reset(Self.advancedOnlyDefaultsKeys)
-    }
-
-    /// The `.standard`-backed global `Defaults.Keys` settings that ONLY surface in the Advanced panel (no
-    /// dedicated tab) — reset by BOTH ``resetAll()`` and ``resetAdvancedOnly()``. The privilege gates
-    /// (`title-shell-controlled` / `clipboard-shell-controlled` / the OSC-52 read+write tri-state) — all
-    /// edited solely from the Advanced → Privileges section / the All-Settings inline list, so resetting
-    /// them never destroys a tab choice.
-    nonisolated static let advancedOnlyDefaultsKeys: [Defaults.Keys] = [
-        .titleShellControlled, .clipboardShellControlled,
-        .clipboardRead, .clipboardWrite,
-    ]
-
-    /// The `.standard`-backed global `Defaults.Keys` settings reachable from a DEDICATED tab — reset by
-    /// ``resetAll()`` ONLY (Reset-Advanced-Only leaves every tab-reachable choice intact). They live in
-    /// `Defaults.standard` (NOT the injected ``defaults`` — the per-instance store stays test-isolated), so
-    /// they reset via `Defaults.reset(_:)` regardless of the store's injected suite. The union of every user
-    /// setting the `Settings` tabs edit; with ``advancedOnlyDefaultsKeys`` it covers every key the Advanced →
-    /// All Settings catalog advertises (pinned by `AllSettingsCatalogTests`), so no advertised row survives a
-    /// Reset All at a non-default value.
-    nonisolated static let tabReachableDefaultsKeys: [Defaults.Keys] = [
-        // General
-        .onLaunch, .redactSecrets, .closeConfirmTab, .closeConfirmWindow,
-        // Shell — notifications / sounds / agent-notify
-        .oscNotifications, .longCommandNotifications,
-        .notifyOnFinish, .notifyOnError, .notifyOnWatchFinish, .notifyWhileForeground,
-        .bounceDockIcon, .soundShellControlled, .soundOnErrorExit,
-        .agentNotifyTaskComplete, .agentNotifyAwaitInput,
-        .agentSoundTaskComplete, .agentSoundAwaitInput,
-        // Shell — TAB BADGE command-badge toggles (progress-state.md)
-        .tabBadgeOnCommandFinish, .tabBadgeOnCommandFail, .tabBadgeOnCommandAwaitInput,
-        .tabBadgeBusyDelaySeconds,
-        // Shell — working directory + CLI prefix toggles
-        .workingDirectoryNewWindow, .workingDirectoryNewTab, .workingDirectoryNewSplit,
-        .omitCLIPrefix, .allowPrefixOverwrite,
-        // Controls — selection / copy / paste
-        .copyOnSelect, .trimTrailingSpacesOnCopy, .pasteProtection, .pasteBracketedSafe,
-        .clearSelectionOnTyping, .clearSelectionOnCopy, .shiftArrowSelect,
-        // Controls — mouse / scroll
-        .mouseHideWhileTyping, .focusFollowsMouse, .scrollMultiplier,
-        .allowMouseCapture, .allowShiftClick, .clickToMove, .rightClickAction, .optionAsAlt,
-        .undoAtPrompt,
-        // Controls — the ⌃⇥ switcher's follow-along preview (edited from Appearance → Tabs)
-        .paneSwitcherPreview,
-        // Controls — link detection + hint patterns
-        .linkDetection, .linkCmdClick, .linkCmdShiftClick, .autoDetectLinkSchemes, .customLinkSchemes,
-        .hintPatterns, .hintPatternActions,
-        // Controls — secure input
-        .autoSecureInput, .secureInputIndicator,
-        // Appearance
-        .newTabPosition, .autoHideTabsPanel,
-        .dockIconAnimateProgress, .dockIconErrorBadge,
-        // Appearance → Window (macOS-only controls, but the keys round-trip on both platforms and
-        // are advertised either way, so a reset has to reach them on both)
-        .windowSize, .windowCols, .windowRows, .windowWidthPx, .windowHeightPx,
-        .desktopWindowPresentation, .satelliteBackgroundPointer,
-        // Agents
-        .recordClipboardHistory,
-        .agentBadgeWhileProcessing, .agentBadgeWhenComplete, .agentBadgeWhenAwaitingInput,
-    ]
-
     // MARK: Block bookmarks (per-session starred command blocks)
 
-    /// The persisted per-session block bookmarks: `sessionUUID → [block index]`. A separate `UserDefaults`
-    /// key (`settings.blockBookmarks.v1`) holding a plain `[String: [UInt32]]` JSON map — NOT part of the
-    /// four typed prefs models, never folded into the env overlay / sidecar (golden corpus untouched). An
-    /// absent key (fresh install) reads as empty.
+    /// The persisted per-session block bookmarks: `sessionUUID → [block index]`. STATE, not a
+    /// setting — never folded into the env overlay or the sidecar. An absent key reads as empty.
     private func loadBlockBookmarkMap() -> [String: [UInt32]] {
         Self.decode([String: [UInt32]].self, defaults, Key.blockBookmarks) ?? [:]
     }
 
-    /// The bookmarked block indices for `sessionUUID` (empty if none / unknown). The wiring layer seeds a
-    /// pane's ``TerminalBlockModel`` from this on attach.
+    /// The bookmarked block indices for `sessionUUID` (empty if none / unknown). The wiring layer
+    /// seeds a pane's ``TerminalBlockModel`` from this on attach.
     public func blockBookmarks(for sessionUUID: String) -> [UInt32] {
         loadBlockBookmarkMap()[sessionUUID] ?? []
     }
 
-    /// Persists `indices` as `sessionUUID`'s bookmarks (an EMPTY set removes the key entry, keeping the map
-    /// tidy). The wiring layer calls this from the model's `onBookmarksChanged`.
+    /// Persists `indices` as `sessionUUID`'s bookmarks (an EMPTY set removes the entry, keeping the
+    /// map tidy). The wiring layer calls this from the model's `onBookmarksChanged`.
     public func setBlockBookmarks(_ indices: [UInt32], for sessionUUID: String) {
         var map = loadBlockBookmarkMap()
         if indices.isEmpty { map.removeValue(forKey: sessionUUID) } else { map[sessionUUID] = indices }
@@ -454,9 +291,7 @@ public final class PreferencesStore {
 
     // MARK: Seen completion counters (the unread-finish marker's device half)
 
-    /// The persisted ``SeenCompletionEpochs``, or `nil` on a fresh install. A separate `UserDefaults`
-    /// key holding one small JSON value — NOT part of the four typed prefs models, never folded into
-    /// the env overlay / sidecar (golden corpus untouched).
+    /// The persisted ``SeenCompletionEpochs``, or `nil` on a fresh install.
     public func seenCompletionEpochs() -> SeenCompletionEpochs? {
         Self.decode(SeenCompletionEpochs.self, defaults, Key.seenCompletionEpochs)
     }
@@ -465,10 +300,14 @@ public final class PreferencesStore {
         Self.encode(record, defaults, Key.seenCompletionEpochs)
     }
 
-    /// The keybinding conflicts the UI highlights — DISTINCT ids resolving to the same chord
-    /// (``KeybindingPreferences/conflicts()``). Only explicit overrides collide here; the registry
-    /// defaults are conflict-free by construction (pinned by `TreeCommandRoutingTests`).
-    public func keybindingConflicts() -> [String: [String]] { keybindings.conflicts() }
+    private static func encode(_ value: some Encodable, _ defaults: UserDefaults, _ key: String) {
+        if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: key) }
+    }
+
+    private static func decode<T: Decodable>(_: T.Type, _ defaults: UserDefaults, _ key: String) -> T? {
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(T.self, from: data)
+    }
 }
 
 // MARK: - TerminalConfigBroadcaster (the live terminal-reload seam)
@@ -479,8 +318,8 @@ public final class PreferencesStore {
 ///
 /// A tiny `@Observable` holder (not the model) so the gated renderer can `@Observe` it without importing
 /// the whole store; the HEADLESS build keeps a no-op consumer. The `generation` bumps on each publish so
-/// an idempotent re-publish of the SAME string still triggers a reload (e.g. toggling a value back and
-/// forth).
+/// an idempotent re-publish of the SAME string still triggers a reload (e.g. a ⌘± that lands back where
+/// it started).
 @preconcurrency
 @MainActor
 @Observable

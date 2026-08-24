@@ -1,18 +1,18 @@
 # Cursor and Mouse
 
-> ⚠️ **THERE IS NO "Theme" SETTINGS PAGE AND NO THEME EDITOR.** Cursor colour and text-under-cursor are
-> set under **Appearance ▸ Cursor** only (`Sources/SlopDeskClientCore/Settings/CursorColorHex.swift`,
-> `MacCursorPreviewSurface.swift` / `CursorPreviewView.swift`); the theme system that the other half of
-> each sentence names was deleted 2026-08-08 (`docs/DECISIONS.md` §"ONE appearance"). "(theme default)"
-> in the key table now means the single shipped appearance.
+> ⚠️ **THERE IS NO SETTINGS GUI AT ALL.** Every key on this page is written in `config.toml` and
+> nowhere else — the settings window, the Appearance page and the cursor preview surfaces were
+> deleted 2026-08-24 (`docs/58-configuration.md`). The theme system the other half of each sentence
+> names went earlier, 2026-08-08 (`docs/DECISIONS.md` §"ONE appearance"), so "(theme default)" in the
+> key table means the single shipped appearance.
 >
-> The left-nav list at the foot of the page is also stale: the eight sections are General, Shell,
-> Controls, Editor, Agents, Appearance, Key Bindings, Advanced — **no Recipes** (deleted 2026-07-03,
-> `d63e1274`).
+> The left-nav list at the foot of the page describes a navigator that no longer exists. Read the key
+> names as `config.toml` paths under `terminal.*` and `controls.*`; `slopdesk config show` prints
+> every one as resolved.
 
 ## Summary
 
-How slopdesk styles the text cursor and handles mouse/pointer input. All GUI-configured — no config file. Cursor: shape, blink, smooth animation, color, opacity. Mouse: hover-to-focus, right-click action, hide-on-type, shift-bypass for captured mouse, click-to-move, mouse-capture permission. Mouse reporting delegates events (clicks, drags, wheel, bare motion) to programs via DECSET modes with SGR coordinate encoding. OSC 22 lets programs set the system pointer shape dynamically.
+How slopdesk styles the text cursor and handles mouse/pointer input. All set in `config.toml`; there is no GUI. Cursor: shape, blink, smooth animation, color, opacity. Mouse: hover-to-focus, right-click action, hide-on-type, shift-bypass for captured mouse, click-to-move, mouse-capture permission. Mouse reporting delegates events (clicks, drags, wheel, bare motion) to programs via DECSET modes with SGR coordinate encoding. OSC 22 lets programs set the system pointer shape dynamically.
 
 ---
 

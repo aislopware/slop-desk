@@ -24,11 +24,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var learnReturn: String? = "/learned/dir"
     var ignoreReturn = true
     var openReturn = true
-    var configGetReturn: String?
-    var configSetReturn = true
-    var configUnsetReturn = true
-    var configReloadReturn = true
-    var configShowReturn: [ClientConfigEntry] = []
     var fontsReturn: [ClientFontInfo] = []
     var keybindsReturn: [ClientKeybindInfo] = []
     var capturePaneReturn: [String]? = []
@@ -50,12 +45,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
     var recordedOpenTarget: String?
     var recordedOpenMode: ClientControlOpenMode?
     var recordedOpenPlacement: ClientControlProtocol.Placement?
-    var recordedConfigGetKey: String?
-    var recordedConfigSetKey: String?
-    var recordedConfigSetValue: String?
-    var recordedConfigSetTransient: Bool?
-    var recordedConfigUnsetKey: String?
-    var recordedConfigUnsetTransient: Bool?
     var recordedFontMonospace: Bool?
     var recordedFontFamily: String?
     var recordedFontScope: ClientControlProtocol.FontScope?
@@ -108,28 +97,6 @@ private final class FakeClientControlBackend: ClientControlBackend {
         recordedOpenPlacement = placement
         return openReturn
     }
-
-    func configGet(key: String) -> String? {
-        recordedConfigGetKey = key
-        return configGetReturn
-    }
-
-    func configSet(key: String, value: String, transient: Bool) -> Bool {
-        recordedConfigSetKey = key
-        recordedConfigSetValue = value
-        recordedConfigSetTransient = transient
-        return configSetReturn
-    }
-
-    func configUnset(key: String, transient: Bool) -> Bool {
-        recordedConfigUnsetKey = key
-        recordedConfigUnsetTransient = transient
-        return configUnsetReturn
-    }
-
-    func configReload() -> Bool { configReloadReturn }
-
-    func configShow() -> [ClientConfigEntry] { configShowReturn }
 
     func listFonts(
         monospaceOnly: Bool,
@@ -437,99 +404,6 @@ final class ClientControlDispatcherTests: XCTestCase {
         let obj = run(ClientControlProtocol.Method.view, ["target": "/f", "placement": 7])
         XCTAssertTrue(isOK(obj))
         XCTAssertEqual(backend.recordedOpenPlacement, .newTab)
-    }
-
-    // MARK: config
-
-    func testConfigGetSetValue() {
-        backend.configGetReturn = "14"
-        let obj = run(ClientControlProtocol.Method.configGet, ["key": "font-size"])
-        XCTAssertEqual(backend.recordedConfigGetKey, "font-size")
-        XCTAssertEqual(result(obj)["value"] as? String, "14")
-        XCTAssertEqual(result(obj)["key"] as? String, "font-size")
-    }
-
-    func testConfigGetUnsetIsOKWithoutValue() {
-        backend.configGetReturn = nil
-        let obj = run(ClientControlProtocol.Method.configGet, ["key": "missing"])
-        XCTAssertTrue(isOK(obj))
-        XCTAssertNil(result(obj)["value"])
-    }
-
-    func testConfigGetMissingKeyErrors() {
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configGet)))
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configGet, ["key": ""])))
-    }
-
-    /// `--transient` is HONESTLY REJECTED at the dispatcher BEFORE the backend is touched: slopdesk applies
-    /// config live through the same model that persists it (no apply-without-persist layer), so the pre-fix
-    /// behavior (echo `transient:true` while the backend silently persisted) was a lie. Revert-to-confirm-fail:
-    /// the pre-fix dispatcher returned ok + `transient:true` and recorded the backend call.
-    func testConfigSetTransientIsHonestlyRejected() {
-        let obj = run(
-            ClientControlProtocol.Method.configSet,
-            ["key": "font-size", "value": "16", "transient": true],
-        )
-        XCTAssertFalse(isOK(obj), "--transient is rejected, not a silent persist")
-        XCTAssertNil(backend.recordedConfigSetKey, "the backend is never invoked for a transient set")
-        XCTAssertTrue((errorMessage(obj) ?? "").contains("--transient"), "the error names the rejected flag")
-    }
-
-    func testConfigSetDefaultsTransientFalse() throws {
-        _ = run(ClientControlProtocol.Method.configSet, ["key": "k", "value": "v"])
-        XCTAssertFalse(try XCTUnwrap(backend.recordedConfigSetTransient))
-    }
-
-    func testConfigSetMissingValueErrors() {
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configSet, ["key": "k"])))
-    }
-
-    func testConfigSetRejected() {
-        backend.configSetReturn = false
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configSet, ["key": "k", "value": "v"])))
-    }
-
-    func testConfigUnsetPersisted() throws {
-        let obj = run(ClientControlProtocol.Method.configUnset, ["key": "font-size"])
-        XCTAssertTrue(isOK(obj))
-        XCTAssertEqual(backend.recordedConfigUnsetKey, "font-size")
-        XCTAssertFalse(try XCTUnwrap(backend.recordedConfigUnsetTransient))
-        XCTAssertEqual(result(obj)["key"] as? String, "font-size")
-    }
-
-    func testConfigUnsetTransientIsHonestlyRejected() {
-        let obj = run(ClientControlProtocol.Method.configUnset, ["key": "font-size", "transient": true])
-        XCTAssertFalse(isOK(obj), "--transient unset is rejected, not a silent persist")
-        XCTAssertNil(backend.recordedConfigUnsetKey, "the backend is never invoked for a transient unset")
-        XCTAssertTrue((errorMessage(obj) ?? "").contains("--transient"), "the error names the rejected flag")
-    }
-
-    func testConfigUnsetMissingKeyErrors() {
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configUnset)))
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configUnset, ["key": ""])))
-        XCTAssertNil(backend.recordedConfigUnsetKey)
-    }
-
-    func testConfigUnsetRejected() {
-        backend.configUnsetReturn = false
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configUnset, ["key": "k"])))
-    }
-
-    func testConfigReload() {
-        XCTAssertTrue(isOK(run(ClientControlProtocol.Method.configReload)))
-        backend.configReloadReturn = false
-        XCTAssertFalse(isOK(run(ClientControlProtocol.Method.configReload)))
-    }
-
-    func testConfigShowOrderedEntries() {
-        backend.configShowReturn = [
-            ClientConfigEntry(key: "cursor-style", value: "block"),
-            ClientConfigEntry(key: "font-size", value: "14"),
-        ]
-        let entries = result(run(ClientControlProtocol.Method.configShow))["config"] as? [[String: Any]]
-        XCTAssertEqual(entries?.count, 2)
-        XCTAssertEqual(entries?.first?["key"] as? String, "cursor-style")
-        XCTAssertEqual(entries?.last?["key"] as? String, "font-size")
     }
 
     // MARK: font / keybind

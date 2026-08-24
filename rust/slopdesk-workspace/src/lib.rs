@@ -113,6 +113,7 @@ pub mod panel_tabs;
 pub mod peek_reply;
 pub mod persist;
 pub mod phone_key;
+pub mod platform;
 pub mod rail_list;
 pub mod rail_title;
 pub mod search_rank;

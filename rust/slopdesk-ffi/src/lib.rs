@@ -88,10 +88,10 @@ pub mod close_confirm;
 pub mod code_panel;
 pub mod code_surface;
 pub mod command_navigator;
+pub mod config;
 pub mod connect_form;
 pub mod connection;
 pub mod context_menu;
-pub mod cursor_color;
 pub mod cursor_overlay;
 // macOS only: `NSCursor` and the window server's cursor seed. The one handle here that two threads
 // may call at once, because the pointer must keep flowing while the main thread is busy. See the
@@ -202,10 +202,6 @@ pub mod scroll_resample;
 pub mod search_rank;
 pub mod send_pacing;
 pub mod session_state;
-pub mod settings_catalog;
-pub mod settings_layout;
-pub mod settings_options;
-pub mod settings_rows;
 pub mod sidebar_row;
 pub mod sidecars;
 pub mod simulator_presentation;

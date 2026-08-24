@@ -1,9 +1,8 @@
 // Client control backend over the live client stores.
 //
 // The concrete ``ClientControlBackend`` the ``ClientControlServer`` drives: adapts the running client
-// GUI's `@MainActor` stores — ``WorkspaceStore`` (the `Session → Tab → Pane` tree), ``PreferencesStore``
-// (render/appearance), ``WorkspaceBindingRegistry`` (keybinds), and
-// ``FolderFrecencyStore`` (jump) — onto the verb seam the PURE ``ClientControlDispatcher`` calls.
+// GUI's `@MainActor` stores — ``WorkspaceStore`` (the `Session → Tab → Pane` tree),
+// ``WorkspaceBindingRegistry`` (keybinds) and ``FolderFrecencyStore`` (jump) — onto the verb seam the PURE ``ClientControlDispatcher`` calls.
 //
 // ## Compiled-only (hang-safety)
 // Like the host's `AgentControlListener`, this touches live GUI stores and is **never instantiated in a
@@ -20,11 +19,12 @@
 //
 // ## Known gaps
 // Every method wires against an existing seam so the socket is functional end-to-end. The scrollback
-// `pane capture` read's DEPTH is shallow (marked inline). `config get/set/unset/show/reload` drive the
-// LIVE settings — render keys reflow/retint via ``PreferencesStore``,
-// unknown keys honestly error (no dead namespace / no `EnvConfig.overlay` write). `tab badge --kind`
-// writes the store-side per-tab override the rail + `tab list` render. None of these are on the golden
-// wire; this is the NDJSON control plane only.
+// `pane capture` read's DEPTH is shallow (marked inline). `tab badge --kind` writes the store-side
+// per-tab override the rail + `tab list` render. None of these are on the golden wire; this is the
+// NDJSON control plane only.
+//
+// Settings are NOT here. `slopdesk config` reads the file directly in the CLI process — it never
+// dials the running app, because the file is the truth whether the app is running or not.
 
 import CSlopDeskFFI // slopdesk_ws_key_token — the ONE named-key vocabulary, shared with the host's `write`
 import Foundation
@@ -43,17 +43,12 @@ import CoreText // CTFontDescriptorCopyAttribute(kCTFontURLAttribute) — the pe
 @MainActor
 package final class WorkspaceControlBackend: ClientControlBackend {
     private weak var store: WorkspaceStore?
-    private weak var preferences: PreferencesStore?
     private weak var folders: FolderFrecencyStore?
 
     /// The directory a prior no-query `jump` left — the mutable pole of the `$HOME`↔last-jump-source toggle
     /// (`reference__cli.md`). Held on this long-lived backend so the toggle persists across the separate,
     /// short-lived `slopdesk jump` CLI processes that drive it. `nil` until the first committed jump from `$HOME`.
     private var lastJumpSource: String?
-
-    /// Posted by ``configReload()`` alongside its concrete re-apply, so any additional config-change
-    /// observer can refresh — a broadcast hook beside the direct re-apply.
-    package static let configReloadNotification = Notification.Name("SlopDeskClientControlConfigReload")
 
     /// How long the `view`/`edit` shim defers its command injection while the new pane's prompt comes up.
     /// The pane's inherited cwd is applied host-side at PTY spawn, so relative paths already resolve there.
@@ -62,12 +57,10 @@ package final class WorkspaceControlBackend: ClientControlBackend {
 
     package init(
         store: WorkspaceStore,
-        preferences: PreferencesStore,
         folders: FolderFrecencyStore,
         shimLaunchGrace: Duration = .milliseconds(1500),
     ) {
         self.store = store
-        self.preferences = preferences
         self.folders = folders
         self.shimLaunchGrace = shimLaunchGrace
     }
@@ -266,63 +259,6 @@ package final class WorkspaceControlBackend: ClientControlBackend {
             }
         }
         return ids
-    }
-
-    // MARK: - config
-
-    /// Resolve a config key's value for the running app, reflecting the LIVE settings (not a catalog default
-    /// or dead namespace): render keys → the live ``PreferencesStore`` typed model. A key not bound live
-    /// falls back to its catalog default, or `nil` when the catalog has no entry either.
-    package func configGet(key: String) -> String? {
-        if let value = preferences?.renderConfigValue(forKey: key) { return value }
-        return AllSettingsCatalog.entries.first { $0.key == key }?.defaultText
-    }
-
-    /// Write one config key to the LIVE running app: render keys reflow/retint via the live typed model
-    /// (which also persists). A key with NO live binding —
-    /// or a value that fails to parse — returns `false` → dispatcher's honest `config set rejected` (NEVER a
-    /// silent success, the `setTabBadge` lesson).
-    ///
-    /// `transient` (apply-without-persisting) is HONESTLY REJECTED (returns `false`): slopdesk's live render
-    /// settings ARE their own persistence — the typed ``PreferencesStore`` model the renderer reads is the
-    /// SAME model whose `didSet` persists; there is no separate ephemeral render layer. Silently accepting the
-    /// flag while persisting anyway would let the dispatcher echo `transient:true` and lie to the caller, so
-    /// rejection is the honest response. Recorded as a ceiling in `docs/DECISIONS.md`. A genuine overlay would
-    /// need splitting render-source-of-truth from persistence in the libghostty config builder + typed model —
-    /// out of scope for the CLI. A `nonisolated(unsafe)` static `EnvConfig.overlay` the pipeline reads would be
-    /// an easy-looking shortcut here, but ``PreferencesStore`` wholesale-replaces its model on any video/agent
-    /// change, so such a write would both race and get silently clobbered — deliberately not reintroduced.
-    package func configSet(key: String, value: String, transient: Bool) -> Bool {
-        guard !transient else { return false }
-        guard let preferences else { return false }
-        return preferences.setRenderConfig(value, forKey: key)
-    }
-
-    /// Remove one config key — reset it to its model default via
-    /// ``PreferencesStore/unsetRenderConfig(forKey:)``. A key with no live binding → `false` (honest error). `transient` is rejected for the same reason as
-    /// ``configSet(key:value:transient:)`` — there is no non-persisting render layer to unset.
-    package func configUnset(key: String, transient: Bool) -> Bool {
-        guard !transient else { return false }
-        guard let preferences else { return false }
-        return preferences.unsetRenderConfig(forKey: key)
-    }
-
-    /// Re-apply the live settings to the running app (density + terminal reflow + keybinding
-    /// overrides) AND post the config-change notification — a CONCRETE reload, not a dead broadcast. The
-    /// `--reload`/`reload` CLI op therefore re-applies the current config to the GUI.
-    package func configReload() -> Bool {
-        preferences?.reapplyLiveSettings()
-        NotificationCenter.default.post(name: Self.configReloadNotification, object: nil)
-        return true
-    }
-
-    /// The full known-settings catalog, in display order, each paired with its EFFECTIVE value — the LIVE
-    /// render/appearance value where slopdesk binds it (font, cursor, scrollback, density), else
-    /// the catalog default.
-    package func configShow() -> [ClientConfigEntry] {
-        AllSettingsCatalog.entries.map { entry in
-            ClientConfigEntry(key: entry.key, value: configGet(key: entry.key) ?? entry.defaultText)
-        }
     }
 
     // MARK: - font / keybind

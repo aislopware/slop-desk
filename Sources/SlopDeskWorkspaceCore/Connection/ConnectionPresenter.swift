@@ -17,7 +17,7 @@ import SlopDeskWorkspaceModel
 /// The three WORDS come back in ONE crossing (``words(for:)``), because every surface that draws a
 /// status draws it beside its own fallback: the gate card wants the headline, the toolbar wants the
 /// compact form, and both want the plain state name underneath. Three doors would have been three
-/// crossings for one line of text — the same retreat ``SettingsCatalog`` already made.
+/// crossings for one line of text — the same retreat the settings table already made.
 public enum ConnectionPresenter {
     /// The supervisor's give-up ceiling, from ``ReconnectManager/maxReconnectAttempts`` (the single
     /// source of truth, in the lower module) so "attempt N of M" can never drift from EITHER the

@@ -1,574 +1,273 @@
+// `SettingsKey`, after the settings GUI came out.
+//
+// What this file used to pin is gone with the thing it pinned. There were ~90 `<name>Key` string
+// constants here, each asserted equal to a literal, because a rename silently orphaned a user's
+// `UserDefaults` entry and the app read the default instead. There is no `UserDefaults` entry to
+// orphan any more: a setting is a PATH in `config.toml`, the reader typed it, and the equivalent
+// break is a path the table stops declaring — which is not a Swift question. That one is answered
+// in `slopdesk-invariants`, which can read both the accessors here and the table in
+// `slopdesk-settings`; a test in this process could only restate the literals it is checking.
+//
+// So what is left is what a Swift test is the right place for: that each accessor READS the file
+// rather than a compiled-in constant, that the ones with a fixed set of tokens repair a token the
+// file does not name, that the four composite readings fold their parts in the right order, and
+// that the four survivors in `Defaults` are STATE — things the app learned, which it still writes.
+//
+// Hang-safe: pure reads off a stated ``AppConfig``, no daemons, no sockets, no disk.
+
+import Defaults
+import SlopDeskTestSupport
 import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the `SettingsKey` fire-time accessors (default ON for the gates, with env/UserDefaults
-/// overrides) — the shared source of truth between the Settings scene and the consumers.
 @MainActor
 final class SettingsKeyTests: XCTestCase {
-    private var keys: [String] {
-        [
-            SettingsKey.oscNotifications,
-            SettingsKey.longCommandNotifications,
-            // Notification policy keys.
-            SettingsKey.notifyOnFinish,
-            SettingsKey.notifyOnError,
-            SettingsKey.notifyOnWatchFinish,
-            SettingsKey.notifyWhileForegroundKey,
-            SettingsKey.bounceDockIcon,
-            SettingsKey.soundShellControlled,
-            SettingsKey.soundOnErrorExit,
-            SettingsKey.agentNotifyTaskComplete,
-            SettingsKey.agentNotifyAwaitInput,
-            // Agent badge gates.
-            SettingsKey.agentBadgeWhileProcessing,
-            SettingsKey.agentBadgeWhenComplete,
-            SettingsKey.agentBadgeWhenAwaitingInput,
-            // Progress cluster: command-driven TAB BADGE toggles.
-            SettingsKey.tabBadgeOnCommandFinish,
-            SettingsKey.tabBadgeOnCommandFail,
-            SettingsKey.tabBadgeOnCommandAwaitInput,
-            SettingsKey.redactSecrets,
-            SettingsKey.recordClipboardHistory,
-            SettingsKey.onLaunchKey,
-            SettingsKey.copyOnSelect,
-            SettingsKey.trimTrailingSpacesOnCopy,
-            SettingsKey.pasteProtection,
-            SettingsKey.mouseHideWhileTyping,
-            SettingsKey.focusFollowsMouse,
-            SettingsKey.scrollMultiplier,
-            // The remaining Controls / Mouse / Scroll knobs.
-            SettingsKey.clearSelectionOnTyping,
-            SettingsKey.clearSelectionOnCopy,
-            SettingsKey.shiftArrowSelect,
-            SettingsKey.pasteBracketedSafe,
-            SettingsKey.allowMouseCapture,
-            SettingsKey.clickToMove,
-            SettingsKey.clipboardReadKey,
-            SettingsKey.clipboardWriteKey,
-            // Privilege surface (title gates + OSC-52 master switch).
-            SettingsKey.titleShellControlled,
-            SettingsKey.clipboardShellControlled,
-            // IPC guards on the agent-control ctl socket.
-            SettingsKey.allowShiftClickKey,
-            SettingsKey.rightClickActionKey,
-            // Link & status-bar config keys.
-            SettingsKey.linkDetection,
-            SettingsKey.linkCmdClickKey,
-            SettingsKey.linkCmdShiftClickKey,
-            SettingsKey.autoDetectLinkSchemesKey,
-            SettingsKey.customLinkSchemes,
-            SettingsKey.hintPatterns,
-            SettingsKey.hintPatternActions,
-            // Window-size + auto-hide-tabs-panel keys.
-            SettingsKey.windowSizeKey,
-            SettingsKey.windowColsKey,
-            SettingsKey.windowRowsKey,
-            SettingsKey.windowWidthPxKey,
-            SettingsKey.windowHeightPxKey,
-            SettingsKey.windowSavedFrameKey,
-            SettingsKey.autoHideTabsPanelKey,
-        ]
+    // MARK: - Every accessor reads the FILE
+
+    /// A flag the file sets is the flag the accessor answers, both ways — the property that makes
+    /// the whole surface a projection rather than a copy. One row per family, because the families
+    /// are what a table rename would split.
+    func testAFlagTheFileSetsIsTheFlagTheAccessorAnswers() {
+        for state in [true, false] {
+            stateSetting("general.redact-secrets", state)
+            stateSetting("notifications.osc", state)
+            stateSetting("badges.agent-complete", state)
+            stateSetting("controls.copy-on-select", state)
+            stateSetting("controls.link-detection", state)
+
+            XCTAssertEqual(SettingsKey.redactSecretsEnabled, state)
+            XCTAssertEqual(SettingsKey.oscNotificationsEnabled, state)
+            XCTAssertEqual(SettingsKey.agentBadgeWhenCompleteEnabled, state)
+            XCTAssertEqual(SettingsKey.copyOnSelectEnabled, state)
+            XCTAssertEqual(SettingsKey.linkDetectionEnabled, state)
+        }
     }
 
-    // The @objc XCTestCase overrides must keep the throwing signature (a non-throwing
-    // override of a throwing @objc method does not compile).
-    // swiftlint:disable:next unneeded_throws_rethrows
-    override func setUp() async throws { keys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
-    // swiftlint:disable:next unneeded_throws_rethrows
-    override func tearDown() async throws { keys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
+    /// The numbers, likewise. The window geometry is four ints the table declares separately and a
+    /// transposition between them would be invisible in any single-row check.
+    func testTheNumbersComeOffTheirOwnRows() {
+        stateSetting("window.cols", 132)
+        stateSetting("window.rows", 43)
+        stateSetting("window.width-px", 1600)
+        stateSetting("window.height-px", 900)
+        stateSetting("controls.scroll-multiplier", 2.5)
+        stateSetting("badges.busy-delay-seconds", 0.0)
 
-    func testGatesDefaultOnWhenUnset() {
-        XCTAssertTrue(SettingsKey.oscNotificationsEnabled)
-        XCTAssertTrue(SettingsKey.longCommandNotificationsEnabled)
+        XCTAssertEqual(SettingsKey.windowCols, 132)
+        XCTAssertEqual(SettingsKey.windowRows, 43)
+        XCTAssertEqual(SettingsKey.windowWidthPx, 1600)
+        XCTAssertEqual(SettingsKey.windowHeightPx, 900)
+        XCTAssertEqual(SettingsKey.scrollMultiplierValue, 2.5)
+        XCTAssertEqual(SettingsKey.tabBadgeBusyDelaySecondsValue, 0, "0 is a chosen value, not 'unset'")
     }
 
-    func testGatesRespectAnExplicitFalse() {
-        SettingsKey.store.set(false, forKey: SettingsKey.oscNotifications)
-        XCTAssertFalse(SettingsKey.oscNotificationsEnabled)
-        XCTAssertTrue(SettingsKey.longCommandNotificationsEnabled, "an unset key stays default-ON")
+    func testTheTextRowsComeOffTheirOwnRows() {
+        stateSetting("appearance.density", "compact")
+        XCTAssertEqual(SettingsKey.density, "compact")
     }
 
-    func testPrivacyGatesDefaultOnAndRespectFalse() {
-        XCTAssertTrue(SettingsKey.redactSecretsEnabled)
-        XCTAssertTrue(SettingsKey.recordClipboardHistoryEnabled)
-        SettingsKey.store.set(false, forKey: SettingsKey.redactSecrets)
-        SettingsKey.store.set(false, forKey: SettingsKey.recordClipboardHistory)
-        XCTAssertFalse(SettingsKey.redactSecretsEnabled)
-        XCTAssertFalse(SettingsKey.recordClipboardHistoryEnabled)
+    // MARK: - A token the file does not name
+
+    /// A hand-edited file is UNTRUSTED text, and every enum-valued row is one typo from a token no
+    /// case has. Each repairs to its own declared default rather than trapping or answering the
+    /// first case — the app must start on a file with a typo in it, and start behaving the way a
+    /// file without that row behaves.
+    func testAnUnknownTokenRepairsToTheDeclaredDefault() {
+        // The shipped answers, read through the SAME accessors, so a rename of a default token in
+        // the table cannot make this test pass by restating the old one.
+        stateCompiledDefaults()
+        let shipped = (
+            newTabPosition: SettingsKey.newTabPosition,
+            autoHideTabsPanel: SettingsKey.autoHideTabsPanel,
+            windowSize: SettingsKey.windowSize,
+        )
+
+        stateSetting("general.on-launch", "no-such-token")
+        stateSetting("shell.new-tab-position", "no-such-token")
+        stateSetting("shell.auto-hide-tabs-panel", "no-such-token")
+        stateSetting("shell.close-confirm-window", "no-such-token")
+        stateSetting("window.size", "no-such-token")
+        stateSetting("controls.option-as-alt", "no-such-token")
+        stateSetting("controls.link-cmd-click", "no-such-token")
+        stateSetting("controls.auto-detect-link-schemes", "no-such-token")
+
+        XCTAssertEqual(SettingsKey.onLaunch, .restoreLastSession)
+        XCTAssertEqual(SettingsKey.newTabPosition, shipped.newTabPosition)
+        XCTAssertEqual(SettingsKey.autoHideTabsPanel, shipped.autoHideTabsPanel)
+        XCTAssertEqual(SettingsKey.closeConfirmWindow, .process)
+        XCTAssertEqual(SettingsKey.windowSize, shipped.windowSize)
+        XCTAssertEqual(SettingsKey.optionAsAlt, .off)
+        XCTAssertEqual(SettingsKey.linkCmdClick, .open)
+        XCTAssertEqual(SettingsKey.autoDetectLinkSchemes, .all)
     }
 
-    /// The chrome key strings are pinned so a rename can't split-brain the Settings UI from its consumers.
-    func testChromeKeyStringsAreStable() {
-        XCTAssertEqual(SettingsKey.density, "appearance.density")
+    /// And a token the file DOES name is honoured — otherwise the repair above would pass on an
+    /// accessor that ignored the file entirely.
+    func testATokenTheFileNamesIsHonoured() {
+        stateSetting("general.on-launch", "new-window")
+        stateSetting("shell.auto-hide-tabs-panel", "always")
+        stateSetting("controls.option-as-alt", "left")
+
+        XCTAssertEqual(SettingsKey.onLaunch, .newWindow)
+        XCTAssertEqual(SettingsKey.autoHideTabsPanel, .always)
+        XCTAssertEqual(SettingsKey.optionAsAlt, .left)
     }
 
-    // MARK: - Notification policy keys + the resolved `notificationSettings` bundle
+    // MARK: - The composite readings
 
-    /// The notification keys read their notification-setting.png defaults when unset, and the
-    /// resolved ``SettingsKey/notificationSettings`` bundle (which the macOS poster consumes) matches the
-    /// spec baseline `NotificationSettings()`. This pins the `Defaults.Key` defaults against an INDEPENDENT
-    /// expectation (the struct defaults), catching a divergence between the two sources. Round-trips the
-    /// `notifyWhileForeground` enum + repairs a stale raw value to `.off`.
-    func testNotificationKeyDefaultsAndResolvedBundle() {
-        XCTAssertFalse(SettingsKey.notifyOnFinishEnabled, "Notify on Command Finish defaults OFF")
-        XCTAssertTrue(SettingsKey.notifyOnErrorEnabled, "Notify on Error Exit defaults ON")
-        XCTAssertTrue(SettingsKey.notifyOnWatchFinishEnabled, "Notify on Watch Finish defaults ON")
-        XCTAssertEqual(SettingsKey.notifyWhileForeground, .off, "Notify While Foreground defaults Off")
-        XCTAssertTrue(SettingsKey.bounceDockIconEnabled, "Bounce Dock Icon defaults ON")
-        XCTAssertTrue(SettingsKey.soundShellControlledEnabled, "Sound — Shell Controlled defaults ON")
-        XCTAssertFalse(SettingsKey.soundOnErrorExitEnabled, "Sound on Error Exit defaults OFF")
-        XCTAssertTrue(SettingsKey.agentNotifyTaskCompleteEnabled, "Agent task-complete defaults ON")
-        XCTAssertTrue(SettingsKey.agentNotifyAwaitInputEnabled, "Agent await-input defaults ON")
-        // Agent badge gates: "while processing" defaults OFF (progress-state.md "off by default"),
-        // the other two ON.
-        XCTAssertFalse(SettingsKey.agentBadgeWhileProcessingEnabled, "Badge while processing defaults OFF (spec)")
-        XCTAssertTrue(SettingsKey.agentBadgeWhenCompleteEnabled, "Badge when complete defaults ON")
-        XCTAssertTrue(SettingsKey.agentBadgeWhenAwaitingInputEnabled, "Badge when awaiting input defaults ON")
+    /// ``SettingsKey/notificationSettings`` is the ONE seam the poster reads, so a part folded into
+    /// the wrong field would silence the wrong event. Each part is stated to a DISTINCT value so no
+    /// two fields can be swapped without the assertion noticing.
+    func testTheNotificationSeamFoldsEveryPartIntoItsOwnField() {
+        stateSetting("notifications.osc", true)
+        stateSetting("notifications.on-finish", false)
+        stateSetting("notifications.on-error", true)
+        stateSetting("notifications.on-watch-finish", false)
+        stateSetting("notifications.while-foreground", "off")
+        stateSetting("notifications.agent-task-complete", true)
+        stateSetting("notifications.agent-await-input", false)
+
+        let settings = SettingsKey.notificationSettings
+        XCTAssertTrue(settings.appNotificationsEnabled)
+        XCTAssertFalse(settings.notifyOnFinish)
+        XCTAssertTrue(settings.notifyOnError)
+        XCTAssertFalse(settings.notifyOnWatchFinish)
+        XCTAssertEqual(settings.notifyWhileForeground, .off)
+        XCTAssertTrue(settings.agentNotifyTaskComplete)
+        XCTAssertFalse(settings.agentNotifyAwaitInput)
+    }
+
+    /// The two badge seams are SEPARATE gates over the same three shapes — an agent's spinner and a
+    /// command's are chosen independently, and folding one set into the other would silence a badge
+    /// the reader never turned off. Stated in opposition so a crossed wire is visible.
+    func testTheAgentAndCommandBadgeGatesAreSeparate() {
+        stateSetting("badges.agent-processing", true)
+        stateSetting("badges.agent-complete", false)
+        stateSetting("badges.agent-awaiting-input", true)
+        stateSetting("badges.command-finish", false)
+        stateSetting("badges.command-fail", true)
+        stateSetting("badges.command-await-input", false)
+
         XCTAssertEqual(
             SettingsKey.agentBadgeGates,
-            AgentBadgeGates(badgeWhileProcessing: false, badgeWhenComplete: true, badgeWhenAwaitingInput: true),
-            "the resolved global gates default with while-processing OFF",
+            AgentBadgeGates(badgeWhileProcessing: true, badgeWhenComplete: false, badgeWhenAwaitingInput: true),
         )
-        // Progress cluster: the three COMMAND-driven "TAB BADGE" toggles all default ON (distinct keys).
-        XCTAssertTrue(SettingsKey.tabBadgeOnCommandFinishEnabled, "Tab Badge When Command Finishes defaults ON")
-        XCTAssertTrue(SettingsKey.tabBadgeOnCommandFailEnabled, "Tab Badge When Command Fails defaults ON")
-        XCTAssertTrue(SettingsKey.tabBadgeOnCommandAwaitInputEnabled, "Tab Badge When Command Awaits Input defaults ON")
-        XCTAssertEqual(SettingsKey.commandBadgeGates, .allOn, "the resolved global command gates default all-on")
-        // The resolved bundle the notifier reads equals the spec baseline (the two default sources agree).
-        XCTAssertEqual(SettingsKey.notificationSettings, NotificationSettings())
-        // Round-trip the enum from its persisted raw value + repair a stale value.
-        SettingsKey.store.set("tab-unfocused", forKey: SettingsKey.notifyWhileForegroundKey)
-        XCTAssertEqual(SettingsKey.notifyWhileForeground, .tabUnfocused)
-        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.notifyWhileForegroundKey)
-        XCTAssertEqual(SettingsKey.notifyWhileForeground, .off, "an invalid raw value repairs to off")
-        // A flipped toggle flows into the resolved bundle (proves the resolver reads the live keys).
-        SettingsKey.store.set(true, forKey: SettingsKey.notifyOnFinish)
-        XCTAssertTrue(SettingsKey.notificationSettings.notifyOnFinish)
-    }
-
-    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer + the All-Settings catalog + the navigator — a rename that would split-brain them fails
-    /// this pin. The `notifyWhileForeground` enum raw values are the declared persisted config tokens.
-    func testNotificationKeyStringsAreStable() {
-        XCTAssertEqual(SettingsKey.notifyOnFinish, "notifications.onFinish")
-        XCTAssertEqual(SettingsKey.notifyOnError, "notifications.onError")
-        XCTAssertEqual(SettingsKey.notifyOnWatchFinish, "notifications.onWatchFinish")
-        XCTAssertEqual(SettingsKey.notifyWhileForegroundKey, "notifications.whileForeground")
-        XCTAssertEqual(SettingsKey.bounceDockIcon, "notifications.bounceDock")
-        XCTAssertEqual(SettingsKey.soundShellControlled, "notifications.soundShellControlled")
-        XCTAssertEqual(SettingsKey.soundOnErrorExit, "notifications.soundOnErrorExit")
-        XCTAssertEqual(SettingsKey.agentNotifyTaskComplete, "notifications.agentTaskComplete")
-        XCTAssertEqual(SettingsKey.agentNotifyAwaitInput, "notifications.agentAwaitInput")
-        XCTAssertEqual(SettingsKey.agentBadgeWhileProcessing, "agents.badgeWhileProcessing")
-        XCTAssertEqual(SettingsKey.agentBadgeWhenComplete, "agents.badgeWhenComplete")
-        XCTAssertEqual(SettingsKey.agentBadgeWhenAwaitingInput, "agents.badgeWhenAwaitingInput")
-        XCTAssertEqual(SettingsKey.tabBadgeOnCommandFinish, "tabBadge.onCommandFinish")
-        XCTAssertEqual(SettingsKey.tabBadgeOnCommandFail, "tabBadge.onCommandFail")
-        XCTAssertEqual(SettingsKey.tabBadgeOnCommandAwaitInput, "tabBadge.onCommandAwaitInput")
-        XCTAssertEqual(NotifyWhileForeground.off.rawValue, "off")
-        XCTAssertEqual(NotifyWhileForeground.always.rawValue, "always")
-        XCTAssertEqual(NotifyWhileForeground.tabUnfocused.rawValue, "tab-unfocused")
-    }
-
-    // MARK: - PreferencesStore — the live source the Settings panels bind to
-
-    /// An isolated `UserDefaults` suite so the round-trips don't touch the real defaults.
-    private func makeIsolatedDefaults(_ name: String = #function) -> UserDefaults {
-        let suite = "PreferencesStoreTest." + name
-        let d = UserDefaults(suiteName: suite)!
-        d.removePersistentDomain(forName: suite)
-        return d
-    }
-
-    func testPreferencesStoreLoadsModelDefaultsOnFreshInstall() {
-        // A fresh install (no persisted prefs) loads the model DEFAULTS, and the all-nil video/agent
-        // models contribute NOTHING to the EnvConfig overlay (behaviour-preserving). `applyOnInit: false`
-        // so we assert the loaded models without mutating the process-wide overlay.
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
-        XCTAssertEqual(store.terminal, TerminalPreferences())
-        XCTAssertEqual(store.video, VideoPreferences())
-        XCTAssertEqual(store.agent, AgentPreferences())
-        XCTAssertEqual(store.keybindings, KeybindingPreferences())
-        XCTAssertTrue(store.rawOverrides.isEmpty)
-        // The behaviour-preservation proof: the default video ∪ agent overlay is EMPTY.
-        XCTAssertTrue(EnvBridge.toEnv(store.video).isEmpty)
-        XCTAssertTrue(EnvBridge.toEnv(store.agent).isEmpty)
-    }
-
-    func testPreferencesStoreRoundTripsEachModelThroughUserDefaults() {
-        let defaults = makeIsolatedDefaults()
-        // Write a custom value for each model, then reload a NEW store from the SAME defaults.
-        let store = PreferencesStore(defaults: defaults, sidecarURL: nil, applyOnInit: false)
-        store.terminal = TerminalPreferences(fontFamily: "JetBrains Mono", fontSize: 15, cursorStyle: .bar)
-        store.video = VideoPreferences(qpSharp: 22, fecM: 2, fecK: 5)
-        store.agent = AgentPreferences(preventSleep: true)
-        store.keybindings = KeybindingPreferences(overrides: ["pane.splitRight": .init(key: "e", command: true)])
-        store.rawOverrides = ["SLOPDESK_FOO": "1"]
-
-        let reloaded = PreferencesStore(defaults: defaults, sidecarURL: nil, applyOnInit: false)
-        XCTAssertEqual(reloaded.terminal, store.terminal)
-        XCTAssertEqual(reloaded.video, store.video)
-        XCTAssertEqual(reloaded.agent, store.agent)
-        XCTAssertEqual(reloaded.keybindings, store.keybindings)
-        XCTAssertEqual(reloaded.rawOverrides, store.rawOverrides)
-    }
-
-    func testResetAllReturnsToBehaviourPreservingDefaults() {
-        let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
-        store.video = VideoPreferences(qpSharp: 30)
-        store.rawOverrides = ["SLOPDESK_X": "9"]
-        store.resetAll()
-        XCTAssertEqual(store.video, VideoPreferences())
-        XCTAssertTrue(store.rawOverrides.isEmpty)
-        XCTAssertTrue(EnvBridge.toEnv(store.video).isEmpty)
-    }
-
-    // MARK: - On-Launch behaviour + Controls/Scroll/Copy toggles
-
-    /// The `On Launch` general setting defaults to ``OnLaunchBehavior/restoreLastSession`` (the existing
-    /// launch behaviour — the store already restores the persisted tree), round-trips ``newWindow`` through
-    /// the persisted raw string, and a stale / junk persisted raw value repairs to `.restoreLastSession`
-    /// (validate-then-repair, never traps). Read through the public ``SettingsKey/onLaunch`` accessor + the
-    /// raw `UserDefaults` the `@Default(.onLaunch)` picker binds (the file's established no-`import Defaults`
-    /// convention).
-    func testOnLaunchDefaultsToRestore() {
-        // Default when unset.
-        XCTAssertEqual(SettingsKey.onLaunch, .restoreLastSession)
-        // Round-trips the alternative case from its persisted raw value.
-        SettingsKey.store.set("new-window", forKey: SettingsKey.onLaunchKey)
-        XCTAssertEqual(SettingsKey.onLaunch, .newWindow)
-        // The case's raw value matches the declared config string.
-        XCTAssertEqual(OnLaunchBehavior.newWindow.rawValue, "new-window")
-        XCTAssertEqual(OnLaunchBehavior.restoreLastSession.rawValue, "restore-last-session")
-        // A stale / hostile persisted raw value repairs to the default rather than trapping.
-        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.onLaunchKey)
-        XCTAssertEqual(SettingsKey.onLaunch, .restoreLastSession, "an invalid raw value repairs to restore")
-    }
-
-    /// The Controls/Scroll/Copy toggles each read their declared default when unset (they are
-    /// fire-time `Defaults.Keys` flags, not typed-model fields → golden-safe). This
-    /// pins the persisted defaults + round-trip so the Controls picker is faithful.
-    func testNewControlsToggleDefaults() {
-        // Declared defaults for the Controls config values.
-        XCTAssertFalse(SettingsKey.copyOnSelectEnabled, "copy-on-select defaults OFF")
-        XCTAssertTrue(SettingsKey.trimTrailingSpacesOnCopyEnabled, "trim trailing spaces defaults ON")
-        XCTAssertTrue(SettingsKey.pasteProtectionEnabled, "paste protection defaults ON")
-        XCTAssertTrue(SettingsKey.mouseHideWhileTypingEnabled, "mouse-hide-while-typing defaults ON")
-        XCTAssertFalse(SettingsKey.focusFollowsMouseEnabled, "focus-follows-mouse defaults OFF")
-        XCTAssertEqual(SettingsKey.scrollMultiplierValue, 1.0, "scroll multiplier defaults to 1.0")
-        // An explicit persisted value is respected (the toggle persists across reads).
-        SettingsKey.store.set(true, forKey: SettingsKey.copyOnSelect)
-        SettingsKey.store.set(2.5, forKey: SettingsKey.scrollMultiplier)
-        XCTAssertTrue(SettingsKey.copyOnSelectEnabled)
-        XCTAssertEqual(SettingsKey.scrollMultiplierValue, 2.5)
-    }
-
-    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer — a rename that would split-brain the Settings UI from the fire-sites fails this pin.
-    func testSettingsKeyStringsAreStable() {
-        XCTAssertEqual(SettingsKey.onLaunchKey, "general.onLaunch")
-        XCTAssertEqual(SettingsKey.copyOnSelect, "controls.copyOnSelect")
-        XCTAssertEqual(SettingsKey.trimTrailingSpacesOnCopy, "controls.trimTrailingSpaces")
-        XCTAssertEqual(SettingsKey.pasteProtection, "controls.pasteProtection")
-        XCTAssertEqual(SettingsKey.mouseHideWhileTyping, "controls.mouseHideWhileTyping")
-        XCTAssertEqual(SettingsKey.focusFollowsMouse, "controls.focusFollowsMouse")
-        XCTAssertEqual(SettingsKey.scrollMultiplier, "controls.scrollMultiplier")
-    }
-
-    // MARK: - The remaining Controls / Mouse / Scroll knobs
-
-    /// The Bool toggles each read their declared default when unset, and respect a persisted explicit
-    /// value (the toggle-persistence proof). These are fire-time `Defaults.Keys` flags (never folded into a
-    /// typed prefs model → golden-safe). This pins the persisted defaults.
-    func testE8BoolToggleDefaults() {
-        XCTAssertTrue(SettingsKey.clearSelectionOnTypingEnabled, "clear-on-typing defaults ON")
-        XCTAssertFalse(SettingsKey.clearSelectionOnCopyEnabled, "clear-on-copy defaults OFF")
-        XCTAssertTrue(SettingsKey.shiftArrowSelectEnabled, "shift-arrow-select defaults ON")
-        XCTAssertTrue(SettingsKey.pasteBracketedSafeEnabled, "paste-bracketed-safe defaults ON")
-        XCTAssertTrue(SettingsKey.allowMouseCaptureEnabled, "allow-mouse-capture defaults ON")
-        XCTAssertTrue(SettingsKey.clickToMoveEnabled, "click-to-move defaults ON")
-        XCTAssertTrue(SettingsKey.undoAtPromptEnabled, "undo-at-prompt defaults ON")
-        // An explicit persisted value is respected.
-        SettingsKey.store.set(false, forKey: SettingsKey.clearSelectionOnTyping)
-        SettingsKey.store.set(true, forKey: SettingsKey.clearSelectionOnCopy)
-        SettingsKey.store.set(false, forKey: SettingsKey.clickToMove)
-        XCTAssertFalse(SettingsKey.clearSelectionOnTypingEnabled)
-        XCTAssertTrue(SettingsKey.clearSelectionOnCopyEnabled)
-        XCTAssertFalse(SettingsKey.clickToMoveEnabled)
-    }
-
-    /// The enum-valued knobs default to the declared value when unset, round-trip the alternative case via
-    /// the persisted raw string (`Defaults.PreferRawRepresentable` → `RawRepresentableBridge`), and repair a
-    /// stale / hostile persisted raw value to the default rather than trapping (the non-failable
-    /// `init(rawValue:)`). Read through the public typed accessors + the raw `UserDefaults` the
-    /// `@Default(.key)` pickers bind.
-    func testE8EnumKnobDefaultsAndRoundTrip() {
-        // Defaults when unset.
-        XCTAssertEqual(SettingsKey.clipboardRead, .ask, "clipboard-read defaults Ask")
-        XCTAssertEqual(SettingsKey.clipboardWrite, .allow, "clipboard-write defaults Allow")
-        XCTAssertEqual(SettingsKey.allowShiftClick, .enabled, "allow-shift-click defaults Enabled")
-        XCTAssertEqual(SettingsKey.rightClickAction, .contextMenu, "right-click-action defaults Context Menu")
-        // Round-trip the alternative case from its persisted raw value.
-        SettingsKey.store.set(ClipboardAccess.deny.rawValue, forKey: SettingsKey.clipboardReadKey)
-        SettingsKey.store.set(MouseShiftCapture.always.rawValue, forKey: SettingsKey.allowShiftClickKey)
-        SettingsKey.store.set(RightClickAction.copyOrPaste.rawValue, forKey: SettingsKey.rightClickActionKey)
-        XCTAssertEqual(SettingsKey.clipboardRead, .deny)
-        XCTAssertEqual(SettingsKey.allowShiftClick, .always)
-        XCTAssertEqual(SettingsKey.rightClickAction, .copyOrPaste)
-        // A stale / hostile persisted raw value repairs to the default rather than trapping.
-        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.clipboardReadKey)
-        SettingsKey.store.set("garbage", forKey: SettingsKey.rightClickActionKey)
-        XCTAssertEqual(SettingsKey.clipboardRead, .ask, "an invalid raw value repairs to ask")
-        XCTAssertEqual(SettingsKey.rightClickAction, .contextMenu, "an invalid raw value repairs to context menu")
-    }
-
-    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer + the fire-sites — a rename that would split-brain the Settings UI from the fire-sites fails
-    /// this pin.
-    func testE8SettingsKeyStringsAreStable() {
-        XCTAssertEqual(SettingsKey.clearSelectionOnTyping, "controls.clearSelectionOnTyping")
-        XCTAssertEqual(SettingsKey.clearSelectionOnCopy, "controls.clearSelectionOnCopy")
-        XCTAssertEqual(SettingsKey.shiftArrowSelect, "controls.shiftArrowSelect")
-        XCTAssertEqual(SettingsKey.pasteBracketedSafe, "controls.pasteBracketedSafe")
-        XCTAssertEqual(SettingsKey.allowMouseCapture, "controls.allowMouseCapture")
-        XCTAssertEqual(SettingsKey.clickToMove, "controls.clickToMove")
-        XCTAssertEqual(SettingsKey.undoAtPrompt, "controls.undoAtPrompt")
-        XCTAssertEqual(SettingsKey.clipboardReadKey, "controls.clipboardRead")
-        XCTAssertEqual(SettingsKey.clipboardWriteKey, "controls.clipboardWrite")
-        XCTAssertEqual(SettingsKey.allowShiftClickKey, "controls.allowShiftClick")
-        XCTAssertEqual(SettingsKey.rightClickActionKey, "controls.rightClickAction")
-    }
-
-    // MARK: - Link & status-bar config keys
-
-    /// The link-interaction keys read their declared defaults when unset, round-trip the alternative
-    /// case via the persisted raw value (`Defaults.PreferRawRepresentable` → `RawRepresentableBridge`), and
-    /// repair a stale / hostile persisted raw value to the default rather than trapping (the non-failable
-    /// `init(rawValue:)`). ``SettingsKey/linkSchemePolicy`` bridges the persisted mode + custom list into the
-    /// detector's ``LinkSchemePolicy``. Read through the public typed accessors + the raw `UserDefaults` the
-    /// `@Default(.key)` pickers bind (the file's established no-`import Defaults` convention).
-    func testE10LinkKeyDefaultsAndRoundTrip() {
-        // Defaults when unset.
-        XCTAssertTrue(SettingsKey.linkDetectionEnabled, "link-detection defaults ON")
-        XCTAssertEqual(SettingsKey.linkCmdClick, .open, "link-cmd-click defaults Open")
-        XCTAssertEqual(SettingsKey.linkCmdShiftClick, .revealFinder, "link-cmd-shift-click defaults Reveal")
-        XCTAssertEqual(SettingsKey.autoDetectLinkSchemes, .all, "auto-detect schemes defaults All")
-        XCTAssertEqual(SettingsKey.linkSchemePolicy, .all, "the default scheme policy detects any scheme")
-        // Round-trip the alternative case from its persisted raw value.
-        SettingsKey.store.set(false, forKey: SettingsKey.linkDetection)
-        SettingsKey.store.set(LinkCmdClick.copy.rawValue, forKey: SettingsKey.linkCmdClickKey)
-        SettingsKey.store.set(
-            LinkCmdShiftClick.openSystemDefault.rawValue,
-            forKey: SettingsKey.linkCmdShiftClickKey,
+        XCTAssertEqual(
+            SettingsKey.commandBadgeGates,
+            CommandBadgeGates(whenCommandFinishes: false, whenCommandFails: true, whenCommandAwaitsInput: false),
         )
-        SettingsKey.store.set(AutoDetectLinkSchemes.custom.rawValue, forKey: SettingsKey.autoDetectLinkSchemesKey)
-        SettingsKey.store.set(["codex", "ssh"], forKey: SettingsKey.customLinkSchemes)
-        XCTAssertFalse(SettingsKey.linkDetectionEnabled)
-        XCTAssertEqual(SettingsKey.linkCmdClick, .copy)
-        XCTAssertEqual(SettingsKey.linkCmdShiftClick, .openSystemDefault)
-        XCTAssertEqual(SettingsKey.autoDetectLinkSchemes, .custom)
-        // Custom mode bridges the persisted list into the detector policy (the always-on schemes are folded in
-        // by the detector itself, not by this policy value).
-        XCTAssertEqual(SettingsKey.linkSchemePolicy, .custom(["codex", "ssh"]))
-        // A stale / hostile persisted raw value repairs to the default rather than trapping.
-        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.linkCmdClickKey)
-        SettingsKey.store.set("nonsense", forKey: SettingsKey.autoDetectLinkSchemesKey)
-        XCTAssertEqual(SettingsKey.linkCmdClick, .open, "an invalid raw value repairs to open")
-        XCTAssertEqual(SettingsKey.autoDetectLinkSchemes, .all, "an invalid raw value repairs to all")
     }
 
-    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer + the All-Settings catalog + the fire-sites — a rename that would split-brain
-    /// the Settings UI from the fire-sites fails this pin. The enum raw values are the declared config tokens
-    /// (shared with the host-route dispatch + `docs/20-wire-protocol.md`).
-    func testE10LinkKeyStringsAreStable() {
-        XCTAssertEqual(SettingsKey.linkDetection, "controls.linkDetection")
-        XCTAssertEqual(SettingsKey.linkCmdClickKey, "controls.linkCmdClick")
-        XCTAssertEqual(SettingsKey.linkCmdShiftClickKey, "controls.linkCmdShiftClick")
-        XCTAssertEqual(SettingsKey.autoDetectLinkSchemesKey, "controls.autoDetectLinkSchemes")
-        XCTAssertEqual(SettingsKey.customLinkSchemes, "controls.customLinkSchemes")
-        XCTAssertEqual(SettingsKey.hintPatterns, "controls.hintPatterns")
-        XCTAssertEqual(SettingsKey.hintPatternActions, "controls.hintPatternActions")
-        XCTAssertEqual(LinkCmdClick.open.rawValue, "open")
-        XCTAssertEqual(LinkCmdClick.nothing.rawValue, "nothing")
-        XCTAssertEqual(LinkCmdShiftClick.revealFinder.rawValue, "reveal-finder")
-        XCTAssertEqual(LinkCmdShiftClick.openSystemDefault.rawValue, "open-system-default")
-        XCTAssertEqual(AutoDetectLinkSchemes.all.rawValue, "all")
-        XCTAssertEqual(AutoDetectLinkSchemes.custom.rawValue, "custom")
+    /// The link-scheme policy is a MODE plus a list, and the list is only read in one of the two
+    /// modes. A policy that carried the custom list while the mode said `all` would underline a
+    /// scheme the reader restricted away, and one that dropped it in `custom` mode would underline
+    /// nothing at all.
+    func testTheSchemePolicyReadsTheListOnlyInCustomMode() {
+        stateSetting("controls.custom-link-schemes", ["ssh", "slack"])
+
+        stateSetting("controls.auto-detect-link-schemes", "all")
+        XCTAssertEqual(SettingsKey.linkSchemePolicy, .all, "the list is present and deliberately unread")
+
+        stateSetting("controls.auto-detect-link-schemes", "custom")
+        XCTAssertEqual(SettingsKey.linkSchemePolicy, .custom(["ssh", "slack"]))
     }
 
-    // MARK: - Privilege surface (title gates + OSC-52 master switch)
+    /// Hint patterns are TWO parallel lists in the file — the regexes and their actions — because a
+    /// TOML array of tables would make the common case (a pattern with no action) noisier to write
+    /// than the whole feature is worth. The zip is therefore this side's, and it has three cases
+    /// only a test states: a pair, a pattern whose action is missing entirely, and a pattern whose
+    /// action is present but empty. An empty PATTERN is dropped — it would match everything.
+    func testTheHintPatternsZipTheirTwoLists() {
+        stateSetting("controls.hint-patterns", ["ERR-\\d+", "", "TODO", "FIXME"])
+        stateSetting("controls.hint-pattern-actions", ["open", "open", ""])
 
-    /// The privilege keys read their notification-setting.png defaults when unset (Title — Shell
-    /// Controlled ON, Clipboard — Shell Controlled ON), respect an explicit persisted value,
-    /// and their wire key strings are the single source of truth shared with the navigator + the All-Settings
-    /// catalog (a rename that would split-brain them fails this pin).
-    func testPrivilegeKeyDefaultsAndStrings() {
-        // Defaults when unset.
-        XCTAssertTrue(SettingsKey.titleShellControlledEnabled, "Title — Shell Controlled defaults ON")
-        XCTAssertTrue(SettingsKey.clipboardShellControlledEnabled, "Clipboard — Shell Controlled defaults ON")
-        // An explicit persisted value is respected (the toggle persists across reads).
-        SettingsKey.store.set(false, forKey: SettingsKey.titleShellControlled)
-        SettingsKey.store.set(false, forKey: SettingsKey.clipboardShellControlled)
-        XCTAssertFalse(SettingsKey.titleShellControlledEnabled)
-        XCTAssertFalse(SettingsKey.clipboardShellControlledEnabled)
-        // The wire key strings are the single source of truth.
-        XCTAssertEqual(SettingsKey.titleShellControlled, "controls.titleShellControlled")
-        XCTAssertEqual(SettingsKey.clipboardShellControlled, "controls.clipboardShellControlled")
+        XCTAssertEqual(
+            SettingsKey.hintPatternList,
+            [
+                HintPattern(regex: "ERR-\\d+", action: "open"),
+                HintPattern(regex: "TODO", action: nil),
+                HintPattern(regex: "FIXME", action: nil),
+            ],
+            "an empty pattern is dropped; an empty or absent action is nil, and the pairing survives it",
+        )
     }
 
-    /// The "Clipboard — Shell Controlled" master switch (default ON) gates the resolved OSC-52 read/write
-    /// access AHEAD of the per-direction Ask/Allow/Deny gate: when OFF, ``TerminalControls/from(defaults:)``
-    /// resolves BOTH directions to ``ClipboardAccess/deny`` so the libghostty config emits
-    /// `clipboard-read/write = deny`. Revert-to-confirm-fail: before the master gate, `from()` returned the
-    /// raw per-direction value, so the two `.deny` asserts fail on the un-gated code.
-    func testClipboardMasterSwitchGatesResolvedAccess() {
-        // Set both directions to a permissive non-default value so the gate's effect is observable.
-        SettingsKey.store.set(ClipboardAccess.allow.rawValue, forKey: SettingsKey.clipboardReadKey)
-        SettingsKey.store.set(ClipboardAccess.allow.rawValue, forKey: SettingsKey.clipboardWriteKey)
-        // Master ON (the unset default) → the per-direction values pass through.
-        let onControls = TerminalControls.from(defaults: SettingsKey.store)
-        XCTAssertEqual(onControls.clipboardRead, .allow, "master ON passes the per-direction read value")
-        XCTAssertEqual(onControls.clipboardWrite, .allow, "master ON passes the per-direction write value")
-        // Master OFF → both resolve to deny regardless of the per-direction value.
-        SettingsKey.store.set(false, forKey: SettingsKey.clipboardShellControlled)
-        let offControls = TerminalControls.from(defaults: SettingsKey.store)
-        XCTAssertEqual(offControls.clipboardRead, .deny, "master OFF denies clipboard read")
-        XCTAssertEqual(offControls.clipboardWrite, .deny, "master OFF denies clipboard write")
+    func testNoHintPatternsIsAnEmptyList() {
+        stateCompiledDefaults()
+        XCTAssertTrue(SettingsKey.hintPatternList.isEmpty)
     }
 
-    // MARK: - Window-size + auto-hide-tabs-panel keys (surfaced by the Appearance rows)
+    // MARK: - The four survivors in `Defaults`
 
-    /// The window-size + auto-hide keys read their declared defaults when unset (`.remember`, 80, 24,
-    /// 1000, 600, `.default`), round-trip a written value via the persisted raw, and a stale / hostile persisted
-    /// ENUM raw repairs to the default rather than trapping (the `Defaults.PreferRawRepresentable` bridge — a
-    /// failable `init(rawValue:)` would otherwise return nil; the bridge falls back to the key default). The
-    /// Int keys are plain raw values clamped downstream by `WindowSizeMath`, so they store/read verbatim here.
-    /// Read through the public typed accessors + the raw `UserDefaults` the `@Default(.key)` pickers bind (the
-    /// file's established no-`import Defaults` convention).
-    func testWindowSizeAndAutoHideKeyDefaultsAndRoundTrip() {
-        // Defaults when unset.
-        XCTAssertEqual(SettingsKey.windowSize, .remember, "window-size defaults to Remember")
-        XCTAssertEqual(SettingsKey.windowCols, 80, "window-cols defaults to 80")
-        XCTAssertEqual(SettingsKey.windowRows, 24, "window-rows defaults to 24")
-        XCTAssertEqual(SettingsKey.windowWidthPx, 1000, "window-width-px defaults to 1000")
-        XCTAssertEqual(SettingsKey.windowHeightPx, 600, "window-height-px defaults to 600")
-        XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default, "auto-hide-tabs-panel defaults to Default")
-        // Round-trip a written value.
-        SettingsKey.store.set(WindowSizeMode.grid.rawValue, forKey: SettingsKey.windowSizeKey)
-        SettingsKey.store.set(120, forKey: SettingsKey.windowColsKey)
-        SettingsKey.store.set(40, forKey: SettingsKey.windowRowsKey)
-        SettingsKey.store.set(1440, forKey: SettingsKey.windowWidthPxKey)
-        SettingsKey.store.set(900, forKey: SettingsKey.windowHeightPxKey)
-        SettingsKey.store.set(AutoHideTabsPanelMode.auto.rawValue, forKey: SettingsKey.autoHideTabsPanelKey)
-        XCTAssertEqual(SettingsKey.windowSize, .grid)
-        XCTAssertEqual(SettingsKey.windowCols, 120)
-        XCTAssertEqual(SettingsKey.windowRows, 40)
-        XCTAssertEqual(SettingsKey.windowWidthPx, 1440)
-        XCTAssertEqual(SettingsKey.windowHeightPx, 900)
-        XCTAssertEqual(SettingsKey.autoHideTabsPanel, .auto)
-        // A stale / hostile persisted enum raw repairs to the default rather than trapping.
-        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.windowSizeKey)
-        SettingsKey.store.set("nonsense", forKey: SettingsKey.autoHideTabsPanelKey)
-        XCTAssertEqual(SettingsKey.windowSize, .remember, "an invalid raw value repairs to remember")
-        XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default, "an invalid raw value repairs to default")
+    /// The line between the two stores, stated once. A `config.toml` path is something the reader
+    /// CHOSE and the app never writes; a `Defaults` key is something the app LEARNED and only the
+    /// app writes. These four are the whole of the second list — and `savedWindowFrame` is the only
+    /// settable accessor left in the file, which is what makes the rest a pure projection.
+    func testTheStateKeysAreTheFourTheAppWrites() {
+        XCTAssertEqual(
+            [
+                SettingsKey.codeSidebarCollapsedKey,
+                SettingsKey.codeSidebarWidthKey,
+                SettingsKey.openedCodeProjectsKey,
+                SettingsKey.windowSavedFrameKey,
+            ],
+            ["shell.codeSidebarCollapsed", "shell.codeSidebarWidth", "shell.openedCodeProjects", "window.savedFrame"],
+        )
+        for key in [
+            SettingsKey.codeSidebarCollapsedKey,
+            SettingsKey.codeSidebarWidthKey,
+            SettingsKey.openedCodeProjectsKey,
+            SettingsKey.windowSavedFrameKey,
+        ] {
+            XCTAssertFalse(
+                AppConfig.compiledDefaults.declaredPaths.contains(key),
+                "\(key) is state the app writes — a config path would invite the reader to set it",
+            )
+        }
     }
 
-    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer (the Appearance Window + Auto Hide Tabs Panel rows, the auto-hide glue, the macOS NSWindow
-    /// size glue) — a rename that would split-brain them fails this pin. The enum raw values are the declared
-    /// config tokens (`window-size` = `remember`/`grid`/`frame`; `auto-hide-tabs-panel` = `default`/`always`/`auto`).
-    func testWindowSizeAndAutoHideKeyStringsAreStable() {
-        XCTAssertEqual(SettingsKey.windowSizeKey, "window.size")
-        XCTAssertEqual(SettingsKey.windowColsKey, "window.cols")
-        XCTAssertEqual(SettingsKey.windowRowsKey, "window.rows")
-        XCTAssertEqual(SettingsKey.windowWidthPxKey, "window.widthPx")
-        XCTAssertEqual(SettingsKey.windowHeightPxKey, "window.heightPx")
-        XCTAssertEqual(SettingsKey.autoHideTabsPanelKey, "shell.autoHideTabsPanel")
-        XCTAssertEqual(WindowSizeMode.remember.rawValue, "remember")
-        XCTAssertEqual(WindowSizeMode.grid.rawValue, "grid")
-        XCTAssertEqual(WindowSizeMode.frame.rawValue, "frame")
-        XCTAssertEqual(AutoHideTabsPanelMode.default.rawValue, "default")
-        XCTAssertEqual(AutoHideTabsPanelMode.always.rawValue, "always")
-        XCTAssertEqual(AutoHideTabsPanelMode.auto.rawValue, "auto")
+    func testTheWindowFrameRoundTripsThroughTheStateStore() {
+        let before = SettingsKey.savedWindowFrame
+        addTeardownBlock { @MainActor in SettingsKey.savedWindowFrame = before }
+
+        SettingsKey.savedWindowFrame = "120 340 1280 800 0 0 2560 1415 "
+        XCTAssertEqual(SettingsKey.savedWindowFrame, "120 340 1280 800 0 0 2560 1415 ")
     }
 
-    // MARK: - Which `UserDefaults` suite the process binds
-
-    /// The app writes `.standard` — the domain the developer's own settings live in.
-    func testTheShippingAppBindsTheStandardDomain() {
-        XCTAssertNil(SettingsKey.suiteName(testProcessSuite: nil, environment: [:]))
+    /// A fresh install hides the code panel and has opened nothing — the defaults a first launch
+    /// runs on now that there is no onboarding to set them.
+    func testTheStateDefaultsAreAFreshInstall() {
+        let suite = SettingsKey.store
+        for key in [SettingsKey.codeSidebarCollapsedKey, SettingsKey.openedCodeProjectsKey] {
+            suite.removeObject(forKey: key)
+        }
+        XCTAssertTrue(Defaults[.codeSidebarCollapsed])
+        XCTAssertTrue(Defaults[.openedCodeProjects].isEmpty)
     }
 
-    /// A GUI gate names a throwaway suite, because `CFFIXED_USER_HOME` does not move `UserDefaults`:
-    /// cfprefsd resolves the real home whatever the environment says, so without this every gate
-    /// that connects writes its loopback port into the developer's `connection.recentTargets` — a
-    /// five-entry MRU, three of whose slots were gate ports when this was measured.
-    func testAnAutomationRunCanNameItsOwnSuite() {
+    // MARK: - The test suite itself
+
+    /// Every state key binds the SAME suite, and under XCTest that suite is a per-process one — so a
+    /// test that writes state cannot leave it in the developer's own domain. The env override is
+    /// what an automation run sets to get the same isolation outside XCTest.
+    func testTheStateStoreIsAPerProcessSuiteUnderTest() {
+        XCTAssertNotEqual(SettingsKey.store, .standard)
+        XCTAssertEqual(
+            SettingsKey.suiteName(testProcessSuite: "under.xctest", environment: [:]),
+            "under.xctest",
+            "the XCTest suite wins outright — an automation env var must not redirect a test's writes",
+        )
         XCTAssertEqual(
             SettingsKey.suiteName(
-                testProcessSuite: nil,
-                environment: [SettingsKey.defaultsSuiteEnvKey: "slopdesk.gate.pid42"],
+                testProcessSuite: nil, environment: [SettingsKey.defaultsSuiteEnvKey: "run.42"],
             ),
-            "slopdesk.gate.pid42",
+            "run.42",
         )
-    }
-
-    /// An empty value is unset. `FOO="${BAR}"` with `BAR` unset is how a shell delivers one, and
-    /// `UserDefaults(suiteName: "")` is not a store anyone meant to name.
-    func testAnEmptySuiteNameIsUnset() {
         XCTAssertNil(
-            SettingsKey.suiteName(
-                testProcessSuite: nil,
-                environment: [SettingsKey.defaultsSuiteEnvKey: ""],
-            ),
+            SettingsKey.suiteName(testProcessSuite: nil, environment: [SettingsKey.defaultsSuiteEnvKey: ""]),
+            "an empty override is no override — `.standard`, not a suite named the empty string",
         )
-    }
-
-    /// EMPTYING a suite is not REMOVING it, and the difference is measured in files.
-    ///
-    /// `removePersistentDomain` clears every key and leaves the plist: a 58-byte
-    /// `~/Library/Preferences/<suite>.plist` survives it. That is why this machine's Preferences
-    /// directory holds 55,003 `slopdesk.tests.pid*.plist` files — one per xctest process that has
-    /// ever run here, each emptied by ``SettingsKey/store``'s `atexit` hook and none of them gone.
-    /// A per-run suite that outlives its run is the same leak the GUI gates have, one directory over.
-    ///
-    /// `synchronize()` between the two is load-bearing rather than superstition: the emptying is
-    /// written back lazily, so unlinking first lets cfprefsd re-create the file after this process
-    /// has exited — observed on a probe that skipped it.
-    func testRemovingASuiteTakesItsPlistWithIt() throws {
-        let name = "slopdesk.suite-removal.\(UUID().uuidString)"
-        let path = NSHomeDirectory() + "/Library/Preferences/\(name).plist"
-        // The probe must not leak either, and an unlink here would not hold: cfprefsd re-creates a
-        // plist removed mid-process, which is why ``SettingsKey/removeSuiteAtExit(named:)`` exists.
-        SettingsKey.removeSuiteAtExit(named: name)
-        let suite = try XCTUnwrap(UserDefaults(suiteName: name))
-        suite.set(true, forKey: "probe")
-        suite.synchronize()
-        XCTAssertTrue(
-            FileManager.default.fileExists(atPath: path),
-            "a written suite has a plist — without one there is nothing for this test to remove",
-        )
-        SettingsKey.removeSuite(named: name)
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: path),
-            "removeSuite left \(path) behind. Emptied is not removed: every run of the test suite "
-                + "then costs the developer one more file in ~/Library/Preferences, forever.",
-        )
-    }
-
-    /// XCTest's per-pid suite OUTRANKS the environment. `swift test --parallel` runs many xctest
-    /// processes; if an exported `SLOPDESK_DEFAULTS_SUITE` in a developer's shell could win, they
-    /// would all share one domain again and a flag flipped in one worker would race a read in
-    /// another — the exact failure the per-pid suite exists to prevent.
-    func testTheTestSuiteOutranksTheEnvironment() {
-        XCTAssertEqual(
-            SettingsKey.suiteName(
-                testProcessSuite: "slopdesk.tests.pid7",
-                environment: [SettingsKey.defaultsSuiteEnvKey: "slopdesk.gate.pid42"],
-            ),
-            "slopdesk.tests.pid7",
-        )
+        XCTAssertNil(SettingsKey.suiteName(testProcessSuite: nil, environment: [:]))
     }
 }

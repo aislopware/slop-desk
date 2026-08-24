@@ -25,7 +25,6 @@
 // GLYPH; the working reading is the row's own affordance.
 
 import CSlopDeskFFI
-import Defaults
 import SlopDeskAgentDetect
 import SlopDeskInspector // PendingToolSummary — the working row's todo-scent tooltip line
 import SlopDeskWorkspaceCore
@@ -428,19 +427,19 @@ package enum SidebarRowVerb: Equatable, Sendable {
     }
 }
 
-/// The row menu's checkboxes. The three BADGE switches are PER-PANE overrides (seeded from the
-/// pane's CURRENT effective gates, so the first flip preserves the other two — an absent override
-/// follows the global Settings → Agents default). The two NOTIFY switches and the sleep assertion
-/// are GLOBAL keys: notification fire-times and a host-local power assertion are not per-pane facts.
+/// The row menu's checkboxes: three PER-PANE badge overrides, seeded from the pane's CURRENT
+/// effective gates so the first flip preserves the other two. An absent override follows whatever
+/// the config file's `[badges]` rows resolve to.
+///
+/// It used to carry three more — two notification toggles and the host-local sleep assertion — and
+/// they left with the settings GUI. Each was a SETTING wearing a context-menu row: a global answer
+/// reached by right-clicking one pane, written by the app into a store the user could not read.
+/// The badge overrides are a different thing: they belong to the pane, they die with it, and a
+/// config file has nowhere to state one.
 package enum SidebarRowSwitch: Equatable, Sendable {
     case badgeWhileProcessing
     case badgeWhenComplete
     case badgeWhenAwaitingInput
-    case notifyTaskComplete
-    case notifyAwaitInput
-    /// The host-LOCAL `AgentPreferences` flag (rides the sidecar → applies on reconnect;
-    /// default-OFF). Offered only when a live preferences store is threaded in.
-    case preventSleep
 
     package var title: String { SidebarRowMenu.titles[SidebarRowVerb.clearBadge.index + 1 + index] }
 
@@ -451,9 +450,6 @@ package enum SidebarRowSwitch: Equatable, Sendable {
         case .badgeWhileProcessing: 0
         case .badgeWhenComplete: 1
         case .badgeWhenAwaitingInput: 2
-        case .notifyTaskComplete: 3
-        case .notifyAwaitInput: 4
-        case .preventSleep: 5
         }
     }
 
@@ -462,34 +458,27 @@ package enum SidebarRowSwitch: Equatable, Sendable {
         case 0: self = .badgeWhileProcessing
         case 1: self = .badgeWhenComplete
         case 2: self = .badgeWhenAwaitingInput
-        case 3: self = .notifyTaskComplete
-        case 4: self = .notifyAwaitInput
-        case 5: self = .preventSleep
         default: return nil
         }
     }
 }
 
 package enum SidebarRowMenu {
-    /// Every title in ONE crossing, once per process: the two verbs, then the six switches.
+    /// Every title in ONE crossing, once per process: the two verbs, then the three switches.
     static let titles: [String] = wsRuns(
         wsAnswerBytes { out, cap in Int(slopdesk_ws_sidebar_row_menu_titles(out, cap)) },
-        count: 8,
+        count: 5,
     )
 
-    /// The menu for `paneID`, with every switch already read. `preventSleep` is `nil` (a preview /
-    /// pre-injection shell) ⇒ the sleep row and its separator are simply absent, never a dead
-    /// control.
+    /// The menu for `paneID`, with every switch already read.
     ///
     /// The SHAPE — which entries, in which order, with which separators — is the far side's; the
     /// STATE each checkbox reads is the store's, and only the store can answer it.
     @MainActor
-    package static func entries(
-        for paneID: PaneID, store: WorkspaceStore, preventSleep: Bool?,
-    ) -> [SidebarRowMenuEntry] {
+    package static func entries(for paneID: PaneID, store: WorkspaceStore) -> [SidebarRowMenuEntry] {
         let gates = store.agentBadgeGates(for: paneID)
         let blob = wsAnswerBytes { out, cap in
-            Int(slopdesk_ws_sidebar_row_menu(preventSleep != nil, out, cap))
+            Int(slopdesk_ws_sidebar_row_menu(out, cap))
         }
         guard blob.count >= 4 else { return [] }
         let count = Int(blob[0]) << 24 | Int(blob[1]) << 16 | Int(blob[2]) << 8 | Int(blob[3])
@@ -499,7 +488,7 @@ package enum SidebarRowMenu {
                 if code == 0x10 { .action(.rename) } else { .action(.clearBadge) }
             case 0x20:
                 SidebarRowSwitch(index: code & 0x0F).map { flag in
-                    .toggle(flag, isOn: state(of: flag, gates: gates, preventSleep: preventSleep))
+                    .toggle(flag, isOn: state(of: flag, gates: gates))
                 }
             default:
                 if code == UInt8(slopdesk_ws_sidebar_row_separator_code()) { .separator } else { nil }
@@ -509,16 +498,11 @@ package enum SidebarRowMenu {
 
     /// What one checkbox currently reads.
     @MainActor
-    private static func state(
-        of flag: SidebarRowSwitch, gates: AgentBadgeGates, preventSleep: Bool?,
-    ) -> Bool {
+    private static func state(of flag: SidebarRowSwitch, gates: AgentBadgeGates) -> Bool {
         switch flag {
         case .badgeWhileProcessing: gates.badgeWhileProcessing
         case .badgeWhenComplete: gates.badgeWhenComplete
         case .badgeWhenAwaitingInput: gates.badgeWhenAwaitingInput
-        case .notifyTaskComplete: Defaults[.agentNotifyTaskComplete]
-        case .notifyAwaitInput: Defaults[.agentNotifyAwaitInput]
-        case .preventSleep: preventSleep ?? false
         }
     }
 
@@ -531,25 +515,14 @@ package enum SidebarRowMenu {
         }
     }
 
-    /// Flip a switch. The badge gates are per-pane toggles the store owns and the notify keys are
-    /// global `Defaults`, so both land here; the SLEEP flag is handed back through `togglePreventSleep`
-    /// because the preferences store is the caller's — this layer never reaches a host-local
-    /// sidecar preference.
-    ///
-    /// A badge gate is a per-pane OVERRIDE seeded from the pane's current EFFECTIVE gates, so the
-    /// first flip preserves the other two rather than dropping them to the global default.
+    /// Flip a switch — a per-pane OVERRIDE seeded from the pane's current EFFECTIVE gates, so the
+    /// first flip preserves the other two rather than dropping them to the config's answer.
     @MainActor
-    package static func flip(
-        _ toggle: SidebarRowSwitch, paneID: PaneID, store: WorkspaceStore,
-        togglePreventSleep: () -> Void,
-    ) {
+    package static func flip(_ toggle: SidebarRowSwitch, paneID: PaneID, store: WorkspaceStore) {
         switch toggle {
         case .badgeWhileProcessing: store.toggleAgentBadgeGate(.whileProcessing, for: paneID)
         case .badgeWhenComplete: store.toggleAgentBadgeGate(.whenComplete, for: paneID)
         case .badgeWhenAwaitingInput: store.toggleAgentBadgeGate(.whenAwaitingInput, for: paneID)
-        case .notifyTaskComplete: Defaults[.agentNotifyTaskComplete].toggle()
-        case .notifyAwaitInput: Defaults[.agentNotifyAwaitInput].toggle()
-        case .preventSleep: togglePreventSleep()
         }
     }
 }

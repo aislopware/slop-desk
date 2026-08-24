@@ -36,7 +36,7 @@
 //!
 //! GOLDEN-SAFE: metadata only. Nothing here reads or writes a value or touches a wire codec.
 
-use slopdesk_settings::settings_layout::Platform;
+use crate::platform::Platform;
 
 /// One binding row's platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -182,10 +182,9 @@ pub fn shown(id: &str, mac: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use slopdesk_settings::settings_layout::Platform;
-
     use super::{ROWS, row_at, shown};
     use crate::palette_rows;
+    use crate::platform::Platform;
 
     #[test]
     fn every_id_is_declared_once_and_reads_as_a_registry_id() {

@@ -149,11 +149,11 @@ mod tests {
         assert_eq!(ask("nothing here", &ROWS), Vec::<usize>::new());
     }
 
-    /// THE ONE THAT KEEPS THE TWO CALLERS HONEST. `KeybindingsEditorModel.matches` asks about ONE
-    /// row and the editor's sweep asks about all of them; a batch that answered differently from
-    /// the single-member call would show a row in the list that the row's own predicate says is
-    /// filtered out. Walked over EVERY member against EVERY query the other members could be
-    /// searched by.
+    /// THE ONE THAT KEEPS THE TWO CALLERS HONEST. A caller may ask about ONE row (`DeviceRowFilter`
+    /// re-checking a row it already has) or about the whole table in one crossing; a batch that
+    /// answered differently from the single-member call would show a row in the list that the row's
+    /// own predicate says is filtered out. Walked over EVERY member against EVERY query the other
+    /// members could be searched by.
     #[test]
     fn every_member_answers_the_same_alone_as_it_does_in_the_batch() {
         let mut checked = 0;

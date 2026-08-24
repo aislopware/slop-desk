@@ -655,7 +655,7 @@ bool                  slopdesk_hid_is_modifier(uint16_t hid_usage);
 // character of its own? — and differ only at the last step, where one wants a `KeyEvent` keycode
 // and the other a `KeyboardEvent.code` string. `hid` picks the NUMBERING: a Mac reports a virtual
 // keycode, an iPad a USB HID usage. That is one bit, so it rides as one rather than doubling every
-// door, the way `slopdesk_settings_row_shown(index, mac)` carries which half is asking.
+// door with a per-numbering twin.
 //
 // The HID side is DERIVED from `slopdesk_hid_virtual_key` above, not tabulated. Four Swift maps
 // became two here, because two of them were that composition written out — and a written-out join
@@ -1268,203 +1268,46 @@ size_t slopdesk_ws_workdir_keyword(uint8_t kind, uint8_t *out, size_t cap);
 // directory. Nothing is copied back — every caller already holds both strings.
 uint8_t slopdesk_ws_workdir_source(uint8_t kind, bool active_cwd_known);
 
-// ---- What Settings offers ----
+// ---- The config FILE ----
 //
-// A settings page is two things stacked: a control, which is a view and belongs to whichever
-// framework is drawing, and the ANSWER to "what can this be set to, what is each choice called,
-// what does the number read as" — which is the same on a phone as on a Mac and is not a view at
-// all. Every door here is the second thing.
+// There is no settings window. Every setting has a best-by-default answer compiled into
+// `slopdesk-settings::config::table`, and the only way to disagree with one is a line in
+// `config.toml`. Three doors, all cold — one at launch, one per reload, one when the CLI is asked
+// for the schema. None of them is called from a draw.
 //
-// An option GROUP crosses whole, because a group is what every caller asked for. It used to be a
-// count plus four indexed field accessors, and the near side's only reader of any of them built the
-// whole group — so naming one token cost `1 + 4n` crossings, and the phone's all-settings list paid
-// that inside a `ForEach` on every keystroke and on every settings write. Twenty-three groups
-// holding sixty-seven options came to 291 crossings for a table that is `&'static` over there. The
-// five doors are DELETED rather than kept beside the new one: a door nothing calls is a second way
-// to ask what a live door already answers.
-//
-// What kept an indexed door is the answer that is genuinely ONE string — a density token by name,
-// an apply-timing chip's words, a ladder stop's label — each of which a caller reads once into a
-// `static let`.
-//
-// EVERY OPTION CROSSES AS THE VALUE THE STORE PERSISTS, never as a case index. The near side
-// rebuilds its own enum from the token with the `RawRepresentable` init it already has, so
-// inserting a case in either language cannot silently re-point a row at a different value.
+// The rules live over there; what is here is the marshalling PLUS the file read itself, which stays
+// on the far side for the same reason every other effect does. The near side never opens the file,
+// parses TOML, or holds a default of its own.
 
-// The GROUPS, in case-index order. One control's worth of choices each.
-#define SLOPDESK_SETTINGS_GROUP_CURSOR_STYLE           ((uint8_t)0)
-#define SLOPDESK_SETTINGS_GROUP_NEW_TAB_POSITION       ((uint8_t)1)
-#define SLOPDESK_SETTINGS_GROUP_DENSITY                ((uint8_t)2)
-#define SLOPDESK_SETTINGS_GROUP_WINDOW_SIZE            ((uint8_t)3)
-#define SLOPDESK_SETTINGS_GROUP_DESKTOP_PRESENTATION   ((uint8_t)4)
-#define SLOPDESK_SETTINGS_GROUP_OPTION_AS_ALT          ((uint8_t)5)
-#define SLOPDESK_SETTINGS_GROUP_RIGHT_CLICK_ACTION     ((uint8_t)6)
-#define SLOPDESK_SETTINGS_GROUP_ON_LAUNCH              ((uint8_t)7)
-#define SLOPDESK_SETTINGS_GROUP_CLOSE_CONFIRMATION     ((uint8_t)8)
-#define SLOPDESK_SETTINGS_GROUP_CLOSE_CONFIRMATION_TAB ((uint8_t)9)
+// The resolved config-file path. `explicit` is the caller's override — empty on macOS, and on iOS
+// the app's own Documents directory, which is the only place the file can be reached from the Files
+// app. When it is empty the real environment decides: `SLOPDESK_CONFIG_FILE`, then
+// `XDG_CONFIG_HOME`, then `HOME`, then the lent `fallback` home.
+size_t slopdesk_config_path(const uint8_t *explicit_path, size_t explicit_len,
+                            const uint8_t *fallback, size_t fallback_len,
+                            uint8_t *out, size_t cap);
 
-// The LADDERS — sliders with magnitude stops on them.
-#define SLOPDESK_SETTINGS_LADDER_SCROLLBACK        ((uint8_t)0)
-#define SLOPDESK_SETTINGS_LADDER_SCROLL_MULTIPLIER ((uint8_t)1)
-#define SLOPDESK_SETTINGS_LADDER_BUSY_DELAY        ((uint8_t)2)
-
-// When a setting takes effect, as a DATA attribute so the distinction can be a chip not prose.
-#define SLOPDESK_SETTINGS_TIMING_LIVE      ((uint8_t)0)
-#define SLOPDESK_SETTINGS_TIMING_RECONNECT ((uint8_t)1)
-
-// ONE option group's choices, in render order, in ONE delivery. `0` is "there is no such group" —
-// a group index no group has — and a group with no options would still deliver its two-byte header,
-// so §4's `0` keeps its literal meaning. All lengths are big-endian, because this is read across a
-// C boundary where a width that followed the target would be a bug waiting for a 32-bit build.
+// The whole resolved configuration as ONE JSON object, read from the file at `path`:
 //
-//   [u16 option_count]
-//   option_count x 4 x [u32 length][UTF-8 bytes]
+//   {"flag":{…},"int":{…},"float":{…},"text":{…},"list":{…},
+//    "keybind":{…},"env":{…},"diagnostics":[…]}
 //
-// The four fields per option are `token`, `label`, `caption`, `menu_label`, in that order. The
-// token is what the store PERSISTS. The caption is the honesty channel and a ZERO LENGTH IS NO
-// CAPTION — not an empty one — which is the reading the deleted per-field door already had, since a
-// choice with an empty caveat and a choice with none render identically. `menu_label` is the
-// one-line form a MENU shows, the label with the caveat folded in after an en dash: the fold is a
-// rule, and a rule re-concatenated on the near side is two rules, so it is composed over here and
-// rides the same delivery.
-//
-// Their number is derivable from the header, which is what lets the near side cut them with the
-// length-prefixed splitter the settings-layout page already uses and PAD to the promised count: a
-// short delivery is a layout disagreement between the two sides, and padding is what stops it
-// becoming a silent off-by-one where every option after the gap wears its neighbour's words.
-size_t slopdesk_settings_option_group(uint8_t group, uint8_t *out, size_t cap);
+// Five maps BY TYPE rather than a nested document, because the near side's reads are typed: a
+// dotted key names a value whose Swift type is already known at the call site, so a tree would only
+// be re-flattened there. Every declared key appears, defaults included — the near side holds no
+// fallback of its own. A missing file resolves to the defaults with NO diagnostic; an install
+// without a config file is the supported shape, not a lesser one.
+size_t slopdesk_config_snapshot(const uint8_t *path, size_t path_len, uint8_t *out, size_t cap);
 
-// The DENSITY group's two tokens, by name. It is the one group the store persists as a bare string
-// rather than through an enum, so without this the near side would spell `"compact"` itself.
-size_t slopdesk_settings_density_token(bool compact, uint8_t *out, size_t cap);
+// The JSON Schema (draft 2020-12) for the config file, generated from the same table the snapshot
+// resolves against. `additionalProperties: false` at every declared level, so a typo is an error
+// where the user typed it. What `slopdesk config schema` prints, and what `docs/config.schema.json`
+// is checked against.
+size_t slopdesk_config_schema(uint8_t *out, size_t cap);
 
-// The 8-section taxonomy — one row in the Mac's navigator, one row in the phone's list, one order.
-size_t slopdesk_settings_section_count(void);
-size_t slopdesk_settings_section_id(size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_section_title(size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_settings_section_symbol(size_t index, uint8_t *out, size_t cap);
-
-// ---- Which settings sections a needle names ----
-//
-// The taxonomy has crossed this boundary since it was written — a count and three indexed field
-// accessors, just above. The SEARCH over it never did, so each face held the list from here and then
-// wrote its own case-insensitive containment rule to filter it, four times over. That is docs/55 §8's
-// drift class in its cleanest form, and §8's point is that this class is not ranked by cost: eight
-// sections filtered per keystroke is ~750 ns and would never on its own justify a crossing. What
-// justifies it is that "which sections does this needle name" stops having two answers.
-//
-// `out[i]` indexes the same list the three accessors above are indexed by, ascending, so the answer
-// arrives in render order. The needle crosses RAW — the far side folds ASCII case itself, so a caller
-// neither lowercases nor trims first, which is what keeps the rule from being spelled a fifth time.
-// Returns how many matched; a blank needle matches the whole taxonomy, which is a search field's zero
-// state. `cap` below that count leaves `out` untouched and reports the same number, the §4 retry —
-// though the caller derives its size from the section count, so it never runs.
-//
-// The fold is ASCII-only, deliberately, and that is NOT what a locale-aware containment does: the
-// system one normalises and case-folds, so it holds `file` in `ﬁle` and `strasse` in `straße`. It
-// does NOT fold diacritics — `Café` does not hold `cafe`; only `localizedStandardContains` reaches
-// that far. The two agree on ASCII and only on ASCII. Every section title is ASCII and the crate pins
-// that in a test beside the rule, so the substitution is exact here — it is not a general
-// replacement for searching user text.
-size_t slopdesk_settings_sections_matching(const uint8_t *needle, size_t needle_len,
-                                           uint32_t *out, size_t cap);
-
-// The apply-timing chip.
-size_t slopdesk_settings_timing_label(uint8_t timing, uint8_t *out, size_t cap);
-size_t slopdesk_settings_timing_symbol(uint8_t timing, uint8_t *out, size_t cap);
-
-// A ladder's range and granularity. `known` false leaves the three numbers at zero.
-typedef struct {
-    double min;
-    double max;
-    double step;
-    bool   known;
-} SlopDeskSettingsLadder;
-SlopDeskSettingsLadder slopdesk_settings_ladder(uint8_t ladder);
-// Its magnitude stops — the values a user actually picks, not an even subdivision of the range. A
-// stop that does not exist reports NaN rather than zero, because zero IS a legitimate stop.
-size_t slopdesk_settings_ladder_preset_count(uint8_t ladder);
-double slopdesk_settings_ladder_preset_value(uint8_t ladder, size_t index);
-size_t slopdesk_settings_ladder_preset_label(uint8_t ladder, size_t index, uint8_t *out, size_t cap);
-// What the slider's current value reads as. Each ladder's readout is about its own unit: scrollback
-// is thousands-grouped with a NARROW NO-BREAK SPACE (never a locale comma — the readout is
-// monospaced digits, where a comma reads as a decimal point in half the world), the multiplier
-// carries two decimals to match its own step, and the delay says `Instant` at zero because that is
-// the BEHAVIOUR changing rather than a delay that happens to be short.
-size_t slopdesk_settings_ladder_readout(uint8_t ladder, double value, uint8_t *out, size_t cap);
-
-// A stepper range's ends and granularity — the ladder's sibling, for a value whose useful settings
-// are not a handful of magnitudes but any literal count in the range. `known` false leaves the three
-// numbers at zero. The pixel step is fifty because one pixel at a time across sixteen thousand is a
-// control that cannot reach its own far end.
-typedef struct {
-    int64_t min;
-    int64_t max;
-    int64_t step;
-    bool    known;
-} SlopDeskSettingsStepper;
-SlopDeskSettingsStepper slopdesk_settings_stepper(uint8_t stepper);
-// What the value reads as after the row's label — `80`, `1000 px`, `13.5`. A whole value drops its
-// fraction; a fractional one prints as it is. The UNIT used to cross instead, so that each side
-// could compose from the value it holds — and both did, with only one of them dropping the
-// fraction. A double argument costs nothing and leaves one composition.
-size_t slopdesk_settings_stepper_readout(uint8_t stepper, double value, uint8_t *out, size_t cap);
-
-// ---- Every setting as a ROW ----
-//
-// The other half of the same page: one entry per configuration key, carrying the one label and the
-// one description that key uses wherever it appears — in the searchable all-settings list AND in the
-// section control that edits it. Those were two byte-identical copies in two targets before this.
-//
-// The KEY is what the near side holds (they are `Defaults.Key` names), so a row is reached by key as
-// often as by position — `slopdesk_settings_row_index` turns one into the other.
-
-#define SLOPDESK_SETTINGS_ROW_BUCKET_ADVANCED_ONLY 0
-#define SLOPDESK_SETTINGS_ROW_BUCKET_HAS_DEDICATED_TAB 1
-// What `slopdesk_settings_row_index` answers for a key no row has. A sentinel rather than a zero,
-// because zero is a real row.
-#define SLOPDESK_SETTINGS_ROW_NONE SIZE_MAX
-
-size_t slopdesk_settings_row_count(void);
-size_t slopdesk_settings_row_key(size_t index, uint8_t *out, size_t cap);
-bool slopdesk_settings_row_is_inline_editable(size_t index);
-// WHERE a row's value lives, and so what restores it: `0` a `UserDefaults` key a global reset
-// reaches, `1` a device-local fact in `device-prefs.json`, `2` a typed render field (or the density
-// token) that comes back with its model. A FIELD on every row rather than two lists beside the
-// table, because a list is a second spelling that drifts silently: a new row is simply absent from
-// it, which reads as `0` and is wrong for exactly the rows a defaults reset misses. `0` past the
-// end.
-uint8_t slopdesk_settings_row_persistence(size_t index);
-// Whether the half that identifies as `mac` advertises this row. DERIVED from the page table below,
-// never declared here: which half can edit a setting is already a `Platform` on a group and on a
-// row, and a second spelling of it would agree until somebody moved a group. A row the page table
-// names nowhere — one a bespoke surface edits — is advertised on both. `false` past the end.
-//
-// The index used to advertise every key on both halves, on the grounds that a key still round-trips
-// on iOS. What that shipped was a live switch over `notifications.bounceDock` that no Dock reads and
-// a ✎ into an Appearance page with no Dock Icon group on it. `shown` rather than `platform` here for
-// the palette table's reason: the near side must not turn its own slice back into an `#if`.
-bool slopdesk_settings_row_shown(size_t index, bool mac);
-size_t slopdesk_settings_row_index(const uint8_t *key, size_t key_len);
-// The positions a query matched, under the same retry protocol as the string doors: a return larger
-// than `cap` means nothing was written — ask again at that size.
-size_t slopdesk_settings_row_matches(const uint8_t *query, size_t query_len, size_t *out, size_t cap);
-// A WHOLE row in one delivery: the bucket byte, then seven fields, each a four-byte big-endian
-// length followed by that many UTF-8 bytes — key, label, page label, description, default text,
-// target section, keywords. The same retry protocol; `0` for an index no row has.
-//
-// A zero-length field is an ABSENT one. That is how target section says "edited in place" and how
-// keywords says the row needs no extra searchable text. The page label is the page register where
-// the row carries an override and the index register otherwise, so a caller never has to know which
-// rows have one. The bucket byte takes the values the two BUCKET macros above name.
-//
-// It exists because the match already crosses as positions to keep a filter one crossing rather
-// than one per field per row, and the reader then turned each position back into eight calls. On
-// every settings-search keystroke. The seven per-field doors it replaced were DELETED rather than
-// left standing beside it: once the reader had this one, nothing called them, and an exported door
-// with no caller is a second way to ask what a live door already answers — the drift docs/55 §8 is
-// about.
-size_t slopdesk_settings_row_fields(size_t index, uint8_t *out, size_t cap);
+// The env var that overrides the config-file location, for the one caller that prints where the
+// path came from. Everything else asks `slopdesk_config_path`, which has already applied it.
+size_t slopdesk_config_env_key(uint8_t *out, size_t cap);
 
 // ---- Which half lists a command-palette VERB ----
 //
@@ -1532,67 +1375,6 @@ size_t slopdesk_ws_binding_row_matches(const uint8_t *query, size_t query_len,
                                        const uint8_t *records, size_t records_len,
                                        size_t *out, size_t cap);
 
-// ---- The SHAPE of a settings page ----
-//
-// Which groups a page shows, in what order, what each row is, and — the reason this table exists —
-// which platform each of those belongs to. A platform gate is DATA here: the Mac renderer asks with
-// `mac = true` and the phone with `mac = false`, and NEITHER carries an `#if`.
-//
-// `mac` is an argument rather than the compiled slice on purpose. The xcframework is built per
-// slice, so the table could have been filtered by `cfg!` — but then "which groups does the phone
-// show" would be unanswerable on a Mac, and that is exactly what the tests on both sides ask.
-//
-// A PAGE crosses whole, in one delivery. It used to cross positionally — a group count, then a
-// title, a timing and a row count per group, then six more doors per row — which cost `1 + 3G + 6R`
-// crossings to answer one question, and both renderers ask it from inside a body they re-evaluate
-// whenever a setting on the page changes. Worse, every one of those calls re-derived the whole
-// page to reach one member: the row accessor filters the flat table into a fresh list and then
-// filters that group's rows into a second one, so Appearance's ~166 crossings did ~166 filters and
-// ~330 allocations to read 23 rows. The near side wanted the page, so the page is what crosses.
-//
-// The rows and groups are still filtered to the asking half before anything is written, so a phone
-// reading the fourth group of General gets its own fourth group, never a hole where a macOS-only
-// group was. The near side never sees the unfiltered table and cannot render from it.
-//
-// The answer, all lengths big-endian because this is read across a C boundary where a width that
-// followed the target would be a bug waiting for a 32-bit build:
-//
-//     [uint16 group_count][uint16 row_total]
-//     group_count x [uint8 timing][uint16 row_count]
-//     row_total   x [uint8 control_kind][uint8 control_argument]
-//     (group_count + 4 * row_total) x [uint32 length][UTF-8 bytes]
-//
-// The strings ride BEHIND the fixed records rather than interleaved with them, and how many there
-// are follows from the header — group titles in group order, then key, subtitle, glyph and bespoke
-// id per row, rows in page order. That is what lets the reader cut them with the same
-// length-prefixed splitter the rail's disambiguated labels use and PAD to the promised count: a
-// short delivery is a layout disagreement between the two sides, and padding is what stops it
-// becoming a silent off-by-one where every row after the gap renders its neighbour's words.
-//
-// A zero length is NO string, not an empty one — a row with no glyph and a row with an empty one
-// draw identically, so a presence flag would name a distinction nothing downstream can act on. The
-// ten doors this replaced already conflated them, which is what keeps this a marshalling change.
-//
-// `0` means there is no such page: a section index no section has. A return larger than `cap` means
-// nothing was written — ask again at that size. Every page fits 4096 bytes today (the widest is
-// Controls on a Mac at 3676), and a Rust test fails if one ever stops fitting, so the retry is a
-// correctness property rather than a second crossing every settings render pays.
-//
-// Control kinds, as the `control_kind` byte of each row record carries them.
-#define SLOPDESK_SETTINGS_CONTROL_TOGGLE  0
-#define SLOPDESK_SETTINGS_CONTROL_MENU    1
-#define SLOPDESK_SETTINGS_CONTROL_CARDS   2
-#define SLOPDESK_SETTINGS_CONTROL_SLIDER  3
-#define SLOPDESK_SETTINGS_CONTROL_STEPPER 4
-#define SLOPDESK_SETTINGS_CONTROL_TEXT    5
-// Prose belonging to the group rather than to a setting; its words are the row's subtitle.
-#define SLOPDESK_SETTINGS_CONTROL_NOTE    6
-#define SLOPDESK_SETTINGS_CONTROL_BESPOKE 7
-// What a row's `control_argument` byte reads as where its kind draws over neither an option group
-// nor a scalar ladder.
-#define SLOPDESK_SETTINGS_LAYOUT_NONE ((uint8_t)0xFF)
-size_t slopdesk_settings_layout_page(uint8_t section_index, bool mac, uint8_t *out, size_t cap);
-
 // ---- What the phone's keyboard sends ----
 //
 // A touch device is forced to split physical input in two: the keys a terminal needs raw, and
@@ -1628,12 +1410,6 @@ size_t slopdesk_settings_layout_page(uint8_t section_index, bool mac, uint8_t *o
 #define SLOPDESK_PHONE_KEY_OPTION_AS_ALT_RIGHT (3u << 4)
 // The `named` a chord writes when its key is the printable scalar in `character` instead.
 #define SLOPDESK_PHONE_KEY_NAMED_NONE ((uint8_t)0xFF)
-// What capturing one press in the Settings chord recorder means — the SAME four answers, in the same
-// order, that `slopdesk_key_capture_outcome` gives the Mac's recorder. Both write one override map.
-#define SLOPDESK_PHONE_KEY_CAPTURE_CANCEL ((uint8_t)0)
-#define SLOPDESK_PHONE_KEY_CAPTURE_CLEAR  ((uint8_t)1)
-#define SLOPDESK_PHONE_KEY_CAPTURE_IGNORE ((uint8_t)2)
-#define SLOPDESK_PHONE_KEY_CAPTURE_BIND   ((uint8_t)3)
 // A key a MODE reads as a command rather than as input — Copy Mode and Hint Mode, the two places a
 // pane answers keys instead of forwarding them. Six of the twenty-six special keys carry a meaning
 // there; everything else, special or not, reaches the mode as its CHARACTER, which is what
@@ -1675,12 +1451,6 @@ size_t slopdesk_phone_key_encode(const SlopDeskPhoneKeyPress *press, bool applic
 // field of a chord is a legitimate zero, so a length could not have said "not a chord".
 bool slopdesk_phone_key_chord(const SlopDeskPhoneKeyPress *press, uint8_t *named,
                               uint32_t *character, uint8_t *modifiers);
-// What this press does to the binding being RECORDED — one of SLOPDESK_PHONE_KEY_CAPTURE_*. Only a
-// bind writes through, and it writes the chord exactly as `slopdesk_phone_key_chord` would. Stricter
-// than that door in the two ways the Mac's recorder is stricter than its dispatcher: the space bar
-// is no key here, and a base the chord grammar cannot spell back is refused rather than stored.
-uint8_t slopdesk_phone_key_capture(const SlopDeskPhoneKeyPress *press, uint8_t *named,
-                                   uint32_t *character, uint8_t *modifiers);
 // The modal key one HID usage is — a SLOPDESK_PHONE_MODAL_* value. A USAGE rather than a whole
 // press, because nothing about this answer reads the layout or the modifiers: `⌃v` in copy mode is
 // the visual-block key, not an Escape, so the modes take the modifier state off the press
@@ -3044,12 +2814,6 @@ typedef struct {
   bool launch_gui;
 } SlopDeskCliInvocation;
 
-// One config-file syntax problem.
-typedef struct {
-  SlopDeskByteSpan message;
-  size_t line;
-} SlopDeskCliConfigError;
-
 /* The grammar for one `keybind` line of the user's config. A parsed binding is a fixed record plus
  * three runs of variable-length bytes — the base key, the payload (a literal action's resolved
  * bytes, or a named action's id) and the argument — so it crosses as a record whose runs are
@@ -3201,38 +2965,7 @@ size_t slopdesk_terminal_config_string(SlopDeskTerminalConfig config, const uint
  * numbers by, at the limit an env value reaches. The limit is not a thing the near side spells. */
 size_t slopdesk_settings_env_number_text(double value, uint8_t *out, size_t cap);
 
-/* ---------------------------------------------------------------------------- *
- * The caret colour, both ways — the value a `cursor-color` line carries and the channels the two
- * colour wells show.
- *
- * The parse answers a PACKED int32_t rather than three channels and a presence flag, and it is the
- * `slopdesk_fuzzy_rank` exception rather than a break with §4b's "an Option crosses as a value plus
- * a flag". The three bytes occupy the low 24 bits, so every colour this door can name lies in
- * 0x000000..0xFFFFFF and nothing the packing does can set the sign bit: -1 is outside the answer's
- * range BY CONSTRUCTION, not by a convention a caller has to remember. A uint32_t beside a
- * `bool *found` was the alternative and it buys a second pointer and a second lifetime in order to
- * separate two states one signed word already separates.
- *
- * Every reason there is no colour collapses into that one refusal — the empty "follow the theme"
- * spelling, the wrong length, a non-hex character, bytes that are not UTF-8 — because the caller
- * does the same thing for all of them, which is show the effective default.
- *
- * The format side is an ordinary (out, cap) delivery at a fixed six bytes, so its §4 retry is
- * unreachable. It stays §4-shaped anyway: "nothing is written unless it fits" is what makes a short
- * buffer safe, and a door that opted out because its answer happens to be a constant size is a door
- * that stops being safe the day that stops being true.
- * ---------------------------------------------------------------------------- */
-
-/* (red << 16) | (green << 8) | blue, or -1 for a string that names no colour. */
-int32_t slopdesk_cursor_color_rgb(const uint8_t *hex, size_t hex_len);
-
-/* Three unit-RGB doubles as six UPPERCASE ASCII hex digits, no leading `#`. Always 6. Each channel
- * is clamped to 0…1 with NaN answering 0, and the clamp order and the rounding rule are the wrapped
- * crate's — a second rounding rule is exactly the drift one codec exists to prevent. */
-size_t slopdesk_cursor_color_hex(double red, double green, double blue, uint8_t *out, size_t cap);
-
 int64_t slopdesk_cli_default_timeout_ms(void);
-size_t slopdesk_cli_config_env_key(uint8_t *out, size_t cap);
 size_t slopdesk_cli_build_hash_env_key(uint8_t *out, size_t cap);
 
 SlopDeskCliShape slopdesk_cli_parse(const SlopDeskByteSpan *args, size_t args_count,
@@ -3266,28 +2999,6 @@ SlopDeskCliShape slopdesk_cli_planned_subcommands(SlopDeskByteSpan *out, size_t 
  * because the subcommand list, its availability and its help text are one table and rendering half
  * of it on the near side is how the near side grew a second copy in the first place. */
 size_t slopdesk_cli_usage(const uint8_t *program, size_t program_len, uint8_t *out, size_t cap);
-
-size_t slopdesk_cli_config_path(const uint8_t *explicit_path, size_t explicit_len,
-                                const uint8_t *from_env, size_t from_env_len, const uint8_t *xdg,
-                                size_t xdg_len, const uint8_t *home, size_t home_len,
-                                const uint8_t *fallback, size_t fallback_len, uint8_t *out,
-                                size_t cap);
-size_t slopdesk_cli_config_default_path(const uint8_t *xdg, size_t xdg_len, const uint8_t *home,
-                                        size_t home_len, const uint8_t *fallback,
-                                        size_t fallback_len, uint8_t *out, size_t cap);
-/* The `keybind` value one config line declares, or 0 for every line that declares none — blank, a
- * comment, a [section] header, another key, or a `keybind` with nothing after the `=`. The client's
- * loader reads its file through this and `slopdesk_cli_config_validate` reports on the SAME reading,
- * so the validator cannot call a line good that the loader will silently drop. The trim includes a
- * carriage return, which is what makes a CRLF file declare the bindings it looks like it does. */
-size_t slopdesk_cli_config_keybind_value(const uint8_t *line, size_t line_len, uint8_t *out,
-                                         size_t cap);
-
-/* Validated against `slopdesk_keybind_*` above — the same grammar the app parses its bindings
- * with, so the verdict tracks exactly what will be honoured. */
-SlopDeskCliShape slopdesk_cli_config_validate(const uint8_t *contents, size_t contents_len,
-                                              SlopDeskCliConfigError *out, size_t cap,
-                                              uint8_t *out_arena, size_t arena_cap);
 
 size_t slopdesk_cli_table(uint32_t kind, const uint8_t *rows_json, size_t rows_json_len,
                           uint32_t format, bool no_headers, uint8_t *out, size_t cap);
@@ -7679,17 +7390,12 @@ bool    slopdesk_key_capture_is_down(uint16_t key_code, uint8_t modifiers, uint8
 int32_t slopdesk_key_capture_modifier_bit(uint16_t key_code);
 // The cancel key, for the local monitors a transient gesture installs over the whole window.
 bool    slopdesk_key_capture_is_escape(uint16_t key_code);
-// Whether that monitor's window should close: a PLAIN Escape, and no chord recorder holding a claim
-// on it. `modifiers` is the same six-bit mask above — which of them disqualify a dismiss (and which
-// are a state the user is merely in, like a stuck caps lock) is the crate's decision, not the tap's.
-bool    slopdesk_escape_dismisses_window(uint16_t key_code, uint8_t modifiers,
-                                         bool chord_capture_armed);
 
-/* ---- What a key event is CALLED, for the two surfaces that key bindings on it ----
+/* ---- What a key event is CALLED, for the dispatcher that keys bindings on it ----
  *
- * The dispatcher resolves a live keystroke against the binding table and the Settings recorder
- * captures one to persist; both must land on the same name or a rebind never matches. One table,
- * therefore, and it answers a SUM: a named key, a printable character, or nothing.
+ * A live keystroke has to land on the name the binding table is keyed by, and a `keybind` line in
+ * `config.toml` names the same keys — one table, therefore, and it answers a SUM: a named key, a
+ * printable character, or nothing.
  *
  * The named-key indices are 0 return · 1 tab · 2 space · 3 left · 4 right · 5 up · 6 down ·
  * 7 pageup · 8 pagedown · 9 home · 10 end. Return covers the keypad's Enter — one intent, one name.
@@ -7704,16 +7410,10 @@ typedef struct {
 // the terminal must receive; ⌃/⌥/⌘ Space is the Vi-mode chord.
 SlopDeskKeyBase slopdesk_key_chord_base(uint16_t key_code, const uint8_t *chars, size_t chars_len,
                                         bool non_shift_modifier_held, uint8_t *out, size_t cap);
-// The recorder's verdict: 0 cancel · 1 clear the binding · 2 keep recording · 3 bind, with the base
-// key's canonical text in (out, cap) and its length in `needed`. Only a bind writes anything. The
-// clear keys are answered BEFORE the characters are read — Backspace reports the DEL scalar, which
-// a base-key-first recorder stored as a junk chord instead of clearing the binding.
-uint8_t slopdesk_key_capture_outcome(uint16_t key_code, const uint8_t *chars, size_t chars_len,
-                                     uint8_t *out, size_t cap, size_t *needed);
 // The two token doors: a named key's canonical SPELLING by case index, and the index a spelling
 // names (-1 for a single character, an alias the grammar folds, or a token nothing produces). A
 // caller with the same eleven cases needs the text to key a stored binding by, and asking for it is
-// what keeps a rebind from being persisted under a spelling the grammar reads back as another key.
+// what keeps a `keybind` line from being read back under a spelling the dispatcher never builds.
 size_t  slopdesk_key_named_canonical(uint8_t index, uint8_t *out, size_t cap);  // 0 = no such case
 int32_t slopdesk_key_named_index(const uint8_t *text, size_t len);
 
@@ -8087,8 +7787,8 @@ int32_t slopdesk_panel_clamp_i32(double value);
 // The section above is the panel boundary's ordinary rule: every answer is a
 // KIND, because the caller already holds the string it is about. That still
 // holds for every FOLD below — the stage, the menus, the inks, a device's own
-// flags. It does not hold for the panels' COPY, and `slopdesk_settings_options`
-// is where that was settled: a table of literals read once into a Swift
+// flags. It does not hold for the panels' COPY, and the settings option
+// tables were where that was settled: a table of literals read once into a Swift
 // `static let` is not an identity the caller has, it is the single spelling two
 // renderers must share. Each panel is drawn by SwiftUI on the phone and AppKit
 // on the Mac, so its words had one speller by accident and now have one on
@@ -9922,8 +9622,8 @@ size_t   slopdesk_ws_sidebar_row_command_line(SlopDeskWsSpan command, SlopDeskWs
 // `[u32 count]` then one byte per entry, kind in the high nibble: 0x00 separator, 0x1x a verb,
 // 0x2x a toggle. A byte per entry rather than a record, because a menu opening under a finger must
 // not cost a crossing per row.
-size_t   slopdesk_ws_sidebar_row_menu(bool prevent_sleep_offered, uint8_t *out, size_t cap);
-size_t   slopdesk_ws_sidebar_row_menu_titles(uint8_t *out, size_t cap);  // 8 runs: 2 verbs, 6 switches
+size_t   slopdesk_ws_sidebar_row_menu(uint8_t *out, size_t cap);
+size_t   slopdesk_ws_sidebar_row_menu_titles(uint8_t *out, size_t cap);  // 5 runs: 2 verbs, 3 switches
 uint8_t  slopdesk_ws_sidebar_row_separator_code(void);
 
 // ---- The Open Quickly picker -------------------------------------------------------------------

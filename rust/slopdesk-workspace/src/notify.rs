@@ -397,7 +397,7 @@ impl RateLimiter {
     /// [`EXPLICIT_REFILL_PER_SECOND`].
     ///
     /// The numbers live here rather than in a caller's default argument, the way
-    /// [`slopdesk_settings::chrome`]'s dwell gate does: they are the anti-flood POLICY, and a
+    /// the chrome crate's dwell gate does: they are the anti-flood POLICY, and a
     /// second spelling of them would be a second opinion about how much a hostile shell may
     /// post.
     #[must_use]

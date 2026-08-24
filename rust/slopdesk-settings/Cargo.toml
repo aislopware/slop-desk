@@ -1,18 +1,17 @@
-# `slopdesk-settings` — what Settings OFFERS, as data.
+# `slopdesk-settings` — what slopdesk can be configured to do, as data.
 #
 # ## Why it is its own crate
-# Five thousand lines of catalogue: the sections, the groups, the choices in each, every setting's
-# one label and one description, the scalar ladders' stops and readouts, and the two projections
-# the window chrome switches between. It is the largest single body in the tree that decides
-# nothing — a change here changes a string or a stop, never a behaviour — and it was sitting in the
-# same crate as the tree operations, which is how the workspace document's domain rules came to be
-# a dependency of anything that wanted to know a slider's default.
+# The configuration surface: every key the file may carry, its domain, its default and its sentence,
+# the resolver that reads a file against them, the JSON Schema written out of them, and the two
+# projections the window chrome switches between. It decides nothing — a change here changes a
+# default or a range, never a behaviour — and it was sitting in the same crate as the tree
+# operations, which is how the workspace document's domain rules came to be a dependency of
+# anything that wanted to know a default.
 #
-# ## Why it is a leaf
-# Zero dependencies, ours or anyone's, and the module graph says it earns that: nothing in here
-# reaches for a pane, a tab or a session. `settings_layout` and `settings_rows` are mutually
-# recursive — a row needs its page and a page needs its rows — and that cycle is the reason they
-# are one crate rather than two.
+# ## Why it is nearly a leaf
+# Two dependencies, each earned by the config FILE: `toml` parses it, and `slopdesk-terminal` owns
+# the control vocabularies a choice key must not respell. Nothing in here reaches for a pane, a tab
+# or a session — a table that needed one would not be a table.
 
 [workspace]
 resolver = "3"
@@ -22,7 +21,7 @@ name = "slopdesk-settings"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The Settings catalogue for slopdesk — sections, rows, ladders and the two projections"
+description = "The configuration surface for slopdesk — the key table, the file resolver and its JSON Schema"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
@@ -31,7 +30,14 @@ name = "slopdesk_settings"
 path = "src/lib.rs"
 
 [dependencies]
-# None, on purpose. A catalogue that needed a pane would not be a catalogue.
+# The config file is a real TOML document, so it is parsed by the ecosystem's parser rather than by
+# a hand-rolled line reader of ours. `screend` already carries this dependency for the same reason.
+toml = { version = "1", default-features = false, features = ["std", "parse", "serde"] }
+
+# The control vocabularies — the clipboard gates, the mouse verbs, the two link verbs — already live
+# there, and a choice key must offer exactly the tokens the terminal accepts. Referencing `token()`
+# in const context is what keeps the config file from accepting a word nothing downstream knows.
+slopdesk-terminal = { path = "../slopdesk-terminal" }
 
 # Settings is not a hot path, but the profile is shared with its callers so a mixed build does not
 # recompile the tree twice.

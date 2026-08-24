@@ -28,7 +28,6 @@ use std::ffi::c_uchar;
 
 use slopdesk_cli::args::{Invocation, OutputFormat, ParseError};
 use slopdesk_cli::completions::Shell;
-use slopdesk_cli::config::{ValidationError, default_path, resolve_path, validate};
 use slopdesk_cli::formatting::{TableKind, render_json_text, table, table_from_json};
 use slopdesk_cli::version::summary;
 use slopdesk_cli::vocabulary::{planned_names, ready_names, usage};
@@ -126,16 +125,6 @@ pub struct SlopDeskCliInvocation {
     pub wants_help: bool,
     /// Whether this invocation launches the client GUI.
     pub launch_gui: bool,
-}
-
-/// One config-file syntax problem.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct SlopDeskCliConfigError {
-    /// What is wrong with the line, phrased for a user reading a terminal.
-    pub message: SlopDeskByteSpan,
-    /// The 1-based line number.
-    pub line: usize,
 }
 
 /// The output format a code names. An unknown code reads as text, the default.
@@ -279,20 +268,6 @@ const unsafe fn spill<T: Copy>(
 #[unsafe(no_mangle)]
 pub const extern "C" fn slopdesk_cli_default_timeout_ms() -> i64 {
     slopdesk_cli::args::DEFAULT_TIMEOUT_MS
-}
-
-/// The env var that overrides the config-file location.
-///
-/// # Safety
-/// `out` must be null, or writable for `cap` bytes.
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[unsafe(no_mangle)]
-pub const unsafe extern "C" fn slopdesk_cli_config_env_key(out: *mut c_uchar, cap: usize) -> usize {
-    // SAFETY: the caller's obligation on the output buffer.
-    unsafe { text(slopdesk_cli::config::CONFIG_FILE_ENV_KEY, out, cap) }
 }
 
 /// The env var carrying an optional short build or commit hash.
@@ -571,166 +546,6 @@ pub unsafe extern "C" fn slopdesk_cli_usage(
     unsafe { text(&usage(name), out, cap) }
 }
 
-/// The config-file path: an explicit `--config-file`, else the env override, else the XDG default.
-///
-/// Every candidate is passed by value rather than looked up, because asking the environment is I/O
-/// and the ORDER is the part that was worth porting. An empty pair means the value is absent.
-///
-/// # Safety
-/// Every input pair must be live for the call; `out` must be null or writable for `cap` bytes.
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn slopdesk_cli_config_path(
-    explicit: *const c_uchar,
-    explicit_len: usize,
-    from_env: *const c_uchar,
-    from_env_len: usize,
-    xdg: *const c_uchar,
-    xdg_len: usize,
-    home: *const c_uchar,
-    home_len: usize,
-    fallback: *const c_uchar,
-    fallback_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations on the five input pairs.
-    let (explicit, from_env, xdg, home, fallback) = unsafe {
-        (
-            String::from_utf8_lossy(borrow(explicit, explicit_len)).into_owned(),
-            String::from_utf8_lossy(borrow(from_env, from_env_len)).into_owned(),
-            String::from_utf8_lossy(borrow(xdg, xdg_len)).into_owned(),
-            String::from_utf8_lossy(borrow(home, home_len)).into_owned(),
-            String::from_utf8_lossy(borrow(fallback, fallback_len)).into_owned(),
-        )
-    };
-    let lookup = |name: &str| -> Option<String> {
-        match name {
-            slopdesk_cli::config::CONFIG_FILE_ENV_KEY => Some(from_env.clone()),
-            "XDG_CONFIG_HOME" => Some(xdg.clone()),
-            "HOME" => Some(home.clone()),
-            _ => None,
-        }
-    };
-    let answer = resolve_path(Some(explicit.as_str()), &lookup, &fallback);
-    // SAFETY: the caller's obligation on the output buffer.
-    unsafe { text(&answer, out, cap) }
-}
-
-/// The XDG default config path, with no explicit override in play.
-///
-/// # Safety
-/// Every input pair must be live for the call; `out` must be null or writable for `cap` bytes.
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn slopdesk_cli_config_default_path(
-    xdg: *const c_uchar,
-    xdg_len: usize,
-    home: *const c_uchar,
-    home_len: usize,
-    fallback: *const c_uchar,
-    fallback_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations on the three input pairs.
-    let (xdg, home, fallback) = unsafe {
-        (
-            String::from_utf8_lossy(borrow(xdg, xdg_len)).into_owned(),
-            String::from_utf8_lossy(borrow(home, home_len)).into_owned(),
-            String::from_utf8_lossy(borrow(fallback, fallback_len)).into_owned(),
-        )
-    };
-    let lookup = |name: &str| -> Option<String> {
-        match name {
-            "XDG_CONFIG_HOME" => Some(xdg.clone()),
-            "HOME" => Some(home.clone()),
-            _ => None,
-        }
-    };
-    let answer = default_path(&lookup, &fallback);
-    // SAFETY: the caller's obligation on the output buffer.
-    unsafe { text(&answer, out, cap) }
-}
-
-/// The `keybind` value one config line declares, written into the lent buffer.
-///
-/// Answers 0 for every line that declares none — blank, a comment, a `[section]` header, another
-/// key, or a `keybind` with nothing after the `=`. The client's loader reads its file through this,
-/// and `slopdesk_cli_config_validate` reports on the SAME reading, so the validator cannot call a
-/// line good that the loader will silently drop. The trim includes a carriage return, which is what
-/// makes a CRLF file declare the bindings it looks like it declares.
-///
-/// # Safety
-/// The input pair must be live for the call; `out` must be null or writable for `cap` bytes.
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn slopdesk_cli_config_keybind_value(
-    line: *const c_uchar,
-    line_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligation on the input pair.
-    let raw = String::from_utf8_lossy(unsafe { borrow(line, line_len) }).into_owned();
-    let Some(value) = slopdesk_cli::config::keybind_value(&raw) else {
-        return 0;
-    };
-    // SAFETY: the caller's obligation on the output buffer.
-    unsafe { text(value, out, cap) }
-}
-
-/// Validates a config file against the keybind grammar, answering one record per problem. An empty
-/// answer means the file is valid.
-///
-/// The grammar is [`slopdesk_terminal::keybind`], the same one the app parses its bindings with, so
-/// the verdict tracks exactly what will be honoured. `validate` still takes it as a parameter — the
-/// file's shape and the value's grammar are separate questions, and the stand-in in its own tests
-/// depends on that — but the answer no longer leaves this side of the door.
-///
-/// # Safety
-/// The input pair must be live for the call and the output pointers must be null or writable for
-/// their capacities.
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn slopdesk_cli_config_validate(
-    contents: *const c_uchar,
-    contents_len: usize,
-    out: *mut SlopDeskCliConfigError,
-    cap: usize,
-    out_arena: *mut c_uchar,
-    arena_cap: usize,
-) -> SlopDeskCliShape {
-    // SAFETY: the caller's obligation on the contents.
-    let text_in = String::from_utf8_lossy(unsafe { borrow(contents, contents_len) }).into_owned();
-    let asking = |value: &str| -> bool { slopdesk_terminal::keybind::parse_line(value).is_some() };
-    let problems: Vec<ValidationError> = validate(&text_in, &asking);
-    let mut pool = TextArena::default();
-    let records: Vec<SlopDeskCliConfigError> = problems
-        .iter()
-        .map(|problem| {
-            SlopDeskCliConfigError {
-                message: span(pool.intern(problem.message.as_bytes())),
-                line: problem.line,
-            }
-        })
-        .collect();
-    // SAFETY: the caller's obligations on the output buffers.
-    unsafe { spill(&records, &pool, out, cap, out_arena, arena_cap) }
-}
-
 /// Renders one list from the JSON text the control socket answered with.
 ///
 /// # Safety
@@ -850,9 +665,9 @@ mod tests {
     use super::{
         SLOPDESK_CLI_INVALID_VALUE, SLOPDESK_CLI_JSON, SLOPDESK_CLI_OK, SLOPDESK_CLI_TABLE_WINDOWS,
         SLOPDESK_CLI_TEXT, SLOPDESK_SHELL_FISH, SLOPDESK_SHELL_POWERSHELL, SlopDeskCliInvocation,
-        SlopDeskCliShape, planned_names, ready_names, slopdesk_cli_config_path, slopdesk_cli_parse,
-        slopdesk_cli_planned_subcommands, slopdesk_cli_render_json, slopdesk_cli_shell,
-        slopdesk_cli_subcommands, slopdesk_cli_table, slopdesk_cli_usage, slopdesk_cli_version_summary,
+        SlopDeskCliShape, planned_names, ready_names, slopdesk_cli_parse, slopdesk_cli_planned_subcommands,
+        slopdesk_cli_render_json, slopdesk_cli_shell, slopdesk_cli_subcommands, slopdesk_cli_table,
+        slopdesk_cli_usage, slopdesk_cli_version_summary,
     };
     use crate::host_state::SlopDeskByteSpan;
 
@@ -1064,51 +879,6 @@ mod tests {
         let mut out = vec![0_u8; needed];
         unsafe { slopdesk_cli_render_json(junk.as_ptr(), junk.len(), out.as_mut_ptr(), out.len()) };
         assert_eq!(String::from_utf8_lossy(&out), "[]");
-    }
-
-    #[test]
-    fn the_config_path_prefers_the_flag_then_the_env_then_xdg() {
-        let read = |explicit: &str, env: &str, xdg: &str, home: &str| -> String {
-            let needed = unsafe {
-                slopdesk_cli_config_path(
-                    explicit.as_ptr(),
-                    explicit.len(),
-                    env.as_ptr(),
-                    env.len(),
-                    xdg.as_ptr(),
-                    xdg.len(),
-                    home.as_ptr(),
-                    home.len(),
-                    b"/var/empty".as_ptr(),
-                    10,
-                    std::ptr::null_mut(),
-                    0,
-                )
-            };
-            let mut out = vec![0_u8; needed];
-            unsafe {
-                slopdesk_cli_config_path(
-                    explicit.as_ptr(),
-                    explicit.len(),
-                    env.as_ptr(),
-                    env.len(),
-                    xdg.as_ptr(),
-                    xdg.len(),
-                    home.as_ptr(),
-                    home.len(),
-                    b"/var/empty".as_ptr(),
-                    10,
-                    out.as_mut_ptr(),
-                    out.len(),
-                )
-            };
-            String::from_utf8_lossy(&out).into_owned()
-        };
-        assert_eq!(read("/flag.toml", "/env.toml", "/xdg", "/home"), "/flag.toml");
-        assert_eq!(read("", "/env.toml", "/xdg", "/home"), "/env.toml");
-        assert_eq!(read("", "", "/xdg", "/home"), "/xdg/slopdesk/config.toml");
-        assert_eq!(read("", "", "", "/home"), "/home/.config/slopdesk/config.toml");
-        assert_eq!(read("", "", "", ""), "/var/empty/.config/slopdesk/config.toml");
     }
 
     #[test]

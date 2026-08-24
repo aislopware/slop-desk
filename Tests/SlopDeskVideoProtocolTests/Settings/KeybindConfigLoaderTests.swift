@@ -3,17 +3,17 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// Pins for ``KeybindConfigLoader``, the config-file → ``KeybindingPreferences`` population path that makes
-/// the `text:` / `csi:` / `esc:` / `unbind:` half reachable end-to-end. Without this loader NOTHING writes
-/// ``KeybindingPreferences/textBindings`` / ``unbinds`` from a real user-facing source, so the dispatcher's
-/// text-binding / unbind branch would be dead code in practice.
+/// Pins for ``KeybindConfigLoader``, the `[keybind]` table → ``KeybindingPreferences`` population path that
+/// makes the `text:` / `csi:` / `esc:` / `unbind:` half reachable end-to-end. Without this loader NOTHING
+/// writes ``KeybindingPreferences/textBindings`` / ``unbinds`` from a real user-facing source, so the
+/// dispatcher's text-binding / unbind branch would be dead code in practice.
 final class KeybindConfigLoaderTests: XCTestCase {
     // MARK: text: / csi: / esc: → textBindings (the literal-byte half)
 
-    /// `keybind = cmd+shift+h:text:hi` populates `textBindings` on the ⌘⇧H chord with the literal bytes — so
+    /// `"cmd+shift+h" = "text:hi"` populates `textBindings` on the ⌘⇧H chord with the literal bytes — so
     /// after publishing into `activeOverrides` a ⌘⇧H keystroke injects `[h, i]`.
     func testTextBindingIsFoldedIntoTextBindings() {
-        let prefs = KeybindConfigLoader.apply(configText: "keybind = cmd+shift+h:text:hi")
+        let prefs = KeybindConfigLoader.apply(table: ["cmd+shift+h": "text:hi"])
         let chord = KeybindingPreferences.KeyChord(key: "h", command: true, shift: true)
         XCTAssertEqual(prefs.textBindings[chord], .init(kind: .text, payload: [0x68, 0x69]))
         XCTAssertTrue(prefs.unbinds.isEmpty)
@@ -23,12 +23,10 @@ final class KeybindConfigLoaderTests: XCTestCase {
     /// `csi:` / `esc:` route into `textBindings` with the ESC / ESC-`[` lead bytes already resolved (the
     /// dispatcher hands `payload` straight to `sendBytes`) and the matching `Kind` recorded for the UI.
     func testCSIAndEscBindingsFoldWithLeadBytes() {
-        let prefs = KeybindConfigLoader.apply(
-            configText: """
-            keybind = cmd+pageup:csi:5~
-            keybind = opt+o:esc:O
-            """,
-        )
+        let prefs = KeybindConfigLoader.apply(table: [
+            "cmd+pageup": "csi:5~",
+            "opt+o": "esc:O",
+        ])
         XCTAssertEqual(
             prefs.textBindings[.init(key: "pageup", command: true)],
             .init(kind: .csi, payload: [0x1B, 0x5B, 0x35, 0x7E]),
@@ -46,13 +44,11 @@ final class KeybindConfigLoaderTests: XCTestCase {
     /// via `asPreferencesChord`) could never hit the `textBindings`/`unbinds` entry — the binding parsed yet
     /// was permanently dead.
     func testAliasNamedKeySpellingsAreStoredCanonically() {
-        let prefs = KeybindConfigLoader.apply(
-            configText: """
-            keybind = cmd+pgup:text:x
-            keybind = ctrl+leftarrow:csi:1;5D
-            keybind = unbind:cmd+enter
-            """,
-        )
+        let prefs = KeybindConfigLoader.apply(table: [
+            "cmd+pgup": "text:x",
+            "ctrl+leftarrow": "csi:1;5D",
+            "cmd+enter": "unbind",
+        ])
         // Stored under the canonical token (what the dispatcher emits) …
         XCTAssertEqual(
             prefs.textBindings[.init(key: "pageup", command: true)]?.payload, [0x78],
@@ -70,73 +66,59 @@ final class KeybindConfigLoaderTests: XCTestCase {
 
     // MARK: unbind: → unbinds (the disable-a-default half)
 
-    /// `keybind = unbind:cmd+d` inserts ⌘D into `unbinds` so the dispatcher passes the chord through instead
-    /// of firing the default split-right action (an `unbind:` directive disables a default).
+    /// `"cmd+d" = "unbind"` inserts ⌘D into `unbinds` so the dispatcher passes the chord through instead
+    /// of firing the default split-right action (an `unbind` entry disables a default).
     func testUnbindIsFoldedIntoUnbinds() {
-        let prefs = KeybindConfigLoader.apply(configText: "keybind = unbind:cmd+d")
+        let prefs = KeybindConfigLoader.apply(table: ["cmd+d": "unbind"])
         XCTAssertTrue(prefs.unbinds.contains(.init(key: "d", command: true)))
         XCTAssertTrue(prefs.textBindings.isEmpty)
     }
 
-    // MARK: lenient flat-config dialect
-
-    /// Blank lines, `#` comments, OTHER config keys (silently ignored), lenient `=` whitespace, and an
-    /// optional quoted value all parse — only `keybind` lines contribute, every other key is dropped.
-    func testLenientDialectIgnoresCommentsBlanksAndOtherKeys() {
-        let prefs = KeybindConfigLoader.apply(
-            configText: """
-            # a comment line
-
-            font-size = 14
-            theme = Nord
-            keybind=cmd+shift+h:text:hi
-            keybind = "ctrl+a:text:x"
-            """,
-        )
-        XCTAssertEqual(
-            prefs.textBindings[.init(key: "h", command: true, shift: true)]?.payload, [0x68, 0x69],
-        )
-        XCTAssertEqual(prefs.textBindings[.init(key: "a", control: true)]?.payload, [0x78])
-        // No `font-size` / `theme` key leaked into any override map.
-        XCTAssertTrue(prefs.overrides.isEmpty)
+    /// TWO chords can be unbound in the same file. The grammar reads `unbind` chord-LAST
+    /// (`unbind:cmd+d`), so a table keyed the grammar's way could hold exactly one `unbind` key and a
+    /// second would be a duplicate-key error from the TOML parser. The loader turns the entry around,
+    /// which is what makes this table shape able to say what the line shape said. FAILS on a loader
+    /// that joins every entry as `<chord>:<action>`: both would parse as an unknown NAMED action
+    /// called `unbind` and be dropped.
+    func testSeveralChordsCanBeUnbound() {
+        let prefs = KeybindConfigLoader.apply(table: ["cmd+d": "unbind", "cmd+shift+d": "unbind"])
+        XCTAssertTrue(prefs.unbinds.contains(.init(key: "d", command: true)))
+        XCTAssertTrue(prefs.unbinds.contains(.init(key: "d", command: true, shift: true)))
+        XCTAssertEqual(prefs.unbinds.count, 2)
     }
 
-    /// A malformed `keybind` line is DROPPED (validate-then-drop) and does NOT abort the load — the
-    /// well-formed line on the next row still folds. Revert-to-confirm-fail: deleting the parse guard would
-    /// make the bad line crash / poison the whole load.
-    func testMalformedLineIsDroppedAndRestStillLoads() {
-        let prefs = KeybindConfigLoader.apply(
-            configText: """
-            keybind = badmod+h:text:nope
-            keybind = cmd+shift+h:text:hi
-            """,
-        )
+    // MARK: validate-then-drop
+
+    /// A malformed entry is DROPPED and does NOT abort the fold — the well-formed entry beside it still
+    /// lands. Revert-to-confirm-fail: deleting the parse guard would make the bad entry poison the whole
+    /// table.
+    func testMalformedEntryIsDroppedAndRestStillLoads() {
+        let prefs = KeybindConfigLoader.apply(table: [
+            "badmod+h": "text:nope",
+            "cmd+shift+h": "text:hi",
+        ])
         XCTAssertEqual(prefs.textBindings.count, 1)
         XCTAssertEqual(
             prefs.textBindings[.init(key: "h", command: true, shift: true)]?.payload, [0x68, 0x69],
         )
     }
 
-    /// Later `keybind` on the same chord wins (last-writer-wins within the file).
-    func testLastWriterWinsOnTheSameChord() {
-        let prefs = KeybindConfigLoader.apply(
-            configText: """
-            keybind = cmd+shift+h:text:aa
-            keybind = cmd+shift+h:text:bb
-            """,
-        )
-        XCTAssertEqual(
-            prefs.textBindings[.init(key: "h", command: true, shift: true)]?.payload, [0x62, 0x62],
-        )
+    /// An empty chord or an empty action is dropped before the grammar ever sees it — `"" = "text:x"`
+    /// would otherwise reach `parseLine` as `":text:x"`, which is not a binding anybody wrote.
+    func testEmptyHalvesAreDropped() {
+        let prefs = KeybindConfigLoader.apply(table: ["": "text:x", "cmd+j": ""])
+        XCTAssertTrue(prefs.textBindings.isEmpty)
+        XCTAssertTrue(prefs.unbinds.isEmpty)
+        XCTAssertTrue(prefs.overrides.isEmpty)
     }
 
     // MARK: merge into an existing base + named-action hook
 
     /// Folding preserves the `base` prefs (existing single-chord overrides / sequence overrides survive) and
-    /// the file's text bindings are layered on top.
+    /// the table's text bindings are layered on top.
     func testFoldPreservesBaseOverrides() {
         let base = KeybindingPreferences(overrides: ["pane.splitRight": .init(key: "k", command: true)])
-        let prefs = KeybindConfigLoader.apply(configText: "keybind = cmd+shift+h:text:hi", to: base)
+        let prefs = KeybindConfigLoader.apply(table: ["cmd+shift+h": "text:hi"], to: base)
         XCTAssertEqual(prefs.overrides["pane.splitRight"], .init(key: "k", command: true))
         XCTAssertEqual(
             prefs.textBindings[.init(key: "h", command: true, shift: true)]?.payload, [0x68, 0x69],
@@ -145,13 +127,10 @@ final class KeybindConfigLoaderTests: XCTestCase {
 
     /// A NAMED action (`goto_tab:1`) is routed through the caller-supplied `resolveNamedBinding` hook into
     /// `overrides` (the registry lives in another module, so the loader cannot resolve the id itself). When
-    /// the hook returns `nil` (unknown action), the named line is dropped.
+    /// the hook returns `nil` (unknown action), the entry is dropped.
     func testNamedActionRoutesThroughResolverHook() {
         let prefs = KeybindConfigLoader.apply(
-            configText: """
-            keybind = cmd+1:goto_tab:1
-            keybind = cmd+2:unknown_action
-            """,
+            table: ["cmd+1": "goto_tab:1", "cmd+2": "unknown_action"],
             resolveNamedBinding: { named in
                 guard named.id == "goto_tab", let arg = named.arg else { return nil }
                 return (bindingID: "pane.select.\(arg)", chord: named.chord)
@@ -162,15 +141,10 @@ final class KeybindConfigLoaderTests: XCTestCase {
         XCTAssertEqual(prefs.overrides.count, 1)
     }
 
-    /// With NO resolver supplied, named-action lines are simply dropped (the text/unbind directives are still
-    /// honoured — they need no registry). This is the launch-time default.
+    /// With NO resolver supplied, named-action entries are simply dropped (the text/unbind directives are
+    /// still honoured — they need no registry).
     func testNamedActionDroppedWithoutResolver() {
-        let prefs = KeybindConfigLoader.apply(
-            configText: """
-            keybind = cmd+1:goto_tab:1
-            keybind = unbind:cmd+q
-            """,
-        )
+        let prefs = KeybindConfigLoader.apply(table: ["cmd+1": "goto_tab:1", "cmd+q": "unbind"])
         XCTAssertTrue(prefs.overrides.isEmpty)
         XCTAssertTrue(prefs.unbinds.contains(.init(key: "q", command: true)))
     }
@@ -208,12 +182,12 @@ final class KeybindConfigLoaderTests: XCTestCase {
         return (bindingID: id, chord: named.chord)
     }
 
-    /// A bare named action (`cmd+t:new_tab`) folds into `overrides` under the resolved bindingID with the
-    /// trigger chord — the end-to-end fold the launch-time resolver performs (the named-action half). The
-    /// `text:`/`unbind:` directives stay empty (this line is a pure override).
+    /// A bare named action (`"cmd+t" = "new_tab"`) folds into `overrides` under the resolved bindingID with
+    /// the trigger chord — the end-to-end fold the launch-time resolver performs (the named-action half).
+    /// The `text:`/`unbind:` directives stay empty (this entry is a pure override).
     func testNamedBindingFoldsIntoOverridesViaResolver() {
         let prefs = KeybindConfigLoader.apply(
-            configText: "keybind = cmd+t:new_tab",
+            table: ["cmd+t": "new_tab"],
             resolveNamedBinding: handBuiltResolver,
         )
         XCTAssertEqual(prefs.overrides["tab.new"], .init(key: "t", command: true))
@@ -222,74 +196,34 @@ final class KeybindConfigLoaderTests: XCTestCase {
         XCTAssertTrue(prefs.unbinds.isEmpty)
     }
 
-    /// The parameterized `goto_tab:N` action folds per-digit: `cmd+3:goto_tab:3` → `overrides["pane.select.3"]`
-    /// on ⌘3 (the resolver expands the arg into the per-digit registry id).
+    /// The parameterized `goto_tab:N` action folds per-digit: `"cmd+3" = "goto_tab:3"` →
+    /// `overrides["pane.select.3"]` on ⌘3 (the resolver expands the arg into the per-digit registry id).
     func testParameterizedGotoTabFoldsPerDigitViaResolver() {
         let prefs = KeybindConfigLoader.apply(
-            configText: "keybind = cmd+3:goto_tab:3",
+            table: ["cmd+3": "goto_tab:3"],
             resolveNamedBinding: handBuiltResolver,
         )
         XCTAssertEqual(prefs.overrides["pane.select.3"], .init(key: "3", command: true))
         XCTAssertEqual(prefs.overrides.count, 1)
     }
 
-    /// An UNKNOWN named action (`cmd+t:frobnicate`) the resolver maps to `nil` is dropped — no stray override,
-    /// no trap (validate-then-drop). Revert-to-confirm-fail: a resolver that force-unwrapped its lookup would
-    /// crash here instead of dropping.
+    /// An UNKNOWN named action (`"cmd+t" = "frobnicate"`) the resolver maps to `nil` is dropped — no stray
+    /// override, no trap (validate-then-drop). Revert-to-confirm-fail: a resolver that force-unwrapped its
+    /// lookup would crash here instead of dropping.
     func testUnknownNamedBindingIsDropped() {
         let prefs = KeybindConfigLoader.apply(
-            configText: "keybind = cmd+t:frobnicate",
+            table: ["cmd+t": "frobnicate"],
             resolveNamedBinding: handBuiltResolver,
         )
         XCTAssertTrue(prefs.overrides.isEmpty)
     }
 
-    // MARK: file I/O entry (missing / present)
+    // MARK: the empty table
 
-    /// A MISSING file returns `base` unchanged (a fresh install authored no config ⇒ behaviour-identical).
-    func testMissingFileReturnsBaseUnchanged() {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-no-such-\(UUID().uuidString).toml")
+    /// An EMPTY `[keybind]` table returns `base` unchanged — a fresh install authored no bindings, so its
+    /// behaviour is identical to one that never had a config file.
+    func testEmptyTableReturnsBaseUnchanged() {
         let base = KeybindingPreferences(unbinds: [.init(key: "z", command: true)])
-        XCTAssertEqual(KeybindConfigLoader.loadFile(at: url, into: base), base)
-    }
-
-    /// A real on-disk file is read and folded — the full path the app launch uses (sans the default URL).
-    func testFileOnDiskIsLoadedAndFolded() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("slopdesk-config-\(UUID().uuidString).toml")
-        try "keybind = cmd+shift+h:text:hi\n".write(to: url, atomically: true, encoding: .utf8)
-        defer { try? FileManager.default.removeItem(at: url) }
-        let prefs = KeybindConfigLoader.loadFile(at: url)
-        XCTAssertEqual(
-            prefs.textBindings[.init(key: "h", command: true, shift: true)]?.payload, [0x68, 0x69],
-        )
-    }
-
-    // MARK: default config URL resolution
-
-    /// `XDG_CONFIG_HOME` wins; else `$HOME/.config`; the file is `$XDG_CONFIG_HOME/slopdesk/config.toml`.
-    func testDefaultConfigURLHonoursXDGThenHome() {
-        let xdg = KeybindConfigLoader.defaultConfigURL(environment: ["XDG_CONFIG_HOME": "/tmp/cfg"])
-        XCTAssertEqual(xdg?.path, "/tmp/cfg/slopdesk/config.toml")
-        let home = KeybindConfigLoader.defaultConfigURL(environment: ["HOME": "/Users/me"])
-        XCTAssertEqual(home?.path, "/Users/me/.config/slopdesk/config.toml")
-        XCTAssertNil(KeybindConfigLoader.defaultConfigURL(environment: [:]))
-    }
-
-    /// A file written by an editor that ends its lines with CRLF declares the bindings it looks like it
-    /// declares. The line reader is `slopdesk-cli`'s — the same one `slopdesk config validate` reports on
-    /// — and its trim includes the carriage return; a reader that kept the `\r` would hand it to the
-    /// keybind grammar as part of the base key, and the line would be dropped by a validator that had
-    /// already called the file valid. FAILS on a reader that trims only spaces and tabs.
-    func testCRLFLineEndingsDeclareTheSameBindings() {
-        let prefs = KeybindConfigLoader.apply(
-            configText: "# a comment\r\nkeybind = cmd+shift+h:text:hi\r\nkeybind = unbind:cmd+q\r\n",
-        )
-        XCTAssertEqual(
-            prefs.textBindings[.init(key: "h", command: true, shift: true)]?.payload, [0x68, 0x69],
-            "a CRLF line binds what it says",
-        )
-        XCTAssertTrue(prefs.unbinds.contains(.init(key: "q", command: true)))
+        XCTAssertEqual(KeybindConfigLoader.apply(table: [:], to: base), base)
     }
 }

@@ -1,17 +1,14 @@
 import Foundation
+import SlopDeskTestSupport
+import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// Pins the auto-hide CROSSING (``SidebarAutoHidePolicy``) plus the ``AutoHideTabsPanelMode`` enum's
-/// persisted-`Defaults` round-trip and repair, which stay on this side because they are what the
-/// stored config string decodes through. No `NSWindow`/view instantiation.
+/// round-trip and repair out of the config file, which stay on this side because they are what the
+/// file's token decodes through. No `NSWindow`/view instantiation.
 @MainActor
 final class SidebarAutoHidePolicyTests: XCTestCase {
-    private let autoHideKey = SettingsKey.autoHideTabsPanelKey
-
-    override func setUp() { SettingsKey.store.removeObject(forKey: autoHideKey) }
-    override func tearDown() { SettingsKey.store.removeObject(forKey: autoHideKey) }
-
     /// Each mode reaches its own case index, and the door's `-1` — the no-opinion rung the two
     /// non-`auto` modes answer with — reads back as `nil` rather than as either boolean. The rule is
     /// `slopdesk_workspace::chrome::desired_collapsed`'s.
@@ -37,21 +34,20 @@ final class SidebarAutoHidePolicyTests: XCTestCase {
     }
 
     /// The new `Defaults.Key` reads its declared default (`.default`) when unset, round-trips a written value
-    /// from its persisted form, and a bogus persisted raw repairs to `.default` (the
-    /// `Defaults.PreferRawRepresentable` bridge) rather than trapping. Read through the public
-    /// ``SettingsKey/autoHideTabsPanel`` accessor + the raw `UserDefaults` the `@Default(.autoHideTabsPanel)`
-    /// picker binds (the file's established no-`import Defaults` convention).
-    func testAutoHideTabsPanelDefaultsRoundTripAndRepair() {
+    /// The mode resolves from the config file, and a token no case spells — a file hand-edited
+    /// against a newer build — repairs to `.default` rather than trapping.
+    func testAutoHideTabsPanelResolvesFromTheFileAndRepairsAnUnknownToken() {
+        stateCompiledDefaults()
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default)
-        SettingsKey.store.set("auto", forKey: autoHideKey)
+        stateSetting("shell.auto-hide-tabs-panel", "auto")
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .auto)
-        SettingsKey.store.set("garbage-from-a-future-version", forKey: autoHideKey)
-        XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default, "an invalid raw value repairs to default")
+        stateSetting("shell.auto-hide-tabs-panel", "garbage-from-a-future-version")
+        XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default, "an unknown token repairs to default")
     }
 
-    /// The persisted key string is stable (the `@Default(.autoHideTabsPanel)` picker + a future All-Settings
-    /// catalog row bind it; a rename would silently orphan the user's choice).
-    func testAutoHideTabsPanelKeyStringIsStable() {
-        XCTAssertEqual(SettingsKey.autoHideTabsPanelKey, "shell.autoHideTabsPanel")
+    /// The config PATH is stable: it is what the user typed in their own file, so a rename orphans
+    /// their choice silently — the schema would even complete the OLD name until they re-read it.
+    func testTheAutoHidePathIsDeclared() {
+        XCTAssertTrue(AppConfig.compiledDefaults.declaredPaths.contains("shell.auto-hide-tabs-panel"))
     }
 }

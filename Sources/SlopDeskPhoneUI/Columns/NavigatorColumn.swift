@@ -43,7 +43,6 @@
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate
-import SlopDeskVideoProtocol // AgentPreferences — the `preventSleep` flag the tab context menu toggles
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -59,14 +58,6 @@ struct NavigatorColumn: View {
     /// Opens the Connect-to-Host editor from the footer island. No-op default keeps the column
     /// standalone-mountable.
     var onConnect: () -> Void = {}
-
-    /// The live ``PreferencesStore`` — threaded in so the tab context menu can surface the host-LOCAL
-    /// **Prevent Sleep While Processing** flag (`docs/ui-shell/screenshots/open-code-agent-history.png`
-    /// shows it on the tab menu). The macOS sidebar is hosted in a SEPARATE `NSHostingController` that does not
-    /// inherit the WindowGroup environment, so the split-view host passes it explicitly (`nil` on a preview /
-    /// pre-injection ⇒ the Prevent-Sleep row is hidden, never a dead control). iOS inherits it via the
-    /// `NavigationSplitView` but still passes it explicitly for parity.
-    var preferences: PreferencesStore?
 
     /// The transient sidebar search query — narrows the rows via the pure
     /// ``RailRowsBuilder/filtered``. On iOS it feeds the system `.searchable`; on macOS the
@@ -243,12 +234,7 @@ struct NavigatorColumn: View {
     /// menu is not their Mac's. This body only turns entries into `Button`s and `Toggle`s.
     @ViewBuilder
     private func rowContextMenu(_ row: RailRow) -> some View {
-        let entries = SidebarRowMenu.entries(
-            for: row.id, store: store,
-            // `?? false` mirrors the daemon's default-OFF (`nil` ⇒ unset). A `nil` STORE (preview /
-            // pre-injection) drops the row entirely rather than offering a dead control.
-            preventSleep: preferences.map { $0.agent.preventSleep ?? false },
-        )
+        let entries = SidebarRowMenu.entries(for: row.id, store: store)
         ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
             switch entry {
             case .separator:
@@ -258,12 +244,7 @@ struct NavigatorColumn: View {
             case let .toggle(flag, isOn):
                 Toggle(flag.title, isOn: Binding(
                     get: { isOn },
-                    set: { _ in
-                        SidebarRowMenu.flip(flag, paneID: row.id, store: store) {
-                            guard let preferences else { return }
-                            preferences.agent.preventSleep = !(preferences.agent.preventSleep ?? false)
-                        }
-                    },
+                    set: { _ in SidebarRowMenu.flip(flag, paneID: row.id, store: store) },
                 ))
             }
         }

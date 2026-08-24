@@ -10,6 +10,7 @@ guessing one.
 | --- | --- |
 | anything | `docs/00-overview.md` |
 | a gate, a transport, a `SLOPDESK_*` flag | `docs/46-gates-env-paths.md` |
+| a setting, `config.toml`, the schema | `docs/58-configuration.md` — there is NO settings GUI |
 | agent status detection | `docs/50-agent-detection-architecture.md` |
 | a sidecar daemon | `docs/51` superd · `52` screend · `53` dropd · `54` inspectord · `48` androidd |
 | the wire | `docs/20-wire-protocol.md` — update it after wire changes |

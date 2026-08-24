@@ -1,12 +1,12 @@
-// SlopDeskMacApp — the macOS app SCENE: one workspace window, the stock Settings scene, and the
-// AppKit obligations that hang off them.
+// SlopDeskMacApp — the macOS app SCENE: one workspace window and the AppKit obligations that hang
+// off it.
 //
 // It is the macOS half of what used to be `SlopDeskClientApp`, a single scene serving two products
 // through seventeen `#if os(...)` branches. There is not one platform gate left in this file, because
 // the file is the platform (docs/56 §3).
 //
 // WHAT THE APP IS lives in ``ClientComposition`` (`SlopDeskClientCore`): the store, the connection, the
-// preferences, the overlay coordinator, the Folders frecency, the Agents card, the chrome flags and
+// preferences, the overlay coordinator, the Folders frecency, the hook enforcer, the chrome flags and
 // every seam between them. This scene holds one of those and adds what only a Mac has:
 //
 //   * the three OS-notification sinks the composition leaves open — the `UNUserNotification` banner
@@ -68,7 +68,7 @@ public struct SlopDeskMacApp: App {
     /// at launch in a scene `.task`.
     @State private var keyDispatcher: WorkspaceKeyDispatcher
     /// The CLIENT-side control socket server (`AF_UNIX` NDJSON), the runtime surface the `slopdesk` CLI
-    /// drives the running GUI through (windows/tabs/panes, jump/config/theme/keybind, pane capture/
+    /// drives the running GUI through (windows/tabs/panes, jump/font/keybind, pane capture/
     /// send-keys, agent status). Built once here over a ``WorkspaceControlBackend`` adapter and bound in a
     /// launch `.task`; compiled-only + never unit-tested (hang-safety, mirroring the host's
     /// `AgentControlListener`).
@@ -100,15 +100,7 @@ public struct SlopDeskMacApp: App {
     /// `NSHostingView<PaneDragChipView>` replaced by a hand-drawn capsule and the SwiftUI original
     /// deleted. The seam did not move: the coordinator still sees only ``PaneDragChipSink``.
     @State private var paneDrag = PaneDragCoordinator(chip: MacPaneDragChipPanel())
-    /// The Settings WINDOW (docs/56 stage D). Not a `Settings` scene: that scene is a SwiftUI construct
-    /// that supplies its own ⌘, item, and the page it hosted is now drawn in AppKit from the layout
-    /// table. Built once at launch, opened on demand, and it holds its own window.
-    @State private var settingsWindow: MacSettingsWindowController
     @Environment(\.scenePhase) private var scenePhase
-    /// The guided first-launch checklist, as a real sheet on the workspace window. Held here rather
-    /// than presented by a `.sheet` modifier so the checklist is an AppKit sheet like every other
-    /// summoned surface the Mac shell has taken (docs/56 stage D).
-    @State private var firstLaunchSheet: MacFirstLaunchSheet
 
     // MARK: The composition's parts, read straight through
 
@@ -116,9 +108,8 @@ public struct SlopDeskMacApp: App {
     private var connection: AppConnection { app.connection }
     private var preferences: PreferencesStore { app.preferences }
     private var overlayCoordinator: OverlayCoordinator { app.overlay }
-    // No `agentHooks` shorthand: its only two readers were the environment injections increment 56f
-    // deleted, and the two surfaces that genuinely need the controller — the first-launch sheet and the
-    // Settings hooks card — take it as an init parameter off `app.agentHooks` directly.
+    // No `agentHooks` shorthand: nothing on this platform reads it. The hooks are enforced from the
+    // composition's own connection edge, with no surface to bind.
     private var chrome: WorkspaceChromeState { app.chrome }
 
     public init() {
@@ -204,14 +195,9 @@ public struct SlopDeskMacApp: App {
         // `WeakWindowBox` the `.introspect(.window)` hook fills.
         let windowBox = WeakWindowBox()
         _windowBox = State(initialValue: windowBox)
-        _firstLaunchSheet = State(initialValue: MacFirstLaunchSheet(
-            model: app.firstLaunch, agentHooks: app.agentHooks,
-        ))
-        // The Settings window controller, built with the SAME single live store the workspace binds —
-        // one `PreferencesStore`, one window, raised rather than re-made on the second ⌘,.
-        _settingsWindow = State(initialValue: MacSettingsWindowController(
-            store: app.preferences, agentHooks: app.agentHooks, workspace: store,
-        ))
+        // The `slopdesk` command, linked into `~/.local/bin` without asking. Idempotent and silent —
+        // see ``CLILink`` for why this is not a switch on a card.
+        CLILink.ensureLinked()
         _clipboardMonitor = State(initialValue: ClipboardMonitor(store: store))
         // CLIPBOARD SYNC: copy on this Mac → the HOST pasteboard mirrors it within a tick (so Claude
         // Code's Ctrl+V image paste and a plain ⌘V in a remote-desktop pane just work), and a host-side
@@ -278,9 +264,7 @@ public struct SlopDeskMacApp: App {
         // stores the GUI uses (the backend holds them WEAKLY — the composition retains the originals).
         // Built here so it outlives the scene; BOUND in a launch `.task` (the bind/listen is deferred).
         _clientControlServer = State(initialValue: ClientControlServer(
-            backend: WorkspaceControlBackend(
-                store: store, preferences: app.preferences, folders: app.folders,
-            ),
+            backend: WorkspaceControlBackend(store: store, folders: app.folders),
         ))
     }
 
@@ -306,10 +290,9 @@ public struct SlopDeskMacApp: App {
             installPinToggle: { [keyDispatcher] toggle in keyDispatcher.setTogglePinWindow(toggle) },
             paneDrag: paneDrag,
         )
-        // Bind the coordinator's `openSettingsAction` to the SwiftUI `openSettings` environment action so
-        // the palette "Open Settings" row + the agent footer hook open the stock Settings scene — without
-        // this the row is a dead control, since nothing observes a `settingsVisible` flag.
-        .modifier(SettingsOpenerInstaller(overlay: overlayCoordinator))
+        // The palette's "Open Settings" row opens the config FILE, the same thing ⌘, does. There is
+        // no settings surface for it to raise any more.
+        .onAppear { overlayCoordinator.openSettingsAction = { ConfigFile.openInEditor() } }
     }
 
     public var body: some Scene {
@@ -319,9 +302,8 @@ public struct SlopDeskMacApp: App {
                 // used to hand down `\.preferencesStore`, `\.agentHooksController` and
                 // `\.overlayCoordinator` "so deep views can reach them". There are no such deep views
                 // left on this platform: every reader of all three keys is a PHONE view, and each has an
-                // AppKit twin the Mac mounts instead — `MacSettingsBespokeSurfaces` and
-                // `MacFirstLaunchSheet` take their controller as an INIT PARAMETER, and increment 56b
-                // did the same to `MacWorkspaceRootView`'s preferences. The canvas was the last reader
+                // AppKit twin the Mac mounts instead, and increment 56b did the same to
+                // `MacWorkspaceRootView`'s preferences. The canvas was the last reader
                 // of `\.overlayCoordinator` on this platform and took it from a hosting root of its
                 // own; R12 rewrote it in AppKit (``MacContentCanvas``), so the coordinator is an init
                 // parameter there too and there is no environment on this side at all.
@@ -340,25 +322,6 @@ public struct SlopDeskMacApp: App {
                 // floor. R11 then removed the question: the satellite's content is AppKit in THIS
                 // target, so the coordinator is an init parameter and there is no environment left to
                 // inject into at all.
-                // The guided first-launch checklist — On-Launch / Default-Terminal / Install-CLI /
-                // Install-Claude-hooks. Presents once on a fresh install (the `hasCompletedFirstLaunch`
-                // Defaults flag) and never under automation (it would steal the autoconnect focus).
-                // Dismissing by ANY path persists the flag (the sheet's completion handler).
-                .task {
-                    guard FirstLaunchModel.shouldPresent(
-                        hasCompleted: SettingsKey.hasCompletedFirstLaunchEnabled,
-                        automationActive: app.isAutomation,
-                    ) else { return }
-                    // A sheet needs the window it hangs from, and the window arrives when the
-                    // `.introspect(.window)` hook fires — which is after this task starts. Yield until
-                    // it lands, bounded, so a build where the hook never fires shows no checklist
-                    // rather than spinning: the flag stays unset, so the next launch offers it again.
-                    for _ in 0..<100 where windowBox.window == nil {
-                        try? await Task.sleep(for: .milliseconds(20))
-                    }
-                    guard let window = windowBox.window else { return }
-                    firstLaunchSheet.present(over: window)
-                }
                 // The chrome follows the OS appearance (semantic tokens resolve per-appearance at draw
                 // time — user-directed 2026-08-07), so NO colour scheme is forced anywhere.
                 .onChange(of: scenePhase) { _, phase in
@@ -498,6 +461,11 @@ public struct SlopDeskMacApp: App {
                 // SecureKeyboardEntryController already use.
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     store.isAppActive = true
+                    // Coming back to the app is exactly the moment somebody has finished editing the
+                    // config file in another one. A no-op when the file has not moved (``ConfigFile``
+                    // compares before re-applying) — otherwise every ⌘Tab back would rebuild the
+                    // terminal config and re-measure the PTY grid.
+                    ConfigFile.reload(preferences)
                 }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
                     store.isAppActive = false
@@ -654,11 +622,11 @@ public struct SlopDeskMacApp: App {
             // affordance without touching the rest of the File menu.
             CommandGroup(replacing: .newItem) {}
             // ⌘, is the one shortcut declared here rather than routed through the binding registry: it
-            // is the app menu's, not the workspace's, and the `Settings` scene that used to supply it
-            // went with the SwiftUI settings surface. `.appSettings` is the group AppKit reserves for
-            // it, so the item lands where every Mac user looks for it.
+            // is the app menu's, not the workspace's. It opens `config.toml` — there is no settings
+            // window to raise, and the file IS the settings surface. `.appSettings` is the group AppKit
+            // reserves for it, so the item lands where every Mac user looks for it.
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { settingsWindow.show() }
+                Button("Open Configuration…") { ConfigFile.openInEditor() }
                     .keyboardShortcut(",", modifiers: .command)
             }
             WorkspaceCommands(

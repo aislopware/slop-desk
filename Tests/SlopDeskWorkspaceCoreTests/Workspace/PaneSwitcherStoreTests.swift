@@ -1,4 +1,5 @@
 import Defaults
+import SlopDeskVideoProtocol
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -341,15 +342,13 @@ final class PaneSwitcherStoreTests: XCTestCase {
         XCTAssertEqual(activePane(store), before, "⌘9 with three panes is a no-op")
     }
 
-    // MARK: - The follow-along preview (`controls.paneSwitcherPreview`, default ON)
+    // MARK: - The follow-along preview (`controls.pane-switcher-preview`, default ON)
 
-    /// Runs `body` with the preview setting forced to `enabled`, restoring it after — the key is a real
-    /// `UserDefaults` entry, so a test that flipped it and walked away would leak into every later one.
+    /// Runs `body` on a machine whose config file states the preview as `enabled`. Scoped to the BODY
+    /// rather than to the test, because ``AppConfig/current`` is a process-global and the assertions
+    /// after it should be reading whatever the rest of the suite reads.
     private func withPreview(_ enabled: Bool, _ body: () -> Void) {
-        let previous = Defaults[.paneSwitcherPreview]
-        Defaults[.paneSwitcherPreview] = enabled
-        defer { Defaults[.paneSwitcherPreview] = previous }
-        body()
+        AppConfig.withCurrent(AppConfig.current.setting("controls.pane-switcher-preview", enabled), body)
     }
 
     /// The point of the feature: while the highlight walks, THIS DEVICE looks at the highlighted pane.

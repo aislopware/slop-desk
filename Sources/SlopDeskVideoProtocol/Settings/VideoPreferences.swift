@@ -128,4 +128,32 @@ public struct VideoPreferences: Codable, Sendable, Equatable {
         self.virtualDisplay = virtualDisplay
         self.sharpen = sharpen
     }
+
+    /// Read the `[video]` table out of a resolved ``AppConfig``.
+    ///
+    /// Every row here is declared WITHOUT a default, which is the whole point: unset must stay unset
+    /// so the sidecar keeps emitting nothing and the daemon's own compiled defaults hold. So this
+    /// reads through the `optional*` accessors — the ones that answer `nil` for an absent key instead
+    /// of a zero — and a file that mentions no `[video]` key at all yields a value equal to
+    /// `VideoPreferences()`.
+    ///
+    /// The two enum rows are `Choice`s with no default, so ``AppConfig/choice(_:_:)`` (which insists
+    /// on a fallback) is the wrong door: they come across as optional text and fail to `nil` on a
+    /// token the row would already have refused.
+    public init(_ config: AppConfig) {
+        self.init(
+            qpSharp: config.optionalInt("video.qp-sharp"),
+            qpCoarse: config.optionalInt("video.qp-coarse"),
+            qpDecouple: config.optionalFlag("video.qp-decouple"),
+            fecM: config.optionalInt("video.fec-m"),
+            fecK: config.optionalInt("video.fec-k"),
+            pacer: config.optionalText("video.pacer").flatMap(Pacer.init(rawValue:)),
+            playoutMs: config.optionalDouble("video.playout-ms"),
+            captureScale: config.optionalDouble("video.capture-scale"),
+            displayCapture: config.optionalText("video.display-capture")
+                .flatMap(DisplayCapture.init(rawValue:)),
+            virtualDisplay: config.optionalFlag("video.virtual-display"),
+            sharpen: config.optionalDouble("video.sharpen"),
+        )
+    }
 }

@@ -72,7 +72,7 @@ final class FontScrollHookTests: XCTestCase {
     /// THE regression test: a ⌘±/⌘0 zoom UPDATES the persisted Settings font size (the single source of
     /// truth the "Size" stepper binds), so the two never desync. Wires the seam to a live ``PreferencesStore``
     /// exactly as the app shell does. ⌘+ bumps +1, ⌘- back, ⌘0 resets to the default size.
-    func testFontZoomUpdatesPreferencesFontSizeSingleSourceOfTruth() {
+    func testFontZoomMovesTheEffectiveSizeAndResetsToTheFilesAnswer() {
         let store = makeStore()
         let prefs = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
         store.onFontSizeStep = { step in
@@ -85,13 +85,19 @@ final class FontScrollHookTests: XCTestCase {
         let base = prefs.terminal.fontSize
 
         store.increaseFontInActivePane()
-        XCTAssertEqual(prefs.terminal.fontSize, base + 1, "⌘+ bumps the persisted Settings font size")
+        XCTAssertEqual(prefs.effectiveFontSize, base + 1, "⌘+ bumps the size every terminal renders at")
         store.decreaseFontInActivePane()
-        XCTAssertEqual(prefs.terminal.fontSize, base, "⌘- steps it back — stepper stays in sync")
+        XCTAssertEqual(prefs.effectiveFontSize, base, "⌘- steps it back")
 
-        prefs.terminal.fontSize = 20
+        // ⌘0 drops the runtime delta, so the size goes back to the FILE's answer — not to a compiled
+        // constant, and not to whatever ⌘+ last left. The delta is deliberately not persisted: zooming is
+        // something you do to read a stack trace, not a preference you are stating.
+        store.increaseFontInActivePane()
+        store.increaseFontInActivePane()
+        XCTAssertNotEqual(prefs.fontSizeDelta, 0, "precondition: zoomed away from the file's size")
         store.resetFontInActivePane()
-        XCTAssertEqual(prefs.terminal.fontSize, TerminalPreferences().fontSize, "⌘0 resets to the default size")
+        XCTAssertEqual(prefs.fontSizeDelta, 0)
+        XCTAssertEqual(prefs.effectiveFontSize, base, "⌘0 resets to the configured size")
     }
 
     // MARK: - Viewport scroll

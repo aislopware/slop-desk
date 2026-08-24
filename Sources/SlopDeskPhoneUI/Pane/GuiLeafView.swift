@@ -22,10 +22,10 @@
 // registers no factory, so `VideoWindowFactory.make` yields an `EmptyView`. SYSTEM/Slate tokens only.
 
 #if os(iOS)
-import Defaults
 import SFSafeSymbols
 import SlopDeskClientCore
 import SlopDeskSlate
+import SlopDeskVideoProtocol // ConfigRevision — what makes the pointer-grant read live
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -46,10 +46,14 @@ struct GuiLeafView: View {
     /// + stops the UDP/VT/Metal pipeline, a visible one (re)requests a slot. Defaults `true` for a preview.
     var isVisible: Bool = true
     /// BACKGROUND INTERACTION (satellite windows): the user setting behind the background-pointer
-    /// grant. Observed via `@Default` so a Settings flip re-renders the leaf and re-threads the seam
-    /// context (no remount). Granted below ONLY for a detached pane — canvas panes keep
-    /// click-to-activate.
-    @Default(.satelliteBackgroundPointer) private var satelliteBackgroundPointer
+    /// grant. COMPUTED off ``ConfigRevision`` — `AppConfig` is a plain locked global, so reading the
+    /// revision is what makes a saved config file re-render the leaf and re-thread the seam context
+    /// (no remount). Granted below ONLY for a detached pane — canvas panes keep click-to-activate.
+    private var satelliteBackgroundPointer: Bool {
+        _ = ConfigRevision.shared.generation
+        return SettingsKey.satelliteBackgroundPointerEnabled
+    }
+
     /// Whether the in-pane STATS readout is showing (footer toggle). Per-pane view state — resets on
     /// remount, like the client-side zoom.
     @State private var showStats = false

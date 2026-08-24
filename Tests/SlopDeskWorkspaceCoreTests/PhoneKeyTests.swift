@@ -1,4 +1,4 @@
-import Defaults
+import SlopDeskTestSupport
 import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -69,9 +69,7 @@ final class PhoneKeyTests: XCTestCase {
     /// default is `.off` (the Mac's, so ⌥e still composes `é`), and a test about MARSHALLING must not
     /// silently become a test about which default happens to ship.
     func testTheUsageAndTheBaseBothReachTheDoor() {
-        let prior = Defaults[.optionAsAlt]
-        defer { Defaults[.optionAsAlt] = prior }
-        Defaults[.optionAsAlt] = .both
+        stateSetting("controls.option-as-alt", "both")
         let altB = PhoneKey.Press(charactersIgnoringModifiers: "b", option: true)
         XCTAssertEqual(PhoneKey.encode(altB), [0x1B, 0x62], "⌥b takes the base letter, not the layout's ∫")
         let ctrlBracket = PhoneKey.Press(charactersIgnoringModifiers: "[", control: true)
@@ -124,9 +122,7 @@ final class PhoneKeyTests: XCTestCase {
     /// setting's to grant. With the shipping default the press correctly encodes nothing, which would
     /// pass this test's retry protocol vacuously.
     func testALongBaseRetriesRatherThanTruncating() {
-        let prior = Defaults[.optionAsAlt]
-        defer { Defaults[.optionAsAlt] = prior }
-        Defaults[.optionAsAlt] = .both
+        stateSetting("controls.option-as-alt", "both")
         let long = String(repeating: "é", count: 40) // 80 UTF-8 bytes, well past the inline buffer
         let press = PhoneKey.Press(charactersIgnoringModifiers: long, option: true)
         XCTAssertEqual(PhoneKey.encode(press), [0x1B] + Array(long.utf8))
@@ -141,86 +137,64 @@ final class PhoneKeyTests: XCTestCase {
     /// Both directions are pinned here, because a wiring that only ever answers one way is the defect
     /// it replaced wearing a switch.
     func testOptionAsAltReachesTheDoorAndItsDefaultIsOff() {
-        let prior = Defaults[.optionAsAlt]
-        defer { Defaults[.optionAsAlt] = prior }
         let altE = PhoneKey.Press(charactersIgnoringModifiers: "e", option: true)
 
-        Defaults[.optionAsAlt] = .off
+        stateSetting("controls.option-as-alt", OptionAsAlt.off.rawValue)
         XCTAssertNil(PhoneKey.encode(altE), "OFF leaves ⌥e to UIKit's composition, which is where é comes from")
-        Defaults[.optionAsAlt] = .both
+        stateSetting("controls.option-as-alt", OptionAsAlt.both.rawValue)
         XCTAssertEqual(PhoneKey.encode(altE), [0x1B, 0x65], "BOTH makes ⌥ the meta prefix")
 
         // A phone's `UIKey` carries one `.alternate` bit and no side, so a side-specific choice
         // cannot be honoured — it reads as BOTH rather than as OFF, which would take away the meta
         // the reader asked for. Documented at `OptionAsAlt`; pinned here because it is a crossing.
         for sided: OptionAsAlt in [.left, .right] {
-            Defaults[.optionAsAlt] = sided
+            stateSetting("controls.option-as-alt", sided.rawValue)
             XCTAssertEqual(PhoneKey.encode(altE), [0x1B, 0x65], "\(sided) reads as BOTH on a device with no sides")
         }
 
-        // The shipping default, asserted last so the restores above cannot mask it: `.off`, which is
+        // The shipping default, asserted last so the states above cannot mask it: `.off`, which is
         // the Mac's, and the whole reason the two halves now agree about what ⌥ means.
-        Defaults.reset(.optionAsAlt)
-        XCTAssertEqual(Defaults[.optionAsAlt], .off)
+        stateCompiledDefaults()
+        XCTAssertEqual(SettingsKey.optionAsAlt, .off)
         XCTAssertNil(PhoneKey.encode(altE))
     }
 
-    // MARK: The chord recorder
-
-    /// The verdict crosses, and a bind crosses with the chord it would store — in the PERSISTED
-    /// spelling, which is the only part of this a marshalling bug could get wrong silently: an
-    /// override written under a token the lookup never builds is a shortcut that simply stops
-    /// firing. The rules are `slopdesk_workspace::phone_key::capture_verdict`, tested there and
-    /// pinned against the Mac's recorder in `slopdesk-ffi`.
-    func testTheRecorderCrossesItsVerdictAndItsChord() {
-        XCTAssertEqual(PhoneKey.captureOutcome(PhoneKey.Press(hidUsage: HID.escape)), .cancel)
-        XCTAssertEqual(
-            PhoneKey.captureOutcome(PhoneKey.Press(charactersIgnoringModifiers: "\u{7f}", hidUsage: HID.backspace)),
-            .clear,
-            "the DEL scalar Backspace reports is never stored as a chord",
-        )
-        XCTAssertEqual(PhoneKey.captureOutcome(PhoneKey.Press(hidUsage: HID.forwardDelete)), .clear)
-
-        XCTAssertEqual(
-            PhoneKey.captureOutcome(PhoneKey.Press(
-                charactersIgnoringModifiers: "P", command: true, shift: true,
-            )),
-            .bind(KeybindingPreferences.KeyChord(key: "p", command: true, shift: true)),
-            "⇧ rides in the modifiers, so the base is the lower-cased letter",
-        )
-        XCTAssertEqual(
-            PhoneKey.captureOutcome(PhoneKey.Press(hidUsage: HID.pageUp, command: true)),
-            .bind(KeybindingPreferences.KeyChord(key: "pageup", command: true)),
-            "a named key crosses as its canonical token, not as a scalar",
-        )
-
-        // Nothing to store yet: the row stays armed rather than recording a chord nobody can type.
-        XCTAssertEqual(PhoneKey.captureOutcome(PhoneKey.Press()), .ignore)
-        XCTAssertEqual(
-            PhoneKey.captureOutcome(PhoneKey.Press(
-                charactersIgnoringModifiers: " ", hidUsage: HID.space, control: true, shift: true,
-            )),
-            .ignore,
-            "the dispatcher names ⌃⇧Space; the recorder refuses to let the space bar be bound",
-        )
-    }
-
-    /// The chord a recorded press persists is the chord the DISPATCHER builds for the same press —
-    /// the property the whole recorder exists for, and the one that cannot be checked on either side
-    /// alone.
-    func testARecordedChordIsTheChordThatFires() {
+    /// Every chord the phone's dispatcher builds is a chord a `[keybind]` line can NAME.
+    ///
+    /// This is what a settings file replaced a chord recorder with. A recorder could refuse a
+    /// keystroke it was unable to spell back; a file has the opposite problem — the reader types a
+    /// spelling and the dispatcher has to resolve to it. So the property that matters is the round
+    /// trip: fold the built chord to its canonical text, parse that text back, and require the same
+    /// chord. A press whose chord canonicalised to a token the grammar rereads as something else
+    /// would be a shortcut nobody could bind.
+    func testEveryChordTheDispatcherBuildsIsOneTheConfigGrammarCanName() {
         for press in [
             PhoneKey.Press(charactersIgnoringModifiers: "k", command: true),
             PhoneKey.Press(charactersIgnoringModifiers: "P", command: true, shift: true),
             PhoneKey.Press(hidUsage: HID.up, command: true, shift: true),
             PhoneKey.Press(hidUsage: HID.home, control: true),
+            PhoneKey.Press(hidUsage: HID.pageUp, command: true),
         ] {
-            guard case let .bind(recorded) = PhoneKey.captureOutcome(press) else {
-                XCTFail("\(press) should record")
+            guard let chord = PhoneKey.keyChord(for: press)?.asPreferencesChord else {
+                XCTFail("\(press) should be a chord")
                 return
             }
-            XCTAssertEqual(recorded, PhoneKey.keyChord(for: press)?.asPreferencesChord)
+            XCTAssertEqual(
+                KeybindGrammar.parseLine("\(chord.canonical):new_tab")?.chord,
+                chord,
+                "\(chord.canonical) does not read back as the chord that wrote it",
+            )
         }
+    }
+
+    /// The two keys a recorder used to answer before reading their characters are simply not
+    /// chords: Backspace reports the DEL scalar, and a chord keyed by DEL is one the Mac's
+    /// dispatcher never builds — so it would fire on one client and not the other.
+    func testTheDeleteKeysAreNotChords() {
+        XCTAssertNil(PhoneKey.keyChord(for: PhoneKey.Press(
+            charactersIgnoringModifiers: "\u{7f}", hidUsage: HID.backspace, command: true,
+        )))
+        XCTAssertNil(PhoneKey.keyChord(for: PhoneKey.Press(hidUsage: HID.forwardDelete, command: true)))
     }
 
     // MARK: The accessory bar

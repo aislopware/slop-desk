@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskTestSupport
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -111,8 +112,7 @@ final class BusyDotThresholdTests: XCTestCase {
 
     /// The delay is user-configurable; 0 reveals immediately (the pre-threshold behaviour).
     func testConfiguredZeroDelayRevealsImmediately() throws {
-        SettingsKey.store.set(0.0, forKey: SettingsKey.tabBadgeBusyDelaySeconds)
-        defer { SettingsKey.store.removeObject(forKey: SettingsKey.tabBadgeBusyDelaySeconds) }
+        stateSetting("badges.busy-delay-seconds", 0.0)
 
         let store = makeTreeStore()
         let pane = try activePane(store)
@@ -125,8 +125,7 @@ final class BusyDotThresholdTests: XCTestCase {
     /// A hostile/corrupt negative persisted value clamps to 0 (validate-then-default), never a
     /// dot that can't reveal.
     func testNegativePersistedDelayClampsToZero() {
-        SettingsKey.store.set(-5.0, forKey: SettingsKey.tabBadgeBusyDelaySeconds)
-        defer { SettingsKey.store.removeObject(forKey: SettingsKey.tabBadgeBusyDelaySeconds) }
+        stateSetting("badges.busy-delay-seconds", -5.0)
         XCTAssertEqual(SettingsKey.tabBadgeBusyDelaySecondsValue, 0)
     }
 
@@ -136,8 +135,7 @@ final class BusyDotThresholdTests: XCTestCase {
     /// `completionFlashTick` — `paneShowsBusyDot` reads the wall clock, not an `@Observable`
     /// dependency, so without this tick nothing would repaint the row when the delay elapses.
     func testCommandStartArmsRevealTickAtConfiguredDelay() throws {
-        SettingsKey.store.set(1.5, forKey: SettingsKey.tabBadgeBusyDelaySeconds)
-        defer { SettingsKey.store.removeObject(forKey: SettingsKey.tabBadgeBusyDelaySeconds) }
+        stateSetting("badges.busy-delay-seconds", 1.5)
 
         let store = makeTreeStore()
         let pane = try activePane(store)

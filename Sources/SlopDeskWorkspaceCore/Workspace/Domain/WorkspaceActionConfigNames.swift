@@ -12,9 +12,8 @@ import SlopDeskWorkspaceModel
 /// OPTIONAL `resolveNamedBinding` hook — but the loader CANNOT call this registry directly
 /// (`KeybindConfigLoader` lives in `SlopDeskVideoProtocol`, which must not import
 /// `SlopDeskWorkspaceCore`; that layering is exactly why the hook is a closure). This is the
-/// production resolver the app layer (`SlopDeskClientUI`, which imports both) installs into that hook so
-/// a user's `keybind = cmd+t:new_tab` actually rebinds the registry action instead of silently doing
-/// nothing.
+/// production resolver ``PreferencesStore`` installs into that hook so a user's
+/// `cmd+t = "new_tab"` actually rebinds the registry action instead of silently doing nothing.
 ///
 /// **Validate-then-drop (CLAUDE.md §3, applied to untrusted config text).** An unknown name, an
 /// out-of-range / non-numeric `goto_tab` arg, and the libghostty-only responder actions

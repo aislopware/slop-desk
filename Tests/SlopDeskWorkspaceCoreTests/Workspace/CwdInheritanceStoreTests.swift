@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskTestSupport
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -12,22 +13,6 @@ import XCTest
 /// cwd lands on the right spec, `.home` stamps nil, and no startup `cd` bytes reach the new pane.
 @MainActor
 final class CwdInheritanceStoreTests: XCTestCase {
-    private let policyKeys = [
-        SettingsKey.workingDirectoryNewWindowKey,
-        SettingsKey.workingDirectoryNewTabKey,
-        SettingsKey.workingDirectoryNewSplitKey,
-    ]
-
-    override func setUp() {
-        super.setUp()
-        for key in policyKeys { SettingsKey.store.removeObject(forKey: key) }
-    }
-
-    override func tearDown() {
-        for key in policyKeys { SettingsKey.store.removeObject(forKey: key) }
-        super.tearDown()
-    }
-
     // MARK: - Fixtures
 
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
@@ -80,7 +65,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     // MARK: - Stamp resolved cwd on the new spec
 
     func testSplitInheritStampsActiveCwdOnNewSpec() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        stateSetting("shell.working-directory-new-split", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -95,7 +80,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewTabInheritStampsActiveCwdOnNewSpec() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -107,7 +92,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testHomeStampsNilEvenWithAnActiveCwd() throws {
-        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "home")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -122,7 +107,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testPathStampsTheConfiguredPath() throws {
-        SettingsKey.store.set("/opt/work", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        stateSetting("shell.working-directory-new-split", "/opt/work")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -137,7 +122,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
         // The freshness refresh (the `onCommandCompleted` OSC-7-equivalent) writes the pane's cwd via
         // `setLastKnownCwd`; `inherit` must read that SAME field — proving the single-source loop (the
         // "don't double-source cwd" invariant) rather than reading some stale alternate field.
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        stateSetting("shell.working-directory-new-split", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: nil)
         store.setLastKnownCwd("/refreshed/dir", for: pane) // stands in for the post-command cwd refresh
@@ -153,7 +138,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testInheritWithNoActiveCwdStampsNil() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: nil)
         let before = allPaneIDs(store)
@@ -189,7 +174,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testPluginDirRefreshDoesNotPoisonNewTabInherit() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
 
@@ -212,7 +197,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     /// not a shell spawned in the plugin dir titled `zsh-users---zsh-autosuggestions`. FAILS on the un-fixed
     /// `newTab` (it read `tree.spec(for:)?.lastKnownCwd` directly ⇒ inherited the poison).
     func testNewTabDoesNotInheritPersistedPluginCwd() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "inherit")
         let pane = PaneID()
         let poison = "/Users/me/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions"
         let store = makeStore(pane, cwd: poison)
@@ -229,7 +214,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
 
     /// Same backstop on the split path (`inheritableCwd` covers `splitActivePane` too).
     func testSplitDoesNotInheritPersistedPluginCwd() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        stateSetting("shell.working-directory-new-split", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/opt/zinit/plugins/owner---repo")
         let before = allPaneIDs(store)
@@ -264,7 +249,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     // MARK: - No startup `cd` bytes
 
     func testSplitInheritSendsNoStartupCdToTheNewPane() async throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        stateSetting("shell.working-directory-new-split", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -284,7 +269,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewTabInheritSendsNoStartupCdToTheNewPane() async throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/srv/app")
         let before = allPaneIDs(store)
@@ -299,7 +284,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testHomeSendsNoCd() async throws {
-        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "home")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -313,7 +298,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testInheritWithNoActiveCwdSendsNothing() async throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: nil)
         let before = allPaneIDs(store)
@@ -333,7 +318,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     // spawns the PTY there directly; nothing is ever typed into the shell.
 
     func testNewTerminalPaneNewTabInheritsCwdAndSendsNothing() async throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -357,7 +342,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewTerminalPaneSplitInheritsCwdAndSendsNothing() async throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        stateSetting("shell.working-directory-new-split", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/srv/app")
         let before = allPaneIDs(store)
@@ -375,7 +360,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewTerminalPaneHomePolicyStampsNilCwdAndSendsNothing() async throws {
-        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
+        stateSetting("shell.working-directory-new-tab", "home")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -397,7 +382,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     // never reading the policy).
 
     func testNewSessionInheritStampsActiveCwdOnNewSessionLeaf() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
+        stateSetting("shell.working-directory-new-window", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -428,7 +413,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewSessionInheritSendsNoStartupCdToTheNewSessionLeaf() async throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
+        stateSetting("shell.working-directory-new-window", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/srv/app")
         let before = allPaneIDs(store)
@@ -447,7 +432,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewSessionHomeSendsNoCd() async throws {
-        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewWindowKey)
+        stateSetting("shell.working-directory-new-window", "home")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)
@@ -462,7 +447,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
 
     func testNewSessionNonTerminalKindSendsNoCd() async throws {
         // The deferred `cd` fires for TERMINAL kind ONLY — a remote-GUI session leaf has no shell.
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
+        stateSetting("shell.working-directory-new-window", "inherit")
         let pane = PaneID()
         let store = makeStore(pane, cwd: "/Users/me/project")
         let before = allPaneIDs(store)

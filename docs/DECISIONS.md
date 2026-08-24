@@ -16972,3 +16972,45 @@ ran by default. That constraint was Swift's, not AudioToolbox's.
 `slopdesk-apple-audio`'s round-trip test builds both converters, encodes a synthetic tone and
 asserts the wire cadence, in `cargo test`, with no window server and no grant — so the loopback arm
 was deleted rather than kept as a second proof of the same thing.
+
+## Settings are a file, and the onboarding is deleted rather than shortened (2026-08-24)
+
+**Detail: [58-configuration.md](58-configuration.md).**
+
+- ✅ **The settings GUI is DELETED, not simplified.** Eighty-two files: nineteen `Settings/` views on
+  the Mac, seventeen on the phone, six onboarding step cards, the row catalogue and taxonomy that
+  indexed them, both chord recorders, and the four FFI door families underneath (`settings_rows`,
+  `settings_layout`, `settings_catalog`, `settings_options`). Replaced by `config.toml`, a generated
+  `docs/config.schema.json`, and defaults chosen once. Ghostty's shape, for Ghostty's reason: install
+  it and it works. Held by the `settings-is-a-file` invariant, which bans the directories AND the
+  type names, so the shape cannot return at a new address.
+- ✅ **`config set` does not exist and is not deferred.** The CLI reads the file and never writes it —
+  a verb that edits a document a human also edits is a merge conflict with a comment-eating parser on
+  one side. This VOIDS the 2026-06-29 "`config set/unset --transient` is honestly rejected" entry and
+  the "`font apply` / `font import --apply` are implemented" entry above: `font apply` is gone with
+  `config set`, and `font import` now installs the file and prints its family name, leaving the
+  reader to write `terminal.font-family`.
+- ✅ **The good defaults are ENFORCED, never offered.** The Claude Code hooks install on every
+  connection establish (`AgentHookEnforcer`) — agent detection is what this app IS, so a host without
+  them is a host with half the product dark, and it runs per-establish because the next host is not
+  necessarily the last. The `slopdesk` command links at launch into `~/.local/bin`, a directory the
+  user already owns: the old switch escalated to `/usr/local/bin` and spent an administrator prompt
+  on a convenience in the user's first two minutes. "Set as default terminal" is deleted outright.
+- ✅ **No first-launch state exists at all.** Not a shortened flow, not a skippable one — there is no
+  flag saying the flow was seen, which is what kept two installs of the same build from being the
+  same product. Banned as a token by the same invariant.
+- ✅ **There is no reload verb and no file watcher.** The app re-reads the file on every ACTIVATION,
+  which is the moment a reader who just saved it comes back to look. `ConfigFile.reload` guards on
+  `AppConfig` equality first, and the guard is the feature: `PreferencesStore` bumps the
+  terminal-config generation unconditionally, so re-applying an identical reading would rebuild every
+  live terminal's config and re-measure its grid — a visible flash on every ⌘Tab back.
+- ✅ **`docs/config.schema.json` is an artifact with a producer.** `make config-schema` is the only
+  writer; `rust/slopdesk-settings/tests/checked_in_schema.rs` is the gate. A STALE schema is worse
+  than none — it tells the reader a key exists that this build ignores, in the editor where they are
+  most likely to believe it.
+- ✅ **The chord RECORDER is deleted; the two dispatchers stay.** A file has no recorder. The
+  recorder half was strictly stricter than the dispatcher (it refused a base it could not spell
+  back), and what replaces its guarantee is a round trip: canonicalise the dispatcher's chord, parse
+  that text back, require the same chord. Comparing the two dispatchers directly for the first time
+  found a real divergence — the phone accepted the DEL scalar as a printable base while the Mac
+  refused it, so ⌘⌫ resolved to a chord no `keybind` line on the other client could ever match.

@@ -199,39 +199,6 @@ pub fn one_rule_for_pane_directory(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// The keybindings search filters through the door, not through `contains`
-///
-/// `String.contains(_: String)` is grapheme-aware search. Measured against the shipped xcframework:
-/// 825ns over a 35-byte title, 1,652ns over a 70-byte keyword run, against 29ns and 53ns for the
-/// same containment as bytes. Four spellings across 85 rows is 415µs on every keystroke typed into
-/// the editor's search field, and the whole of it is that one call.
-/// `slopdesk_ws_binding_row_matches` takes the table in one blob and answers positions. The ban is
-/// on the FOLD coming back, not on the door going away: a reader that re-derives a row's glyph or
-/// canonical per keystroke is the same defect with the door still declared. BREAK-TESTED against
-/// the real tree, 2026-08-22: restoring `if binding.title.lowercased().contains(q) { return true }`
-/// in `matches` fails the first rule; removing the `surviving` batch face fails the second. Both
-/// pass on the tree as it stands.
-#[must_use]
-pub fn keybindings_search_crosses_once_for(tree: &Tree) -> Report {
-    let claims = [
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift"],
-            pattern: r"lowercased\(\)\.contains\(",
-            view: View::Code,
-            message: "{files} folds and searches a binding row in Swift again — the filter crosses once for \
-                      the whole table (slopdesk_ffi::binding_search)",
-        },
-        Claim::Names {
-            path: "Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift",
-            needle: "func surviving(",
-            message: "Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift: the \
-                      whole-table filter face is gone — a per-row door is 85 crossings and 85 blobs where \
-                      one of each will do",
-        },
-    ];
-    check_all(tree, &claims)
-}
-
 /// One key vocabulary, on the CLIENT's send-keys too
 ///
 /// The existing "One key vocabulary" block pins the HOST's face (`ControlKeyMap.swift`). The
@@ -472,35 +439,6 @@ mod tests {
             "contains(\"---\")\n",
         );
         assert!(!super::one_rule_for_pane_directory(&fixture.tree()).is_clean());
-    }
-
-    fn write_keybindings_search_crosses_once_for(fixture: &Fixture) {
-        fixture.write(
-            "Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift",
-            "func surviving(\nkept so the ban has a haystack\n",
-        );
-    }
-
-    #[test]
-    fn keybindings_search_crosses_once_for_holds_its_faces_to_their_doors() {
-        let fixture = Fixture::new("keybindings-search-crosses-once-for");
-        write_keybindings_search_crosses_once_for(&fixture);
-        assert!(super::keybindings_search_crosses_once_for(&fixture.tree()).is_clean());
-
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write(
-            "Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift",
-            "",
-        );
-        assert!(!super::keybindings_search_crosses_once_for(&fixture.tree()).is_clean());
-
-        // And the law it was banned from respelling, respelled.
-        write_keybindings_search_crosses_once_for(&fixture);
-        fixture.append(
-            "Sources/SlopDeskWorkspaceCore/Workspace/Domain/KeybindingsEditorModel.swift",
-            "lowercased().contains(\n",
-        );
-        assert!(!super::keybindings_search_crosses_once_for(&fixture.tree()).is_clean());
     }
 
     fn write_client_send_keys_asks_one(fixture: &Fixture) {

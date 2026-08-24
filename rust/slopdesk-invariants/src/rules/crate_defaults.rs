@@ -19,8 +19,6 @@ const VIDEO_HOST: &str = "Sources/SlopDeskVideoHost/";
 const IDR_FACE: &str = "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift";
 /// The face whose env fallbacks are the door's answer, never a digit.
 const QP_FACE: &str = "Sources/SlopDeskVideoHost/QPController.swift";
-/// The reader that turned one crossing back into eight.
-const CATALOG: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/AllSettingsCatalog.swift";
 /// The builder whose relabelling is quadratic if asked per row.
 const RAIL: &str = "Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift";
 /// The host performer that used to hold a second `:line[:col]` splitter.
@@ -129,71 +127,6 @@ pub fn the_encoder_defaults_are_the_crates(tree: &Tree) -> Report {
                       slopdesk_qp_config_default()'s",
         },
     ])
-}
-
-/// A settings row crosses whole, not field by field
-///
-/// `slopdesk_ffi::settings_rows`' own header argues the principle for the MATCH — positions rather
-/// than rows, so a filter is one crossing and not one per field per row — and the reader then
-/// turned each position back into eight calls, on every settings-search keystroke.
-/// `slopdesk_settings_row_fields` is that argument applied one level out, and this stops
-/// `entry(at:)` sliding back to the field doors.
-///
-/// The seven doors banned below were DELETED on 2026-08-22, so the ban names symbols that do not
-/// exist — deliberately. `ffi-doors-are-opened` is what found them exported and uncalled, and the
-/// reason they could never acquire a caller was this ban; keeping it outliving them stops the next
-/// reader from re-declaring one as the obvious fix for a one-field question.
-///
-/// THREE field doors stay, and only three, because three callers really do want one field: the key
-/// lookup, the shown gate, and the reset walk over `persistence`. Each asks a question about a row
-/// it is not otherwise reading, so routing it through the whole-row door would decode seven fields
-/// to use one. The other seven had no such caller left, which is why they are gone rather than kept
-/// "for symmetry" — `docs/55` §8: an unreached port is worse than an unported one.
-///
-/// Scoped to `entry(at:)` rather than the file, which is the whole point: the key door is spelled
-/// in the same file, legitimately, by the caller that wants exactly one field.
-#[must_use]
-pub fn a_settings_row_crosses_whole(tree: &Tree) -> Report {
-    /// The seven doors that a whole-row crossing replaced.
-    const FIELD_DOORS: &[&str] = &[
-        "slopdesk_settings_row_label",
-        "slopdesk_settings_row_page_label",
-        "slopdesk_settings_row_description",
-        "slopdesk_settings_row_default_text",
-        "slopdesk_settings_row_target_section",
-        "slopdesk_settings_row_keywords",
-        "slopdesk_settings_row_bucket",
-    ];
-
-    let mut claims: Vec<Claim> = FIELD_DOORS
-        .iter()
-        .map(|door| {
-            Claim::LacksWithin {
-                path: CATALOG,
-                start: r"private static func entry\(at index: Int\)",
-                end: r"^    \}",
-                pattern: door,
-                view: View::Raw,
-                message: "entry(at:) went back to a field door — a row crosses whole \
-                          (slopdesk_settings_row_fields)",
-            }
-        })
-        .collect();
-    claims.push(Claim::Matches {
-        path: CATALOG,
-        pattern: r"slopdesk_settings_row_fields",
-        view: View::Raw,
-        message: "the settings catalog stopped calling slopdesk_settings_row_fields — reading a row costs 8 \
-                  crossings again",
-    });
-    claims.push(Claim::Matches {
-        path: CATALOG,
-        pattern: r"slopdesk_settings_row_key",
-        view: View::Raw,
-        message: "the settings catalog lost the single-field key door — a key lookup should not decode a \
-                  whole row",
-    });
-    check_all(tree, &claims)
 }
 
 /// A rail relabelling crosses once, not once per row
@@ -394,29 +327,6 @@ mod tests {
             "public struct Config {\n\x20   public var window: Double\n}\n",
         );
         assert!(!super::the_encoder_defaults_are_the_crates(&fixture.tree()).is_clean());
-    }
-
-    #[test]
-    fn a_row_read_field_by_field_is_red() {
-        let fixture = Fixture::new("defaults-rowfields");
-        fixture.write(
-            super::CATALOG,
-            "    private static func entry(at index: Int) -> SettingEntry {\n\x20       let fields = \
-             slopdesk_settings_row_fields(index)\n\x20       return SettingEntry(fields)\n\x20   }\n\x20   \
-             static func key(at index: Int) -> String { slopdesk_settings_row_key(index) }\n",
-        );
-        assert!(super::a_settings_row_crosses_whole(&fixture.tree()).is_clean());
-
-        // The key door is spelled in the same file, legitimately, which is why the ban is scoped to
-        // entry(at:) rather than the file.
-        fixture.write(
-            super::CATALOG,
-            "    private static func entry(at index: Int) -> SettingEntry {\n\x20       let label = \
-             slopdesk_settings_row_label(index)\n\x20       let fields = \
-             slopdesk_settings_row_fields(index)\n\x20       return SettingEntry(label, fields)\n\x20   \
-             }\n\x20   static func key(at index: Int) -> String { slopdesk_settings_row_key(index) }\n",
-        );
-        assert!(!super::a_settings_row_crosses_whole(&fixture.tree()).is_clean());
     }
 
     #[test]

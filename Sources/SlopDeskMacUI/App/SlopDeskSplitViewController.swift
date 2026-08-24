@@ -123,7 +123,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         // `onConnect`.
         let navigator = MacNavigatorColumn(
             store: store, connection: connection, onConnect: onConnect,
-            preferences: preferences, paneDrag: paneDrag, overlay: overlay,
+            paneDrag: paneDrag, overlay: overlay,
         )
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth

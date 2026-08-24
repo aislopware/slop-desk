@@ -336,22 +336,6 @@ public final class WorkspaceStore {
         setDeviceFocus(following ? nil : currentViewAsDeviceFocus())
     }
 
-    /// Restores the DEVICE-LOCAL rows the Advanced → All Settings list advertises
-    /// (``AllSettingsCatalog/deviceLocalKeys``) to their defaults — the half of "Reset All Settings"
-    /// that lives in `device-prefs.json` and no `Defaults.reset(_:)` can reach.
-    ///
-    /// SETTINGS only. The rest of ``DevicePreferences`` — the preset library, the latched video modes,
-    /// the per-host connection MRU — is device STATE and content, on exactly the terms
-    /// ``PreferencesStore/resetAll()`` leaves the first-launch flag and the window geometry alone.
-    /// Nothing in the All-Settings list advertises them, and a reset that emptied a user's preset
-    /// library would be data loss behind a button that promises defaults.
-    ///
-    /// Routed through ``setFollowSessionFocus(_:)`` so resuming follow drops the device-local focus
-    /// overlay here too — the one edit path, and the rule it enforces cannot be routed around.
-    public func resetDeviceLocalSettings() {
-        setFollowSessionFocus(DevicePreferences.platformDefaultFollowSessionFocus)
-    }
-
     /// Where the last picture of the host's document is cached (docs/45 §7.3), so a cold launch paints
     /// real folder names before a packet moves. Injectable on the same terms as ``persistence``:
     /// `nil` (the test/automation default) never touches disk.

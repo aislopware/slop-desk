@@ -56,46 +56,47 @@ pub fn folders_rank_once_and_a_jump_reads_it(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// The config file has one reader, and `validate` reports on THAT reading
+/// The config file has one reader, and nothing in Swift re-reads its dialect
 ///
-/// `slopdesk config validate` exists to say which lines the app will honour, so a second line
-/// reader is not a duplicate — it is a validator that can call a line good and a loader that then
-/// drops it. The two disagreed on exactly one byte: the crate trimmed a carriage return and the
-/// loader did not, so every binding in a CRLF file was reported valid and silently ignored. One
-/// reader now (`slopdesk_cli_config_keybind_value`), and the loader's default path comes from the
-/// same door that prints `slopdesk config path`.
+/// `slopdesk config validate` exists to say which of the reader's lines the app will honour, so a
+/// second reader is not a duplicate — it is a validator that can call a line good and a loader that
+/// then drops it. The two once disagreed on exactly one byte: the crate trimmed a carriage return
+/// and the loader did not, so every binding in a CRLF file was reported valid and silently ignored.
+///
+/// There is no line reader on either side any more. The file is TOML, `slopdesk-settings` parses
+/// it, and `AppConfig` is the ONE resolved reading both the app and `slopdesk config` see — so the
+/// CRLF question is the TOML parser's and cannot be answered twice. What this rule holds is the
+/// shape that made that true: `KeybindConfigLoader` takes an already-parsed `[String: String]`
+/// TABLE, never a path and never file text, and it does not classify a comment, a quote or a
+/// section header of its own. A loader that opened a file again would be the second reader back,
+/// with the same failure mode and a new byte to disagree about.
 #[must_use]
 pub fn the_config_file_has_one_reader(tree: &Tree) -> Report {
-    let claims = [
-        Claim::Mentions {
-            path: SWIFT_LOADER,
-            names: &[
-                "slopdesk_cli_config_keybind_value",
-                "slopdesk_cli_config_default_path",
-            ],
-            message: "KeybindConfigLoader.swift no longer reads the config file through {entry} — that \
-                      reading is slopdesk-cli's config",
-        },
-        Claim::Lacks {
-            path: SWIFT_LOADER,
-            pattern: r##"hasPrefix\("#"\)|key == "keybind"|dropFirst\(\)\.dropLast\(\)|"\.config""##,
-            view: View::Code,
-            message: "KeybindConfigLoader.swift re-reads the config dialect in Swift — config.rs classifies \
-                      the line, comments, quoting and all",
-        },
-        Claim::Names {
-            path: SWIFT_LOADER,
-            needle: "whereSeparator",
-            message: "KeybindConfigLoader.swift splits lines without naming its separators — a CRLF pair is \
-                      ONE Swift Character, so a whole CRLF file arrives as one line",
-        },
-        Claim::Names {
-            path: "rust/slopdesk-cli/src/config.rs",
-            needle: r"c == '\r'",
-            message: "rust/slopdesk-cli/src/config.rs stopped trimming the carriage return — a CRLF file \
-                      would validate clean and bind nothing",
-        },
-    ];
+    let claims =
+        [
+            Claim::Names {
+                path: SWIFT_LOADER,
+                needle: "table: [String: String]",
+                message: "KeybindConfigLoader.swift stopped taking the parsed TABLE — a loader that takes a \
+                          path                       or file text is the second reader of a file \
+                          slopdesk-settings already read",
+            },
+            Claim::Lacks {
+                path: SWIFT_LOADER,
+                pattern: r##"hasPrefix\("#"\)|hasPrefix\("\["\)|contentsOfFile|String\(contentsOf|whereSeparator|components\(separatedBy"##,
+                view: View::Code,
+                message: "KeybindConfigLoader.swift reads the config dialect in Swift again — the parse, \
+                          the                       comments and the quoting are slopdesk-settings' TOML \
+                          reading",
+            },
+            Claim::Mentions {
+                path: "Sources/SlopDeskCLICore/CLIConfig.swift",
+                names: &["AppConfig.resolvedPath", "AppConfig.load"],
+                message: "Sources/SlopDeskCLICore/CLIConfig.swift no longer reaches the file through \
+                          {entry} — a                       CLI that resolves the path its own way prints a \
+                          verdict on a file the app does not read",
+            },
+        ];
     check_all(tree, &claims)
 }
 
@@ -229,9 +230,12 @@ mod tests {
         fixture
             .write(
                 super::SWIFT_LOADER,
-                "slopdesk_cli_config_keybind_value\nslopdesk_cli_config_default_path\nwhereSeparator\n",
+                "public static func apply(table: [String: String]) -> KeybindingPreferences {\n",
             )
-            .write("rust/slopdesk-cli/src/config.rs", "c == '\\r'\n");
+            .write(
+                "Sources/SlopDeskCLICore/CLIConfig.swift",
+                "AppConfig.resolvedPath(explicit: override)\nAppConfig.load(path:)\n",
+            );
     }
 
     #[test]
@@ -240,13 +244,21 @@ mod tests {
         loader(&fixture);
         assert!(super::the_config_file_has_one_reader(&fixture.tree()).is_clean());
 
-        // The byte the two readers disagreed on, dropped again.
-        fixture.write("rust/slopdesk-cli/src/config.rs", "");
+        // The loader taking file text again instead of the parsed table.
+        fixture.write(
+            super::SWIFT_LOADER,
+            "public static func apply(text: String) -> KeybindingPreferences {\n",
+        );
         assert!(!super::the_config_file_has_one_reader(&fixture.tree()).is_clean());
 
         // And the dialect classified a second time, in the loader.
         loader(&fixture);
         fixture.append(super::SWIFT_LOADER, "if line.hasPrefix(\"#\") { continue }\n");
+        assert!(!super::the_config_file_has_one_reader(&fixture.tree()).is_clean());
+
+        // And the CLI resolving the path its own way.
+        loader(&fixture);
+        fixture.write("Sources/SlopDeskCLICore/CLIConfig.swift", "");
         assert!(!super::the_config_file_has_one_reader(&fixture.tree()).is_clean());
     }
 

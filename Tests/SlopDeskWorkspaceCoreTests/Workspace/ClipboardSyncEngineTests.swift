@@ -237,9 +237,7 @@ final class ClipboardSyncEngineTests: XCTestCase {
     func testTheHistoryToggleDoesNotGateTheSync() async {
         let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) })
         let engine = makeEngine(attendedReadsFrom: store)
-        let key = SettingsKey.recordClipboardHistory
-        SettingsKey.store.set(false, forKey: key)
-        defer { SettingsKey.store.removeObject(forKey: key) }
+        stateSetting("general.record-clipboard-history", false)
         store.clipboardTextProvider = { "not retained, still shared" }
         _ = store.currentLocalClipboard()
         XCTAssertTrue(store.clipboardRing.isEmpty, "recording is off — nothing is retained")

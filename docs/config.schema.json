@@ -1,0 +1,665 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://slopdesk.dev/schema/config.schema.json",
+  "title": "slopdesk configuration",
+  "description": "Every setting slopdesk understands. Everything has a best-by-default answer; a key is only written here to disagree with it.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "general": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on-launch": {
+          "description": "Restore the last session or open a fresh window when the app starts.",
+          "type": "string",
+          "enum": ["restore-last-session", "new-window"],
+          "default": "restore-last-session"
+        },
+        "redact-secrets": {
+          "description": "Mask likely secrets in window titles and notification bodies.",
+          "type": "boolean",
+          "default": true
+        },
+        "record-clipboard-history": {
+          "description": "Keep the clipboard ring the pane's paste history reads.",
+          "type": "boolean",
+          "default": true
+        },
+        "follow-session-focus": {
+          "description": "Follow the host's focused pane when another client moves it (docs/45 §8.2).",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "shell": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "close-confirm-tab": {
+          "description": "When to confirm before closing a tab.",
+          "type": "string",
+          "enum": ["process", "always"],
+          "default": "process"
+        },
+        "close-confirm-window": {
+          "description": "When to confirm before closing a window.",
+          "type": "string",
+          "enum": ["process", "always", "multiple-tabs"],
+          "default": "process"
+        },
+        "new-tab-position": {
+          "description": "Where a new tab lands in the strip.",
+          "type": "string",
+          "enum": ["auto", "end", "after-current"],
+          "default": "auto"
+        },
+        "auto-hide-tabs-panel": {
+          "description": "Whether the layout may take the tabs panel away when it is tight.",
+          "type": "string",
+          "enum": ["default", "always", "auto"],
+          "default": "default"
+        },
+        "working-directory-new-window": {
+          "description": "Where a new WINDOW opens: `inherit`, `home`, or an absolute path.",
+          "type": "string",
+          "default": "home"
+        },
+        "working-directory-new-tab": {
+          "description": "Where a new TAB opens: `inherit`, `home`, or an absolute path.",
+          "type": "string",
+          "default": "inherit"
+        },
+        "working-directory-new-split": {
+          "description": "Where a new SPLIT opens: `inherit`, `home`, or an absolute path.",
+          "type": "string",
+          "default": "inherit"
+        }
+      }
+    },
+    "notifications": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "osc": {
+          "description": "Post the explicit OSC 9 / OSC 777 notifications a program asks for.",
+          "type": "boolean",
+          "default": true
+        },
+        "long-command": {
+          "description": "Post when a long-running command finishes.",
+          "type": "boolean",
+          "default": true
+        },
+        "on-finish": {
+          "description": "Post when any command exits cleanly.",
+          "type": "boolean",
+          "default": false
+        },
+        "on-error": {
+          "description": "Post when a command exits non-zero.",
+          "type": "boolean",
+          "default": true
+        },
+        "on-watch-finish": {
+          "description": "Post when an `slopdesk watch`-wrapped command finishes.",
+          "type": "boolean",
+          "default": true
+        },
+        "while-foreground": {
+          "description": "Whether a banner shows while slopdesk itself is frontmost.",
+          "type": "string",
+          "enum": ["off", "always", "tab-unfocused"],
+          "default": "off"
+        },
+        "bounce-dock": {
+          "description": "Bounce the Dock icon when a notification arrives and the app is not focused.",
+          "type": "boolean",
+          "default": true
+        },
+        "sound-shell-controlled": {
+          "description": "Let a `BEL` ring the system beep.",
+          "type": "boolean",
+          "default": true
+        },
+        "sound-on-error-exit": {
+          "description": "Beep when a command exits non-zero.",
+          "type": "boolean",
+          "default": false
+        },
+        "agent-task-complete": {
+          "description": "Post when a code agent finishes its task.",
+          "type": "boolean",
+          "default": true
+        },
+        "agent-await-input": {
+          "description": "Post when a code agent stops to ask something.",
+          "type": "boolean",
+          "default": true
+        },
+        "agent-sound-task-complete": {
+          "description": "Play a sound when a code agent finishes its task.",
+          "type": "boolean",
+          "default": true
+        },
+        "agent-sound-await-input": {
+          "description": "Play a sound when a code agent stops to ask something.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "badges": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "command-finish": {
+          "description": "Badge the tab when a command exits cleanly.",
+          "type": "boolean",
+          "default": true
+        },
+        "command-fail": {
+          "description": "Badge the tab when a command exits non-zero.",
+          "type": "boolean",
+          "default": true
+        },
+        "command-await-input": {
+          "description": "Badge the tab when a command stops at an interactive prompt.",
+          "type": "boolean",
+          "default": true
+        },
+        "busy-delay-seconds": {
+          "description": "Seconds a command must run before the busy dot shows. 0 shows it immediately.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 60,
+          "default": 1
+        },
+        "agent-processing": {
+          "description": "Badge a pane while its code agent is working.",
+          "type": "boolean",
+          "default": false
+        },
+        "agent-complete": {
+          "description": "Badge a pane when its code agent finishes.",
+          "type": "boolean",
+          "default": true
+        },
+        "agent-awaiting-input": {
+          "description": "Badge a pane when its code agent is waiting on an answer.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pane-switcher-preview": {
+          "description": "Show the live pane preview while the switcher is held open.",
+          "type": "boolean",
+          "default": true
+        },
+        "copy-on-select": {
+          "description": "Copy the selection to the pasteboard as soon as it is made.",
+          "type": "boolean",
+          "default": false
+        },
+        "trim-trailing-spaces": {
+          "description": "Drop trailing spaces from each copied line.",
+          "type": "boolean",
+          "default": true
+        },
+        "paste-protection": {
+          "description": "Confirm before pasting text that carries a newline or a control byte.",
+          "type": "boolean",
+          "default": true
+        },
+        "mouse-hide-while-typing": {
+          "description": "Hide the pointer while typing until the mouse moves again.",
+          "type": "boolean",
+          "default": true
+        },
+        "focus-follows-mouse": {
+          "description": "Focus the pane under the pointer without a click.",
+          "type": "boolean",
+          "default": false
+        },
+        "scroll-multiplier": {
+          "description": "Multiplier applied to every scroll delta the terminal receives.",
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 10,
+          "default": 1
+        },
+        "clear-selection-on-typing": {
+          "description": "Clear the selection as soon as a key is typed.",
+          "type": "boolean",
+          "default": true
+        },
+        "clear-selection-on-copy": {
+          "description": "Clear the selection once it has been copied.",
+          "type": "boolean",
+          "default": false
+        },
+        "shift-arrow-select": {
+          "description": "Let ⇧+arrow extend a selection instead of reaching the program.",
+          "type": "boolean",
+          "default": true
+        },
+        "paste-bracketed-safe": {
+          "description": "Strip the bracketed-paste terminators a pasted payload tries to smuggle in.",
+          "type": "boolean",
+          "default": true
+        },
+        "clipboard-read": {
+          "description": "What a program may do when it READS the clipboard through OSC 52.",
+          "type": "string",
+          "enum": ["ask", "allow", "deny"],
+          "default": "ask"
+        },
+        "clipboard-write": {
+          "description": "What a program may do when it WRITES the clipboard through OSC 52.",
+          "type": "string",
+          "enum": ["ask", "allow", "deny"],
+          "default": "allow"
+        },
+        "allow-mouse-capture": {
+          "description": "Let a program take the mouse (vim, tmux) instead of the terminal keeping it.",
+          "type": "boolean",
+          "default": true
+        },
+        "shift-click": {
+          "description": "Whether ⇧-click extends the selection or reaches the program that captured the mouse.",
+          "type": "string",
+          "enum": ["enabled", "disabled", "always", "never"],
+          "default": "enabled"
+        },
+        "click-to-move": {
+          "description": "Move the shell's cursor to a click on the prompt line.",
+          "type": "boolean",
+          "default": true
+        },
+        "auto-secure-input": {
+          "description": "Turn on macOS secure input while a password prompt is on screen.",
+          "type": "boolean",
+          "default": true
+        },
+        "secure-input-indicator": {
+          "description": "Show the lock while secure input is on.",
+          "type": "boolean",
+          "default": true
+        },
+        "undo-at-prompt": {
+          "description": "Let ⌘Z undo the last edit on the prompt line.",
+          "type": "boolean",
+          "default": true
+        },
+        "right-click-action": {
+          "description": "What a plain right-click does. ⌃+right-click always opens the menu.",
+          "type": "string",
+          "enum": ["context-menu", "copy", "paste", "copy-or-paste", "ignore"],
+          "default": "context-menu"
+        },
+        "option-as-alt": {
+          "description": "Which ⌥ keys send ESC rather than composing a character.",
+          "type": "string",
+          "enum": ["off", "both", "left", "right"],
+          "default": "off"
+        },
+        "link-detection": {
+          "description": "Underline URLs, paths and issue references under the pointer.",
+          "type": "boolean",
+          "default": true
+        },
+        "link-cmd-click": {
+          "description": "What ⌘-click does to a detected link.",
+          "type": "string",
+          "enum": ["open", "copy", "nothing"],
+          "default": "open"
+        },
+        "link-cmd-shift-click": {
+          "description": "What ⌘⇧-click does to a detected link. Both actions happen on the HOST.",
+          "type": "string",
+          "enum": ["reveal-finder", "open-system-default"],
+          "default": "reveal-finder"
+        },
+        "auto-detect-link-schemes": {
+          "description": "Whether every scheme is detected or only the custom list below.",
+          "type": "string",
+          "enum": ["all", "custom"],
+          "default": "all"
+        },
+        "custom-link-schemes": {
+          "description": "The schemes detected when `auto-detect-link-schemes` is `custom`.",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "hint-patterns": {
+          "description": "Extra regular expressions the hint overlay offers as jump targets.",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "hint-pattern-actions": {
+          "description": "What each `hint-patterns` entry does when it is chosen, positionally.",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "title-shell-controlled": {
+          "description": "Let a program set the pane title through OSC 0 / OSC 2.",
+          "type": "boolean",
+          "default": true
+        },
+        "clipboard-shell-controlled": {
+          "description": "Let a program reach the clipboard through OSC 52 at all.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "description": "Open at the remembered frame, at a cell grid, or at a pixel frame.",
+          "type": "string",
+          "enum": ["remember", "grid", "frame"],
+          "default": "remember"
+        },
+        "cols": {
+          "description": "How many columns a window opens at while `window.size` is `grid`.",
+          "type": "integer",
+          "minimum": 20,
+          "maximum": 1000,
+          "default": 80
+        },
+        "rows": {
+          "description": "How many rows a window opens at while `window.size` is `grid`.",
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 500,
+          "default": 24
+        },
+        "width-px": {
+          "description": "Width in points a `frame` window opens at.",
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 20000,
+          "default": 1000
+        },
+        "height-px": {
+          "description": "Height in points a `frame` window opens at.",
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 20000,
+          "default": 600
+        },
+        "desktop-presentation": {
+          "description": "How a remote desktop window opens: in a window, fullscreen or borderless.",
+          "type": "string",
+          "enum": ["window", "fullscreen", "borderless"],
+          "default": "window"
+        },
+        "satellite-background-pointer": {
+          "description": "Let a satellite window move the remote pointer while it is not the key window.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "appearance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "density": {
+          "description": "How much room the chrome takes. Compact buys more rows.",
+          "type": "string",
+          "enum": ["comfortable", "compact"],
+          "default": "comfortable"
+        },
+        "dock-icon-animate-progress": {
+          "description": "Animate the Dock tile while a command runs.",
+          "type": "boolean",
+          "default": false
+        },
+        "dock-icon-error-badge": {
+          "description": "Badge the Dock tile when a command fails.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "font-family": {
+          "description": "The primary monospace family.",
+          "type": "string",
+          "default": "SF Mono"
+        },
+        "font-family-fallback": {
+          "description": "Comma-separated families tried when the primary lacks a glyph.",
+          "type": "string",
+          "default": ""
+        },
+        "font-family-bold": {
+          "description": "Explicit bold face. Only read when `auto-match-weight-style` is off.",
+          "type": "string",
+          "default": ""
+        },
+        "font-family-italic": {
+          "description": "Explicit italic face. Only read when `auto-match-weight-style` is off.",
+          "type": "string",
+          "default": ""
+        },
+        "font-family-bold-italic": {
+          "description": "Explicit bold-italic face. Only read when `auto-match-weight-style` is off.",
+          "type": "string",
+          "default": ""
+        },
+        "auto-match-weight-style": {
+          "description": "Pick the family's own bold / italic faces automatically.",
+          "type": "boolean",
+          "default": true
+        },
+        "font-size": {
+          "description": "Point size of the primary face.",
+          "type": "number",
+          "minimum": 4,
+          "maximum": 96,
+          "default": 13
+        },
+        "font-weight": {
+          "description": "Weight token applied to the primary face, e.g. regular or bold.",
+          "type": "string",
+          "default": "regular"
+        },
+        "line-height": {
+          "description": "Cell height: a named stop, or a raw multiplier like 1.15.",
+          "oneOf": [
+            { "type": "string", "enum": ["default", "compact", "loose"] },
+            { "type": "number", "minimum": 0.5, "maximum": 3 }
+          ],
+          "default": "default"
+        },
+        "ligatures": {
+          "description": "Which ligature features are enabled for the primary face.",
+          "type": "string",
+          "enum": ["off", "calt", "dlig"],
+          "default": "off"
+        },
+        "ligatures-alphabet": {
+          "description": "Extend ligation to alphabetic sequences.",
+          "type": "boolean",
+          "default": false
+        },
+        "bold": {
+          "description": "How bold text is drawn when the family has no real bold face.",
+          "type": "string",
+          "enum": ["auto", "off", "primary-only", "synthetic"],
+          "default": "auto"
+        },
+        "italic": {
+          "description": "How italic text is drawn when the family has no real italic face.",
+          "type": "string",
+          "enum": ["auto", "off", "primary-only", "synthetic"],
+          "default": "auto"
+        },
+        "blending": {
+          "description": "Glyph anti-aliasing blend mode used when text is drawn.",
+          "type": "string",
+          "enum": ["default", "macos-like"],
+          "default": "default"
+        },
+        "theme": {
+          "description": "A libghostty theme name. Empty means the explicit colours below are the theme.",
+          "type": "string",
+          "default": ""
+        },
+        "background": {
+          "description": "Terminal background, six hex digits.",
+          "type": "string",
+          "default": "22212C"
+        },
+        "foreground": {
+          "description": "Terminal text colour, six hex digits.",
+          "type": "string",
+          "default": "F8F8F2"
+        },
+        "cursor-style": {
+          "description": "Cursor silhouette: block, hollow block, bar or underline.",
+          "type": "string",
+          "enum": ["block", "block_hollow", "bar", "underline"],
+          "default": "block"
+        },
+        "cursor-blink": {
+          "description": "Whether the cursor blinks. `default` leaves it to the program (DEC mode 12).",
+          "type": "string",
+          "enum": ["default", "on", "off"],
+          "default": "default"
+        },
+        "cursor-color": {
+          "description": "Cursor body colour as six hex digits. Empty follows the foreground.",
+          "type": "string",
+          "default": ""
+        },
+        "cursor-text-color": {
+          "description": "Colour of the glyph under the cursor. Empty follows the background.",
+          "type": "string",
+          "default": ""
+        },
+        "cursor-opacity": {
+          "description": "Cursor body opacity, 0 transparent through 1 opaque.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 1
+        },
+        "scrollback-limit": {
+          "description": "How many lines are kept above the viewport for scrollback.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000000,
+          "default": 10000
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prevent-sleep": {
+          "description": "Hold a sleep assertion on the HOST while any agent is working. Applies on reconnect.",
+          "type": "boolean"
+        },
+        "resume-on-recovery": {
+          "description": "Re-arm a detached agent session when the connection recovers. Applies on reconnect.",
+          "type": "boolean"
+        }
+      }
+    },
+    "video": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "qp-sharp": {
+          "description": "Sharpest constant QP on a clean link. Unset leaves the encoder's own. Reconnect.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 51
+        },
+        "qp-coarse": {
+          "description": "Coarsest QP under congestion. Unset leaves the encoder's own. Reconnect.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 51
+        },
+        "qp-decouple": {
+          "description": "Let min and max QP move apart so a static sidebar stays crisp. Reconnect.",
+          "type": "boolean"
+        },
+        "fec-m": {
+          "description": "Reed–Solomon parity count. Must match on BOTH ends. Reconnect.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "fec-k": {
+          "description": "Reed–Solomon group size, read only when `fec-m` is 2 or more. Both ends. Reconnect.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "pacer": {
+          "description": "Present a decoded frame on arrival or hold it to a smoothness deadline. Reconnect.",
+          "type": "string",
+          "enum": ["arrival", "deadline"]
+        },
+        "playout-ms": {
+          "description": "Fixed playout buffer in ms. Setting it leaves adaptive playout. Reconnect.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "capture-scale": {
+          "description": "Downscale factor applied to the captured desktop. Reconnect.",
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 2
+        },
+        "display-capture": {
+          "description": "Which SCStream filter the host captures with. Reconnect.",
+          "type": "string",
+          "enum": ["window", "display", "include"]
+        },
+        "virtual-display": {
+          "description": "Render the remote desktop onto a HiDPI virtual display. Reconnect.",
+          "type": "boolean"
+        },
+        "sharpen": {
+          "description": "Unsharp-mask strength on the luma channel, client side. 0 is off.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        }
+      }
+    },
+    "keybind": {
+      "type": "object",
+      "description": "Chord to action, one per line: \"cmd+t\" = \"new-tab\".",
+      "additionalProperties": { "type": "string" }
+    },
+    "env": {
+      "type": "object",
+      "description": "Raw SLOPDESK_* overrides, applied last and above every typed key above.",
+      "additionalProperties": { "type": "string" }
+    }
+  }
+}

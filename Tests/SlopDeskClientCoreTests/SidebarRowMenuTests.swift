@@ -5,10 +5,15 @@
 // (which entries, in which order, reading which state) and the two write paths — a VERB and a
 // SWITCH — because a menu that offers a dead control or flips the wrong key is a bug no render shows.
 //
+// The table holds THREE switches, all per-pane badge overrides. The notify fire-times and the
+// host-local sleep flag used to sit here too; both were global settings wearing a context-menu row —
+// a machine-wide answer reached by right-clicking ONE pane, written into a store the user could not
+// read. They live in `config.toml` now (`agent.notify-*`, `agent.prevent-sleep`), and what is left is
+// the part that is genuinely about THIS pane.
+//
 // Headless: a tree-model `WorkspaceStore` over the `RecordingPaneSession` double (no socket / video /
 // Metal — hang-safety).
 
-import Defaults
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientCore
@@ -28,14 +33,14 @@ final class SidebarRowMenuTests: XCTestCase {
 
     // MARK: - What is offered
 
-    /// The table's SHAPE: rename, then the badge acknowledgement, then the five gate/notify switches,
-    /// each pair fenced by a separator. Pinned as a whole because the order is the menu's grammar —
-    /// the verbs act on THIS pane now, the switches decide what it will do next.
-    func testTheMenuIsRenameThenClearThenTheFiveSwitches() throws {
+    /// The table's SHAPE: rename, then the badge acknowledgement, then the three badge gates, each pair
+    /// fenced by a separator. Pinned as a whole because the order is the menu's grammar — the verbs act
+    /// on THIS pane now, the switches decide what it will do next.
+    func testTheMenuIsRenameThenClearThenTheThreeBadgeGates() throws {
         let store = makeStore()
         let pane = try activePane(store)
-        let entries = SidebarRowMenu.entries(for: pane, store: store, preventSleep: nil)
-        XCTAssertEqual(entries.count, 9)
+        let entries = SidebarRowMenu.entries(for: pane, store: store)
+        XCTAssertEqual(entries.count, 7)
         XCTAssertEqual(entries[0], .action(.rename))
         XCTAssertEqual(entries[1], .separator)
         XCTAssertEqual(entries[2], .action(.clearBadge))
@@ -44,29 +49,21 @@ final class SidebarRowMenuTests: XCTestCase {
             guard case let .toggle(flag, _) = entry else { return nil }
             return flag
         }
-        XCTAssertEqual(
-            switches,
-            [
-                .badgeWhileProcessing, .badgeWhenComplete, .badgeWhenAwaitingInput,
-                .notifyTaskComplete, .notifyAwaitInput,
-            ],
-        )
+        XCTAssertEqual(switches, [.badgeWhileProcessing, .badgeWhenComplete, .badgeWhenAwaitingInput])
     }
 
-    /// `preventSleep: nil` is a preview / pre-injection shell — the sleep row and its separator are
-    /// ABSENT rather than present-and-dead. A control that does nothing is worse than no control.
-    func testSleepRowIsAbsentWithoutAPreferencesStore() throws {
+    /// Nothing in the menu reaches a GLOBAL setting any more — every switch it offers is a per-pane
+    /// override. This is the rule the trim exists to keep, so it is asserted rather than left implied.
+    func testEverySwitchOfferedIsAPerPaneOverride() throws {
         let store = makeStore()
         let pane = try activePane(store)
-        let without = SidebarRowMenu.entries(for: pane, store: store, preventSleep: nil)
-        XCTAssertFalse(without.contains { entry in
-            guard case let .toggle(flag, _) = entry else { return false }
-            return flag == .preventSleep
-        })
-        let with = SidebarRowMenu.entries(for: pane, store: store, preventSleep: true)
-        XCTAssertEqual(with.count, without.count + 2, "the row arrives behind its own separator")
-        XCTAssertEqual(with[with.count - 2], .separator)
-        XCTAssertEqual(with.last, .toggle(.preventSleep, isOn: true))
+        for entry in SidebarRowMenu.entries(for: pane, store: store) {
+            guard case let .toggle(flag, _) = entry else { continue }
+            XCTAssertTrue(
+                [.badgeWhileProcessing, .badgeWhenComplete, .badgeWhenAwaitingInput].contains(flag),
+                "a settings row crept back into a per-pane menu — it belongs in config.toml",
+            )
+        }
     }
 
     /// Every switch reads its CURRENT state — the menu is a picture of the pane, not a list of names.
@@ -74,12 +71,10 @@ final class SidebarRowMenuTests: XCTestCase {
         let store = makeStore()
         let pane = try activePane(store)
         let gates = store.agentBadgeGates(for: pane)
-        let entries = SidebarRowMenu.entries(for: pane, store: store, preventSleep: false)
+        let entries = SidebarRowMenu.entries(for: pane, store: store)
         XCTAssertTrue(entries.contains(.toggle(.badgeWhileProcessing, isOn: gates.badgeWhileProcessing)))
         XCTAssertTrue(entries.contains(.toggle(.badgeWhenComplete, isOn: gates.badgeWhenComplete)))
         XCTAssertTrue(entries.contains(.toggle(.badgeWhenAwaitingInput, isOn: gates.badgeWhenAwaitingInput)))
-        XCTAssertTrue(entries.contains(.toggle(.notifyTaskComplete, isOn: Defaults[.agentNotifyTaskComplete])))
-        XCTAssertTrue(entries.contains(.toggle(.notifyAwaitInput, isOn: Defaults[.agentNotifyAwaitInput])))
     }
 
     /// Every entry that can be clicked has a title — an `NSMenuItem` with an empty one is a blank row.
@@ -89,7 +84,6 @@ final class SidebarRowMenuTests: XCTestCase {
         }
         for flag in [
             SidebarRowSwitch.badgeWhileProcessing, .badgeWhenComplete, .badgeWhenAwaitingInput,
-            .notifyTaskComplete, .notifyAwaitInput, .preventSleep,
         ] {
             XCTAssertFalse(flag.title.isEmpty)
         }
@@ -132,31 +126,23 @@ final class SidebarRowMenuTests: XCTestCase {
         let pane = try activePane(store)
         let before = store.agentBadgeGates(for: pane)
 
-        SidebarRowMenu.flip(.badgeWhileProcessing, paneID: pane, store: store, togglePreventSleep: {})
+        SidebarRowMenu.flip(.badgeWhileProcessing, paneID: pane, store: store)
         let after = store.agentBadgeGates(for: pane)
         XCTAssertEqual(after.badgeWhileProcessing, !before.badgeWhileProcessing)
         XCTAssertEqual(after.badgeWhenComplete, before.badgeWhenComplete)
         XCTAssertEqual(after.badgeWhenAwaitingInput, before.badgeWhenAwaitingInput)
     }
 
-    /// The notify keys are GLOBAL `Defaults` — a fire-time is not a per-pane fact.
-    func testNotifySwitchesFlipTheGlobalKeys() throws {
+    /// A flip lands on THIS pane and nowhere else — the sibling keeps whatever it had.
+    func testAFlipIsScopedToItsOwnPane() throws {
         let store = makeStore()
         let pane = try activePane(store)
-        let before = Defaults[.agentNotifyTaskComplete]
-        defer { Defaults[.agentNotifyTaskComplete] = before }
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let sibling = try activePane(store)
+        XCTAssertNotEqual(pane, sibling, "precondition: two panes")
+        let siblingBefore = store.agentBadgeGates(for: sibling)
 
-        SidebarRowMenu.flip(.notifyTaskComplete, paneID: pane, store: store, togglePreventSleep: {})
-        XCTAssertEqual(Defaults[.agentNotifyTaskComplete], !before)
-    }
-
-    /// The SLEEP flag is handed BACK to the caller — this layer never reaches a host-local sidecar
-    /// preference, which is why the entry is absent when no store was threaded in.
-    func testPreventSleepIsHandedBackToTheCaller() throws {
-        let store = makeStore()
-        let pane = try activePane(store)
-        var handedBack = 0
-        SidebarRowMenu.flip(.preventSleep, paneID: pane, store: store, togglePreventSleep: { handedBack += 1 })
-        XCTAssertEqual(handedBack, 1)
+        SidebarRowMenu.flip(.badgeWhenComplete, paneID: pane, store: store)
+        XCTAssertEqual(store.agentBadgeGates(for: sibling), siblingBefore)
     }
 }

@@ -28,9 +28,9 @@
 // the split (see ``WorkspaceSplitRepresentable/preferences``), and the `@Environment` was one hop of
 // implicit plumbing feeding one hop of explicit plumbing. A parameter says the same thing once.
 
-import Defaults // @Default(.autoHideTabsPanel) — re-fires the auto-hide observer on a Settings flip
 import SlopDeskClientCore
 import SlopDeskSlate // the ONE design ladder, in its native (NSColor/NSFont) spelling
+import SlopDeskVideoProtocol // ConfigRevision — what makes the config-backed reads below live
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 import SwiftUI
@@ -57,11 +57,15 @@ struct MacWorkspaceRootView: View {
     /// is inside an `NSHostingController` column, which inherits no WindowGroup environment, so the value
     /// was ALREADY being threaded explicitly into the split. One hop, spelled once.
     let preferences: PreferencesStore?
-    /// The live `auto-hide-tabs-panel` mode. Read via `@Default` (NOT the plain
-    /// ``SettingsKey/autoHideTabsPanel`` accessor) so SwiftUI re-evaluates the body — re-firing the
-    /// `.onChange(of: autoHideTabsPanel)` observer below — when the user flips the Settings picker. Drives
-    /// the vertical TABS panel auto-hide together with the active session's tab count.
-    @Default(.autoHideTabsPanel) private var autoHideTabsPanel
+    /// The live `auto-hide-tabs-panel` mode. COMPUTED, and it reads ``ConfigRevision/generation``
+    /// first: `AppConfig` is a plain locked global, so the bare ``SettingsKey/autoHideTabsPanel``
+    /// accessor registers no dependency and the body would never re-evaluate. Reading the revision
+    /// here is what re-fires the `.onChange(of: autoHideTabsPanel)` observer below when the user saves
+    /// their config file. Drives the vertical TABS panel auto-hide with the active session's tab count.
+    private var autoHideTabsPanel: AutoHideTabsPanelMode {
+        _ = ConfigRevision.shared.generation
+        return SettingsKey.autoHideTabsPanel
+    }
 
     /// Installs the sidebar / Tabs-panel toggle on the app-level keybinding dispatcher. The dispatcher is
     /// built at app `init` (before `chrome` exists), so on appear the root view hands it `chrome.toggleSidebar`

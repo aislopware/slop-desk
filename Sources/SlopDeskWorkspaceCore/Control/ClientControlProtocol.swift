@@ -5,8 +5,12 @@ import SlopDeskWorkspaceModel
 //
 // The method-name vocabulary + param builders for the CLIENT-side control socket — the
 // runtime-control surface the new `slopdesk` CLI uses to drive the running client GUI
-// (windows/tabs/panes, badges, jump/view/edit, config, theme/font/keybind dumps, pane
-// capture/send-keys, agent status).
+// (windows/tabs/panes, badges, jump/view/edit, font/keybind dumps, pane capture/send-keys,
+// agent status).
+//
+// There is no config verb here. Settings are the config FILE's, read by every process that wants
+// them; a socket that wrote one would be a second authoring surface for a value the user is
+// supposed to see in their own file.
 //
 // This mirrors the style of the host ctl's `*Params` builders (`rust/slopdesk-ctl/src/protocol.rs`)
 // and reuses the SAME NDJSON line protocol: a request is `{"id":…,"method":…,"params":{…}}` and a
@@ -44,17 +48,6 @@ public enum ClientControlProtocol {
         public static let view = "view"
         /// Open an editable `edit` shim (`$EDITOR <path>`) in a new split/tab/window.
         public static let edit = "edit"
-        /// Read one config key.
-        public static let configGet = "config-get"
-        /// Write one config key (persisted, or `--transient` for the running app only).
-        public static let configSet = "config-set"
-        /// Remove one config key (persisted, or `--transient` for the running app only).
-        public static let configUnset = "config-unset"
-        /// Broadcast the config-change notification to the running app.
-        public static let configReload = "config-reload"
-        /// Dump the full effective config.
-        public static let configShow = "config-show"
-        /// Enumerate themes (filtered by color appearance).
         /// Enumerate fonts.
         public static let fontList = "font-list"
         /// Enumerate keybindings (optionally filtered by action substring).
@@ -69,7 +62,6 @@ public enum ClientControlProtocol {
         /// Every recognised method — the dispatcher rejects anything outside this set.
         public static let all: Set<String> = [
             windows, tabs, panes, tabBadge, jump, learn, ignore, view, edit,
-            configGet, configSet, configUnset, configReload, configShow,
             fontList, keybindList, paneCapture, paneSendKeys, agentStatus,
         ]
     }
@@ -226,27 +218,6 @@ public enum ClientControlProtocol {
     public static func editParams(target: String, placement: Placement = .newTab) -> [String: Any] {
         ["target": target, "placement": placement.rawValue]
     }
-
-    /// `config-get` — one `key`.
-    public static func configGetParams(key: String) -> [String: Any] {
-        ["key": key]
-    }
-
-    /// `config-set` — `key`/`value`; `transient` writes the running app only (no persist).
-    public static func configSetParams(key: String, value: String, transient: Bool = false) -> [String: Any] {
-        ["key": key, "value": value, "transient": transient]
-    }
-
-    /// `config-unset` — remove `key`; `transient` removes from the running app only (no persist).
-    public static func configUnsetParams(key: String, transient: Bool = false) -> [String: Any] {
-        ["key": key, "transient": transient]
-    }
-
-    /// `config-reload` — no params.
-    public static func configReloadParams() -> [String: Any] { [:] }
-
-    /// `config-show` — no params.
-    public static func configShowParams() -> [String: Any] { [:] }
 
     /// `font-list` — optional `monospace` filter, `family` substring, and `scope` token.
     public static func fontListParams(

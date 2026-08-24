@@ -7,7 +7,7 @@
 // the workspace drops it mid-edit, and Esc / Return reach Cancel and Connect through the buttons' own
 // key equivalents rather than through a hand-rolled dismiss floor.
 //
-// So it is `beginSheet`, the same presentation ``MacFirstLaunchSheet`` uses, and it wears the SYSTEM's
+// So it is `beginSheet`, the presentation AppKit sheets use, and it wears the SYSTEM's
 // sheet chrome rather than the floating family's corner. The phone's `.sheet` had to be talked into that
 // corner (`slateSheetSurface`) because SwiftUI's sheet is a window with its own mask; an AppKit sheet is
 // already the platform's, which is exactly what this surface asked to be.

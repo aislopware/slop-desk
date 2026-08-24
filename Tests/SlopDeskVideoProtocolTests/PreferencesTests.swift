@@ -2,9 +2,13 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// Round-trip + default tests for the four settings models. Each model is a pure `Codable` value
-/// type; this proves `encode |> decode == value`, that defaults are sensible, and (for keybindings)
-/// the chord canonicalisation + conflict detection.
+/// The settings models, each pinned at the seam it actually has.
+///
+/// ``VideoPreferences`` and ``AgentPreferences`` are still `Codable` — they ride the `video-prefs.json`
+/// sidecar the host daemon reads — so a round-trip is the right test for them. ``TerminalPreferences``
+/// is NOT: the config file is its only authoring surface and ``AppConfig`` already decodes it, so what
+/// is pinned instead is that the table's defaults and the struct's field defaults are one answer.
+/// Keybindings keep their own chord canonicalisation + conflict tests.
 final class PreferencesTests: XCTestCase {
     private func roundTrip<T: Codable & Equatable>(_ value: T) throws -> T {
         let data = try JSONEncoder().encode(value)
@@ -22,82 +26,37 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNil(VideoPreferences().qpSharp)
     }
 
-    func testTerminalPreferencesRoundTripAndDefaults() throws {
-        let def = TerminalPreferences()
-        XCTAssertEqual(def.fontFamily, "SF Mono")
-        XCTAssertEqual(def.scrollbackLines, 10000)
-        XCTAssertEqual(def.cursorStyle, .block)
-        XCTAssertEqual(def.cursorBlink, .default) // tri-state default = defer to DEC mode 12
-        // Cursor color/text/opacity render-pref defaults (empty colour = follow theme, opacity 1.0).
-        XCTAssertEqual(def.cursorColor, "")
-        XCTAssertEqual(def.cursorTextColor, "")
-        XCTAssertEqual(def.cursorOpacity, 1.0)
-        // The font-parity defaults — every one is the value that emits NO new libghostty line, so
-        // a default-constructed prefs stays byte-identical to the builder output without these fields.
-        XCTAssertEqual(def.fontFamilyFallback, "")
-        XCTAssertEqual(def.fontFamilyBold, "")
-        XCTAssertEqual(def.fontFamilyItalic, "")
-        XCTAssertEqual(def.fontFamilyBoldItalic, "")
-        XCTAssertTrue(def.autoMatchWeightStyle)
-        XCTAssertEqual(def.fontLigatures, .off)
-        XCTAssertFalse(def.fontLigaturesAlphabet)
-        XCTAssertEqual(def.fontBold, .auto)
-        XCTAssertEqual(def.fontItalic, .auto)
-        XCTAssertEqual(def.fontBlending, .default)
-        XCTAssertEqual(def.lineHeight, .default)
-        let custom = TerminalPreferences(
-            fontFamily: "JetBrains Mono", fontSize: 14, fontWeight: "bold", theme: "Light",
-            cursorStyle: .bar, cursorBlink: .off, scrollbackLines: 50000,
-            cursorColor: "FF8800", cursorTextColor: "101010", cursorOpacity: 0.75,
-            fontFamilyFallback: "PingFang SC", fontFamilyBold: "IBM Plex Mono Bold",
-            fontFamilyItalic: "IBM Plex Mono Italic", fontFamilyBoldItalic: "IBM Plex Mono Bold Italic",
-            autoMatchWeightStyle: false, fontLigatures: .dlig, fontLigaturesAlphabet: true,
-            fontBold: .synthetic, fontItalic: .primaryOnly,
-            fontBlending: .macosLike, lineHeight: .custom(1.5),
+    /// The `[terminal]` rows and ``TerminalPreferences``'s own field defaults are the SAME answers.
+    ///
+    /// They are typed in two languages — the table says `terminal.font-size` defaults to
+    /// `FACTORY_FONT_SIZE`, the struct says `fontSize = 14` — so this is where they are held together.
+    /// It fails the moment a row's default is retuned without the struct following, which is the only
+    /// way the two can drift now that the file is the one authoring surface.
+    func testTerminalPreferencesFromCompiledDefaultsMatchesFieldDefaults() {
+        XCTAssertEqual(TerminalPreferences(AppConfig.compiledDefaults), TerminalPreferences())
+    }
+
+    /// `terminal.line-height` is the one dual-typed row: a named stop OR a raw multiplier, with the
+    /// number winning when both readings are present. `LineHeightMode` is not `RawRepresentable`, so
+    /// this cannot go through `AppConfig.choice` and needs its own pin.
+    func testLineHeightReadsBothNamedStopAndMultiplier() {
+        let base = AppConfig.compiledDefaults
+        XCTAssertEqual(TerminalPreferences(base).lineHeight, .default)
+        XCTAssertEqual(TerminalPreferences(base.setting("terminal.line-height", "compact")).lineHeight, .compact)
+        XCTAssertEqual(TerminalPreferences(base.setting("terminal.line-height", "loose")).lineHeight, .loose)
+        XCTAssertEqual(TerminalPreferences(base.setting("terminal.line-height", 1.5)).lineHeight, .custom(1.5))
+        XCTAssertEqual(
+            TerminalPreferences(base.setting("terminal.line-height", "compact").setting("terminal.line-height", 1.25))
+                .lineHeight,
+            .custom(1.25),
+            "a multiplier beats a named stop when the file somehow carries both",
         )
-        XCTAssertEqual(try roundTrip(custom), custom)
-        // The associated-value `LineHeightMode` round-trips its payload (and the simple cases).
-        for mode in [LineHeightMode.default, .compact, .loose, .custom(0.9), .custom(2.0)] {
-            XCTAssertEqual(try roundTrip(TerminalPreferences(lineHeight: mode)).lineHeight, mode)
-        }
     }
 
     func testAgentPreferencesRoundTrip() throws {
         XCTAssertNil(AgentPreferences().preventSleep)
         let custom = AgentPreferences(preventSleep: true, resumeOnRecovery: false)
         XCTAssertEqual(try roundTrip(custom), custom)
-    }
-
-    // MARK: Appearance (client chrome, golden-irrelevant)
-
-    func testAppearancePreferencesDefaultIsAllNil() {
-        XCTAssertNil(AppearancePreferences().density)
-    }
-
-    func testAppearancePreferencesRoundTrip() throws {
-        let prefs = AppearancePreferences(density: "comfortable")
-        XCTAssertEqual(try roundTrip(prefs), prefs)
-        // A partially-set model round-trips too (density unset).
-        XCTAssertNil(try roundTrip(AppearancePreferences()).density)
-    }
-
-    /// A malformed persisted blob must decode-FAIL to the all-`nil` default (validate-then-default, no
-    /// migration). The store wraps this in `try? decode ?? .init()`, so the throw is the load-bearing
-    /// behaviour. A blob carrying the RETIRED theme keys is not malformed — the unknown keys are simply
-    /// ignored, which is what lets an upgraded install keep its density.
-    func testAppearancePreferencesMalformedDecodeFails() {
-        let notObject = Data("[1,2,3]".utf8)
-        XCTAssertThrowsError(try JSONDecoder().decode(AppearancePreferences.self, from: notObject))
-        XCTAssertEqual(
-            (try? JSONDecoder().decode(AppearancePreferences.self, from: notObject)) ?? AppearancePreferences(),
-            AppearancePreferences(),
-        )
-        // The retired dual-slot keys decode away, leaving density intact.
-        let legacy = Data(#"{"theme":"midnight","density":"compact"}"#.utf8)
-        XCTAssertEqual(
-            try JSONDecoder().decode(AppearancePreferences.self, from: legacy),
-            AppearancePreferences(density: "compact"),
-        )
     }
 
     // MARK: Keybindings
@@ -192,48 +151,5 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(restored.textBindings[.init(key: "h", command: true, shift: true)]?.kind, .text)
         XCTAssertTrue(restored.unbinds.contains(.init(key: "q", command: true)))
         XCTAssertEqual(KeybindingPreferences.currentSchemaVersion, 3)
-    }
-
-    /// `conflicts()` folds text bindings + unbinds into the chord namespace: a text binding on a chord an
-    /// action override ALSO resolves to is a real clash, and so is a text-binding-vs-unbind on the same
-    /// chord. A text binding on its own (unique chord) is NOT a conflict.
-    /// (FAILS on a `conflicts()` that ignores text bindings + unbinds entirely.)
-    func testTextBindingAndUnbindConflictFold() {
-        // An action override `⌘X` and a text binding on the SAME chord ⌘X collide.
-        let clash = KeybindingPreferences(
-            overrides: ["pane.splitRight": .init(key: "x", command: true)],
-            textBindings: [.init(key: "x", command: true): .init(kind: .text, payload: [0x78])],
-        )
-        let conflicts = clash.conflicts()
-        XCTAssertEqual(conflicts.count, 1)
-        XCTAssertEqual(
-            conflicts["cmd+x"].map { Set($0) }, Set(["pane.splitRight", "text:cmd+x"]),
-        )
-
-        // A text binding and an unbind on the SAME chord also collide (contradictory intent).
-        let textVsUnbind = KeybindingPreferences(
-            textBindings: [.init(key: "p", command: true): .init(kind: .esc, payload: [0x1B, 0x4F])],
-            unbinds: [.init(key: "p", command: true)],
-        )
-        XCTAssertEqual(textVsUnbind.conflicts().count, 1)
-
-        // A text binding on a UNIQUE chord is not a conflict.
-        let unique = KeybindingPreferences(
-            textBindings: [.init(key: "z", command: true): .init(kind: .text, payload: [0x7A])],
-        )
-        XCTAssertTrue(unique.conflicts().isEmpty)
-    }
-
-    func testKeybindingConflictDetection() {
-        // Two ids bound to the SAME chord ⇒ a conflict; a unique binding ⇒ none.
-        let prefs = KeybindingPreferences(overrides: [
-            "a": .init(key: "x", command: true),
-            "b": .init(key: "x", command: true), // collides with a
-            "c": .init(key: "y", command: true), // unique
-        ])
-        let conflicts = prefs.conflicts()
-        XCTAssertEqual(conflicts.count, 1)
-        XCTAssertEqual(conflicts["cmd+x"].map { Set($0) }, Set(["a", "b"]))
-        XCTAssertTrue(KeybindingPreferences().conflicts().isEmpty) // empty ⇒ no conflicts
     }
 }

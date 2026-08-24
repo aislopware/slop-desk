@@ -273,7 +273,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-macos-apps check-ios-tests gui-macos gui-video gui-multiclient gui-launch-restore build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install devtools devtools-test dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
+.PHONY: check quick check-ios check-macos-apps check-ios-tests gui-macos gui-video gui-multiclient gui-launch-restore build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install devtools devtools-test dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test config-schema codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
 check: lint build test miri golden check-ios check-macos-apps ## lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -740,8 +740,15 @@ tree-test: ## cargo test for the workspace DOCUMENT — geometry, splits, sessio
 settings: ## Build slopdesk-settings (rust/slopdesk-settings)
 	cd rust/slopdesk-settings && cargo build --release
 
-settings-test: ## cargo test for the settings catalogue, its layout and its rows
+settings-test: ## cargo test for the key table, the file resolver, the schema and its checked-in copy
 	cd rust/slopdesk-settings && cargo test
+
+# The JSON Schema `config.toml` is described by, written out of the SAME key table the app resolves
+# against. Generated, never edited: a hand-maintained schema is a second declaration of every key
+# and would drift the day somebody added one. `settings-test` fails when the checked-in copy is
+# stale, so this target is what that failure asks for.
+config-schema: ## Regenerate docs/config.schema.json from the key table
+	cd rust/slopdesk-settings && cargo run --release --quiet --bin write-config-schema
 
 # The code panel's injected dressing: the stylesheet, the four user scripts and the recommendation
 # catalogue the workbench's own server never forwards. A LEAF library the FFI artifact links, so

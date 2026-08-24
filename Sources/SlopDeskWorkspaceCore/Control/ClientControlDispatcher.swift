@@ -32,13 +32,6 @@ public struct ClientControlDispatcher {
     static let defaultCaptureLines = 100
     /// Upper bound on `pane-capture` `lines` so a hostile count can't force an unbounded read.
     static let maxCaptureLines = 100_000
-    /// Honest rejection for `config set/unset --transient`: slopdesk applies render settings LIVE through the
-    /// same typed model that persists them, so there is no apply-without-persist layer. Rejecting beats the
-    /// pre-fix lie (persist silently while reporting `transient:true`). See `docs/DECISIONS.md`.
-    static let transientUnsupportedMessage =
-        "--transient is unsupported: slopdesk applies config live AND persists it (no separate ephemeral "
-            + "render layer); re-run without --transient to apply (and persist), or config unset to revert"
-
     public init(backend: any ClientControlBackend) {
         self.backend = backend
     }
@@ -86,16 +79,6 @@ public struct ClientControlDispatcher {
             openShim(id: id, params: params, mode: .view)
         case ClientControlProtocol.Method.edit:
             openShim(id: id, params: params, mode: .edit)
-        case ClientControlProtocol.Method.configGet:
-            configGet(id: id, params: params)
-        case ClientControlProtocol.Method.configSet:
-            configSet(id: id, params: params)
-        case ClientControlProtocol.Method.configUnset:
-            configUnset(id: id, params: params)
-        case ClientControlProtocol.Method.configReload:
-            configReload(id: id)
-        case ClientControlProtocol.Method.configShow:
-            configShow(id: id)
         case ClientControlProtocol.Method.fontList:
             fontList(id: id, params: params)
         case ClientControlProtocol.Method.keybindList:
@@ -223,60 +206,6 @@ public struct ClientControlDispatcher {
             return Self.error(id: id, message: "could not open target")
         }
         return Self.success(id: id, result: [:])
-    }
-
-    /// `config-get` → `{key, value?}`. An UNSET key is NOT an error (returns ok with no `value`).
-    private func configGet(id: String, params: [String: Any]) -> [String: Any] {
-        guard let key = params["key"] as? String, !key.isEmpty else {
-            return Self.error(id: id, message: "missing params.key")
-        }
-        if let value = backend.configGet(key: key) {
-            return Self.success(id: id, result: ["key": key, "value": value])
-        }
-        return Self.success(id: id, result: ["key": key])
-    }
-
-    /// `config-set` → write `key`=`value` (persisted, or `transient` running-app-only).
-    private func configSet(id: String, params: [String: Any]) -> [String: Any] {
-        guard let key = params["key"] as? String, !key.isEmpty else {
-            return Self.error(id: id, message: "missing params.key")
-        }
-        guard let value = params["value"] as? String else {
-            return Self.error(id: id, message: "missing params.value")
-        }
-        let transient = (params["transient"] as? Bool) ?? false
-        if transient { return Self.error(id: id, message: Self.transientUnsupportedMessage) }
-        guard backend.configSet(key: key, value: value, transient: transient) else {
-            return Self.error(id: id, message: "config set rejected")
-        }
-        return Self.success(id: id, result: ["key": key, "value": value, "transient": transient])
-    }
-
-    /// `config-unset` → remove `key` (persisted, or `transient` running-app-only).
-    private func configUnset(id: String, params: [String: Any]) -> [String: Any] {
-        guard let key = params["key"] as? String, !key.isEmpty else {
-            return Self.error(id: id, message: "missing params.key")
-        }
-        let transient = (params["transient"] as? Bool) ?? false
-        if transient { return Self.error(id: id, message: Self.transientUnsupportedMessage) }
-        guard backend.configUnset(key: key, transient: transient) else {
-            return Self.error(id: id, message: "config unset rejected")
-        }
-        return Self.success(id: id, result: ["key": key, "transient": transient])
-    }
-
-    /// `config-reload` → broadcast the config-change notification.
-    private func configReload(id: String) -> [String: Any] {
-        guard backend.configReload() else {
-            return Self.error(id: id, message: "config reload failed")
-        }
-        return Self.success(id: id, result: [:])
-    }
-
-    /// `config-show` → `{config: [{key, value}]}` (ordered).
-    private func configShow(id: String) -> [String: Any] {
-        let entries = backend.configShow().map { ["key": $0.key, "value": $0.value] }
-        return Self.success(id: id, result: ["config": entries])
     }
 
     /// `font-list` → `{fonts: [{family, monospace, system}]}`. Optional `monospace`/`family`/`scope`.

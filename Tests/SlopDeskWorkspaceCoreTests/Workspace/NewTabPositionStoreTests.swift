@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskTestSupport
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -10,18 +11,6 @@ import XCTest
 /// regression to a hardcoded `.end` append. Drives a LIVE `.tree` store through the `FakePaneSession` seam.
 @MainActor
 final class NewTabPositionStoreTests: XCTestCase {
-    private let key = SettingsKey.newTabPositionKey
-
-    override func setUp() {
-        super.setUp()
-        SettingsKey.store.removeObject(forKey: key)
-    }
-
-    override func tearDown() {
-        SettingsKey.store.removeObject(forKey: key)
-        super.tearDown()
-    }
-
     // MARK: - Fixtures
 
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
@@ -64,7 +53,7 @@ final class NewTabPositionStoreTests: XCTestCase {
     // MARK: - after-current: insert immediately after the active (middle) tab + select it
 
     func testNewTabAfterCurrentLandsAfterMiddleActiveTab() throws {
-        SettingsKey.store.set("after-current", forKey: key)
+        stateSetting("shell.new-tab-position", "after-current")
         let (tree, _) = threeTabSession(activeIndex: 1) // MIDDLE tab active (index 1 of 0,1,2)
         let store = makeTreeStore(restoringTree: tree)
         let before = Set(store.tree.allPaneIDs())
@@ -82,7 +71,7 @@ final class NewTabPositionStoreTests: XCTestCase {
     /// honours `after-current` (a regression that hardcoded `.end` on the gesture path would slip past the
     /// direct-`newTab` test above).
     func testGestureNewTabAfterCurrentLandsAfterMiddleActiveTab() throws {
-        SettingsKey.store.set("after-current", forKey: key)
+        stateSetting("shell.new-tab-position", "after-current")
         let (tree, _) = threeTabSession(activeIndex: 1)
         let store = makeTreeStore(restoringTree: tree)
         let before = Set(store.tree.allPaneIDs())
@@ -98,7 +87,7 @@ final class NewTabPositionStoreTests: XCTestCase {
     // MARK: - end: append even with a middle-active tab
 
     func testNewTabEndAppendsEvenWithMiddleActiveTab() throws {
-        SettingsKey.store.set("end", forKey: key)
+        stateSetting("shell.new-tab-position", "end")
         let (tree, _) = threeTabSession(activeIndex: 1) // middle active, but `.end` ignores it
         let store = makeTreeStore(restoringTree: tree)
         let before = Set(store.tree.allPaneIDs())

@@ -70,6 +70,8 @@ Not exhaustive — grep `SLOPDESK_`. **Default idiom:** `!= "0"` → default-ON;
 | Flag | Notes |
 |------|--------|
 | `SLOPDESK_FEC_M` / `_FEC_K` | Set **identically** host + client |
+| `SLOPDESK_CONFIG_FILE` | which `config.toml` the app and the CLI read, outranking `$XDG_CONFIG_HOME/slopdesk/` and `~/.config/slopdesk/`. Resolved in `rust/slopdesk-settings`, crossed to Swift as ONE snapshot per launch/reload. It is also what makes ⌘, open the file the app actually honours rather than the default address. Detail: `docs/58-configuration.md` |
+| `SLOPDESK_*` via `[env]` | `config.toml`'s `[env]` table sets any of these by raw name. It folds into `EnvConfig.overlay`, so the precedence is the one this table has always had — **real env var → `[env]` overlay → compile-time default** — and it is applied above every typed key the file also sets. A deliberate `SLOPDESK_*=…` on the command line is still the operator's escape hatch and is never overridden by the file |
 | `SLOPDESK_VIDEO_DEBUG` | Video stderr |
 | `SLOPDESK_DISPLAY_CAPTURE` | `window` / `display` / `include` |
 | `SLOPDESK_PACER` | default present-on-arrival; `=deadline` for smoothness pacer |

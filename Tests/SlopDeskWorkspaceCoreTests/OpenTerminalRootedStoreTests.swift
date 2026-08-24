@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskTestSupport
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -35,8 +36,7 @@ final class OpenTerminalRootedStoreTests: XCTestCase {
     /// pinned. Revert-to-confirm-fail: on the un-fixed store `openTerminalRooted` does not exist (the test
     /// fails to compile); a `SendKeysParser` path would also yield different bytes.
     func testOpenTerminalRootedNewTabSendsParentFallbackCd() async throws {
-        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
-        defer { SettingsKey.store.removeObject(forKey: SettingsKey.workingDirectoryNewTabKey) }
+        stateSetting("shell.working-directory-new-tab", "home")
 
         let store = makeStore()
         let before = Set(store.tree.allPaneIDs())
@@ -61,8 +61,7 @@ final class OpenTerminalRootedStoreTests: XCTestCase {
     /// The split sibling (`DropAction.splitInjectPath`): the dropped path opens beside the active pane and the
     /// NEW split pane (only it) receives the `cd … || cd <parent>` line; the original terminal gets nothing.
     func testOpenTerminalRootedSplitSendsCdToTheNewPaneOnly() async throws {
-        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewSplitKey)
-        defer { SettingsKey.store.removeObject(forKey: SettingsKey.workingDirectoryNewSplitKey) }
+        stateSetting("shell.working-directory-new-split", "home")
 
         let store = makeStore()
         let original = try XCTUnwrap(store.tree.allPaneIDs().first)

@@ -36,4 +36,17 @@ public struct AgentPreferences: Codable, Sendable, Equatable {
         self.preventSleep = preventSleep
         self.resumeOnRecovery = resumeOnRecovery
     }
+
+    /// Read the `[agent]` table out of a resolved ``AppConfig``.
+    ///
+    /// Both rows are declared with NO default, so an untouched file leaves both `nil` and the daemon
+    /// keeps its own answer — which is why this reads through ``AppConfig/optionalFlag(_:)`` rather
+    /// than ``AppConfig/flag(_:)``: the latter would report `false` for absent, and absent
+    /// ``resumeOnRecovery`` means ON.
+    public init(_ config: AppConfig) {
+        self.init(
+            preventSleep: config.optionalFlag("agent.prevent-sleep"),
+            resumeOnRecovery: config.optionalFlag("agent.resume-on-recovery"),
+        )
+    }
 }

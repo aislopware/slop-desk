@@ -75,6 +75,28 @@ if arguments.count >= 2, arguments[1] == "integration" {
     }
 }
 
+// The Claude Code hooks are INSTALLED, not offered.
+//
+// They were an `integration install claude` the user had to know to type, which meant a host that
+// had never been told still ran Claude and still reported nothing — an agent pane with no status,
+// for a reason nothing on screen could explain. The merge is idempotent and touches only entries
+// carrying our own marker, so re-running it on every launch is the same file it already wrote.
+// `isInstalled()` first, so a host whose hooks are already there does no work and writes nothing.
+//
+// Failure is a log line, never a stop: a `settings.json` we cannot write is the user's file, and a
+// daemon that refuses to serve terminals over it would be trading the whole product for one feature.
+if !AgentHooks.isInstalled(), let answer = AgentHooks.install() {
+    if let error = answer.error {
+        FileHandle.standardError.write(
+            Data("\(programName): could not install the Claude Code hooks: \(error)\n".utf8),
+        )
+    } else {
+        FileHandle.standardError.write(
+            Data("\(programName): installed the Claude Code hooks → \(answer.settings)\n".utf8),
+        )
+    }
+}
+
 guard let parsed = HostdArguments.parse(arguments) else {
     FileHandle.standardError.write(Data(
         (HostdArguments.usage(programName: programName) + "\n").utf8,

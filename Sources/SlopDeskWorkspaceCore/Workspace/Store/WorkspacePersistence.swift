@@ -95,7 +95,7 @@ public struct WorkspacePersistence: @unchecked Sendable {
     // MARK: On-Launch behaviour (the `On Launch` general setting → actual launch behaviour)
 
     /// Resolves the tree the store seeds on launch, honouring the `On Launch` general setting
-    /// (``OnLaunchBehavior``, persisted under ``SettingsKey/onLaunchKey``) — the wiring that makes the
+    /// (``OnLaunchBehavior``, read off `general.on-launch`) — the wiring that makes the
     /// General → On Launch picker a LIVE control, not a dead accessor:
     ///
     /// - ``OnLaunchBehavior/restoreLastSession`` (default) → return the persisted tree (``loadTree()``).

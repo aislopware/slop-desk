@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskClient
+import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -90,9 +91,12 @@ final class AgentSoundPolicyTests: XCTestCase {
 /// `.commandStatus(.idle)` arms never rang the seam, so these counts would all be 0.
 @MainActor
 final class BellSoundWiringTests: XCTestCase {
-    private let touched = [SettingsKey.soundShellControlled, SettingsKey.soundOnErrorExit]
-    override func setUp() { touched.forEach { SettingsKey.store.removeObject(forKey: $0) } }
-    override func tearDown() { touched.forEach { SettingsKey.store.removeObject(forKey: $0) } }
+    /// The two settings this suite states, each as a configuration installed for one body.
+    /// ``AppConfig/current`` is a process-global, so it is never left moved past a case.
+    private static let shellSoundOff = AppConfig.compiledDefaults
+        .setting("notifications.sound-shell-controlled", false)
+    private static let errorExitSoundOn = AppConfig.compiledDefaults
+        .setting("notifications.sound-on-error-exit", true)
 
     /// A `.bell` rings the beep seam when Sound — Shell Controlled is on (the default).
     func testBellBeepsWhenSoundShellControlledOn() {
@@ -106,11 +110,12 @@ final class BellSoundWiringTests: XCTestCase {
 
     /// With Sound — Shell Controlled OFF, a `.bell` does NOT ring (the toggle gates the beep).
     func testBellSilentWhenSoundShellControlledOff() {
-        SettingsKey.store.set(false, forKey: SettingsKey.soundShellControlled)
-        let model = TerminalViewModel()
         var beeps = 0
-        model.beep = { beeps += 1 }
-        model.handle(.bell)
+        AppConfig.withCurrent(Self.shellSoundOff) {
+            let model = TerminalViewModel()
+            model.beep = { beeps += 1 }
+            model.handle(.bell)
+        }
         XCTAssertEqual(beeps, 0, "a BEL is silent with Sound — Shell Controlled OFF")
     }
 
@@ -123,14 +128,15 @@ final class BellSoundWiringTests: XCTestCase {
         off.handle(.commandStatus(.idle(exitCode: 1, durationMS: 0)))
         XCTAssertEqual(offBeeps, 0, "Sound on Error Exit is OFF by default → no beep")
 
-        // Toggle ON → a non-zero exit beeps; a clean exit stays silent.
-        SettingsKey.store.set(true, forKey: SettingsKey.soundOnErrorExit)
-        let on = TerminalViewModel()
+        // Stated ON → a non-zero exit beeps; a clean exit stays silent.
         var onBeeps = 0
-        on.beep = { onBeeps += 1 }
-        on.handle(.commandStatus(.idle(exitCode: 2, durationMS: 0)))
-        XCTAssertEqual(onBeeps, 1, "a non-zero exit beeps with Sound on Error Exit ON")
-        on.handle(.commandStatus(.idle(exitCode: 0, durationMS: 0)))
-        XCTAssertEqual(onBeeps, 1, "a clean exit never beeps (still 1)")
+        AppConfig.withCurrent(Self.errorExitSoundOn) {
+            let on = TerminalViewModel()
+            on.beep = { onBeeps += 1 }
+            on.handle(.commandStatus(.idle(exitCode: 2, durationMS: 0)))
+            XCTAssertEqual(onBeeps, 1, "a non-zero exit beeps with Sound on Error Exit ON")
+            on.handle(.commandStatus(.idle(exitCode: 0, durationMS: 0)))
+            XCTAssertEqual(onBeeps, 1, "a clean exit never beeps (still 1)")
+        }
     }
 }

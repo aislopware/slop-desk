@@ -130,16 +130,14 @@ final class TextBindingResolutionTests: XCTestCase {
     /// A `text:` / `csi:` binding authored through the PRODUCTION loader with an ALIAS named-key spelling
     /// (`pgup`, `leftarrow`, …) resolves for the CANONICAL live-keystroke chord the dispatcher produces.
     /// `KeybindConfigLoader.apply` stores the parsed chord under the canonical token (folded by
-    /// `KeybindingPreferences.KeyChord.init`), so `cmd+pgup:text:x` and a live ⌘PageUp key the SAME
+    /// `KeybindingPreferences.KeyChord.init`), so `"cmd+pgup" = "text:x"` and a live ⌘PageUp key the SAME
     /// `textBindings` entry. FAILS before the fix: the chord stored verbatim as `"pgup"` never matched the
     /// dispatcher's `"pageup"` token (`asPreferencesChord`/`preferencesKeyToken`) → a permanent miss.
     func testAliasSpelledTextBindingResolvesForCanonicalChord() {
-        WorkspaceBindingRegistry.activeOverrides = KeybindConfigLoader.apply(
-            configText: """
-            keybind = cmd+pgup:text:x
-            keybind = ctrl+leftarrow:csi:1;5D
-            """,
-        )
+        WorkspaceBindingRegistry.activeOverrides = KeybindConfigLoader.apply(table: [
+            "cmd+pgup": "text:x",
+            "ctrl+leftarrow": "csi:1;5D",
+        ])
         XCTAssertEqual(
             WorkspaceBindingRegistry.textBinding(for: KeyChord(.pageUp, [.command]))?.payload, [0x78],
             "cmd+pgup must resolve for the dispatcher's canonical ⌘PageUp chord",
@@ -151,16 +149,16 @@ final class TextBindingResolutionTests: XCTestCase {
         )
     }
 
-    /// An `unbind:` authored with an alias spelling suppresses the CANONICAL live chord — `unbind:cmd+enter`
-    /// stores under `"return"`, so a live ⌘Return is recognised as unbound. FAILS before the fix (stored
-    /// verbatim as `"enter"`, never matching the dispatcher's `"return"` token).
+    /// An `unbind` authored with an alias spelling suppresses the CANONICAL live chord —
+    /// `"cmd+enter" = "unbind"` stores under `"return"`, so a live ⌘Return is recognised as unbound. FAILS
+    /// before the fix (stored verbatim as `"enter"`, never matching the dispatcher's `"return"` token).
     func testAliasSpelledUnbindRecognisesCanonicalChord() {
         WorkspaceBindingRegistry.activeOverrides = KeybindConfigLoader.apply(
-            configText: "keybind = unbind:cmd+enter",
+            table: ["cmd+enter": "unbind"],
         )
         XCTAssertTrue(
             WorkspaceBindingRegistry.isUnbound(KeyChord(.return, [.command])),
-            "unbind:cmd+enter must suppress the dispatcher's canonical ⌘Return chord",
+            "\"cmd+enter\" = \"unbind\" must suppress the dispatcher's canonical ⌘Return chord",
         )
     }
 }

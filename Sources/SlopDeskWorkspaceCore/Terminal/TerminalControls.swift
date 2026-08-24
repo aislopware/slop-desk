@@ -20,6 +20,7 @@
 
 import CSlopDeskFFI
 import Foundation
+import SlopDeskVideoProtocol // AppConfig — every field below is a `[controls]` row
 import SlopDeskWorkspaceModel
 
 // MARK: - The token tables, read once per process
@@ -392,7 +393,7 @@ public enum LinkCmdShiftClick: Sendable, CaseIterable, RawRepresentable, Codable
 /// ``LinkSchemePolicy``); this only governs OTHER `scheme://…` forms.
 ///
 /// - ``all``: detect ANY `scheme://…`.
-/// - ``custom``: detect only the always-on schemes plus ``SettingsKey/customLinkSchemes``.
+/// - ``custom``: detect only the always-on schemes plus the `controls.custom-link-schemes` list.
 ///
 /// The POLICY itself does not cross: it is consumed by the detector, which is already Rust's.
 public enum AutoDetectLinkSchemes: Sendable, CaseIterable, RawRepresentable, Codable {
@@ -433,11 +434,11 @@ public enum AutoDetectLinkSchemes: Sendable, CaseIterable, RawRepresentable, Cod
 /// `TerminalConfigBuilder.string(...)`, NOT nested: the builder emits render lines from
 /// ``TerminalPreferences`` and control lines from this struct.
 ///
-/// Every field derives from a fire-time `Defaults.Keys` flag (in `SettingsKey`), so this bundle never
-/// reaches the `EnvConfig` overlay or the `video-prefs.json` sidecar — golden-safe by construction.
-/// ``from(defaults:)`` is the single read site (`PreferencesStore.applyTerminal` rebuilds it
-/// on every apply / `refreshTerminalControls()`), so the init defaults mirror the `Defaults.Keys` defaults
-/// and a default-constructed value is a faithful "factory" terminal.
+/// Every field derives from a `[controls]` row in the config file, so this bundle never reaches the
+/// `EnvConfig` overlay or the `video-prefs.json` sidecar — golden-safe by construction.
+/// ``from(config:)`` is the single read site (`PreferencesStore.applyTerminal` rebuilds it on every
+/// apply / `refreshTerminalControls()`), so the init defaults mirror the rows' own defaults and a
+/// default-constructed value is a faithful "factory" terminal.
 public struct TerminalControls: Codable, Sendable, Equatable {
     /// The `copy-on-select` config line — copy the selection to the pasteboard as soon as it is made
     /// (default OFF). The builder emits `clipboard` when on, `false` when off.
@@ -519,37 +520,39 @@ public struct TerminalControls: Codable, Sendable, Equatable {
         self.optionAsAlt = optionAsAlt
     }
 
-    /// Read the live control bundle from the persisted fire-time `Defaults.Keys` flags. Reading through the
-    /// typed-key subscript (`defaults[.copyOnSelect]`) lets an injected suite isolate the factory in tests
-    /// while production passes `SettingsKey.store` (`.standard` in the app). Each missing key falls back to
-    /// its `Defaults.Key` default (mirrored by this struct's init defaults).
-    public static func from(defaults: UserDefaults = SettingsKey.store) -> Self {
+    /// Read the live control bundle out of the config file's `[controls]` table.
+    ///
+    /// Every field is a declared row, so no default is spelled twice: an absent key already carries
+    /// the row's compiled default out of ``AppConfig``, and a value the row refuses was dropped with
+    /// a diagnostic at resolve time. The `choice` fallbacks below are unreachable — the enums repair
+    /// an unknown token themselves — and exist only because the accessor insists on one.
+    public static func from(config: AppConfig) -> Self {
         // The "Clipboard — Shell Controlled" master switch (default ON) gates the WHOLE OSC-52 path
         // ahead of the per-direction Ask/Allow/Deny gate. Both directions resolve in ONE crossing:
         // a master switch honoured in one direction and not the other is the failure that rules out.
         let gates = slopdesk_terminal_clipboard_gates(
-            defaults[.clipboardShellControlled],
-            UInt8(defaults[.clipboardRead].index),
-            UInt8(defaults[.clipboardWrite].index),
+            config.flag("controls.clipboard-shell-controlled"),
+            UInt8(config.choice("controls.clipboard-read", ClipboardAccess.ask).index),
+            UInt8(config.choice("controls.clipboard-write", ClipboardAccess.allow).index),
         )
         let all = ClipboardAccess.allCases
         return Self(
-            copyOnSelect: defaults[.copyOnSelect],
-            trimTrailing: defaults[.trimTrailingSpacesOnCopy],
-            clearOnTyping: defaults[.clearSelectionOnTyping],
-            clearOnCopy: defaults[.clearSelectionOnCopy],
-            pasteProtection: defaults[.pasteProtection],
-            bracketedSafe: defaults[.pasteBracketedSafe],
+            copyOnSelect: config.flag("controls.copy-on-select"),
+            trimTrailing: config.flag("controls.trim-trailing-spaces"),
+            clearOnTyping: config.flag("controls.clear-selection-on-typing"),
+            clearOnCopy: config.flag("controls.clear-selection-on-copy"),
+            pasteProtection: config.flag("controls.paste-protection"),
+            bracketedSafe: config.flag("controls.paste-bracketed-safe"),
             clipboardRead: all[Int(gates & 0xFF)],
             clipboardWrite: all[Int(gates >> 8)],
-            hideMouseWhileTyping: defaults[.mouseHideWhileTyping],
-            allowShiftClick: defaults[.allowShiftClick],
-            clickToMove: defaults[.clickToMove],
-            allowMouseCapture: defaults[.allowMouseCapture],
-            rightClickAction: defaults[.rightClickAction],
-            shiftArrowSelect: defaults[.shiftArrowSelect],
-            scrollMultiplier: defaults[.scrollMultiplier],
-            optionAsAlt: defaults[.optionAsAlt],
+            hideMouseWhileTyping: config.flag("controls.mouse-hide-while-typing"),
+            allowShiftClick: config.choice("controls.shift-click", MouseShiftCapture.enabled),
+            clickToMove: config.flag("controls.click-to-move"),
+            allowMouseCapture: config.flag("controls.allow-mouse-capture"),
+            rightClickAction: config.choice("controls.right-click-action", RightClickAction.contextMenu),
+            shiftArrowSelect: config.flag("controls.shift-arrow-select"),
+            scrollMultiplier: config.double("controls.scroll-multiplier"),
+            optionAsAlt: config.choice("controls.option-as-alt", OptionAsAlt.off),
         )
     }
 }

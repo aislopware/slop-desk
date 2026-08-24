@@ -9,32 +9,20 @@
 //
 // Pure value-type construction — no view, no SCStream/VT/Metal (hang-safe).
 
+import SlopDeskTestSupport
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientCore
 
 final class ToastSecretRedactionTests: XCTestCase {
-    private var priorRedact: Any?
-
-    override func setUp() {
-        super.setUp()
-        priorRedact = SettingsKey.store.object(forKey: SettingsKey.redactSecrets)
-    }
-
-    override func tearDown() {
-        if let priorRedact {
-            SettingsKey.store.set(priorRedact, forKey: SettingsKey.redactSecrets)
-        } else {
-            SettingsKey.store.removeObject(forKey: SettingsKey.redactSecrets)
-        }
-        super.tearDown()
-    }
+    // No save/restore here: `stateSetting` registers its own teardown, so each case states the
+    // reading it needs and the process is handed back the configuration it had.
 
     /// A canonical AWS access-key id in an OSC 9/777 title is masked in the Toast that the in-app surface
     /// builds — the key never reaches `Toast.title` verbatim. This is the on-screen / iOS leak the finding
     /// flagged; it fails if the redaction inside `Toast.explicitOSC` is removed.
     func testOSCToastMasksSecretWhenOn() {
-        SettingsKey.store.set(true, forKey: SettingsKey.redactSecrets)
+        stateSetting("general.redact-secrets", true)
         XCTAssertTrue(SettingsKey.redactSecretsEnabled, "precondition: redactSecrets ON")
 
         let secretKey = "AKIAIOSFODNN7EXAMPLE" // AKIA + 16 — masked whole by SecretRedactor rule 3.
@@ -55,7 +43,7 @@ final class ToastSecretRedactionTests: XCTestCase {
     /// When the opt-out is OFF the title/body pass through verbatim — proving the toast HONORS the gate
     /// (it is not unconditionally masking, and it is not unconditionally leaking).
     func testOSCToastPassesThroughWhenOff() {
-        SettingsKey.store.set(false, forKey: SettingsKey.redactSecrets)
+        stateSetting("general.redact-secrets", false)
         XCTAssertFalse(SettingsKey.redactSecretsEnabled, "precondition: redactSecrets OFF")
 
         let secretKey = "AKIAIOSFODNN7EXAMPLE"
@@ -71,7 +59,7 @@ final class ToastSecretRedactionTests: XCTestCase {
     /// `redactSecretsIfEnabled(paneTitle)` call inside `Toast.longCommand` and this fails (the password value
     /// appears verbatim in the toast title).
     func testLongCommandToastMasksSecretTitleWhenOn() {
-        SettingsKey.store.set(true, forKey: SettingsKey.redactSecrets)
+        stateSetting("general.redact-secrets", true)
         XCTAssertTrue(SettingsKey.redactSecretsEnabled, "precondition: redactSecrets ON")
 
         let secretValue = "supersecretvalue123"
@@ -95,7 +83,7 @@ final class ToastSecretRedactionTests: XCTestCase {
     /// With the opt-out OFF the long-command title passes through verbatim — proving the new factory HONORS the
     /// gate (mirrors `testOSCToastPassesThroughWhenOff`).
     func testLongCommandToastPassesThroughWhenOff() {
-        SettingsKey.store.set(false, forKey: SettingsKey.redactSecrets)
+        stateSetting("general.redact-secrets", false)
         XCTAssertFalse(SettingsKey.redactSecretsEnabled, "precondition: redactSecrets OFF")
 
         let secretValue = "supersecretvalue123"
@@ -114,7 +102,7 @@ final class ToastSecretRedactionTests: XCTestCase {
     /// the outcome ("\(title) finished"), so a sentence fallback would render "Command finished finished".
     @MainActor
     func testLongCommandToastEmptyTitleFallsBack() {
-        SettingsKey.store.set(true, forKey: SettingsKey.redactSecrets)
+        stateSetting("general.redact-secrets", true)
         let toast = Toast.longCommand(paneIDKey: UUID().uuidString, paneTitle: "", exitCode: 0, durationMS: 10000)
         XCTAssertEqual(toast.title, "Command")
         XCTAssertEqual(ToastPresentation.headline(for: toast), "Command finished")

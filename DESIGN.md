@@ -288,7 +288,7 @@ the pill a 32pt row reaches at 16.
 
 | World | Where | Colour source |
 |---|---|---|
-| **Chrome** | the ground, sidebar, dividers, the band, the panel tab strip and its rail, the embedded workbench, overlays, Settings, empty states | Semantic system colours resolving LIGHT, on the one cream ground |
+| **Chrome** | the ground, sidebar, dividers, the band, the panel tab strip and its rail, the embedded workbench, overlays, empty states | Semantic system colours resolving LIGHT, on the one cream ground |
 | **Glass** | the terminal island, the device streams, satellite pane windows | The one **terminal profile** (`SlateTheme.app`) |
 
 **One chrome polarity, always light.** That is a CONSEQUENCE of the ground, not a second decision —
@@ -468,8 +468,9 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
   the plate idiom (`SlatePlateStyle`, whose press previews the latch it lands on) — rows and tabs
   act instantly, so they do not carry one. Do not add pressed fills to instant-action rows.
 - **Overlays**: `SlatePaperCard` — the ground's cream, opaque, at the island's corner — plus
-  `Color.primary` ink (`SlateOverlayInk`). No material anywhere in the family. Settings stays pure
-  system semantics (`SettingsInk` — a deliberate second world; do not route it through `Slate`).
+  `Color.primary` ink (`SlateOverlayInk`). No material anywhere in the family. There is no second
+  world any more: `SettingsInk` went with the settings GUI on 2026-08-24 (`docs/58`), so every
+  surface this family draws routes through `Slate`.
 
 ## Do / Don't
 
@@ -514,8 +515,8 @@ terminal convention); brights REPEAT the bases; bright-black = the comment tone.
   the cream ground. This REVERSES the 2026-08-07 "no reverse-video,
   no solid chip" verdict, which was written when the chrome ground was dark and a solid plate meant
   an off-family grey; on the cream ground the plate is the island tone, in family by construction.
-  Still dead: accent tint or accent edge on the row, and underlines. `SlateListRow` (settings,
-  popovers, generic lists) keeps the semantic raised card — this is a TAB gesture, not a list one.
+  Still dead: accent tint or accent edge on the row, and underlines. `SlateListRow` (popovers and
+  generic lists) keeps the semantic raised card — this is a TAB gesture, not a list one.
 - DON'T dim, veil, or fade a column to state focus — the accent corner mark only.
 - DON'T touch the fixed pills (secure blue / sync amber) or route them through anything.
 - DON'T write a raw `.opacity(N)`, shadow radius/y, or tracking literal in chrome code — pick a

@@ -33,14 +33,19 @@ public enum TerminalFactoryDefaults {
 }
 
 /// Live, client-side terminal-render preferences (decision #6: these DO apply live, unlike the video
-/// flags). Persisted via `@AppStorage` / `UserDefaults` (the model is the source of truth); font/theme
-/// apply live via `ghostty_config_load_string` before `ghostty_config_finalize`.
+/// flags). READ from the config file's `[terminal]` table via ``init(_:)``; font/theme apply live via
+/// `ghostty_config_load_string` before `ghostty_config_finalize`.
 ///
-/// Pure `Codable` value type — no SwiftUI import, so it is headlessly testable and the libghostty
+/// **Not `Codable`.** It used to be, for a `UserDefaults` blob that no longer exists: the file is the
+/// only authoring surface now and ``AppConfig`` already decodes it, so a second decode path here
+/// would be the same setting spelled twice. The additive-tolerant `decodeIfPresent` init went with
+/// it — a config file simply omits what it does not override, and the row's own default answers.
+///
+/// Pure value type — no SwiftUI import, so it is headlessly testable and the libghostty
 /// config-string builder (`ghosttyConfigString()`) can be unit-tested without a surface. Every
 /// field has a real default (these are render prefs, not env overrides), so a default-constructed
 /// value is a sensible terminal.
-public struct TerminalPreferences: Codable, Sendable, Equatable {
+public struct TerminalPreferences: Sendable, Equatable {
     /// Monospace font family (libghostty `font-family`).
     public var fontFamily: String
     /// Font point size (libghostty `font-size`).
@@ -194,71 +199,56 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         self.lineHeight = lineHeight
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case fontFamily
-        case fontSize
-        case fontWeight
-        case theme
-        case background
-        case foreground
-        case cursorStyle
-        case cursorBlink
-        case scrollbackLines
-        case cursorColor
-        case cursorTextColor
-        case cursorOpacity
-        case fontFamilyFallback
-        case fontFamilyBold
-        case fontFamilyItalic
-        case fontFamilyBoldItalic
-        case autoMatchWeightStyle
-        case fontLigatures
-        case fontLigaturesAlphabet
-        case fontBold
-        case fontItalic
-        case fontBlending
-        case lineHeight
+    /// Read the whole `[terminal]` table out of a resolved ``AppConfig``.
+    ///
+    /// Every field is a declared row with a compiled default, so this never has to spell one: an
+    /// absent key resolves to the row's default INSIDE `config`, and a key whose value the row
+    /// refuses (out of domain, unknown choice token) was already dropped at resolve time with a
+    /// diagnostic. That is why there is not one `??` here — the fallbacks are one layer down, in
+    /// `rust/slopdesk-settings`'s table, where they are also what `--schema` publishes.
+    ///
+    /// The one row that is not a plain scalar is `terminal.line-height`, a `Scale`: it lands as a
+    /// TEXT stop (`default` / `compact` / `loose`) or as a raw FLOAT multiplier, never both. A float
+    /// present means the user typed a number, so it wins; otherwise the token names the stop.
+    public init(_ config: AppConfig) {
+        self.init(
+            fontFamily: config.text("terminal.font-family"),
+            fontSize: config.double("terminal.font-size"),
+            fontWeight: config.text("terminal.font-weight"),
+            theme: config.text("terminal.theme"),
+            background: config.text("terminal.background"),
+            foreground: config.text("terminal.foreground"),
+            cursorStyle: config.choice("terminal.cursor-style", CursorStyle.block),
+            cursorBlink: config.choice("terminal.cursor-blink", CursorBlink.default),
+            scrollbackLines: config.int("terminal.scrollback-limit"),
+            cursorColor: config.text("terminal.cursor-color"),
+            cursorTextColor: config.text("terminal.cursor-text-color"),
+            cursorOpacity: config.double("terminal.cursor-opacity"),
+            fontFamilyFallback: config.text("terminal.font-family-fallback"),
+            fontFamilyBold: config.text("terminal.font-family-bold"),
+            fontFamilyItalic: config.text("terminal.font-family-italic"),
+            fontFamilyBoldItalic: config.text("terminal.font-family-bold-italic"),
+            autoMatchWeightStyle: config.flag("terminal.auto-match-weight-style"),
+            fontLigatures: config.choice("terminal.ligatures", FontLigatures.off),
+            fontLigaturesAlphabet: config.flag("terminal.ligatures-alphabet"),
+            fontBold: config.choice("terminal.bold", FontStyleMode.auto),
+            fontItalic: config.choice("terminal.italic", FontStyleMode.auto),
+            fontBlending: config.choice("terminal.blending", FontBlending.default),
+            lineHeight: Self.lineHeight(config),
+        )
     }
 
-    /// ADDITIVE-TOLERANT decoding (NOT a migration — no-backcompat rule preserved). Each field is
-    /// `decodeIfPresent ?? <default>`, so a stored blob written before a field existed (e.g. an existing
-    /// user's terminal prefs from before the font-parity fields landed) DECODES SUCCESSFULLY with the
-    /// new fields defaulted — it does NOT decode-fail and reset every terminal pref once on upgrade. The
-    /// defaults are sourced from a default-constructed value so they can never drift from the memberwise
-    /// init. GENUINE corruption still resets: a key that is PRESENT but holds an invalid value (e.g. an
-    /// unknown `cursorStyle` raw) throws from `decodeIfPresent`, so `PreferencesStore.decode`'s `try?`
-    /// falls back to the default — the validate-then-default discipline for hostile/stale data is intact.
-    /// Mirrors the established ``KeybindingPreferences`` `decodeIfPresent` precedent.
-    public init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        let d = Self()
-        try self.init(
-            fontFamily: c.decodeIfPresent(String.self, forKey: .fontFamily) ?? d.fontFamily,
-            fontSize: c.decodeIfPresent(Double.self, forKey: .fontSize) ?? d.fontSize,
-            fontWeight: c.decodeIfPresent(String.self, forKey: .fontWeight) ?? d.fontWeight,
-            theme: c.decodeIfPresent(String.self, forKey: .theme) ?? d.theme,
-            background: c.decodeIfPresent(String.self, forKey: .background) ?? d.background,
-            foreground: c.decodeIfPresent(String.self, forKey: .foreground) ?? d.foreground,
-            cursorStyle: c.decodeIfPresent(CursorStyle.self, forKey: .cursorStyle) ?? d.cursorStyle,
-            cursorBlink: c.decodeIfPresent(CursorBlink.self, forKey: .cursorBlink) ?? d.cursorBlink,
-            scrollbackLines: c.decodeIfPresent(Int.self, forKey: .scrollbackLines) ?? d.scrollbackLines,
-            cursorColor: c.decodeIfPresent(String.self, forKey: .cursorColor) ?? d.cursorColor,
-            cursorTextColor: c.decodeIfPresent(String.self, forKey: .cursorTextColor) ?? d.cursorTextColor,
-            cursorOpacity: c.decodeIfPresent(Double.self, forKey: .cursorOpacity) ?? d.cursorOpacity,
-            fontFamilyFallback: c.decodeIfPresent(String.self, forKey: .fontFamilyFallback) ?? d.fontFamilyFallback,
-            fontFamilyBold: c.decodeIfPresent(String.self, forKey: .fontFamilyBold) ?? d.fontFamilyBold,
-            fontFamilyItalic: c.decodeIfPresent(String.self, forKey: .fontFamilyItalic) ?? d.fontFamilyItalic,
-            fontFamilyBoldItalic: c.decodeIfPresent(String.self, forKey: .fontFamilyBoldItalic)
-                ?? d.fontFamilyBoldItalic,
-            autoMatchWeightStyle: c.decodeIfPresent(Bool.self, forKey: .autoMatchWeightStyle)
-                ?? d.autoMatchWeightStyle,
-            fontLigatures: c.decodeIfPresent(FontLigatures.self, forKey: .fontLigatures) ?? d.fontLigatures,
-            fontLigaturesAlphabet: c.decodeIfPresent(Bool.self, forKey: .fontLigaturesAlphabet)
-                ?? d.fontLigaturesAlphabet,
-            fontBold: c.decodeIfPresent(FontStyleMode.self, forKey: .fontBold) ?? d.fontBold,
-            fontItalic: c.decodeIfPresent(FontStyleMode.self, forKey: .fontItalic) ?? d.fontItalic,
-            fontBlending: c.decodeIfPresent(FontBlending.self, forKey: .fontBlending) ?? d.fontBlending,
-            lineHeight: c.decodeIfPresent(LineHeightMode.self, forKey: .lineHeight) ?? d.lineHeight,
-        )
+    /// The dual-typed `terminal.line-height` row: a float multiplier if the user typed one, else the
+    /// named stop. An unrecognised token cannot occur (the row validates its own options), so the
+    /// last resort is ``LineHeightMode/default`` rather than a trap.
+    private static func lineHeight(_ config: AppConfig) -> LineHeightMode {
+        if let multiplier = config.optionalDouble("terminal.line-height") {
+            return .custom(multiplier)
+        }
+        switch config.text("terminal.line-height") {
+        case "compact": return .compact
+        case "loose": return .loose
+        default: return .default
+        }
     }
 }

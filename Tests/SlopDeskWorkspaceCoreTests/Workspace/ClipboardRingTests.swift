@@ -46,12 +46,10 @@ final class ClipboardRingTests: XCTestCase {
 
     func testRecordClipRespectsTheHistoryToggle() {
         let store = makeStore()
-        let key = SettingsKey.recordClipboardHistory
-        SettingsKey.store.set(false, forKey: key)
-        defer { SettingsKey.store.removeObject(forKey: key) } // restore default (ON) for other tests
+        stateSetting("general.record-clipboard-history", false)
         store.recordClip("a copied secret")
         XCTAssertTrue(store.clipboardRing.isEmpty, "recording disabled → nothing is retained")
-        SettingsKey.store.set(true, forKey: key)
+        stateSetting("general.record-clipboard-history", true)
         store.recordClip("ok")
         XCTAssertEqual(store.clipboardRing, ["ok"], "re-enabling resumes recording")
     }
@@ -77,9 +75,7 @@ final class ClipboardRingTests: XCTestCase {
     /// The privacy toggle still owns the ring: a live read pastes, and retains nothing.
     func testLiveClipboardReadRespectsTheHistoryToggle() {
         let store = makeStore()
-        let key = SettingsKey.recordClipboardHistory
-        SettingsKey.store.set(false, forKey: key)
-        defer { SettingsKey.store.removeObject(forKey: key) }
+        stateSetting("general.record-clipboard-history", false)
         store.clipboardTextProvider = { "a copied secret" }
         XCTAssertEqual(store.currentLocalClipboard(), "a copied secret", "the paste still works")
         XCTAssertTrue(store.clipboardRing.isEmpty, "recording disabled → the read retains nothing")

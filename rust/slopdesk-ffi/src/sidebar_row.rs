@@ -181,7 +181,7 @@ pub unsafe extern "C" fn slopdesk_ws_sidebar_row_command_line(
 /// count × [u8 entry code]     // the kind in the high nibble, the member in the low one
 /// ```
 ///
-/// A byte per entry rather than a record per entry: the whole menu is at most eleven of them and a
+/// A byte per entry rather than a record per entry: the whole menu is seven of them and a
 /// caller walks the list once, so a crossing per row of a context menu opening under a finger is
 /// the cost the shape exists to avoid.
 ///
@@ -192,22 +192,18 @@ pub unsafe extern "C" fn slopdesk_ws_sidebar_row_command_line(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's buffer"
 )]
-pub unsafe extern "C" fn slopdesk_ws_sidebar_row_menu(
-    prevent_sleep_offered: bool,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    let entries = sidebar_row::menu(prevent_sleep_offered);
+pub unsafe extern "C" fn slopdesk_ws_sidebar_row_menu(out: *mut c_uchar, cap: usize) -> usize {
+    let entries = sidebar_row::menu();
     let mut answer = saturating_u32(entries.len()).to_be_bytes().to_vec();
     answer.extend(entries.iter().map(|entry| entry.code()));
     // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
     unsafe { deliver(&answer, out, cap) }
 }
 
-/// Every menu member's title, in one delivery — the two verbs, then the six switches.
+/// Every menu member's title, in one delivery — the two verbs, then the three switches.
 ///
 /// ```text
-/// 8 × [u32 length][UTF-8 bytes]   // `Verb::ALL` then `Switch::ALL`, each in its own order
+/// 5 × [u32 length][UTF-8 bytes]   // `Verb::ALL` then `Switch::ALL`, each in its own order
 /// ```
 ///
 /// One delivery rather than a lookup per entry code, because a menu is built whole.
@@ -497,17 +493,15 @@ mod tests {
 
     #[test]
     fn the_menu_crosses_as_the_codes_the_rule_writes() {
-        for offered in [false, true] {
-            let blob = delivered(|out, cap| {
-                // SAFETY: `out` is a live local for the call.
-                unsafe { slopdesk_ws_sidebar_row_menu(offered, out, cap) }
-            });
-            let count = u32::from_be_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
-            let expected = sidebar_row::menu(offered);
-            assert_eq!(count, expected.len());
-            let codes: Vec<u8> = expected.iter().map(|entry| entry.code()).collect();
-            assert_eq!(blob[4..], codes[..], "offered {offered}");
-        }
+        let blob = delivered(|out, cap| {
+            // SAFETY: `out` is a live local for the call.
+            unsafe { slopdesk_ws_sidebar_row_menu(out, cap) }
+        });
+        let count = u32::from_be_bytes([blob[0], blob[1], blob[2], blob[3]]) as usize;
+        let expected = sidebar_row::menu();
+        assert_eq!(count, expected.len());
+        let codes: Vec<u8> = expected.iter().map(|entry| entry.code()).collect();
+        assert_eq!(blob[4..], codes[..]);
         assert_eq!(slopdesk_ws_sidebar_row_separator_code(), Entry::Separator.code());
     }
 

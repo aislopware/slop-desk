@@ -572,12 +572,30 @@ mod tests {
     /// An implementation that never writes the needle hangs here rather than failing, which is the
     /// bargain the polls below make too: a deadline that a loaded machine can exhaust is a suite
     /// that goes red for being busy.
+    ///
+    /// `Interrupted` is RESUMED for the same reason. A blocking read on the master is exactly the
+    /// syscall a signal lands in the middle of, and `std`'s `Read for File` hands `EINTR` back
+    /// rather than retrying it — so a suite busy enough to be signalled read a scheduling artefact
+    /// as an empty transcript. Only a real end of stream ends the loop without the needle.
+    ///
+    /// The end it stopped at is APPENDED to what it collected. A caller's assertion prints this
+    /// string, and `""` names no cause at all — which is precisely the shape a flake arrives in.
     fn drain_until(file: &mut std::fs::File, needle: &str) -> String {
         let mut text = String::new();
         let mut buffer = [0_u8; 256];
         loop {
             match file.read(&mut buffer) {
-                Ok(0) | Err(_) => return text,
+                Err(why) if why.kind() == std::io::ErrorKind::Interrupted => {},
+                Ok(0) => {
+                    text.push_str("\n[master read: end of stream]");
+                    return text;
+                },
+                Err(why) => {
+                    text.push_str("\n[master read: ");
+                    text.push_str(&why.to_string());
+                    text.push(']');
+                    return text;
+                },
                 Ok(got) => {
                     text.push_str(&String::from_utf8_lossy(buffer.get(..got).unwrap()));
                     if text.contains(needle) {

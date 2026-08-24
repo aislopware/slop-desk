@@ -1,5 +1,6 @@
 import CoreGraphics
 import SlopDeskTerminal
+import SlopDeskTestSupport
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
@@ -13,18 +14,6 @@ final class WindowSizeMathTests: XCTestCase {
 
     /// A roomy display so the screen clamp is a no-op unless a test deliberately oversizes the content.
     private let bigScreen = CGRect(x: 0, y: 0, width: 5000, height: 5000)
-
-    private let windowKeys = [
-        SettingsKey.windowSizeKey,
-        SettingsKey.windowColsKey,
-        SettingsKey.windowRowsKey,
-        SettingsKey.windowWidthPxKey,
-        SettingsKey.windowHeightPxKey,
-        SettingsKey.windowSavedFrameKey,
-    ]
-
-    override func setUp() { windowKeys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
-    override func tearDown() { windowKeys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
 
     // MARK: gridContentSize
 
@@ -285,43 +274,37 @@ final class WindowSizeMathTests: XCTestCase {
         XCTAssertNil(WindowSizeMode(rawValue: "garbage-from-a-future-version"))
     }
 
-    /// The new `Defaults.Keys` read their declared defaults when unset (`.remember`, 80, 24, 1000, 600),
-    /// round-trip a written value, and a bogus persisted raw repairs to `.remember` (the
-    /// `Defaults.PreferRawRepresentable` bridge) rather than trapping. Read through the public ``SettingsKey``
-    /// accessors + the raw `UserDefaults` the `@Default(.key)` views bind (the file's no-`import Defaults`
-    /// convention).
-    func testWindowSizeDefaultsRoundTripAndRepair() {
-        // Defaults when unset.
+    /// The `window.*` rows read their declared defaults on a machine with no config file (`.remember`, 80,
+    /// 24, 1000, 600), resolve a stated value, and repair a token no case spells to `.remember` rather than
+    /// trapping.
+    func testWindowSizeDefaultsResolveAndRepair() {
+        stateCompiledDefaults()
         XCTAssertEqual(SettingsKey.windowSize, .remember)
         XCTAssertEqual(SettingsKey.windowCols, 80)
         XCTAssertEqual(SettingsKey.windowRows, 24)
         XCTAssertEqual(SettingsKey.windowWidthPx, 1000)
         XCTAssertEqual(SettingsKey.windowHeightPx, 600)
-        // Round-trip written values from their persisted form.
-        SettingsKey.store.set("grid", forKey: SettingsKey.windowSizeKey)
-        SettingsKey.store.set(120, forKey: SettingsKey.windowColsKey)
-        SettingsKey.store.set(40, forKey: SettingsKey.windowRowsKey)
+        // The stated file's answers.
+        stateSetting("window.size", "grid")
+        stateSetting("window.cols", 120)
+        stateSetting("window.rows", 40)
         XCTAssertEqual(SettingsKey.windowSize, .grid)
         XCTAssertEqual(SettingsKey.windowCols, 120)
         XCTAssertEqual(SettingsKey.windowRows, 40)
-        // A bogus persisted raw repairs to the default rather than trapping.
-        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.windowSizeKey)
-        XCTAssertEqual(SettingsKey.windowSize, .remember, "an invalid raw value repairs to remember")
+        // An unknown token repairs to the default rather than trapping.
+        stateSetting("window.size", "garbage-from-a-future-version")
+        XCTAssertEqual(SettingsKey.windowSize, .remember, "an unknown token repairs to remember")
     }
 
-    /// The `remember`-mode saved-frame descriptor: key string pinned (the `window.*` namespace), default
-    /// empty when unset (a fresh install keeps the scene's `.defaultSize`), and the settable
-    /// ``SettingsKey/savedWindowFrame`` accessor round-trips through the persisted store — the headless
-    /// half of the frame persistence; the `NSWindow` glue (`applyRememberedFrame`) is GUI-verified only.
-    func testSavedWindowFrameKeyDefaultAndRoundTrip() {
-        XCTAssertEqual(SettingsKey.windowSavedFrameKey, "window.savedFrame")
+    /// The `remember`-mode saved frame is STATE, not a setting — the app wrote it, so it stays in
+    /// `Defaults` while every `window.*` preference above moved to the file. Default empty when unset (a
+    /// fresh install keeps the scene's `.defaultSize`), and the accessor round-trips: the headless half of
+    /// the frame persistence; the `NSWindow` glue (`applyRememberedFrame`) is GUI-verified only.
+    func testSavedWindowFrameDefaultsEmptyAndRoundTrips() {
+        SettingsKey.store.removeObject(forKey: SettingsKey.windowSavedFrameKey)
         XCTAssertEqual(SettingsKey.savedWindowFrame, "", "unset → empty (no saved frame)")
         SettingsKey.savedWindowFrame = "620 355 1080 720 0 0 1800 1130 "
         XCTAssertEqual(SettingsKey.savedWindowFrame, "620 355 1080 720 0 0 1800 1130 ")
-        XCTAssertEqual(
-            SettingsKey.store.string(forKey: SettingsKey.windowSavedFrameKey),
-            "620 355 1080 720 0 0 1800 1130 ",
-            "the setter writes the persisted store the @Default views bind",
-        )
+        SettingsKey.store.removeObject(forKey: SettingsKey.windowSavedFrameKey)
     }
 }

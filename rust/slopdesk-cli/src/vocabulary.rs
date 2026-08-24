@@ -62,8 +62,8 @@ impl Group {
 
 /// One documented way to invoke a subcommand, with the one-line summary that follows it.
 ///
-/// A subcommand may have several: `config` is three local forms and five app-driving ones, and they
-/// print in different sections because they need different things to be running.
+/// A subcommand may have several: `session` drives the running app several ways, `config` reads a
+/// file six, and they print in different sections because they need different things to be running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Form {
     /// Where this form prints, and what it needs.
@@ -201,37 +201,32 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
             Form {
                 group: Group::Local,
                 invocation: "config path",
-                summary: "Print the resolved keybind config-file path.",
+                summary: "Print the resolved config-file path.",
             },
             Form {
                 group: Group::Local,
                 invocation: "config edit",
-                summary: "Open the keybind config file in $EDITOR.",
+                summary: "Open the config file in $EDITOR.",
             },
             Form {
                 group: Group::Local,
                 invocation: "config validate",
-                summary: "Check the keybind config file's syntax.",
+                summary: "Report every key the config file gets wrong.",
             },
             Form {
-                group: Group::App,
+                group: Group::Local,
+                invocation: "config schema",
+                summary: "Print the JSON Schema for the config file.",
+            },
+            Form {
+                group: Group::Local,
+                invocation: "config show",
+                summary: "Print every setting as resolved, defaults included.",
+            },
+            Form {
+                group: Group::Local,
                 invocation: "config get <key>",
-                summary: "Read a config key (running app).",
-            },
-            Form {
-                group: Group::App,
-                invocation: "config set <key> <value> [--reload]",
-                summary: "Write a config key (live + persisted).",
-            },
-            Form {
-                group: Group::App,
-                invocation: "config unset <key>",
-                summary: "Remove a config key (-y to confirm).",
-            },
-            Form {
-                group: Group::App,
-                invocation: "config show | config reload",
-                summary: "Dump / broadcast-reload the running config.",
+                summary: "Print one resolved setting.",
             },
         ],
     },
@@ -245,14 +240,9 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
                 summary: "List fonts.",
             },
             Form {
-                group: Group::App,
-                invocation: "font apply \"<name>\"",
-                summary: "Set the terminal font family (running app).",
-            },
-            Form {
-                group: Group::App,
-                invocation: "font import <path> [--apply]",
-                summary: "Install a font into ~/Library/Fonts (optionally apply).",
+                group: Group::Local,
+                invocation: "font import <path>",
+                summary: "Install a font into ~/Library/Fonts and print its family name.",
             },
         ],
     },
@@ -514,14 +504,13 @@ pub fn usage(program: &str) -> String {
     out
 }
 
-/// The `config` split, which is the one place in this CLI where two unrelated stores wear the same
-/// verb: five forms talk to the running app and three talk to a file on disk. Prose rather than a
-/// table row because it is about the RELATIONSHIP between rows.
+/// Why no `config set`. Prose rather than a table row because it is about a row that is ABSENT,
+/// and an absent row is exactly what a user goes looking for a note about.
 const CONFIG_NOTE: &str = "\
-config: get/set/unset/show/reload target the LIVE running-app store (app keys like
-font-size/theme, over the socket). path/edit/validate target the on-disk KEYBIND config
-file: the app reads only its `keybind = <chord>:<action>` lines at launch — other keys in
-that file are ignored, and `config validate` flags them rather than calling them valid.
+config: the file is the truth. Every form here READS it — there is no `set` and no
+`unset`, because a setting written by a program is one the user cannot see in their own
+file. `show` prints what the app resolved (every key, defaults included), `get` prints
+one of them, and `edit` opens the file that decides.
 ";
 
 /// One `  <invocation>    <summary>` entry, wrapped into [`SUMMARY_COLUMN`].

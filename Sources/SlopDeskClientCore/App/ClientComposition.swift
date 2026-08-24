@@ -97,12 +97,10 @@ package final class ClientComposition {
     /// The client-side Folders frecency, backing Open Quickly's Folders pill. Owned here because the
     /// coordinator holds it WEAKLY.
     package let folders: FolderFrecencyStore
-    /// The Agents settings-card model (install / uninstall / status of the Claude Code host hooks).
-    package let agentHooks: AgentHooksController
+    /// Puts the Claude Code host hooks on, without asking, on every connection.
+    package let agentHooks: AgentHookEnforcer
     /// The sidebar-collapse + window-pin flags the toolbar, menu and palette all drive.
     package let chrome: WorkspaceChromeState
-    /// The PURE first-launch gating model (which steps this platform shows, present-once).
-    package let firstLaunch = FirstLaunchModel()
     /// The per-host shared-connection pool. Retained here because the store's session factory and the
     /// workspace-document channel both close over it.
     package let muxRegistry: ConnectionRegistry
@@ -136,10 +134,9 @@ package final class ClientComposition {
         deviceClass: VideoDeviceClass,
         env: [String: String] = WorkspaceStore.automationInputs(),
     ) {
-        // Build the GUI Settings store FIRST so its apply paths run before the video pipeline / any
-        // `static let` env flag is forced (folds persisted prefs into `EnvConfig.overlay`).
+        // Build the preferences store FIRST so its apply paths run before the video pipeline / any
+        // `static let` env flag is forced (folds the config file into `EnvConfig.overlay`).
         let preferences = PreferencesStore()
-        Self.foldConfigKeybindings(into: preferences)
         self.preferences = preferences
 
         // Automation runs against the real Application Support dir; every persistence handle is nil
@@ -235,7 +232,14 @@ package final class ClientComposition {
         // disconnected/failed/unreachable — the leaf's connect-on-appear `.task` never re-fires under
         // keep-all-mounted, so without this fan-out a restored pane that gave up while the host was down
         // stays a dead, blank terminal behind a green pill until a manual per-pane Reconnect.
-        connection.onConnectionEstablished = { [weak store] in store?.handleConnectionEstablished() }
+        // …and enforce the Claude Code hooks on the same edge. There is no Install button any more:
+        // agent detection is what this app IS, so a host without the hooks is a host with half the
+        // product dark. It runs on EVERY establish, not once, because the host on the other end of the
+        // next connection is not necessarily the one from the last.
+        connection.onConnectionEstablished = { [weak store, weak agentHooks = agentHooks] in
+            store?.handleConnectionEstablished()
+            Task { await agentHooks?.enforce() }
+        }
         // Host identity: the titlebar speaks the host's NAME even when the user connected by IP. The
         // resolver asks the host itself over the metadata RPC (verb 14) through whichever pane carries a
         // live channel — resolved at CALL time, so the fetcher survives pane churn/reconnects.
@@ -431,49 +435,25 @@ package final class ClientComposition {
 
     // MARK: - Launch facts
 
-    /// The Agents settings-card model. Its seams resolve the active session's FIRST connected pane
-    /// metadata façade at CALL time (not at construction — no pane is connected yet). The card is
+    /// The Claude Code hook enforcer. Its seams resolve the active session's FIRST connected pane
+    /// metadata façade at CALL time (not at construction — no pane is connected yet). The hooks are
     /// host-global but `MetadataClient` is one-per-pane, so any live channel suffices; with no connected
-    /// pane the status seam returns `nil` and the card lands on `.disconnected`, never a dead button.
-    private static func makeAgentHooks(store: WorkspaceStore) -> AgentHooksController {
-        AgentHooksController(
+    /// pane the status seam returns `nil` and the pass concludes `.unreachable`, to be retried on the
+    /// next connection.
+    ///
+    /// There is no uninstall seam. Nothing in the app removes the hooks — that decision lives on the
+    /// host, next to the file it edits.
+    private static func makeAgentHooks(store: WorkspaceStore) -> AgentHookEnforcer {
+        AgentHookEnforcer(
             install: { [weak store] in
                 guard let store, let client = store.firstConnectedMetadataClient else { return false }
                 return await client.installAgentHooks()
-            },
-            uninstall: { [weak store] in
-                guard let store, let client = store.firstConnectedMetadataClient else { return false }
-                return await client.uninstallAgentHooks()
             },
             refreshStatus: { [weak store] in
                 guard let store, let client = store.firstConnectedMetadataClient else { return nil }
                 return await client.agentHookStatus()
             },
         )
-    }
-
-    /// Folds the `~/.config/slopdesk/config.toml` keybind lines into the live keybindings.
-    ///
-    /// Setting `keybindings` republishes the merged model to `WorkspaceBindingRegistry.activeOverrides`
-    /// via the store's `didSet`, which the dispatcher reads BEFORE the action table. The `text:` / `csi:`
-    /// / `esc:` / `unbind:` directives need no registry and fold inside the loader; the NAMED /
-    /// parameterized directives (`cmd+t:new_tab`, `cmd+1:goto_tab:1`) resolve HERE — the loader lives in
-    /// `SlopDeskVideoProtocol`, which must not import the registry, so this layer supplies the action-name
-    /// → bindingID table. An unknown / out-of-range name resolves to `nil` and the line is dropped
-    /// (validate-then-drop, no trap). A missing/broken file is a no-op, so a fresh install is identical.
-    private static func foldConfigKeybindings(into preferences: PreferencesStore) {
-        guard let configURL = KeybindConfigLoader.defaultConfigURL() else { return }
-        let merged = KeybindConfigLoader.loadFile(
-            at: configURL,
-            into: preferences.keybindings,
-            resolveNamedBinding: { named in
-                guard let bindingID = WorkspaceBindingRegistry.bindingID(
-                    forConfigName: named.id, arg: named.arg,
-                ) else { return nil }
-                return (bindingID: bindingID, chord: named.chord)
-            },
-        )
-        if merged != preferences.keybindings { preferences.keybindings = merged }
     }
 
     /// Promotes every `SLOPDESK_<KEY>=<VALUE>` launch argument into the process environment via `setenv`.
