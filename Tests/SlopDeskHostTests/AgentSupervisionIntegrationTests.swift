@@ -184,32 +184,15 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
             cmd: nil, cwd: nil, env: sandboxHomeEnv(), rows: 24, cols: 80,
         )
 
-        // A faithful mirror of the daemon's PreventSleepDriver: insert on "working", remove on anything
-        // else; `anyWorking` is what gates the IOPMAssertion (assert iff non-empty).
-        final class WorkingSet: @unchecked Sendable {
-            private let lock = NSLock()
-            private var working: Set<String> = []
-            func note(_ paneId: String, _ state: String) {
-                lock.lock()
-                defer { lock.unlock() }
-                if state == "working" { working.insert(paneId) } else { working.remove(paneId) }
-            }
-
-            func contains(_ paneId: String) -> Bool {
-                lock.lock()
-                defer { lock.unlock() }
-                return working.contains(paneId)
-            }
-
-            var anyWorking: Bool {
-                lock.lock()
-                defer { lock.unlock() }
-                return !working.isEmpty
-            }
-        }
-        let set = WorkingSet()
+        // The REAL driver, not a mirror of it: `PreventSleepDriver` is a face over
+        // `slopdesk_prevent_sleep_*`, so the set, the opt-in rule and the `IOPMAssertion` are all one
+        // door away and `isAsserted` is the assertion's own state. One pane makes "tracked" and
+        // "asserted" the same question, which is why this reads the flag rather than the set.
+        let driver = PreventSleepDriver(enabled: true)
         let obsID = UUID()
-        server.registerAgentStatusObserver(id: obsID) { pid, state, _, _, _ in set.note(pid, state) }
+        server.registerAgentStatusObserver(id: obsID) { pid, state, _, _, _ in
+            driver.note(paneId: pid, working: state == "working")
+        }
         defer { server.removeAgentStatusObserver(id: obsID) }
 
         guard let session = server.lookupPaneForControl(paneId: paneId) else {
@@ -218,19 +201,18 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
         }
         // The agent enters a turn → the driver would now hold the assertion.
         session.reportAgentStatusForControl(state: "working", message: nil)
-        for _ in 0..<40 where !set.contains(paneId) { try? await Task.sleep(nanoseconds: 50_000_000) }
-        XCTAssertTrue(set.contains(paneId), "precondition: the working pane is tracked (assertion held)")
+        for _ in 0..<40 where !driver.isAsserted { try? await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertTrue(driver.isAsserted, "precondition: the working pane is tracked (assertion held)")
 
         // Close the pane WHILE it is working (tab close / link drop / ctl kill all reach the same fan).
         XCTAssertTrue(server.killPaneForControl(paneId: paneId), "the working pane is found + killed")
 
         // The teardown fan must clear the pane → the working set empties → the assertion releases.
-        for _ in 0..<40 where set.contains(paneId) { try? await Task.sleep(nanoseconds: 50_000_000) }
+        for _ in 0..<40 where driver.isAsserted { try? await Task.sleep(nanoseconds: 50_000_000) }
         XCTAssertFalse(
-            set.contains(paneId),
-            "teardown fans a final non-working status; the dead pane is pruned from the working set",
+            driver.isAsserted,
+            "teardown fans a final non-working status; the dead pane is pruned and the IOPMAssertion releases",
         )
-        XCTAssertFalse(set.anyWorking, "no pane remains working ⇒ the prevent-sleep IOPMAssertion releases")
     }
 
     /// A freshly-spawned pane reports a state in the closed supervision set (a live pane with no

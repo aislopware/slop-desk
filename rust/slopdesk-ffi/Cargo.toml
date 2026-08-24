@@ -134,6 +134,10 @@ slopdesk-apple-cursor = { path = "../slopdesk-apple-cursor" }
 # Gated with the rest of the family: `AXUIElement` is a macOS-only API, and iOS has no window it
 # would name.
 slopdesk-apple-ax = { path = "../slopdesk-apple-ax" }
+# The two sleep assertions — IOKit power management, through `objc2`. Gated with the rest of the
+# family: `IOPMAssertion` is macOS-only, and a phone that stopped its own screen from sleeping
+# because a pane was busy would be a bug rather than a feature.
+slopdesk-apple-power = { path = "../slopdesk-apple-power" }
 # The foreground doors' probe half. Gated for the same reason `slopdesk-git` is, and one more: this
 # crate is otherwise linked by the iOS app, and `slopdesk-posix` exists to stay tiny for a daemon —
 # an ungated edge would drag `fork`/`openpty` into a slice that has no use for either.

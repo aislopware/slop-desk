@@ -31,7 +31,7 @@ use core::ffi::c_uchar;
 
 use slopdesk_agent::{
     AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeStatus,
-    ClaudeStatusMachine, Emission, NotificationKind, PaneDetector, attention, badge, sleep,
+    ClaudeStatusMachine, Emission, NotificationKind, PaneDetector, attention, badge,
 };
 
 use crate::{borrow, deliver, push_text, records_of, saturating_u32};
@@ -1598,18 +1598,12 @@ pub const extern "C" fn slopdesk_agent_dissent_seconds(index: c_uchar) -> f64 {
 // `slopdesk_pty_foreground_agent` in `crate::foreground`. N+1 boundary crossings per poll became
 // one, and the resolver trampoline became a direct call to `realpath_basename`.
 
-/// Whether the host should be holding a system-sleep assertion right now.
-///
-/// The whole state, not an event: the daemon asks on every fold and its create⇄release stays
-/// balanced against the answer.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_agent_should_prevent_sleep(any_agent_working: bool, enabled: bool) -> bool {
-    sleep::should_assert(any_agent_working, enabled)
-}
+// The prevent-sleep POLICY has no door of its own any more, for the reason the foreground job has
+// none: asking it separately meant Swift held the working-pane set and the `IOPMAssertion` beside
+// it, and applied a verdict computed against a set another thread could already have moved. Both
+// live behind one handle now — `crate::power`, whose `_note` folds the set AND drives the assertion
+// in one statement. `slopdesk_agent::sleep::should_assert` is still the rule; it is simply reached
+// from the fold that owns the set rather than from across the boundary.
 
 #[cfg(test)]
 #[expect(

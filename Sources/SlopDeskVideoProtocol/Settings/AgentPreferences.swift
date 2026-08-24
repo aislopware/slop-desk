@@ -13,7 +13,7 @@
 public struct AgentPreferences: Codable, Sendable, Equatable {
     /// Hold a system-sleep assertion while ANY agent is processing (the "Prevent Sleep
     /// While Processing" toggle) → `SLOPDESK_AGENT_PREVENT_SLEEP` (default-OFF host gate, `== "1"`). Host-LOCAL
-    /// policy: the daemon holds the `IOPMAssertion` (``PreventSleepAssertion``) driven by the `claudeStatus
+    /// policy: the daemon holds the `IOPMAssertion` (`slopdesk-apple-power`) driven by the `claudeStatus
     /// .working` aggregate it already computes, so it needs no live wire verb — it rides this sidecar like the
     /// other two flags (surfaced with the `.reconnect` timing chip). `nil` ⇒ unset (the daemon default-OFF).
     public var preventSleep: Bool?

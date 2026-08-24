@@ -249,7 +249,7 @@ public enum HostEnvironment {
     /// ("Prevent Sleep While Processing"). Default idiom = DEFAULT-OFF via `env[key] == "1"` (like
     /// ``agentControlEnvKey``): blocking system sleep is not something to enable silently. The CLIENT toggle is
     /// the ``AgentPreferences/preventSleep`` field, shipped via the `video-prefs.json` sidecar (reconnect-
-    /// tagged); the daemon reads this gate at launch and, when ON, drives ``PreventSleepAssertion`` off the
+    /// tagged); the daemon reads this gate at launch and, when ON, drives ``PreventSleepDriver`` off the
     /// `claudeStatus .working` aggregate it already computes.
     public static let agentPreventSleepEnvKey = "SLOPDESK_AGENT_PREVENT_SLEEP"
 

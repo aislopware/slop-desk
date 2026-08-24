@@ -69,6 +69,11 @@
 //!   side: sizing the budget to the pixels actually encoded, answering a negative acknowledgement
 //!   from a bounded send history, and the ladders for a capture or a virtual display lost out from
 //!   under a live session.
+//! - [`display_wake`] — how many desktop streams are live, and therefore whether the host's display
+//!   assertion should be held. LINKED, through `slopdesk-ffi`'s `power`, which drives
+//!   `slopdesk-apple-power`'s `SleepAssertion` off it: the fold is here because clamping an
+//!   unbalanced release is a rule, and the `IOPMAssertion` is there because holding one is an
+//!   effect.
 //! - [`network_estimate`] / [`congestion`] — the control loop over the link itself: the clock-skew-
 //!   free fold of the client's report, and the additive-increase, multiplicative-decrease law whose
 //!   every stability rule was bought with a measurement.
@@ -178,6 +183,7 @@ pub mod cursor_overlay;
 pub mod cursor_sampling;
 pub mod decode_admission;
 pub mod decoder_state;
+pub mod display_wake;
 pub mod encoder_ceiling;
 pub mod encoder_config;
 pub mod encoder_state;

@@ -161,19 +161,16 @@ server.onLog = log
 
 // Hold a system-sleep assertion while ANY agent is processing. DEFAULT-OFF — only
 // `SLOPDESK_AGENT_PREVENT_SLEEP=1` (the client `preventSleep` toggle, via the video-prefs.json sidecar)
-// enables it. macOS-host-only: the `IOPMAssertion` glue (`PreventSleepAssertion`) lives behind `#if
-// os(macOS)`. The driver aggregates each pane's `claudeStatus` transition (the existing P1 fan-out) into a
-// `.working` set and asks the pure `PreventSleepPolicy` whether to hold the assertion — asserting on the
-// first working pane, releasing when none remain (strictly balanced, so a quiet host always sleeps).
+// enables it. macOS-host-only: the `IOPMAssertion` is `slopdesk-apple-power`'s, reached through the
+// `slopdesk_prevent_sleep_*` doors, which are declared inside the header's macOS-only region.
 #if os(macOS)
-// The driver (`PreventSleepDriver`, in SlopDeskHost) guards the working-pane set AND the balanced
-// `IOPMAssertion` apply under ONE lock, so the agent-status fan-out (which calls observers OUTSIDE its own
-// lock, from BOTH the foreground-poll thread and the mux teardown fan) can never apply a stale state that
-// leaks the assertion. The macOS-only `PreventSleepAssertion` is injected as its `PreventSleepAsserting`
-// sink; the driver asks the pure `PreventSleepPolicy` whether to hold the assertion each edge.
+// `PreventSleepDriver` is a face over one handle that owns BOTH the working-pane set and the balanced
+// assertion, so the agent-status fan-out — which calls observers OUTSIDE its own lock, from BOTH the
+// foreground-poll thread and the mux teardown fan — cannot apply a state computed against a set that has
+// since moved. Asserting on the first working pane, releasing when none remain, so a quiet host sleeps.
 let preventSleepEnabled = HostEnvironment.agentPreventSleepEnabled()
 if preventSleepEnabled {
-    let preventSleepDriver = PreventSleepDriver(enabled: preventSleepEnabled, asserter: PreventSleepAssertion())
+    let preventSleepDriver = PreventSleepDriver(enabled: preventSleepEnabled)
     server.observeAgentStatusForPreventSleep { paneId, state in
         // "working" is the ctl supervision string for `ClaudeStatus.working` (see `AgentControlState`).
         preventSleepDriver.note(paneId: paneId, working: state == "working")

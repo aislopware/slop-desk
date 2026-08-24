@@ -1,0 +1,128 @@
+# `slopdesk-apple-power` — IOKit **power management**, the assertion side.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# One thing: holding an `IOPMAssertion` and letting go of it, strictly balanced. The two assertion
+# TYPES this repository raises — `PreventUserIdleSystemSleep` while an agent is working, and
+# `PreventUserIdleDisplaySleep` while a desktop stream is attached — are a parameter rather than two
+# wrappers, because the create/release contract they share is the whole of what this crate knows.
+#
+# WHO should be kept awake is not here. That is two folds, each in the crate that owns the question:
+# `slopdesk_agent::sleep` aggregates the working panes, `slopdesk_video::display_wake`
+# refcounts the streaming sessions. Both are `forbid(unsafe_code)`.
+#
+# ## Why this crate exists NOW and did not before
+# `docs/57` deferred it on a measured claim — that `objc2-io-kit` had no `IOPMLib` binding, so the
+# only route was a hand-declared `extern "C"` block. That claim is no longer true: 0.3.2 ships a
+# `pwr_mgt` feature (on by default) that generates `IOPMAssertionCreateWithName`,
+# `IOPMAssertionRelease` and `IOPMAssertionID` from the SDK header, which is exactly the condition
+# the deferral named as its own end. The declaration comes from Apple's metadata, not from a
+# signature someone typed.
+#
+# ## The `unsafe` in this crate
+# ONE block. The release is generated SAFE — it takes an id by value and dereferences nothing — so
+# only the create, which reports its new id through an out-pointer, needs one, and it lends a fully
+# initialised local. There is no `from_raw`, no transmute and no raw-pointer arithmetic, so the two
+# Core Foundation admissions §2 grants this family are unspent here.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-power"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "IOKit power-management assertions for slopdesk — keeping the Mac or its display awake"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_power"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+#
+# `default-features = false` plus `pwr_mgt` is deliberate and is most of the point: the default
+# feature set of `objc2-io-kit` drags in USB, HID and the IOKit plug-in machinery, none of which this
+# crate calls and all of which would widen the framework area §2 says a crate may cover.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-io-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "pwr_mgt",
+] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CFBase",
+  "CFString",
+] }
+
+# Mirrors `slopdesk-video`'s: this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` because
+# every site sits under its own self-expiring `#[expect(unsafe_code, reason = …)]`, so an exemption
+# that stops being needed fails the build. `unsafe_op_in_unsafe_fn` is `deny` on top, per §3.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

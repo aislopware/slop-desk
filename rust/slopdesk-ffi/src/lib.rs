@@ -191,6 +191,10 @@ pub mod paste_safety;
 pub mod path_confine;
 pub mod peek_reply;
 pub mod phone_key;
+// macOS only: behind it is an `IOPMAssertion`, which is IOKit power management about the machine
+// this process runs on. A client never asks it of itself. See the module.
+#[cfg(target_os = "macos")]
+pub mod power;
 // No C door at all — a RUST-only surface, for the validation harness that writes a synthetic
 // picture and reads the decoded one back. It lives here because turning a locked plane's
 // (address, stride) into a slice is this crate's remit and no other crate's. See the module.

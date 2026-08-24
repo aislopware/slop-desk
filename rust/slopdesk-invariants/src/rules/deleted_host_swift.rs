@@ -166,7 +166,30 @@ fn engines_and_taps() -> Vec<Claim> {
 /// **The vendored-prefix walk.** The marker, the upward loop and the two paths that hang off it sit
 /// next to the binary SEARCH ORDER whose second rung they fill. Split across languages, the rung
 /// and the thing that fills it could disagree about what a checkout root even is.
+///
+/// The SPLIT below is that distinction, not a length workaround: every claim in
+/// [`folds_that_moved_to_rust`] bans a DECISION from being spelled twice, and the one in
+/// [`resources_that_moved_to_rust`] bans a system RESOURCE from being acquired on the wrong side.
+/// The two fail for different reasons and a new rule belongs in exactly one of them.
+///
+/// **The two sleep assertions.** This one is not a drift ban, and saying so is the point: an
+/// `IOPMAssertion` created in Swift would not disagree with anything — it would simply be a second
+/// create with no paired release anybody wrote, and the failure it causes has no test that turns
+/// red. A leaked `PreventUserIdleSystemSleep` keeps the Mac awake until the daemon dies, and it
+/// does NOT self-heal on the next clean transition. So the assertion is `slopdesk-apple-power`'s,
+/// held by a type that owns the only copy of the id and releases on drop, and the two folds that
+/// decide when to hold one are `slopdesk-agent`'s `sleep` and `slopdesk-video`'s `display_wake`.
+/// What is left in Swift is a lock over a handle. See `docs/57` §1 for why this crate exists now
+/// and did not before.
 fn rules_that_moved_to_rust() -> Vec<Claim> {
+    let mut claims = folds_that_moved_to_rust();
+    claims.extend(resources_that_moved_to_rust());
+    claims
+}
+
+/// The DECISIONS: each of these fails because the same rule spelled twice can answer differently,
+/// and the two answers are the bug. See [`rules_that_moved_to_rust`] for what each one is.
+fn folds_that_moved_to_rust() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -260,6 +283,23 @@ fn rules_that_moved_to_rust() -> Vec<Claim> {
     ]
 }
 
+/// The RESOURCES: acquiring one on the Swift side is not a disagreement, it is an acquisition
+/// nobody paired with a release. Nothing turns red for it — see [`rules_that_moved_to_rust`].
+fn resources_that_moved_to_rust() -> Vec<Claim> {
+    vec![Claim::NoneUnder {
+        roots: &["Sources"],
+        extensions: SWIFT,
+        pattern: r"IOPMAssertion|kIOPMAssertion|IOKit\.pwr_mgt",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "an IOPMAssertion is back in {files} — slopdesk-apple-power holds both sleep assertions, \
+                  and the two folds that decide when live in slopdesk-agent's sleep and slopdesk-video's \
+                  display_wake; a create in Swift is the leak that keeps the Mac awake",
+    }]
+}
+
 /// The two request flags hostd still sends, spelled the same way at both ends.
 ///
 /// hostd may still ASK for the shim and for the tap, and each request has to reach superd spelled
@@ -334,6 +374,10 @@ mod tests {
             (
                 "vendored",
                 "    let bin = root + \"/ThirdParty/tools/.prefix/bin\"\n",
+            ),
+            (
+                "preventsleep",
+                "    let r = IOPMAssertionCreateWithName(t, l, n, &id)\n",
             ),
         ] {
             let fixture = Fixture::new(&format!("deleted-host-{name}"));

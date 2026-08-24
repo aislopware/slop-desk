@@ -18,13 +18,15 @@
 // (NULL, 0) as the output is the supported way to ask for the length before allocating.
 //
 // THE HANDLE CONVENTION (SlopDeskReplay, SlopDeskVideoPacketizer, SlopDeskVideoReassembler,
-//                        SlopDeskHostVitalsSampler)
-//   Two things cannot cross per call: memory too big to copy, and a counter two sides would then
-//   have to agree about who advanced. A replay buffer is the first — up to 256 MiB of retained PTY
-//   output, appended per PTY chunk; the packetizer's streamSeq/frameID are the second, and the
-//   vitals sampler's CPU baseline is the same shape as the second (a snapshot the NEXT call is
-//   measured against, which is a rule rather than a number). Rust owns all of them; the caller
-//   holds an opaque token.
+//                        SlopDeskHostVitalsSampler, SlopDeskPreventSleep, SlopDeskDisplayWake)
+//   Three things cannot cross per call: memory too big to copy, a counter two sides would then
+//   have to agree about who advanced, and a SYSTEM RESOURCE that has to be let go of exactly once.
+//   A replay buffer is the first — up to 256 MiB of retained PTY output, appended per PTY chunk;
+//   the packetizer's streamSeq/frameID are the second, and the vitals sampler's CPU baseline is the
+//   same shape (a snapshot the NEXT call is measured against, which is a rule rather than a
+//   number). The two sleep drivers are the third: each owns an IOPMAssertion whose create must be
+//   balanced by exactly one release, so the id never crosses at all and _free is what lets go.
+//   Rust owns all of them; the caller holds an opaque token.
 //     * exactly one _free per _new; NULL is inert everywhere.
 //     * NO TWO CALLS ON ONE HANDLE MAY OVERLAP — the mutators take &mut, so a concurrent call is
 //       aliasing UB. The Swift owner serialises under the lock it already held.
@@ -578,9 +580,9 @@ double slopdesk_agent_dissent_seconds(uint8_t index);
 // could hand over a process group it had probed itself; both halves live in Rust now and the
 // question is asked once, as slopdesk_pty_foreground_agent below (macOS only, like the probe).
 
-// Whether the host should be holding a system-sleep assertion right now — the WHOLE state, asked on
-// every fold, so the daemon's create⇄release stays balanced against the answer rather than an edge.
-bool    slopdesk_agent_should_prevent_sleep(bool any_agent_working, bool enabled);
+// The prevent-sleep POLICY has no door here either. Asking it separately meant Swift held the
+// working-pane set and the IOPMAssertion beside it and could apply a verdict computed against a set
+// another thread had already moved; both live behind one macOS-only handle now, further down.
 
 // MARK: - The workspace document's solvers (`rust/slopdesk-workspace`)
 //
@@ -8714,6 +8716,56 @@ void slopdesk_host_vitals_reset(SlopDeskHostVitalsSampler *handle);
 bool slopdesk_host_vitals_sample(SlopDeskHostVitalsSampler *handle,
                                  const uint8_t *home, size_t home_len,
                                  uint64_t now_nanos, SlopDeskHostVitals *out);
+
+// ---- Keeping the Mac, or its screen, awake -------------------------------------------
+//
+// Two handles, one shape: each pairs the fold that decides WHO needs the machine awake
+// with the single IOPMAssertion it drives, and answers the state that fold reached. The
+// pairing is inside the handle on purpose — the Swift versions kept the set and the
+// assertion apart and made every caller hold a lock across both, and the failure that
+// slips through is one thread applying a verdict computed against a set another thread
+// has already changed, which leaves an assertion held over an empty set. That does not
+// self-heal; it keeps the Mac awake until the daemon dies.
+//
+// Handle convention as everywhere: exactly one free per new, no two calls on one handle
+// at once. Freeing RELEASES a still-held assertion, which is the teardown guarantee.
+//
+// Two of them and not one with a flag: an agent working through the night must not let
+// the MACHINE sleep, a client watching the desktop must not let the SCREEN go dark, and
+// an agent working with nobody watching should still let the screen go dark.
+
+typedef struct SlopDeskPreventSleep SlopDeskPreventSleep;
+
+// `enabled` is the SLOPDESK_AGENT_PREVENT_SLEEP opt-in, read once at launch — the
+// preference is not live-reloadable, and a hostd restart is the reload.
+SlopDeskPreventSleep *slopdesk_prevent_sleep_new(bool enabled);
+
+void slopdesk_prevent_sleep_free(SlopDeskPreventSleep *handle);
+
+// Records one pane's `.working` transition and answers whether the assertion is now
+// held. false from a handle that WANTED to assert means the system refused the create;
+// the next transition retries, which is why nothing here remembers the failure.
+bool slopdesk_prevent_sleep_note(SlopDeskPreventSleep *handle,
+                                 const uint8_t *pane, size_t pane_len, bool working);
+
+bool slopdesk_prevent_sleep_is_held(const SlopDeskPreventSleep *handle);
+
+typedef struct SlopDeskDisplayWake SlopDeskDisplayWake;
+
+SlopDeskDisplayWake *slopdesk_display_wake_new(void);
+
+void slopdesk_display_wake_free(SlopDeskDisplayWake *handle);
+
+// One more streaming desktop session; answers whether the display assertion is held.
+bool slopdesk_display_wake_acquire(SlopDeskDisplayWake *handle);
+
+// One session ended. An UNBALANCED release clamps at zero rather than underflowing —
+// a count that wrapped would hold the screen awake with no live session to release it.
+bool slopdesk_display_wake_release(SlopDeskDisplayWake *handle);
+
+// There is no `_is_held` twin here, and its absence is the rule rather than an omission: both doors
+// above already answer the state they reached, and `HostDisplayWake` reads neither. Its sibling
+// `slopdesk_prevent_sleep_is_held` exists only because hostd's supervision suite asserts on it.
 
 // ---- What is running in a pane -----------------------------------------------------
 

@@ -58,23 +58,28 @@ The caveat that matters: framework crates are **generated**, not hand-audited. A
 right as the SDK metadata it came from, which is why §3's bar asks for a leak test rather than
 trusting `CFRetained` to be correct by construction.
 
-### The one area `objc2` does not reach: IOKit power management
+### The area that was deferred, and the measurement that ended it
 
-Measured, not assumed. `objc2-io-kit` 0.3.2's features are `AppleUSBDefinitions`,
-`IOUSBHostFamilyDefinitions`, `IOUSBLib`, `USB`, `USBSpec`, `graphics`, `hid`, `hidsystem`, `usb`
-and the plumbing ones — there is **no `IOPMLib`**, so `IOPMAssertionCreateWithName` and
-`IOPMAssertionRelease` have no generated binding. The obvious substitute does not cover it either:
-`io-kit-sys` 0.5.0 (2.9M recent downloads, updated 2025-10-31) has a `src/pwr_mgt/` module, but it
-holds power-STATE constants (`kIOPMPowerOn`, `kIOPMPreventIdleSleep`, the assertion *dictionary
-keys*) and declares neither assertion function.
+IOKit power management used to be the one hole in this family, on a measured claim: that
+`objc2-io-kit` 0.3.2 shipped no `IOPMLib`, so the two sleep assertions could only be reached through
+a hand-declared `extern "C"` block — precisely the shape §1 argues against. The deferral named its
+own end condition: *"it lands when a binding appears upstream."*
 
-So the only route for the two sleep assertions is a hand-declared `extern "C"` block, which is
-precisely the shape §1 argues against, for a benefit of 154 Swift lines. **`slopdesk-apple-power` is
-therefore deferred, not planned** — it lands when either a binding appears upstream or the surface
-grows enough to pay for a build-time `bindgen` against `IOKit/pwr_mgt/IOPMLib.h`, which is the only
-version of it where the declaration comes from the SDK header rather than from a signature someone
-typed. `PreventSleepAssertion.swift` and `HostDisplayWake.swift` stay Swift until then, and that is
-a recorded exception to §4 rather than an oversight.
+**The claim was wrong, and re-measuring is what found it.** `objc2-io-kit` 0.3.2 has a `pwr_mgt`
+feature, on by DEFAULT, and it generates `IOPMAssertionCreateWithName`, `IOPMAssertionRelease` and
+`IOPMAssertionID` from the SDK header. The original reading listed the crate's USB, HID and graphics
+features and stopped before the one it was looking for. Nothing upstream changed; the audit did.
+
+So `slopdesk-apple-power` exists, and it is worth naming what the deferral bought anyway: the crate
+declares `default-features = false` and asks for `pwr_mgt` alone, because `objc2-io-kit`'s default
+set drags in USB, HID and the IOKit plug-in machinery — a framework area far wider than §2 lets one
+crate cover. `PreventSleepAssertion.swift` and `PreventSleepPolicy.swift` are DELETED, and
+`PreventSleepDriver.swift` and `HostDisplayWake.swift` shrank to what a face is: a lock over a
+handle, twice.
+
+The transferable rule: a deferral resting on a measurement is only as good as the measurement, and
+the crate index moves. Re-run the check before treating one as settled — this one bought a standing
+"that is a recorded exception to §4" for a feature flag that was there the whole time.
 
 ## 2. What a `slopdesk-apple-*` crate is
 
@@ -183,7 +188,7 @@ no-op, not a fault.`
    not a loophole — these crates run about half prose, because every `unsafe` block owes a `# Safety`
    note naming a framework rule and every door owes the reason it answers nothing rather than
    failing. A bar that counted those would be a bar on writing them down. The family as it stands:
-   `app` 67, `cgdisplay` 131, `cursor` 140, `cgwindow` 247, `cgevent` 317, `ax` 462 — the last is the
+   `app` 67, `cgdisplay` 131, `cursor` 140, `power` 141, `cgwindow` 270, `cgevent` 317, `ax` 472 — the last is the
    widest because the accessibility client API genuinely is, and splitting it would break the rule
    above it.
 5. `cargo test` runs it on macOS; on any other host every module is `#[cfg(target_os = "macos")]` and
@@ -242,7 +247,7 @@ accessor it needs, so the ownership question was answered by the binding rather 
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder` **(done)**, `VideoDecoder` **(done)** | **landed** (increments 92, 93) — costs both §2 admissions, the shim's third convention, and the family's only iOS edge |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer`'s stream **(done)** | **landed** (increment 94) — costs **neither** §2 admission |
 | `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder` | **done** — the §2 exemption above; `AudioPlaybackEngine` went to `slopdesk-audio-out` (cpal) instead |
-| `slopdesk-apple-power` | `IOKit.pwr_mgt` | `PreventSleepAssertion`, `HostDisplayWake` | **deferred** — §1 |
+| `slopdesk-apple-power` | `IOKit.pwr_mgt` | `PreventSleepAssertion`, `PreventSleepPolicy`, `HostDisplayWake`'s seams | **landed** — costs **one** `unsafe` block; the deferral was a mis-read feature list, see §1 |
 
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s
 one-implementation rule does not soften because the other language is a framework.
