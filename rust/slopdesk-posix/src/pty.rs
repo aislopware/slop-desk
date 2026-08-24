@@ -555,6 +555,50 @@ mod tests {
 
     use super::{SpawnPlan, foreground_process_group, slave_device, spawn_pty};
 
+    /// One `read` on a master returns whatever the kernel has buffered at that instant, which is
+    /// NOT the same as everything the child will ever write: the child is a separate process, so
+    /// the first read can land before `execve` has produced a byte and answer a short prefix — or
+    /// on a loaded machine, nothing at all. Asserting on it makes a scheduling race look like a
+    /// broken `argv0`. Drain instead, and let the child end the loop: the parent already dropped
+    /// the slave in `spawn_pty`, so the last close is the child's exit and the master then answers
+    /// `EIO` (macOS's EOF for a master) rather than blocking forever.
+    fn drain_until(file: &mut std::fs::File, needle: &str) -> String {
+        let mut text = String::new();
+        let mut buffer = [0_u8; 256];
+        loop {
+            match file.read(&mut buffer) {
+                Ok(0) | Err(_) => return text,
+                Ok(got) => {
+                    text.push_str(&String::from_utf8_lossy(buffer.get(..got).unwrap()));
+                    if text.contains(needle) {
+                        return text;
+                    }
+                },
+            }
+        }
+    }
+
+    /// Both terminal facts below become true only once the CHILD reaches `setsid` + `TIOCSCTTY`,
+    /// and that is a different process on a machine which — during `make quick`, or the commit
+    /// hook that runs every workspace's suite — is busy compiling. The fixed 200 × 10 ms budget
+    /// these polls used to carry read that scheduling delay as a broken contract and failed the
+    /// suite for it. Poll against a WALL-CLOCK deadline instead, generous enough that only a real
+    /// failure can exhaust it: the loop leaves the instant the answer arrives, so a budget nobody
+    /// needs costs nothing. The children sleep longer than the deadline on purpose — a child that
+    /// exited first would take the fact being polled for with it.
+    fn poll_for<T>(mut answer: impl FnMut() -> Option<T>) -> Option<T> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if let Some(value) = answer() {
+                return Some(value);
+            }
+            if std::time::Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     fn plan<'a>(executable: &'a str, arguments: &'a [String]) -> SpawnPlan<'a> {
         SpawnPlan {
             executable,
@@ -573,9 +617,7 @@ mod tests {
         let spawned = spawn_pty(&plan("/bin/echo", &arguments)).unwrap();
 
         let mut file = std::fs::File::from(spawned.master);
-        let mut buffer = [0_u8; 64];
-        let got = file.read(&mut buffer).unwrap();
-        let text = String::from_utf8_lossy(buffer.get(..got).unwrap()).into_owned();
+        let text = drain_until(&mut file, "hello superd");
         assert!(text.contains("hello superd"), "{text:?}");
 
         // Only the forking process may reap, and this test IS it.
@@ -592,9 +634,7 @@ mod tests {
         let spawned = spawn_pty(&spawn_plan).unwrap();
 
         let mut file = std::fs::File::from(spawned.master);
-        let mut buffer = [0_u8; 64];
-        let got = file.read(&mut buffer).unwrap();
-        let text = String::from_utf8_lossy(buffer.get(..got).unwrap()).into_owned();
+        let text = drain_until(&mut file, "-sh");
         assert!(text.contains("-sh"), "{text:?}");
         let _ignored = nix::sys::wait::waitpid(nix::unistd::Pid::from_raw(spawned.pid), None);
     }
@@ -603,7 +643,7 @@ mod tests {
     /// reach it — and `tcgetpgrp`, the detection signal, would return nothing useful.
     #[test]
     fn child_owns_the_terminal_so_tcgetpgrp_answers() {
-        let arguments = vec!["-c".to_owned(), "sleep 5".to_owned()];
+        let arguments = vec!["-c".to_owned(), "sleep 60".to_owned()];
         let spawned = spawn_pty(&plan("/bin/sh", &arguments)).unwrap();
         let master = spawned.master.as_raw_fd();
 
@@ -611,16 +651,15 @@ mod tests {
         // child is a separate process, so poll rather than read once. Between the fork returning
         // and the child reaching `setsid`, the master has NO foreground group and `tcgetpgrp`
         // answers 0, which is not an error and must not be read as one.
-        let mut group = 0;
-        for _attempt in 0..200 {
-            group = foreground_process_group(master).unwrap();
-            if group != 0 {
-                break;
+        let group = poll_for(|| {
+            match foreground_process_group(master).unwrap() {
+                0 => None,
+                answered => Some(answered),
             }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        });
         assert_eq!(
-            group, spawned.pid,
+            group,
+            Some(spawned.pid),
             "the child should lead its own foreground group"
         );
 
@@ -638,20 +677,17 @@ mod tests {
     /// not an error.
     #[test]
     fn the_masters_slave_device_is_what_the_child_carries_as_its_terminal() {
-        let arguments = vec!["-c".to_owned(), "sleep 5".to_owned()];
+        let arguments = vec!["-c".to_owned(), "sleep 60".to_owned()];
         let spawned = spawn_pty(&plan("/bin/sh", &arguments)).unwrap();
         let master = spawned.master.as_raw_fd();
         let device = slave_device(master).unwrap();
 
         // Same poll as above: the child has no controlling terminal until it reaches `TIOCSCTTY`.
-        let mut child_device = None;
-        for _attempt in 0..200 {
-            child_device = crate::proc::tty_and_start(spawned.pid).map(|(tty, _start)| tty);
-            if child_device.is_some_and(|tty| tty == device) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        let child_device = poll_for(|| {
+            crate::proc::tty_and_start(spawned.pid)
+                .map(|(tty, _start)| tty)
+                .filter(|tty| *tty == device)
+        });
         assert_eq!(
             child_device,
             Some(device),
