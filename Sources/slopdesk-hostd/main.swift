@@ -146,7 +146,6 @@ let ctlBinaryPath: String = {
 let server = HostServer(
     port: parsed.port,
     shellPath: parsed.shell,
-    launchMode: parsed.launchMode,
     agentDetectEnabled: agentDetectEnabled,
     agentHookListener: agentHookListener,
     agentControlEnabled: agentControlEnabled,
@@ -288,8 +287,7 @@ Task {
     // command that cannot pick the wrong process, the wrong port or the wrong flags — the ritual
     // was the last thing making a restart feel expensive, now that superd makes it cheap.
     // Best-effort: a host that cannot write it still serves every client.
-    let launchRecord = HostLaunchRecord.current(boundPort: bound)
-    if launchRecord.write(), let recordPath = HostLaunchRecord.url()?.path {
+    if let recordPath = HostLaunchRecord.publish(boundPort: bound) {
         log("launch record at \(recordPath) — `slopdesk-ops restart-hostd` restarts this exact daemon")
     }
 

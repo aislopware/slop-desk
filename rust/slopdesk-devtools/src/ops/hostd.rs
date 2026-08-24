@@ -7,7 +7,7 @@
 //! notice that `--port 0` bound something else. A restart that is technically free but manually
 //! fiddly still gets postponed, which is the behaviour this subsystem set out to change.
 //!
-//! So the daemon states its own launch — `HostLaunchRecord`, written once the REAL bound port is
+//! So the daemon states its own launch — a `LaunchRecord`, written once the REAL bound port is
 //! known — and this reads it. Nothing here parses `ps` for a flag, guesses a port or retypes an
 //! argument.
 //!
@@ -15,7 +15,11 @@
 //! `jq` stopped being a hard dependency. The shell read six fields with six `jq -r` forks and then
 //! reached for `@sh` + `eval` for the two ARRAY fields, because an environment value holding a
 //! space, a quote or a newline is not hypothetical and no other bash spelling survives one. That
-//! whole apparatus is [`serde_json`] and a `Vec<String>` here.
+//! whole apparatus is a `serde` derive now — and it is the SAME derive the daemon writes with
+//! ([`slopdesk_hostlaunch::record`]), which is the part that matters here. This module used to
+//! carry its own reader for a Swift `Codable` struct's eight fields: two spellings of one document,
+//! in two languages, where a rename on either side compiles, passes and silently breaks the
+//! restart. Reading is now the writer's own type, and the fields cannot come apart.
 //!
 //! ## The order, which is the thing that must not change
 //! Everything is read from the record UP FRONT, because hostd DELETES it on an orderly shutdown
@@ -28,13 +32,13 @@
 //!
 //! `docs/51-process-supervision.md` §9, `docs/46-gates-env-paths.md`.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
-use std::{env, fs};
 
-use serde_json::Value;
+use slopdesk_hostlaunch::record::{self, LaunchRecord};
 
-use super::{home, log_dir, say};
+use super::{log_dir, say};
 use crate::proc;
 
 /// What the caller asked for.
@@ -67,89 +71,6 @@ impl Plan {
     pub const fn is_status_only(self) -> bool {
         !self.build && !self.stop && !self.start
     }
-}
-
-/// The launch a running hostd published for itself.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Record {
-    /// The pid it had when it wrote this.
-    pub pid: i32,
-    /// The port it actually BOUND, which is not always the one it was asked for.
-    pub port: u16,
-    /// The executable the kernel ran, symlinks resolved.
-    pub binary: PathBuf,
-    /// The working directory its panes default to.
-    pub working_directory: PathBuf,
-    /// Its version, for the report.
-    pub version: String,
-    /// When it started, for the report.
-    pub started_at: String,
-    /// Its argv after the program name.
-    pub arguments: Vec<String>,
-    /// The `SLOPDESK_*` pairs it actually resolved, as `KEY=VALUE`.
-    pub environment: Vec<String>,
-}
-
-/// Read a launch record.
-///
-/// # Errors
-/// When the file is not JSON, or a field it must have is missing or of the wrong shape.
-pub fn parse_record(text: &str) -> Result<Record, String> {
-    let document: Value =
-        serde_json::from_str(text).map_err(|error| format!("launch record is not valid JSON: {error}"))?;
-    let string = |key: &str| -> Result<String, String> {
-        document
-            .get(key)
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| format!("launch record has no string `{key}`"))
-    };
-    let pid = i32::try_from(
-        document
-            .get("pid")
-            .and_then(Value::as_i64)
-            .ok_or_else(|| "launch record has no numeric `pid`".to_owned())?,
-    )
-    .map_err(|_| "launch record's `pid` is not a pid".to_owned())?;
-    let port = u16::try_from(
-        document
-            .get("port")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| "launch record has no numeric `port`".to_owned())?,
-    )
-    .map_err(|_| "launch record's `port` is not a port".to_owned())?;
-    let arguments = document
-        .get("arguments")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect()
-        })
-        .unwrap_or_default();
-    // An object, flattened to the `KEY=VALUE` pairs `env` takes. A value holding a space, a quote
-    // or a newline is carried verbatim here, which is the whole reason the shell needed `@sh`.
-    let environment = document
-        .get("environment")
-        .and_then(Value::as_object)
-        .map_or_else(Vec::new, |pairs| {
-            pairs
-                .iter()
-                .filter_map(|(key, value)| value.as_str().map(|text| format!("{key}={text}")))
-                .collect()
-        });
-    Ok(Record {
-        pid,
-        port,
-        binary: PathBuf::from(string("binary")?),
-        working_directory: PathBuf::from(string("workingDirectory")?),
-        version: string("version").unwrap_or_else(|_| "?".to_owned()),
-        started_at: string("startedAt").unwrap_or_else(|_| "?".to_owned()),
-        arguments,
-        environment,
-    })
 }
 
 /// The port the recorded argv ASKED for, in either spelling, if it named one at all.
@@ -185,13 +106,14 @@ pub fn configuration_of(binary: &Path) -> &'static str {
     }
 }
 
-/// Where the record lives, honouring the same override the daemon reads.
-fn record_path() -> PathBuf {
-    let base = env::var_os("SLOPDESK_APP_SUPPORT_DIR").map_or_else(
-        || home().join("Library/Application Support/SlopDesk"),
-        PathBuf::from,
-    );
-    base.join("hostd-launch.json")
+/// Where the record lives — the writer's own answer, not a second derivation of it.
+///
+/// `SLOPDESK_APP_SUPPORT_DIR` moves the container and this honours it for the same reason the
+/// daemon does: a test, or a second host on the same machine, gets its own record without a second
+/// name having to be invented. Asking [`record::path`] rather than rebuilding the join is what
+/// keeps the override one rule.
+fn record_path() -> Option<PathBuf> {
+    record::path()
 }
 
 /// True when a pid exists — the cheap half of the identity check.
@@ -203,8 +125,9 @@ fn pid_exists(pid: i32) -> bool {
 ///
 /// `lsof -d txt`, not `ps -o comm=`. `comm` is argv[0] as the caller typed it — usually the
 /// relative `.build/release/slopdesk-hostd` — while `txt` is the vnode the kernel executed, which
-/// is what the record holds (`HostLaunchRecord.runningExecutablePath`, symlinks resolved on both
-/// sides so `.build/release` and `.build/arm64-apple-macosx/release` are one file).
+/// is what the record holds (`slopdesk_hostlaunch::record`'s `running_executable`, symlinks
+/// resolved on both sides so `.build/release` and `.build/arm64-apple-macosx/release` are one
+/// file).
 fn running_executable(pid: i32) -> Option<String> {
     let dump = proc::ask(
         "/usr/sbin/lsof",
@@ -220,7 +143,7 @@ fn running_executable(pid: i32) -> Option<String> {
 ///
 /// Pids are recycled, so existence is not identity — signalling a reused pid is the failure mode
 /// that made `pkill` a trap in the first place.
-fn is_alive(record: &Record) -> bool {
+fn is_alive(record: &LaunchRecord) -> bool {
     if !pid_exists(record.pid) {
         return false;
     }
@@ -308,9 +231,11 @@ fn until(budget: Duration, mut condition: impl FnMut() -> bool) -> bool {
 /// reproduce, or nothing is listening afterwards.
 #[allow(clippy::too_many_lines)]
 pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
-    let path = record_path();
+    let path = record_path().ok_or_else(|| {
+        "no home directory, so there is no container a launch record could be in".to_owned()
+    })?;
     let record = match fs::read_to_string(&path) {
-        Ok(text) => Some(parse_record(&text)?),
+        Ok(text) => Some(record::parse(&text)?),
         Err(_) => None,
     };
 
@@ -447,7 +372,7 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline && bound.is_none() {
             if let Ok(text) = fs::read_to_string(&path)
-                && let Ok(fresh) = parse_record(&text)
+                && let Ok(fresh) = record::parse(&text)
                 && fresh.pid != found.pid
                 && pid_exists(fresh.pid)
             {
@@ -509,7 +434,7 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
 /// The shell's `nohup … &` inside a subshell. Here the child gets its own session — a fresh
 /// process group detached from this terminal — so a Ctrl-C at the prompt this returns to does not
 /// take the daemon with it, and its streams are the append-mode log rather than inherited pipes.
-fn spawn_detached(record: &Record, log: &Path) -> Result<(), String> {
+fn spawn_detached(record: &LaunchRecord, log: &Path) -> Result<(), String> {
     use std::process::{Command, Stdio};
 
     let out = fs::OpenOptions::new()
@@ -522,13 +447,20 @@ fn spawn_detached(record: &Record, log: &Path) -> Result<(), String> {
         .map_err(|error| format!("{}: {error}", log.display()))?;
 
     // `/usr/bin/env --` is not portable to macOS's `env`, and it is not needed: the recorded pairs
-    // are `SLOPDESK_*=…` by construction (`HostLaunchRecord.configVariables`), so none can be
-    // mistaken for an option.
+    // are `SLOPDESK_*=…` by construction (`slopdesk_hostlaunch::record`'s `config_variables`), so
+    // none can be mistaken for an option.
     let mut command = Command::new("/usr/bin/env");
     command
         .arg("-P")
         .arg("/usr/bin:/bin")
-        .args(&record.environment)
+        // Flattened to the `KEY=VALUE` pairs `env` takes. A value holding a space, a quote or a
+        // newline is carried verbatim here, which is the whole reason the shell needed `@sh`.
+        .args(
+            record
+                .environment
+                .iter()
+                .map(|(key, value)| format!("{key}={value}")),
+        )
         .arg(&record.binary)
         .args(&record.arguments)
         .current_dir(&record.working_directory)
@@ -543,38 +475,9 @@ fn spawn_detached(record: &Record, log: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    /// The record, including an environment value with a space in it — the case that made the
-    /// shell reach for `jq @sh` + `eval` and the case a naive split would corrupt.
-    #[test]
-    fn a_launch_record_reads_back_field_for_field() {
-        let text = r#"{
-          "pid": 4242,
-          "port": 7420,
-          "binary": "/repo/.build/release/slopdesk-hostd",
-          "workingDirectory": "/repo",
-          "version": "0.4.1",
-          "startedAt": "2026-08-24T00:00:00Z",
-          "arguments": ["--port", "7420", "--shell", "/bin/zsh"],
-          "environment": {"SLOPDESK_SHELL_ARGS": "-l -c 'echo hi'", "SLOPDESK_VIDEO_DEBUG": "1"}
-        }"#;
-        let record = super::parse_record(text).expect("a well-formed record");
-        assert_eq!(record.pid, 4242);
-        assert_eq!(record.port, 7420);
-        assert_eq!(record.arguments, ["--port", "7420", "--shell", "/bin/zsh"]);
-        let mut environment = record.environment;
-        environment.sort();
-        assert_eq!(environment, [
-            "SLOPDESK_SHELL_ARGS=-l -c 'echo hi'",
-            "SLOPDESK_VIDEO_DEBUG=1"
-        ]);
-    }
-
-    /// A record with no `pid` is an error, never a zero — signalling pid 0 is signalling a group.
-    #[test]
-    fn a_record_missing_a_field_is_refused_rather_than_defaulted() {
-        assert!(super::parse_record(r#"{"port": 1}"#).is_err());
-        assert!(super::parse_record("not json at all").is_err());
-    }
+    // The record's own round-trip, its key order and its required-versus-report fields are
+    // `slopdesk_hostlaunch::record`'s tests, where the declaration is. Asserting them again here
+    // would be the second spelling this module just stopped carrying.
 
     /// Both spellings of the flag, and the LAST one winning, which is what the daemon's own parse
     /// does.

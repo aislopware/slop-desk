@@ -56,6 +56,10 @@ slopdesk-devicelog = { path = "../slopdesk-devicelog" }
 slopdesk-devicepanel = { path = "../slopdesk-devicepanel" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }
 slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
+# hostd's argv grammar and the record it publishes for itself. Shared with `slopdesk-devtools`,
+# which READS that record to restart the daemon identically — the edge is what makes the eight
+# fields one declaration instead of a Swift `Codable` struct and a hand-written Rust reader.
+slopdesk-hostlaunch = { path = "../slopdesk-hostlaunch" }
 slopdesk-rowscan = { path = "../slopdesk-rowscan" }
 slopdesk-hookevent = { path = "../slopdesk-hookevent" }
 slopdesk-inspectord = { path = "../slopdesk-inspectord" }

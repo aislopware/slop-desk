@@ -44,6 +44,7 @@ pub mod config;
 pub mod context_menu;
 pub mod controls;
 pub mod dedup;
+pub mod echo;
 pub mod inputbox;
 pub mod keybind;
 pub mod link;

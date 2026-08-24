@@ -850,17 +850,27 @@ half that decides whether it actually gets done. A restart that costs nothing bu
 and one remembered flag still gets postponed — and postponing it was the original complaint.
 
 ### hostd states its own launch
-`HostLaunchRecord` → `<Application Support>/SlopDesk/hostd-launch.json`, written once the listener
-is up and removed on the orderly stop. It carries the pid, the **bound** port, the physical path of
-the running executable, argv, the cwd, and the `SLOPDESK_*` variables this process actually
-resolved.
+`rust/slopdesk-hostlaunch`'s record → `<Application Support>/SlopDesk/hostd-launch.json`, written
+once the listener is up and removed on the orderly stop. It carries the pid, the **bound** port, the
+physical path of the running executable, argv, the cwd, and the `SLOPDESK_*` variables this process
+actually resolved.
 
 Two of those cannot be learned from outside the process, which is why the process writes it:
 
 - **The bound port.** `--port 0` mints an OS-chosen ephemeral port that differs from the request.
 - **The executable.** `argv[0]` is usually the relative `.build/release/slopdesk-hostd`;
-  `_NSGetExecutablePath` is the kernel's answer and cannot be wrong. Symlinks are resolved so it
-  matches `lsof -d txt`, which is how the script confirms a pid has not been recycled.
+  `current_exe` (`_NSGetExecutablePath` on macOS) is the kernel's answer and cannot be wrong.
+  Symlinks are resolved so it matches `lsof -d txt`, which is how the restart confirms a pid has not
+  been recycled.
+
+**One declaration, both ends.** The record used to be a Swift `Codable` struct with a hand-written
+Rust reader beside it in `slopdesk-devtools` — the same eight fields spelled twice, in two
+languages, where a rename on either side compiles, passes every test and silently breaks the
+restart. `slopdesk-hostlaunch` is that declaration now, taken by `slopdesk-ffi` (which the daemon
+links, and which writes) and by `slopdesk-devtools` (which reads). The daemon supplies only the two
+facts it alone knows — the bound port and its build version — and Rust asks the process for the
+other six. hostd's argv **grammar** rides the same crate for the reason that pairs them: `--port 0`
+is accepted by the grammar and answerable only by the record.
 
 The pid is *content*, re-read every time and never baked into a name a child remembers — the
 distinction §1 turns on. Its absence is meaningful too: no file means no hostd, a file whose pid is

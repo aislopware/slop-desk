@@ -55,7 +55,7 @@
 
 ### 1.6 Claude Code today (explicit kind — being removed)
 - `SlopDeskClaudeCode` module = client-side output analysis only: `TerminalModeTracker` (`TerminalModeTracker.swift:39`, DECSET 1049/47/1047 + OSC 133 → `.shellPrompt`/`.altScreen`), `InputBoxModel` (`InputBoxModel.swift:23`, A/B1 affordance + echo dedup), `InputDedupRing`. **No process detection, no IPC, no MCP, no OSC 777.**
-- Host: `ClaudeCodeProfile` (`ClaudeCodeProfile.swift:30`) curated PTY launch (`["-lc","claude"]`, forced env `CLAUDE_CODE_ENTRYPOINT=remote_mobile`). `HostServer.LaunchMode` (`HostServer.swift:32`) is a **construction-time constant** (`--claude` flag, `HostdArguments.swift:76`) — whole daemon is shell OR claude, no per-pane switch.
+- Host: `ClaudeCodeProfile` (`ClaudeCodeProfile.swift:30`) curated PTY launch (`["-lc","claude"]`, forced env `CLAUDE_CODE_ENTRYPOINT=remote_mobile`). `HostServer.LaunchMode` (`HostServer.swift:32`) is a **construction-time constant** (`--claude` flag, then in `HostdArguments.swift`; the flag is retired and the grammar is `rust/slopdesk-hostlaunch`'s `args`) — whole daemon is shell OR claude, no per-pane switch.
 - `.claudeCode` is created explicitly (⇧⌘N `CommandInterpreter.swift:208`, palette, pill picker) → `addPane(kind:.claudeCode)` → `ClaudeCodePaneView` (`PaneLeafView.swift:401`) = terminal + `InspectorPanel` on `port+1` (inspector wired but **no host daemon exists yet**).
 
 ### 1.7 Settings today

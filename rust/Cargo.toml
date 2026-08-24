@@ -10,7 +10,12 @@
 # per-tool version policy, and it is here because BOTH its callers are — `slopdesk sidecars`, which
 # is another fork-and-exit invocation, and the `.xcframework` the host links. Nothing in it wants a
 # daemon's profile; it holds no state and never blocks.
-members = ["slopdesk-hook", "slopdesk-ctl", "slopdesk-cli", "slopdesk-probe", "slopdesk-sidecars"]
+#
+# `slopdesk-hostlaunch` joins on exactly that argument: hostd's argv grammar and the launch record,
+# read by the `.xcframework` the daemon links and by `slopdesk-ops restart-hostd`. It holds no
+# state, never blocks, and needs no `unsafe`, so the profile and the `forbid` above both cost it
+# nothing.
+members = ["slopdesk-hook", "slopdesk-ctl", "slopdesk-cli", "slopdesk-probe", "slopdesk-sidecars", "slopdesk-hostlaunch"]
 # `slopdesk-superd` is a SEPARATE workspace living in this directory, not a member — see
 # `slopdesk-superd/Cargo.toml` for why. The exclude is what keeps cargo from adopting it.
 exclude = ["slopdesk-superd"]

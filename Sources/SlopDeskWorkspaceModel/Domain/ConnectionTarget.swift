@@ -1,5 +1,7 @@
 // MARK: - ConnectionTarget (the ONE app-global host the whole app connects to)
 
+import CSlopDeskFFI
+
 /// The single host the whole app connects to (docs/31 app-global connection): the TCP-mux terminal
 /// port AND the two UDP video ports all live on ONE host. Per-pane host/port fields are avoided —
 /// every terminal/Claude pane opens a *channel* on the one shared mux at `host:port`, and every
@@ -25,9 +27,14 @@ public struct ConnectionTarget: Codable, Sendable, Equatable {
     /// encoded into the persisted target.
     public var filePort: UInt16 { port &+ 2 }
 
+    /// - Parameter port: the terminal port. Defaults to what a host binds when nobody says
+    ///   otherwise — ASKED of `slopdesk_hostd_default_port`, never spelled. This side and the
+    ///   menu-bar app both used to carry their own copy of that number and the two disagreed:
+    ///   the app stored `7779` while this dialled `7420`, so starting a host from the menu bar
+    ///   and pressing Connect dialled a port nothing was listening on.
     public init(
         host: String = "127.0.0.1",
-        port: UInt16 = 7420,
+        port: UInt16 = slopdesk_hostd_default_port(),
         mediaPort: UInt16 = 9000,
         cursorPort: UInt16 = 9001,
     ) {

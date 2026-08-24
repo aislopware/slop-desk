@@ -1055,6 +1055,7 @@ dependencies = [
  "slopdesk-fuzzy",
  "slopdesk-git",
  "slopdesk-hookevent",
+ "slopdesk-hostlaunch",
  "slopdesk-ids",
  "slopdesk-inspectord",
  "slopdesk-muxsession",
@@ -1095,6 +1096,14 @@ dependencies = [
 name = "slopdesk-hookevent"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "slopdesk-hostlaunch"
+version = "0.1.0"
+dependencies = [
+ "serde",
  "serde_json",
 ]
 

@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskWorkspaceModel
 
@@ -59,7 +60,9 @@ public extension WorkspaceStore {
               let cursorStr = env["SLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT"], let cursor = UInt16(cursorStr),
               let widStr = env["SLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID"], let wid = UInt32(widStr) else { return nil }
         let title = env["SLOPDESK_VIDEO_AUTOCONNECT_TITLE"].flatMap { $0.isEmpty ? nil : $0 } ?? "Remote window"
-        let port = env["SLOPDESK_AUTOCONNECT_PORT"].flatMap { UInt16($0) } ?? 7420
+        // The same door the connect gate prefills from — one spelling of the default, asked for.
+        let port = env["SLOPDESK_AUTOCONNECT_PORT"].flatMap { UInt16($0) }
+            ?? slopdesk_hostd_default_port()
         let target = ConnectionTarget(host: host, port: port, mediaPort: media, cursorPort: cursor)
         return (target, VideoEndpoint(windowID: wid, title: title))
     }

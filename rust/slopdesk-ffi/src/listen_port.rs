@@ -41,11 +41,45 @@ pub extern "C" fn slopdesk_ws_listen_port(raw: i64) -> i32 {
     listen::port(raw).map_or(-1, i32::from)
 }
 
+/// The port a host binds, and a client dials, when nobody says otherwise.
+///
+/// Here rather than behind the macOS gate with the rest of hostd's command line, because this is
+/// the one fact in that domain BOTH ends need: the client's connect gate prefills it and the
+/// menu-bar app seeds the host it starts with it. Three halves once spelled it separately and two
+/// of them disagreed — the menu-bar app stored `7779` while the client dialled `7420`, so starting
+/// a host from the menu bar and pressing Connect dialled a port nothing was listening on. A default
+/// only one half knows is not a default.
+///
+/// `docs/55` §8's answer to that shape is a door, not a ratchet: the constant is in-process across
+/// `CSlopDeskFFI`, so Swift ASKS rather than transcribing, and there is no second spelling for a
+/// rule to have to compare.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_hostd_default_port() -> u16 {
+    slopdesk_hostlaunch::args::DEFAULT_PORT
+}
+
 #[cfg(test)]
 mod tests {
     use slopdesk_workspace::listen;
 
-    use super::slopdesk_ws_listen_port;
+    use super::{slopdesk_hostd_default_port, slopdesk_ws_listen_port};
+
+    /// The default is a port the neighbouring predicate accepts. Two doors about one number that
+    /// disagreed would be a host that cannot bind its own default.
+    #[test]
+    fn the_default_port_is_a_port_the_range_accepts() {
+        let default = slopdesk_hostd_default_port();
+        assert!(listen::is_valid_port(i64::from(default)));
+        assert_eq!(slopdesk_ws_listen_port(i64::from(default)), i32::from(default));
+        assert_ne!(
+            default, 0,
+            "the default must not ask the OS for an ephemeral port"
+        );
+    }
 
     #[test]
     fn the_whole_accepted_range_crosses_as_itself() {

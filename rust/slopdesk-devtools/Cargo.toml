@@ -59,6 +59,13 @@ name = "slopdesk-guigate"
 path = "src/bin/guigate.rs"
 
 [dependencies]
+# The ONE path edge in this crate, and the reason it is worth the exception the header's "ships in
+# nothing" framing implies: `restart-hostd` reads a document hostd WRITES, so the eight fields have
+# to be one declaration. They used to be three — a Swift `Codable` struct, a hand-written reader
+# here, and the field names spelled again in both. `slopdesk-hostlaunch` is that declaration, and
+# taking it is what makes a renamed field a compile error instead of a restart that quietly stops
+# working.
+slopdesk-hostlaunch = { path = "../slopdesk-hostlaunch" }
 # The access raiser is a line scanner over SwiftFormat-clean source, which is what makes a regex
 # the right reader rather than a shortcut — and the same DFA-backed crate the invariants gate
 # takes, for the same reason: a pattern cannot blow up on input a foreign repo chose.

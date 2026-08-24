@@ -61,8 +61,44 @@ impl std::fmt::Display for SpawnError {
 
 impl std::error::Error for SpawnError {}
 
-/// Serialises `openpty` → `fork` across superd's threads.
+/// Serialises `openpty` → `fork` against everything another thread must not be INSIDE at that
+/// instant.
 ///
+/// Two hazards, one lock, because both are the same shape: `fork(2)` copies whatever the rest of
+/// the process was in the middle of, and the child is alone with it. The second one is stated first
+/// because it is the one that was measured, and it is why [`while_no_fork_is_taken`] exists and why
+/// [`crate::dynsym`] calls it.
+///
+/// ## No Apple framework call may be in flight while a fork is taken
+/// A child forked while another thread is inside a CoreGraphics call dies before the window can
+/// report anything: `SIGKILL`, which no path in [`exec_in_forked_child`] can produce — every
+/// refusal there is `_exit(127)` — with the master's foreground process group still `0`, so the
+/// death is at or before the `TIOCSCTTY` two calls in. What runs in the child ahead of the window
+/// is the `pthread_atfork` child handlers those frameworks register, and making those re-entrant is
+/// not available to this crate. Not forking while one of their calls is open is.
+///
+/// Every number here is from this crate's own suite, which is the only process that both forks and
+/// calls a framework. Before: the whole suite failed 1 run in 40, the pty tests plus the two
+/// [`crate::dynsym`] tests that CALL through their symbol 4 in 40, the pty tests alone 0 in 40, the
+/// suite with `dynsym` skipped 0 in 40, and `--test-threads=1` 0 in 12. After: 0 in 40 for the pair
+/// and 0 in 40 for the whole suite.
+///
+/// What is NOT established is a reproducer smaller than the suite. Two threads calling
+/// [`crate::dynsym::cursor_seed`] against 30 forks, barrier-aligned so the first fork meets the
+/// first call, survived 20 runs with this lock removed — so the trigger wants the whole binary's
+/// concurrency, and a regression here will show up as the suite going flaky again rather than as
+/// one test going red. Read that as the limit of the evidence, not as a reason to loosen the rule.
+///
+/// Production does not rest on any of it: superd is the only process that forks, and it calls no
+/// framework. The lock makes the rule hold for the calls this crate itself owns, which is what the
+/// suite exercises and what a future process that did both would inherit.
+///
+/// The guard is dropped immediately after the fork rather than held across the exec, because a
+/// child is a separate process from the moment `fork` returns — what the parent does afterwards
+/// cannot reach it, and holding it longer would serialise superd's panes against each other for no
+/// reason.
+///
+/// ## No descriptor may be born unmarked while a fork is taken
 /// **Not** about the fork window's async-signal-safety (that is [`exec_in_forked_child`]'s
 /// contract). This closes a descriptor-inheritance race that `FD_CLOEXEC` alone cannot: Darwin's
 /// `openpty(3)` takes no `O_CLOEXEC`, so there are a few instructions between "the master exists"
@@ -77,6 +113,20 @@ impl std::error::Error for SpawnError {}
 /// The child inherits this mutex LOCKED, which is fine and is the same reasoning as everywhere else
 /// in the window: the child touches nothing but raw syscalls and then `execve`s.
 static FORK_LOCK: Mutex<()> = Mutex::new(());
+
+/// Runs `body` with no `fork(2)` able to land in the middle of it.
+///
+/// The other end of [`FORK_LOCK`], for the callers that are not spawning anything: a `dlopen`, and
+/// a call into an Apple framework. Poisoning is meaningless for a `()` guard — a panicking body
+/// leaves no shared state behind — so the guard is taken either way.
+pub(crate) fn while_no_fork_is_taken<T>(body: impl FnOnce() -> T) -> T {
+    let fork_guard = FORK_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let answer = body();
+    drop(fork_guard);
+    answer
+}
 
 /// A freshly forked child under a fresh PTY.
 #[derive(Debug)]
@@ -543,6 +593,64 @@ const fn tcflag(value: libc::tcflag_t) -> libc::tcflag_t {
     value
 }
 
+/// Does this PTY master's line discipline mean "a person can see what they are typing"?
+///
+/// The host drives the client's automatic Secure Keyboard Entry off this: `false` means a hidden-
+/// password prompt is up (`sudo`, `ssh`, `login`, `read -s`, `getpass`), and the client engages
+/// `EnableSecureEventInput` for the duration. It is a HOST-side termios attribute the child sets
+/// with `tcsetattr` and it is not in the output byte stream at all, so the client cannot derive it
+/// — which is why there is a wire message for it (`docs/20`, type 31).
+///
+/// A negative descriptor, or a `tcgetattr` that declines, reads as echo-on. That default is the
+/// safe one in one direction only: a probe error must never SPURIOUSLY lock a user's keyboard.
+///
+/// See [`echo_on`] for why the `ECHO` bit alone is the wrong question.
+#[expect(
+    unsafe_code,
+    reason = "tcgetattr fills a local termios through a descriptor the caller owns"
+)]
+#[must_use]
+pub fn echo_enabled(master_fd: RawFd) -> bool {
+    if master_fd < 0 {
+        return true;
+    }
+    let mut term = unsafe_zeroed_termios();
+    // SAFETY: `term` is a live local of exactly the type the call fills, and `master_fd` is only
+    // READ — the obligation is the caller's that it is a descriptor this process holds open, which
+    // is `slopdesk-posix`'s usual one and local to this call.
+    if unsafe { libc::tcgetattr(master_fd, &raw mut term) } != 0 {
+        return true;
+    }
+    echo_on(
+        term.c_lflag & tcflag(libc::ECHO) != 0,
+        term.c_lflag & tcflag(libc::ICANON) != 0,
+    )
+}
+
+/// Two termios local-mode bits, classified. `true` is the normal state; `false` is a secret.
+///
+/// ## Why `ECHO` alone is NOT the question
+/// The naive rule — no-echo iff `ECHO` is cleared — is wrong for an interactive shell, because a
+/// LINE EDITOR (zsh's `zle`, bash's readline) and every full-screen TUI (`vim`, `less`, `htop`)
+/// also clear `ECHO`: they put the tty in RAW mode and echo characters THEMSELVES. So `tcgetattr`
+/// at an ordinary idle prompt reads `ECHO` cleared, and an `ECHO`-only probe latched the client's
+/// Secure-Input pill on every normal prompt. That was the live bug.
+///
+/// A genuine hidden-password prompt is different: it clears `ECHO` but stays CANONICAL — it reads a
+/// whole line with echo suppressed by the line discipline. So `ICANON` is the discriminator, and
+/// the rule is empirical rather than derived: an idle `zsh -i` prompt reads `ECHO=0 ICANON=0`; a
+/// `read -s` or `sudo` prompt reads `ECHO=0 ICANON=1`.
+///
+/// Both bits arrive as `!= 0` rather than as `{0, 1}`, which is what a C flag word actually
+/// promises.
+#[must_use]
+pub const fn echo_on(echo_bit_set: bool, canonical_bit_set: bool) -> bool {
+    // The minimised form of "NOT (echo cleared AND still canonical)": a cooked child is echo-on
+    // because it echoes, and a line editor is echo-on because it left canonical mode and does its
+    // own echoing. Only the two together are a secret.
+    echo_bit_set || !canonical_bit_set
+}
+
 #[cfg(test)]
 // The fixtures here are known-good and built inline, so `unwrap` IS the assertion.
 #[expect(
@@ -553,7 +661,10 @@ mod tests {
     use std::io::Read as _;
     use std::os::fd::AsRawFd as _;
 
-    use super::{SpawnPlan, foreground_process_group, slave_device, spawn_pty};
+    use super::{
+        SpawnPlan, echo_enabled, echo_on, foreground_process_group, open_pty, slave_device, spawn_pty,
+        tcflag, unsafe_zeroed_termios,
+    };
 
     /// One `read` on a master returns whatever the kernel has buffered at that instant, which is
     /// NOT the same as everything the child will ever write: the child is a separate process, so
@@ -765,5 +876,83 @@ mod tests {
         let arguments: Vec<String> = Vec::new();
         let result = spawn_pty(&plan("/bin/ec\0ho", &arguments));
         assert!(matches!(result, Err(super::SpawnError::InteriorNul)));
+    }
+
+    // MARK: the echo probe
+    //
+    // These run against a REAL `openpty` master, which the hang-safety rule the Swift original
+    // cited does not bar: `tcgetattr` is a property read on a descriptor this process already
+    // holds. It does not block, it does not wait on a child, and — the part that mattered for the
+    // Swift version — it is not a `read`, so it cannot steal a byte from superd, which owns `read`
+    // on every PTY master. The shim was therefore "compiled and code-reviewed, never spun in a
+    // test" for a reason that never applied to it. Here it is spun.
+
+    /// The classifier, as a table. The `ECHO=0 ICANON=0` row is the one that used to latch the
+    /// client's Secure-Input pill on an ordinary zsh prompt.
+    #[test]
+    fn the_classifier_tells_a_line_editor_from_a_password_prompt() {
+        // A cooked child: echoing, canonical. Normal.
+        assert!(echo_on(true, true));
+        // A raw child that does its own echoing — a line editor or a full-screen TUI. Normal.
+        assert!(echo_on(false, false));
+        // `ECHO` set while raw: still nothing hidden.
+        assert!(echo_on(true, false));
+        // Canonical AND silent: the line discipline is suppressing echo. THIS is the secret.
+        assert!(!echo_on(false, true));
+    }
+
+    /// A freshly opened master carries `cooked_termios`, which sets both bits — so the probe reads
+    /// the same "normal" a person at a shell prompt would expect.
+    #[test]
+    fn a_cooked_master_reads_as_echo_on() {
+        let pty = open_pty(24, 80).unwrap();
+        assert!(echo_enabled(pty.master.as_raw_fd()));
+    }
+
+    /// Clear `ECHO` on the line discipline while leaving it CANONICAL — which is exactly what
+    /// `getpass(3)` does — and the probe reports a secret. Restoring the bit takes it back.
+    ///
+    /// The write goes through the MASTER because master and slave share one line discipline, which
+    /// is the same reason the live probe reads the master rather than opening the slave again.
+    #[expect(
+        unsafe_code,
+        reason = "the fixture has to SET the line discipline the probe reads, and tcsetattr is the only way \
+                  to say it"
+    )]
+    #[test]
+    fn a_canonical_master_with_echo_cleared_reads_as_a_secret() {
+        let pty = open_pty(24, 80).unwrap();
+        let fd = pty.master.as_raw_fd();
+        let mut term = unsafe_zeroed_termios();
+        // SAFETY: `term` is a live local of the right type and `fd` is a descriptor this test holds.
+        assert_eq!(unsafe { libc::tcgetattr(fd, &raw mut term) }, 0);
+        assert!(
+            term.c_lflag & tcflag(libc::ICANON) != 0,
+            "the fixture starts canonical"
+        );
+
+        term.c_lflag &= !tcflag(libc::ECHO);
+        // SAFETY: same descriptor, and `term` was filled by the matching `tcgetattr` above.
+        assert_eq!(unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw const term) }, 0);
+        assert!(
+            !echo_enabled(fd),
+            "canonical with ECHO cleared is a password prompt"
+        );
+
+        term.c_lflag |= tcflag(libc::ECHO);
+        // SAFETY: as above.
+        assert_eq!(unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw const term) }, 0);
+        assert!(echo_enabled(fd), "restoring ECHO ends the prompt");
+    }
+
+    /// Every way the probe can fail reads as echo-on, because the alternative is locking a user's
+    /// keyboard over a bad descriptor.
+    #[test]
+    fn a_descriptor_the_probe_cannot_read_is_echo_on() {
+        assert!(echo_enabled(-1), "a negative fd never reaches the syscall");
+        assert!(echo_enabled(i32::MAX), "EBADF is not a secret");
+        // A real descriptor that is not a terminal at all — `tcgetattr` answers ENOTTY.
+        let file = std::fs::File::open("/dev/null").unwrap();
+        assert!(echo_enabled(file.as_raw_fd()), "ENOTTY is not a secret either");
     }
 }

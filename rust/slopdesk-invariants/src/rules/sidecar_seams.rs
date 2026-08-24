@@ -590,21 +590,21 @@ mod tests {
                 "encoder.outputFormatting = [.prettyPrinted, .sortedKeys]\n",
             )
             .write(
-                "Sources/SlopDeskHost/HostLaunchRecord.swift",
+                "Sources/SlopDeskVideoHost/WindowParkingSidecar.swift",
                 "encoder.outputFormatting = [.sortedKeys]\n",
             );
         assert!(super::one_sidecar_encoder(&fixture.tree()).is_clean());
 
         // The file that names outputFormatting is the one that has to name .sortedKeys too.
         fixture.write(
-            "Sources/SlopDeskHost/HostLaunchRecord.swift",
+            "Sources/SlopDeskVideoHost/WindowParkingSidecar.swift",
             "encoder.outputFormatting = [.prettyPrinted]\n",
         );
         assert!(!super::one_sidecar_encoder(&fixture.tree()).is_clean());
 
         // And a second encoder inside WorkspaceCore, where one answers all four stores.
         fixture.write(
-            "Sources/SlopDeskHost/HostLaunchRecord.swift",
+            "Sources/SlopDeskVideoHost/WindowParkingSidecar.swift",
             "encoder.outputFormatting = [.sortedKeys]\n",
         );
         fixture.write(

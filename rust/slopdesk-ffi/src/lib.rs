@@ -110,6 +110,10 @@ pub mod device_log;
 pub mod device_panel;
 pub mod drop_action;
 pub mod drop_register;
+// macOS only: a `tcgetattr` on a PTY master hostd owns. A client is TOLD the answer over the wire
+// (type 31) and has no PTY to ask. See the module.
+#[cfg(target_os = "macos")]
+pub mod echo_mode;
 // macOS only: behind it is VideoToolbox's hardware HEVC encoder. iOS HAS VideoToolbox, so an
 // ungated edge here would LINK and merely bloat every client slice with a host-only encoder — which
 // is worse than a link error, because nothing would fail. See the module.
@@ -139,6 +143,11 @@ pub mod host_state;
 // client asks the HOST for this over the wire; it never asks itself. See the module.
 #[cfg(target_os = "macos")]
 pub mod host_vitals;
+// macOS only: hostd's own command line, and the record it publishes about itself. A client neither
+// parses that argv nor writes that file. The one fact here a client DOES need — the port to dial
+// when nobody said otherwise — is `listen_port`'s, which is not gated. See the module.
+#[cfg(target_os = "macos")]
+pub mod hostd_launch;
 // macOS only: behind it is CoreGraphics event synthesis, which no iOS slice has. See the module.
 #[cfg(target_os = "macos")]
 pub mod inject;

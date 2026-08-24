@@ -172,6 +172,19 @@ fn engines_and_taps() -> Vec<Claim> {
 /// [`resources_that_moved_to_rust`] bans a system RESOURCE from being acquired on the wrong side.
 /// The two fail for different reasons and a new rule belongs in exactly one of them.
 ///
+/// **hostd's own launch.** The argv grammar and the launch record are one domain and were spelled
+/// in three places: a Swift parser, a Swift `Codable` struct, and a hand-written Rust reader in
+/// `slopdesk-devtools` for the same eight fields. All three compiled, all three passed, and a
+/// rename on any one of them would have broken `restart-hostd` with nothing turning red. The
+/// grammar's flags and the record's file name are banned here because they are the anchors a
+/// revival would have to write; `rust/slopdesk-hostlaunch` is the one declaration both ends read.
+///
+/// **The PTY echo probe.** Not the `tcgetattr` — the client's own `SlopDeskTTY` still makes that
+/// call about its own terminal, which is a different question — but the two termios bits and what
+/// they MEAN. `ECHO` cleared is not a secret on its own: a line editor and every full-screen TUI
+/// clear it too, which is why an ECHO-only rule latched the Secure-Input pill on every ordinary
+/// prompt. The discrimination is `slopdesk-posix`'s and the edge is `slopdesk-terminal`'s.
+///
 /// **The two sleep assertions.** This one is not a drift ban, and saying so is the point: an
 /// `IOPMAssertion` created in Swift would not disagree with anything — it would simply be a second
 /// create with no paired release anybody wrote, and the failure it causes has no test that turns
@@ -189,7 +202,20 @@ fn rules_that_moved_to_rust() -> Vec<Claim> {
 
 /// The DECISIONS: each of these fails because the same rule spelled twice can answer differently,
 /// and the two answers are the bug. See [`rules_that_moved_to_rust`] for what each one is.
+///
+/// Split by what the fold is ABOUT, which is also where a new one belongs: [`pane_folds`] answers a
+/// question about ONE pane — its size, its project, its turn, its shell's environment, its queue,
+/// its line discipline — and [`machine_folds`] answers one about the machine or about this daemon
+/// itself. The two have different blast radii and neither list is a bucket for the other's
+/// overflow.
 fn folds_that_moved_to_rust() -> Vec<Claim> {
+    let mut claims = pane_folds();
+    claims.extend(machine_folds());
+    claims
+}
+
+/// The folds about ONE pane. See [`folds_that_moved_to_rust`] for the split.
+fn pane_folds() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -250,17 +276,6 @@ fn folds_that_moved_to_rust() -> Vec<Claim> {
         Claim::NoneUnder {
             roots: &["Sources"],
             extensions: SWIFT,
-            pattern: r"HOST_CPU_LOAD_INFO|HOST_VM_INFO64|host_statistics64?\(|memorystatus_vm_pressure_level|f_bavail",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "the host-vitals readings are back in {files} — rust/slopdesk-posix makes the four \
-                      syscalls and rust/slopdesk-panecensus's vitals interprets them",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
             pattern: r"outstanding >= capacity|replayPause \|\||fanoutBacklog >=",
             all: &[],
             unless: &[],
@@ -272,6 +287,37 @@ fn folds_that_moved_to_rust() -> Vec<Claim> {
         Claim::NoneUnder {
             roots: &["Sources"],
             extensions: SWIFT,
+            pattern: r"tcflag_t\((ECHO|ICANON)\)",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the PTY echo probe is back in {files} — rust/slopdesk-posix's pty reads the two \
+                      termios bits and rust/slopdesk-terminal's echo decides the edge; an ECHO-only rule \
+                      spelled here is the bug that latched the client's Secure-Input pill on every ordinary \
+                      zsh prompt",
+        },
+    ]
+}
+
+/// The folds about the MACHINE, or about this daemon's own launch. See
+/// [`folds_that_moved_to_rust`].
+fn machine_folds() -> Vec<Claim> {
+    vec![
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"HOST_CPU_LOAD_INFO|HOST_VM_INFO64|host_statistics64?\(|memorystatus_vm_pressure_level|f_bavail",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the host-vitals readings are back in {files} — rust/slopdesk-posix makes the four \
+                      syscalls and rust/slopdesk-panecensus's vitals interprets them",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
             pattern: r"ThirdParty/tools",
             all: &[],
             unless: &[],
@@ -279,6 +325,19 @@ fn folds_that_moved_to_rust() -> Vec<Claim> {
             exempt: &[],
             message: "the vendored-prefix walk is back in {files} — rust/slopdesk-androidd's toolchain owns \
                       the marker and the two paths, next to the search order they fill",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r#"case "--inspector"|case "--transcript"|struct HostLaunchRecord\b|hostd-launch\.json|_NSGetExecutablePath"#,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "hostd's launch is spelled in Swift again in {files} — rust/slopdesk-hostlaunch owns \
+                      the argv grammar AND the record's eight fields, and slopdesk-devtools READS that \
+                      record; a second declaration here is the rename that compiles, passes and silently \
+                      breaks `slopdesk-ops restart-hostd`",
         },
     ]
 }
@@ -378,6 +437,24 @@ mod tests {
             (
                 "preventsleep",
                 "    let r = IOPMAssertionCreateWithName(t, l, n, &id)\n",
+            ),
+            (
+                "hostdargs",
+                "            case \"--transcript\": transcript = it.next()\n",
+            ),
+            ("launchrecord", "struct HostLaunchRecord: Codable {}\n"),
+            (
+                "recordpath",
+                "    let p = dir.appendingPathComponent(\"hostd-launch.json\")\n",
+            ),
+            (
+                "runningexe",
+                "    if _NSGetExecutablePath(&buffer, &capacity) == 0 { return \"\" }\n",
+            ),
+            ("echoprobe", "    let on = (term.c_lflag & tcflag_t(ECHO)) != 0\n"),
+            (
+                "echocanonical",
+                "    let canonical = (term.c_lflag & tcflag_t(ICANON)) != 0\n",
             ),
         ] {
             let fixture = Fixture::new(&format!("deleted-host-{name}"));

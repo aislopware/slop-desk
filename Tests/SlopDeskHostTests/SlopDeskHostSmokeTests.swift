@@ -70,71 +70,55 @@ final class SlopDeskHostSmokeTests: XCTestCase {
         XCTAssertEqual(HostEnvironment.loginArgv0(forShell: "/usr/local/bin/fish"), "-fish")
     }
 
-    // MARK: slopdesk-hostd arg parsing → LaunchMode mapping
+    // MARK: HostdArguments — the FACE, not the grammar
 
-    func testParseDefaultsToShellLaunchMode() throws {
-        let parsed = try XCTUnwrap(HostdArguments.parse(["slopdesk-hostd"]))
-        XCTAssertEqual(parsed.port, 7420)
-        XCTAssertNil(parsed.shell)
-        XCTAssertEqual(parsed.launchMode, .shell)
+    // Which flags exist, which take values, which are refused, and what the usage line says are
+    // `slopdesk-hostlaunch`'s tests — the declaration is there and asserting it again here would be
+    // the second spelling this port removed. What is left to check is the MARSHALLING: that the blob
+    // this side decodes carries every field, that a refusal survives the status byte, and that an
+    // argument holding a space is not cut in half by the NUL framing.
+
+    func testParseDecodesEveryFieldOffTheBlob() throws {
+        let bare = try XCTUnwrap(HostdArguments.parse(["slopdesk-hostd"]))
+        XCTAssertEqual(bare.port, HostdArguments.defaultPort)
+        XCTAssertNil(bare.shell)
+        XCTAssertFalse(bare.inspectorEnabled)
+        XCTAssertNil(bare.transcriptPath)
+
+        let full = try XCTUnwrap(HostdArguments.parse([
+            "slopdesk-hostd", "--port", "9001", "--shell", "/bin/bash",
+            "--transcript", "/tmp/session.jsonl",
+        ]))
+        XCTAssertEqual(full.port, 9001)
+        XCTAssertEqual(full.shell, "/bin/bash")
+        XCTAssertEqual(full.transcriptPath, "/tmp/session.jsonl")
+        XCTAssertTrue(full.inspectorEnabled, "--transcript implies --inspector")
     }
 
-    func testParseRetiredClaudeFlagIsUnknownAndRejected() {
-        // The curated `claude` launch is not a daemon mode. `--claude`
-        // is an UNKNOWN flag → parse returns nil (caller prints usage + exits non-zero).
-        XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--claude"]))
-        XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--claude", "--xterm256"]))
+    func testAnArgumentWithASpaceSurvivesTheNULFraming() throws {
+        let parsed = try XCTUnwrap(
+            HostdArguments.parse(["slopdesk-hostd", "--shell", "/opt/My Shells/zsh"]),
+        )
+        XCTAssertEqual(parsed.shell, "/opt/My Shells/zsh")
     }
 
-    func testParseRetiredXterm256FlagIsUnknownAndRejected() {
-        // `--xterm256` is only meaningful with `--claude`; both are retired and unknown flags.
-        XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--xterm256"]))
-    }
-
-    func testParseHelpReturnsNil() {
+    func testARefusalReadsAsNilRatherThanADefaultedParse() {
         XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--help"]))
-        XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "-h"]))
-    }
-
-    func testParsePortAndShellYieldShellLaunchMode() throws {
-        let parsed = try XCTUnwrap(
-            HostdArguments.parse(["slopdesk-hostd", "--port", "9001", "--shell", "/bin/bash"]),
-        )
-        XCTAssertEqual(parsed.port, 9001)
-        XCTAssertEqual(parsed.shell, "/bin/bash")
-        XCTAssertEqual(parsed.launchMode, .shell)
-    }
-
-    // MARK: - -inspector / --transcript (inspector server)
-
-    func testParseDefaultsDisableInspector() throws {
-        let parsed = try XCTUnwrap(HostdArguments.parse(["slopdesk-hostd"]))
-        XCTAssertFalse(parsed.inspectorEnabled)
-        XCTAssertNil(parsed.transcriptPath)
-    }
-
-    func testInspectorIsOnlyEnabledByExplicitFlags() throws {
-        // The `--claude` auto-enable is retired: the inspector stands up
-        // only on an explicit `--inspector`/`--transcript`. A bare daemon leaves it off.
-        let parsed = try XCTUnwrap(HostdArguments.parse(["slopdesk-hostd"]))
-        XCTAssertFalse(parsed.inspectorEnabled, "no implicit inspector without an explicit flag")
-    }
-
-    func testParseExplicitInspectorFlag() throws {
-        let parsed = try XCTUnwrap(HostdArguments.parse(["slopdesk-hostd", "--inspector"]))
-        XCTAssertTrue(parsed.inspectorEnabled)
-        XCTAssertEqual(parsed.launchMode, .shell, "--inspector alone does not change launch mode")
-    }
-
-    func testParseTranscriptPathImpliesInspector() throws {
-        let parsed = try XCTUnwrap(
-            HostdArguments.parse(["slopdesk-hostd", "--transcript", "/tmp/session.jsonl"]),
-        )
-        XCTAssertEqual(parsed.transcriptPath, "/tmp/session.jsonl")
-        XCTAssertTrue(parsed.inspectorEnabled, "--transcript implies --inspector")
-    }
-
-    func testParseTranscriptMissingValueReturnsNil() {
+        XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--claude"]))
         XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--transcript"]))
+    }
+
+    func testTheUsageLineIsRenderedForTheProgramItIsGiven() {
+        let text = HostdArguments.usage(programName: "slopdesk-hostd")
+        XCTAssertTrue(text.hasPrefix("usage: slopdesk-hostd "), text)
+        XCTAssertTrue(text.contains("--transcript"), text)
+    }
+
+    func testTheDefaultPortIsAskedForRatherThanSpelled() {
+        // The door's number, whatever it is — asserting 7420 here would re-introduce exactly the
+        // transcription the door removed. What matters is that it is a real, non-ephemeral port,
+        // and that a bare parse lands on it rather than on a literal of its own.
+        XCTAssertNotEqual(HostdArguments.defaultPort, 0)
+        XCTAssertEqual(HostdArguments.parse(["slopdesk-hostd"])?.port, HostdArguments.defaultPort)
     }
 }

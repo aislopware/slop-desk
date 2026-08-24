@@ -446,8 +446,9 @@ never offers or falls back to another version.
     body decodes to `truncated` (never an over-read). The host **dedupes**: it is anchored at echo-on (the
     canonical default the client also assumes) and emits ONLY on a deviation from — and a restore to —
     that default, so the steady (echo-on) case adds nothing to the CONTROL stream. Host delivery is driven
-    by the pure `EchoModeDetector` (the `ForegroundProcessDetector` pure-core / thin-`PTYEchoProbe`-shim
-    split) from `MuxChannelSession`: opportunistically right after a client keystroke is written to the
+    by `MuxChannelSession` through two doors — `slopdesk_pty_echo_enabled` (`slopdesk-posix`'s two
+    termios bits and what they mean) and `slopdesk_pty_echo_edge` (`slopdesk-terminal`'s dedupe) — with
+    one `Bool` per pane left on the Swift side: opportunistically right after a client keystroke is written to the
     PTY (where `ECHO` flips fastest) plus the low-rate foreground-watch poll as a backstop. Rides the
     head-of-line-independent CONTROL channel and is **not** sequenced/replayed.
 

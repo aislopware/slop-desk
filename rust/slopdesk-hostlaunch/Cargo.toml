@@ -1,0 +1,40 @@
+# `slopdesk-hostlaunch` — how `slopdesk-hostd` was started, in one place.
+#
+# ## Why one crate for two modules
+# The argv GRAMMAR and the launch RECORD are one domain read from two ends. `--port 0` is the
+# clearest case: the grammar accepts it, the record is the only thing that can say what it actually
+# bound, and `slopdesk-ops restart-hostd` has to know BOTH to poll the right port after a restart.
+# Splitting them would put one half where the other's reader could not reach it.
+#
+# ## Why it exists at all rather than living in a caller
+# It has two consumers that share no other code: `slopdesk-ffi`, linked into the daemon that WRITES
+# the record, and `slopdesk-devtools`, the operator tool that READS it. Before this crate the record
+# was a Swift `Codable` struct and a hand-written Rust reader — the same eight fields spelled twice,
+# in two languages, which is exactly what `CLAUDE.md`'s "one implementation, never two languages"
+# forbids and exactly the drift nothing turns red for: both sides compile, both sides pass, and a
+# renamed field is a restart that silently stops working.
+#
+# ## Why a MEMBER of the root workspace
+# `slopdesk-sidecars`'s reason, verbatim: it is not a program, it holds no state, it never blocks,
+# and both its callers are here. Nothing in it needs `unsafe`, so the root's `forbid` costs nothing
+# — the one thing that would have needed it, a `kill(pid, 0)` liveness probe, had no caller on
+# either side and did not come across.
+[package]
+name = "slopdesk-hostlaunch"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "hostd's argv grammar and the launch record it publishes for itself"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lints]
+workspace = true
+
+[dependencies]
+# The record is a document a PERSON reads to answer "what flags is my host running?", and an
+# environment value holding a space, a quote or a newline is not hypothetical — that is precisely
+# what made the shell version reach for `jq @sh` + `eval`. A derive is what keeps the eight field
+# NAMES one fact rather than two, which is the whole reason this crate exists.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -767,6 +767,13 @@ int32_t slopdesk_ws_listen_port(int64_t raw);
 bool    slopdesk_ws_listen_detail_is_address_in_use(const uint8_t *bytes, size_t len);
 bool    slopdesk_ws_listen_waiting_errno_is_fatal(int32_t posix_errno);
 
+// The port a host binds, and a client dials, when nobody says otherwise. NOT behind the macOS gate
+// with the rest of hostd's command line, because this is the one fact in that domain BOTH ends
+// need: the client's connect gate prefills it and the menu-bar app seeds the host it starts with
+// it. Three halves once spelled it separately and two disagreed — the menu-bar app stored 7779
+// while the client dialled 7420 — so all three ask here instead.
+uint16_t slopdesk_hostd_default_port(void);
+
 // Direction: 0 left · 1 right · 2 up · 3 down · 4 next · 5 previous.
 bool slopdesk_ws_focus_neighbor(const SlopDeskWsFrame *frames, size_t count,
                                 SlopDeskWsUuid pane, uint8_t direction, SlopDeskWsUuid *answer);
@@ -9326,6 +9333,74 @@ void   slopdesk_audio_encoder_reset(SlopDeskAudioEncoder *handle);
 size_t slopdesk_audio_encoder_push_sample_buffer(SlopDeskAudioEncoder *handle,
                                                  const void *sample_buffer,
                                                  SlopDeskAudioPayloadFn sink, void *context);
+
+// ---- hostd's command line, and the record it publishes -----------------------------
+//
+// `rust/slopdesk-hostlaunch` owns the grammar, the usage text, the eight record fields,
+// the atomic write and the container path. Both halves are about the daemon this process
+// IS: a client neither parses that argv nor writes that file. The one fact in the domain
+// a client DOES need — `slopdesk_hostd_default_port` — is declared outside this region.
+//
+// The record used to be a Swift `Codable` struct with a hand-written Rust reader beside
+// it in `slopdesk-devtools`: one document spelled twice, in two languages, where a rename
+// on either side compiles, passes and silently breaks `restart-hostd`. Both readers are
+// now one declaration.
+
+// Parse hostd's argv, NUL-separated and INCLUDING argv[0]. §4's `(out, cap) -> needed`
+// with ONE stated deviation: the first byte is a STATUS, 1 for a parse and 0 for a
+// refusal, because a refusal is a real answer and `needed == 0` already means "no answer
+// at all". A refusal therefore delivers exactly one byte. After the status:
+//
+//   port: uint16 big-endian | inspector: uint8 | text shell | text transcript
+//
+// where each `text` is the four-byte big-endian length prefix this header uses
+// everywhere, and an EMPTY one means the flag was absent — neither `--shell` nor
+// `--transcript` accepts an empty value, so there is nothing for that to collide with.
+//
+// A refusal is `--help`, `-h`, a flag with no value, a `--port` that is not a port, or a
+// flag this daemon does not have. NUL-joining is lossless because an `execve` argument
+// cannot contain a NUL, and it is what carries `--shell "/opt/My Shells/zsh"` intact.
+size_t slopdesk_hostd_args_parse(const uint8_t *argv, size_t argv_len,
+                                 uint8_t *out, size_t cap);
+// The usage line, rendered here because the flag list IS the grammar: a usage string that
+// documents a flag the parser no longer accepts is the drift this door prevents.
+size_t slopdesk_hostd_args_usage(const uint8_t *program, size_t program_len,
+                                 uint8_t *out, size_t cap);
+
+// Publish this process's launch record. TWO arguments and not eight because the pid, the
+// argv, the cwd, the environment and the executable are the PROCESS's answers, and the
+// process is the same one on both sides of this boundary — so Rust asks it directly. What
+// crosses is what the daemon alone knows: the port its listener actually BOUND (`--port 0`
+// mints one that differs from the request) and its build version.
+bool   slopdesk_hostd_launch_record_write(uint16_t bound_port,
+                                          const uint8_t *version, size_t version_len);
+// Where it landed, for the line the daemon logs. §4 undeviated: 0 is no container.
+size_t slopdesk_hostd_launch_record_path(uint8_t *out, size_t cap);
+// Deleted BEFORE the drain, not after: from that point this daemon will not serve, and a
+// record naming a dying pid is worse than none. Its ABSENCE is meaningful — a record whose
+// pid is gone means hostd died badly, which is worth telling apart from a clean stop.
+void   slopdesk_hostd_launch_record_remove(void);
+
+// ---- The host's PTY-echo signal ----------------------------------------------------
+//
+// Two doors, because the two callers ask different questions. The steady path probes and
+// folds; the REATTACH path already has a probed value and needs the fold re-anchored
+// against it, so one combined door would need a mode flag to serve both.
+//
+// Together they are all of the deleted `EchoModeWatcher.swift`. What is left on the near
+// side is one `Bool` per pane — the last state that pane emitted, which the pane owns and
+// which decides nothing.
+
+// True unless a hidden-password prompt is up. The rule is NOT "ECHO is cleared": a line
+// editor (zsh `zle`, bash readline) and every full-screen TUI clear it too and echo
+// themselves, which is why an ECHO-only probe latched the client's pill on every ordinary
+// prompt. A genuine `getpass` prompt clears ECHO while staying CANONICAL, so ICANON is the
+// discriminator. A bad descriptor, a non-terminal, or a declining `tcgetattr` all read
+// true — a probe error must never spuriously lock a user's keyboard.
+bool slopdesk_pty_echo_enabled(int32_t master_fd);
+// Whether this sample is worth a type-31 `inputEcho`, given the last state the caller
+// emitted. Re-anchoring is passing `true` again, which is what the reattach path does.
+bool slopdesk_pty_echo_edge(bool sample, bool last_emitted);
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END

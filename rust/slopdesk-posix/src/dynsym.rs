@@ -87,9 +87,12 @@ pub fn cursor_seed() -> Option<i32> {
         // asking CoreGraphics for one of the two names that denote `int (*)(void)` there.
         Some(unsafe { std::mem::transmute::<*mut c_void, Seed>(symbol) })
     }))?;
-    // SAFETY: `resolved` came from the block above, so it is a live function with the declared
-    // signature, in an image this process opened and never closes.
-    Some(unsafe { resolved() })
+    // The call is CoreGraphics', so no fork may land inside it — see `crate::pty::FORK_LOCK`, which
+    // holds the measurement. One uncontended lock against a window-server round trip.
+    Some(crate::pty::while_no_fork_is_taken(||
+        // SAFETY: `resolved` came from the block above, so it is a live function with the declared
+        // signature, in an image this process opened and never closes.
+        unsafe { resolved() }))
 }
 
 /// The `CGWindowID` of an Accessibility window element, or `None` when it cannot be had.
@@ -138,11 +141,13 @@ pub unsafe fn ax_window_id(element: *const c_void) -> Option<u32> {
         Some(unsafe { std::mem::transmute::<*mut c_void, GetWindow>(symbol) })
     }))?;
     let mut id: u32 = 0;
-    // SAFETY: `resolved` is a live function with the declared signature in an image this process
-    // opened and never closes; `element` is non-null and, by this function's own contract, a live
-    // AX element the callee may interpret; `&raw mut id` points at a live, aligned, initialised
-    // `u32` that outlives the call.
-    let status = unsafe { resolved(element, &raw mut id) };
+    // The call is HIServices', so no fork may land inside it — `crate::pty::FORK_LOCK` again.
+    let status = crate::pty::while_no_fork_is_taken(||
+        // SAFETY: `resolved` is a live function with the declared signature in an image this process
+        // opened and never closes; `element` is non-null and, by this function's own contract, a
+        // live AX element the callee may interpret; `&raw mut id` points at a live, aligned,
+        // initialised `u32` that outlives the call.
+        unsafe { resolved(element, &raw mut id) });
     (status == 0 && id != 0).then_some(id)
 }
 
@@ -178,12 +183,16 @@ static HI_SERVICES_HANDLE: OnceLock<Option<usize>> = OnceLock::new();
 #[expect(unsafe_code, reason = "dlopen has no safe wrapper")]
 fn image(cache: &OnceLock<Option<usize>>, path: &CStr) -> Option<*mut c_void> {
     // A `*mut c_void` is not `Send`, and the pointer is a process-wide handle rather than data — so
-    // it is cached as the integer it is and handed back as a pointer at the use site. There is
-    // nothing to synchronise: `dlopen` is itself thread-safe and answers the same handle for the
-    // same path.
+    // it is cached as the integer it is and handed back as a pointer at the use site. `dlopen` is
+    // itself thread-safe and answers the same handle for the same path, so the `OnceLock` is about
+    // the COST of a second call, not its correctness.
     let address = (*cache.get_or_init(|| {
-        // SAFETY: the function's obligation, above.
-        let handle = unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY) };
+        // Loading an image is the loader's own lock, and a `fork` landing inside it hands the child
+        // that lock frozen. The rule is `crate::pty::FORK_LOCK`'s and the cost is two uncontended
+        // locks per process, ever, because the handle is cached.
+        let handle = crate::pty::while_no_fork_is_taken(||
+            // SAFETY: the function's obligation, above.
+            unsafe { libc::dlopen(path.as_ptr(), libc::RTLD_LAZY) });
         (!handle.is_null()).then(|| handle.addr())
     }))?;
     Some(std::ptr::without_provenance_mut(address))
