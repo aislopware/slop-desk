@@ -161,6 +161,7 @@ pub mod mux_envelope;
 pub mod mux_flow;
 pub mod mux_header;
 pub mod mux_host;
+pub mod mux_resize;
 // macOS only: the swipe-nav history gate's accessibility read — one browser's Back/Forward
 // availability, cached per pid across beats. See the module.
 #[cfg(target_os = "macos")]

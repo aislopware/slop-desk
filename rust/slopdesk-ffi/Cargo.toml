@@ -70,6 +70,7 @@ slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 slopdesk-screenwire = { path = "../slopdesk-screenwire" }
 slopdesk-sidecars = { path = "../slopdesk-sidecars" }
 slopdesk-superwire = { path = "../slopdesk-superwire" }
+slopdesk-muxsession = { path = "../slopdesk-muxsession" }
 slopdesk-terminal = { path = "../slopdesk-terminal" }
 slopdesk-video = { path = "../slopdesk-video" }
 slopdesk-altscreen = { path = "../slopdesk-altscreen" }

@@ -3268,6 +3268,64 @@ bool slopdesk_mux_bye_limiter_admit(SlopDeskUnboundByeLimiter *handle, uint32_t 
                                     double now);
 
 /* ---------------------------------------------------------------------------- *
+ * mux_resize — the PTY size fold of docs/45 §8.3: who votes on a pane's grid, and
+ * what that folds to.
+ *
+ * A HANDLE, because the state is a map of every attached subscriber's standing
+ * offer plus the latches around it, it lives as long as the pane, and hostd
+ * mutates it from four contexts under one lock.
+ *
+ * What did NOT cross: the `TIOCSWINSZ` and the timers. Every entry point answers
+ * what the grid SHOULD be and whether a timer is worth arming; the descriptor and
+ * the `Task` stay on the Swift side.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskResizeFold SlopDeskResizeFold;
+
+// One client's offer, or one resolved fold. The pixels are CARRIED rather than
+// folded: they are one client's cell metrics at one scale, and a minimum over two
+// clients' is a number no display has.
+typedef struct {
+    uint16_t cols;
+    uint16_t rows;
+    uint16_t px;
+    uint16_t py;
+} SlopDeskResizeGrid;
+
+// What a fold mutation asks the caller to schedule: whether to arm this
+// mutation's timer, and the generation the scheduled task must quote back.
+typedef struct {
+    uint64_t generation;
+    bool arm;
+} SlopDeskResizeArm;
+
+// One contributor as the workspace roster publishes it. `contributes` is what the
+// fold CREDITS, not the passivity flag alone — a phone alone on a pane sizes it.
+typedef struct {
+    uint64_t subscriber;
+    uint16_t cols;
+    uint16_t rows;
+    bool contributes;
+} SlopDeskResizeAttachment;
+
+SlopDeskResizeFold *slopdesk_resize_fold_new(bool opened_size_passive);
+void slopdesk_resize_fold_free(SlopDeskResizeFold *handle);
+SlopDeskResizeArm slopdesk_resize_fold_add(SlopDeskResizeFold *handle, uint64_t subscriber,
+                                           bool size_passive);
+SlopDeskResizeArm slopdesk_resize_fold_remove(SlopDeskResizeFold *handle, uint64_t subscriber);
+SlopDeskResizeArm slopdesk_resize_fold_offer(SlopDeskResizeFold *handle, uint64_t subscriber,
+                                             SlopDeskResizeGrid offer);
+uint64_t slopdesk_resize_fold_override(SlopDeskResizeFold *handle, SlopDeskResizeGrid grid);
+bool slopdesk_resize_fold_resolve(SlopDeskResizeFold *handle, bool check_generation,
+                                  uint64_t generation, SlopDeskResizeGrid *out);
+bool slopdesk_resize_fold_resolved(SlopDeskResizeFold *handle, SlopDeskResizeGrid *out);
+void slopdesk_resize_fold_clear_settle(SlopDeskResizeFold *handle, uint64_t generation);
+void slopdesk_resize_fold_clear_members(SlopDeskResizeFold *handle);
+bool slopdesk_resize_fold_is_settling(SlopDeskResizeFold *handle);
+size_t slopdesk_resize_fold_attachments(SlopDeskResizeFold *handle,
+                                        SlopDeskResizeAttachment *out, size_t capacity);
+
+/* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
  * loop policies both ends of the wire were spelling twice.
  *

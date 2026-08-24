@@ -1039,6 +1039,7 @@ dependencies = [
  "slopdesk-hookevent",
  "slopdesk-ids",
  "slopdesk-inspectord",
+ "slopdesk-muxsession",
  "slopdesk-panecensus",
  "slopdesk-posix",
  "slopdesk-probe",
@@ -1099,6 +1100,10 @@ dependencies = [
  "slopdesk-ffi",
  "slopdesk-video",
 ]
+
+[[package]]
+name = "slopdesk-muxsession"
+version = "0.1.0"
 
 [[package]]
 name = "slopdesk-panecensus"

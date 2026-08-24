@@ -1,11 +1,11 @@
-//! The six things hostd used to do in Swift and superd does now, and the two flags that ask for
-//! two of them.
+//! The seven things hostd used to do in Swift and a sidecar or a Rust crate does now, and the two
+//! flags that ask for two of them.
 //!
 //! Every ban here is a port that DELETED its original (`CLAUDE.md`, one implementation). What makes
 //! each worth a ratchet rather than a comment is that the Swift version would still work — it would
 //! simply be a second reader, a second parser or a second copy of a list, drifting from the one
-//! that ships. None of the six fails a test in either language, because each side stays internally
-//! consistent; the drift is between them.
+//! that ships. None of the seven fails a test in either language, because each side stays
+//! internally consistent; the drift is between them.
 //!
 //! Read `View::Code`, like every other ban in this crate: the prose above a ban names the thing it
 //! forbids, and a raw read would fire on the explanation.
@@ -55,79 +55,98 @@ const RUST_PROTOCOL: &str = "rust/slopdesk-superd/src/protocol.rs";
 /// second copy of a list whose whole point (`docs/DECISIONS`, 2026-08-10) is that it is the only
 /// copy of itself.
 ///
+/// **The PTY size fold.** Who votes on a pane's grid, what that folds to, and when a change is
+/// worth settling for (docs/45 §8.3) moved into `rust/slopdesk-muxsession`'s `resize_fold` and were
+/// deleted here in the same change. What did NOT move is the `TIOCSWINSZ` and the two `Task`s: the
+/// descriptor cannot cross and the timers should not. A second fold in Swift is the drift this ban
+/// exists for — it would still resolve a grid, and it would disagree with the one the roster
+/// publishes about who is contributing.
+///
 /// **The manifests themselves.** They live ONCE, as the TOML files they already are. A Swift source
 /// carrying manifest rule text is the mirror in its most tempting form: it looks like data, not
 /// code.
 #[must_use]
 pub fn deleted_host_swift(tree: &Tree) -> Report {
-    let claims = [
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"(enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "a Swift screen-detection engine is back in {files} — screend's detect verb owns the \
-                      ladder (docs/50 §3)",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"(enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "the ZDOTDIR shim is back in {files} — superd owns it \
-                      (rust/slopdesk-superd/src/shellintegration.rs)",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"(enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "the OSC sniffer is back in {files} — superd owns it \
-                      (rust/slopdesk-superd/src/sniffer.rs)",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"(enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "the command-block tap is back in {files} — superd owns it \
-                      (rust/slopdesk-superd/src/blocks.rs)",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"autoProgressCommands: \[String\]|autoProgressPrefixes",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "hostd is parsing SLOPDESK_AUTO_PROGRESS_COMMANDS in {files} — the raw value crosses, \
-                      superd parses it",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "manifest TOML is back in {files} — it lives in rust/slopdesk-screend/manifests \
-                      (docs/52)",
-        },
-    ];
+    let claims =
+        [
+            Claim::NoneUnder {
+                roots: &["Sources"],
+                extensions: SWIFT,
+                pattern: r"(enum|struct|final class|class|actor) (AgentManifest|CompiledAgentManifest|AgentManifestCatalog|TOMLSubsetParser|ManifestRegion|ManifestRuleEngine|BundledAgentManifests|AgentDetectionExplain|AgentOscTracker|AgentSyncFrameTracker|ClaudeManifestMatcher)\b",
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: "a Swift screen-detection engine is back in {files} — screend's detect verb owns \
+                          the ladder (docs/50 §3)",
+            },
+            Claim::NoneUnder {
+                roots: &["Sources"],
+                extensions: SWIFT,
+                pattern: r"(enum|struct|final class|class|actor) ShellIntegration\b|slopdesk-zdotdir-",
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: "the ZDOTDIR shim is back in {files} — superd owns it \
+                          (rust/slopdesk-superd/src/shellintegration.rs)",
+            },
+            Claim::NoneUnder {
+                roots: &["Sources"],
+                extensions: SWIFT,
+                pattern: r"(enum|struct|final class|class|actor) (HostOutputSniffer|OutputSniffer)\b",
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: "the OSC sniffer is back in {files} — superd owns it \
+                          (rust/slopdesk-superd/src/sniffer.rs)",
+            },
+            Claim::NoneUnder {
+                roots: &["Sources"],
+                extensions: SWIFT,
+                pattern: r"(enum|struct|final class|class|actor) (CommandBlockSegmenter|CommandBlockTracker|AutoProgressMatcher)\b",
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: "the command-block tap is back in {files} — superd owns it \
+                          (rust/slopdesk-superd/src/blocks.rs)",
+            },
+            Claim::NoneUnder {
+                roots: &["Sources"],
+                extensions: SWIFT,
+                pattern: r"autoProgressCommands: \[String\]|autoProgressPrefixes",
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: "hostd is parsing SLOPDESK_AUTO_PROGRESS_COMMANDS in {files} — the raw value \
+                          crosses, superd parses it",
+            },
+            Claim::NoneUnder {
+                roots: &["Sources"],
+                extensions: SWIFT,
+                pattern: r"struct ResizeContribution\b|func (foldOffers|creditsOffer|contributingCountLocked)\b",
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: "the PTY size fold is back in {files} — rust/slopdesk-muxsession owns the \
+                          arithmetic                       and hostd owns only the TIOCSWINSZ (docs/45 §8.3)",
+            },
+            Claim::NoneUnder {
+                roots: &["Sources"],
+                extensions: SWIFT,
+                pattern: r"\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=",
+                all: &[],
+                unless: &[],
+                view: View::Code,
+                exempt: &[],
+                message: "manifest TOML is back in {files} — it lives in rust/slopdesk-screend/manifests \
+                          (docs/52)",
+            },
+        ];
     check_all(tree, &claims)
 }
 
@@ -188,6 +207,8 @@ mod tests {
             ("blocks", "struct CommandBlockSegmenter {}\n"),
             ("autoprogress", "let autoProgressCommands: [String] = []\n"),
             ("manifest", "let body = \"\"\"\\n[[rules]]\\n\"\"\"\n"),
+            ("resizefold", "struct ResizeContribution {}\n"),
+            ("resizefoldfn", "    private static func foldOffers() {}\n"),
         ] {
             let fixture = Fixture::new(&format!("deleted-host-{name}"));
             fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");

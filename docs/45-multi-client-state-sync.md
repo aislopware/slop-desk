@@ -1157,6 +1157,10 @@ a Studio's nvim — network jitter driving a terminal reflow. So:
    having made no offer, so a Mac that has opened its channel but not yet offered still shuts the
    phone out.
 4. **A pane with zero ATTACHED subscribers keeps its last size** — it does not snap to 80×24.
+   The fold itself — the contributor map, the override, the settle latch and the generation
+   counter — lives in `rust/slopdesk-muxsession`'s `resize_fold`, reached through `PaneResizeFold`.
+   hostd keeps the `TIOCSWINSZ` and the two `Task`s and nothing else: a descriptor cannot cross, and
+   a timer should not.
 5. Wire type 11 `resize` stops being a command and becomes a **contribution**. `scheduleResize`
    records the offering subscriber's LATEST offer; `applyResolvedGrid()` folds the min and performs
    the one `pty.setWindowSize`. **No wire change.** Idempotence is a comparison against the live
