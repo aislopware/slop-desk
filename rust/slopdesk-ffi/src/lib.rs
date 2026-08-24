@@ -193,6 +193,10 @@ pub mod phone_key;
 pub mod pixel_plane;
 pub mod pointer_shape;
 pub mod present_queue;
+// macOS only, with `git_status`: the walk is portable, but the crate it lives in vendors `libgit2`,
+// and hostd is the only caller — a phone has no pane whose directory it could key.
+#[cfg(target_os = "macos")]
+pub mod project_key;
 pub mod rail_list;
 pub mod rail_structure;
 pub mod rate_control;

@@ -35,7 +35,12 @@ use sha2::{Digest, Sha256};
 const COMPILED: &[&str] = &["swift", "yml", "plist", "metal", "h"];
 
 /// The trees walked for [`COMPILED`] files.
-const TREES: &[&str] = &["Sources", "Apps"];
+///
+/// `ThirdParty/ghostty/integration` is one of them because BOTH app specs list
+/// `GhosttySurface` as a source path: those files are members of no `Package.swift` target, so
+/// nothing else in this set covers them, and an edit there used to leave a warm stamp — the gate
+/// reporting green over a file it had not compiled since the change.
+const TREES: &[&str] = &["Sources", "Apps", "ThirdParty/ghostty/integration"];
 
 /// The C surface, whose module maps have no extension worth matching on.
 const FFI_TREE: &str = "ThirdParty/slopdesk-ffi";

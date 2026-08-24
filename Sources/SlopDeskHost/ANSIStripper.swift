@@ -55,6 +55,42 @@ public enum ANSIStripper {
         }
     }
 
+    /// Plain text as LOGICAL lines — the `read --unwrapped` verb's answer, at most `limit` of them
+    /// counting from the end (`nil` is all).
+    ///
+    /// `slopdesk-sanitize`'s `lines::logical_lines`, which is where the two cases that matter are
+    /// stated and tested: an unterminated last line is KEPT (host-side it is indistinguishable from
+    /// the prompt an orchestrator is scraping for), and empty text is NO lines rather than one empty
+    /// one. The door delivers them joined by `\n` with their count beside — a logical line cannot
+    /// contain that byte, so the split back is exact, and the count is what tells the two empties
+    /// apart.
+    public static func logicalLines(_ text: String, limit: Int? = nil) -> [String] {
+        let bytes = Array(text.utf8)
+        return bytes.withUnsafeBufferPointer { input -> [String] in
+            var count = 0
+            // The answer is the input minus at most one newline, so the input's length is a bound —
+            // the same reasoning ``strip(bytes:)`` documents, and the same §4 retry if it ever is not.
+            var room = [UInt8](repeating: 0, count: input.count)
+            var needed = room.withUnsafeMutableBufferPointer { out in
+                slopdesk_logical_lines(
+                    input.baseAddress, input.count, limit ?? 0, out.baseAddress, out.count, &count,
+                )
+            }
+            if needed > room.count {
+                room = [UInt8](repeating: 0, count: needed)
+                needed = room.withUnsafeMutableBufferPointer { out in
+                    slopdesk_logical_lines(
+                        input.baseAddress, input.count, limit ?? 0, out.baseAddress, out.count, &count,
+                    )
+                }
+            }
+            guard count > 0 else { return [] }
+            guard needed <= room.count else { return [] }
+            let joined = String(bytes: room[0..<needed], encoding: .utf8) ?? ""
+            return joined.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        }
+    }
+
     /// The index from which the tail of `bytes` must be HELD BACK into the next chunk: the start of
     /// a trailing escape sequence that has not terminated yet, or of a trailing truncated UTF-8
     /// codepoint — either can only be stripped once its continuation arrives. `bytes.count` means

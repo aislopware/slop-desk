@@ -73,6 +73,16 @@ public extension ClaudeStatus {
         }
     }
 
+    /// Whether `previous → next` mints one FINISHED TURN — `slopdesk-agent`'s
+    /// `attention::mints_finished_turn`, which is where the rule and every case it turns on live.
+    ///
+    /// Beside ``ffiByte`` rather than at either caller: the host counts the turn (`pane/completionEpoch`)
+    /// and a test reads the same answer back, and two spellings of "a turn ended" is an unread badge
+    /// on one surface and not the other.
+    static func mintsFinishedTurn(previous: Self, next: Self) -> Bool {
+        slopdesk_agent_finished_turn(previous.ffiByte, next.ffiByte)
+    }
+
     /// The inverse. Total, because an unknown byte from a newer library must degrade rather than trap.
     init(ffiByte: UInt8) {
         switch ffiByte {

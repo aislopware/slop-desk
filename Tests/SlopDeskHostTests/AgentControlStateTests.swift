@@ -105,38 +105,11 @@ final class AgentControlStateTests: XCTestCase {
 
     // MARK: PIECE 3 — unwrapped logical-line split
 
-    func testUnwrapKeepsUnterminatedTrailingLine() {
-        // No trailing newline → the final element is a complete-but-unterminated logical line
-        // (host-side indistinguishable from a live prompt / "awaiting input" cue the orchestrator
-        // scrapes), so it is KEPT — dropping it would swallow the freshest line (review finding).
-        let out = MuxChannelSession.unwrapLogicalLines("alpha\nbeta\ngamma")
-        XCTAssertEqual(
-            out,
-            ["alpha", "beta", "gamma"],
-            "the unterminated trailing 'gamma' is kept (it may be the prompt)",
-        )
-    }
-
-    func testUnwrapDropsOnlyTerminatingNewlineArtifact() {
-        // Trailing newline → the split's trailing "" is a separator artifact, dropped (no spurious
-        // trailing blank), but the real content lines survive.
-        let out = MuxChannelSession.unwrapLogicalLines("alpha\nbeta\n")
-        XCTAssertEqual(out, ["alpha", "beta"])
-    }
-
-    func testUnwrapKeepsBlankLines() {
-        let out = MuxChannelSession.unwrapLogicalLines("a\n\nb\n")
-        XCTAssertEqual(out, ["a", "", "b"], "blank lines are preserved")
-    }
-
-    func testUnwrapLastNCap() {
-        let out = MuxChannelSession.unwrapLogicalLines("a\nb\nc\nd\n", lines: 2)
-        XCTAssertEqual(out, ["c", "d"], "only the last N logical lines")
-    }
-
-    func testUnwrapEmpty() {
-        XCTAssertEqual(MuxChannelSession.unwrapLogicalLines(""), [])
-    }
+    //
+    // (The split itself is `slopdesk-sanitize`'s `lines::logical_lines`, tested there — including
+    // the two cases this verb turns on: an unterminated last line is KEPT because host-side it is
+    // indistinguishable from the prompt an orchestrator scrapes, and empty text is NO lines rather
+    // than one empty one.)
 
     func testReadUnwrappedMissingPaneIsError() {
         let server = HostServer(port: 0)

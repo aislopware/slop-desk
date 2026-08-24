@@ -13,7 +13,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_sanitize::{Options, inputmode, plaintext, sanitize, styled, syncinput};
+use slopdesk_sanitize::{Options, inputmode, lines, plaintext, sanitize, styled, syncinput};
 
 use crate::{borrow, deliver};
 
@@ -71,6 +71,42 @@ pub unsafe extern "C" fn slopdesk_plaintext_strip(
 ) -> usize {
     // SAFETY: the caller's obligations, restated above; `borrow` and `deliver` state their own.
     unsafe { deliver(&plaintext::strip(borrow(bytes, len)), out, cap) }
+}
+
+/// Plain text as LOGICAL lines — the `read --unwrapped` verb's answer.
+///
+/// The lines are delivered JOINED by `\n`, with their count written to `line_count`, and the caller
+/// splits on the same byte: a logical line cannot contain one by construction, so the join is
+/// exact, and the count is what tells no lines at all from one empty line — two answers a joined
+/// blob spells identically and an orchestrator asking "did anything arrive" needs apart.
+///
+/// `limit` is how many lines to keep counting from the END; `0` is all of them.
+///
+/// # Safety
+/// `text` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes;
+/// `line_count` null or writable.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_logical_lines(
+    text: *const c_uchar,
+    len: usize,
+    limit: usize,
+    out: *mut c_uchar,
+    cap: usize,
+    line_count: *mut usize,
+) -> usize {
+    // SAFETY: the caller's obligation above is `borrow`'s.
+    let body = String::from_utf8_lossy(unsafe { borrow(text, len) }).into_owned();
+    let rows = lines::logical_lines(&body, Some(limit));
+    if !line_count.is_null() {
+        // SAFETY: non-null and writable by the caller's obligation above.
+        unsafe { *line_count = rows.len() };
+    }
+    // SAFETY: the caller's obligation above is `deliver`'s.
+    unsafe { deliver(rows.join("\n").as_bytes(), out, cap) }
 }
 
 /// Where a chunk's trailing INCOMPLETE sequence begins, so a caller feeding one chunk at a time can

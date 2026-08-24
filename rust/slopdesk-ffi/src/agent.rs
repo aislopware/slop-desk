@@ -579,6 +579,19 @@ pub const extern "C" fn slopdesk_agent_attention_completion(previous: c_uchar, c
     attention::is_completion(status_from(previous), status_from(current))
 }
 
+/// Whether `previous → current` mints one FINISHED TURN — the `pane/completionEpoch` count.
+///
+/// The hook-less finish plus the hook's own: entering `done` counts where a `Stop` hook announces
+/// it, and the decay that follows counts nothing.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_agent_finished_turn(previous: c_uchar, current: c_uchar) -> bool {
+    attention::mints_finished_turn(status_from(previous), status_from(current))
+}
+
 /// The POSITION of the oldest pane needing attention in a run of statuses, or `-1` for none.
 ///
 /// A position, not an identity: the caller holds the panes, and this rule only ranks them.

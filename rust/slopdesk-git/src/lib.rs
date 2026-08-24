@@ -7,6 +7,8 @@
 //!   path carrying the porcelain `XY` pair the wire is pinned to. The answer's TYPE is the wire's
 //!   own `GitStatusPayload` — a struct here with the same eight fields would be a mirror to keep in
 //!   step, and the reply this feeds already has one.
+//! - [`project_key`] — which repository a directory belongs to, by the boundary alone: the nearest
+//!   ancestor carrying a `.git`. The one question here that does not open the repository.
 //! - [`porcelain`] — the `XY` pair itself: how `git2`'s bitflags become the two characters `git
 //!   status --porcelain` prints, and how those characters pack into the byte the client unpacks.
 //!
@@ -24,6 +26,7 @@
 //!   spelled.
 
 pub mod porcelain;
+pub mod project_key;
 pub mod status;
 
 pub use status::{encoded_of_path, of_path};

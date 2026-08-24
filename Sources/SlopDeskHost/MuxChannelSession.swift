@@ -385,7 +385,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// probe), latched at the SNIFF point on the read-loop thread (like `lastProgress` — a detached
     /// window's change must be visible to the reattach re-assert immediately). `lastProjectKey` is
     /// the last EMITTED type-34 (git toplevel containing that cwd, else the cwd itself —
-    /// ``ProjectKeyResolver``), latched at RESOLVE COMPLETION on `metadataQueue`: the resolver's
+    /// ``ProjectKey/of(cwd:)``), latched at RESOLVE COMPLETION on `metadataQueue`: the resolver's
     /// `stat(2)`-per-ancestor walk is blocking filesystem work (a hung network mount can park it
     /// indefinitely), so ``deriveProjectKey(from:)`` dispatches it off the read-loop thread and the
     /// emission goes straight to ``broadcastControl(_:)``. Both latches are re-asserted by
@@ -407,7 +407,7 @@ final class MuxChannelSession: @unchecked Sendable {
     var cwdProbeOverride: (() -> String?)?
 
     /// Test seam for the async project-key resolve hop: production dispatches the
-    /// ``ProjectKeyResolver`` stat-walk onto the serial `metadataQueue` (resolves stay ordered);
+    /// ``ProjectKey/of(cwd:)`` stat-walk onto the serial `metadataQueue` (resolves stay ordered);
     /// tests inject a run-inline executor (deterministic emission) or a deferred one (pinning that
     /// a slow/hung resolve never blocks ``ingestPTYChunk(_:)``). `nil` (production) uses
     /// `metadataQueue.async`.
@@ -839,29 +839,11 @@ final class MuxChannelSession: @unchecked Sendable {
         onAgentStatusChanged?(status)
     }
 
-    /// Whether `previous → next` is one finished turn (herdr `is_background_completion_transition`).
-    ///
-    /// `.done` is the AUTHORITATIVE finish and only a `Stop` hook (or a ctl self-report) ever
-    /// produces it. Hooks are opt-in and off by default, and the screen-manifest engine — the
-    /// fallback that actually runs on most panes — has no `done` verdict at all: its states are
-    /// `unknown`/`working`/`blocked`/`idle`. Counting only `.done` therefore meant that on a
-    /// hook-free host a turn ending was indistinguishable from a turn never having happened, and the
-    /// finished-turn marker could not exist. The pane simply went grey.
-    ///
-    /// herdr never had that gap because it never had a `done` STATE: it derives `Done` as
-    /// `Idle && !seen` and mints the unread bit on `Working|Blocked → Idle`. Ported exactly, with
-    /// `.done` kept as an additional mint so a hook-driven host still counts the finish at the edge
-    /// the hook announces it (`.done → .idle`, the decay, is then the same turn ending twice and
-    /// mints nothing).
-    ///
-    /// `.none → .idle` is the presence FLOOR lifting — an agent appearing, not a turn ending — and
-    /// is deliberately not a completion. (herdr's second clause, `Unknown → Idle` guarded by an
-    /// unchanged agent label, has no equivalent here: this codebase's `.none` means "no agent
-    /// detected", so honouring it would mint a finish every time an agent was first seen.)
+    /// Whether `previous → next` mints one finished turn — ``ClaudeStatus/mintsFinishedTurn(previous:next:)``,
+    /// the face over `slopdesk-agent`'s `attention::mints_finished_turn`. Kept as a named seam here
+    /// because the hook-authority suite reads the same answer this counter does.
     static func isCompletionTransition(previous: ClaudeStatus, next: ClaudeStatus) -> Bool {
-        if next == .done { return previous != .done }
-        guard next == .idle else { return false }
-        return previous == .working || previous == .needsPermission
+        ClaudeStatus.mintsFinishedTurn(previous: previous, next: next)
     }
 
     private enum OutputItem {
@@ -2994,30 +2976,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// never matches a half-written prompt. When `lines` is non-nil, only the last N are returned.
     func recentUnwrappedTextForControl(lines limit: Int? = nil) -> [String] {
         let text = scrollbackTextForControl(ansiStrip: true)
-        return Self.unwrapLogicalLines(text, lines: limit)
-    }
-
-    /// Pure logical-line split (the `read --unwrapped` verb): split `text` on hard `\n`, keep blank
-    /// lines, and optionally keep only the last `limit`. Extracted as a `static` so it is
-    /// unit-testable with no PTY/ReplayBuffer.
-    ///
-    /// Trailing-element handling: only DROP the final element when the text ended in `\n` (so the
-    /// split's trailing `""` is a separator artifact, not content). When the text does NOT end in
-    /// `\n`, the final element is a complete-but-unterminated logical line — which host-side is
-    /// INDISTINGUISHABLE from the very signal an orchestrator scrapes (a live shell prompt or a
-    /// Claude "awaiting input" line that carries no trailing newline). Dropping it unconditionally
-    /// would silently swallow the freshest line, so we KEEP it. (A genuine half-written partial is
-    /// rare and harmless to include; losing the prompt is the worse failure.)
-    static func unwrapLogicalLines(_ text: String, lines limit: Int? = nil) -> [String] {
-        guard !text.isEmpty else { return [] }
-        var rows = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        // Drop ONLY the empty trailing artifact of a terminating newline; keep an unterminated
-        // final logical line (the prompt / awaiting-input cue).
-        if text.hasSuffix("\n"), !rows.isEmpty, rows[rows.count - 1].isEmpty {
-            rows.removeLast()
-        }
-        if let limit, limit > 0, rows.count > limit { rows = Array(rows.suffix(limit)) }
-        return rows
+        return ANSIStripper.logicalLines(text, limit: limit)
     }
 
     /// The last OSC-sniffed window title for this pane (empty string if none has arrived yet).
@@ -3324,7 +3283,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// ungated (it needs no startup-noise gate of its own).
     ///
     /// **Async (the resolver walk — `metadataQueue`):** a CHANGED cwd hands
-    /// ``ProjectKeyResolver/projectKey(forCwd:)`` — a `stat(2)`-per-ancestor filesystem walk that
+    /// ``ProjectKey/of(cwd:)`` — a `stat(2)`-per-ancestor filesystem walk that
     /// can block INDEFINITELY on a hung network mount (NFS/SMB/FUSE) — to
     /// ``scheduleProjectKeyResolve(for:)``, so a wedged mount can never freeze this pane's
     /// terminal output. The type-34 emission happens there, straight onto the CONTROL sender.
@@ -3375,9 +3334,8 @@ final class MuxChannelSession: @unchecked Sendable {
         scheduleProjectKeyResolve(for: cwd)
     }
 
-    /// Runs the ``ProjectKeyResolver`` toplevel walk for the CANONICALIZED `cwd`
-    /// (``canonicalCwd(_:)`` — logical OSC-7 paths and physical probe paths must land on ONE key)
-    /// OFF the read-loop thread — on the
+    /// Runs ``ProjectKey/of(cwd:)`` — the resolve and the toplevel walk, one crossing — OFF the
+    /// read-loop thread, on the
     /// serial `metadataQueue` (the file's home for ALL blocking FileManager/git/lsof work; serial,
     /// so resolves stay ordered), or the injected test executor. On completion, under
     /// `projectKeyLock`, the resolve is DROPPED if a later `cd` superseded it (`cwd` is no longer
@@ -3389,7 +3347,7 @@ final class MuxChannelSession: @unchecked Sendable {
     private func scheduleProjectKeyResolve(for cwd: String) {
         let resolve: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
-            let key = ProjectKeyResolver.projectKey(forCwd: Self.canonicalCwd(cwd))
+            let key = ProjectKey.of(cwd: cwd)
             projectKeyLock.lock()
             guard cwd == lastCwdTruth, key != lastProjectKey else {
                 projectKeyLock.unlock()
@@ -3439,21 +3397,6 @@ final class MuxChannelSession: @unchecked Sendable {
         projectKeyLock.unlock()
         guard matches else { return }
         broadcastControl([.projectGitStatus(status)])
-    }
-
-    /// `realpath(3)` of `cwd` for KEY RESOLUTION only — the type-33 cwd stays the path the shell
-    /// reported. OSC-7 carries the shell's LOGICAL `$PWD` (symlink components intact) while the
-    /// prompt-edge probe reports the kernel's PHYSICAL vnode path; the same directory would
-    /// otherwise resolve to two DIFFERENT key strings depending on which source spoke last, and the
-    /// client (which cannot stat host paths) would render one repo as two sidebar sections — or,
-    /// worse, walk a symlink ANCESTOR whose target has a `.git` and mint a third. Blocking (stats
-    /// every component) — callers are already off the read-loop thread, on `metadataQueue`. A
-    /// failed resolution (dir vanished, erroring mount) falls back to the raw path.
-    static func canonicalCwd(_ cwd: String) -> String {
-        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-        guard realpath(cwd, &buffer) != nil else { return cwd }
-        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
-        return String(bytes: bytes, encoding: .utf8) ?? cwd
     }
 
     /// The prompt-edge cwd read: the test seam when set, else the real ``HostMetadataProbe``

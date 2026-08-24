@@ -61,6 +61,26 @@ pub const fn is_completion(previous: ClaudeStatus, current: ClaudeStatus) -> boo
         && matches!(previous, ClaudeStatus::Working | ClaudeStatus::NeedsPermission)
 }
 
+/// Whether `previous → current` mints one FINISHED TURN — the count each viewer compares its own
+/// device-local "seen" against (`pane/completionEpoch`).
+///
+/// [`is_completion`] plus the hook path: entering `Done` is the authoritative finish and mints at
+/// the edge the `Stop` hook announces it, so a host WITH hooks counts the turn once there and the
+/// `Done → Idle` decay that follows mints nothing. A host WITHOUT hooks never sees `Done` at all —
+/// the screen engine has no such verdict — and counts the same turn at `Working|NeedsPermission →
+/// Idle`. One rule, both hosts, never twice for one turn.
+///
+/// Separate from [`is_completion`] because the two questions differ on exactly one edge: a
+/// NOTIFICATION for a hook-driven finish already fired on the `Done` attention edge ([`is_edge`]),
+/// so folding the mint in there would interrupt twice for the turn it counts once.
+#[must_use]
+pub const fn mints_finished_turn(previous: ClaudeStatus, current: ClaudeStatus) -> bool {
+    if matches!(current, ClaudeStatus::Done) {
+        return !matches!(previous, ClaudeStatus::Done);
+    }
+    is_completion(previous, current)
+}
+
 /// The position of the OLDEST pane needing attention, or `None` when none does.
 ///
 /// `statuses` is the caller's panes in canonical order, so the answer is a position in ITS list
@@ -220,7 +240,7 @@ pub fn walk_step(visited: &[bool], origin_is_live: bool) -> Step {
 mod tests {
     use super::{
         FocusedPane, PeekTarget, QueuePosition, Step, is_attention, is_completion, is_edge,
-        oldest_needing_attention, peek_queue, peek_target, walk_step,
+        mints_finished_turn, oldest_needing_attention, peek_queue, peek_target, walk_step,
     };
     use crate::status::ClaudeStatus;
 
@@ -271,6 +291,42 @@ mod tests {
             "presence appearing is not a finish"
         );
         assert!(!is_completion(ClaudeStatus::Working, ClaudeStatus::Done));
+    }
+
+    #[test]
+    fn a_finished_turn_is_counted_once_on_either_host() {
+        // The hook-free host: the screen engine has no `Done`, so the settle IS the finish.
+        assert!(mints_finished_turn(ClaudeStatus::Working, ClaudeStatus::Idle));
+        assert!(mints_finished_turn(
+            ClaudeStatus::NeedsPermission,
+            ClaudeStatus::Idle
+        ));
+
+        // The hook host: the `Stop` hook's `Done` mints, from anywhere that was not already `Done`.
+        assert!(mints_finished_turn(ClaudeStatus::Working, ClaudeStatus::Done));
+        assert!(mints_finished_turn(ClaudeStatus::Idle, ClaudeStatus::Done));
+        assert!(
+            !mints_finished_turn(ClaudeStatus::Done, ClaudeStatus::Idle),
+            "the decay of an announced finish is the same turn ending twice"
+        );
+
+        assert!(
+            !mints_finished_turn(ClaudeStatus::None, ClaudeStatus::Idle),
+            "an agent appearing is not a turn ending"
+        );
+        for status in ClaudeStatus::ALL {
+            assert!(
+                !mints_finished_turn(status, status),
+                "a re-assertion is not a transition: {status:?}"
+            );
+        }
+        assert!(!mints_finished_turn(ClaudeStatus::Idle, ClaudeStatus::Working));
+        assert!(!mints_finished_turn(
+            ClaudeStatus::Working,
+            ClaudeStatus::NeedsPermission
+        ));
+        assert!(!mints_finished_turn(ClaudeStatus::Done, ClaudeStatus::None));
+        assert!(!mints_finished_turn(ClaudeStatus::Idle, ClaudeStatus::None));
     }
 
     #[test]

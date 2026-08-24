@@ -78,7 +78,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
     }
 
     /// A real on-disk repo shape: `<tmp>/repo/.git/` + `<tmp>/repo/sub/` — the resolver walks the
-    /// actual filesystem in these tests (the walk itself is pinned pure in ProjectKeyResolverTests).
+    /// actual filesystem in these tests (the walk itself is pinned pure in `rust/slopdesk-git`'s `project_key`).
     /// Returned paths are PHYSICAL (`realpath`), so feeding them as the cwd round-trips through the
     /// resolver's canonicalization unchanged.
     private func makeTempRepo() throws -> (root: String, sub: String) {

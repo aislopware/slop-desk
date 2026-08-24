@@ -70,6 +70,12 @@ size_t slopdesk_sanitize(const uint8_t *bytes, size_t len, bool distill, bool re
                          uint8_t *out, size_t cap);
 size_t slopdesk_plaintext_strip(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t slopdesk_plaintext_holdback(const uint8_t *bytes, size_t len);
+// Plain text as LOGICAL lines: the lines JOINED by '\n', their count written to
+// line_count, and at most `limit` of them counting from the end (0 is all). The
+// caller splits on the same byte — a logical line cannot contain one — and reads
+// line_count to tell NO lines from ONE empty line, which the blob spells alike.
+size_t slopdesk_logical_lines(const uint8_t *text, size_t len, size_t limit,
+                              uint8_t *out, size_t cap, size_t *line_count);
 // The sync-input fan-out's mirror: client→host bytes with everything a KEYBOARD did not
 // produce removed — replies, mouse reports, focus events. The other direction from
 // `slopdesk_sanitize`, which drops the QUERIES rather than the answers.
@@ -390,6 +396,10 @@ uint8_t slopdesk_agent_status_rollup(const uint8_t *statuses, size_t len);
 bool    slopdesk_agent_is_attention(uint8_t status);
 bool    slopdesk_agent_attention_edge(uint8_t previous, uint8_t current);
 bool    slopdesk_agent_attention_completion(uint8_t previous, uint8_t current);
+// What mints one FINISHED TURN (`pane/completionEpoch`): the hook-less finish above, plus
+// ENTERING done, where a Stop hook announces the finish itself. The `Done -> Idle` decay that
+// follows mints nothing, so one turn is counted once on a host with hooks and on one without.
+bool    slopdesk_agent_finished_turn(uint8_t previous, uint8_t current);
 // The POSITION of the oldest pane needing attention in the caller's own order, or -1 for none:
 // blocked outranks finished wherever it sits, and within a bucket the earliest pane has waited
 // longest. A position, not an identity — the caller holds the panes.
@@ -8539,6 +8549,15 @@ int32_t slopdesk_pty_foreground_group(int32_t master_fd);
 // rendering, which is the right one for all three. 0 means only that `path` was
 // not UTF-8.
 size_t slopdesk_git_status(const uint8_t *path, size_t len, uint8_t *out, size_t cap);
+
+// The By-Project sidebar key (wire type 34) for a pane's cwd: the nearest ancestor
+// carrying a `.git` — directory or file, so a linked worktree is its own section —
+// else the cwd itself. `realpath`ed first, in the same crossing: OSC 7 reports the
+// shell's logical $PWD and the prompt-edge probe the kernel's physical path, and
+// one directory keying two ways renders one repository as two sections.
+//
+// Blocking (a stat per ancestor): the caller keeps this off its PTY read loop.
+size_t slopdesk_project_key(const uint8_t *cwd, size_t cwd_len, uint8_t *out, size_t cap);
 
 // ---- What is running in a pane -----------------------------------------------------
 

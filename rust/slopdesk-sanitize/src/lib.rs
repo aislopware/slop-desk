@@ -43,6 +43,7 @@ pub mod boundary;
 pub mod distill;
 pub mod escape;
 pub mod inputmode;
+pub mod lines;
 pub mod overprint;
 pub mod plaintext;
 pub mod prompteol;
