@@ -87,6 +87,155 @@ impl TabBadge {
     pub const fn is_busy_tier(self) -> bool {
         matches!(self, Self::CommandBusy | Self::CommandRunning | Self::Running)
     }
+
+    /// The state's WORD — the row title's accessibility value, the roll-up's spoken label.
+    ///
+    /// Three surfaces read it — the Mac's `AppKit` rows, the phone's `SwiftUI` rows and the
+    /// collapsed-sidebar strip — and a word spelled twice is a state `VoiceOver` reads two ways on
+    /// two devices. The colours are NOT here: a role resolves to an ink in the design floor.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Running => "Agent working",
+            Self::CommandRunning => "Loading",
+            Self::CommandBusy => "Running",
+            Self::Completed => "Completed",
+            Self::Finished => "Finished",
+            Self::Error => "Error",
+            Self::AwaitingInput => "Awaiting input",
+            Self::Caffeinate => "Caffeinated",
+            Self::Sudo => "Privileged",
+        }
+    }
+}
+
+/// The three states that WAIT ON YOU, as roles rather than hues.
+///
+/// The ink each takes is the view floor's answer; the ORDER they rank in is this module's, because
+/// the collapsed-group roll-up has to pick a loudest one and both halves must pick the same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Attention {
+    /// A question is blocking the agent. The most urgent — someone is waiting on a person.
+    Awaiting,
+    /// Something broke.
+    Failed,
+    /// A turn ended and the news is unread.
+    Finished,
+}
+
+impl Attention {
+    /// Every role, loudest first — the order [`rollup`] walks.
+    pub const ALL: [Self; 3] = [Self::Awaiting, Self::Failed, Self::Finished];
+
+    /// The code this role crosses as. `0` is reserved for "no role at all".
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Awaiting => 1,
+            Self::Failed => 2,
+            Self::Finished => 3,
+        }
+    }
+}
+
+/// A finished command's OUTCOME — the two readings the trailing slot has.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// Exit 0, or a completion the shell reported no code for.
+    Succeeded,
+    /// A non-zero exit, or a held-red `OSC 9;4;2`.
+    Failed,
+}
+
+impl Outcome {
+    /// The code this outcome crosses as. `0` is reserved for "no outcome".
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Succeeded => 1,
+            Self::Failed => 2,
+        }
+    }
+}
+
+/// The badge's attention role, or [`None`] for the states that are merely BUSY or merely
+/// privileged.
+///
+/// Busy is not attention: a spinning agent is not waiting for anyone. This is the ROLE behind
+/// [`TabBadge::needs_attention`], which answers the same question as a bare bit.
+#[must_use]
+pub const fn attention(badge: TabBadge) -> Option<Attention> {
+    match badge {
+        TabBadge::AwaitingInput => Some(Attention::Awaiting),
+        TabBadge::Error => Some(Attention::Failed),
+        // The completed/finished split is the freshness machinery's, not the reader's: a fresh
+        // flash and a settled unread finish are the same news at two ages.
+        TabBadge::Completed | TabBadge::Finished => Some(Attention::Finished),
+        TabBadge::Caffeinate
+        | TabBadge::CommandBusy
+        | TabBadge::CommandRunning
+        | TabBadge::Running
+        | TabBadge::Sudo => None,
+    }
+}
+
+/// The subset of [`attention`] that means *something is wrong or stopped and it is waiting on you*
+/// — the two roles that take their hue across a whole row title.
+///
+/// A FINISH is deliberately absent: green is the "nothing is wrong, come look when you can" end of
+/// the ramp, and spending the row on it would leave the urgent pair nothing louder to be.
+#[must_use]
+pub const fn urgent(badge: TabBadge) -> Option<Attention> {
+    match attention(badge) {
+        Some(Attention::Awaiting) => Some(Attention::Awaiting),
+        Some(Attention::Failed) => Some(Attention::Failed),
+        Some(Attention::Finished) | None => None,
+    }
+}
+
+/// The strongest attention role among a collapsed group's hidden rows.
+///
+/// A waiting question outranks a failure outranks an unread finish, which is [`Attention::ALL`]'s
+/// own order. [`None`] when nothing inside waits, so the header's count keeps the muted metadata
+/// ink and folding a group never hides an agent that needs the eye.
+#[must_use]
+pub fn rollup(badges: &[Option<TabBadge>]) -> Option<Attention> {
+    Attention::ALL.into_iter().find(|role| {
+        badges
+            .iter()
+            .flatten()
+            .copied()
+            .filter_map(attention)
+            .any(|found| found == *role)
+    })
+}
+
+/// Whether a badge is a COMMAND's outcome, and which one.
+///
+/// The finish tiers fuse both speakers, so `agent_finish` decides: the agent's turn ending is the
+/// mark column's check, a command's exit is the trailing slot's. An error is always a command's —
+/// the agent status vocabulary has no error case.
+#[must_use]
+pub const fn command_outcome(badge: Option<TabBadge>, agent_finish: bool) -> Option<Outcome> {
+    match badge {
+        Some(TabBadge::Error) => Some(Outcome::Failed),
+        Some(TabBadge::Completed | TabBadge::Finished) => {
+            if agent_finish {
+                None
+            } else {
+                Some(Outcome::Succeeded)
+            }
+        },
+        Some(
+            TabBadge::AwaitingInput
+            | TabBadge::Caffeinate
+            | TabBadge::CommandBusy
+            | TabBadge::CommandRunning
+            | TabBadge::Running
+            | TabBadge::Sudo,
+        )
+        | None => None,
+    }
 }
 
 /// The stored exit-code badge a background pane carries until it is looked at.
@@ -288,7 +437,10 @@ fn privilege_badge(process: &str) -> Option<TabBadge> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Completion, Freshness, Gates, Progress, Signals, TabBadge, resolve, resolve_gated};
+    use super::{
+        Attention, Completion, Freshness, Gates, Outcome, Progress, Signals, TabBadge, attention,
+        command_outcome, resolve, resolve_gated, rollup, urgent,
+    };
     use crate::status::ClaudeStatus;
 
     /// A row with nothing happening on it.
@@ -532,5 +684,88 @@ mod tests {
         // The privilege markers are neither: they say what a session IS, not what it is doing.
         assert!(!TabBadge::Sudo.needs_attention() && !TabBadge::Sudo.is_busy_tier());
         assert!(!TabBadge::Caffeinate.needs_attention() && !TabBadge::Caffeinate.is_busy_tier());
+    }
+
+    #[test]
+    fn every_badge_says_something_and_no_two_share_a_word() {
+        let mut words: Vec<&str> = TabBadge::ALL.iter().map(|badge| badge.label()).collect();
+        for word in &words {
+            assert!(!word.is_empty());
+        }
+        words.sort_unstable();
+        let count = words.len();
+        words.dedup();
+        assert_eq!(words.len(), count, "a shared word is one state read as another");
+    }
+
+    /// The bit and the role must agree, or a row that raises the queue speaks no reason for it.
+    #[test]
+    fn the_attention_role_is_present_exactly_where_the_attention_bit_is() {
+        for badge in TabBadge::ALL {
+            assert_eq!(attention(badge).is_some(), badge.needs_attention(), "{badge:?}");
+        }
+        assert_eq!(attention(TabBadge::AwaitingInput), Some(Attention::Awaiting));
+        assert_eq!(attention(TabBadge::Error), Some(Attention::Failed));
+        assert_eq!(attention(TabBadge::Completed), Some(Attention::Finished));
+        assert_eq!(attention(TabBadge::Finished), Some(Attention::Finished));
+    }
+
+    /// A finish is news, not an alarm — it never takes the whole title.
+    #[test]
+    fn a_finish_is_never_urgent() {
+        assert_eq!(urgent(TabBadge::Finished), None);
+        assert_eq!(urgent(TabBadge::Completed), None);
+        assert_eq!(urgent(TabBadge::AwaitingInput), Some(Attention::Awaiting));
+        assert_eq!(urgent(TabBadge::Error), Some(Attention::Failed));
+    }
+
+    #[test]
+    fn the_rollup_picks_the_loudest_role_present() {
+        assert_eq!(rollup(&[]), None);
+        assert_eq!(rollup(&[None, Some(TabBadge::Running)]), None);
+        assert_eq!(rollup(&[Some(TabBadge::Finished)]), Some(Attention::Finished));
+        assert_eq!(
+            rollup(&[Some(TabBadge::Finished), Some(TabBadge::Error)]),
+            Some(Attention::Failed),
+        );
+        assert_eq!(
+            rollup(&[
+                Some(TabBadge::Error),
+                Some(TabBadge::AwaitingInput),
+                Some(TabBadge::Finished),
+            ]),
+            Some(Attention::Awaiting),
+        );
+    }
+
+    /// The one fork the finish tiers force: whose ending this is.
+    #[test]
+    fn a_finish_is_a_command_outcome_only_when_it_is_not_the_agents() {
+        assert_eq!(
+            command_outcome(Some(TabBadge::Finished), false),
+            Some(Outcome::Succeeded)
+        );
+        assert_eq!(command_outcome(Some(TabBadge::Finished), true), None);
+        assert_eq!(
+            command_outcome(Some(TabBadge::Completed), false),
+            Some(Outcome::Succeeded)
+        );
+        assert_eq!(command_outcome(Some(TabBadge::Completed), true), None);
+        // An error is a command's however the finish is attributed.
+        assert_eq!(
+            command_outcome(Some(TabBadge::Error), true),
+            Some(Outcome::Failed)
+        );
+        assert_eq!(command_outcome(None, false), None);
+    }
+
+    #[test]
+    fn no_role_or_outcome_crosses_as_the_absent_code() {
+        for role in Attention::ALL {
+            assert_ne!(role.code(), 0, "{role:?}");
+        }
+        for outcome in [Outcome::Succeeded, Outcome::Failed] {
+            assert_ne!(outcome.code(), 0, "{outcome:?}");
+        }
     }
 }

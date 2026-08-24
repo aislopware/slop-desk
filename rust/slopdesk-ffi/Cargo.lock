@@ -1176,6 +1176,7 @@ name = "slopdesk-workspace"
 version = "0.1.0"
 dependencies = [
  "regex",
+ "slopdesk-agent",
  "slopdesk-fuzzy",
  "slopdesk-ids",
  "slopdesk-settings",

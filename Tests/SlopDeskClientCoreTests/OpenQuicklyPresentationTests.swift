@@ -38,8 +38,9 @@ final class OpenQuicklyPresentationTests: XCTestCase {
     /// "Open in New Window" is absent on purpose (N/A in the single-window rail model, pinned in
     /// `docs/DECISIONS.md`) rather than being a dead row.
     func testTheFolderTableIsTheFullSetInOrder() {
-        let titles = OpenQuicklyActions.folderActions(
-            path: "/Users/me/proj", store: store(), model: nil, folders: nil,
+        let titles = OpenQuicklyActions.rowActions(
+            for: item(kind: .folder, act: .openFolder(path: "/Users/me/proj")),
+            store: store(), model: nil, folders: nil,
         ).map(\.title)
         XCTAssertEqual(titles, [
             "Split Right", "Split Down", "Change Directory Here", "Reveal in Finder", "Copy Path",
@@ -50,8 +51,9 @@ final class OpenQuicklyPresentationTests: XCTestCase {
     /// nothing to forget it from, and an inert row is worse than an absent one.
     func testForgetThisFolderNeedsAFrecencyStore() {
         let folders = FolderFrecencyStore()
-        let titles = OpenQuicklyActions.folderActions(
-            path: "/Users/me/proj", store: store(), model: nil, folders: folders,
+        let titles = OpenQuicklyActions.rowActions(
+            for: item(kind: .folder, act: .openFolder(path: "/Users/me/proj")),
+            store: store(), model: nil, folders: folders,
         ).map(\.title)
         XCTAssertEqual(titles.last, "Forget This Folder")
     }

@@ -1,4 +1,5 @@
-// PaneSwitcherRows — what one ⌃⇥ switcher row SAYS, resolved off the live store.
+// PaneSwitcherRows — the near-side FACE of `slopdesk_workspace::pane_switcher`, plus the store reads
+// that resolve one ⌃⇥ row off the live workspace.
 //
 // A row is a PANE, the same unit the sidebar lists and the same unit ⌘1…⌘9 lands on. The card is
 // therefore the sidebar in recency order: one line per pane, carrying only what differs — the pane's
@@ -16,19 +17,20 @@
 // the order ⇥ steps in, so grouping would make the highlight jump around the list. So each row says its
 // own place, on its own second line.
 //
-// Pure composers (`projectName` / `relativePath` / `note`) so the wording is unit-pinned without a view;
-// the one `@MainActor` entry is the store read.
-//
 // TWO HALVES READ THIS FILE, and the second one arrived late. The Mac draws the rows in an `NSPanel`
 // (`Sources/SlopDeskMacUI/Overlays/MacPaneSwitcher.swift`), the phone in a paper card
 // (`Sources/SlopDeskPhoneUI/Overlays/PaneSwitcherOverlay.swift`) — and for a while the phone drew
 // NOTHING, while the binding row that opens the gesture said `Platform::Both`. ⌃⇥ on an iPad therefore
 // veiled every pane (``PaneFocusPolicy/showsSwitcherRecede(switcherIsOpen:isFocused:)`` reads the same
 // store flag) behind a card that did not exist, with no way to step, commit or cancel. Everything the
-// phone needed that the Mac did not — its width rung, and what a TAP on a row means — is here rather
-// than in the view, for the same reason the rows and the measurements always were.
+// phone needed that the Mac did not — its width rung, and what a TAP on a row means — crossed with the
+// rest, for the same reason the rows and the measurements did.
+//
+// What stays HERE is the `@MainActor` walk over the store: which panes the ring holds, what number each
+// wears, and the chrome resolver that titles one. Those are reads of live workspace state, not rules.
 
 import CoreGraphics
+import CSlopDeskFFI
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
@@ -48,73 +50,40 @@ package struct PaneSwitcherRow: Identifiable, Equatable {
     package let isHighlighted: Bool
 }
 
-/// How big the card is, as a function of the window it floats in. Pure + unit-pinned; the view only
-/// supplies the container size.
+/// How big the card is, as a function of the window it floats in.
 ///
 /// A fixed width is wrong for this surface in a way it is not wrong for a dialog: the switcher's rows
 /// carry LIVE text of wildly varying length (`zsh` … `nvim Sources/…/PaneSwitcherOverlay.swift`), so the
-/// right measure depends on how much room the window can spare. The band below is MEASURED, not guessed
-/// — SF 13 in this row anatomy (card 12 + row 12 padding either side, a 30pt keycap and its 12pt gap =
-/// ~90pt of chrome):
+/// right measure depends on how much room the window can spare. The band the far side clamps into is
+/// MEASURED rather than guessed, and its own header records the three sample measures.
 ///
-/// | content | card |
-/// |---|---|
-/// | 45 characters — the low end of a comfortable measure | 390 |
-/// | 60 characters — `swift test --filter PaneSwitcherRowsTests` and friends land here | 490 |
-/// | 75 characters — the high end; past it the eye loses the line | 590 |
-///
-/// The row is now TWO registers stacked (identity over place), so the title owns that measure alone
-/// rather than sharing it with the sub-path — the band holds, with more slack than it had.
-///
-/// So: ``minWidth`` 400 (a real command, untruncated), ``maxWidth`` 640 (the app's Open-Quickly rung —
-/// the widest list panel the chrome already uses), and between them a fraction of the window. The last
-/// clamp is the one that matters on a small window: an overlay that eats two thirds of its host has
-/// stopped reading as an overlay.
+/// The two rungs — desktop and compact — are separate functions rather than one with a flag, because
+/// NEITHER desktop bound survives the move to a phone. That is arithmetic rather than taste: the floor
+/// is wider than an iPhone's whole screen, and the ceiling would spend a third of that screen on ground
+/// whose only job is to be not-the-card. Its premise is the workspace BEHIND, and a phone screen has no
+/// behind; ``GlobalSearchMetrics`` records the same reading for the same reason one surface over.
 package enum PaneSwitcherMetrics {
-    /// Below this a genuine title truncates on nearly every row.
-    package static let minWidth: CGFloat = 400
-    /// The app's widest list-panel rung (Open Quickly). Past ~75 characters a line stops being scannable.
-    package static let maxWidth: CGFloat = 640
-    /// Of the window, between the two bounds. At 1280 that is 538; at 1524 and wider it reaches the cap.
-    package static let widthFraction: CGFloat = 0.42
-    /// The hard share of the window the card may occupy — it outranks ``minWidth``, because a card wider
-    /// than its window is not a floating surface.
-    package static let widthCeilingFraction: CGFloat = 0.66
-    /// The card may not grow past this share of the window's height; beyond it the rows scroll.
-    package static let heightFraction: CGFloat = 0.7
-
     package static func width(container: CGFloat) -> CGFloat {
-        guard container > 0 else { return minWidth }
-        let ideal = min(max(container * widthFraction, minWidth), maxWidth)
-        return min(ideal, container * widthCeilingFraction)
+        CGFloat(slopdesk_ws_pane_switcher_width(Double(container)))
     }
 
+    /// An unmeasured container has NO ceiling — a first layout pass must not clamp the card to zero.
     package static func maxHeight(container: CGFloat) -> CGFloat {
-        guard container > 0 else { return .infinity }
-        return container * heightFraction
+        CGFloat(slopdesk_ws_pane_switcher_max_height(Double(container)))
     }
 
     /// The width the card takes on a COMPACT screen — the phone's rung of the same measure.
     ///
-    /// ⚠️ NEITHER BOUND ABOVE SURVIVES THE MOVE, and that is arithmetic rather than taste. The floor is
-    /// 400 and an iPhone's whole screen is 390, so the "a real command, untruncated" guarantee is not
-    /// available at any width here. The ceiling is worse: applied to a 390pt screen it answers with a
-    /// 257pt card — every row truncated, a third of the screen spent on ground whose only job is to be
-    /// not-the-card. Its premise is the workspace BEHIND (an overlay that eats two thirds of its host
-    /// has stopped reading as an overlay), and a phone screen has no behind; ``GlobalSearchMetrics``
-    /// records the same reading for the same reason one surface over.
+    /// It keeps exactly the one bound that was never about the window: past ~75 characters the eye loses
+    /// the line, on any screen. The card takes the width it is offered, up to that cap — which binds on
+    /// an iPad and never on a phone. The margin between the card and the screen edge is the presenter's,
+    /// the same `Slate.Metric.space4` every phone card keeps.
     ///
-    /// So the compact rung keeps exactly the one bound that was never about the window: past ~75
-    /// characters the eye loses the line, on any screen. The card takes the width it is offered, up to
-    /// ``maxWidth`` — which binds on an iPad and never on a phone. The margin between the card and the
-    /// screen edge is the presenter's, the same `Slate.Metric.space4` every phone card keeps.
-    ///
-    /// An unmeasured container (a first layout pass) yields the CAP rather than the floor: the phone's
-    /// frame is a `maxWidth`, so the enclosing padding still bounds it, where returning 400 would ask a
-    /// 390pt screen for a card wider than itself.
+    /// An unmeasured container (a first layout pass) yields the CAP rather than a floor: the phone's
+    /// frame is a `maxWidth`, so the enclosing padding still bounds it, where a floor would ask a 390pt
+    /// screen for a card wider than itself.
     package static func compactWidth(container: CGFloat) -> CGFloat {
-        guard container > 0 else { return maxWidth }
-        return min(container, maxWidth)
+        CGFloat(slopdesk_ws_pane_switcher_compact_width(Double(container)))
     }
 
     /// How tall the ROWS stand: their true height, capped at the ceiling past which they scroll.
@@ -124,9 +93,9 @@ package enum PaneSwitcherMetrics {
     /// so a two-row card left to the framework stands 70% of the screen tall with its two rows at the
     /// top. The sum is exact rather than an estimate — the row is a fixed-height object in both halves
     /// (`Slate.Metric.heightRowStacked`), which is what makes the list's rhythm a constant beat — so the
-    /// caller passes that height in and the arithmetic is pinned here rather than inlined in a view.
+    /// caller passes that height in and the arithmetic stays on one side of the boundary.
     package static func listHeight(rows: Int, rowHeight: CGFloat, container: CGFloat) -> CGFloat {
-        min(CGFloat(rows) * rowHeight, maxHeight(container: container))
+        CGFloat(slopdesk_ws_pane_switcher_list_height(rows, Double(rowHeight), Double(container)))
     }
 }
 
@@ -153,26 +122,31 @@ package struct PaneSwitcherWalk: Equatable {
 /// with nothing held, in a family where every card names itself (``SlateCardTitle``).
 package enum PaneSwitcherCopy {
     /// The card's title — the SAME words the palette row that opens it wears (`pane.switcher` in
-    /// ``WorkspaceBindingRegistry``, and the phone's only touch entry point into the gesture). Pinned
-    /// equal by `Tests/SlopDeskClientCoreTests/PaneSwitcherRowsTests.swift`: a surface and the command
-    /// that summons it may not come to have two names.
-    package static let title = "Pane Switcher"
+    /// ``WorkspaceBindingRegistry``, and the phone's only touch entry point into the gesture). A surface
+    /// and the command that summons it may not come to have two names.
+    package static var title: String { words[0] }
 
     /// The honest zero state. The ring is frozen at open and its panes can close under it, so the rows
     /// CAN empty mid-gesture — and an empty card that still veils the workspace is the defect this
     /// surface exists to answer, said a second time.
-    package static let noPanes = "No other panes"
+    package static var noPanes: String { words[1] }
 
     /// The two step controls, for the reader who has no ⇥ to press. Named by what they MOVE, not by the
     /// ring's direction: "forward" is a fact about the frozen order, and nobody is holding it.
-    package static let stepForward = "Next pane"
-    package static let stepBackward = "Previous pane"
+    package static var stepForward: String { words[2] }
+    package static var stepBackward: String { words[3] }
 
     /// The join between a row's two place halves. ``PaneSwitcherRowsBuilder/PaneIdentity/placeLine``
     /// makes the same join for the surfaces that carry one subtitle slot; a half that draws the two
     /// registers separately (the switcher rows do, so the project can go a shade heavier) still spells
     /// the separator from here.
-    package static let placeSeparator = " › "
+    package static var placeSeparator: String { words[4] }
+
+    /// Every word in ONE crossing, once per process.
+    private static let words: [String] = wsRuns(
+        wsAnswerBytes { out, cap in Int(slopdesk_ws_pane_switcher_words(out, cap)) },
+        count: 5,
+    )
 }
 
 package enum PaneSwitcherRowsBuilder {
@@ -198,7 +172,7 @@ package enum PaneSwitcherRowsBuilder {
     }
 
     /// The highest pane the app binds a ⌘-digit to (⌘1–9). Past it a row has no shortcut to show.
-    package static let highestShortcut = 9
+    package static let highestShortcut = slopdesk_ws_pane_switcher_highest_shortcut()
 
     /// Resolve the frozen candidate ring into rows. The ORDER is the switcher's (recency), not the
     /// session's — that is the point of the surface; the NUMBER is the session's, because that is what
@@ -243,23 +217,12 @@ package enum PaneSwitcherRowsBuilder {
     /// until the highlight is the tapped row, then COMMIT. That is what a Mac user does with ⇥⇥⇥ and a
     /// release; the phone just does it in one gesture.
     ///
-    /// The direction is the SHORTER way round the ring, and that is not cosmetic: every step previews
-    /// its pane, so the count is the number of device-focus writes a single tap costs. They all land
-    /// inside one runloop turn — nothing renders between them, so no intermediate pane ever appears —
-    /// but half a ring of them is still half a ring more than the walk needs. A tie (the row exactly
-    /// opposite, on an even ring) goes FORWARD, the direction a bare ⇥ walks.
-    ///
     /// ⚠️ CANDIDATE INDEX SPACE, NOT ROW SPACE. ``rows(for:store:)`` drops a candidate whose pane closed
     /// under the held gesture, so the third ROW can be the fourth CANDIDATE — and the highlight
-    /// ``PaneSwitcher/step(forward:)`` moves is the candidate's. Pure.
+    /// ``PaneSwitcher/step(forward:)`` moves is the candidate's.
     package static func walk(from: Int, to: Int, count: Int) -> PaneSwitcherWalk {
-        guard count > 1 else { return PaneSwitcherWalk(forward: true, steps: 0) }
-        let ahead = ((to - from) % count + count) % count
-        guard ahead > 0 else { return PaneSwitcherWalk(forward: true, steps: 0) }
-        let behind = count - ahead
-        return ahead <= behind
-            ? PaneSwitcherWalk(forward: true, steps: ahead)
-            : PaneSwitcherWalk(forward: false, steps: behind)
+        let answer = slopdesk_ws_pane_switcher_walk(max(0, from), max(0, to), max(0, count))
+        return PaneSwitcherWalk(forward: answer.forward, steps: answer.steps)
     }
 
     /// The walk from the live highlight to `target`, over the ring `switcher` froze.
@@ -278,12 +241,15 @@ package enum PaneSwitcherRowsBuilder {
         package let title: String
         package let project: String?
         package let note: String?
-
         /// The place line the switcher stacks under the title, as ONE string (`project › note`) — for
         /// surfaces that carry a single subtitle slot. `nil` when the pane has neither half.
-        package var placeLine: String? {
-            let joined = [project, note].compactMap(\.self).joined(separator: PaneSwitcherCopy.placeSeparator)
-            return joined.isEmpty ? nil : joined
+        package let placeLine: String?
+
+        package init(title: String, project: String?, note: String?, placeLine: String?) {
+            self.title = title
+            self.project = project
+            self.note = note
+            self.placeLine = placeLine
         }
     }
 
@@ -303,43 +269,71 @@ package enum PaneSwitcherRowsBuilder {
             representativePane: tab.activePane ?? tab.allPaneIDs().first,
             manualBadge: store.tabBadgeOverride(for: tab.id), store: store,
         )
-        let project = facts.kind == .terminal
-            ? projectName(projectKey: facts.projectKey, cwd: facts.cwd)
-            : nil
-        let note = facts.kind == .terminal
-            ? note(projectKey: facts.projectKey, cwd: facts.cwd)
-            // No section headers here, so no key: the switcher shows the whole location.
-            : facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle, projectKey: nil)
-        let resolved = title(facts: facts, chrome: chrome, project: project, note: note, store: store)
-        // The agent's ✳ mark rides the IDENTITY, not just the sidebar view: the rail row draws its own
-        // marker (`SlateTabRow.agentMarker`), so without this the switcher and the palette would show
-        // the same pane bare while the rail shows it marked. Whatever rung titled the row — intent,
-        // running command, normalized program title, folder — an agent session leads with the ONE
-        // static mark; a title already led by it (the normalized-title rung) keeps its own.
-        let isAgent = RailRowsBuilder.isAgentSession(status: chrome.status, processLabel: chrome.processLabel)
-        return PaneIdentity(
-            title: isAgent ? RailRowsBuilder.agentMarkedTitle(resolved) : resolved,
-            project: project,
-            note: note,
+        let structural = structuralTitle(facts: facts, chrome: chrome, store: store)
+        // A NON-terminal pane has no project and takes the whole location as its note — there are no
+        // section headers here, so no key to cut it against.
+        guard facts.kind == .terminal else {
+            let note = facts.spec?.railSubtitle(cwd: facts.cwd, liveTitle: facts.liveTitle, projectKey: nil)
+            return marked(title: structural, project: nil, note: note, chrome: chrome)
+        }
+        // The row's three registers, resolved in one crossing off the pane's own four facts: the drawn
+        // title (already yielded to the program if it only restated its place line), the project, the
+        // note, and the two joined. Four doors would let a half join a project from one row with a note
+        // from another.
+        var arena = WsStrings()
+        let title = arena.span(structural)
+        let projectKey = arena.span(facts.projectKey)
+        let cwd = arena.span(facts.cwd)
+        let processLabel = arena.span(chrome.processLabel)
+        let blob = arena.bytes.withUnsafeBufferPointer { lent in
+            wsAnswerBytes { out, cap in
+                Int(slopdesk_ws_pane_switcher_row(
+                    title, projectKey, cwd, processLabel, lent.baseAddress, lent.count, out, cap,
+                ))
+            }
+        }
+        // An EMPTY run is "there is none": the rules never write a blank project or note, so an empty
+        // one cannot collide with a real answer.
+        let runs = wsRuns(blob, count: 4)
+        return marked(
+            title: runs[0],
+            project: runs[1].isEmpty ? nil : runs[1],
+            note: runs[2].isEmpty ? nil : runs[2],
+            placeLine: runs[3].isEmpty ? nil : runs[3],
+            chrome: chrome,
         )
     }
 
-    /// The row's LINE — the pane's live identity chain, the same one ``NavigatorColumn`` hands its rows,
-    /// so the switcher and the sidebar can never call one pane two things.
+    /// The agent's ✳ mark rides the IDENTITY, not just the sidebar view: the rail row draws its own
+    /// marker (`SlateTabRow.agentMarker`), so without this the switcher and the palette would show the
+    /// same pane bare while the rail shows it marked. Whatever rung titled the row — intent, running
+    /// command, normalized program title, folder — an agent session leads with the ONE static mark; a
+    /// title already led by it (the normalized-title rung) keeps its own.
+    @MainActor
+    private static func marked(
+        title: String, project: String?, note: String?, placeLine: String? = nil,
+        chrome: RailRowsBuilder.RailRowChrome,
+    ) -> PaneIdentity {
+        let isAgent = RailRowsBuilder.isAgentSession(status: chrome.status, processLabel: chrome.processLabel)
+        return PaneIdentity(
+            title: isAgent ? RailRowsBuilder.agentMarkedTitle(title) : title,
+            project: project,
+            note: note,
+            placeLine: placeLine ?? note,
+        )
+    }
+
+    /// The row's LINE before the place line has had its say — the pane's live identity chain, the same
+    /// one ``NavigatorColumn`` hands its rows, so the switcher and the sidebar can never call one pane
+    /// two things.
     ///
     /// `projectKey` IS passed to the structural rung on purpose: at the project root that yields the
     /// PROGRAM rather than the folder name, and an idle shell's empty result then falls through to the
     /// running command / last command / folder name. That fall-through is what tells two panes of one
-    /// repo apart.
-    ///
-    /// The last rung of that chain is the folder name, which beside the row's own place line is the same
-    /// word twice — so a row that lands there yields to its program instead (`zsh`, the sidebar's
-    /// metadata slot). Only when even that is unknown does the row restate the folder, because a blank
-    /// line says less than a redundant one.
+    /// repo apart. Whether the result then only RESTATES its place line is the far side's question.
     @MainActor
-    private static func title(
-        facts: PaneFacts, chrome: RailRowsBuilder.RailRowChrome, project: String?, note: String?,
-        store: WorkspaceStore,
+    private static func structuralTitle(
+        facts: PaneFacts, chrome: RailRowsBuilder.RailRowChrome, store: WorkspaceStore,
     ) -> String {
         let structural = RailRowsBuilder.rowTitle(
             kind: facts.kind, spec: facts.spec, cwd: facts.cwd, liveTitle: facts.liveTitle,
@@ -352,7 +346,7 @@ package enum PaneSwitcherRowsBuilder {
                 for: facts.pane, processLabel: RailRowsBuilder.processDisplayName(chrome.processLabel),
             )
             : nil
-        let resolved = RailRowsBuilder.liveRowTitle(
+        return RailRowsBuilder.liveRowTitle(
             structuralTitle: structural,
             userRenamed: facts.spec?.userRenamed == true,
             isAgent: RailRowsBuilder.isAgentSession(
@@ -367,56 +361,5 @@ package enum PaneSwitcherRowsBuilder {
             cwdTitle: RailRowsBuilder.cwdFolderName(facts.cwd),
             fallback: PaneChooserRegistry.option(for: facts.kind).title,
         )
-        return unrepeated(resolved, project: project, note: note, processLabel: chrome.processLabel)
-    }
-
-    /// A title that only restates the place line under it yields to the pane's program. Pure so the rule
-    /// is unit-pinned.
-    ///
-    /// BOTH halves of that line count. The project is the obvious case (`slopdesk` over `slopdesk`), but
-    /// the note's LAST component is the same stutter one level down: a shell sitting in
-    /// `Sources/…/Overlays` titles itself by the folder-name rung, and the row then reads `Overlays`
-    /// over `slopdesk › Sources/SlopDeskClientCore/Overlays`. That was invisible while the path lived in a
-    /// section header the row could not see; with the place on the row it is a line saying one word
-    /// twice.
-    package static func unrepeated(
-        _ title: String, project: String?, note: String?, processLabel: String?,
-    ) -> String {
-        let noteTail = note?.split(separator: "/").last.map(String.init)
-        guard title == project || title == noteTail else { return title }
-        return RailRowsBuilder.slotProcessName(processLabel) ?? title
-    }
-
-    /// The PROJECT a terminal pane belongs to: its project's folder name, or — for a pane with no
-    /// project key yet — its own folder name, so the row still names a place rather than nowhere.
-    /// `nil` when there is no cwd at all. Pure.
-    package static func projectName(projectKey: String?, cwd: String?) -> String? {
-        guard let key = TabOrderingEngine.normalizedProjectKey(projectKey) else {
-            return RailRowsBuilder.cwdFolderName(cwd)
-        }
-        return TabOrderingEngine.projectSectionHeader(for: key)
-    }
-
-    /// Where the pane sits BELOW its project root, or `nil` at the root itself (the project half of the
-    /// place line already said it). A cwd OUTSIDE the key's subtree — a stale key across an un-re-pushed `cd` — gives its own
-    /// folder name instead: hiding the location would lie, and a relative path cannot be formed. Pure.
-    package static func relativePath(projectKey: String?, cwd: String?) -> String? {
-        guard let key = TabOrderingEngine.normalizedProjectKey(projectKey),
-              var path = cwd?.trimmingCharacters(in: .whitespacesAndNewlines), !path.isEmpty
-        else { return nil }
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        if path == key { return nil }
-        if path.hasPrefix(key + "/") { return String(path.dropFirst(key.count + 1)) }
-        return RailRowsBuilder.cwdFolderName(path)
-    }
-
-    /// The row's quiet remainder: where the pane sits below its project. A pane at its root has no note
-    /// at all, which is the common row and the reason the list reads quiet.
-    ///
-    /// The tab's pane COUNT used to ride here, back when a row was a tab and the count was the only
-    /// thing that could say "this destination holds three shells". A row is now one of those shells, so
-    /// the count would be a fact about the row's neighbours rather than about the row. Pure.
-    package static func note(projectKey: String?, cwd: String?) -> String? {
-        relativePath(projectKey: projectKey, cwd: cwd)
     }
 }

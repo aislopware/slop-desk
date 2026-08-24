@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskProtocol
 import SlopDeskWorkspaceModel
@@ -7,6 +8,11 @@ import SlopDeskWorkspaceModel
 /// The Open-Quickly filter pills — the `⌘⇧O` taxonomy (distinct from the `⌘⇧P` command-palette
 /// `QueryFilter`). One floating picker fuzzy-searches these sources; `.all` merges the rest into a single
 /// ranked list with ALL-CAPS section headers.
+///
+/// The pill's four readings — its label, its ALL-CAPS header, its silhouette and its honest empty line —
+/// are `slopdesk_workspace::open_quickly`'s, and they cross in ONE delivery per pill: a pill labelled
+/// one thing whose header said another would be two of the four disagreeing, which is only reachable if
+/// they are asked separately.
 ///
 /// ### Pill set
 /// The ring is **All / Opened / Recent / Folders / Agents / Current**. SSH and Recipes are NOT pills — the
@@ -28,65 +34,67 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
     case current
 
     /// The pill order rendered in the filter bar (Tab/⇧Tab cycle this ring). `⌘⇧O` opens to ``defaultFilter``.
-    public static let pickerPills: [Self] = [.all, .opened, .recent, .folders, .agents, .current]
+    ///
+    /// Both memberships come from ONE bitmask over the shared code space: the low 16 bits are the pill
+    /// ring, the high 16 the section headers. They differ by exactly one member — All is a pill and
+    /// heads nothing — and asking for that difference twice is how the two lists come apart.
+    public static let pickerPills: [Self] = offered { $0 & 0xFFFF }
 
     /// The section order the `.all` list merges in (every pill EXCEPT `.all`, in pill order). `.all` itself is
     /// never a section — it is the merged view of these.
-    public static let sectionOrder: [Self] = [.opened, .recent, .folders, .agents, .current]
+    public static let sectionOrder: [Self] = offered { $0 >> 16 }
 
     /// The pill `⌘⇧O` opens to (the merged All list).
     public static let defaultFilter: OpenQuicklyFilter = .all
 
     /// The pill's display label (also the source of ``sectionHeader``).
-    public var label: String {
-        switch self {
-        case .all: "All"
-        case .opened: "Opened"
-        case .recent: "Recent"
-        case .folders: "Folders"
-        case .agents: "Agents"
-        case .current: "Current"
-        }
-    }
+    public var label: String { readings[0] }
 
     /// The ALL-CAPS group header this source renders under in the merged `.all` list (the uppercased pill name).
-    public var sectionHeader: String { label.uppercased() }
+    public var sectionHeader: String { readings[1] }
 
     /// The pill's leading SF Symbol name (`Image(systemName:)`).
-    public var icon: String {
-        switch self {
-        case .all: "square.grid.2x2"
-        case .opened: "rectangle.stack"
-        case .recent: "clock.arrow.circlepath"
-        case .folders: "folder"
-        case .agents: "sparkles"
-        case .current: "scope"
-        }
-    }
+    public var icon: String { readings[2] }
+
+    /// The honest empty-state line the picker shows when this source has no rows.
+    public var emptyMessage: String { readings[3] }
 
     /// The bare character of the picker-LOCAL `⌘`-chord that jumps straight to this pill (`⌘0`/`⌘W`/`⌘R`/
     /// `⌘Z`/`⌘G`/`⌘J`). Handled by the panel's own `onKeyPress`, NEVER registered globally.
-    public var pickerChordKey: String {
+    public var pickerChordKey: String { String(UnicodeScalar(Self.pills[code].chord)) }
+
+    /// This pill's own code, which is also its place in the ring.
+    public var code: Int {
         switch self {
-        case .all: "0"
-        case .opened: "w"
-        case .recent: "r"
-        case .folders: "z"
-        case .agents: "g"
-        case .current: "j"
+        case .all: 0
+        case .opened: 1
+        case .recent: 2
+        case .folders: 3
+        case .agents: 4
+        case .current: 5
         }
     }
 
-    /// The honest empty-state line the picker shows when this source has no rows.
-    public var emptyMessage: String {
-        switch self {
-        case .all: "No results"
-        case .opened: "No open panes"
-        case .recent: "No recently closed tabs"
-        case .folders: "No folders yet"
-        case .agents: "No agent sessions"
-        case .current: "Nothing detected in this pane"
+    public init?(code: Int) {
+        guard Self.allCases.indices.contains(code) else { return nil }
+        self = Self.allCases[code]
+    }
+
+    private var readings: [String] { Self.pills[code].runs }
+
+    /// Every pill's chord key and four readings, in six crossings, once per process.
+    private static let pills: [(chord: UInt8, runs: [String])] = allCases.map { pill in
+        let blob = wsAnswerBytes { out, cap in
+            Int(slopdesk_ws_open_quickly_pill(UInt8(pill.code), out, cap))
         }
+        guard let chord = blob.first else { return (0, ["", "", "", ""]) }
+        return (chord, wsRuns(Array(blob.dropFirst()), count: 4))
+    }
+
+    /// The members of one half of the shared bitmask, in code order.
+    private static func offered(_ half: (UInt32) -> UInt32) -> [Self] {
+        let mask = half(slopdesk_ws_open_quickly_pill_sets())
+        return allCases.filter { mask & (1 << UInt32($0.code)) != 0 }
     }
 }
 
@@ -105,32 +113,26 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
     case fileURL
 
     /// The trailing type-badge label the row renders flush-right.
-    public var badge: String {
-        switch self {
-        case .pane: "Pane"
-        case .folder: "Folder"
-        case .agent: "Agent"
-        case .recentTab: "Tab"
-        case .command: "Cmd"
-        case .prompt: "Prompt"
-        case .path: "Path"
-        case .url: "URL"
-        case .fileURL: "File"
-        }
-    }
+    public var badge: String { Self.kinds[code].runs[0] }
 
     /// The leading icon SF Symbol name (`Image(systemName:)`).
-    public var symbol: String {
-        switch self {
-        case .pane: "rectangle.split.2x1"
-        case .folder: "folder"
-        case .agent: "sparkles"
-        case .recentTab: "clock.arrow.circlepath"
-        case .command: "terminal"
-        case .prompt: "text.bubble"
-        case .path: "doc.text"
-        case .url: "link"
-        case .fileURL: "doc"
+    public var symbol: String { Self.kinds[code].runs[1] }
+
+    /// The `↩` verb a row of this kind earns, for the footer hint — the ROW's, not the picker's.
+    ///
+    /// It rides with the badge and the symbol because all three are readings of one kind and a row is
+    /// built with all three at once.
+    public var defaultActionLabel: String { Self.kinds[code].runs[2] }
+
+    /// The ``JumpToItemKind`` a reconstructed item takes. Cosmetic — the shared jump table keys only on
+    /// the act and the title — so a kind that never reaches here reads as `.path`.
+    public var jumpToKind: JumpToItemKind {
+        switch Self.kinds[code].jumpTo {
+        case 1: .url
+        case 2: .fileURL
+        case 3: .command
+        case 4: .prompt
+        default: .path
         }
     }
 
@@ -143,6 +145,29 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
         case .command: self = .command
         case .prompt: self = .prompt
         }
+    }
+
+    public var code: Int {
+        switch self {
+        case .pane: 0
+        case .folder: 1
+        case .agent: 2
+        case .recentTab: 3
+        case .command: 4
+        case .prompt: 5
+        case .path: 6
+        case .url: 7
+        case .fileURL: 8
+        }
+    }
+
+    /// Every kind's jump-to code and three readings, in nine crossings, once per process.
+    private static let kinds: [(jumpTo: UInt8, runs: [String])] = allCases.map { kind in
+        let blob = wsAnswerBytes { out, cap in
+            Int(slopdesk_ws_open_quickly_kind(UInt8(kind.code), out, cap))
+        }
+        guard let jumpTo = blob.first else { return (0, ["", "", ""]) }
+        return (jumpTo, wsRuns(Array(blob.dropFirst()), count: 3))
     }
 }
 

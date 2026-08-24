@@ -1,4 +1,4 @@
-// CloseConfirmationCopy — what the pane/tab close confirmation SAYS, resolved once for both halves.
+// CloseConfirmationCopy — the near-side FACE of `slopdesk_workspace::close_confirm`.
 //
 // The confirmation itself is the platform's own modal on both platforms — an `NSAlert` sheet on the Mac
 // (``SlopDeskMacUI/MacCloseConfirmation``), a SwiftUI `.alert` on the phone (``OverlayHostView``) — and
@@ -7,14 +7,17 @@
 // actually gated the park (a park raised purely for the project-loss warning must not claim "a process
 // is still running" over an idle shell), and on whether the close takes a project's last pane with it.
 // Both can apply at once. Three branches and a join is exactly the amount of logic that drifts when two
-// halves each carry it, so neither does: they read the park off the store through ``request(store:)``
-// and print ``title(_:)`` and ``message(_:)``.
+// halves each carry it, so neither does — and now neither LANGUAGE does either.
 //
-// It lives HERE rather than in the domain because it is a PRESENTATION of the domain (docs/56 §2): the
-// store owns whether a close is parked and why; what a human is told about it is what a UI asks the
-// store for.
+// ``request(store:)`` stays on this side: reading a live park off the store is a walk over `@MainActor`
+// state the store owns, not a rule about what a human is told.
+//
+// Both sentences ride in ONE delivery because an alert is raised with both or not at all, and two doors
+// would give a caller a way to pair a headline about a pane with a body about a tab.
 
+import CSlopDeskFFI
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 /// The close confirmation's wording — PURE, so the copy is pinnable without instantiating a dialog.
 public enum CloseConfirmationCopy {
@@ -80,56 +83,56 @@ public enum CloseConfirmationCopy {
     }
 
     /// The alert's headline: the pane's own title when a pane close is parked, else the tab copy.
-    public static func title(_ request: Request) -> String {
-        guard let name = request.paneTitle else { return "Close this tab?" }
-        return name.isEmpty ? "Close this pane?" : "Close “\(name)”?"
-    }
+    public static func title(_ request: Request) -> String { copy(request)[0] }
 
     /// The alert's body: the policy line when a policy gated the park, the project-loss line when the
     /// close takes a project's last pane, or both. A park that matches NEITHER gate (both are resolved
     /// live, so either can decay while the dialog is up) still prints the policy line rather than an
     /// empty body.
-    public static func message(_ request: Request) -> String {
-        var lines: [String] = []
-        if request.policyGated {
-            lines.append(reason(for: request.policy ?? .process, scope: request.scope))
-        }
-        if let project = request.projectName {
-            lines.append(projectCloseReason(project: project, scope: request.scope))
-        }
-        if lines.isEmpty {
-            lines.append(reason(for: request.policy ?? .process, scope: request.scope))
-        }
-        return lines.joined(separator: "\n\n")
-    }
+    public static func message(_ request: Request) -> String { copy(request)[1] }
 
-    /// The close-confirmation subtitle for a given resolved policy + close scope. The wording stays soft:
-    /// a running process names the consequence; `always` asks plainly (scoped to "pane" vs "tab");
-    /// `multiple_tabs` warns that the window holds several tabs.
-    public static func reason(for policy: CloseConfirmationPolicy, scope: CloseScope = .tab) -> String {
-        switch policy {
-        case .process:
-            "A process is still running. Closing it will stop the command."
-        case .always:
-            switch scope {
-            case .pane: "Are you sure you want to close this pane?"
-            case .tab,
-                 .window: "Are you sure you want to close this tab?"
+    /// Both sentences, in one crossing.
+    private static func copy(_ request: Request) -> [String] {
+        var arena = WsStrings()
+        let paneTitle = arena.span(request.paneTitle)
+        let projectName = arena.span(request.projectName)
+        let blob = arena.bytes.withUnsafeBufferPointer { lent in
+            wsAnswerBytes { out, cap in
+                Int(slopdesk_ws_close_confirm_copy(
+                    request.scope.closeCode,
+                    request.policyGated,
+                    (request.policy ?? .process).closeCode,
+                    paneTitle,
+                    projectName,
+                    lent.baseAddress,
+                    lent.count,
+                    out,
+                    cap,
+                ))
             }
-        case .multipleTabs:
-            "This window has multiple tabs."
+        }
+        return wsRuns(blob, count: 2)
+    }
+}
+
+private extension CloseScope {
+    /// A window closes like a tab as far as the wording goes — the sentence names the thing the reader
+    /// pressed × on, and nobody presses × on a window expecting to be told about a pane.
+    var closeCode: UInt8 {
+        switch self {
+        case .pane: 0
+        case .tab,
+             .window: 1
         }
     }
+}
 
-    /// The project-loss warning line: the parked close takes `project`'s LAST pane / tab with it, so the
-    /// whole By-Project section disappears. Appended to (or standing in for) the policy reason above.
-    public static func projectCloseReason(project: String, scope: CloseScope) -> String {
-        switch scope {
-        case .pane:
-            "This is the last pane of “\(project)”. Closing it will close the project."
-        case .tab,
-             .window:
-            "This is the last tab of “\(project)”. Closing it will close the project."
+private extension CloseConfirmationPolicy {
+    var closeCode: UInt8 {
+        switch self {
+        case .process: 0
+        case .always: 1
+        case .multipleTabs: 2
         }
     }
 }

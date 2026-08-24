@@ -52,6 +52,18 @@
 //!   rather than trap.
 //! - [`toast`] — the three events that raise a notification card, and what each one says.
 //! - [`palette_card`] — how big the command palette is, and how far one page of it moves.
+//! - [`close_confirm`] — what a close prompt promises before it takes something away, over the four
+//!   scopes and the two policies that decide whether anything is at stake at all.
+//! - [`connect_form`] — the connect sheet's words, and the three prompts it deliberately does not
+//!   spell.
+//! - [`outline`] — the file outline's gutter marks and the relative time its rows carry.
+//! - [`hint_overlay`] — what a hint label reads while a chord is half-typed.
+//! - [`command_navigator`] — the command-block navigator's size, its filters and its zero states.
+//! - [`pane_switcher`] — the ⌃Tab ring: where a walk lands, how wide the card is, and what each row
+//!   says about a pane the reader is about to jump to.
+//! - [`sidebar_row`] — a session row's ink, its spoken state, its presence lines and its menu.
+//! - [`open_quickly`] — the Open Quickly panel: its filters, its result kinds, the verbs each kind
+//!   offers, and the order its lines are drawn in.
 //!
 //! ## Invariants
 //!
@@ -72,6 +84,9 @@
 pub mod binding_rows;
 pub mod binding_search;
 pub mod cheat_sheet;
+pub mod close_confirm;
+pub mod command_navigator;
+pub mod connect_form;
 pub mod connection;
 pub mod drop_action;
 pub mod drop_register;
@@ -81,15 +96,19 @@ pub mod frecency;
 pub mod git_line;
 pub mod global_search;
 pub mod hid_virtual_key;
+pub mod hint_overlay;
 pub mod jump;
 pub mod keybind;
 pub mod keystroke_replay;
 pub mod list_nav;
 pub mod listen;
 pub mod notify;
+pub mod open_quickly;
+pub mod outline;
 pub mod palette_card;
 pub mod palette_rows;
 pub mod pane_drop;
+pub mod pane_switcher;
 pub mod panel_tabs;
 pub mod peek_reply;
 pub mod persist;
@@ -99,6 +118,7 @@ pub mod rail_title;
 pub mod search_rank;
 pub mod secrets;
 pub mod send_keys;
+pub mod sidebar_row;
 pub mod state_codec;
 pub mod status_pill;
 pub mod templates;

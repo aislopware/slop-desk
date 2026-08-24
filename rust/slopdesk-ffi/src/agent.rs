@@ -34,7 +34,7 @@ use slopdesk_agent::{
     ClaudeStatusMachine, Emission, NotificationKind, PaneDetector, attention, badge, sleep,
 };
 
-use crate::{borrow, deliver, records_of, saturating_u32};
+use crate::{borrow, deliver, push_text, records_of, saturating_u32};
 
 // MARK: The shared vocabulary, as discriminants
 //
@@ -459,6 +459,93 @@ pub extern "C" fn slopdesk_agent_badge_needs_attention(badge: c_uchar) -> bool {
 )]
 pub extern "C" fn slopdesk_agent_badge_is_busy_tier(badge: c_uchar) -> bool {
     badge_from(badge).is_some_and(badge::TabBadge::is_busy_tier)
+}
+
+/// The WORD a badge discriminant is spoken with, in one delivery. `0` for a byte naming no badge.
+///
+/// ```text
+/// 1 × [u32 length][UTF-8 bytes]
+/// ```
+///
+/// # Safety
+/// `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's buffer"
+)]
+pub unsafe extern "C" fn slopdesk_agent_badge_label(badge: c_uchar, out: *mut c_uchar, cap: usize) -> usize {
+    let Some(badge) = badge_from(badge) else {
+        return 0;
+    };
+    let mut blob = Vec::new();
+    push_text(&mut blob, badge.label());
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// A badge's ATTENTION role as its code, or `0` for a badge that waits on nobody — which is also
+/// what a byte naming no badge answers.
+///
+/// The role behind [`slopdesk_agent_badge_needs_attention`]'s bare bit: which of the three unread
+/// states this is, so the row can take the ink the state deserves rather than one ink for all.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_agent_badge_attention(badge: c_uchar) -> u8 {
+    badge_from(badge)
+        .and_then(badge::attention)
+        .map_or(0, badge::Attention::code)
+}
+
+/// The subset of [`slopdesk_agent_badge_attention`] loud enough to take a whole row title, or `0`.
+///
+/// A FINISH is deliberately not urgent; the rule's own doc says why.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_agent_badge_urgent(badge: c_uchar) -> u8 {
+    badge_from(badge)
+        .and_then(badge::urgent)
+        .map_or(0, badge::Attention::code)
+}
+
+/// The strongest attention role among a collapsed group's hidden rows, or `0` when nothing waits.
+///
+/// `badges` is ONE BYTE PER ROW, each a badge discriminant, with `SLOPDESK_AGENT_BADGE_NONE` for a
+/// row wearing none. A byte naming no badge is simply skipped: an unknown state must never raise a
+/// group header the reader cannot then explain.
+///
+/// # Safety
+/// `badges` must be null or point to `len` initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_agent_badge_rollup(badges: *const c_uchar, len: usize) -> u8 {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let raw = unsafe { borrow(badges, len) };
+    let badges: Vec<Option<badge::TabBadge>> = raw.iter().copied().map(badge_from).collect();
+    badge::rollup(&badges).map_or(0, badge::Attention::code)
+}
+
+/// Whether a badge is a COMMAND's outcome, and which one: `0` for neither, else the outcome's code.
+///
+/// `badge` is `-1` for a row wearing none. `agent_finish` says the finish tier belongs to the
+/// AGENT's turn ending rather than a command's exit, which is the one fork the fused tiers force.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_agent_badge_command_outcome(badge: i8, agent_finish: bool) -> u8 {
+    let badge = u8::try_from(badge).ok().and_then(badge_from);
+    badge::command_outcome(badge, agent_finish).map_or(0, badge::Outcome::code)
 }
 
 /// Whether a status is waiting on a human or finished unseen — the level the ring reads.
@@ -1717,5 +1804,90 @@ mod tests {
         // SAFETY: as above.
         let alone = unsafe { slopdesk_agent_peek_queue(statuses.as_ptr(), answered.as_ptr(), 1, 0) };
         assert_eq!(alone, NO_PEEK_QUEUE, "one waiting pane is not a queue");
+    }
+
+    /// A badge's discriminant, the way the resolver's own answer spells it.
+    fn discriminant(badge: badge::TabBadge) -> c_uchar {
+        u8::try_from(
+            badge::TabBadge::ALL
+                .iter()
+                .position(|other| *other == badge)
+                .unwrap_or(0),
+        )
+        .unwrap_or(0)
+    }
+
+    #[test]
+    fn every_badge_crosses_with_its_word_and_its_role() {
+        for badge in badge::TabBadge::ALL {
+            let raw = discriminant(badge);
+            let blob = crate::testing::delivered(|out, cap| {
+                // SAFETY: `out` is a live local for the call.
+                unsafe { slopdesk_agent_badge_label(raw, out, cap) }
+            });
+            assert_eq!(
+                crate::testing::runs(&blob, 1).first().map(String::as_str),
+                Some(badge.label()),
+                "{badge:?}",
+            );
+            assert_eq!(
+                slopdesk_agent_badge_attention(raw),
+                badge::attention(badge).map_or(0, badge::Attention::code),
+                "{badge:?}",
+            );
+            assert_eq!(
+                slopdesk_agent_badge_urgent(raw),
+                badge::urgent(badge).map_or(0, badge::Attention::code),
+                "{badge:?}",
+            );
+        }
+    }
+
+    /// A badge this build cannot name says nothing and raises nothing.
+    #[test]
+    fn an_unknown_discriminant_speaks_no_word_and_wakes_nobody() {
+        let mut out = [0xAA_u8; 8];
+        // SAFETY: `out` is a live local for the call.
+        let needed = unsafe { slopdesk_agent_badge_label(200, out.as_mut_ptr(), out.len()) };
+        assert_eq!(needed, 0);
+        assert_eq!(out, [0xAA; 8], "no answer means nothing was written");
+        assert_eq!(slopdesk_agent_badge_attention(200), 0);
+        assert_eq!(slopdesk_agent_badge_urgent(200), 0);
+    }
+
+    #[test]
+    fn the_rollup_picks_the_loudest_role_a_group_holds() {
+        let group = [
+            discriminant(badge::TabBadge::Finished),
+            0xFF,
+            discriminant(badge::TabBadge::Error),
+        ];
+        // SAFETY: `group` is a live local for the call.
+        let role = unsafe { slopdesk_agent_badge_rollup(group.as_ptr(), group.len()) };
+        assert_eq!(role, badge::Attention::Failed.code());
+        // SAFETY: an empty run is exactly what `borrow` documents a null pointer as.
+        let quiet = unsafe { slopdesk_agent_badge_rollup(core::ptr::null(), 0) };
+        assert_eq!(quiet, 0, "nothing inside waits");
+        let busy = [discriminant(badge::TabBadge::Running)];
+        // SAFETY: `busy` is a live local for the call.
+        let none = unsafe { slopdesk_agent_badge_rollup(busy.as_ptr(), busy.len()) };
+        assert_eq!(none, 0, "busy is not attention");
+    }
+
+    /// The one fork the fused finish tiers force: whose ending this is.
+    #[test]
+    fn a_finish_is_a_command_outcome_only_when_it_is_not_the_agents() {
+        let finished = i8::try_from(discriminant(badge::TabBadge::Finished)).unwrap_or(-1);
+        let error = i8::try_from(discriminant(badge::TabBadge::Error)).unwrap_or(-1);
+        assert_eq!(
+            slopdesk_agent_badge_command_outcome(finished, false),
+            badge::Outcome::Succeeded.code(),
+        );
+        assert_eq!(slopdesk_agent_badge_command_outcome(finished, true), 0);
+        assert_eq!(
+            slopdesk_agent_badge_command_outcome(error, true),
+            badge::Outcome::Failed.code(),
+        );
+        assert_eq!(slopdesk_agent_badge_command_outcome(-1, false), 0);
     }
 }

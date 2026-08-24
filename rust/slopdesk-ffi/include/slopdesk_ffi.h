@@ -364,6 +364,25 @@ int8_t  slopdesk_agent_tab_badge(uint8_t agent, int8_t completion, bool is_busy,
                                  bool command_when_fails);
 bool    slopdesk_agent_badge_needs_attention(uint8_t badge);
 bool    slopdesk_agent_badge_is_busy_tier(uint8_t badge);
+// What a badge SAYS and which of the three attention roles it carries. The word is the row title's
+// accessibility value and the roll-up's spoken label; three surfaces read it, and a word spelled
+// twice is a state VoiceOver reads two ways on two devices. The roles are 1 awaiting, 2 failed,
+// 3 finished, and 0 is reserved for "no role at all" — which is what BUSY answers, because a
+// spinning agent is not waiting on anyone. `_urgent` is the subset loud enough to take a whole row
+// title: a FINISH is deliberately absent, so the two alarming roles keep something louder to be.
+// Any byte past the last discriminant names no badge: it says nothing and raises nothing.
+#define SLOPDESK_AGENT_BADGE_NONE 0xFF
+size_t  slopdesk_agent_badge_label(uint8_t badge, uint8_t *out, size_t cap);  // 1 run, 0 for none
+uint8_t slopdesk_agent_badge_attention(uint8_t badge);
+uint8_t slopdesk_agent_badge_urgent(uint8_t badge);
+// The strongest role among a collapsed group's hidden rows — one byte per row, with
+// SLOPDESK_AGENT_BADGE_NONE for a row wearing none. 0 when nothing inside waits, so folding a
+// group never hides an agent that needs the eye.
+uint8_t slopdesk_agent_badge_rollup(const uint8_t *badges, size_t len);
+// Whether a badge is a COMMAND's outcome (1 succeeded, 2 failed) or neither (0). `badge` is -1 for
+// an all-clear row. `agent_finish` decides the one fork the fused finish tiers force: the agent's
+// turn ending is the mark column's check, a command's exit is the trailing slot's.
+uint8_t slopdesk_agent_badge_command_outcome(int8_t badge, bool agent_finish);
 uint8_t slopdesk_agent_status_rollup(const uint8_t *statuses, size_t len);
 // Which pane is asking for the human. The two EDGE rules take the state last NOTIFIED for, not the
 // last state seen, so re-entering a state already announced is not news; `completion` is the
@@ -9778,6 +9797,220 @@ double slopdesk_ws_peek_scroll_max_height(void);
 // placeholder, and dimming a real question would hide what the card is for.
 size_t slopdesk_ws_peek_question(const uint8_t *question, size_t question_len, bool has_question,
                                  uint8_t *out, size_t cap);
+
+// ---- Ten more reading faces -------------------------------------------------------------------
+//
+// The same two shapes as the ten above, over the last of the Swift `enum`-and-`static let` faces:
+// the connect sheet, the close prompt, the Outline gutter, the hint overlay, the Command Navigator,
+// the pane switcher, one sidebar row, the tab badge, the Open Quickly picker and the pane's eight
+// stored control vocabularies.
+//
+// Two framings recur and are worth naming once. A door whose answer is a LIST leads its blob with
+// `[u32 BE count]`, because an empty list is a real answer where a bare 0 return is §4's "ask
+// again". A door whose inputs are a list of STRINGS takes them as `SlopDeskWsSpan`s over one arena,
+// the way the rail planner already does — an absent span is Swift's nil, and a present empty one is
+// an empty string, which is not the same question.
+
+// ---- The connect sheet -----------------------------------------------------------------------
+//
+// The three PORT prompts are deliberately absent: they are `ConnectionTarget.default`'s own numbers
+// rendered as text, and a door for them would be a second spelling of a default the near side holds.
+size_t slopdesk_ws_connect_form_words(uint8_t *out, size_t cap);  // 8 runs
+bool   slopdesk_ws_connect_form_closes_after(bool failed);
+
+// ---- What a close prompt promises before it takes something away -----------------------------
+//
+// `scope` is 0 pane, anything else tab — a window closes like a tab as far as the wording goes, and
+// a stale code over-warns rather than under-warns. `policy` is 0 a running process, 1 the ask-every-
+// time preference, 2 a window holding several tabs; an unrecognised one reads as the process line,
+// which names a consequence rather than asking a bare question.
+//
+// Both sentences ride in ONE delivery because an alert is raised with both or not at all, and two
+// doors would give a caller a way to pair a headline about a pane with a body about a tab.
+size_t slopdesk_ws_close_confirm_copy(uint8_t scope, bool policy_gated, uint8_t policy,
+                                      SlopDeskWsSpan pane_title, SlopDeskWsSpan project_name,
+                                      const uint8_t *blob, size_t blob_len, uint8_t *out,
+                                      size_t cap);  // 2 runs: the headline, then the body
+
+// ---- The Outline row's age line and its gutter -----------------------------------------------
+//
+// The CLOCK stays on the near side — a door that read one would answer differently for the same
+// inputs, which is not a rule. The caller subtracts its own two dates; a negative difference is a
+// clock that went backwards and floors at "just now" rather than printing a future.
+size_t  slopdesk_ws_outline_relative_time(int64_t seconds_ago, uint8_t *out, size_t cap);  // 1 run
+// 0 running, 1 succeeded, 2 failed. A status that did not survive the crossing reads as the neutral
+// running dot: claiming an outcome for a block that never reported one is the one wrong answer.
+uint8_t slopdesk_ws_outline_gutter(uint8_t status);
+
+// ---- The hint overlay ------------------------------------------------------------------------
+//
+// The ASSIGNMENT is `slopdesk_ws_hint_*` above; this is only what the badges then SAY and how they
+// are drawn.
+size_t slopdesk_ws_hint_overlay_words(uint8_t *out, size_t cap);  // 3 runs
+bool   slopdesk_ws_hint_overlay_is_armed(bool armed, double cell_width, double cell_height);
+bool   slopdesk_ws_hint_overlay_is_faded(size_t offset, const uint8_t *typed, size_t typed_len);
+// Whether the typed prefix ruled this label out. Ruled-out badges are DIMMED rather than removed:
+// a label that vanished would let the eye think a target had gone away.
+bool   slopdesk_ws_hint_overlay_dimmed(const uint8_t *label, size_t label_len,
+                                       const SlopDeskWsSpan *matched, size_t matched_count,
+                                       const uint8_t *blob, size_t blob_len);
+// 3 runs: the label as drawn, what VoiceOver calls the badge, what it calls the mode badge.
+size_t slopdesk_ws_hint_overlay_badge(const uint8_t *label, size_t label_len, const uint8_t *intent,
+                                      size_t intent_len, uint8_t *out, size_t cap);
+
+// ---- The Command Navigator card --------------------------------------------------------------
+//
+// `filter` is 0 all, 1 failed, 2 bookmarked; an unrecognised one reads as the widest, because a
+// zero state naming the wrong segment is worse than one naming the whole pane. The frame takes the
+// search overlay's own record: it is the same two numbers about the same kind of thing.
+SlopDeskWsSearchPanelSize slopdesk_ws_command_navigator_metrics(void);
+size_t slopdesk_ws_command_navigator_words(uint8_t *out, size_t cap);  // 11 runs
+// 1 run, and `has_blocks` is the whole fork: a query that matched nothing blames the QUERY, an
+// empty segment names the segment.
+size_t slopdesk_ws_command_navigator_empty_line(uint8_t filter, bool has_blocks, uint8_t *out,
+                                                size_t cap);
+
+// ---- The pane switcher -------------------------------------------------------------------------
+//
+// Two width rungs, not one: NEITHER desktop bound survives the move to a phone, which is arithmetic
+// rather than taste — the 400pt floor is wider than a 390pt screen, and the 0.66 ceiling would spend
+// a third of that screen on ground whose only job is to be not-the-card.
+typedef struct {
+    bool   forward;
+    size_t steps;
+} SlopDeskWsSwitcherWalk;
+size_t slopdesk_ws_pane_switcher_words(uint8_t *out, size_t cap);  // 5 runs
+size_t slopdesk_ws_pane_switcher_highest_shortcut(void);
+double slopdesk_ws_pane_switcher_width(double container);
+double slopdesk_ws_pane_switcher_compact_width(double container);
+// An unmeasured container has NO ceiling — infinity — because a first layout pass must not clamp
+// the card to zero.
+double slopdesk_ws_pane_switcher_max_height(double container);
+double slopdesk_ws_pane_switcher_list_height(size_t rows, double row_height, double container);
+SlopDeskWsSwitcherWalk slopdesk_ws_pane_switcher_walk(size_t from, size_t to, size_t count);
+// 4 runs: the title AS DRAWN, the project, the note, and the two joined into a place line. An EMPTY
+// run is "there is none", which cannot collide with a real answer: the rules never write a blank
+// project or note. One crossing per ROW because a card of ten redraws all four on every press.
+size_t slopdesk_ws_pane_switcher_row(SlopDeskWsSpan title, SlopDeskWsSpan project_key,
+                                     SlopDeskWsSpan cwd, SlopDeskWsSpan process_label,
+                                     const uint8_t *blob, size_t blob_len, uint8_t *out, size_t cap);
+
+// ---- One sidebar row ---------------------------------------------------------------------------
+//
+// `badge` is what `slopdesk_agent_tab_badge` answered, -1 for an all-clear row.
+//
+// The title door packs the INK in the low byte and the WEIGHT in the next: both are asked on every
+// redraw of every row, they share every input, and two doors would let a row take an urgent hue at
+// a resting weight. The ink's own byte carries its kind in the high nibble — 0x00 secondary, 0x01
+// primary, 0x1<role> urgent — and the weight is 0 resting, 1 active, 2 attention.
+uint16_t slopdesk_ws_sidebar_row_title(int8_t badge, bool active, bool working);
+// 1 run, or 0 when the row says nothing. A row whose only news is that it is BUSY says nothing.
+size_t   slopdesk_ws_sidebar_row_spoken_state(int8_t badge, bool working, uint8_t *out, size_t cap);
+// `[u32 line_count]`, that many presence lines, then the joined presence sentence and the whole
+// tooltip — each EMPTY for none. `names` is viewers first for viewer_count entries, holders after.
+// The lines are a CUT of the tooltip and not a second reading, which is exactly why they cross
+// together: a door per spender would be the drift the rule exists to prevent.
+size_t   slopdesk_ws_sidebar_row_hover(SlopDeskWsSpan cwd, SlopDeskWsSpan detail,
+                                       SlopDeskWsSpan last_command, const SlopDeskWsSpan *names,
+                                       size_t viewer_count, size_t holder_count,
+                                       const uint8_t *blob, size_t blob_len, uint8_t *out,
+                                       size_t cap);
+// 1 run, or 0 for a block with none of the three parts.
+size_t   slopdesk_ws_sidebar_row_command_line(SlopDeskWsSpan command, SlopDeskWsSpan duration_label,
+                                              SlopDeskWsSpan status_label, const uint8_t *blob,
+                                              size_t blob_len, uint8_t *out, size_t cap);
+// `[u32 count]` then one byte per entry, kind in the high nibble: 0x00 separator, 0x1x a verb,
+// 0x2x a toggle. A byte per entry rather than a record, because a menu opening under a finger must
+// not cost a crossing per row.
+size_t   slopdesk_ws_sidebar_row_menu(bool prevent_sleep_offered, uint8_t *out, size_t cap);
+size_t   slopdesk_ws_sidebar_row_menu_titles(uint8_t *out, size_t cap);  // 8 runs: 2 verbs, 6 switches
+uint8_t  slopdesk_ws_sidebar_row_separator_code(void);
+
+// ---- The Open Quickly picker -------------------------------------------------------------------
+//
+// The ROWS never cross. `_draw_order` takes section SIZES and answers the interleave; `_row_actions`
+// takes a row's four facts and answers verbs. What a row IS stays in the caller's own storage.
+typedef struct {
+    double panel_width;
+    double results_max_height;
+    double subtitle_max_width;
+    double actions_width;
+} SlopDeskWsPickerMetrics;
+// A header carries only its section; a row carries both index spaces, which differ because the
+// drawn list interleaves headers while the selection counts only rows a user can land on.
+typedef struct {
+    bool   is_header;
+    size_t section;
+    size_t item;
+    size_t selectable;
+} SlopDeskWsPickerLine;
+SlopDeskWsPickerMetrics slopdesk_ws_open_quickly_metrics(void);
+size_t slopdesk_ws_open_quickly_page_stride(double row_height);
+size_t slopdesk_ws_open_quickly_words(uint8_t *out, size_t cap);  // 8 runs
+// `[u8 chord key]` then 4 runs: the pill's label, its section header, its symbol, its empty message.
+size_t slopdesk_ws_open_quickly_pill(uint8_t code, uint8_t *out, size_t cap);
+// Two bitmasks over the pill's own code: the low 16 bits are the pill row, the high 16 the section
+// headers. They differ by exactly one member — All is a pill and heads nothing.
+uint32_t slopdesk_ws_open_quickly_pill_sets(void);
+// `[u8 jump-to code]` then 3 runs: the kind's badge, its symbol, the default action label it earns.
+size_t slopdesk_ws_open_quickly_kind(uint8_t code, uint8_t *out, size_t cap);
+size_t slopdesk_ws_open_quickly_default_action(uint8_t *out, size_t cap);  // 1 run, for NO kind
+size_t slopdesk_ws_open_quickly_verbs(uint8_t *out, size_t cap);  // 30 runs: title, symbol, ×15
+// 1 run. Three answers in one, and the ORDER keeps each honest: a typed query blames the query, an
+// in-flight Agents fetch says loading rather than none, everything else is the source's own line.
+size_t slopdesk_ws_open_quickly_empty_message(const uint8_t *query, size_t query_len, uint8_t filter,
+                                              bool agents_loading, uint8_t *out, size_t cap);
+// The ⌘-chord a UNICODE SCALAR names: 0 none, 0x1<digit> quick-pick, 0x20 toggle actions,
+// 0x3<code> a pill chord.
+uint8_t slopdesk_ws_open_quickly_chord(uint32_t character);
+// The line count; the lines are written only when they fit, the way the row filters answer.
+size_t slopdesk_ws_open_quickly_draw_order(const size_t *sizes, size_t size_count, uint8_t filter,
+                                           SlopDeskWsPickerLine *out, size_t cap);
+// `[u32 count]` then one verb code each. A count of 1 whose byte is this sentinel means the row
+// defers to the SHARED jump-to table the near side already owns — which is not the same answer as
+// offering nothing, and only one of the two draws a sheet.
+#define SLOPDESK_WS_PICKER_SHARED_JUMP_TO 0xFF
+size_t slopdesk_ws_open_quickly_row_actions(uint8_t act, uint8_t kind, bool has_subtitle,
+                                            bool cwd_empty, bool folders_backed, uint8_t *out,
+                                            size_t cap);
+
+// ---- The pane's eight stored control vocabularies ----------------------------------------------
+//
+// Each is a small closed set with a stored spelling per case and a repair for a token this build
+// does not know, so each crosses twice: one delivery of the whole table in ALL order, read once per
+// process, and one door that repairs an arbitrary token to a code. A door per case would be forty
+// crossings for sets both sides know at compile time.
+//
+// Two tables deliver a PAIR per case — the stored token, then the value written into the terminal's
+// own config — and that pair is the point: the config spelling is inverted (`disabled` writes
+// "true"), which is exactly the transcription nobody reproduces correctly twice.
+size_t  slopdesk_terminal_clipboard_tokens(uint8_t *out, size_t cap);            // 3 runs
+uint8_t slopdesk_terminal_clipboard_from_token(const uint8_t *token, size_t len);
+// 1 run, or 0 when the read must be refused OR asked about — the caller raises its own dialog
+// either way, which is a near-side act. A present but EMPTY answer is a silent read of an empty
+// clipboard.
+size_t  slopdesk_terminal_clipboard_silent_read(uint8_t access, const uint8_t *text, size_t len,
+                                                uint8_t *out, size_t cap);
+// Both gates once the shell's master switch has had its say: read in the low byte, write in the
+// next. One answer, because a master switch honoured in one direction and not the other is the
+// failure the rule exists to rule out.
+uint16_t slopdesk_terminal_clipboard_gates(bool shell_controlled, uint8_t read, uint8_t write);
+size_t  slopdesk_terminal_right_click_tokens(uint8_t *out, size_t cap);          // 5 runs
+uint8_t slopdesk_terminal_right_click_from_token(const uint8_t *token, size_t len);
+size_t  slopdesk_terminal_mouse_shift_tokens(uint8_t *out, size_t cap);          // 8 runs: the pair
+// The code in the low byte, "does it extend a selection" in bit 8: a stored token is resolved
+// exactly when a shift-drag has to be routed, so both are read at the same moment.
+uint16_t slopdesk_terminal_mouse_shift_from_token(const uint8_t *token, size_t len);
+size_t  slopdesk_terminal_option_as_alt_tokens(uint8_t *out, size_t cap);        // 8 runs: the pair
+uint8_t slopdesk_terminal_option_as_alt_from_token(const uint8_t *token, size_t len);
+// The POLICY itself does not cross: it is consumed by the detector, which is already Rust's.
+size_t  slopdesk_terminal_scheme_detection_tokens(uint8_t *out, size_t cap);     // 2 runs
+uint8_t slopdesk_terminal_scheme_detection_from_token(const uint8_t *token, size_t len);
+// 5 runs: ⌘-click's three, then ⌘⇧-click's two. One delivery because the two settings are drawn as
+// one pair of rows and neither is read alone.
+size_t  slopdesk_terminal_link_click_tokens(uint8_t *out, size_t cap);
+uint8_t slopdesk_terminal_cmd_click_from_token(const uint8_t *token, size_t len);
+uint8_t slopdesk_terminal_cmd_shift_click_from_token(const uint8_t *token, size_t len);
 
 #ifdef __cplusplus
 }

@@ -1,4 +1,78 @@
+// TerminalControls — the near-side FACE of `slopdesk_terminal::controls`, plus the fire-time bundle
+// the libghostty config builder consumes.
+//
+// Each of the eight vocabularies below is the same shape: a small closed set, a stored spelling per
+// case, and a repair for a token this build does not know. So each crosses TWICE — one delivery of
+// the whole table in declaration order, read once per process, and one door that repairs an
+// arbitrary stored token to a code. A door per case would be forty crossings for eight enumerations
+// whose members are known at compile time on both sides.
+//
+// ⚠️ THREE OF THEM CARRY A SECOND SPELLING — the value written into the terminal's own config, which
+// is inverted or renamed for reasons the rule module documents — and those tables deliver the PAIR.
+// That is the whole reason the config value crosses at all: `disabled → "true"` is exactly the
+// transcription nobody would reproduce correctly twice, and it was already spelled once here and
+// once in a Zig-facing comment.
+//
+// The enums keep `RawRepresentable` by hand rather than `: String`, because a `: String` enum's raw
+// values ARE the literals — writing them here would put the stored vocabulary back in a second
+// place, which is the drift the crossing removes. `Codable` is the same story one layer up: it
+// encodes and decodes the raw value, so it goes through the same table.
+
+import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
+
+// MARK: - The token tables, read once per process
+
+/// One vocabulary's stored spellings, in the far side's own `ALL` order.
+///
+/// Three of the tables carry a `configValue` beside each token; the other five do not, and asking
+/// one of those for a config value is a programming error rather than a missing string, so the
+/// accessor is only offered on the two enums that have one.
+private enum ControlTokens {
+    static let clipboard: [String] = runs(3) { out, cap in
+        Int(slopdesk_terminal_clipboard_tokens(out, cap))
+    }
+
+    static let rightClick: [String] = runs(5) { out, cap in
+        Int(slopdesk_terminal_right_click_tokens(out, cap))
+    }
+
+    /// Token then config value, per case.
+    static let mouseShift: [String] = runs(8) { out, cap in
+        Int(slopdesk_terminal_mouse_shift_tokens(out, cap))
+    }
+
+    /// Token then config value, per case.
+    static let optionAsAlt: [String] = runs(8) { out, cap in
+        Int(slopdesk_terminal_option_as_alt_tokens(out, cap))
+    }
+
+    static let schemeDetection: [String] = runs(2) { out, cap in
+        Int(slopdesk_terminal_scheme_detection_tokens(out, cap))
+    }
+
+    /// ⌘-click's three, then ⌘⇧-click's two — one delivery, because the two settings are drawn as
+    /// one pair of rows and neither is read alone.
+    static let linkClick: [String] = runs(5) { out, cap in
+        Int(slopdesk_terminal_link_click_tokens(out, cap))
+    }
+
+    private static func runs(_ count: Int, _ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> [String] {
+        wsRuns(wsAnswerBytes(door), count: count)
+    }
+}
+
+/// Repairs a stored token through `door` and lands on the case at the code it answers.
+private func repaired<Case>(
+    _ token: String, _ cases: [Case], _ door: (UnsafePointer<UInt8>?, Int) -> UInt8,
+) -> Case {
+    let bytes = Array(token.utf8)
+    let code = Int(bytes.withUnsafeBufferPointer { lent in door(lent.baseAddress, lent.count) })
+    // The far side repairs an unknown token to each vocabulary's own default, so a code past the end
+    // can only mean this build is older than the crate — take the default rather than trap.
+    return cases.indices.contains(code) ? cases[code] : cases[0]
+}
 
 // MARK: - Terminal-control enums (the Controls / Mouse / Scroll multi-state knobs)
 
@@ -9,24 +83,30 @@ import Foundation
 /// - ``deny``: silently refuse it.
 /// - ``ask``: surface the confirmation sheet (reuses the paste-protection surface).
 ///
-/// PURE `String`-raw + `CaseIterable` so it bridges to `Defaults` and the pickers can enumerate it. Raw
-/// values match the libghostty config tokens 1:1, so the config builder emits ``RawValue``
-/// directly. ``init(rawValue:)`` is validate-then-repair to ``ask`` (a stale/hostile string never traps);
+/// ``init(rawValue:)`` is validate-then-repair to ``ask`` (a stale/hostile string never traps);
 /// non-failable so the `Defaults.PreferRawRepresentable` bridge works.
-public enum ClipboardAccess: String, Codable, Sendable, CaseIterable {
+public enum ClipboardAccess: Sendable, CaseIterable, RawRepresentable, Codable {
     case allow
     case deny
     case ask
 
+    public var rawValue: String { ControlTokens.clipboard[index] }
+
     /// Validate-then-repair: unrecognised values repair to ``ask`` (the conservative gate), never trap.
     /// Non-failable — the `RawRepresentable` bridge relies on never returning `nil`.
     public init(rawValue: String) {
-        switch rawValue {
-        case "allow": self = .allow
-        case "deny": self = .deny
-        case "ask": self = .ask
-        default: self = .ask
+        self = repaired(rawValue, Self.allCases) { token, len in
+            slopdesk_terminal_clipboard_from_token(token, len)
         }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 
     /// The SILENT (no-dialog) resolution of an OSC-52 clipboard-READ request, as the text the embedder hands
@@ -35,13 +115,24 @@ public enum ClipboardAccess: String, Codable, Sendable, CaseIterable {
     /// paired with `confirmed: true`, never re-trips libghostty's read gate, which a `confirmed: false`
     /// completion recurses on — the read contract differs from a paste's). ``ask`` returns `nil`: the embedder
     /// surfaces the confirmation sheet and maps the verdict to the same allow (`text`) / deny (`""`).
-    ///
-    /// PURE so the GUI-only `confirm_read_clipboard_cb` routing is unit-pinned without a surface.
     public func silentClipboardRead(text: String) -> String? {
+        let bytes = Array(text.utf8)
+        let blob = bytes.withUnsafeBufferPointer { lent in
+            wsAnswerBytes { out, cap in
+                Int(slopdesk_terminal_clipboard_silent_read(
+                    UInt8(index), lent.baseAddress, lent.count, out, cap,
+                ))
+            }
+        }
+        // A `0` answer is "the caller must ASK" — the sheet is the near side's to raise, either way.
+        return blob.isEmpty ? nil : wsRuns(blob, count: 1)[0]
+    }
+
+    var index: Int {
         switch self {
-        case .allow: text
-        case .deny: ""
-        case .ask: nil
+        case .allow: 0
+        case .deny: 1
+        case .ask: 2
         }
     }
 }
@@ -55,24 +146,40 @@ public enum ClipboardAccess: String, Codable, Sendable, CaseIterable {
 /// - ``copyOrPaste``: copy if there is a selection, otherwise paste.
 /// - ``ignore``: do nothing.
 ///
-/// PURE `String`-raw + `CaseIterable`; CLIENT-side dispatch (no libghostty config key), so the raw values
-/// are slopdesk's own kebab-case tokens. ``init(rawValue:)`` is validate-then-repair to ``contextMenu``.
-public enum RightClickAction: String, Codable, Sendable, CaseIterable {
-    case contextMenu = "context-menu"
+/// CLIENT-side dispatch (no libghostty config key of its own), so the tokens are slopdesk's own
+/// kebab-case ones. ``init(rawValue:)`` is validate-then-repair to ``contextMenu``.
+public enum RightClickAction: Sendable, CaseIterable, RawRepresentable, Codable {
+    case contextMenu
     case copy
     case paste
-    case copyOrPaste = "copy-or-paste"
+    case copyOrPaste
     case ignore
+
+    public var rawValue: String { ControlTokens.rightClick[index] }
 
     /// Validate-then-repair to ``contextMenu`` (default), never trapping; non-failable for the `Defaults` bridge.
     public init(rawValue: String) {
-        switch rawValue {
-        case "context-menu": self = .contextMenu
-        case "copy": self = .copy
-        case "paste": self = .paste
-        case "copy-or-paste": self = .copyOrPaste
-        case "ignore": self = .ignore
-        default: self = .contextMenu
+        self = repaired(rawValue, Self.allCases) { token, len in
+            slopdesk_terminal_right_click_from_token(token, len)
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    var index: Int {
+        switch self {
+        case .contextMenu: 0
+        case .copy: 1
+        case .paste: 2
+        case .copyOrPaste: 3
+        case .ignore: 4
         }
     }
 
@@ -92,61 +199,63 @@ public enum RightClickAction: String, Codable, Sendable, CaseIterable {
 /// - ``always``: ⇧ is always consumed for selection.
 /// - ``never``: ⇧ is never consumed for selection (always forwarded to the program).
 ///
-/// PURE `String`-raw + `CaseIterable`. Raw values are slopdesk's own semantic tokens; the libghostty
-/// token (`false` / `true` / `always` / `never`) is exposed separately as ``configValue`` so persistence
-/// stays readable. ``init(rawValue:)`` is validate-then-repair to ``enabled`` (default).
-public enum MouseShiftCapture: String, Codable, Sendable, CaseIterable {
+/// The tokens are slopdesk's own semantic ones; the libghostty token (`false` / `true` / `always` /
+/// `never`) rides beside each as ``configValue`` so persistence stays readable.
+public enum MouseShiftCapture: Sendable, CaseIterable, RawRepresentable, Codable {
     case disabled
     case enabled
     case always
     case never
 
+    public var rawValue: String { ControlTokens.mouseShift[index * 2] }
+
     /// Validate-then-repair to ``enabled`` (default), never trapping; non-failable for the `Defaults` bridge.
     public init(rawValue: String) {
-        switch rawValue {
-        case "disabled": self = .disabled
-        case "enabled": self = .enabled
-        case "always": self = .always
-        case "never": self = .never
-        default: self = .enabled
+        self = repaired(rawValue, Self.allCases) { token, len in
+            UInt8(truncatingIfNeeded: slopdesk_terminal_mouse_shift_from_token(token, len))
         }
     }
 
-    /// The libghostty `mouse-shift-capture` token this case maps to. Consumed by the config builder;
-    /// kept next to the enum and unit-pinned.
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    /// The libghostty `mouse-shift-capture` token this case maps to. Consumed by the config builder.
     ///
     /// **The mapping is INVERTED on purpose**: this enum's axis ("⇧ *selects text* even when the app captures
     /// the mouse") is the opposite of libghostty's `mouse-shift-capture` axis (whether ⇧ is *captured into the
     /// mouse protocol and sent to the program*). Per the vendored ghostty `Config.zig`: `false` = ⇧ NOT sent,
     /// EXTENDS THE SELECTION (libghostty default, program may override via `XTSHIFTESCAPE`); `true` = ⇧ sent to
     /// the program (overridable); `never` = `false` but program CANNOT override; `always` = `true` but program
-    /// CANNOT override. So "⇧ selects" (ON) → the *don't-capture* tokens, "⇧ to program" (OFF) → the *capture*
-    /// tokens:
-    ///
-    /// - ``enabled`` (default — ⇧ extends selection, soft) → `false` — matches libghostty's own default, so
-    ///   the factory terminal honours rather than overrides it.
-    /// - ``disabled`` (⇧ goes to the program, soft) → `true`.
-    /// - ``always`` (⇧ ALWAYS extends selection, program can't override) → `never`.
-    /// - ``never`` (⇧ NEVER extends selection / always forwarded to the program) → `always`.
-    public var configValue: String {
-        switch self {
-        case .disabled: "true"
-        case .enabled: "false"
-        case .always: "never"
-        case .never: "always"
-        }
-    }
+    /// CANNOT override.
+    public var configValue: String { ControlTokens.mouseShift[index * 2 + 1] }
 
     /// Whether ⇧ EXTENDS THE SELECTION — the ON state of the binary "Allow Shift with Mouse Click" toggle.
-    /// The Settings UI is a simple ON/OFF (not the 4-way enum), so a value from the removed 4-way picker
-    /// projects onto that axis: ``enabled`` / ``always`` read ON, ``disabled`` / ``never`` read OFF. Without
-    /// this a stale ``always`` would mis-read as OFF against a bare `== .enabled` check.
+    /// The stored value is a four-way enum but the reading is a binary axis, so ``enabled`` / ``always``
+    /// read ON and ``disabled`` / ``never`` read OFF. Without this a stale ``always`` would mis-read as
+    /// OFF against a bare `== .enabled` check — which is why it is a RULE and not a comparison.
+    ///
+    /// It rides bit 8 of the same repair the token lookup uses: a stored token is resolved exactly
+    /// when a shift-drag has to be routed, so both readings are wanted at the same moment.
     public var extendsSelection: Bool {
+        let bytes = Array(rawValue.utf8)
+        let packed = bytes.withUnsafeBufferPointer { lent in
+            slopdesk_terminal_mouse_shift_from_token(lent.baseAddress, lent.count)
+        }
+        return packed & 0x0100 != 0
+    }
+
+    var index: Int {
         switch self {
-        case .enabled,
-             .always: true
-        case .disabled,
-             .never: false
+        case .disabled: 0
+        case .enabled: 1
+        case .always: 2
+        case .never: 3
         }
     }
 }
@@ -159,35 +268,43 @@ public enum MouseShiftCapture: String, Codable, Sendable, CaseIterable {
 /// - ``both``: BOTH Option keys send Alt/Meta (Esc-prefixed) sequences — libghostty `true`.
 /// - ``left`` / ``right``: only the named Option key sends Alt/Meta; the other still composes.
 ///
-/// PURE `String`-raw + `CaseIterable`. Raw values are slopdesk's own kebab tokens (NOT libghostty's —
-/// `both` persists as `both`, not `true`); the libghostty token is exposed separately as ``configValue``.
-/// ``init(rawValue:)`` is validate-then-repair to ``off`` (default); non-failable for the `Defaults` bridge.
-public enum OptionAsAlt: String, Codable, Sendable, CaseIterable {
+/// The tokens are slopdesk's own (`both` persists as `both`, not `true`); the libghostty token rides
+/// beside each as ``configValue``.
+public enum OptionAsAlt: Sendable, CaseIterable, RawRepresentable, Codable {
     case off
     case both
     case left
     case right
 
+    public var rawValue: String { ControlTokens.optionAsAlt[index * 2] }
+
     /// Validate-then-repair to ``off`` (default), never trapping; non-failable for the `Defaults` bridge.
     public init(rawValue: String) {
-        switch rawValue {
-        case "off": self = .off
-        case "both": self = .both
-        case "left": self = .left
-        case "right": self = .right
-        default: self = .off
+        self = repaired(rawValue, Self.allCases) { token, len in
+            slopdesk_terminal_option_as_alt_from_token(token, len)
         }
     }
 
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     /// The libghostty `macos-option-as-alt` token this case maps to (values `false` / `true` / `left` /
-    /// `right` — see the vendored ghostty `input/config.zig` `OptionAsAlt`). Consumed by the config builder;
-    /// kept next to the enum and unit-pinned. ``both`` → `true`, ``off`` → `false`.
-    public var configValue: String {
+    /// `right` — see the vendored ghostty `input/config.zig` `OptionAsAlt`). ``both`` → `true`,
+    /// ``off`` → `false`.
+    public var configValue: String { ControlTokens.optionAsAlt[index * 2 + 1] }
+
+    var index: Int {
         switch self {
-        case .off: "false"
-        case .both: "true"
-        case .left: "left"
-        case .right: "right"
+        case .off: 0
+        case .both: 1
+        case .left: 2
+        case .right: 3
         }
     }
 }
@@ -201,22 +318,34 @@ public enum OptionAsAlt: String, Codable, Sendable, CaseIterable {
 /// - ``copy``: copy the resolved absolute path / URL to the client pasteboard.
 /// - ``nothing``: do nothing (reach links via the right-click menu / Jump-To / Hint Mode) — the escape
 ///   hatch when ⌘click conflicts with a TUI.
-///
-/// PURE `String`-raw + `CaseIterable`; CLIENT-side dispatch token (no libghostty config key), so raw
-/// values are slopdesk's own tokens. ``init(rawValue:)`` is validate-then-repair to ``open`` (default);
-/// non-failable for the `Defaults` bridge.
-public enum LinkCmdClick: String, Codable, Sendable, CaseIterable {
+public enum LinkCmdClick: Sendable, CaseIterable, RawRepresentable, Codable {
     case open
     case copy
     case nothing
 
+    public var rawValue: String { ControlTokens.linkClick[index] }
+
     /// Validate-then-repair to ``open`` (default), never trapping; non-failable for the `Defaults` bridge.
     public init(rawValue: String) {
-        switch rawValue {
-        case "open": self = .open
-        case "copy": self = .copy
-        case "nothing": self = .nothing
-        default: self = .open
+        self = repaired(rawValue, Self.allCases) { token, len in
+            slopdesk_terminal_cmd_click_from_token(token, len)
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    var index: Int {
+        switch self {
+        case .open: 0
+        case .copy: 1
+        case .nothing: 2
         }
     }
 }
@@ -227,19 +356,33 @@ public enum LinkCmdClick: String, Codable, Sendable, CaseIterable {
 /// - ``revealFinder``: reveal the path in the HOST Finder (`open -R`-equivalent over the metadata RPC);
 ///   a URL has no Finder target, so the click copies it instead.
 /// - ``openSystemDefault``: open the path / URL with the HOST's system-default handler.
-///
-/// PURE `String`-raw + `CaseIterable`; CLIENT-side dispatch token. ``init(rawValue:)`` is
-/// validate-then-repair to ``revealFinder`` (default).
-public enum LinkCmdShiftClick: String, Codable, Sendable, CaseIterable {
-    case revealFinder = "reveal-finder"
-    case openSystemDefault = "open-system-default"
+public enum LinkCmdShiftClick: Sendable, CaseIterable, RawRepresentable, Codable {
+    case revealFinder
+    case openSystemDefault
+
+    /// ⌘⇧-click's tokens sit AFTER ⌘-click's three in the one delivery the pair of rows reads.
+    public var rawValue: String { ControlTokens.linkClick[LinkCmdClick.allCases.count + index] }
 
     /// Validate-then-repair to ``revealFinder`` (default), never trapping; non-failable for the `Defaults` bridge.
     public init(rawValue: String) {
-        switch rawValue {
-        case "reveal-finder": self = .revealFinder
-        case "open-system-default": self = .openSystemDefault
-        default: self = .revealFinder
+        self = repaired(rawValue, Self.allCases) { token, len in
+            slopdesk_terminal_cmd_shift_click_from_token(token, len)
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    var index: Int {
+        switch self {
+        case .revealFinder: 0
+        case .openSystemDefault: 1
         }
     }
 }
@@ -251,19 +394,33 @@ public enum LinkCmdShiftClick: String, Codable, Sendable, CaseIterable {
 /// - ``all``: detect ANY `scheme://…`.
 /// - ``custom``: detect only the always-on schemes plus ``SettingsKey/customLinkSchemes``.
 ///
-/// PURE `String`-raw + `CaseIterable`; CLIENT-side persistence token. ``init(rawValue:)`` is
-/// validate-then-repair to ``all`` (default). Bridged to the richer ``LinkSchemePolicy`` by
-/// ``SettingsKey/linkSchemePolicy``.
-public enum AutoDetectLinkSchemes: String, Codable, Sendable, CaseIterable {
+/// The POLICY itself does not cross: it is consumed by the detector, which is already Rust's.
+public enum AutoDetectLinkSchemes: Sendable, CaseIterable, RawRepresentable, Codable {
     case all
     case custom
 
+    public var rawValue: String { ControlTokens.schemeDetection[index] }
+
     /// Validate-then-repair to ``all`` (default), never trapping; non-failable for the `Defaults` bridge.
     public init(rawValue: String) {
-        switch rawValue {
-        case "all": self = .all
-        case "custom": self = .custom
-        default: self = .all
+        self = repaired(rawValue, Self.allCases) { token, len in
+            slopdesk_terminal_scheme_detection_from_token(token, len)
+        }
+    }
+
+    public init(from decoder: any Decoder) throws {
+        try self.init(rawValue: decoder.singleValueContainer().decode(String.self))
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
+    var index: Int {
+        switch self {
+        case .all: 0
+        case .custom: 1
         }
     }
 }
@@ -281,9 +438,6 @@ public enum AutoDetectLinkSchemes: String, Codable, Sendable, CaseIterable {
 /// ``from(defaults:)`` is the single read site (`PreferencesStore.applyTerminal` rebuilds it
 /// on every apply / `refreshTerminalControls()`), so the init defaults mirror the `Defaults.Keys` defaults
 /// and a default-constructed value is a faithful "factory" terminal.
-///
-/// PURE `Codable + Sendable + Equatable` — no SwiftUI/AppKit — so `TerminalControlsTests` pins the factory
-/// + enum round-trips with no view.
 public struct TerminalControls: Codable, Sendable, Equatable {
     /// The `copy-on-select` config line — copy the selection to the pasteboard as soon as it is made
     /// (default OFF). The builder emits `clipboard` when on, `false` when off.
@@ -371,9 +525,14 @@ public struct TerminalControls: Codable, Sendable, Equatable {
     /// its `Defaults.Key` default (mirrored by this struct's init defaults).
     public static func from(defaults: UserDefaults = SettingsKey.store) -> Self {
         // The "Clipboard — Shell Controlled" master switch (default ON) gates the WHOLE OSC-52 path
-        // ahead of the per-direction Ask/Allow/Deny gate. When OFF, read + write resolve to `.deny`, so the
-        // builder emits `clipboard-read/write = deny` and no remote OSC-52 reaches the gate.
-        let clipboardShellControlled = defaults[.clipboardShellControlled]
+        // ahead of the per-direction Ask/Allow/Deny gate. Both directions resolve in ONE crossing:
+        // a master switch honoured in one direction and not the other is the failure that rules out.
+        let gates = slopdesk_terminal_clipboard_gates(
+            defaults[.clipboardShellControlled],
+            UInt8(defaults[.clipboardRead].index),
+            UInt8(defaults[.clipboardWrite].index),
+        )
+        let all = ClipboardAccess.allCases
         return Self(
             copyOnSelect: defaults[.copyOnSelect],
             trimTrailing: defaults[.trimTrailingSpacesOnCopy],
@@ -381,8 +540,8 @@ public struct TerminalControls: Codable, Sendable, Equatable {
             clearOnCopy: defaults[.clearSelectionOnCopy],
             pasteProtection: defaults[.pasteProtection],
             bracketedSafe: defaults[.pasteBracketedSafe],
-            clipboardRead: clipboardShellControlled ? defaults[.clipboardRead] : .deny,
-            clipboardWrite: clipboardShellControlled ? defaults[.clipboardWrite] : .deny,
+            clipboardRead: all[Int(gates & 0xFF)],
+            clipboardWrite: all[Int(gates >> 8)],
             hideMouseWhileTyping: defaults[.mouseHideWhileTyping],
             allowShiftClick: defaults[.allowShiftClick],
             clickToMove: defaults[.clickToMove],

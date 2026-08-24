@@ -6,8 +6,10 @@
 // I flipping to?) was unanswerable. `testTwoPanesInOneProjectReadDifferently` fails against that build —
 // it asserts the two rows' titles DIFFER while both still resolve to the one project they share.
 //
-// Headless: the pure composers need no store at all; the live rows ride the same tree-model
-// `WorkspaceStore` + `MountTestPaneSession` fake the rail-row tests use (no socket, no video, no Metal).
+// The composing itself — the project name, the note, the title that must not restate either — is the
+// crate's, tested there; what is left here is what only Swift can answer: the rows a live store yields,
+// and the answers the doors give back. Headless: the same tree-model `WorkspaceStore` +
+// `MountTestPaneSession` fake the rail-row tests use (no socket, no video, no Metal).
 
 import SlopDeskWorkspaceModel
 import XCTest
@@ -16,121 +18,6 @@ import XCTest
 
 @MainActor
 final class PaneSwitcherRowsTests: XCTestCase {
-    // MARK: - `projectName` (the first half of a row's place line)
-
-    /// The project is its folder name, whatever the pane's own cwd is below it.
-    func testProjectNameIsTheProjectFolderName() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.projectName(
-                projectKey: "/w/slopdesk", cwd: "/w/slopdesk/packages/api",
-            ),
-            "slopdesk",
-        )
-    }
-
-    /// A pane with no project key yet still names a place — its own folder.
-    func testProjectNameWithoutAKeyIsTheOwnFolder() {
-        XCTAssertEqual(PaneSwitcherRowsBuilder.projectName(projectKey: nil, cwd: "/w/scratch"), "scratch")
-        XCTAssertNil(PaneSwitcherRowsBuilder.projectName(projectKey: nil, cwd: nil))
-    }
-
-    // MARK: - `relativePath` / `note` (the quiet remainder)
-
-    /// A pane AT its project root adds nothing — the project half of the line already said the place.
-    func testRootPaneHasNoNote() {
-        XCTAssertNil(PaneSwitcherRowsBuilder.relativePath(projectKey: "/w/slopdesk", cwd: "/w/slopdesk"))
-        XCTAssertNil(PaneSwitcherRowsBuilder.note(projectKey: "/w/slopdesk", cwd: "/w/slopdesk"))
-    }
-
-    /// A trailing slash on the cwd is not a stray — it is the same directory.
-    func testRelativePathToleratesATrailingSlash() {
-        XCTAssertNil(PaneSwitcherRowsBuilder.relativePath(projectKey: "/w/slopdesk", cwd: "/w/slopdesk/"))
-    }
-
-    /// A pane that strayed INTO the project's subtree carries the path after the root.
-    func testStrayedPaneCarriesTheSubPath() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.note(projectKey: "/w/slopdesk", cwd: "/w/slopdesk/packages/api"),
-            "packages/api",
-        )
-    }
-
-    /// A cwd OUTSIDE the key's subtree (a stale key across an un-re-pushed `cd`) names where the pane
-    /// actually is rather than hiding it.
-    func testCwdOutsideTheKeyStillNamesItself() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.note(projectKey: "/w/slopdesk", cwd: "/tmp/scratch"),
-            "scratch",
-        )
-    }
-
-    /// The note is the SUB-PATH and nothing else. A tab's pane count used to ride here, back when a row
-    /// was a tab; a row is now one of those panes, so the count would describe the row's neighbours.
-    func testTheNoteIsOnlyEverTheSubPath() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.note(projectKey: "/w/slopdesk", cwd: "/w/slopdesk/docs"), "docs",
-        )
-    }
-
-    // MARK: - `unrepeated` (a title must not restate the project under it)
-
-    /// A row whose identity fell all the way through to the folder name would say its own place line
-    /// twice — it yields to the pane's program instead.
-    func testATitleThatRestatesTheProjectYieldsToTheProgram() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.unrepeated(
-                "slopdesk", project: "slopdesk", note: nil, processLabel: "-zsh",
-            ),
-            "zsh",
-        )
-    }
-
-    /// ⚠️ THE NOTE COUNTS TOO. A shell deep in a project titles itself by its folder name, which is the
-    /// last thing its own place line already says — photographed as `Overlays` sitting over
-    /// `slopdesk › Sources/SlopDeskClientUI/Overlays`. The section-header era could not see this,
-    /// because the path was not on the row.
-    func testATitleThatRestatesTheNotesLastComponentAlsoYields() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.unrepeated(
-                "Overlays", project: "slopdesk", note: "Sources/SlopDeskClientUI/Overlays",
-                processLabel: "-zsh",
-            ),
-            "zsh",
-        )
-    }
-
-    /// …but only the LAST component: a title that happens to match a directory higher up the path is
-    /// saying something the eye does not read as a repeat.
-    func testATitleMatchingAnInnerPathComponentIsLeftAlone() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.unrepeated(
-                "Sources", project: "slopdesk", note: "Sources/SlopDeskClientUI/Overlays",
-                processLabel: "-zsh",
-            ),
-            "Sources",
-        )
-    }
-
-    /// …and only when it has a program to yield to: a blank line says less than a redundant one.
-    func testATitleRestatingTheProjectSurvivesWithNoProgram() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.unrepeated(
-                "slopdesk", project: "slopdesk", note: nil, processLabel: nil,
-            ),
-            "slopdesk",
-        )
-    }
-
-    /// A real identity is never touched, even when a program is known.
-    func testARealTitleIsNeverReplaced() {
-        XCTAssertEqual(
-            PaneSwitcherRowsBuilder.unrepeated(
-                "make check", project: "slopdesk", note: "docs", processLabel: "make",
-            ),
-            "make check",
-        )
-    }
-
     // MARK: - Live rows
 
     private func makeStore() -> WorkspaceStore {
@@ -309,22 +196,23 @@ final class PaneSwitcherRowsTests: XCTestCase {
     /// A wide display does not get a wide card: past ~75 characters the eye loses the line, so the
     /// measure caps even as the window keeps growing.
     func testWidthStopsAtTheMaximumOnAWideWindow() {
-        XCTAssertEqual(PaneSwitcherMetrics.width(container: 1920), PaneSwitcherMetrics.maxWidth)
-        XCTAssertEqual(PaneSwitcherMetrics.width(container: 3840), PaneSwitcherMetrics.maxWidth)
+        XCTAssertEqual(PaneSwitcherMetrics.width(container: 1920), PaneSwitcherMetrics.width(container: 3840))
+        XCTAssertLessThan(PaneSwitcherMetrics.width(container: 3840), 1920 * 0.42)
     }
 
     /// ⚠️ THE WINDOW OUTRANKS THE FLOOR. On a narrow window the minimum would draw a card wider than
     /// its host — an overlay that cannot be an overlay. The share ceiling wins.
     func testANarrowWindowShrinksTheCardBelowItsMinimum() {
         XCTAssertEqual(PaneSwitcherMetrics.width(container: 500), 500 * 0.66, accuracy: 0.5)
-        XCTAssertLessThan(PaneSwitcherMetrics.width(container: 500), PaneSwitcherMetrics.minWidth)
+        XCTAssertLessThan(PaneSwitcherMetrics.width(container: 500), PaneSwitcherMetrics.width(container: 800))
         XCTAssertLessThanOrEqual(PaneSwitcherMetrics.width(container: 320), 320)
     }
 
     /// A short title must not drag the card below the floor — the floor is about the LINE, and only the
     /// window overrides it.
     func testAMidSizedWindowKeepsTheFloor() {
-        XCTAssertEqual(PaneSwitcherMetrics.width(container: 800), PaneSwitcherMetrics.minWidth)
+        XCTAssertEqual(PaneSwitcherMetrics.width(container: 800), 400, accuracy: 0.5)
+        XCTAssertGreaterThan(PaneSwitcherMetrics.width(container: 800), 800 * 0.42)
     }
 
     /// A session with more panes than the window is tall gets a scrolling card, never one taller than its
@@ -336,7 +224,7 @@ final class PaneSwitcherRowsTests: XCTestCase {
 
     /// A zero container (a first layout pass) must not collapse the card to nothing.
     func testAnUnmeasuredContainerFallsBackToTheFloor() {
-        XCTAssertEqual(PaneSwitcherMetrics.width(container: 0), PaneSwitcherMetrics.minWidth)
+        XCTAssertEqual(PaneSwitcherMetrics.width(container: 0), PaneSwitcherMetrics.width(container: 800))
         XCTAssertEqual(PaneSwitcherMetrics.maxHeight(container: 0), .infinity)
     }
 
@@ -354,15 +242,19 @@ final class PaneSwitcherRowsTests: XCTestCase {
     /// The ONE bound that was never about the window survives: past ~75 characters the eye loses the
     /// line, so an iPad's card caps exactly where the Mac's does.
     func testCompactWidthStillStopsAtTheMeasureCap() {
-        XCTAssertEqual(PaneSwitcherMetrics.compactWidth(container: 1024), PaneSwitcherMetrics.maxWidth)
-        XCTAssertEqual(PaneSwitcherMetrics.compactWidth(container: 640), PaneSwitcherMetrics.maxWidth)
+        let cap = PaneSwitcherMetrics.compactWidth(container: 640)
+        XCTAssertEqual(PaneSwitcherMetrics.compactWidth(container: 1024), cap)
+        XCTAssertEqual(PaneSwitcherMetrics.width(container: 3840), cap)
     }
 
     /// An unmeasured container yields the CAP, not the floor: the phone's frame is a `maxWidth`, so the
     /// enclosing margin still bounds it — where 400 would ask a 390pt screen for a card wider than
     /// itself.
     func testAnUnmeasuredCompactContainerFallsBackToTheCap() {
-        XCTAssertEqual(PaneSwitcherMetrics.compactWidth(container: 0), PaneSwitcherMetrics.maxWidth)
+        XCTAssertEqual(
+            PaneSwitcherMetrics.compactWidth(container: 0),
+            PaneSwitcherMetrics.compactWidth(container: 1024),
+        )
     }
 
     /// The rows stand at their TRUE height until the ceiling, which is what the Mac reads off a laid-out
@@ -376,6 +268,7 @@ final class PaneSwitcherRowsTests: XCTestCase {
             PaneSwitcherMetrics.listHeight(rows: 40, rowHeight: 48, container: 900),
             PaneSwitcherMetrics.maxHeight(container: 900), accuracy: 0.5,
         )
+        XCTAssertLessThan(PaneSwitcherMetrics.listHeight(rows: 40, rowHeight: 48, container: 900), 40 * 48)
     }
 
     /// An unmeasured container has no ceiling to impose, so the rows keep their own height rather than
@@ -462,14 +355,5 @@ final class PaneSwitcherRowsTests: XCTestCase {
             PaneSwitcherCopy.title,
             WorkspaceBindingRegistry.binding(for: .paneSwitcher)?.title,
         )
-    }
-
-    /// The place line's separator is spelled ONCE: the single-slot join and the two-register row read
-    /// the same token, so the two surfaces cannot drift to different punctuation.
-    func testThePlaceSeparatorIsTheOneUsedByTheJoinedLine() {
-        let identity = PaneSwitcherRowsBuilder.PaneIdentity(
-            title: "zsh", project: "slopdesk", note: "docs",
-        )
-        XCTAssertEqual(identity.placeLine, "slopdesk\(PaneSwitcherCopy.placeSeparator)docs")
     }
 }

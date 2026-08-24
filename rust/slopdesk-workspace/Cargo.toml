@@ -50,6 +50,12 @@ slopdesk-ids = { path = "../slopdesk-ids" }
 slopdesk-settings = { path = "../slopdesk-settings" }
 slopdesk-tree = { path = "../slopdesk-tree" }
 
+# The badge vocabulary a sidebar row SPEAKS. `slopdesk-agent` already owns the ladder that fuses a
+# pane's signals into one `TabBadge`, so the word each state is read aloud with and the attention
+# role it carries live on that same type — a second nine-case enum here would be the drift pair the
+# one-implementation rule exists for. The edge points DOWN: `slopdesk-agent` names no crate at all.
+slopdesk-agent = { path = "../slopdesk-agent" }
+
 # The one matcher every search field in the app scores against. `src/search_rank.rs` decides the
 # ORDER a list comes back in, and the order is a fact about the scores — a ranking that scored
 # with a second matcher would put the palette and the fuzzy tests in different orders.

@@ -21,6 +21,8 @@
 //!   dismissing.
 //! - [`pointer`] — what the far side asked the POINTER to look like: the `OSC 22` shape libghostty
 //!   parsed, and whether `mouse-hide-while-typing` wants it on screen at all.
+//! - [`controls`] — the multi-state control knobs: what each stored token means, which libghostty
+//!   token it becomes, and how an untrusted one repairs.
 //! - [`surface`] — what a gesture MEANS before anything is sent: which clicks and keys the embedder
 //!   takes for itself, and the two facts — who owns the pointer, who owns the screen — that make it
 //!   step aside.
@@ -40,6 +42,7 @@
 pub mod blocks;
 pub mod config;
 pub mod context_menu;
+pub mod controls;
 pub mod cursor_color;
 pub mod dedup;
 pub mod inputbox;
@@ -56,6 +59,7 @@ pub mod vimotion;
 pub mod wrap_map;
 
 pub use blocks::{BlockNavigatorFilter, BlockRing, BlockStatus, CommandBlock, OutputRequests};
+pub use controls::{ClipboardAccess, MouseShiftCapture, OptionAsAlt, RightClickAction, SchemeDetection};
 pub use dedup::InputDedupRing;
 pub use inputbox::{Ingested, InputAffordance, InputBoxModel};
 pub use link::{DetectedLink, DetectedLinkKind, LinkSchemePolicy};

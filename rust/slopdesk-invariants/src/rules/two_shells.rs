@@ -44,6 +44,91 @@ const BOTH: &[&str] = &[MAC, PHONE];
 /// the exact shape the dedup removed. Rule FIRED, naming both sites. Restored both files by `cp`
 /// from /tmp; rule green. Also verified the inverse: with the tree as it stands the rule finds
 /// exactly the seven ledgered pairs, i.e. it is not passing by finding nothing.
+/// The connect form's own words. Rust, not Swift: the form's vocabulary crossed the FFI
+/// boundary with the rest of its reading, and the ban's paired claim has to follow the floor
+/// wherever it moved or it starts guarding an empty room — the same move `SEARCH` records.
+const CONNECT: &str = "rust/slopdesk-workspace/src/connect_form.rs";
+/// The keybindings editor's.
+const KEYS: &str = "Sources/SlopDeskClientCore/Settings/KeybindingsEditorReading.swift";
+/// A notification's.
+const TOAST: &str = "Sources/SlopDeskClientCore/Overlays/ToastPresentation.swift";
+/// The cross-tab search field's. Rust, not Swift: the field's words crossed the FFI boundary
+/// with the rest of the global-search reading, and the ban's paired claim has to follow the
+/// floor wherever it moved or it starts guarding an empty room.
+const SEARCH: &str = "rust/slopdesk-workspace/src/global_search.rs";
+/// The command palette's.
+const PALETTE: &str = "Sources/SlopDeskClientCore/Palette/PalettePresentation.swift";
+
+/// Each sentence, the file that owns it, and the symbol a caller reaches it by.
+const OWNED: &[(&str, &str, &str)] = &[
+    (
+        "Connect to Host",
+        CONNECT,
+        "slopdesk_workspace::connect_form::Word::Title",
+    ),
+    (
+        "host.local or 10.0.0.7",
+        CONNECT,
+        "slopdesk_workspace::connect_form::Word::HostPrompt",
+    ),
+    (
+        "Video ports",
+        CONNECT,
+        "slopdesk_workspace::connect_form::Word::VideoPortsLabel",
+    ),
+    (
+        "Media port",
+        CONNECT,
+        "slopdesk_workspace::connect_form::Word::MediaPortLabel",
+    ),
+    (
+        "Cursor port",
+        CONNECT,
+        "slopdesk_workspace::connect_form::Word::CursorPortLabel",
+    ),
+    ("Keyboard Shortcuts", KEYS, "KeybindingsEditorCopy.title"),
+    (
+        "Click a shortcut to record a replacement",
+        KEYS,
+        "KeybindingsEditorCopy.subtitle",
+    ),
+    ("Search key bindings", KEYS, "KeybindingsEditorCopy.searchPrompt"),
+    ("Reset to Default", KEYS, "KeybindingsEditorCopy.resetAction"),
+    (
+        "Reset every customized shortcut to its default",
+        KEYS,
+        "KeybindingsEditorCopy.resetHelp",
+    ),
+    (
+        r"Reset all key bindings\?",
+        KEYS,
+        "KeybindingsEditorCopy.resetConfirmTitle",
+    ),
+    (
+        "This clears every customized shortcut",
+        KEYS,
+        "KeybindingsEditorCopy.resetConfirmBody",
+    ),
+    ("Shortcut conflicts", KEYS, "KeybindingsEditorCopy.conflictsTitle"),
+    (
+        "This shortcut conflicts with another command",
+        KEYS,
+        "KeybindingsEditorCopy.conflictHelp",
+    ),
+    ("Dismiss notification", TOAST, "ToastPresentation.dismissLabel"),
+    (
+        "Jump to the pane this notification came from",
+        TOAST,
+        "ToastPresentation.jumpHint",
+    ),
+    (
+        "Search across all tabs…",
+        SEARCH,
+        "slopdesk_workspace::global_search::QUERY_PROMPT",
+    ),
+    ("Search for commands…", PALETTE, "PalettePresentation.queryPrompt"),
+];
+
 #[must_use]
 pub fn no_body_crosses_the_ui_split(tree: &Tree) -> Report {
     check_all(tree, &[Claim::NoCloneAcross {
@@ -112,69 +197,6 @@ pub fn no_body_crosses_the_ui_split(tree: &Tree) -> Report {
 /// FIRED on both, each naming its floor symbol. Restored by `cp` from /tmp; rule green.
 #[must_use]
 pub fn owned_copy_has_one_speller(tree: &Tree) -> Report {
-    /// The connect form's own words.
-    const CONNECT: &str = "Sources/SlopDeskClientCore/Overlays/ConnectPresentation.swift";
-    /// The keybindings editor's.
-    const KEYS: &str = "Sources/SlopDeskClientCore/Settings/KeybindingsEditorReading.swift";
-    /// A notification's.
-    const TOAST: &str = "Sources/SlopDeskClientCore/Overlays/ToastPresentation.swift";
-    /// The cross-tab search field's. Rust, not Swift: the field's words crossed the FFI boundary
-    /// with the rest of the global-search reading, and the ban's paired claim has to follow the
-    /// floor wherever it moved or it starts guarding an empty room.
-    const SEARCH: &str = "rust/slopdesk-workspace/src/global_search.rs";
-    /// The command palette's.
-    const PALETTE: &str = "Sources/SlopDeskClientCore/Palette/PalettePresentation.swift";
-
-    /// Each sentence, the file that owns it, and the symbol a caller reaches it by.
-    const OWNED: &[(&str, &str, &str)] = &[
-        ("Connect to Host", CONNECT, "ConnectForm.title"),
-        ("host.local or 10.0.0.7", CONNECT, "ConnectForm.hostPrompt"),
-        ("Video ports", CONNECT, "ConnectForm.videoPortsLabel"),
-        ("Media port", CONNECT, "ConnectForm.mediaPortLabel"),
-        ("Cursor port", CONNECT, "ConnectForm.cursorPortLabel"),
-        ("Keyboard Shortcuts", KEYS, "KeybindingsEditorCopy.title"),
-        (
-            "Click a shortcut to record a replacement",
-            KEYS,
-            "KeybindingsEditorCopy.subtitle",
-        ),
-        ("Search key bindings", KEYS, "KeybindingsEditorCopy.searchPrompt"),
-        ("Reset to Default", KEYS, "KeybindingsEditorCopy.resetAction"),
-        (
-            "Reset every customized shortcut to its default",
-            KEYS,
-            "KeybindingsEditorCopy.resetHelp",
-        ),
-        (
-            r"Reset all key bindings\?",
-            KEYS,
-            "KeybindingsEditorCopy.resetConfirmTitle",
-        ),
-        (
-            "This clears every customized shortcut",
-            KEYS,
-            "KeybindingsEditorCopy.resetConfirmBody",
-        ),
-        ("Shortcut conflicts", KEYS, "KeybindingsEditorCopy.conflictsTitle"),
-        (
-            "This shortcut conflicts with another command",
-            KEYS,
-            "KeybindingsEditorCopy.conflictHelp",
-        ),
-        ("Dismiss notification", TOAST, "ToastPresentation.dismissLabel"),
-        (
-            "Jump to the pane this notification came from",
-            TOAST,
-            "ToastPresentation.jumpHint",
-        ),
-        (
-            "Search across all tabs…",
-            SEARCH,
-            "slopdesk_workspace::global_search::QUERY_PROMPT",
-        ),
-        ("Search for commands…", PALETTE, "PalettePresentation.queryPrompt"),
-    ];
-
     let mut report = Report::new();
     for (phrase, owner, symbol) in OWNED {
         // Interned, because a claim's pattern and message are both `'static` and the alternative is
@@ -269,6 +291,7 @@ pub fn the_shared_vocabulary_only_shrinks(tree: &Tree) -> Report {
 mod tests {
     use std::fmt::Write as _;
 
+    use super::CONNECT;
     use crate::tests::Fixture;
 
     /// Eight substantive lines, plus the padding that makes each side a corpus rather than a pair
@@ -351,15 +374,17 @@ mod tests {
         );
     }
 
-    /// A shell holding one phrase per line, and the floor file that owns the sentence.
+    /// A shell holding one phrase per line, and the floor file that owns the sentence — Rust, since
+    /// the connect form's vocabulary crossed the FFI boundary with the rest of its reading.
     fn copy(fixture: &Fixture, mac: &str, phone: &str) {
         fixture
             .write(
-                "Sources/SlopDeskClientCore/Overlays/ConnectPresentation.swift",
-                "public enum ConnectForm {\n    public static let title = \"Connect to Host\"\n\x20   \
-                 public static let hostPrompt = \"host.local or 10.0.0.7\"\n\x20   public static let \
-                 videoPortsLabel = \"Video ports\"\n\x20   public static let mediaPortLabel = \"Media \
-                 port\"\n\x20   public static let cursorPortLabel = \"Cursor port\"\n}\n",
+                CONNECT,
+                "impl Word {\n    fn text(self) -> &'static str {\n\x20       match self {\n\x20      \
+                 \x20     Self::Title => \"Connect to Host\",\n\x20           Self::HostPrompt => \
+                 \"host.local or 10.0.0.7\",\n\x20           Self::VideoPortsLabel => \"Video \
+                 ports\",\n\x20           Self::MediaPortLabel => \"Media port\",\n\x20           \
+                 Self::CursorPortLabel => \"Cursor port\",\n\x20       }\n    }\n}\n",
             )
             .write("Sources/SlopDeskMacUI/MacConnectSheet.swift", mac)
             .write("Sources/SlopDeskPhoneUI/ConnectHostView.swift", phone);
@@ -368,24 +393,33 @@ mod tests {
     #[test]
     fn a_respelled_sentence_is_red() {
         let fixture = Fixture::new("owned-copy");
-        copy(&fixture, "Text(ConnectForm.title)\n", "Text(ConnectForm.title)\n");
+        copy(
+            &fixture,
+            "Text(ConnectForm.word(.title))\n",
+            "Text(ConnectForm.word(.title))\n",
+        );
         // Only the connect form's five are exercised here; the other owners are absent, and an
         // absent owner is itself a failure, so this asserts on the connect claims by name.
         let found = super::owned_copy_has_one_speller(&fixture.tree());
-        assert!(!found.violations().iter().any(|line| line.contains("ConnectForm")));
+        assert!(
+            !found
+                .violations()
+                .iter()
+                .any(|line| line.contains("connect_form"))
+        );
 
         // The revert the break-test performed: the shell types the sentence again.
         copy(
             &fixture,
             "Text(\"Connect to Host\")\n",
-            "Text(ConnectForm.title)\n",
+            "Text(ConnectForm.word(.title))\n",
         );
         let found = super::owned_copy_has_one_speller(&fixture.tree());
         assert!(
             found
                 .violations()
                 .iter()
-                .any(|line| line.contains("ConnectForm.title"))
+                .any(|line| line.contains("connect_form::Word::Title"))
         );
     }
 
@@ -396,12 +430,13 @@ mod tests {
         let fixture = Fixture::new("owned-copy-stale");
         fixture
             .write(
-                "Sources/SlopDeskClientCore/Overlays/ConnectPresentation.swift",
-                "public enum ConnectForm {\n    public static let title = \"Connect to a Host\"\n}\n",
+                CONNECT,
+                "impl Word {\n    fn text(self) -> &'static str {\n\x20       match self {\n\x20      \
+                 \x20     Self::Title => \"Connect to a Host\",\n\x20       }\n    }\n}\n",
             )
             .write(
                 "Sources/SlopDeskMacUI/MacConnectSheet.swift",
-                "Text(ConnectForm.title)\n",
+                "Text(ConnectForm.word(.title))\n",
             );
         let found = super::owned_copy_has_one_speller(&fixture.tree());
         assert!(
