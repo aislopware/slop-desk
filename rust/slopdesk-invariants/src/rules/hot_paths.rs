@@ -1,5 +1,5 @@
-//! Four per-keystroke, per-row or per-chunk paths, each of which had a second implementation that
-//! was correct and slow.
+//! Five per-keystroke, per-row, per-chunk or per-message paths, each of which had a second
+//! implementation that was correct and slow.
 //!
 //! Ported from the deleted `check-supervisor.sh`. What is enforced is not the measurement — a
 //! number in a gate rots — but the call site that earned it: the engine that does not backtrack,
@@ -11,6 +11,12 @@ use crate::tree::Tree;
 
 /// The Swift face of the pane outbox — a marshaller, and the rule below says how much of one.
 const OUTBOX_FACE: &str = "Sources/SlopDeskHost/PaneOutbox.swift";
+
+/// The Swift face of the pane's subscriber set. The same bar, for the same reason.
+const FANOUT_FACE: &str = "Sources/SlopDeskHost/PaneFanout.swift";
+
+/// The one file allowed to hold the `Subscriber` OBJECTS the set is keyed by.
+const SESSION: &str = "Sources/SlopDeskHost/MuxChannelSession.swift";
 
 /// One regex engine meets the untrusted rows, and it does not backtrack
 ///
@@ -194,6 +200,78 @@ pub fn the_outbound_frame_merges_once(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// One subscriber set, and every NUMBER in it lives once
+///
+/// A pane's members are two halves that cannot be one thing: the OBJECTS — a sub-channel pair, four
+/// relay tasks, two queues and their `AsyncStream` wakes, none of which has a shape a C ABI could
+/// carry — and the NUMBERS: an ack cursor, a delivery frontier, whether a sender exists, whether
+/// the exit has been told, whether the member is on its way out. `rust/slopdesk-muxsession`'s
+/// `fanout` owns the numbers, the roster, the id mint and both folds over them (docs/45 §8.6,
+/// docs/59 step 3).
+///
+/// A parallel table is the one failure mode that split has, so this pins the line: the near side
+/// may key OBJECTS by id, and may keep `retired` — that latch is about an object's tasks being
+/// cancelled and it deliberately outlives membership — and nothing else. A `lastAckedSeq` or a
+/// `lastSentSeq` declared beside the pair is not a cache, it is a second answer to a question the
+/// retention floor and the producer bound are computed from, and the two drift silently: a stale
+/// min pins the replay buffer forever, a stale max wedges the read loop paused.
+///
+/// `noteSent` runs per MESSAGE on every member's sender, so the face is held to the same
+/// marshaller bar as the outbox above: it may hold no roster, no cursor and no threshold of its
+/// own.
+#[must_use]
+pub fn the_subscriber_set_is_one_table(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: FANOUT_FACE,
+            message: "Sources/SlopDeskHost/PaneFanout.swift is gone — the pane's roster and its cursors are \
+                      not MuxChannelSession's to hold again (docs/59 §4)",
+        },
+        Claim::Doors {
+            path: FANOUT_FACE,
+            entries: &[
+                "slopdesk_pane_fanout_new",
+                "slopdesk_pane_fanout_free",
+                "slopdesk_pane_fanout_lag_bytes",
+                "slopdesk_pane_fanout_reserve_id",
+                "slopdesk_pane_fanout_join",
+                "slopdesk_pane_fanout_leave",
+                "slopdesk_pane_fanout_count",
+                "slopdesk_pane_fanout_ids",
+                "slopdesk_pane_fanout_acknowledge",
+                "slopdesk_pane_fanout_retention_floor",
+                "slopdesk_pane_fanout_start_sender",
+                "slopdesk_pane_fanout_clear_sender",
+                "slopdesk_pane_fanout_note_sent",
+                "slopdesk_pane_fanout_frontier",
+                "slopdesk_pane_fanout_mark_exit_delivered",
+                "slopdesk_pane_fanout_exit_pending",
+                "slopdesk_pane_fanout_lagging",
+                "slopdesk_pane_fanout_evict",
+            ],
+            message: "Sources/SlopDeskHost/PaneFanout.swift no longer calls {entry} — a face that drops a \
+                      door is an implementation coming back, and here it would be a second roster beside \
+                      the one the retention floor and the producer bound are folded from",
+        },
+        Claim::NoneOf {
+            paths: &[FANOUT_FACE],
+            pattern: r"\bNSLock\b|ProcessInfo|: \[MuxSubscriberID *:|var (members|roster|nextID|nextSubscriberID)\b",
+            view: View::Code,
+            message: "{files} keeps a set of its own — the face marshals and nothing else, because the \
+                      roster, the id mint and the laggard threshold are all the door's (docs/59 §4)",
+        },
+        Claim::NoneOf {
+            paths: &[SESSION],
+            pattern: r"var evicting\b|subscribers\.(values|keys|count|isEmpty)\b",
+            view: View::Code,
+            message: "{files} folds over its own dictionary again — that dictionary holds OBJECTS, and the \
+                      population, the order and every cursor come from the door; a second walk here is the \
+                      parallel table the split exists to prevent (docs/59 §4, §8 rule 3)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -266,5 +344,73 @@ mod tests {
         let bare = Fixture::new("outbound-frame-merges-once-bare");
         bare.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
         assert!(!super::the_outbound_frame_merges_once(&bare.tree()).is_clean());
+    }
+
+    /// The face whose doors [`super::the_subscriber_set_is_one_table`] pins.
+    const FANOUT_FACE: &str = super::FANOUT_FACE;
+
+    /// The one file allowed to hold the members themselves.
+    const SESSION: &str = super::SESSION;
+
+    /// Every door the face must keep asking, in one string a fixture can hold.
+    const FANOUT_DOORS: &str = concat!(
+        "slopdesk_pane_fanout_new()\nslopdesk_pane_fanout_free()\n",
+        "slopdesk_pane_fanout_lag_bytes()\nslopdesk_pane_fanout_reserve_id()\n",
+        "slopdesk_pane_fanout_join()\nslopdesk_pane_fanout_leave()\n",
+        "slopdesk_pane_fanout_count()\nslopdesk_pane_fanout_ids()\n",
+        "slopdesk_pane_fanout_acknowledge()\n",
+        "slopdesk_pane_fanout_retention_floor()\n",
+        "slopdesk_pane_fanout_start_sender()\nslopdesk_pane_fanout_clear_sender()\n",
+        "slopdesk_pane_fanout_note_sent()\nslopdesk_pane_fanout_frontier()\n",
+        "slopdesk_pane_fanout_mark_exit_delivered()\n",
+        "slopdesk_pane_fanout_exit_pending()\nslopdesk_pane_fanout_lagging()\n",
+        "slopdesk_pane_fanout_evict()\n",
+    );
+
+    fn write_the_subscriber_set_is_one_table(fixture: &Fixture) {
+        fixture
+            .write(FANOUT_FACE, FANOUT_DOORS)
+            .write(SESSION, "    private let fanout = PaneFanout()\n");
+    }
+
+    #[test]
+    fn the_subscriber_set_is_one_table_keeps_every_member_scalar_on_one_side() {
+        let fixture = Fixture::new("subscriber-set-is-one-table");
+        write_the_subscriber_set_is_one_table(&fixture);
+        assert!(super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a fold grew back where the call used to be.
+        fixture.write(FANOUT_FACE, "slopdesk_pane_fanout_new()\n");
+        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+
+        // The face kept every door AND a roster of its own beside it.
+        write_the_subscriber_set_is_one_table(&fixture);
+        fixture.append(
+            FANOUT_FACE,
+            "    private var members: [MuxSubscriberID: Cursor] = [:]\n",
+        );
+        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+
+        // And the session, walking its own dictionary again: the parallel table this rule exists
+        // for. Both halves of that — the eviction latch and every population fold.
+        write_the_subscriber_set_is_one_table(&fixture);
+        fixture.append(SESSION, "        var evicting = false\n");
+        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+
+        write_the_subscriber_set_is_one_table(&fixture);
+        fixture.append(SESSION, "        let emptied = subscribers.isEmpty\n");
+        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+
+        write_the_subscriber_set_is_one_table(&fixture);
+        fixture.append(
+            SESSION,
+            "        let floor = subscribers.values.map(cursor).min()\n",
+        );
+        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+
+        // And the file itself, gone.
+        let bare = Fixture::new("subscriber-set-is-one-table-bare");
+        bare.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
+        assert!(!super::the_subscriber_set_is_one_table(&bare.tree()).is_clean());
     }
 }

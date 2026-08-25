@@ -24,9 +24,15 @@
 //! over-cap head splits, and that `.exit` is a barrier neither may cross. The queue holds
 //! `(slot, len)`; hostd holds the payload each slot names, so the merge decision crosses and the
 //! concatenation stays where the `Data` already is.
+//!
+//! [`fanout`] is the sixth, and the one about a SET of clients on one pane: the roster and its
+//! order, each member's ack and delivery cursors, which of them has fallen too far behind to keep,
+//! and how far retention may be released. Sockets and tasks stay where they are; what crosses is an
+//! `id` and the cursors that decide what the pane does next.
 
 pub mod bridge_router;
 pub mod detach_retention;
+pub mod fanout;
 pub mod outbox;
 pub mod resize_fold;
 pub mod spawn_env;

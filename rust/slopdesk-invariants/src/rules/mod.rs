@@ -1465,6 +1465,11 @@ pub fn registry() -> Vec<Rule> {
             check: hot_paths::the_outbound_frame_merges_once,
         },
         Rule {
+            name: "subscriber-set-one-table",
+            origin: "docs/59 §4, §8 rule 3",
+            check: hot_paths::the_subscriber_set_is_one_table,
+        },
+        Rule {
             name: "live-docs-cite-real-files",
             origin: "CLAUDE.md §Read before you touch",
             check: repo_invariants::live_docs_cite_files_that_exist,

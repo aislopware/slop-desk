@@ -157,14 +157,49 @@ where the `Data` already is. The single-slot fast path returns the chunk unchang
 steady state is byte-identical work. `BoundedQueuePolicy` was already Rust; the accounting and the
 queue are now on the same side of the door.
 
-**Step 3 — `PaneFanout`.** *(~700 Swift lines)* The whole `:4161-4665` extension:
-`sequenceAndFanOut` `:4167` · `deliverExit` `:4196` · `enqueueData`/`takeDataBatch` ·
-`fanoutBacklog()` `:4341` · `applyQueueCapacityForPopulation()` `:4364` ·
-`evictLaggingSubscribers()` `:4401` · `joinSubscriber` `:4454` · `admitJoiner` `:4511` ·
-`composeJoinSnapshot` `:4556` · `reserveSubscriberID` `:4586` · `removeSubscriber` `:4628` ·
-`releaseRetentionToMinimum` `:4652`. Subscriber ids cross as `uint32_t` the caller assigns. The
-largest single subtraction; after it, all `MuxChannelSession` holds about a subscriber is a socket and
-a task.
+**Step 3 — `PaneFanout`. LANDED.** *(~70 removed from the session, ~150 face added)* Every
+NUMBER about a member — `lastAckedSeq`, `lastSentSeq`, `exitDelivered`, `evicting`, whether a sender
+exists — plus the roster, its order, the id mint and all three folds over them are
+`rust/slopdesk-muxsession`'s `fanout`, behind `rust/slopdesk-ffi/src/pane_fanout.rs`. The face is
+`Sources/SlopDeskHost/PaneFanout.swift`. `nextSubscriberID`, `mintSubscriberIDLocked` and
+`subscriberLagBytes` are gone; `subscriberList()`, `subscriberCount`, `acknowledge`, `noteSent`,
+`fanoutBacklog`, `evictLaggingSubscribers`, `releaseRetentionToMinimum` and `hasPendingExitDelivery`
+survive as marshallers of two or three lines.
+
+Ids cross as `uint64_t` — `MuxSubscriberID`'s own width, not docs/59's original `uint32_t` guess, so
+this door and `mux_resize`'s agree — and they are CALLER-minted, which is the opposite of step 2's
+slot and for the reason step 2 gave: a subscriber id is an IDENTITY (a channel key names it before
+the member exists, so a link dropping in that window stays attributable to the joiner), where a slot
+is a queue coordinate nothing outside names. `reserve_id` is on the handle so the counter is not a
+second piece of state, but the ORDER — reserve, register the key, then join — stays the caller's.
+
+Three shapes worth carrying into steps 4–7:
+
+- **The handle is serialized by ONE lock, and it is the one those fields already lived under.**
+  `subscribersLock`, this file's innermost, never `fanoutLock`: `noteSent` runs per MESSAGE on every
+  member's sender and takes only `subscribersLock` today, so putting the handle under the drain's
+  ordering lock would be a lock-order and contention change wearing a port's clothes. `fanoutActive`
+  and the join ordering therefore stay Swift under `fanoutLock`, which is exactly right — they are
+  about a drain's mode, not about a member.
+- **Two handles never hold each other; values cross instead.** The laggard rule needs
+  `replay.retainedBytes(above:)`, which lives behind the ReplayBuffer under `replayLock`. A fanout
+  handle holding a replay-handle pointer would alias state its own lock says nothing about and break
+  `held()`'s "no other reference live for the duration of the call". So the ladder is two calls:
+  `_lagging` answers WHICH cursors are behind the frontier (empty for a set of one, and empty for a
+  disabled threshold, so an empty answer costs no O(history) walk at all), Swift prices each under
+  `replayLock`, and `_evict` applies the threshold and claims the one-shot latch. Both halves of the
+  RULE are in Rust; only the QUERY is not.
+- **A parallel table is the failure mode, so the split is by SHAPE, not by convenience.** Swift keeps
+  `[MuxSubscriberID: Subscriber]` because a channel pair, four `Task`s and two `AsyncStream`
+  continuations have no C ABI shape — and it keeps `retired`, because that latch is about an object's
+  tasks being cancelled and it deliberately outlives membership (`shutdown()` cancels without
+  retiring the set). Everything else is one table. The population, the order, the count and "is it
+  emptied" all come from the door; `subscribers.values`/`.keys` never appear again, and the ratchet
+  in §8 rule 3 says so.
+
+One latent bug fell out: `admitJoiner` took `replayLock` while HOLDING `subscribersLock`, nesting
+outward from the lock its own doc comment calls innermost. The seed is now read before the section,
+which is exact because `fanoutLock` is held across both.
 
 **Step 4 — `PaneTruths`.** *(~900 Swift lines)* `ingestPTYChunk(_:sniffed:blocks:)` `:2624-2766`
 becomes: call `truths.ingest(...)`, read a counted buffer of message descriptors, hand them to
@@ -296,9 +331,17 @@ class, and the BREAK-TESTED convention every new rule follows) · `crate_policy.
    `slopdesk_pane_outbox_*` doors, and to hold NO ordering of its own — no array of queued items, no
    head cursor, no `removeFirst`. `hot_paths` is the right home for the second half: its header is
    *the Swift face must stay a marshaller*, and this path runs once per 32 KiB chunk forever.
-3. **the subscriber roster is one table** — ban
-   `evictLaggingSubscribers|releaseRetentionToMinimum|admitJoiner|reserveSubscriberID` bodies in
-   Swift; require `slopdesk_pane_fanout_*`.
+3. **the subscriber roster is one table** — LANDED, as two rules for the same reason rule 2 split.
+   `deleted_host_swift::pane_subscriber_set` bans
+   `mintSubscriberIDLocked|nextSubscriberID|lastAckedSeq|lastSentSeq|exitDelivered|subscriberLagBytes|SLOPDESK_SUB_LAG_BYTES`
+   anywhere under `Sources` — the CURSORS, not the functions that walked them, because those
+   functions survive as marshallers and a member scalar declared anywhere in Swift is a parallel
+   table by definition. `hot_paths::the_subscriber_set_is_one_table` (rule
+   `subscriber-set-one-table`) requires `PaneFanout.swift` to exist, to call every one of the
+   eighteen `slopdesk_pane_fanout_*` doors, to hold no roster/mint/threshold of its own (no `NSLock`,
+   no `ProcessInfo`, no `[MuxSubscriberID:` map), and requires `MuxChannelSession.swift` to declare
+   no `evicting` and to fold over `subscribers.values`/`.keys`/`.count`/`.isEmpty` never again — the
+   population, the order and every cursor come from the door.
 4. **what the shell said is translated once** — ban `wireMessages(from:`/`commandBlockMessage` in
    `MuxChannelSession.swift`; require `slopdesk_pane_truths_ingest`. Pair with a `Claim::AtMost` on
    `NSLock()` occurrences in that file, ratcheting downward as steps 4 and 5 merge locks — the

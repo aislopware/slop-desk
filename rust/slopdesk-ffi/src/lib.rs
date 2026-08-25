@@ -197,6 +197,7 @@ pub mod palette_card;
 pub mod palette_rows;
 pub mod pane_drop;
 pub mod pane_facts;
+pub mod pane_fanout;
 pub mod pane_kind;
 pub mod pane_outbox;
 pub mod pane_session;

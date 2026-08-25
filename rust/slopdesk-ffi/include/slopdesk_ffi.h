@@ -3319,6 +3319,72 @@ bool slopdesk_pane_outbox_is_empty(SlopDeskPaneOutbox *handle);
 void slopdesk_pane_outbox_take(SlopDeskPaneOutbox *handle, SlopDeskOutboxFrame *out);
 
 /* ---------------------------------------------------------------------------- *
+ * pane_fanout — one pane's subscriber set: the roster and its order, each member's
+ * ack and delivery cursors, the retention floor, the producer bound and the
+ * laggard rule (docs/45 §8.6, docs/59 step 3).
+ *
+ * A HANDLE, by the same test: state that lives as long as the pane, mutated from
+ * the read loop, the ack path, every member's sender task and the exit task, under
+ * exactly ONE lock — hostd's `subscribersLock`.
+ *
+ * What did NOT cross: the MEMBERS. A subscriber is a sub-channel pair plus four
+ * relay tasks, two outbound queues and their `AsyncStream` continuations, and none
+ * of that has a shape a C ABI could carry. What crosses is the `uint64_t` the
+ * caller assigned it. Its `retired` latch stays Swift for the same reason: that is
+ * about the OBJECT's tasks being cancelled, and it outlives membership.
+ *
+ * The eviction ladder is TWO calls on purpose. Pricing a cursor is an
+ * O(retained history) walk the replay buffer owns, under a different lock; a door
+ * that reached for it would alias state this handle's lock says nothing about. So
+ * `_lagging` answers which cursors are behind the frontier, the caller prices each
+ * under `replayLock`, and `_evict` applies the threshold and claims the latch.
+ * `SLOPDESK_SUB_LAG_BYTES` is read HERE, once per process; `_lag_bytes` exists so
+ * the log line can name the number without spelling it twice.
+ *
+ * Every `_ids`/`_lagging` call answers the TOTAL count and writes nothing into a
+ * buffer the list does not fit — the retry convention every table door here uses.
+ * `_evict` cannot be retried (it MUTATES), and does not need to be: its answer is
+ * never longer than what was handed in.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskPaneFanout SlopDeskPaneFanout;
+
+// One member's ack cursor, for the caller to price against its retained history.
+typedef struct {
+    uint64_t id;
+    int64_t acked;
+} SlopDeskFanoutCursor;
+
+// One member's un-acked backlog, as the caller's retained history priced it.
+typedef struct {
+    uint64_t id;
+    uint64_t retained_bytes;
+} SlopDeskFanoutPriced;
+
+SlopDeskPaneFanout *slopdesk_pane_fanout_new(void);
+void slopdesk_pane_fanout_free(SlopDeskPaneFanout *handle);
+uint64_t slopdesk_pane_fanout_lag_bytes(void);
+uint64_t slopdesk_pane_fanout_reserve_id(SlopDeskPaneFanout *handle);
+void slopdesk_pane_fanout_join(SlopDeskPaneFanout *handle, uint64_t id, int64_t acked);
+bool slopdesk_pane_fanout_leave(SlopDeskPaneFanout *handle, uint64_t id);
+size_t slopdesk_pane_fanout_count(SlopDeskPaneFanout *handle);
+size_t slopdesk_pane_fanout_ids(SlopDeskPaneFanout *handle, uint64_t *out, size_t capacity);
+bool slopdesk_pane_fanout_acknowledge(SlopDeskPaneFanout *handle, uint64_t id,
+                                      int64_t seq, int64_t *out);
+bool slopdesk_pane_fanout_retention_floor(SlopDeskPaneFanout *handle, int64_t *out);
+bool slopdesk_pane_fanout_start_sender(SlopDeskPaneFanout *handle, uint64_t id, int64_t head);
+void slopdesk_pane_fanout_clear_sender(SlopDeskPaneFanout *handle, uint64_t id);
+void slopdesk_pane_fanout_note_sent(SlopDeskPaneFanout *handle, uint64_t id, int64_t seq);
+bool slopdesk_pane_fanout_frontier(SlopDeskPaneFanout *handle, int64_t *out);
+void slopdesk_pane_fanout_mark_exit_delivered(SlopDeskPaneFanout *handle, uint64_t id);
+bool slopdesk_pane_fanout_exit_pending(SlopDeskPaneFanout *handle, uint64_t id);
+size_t slopdesk_pane_fanout_lagging(SlopDeskPaneFanout *handle,
+                                    SlopDeskFanoutCursor *out, size_t capacity);
+size_t slopdesk_pane_fanout_evict(SlopDeskPaneFanout *handle,
+                                  const SlopDeskFanoutPriced *priced, size_t count,
+                                  uint64_t *out, size_t capacity);
+
+/* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
  * loop policies both ends of the wire were spelling twice.
  *

@@ -13,7 +13,7 @@ import XCTest
 /// `await sub.data.send()` would give every member head-of-line over every other), so that source
 /// can never assert. The bound therefore has to be re-derived from the FASTEST member's delivery
 /// frontier: nobody is consuming ⇒ pause; somebody is ⇒ keep draining, and let
-/// ``MuxChannelSession/subscriberLagBytes`` deal with the laggard.
+/// ``PaneFanout/lagBytes`` deal with the laggard.
 ///
 /// Headless: unspawned ``PTYProcess`` (no read loop, no PTY), a recording ``PausableQueueGate``, and
 /// the same `…ForTesting` producer seams the fan-out and backpressure suites use.
@@ -157,7 +157,7 @@ final class MuxChannelSessionFanOutDrainBoundTests: XCTestCase {
     /// THE ONE THAT BITES. A pane that fanned out and then shrinks back to one member — a laggard
     /// evicted, a second client closing its lid — still delivers through that member's OUTBOX, and
     /// the drain dequeues the gate the instant it hands a frame over. So the out-FIFO source cannot
-    /// bound this pane, and `subscriberLagBytes` eviction cannot either (it never takes a pane to
+    /// bound this pane, and `PaneFanout.lagBytes` eviction cannot either (it never takes a pane to
     /// zero members): the fan-out backlog source is the ONLY thing standing between a stopped reader
     /// and a shell running flat out into host RAM, 4000× past the 64 KiB bound.
     func testTheDrainStillPausesAfterTheSetShrinksBackToOneMember() async {
@@ -195,7 +195,7 @@ final class MuxChannelSessionFanOutDrainBoundTests: XCTestCase {
 
     /// The other half, and the reason the bound cannot simply be "the slowest member": ONE laggard
     /// must never pause the drain for everybody. A member that keeps up holds the read loop open
-    /// while the parked one falls behind — that is what `subscriberLagBytes` eviction is for.
+    /// while the parked one falls behind — that is what `PaneFanout.lagBytes` eviction is for.
     func testALaggardDoesNotPauseTheDrainWhileAnotherMemberKeepsUp() async {
         let rec = PauseRec()
         let fast = ByteSink()

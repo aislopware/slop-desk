@@ -24,7 +24,8 @@
 //! **The outbound frame queue.** What the drain pops is not what the read loop appended — chunks
 //! coalesce to the credit-safe cap, an over-cap head splits, and `.exit` is a barrier. That
 //! arithmetic is `rust/slopdesk-muxsession`'s `outbox`; hostd keeps the lock, the bytes and the
-//! wake. See [`pane_outbound_queue`].
+//! wake. See [`pane_outbound_queue`], and [`pane_subscriber_set`] for the cursors the same pane's
+//! subscriber set folded over.
 //!
 //! Read `View::Code`, like every other ban in this crate: the prose above a ban names the thing it
 //! forbids, and a raw read would fire on the explanation.
@@ -100,6 +101,7 @@ pub fn deleted_host_swift(tree: &Tree) -> Report {
     claims.extend(supervisor_protocol_stays_deleted());
     claims.extend(swift_instruments_stay_deleted());
     claims.extend(pane_outbound_queue());
+    claims.extend(pane_subscriber_set());
     check_all(tree, &claims)
 }
 
@@ -130,6 +132,38 @@ fn pane_outbound_queue() -> Vec<Claim> {
         message: "the outbound frame merge is back in {files} — rust/slopdesk-muxsession's outbox owns the \
                   coalesce, the over-cap split and the .exit barrier; hostd owns the lock, the bytes and \
                   the wake, and nothing else (docs/59 §4)",
+    }]
+}
+
+/// The pane's SUBSCRIBER SET — docs/59 step 3.
+///
+/// The three folds over a pane's members are `rust/slopdesk-muxsession`'s `fanout` now, behind
+/// `slopdesk_pane_fanout_*`: retention releases to the MIN ack cursor, the producer bound is the
+/// MAX delivery cursor among outbox-fed members, and eviction takes everyone behind the healthiest
+/// that is further back than the threshold. The id mint went with them.
+///
+/// Two of those are `min`/`max` over a dictionary — the easiest thing in this file to write again
+/// by hand, and the most expensive to get wrong. A second min pins the replay buffer forever; a
+/// second max leaves the read loop paused waiting for the very byte the pause is preventing.
+///
+/// So the ban names the CURSORS the folds walked, not the functions that walked them: those
+/// functions survive as marshallers, and a member scalar declared anywhere in Swift is a parallel
+/// table by definition. The rest of the shape — that the face goes through every door, and that the
+/// session derives its roster from the door rather than from its own dictionary — is `hot_paths`'
+/// `the_subscriber_set_is_one_table`, because those are claims about two files and this file is
+/// bans across the tree.
+fn pane_subscriber_set() -> Vec<Claim> {
+    vec![Claim::NoneUnder {
+        roots: &["Sources"],
+        extensions: SWIFT,
+        pattern: r"\b(mintSubscriberIDLocked|nextSubscriberID|lastAckedSeq|lastSentSeq|exitDelivered|subscriberLagBytes)\b|SLOPDESK_SUB_LAG_BYTES",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "a subscriber CURSOR is back in {files} — rust/slopdesk-muxsession's fanout owns the ack \
+                  cursor, the delivery frontier, the exit latch, the id mint and the laggard threshold; \
+                  hostd owns the lock, the channel pairs and the tasks, and nothing else (docs/59 §4)",
     }]
 }
 
@@ -742,6 +776,17 @@ mod tests {
             (
                 "outboxcursor",
                 "    private func advanceFIFOHead() { fifoHead += 1 }\n",
+            ),
+            ("fanoutack", "    var lastAckedSeq: Int64 = 0\n"),
+            ("fanoutsent", "    var lastSentSeq: Int64 = 0\n"),
+            ("fanoutexit", "    var exitDelivered = false\n"),
+            (
+                "fanoutmint",
+                "    private func mintSubscriberIDLocked() -> UInt64 { 0 }\n",
+            ),
+            (
+                "fanoutlag",
+                "    static let subscriberLagBytes = 32 * 1024 * 1024\n",
             ),
             ("outboxqueue", "    private var outFIFO: [OutputItem] = []\n"),
         ] {
