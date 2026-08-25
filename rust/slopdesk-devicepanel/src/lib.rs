@@ -32,6 +32,21 @@
 //! them, and what to do with the ones that do. It replaced FOUR Swift tables with two, because two
 //! of the four were a join `slopdesk-workspace` could already perform.
 //!
+//! ## And how a wheel becomes a finger
+//!
+//! [`scroll`] is the fifth: one virtual contact, planted under the cursor, moved by the wheel and
+//! re-gripped at the edge. Both panels reached it from different directions — a `swipe` verb that
+//! cost 275 ms on one side, a wheel verb with no fling on the other — and the machine they arrived
+//! at was the same one, twice.
+//!
+//! ## And what the simulator's own server speaks
+//!
+//! [`sim_stream`], [`sim_input`] and [`sim_routes`] are a FOREIGN wire, which is why they are named
+//! for the server rather than for a decision: `baguette serve` defines the dialect and this side
+//! speaks it. There are no golden vectors to pin and no version byte anyone here controls, so what
+//! they owe instead is what every untrusted decoder owes — an optional answer, and not one byte
+//! read without a bounds check.
+//!
 //! ## And what the two panels SAY
 //!
 //! [`android`] and [`simulator`] are the fourth, and the one place the "answers, not identities"
@@ -43,6 +58,10 @@
 pub mod android;
 pub mod geometry;
 pub mod panel_key;
+pub mod scroll;
+pub mod sim_input;
+pub mod sim_routes;
+pub mod sim_stream;
 pub mod simulator;
 
 use slopdesk_wire::metadata::{ServiceEndpoint, ServiceState};

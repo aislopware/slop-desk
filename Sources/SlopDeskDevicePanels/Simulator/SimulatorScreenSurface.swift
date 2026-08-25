@@ -212,7 +212,7 @@ package final class SimulatorScreenNSView: NSView, SimulatorFrameRenderer {
 
     // MARK: Scroll
 
-    private var scroll = SimulatorScrollGesture()
+    private let scroll = SimulatorScrollGesture()
     /// Closes a CLASSIC WHEEL's gesture. A wheel has no phases, so nothing on the wire says the user
     /// stopped — the finger is lifted once the notches stop coming. A trackpad never uses this: its
     /// own `.ended` is exact, and waiting out an idle window after it would hold a contact down for a

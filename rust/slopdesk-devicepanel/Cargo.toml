@@ -52,6 +52,17 @@ slopdesk-workspace = { path = "../slopdesk-workspace" }
 # overlay already agree on — which is how a click ends up beside the pixel it was drawn for.
 slopdesk-video = { path = "../slopdesk-video" }
 
+# The simulator's own upstream dialect is JSON, and its escaping is the part that must be right: a
+# quote in what the user typed would otherwise end the object early. A hand-rolled writer is the
+# reinvention this rule exists to avoid, and serde_json's map is ordered, which is what makes each
+# envelope a pure function of its inputs and lets a test pin the whole string.
+serde_json = "1"
+
+# The percent-encoding sets the route table is written against. Escaping a UDID by hand is how a
+# slash in one silently addresses a different route, or how every dash in it comes out `%2D` and the
+# server compares the wrong string.
+percent-encoding = "2"
+
 # The ONE severity scale both consoles ink against. Each panel answers a different ink for the same
 # rung — `Plain` recedes on the Android side and does not on the simulator's — and that difference
 # is only legible as a difference because both matches are exhaustive over the same enum.

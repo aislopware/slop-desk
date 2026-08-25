@@ -7860,6 +7860,203 @@ uint16_t slopdesk_panel_clamp_u16(double value);
 int32_t slopdesk_panel_clamp_i32(double value);
 
 // ---------------------------------------------------------------------------
+// A panel's VIRTUAL FINGER — `slopdesk_devicepanel::scroll`.
+//
+// A wheel or a trackpad becomes ONE continuous contact: planted under the
+// cursor, moved by the delta, re-gripped at the edge, lifted when the gesture
+// ends. Both panels arrived at this from different directions — a `swipe` verb
+// that cost 275 ms of the simulator server's main actor, a `scrcpy` wheel verb
+// that scrolls without over-scroll, glow or fling — and the machine they
+// arrived at is the same one, twice.
+//
+// A HANDLE, not a fold: where the contact is must survive between events, and
+// a caller carrying that would hold the half that decides where the next plant
+// lands. The contacts come back in the FITTED rect's own space; what each
+// becomes on the wire is the panel's, because the two protocols disagree about
+// which grid a positional message is measured in.
+
+// The gesture began, or the first change of one that began off-view.
+#define SLOPDESK_PANEL_SCROLL_BEGAN 0
+// The gesture continues.
+#define SLOPDESK_PANEL_SCROLL_CHANGED 1
+// The fingers left the trackpad — ended or cancelled. An unknown byte reads as
+// this one: taken as a `began` it would strand a contact on the device.
+#define SLOPDESK_PANEL_SCROLL_ENDED 2
+// A classic wheel notch, which carries no phase of its own — the caller arms an
+// idle timer and calls the lift.
+#define SLOPDESK_PANEL_SCROLL_WHEEL 3
+
+#define SLOPDESK_PANEL_CONTACT_DOWN 0
+#define SLOPDESK_PANEL_CONTACT_MOVE 1
+#define SLOPDESK_PANEL_CONTACT_UP 2
+
+// The most contacts one event can produce: the re-grip, which moves to the
+// boundary, lifts, and plants again. Size by this and never retry.
+#define SLOPDESK_PANEL_CONTACT_MAX 4
+
+typedef struct {
+  SlopDeskVideoPoint point;
+  uint8_t action;
+} SlopDeskPanelContact;
+
+typedef struct SlopDeskPanelScroll SlopDeskPanelScroll;
+
+SlopDeskPanelScroll *slopdesk_panel_scroll_new(void);
+void slopdesk_panel_scroll_free(SlopDeskPanelScroll *handle);
+
+// One scroll event. Answers how many contacts it produced, writing up to `cap`.
+// `angle` un-rotates the delta for a panel whose frame is DRAWN turned while
+// its framebuffer is not; zero for one that rotates on the device instead.
+size_t slopdesk_panel_scroll_accept(SlopDeskPanelScroll *handle,
+                                    SlopDeskVideoSize delta, bool is_precise,
+                                    uint8_t phase, SlopDeskVideoPoint pointer,
+                                    SlopDeskVideoRect fitted, double angle,
+                                    SlopDeskPanelContact *out, size_t cap);
+// Close a gesture the caller's idle timer decided is over. 0 with none down.
+size_t slopdesk_panel_scroll_lift(SlopDeskPanelScroll *handle,
+                                  SlopDeskPanelContact *out, size_t cap);
+// Forget the contact silently — the socket went away, so a lift has nowhere to
+// go and the device's touch state is moot.
+void slopdesk_panel_scroll_abandon(SlopDeskPanelScroll *handle);
+// Whether a contact is down, and where.
+bool slopdesk_panel_scroll_finger(const SlopDeskPanelScroll *handle,
+                                  SlopDeskVideoPoint *out);
+
+// ---------------------------------------------------------------------------
+// The simulator server's own dialect — `slopdesk_devicepanel::sim_stream`,
+// `::sim_input` and `::sim_routes`.
+//
+// A FOREIGN wire, not one of slopdesk's own: `baguette serve` defines it and
+// this side speaks it. There are no golden vectors to pin and no version byte
+// anyone here controls, so what these owe instead is what every untrusted
+// decoder owes — a refusal rather than a trap, and not one byte read without a
+// bounds check.
+
+#define SLOPDESK_SIM_STREAM_CONFIGURATION 0
+#define SLOPDESK_SIM_STREAM_KEYFRAME 1
+#define SLOPDESK_SIM_STREAM_DELTA 2
+#define SLOPDESK_SIM_STREAM_JPEG 3
+// A type byte this build does not know — IGNORE the message, do not drop the
+// stream: a newer server may add one.
+#define SLOPDESK_SIM_STREAM_UNKNOWN 4
+
+// What one binary downstream message carries. `false` — and `kind` untouched —
+// for a message this wire never produces. The PAYLOAD does not cross: it is the
+// message minus its first byte, which the caller already holds, and copying it
+// here would be a memcpy per access unit sixty times a second.
+bool slopdesk_sim_stream_kind(const uint8_t *message, size_t len,
+                              uint8_t *kind);
+
+typedef struct {
+  uint32_t set_count;
+  uint8_t nal_unit_header_length;
+  uint8_t profile;
+  uint8_t level_indication;
+} SlopDeskAvcHeader;
+
+// Parse an avcC record. Answers the bytes NEEDED for the parameter-set
+// delivery — `set_count` blobs, each four big-endian length bytes then that
+// many bytes. 0 is a record that could only build a decoder that decodes
+// nothing, which is far harder to diagnose than a refusal here.
+size_t slopdesk_sim_avcc_parse(const uint8_t *record, size_t len,
+                               SlopDeskAvcHeader *header, uint8_t *out,
+                               size_t cap);
+
+#define SLOPDESK_SIM_TOUCH_DOWN 0
+#define SLOPDESK_SIM_TOUCH_MOVE 1
+// An unknown phase byte reads as this one: the only phase whose worst case is a
+// contact that ends early.
+#define SLOPDESK_SIM_TOUCH_UP 2
+
+#define SLOPDESK_SIM_MODIFIER_SHIFT 1
+#define SLOPDESK_SIM_MODIFIER_CONTROL 2
+#define SLOPDESK_SIM_MODIFIER_OPTION 4
+#define SLOPDESK_SIM_MODIFIER_COMMAND 8
+
+// Synthesized keystrokes, US-ASCII only.
+#define SLOPDESK_SIM_TEXT_TYPE 0
+// The device's pasteboard — the only route that carries emoji or CJK.
+#define SLOPDESK_SIM_TEXT_PASTE 1
+
+typedef struct {
+  double width;
+  double height;
+} SlopDeskSimSurface;
+
+// The SERVER's own defaults, as doors: a number written down on this side would
+// be a second copy of a value the server owns.
+double slopdesk_sim_default_tap_duration(void);
+double slopdesk_sim_default_swipe_duration(void);
+
+// One envelope per verb rather than one door with every field optional: the
+// key set changes per type, and a single entry point makes the wrong
+// combination representable. COORDINATES ARE NOT PIXELS — every positional
+// envelope carries the surface its x/y were measured in, and the host rescales.
+size_t slopdesk_sim_input_tap(double x, double y, double duration,
+                              SlopDeskSimSurface surface, uint8_t *out,
+                              size_t cap);
+size_t slopdesk_sim_input_swipe(double from_x, double from_y, double to_x,
+                                double to_y, double duration,
+                                SlopDeskSimSurface surface, uint8_t *out,
+                                size_t cap);
+// The `edge` hint — set when the gesture began off-screen — is what lets the
+// host drive the home indicator and the shades from a drag.
+size_t slopdesk_sim_input_touch(uint8_t phase, double x, double y,
+                                const uint8_t *edge, size_t edge_len,
+                                bool has_edge, SlopDeskSimSurface surface,
+                                uint8_t *out, size_t cap);
+size_t slopdesk_sim_input_touch2(uint8_t phase, double x1, double y1, double x2,
+                                 double y2, SlopDeskSimSurface surface,
+                                 uint8_t *out, size_t cap);
+// `hold` above zero is the press-and-hold that summons the power slider.
+size_t slopdesk_sim_input_button(const uint8_t *name, size_t name_len,
+                                 double hold, uint8_t *out, size_t cap);
+size_t slopdesk_sim_input_key(const uint8_t *code, size_t code_len,
+                              uint8_t modifiers, uint8_t *out, size_t cap);
+size_t slopdesk_sim_input_text(uint8_t route, const uint8_t *text,
+                               size_t text_len, uint8_t *out, size_t cap);
+size_t slopdesk_sim_input_copy(uint8_t *out, size_t cap);
+
+#define SLOPDESK_SIM_ROUTE_DEVICE_LIST 0
+#define SLOPDESK_SIM_ROUTE_BOOT 1
+#define SLOPDESK_SIM_ROUTE_SHUTDOWN 2
+#define SLOPDESK_SIM_ROUTE_DEFINITION 3
+#define SLOPDESK_SIM_ROUTE_STATUS_BAR 4
+#define SLOPDESK_SIM_ROUTE_LOCATION 5
+#define SLOPDESK_SIM_ROUTE_ORIENTATION 6
+#define SLOPDESK_SIM_ROUTE_SCREENSHOT 7
+#define SLOPDESK_SIM_ROUTE_LOGS 8
+#define SLOPDESK_SIM_ROUTE_FILES 9
+#define SLOPDESK_SIM_ROUTE_STREAM 10
+#define SLOPDESK_SIM_ROUTE_RESOLVE 11
+
+// Which route to build, and every part any of them needs. A record rather than
+// a dozen arguments because most routes ignore most fields — a boot URL sets
+// three of these, and the rest are read by nobody.
+typedef struct {
+  uint32_t kind;
+  const uint8_t *host;
+  size_t host_len;
+  uint16_t port;
+  const uint8_t *udid;
+  size_t udid_len;
+  // The one free value this route carries: an orientation, a log level, a file
+  // name, or a reference.
+  const uint8_t *arg;
+  size_t arg_len;
+  uint64_t nonce;
+  int32_t scale;
+  double quality;
+  bool has_quality;
+} SlopDeskSimRoute;
+
+// Answers the bytes NEEDED, or 0 for a route that cannot be built. Zero is a
+// REFUSAL, not an empty answer: a URL is never empty, and a degenerate endpoint
+// is the phase machine's "not ready" rather than a URL that fails at connect.
+size_t slopdesk_sim_route(const SlopDeskSimRoute *route, uint8_t *out,
+                          size_t cap);
+
+// ---------------------------------------------------------------------------
 // What the two device panels SAY — `slopdesk_devicepanel::android` and
 // `::simulator`.
 //

@@ -445,6 +445,9 @@ let package = Package(
                 "SlopDeskVideoProtocol",
                 // The Android control codec + the device console grammars are Rust (`slopdesk-devicelog`).
                 "CSlopDeskFFI",
+                // `ffiAnswerText`/`ffiLend` — the simulator's route table and its input dialect are
+                // delivery doors, and docs/55 §4's retry is spelled once for the whole tree.
+                "SlopDeskArena",
                 // Device-kind glyph names. A string enum, not a view framework — the UI half maps the
                 // name onto its own image type.
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),

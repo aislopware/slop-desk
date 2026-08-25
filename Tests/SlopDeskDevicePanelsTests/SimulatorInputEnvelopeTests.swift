@@ -14,13 +14,12 @@ final class SimulatorInputEnvelopeTests: XCTestCase {
         // The surface travels with EVERY positional envelope — the host rescales to the device's real
         // framebuffer, which is what lets this side send view-space points with no DPI maths and stay
         // correct across a resize mid-gesture.
-        // The duration reads as 0.050000000000000003 because 0.05 has no exact binary form and
-        // `JSONSerialization` prints full precision rather than the shortest round-trip. Harmless —
-        // it parses back to the same double server-side — and pinned verbatim so the next reader
-        // does not "fix" it into a mismatch.
+        // Numbers print SHORTEST-ROUND-TRIP: `serde_json` writes 0.05 where `JSONSerialization`
+        // wrote 0.050000000000000003, and both parse to the same double. Whole doubles keep their
+        // `.0`, which is a JSON number either way and is what the door actually emits.
         XCTAssertEqual(
             SimulatorInputEnvelope.tap(x: 10, y: 20, in: surface).json,
-            #"{"duration":0.050000000000000003,"height":800,"type":"tap","width":400,"x":10,"y":20}"#,
+            #"{"duration":0.05,"height":800.0,"type":"tap","width":400.0,"x":10.0,"y":20.0}"#,
         )
     }
 
@@ -29,21 +28,25 @@ final class SimulatorInputEnvelopeTests: XCTestCase {
         // message the server has no case for.
         XCTAssertEqual(
             SimulatorInputEnvelope.tap(x: 1, y: 2, duration: 1.5, in: surface).json,
-            #"{"duration":1.5,"height":800,"type":"tap","width":400,"x":1,"y":2}"#,
+            #"{"duration":1.5,"height":800.0,"type":"tap","width":400.0,"x":1.0,"y":2.0}"#,
         )
     }
 
     func testSwipeUsesStartEndNamesRatherThanAPointPair() {
         XCTAssertEqual(
             SimulatorInputEnvelope.swipe(fromX: 1, fromY: 2, toX: 3, toY: 4, in: surface).json,
-            #"{"duration":0.25,"endX":3,"endY":4,"height":800,"startX":1,"startY":2,"type":"swipe","width":400}"#,
+            #"{"duration":0.25,"endX":3.0,"endY":4.0,"height":800.0,"startX":1.0,"startY":2.0,"type":"swipe","width":400.0}"#,
         )
     }
 
     func testEachTouchPhaseGetsItsOwnTypeName() {
-        for phase in [SimulatorInputEnvelope.TouchPhase.down, .move, .up] {
+        // The NAMES are the door's — this side carries only the code, so a phase mapped to the
+        // wrong name is exactly what this pins.
+        for (phase, name) in [
+            (SimulatorInputEnvelope.TouchPhase.down, "down"), (.move, "move"), (.up, "up"),
+        ] {
             let json = SimulatorInputEnvelope.touch(phase, x: 5, y: 6, in: surface).json
-            XCTAssertEqual(json, #"{"height":800,"type":"touch1-\#(phase.rawValue)","width":400,"x":5,"y":6}"#)
+            XCTAssertEqual(json, #"{"height":800.0,"type":"touch1-\#(name)","width":400.0,"x":5.0,"y":6.0}"#)
         }
     }
 
@@ -53,14 +56,14 @@ final class SimulatorInputEnvelopeTests: XCTestCase {
         XCTAssertFalse(SimulatorInputEnvelope.touch(.down, x: 5, y: 6, in: surface).json?.contains("edge") ?? true)
         XCTAssertEqual(
             SimulatorInputEnvelope.touch(.down, x: 5, y: 6, edge: "bottom", in: surface).json,
-            #"{"edge":"bottom","height":800,"type":"touch1-down","width":400,"x":5,"y":6}"#,
+            #"{"edge":"bottom","height":800.0,"type":"touch1-down","width":400.0,"x":5.0,"y":6.0}"#,
         )
     }
 
     func testTwoFingerTouchNamesItsPointsSeparately() {
         XCTAssertEqual(
             SimulatorInputEnvelope.touch2(.move, x1: 1, y1: 2, x2: 3, y2: 4, in: surface).json,
-            #"{"height":800,"type":"touch2-move","width":400,"x1":1,"x2":3,"y1":2,"y2":4}"#,
+            #"{"height":800.0,"type":"touch2-move","width":400.0,"x1":1.0,"x2":3.0,"y1":2.0,"y2":4.0}"#,
         )
     }
 
@@ -70,15 +73,17 @@ final class SimulatorInputEnvelopeTests: XCTestCase {
         XCTAssertEqual(SimulatorInputEnvelope.button("home").json, #"{"button":"home","type":"button"}"#)
         XCTAssertEqual(
             SimulatorInputEnvelope.button("lock", hold: 2).json,
-            #"{"button":"lock","duration":2,"type":"button"}"#,
+            #"{"button":"lock","duration":2.0,"type":"button"}"#,
         )
     }
 
     func testAKeyCarriesModifiersOnlyWhenThereAreSome() {
         XCTAssertEqual(SimulatorInputEnvelope.key("KeyA").json, #"{"code":"KeyA","type":"key"}"#)
+        // BIT order, not the caller's array order: the set crosses as a mask, so two call sites
+        // spelling the same chord differently produce the same envelope.
         XCTAssertEqual(
             SimulatorInputEnvelope.key("KeyA", modifiers: [.command, .shift]).json,
-            #"{"code":"KeyA","modifiers":["command","shift"],"type":"key"}"#,
+            #"{"code":"KeyA","modifiers":["shift","command"],"type":"key"}"#,
         )
     }
 

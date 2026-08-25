@@ -1,5 +1,11 @@
 // SimulatorScrollGesture — a scroll wheel or a trackpad becomes ONE continuous finger on the device.
 //
+// The MACHINE is `slopdesk_devicepanel::scroll`, shared with the Android panel, reached through the
+// `slopdesk_panel_scroll_*` handle. What is left here is the one thing the two panels do not share:
+// what a contact becomes on the wire. This lane sends the fitted rect's own coordinates with that
+// rect's size beside them, because the host rescales; the Android lane converts to the video's pixel
+// grid, because its server drops a mismatched pair.
+//
 // ⚠️ THE VERB THIS REPLACES COSTS 275 MILLISECONDS. The panel used to bank scroll travel and fire a
 // discrete `swipe` every 24 points. Measured 2026-08-04 by feeding `baguette input` back-to-back
 // envelopes and timing its per-envelope acks:
@@ -19,98 +25,89 @@
 // what a scroll IS. Each one starts a fresh contact at the same origin, so iOS sees ten unrelated
 // short drags rather than one long one: no continuous tracking, no velocity, and therefore no
 // momentum — the deceleration that makes a scroll feel like a scroll comes from the touch history at
-// the moment of lift, and a stream of one-shot swipes has none. Planting one finger, moving it with
-// the wheel, and lifting it when the gesture ends gives UIScrollView exactly the input it was built
-// for, and the inertia arrives for free because iOS computes it.
+// the moment of lift, and a stream of one-shot swipes has none.
 //
-// RE-GRIPPING. A trackpad gesture can travel further than the device is tall, and a finger cannot
-// leave the screen and keep scrolling. When the virtual finger reaches the edge this lifts it and
-// plants it again at the far side, which is what a hand does — and it is why the edge margin exists:
-// planting ON the boundary would put the next contact inside iOS's own system-gesture band.
-//
-// Pure and struct-shaped so the whole machine is testable without an `NSEvent`: the view feeds it
-// deltas and phases, it answers with envelopes, and it holds no view, no socket and no timer.
+// A CLASS, not a struct, for the reason `docs/55` §4b gives: the handle OWNS a boxed gesture, and a
+// value type holding one would free it once per copy while every copy still pointed at it.
 
 import CoreGraphics
+import CSlopDeskFFI
 
-package struct SimulatorScrollGesture {
+package final class SimulatorScrollGesture {
     /// Where a scroll event sits in its gesture. Trackpads report this; a classic wheel does not,
-    /// which is what ``wheel`` is for — the caller arms an idle timer and calls ``lift(at:)``.
-    package enum Phase {
+    /// which is what ``wheel`` is for — the caller arms an idle timer and calls ``lift(in:)``.
+    package enum Phase: UInt8 {
         /// `NSEvent.phase == .began`, or the first `.changed` of a gesture that began off-view.
-        case began
-        case changed
+        case began = 0
+        case changed = 1
         /// `.ended` or `.cancelled` — the fingers left the trackpad.
-        case ended
+        case ended = 2
         /// A classic wheel notch. No phases exist, so the gesture is opened on the first one and
         /// closed by the caller's idle timer.
-        case wheel
+        case wheel = 3
     }
 
-    package init() {}
+    private let handle: OpaquePointer
+
+    package init() {
+        guard let handle = slopdesk_panel_scroll_new() else {
+            // The door allocates one small box and nothing else, so a null here is an out-of-memory
+            // the process cannot continue past — and a silently inert gesture would read as a panel
+            // that quietly stopped scrolling.
+            preconditionFailure("slopdesk_panel_scroll_new returned null")
+        }
+        self.handle = handle
+    }
+
+    deinit { slopdesk_panel_scroll_free(handle) }
 
     /// The finger's position in the fitted rect's own space, or `nil` when no contact is down.
-    package private(set) var finger: CGPoint?
+    package var finger: CGPoint? {
+        var point = SlopDeskVideoPoint()
+        guard slopdesk_panel_scroll_finger(handle, &point) else { return nil }
+        return CGPoint(x: point.x, y: point.y)
+    }
 
     /// Feed one scroll event. Returns the envelopes to send, in order.
     ///
     /// `pointer` is where the cursor is, in the fitted rect's space — the contact is planted there,
     /// so a scroll acts on whatever is under the cursor, exactly as it does on a Mac.
-    package mutating func accept(
+    ///
+    /// The ORIENTATION is what this lane adds and the Android lane must not: the simulator's
+    /// framebuffer never turns while the bezel is DRAWN under a `rotationEffect`, so a delta that
+    /// never passed through the view's geometry is a quarter turn out of step with it.
+    package func accept(
         delta: CGSize, isPrecise: Bool, phase: Phase, pointer: CGPoint,
         fitted: CGRect, orientation: SimulatorOrientation,
     ) -> [SimulatorInputEnvelope] {
         let surface = SimulatorScreenLayout.surface(fitted: fitted)
-        guard fitted.width > 0, fitted.height > 0 else { return [] }
-
-        if phase == .ended {
-            guard let finger else { return [] }
-            self.finger = nil
-            return [.touch(.up, x: finger.x, y: finger.y, in: surface)]
-        }
-
-        var envelopes: [SimulatorInputEnvelope] = []
-        var point: CGPoint
-        if let finger {
-            point = finger
-        } else {
-            point = Self.planted(pointer, in: fitted)
-            envelopes.append(.touch(.down, x: point.x, y: point.y, in: surface))
-        }
-
-        let travel = SimulatorScreenLayout.scrollVector(
-            delta: delta, isPrecise: isPrecise, orientation: orientation,
-        )
-        let target = CGPoint(x: point.x + travel.width, y: point.y + travel.height)
-        let clamped = Self.planted(target, in: fitted)
-        if clamped != target {
-            // Out of room. Lift at the boundary, plant again as far the other way as the margin
-            // allows, and let the same event's remaining travel apply from there.
-            envelopes.append(.touch(.move, x: clamped.x, y: clamped.y, in: surface))
-            envelopes.append(.touch(.up, x: clamped.x, y: clamped.y, in: surface))
-            point = Self.regrip(travel: travel, in: fitted)
-            envelopes.append(.touch(.down, x: point.x, y: point.y, in: surface))
-        } else {
-            point = clamped
-            envelopes.append(.touch(.move, x: point.x, y: point.y, in: surface))
-        }
-        finger = point
-        return envelopes
+        return contacts { out, cap in
+            slopdesk_panel_scroll_accept(
+                handle,
+                SlopDeskVideoSize(width: delta.width, height: delta.height),
+                isPrecise, phase.rawValue,
+                SlopDeskVideoPoint(x: pointer.x, y: pointer.y),
+                SlopDeskVideoRect(
+                    x: fitted.origin.x, y: fitted.origin.y,
+                    width: fitted.size.width, height: fitted.size.height,
+                ),
+                orientation.viewAngle, out, cap,
+            )
+        }.map { Self.envelope($0, in: surface) }
     }
 
     /// Close a wheel gesture the caller's idle timer has decided is over. No-op with no contact down.
-    package mutating func lift(in fitted: CGRect) -> [SimulatorInputEnvelope] {
-        guard let finger else { return [] }
-        self.finger = nil
-        return [.touch(
-            .up, x: finger.x, y: finger.y, in: SimulatorScreenLayout.surface(fitted: fitted),
-        )]
+    package func lift(in fitted: CGRect) -> [SimulatorInputEnvelope] {
+        let surface = SimulatorScreenLayout.surface(fitted: fitted)
+        return contacts { out, cap in
+            slopdesk_panel_scroll_lift(handle, out, cap)
+        }.map { Self.envelope($0, in: surface) }
     }
 
     /// Forget the contact without sending anything — the socket went away, so an `up` has nowhere to
     /// go and the device's touch state is moot.
-    package mutating func abandon() {
-        finger = nil
+    package func abandon() {
+        slopdesk_panel_scroll_abandon(handle)
     }
 
     /// The safe-area helpers both device panels share — ``DevicePanelGeometry``. A synthetic finger
@@ -123,5 +120,37 @@ package struct SimulatorScrollGesture {
 
     package static func regrip(travel: CGSize, in fitted: CGRect) -> CGPoint {
         DevicePanelGeometry.regrip(travel: travel, in: fitted)
+    }
+
+    // MARK: - Marshalling
+
+    /// One event's contacts. `SLOPDESK_PANEL_CONTACT_MAX` is the longest an event can be — the
+    /// re-grip — so the buffer is sized once by the door's own advertised bound and the count can
+    /// never come back larger than it.
+    private func contacts(
+        _ door: (UnsafeMutablePointer<SlopDeskPanelContact>?, Int) -> Int,
+    ) -> [SlopDeskPanelContact] {
+        var out = [SlopDeskPanelContact](
+            repeating: SlopDeskPanelContact(), count: Int(SLOPDESK_PANEL_CONTACT_MAX),
+        )
+        let count = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+        guard count > 0, count <= out.count else { return [] }
+        return Array(out[0..<count])
+    }
+
+    private static func envelope(
+        _ contact: SlopDeskPanelContact, in surface: SimulatorInputEnvelope.Surface,
+    ) -> SimulatorInputEnvelope {
+        .touch(phase(contact.action), x: contact.point.x, y: contact.point.y, in: surface)
+    }
+
+    private static func phase(_ action: UInt8) -> SimulatorInputEnvelope.TouchPhase {
+        switch action {
+        case UInt8(SLOPDESK_PANEL_CONTACT_DOWN): .down
+        case UInt8(SLOPDESK_PANEL_CONTACT_MOVE): .move
+        // An action this build has no case for lifts rather than plants: a stray `up` is a gesture
+        // that ends early, where a stray `down` strands a contact no later event can clear.
+        default: .up
+        }
     }
 }

@@ -195,6 +195,7 @@ pub mod pane_switcher;
 #[cfg(target_os = "macos")]
 pub mod pane_probe;
 pub mod panel_key;
+pub mod panel_scroll;
 pub mod panel_tabs;
 pub mod paste_safety;
 pub mod path_confine;
@@ -230,7 +231,10 @@ pub mod send_pacing;
 pub mod session_state;
 pub mod sidebar_row;
 pub mod sidecars;
+pub mod simulator_input;
 pub mod simulator_presentation;
+pub mod simulator_routes;
+pub mod simulator_wire;
 // macOS only: the environment a hostd pane's login shell is spawned into. There is no `posix_spawn`
 // and no login shell in an iOS slice. See the module.
 #[cfg(target_os = "macos")]

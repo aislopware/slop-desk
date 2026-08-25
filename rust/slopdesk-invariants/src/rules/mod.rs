@@ -640,6 +640,16 @@ pub fn registry() -> Vec<Rule> {
             check: device_frames::one_reader_for_scrcpy_stream,
         },
         Rule {
+            name: "simulator-dialect",
+            origin: "docs/47-simulator-panel.md",
+            check: device_frames::one_dialect_for_the_simulator_server,
+        },
+        Rule {
+            name: "panel-virtual-finger",
+            origin: "docs/47-simulator-panel.md",
+            check: device_frames::one_virtual_finger_for_both_panels,
+        },
+        Rule {
             name: "split-drop-zone",
             origin: "check-supervisor.sh (deleted)",
             check: split_surfaces::the_drop_overlay_draws_one_shape,

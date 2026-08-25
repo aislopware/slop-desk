@@ -1,11 +1,10 @@
-// SimulatorWireProtocol — the pure codec for the host simulator server's stream dialect.
+// SimulatorWireProtocol — the face over the host simulator server's downstream dialect.
 //
-// This is a FOREIGN wire, not one of SlopDesk's own: `baguette serve` defines it and the client
-// speaks it. So the rules that govern `SlopDeskProtocol` do not apply here — there are no golden
-// vectors to pin and no version byte we control. What this file owes instead is the discipline every
-// untrusted decoder in the project owes: optional/throwing parses, validate-then-drop, and not one
-// byte read without a bounds check. The frames arrive over the WireGuard mesh from a process the
-// user installed, and a malformed one must yield `nil`, never a trap.
+// The RULES live in `slopdesk_devicepanel::sim_stream`. This is a FOREIGN wire, not one of SlopDesk's
+// own: `baguette serve` defines it and the client speaks it. So the rules that govern
+// `SlopDeskProtocol` do not apply — there are no golden vectors to pin and no version byte we
+// control. What the decoder owes instead is what every untrusted decoder owes, and it owes it in
+// Rust now: validate-then-drop, and not one byte read without a bounds check.
 //
 // The dialect, measured against `baguette serve` v2 (see `docs/47-simulator-panel.md`):
 //
@@ -16,15 +15,17 @@
 //     0x04  JPEG seed frame — painted before the first IDR lands, so the surface is never blank
 //   TEXT message = JSON; carries errors and control, never pixels.
 //
-// Upstream (client → host) is JSON only: gestures, hardware buttons, keys, clipboard. Encoding lives
-// in ``SimulatorInputEnvelope`` and is hand-built rather than `Codable` for one reason — the envelope
-// is a flat heterogeneous bag whose key set changes per type (`tap` carries x/y, `touch2-move`
-// carries x1/y1/x2/y2), which `Codable` models far more awkwardly than a dictionary literal does.
+// THE PAYLOAD DOES NOT CROSS THE BOUNDARY. The door answers a KIND; the payload is the message minus
+// its first byte, which this side already holds. Handing it through Rust so it could come straight
+// back would be a memcpy per access unit, sixty times a second, for bytes that never left this
+// buffer.
 //
-// Everything here is a pure function over bytes. Nothing constructs a socket, a decompression
-// session or a display layer — those live in the runtime types alongside, under the hang-safety rule.
+// Upstream (client → host) is JSON only: gestures, hardware buttons, keys, clipboard. Encoding lives
+// in ``SimulatorInputEnvelope``, which is the same story on the other half of the socket.
 
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 /// One decoded downstream message. `unknown` is a first-class case on purpose: a newer server that
 /// adds a type must degrade to "ignore that message" rather than to a dropped connection.
@@ -42,27 +43,29 @@ package enum SimulatorStreamMessage: Equatable {
 package enum SimulatorWireProtocol {
     // MARK: Downstream envelope
 
-    package static let configurationType: UInt8 = 0x01
-    package static let keyframeType: UInt8 = 0x02
-    package static let deltaType: UInt8 = 0x03
-    package static let jpegType: UInt8 = 0x04
-
     /// Split a binary websocket message into its type byte and payload.
     ///
-    /// A message shorter than two bytes yields `nil` rather than an empty-payload message: the
-    /// server never sends a bodiless frame, so one on the wire means the stream is not what we think
-    /// it is, and the honest response is to drop it. (The page's own decoder applies the same
-    /// `byteLength < 2` floor.)
+    /// A message the door refuses — shorter than two bytes — yields `nil` rather than an
+    /// empty-payload message: the server never sends a bodiless frame, so one on the wire means the
+    /// stream is not what we think it is, and the honest response is to drop it.
     package static func decode(_ message: Data) -> SimulatorStreamMessage? {
-        guard message.count >= 2 else { return nil }
-        let type = message[message.startIndex]
+        var kind: UInt8 = 0
+        let known = message.withUnsafeBytes { raw in
+            slopdesk_sim_stream_kind(
+                raw.baseAddress?.assumingMemoryBound(to: UInt8.self), raw.count, &kind,
+            )
+        }
+        guard known else { return nil }
+
+        // The payload is a SLICE of what the caller already handed us; only the copy `Data` makes
+        // here crosses anything, and it is the copy the sink would have made anyway.
         let payload = Data(message.dropFirst())
-        switch type {
-        case configurationType: return .configuration(payload)
-        case keyframeType: return .accessUnit(payload, isKeyframe: true)
-        case deltaType: return .accessUnit(payload, isKeyframe: false)
-        case jpegType: return .jpeg(payload)
-        default: return .unknown(type)
+        switch kind {
+        case UInt8(SLOPDESK_SIM_STREAM_CONFIGURATION): return .configuration(payload)
+        case UInt8(SLOPDESK_SIM_STREAM_KEYFRAME): return .accessUnit(payload, isKeyframe: true)
+        case UInt8(SLOPDESK_SIM_STREAM_DELTA): return .accessUnit(payload, isKeyframe: false)
+        case UInt8(SLOPDESK_SIM_STREAM_JPEG): return .jpeg(payload)
+        default: return .unknown(message[message.startIndex])
         }
     }
 
@@ -84,68 +87,50 @@ package enum SimulatorWireProtocol {
     /// record carrying no SPS — each of which would otherwise become a format description that
     /// decodes nothing, which is far harder to diagnose than a refusal at the door.
     ///
-    /// Layout (ISO/IEC 14496-15 §5.2.4.1): version, profile, compatibility, level, then a byte whose
-    /// low two bits are `lengthSizeMinusOne`, then a byte whose low five bits are the SPS count,
-    /// then length-prefixed SPS blobs, then a PPS count byte and its length-prefixed blobs.
+    /// The record arrives ONCE per stream, so the delivery copy here is paid once and buys a single
+    /// cut on this side instead of a reader walking the layout in two languages.
     package static func parseAVCConfiguration(_ record: Data) -> AVCConfiguration? {
-        var reader = ByteReader(record)
-        guard let version = reader.byte(), version == 1,
-              let profile = reader.byte(),
-              reader.byte() != nil,
-              let level = reader.byte(),
-              let lengthByte = reader.byte(),
-              let spsCountByte = reader.byte()
-        else { return nil }
-
-        var sets: [Data] = []
-        guard reader.readParameterSets(count: Int(spsCountByte & 0x1F), into: &sets), !sets.isEmpty
-        else { return nil }
-        // The PPS count and its sets are absent from a truncated record. That is tolerated: an SPS
-        // alone still yields a usable format description, and refusing here would turn a recoverable
-        // stream into a dead panel.
-        if let ppsCountByte = reader.byte() {
-            guard reader.readParameterSets(count: Int(ppsCountByte), into: &sets) else { return nil }
+        var header = SlopDeskAvcHeader()
+        let blob = record.withUnsafeBytes { raw -> [UInt8] in
+            ffiAnswerBytes(capacity: 512) { out, cap in
+                slopdesk_sim_avcc_parse(
+                    raw.baseAddress?.assumingMemoryBound(to: UInt8.self), raw.count,
+                    &header, out, cap,
+                )
+            }
         }
+        guard header.set_count > 0 else { return nil }
 
+        let sets = parameterSets(blob, count: Int(header.set_count))
+        guard sets.count == Int(header.set_count) else { return nil }
         return AVCConfiguration(
             parameterSets: sets,
-            nalUnitHeaderLength: Int(lengthByte & 0x03) + 1,
-            profile: profile,
-            levelIndication: level,
+            nalUnitHeaderLength: Int(header.nal_unit_header_length),
+            profile: header.profile,
+            levelIndication: header.level_indication,
         )
     }
 
-    /// A cursor that can only move forward and never past the end. Every read is bounds-checked and
-    /// returns an optional — the shape the untrusted-input invariant asks for.
-    private struct ByteReader {
-        private let bytes: [UInt8]
-        private var offset = 0
-
-        package init(_ data: Data) { bytes = Array(data) }
-
-        package mutating func byte() -> UInt8? {
-            guard offset < bytes.count else { return nil }
-            defer { offset += 1 }
-            return bytes[offset]
+    /// The delivery's own framing: `count` runs of `[UInt32 big-endian length][bytes]`.
+    ///
+    /// A run that would read past the end ends the walk rather than shifting into whatever follows —
+    /// a short delivery means the door and this file disagree about the layout, and the caller reads
+    /// the shortfall as a refusal rather than building a decoder from half a record.
+    private static func parameterSets(_ blob: [UInt8], count: Int) -> [Data] {
+        var sets: [Data] = []
+        sets.reserveCapacity(count)
+        var cursor = blob.startIndex
+        for _ in 0..<count {
+            guard cursor + 4 <= blob.endIndex else { break }
+            let length = Int(
+                UInt32(blob[cursor]) << 24 | UInt32(blob[cursor + 1]) << 16
+                    | UInt32(blob[cursor + 2]) << 8 | UInt32(blob[cursor + 3]),
+            )
+            cursor += 4
+            guard cursor + length <= blob.endIndex else { break }
+            sets.append(Data(blob[cursor..<(cursor + length)]))
+            cursor += length
         }
-
-        package mutating func blob(length: Int) -> Data? {
-            guard length >= 0, offset + length <= bytes.count else { return nil }
-            defer { offset += length }
-            return Data(bytes[offset..<(offset + length)])
-        }
-
-        /// `count` consecutive `[UInt16 BE length][bytes]` blobs. A zero-length set is skipped rather
-        /// than appended — an empty parameter set is meaningless to the decoder and would only make
-        /// the format description fail later, further from the cause.
-        package mutating func readParameterSets(count: Int, into sets: inout [Data]) -> Bool {
-            for _ in 0..<count {
-                guard let high = byte(), let low = byte() else { return false }
-                let length = Int(high) << 8 | Int(low)
-                guard let blob = blob(length: length) else { return false }
-                if !blob.isEmpty { sets.append(blob) }
-            }
-            return true
-        }
+        return sets
     }
 }

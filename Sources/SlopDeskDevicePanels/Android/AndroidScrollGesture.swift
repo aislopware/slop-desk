@@ -1,10 +1,10 @@
 // AndroidScrollGesture — a scroll wheel or a trackpad becomes ONE continuous finger on the device.
 //
-// The same machine as ``SimulatorScrollGesture``, and it arrives here for a DIFFERENT reason, which
-// is worth being precise about. On the simulator path a continuous finger replaced a `swipe` verb
-// that cost 275 ms of the server's main actor per call; it was a performance fix that turned out to
-// also be the right model. `scrcpy` has no such verb to be rescued from — but it does have
-// `INJECT_SCROLL_EVENT`, and using it would be the mistake:
+// The MACHINE is `slopdesk_devicepanel::scroll`, the same one ``SimulatorScrollGesture`` reaches, and
+// it arrives here for a DIFFERENT reason, which is worth being precise about. On the simulator path a
+// continuous finger replaced a `swipe` verb that cost 275 ms of the server's main actor per call; it
+// was a performance fix that turned out to also be the right model. `scrcpy` has no such verb to be
+// rescued from — but it does have `INJECT_SCROLL_EVENT`, and using it would be the mistake:
 //
 //   - `ACTION_SCROLL` reaches a `RecyclerView` as a discrete wheel notch. It scrolls, and that is all
 //     it does: no over-scroll stretch, no edge glow, no fling, no rubber band. Every piece of feedback
@@ -17,91 +17,87 @@
 // Android's own apps are built around. ``AndroidControlMessage/scroll(...)`` stays for a genuine
 // mouse wheel with no phase information, where there is no gesture to reconstruct in the first place.
 //
-// RE-GRIPPING. A trackpad gesture can travel further than the device is tall, and a finger cannot
-// leave the screen and keep scrolling. When the virtual finger reaches the edge this lifts it and
-// plants it again at the far side, which is what a hand does. The edge margin matters more on Android
-// than on iOS: the bottom band is the gesture-navigation area, where a contact is a Back or a Home
-// rather than a scroll.
-//
-// Pure and struct-shaped so the whole machine is testable without an `NSEvent`: the view feeds it
-// deltas and phases, it answers with encoded control messages, and it holds no view, no socket and no
-// timer.
+// What stays on THIS side is the conversion: a contact comes back in the fitted rect's own space, and
+// the server accepts a positional message only in the video's pixel grid, paired with the exact size
+// it is encoding. No angle is passed — `scrcpy` rotates on the DEVICE, so the frame here is always
+// already the right way up and there is nothing for a delta to be out of step with.
 
+import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 
-package struct AndroidScrollGesture {
+package final class AndroidScrollGesture {
     /// Where a scroll event sits in its gesture. Trackpads report this; a classic wheel does not,
     /// which is what ``wheel`` is for — the caller arms an idle timer and calls ``lift(in:)``.
-    package enum Phase {
-        case began
-        case changed
+    package enum Phase: UInt8 {
+        case began = 0
+        case changed = 1
         /// `.ended` or `.cancelled` — the fingers left the trackpad.
-        case ended
+        case ended = 2
         /// A classic wheel notch. No phases exist, so the gesture is opened on the first one and
         /// closed by the caller's idle timer.
-        case wheel
+        case wheel = 3
     }
 
-    /// The finger's position in the fitted rect's own space, or `nil` when no contact is down.
-    package private(set) var finger: CGPoint?
+    private let handle: OpaquePointer
 
-    package init() {}
+    package init() {
+        guard let handle = slopdesk_panel_scroll_new() else {
+            // One small box and nothing else, so a null here is an out-of-memory the process cannot
+            // continue past — and a silently inert gesture would read as a panel that stopped
+            // scrolling for no reason.
+            preconditionFailure("slopdesk_panel_scroll_new returned null")
+        }
+        self.handle = handle
+    }
+
+    deinit { slopdesk_panel_scroll_free(handle) }
+
+    /// The finger's position in the fitted rect's own space, or `nil` when no contact is down.
+    package var finger: CGPoint? {
+        var point = SlopDeskVideoPoint()
+        guard slopdesk_panel_scroll_finger(handle, &point) else { return nil }
+        return CGPoint(x: point.x, y: point.y)
+    }
 
     /// Feed one scroll event. Returns the messages to send, in order.
     ///
     /// `pointer` is where the cursor is, in the fitted rect's space — the contact is planted there,
     /// so a scroll acts on whatever is under the cursor, exactly as it does on a Mac.
-    package mutating func accept(
+    package func accept(
         delta: CGSize, isPrecise: Bool, phase: Phase, pointer: CGPoint,
         surface: AndroidScreenLayout.Surface,
     ) -> [Data] {
         guard surface.isUsable else { return [] }
         let fitted = surface.fitted
-
-        if phase == .ended {
-            guard let finger else { return [] }
-            self.finger = nil
-            return [Self.message(.up, at: finger, surface: surface)]
-        }
-
-        var messages: [Data] = []
-        var point: CGPoint
-        if let finger {
-            point = finger
-        } else {
-            point = Self.planted(pointer, in: fitted)
-            messages.append(Self.message(.down, at: point, surface: surface))
-        }
-
-        let travel = AndroidScreenLayout.scrollVector(delta: delta, isPrecise: isPrecise)
-        let target = CGPoint(x: point.x + travel.width, y: point.y + travel.height)
-        let clamped = Self.planted(target, in: fitted)
-        if clamped != target {
-            // Out of room. Lift at the boundary, plant again as far the other way as the margin
-            // allows, and let the same event's remaining travel apply from there.
-            messages.append(Self.message(.move, at: clamped, surface: surface))
-            messages.append(Self.message(.up, at: clamped, surface: surface))
-            point = Self.regrip(travel: travel, in: fitted)
-            messages.append(Self.message(.down, at: point, surface: surface))
-        } else {
-            point = clamped
-            messages.append(Self.message(.move, at: point, surface: surface))
-        }
-        finger = point
-        return messages
+        return contacts { out, cap in
+            slopdesk_panel_scroll_accept(
+                handle,
+                SlopDeskVideoSize(width: delta.width, height: delta.height),
+                isPrecise, phase.rawValue,
+                SlopDeskVideoPoint(x: pointer.x, y: pointer.y),
+                SlopDeskVideoRect(
+                    x: fitted.origin.x, y: fitted.origin.y,
+                    width: fitted.size.width, height: fitted.size.height,
+                ),
+                // No un-rotation: the frame is never drawn turned. That is the whole difference
+                // between this call and the simulator panel's.
+                0, out, cap,
+            )
+        }.map { Self.message($0, surface: surface) }
     }
 
     /// Close a wheel gesture the caller's idle timer has decided is over. No-op with no contact down.
-    package mutating func lift(in surface: AndroidScreenLayout.Surface) -> [Data] {
-        guard let finger else { return [] }
-        self.finger = nil
-        return [Self.message(.up, at: finger, surface: surface)]
+    package func lift(in surface: AndroidScreenLayout.Surface) -> [Data] {
+        contacts { out, cap in
+            slopdesk_panel_scroll_lift(handle, out, cap)
+        }.map { Self.message($0, surface: surface) }
     }
 
     /// Forget the contact without sending anything — the socket went away, so an `up` has nowhere to
     /// go and the device's touch state is moot.
-    package mutating func abandon() {
-        finger = nil
+    package func abandon() {
+        slopdesk_panel_scroll_abandon(handle)
     }
 
     /// One contact, converted from the fitted rect the gesture is tracked in to the video pixels the
@@ -133,5 +129,39 @@ package struct AndroidScrollGesture {
 
     package static func regrip(travel: CGSize, in fitted: CGRect) -> CGPoint {
         DevicePanelGeometry.regrip(travel: travel, in: fitted)
+    }
+
+    // MARK: - Marshalling
+
+    /// One event's contacts. `SLOPDESK_PANEL_CONTACT_MAX` is the longest an event can be — the
+    /// re-grip — so the buffer is sized once by the door's own advertised bound.
+    private func contacts(
+        _ door: (UnsafeMutablePointer<SlopDeskPanelContact>?, Int) -> Int,
+    ) -> [SlopDeskPanelContact] {
+        var out = [SlopDeskPanelContact](
+            repeating: SlopDeskPanelContact(), count: Int(SLOPDESK_PANEL_CONTACT_MAX),
+        )
+        let count = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+        guard count > 0, count <= out.count else { return [] }
+        return Array(out[0..<count])
+    }
+
+    private static func message(
+        _ contact: SlopDeskPanelContact, surface: AndroidScreenLayout.Surface,
+    ) -> Data {
+        message(
+            action(contact.action), at: CGPoint(x: contact.point.x, y: contact.point.y),
+            surface: surface,
+        )
+    }
+
+    private static func action(_ code: UInt8) -> AndroidMotionAction {
+        switch code {
+        case UInt8(SLOPDESK_PANEL_CONTACT_DOWN): .down
+        case UInt8(SLOPDESK_PANEL_CONTACT_MOVE): .move
+        // An action this build has no case for lifts rather than plants: a stray `up` is a gesture
+        // that ends early, where a stray `down` strands a contact no later event can clear.
+        default: .up
+        }
     }
 }
