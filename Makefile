@@ -58,7 +58,13 @@ SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
 # silently unlinted — and `scripting-is-rust` in `rust/slopdesk-invariants` fails the moment one
 # does. `ThirdParty/ghostty/` is the one tree exempt from that rule: it is the vendored libghostty
 # build recipe, carried close to upstream's own shape, and is not ours to rewrite.
-SHELL_FILES  := $(wildcard scripts/*.sh) $(wildcard ThirdParty/tools/*.sh)
+# `strip`ped at the DEFINITION, not at each use. Both globs match nothing today, and two globs that
+# each expand to nothing still leave the SPACE between them — so an unstripped `SHELL_FILES` is the
+# one-character string " ", `[ -n "$(SHELL_FILES)" ]` is TRUE, and `shfmt -w` with no operands reads
+# standard input and dies with "-w cannot be used on standard input". `make fmt` failed that way from
+# the day the last script became Rust. Stripping here makes the emptiness the same emptiness at all
+# four use sites instead of at the two that happened to remember.
+SHELL_FILES  := $(strip $(wildcard scripts/*.sh) $(wildcard ThirdParty/tools/*.sh))
 SHFMT_FLAGS  := -i 2 -ci -sr
 # There is no PY_FILES, and no ruff. Every Python script this repo had is now Rust — the four
 # lint gates are rules in `rust/slopdesk-invariants`, the operator tools (the release pipeline, the
@@ -214,13 +220,13 @@ invariants-test: ## cargo test for the ratchets and their break-tests
 # tool's own exit status otherwise. Same tools, flags and file set as the CI `shell` job, so local
 # green implies CI green rather than the reverse.
 #
-# `strip` is load-bearing for the same reason, one layer down: two empty `$(wildcard …)` still join
-# with the SPACE between them, and `[ -n " " ]` is true — the guard fired, shellcheck was handed no
-# files, and printed its usage with exit 3. Now that every script in this repo is Rust that empty
-# list is the ORDINARY case, not the odd one.
+#
+# The emptiness guard is load-bearing for the same reason, one layer down — a linter handed no files
+# reads standard input rather than doing nothing. `SHELL_FILES` is `strip`ped where it is DEFINED so
+# that this reads as the plain test it looks like; the note there says what the space cost.
 lint-shell: ## shellcheck + shfmt --diff
-	@if [ -n "$(strip $(SHELL_FILES))" ]; then shellcheck $(SHELL_FILES); fi
-	@if [ -n "$(strip $(SHELL_FILES))" ]; then shfmt $(SHFMT_FLAGS) -d $(SHELL_FILES); fi
+	@if [ -n "$(SHELL_FILES)" ]; then shellcheck $(SHELL_FILES); fi
+	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -d $(SHELL_FILES); fi
 
 # Rust: clippy at all/pedantic/nursery/cargo + a curated restriction slice, every group DENY
 # (rust/Cargo.toml `[workspace.lints]`), so `-D warnings` is the belt to those braces. `--all-targets`
