@@ -1,0 +1,71 @@
+# `slopdesk-provision` — materialises the pinned host-side runtime dependencies of the right panel.
+#
+# ## Why this is its own workspace and not a `slopdesk-devtools` binary
+#
+# It is the only program in the tree that opens a socket to the internet, and that costs a TLS
+# stack. `slopdesk-devtools` holds `slopdesk-gate`, which every `make quick` builds — putting rustls
+# behind that gate would make the inner loop pay for a download nobody in it performs. Its own root
+# keeps the cost where the cost belongs: this crate is built by `make provision` and by nothing else.
+#
+# ## Why it is not a script any more
+#
+# It was 191 lines of bash, and the shell shape cost it three real things. It hashed the download by
+# reading the file a SECOND time — 206 MB for code-server alone. It shelled out to `tar`, `unzip`,
+# `shasum` and `xattr`, so an archive layout the pin did not expect surfaced as a foreign program's
+# stderr rather than as an error naming the pin. And its lock parser was an `IFS='|' read` loop,
+# which cannot say which field of which line was malformed. All three are gone: the digest is
+# computed on the bytes as they stream to disk, both archive kinds are unpacked in-process, and the
+# lock is a parser with tests.
+[package]
+name = "slopdesk-provision"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Materialises the pinned host-side runtime dependencies from ThirdParty/tools/tools.lock"
+
+[workspace]
+resolver = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+
+# Disabled, with a reason:
+# - `multiple_crate_versions` (cargo): a duplicate deep in the TLS stack's tree is not ours.
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly
+#   the fused multiply-add `CLAUDE.md` forbids. This crate does no float arithmetic at all, and the
+#   opt-out is here anyway so the standing rule holds by construction rather than by absence.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
+[dependencies]
+# The download, over TLS. `ureq` rather than `reqwest`: this program makes at most four blocking GETs
+# in its whole life, so an async runtime would be the largest thing in the binary and would buy
+# nothing. `ureq` is blocking by design, rustls-backed (no OpenSSL on the host to keep in sync), and
+# small enough that its dependency tree is auditable in a sitting.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+# The digest, computed as the bytes stream past on their way to disk. The same crate the release
+# pipeline already hashes with, for the same reason: it is the implementation the ecosystem audits.
+sha2 = "0.10"
+# `tar.gz`, in-process. `flate2` is the rust-lang organisation's own zlib binding and `tar` is its
+# long-standing companion; between them they replace a `tar -xzf` spawn whose only failure report
+# was a foreign program's exit code.
+flate2 = "1"
+tar = "0.4"
+# `zip`, for the one pinned archive Google publishes that way. Default features off on purpose: the
+# full crate carries bzip2, lzma, zstd and AES backends, and the pin needs deflate and nothing else.
+zip = { version = "8", default-features = false, features = ["deflate-flate2"] }
+# Clearing `com.apple.quarantine` off an extracted tree. Belt-and-braces (this program's own
+# downloads never carry it — LaunchServices sets it, not a socket), but a quarantined panel server
+# surfaces to the user as "not found", which is a miserable thing to debug. In-process rather than
+# an `xattr -dr` spawn so a failure names the file it was on.
+xattr = "1"

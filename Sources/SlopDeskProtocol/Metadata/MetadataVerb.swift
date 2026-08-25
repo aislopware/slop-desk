@@ -198,7 +198,7 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     ///
     /// Response payload: ``MetadataCodec/ServiceEndpoint``, the same shape and the same never-wait
     /// contract as verbs 18 and 21. `unavailable` here means the host is missing `adb` (pinned in
-    /// `ThirdParty/tools/tools.lock`, provisioned by `ThirdParty/tools/provision.sh`), and the panel
+    /// `ThirdParty/tools/tools.lock`, provisioned by `slopdesk-provision`), and the panel
     /// shows that hint. The `scrcpy-server` jar is committed to the repo, so it is present wherever
     /// hostd runs from a checkout.
     ///

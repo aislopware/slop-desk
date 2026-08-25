@@ -30,7 +30,7 @@ import SlopDeskWorkspaceCore
 /// The cases matched the Android panel's case for case, over a `phase(for:host:)` that was
 /// byte-identical in both files, so both read one type and one rule now. What is the simulator's
 /// here is the WORDS: `.unavailable` is "no `baguette` binary on the host" (a
-/// `ThirdParty/tools/provision.sh` run fixes it mid-session), `.starting` is a server the host is
+/// `make provision` run fixes it mid-session), `.starting` is a server the host is
 /// booting or probing, and verb 21 is the round that answers.
 package typealias SimulatorSidebarPhase = DevicePanelPhase
 

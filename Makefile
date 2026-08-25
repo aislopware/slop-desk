@@ -47,16 +47,18 @@ SWIFT_PATHS  := Sources Tests Apps
 # Format (SwiftFormat) also covers the package manifest; the SwiftLint scope stays
 # Sources/Tests/Apps (Package.swift is config, not linted).
 SWIFTFMT_PATHS := Package.swift $(SWIFT_PATHS)
-# ThirdParty/ghostty/ only: that tree is the vendored libghostty build recipe, carried close to
-# upstream's own shape. ThirdParty/tools/provision.sh is OURS and meets the same bar as scripts/.
+# ZERO files, and the count is the point: every gate, every operator harness, every step of the
+# release AND the panel's provisioner is Rust now, so `scripts/` holds pins, fixtures and two Swift
+# probes — no program at all. The last one to go was the panel's provisioner, and the "bootstrap"
+# argument that had kept it was simply wrong: it installs the PANEL's runtime deps
+# (code-server, baguette, adb), not the toolchain a Rust gate needs, and cargo is a prerequisite of
+# this tree either way. It is `rust/slopdesk-provision` now.
 #
-# ONE file is left, and the count is the point: every gate, every operator harness and every step of
-# the release is Rust now, so `scripts/` holds pins, fixtures and two Swift probes — no program at
-# all. `provision.sh` stays because it is a bootstrap: it installs the toolchain a Rust gate would
-# need in order to run. `scripts/*.sh` is still globbed rather than dropped, so a script that comes
-# back is linted rather than silently unlinted — and `scripting-is-rust` in `rust/slopdesk-invariants`
-# fails the moment one does.
-SHELL_FILES  := $(wildcard scripts/*.sh) ThirdParty/tools/provision.sh
+# The globs stay rather than being dropped, so a script that comes back is linted rather than
+# silently unlinted — and `scripting-is-rust` in `rust/slopdesk-invariants` fails the moment one
+# does. `ThirdParty/ghostty/` is the one tree exempt from that rule: it is the vendored libghostty
+# build recipe, carried close to upstream's own shape, and is not ours to rewrite.
+SHELL_FILES  := $(wildcard scripts/*.sh) $(wildcard ThirdParty/tools/*.sh)
 SHFMT_FLAGS  := -i 2 -ci -sr
 # There is no PY_FILES, and no ruff. Every Python script this repo had is now Rust — the four
 # lint gates are rules in `rust/slopdesk-invariants`, the operator tools (the release pipeline, the
@@ -950,11 +952,13 @@ tool-versions: ## Show which sidecars changed since the last release, and the bu
 # The panel's RUNTIME deps (code-server, baguette, adb, scrcpy-server), pinned by URL + SHA-256 in
 # ThirdParty/tools/tools.lock. Not part of `build` or `test`: the whole Swift package builds and
 # tests headless without any of them, and provisioning downloads ~250 MB.
+# `--release` on purpose: the whole cost of this target is a 250 MB transfer and a gzip/deflate
+# pass over it, and a debug `flate2` turns the extract from seconds into minutes.
 provision: ## Fetch + verify the pinned host-side runtime deps into ThirdParty/tools/.prefix
-	bash ThirdParty/tools/provision.sh
+	cd rust/slopdesk-provision && cargo run --release --quiet
 
 provision-check: ## Report which pinned deps are present; download nothing
-	bash ThirdParty/tools/provision.sh --check
+	cd rust/slopdesk-provision && cargo run --release --quiet -- --check
 
 # ---------------------------------------------------------------------------- #
 .PHONY: install-tools hooks

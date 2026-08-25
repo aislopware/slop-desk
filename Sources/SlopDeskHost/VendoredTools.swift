@@ -7,7 +7,7 @@
 // no file in this repo recorded which version the panel had been written against.
 //
 // So they are pinned in `ThirdParty/tools/tools.lock` and provisioned into
-// `ThirdParty/tools/.prefix/bin` by `ThirdParty/tools/provision.sh`. This type is the read half.
+// `ThirdParty/tools/.prefix/bin` by `slopdesk-provision` (`make provision`). This type is the read half.
 //
 // A face over `slopdesk-androidd`'s `toolchain`, which owns the marker, the upward walk and the two
 // paths that hang off it — the same crate that owns the binary SEARCH ORDER the prefix is the

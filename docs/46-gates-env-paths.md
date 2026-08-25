@@ -110,7 +110,7 @@ Deleted deliberately — do not reintroduce: `SLOPDESK_WORKSPACE_DOC`, `SLOPDESK
 
 ## Vendored runtime deps
 
-The right panel's surfaces stand on programs this repo does not build. They are **pinned by URL + SHA-256 in `ThirdParty/tools/tools.lock`** and provisioned by `ThirdParty/tools/provision.sh` (`make provision`, `make provision-check`) into `ThirdParty/tools/.prefix/bin` (gitignored, ~730 MB). Same bargain as `ThirdParty/ghostty/`: the recipe is committed, the artifact is not.
+The right panel's surfaces stand on programs this repo does not build. They are **pinned by URL + SHA-256 in `ThirdParty/tools/tools.lock`** and provisioned by `rust/slopdesk-provision` (`make provision`, `make provision-check`) into `ThirdParty/tools/.prefix/bin` (gitignored, ~730 MB). Same bargain as `ThirdParty/ghostty/`: the recipe is committed, the artifact is not.
 
 **Why.** Homebrew's `code-server` formula froze at 4.112 and was deprecated, and nothing in the repo recorded — or could enforce — the version the panel was written against. The panel sat on Code 1.112 for months, below the 1.121 floor where the built-in mermaid preview landed, and no gate could see it.
 
@@ -119,7 +119,7 @@ The right panel's surfaces stand on programs this repo does not build. They are 
 | `code-server` | code panel (verb 18) | 4.131.0 | floor is **4.121** — Code 1.121 is where `mermaid-markdown-features` became built-in |
 | `baguette` | simulator panel (verb 21) | 0.1.88 | executable is `Baguette`, sibling to the `.bundle` it loads assets from; the `bin/` symlink was checked to still resolve it |
 | `adb` | Android panel (verb 22) | 37.0.1 | Google's versioned zip; its `repository2-3.xml` SHA-1 was cross-checked against our SHA-256 |
-| `scrcpy-server` | Android panel | 4.1 | **committed** at `ThirdParty/tools/vendor/scrcpy-server` (716 KB, not an executable — the device's `app_process` runs it). `provision.sh` verifies those bytes, never downloads them |
+| `scrcpy-server` | Android panel | 4.1 | **committed** at `ThirdParty/tools/vendor/scrcpy-server` (716 KB, not an executable — the device's `app_process` runs it). `slopdesk-provision` verifies those bytes, never downloads them |
 
 **Search order** (`locate_tool` in `rust/slopdesk-androidd/src/toolchain.rs`, reached from Swift through `slopdesk_host_service_binary` — there is no second copy to mirror, and the wording that used to name a Swift `searchDirectories` as the canonical one is why the two drifted: `FileManager.isExecutableFile` is `access(X_OK)`, which is TRUE for a directory, so a directory wearing a tool's name on `PATH` reached `posix_spawn`. The crate tests `is_file()` and the mode bits and walks past it. The Swift `AndroidToolchain` that used to hold the other copy is on the must-stay-deleted list in the row above): `SLOPDESK_*_BIN` override → **vendored prefix** → `PATH` → `~/.local/bin` → `/opt/homebrew/bin` → `/usr/local/bin`. The prefix outranking `PATH` is deliberate and is the whole point: a stale Homebrew copy silently winning is the failure this layer ends. `VendoredTools` finds the prefix by walking up from the running binary looking for `tools.lock`, so a hostd copied out of the checkout correctly resolves nothing and falls through.
 
