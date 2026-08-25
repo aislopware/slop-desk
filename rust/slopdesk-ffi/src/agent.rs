@@ -549,37 +549,6 @@ pub extern "C" fn slopdesk_agent_badge_command_outcome(badge: i8, agent_finish: 
     badge::command_outcome(badge, agent_finish).map_or(0, badge::Outcome::code)
 }
 
-/// Whether a status is waiting on a human or finished unseen — the level the ring reads.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_agent_is_attention(status: c_uchar) -> bool {
-    attention::is_attention(status_from(status))
-}
-
-/// Whether `previous → current` is an attention EDGE worth interrupting someone for. `previous` is
-/// the state the caller last NOTIFIED for, not the last one it saw.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_agent_attention_edge(previous: c_uchar, current: c_uchar) -> bool {
-    attention::is_edge(status_from(previous), status_from(current))
-}
-
-/// Whether `previous → current` is a hook-less finish: an active state settling to plain idle.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_agent_attention_completion(previous: c_uchar, current: c_uchar) -> bool {
-    attention::is_completion(status_from(previous), status_from(current))
-}
-
 /// Whether `previous → current` mints one FINISHED TURN — the `pane/completionEpoch` count.
 ///
 /// The hook-less finish plus the hook's own: entering `done` counts where a `Stop` hook announces

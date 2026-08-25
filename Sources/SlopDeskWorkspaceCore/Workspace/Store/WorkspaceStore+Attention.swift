@@ -31,10 +31,10 @@ public extension WorkspaceStore {
     /// Sets the per-pane agent status (the detection sink — the sidebar/chrome dots' write path).
     /// Idempotent: a no-op when unchanged so it never churns the views.
     ///
-    /// This is the SINGLE centralized chokepoint for every per-pane status write, so the attention
-    /// EDGE detection runs here. It captures the last-notified state before the mutation and, after
-    /// committing, runs ``applyAttentionEdge(for:lastNotified:status:)`` — a genuine entry into
-    /// needsPermission/done notifies once (coalesced), a flap does not.
+    /// This is the SINGLE centralized chokepoint for every per-pane status write, so the whole
+    /// supervision LADDER runs here — as ``PaneFacts/commit(previous:lastNotified:status:quiet:)``
+    /// answers it, in one call. The verdict's fields are applied in order and nothing else is asked:
+    /// the decision lives in `slopdesk-workspace::pane_facts`, the storage lives here.
     ///
     /// `quiet` = the host qualified this transition as BOOKKEEPING (wire `kind` ==
     /// ``AgentStatusKind/quiet``; today only the `/compact` boundary). Everything visual still
@@ -42,61 +42,59 @@ public extension WorkspaceStore {
     /// coalesced edge nor the hook-less completion edge may fire for it. Defaulted `false` so every
     /// non-wire writer (tests, the seen-sweep's `.done → .idle`) keeps its behaviour verbatim.
     func setAgentStatus(_ status: ClaudeStatus, for id: PaneID, at date: Date = Date(), quiet: Bool = false) {
-        guard paneAgentStatus[id] != status else { return }
         let previous = paneAgentStatus[id] ?? .none
-        let lastNotified = lastNotifiedStatus[id] ?? .none
+        guard let verdict = PaneFacts.commit(
+            previous: previous, lastNotified: lastNotifiedStatus[id] ?? .none, status: status, quiet: quiet,
+        ) else { return }
         // ANY genuine status change supersedes a parked notification (herdr: pending is replaced on
         // every state change) — either a schedule below re-parks for the NEW edge, or the pane moved
         // on and the stale ring must never sound.
         pendingAgentAttention.removeValue(forKey: id)
         if status == .none { paneAgentStatus.removeValue(forKey: id) } else { paneAgentStatus[id] = status }
-        applyAttentionEdge(for: id, lastNotified: lastNotified, status: status, quiet: quiet)
-        // The HOOK-LESS completion edge (herdr `Working|Blocked → Idle`): a screen-detected agent
-        // (codex, gemini, … — no Stop hook to mint `.done`) finishing its turn fires the SAME
-        // attention sink as a Claude Stop, so its toast/banner/sound coverage matches herdr's.
-        // Distinct from `applyAttentionEdge` on purpose: this edge needs the REAL previous status
-        // (`.done → .idle` decay must stay silent), not the last-notified coalescing state.
-        // `quiet` vetoes it: a `/compact` lands on exactly this shape (`.working → .idle`) without
-        // being a finish, and the host is the only party that can tell the difference.
-        if !quiet, AttentionEdge.isCompletion(prev: previous, current: status) {
+        if verdict.notify_edge {
+            lastNotifiedStatus[id] = status
             scheduleAgentAttention(for: id, status: status)
+        } else if verdict.rearm_notified {
+            // Left the attention bucket → forget the coalescing memory so the NEXT entry rings.
+            lastNotifiedStatus.removeValue(forKey: id)
         }
-        // The NEEDS-ATTENTION `since` fallback: a genuine status transition (past the idempotency guard)
-        // stamps the pane — a BLOCKED `needsPermission` agent never stamps `paneCompletedAt`, so this is
-        // where its menu-row age comes from.
+        // The HOOK-LESS completion edge: a screen-detected agent (codex, gemini, … — no Stop hook to
+        // mint `.done`) finishing its turn fires the SAME attention sink as a Claude Stop, so its
+        // toast/banner/sound coverage matches herdr's. Independent of the edge above: the two read
+        // different histories, and idle is not itself an attention state.
+        if verdict.schedule_completion { scheduleAgentAttention(for: id, status: status) }
+        // The NEEDS-ATTENTION `since` fallback: a genuine status transition stamps the pane — a
+        // BLOCKED `needsPermission` agent never stamps `paneCompletedAt`, so this is where its
+        // menu-row age comes from. Unconditional on purpose; it follows from the CHANGE, not its shape.
         paneAttentionAt[id] = date
-        // Drive the completion-flash decay for an agent turn: a genuine entry into `.done` stamps
-        // the ephemeral `completedAt` (brief `.completed` flash, settling to `.finished`). Only the
-        // positive edge stamps — a stale stamp is harmless (the resolver reads it ONLY in the
-        // completed/finished branch, it is refreshed on the next `.done`/`.success`, and pruned on
-        // reconcile), so this never clobbers a coexisting completion-badge stamp. Arms the one-shot
-        // that decays the flash so a quiet `.done` row settles to `.finished` without a further mutation.
-        if status == .done {
+        if verdict.stamp_completed {
+            // The completion-flash decay for an agent turn. A stale stamp is harmless (the resolver
+            // reads it ONLY in the completed/finished branch, it is refreshed on the next
+            // `.done`/`.success`, and pruned on reconcile), so this never clobbers a coexisting
+            // completion-badge stamp. The one-shot decays the flash so a quiet `.done` row settles
+            // to `.finished` without a further mutation.
             paneCompletedAt[id] = date
             armCompletionFlashDecay()
             // UNREAD marker: a turn finishing while the user is NOT watching stays marked until the
             // pane is visited — the host's own done→idle decay (seconds) must not take the badge
-            // with it. A finish the user watched happen (any split of the active tab / key
-            // satellite) is pre-seen: it still gets the brief `.completed` flash via the live
-            // `.done` status, but no sticky unread marker (t3code/herdr both pin this rule).
-            //
-            // Expressed as a COUNTER, not a bit. This bump is the client's own — refused the moment
-            // host truth holds the key, so with the document live the host's count is what everyone
-            // compares against and no client's local edge can disagree with another's.
+            // with it. Expressed as a COUNTER, not a bit. This bump is the client's own — refused
+            // the moment host truth holds the key, so with the document live the host's count is
+            // what everyone compares against and no client's local edge can disagree with another's.
             bumpOwnCompletionEpoch(for: id)
             refreshUnseenDone(for: id)
-        } else if status == .working || status == .needsPermission {
-            // The agent moved on — new activity supersedes the unread finish (herdr: any
-            // non-idle transition marks the pane seen). Marking SEEN rather than clearing a bit:
-            // the next host frame re-asserts the same counter, and a cleared bit would come back.
+        }
+        if verdict.mark_seen {
+            // The agent moved on — new activity supersedes the unread finish. Marking SEEN rather
+            // than clearing a bit: the next host frame re-asserts the same counter, and a cleared
+            // bit would come back.
             markCompletionSeen(id)
             refreshUnseenDone(for: id)
         }
-        // The trailing-slot elapsed readout's anchor: a genuine entry into `.working` (the
-        // idempotency guard above already filtered repeats) starts the turn clock; leaving
-        // `.working` retires it. Label-only re-emissions never reach here (same status ⇒ early
-        // return), so mid-turn PreToolUse/PostToolUse churn cannot reset the clock.
-        if status == .working {
+        // The trailing-slot elapsed readout's anchor: entering `.working` starts the turn clock,
+        // leaving it RETIRES it — an anchor outliving its turn prints an elapsed time that never
+        // stops. Label-only re-emissions never reach here (same status ⇒ no verdict), so mid-turn
+        // PreToolUse/PostToolUse churn cannot reset the clock.
+        if verdict.stamp_working {
             paneWorkingSince[id] = date
         } else {
             paneWorkingSince.removeValue(forKey: id)
@@ -234,10 +232,9 @@ public extension WorkspaceStore {
                 startedAWatch = true
                 continue
             }
-            // Ordered compare (no bare `<`, per the repo's NaN-faithful convention): settle once the
-            // watch REACHES the window.
-            let watched = now.timeIntervalSince(since)
-            if !watched.isLess(than: Self.focusedDoneSettleWindow) { due.append(id) }
+            if PaneFacts.settleDue(watched: now.timeIntervalSince(since), window: Self.focusedDoneSettleWindow) {
+                due.append(id)
+            }
         }
         for id in due { clearAgentBadge(id) }
         if startedAWatch {
@@ -373,46 +370,12 @@ public extension WorkspaceStore {
                 }
             }
         }
-        // Stable urgency sort (Swift's sort is not guaranteed stable — the enumerated offset is the tie).
-        return found.enumerated()
-            .sorted { lhs, rhs in
-                let lRank = lhs.element.badge.attentionRank
-                let rRank = rhs.element.badge.attentionRank
-                if lRank != rRank { return lRank < rRank }
-                switch (lhs.element.since, rhs.element.since) {
-                case let (lSince?, rSince?) where lSince != rSince: return lSince < rSince
-                case (.some, nil): return true // a dated entry always outranks a since-less one at the same rank
-                case (nil, .some): return false
-                default: return lhs.offset < rhs.offset // equal dates, or both nil — traversal order is the tie
-                }
-            }
-            .map(\.element)
+        // The urgency order is `slopdesk-workspace::pane_facts`, which answers POSITIONS into the
+        // list it was handed — so the traversal above stays the tie without an enumerated offset.
+        return PaneFacts.attentionOrder(found)
     }
 
     // MARK: Attention edge (the notification fire)
-
-    /// The coalesced attention-EDGE handler called from ``setAgentStatus(_:for:)`` after it commits the
-    /// new status: fires the notification on a genuine transition INTO needsPermission/done from the
-    /// LAST-NOTIFIED state (not just the previous status, so a flap can't re-fire), and re-arms the
-    /// coalescing memory when the pane leaves the attention bucket.
-    ///
-    /// `quiet` suppresses only the FIRE. The coalescing memory is still re-armed: a bookkeeping
-    /// transition is a real state change, and leaving the memory latched would swallow the pane's next
-    /// genuine block/finish.
-    internal func applyAttentionEdge(
-        for id: PaneID,
-        lastNotified: ClaudeStatus,
-        status: ClaudeStatus,
-        quiet: Bool = false,
-    ) {
-        if !quiet, AttentionEdge.shouldNotify(prev: lastNotified, current: status) {
-            lastNotifiedStatus[id] = status
-            scheduleAgentAttention(for: id, status: status)
-        } else if status == .idle || status == .working || status == .none {
-            // Left the attention bucket → re-arm so the NEXT entry notifies again.
-            lastNotifiedStatus.removeValue(forKey: id)
-        }
-    }
 
     /// The park window between a notify-worthy edge and its delivery (herdr's `ui.toast.delay_seconds`,
     /// default 1): long enough to swallow a flap that resolves itself (an agent that pauses a beat and
@@ -596,24 +559,5 @@ public struct UnseenAttentionEntry: Equatable, Sendable {
         self.pane = pane
         self.badge = badge
         self.since = since
-    }
-}
-
-private extension TabBadgeKind {
-    /// The urgency rank for the unseen-attention queue: blocked (answer it) before a failure (read it)
-    /// before an unread finish (skim it) — the ``AttentionJump`` ordering philosophy. Non-attention kinds
-    /// never reach the queue; their rank is the total-switch tail.
-    var attentionRank: Int {
-        switch self {
-        case .awaitingInput: 0
-        case .error: 1
-        case .completed,
-             .finished: 2
-        case .caffeinate,
-             .commandBusy,
-             .commandRunning,
-             .running,
-             .sudo: 3
-        }
     }
 }

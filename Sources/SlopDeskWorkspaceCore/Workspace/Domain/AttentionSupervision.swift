@@ -1,49 +1,96 @@
 import CSlopDeskFFI
+import Foundation
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceModel
 
-// MARK: - AttentionEdge (the pure "should this status change raise an attention notification" policy)
+// MARK: - PaneFacts (what one status landing on a pane moves)
 
-/// The PURE decision policy for the P3 supervision cockpit: given a pane's PREVIOUS and CURRENT
-/// rolled-up ``ClaudeStatus``, decide whether the transition is an ATTENTION EDGE worth a desktop
-/// notification — i.e. the pane just entered a state that needs the human (``ClaudeStatus/needsPermission``
-/// — it is blocked on you) or just finished (``ClaudeStatus/done``).
+/// The supervision LADDER for one pane, as `slopdesk-workspace::pane_facts` answers it.
 ///
-/// Split out from the store + the platform notifier so the edge rule is unit-tested with NO SwiftUI,
-/// NO `UNUserNotificationCenter`, NO `LivePaneSession` — exactly as ``CommandNotificationPolicy`` and
-/// ``BackgroundCompletionPolicy`` are. `#if`-unguarded so it compiles + tests on every platform.
+/// The three edge questions — is this an attention state, is this transition worth interrupting
+/// somebody for, did a hook-less agent just finish — were each their own Swift entry point once, and
+/// every writer that reached the store's pane maps had to re-compose them into the answer it
+/// actually wanted. That composition is the door now: one call says WHICH of the pane's facts move,
+/// and the store applies the verdict without a branch of its own.
 ///
-/// The rule is deliberately EDGE-triggered, not level-triggered: a notification fires only on the
-/// genuine transition INTO `needsPermission`/`done` from a DIFFERENT state. A flap that re-enters the
-/// same attention state without first leaving it (the `prev == current` case) never re-fires — the
-/// store's coalescing map (`lastNotifiedStatus`) makes "different" mean "different from the last state
-/// we notified for", so `done → working → done` only notifies on the FIRST `done`.
-public enum AttentionEdge {
-    /// Whether the `prev → current` transition is an attention edge worth a notification.
+/// Nothing here reads a clock or learns a pane's identity. A commit takes three statuses; the queue
+/// order takes badges and instants and answers POSITIONS in the list it was handed.
+public enum PaneFacts {
+    /// Which of a pane's facts one committed status change moves, or `nil` when it did not change.
     ///
-    /// True iff `current` is `.needsPermission` or `.done` AND it differs from `prev` (a real entry
-    /// into the attention state, not a repeat of the state we are already in). `.idle` / `.working` /
-    /// `.none` are never notify-worthy targets (working is in-flight; idle/none recede).
-    public static func shouldNotify(prev: ClaudeStatus, current: ClaudeStatus) -> Bool {
-        slopdesk_agent_attention_edge(prev.ffiByte, current.ffiByte)
+    /// The fields are applied in declaration order and nothing else is asked. `lastNotified` is the
+    /// coalescing MEMORY — the state a notification was last raised for, which is not the previous
+    /// status: `done → working → done` re-enters an announced state and stays quiet.
+    ///
+    /// `quiet` is the host's bookkeeping qualification (today only the `/compact` boundary). It
+    /// vetoes rings and nothing else — not the dots, not the stamps, and deliberately not the
+    /// re-arm, because leaving the memory latched would swallow the pane's next genuine block.
+    public static func commit(
+        previous: ClaudeStatus,
+        lastNotified: ClaudeStatus,
+        status: ClaudeStatus,
+        quiet: Bool,
+    ) -> SlopDeskWsPaneStatusCommit? {
+        let verdict = slopdesk_ws_pane_status_commit(
+            previous.ffiByte, lastNotified.ffiByte, status.ffiByte, quiet,
+        )
+        return verdict.changed ? verdict : nil
     }
 
-    /// Whether `prev → current` is a HOOK-LESS COMPLETION edge: the agent left an active state
-    /// (working / blocked) and settled to plain `.idle` without ever minting `.done` — only the
-    /// Claude Stop hook does that; the screen-detect engine has no done concept. This is herdr's
-    /// `is_completion_transition` (`Working|Blocked → Idle`), the trigger that lets a hook-free
-    /// agent's finish (codex, gemini, …) notify like a Claude Stop. `.done → .idle` is the decay
-    /// of an already-notified finish, never a completion; `.none → .idle` is presence appearing,
-    /// not a finish.
-    public static func isCompletion(prev: ClaudeStatus, current: ClaudeStatus) -> Bool {
-        slopdesk_agent_attention_completion(prev.ffiByte, current.ffiByte)
+    /// What a pane's unread-finish MARKER becomes, given the live counter, what this device recorded
+    /// as seen, and whether the pane is on screen.
+    public enum Unseen {
+        /// Not unread, and nothing to record.
+        case clear
+        /// Not unread, and RECORD it: a finish you are looking at is a finish you have seen.
+        case seenThenClear
+        /// Unread — mark it.
+        case mark
     }
 
-    /// Whether `status` is an ATTENTION state — the level predicate the ring / tab-glow read (a pure
-    /// function of the CURRENT status; no history). `needsPermission` (blocked, the most urgent) and
-    /// `done` (finished, waiting to be seen) draw the attention chrome; everything else is quiet.
-    public static func isAttention(_ status: ClaudeStatus) -> Bool {
-        slopdesk_agent_is_attention(status.ffiByte)
+    /// Decides pane's unread-finish marker. `seen` is `nil` when this device has never recorded one,
+    /// which is a different answer from having recorded zero — the first can never match a live
+    /// counter, the second is every pane's state before the document arrives.
+    public static func unseenDone(epoch: UInt32, seen: UInt32?, isVisible: Bool) -> Unseen {
+        switch slopdesk_ws_pane_unseen_done(epoch, seen != nil, seen ?? 0, isVisible) {
+        case 1: .seenThenClear
+        case 2: .mark
+        default: .clear
+        }
+    }
+
+    /// Whether an unbroken watch of `watched` seconds has earned the finish-marker acknowledge.
+    /// Settles once the watch REACHES the window — a window is how long you have to look, not that
+    /// plus a tick — and compares NaN-faithfully, per the repo's convention.
+    public static func settleDue(watched: TimeInterval, window: TimeInterval) -> Bool {
+        slopdesk_ws_pane_settle_due(watched, window)
+    }
+
+    /// Reorders `entries` the way the unseen-attention queue is walked: rank first (a waiting
+    /// question, then a failure, then an unread finish), then longest-waiting, then the caller's own
+    /// traversal order as the tie.
+    ///
+    /// The tie is load-bearing, which is why the rule answers POSITIONS rather than sorting: the
+    /// caller's traversal is session → tab → pre-order DFS, and two panes that entered attention in
+    /// the same instant have to come back in it. A dated entry outranks an undated one at the same
+    /// rank — age is evidence, and an entry with none cannot claim to have waited longer.
+    public static func attentionOrder(_ entries: [UnseenAttentionEntry]) -> [UnseenAttentionEntry] {
+        guard entries.count > 1 else { return entries }
+        let waiting = entries.map { entry in
+            SlopDeskWsWaitingPane(
+                badge: entry.badge.ffiByte,
+                has_since: entry.since != nil,
+                since: entry.since?.timeIntervalSinceReferenceDate ?? 0,
+            )
+        }
+        var order = [UInt32](repeating: 0, count: entries.count)
+        let count = waiting.withUnsafeBufferPointer { panes in
+            order.withUnsafeMutableBufferPointer { out in
+                slopdesk_ws_attention_order(panes.baseAddress, panes.count, out.baseAddress, out.count)
+            }
+        }
+        guard count == entries.count else { return entries }
+        return order.compactMap { position in entries.indices.contains(Int(position)) ? entries[Int(position)] : nil }
     }
 }
 

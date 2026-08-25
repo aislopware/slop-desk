@@ -188,6 +188,7 @@ pub mod pacer_depth;
 pub mod palette_card;
 pub mod palette_rows;
 pub mod pane_drop;
+pub mod pane_facts;
 pub mod pane_kind;
 pub mod pane_switcher;
 // macOS only: Darwin `proc_*` over every live pid, plus an `lsof` spawn. Only hostd asks, and only

@@ -80,26 +80,20 @@ public extension WorkspaceStore {
     /// every edge that can move either side of it. Said only at the edge it loses to ordering: with
     /// the document live, the host's counter and this client's own `.done` arrive on different paths
     /// and in no guaranteed order.
+    ///
+    /// The comparison itself is ``PaneFacts/unseenDone(epoch:seen:isVisible:)``; what is here is the
+    /// three writes its verdict names.
     func refreshUnseenDone(for id: PaneID) {
-        let epoch = paneCompletionEpoch(id)
-        // Nothing has finished — but do NOT record that as "seen 0". Every pane reads zero until the
-        // document arrives, and writing it would erase a restored map before the channel had said
-        // which document this is.
-        guard epoch != 0 else {
-            paneUnseenDone.remove(id)
-            return
-        }
-        if isSourcePaneVisible(id) {
+        switch PaneFacts.unseenDone(
+            epoch: paneCompletionEpoch(id),
+            seen: seenCompletionEpoch[documentPaneID(id)],
+            isVisible: isSourcePaneVisible(id),
+        ) {
+        case .clear: paneUnseenDone.remove(id)
+        case .seenThenClear:
             markCompletionSeen(id)
             paneUnseenDone.remove(id)
-            return
-        }
-        // Inequality, not "greater than": a restarted daemon counts from zero again, and a `seen`
-        // stranded above the live counter is the one way this can go permanently quiet.
-        if epoch == seenCompletionEpoch[documentPaneID(id)] {
-            paneUnseenDone.remove(id)
-        } else {
-            paneUnseenDone.insert(id)
+        case .mark: paneUnseenDone.insert(id)
         }
     }
 

@@ -6,8 +6,8 @@ import XCTest
 /// Pins the P3 supervision-cockpit pure logic + store wiring (the "which agent needs me, take me there"
 /// affordances):
 ///
-/// - ``AttentionEdge/shouldNotify(prev:current:)`` — the EDGE rule: notify only on a real transition
-///   INTO needsPermission/done from a different state.
+/// - ``PaneFacts/commit(previous:lastNotified:status:quiet:)`` — the LADDER: which of a pane's facts
+///   one status change moves, rings included.
 /// - ``AttentionJump/oldestPane(in:status:)`` — needsPermission-before-done, oldest-first ordering.
 /// - The ⌘⇧U chord is registered, maps to `.jumpToAttention`, and is UNIQUE (no collision).
 /// - The store edge-notify is COALESCED (a flap does not re-fire) via the `lastNotifiedStatus` memory.
@@ -66,31 +66,42 @@ final class AttentionTests: XCTestCase {
 
     // MARK: - The three attention rules
 
-    // The rules are `slopdesk-agent::attention`; what is tested here is that each Swift entry point
-    // reaches the one it names — a status crossing as its own byte, a pane list answering with the
-    // right IDENTITY for the position it gets back, and a visited set that is read in queue order.
-
-    func testEachEdgeEntryPointReachesItsOwnRule() {
-        XCTAssertTrue(AttentionEdge.shouldNotify(prev: .working, current: .done))
-        XCTAssertFalse(AttentionEdge.shouldNotify(prev: .done, current: .done))
-        XCTAssertTrue(AttentionEdge.isCompletion(prev: .working, current: .idle))
-        XCTAssertFalse(AttentionEdge.isCompletion(prev: .done, current: .idle))
-        XCTAssertTrue(AttentionEdge.isAttention(.needsPermission))
-        XCTAssertFalse(AttentionEdge.isAttention(.working))
-    }
+    // The rules are `slopdesk-agent::attention` and `slopdesk-workspace::pane_facts`; what is tested
+    // here is that each Swift entry point reaches the one it names — a status crossing as its own
+    // byte, a pane list answering with the right IDENTITY for the position it gets back, and a
+    // visited set that is read in queue order.
 
     /// Every status must cross as ITSELF: a transposed byte would make one state's rule answer for
-    /// another, which no single-case assertion above would catch.
-    func testEveryStatusCrossesAsItself() {
-        let attention: Set<ClaudeStatus> = [.needsPermission, .done]
+    /// another, and the ladder's whole shape turns on which state `next` is.
+    func testEveryStatusCrossesAsItselfThroughTheCommitLadder() {
         for status in [ClaudeStatus.none, .idle, .working, .done, .needsPermission] {
-            XCTAssertEqual(AttentionEdge.isAttention(status), attention.contains(status), "\(status)")
-            XCTAssertEqual(
-                AttentionEdge.isCompletion(prev: status, current: .idle),
-                status == .working || status == .needsPermission,
-                "\(status) → idle",
-            )
+            let verdict = PaneFacts.commit(previous: .working, lastNotified: .none, status: status, quiet: false)
+            guard status != .working else {
+                XCTAssertNil(verdict, "an unchanged status commits nothing")
+                continue
+            }
+            guard let out = verdict else {
+                XCTFail("\(status) changed the pane and committed nothing")
+                continue
+            }
+            XCTAssertEqual(out.stamp_completed, status == .done, "\(status)")
+            XCTAssertEqual(out.notify_edge, status == .done || status == .needsPermission, "\(status)")
+            XCTAssertEqual(out.schedule_completion, status == .idle, "\(status) — the hook-less finish")
+            XCTAssertEqual(out.mark_seen, status == .needsPermission, "\(status)")
         }
+    }
+
+    /// The coalescing MEMORY, not the previous status, is what a ring is judged against — and a
+    /// `quiet` transition rings for nothing while still moving every stamp.
+    func testTheCommitLadderCoalescesAndQuietVetoesOnlyTheRing() {
+        XCTAssertEqual(
+            PaneFacts.commit(previous: .working, lastNotified: .done, status: .done, quiet: false)?.notify_edge,
+            false,
+            "re-entering an announced state is not news",
+        )
+        let quiet = PaneFacts.commit(previous: .working, lastNotified: .none, status: .done, quiet: true)
+        XCTAssertEqual(quiet?.notify_edge, false)
+        XCTAssertEqual(quiet?.stamp_completed, true, "the dot and the stamps are not the ring")
     }
 
     /// The door answers a POSITION; the pane it names must be the one at that position.
@@ -263,7 +274,7 @@ final class AttentionTests: XCTestCase {
     /// The store-level done → needsPermission ESCALATION edge re-fires (with needsInput==true): a pane that
     /// already notified `done` and then becomes blocked must announce again, since the human now must act.
     /// This pins the `lastNotifiedStatus` re-arm/escalation branch through `setAgentStatus` (the pure
-    /// `AttentionEdge` layer alone does not exercise the stored memory).
+    /// ``PaneFacts`` layer alone does not exercise the stored memory).
     func testStoreEscalatesDoneToNeedsPermission() throws {
         let store = makeTreeStore()
         let pump = installAttentionPump(on: store)

@@ -91,7 +91,7 @@ public enum AgentStatusKind: UInt8, Sendable, Equatable, CaseIterable {
     ///
     /// The one producer today is the `/compact` boundary. A compaction ends the turn with a `Stop`
     /// hook, which the machine now lands on `.idle` instead of `.done` — but `.working → .idle` is
-    /// itself the hook-less COMPLETION edge (`AttentionEdge.isCompletion`, herdr's rule for agents
+    /// itself the hook-less COMPLETION edge (`slopdesk-agent::attention::is_completion`, herdr's rule for agents
     /// with no Stop hook at all), so the client would still announce the finish the host just
     /// decided not to announce. This byte is how the host says "I know what this transition looks
     /// like; it is not a finish" (user-reported 2026-08-10).

@@ -395,12 +395,6 @@ uint8_t slopdesk_agent_badge_rollup(const uint8_t *badges, size_t len);
 // turn ending is the mark column's check, a command's exit is the trailing slot's.
 uint8_t slopdesk_agent_badge_command_outcome(int8_t badge, bool agent_finish);
 uint8_t slopdesk_agent_status_rollup(const uint8_t *statuses, size_t len);
-// Which pane is asking for the human. The two EDGE rules take the state last NOTIFIED for, not the
-// last state seen, so re-entering a state already announced is not news; `completion` is the
-// hook-less finish (an active state settling to plain idle), which `Done -> Idle` is NOT.
-bool    slopdesk_agent_is_attention(uint8_t status);
-bool    slopdesk_agent_attention_edge(uint8_t previous, uint8_t current);
-bool    slopdesk_agent_attention_completion(uint8_t previous, uint8_t current);
 // What mints one FINISHED TURN (`pane/completionEpoch`): the hook-less finish above, plus
 // ENTERING done, where a Stop hook announces the finish itself. The `Done -> Idle` decay that
 // follows mints nothing, so one turn is counted once on a host with hooks and on one without.
@@ -10479,6 +10473,49 @@ size_t slopdesk_ws_command_navigator_words(uint8_t *out, size_t cap);  // 11 run
 // empty segment names the segment.
 size_t slopdesk_ws_command_navigator_empty_line(uint8_t filter, bool has_blocks, uint8_t *out,
                                                 size_t cap);
+
+// ---- A pane's supervision facts ----------------------------------------------------------------
+//
+// `slopdesk_agent_attention_*` above answers the three EDGE questions one at a time. This is what
+// the store actually asks: given all three plus the coalescing memory, WHICH of the pane's facts
+// move. The verdict is applied verbatim on the near side — six writes, no branch of its own.
+//
+// No pane identity crosses. The commit takes three statuses; the queue order takes badges and
+// instants and answers POSITIONS in the list it was handed.
+typedef struct {
+    bool changed;             // false => ignore every field below
+    bool notify_edge;         // latch the new status as last-notified, and park a notification
+    bool rearm_notified;      // forget last-notified: the pane left the attention bucket
+    bool schedule_completion; // park a notification for a HOOK-LESS finish
+    bool stamp_completed;     // stamp the finish, arm the flash decay, bump this client's counter
+    bool mark_seen;           // the agent moved on: the previous turn's marker is stale news
+    bool stamp_working;       // anchor the turn clock; false RETIRES it
+} SlopDeskWsPaneStatusCommit;
+// `last_notified` is the coalescing MEMORY, not the previous status: `done -> working -> done`
+// re-enters a state already announced and stays quiet. `quiet` is the host's bookkeeping
+// qualification (today only `/compact`) — it vetoes rings and nothing else, not even the re-arm.
+SlopDeskWsPaneStatusCommit slopdesk_ws_pane_status_commit(uint8_t previous, uint8_t last_notified,
+                                                          uint8_t next, bool quiet);
+// What a pane's unread-finish marker becomes: 0 clear, 1 clear AND record it seen, 2 mark unread.
+// `has_seen` separates "never recorded" from "recorded zero" — the first can never match a live
+// counter, the second is every pane's state before the document arrives.
+uint8_t slopdesk_ws_pane_unseen_done(uint32_t epoch, bool has_seen, uint32_t seen, bool is_visible);
+// Whether an unbroken watch of `watched` seconds has earned the finish-marker acknowledge. Settles
+// once the watch REACHES the window: a window is how long you have to look, not that plus a tick.
+bool slopdesk_ws_pane_settle_due(double watched, double window);
+// One pane in the unseen-attention queue. `since` is a flag plus a value because the absent case is
+// REAL — a manual badge override carries no age evidence — and a sentinel would sort as itself.
+typedef struct {
+    uint8_t badge;
+    bool    has_since;
+    double  since;
+} SlopDeskWsWaitingPane;
+// The order the queue is walked in, as POSITIONS into `entries`: rank first (a waiting question,
+// then a failure, then an unread finish), then longest-waiting, then the caller's own traversal as
+// the tie. A dated entry outranks an undated one at the same rank. Returns the count NEEDED; a
+// short or null `out` is written nothing and told the length.
+size_t slopdesk_ws_attention_order(const SlopDeskWsWaitingPane *entries, size_t len, uint32_t *out,
+                                   size_t capacity);
 
 // ---- The pane switcher -------------------------------------------------------------------------
 //
