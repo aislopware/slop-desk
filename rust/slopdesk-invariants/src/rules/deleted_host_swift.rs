@@ -15,10 +15,10 @@
 //! silently — a second canonical form keys one repository as two sidebar sections, and a second
 //! reading of "a turn ended" mints an unread badge nobody earned.
 //!
-//! **The eight command-line instruments.** They are the easiest second implementation to write and
+//! **The nine command-line instruments.** They are the easiest second implementation to write and
 //! the hardest to notice — nothing links one, no suite runs it, and its whole job is to re-ask a
 //! question about the tree, which means re-spelling whatever it asks about. Three are `[[bin]]`s of
-//! `rust/slopdesk-instruments` now and one is `rust/slopdesk-navprobe`; the other four came back as
+//! `rust/slopdesk-instruments` now and one is `rust/slopdesk-navprobe`; the other five came back as
 //! nothing at all, which is the stronger claim.
 //!
 //! **The outbound frame queue.** What the drain pops is not what the read loop appended — chunks
@@ -195,19 +195,20 @@ fn pane_truths() -> Vec<Claim> {
     }]
 }
 
-/// The eight Swift command-line instruments, and why each one staying gone is a RULE.
+/// The nine Swift command-line instruments, and why each one staying gone is a RULE.
 ///
 /// An instrument is the easiest second implementation to write and the hardest to notice: nothing
 /// links it, no suite runs it, and its whole job is to answer a question about the tree — so it
 /// re-spells whatever it is asking about, and then quietly disagrees. Six of these were already
-/// asking a settled question when they were deleted, and the two benches were measuring a Swift
+/// asking a settled question when they were deleted, and the three benches were measuring a Swift
 /// path that no longer exists.
 ///
 /// Three came back as Rust and their names are the ones to look for, because a `swift run`
 /// respelling would compile: `slopdesk-replay-bench`, `slopdesk-swipestatus-probe` and
 /// `slopdesk-fuzzybench` are `[[bin]]`s of `rust/slopdesk-instruments`, and
 /// `slopdesk-navhistory-probe` is `rust/slopdesk-navprobe`. The other four came back as nothing at
-/// all, which is the stronger claim: the virtual-display probe re-asked what
+/// all, which is the stronger claim: the CPU-codec bench timed three codecs that are Rust's now,
+/// the virtual-display probe re-asked what
 /// `VirtualDisplayPlanner.refreshRates` already ships, the capture probe matched a window title
 /// with the very predicate `panel_predicates` bans, and the loopback and fake-client harnesses were
 /// each a second speaker of a wire that is golden-pinned.
@@ -220,6 +221,13 @@ fn pane_truths() -> Vec<Claim> {
 /// left that a `View::Code` scan could catch.
 fn swift_instruments_stay_deleted() -> Vec<Claim> {
     vec![
+        Claim::Absent {
+            path: "Sources/slopdesk-bench",
+            message: "the CPU-codec bench is back in Swift — it timed the frame hash, the GF region \
+                      multiply and the Reed-Solomon encode/recover, and all three are Rust's now \
+                      (rust/slopdesk-gfsimd and the FEC crate above it), so a Swift one reports a number \
+                      for a path nothing runs",
+        },
         Claim::Absent {
             path: "Sources/slopdesk-replay-bench",
             message: "the model-walk bench is back in Swift — it is rust/slopdesk-instruments' \
@@ -899,11 +907,12 @@ mod tests {
         }
     }
 
-    /// The eight retired instruments. Each ban is on the target DIRECTORY, so the seed is a source
+    /// The nine retired instruments. Each ban is on the target DIRECTORY, so the seed is a source
     /// file under it — a resurrection under any other filename fails the same way.
     #[test]
     fn a_revived_swift_instrument_is_red() {
         for target in [
+            "slopdesk-bench",
             "slopdesk-replay-bench",
             "slopdesk-swipestatus-probe",
             "slopdesk-fuzzybench",

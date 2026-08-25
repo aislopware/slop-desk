@@ -136,3 +136,20 @@ grow its own TOML parser, its own path resolution, or its own comment handling b
 The staleness gate lives in `slopdesk-settings` rather than `slopdesk-invariants` on purpose: it is
 not a pattern over the tree, it is the generator's own output compared to the artifact, and only the
 crate that can RUN the generator can ask that question.
+
+### The one duplication still standing, and the rule that would end it
+
+`AppConfig.choice(_:_:)` takes a Swift enum case as a fallback, and seventeen call sites pass one.
+Every single one of them is DEAD: `texts[path]` already carries the table's own default, so the
+fallback fires only for a token no case spells — a hand-edited `config.toml` reaching an older
+binary. `AppConfig`'s own doc says "this side holds NO default of its own", and seventeen tokens
+sitting in Swift contradict it, which is the shape [`docs/55`](55-ffi-boundary.md) §8 catalogues.
+
+Pinning each fallback TOKEN to its table default needs a three-way join — path → Swift enum →
+`rawValue` → table default — and the enums mix implicit raw values (`case auto`) with explicit ones
+(`case afterCurrent = "after-current"`), so the join has to model both. The cheaper equivalent, and
+the one to write: pin each choice enum's CASE SET to that path's `options` in
+`rust/slopdesk-settings/src/config/table.rs`. Once the sets are proved equal the fallback is
+provably unreachable, and its token stops being a second default whatever it spells. The rule is
+textual on both sides — `slopdesk-invariants` reads source and links no crate — so it must resolve
+an `options:` that is a named `const` in the same file as well as one written as a literal array.
