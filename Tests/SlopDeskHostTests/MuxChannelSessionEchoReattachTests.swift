@@ -4,7 +4,7 @@ import XCTest
 @testable import SlopDeskHost
 
 /// AUTO Secure Keyboard Entry must survive a reconnect/reattach while a no-echo password
-/// prompt is up. The host's ``EchoModeDetector`` is edge-triggered, and the client resets `hostNoEcho = false`
+/// prompt is up. The host's echo fold is edge-triggered, and the client resets `hostNoEcho = false`
 /// on reconnect, so without a forced re-emit a prompt that spans the reattach would leave the client's
 /// `EnableSecureEventInput` DISENGAGED (keystrokes unprotected). ``MuxChannelSession/reestablishEchoOnReattach``
 /// (called from ``rebindRelay``) re-anchors the detector and re-emits the CURRENT echo truth.
@@ -12,7 +12,7 @@ import XCTest
 /// Driven WITHOUT a PTY or running relay via the echo seams (`PTYEchoProbe` is compiled-only per the
 /// hang-safety rule; the injected `echoOn` stands in for its `tcgetattr`).
 ///
-/// REVERT-TO-FAIL: removing the re-anchor (`echoDetector = EchoModeDetector(initialEcho: true)`) inside
+/// REVERT-TO-FAIL: removing the re-anchor (`PaneTruths.reanchorEcho`'s baseline reset) inside
 /// `reestablishEchoOnReattach` collapses it to a no-op re-fold of the unchanged no-echo state →
 /// `testReattachReemitsNoEchoTruthAcrossControlQueueClear` gets `nil` and fails.
 final class MuxChannelSessionEchoReattachTests: XCTestCase {
@@ -71,7 +71,7 @@ final class MuxChannelSessionEchoReattachTests: XCTestCase {
     /// The reported bug: the "SECURE INPUT" pill shows at launch on a NORMAL
     /// echo-on shell prompt and stays on. ROOT CAUSE is host-side — a freshly connected PTY master can
     /// read `ECHO`-cleared for a sample or two before the shell's termios settles to echo-on, and the
-    /// edge-triggered ``EchoModeDetector`` (anchored echo-on) would fold that transient as a real edge,
+    /// edge-triggered echo fold (anchored echo-on) would fold that transient as a real edge,
     /// emitting a spurious `inputEcho(false)` that latches the client's `hostNoEcho = true`.
     ///
     /// The connect/keystroke/poll path must HONOR a no-echo edge only after a confirmed echo-ON sample.

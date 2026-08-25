@@ -15,8 +15,12 @@ const OUTBOX_FACE: &str = "Sources/SlopDeskHost/PaneOutbox.swift";
 /// The Swift face of the pane's subscriber set. The same bar, for the same reason.
 const FANOUT_FACE: &str = "Sources/SlopDeskHost/PaneFanout.swift";
 
-/// The one file allowed to hold the `Subscriber` OBJECTS the set is keyed by.
+/// The one file allowed to hold the `Subscriber` OBJECTS the set is keyed by, and the pane's ONE
+/// lock over its truths.
 const SESSION: &str = "Sources/SlopDeskHost/MuxChannelSession.swift";
+
+/// The face that marshals one pane's latched truths.
+const TRUTHS_FACE: &str = "Sources/SlopDeskHost/PaneTruths.swift";
 
 /// One regex engine meets the untrusted rows, and it does not backtrack
 ///
@@ -272,6 +276,70 @@ pub fn the_subscriber_set_is_one_table(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// One batch, one pass, one lock
+///
+/// A pane's truths were SEVEN stored properties behind seven `NSLock`s, and the read loop took four
+/// of them per chunk — one per latch — while the control sockets took the rest. Nothing was faster
+/// for the split: the writer is serial, so the seven acquisitions bought no concurrency at all, and
+/// they cost every reader the chance of pairing a fresh title with a stale stamp.
+///
+/// The fold that produces them is `rust/slopdesk-muxsession`'s `truths` now, so this pins the two
+/// halves that keep it one implementation: the face asks every door (a face that drops one is a
+/// latch growing back beside the handle), and the session declares no second lock over what the
+/// handle already serialises.
+#[must_use]
+pub fn one_batch_one_pass_one_lock(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: TRUTHS_FACE,
+            message: "Sources/SlopDeskHost/PaneTruths.swift is gone — the title latch, the progress badge, \
+                      the command edge and the turn counter are not MuxChannelSession's to hold again \
+                      (docs/59 §4, step 4)",
+        },
+        Claim::Doors {
+            path: TRUTHS_FACE,
+            entries: &[
+                "slopdesk_pane_truths_new",
+                "slopdesk_pane_truths_free",
+                "slopdesk_pane_truths_ingest_sniffed",
+                "slopdesk_pane_truths_ingest_blocks",
+                "slopdesk_pane_truths_title",
+                "slopdesk_pane_truths_title_at",
+                "slopdesk_pane_truths_retire_title",
+                "slopdesk_pane_truths_take_title_coalescing_reset",
+                "slopdesk_pane_truths_title_anchor_retirements",
+                "slopdesk_pane_truths_progress",
+                "slopdesk_pane_truths_last_exit",
+                "slopdesk_pane_truths_last_duration",
+                "slopdesk_pane_truths_command_running_since",
+                "slopdesk_pane_truths_running_command",
+                "slopdesk_pane_truths_fold_completion",
+                "slopdesk_pane_truths_completion_epoch",
+                "slopdesk_pane_truths_fold_echo",
+                "slopdesk_pane_truths_reanchor_echo",
+            ],
+            message: "Sources/SlopDeskHost/PaneTruths.swift no longer calls {entry} — a face that drops a \
+                      door is a latch coming back beside the handle, which is the seven-lock shape the fold \
+                      replaced",
+        },
+        Claim::NoneOf {
+            paths: &[TRUTHS_FACE],
+            pattern: r"\bNSLock\b|ProcessInfo|Date\(\)|trimmingCharacters",
+            view: View::Code,
+            message: "{files} decides something — the face marshals and nothing else: both clocks are the \
+                      caller's and the trim is the fold's (docs/59 §4, step 4)",
+        },
+        Claim::NoneOf {
+            paths: &[SESSION],
+            pattern: r"\b(titleLock|progressLock|completionLock|commandExitLock|blocksLock|echoDetectLock|agentDetectLock)\b",
+            view: View::Code,
+            message: "{files} declares one of the seven locks again — they collapsed into truthsLock \
+                      because the fields were never the reason they were separate (docs/59 §4, step 4)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -317,6 +385,63 @@ mod tests {
             "NSRegularExpression\n",
         );
         assert!(!super::one_regex_engine_over_untrusted(&fixture.tree()).is_clean());
+    }
+
+    /// Every door the truths face must keep asking, in one string a fixture can hold.
+    const TRUTHS_DOORS: &str = concat!(
+        "slopdesk_pane_truths_new()\n",
+        "slopdesk_pane_truths_free()\n",
+        "slopdesk_pane_truths_ingest_sniffed()\n",
+        "slopdesk_pane_truths_ingest_blocks()\n",
+        "slopdesk_pane_truths_title()\n",
+        "slopdesk_pane_truths_title_at()\n",
+        "slopdesk_pane_truths_retire_title()\n",
+        "slopdesk_pane_truths_take_title_coalescing_reset()\n",
+        "slopdesk_pane_truths_title_anchor_retirements()\n",
+        "slopdesk_pane_truths_progress()\n",
+        "slopdesk_pane_truths_last_exit()\n",
+        "slopdesk_pane_truths_last_duration()\n",
+        "slopdesk_pane_truths_command_running_since()\n",
+        "slopdesk_pane_truths_running_command()\n",
+        "slopdesk_pane_truths_fold_completion()\n",
+        "slopdesk_pane_truths_completion_epoch()\n",
+        "slopdesk_pane_truths_fold_echo()\n",
+        "slopdesk_pane_truths_reanchor_echo()\n",
+    );
+
+    #[test]
+    fn one_batch_one_pass_one_lock_keeps_the_seven_latches_on_one_side() {
+        let fixture = Fixture::new("one-batch-one-pass-one-lock");
+        fixture
+            .write(super::TRUTHS_FACE, TRUTHS_DOORS)
+            .write(super::SESSION, "kept so the bans have a haystack\n");
+        assert!(super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a latch grew back beside the handle.
+        fixture.write(super::TRUTHS_FACE, "slopdesk_pane_truths_new()\n");
+        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+
+        // The face reads a clock the fold takes as a parameter.
+        fixture.write(super::TRUTHS_FACE, TRUTHS_DOORS);
+        fixture.append(super::TRUTHS_FACE, "        let now = Date()\n");
+        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+
+        // The face re-spells the fold's own trim.
+        fixture.write(super::TRUTHS_FACE, TRUTHS_DOORS);
+        fixture.append(
+            super::TRUTHS_FACE,
+            "        text.trimmingCharacters(in: .whitespaces)\n",
+        );
+        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+
+        // One of the seven locks is declared again.
+        fixture.write(super::TRUTHS_FACE, TRUTHS_DOORS);
+        fixture.append(super::SESSION, "    private let progressLock = NSLock()\n");
+        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+
+        // A bare fixture has no face at all.
+        let bare = Fixture::new("one-batch-one-pass-one-lock-bare");
+        assert!(!super::one_batch_one_pass_one_lock(&bare.tree()).is_clean());
     }
 
     /// Every door the face must keep asking, in one string a fixture can hold.

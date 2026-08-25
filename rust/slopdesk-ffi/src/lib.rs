@@ -202,6 +202,7 @@ pub mod pane_kind;
 pub mod pane_outbox;
 pub mod pane_session;
 pub mod pane_switcher;
+pub mod pane_truths;
 // macOS only: Darwin `proc_*` over every live pid, plus an `lsof` spawn. Only hostd asks, and only
 // about a PTY it holds. See the module.
 #[cfg(target_os = "macos")]

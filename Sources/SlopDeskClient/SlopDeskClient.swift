@@ -111,7 +111,7 @@ public actor SlopDeskClient {
         /// The host PTY's termios `ECHO` edge (wire type 31, host → client). `enabled == true`
         /// is the canonical echoing prompt; `enabled == false` is a no-echo hidden-password prompt (`sudo` /
         /// `ssh` / `read -s`). The macOS UI engages process-global Secure Keyboard Entry while `false`. Emitted
-        /// only on the edge (the host's `EchoModeDetector` suppresses chatter).
+        /// only on the edge (the host's `PaneTruths` echo fold suppresses chatter).
         case inputEcho(enabled: Bool)
         /// An OSC 9;4 taskbar-style PROGRESS update (wire type 32, host → client). The host parses
         /// the `ESC]9;4;<state>[;<pct>]` subtype out of the OSC-9 stream and forwards it on the CONTROL

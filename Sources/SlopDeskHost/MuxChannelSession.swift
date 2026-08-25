@@ -244,25 +244,36 @@ final class MuxChannelSession: @unchecked Sendable {
     /// from `SLOPDESK_BLOCKS` (default-ON) by the owner and sent with the `spawn`.
     private let blocksEnabled: Bool
 
-    /// The running command line, as superd's tap last reported it — `nil` at an idle prompt.
+    /// The pane's LATCHED TRUTHS and the ONE lock over them — docs/59 §4, step 4.
     ///
-    /// A LATCH, not a query, and that distinction is load-bearing: ``PaneLiveness/capture`` reads it
-    /// for every pane on every reconciler tick, so it has to be a lock acquisition rather than a
-    /// round trip. Everything else about a pane's blocks IS a round trip (`blockOutput`,
-    /// `blockSnapshot`, `blockControl`), because every other reader is a person or an agent asking
-    /// once. Written on the read-loop thread as the `0x05` batches arrive; read from the control
-    /// socket's threads.
-    private let blocksLock = NSLock()
-    private var _runningCommand: String?
+    /// The title and its stamp, the OSC 9;4 badge, the command edge, the last exit code and
+    /// duration, the running block's command line, the echo anchor and the finished-turn counter
+    /// were SEVEN stored properties behind seven `NSLock`s, all seven written on the read-loop
+    /// thread and read from a control socket's. They were separate because the FIELDS were separate,
+    /// never because the truths are: one sniffed batch folds most of them in one pass, so seven
+    /// acquisitions bought no concurrency against a serial writer and cost every reader the chance
+    /// of a torn view.
+    ///
+    /// Each one is a LATCH rather than a query, and that distinction is load-bearing:
+    /// ``PaneLiveness/capture`` reads the running command for every pane on every reconciler tick,
+    /// so it has to be a lock acquisition rather than a round trip. Everything else about a pane's
+    /// blocks IS a round trip (`blockOutput`, `blockSnapshot`, `blockControl`), because every other
+    /// reader is a person or an agent asking once.
+    ///
+    /// ``agentDetector`` sits behind this lock too: it is folded from the same batch (a sniffed
+    /// title is a detection input) and read in the same breath (the type-25 gate asks it whether the
+    /// pane's agent already announces its own edges), so a second lock would only be a chance to
+    /// pair a fresh title with a stale verdict.
+    private let truthsLock = NSLock()
+    private let truths = PaneTruths()
 
     /// The SINGLE per-pane Claude detector (ONE `ClaudeStatusMachine`, ``rust/slopdesk-agent``'s
     /// `machine`). Fed by ALL detection
     /// inputs — the foreground poll's `processPresent`, the per-poll `tick` (drives the `.done→.idle`
     /// decay), and the hook socket's bytes — so the host is the single source of truth. Touched from
     /// TWO contexts (the serial `agentWatchTask` and the socket-accept thread when a hook POSTs), so
-    /// it is guarded by `agentDetectLock`. ONE machine, deliberately: a pair of independent machines
+    /// it is guarded by ``truthsLock``. ONE machine, deliberately: a pair of independent machines
     /// (`foregroundDetector` + `agentHookHandler`) would fight over the one type-27 stream.
-    private let agentDetectLock = NSLock()
     private let agentDetector = ClaudePaneDetector()
 
     /// The foreground-watch poll task (cancel on shutdown).
@@ -294,62 +305,7 @@ final class MuxChannelSession: @unchecked Sendable {
     private var jobProbeCachedAgent: AgentKind?
     private var jobProbeCachedAt: TimeInterval = -.infinity
 
-    /// The pure per-pane PTY-echo edge detector (the AUTO Secure-Keyboard-Entry signal).
-    /// Driven by ``PTYEchoProbe`` from TWO contexts — the input task (opportunistically right after a
-    /// client keystroke is written to the PTY, where `ECHO` flips fastest around a password prompt) and
-    /// the foreground-watch poll (a low-rate backstop, when `agentDetectEnabled`) — so it is guarded by
-    /// `echoDetectLock`. Anchored at echo-on, so it is SILENT until the child actually clears `ECHO`
-    /// (the CONTROL stream stays byte-identical when no no-echo prompt ever appears).
-    private let echoDetectLock = NSLock()
-    private var echoDetector = EchoModeDetector()
-
-    /// Connect-time warm-up guard for the echo edge (guarded by `echoDetectLock`). A freshly
-    /// connected PTY master can read `ECHO`-cleared for a sample or two right after attach — before the
-    /// line discipline settles to echo-on — and folding that transient as a real edge would emit a
-    /// spurious `inputEcho(false)` that LATCHES the client's Secure-Input pill on a normal prompt. So
-    /// ``foldEchoSample(echoOn:)`` HONORS a no-echo edge only AFTER first observing a confirmed echo-ON
-    /// sample. The reattach path (``reestablishEchoOnReattach(echoOn:to:)``) is SEPARATE — it re-asserts
-    /// the current echo truth immediately and is NOT gated by this flag.
-    private var echoWarmedUp = false
-
     // MARK: - Agent-control surface state
-
-    /// The last OSC-0/2 title sniffed from the PTY output stream. Updated on the PTY
-    /// read-loop thread under `titleLock`; read by the agent-control `list-panes` verb.
-    private let titleLock = NSLock()
-    private var _currentTitle: String = ""
-
-    /// When ``_currentTitle`` was sniffed, `nil` when no title has arrived or the agent retired the
-    /// one it owned. Half of the `pane/titleFresh` verdict (docs/45 §4.4) — the host decides
-    /// freshness and ships the ANSWER, because the client's own two-stamp comparison reset to empty
-    /// on every cold start and so failed permanently.
-    ///
-    /// Stamped on `timeIntervalSinceReferenceDate`, deliberately matching
-    /// the sniffer's `command_running_since` (`rust/slopdesk-superd/src/sniffer.rs`) rather than the `systemUptime` the detector folds
-    /// on. The two stamps are COMPARED; on two different clocks — one of which stops during sleep —
-    /// the comparison would be meaningless in exactly the case (a laptop that slept) where the user
-    /// notices.
-    private var _currentTitleAt: TimeInterval?
-
-    /// Set when the detector retired an exiting agent's title (see ``ClaudePaneDetector/Emission``)
-    /// and consumed by the PTY read loop before its next sniffer pass. The retirement can be folded
-    /// from ANY of the detector's feeds — the foreground poll, the scan task, the hook socket — but
-    /// the sniffer's coalescing anchor belongs to the read-loop thread, so the request crosses over
-    /// as a flag under `titleLock` rather than as a direct call.
-    private var pendingTitleCoalescingReset = false
-
-    /// Reattach truth — the last NON-CLEAR OSC 9;4 progress message emitted for this pane
-    /// (`nil` when cleared / never reported). Latched at BOTH emit points — the sniffer's chunk pass
-    /// and the Blocks segmenter's auto-progress — so a reattaching client (which reset its progress
-    /// mirror on disconnect) can be re-told the live state: progress is control-only, never in the
-    /// replayed output bytes — the same class as the echo truth. Guarded by `progressLock` (written
-    /// on the read-loop thread; read by the reattach path).
-    private let progressLock = NSLock()
-    private var lastProgress: WireMessage?
-
-    /// The freshest OSC 9;4 pair, latched beside ``lastProgress`` so the document can publish the
-    /// VALUE rather than re-deriving it from a message.
-    private var lastProgressPair: (state: UInt8, percent: UInt8)?
 
     /// The last foreground process name the watcher sampled (`pane/foregroundProcess`). Latched
     /// here rather than re-probed per read: `PTYForegroundProbe.foregroundName` is a syscall, and
@@ -357,21 +313,9 @@ final class MuxChannelSession: @unchecked Sendable {
     private let foregroundLock = NSLock()
     private var _lastForeground: String?
 
-    /// Monotone count of FINISHED TURNS (`pane/completionEpoch`), and the status the count last
-    /// stood at (the transition, not the state, is what mints one — see
-    /// ``isCompletionTransition(previous:next:)``).
-    ///
-    /// The host holds ZERO per-client acknowledgement state: it publishes how many turns have
-    /// finished, and each viewer compares that against its own device-local `seenCompletionEpoch`.
-    /// Clients agree on the FACT and are free to disagree about the ACKNOWLEDGEMENT — which is
-    /// what makes "unseen" per-device without any of it crossing the wire.
-    private let completionLock = NSLock()
-    private var _completionEpoch: UInt32 = 0
-    private var _lastCompletionStatus: ClaudeStatus = .none
-
     /// Host-authoritative By-Project key (type 34) — the reattach/dedupe latches. `lastCwdTruth` is
     /// the freshest cwd this session has observed (OSC-7 sniff, else the prompt-edge `proc_pidinfo`
-    /// probe), latched at the SNIFF point on the read-loop thread (like `lastProgress` — a detached
+    /// probe), latched at the SNIFF point on the read-loop thread (like the progress badge — a detached
     /// window's change must be visible to the reattach re-assert immediately). `lastProjectKey` is
     /// the last EMITTED type-34 (git toplevel containing that cwd, else the cwd itself —
     /// ``ProjectKey/of(cwd:)``), latched at RESOLVE COMPLETION on `metadataQueue`: the resolver's
@@ -445,16 +389,6 @@ final class MuxChannelSession: @unchecked Sendable {
         var complete: Bool
     }
 
-    /// The freshest OSC-133-D exit code this session has observed (`133;D;<code>` from the
-    /// sniffer's `.commandStatus(.idle(exitCode:))`), latched at the sniff point like
-    /// `lastProgress`. Guarded by `commandExitLock` (written on the read-loop thread; read by
-    /// the ctl `list-panes` handler threads). `nil` until the first code-carrying `D`.
-    private let commandExitLock = NSLock()
-    private var lastExitTruth: Int32?
-
-    /// The host-measured C→D duration of the last completed command (`pane/lastDurationMS`).
-    private var lastDurationTruth: UInt32?
-
     /// A dedicated serial queue for the host metadata RPC's BLOCKING probe work (git/lsof/proc/
     /// FileManager). Kept OFF the serial control loop so a slow `lsof` / `git` can never stall this
     /// pane's resize/ack/ping; ``sendControl(_:to:)`` (lock-guarded) carries the answer back to the
@@ -480,15 +414,6 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// How many times the read loop has asked superd to retire the title anchor. Read only by the
     /// suite that pins WHEN the retirement is asked for; written only on the read-loop thread.
-    private var titleAnchorRetirements = 0
-
-    /// The command-status truth the reattach re-assert reads, latched from the sniffed batch.
-    ///
-    /// superd holds the OSC-133 state machine; this is the one bit of its answer hostd has to
-    /// REMEMBER, because a client reconnecting mid-command asks what is running now and no new
-    /// event will arrive to tell it. Set on `C`, cleared on `D`, on the read-loop thread; read from
-    /// the reattach path's thread, hence under ``commandExitLock``.
-    private var commandRunningSince: TimeInterval?
 
     /// The prior life's distilled transcript (fresh-spawn restore, `HostServer.spawnFreshShell`).
     /// Enqueued as the FIRST output frame(s) by ``startRelay()`` — before the read loop starts —
@@ -685,12 +610,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// new value (foreground poll, hook POST, or a self-report). The ``HostServer`` sets it (like
     /// ``onExit``) to fan the cross-pane `agent_status_changed` event to top-level subscribers.
     /// `nil` by default → no fan-out (the headless smoke daemon never sets it). The closure is
-    /// invoked OUTSIDE `agentDetectLock` to avoid holding the detector lock across the server's
+    /// invoked OUTSIDE ``truthsLock`` to avoid holding the detector lock across the server's
     /// observer fan-out. Deduping consecutive identical states is the server's responsibility.
     var onAgentStatusChanged: (@Sendable (ClaudeStatus) -> Void)?
 
     /// Invokes ``onAgentStatusChanged`` (if set) with `status`. Called from the detector-folding
-    /// sites AFTER `agentDetectLock` is released, only on a real status transition.
+    /// sites AFTER ``truthsLock`` is released, only on a real status transition.
     /// `quiet` = the detector has qualified this transition as BOOKKEEPING (the wire `kind` byte's
     /// ``AgentStatusKind/quiet``): a `/compact` boundary, an Esc-cancelled dialog, or the screen
     /// watchdog correcting a hook block it outlasted. The status still moves — dots, rollups, the
@@ -703,13 +628,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // A finished turn is a TRANSITION, counted here — at the ONE place every detector fold
         // funnels a real transition through — which is why the count cannot be double-bumped by two
         // feeds observing the same edge.
-        completionLock.lock()
-        let previous = _lastCompletionStatus
-        _lastCompletionStatus = status
-        if !quiet, Self.isCompletionTransition(previous: previous, next: status) {
-            _completionEpoch &+= 1
-        }
-        completionLock.unlock()
+        truthsLock.lock()
+        truths.foldCompletion(status, quiet: quiet)
+        truthsLock.unlock()
         onAgentStatusChanged?(status)
     }
 
@@ -1297,12 +1218,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Folds one published screen detection through the detector and enqueues the resulting
     /// type-27 (the detector dedupes). Split so tests drive the pure fold with an injected clock.
     private func foldScreenDetection(_ detection: AgentScreenDetection, at now: TimeInterval) {
-        agentDetectLock.lock()
+        truthsLock.lock()
         let emission = agentDetector.screenDetection(detection, at: now)
         let newStatus = emission.status != nil
             ? (agentDetector.status, agentDetector.isQuietTransition)
             : nil
-        agentDetectLock.unlock()
+        truthsLock.unlock()
         publishAgentEmission(emission)
         if let newStatus { notifyAgentStatusChanged(newStatus.0, quiet: newStatus.1) }
     }
@@ -1324,7 +1245,7 @@ final class MuxChannelSession: @unchecked Sendable {
     ///
     /// The per-poll `tick(at:)` is what drives the `.done → .idle` decay — nothing else advances the
     /// host machine's clock, so without it a finished turn would stay 🔵 forever. Both folds share the
-    /// one machine under `agentDetectLock` (the hook socket-accept thread also folds into it).
+    /// one machine under ``truthsLock`` (the hook socket-accept thread also folds into it).
     private func sampleForeground(masterFD: Int32) {
         foldForegroundSample(
             name: PTYForegroundProbe.foregroundName(masterFD: masterFD),
@@ -1343,7 +1264,7 @@ final class MuxChannelSession: @unchecked Sendable {
         foregroundLock.lock()
         _lastForeground = name
         foregroundLock.unlock()
-        agentDetectLock.lock()
+        truthsLock.lock()
         // Tick FIRST so the decay is evaluated at this `now`, then the presence sample; both emit
         // type-27 only on a real triple change (the detector dedupes), so at most one status frame ships.
         let tickEmission = agentDetector.tick(at: now)
@@ -1354,7 +1275,7 @@ final class MuxChannelSession: @unchecked Sendable {
         let newStatus = statusChanged
             ? (agentDetector.status, agentDetector.isQuietTransition)
             : nil
-        agentDetectLock.unlock()
+        truthsLock.unlock()
         publishAgentEmission(tickEmission)
         publishAgentEmission(sampleEmission)
         if let newStatus { notifyAgentStatusChanged(newStatus.0, quiet: newStatus.1) }
@@ -1367,13 +1288,12 @@ final class MuxChannelSession: @unchecked Sendable {
     private func publishAgentEmission(_ emission: ClaudePaneDetector.Emission) {
         guard !emission.isEmpty else { return }
         if emission.title != nil {
-            titleLock.lock()
-            _currentTitle = ""
             // No title, no stamp: an ownership retirement must not leave a freshness verdict behind
-            // for a title that no longer exists.
-            _currentTitleAt = nil
-            pendingTitleCoalescingReset = true
-            titleLock.unlock()
+            // for a title that no longer exists, and the sniffer's coalescing anchor is asked to
+            // retire with it.
+            truthsLock.lock()
+            truths.retireTitle()
+            truthsLock.unlock()
         }
         broadcastControl(emission.messages)
     }
@@ -1384,12 +1304,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// anything) it changes. Split from the sniffer loop so tests drive the pure fold with an
     /// injected clock.
     private func foldTitleSample(title: String, at now: TimeInterval) {
-        agentDetectLock.lock()
+        truthsLock.lock()
         let emission = agentDetector.title(title, at: now)
         let newStatus = emission.status != nil
             ? (agentDetector.status, agentDetector.isQuietTransition)
             : nil
-        agentDetectLock.unlock()
+        truthsLock.unlock()
         publishAgentEmission(emission)
         if let newStatus { notifyAgentStatusChanged(newStatus.0, quiet: newStatus.1) }
     }
@@ -1401,18 +1321,18 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Cheap on the steady path: the detector bails on the status check before touching the bytes.
     private func foldUserInput(_ bytes: Data) {
         guard agentDetectEnabled else { return }
-        agentDetectLock.lock()
+        truthsLock.lock()
         let emission = agentDetector.userInput(bytes: bytes, at: ProcessInfo.processInfo.systemUptime)
         let newStatus = emission.status != nil
             ? (agentDetector.status, agentDetector.isQuietTransition)
             : nil
-        agentDetectLock.unlock()
+        truthsLock.unlock()
         publishAgentEmission(emission)
         if let newStatus { notifyAgentStatusChanged(newStatus.0, quiet: newStatus.1) }
     }
 
     /// Probes the PTY master's termios `ECHO` flag via the thin ``PTYEchoProbe`` shim,
-    /// folds it through the pure ``EchoModeDetector``, and enqueues a type-31 ``WireMessage/inputEcho``
+    /// folds it through ``PaneTruths``, and enqueues a type-31 ``WireMessage/inputEcho``
     /// on the CONTROL sender on an edge (the detector dedupes — an unchanged echo state emits nothing).
     /// Called opportunistically right after writing client input to the PTY (where `ECHO` flips fastest
     /// around a password prompt) and from the foreground poll backstop. Cheap (one `tcgetattr` syscall).
@@ -1424,21 +1344,13 @@ final class MuxChannelSession: @unchecked Sendable {
     /// (the detector dedupes — unchanged echo emits nothing). Split out from ``sampleEcho(masterFD:)`` so the
     /// OS probe and the pure fold are separable (the fold is exercised directly by tests via a seam).
     private func foldEchoSample(echoOn: Bool) {
-        echoDetectLock.lock()
-        // Until a confirmed echo-ON sample has been seen on THIS connection, suppress a no-echo
-        // reading entirely (don't fold, don't emit) — a transient startup no-echo (termios not yet
-        // settled to echo-on) must not latch the client's Secure-Input pill. The first echo-on sample
-        // warms the path up; thereafter a genuine echo→no-echo edge folds normally. (Reattach has its
-        // own un-gated re-assert path.)
-        if !echoWarmedUp {
-            guard echoOn else {
-                echoDetectLock.unlock()
-                return
-            }
-            echoWarmedUp = true
-        }
-        let message = echoDetector.sample(echoOn: echoOn)
-        echoDetectLock.unlock()
+        // The warm-up gate and the dedupe are both the fold's: until a confirmed echo-ON sample has
+        // been seen on THIS connection a no-echo reading is suppressed entirely, because a transient
+        // startup no-echo (termios not yet settled) must not latch the client's Secure-Input pill.
+        // (Reattach has its own un-gated re-assert path.)
+        truthsLock.lock()
+        let message = truths.foldEcho(echoOn: echoOn)
+        truthsLock.unlock()
         if let message { broadcastControl([message]) }
     }
 
@@ -1459,10 +1371,9 @@ final class MuxChannelSession: @unchecked Sendable {
         echoOn: Bool,
         to id: MuxSubscriberID = MuxChannelSession.primarySubscriberID,
     ) {
-        echoDetectLock.lock()
-        echoDetector = EchoModeDetector(initialEcho: true)
-        let message = echoDetector.sample(echoOn: echoOn)
-        echoDetectLock.unlock()
+        truthsLock.lock()
+        let message = truths.reanchorEcho(echoOn: echoOn)
+        truthsLock.unlock()
         if let message { sendControl([message], to: id) }
     }
 
@@ -1482,13 +1393,11 @@ final class MuxChannelSession: @unchecked Sendable {
     ) {
         var messages: [WireMessage] = []
         if commandStatusForReattach() != nil { messages.append(.commandStatus(.running)) }
-        progressLock.lock()
-        let progress = lastProgress
-        progressLock.unlock()
-        if let progress { messages.append(progress) }
-        agentDetectLock.lock()
+        truthsLock.lock()
+        let progress = truths.progressMessage
         let agentEmission = agentDetector.reestablishOnReattach()
-        agentDetectLock.unlock()
+        truthsLock.unlock()
+        if let progress { messages.append(progress) }
         messages.append(contentsOf: agentEmission.messages)
         // Host-authoritative cwd + By-Project key (type 33/34): re-tell the latched truths so the
         // returning client's sidebar sections and cwd mirror are correct IMMEDIATELY — no client-side
@@ -1514,9 +1423,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // Empty is skipped, not sent: `publishAgentEmission` clears `_currentTitle` to "" as the
         // ownership-RETIREMENT signal (:1027), so an empty here means "the agent handed the title
         // back" — re-asserting it would resurrect a dead agent's title on every reconnect.
-        titleLock.lock()
-        let title = _currentTitle
-        titleLock.unlock()
+        truthsLock.lock()
+        let title = truths.title
+        truthsLock.unlock()
         if !title.isEmpty { messages.append(.title(title)) }
         if !messages.isEmpty { sendControl(messages, to: id) }
     }
@@ -2448,70 +2357,39 @@ final class MuxChannelSession: @unchecked Sendable {
         // exited) also retires the sniffer's coalescing anchor — otherwise the NEXT agent's
         // opening title, which is very often byte-identical to the one just retired
         // (`✳ Claude Code`), would be deduped away and the pane would stay untitled.
-        titleLock.lock()
-        let forgetTitle = pendingTitleCoalescingReset
-        pendingTitleCoalescingReset = false
-        titleLock.unlock()
-        if forgetTitle {
-            pty.forgetTitleCoalescing()
-            titleAnchorRetirements &+= 1
-        }
+        let now = ProcessInfo.processInfo.systemUptime
+        truthsLock.lock()
+        let forgetTitle = truths.takeTitleCoalescingReset()
+        // The type-25 gate, read in the SAME acquisition the fold runs in: while this pane's agent
+        // announces its own edges through the hook feed, its OSC notification duplicates the type-27
+        // the client already banners, so one blocked prompt raises ONE notification. A hook-free pane
+        // keeps the OSC path — it is that pane's only signal. Two handles never hold each other, so
+        // the detector's verdict crosses as a VALUE.
+        let suppressChildNotifications = agentDetector.suppressesChildNotifications
         // What the shell said out of band in THESE bytes, as superd's pump found it
-        // (`rust/slopdesk-superd/src/sniffer.rs`). hostd no longer runs an OSC state machine over
-        // every byte of every pane: the reader that already holds the bytes does one pass and sends
-        // the ANSWER, which arrives paired with the chunk it came from, so the emission order below
-        // is byte-faithful interleaved exactly as it was.
-        let controlMsgs = Self.wireMessages(from: sniffed)
-        // Agent-control: cache the latest title from any sniffed title message so
-        // `list-panes` can return it without an extra sniffer pass. Runs on the PTY
-        // read-loop thread (serial) — update under titleLock (read from control socket
-        // handler threads). O(N) over the tiny `controlMsgs` list; happens at most once
-        // per chunk (title dedup is inside HostOutputSniffer).
-        for msg in controlMsgs {
-            if case let .title(t) = msg {
-                titleLock.lock()
-                _currentTitle = t
-                _currentTitleAt = Date().timeIntervalSinceReferenceDate
-                titleLock.unlock()
-                // Agent-detection: the title carries Claude Code's own busy/rest telltale (the
-                // Braille spinner / `✳` prefix) — fold the EDGE into the ONE detector (the sniffer
-                // dedupes titles, so this fires only on a real change; the fold is a lock + a pure
-                // reduce, cheap enough for the read loop). Gated like every other detection input.
-                if agentDetectEnabled {
-                    foldTitleSample(title: t, at: ProcessInfo.processInfo.systemUptime)
-                }
-            }
-            // Agent-control: latch the freshest `133;D;<code>` exit so `list-panes` can answer
-            // `lastExitCode` even with blocks tracking off. A code-less `D` keeps the prior latch
-            // (the shim always reports `$?`; a bare `D` carries no new truth to replace it with).
-            if case let .commandStatus(.idle(_, durationMS)) = msg {
-                // The duration is superd-measured C→D wall clock and arrives on EVERY `D`, including
-                // the code-less one the exit latch below deliberately ignores. The same `D` closes
-                // the running latch the reattach re-assert reads.
-                commandExitLock.lock()
-                lastDurationTruth = durationMS
-                commandRunningSince = nil
-                commandExitLock.unlock()
-            }
-            if case .commandStatus(.running) = msg {
-                // Stamped on receipt rather than carried in the event: the scale that matters is the
-                // one `pane/titleFresh` compares against (`systemUptime`, docs/45 §4.4), which is
-                // this process's, and superd's clock is not it. The two differ by the socket hop,
-                // which is orders of magnitude below the freshness window.
-                commandExitLock.lock()
-                commandRunningSince = ProcessInfo.processInfo.systemUptime
-                commandExitLock.unlock()
-            }
-            if case let .commandStatus(.idle(exitCode, _)) = msg, let exitCode {
-                commandExitLock.lock()
-                lastExitTruth = exitCode
-                commandExitLock.unlock()
+        // (`rust/slopdesk-superd/src/sniffer.rs`), folded in ONE pass: the title latch, the command
+        // edge, the exit code, the duration and the progress badge all move together, and the fold
+        // answers what each message is and where it goes. Byte-faithfully interleaved exactly as it
+        // was, because the batch arrived paired with the chunk it came from.
+        let routed = truths.ingest(
+            sniffed: sniffed,
+            reference: Date().timeIntervalSinceReferenceDate,
+            uptime: now,
+            suppressChildNotifications: suppressChildNotifications,
+        )
+        truthsLock.unlock()
+        if forgetTitle { pty.forgetTitleCoalescing() }
+        // Agent-detection: a sniffed title carries Claude Code's own busy/rest telltale (the Braille
+        // spinner / `✳` prefix) — fold the EDGE into the ONE detector (the sniffer dedupes titles, so
+        // this fires only on a real change). Gated like every other detection input, and taken
+        // OUTSIDE the fold's acquisition because publishing an emission broadcasts.
+        if agentDetectEnabled {
+            for entry in routed {
+                guard case let .title(title) = entry.message else { continue }
+                foldTitleSample(title: title, at: now)
             }
         }
-        // Reattach truth: latch the pane's current OSC 9;4 progress at the sniff point (NOT at the
-        // control drain — sniffed control rides the out-FIFO and a detached window's messages only
-        // reach the sender after the backlog ships, long after the reattach re-assert reads this).
-        latchProgress(controlMsgs)
+        let controlMsgs = routed.map(\.message)
         // Host-authoritative By-Project key (type 34): scan THIS chunk's sniffed batch for a cwd
         // change (the OSC-7 sniff when present, else the prompt-edge probe — cheap, sync) and, on
         // a change, hand the resolver's blocking stat-walk to the metadataQueue; the emission
@@ -2549,30 +2427,13 @@ final class MuxChannelSession: @unchecked Sendable {
         // to/over the bound, PAUSE the read loop so the kernel PTY buffer fills and
         // backpressures the shell (the real flood fix).
         enqueueOutput(chunk.count)
-        // Type-33 is host-gated single-source (see ``deriveProjectKey(from:)``, which just consumed
-        // this batch): the raw sniffed OSC-7 `.cwd` must not ALSO ride the FIFO — pre-warm-up plugin
-        // noise would reach the client unfiltered, and a probe-beaten stale OSC-7 would arrive at
-        // drain time AFTER (and client-side overwrite) the probed truth emitted above.
-        // Type-25 is likewise hook-gated: while the pane's agent status is hook-established, the
-        // agent's OWN terminal notification (OSC 9/777/99) duplicates the type-27 edge the client
-        // already banners — drop it here so one blocked prompt raises ONE notification. A hook-free
-        // pane keeps the OSC path (its only signal). The lock is taken only when a notification is
-        // actually in the batch, so the steady chunk stream never pays it.
-        let dropChildNotifications: Bool = {
-            let hasNotification = controlMsgs.contains { message in
-                if case .notification = message { return true }
-                return false
-            }
-            guard hasNotification else { return false }
-            agentDetectLock.lock()
-            defer { agentDetectLock.unlock() }
-            return agentDetector.suppressesChildNotifications
-        }()
-        let fifoControl = controlMsgs.filter { message in
-            if case .cwd = message { return false }
-            if case .notification = message, dropChildNotifications { return false }
-            return true
-        }
+        // Which of these ride the FIFO is the fold's answer, decided above in the same pass that
+        // latched them. Type-33 is host-gated single-source (see ``deriveProjectKey(from:)``, which
+        // just consumed this batch): the raw sniffed OSC-7 `.cwd` is WITHHELD, because pre-warm-up
+        // plugin noise would reach the client unfiltered and a probe-beaten stale OSC-7 would arrive
+        // at drain time AFTER (and client-side overwrite) the probed truth emitted above. A
+        // hook-suppressed type-25 was never made at all.
+        let fifoControl = routed.filter { $0.route == .fifo }.map(\.message)
         // Append-then-yield (no lost wake): the pending bufferingNewest(1) wake always
         // observes a complete FIFO. The continuation is read under fifoLock (teardown
         // nils it); yield happens OUTSIDE the lock (it may resume the drain inline).
@@ -2663,34 +2524,34 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Ingests one received Claude-hook record (raw POST body bytes) for THIS pane and, if it
     /// produced a status change, enqueues the resulting type-27 on the CONTROL sender. Folds through the
     /// SAME ``ClaudePaneDetector`` the foreground poll drives (single source of truth — no second
-    /// machine), under `agentDetectLock` because the socket-accept thread is a different context than the
+    /// machine), under ``truthsLock`` because the socket-accept thread is a different context than the
     /// watch task. Validate-then-drop: malformed bytes are silently ignored. The clock is monotonic
     /// uptime (a plain `Double`; the decision logic is in the pure detector, which takes the time).
     func ingestAgentHookRecord(_ bytes: Data) {
-        agentDetectLock.lock()
+        truthsLock.lock()
         let emission = agentDetector.hook(bytes: bytes, at: ProcessInfo.processInfo.systemUptime)
         let changed = emission.status != nil
             ? (agentDetector.status, agentDetector.isQuietTransition)
             : nil
-        agentDetectLock.unlock()
+        truthsLock.unlock()
         publishAgentEmission(emission)
         if let changed { notifyAgentStatusChanged(changed.0, quiet: changed.1) }
     }
 
     /// Folds an AGENT SELF-REPORT (the `report` ctl verb) into the ONE ``ClaudePaneDetector``
-    /// under `agentDetectLock`. The state string has already been validated by the caller; an
+    /// under ``truthsLock``. The state string has already been validated by the caller; an
     /// unrecognised string is a no-op inside the detector (validate-then-drop). Any resulting
     /// type-27 is enqueued to the (possibly absent) client AND fans the cross-pane
     /// `agent_status_changed` observer (the supervision stream) on a real transition.
     func reportAgentStatusForControl(state: String, message: String?) {
-        agentDetectLock.lock()
+        truthsLock.lock()
         let emission = agentDetector.report(
             state: state, message: message, at: ProcessInfo.processInfo.systemUptime,
         )
         let changed = emission.status != nil
             ? (agentDetector.status, agentDetector.isQuietTransition)
             : nil
-        agentDetectLock.unlock()
+        truthsLock.unlock()
         publishAgentEmission(emission)
         if let changed { notifyAgentStatusChanged(changed.0, quiet: changed.1) }
     }
@@ -2799,21 +2660,21 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// The last OSC-sniffed window title for this pane (empty string if none has arrived yet).
     var currentTitle: String {
-        titleLock.lock()
-        defer { titleLock.unlock() }
-        return _currentTitle
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.title
     }
 
     /// The current rolled-up Claude detection status for this pane (the supervision API).
     ///
-    /// Read under `agentDetectLock` because `agentDetector` is folded from TWO contexts (the
+    /// Read under ``truthsLock`` because `agentDetector` is folded from TWO contexts (the
     /// serial `agentWatchTask` foreground poll and the hook socket-accept thread); a bare read
     /// of the private detector would race. Used by ``HostServer/listPanesForControl()`` to surface
     /// per-pane agent state in the `list-panes` verb. A pane whose detector never saw `claude`
     /// returns ``ClaudeStatus/none``.
     var agentStatusForControl: ClaudeStatus {
-        agentDetectLock.lock()
-        defer { agentDetectLock.unlock() }
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
         return agentDetector.status
     }
 
@@ -2821,8 +2682,8 @@ final class MuxChannelSession: @unchecked Sendable {
     /// both; two separate reads could interleave a transition and pair a stale label with a fresh
     /// state).
     var agentStatusAndMessageForControl: (status: ClaudeStatus, message: String?) {
-        agentDetectLock.lock()
-        defer { agentDetectLock.unlock() }
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
         return (agentDetector.status, agentDetector.statusLabel)
     }
 
@@ -2842,9 +2703,9 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// The freshest OSC-133-D exit code, `nil` until the first code-carrying `D`.
     var lastExitCodeForControl: Int32? {
-        commandExitLock.lock()
-        defer { commandExitLock.unlock() }
-        return lastExitTruth
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.lastExit
     }
 
     // MARK: - Workspace-document surface (the CURRENT VALUE behind each edge)
@@ -2857,9 +2718,9 @@ final class MuxChannelSession: @unchecked Sendable {
     /// ``currentTitle`` and the `systemUptime` it was sniffed at, in ONE lock acquisition: two reads
     /// could interleave a retirement and pair a live title with a cleared stamp.
     var titleAndStampForControl: (title: String, stampedAt: TimeInterval?) {
-        titleLock.lock()
-        defer { titleLock.unlock() }
-        return (_currentTitle, _currentTitleAt)
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return (truths.title, truths.titleAt)
     }
 
     /// The `systemUptime` at which the CURRENT command block opened, `nil` at a prompt. The other
@@ -2874,9 +2735,9 @@ final class MuxChannelSession: @unchecked Sendable {
     /// client's reconnect reset state, and a synthetic `.idle` would fabricate a `lastCommand`
     /// (exit nil / 0 ms) and a completion edge for a command that never finished.
     private func commandStatusForReattach() -> TimeInterval? {
-        commandExitLock.lock()
-        defer { commandExitLock.unlock() }
-        return commandRunningSince
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.commandRunningSince
     }
 
     /// The host's own open command block — the pane's running command line, `nil` at a prompt or
@@ -2887,9 +2748,9 @@ final class MuxChannelSession: @unchecked Sendable {
     /// zero bytes has no running command at all and its sidebar row falls back to the raw command
     /// line. Publishing the host's block is what lets the host alone render the row.
     var runningCommandForControl: String? {
-        blocksLock.lock()
-        defer { blocksLock.unlock() }
-        return _runningCommand
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.runningCommand
     }
 
     /// The last foreground process name the watcher sampled (type 26's current value).
@@ -2900,10 +2761,10 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     /// The type-27 triple the status stream currently stands at, plus the agent's session intent
-    /// (type 36) — read in ONE `agentDetectLock` acquisition, like ``agentStatusAndMessageForControl``.
+    /// (type 36) — read in ONE ``truthsLock`` acquisition, like ``agentStatusAndMessageForControl``.
     var agentPublishedStateForControl: (state: UInt8, kind: UInt8, label: String?, intent: String?) {
-        agentDetectLock.lock()
-        defer { agentDetectLock.unlock() }
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
         let triple = agentDetector.lastEmittedStatusForControl
         return (
             triple?.state ?? 0,
@@ -2915,23 +2776,23 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// The freshest OSC 9;4 progress pair, `nil` when cleared or never reported (type 32's value).
     var progressPairForControl: (state: UInt8, percent: UInt8)? {
-        progressLock.lock()
-        defer { progressLock.unlock() }
-        return lastProgressPair
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.progress
     }
 
     /// The host-measured duration of the last completed command, `nil` until the first `D`.
     var lastDurationMSForControl: UInt32? {
-        commandExitLock.lock()
-        defer { commandExitLock.unlock() }
-        return lastDurationTruth
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.lastDuration
     }
 
     /// How many `working → done` edges this pane has produced (`pane/completionEpoch`).
     var completionEpochForControl: UInt32 {
-        completionLock.lock()
-        defer { completionLock.unlock() }
-        return _completionEpoch
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.completionEpoch
     }
 
     // MARK: - Agent-control block surface (the `last-output` / `run --wait` verbs)
@@ -3034,18 +2895,14 @@ final class MuxChannelSession: @unchecked Sendable {
     /// fold that ignored it could publish a block the reads would then refuse to elaborate on.
     private func foldBlocks(_ blocks: [BlockEvent]) {
         guard blocksEnabled, !blocks.isEmpty else { return }
-        // The running command line, for `PaneLiveness.capture`. Latched here rather than fetched
-        // because that capture runs for every pane on every reconciler tick and must stay a lock
-        // acquisition — see `_runningCommand`.
-        for event in blocks {
-            guard case let .block(meta) = event else { continue }
-            let text = meta.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
-            blocksLock.lock()
-            _runningCommand = meta.complete || text.isEmpty ? nil : text
-            blocksLock.unlock()
-        }
-        let messages = Self.wireMessages(from: blocks)
-        latchProgress(messages) // auto-progress is a second type-32 source — same reattach truth
+        // ONE pass, like the sniffed batch: the running command line is latched for
+        // `PaneLiveness.capture` (which runs for every pane on every reconciler tick and must stay a
+        // lock acquisition), and a synthetic badge latches the same reattach truth the sniffed one
+        // does — auto-progress is a second type-32 source, never a second latch.
+        truthsLock.lock()
+        let routed = truths.ingest(blocks: blocks)
+        truthsLock.unlock()
+        let messages = routed.map(\.message)
         if !messages.isEmpty { broadcastControl(messages) }
         notifyBlockObservers(messages)
     }
@@ -3226,19 +3083,6 @@ final class MuxChannelSession: @unchecked Sendable {
         return HostMetadataProbe(masterFD: pty.masterFD, shellPID: pty.pid).paneWorkingDirectory()
     }
 
-    /// Latches the pane's CURRENT OSC 9;4 progress truth (see `lastProgress`) from a batch of
-    /// outbound control messages: a `.clear` latches `nil`, any other progress state latches its
-    /// message verbatim; the last one in the batch wins (latest-state fold, same as the client's).
-    private func latchProgress(_ messages: [WireMessage]) {
-        for message in messages {
-            guard case let .progress(state, percent) = message else { continue }
-            progressLock.lock()
-            lastProgress = state == ProgressState.clear.rawValue ? nil : message
-            lastProgressPair = state == ProgressState.clear.rawValue ? nil : (state, percent)
-            progressLock.unlock()
-        }
-    }
-
     /// Reattach — RE-SENDS every block the tracker still holds (its metadata) as a burst of type-28
     /// `commandBlock` messages on the CONTROL channel, so a client that (re)attaches to an already-running
     /// session rebuilds its Commands/Outline navigator. Block metadata rides the control channel and is
@@ -3251,7 +3095,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Addressed to the JOINING subscriber — the navigator it is missing is its own.
     private func resendBlocksOnReattach(to id: MuxSubscriberID = MuxChannelSession.primarySubscriberID) {
         guard blocksEnabled else { return }
-        let messages = pty.blockSnapshot()?.map(Self.commandBlockMessage) ?? []
+        let messages = pty.blockSnapshot()?.map(PaneTruths.blockMessage) ?? []
         if !messages.isEmpty { sendControl(messages, to: id) }
     }
 
@@ -3714,12 +3558,22 @@ extension MuxChannelSession {
     }
 
     /// The event→wire translation, for the suite that pins it against the same JSON superd emits.
+    ///
+    /// Through a THROWAWAY fold rather than a static twin: the translation is one of the fold's
+    /// answers, and a second copy of it for tests to read is exactly the mirror the
+    /// one-implementation rule forbids.
     static func wireMessagesForTesting(_ sniffed: [SniffedEvent]) -> [WireMessage] {
-        wireMessages(from: sniffed)
+        PaneTruths().ingest(
+            sniffed: sniffed, reference: 0, uptime: 0, suppressChildNotifications: false,
+        ).map(\.message)
     }
 
     /// How many times the read loop has asked superd to retire the sniffer's title anchor.
-    var titleAnchorRetirementsForTesting: Int { titleAnchorRetirements }
+    var titleAnchorRetirementsForTesting: Int {
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return Int(truths.titleAnchorRetirements)
+    }
 
     /// Drives the real ``setClientOnline(_:)`` glue (offline-gate side).
     func setClientOnlineForTesting(_ online: Bool) { setClientOnline(online) }
@@ -3891,7 +3745,7 @@ extension MuxChannelSession {
     func foldBlocksForTesting(_ blocks: [BlockEvent]) { foldBlocks(blocks) }
     /// The block-event→wire translation, for the suite that pins it against the same JSON superd emits.
     static func wireMessagesForTesting(_ blocks: [BlockEvent]) -> [WireMessage] {
-        wireMessages(from: blocks)
+        PaneTruths().ingest(blocks: blocks).map(\.message)
     }
 
     /// Drives the real `serveBlockOutput` glue (ring lookup → the requester's control queue).
@@ -3907,78 +3761,6 @@ extension MuxChannelSession {
 }
 
 // MARK: - What the shell said, as what a client is told
-
-/// The translation from superd's sniff to this pane's control messages, in an extension because it
-/// is the one part of the fold that holds nothing: no latch, no lock, no order beyond the batch's
-/// own. `private` is file-scoped in Swift, so the main body reaches it unchanged.
-///
-/// The two vocabularies are deliberately separate. superd reports what the shell SAID; this session
-/// decides what a client is TOLD, and those differ for a cwd (host-gated, resolved into a project
-/// key downstream) and a notification (dropped while an agent's hook already banners the edge).
-private extension MuxChannelSession {
-    /// One sniffed batch as the control messages this pane publishes.
-    ///
-    /// An ``SniffedEvent/unknown(kind:)`` is dropped: it is a kind a NEWER superd knows and this
-    /// build does not, and inventing a message for it would be worse than staying quiet.
-    static func wireMessages(from sniffed: [SniffedEvent]) -> [WireMessage] {
-        sniffed.compactMap { event in
-            switch event {
-            case let .title(title): .title(title)
-            case .bell: .bell
-            case .commandRunning: .commandStatus(.running)
-            case let .commandIdle(exitCode, durationMS):
-                .commandStatus(.idle(exitCode: exitCode, durationMS: durationMS))
-            case let .cwd(path): .cwd(path)
-            case let .notification(title, body): .notification(title: title, body: body)
-            // OSC 9;4 crosses the socket unparsed, because the progress vocabulary belongs to
-            // `ProgressOSCParser` and a second copy of that grammar inside the byte reader is the
-            // drift this port exists to remove. A body that will not parse is dropped — it was
-            // progress either way, never a notification.
-            case let .progress(body):
-                ProgressOSCParser.parse(body).map { state, percent in
-                    .progress(state: state.rawValue, percent: percent)
-                }
-            case .unknown: nil
-            }
-        }
-    }
-
-    /// One command-block batch as the control messages this pane publishes.
-    ///
-    /// The synthetic badge is where the two vocabularies genuinely differ: superd says "a slow
-    /// command started", and only this side knows that is spelled as an INDETERMINATE type-32 and
-    /// its clear as a zeroed one. `ProgressState` lives in `SlopDeskProtocol`, which superd does not
-    /// and must not link.
-    ///
-    /// An unknown kind is dropped for the same reason it is above: it is a fact a NEWER superd
-    /// knows and this build does not, and inventing a message for it would be worse than silence.
-    static func wireMessages(from blocks: [BlockEvent]) -> [WireMessage] {
-        blocks.compactMap { event in
-            switch event {
-            case let .block(meta): commandBlockMessage(meta)
-            case .progress(.indeterminate):
-                .progress(state: ProgressState.indeterminate.rawValue, percent: 0)
-            case .progress(.clear):
-                .progress(state: ProgressState.clear.rawValue, percent: 0)
-            case .unknown: nil
-            }
-        }
-    }
-
-    /// One block's metadata as its type-28. Shared by the live fold and the reattach backfill, which
-    /// receive the same object from superd precisely so this can be one function.
-    static func commandBlockMessage(_ meta: BlockMetadata) -> WireMessage {
-        .commandBlock(
-            index: meta.index,
-            exitCode: meta.exitCode,
-            durationMS: meta.durationMS,
-            complete: meta.complete,
-            outputLen: meta.outputLen,
-            commandText: meta.commandText,
-            promptOrdinal: meta.promptOrdinal,
-        )
-    }
-}
 
 // MARK: - The subscriber set: join, leave, fan-out, and the laggard
 

@@ -31,36 +31,9 @@ pub extern "C" fn slopdesk_pty_echo_enabled(master_fd: c_int) -> bool {
     slopdesk_posix::pty::echo_enabled(master_fd)
 }
 
-/// Is this sample worth a type-31 `inputEcho`, given the last state the caller emitted?
-///
-/// `true` means send `inputEcho(sample)` and remember `sample`. `false` means say nothing, so a
-/// caller may probe as often as it likes without chattering — which both probe sites rely on, since
-/// the input task and the foreground poll can sample the same instant.
-///
-/// Re-anchoring is passing `true` as `last_emitted` again: that is what the reattach path does, so
-/// a no-echo prompt still up across a client's return produces a fresh message for a client whose
-/// own mirror reset to echo-on.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_pty_echo_edge(sample: bool, last_emitted: bool) -> bool {
-    slopdesk_terminal::echo::is_edge(sample, last_emitted)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{slopdesk_pty_echo_edge, slopdesk_pty_echo_enabled};
-
-    /// The door answers the module's rule, both directions, and absorbs a repeat.
-    #[test]
-    fn the_edge_door_emits_only_on_a_transition() {
-        assert!(slopdesk_pty_echo_edge(false, true));
-        assert!(slopdesk_pty_echo_edge(true, false));
-        assert!(!slopdesk_pty_echo_edge(true, true));
-        assert!(!slopdesk_pty_echo_edge(false, false));
-    }
+    use super::slopdesk_pty_echo_enabled;
 
     /// Every descriptor the probe cannot read is echo-on, which is the one direction the default
     /// has to be safe in: a bad fd must not lock a keyboard.

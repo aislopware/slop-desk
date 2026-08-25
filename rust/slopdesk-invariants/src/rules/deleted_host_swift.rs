@@ -102,6 +102,7 @@ pub fn deleted_host_swift(tree: &Tree) -> Report {
     claims.extend(swift_instruments_stay_deleted());
     claims.extend(pane_outbound_queue());
     claims.extend(pane_subscriber_set());
+    claims.extend(pane_truths());
     check_all(tree, &claims)
 }
 
@@ -164,6 +165,33 @@ fn pane_subscriber_set() -> Vec<Claim> {
         message: "a subscriber CURSOR is back in {files} — rust/slopdesk-muxsession's fanout owns the ack \
                   cursor, the delivery frontier, the exit latch, the id mint and the laggard threshold; \
                   hostd owns the lock, the channel pairs and the tasks, and nothing else (docs/59 §4)",
+    }]
+}
+
+/// The pane's LATCHED TRUTHS, and why each stored property staying gone is a rule.
+///
+/// docs/59 step 4 collapsed SEVEN `NSLock`s into one by moving what they guarded — the title latch
+/// and its stamp, the OSC 9;4 badge, the command edge, the last exit code and duration, the running
+/// block's command line, the echo anchor and the finished-turn counter — into
+/// `rust/slopdesk-muxsession`'s `truths`. The failure mode a ratchet has to catch is not a rewrite
+/// but a RE-ADDITION: one `private var lastExitTruth` beside the handle reads fine, compiles fine,
+/// and is a second answer to a question that now has one.
+///
+/// The echo detector is named here for the same reason: it was a `struct` holding one `Bool`, and
+/// that `Bool` is one of the latches now. A re-declared `EchoModeDetector` is a second anchor.
+fn pane_truths() -> Vec<Claim> {
+    vec![Claim::NoneUnder {
+        roots: &["Sources"],
+        extensions: SWIFT,
+        pattern: r"var +(_currentTitle|_currentTitleAt|pendingTitleCoalescingReset|titleAnchorRetirements|lastProgress|lastProgressPair|lastExitTruth|lastDurationTruth|commandRunningSince|_runningCommand|_completionEpoch|_lastCompletionStatus|echoWarmedUp)\b[^{\n]*(\n|$)|\b(EchoModeDetector|latchProgress)\b",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "a pane TRUTH is back as a stored property in {files} — rust/slopdesk-muxsession's truths \
+                  owns the title latch and its stamp, the progress badge, the command edge, the exit code \
+                  and duration, the running command line, the echo anchor and the finished-turn counter, \
+                  and hostd holds them under the ONE lock that replaced the seven (docs/59 §4, step 4)",
     }]
 }
 
@@ -701,95 +729,113 @@ mod tests {
     use super::{deleted_host_swift, spawn_request_flags_cross};
     use crate::tests::Fixture;
 
-    /// One tree per ban, seeded with the shape the port deleted.
+    /// One seed per ban: the shape the port deleted, spelled the way it would come back.
+    ///
+    /// A table rather than a test body, because the LOOP is four lines and the seeds are data —
+    /// keeping them apart is what lets a new ban add one line here and nothing else.
+    const REVIVALS: &[(&str, &str)] = &[
+        ("detect", "final class ManifestRuleEngine {}\n"),
+        ("shim", "enum ShellIntegration {}\n"),
+        ("sniffer", "actor HostOutputSniffer {}\n"),
+        ("blocks", "struct CommandBlockSegmenter {}\n"),
+        ("autoprogress", "let autoProgressCommands: [String] = []\n"),
+        ("manifest", "let body = \"\"\"\\n[[rules]]\\n\"\"\"\n"),
+        ("resizefold", "struct ResizeContribution {}\n"),
+        ("resizefoldfn", "    private static func foldOffers() {}\n"),
+        ("projectkey", "enum ProjectKeyResolver {}\n"),
+        ("logicallines", "    static func unwrapLogicalLines() {}\n"),
+        (
+            "finishedturn",
+            "        if next == .done { return previous != .done }\n",
+        ),
+        ("spawnenv", "    env[\"NCURSES_NO_UTF8_ACS\"] = \"1\"\n"),
+        (
+            "vitals",
+            "    let r = host_statistics(port, HOST_CPU_LOAD_INFO, p, &c)\n",
+        ),
+        ("pausefold", "    var wants: Bool { outstanding >= capacity }\n"),
+        (
+            "vendored",
+            "    let bin = root + \"/ThirdParty/tools/.prefix/bin\"\n",
+        ),
+        (
+            "preventsleep",
+            "    let r = IOPMAssertionCreateWithName(t, l, n, &id)\n",
+        ),
+        (
+            "hostdargs",
+            "            case \"--transcript\": transcript = it.next()\n",
+        ),
+        ("launchrecord", "struct HostLaunchRecord: Codable {}\n"),
+        (
+            "recordpath",
+            "    let p = dir.appendingPathComponent(\"hostd-launch.json\")\n",
+        ),
+        (
+            "runningexe",
+            "    if _NSGetExecutablePath(&buffer, &capacity) == 0 { return \"\" }\n",
+        ),
+        (
+            "panescanhold",
+            "    func shouldHoldWorkingToIdle() -> Bool { false }\n",
+        ),
+        ("panescanrebuild", "    var awaitingRepaintAfterRebuild = false\n"),
+        (
+            "bridgeshells",
+            "    static let shellNames: Set<String> = [\"zsh\"]\n",
+        ),
+        (
+            "bridgerefusal",
+            "    let m = \"SlopDesk: no terminal pane is open in this project.\"\n",
+        ),
+        ("terminfo", "enum TerminfoResolver {}\n"),
+        (
+            "terminfofork",
+            "    let a = ask([\"terminfo\", \"--requested\", name])\n",
+        ),
+        ("echoprobe", "    let on = (term.c_lflag & tcflag_t(ECHO)) != 0\n"),
+        (
+            "echocanonical",
+            "    let canonical = (term.c_lflag & tcflag_t(ICANON)) != 0\n",
+        ),
+        (
+            "outboxtake",
+            "    func takeMergedFrame() -> MergedFrame? { nil }\n",
+        ),
+        (
+            "outboxcursor",
+            "    private func advanceFIFOHead() { fifoHead += 1 }\n",
+        ),
+        ("fanoutack", "    var lastAckedSeq: Int64 = 0\n"),
+        ("fanoutsent", "    var lastSentSeq: Int64 = 0\n"),
+        ("fanoutexit", "    var exitDelivered = false\n"),
+        (
+            "fanoutmint",
+            "    private func mintSubscriberIDLocked() -> UInt64 { 0 }\n",
+        ),
+        (
+            "fanoutlag",
+            "    static let subscriberLagBytes = 32 * 1024 * 1024\n",
+        ),
+        ("outboxqueue", "    private var outFIFO: [OutputItem] = []\n"),
+        ("truthstitle", "    private var _currentTitle = \"\"\n"),
+        ("truthsexit", "    private var lastExitTruth: Int32?\n"),
+        (
+            "truthsprogress",
+            "    private var lastProgressPair: (UInt8, UInt8)?\n",
+        ),
+        ("truthsecho", "    private var echoWarmedUp = false\n"),
+        ("truthsanchor", "    struct EchoModeDetector {}\n"),
+        (
+            "truthslatch",
+            "    private func latchProgress(_ s: ProgressState) {}\n",
+        ),
+    ];
+
+    /// Every seed above, each in its own tree: clean before, red after.
     #[test]
     fn a_revived_engine_is_red() {
-        for (name, line) in [
-            ("detect", "final class ManifestRuleEngine {}\n"),
-            ("shim", "enum ShellIntegration {}\n"),
-            ("sniffer", "actor HostOutputSniffer {}\n"),
-            ("blocks", "struct CommandBlockSegmenter {}\n"),
-            ("autoprogress", "let autoProgressCommands: [String] = []\n"),
-            ("manifest", "let body = \"\"\"\\n[[rules]]\\n\"\"\"\n"),
-            ("resizefold", "struct ResizeContribution {}\n"),
-            ("resizefoldfn", "    private static func foldOffers() {}\n"),
-            ("projectkey", "enum ProjectKeyResolver {}\n"),
-            ("logicallines", "    static func unwrapLogicalLines() {}\n"),
-            (
-                "finishedturn",
-                "        if next == .done { return previous != .done }\n",
-            ),
-            ("spawnenv", "    env[\"NCURSES_NO_UTF8_ACS\"] = \"1\"\n"),
-            (
-                "vitals",
-                "    let r = host_statistics(port, HOST_CPU_LOAD_INFO, p, &c)\n",
-            ),
-            ("pausefold", "    var wants: Bool { outstanding >= capacity }\n"),
-            (
-                "vendored",
-                "    let bin = root + \"/ThirdParty/tools/.prefix/bin\"\n",
-            ),
-            (
-                "preventsleep",
-                "    let r = IOPMAssertionCreateWithName(t, l, n, &id)\n",
-            ),
-            (
-                "hostdargs",
-                "            case \"--transcript\": transcript = it.next()\n",
-            ),
-            ("launchrecord", "struct HostLaunchRecord: Codable {}\n"),
-            (
-                "recordpath",
-                "    let p = dir.appendingPathComponent(\"hostd-launch.json\")\n",
-            ),
-            (
-                "runningexe",
-                "    if _NSGetExecutablePath(&buffer, &capacity) == 0 { return \"\" }\n",
-            ),
-            (
-                "panescanhold",
-                "    func shouldHoldWorkingToIdle() -> Bool { false }\n",
-            ),
-            ("panescanrebuild", "    var awaitingRepaintAfterRebuild = false\n"),
-            (
-                "bridgeshells",
-                "    static let shellNames: Set<String> = [\"zsh\"]\n",
-            ),
-            (
-                "bridgerefusal",
-                "    let m = \"SlopDesk: no terminal pane is open in this project.\"\n",
-            ),
-            ("terminfo", "enum TerminfoResolver {}\n"),
-            (
-                "terminfofork",
-                "    let a = ask([\"terminfo\", \"--requested\", name])\n",
-            ),
-            ("echoprobe", "    let on = (term.c_lflag & tcflag_t(ECHO)) != 0\n"),
-            (
-                "echocanonical",
-                "    let canonical = (term.c_lflag & tcflag_t(ICANON)) != 0\n",
-            ),
-            (
-                "outboxtake",
-                "    func takeMergedFrame() -> MergedFrame? { nil }\n",
-            ),
-            (
-                "outboxcursor",
-                "    private func advanceFIFOHead() { fifoHead += 1 }\n",
-            ),
-            ("fanoutack", "    var lastAckedSeq: Int64 = 0\n"),
-            ("fanoutsent", "    var lastSentSeq: Int64 = 0\n"),
-            ("fanoutexit", "    var exitDelivered = false\n"),
-            (
-                "fanoutmint",
-                "    private func mintSubscriberIDLocked() -> UInt64 { 0 }\n",
-            ),
-            (
-                "fanoutlag",
-                "    static let subscriberLagBytes = 32 * 1024 * 1024\n",
-            ),
-            ("outboxqueue", "    private var outFIFO: [OutputItem] = []\n"),
-        ] {
+        for (name, line) in REVIVALS {
             let fixture = Fixture::new(&format!("deleted-host-{name}"));
             fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
             assert!(
@@ -812,6 +858,23 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskHost/A.swift",
             "// `final class HostOutputSniffer` used to live here; superd owns it now.\nlet x = 1\n",
+        );
+        assert!(deleted_host_swift(&fixture.tree()).is_clean());
+    }
+
+    /// The other edge of the pane-truth ban: an ACCESSOR spelling one of those names is the whole
+    /// job of `PaneTruths.swift`, so the ban is on a DECLARATION — a `var` line that ends without
+    /// opening a body. A stored property with an observer (`= .clear { didSet { … } }`) opens a
+    /// body on the same line and therefore slips, which is a hole this test states rather than
+    /// hides: the shape it would have to take to slip is a latch someone deliberately re-declared,
+    /// and `one-batch-one-pass-one-lock` fails that file for its lock and its clock first.
+    #[test]
+    fn a_truth_accessor_is_not_a_latch() {
+        let fixture = Fixture::new("deleted-host-truth-accessor");
+        fixture.write(
+            "Sources/SlopDeskHost/A.swift",
+            "    var titleAnchorRetirements: UInt64 { door(handle) }\nvar commandRunningSince: \
+             TimeInterval? { read(handle) }\n",
         );
         assert!(deleted_host_swift(&fixture.tree()).is_clean());
     }

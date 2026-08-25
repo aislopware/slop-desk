@@ -1465,6 +1465,11 @@ pub fn registry() -> Vec<Rule> {
             check: hot_paths::the_outbound_frame_merges_once,
         },
         Rule {
+            name: "one-batch-one-pass-one-lock",
+            origin: "docs/59 §4, step 4",
+            check: hot_paths::one_batch_one_pass_one_lock,
+        },
+        Rule {
             name: "subscriber-set-one-table",
             origin: "docs/59 §4, §8 rule 3",
             check: hot_paths::the_subscriber_set_is_one_table,

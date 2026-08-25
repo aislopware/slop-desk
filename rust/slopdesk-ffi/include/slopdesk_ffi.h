@@ -3385,6 +3385,94 @@ size_t slopdesk_pane_fanout_evict(SlopDeskPaneFanout *handle,
                                   uint64_t *out, size_t capacity);
 
 /* ---------------------------------------------------------------------------- *
+ * pane_truths — the pane's LATCHED truths and the fold that produces them.
+ *
+ * WHY A HANDLE, AND WHY THIS MANY FIELDS.  Seven pieces of state — the title and
+ * its stamp, the OSC 9;4 badge, the command edge, the last exit code, the running
+ * block, the echo anchor and the finished-turn counter — lived behind SEVEN
+ * NSLocks in hostd, every one of them written on the read-loop thread and read
+ * from a control socket's.  They were separate because the FIELDS were separate,
+ * never because the truths are: one sniffed batch folds most of them in one pass.
+ * Seven acquisitions bought no concurrency against a serial writer and cost every
+ * reader the chance of a torn view, so they cross as ONE handle under ONE lock.
+ *
+ * WHAT DID NOT CROSS.  The clock: both stamps are parameters, because two clocks
+ * are in play deliberately (a title stamp is compared against superd's
+ * command-running stamp, which survives sleep; the agent detector folds on
+ * monotonic uptime) and a fold that read either could not be tested.  The agent
+ * detector: it is its own handle with its own feeds, and two handles never hold
+ * each other — the one thing the fold needs from it, whether the pane's agent
+ * already announces its own edges, crosses as a bool the caller reads under the
+ * same lock.  The wire vocabulary: a verdict names a KIND and a ROUTE, and
+ * building the frame stays the marshaller's job.
+ *
+ * TEXT CROSSES ONCE, BY REFERENCE.  A batch arrives already decoded into rows and
+ * a byte arena.  Each fact's text is an (offset, length) pair into that arena and
+ * each verdict names its fact by INDEX, so a chunk carrying ten titles allocates
+ * nothing either way.  Only the two truths that must OUTLIVE the batch — the
+ * title and the running command line — are copied, and only when they change.
+ *
+ * THE INGEST DOORS DO NOT RETRY.  A mutating call cannot be, and does not need to
+ * be: a fold answers at most one verdict per fact it was handed, so a caller that
+ * lends `count` slots always has room.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskPaneTruths SlopDeskPaneTruths;
+
+typedef struct {
+  uint8_t kind;
+  uint32_t primary_offset;
+  uint32_t primary_length;
+  uint32_t secondary_offset;
+  uint32_t secondary_length;
+  bool has_exit_code;
+  int32_t exit_code;
+  bool has_duration;
+  uint32_t duration_ms;
+  uint8_t progress_state;
+  uint8_t progress_percent;
+  uint32_t index;
+  uint32_t output_len;
+  uint32_t prompt_ordinal;
+  bool complete;
+} SlopDeskTruthFact;
+
+typedef struct {
+  uint32_t fact;
+  uint8_t kind;
+  uint8_t route;
+} SlopDeskTruthVerdict;
+
+SlopDeskPaneTruths *slopdesk_pane_truths_new(void);
+void slopdesk_pane_truths_free(SlopDeskPaneTruths *handle);
+size_t slopdesk_pane_truths_ingest_sniffed(SlopDeskPaneTruths *handle,
+                                           const SlopDeskTruthFact *facts, size_t count,
+                                           const uint8_t *arena, size_t arena_len,
+                                           double reference, double uptime,
+                                           bool suppress_child_notifications,
+                                           SlopDeskTruthVerdict *out, size_t capacity);
+size_t slopdesk_pane_truths_ingest_blocks(SlopDeskPaneTruths *handle,
+                                          const SlopDeskTruthFact *facts, size_t count,
+                                          const uint8_t *arena, size_t arena_len,
+                                          SlopDeskTruthVerdict *out, size_t capacity);
+size_t slopdesk_pane_truths_title(SlopDeskPaneTruths *handle, uint8_t *out, size_t capacity);
+bool slopdesk_pane_truths_title_at(SlopDeskPaneTruths *handle, double *at);
+void slopdesk_pane_truths_retire_title(SlopDeskPaneTruths *handle);
+bool slopdesk_pane_truths_take_title_coalescing_reset(SlopDeskPaneTruths *handle);
+uint64_t slopdesk_pane_truths_title_anchor_retirements(SlopDeskPaneTruths *handle);
+bool slopdesk_pane_truths_progress(SlopDeskPaneTruths *handle, uint8_t *state, uint8_t *percent);
+bool slopdesk_pane_truths_last_exit(SlopDeskPaneTruths *handle, int32_t *code);
+bool slopdesk_pane_truths_last_duration(SlopDeskPaneTruths *handle, uint32_t *duration_ms);
+bool slopdesk_pane_truths_command_running_since(SlopDeskPaneTruths *handle, double *since);
+size_t slopdesk_pane_truths_running_command(SlopDeskPaneTruths *handle,
+                                            uint8_t *out, size_t capacity);
+uint32_t slopdesk_pane_truths_fold_completion(SlopDeskPaneTruths *handle, uint8_t status,
+                                              bool quiet);
+uint32_t slopdesk_pane_truths_completion_epoch(SlopDeskPaneTruths *handle);
+int32_t slopdesk_pane_truths_fold_echo(SlopDeskPaneTruths *handle, bool echo_on);
+int32_t slopdesk_pane_truths_reanchor_echo(SlopDeskPaneTruths *handle, bool echo_on);
+
+/* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
  * loop policies both ends of the wire were spelling twice.
  *
@@ -9986,7 +10074,6 @@ void   slopdesk_hostd_launch_record_remove(void);
 bool slopdesk_pty_echo_enabled(int32_t master_fd);
 // Whether this sample is worth a type-31 `inputEcho`, given the last state the caller
 // emitted. Re-anchoring is passing `true` again, which is what the reattach path does.
-bool slopdesk_pty_echo_edge(bool sample, bool last_emitted);
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END

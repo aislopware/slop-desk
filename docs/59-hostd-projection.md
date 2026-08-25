@@ -201,15 +201,34 @@ One latent bug fell out: `admitJoiner` took `replayLock` while HOLDING `subscrib
 outward from the lock its own doc comment calls innermost. The seed is now read before the section,
 which is exact because `fanoutLock` is held across both.
 
-**Step 4 — `PaneTruths`.** *(~900 Swift lines)* `ingestPTYChunk(_:sniffed:blocks:)` `:2624-2766`
-becomes: call `truths.ingest(...)`, read a counted buffer of message descriptors, hand them to
-`sequenceAndFanOut`. Absorbs the title/anchor latches, `latchProgress`, `lastDurationTruth`,
-`commandRunningSince`, `lastExitTruth`, `foldBlocks`, the type-33 cwd drop, the type-25 hook-gate
-filter, `wireMessages(from:)` ×2 and `commandBlockMessage` `:4087-4150`. **Seven `NSLock`s collapse
-into one** (`titleLock` `:330`, `progressLock` `:358`, `completionLock` `:379`, `commandExitLock`
-`:463`, `blocksLock` `:266`, `echoDetectLock` `:314`, `agentDetectLock` `:276`) — that merge is part of
-this step, not a follow-up. docs/51 §6.13 is satisfied: the grammar stays in hostd's PROCESS, it leaves
-hostd's LANGUAGE.
+**Step 4 — `PaneTruths`. LANDED.** *(~370 removed from the session, ~390 face added)* Every latched
+TRUTH about a pane — the title and its stamp, the anchor retirements and the coalescing reset, the
+progress badge, the command edge with its exit code and duration, the running command line, the echo
+anchor and the finished-turn counter — is `rust/slopdesk-muxsession`'s `truths`, behind
+`rust/slopdesk-ffi/src/pane_truths.rs`. The face is `Sources/SlopDeskHost/PaneTruths.swift`.
+`latchProgress`, `wireMessages(from:)` ×2, `commandBlockMessage` and `EchoModeDetector` are gone;
+`ingestPTYChunk` builds one row table, folds once, and routes what comes back. **Seven `NSLock`s
+collapsed into one** (`titleLock`, `progressLock`, `completionLock`, `commandExitLock`, `blocksLock`,
+`echoDetectLock`, `agentDetectLock` → `truthsLock`) — they were separate because the FIELDS were
+separate, never because the truths are, and the writer is serial, so seven acquisitions bought no
+concurrency and cost readers a torn view. docs/51 §6.13 is satisfied: the grammar stays in hostd's
+PROCESS, it leaves hostd's LANGUAGE.
+
+Two more shapes for steps 5–7, both about how a BATCH crosses:
+
+- **Text crosses once, by reference; verdicts name a fact by INDEX.** The sniffed batch is already
+  decoded into a row table plus a byte arena, so a `Fact<'arena>` BORROWS its text and a `Verdict`
+  carries a `u32` fact index, not a payload. A chunk carrying ten titles allocates nothing on either
+  side. Only the two truths that OUTLIVE the batch — the title and the running command — are copied,
+  and a non-UTF-8 span reads empty rather than allocating a replacement.
+- **A mutating door does not retry.** The two-call `deliver` convention is for READS; a fold answers
+  at most one verdict per fact, so the caller lends `count` slots and the write always fits. Suppressed
+  notifications drop out with no verdict at all, and the survivors still name their ORIGINAL index.
+
+`agentDetector` did not re-parent into the handle — its ~25 doors would have doubled for no
+behavioural gain — but it moved UNDER `truthsLock`, which is what actually retires the seventh lock,
+and `suppressesChildNotifications` crosses as a `bool` parameter rather than as a second handle
+(step 3's "two handles never hold each other").
 
 **Step 5 — `PaneLifecycle`.** *(~600 Swift lines)* `detach(onDetachedExit:)` `:1643-1686` ·
 `rebindRelay(...)` `:1723-1894` · `reestablishEchoOnReattach` `:1563` ·
@@ -342,10 +361,19 @@ class, and the BREAK-TESTED convention every new rule follows) · `crate_policy.
    no `ProcessInfo`, no `[MuxSubscriberID:` map), and requires `MuxChannelSession.swift` to declare
    no `evicting` and to fold over `subscribers.values`/`.keys`/`.count`/`.isEmpty` never again — the
    population, the order and every cursor come from the door.
-4. **what the shell said is translated once** — ban `wireMessages(from:`/`commandBlockMessage` in
-   `MuxChannelSession.swift`; require `slopdesk_pane_truths_ingest`. Pair with a `Claim::AtMost` on
-   `NSLock()` occurrences in that file, ratcheting downward as steps 4 and 5 merge locks — the
-   checkable expression of "the sequencing moved with the law".
+4. **what the shell said is translated once** — LANDED, as two rules, for the reason rules 2 and 3
+   split. `deleted_host_swift::pane_truths` bans a pane truth coming back as a STORED property
+   anywhere under `Sources` (`_currentTitle`, `_currentTitleAt`, `pendingTitleCoalescingReset`,
+   `titleAnchorRetirements`, `lastProgress`, `lastProgressPair`, `lastExitTruth`,
+   `lastDurationTruth`, `commandRunningSince`, `_runningCommand`, `_completionEpoch`,
+   `_lastCompletionStatus`, `echoWarmedUp`) plus the two deleted machines by name
+   (`EchoModeDetector`, `latchProgress`) — a declaration, never an accessor, because the face's whole
+   job is to spell those names as pass-throughs. `hot_paths::one_batch_one_pass_one_lock` (rule
+   `one-batch-one-pass-one-lock`) requires `PaneTruths.swift` to exist, to call all eighteen
+   `slopdesk_pane_truths_*` doors, and to hold no lock, no clock and no trim of its own; and requires
+   `MuxChannelSession.swift` to name none of the seven retired locks. The `Claim::AtMost` on
+   `NSLock()` this plan proposed is subsumed: banning the seven by NAME is the same ratchet without a
+   number to maintain.
 5. **the reattach re-assert has one order** — ban `reestablishActivityOnReattach`/
    `reestablishEchoOnReattach` bodies; require the ladder door. The `.commandStatus`-before-`.title`
    order currently lives only in a comment, which docs/55 §8 names as its own failure mode.
