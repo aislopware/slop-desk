@@ -80,6 +80,7 @@ pub mod cgdisplay;
 pub mod cgwindow;
 pub mod channel_run;
 pub mod cheat_sheet;
+pub mod chip_notice;
 pub mod chrome;
 pub mod client_gestures;
 pub mod client_input;
@@ -98,6 +99,7 @@ pub mod connect_run;
 pub mod connection;
 pub mod context_menu;
 pub mod control_request;
+pub mod copy_receipt;
 pub mod cursor_overlay;
 // macOS only: `NSCursor` and the window server's cursor seed. The one handle here that two threads
 // may call at once, because the pointer must keep flowing while the main thread is busy. See the

@@ -123,6 +123,7 @@ pub mod binding_rows;
 pub mod binding_search;
 pub mod channel_run;
 pub mod cheat_sheet;
+pub mod chip_notice;
 pub mod close_confirm;
 pub mod command_navigator;
 pub mod connect_form;

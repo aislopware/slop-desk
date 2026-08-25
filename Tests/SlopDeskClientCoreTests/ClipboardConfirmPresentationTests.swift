@@ -46,13 +46,6 @@ final class ClipboardConfirmPresentationTests: XCTestCase {
         }
     }
 
-    func testTheWordsAreThePasteCratesAndNotThisTypesOwn() {
-        let reading = ClipboardConfirmPresentation.reading(ask: .clipboardRead, preview: "", dangers: [])
-        XCTAssertEqual(reading.title, PasteSafetyAnalyzer.Ask.clipboardRead.title)
-        XCTAssertEqual(reading.affirmative, PasteSafetyAnalyzer.Ask.clipboardRead.affirmative)
-        XCTAssertEqual(reading.reason, PasteSafetyAnalyzer.Ask.clipboardRead.reason)
-    }
-
     func testThePreviewIsTheDefusedPayloadNotTheRawOne() {
         let reading = ClipboardConfirmPresentation.reading(
             ask: .unsafePaste,
@@ -67,37 +60,26 @@ final class ClipboardConfirmPresentationTests: XCTestCase {
 
     // MARK: - The one-string join, for the renderer whose dialog takes one
 
+    /// The join arrives ALREADY MADE, from the same crossing that decided the branch — so a renderer
+    /// setting one string and a renderer laying the parts out cannot come to say different things.
     func testTheJoinBulletsTheDangersAndCaptionsThePreview() {
-        let reading = ClipboardConfirmPresentation(
-            ask: .unsafePaste,
-            title: "Paste this?",
-            affirmative: "Paste",
-            dangers: ["First danger", "Second danger"],
-            reason: "",
-            preview: "echo hi",
+        let reading = ClipboardConfirmPresentation.reading(
+            ask: .unsafePaste, preview: "echo hi", dangers: [.sudoOrSu, .controlChars],
         )
-        XCTAssertEqual(
-            reading.informativeText,
-            """
-            \(ClipboardConfirmPresentation.bullet)  First danger
-            \(ClipboardConfirmPresentation.bullet)  Second danger
-
-            \(ClipboardConfirmPresentation.previewCaption):
-            echo hi
-            """,
-        )
+        let expected = reading.dangers
+            .map { "\(ClipboardConfirmPresentation.bullet)  \($0)" }
+            .joined(separator: "\n")
+            + "\n\n\(ClipboardConfirmPresentation.previewCaption):\n\(reading.preview)"
+        XCTAssertEqual(reading.informativeText, expected)
     }
 
     func testTheJoinFallsBackToTheReasonAndOmitsAnAbsentPreview() {
-        let reading = ClipboardConfirmPresentation(
-            ask: .clipboardRead,
-            title: "Allow?",
-            affirmative: "Allow",
-            dangers: [],
-            reason: "A program asked to read the clipboard.",
-            preview: "",
+        let reading = ClipboardConfirmPresentation.reading(ask: .clipboardRead, preview: "", dangers: [])
+        XCTAssertTrue(reading.preview.isEmpty)
+        XCTAssertEqual(
+            reading.informativeText, reading.reason,
+            "no payload ⇒ no caption standing over an empty block",
         )
-        XCTAssertEqual(reading.informativeText, "A program asked to read the clipboard.")
     }
 
     // MARK: - The mailbox
@@ -151,6 +133,7 @@ final class ClipboardConfirmPresentationTests: XCTestCase {
             dangers: [],
             reason: "reason",
             preview: "",
+            informativeText: "reason",
         )
     }
 }

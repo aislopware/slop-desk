@@ -2,14 +2,13 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// ``HostPulse`` — what the sidebar footer's pulse line actually shows, which deliberately is not
-/// every sample the host sends. The rail has no animation by design, so a metric only redraws once
-/// it has moved by ``HostPulse/deadband`` points; below that the row holds still.
+/// ``HostPulse`` — the CROSSING, not the deadband. How far a percent must move before the row
+/// redraws, that it snaps to the sample rather than to a midpoint, and that pressure is exempt are
+/// `slopdesk_workspace::connection`'s and pinned there; restating the thresholds here would be the
+/// same rule in two languages.
 ///
-/// Every behaviour has a test that FAILS on the un-fixed code:
-/// - show every sample → the jitter test redraws for ±2 points;
-/// - smooth/average instead of snapping → the climb test shows a number the host never reported;
-/// - deadband the pressure level too → the pressure test swallows a state change.
+/// What only Swift can get wrong is the packing: the sample's two percents in, the held pair back,
+/// and the disk figure whose ABSENCE is a presence flag rather than a zero.
 final class HostPulseTests: XCTestCase {
     private func sample(
         cpu: UInt8, mem: UInt8, pressure: MetadataCodec.MemoryPressure = .normal,
@@ -18,56 +17,41 @@ final class HostPulseTests: XCTestCase {
         .init(cpuPercent: cpu, memoryPercent: mem, pressure: pressure, diskFreeMiB: disk)
     }
 
-    func testFirstSampleIsShownExactly() {
-        let pulse = HostPulse.settled(previous: nil, sample: sample(cpu: 34, mem: 61))
-        XCTAssertEqual(pulse, HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal))
+    func testTheFirstSampleCrossesBackWholeAndAJitteringOneDoesNot() {
+        let first = HostPulse.settled(previous: nil, sample: sample(cpu: 34, mem: 61))
+        XCTAssertEqual(first, HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal))
+        let held = HostPulse.settled(previous: first, sample: sample(cpu: 35, mem: 60))
+        XCTAssertEqual(held, first, "a move under the deadband leaves both shown figures alone")
     }
 
-    func testJitterUnderTheDeadbandDoesNotMoveTheRow() {
-        let shown = HostPulse(cpuPercent: 30, memoryPercent: 60, memoryPressure: .normal)
-        // ±2 points is the idle twitch the row must ignore, on BOTH metrics and in both directions.
-        XCTAssertEqual(HostPulse.settled(previous: shown, sample: sample(cpu: 32, mem: 58)), shown)
-        XCTAssertEqual(HostPulse.settled(previous: shown, sample: sample(cpu: 28, mem: 62)), shown)
-    }
-
-    func testAMoveOfTheDeadbandSnapsToTheSampleExactly() {
-        let shown = HostPulse(cpuPercent: 30, memoryPercent: 60, memoryPressure: .normal)
-        let moved = HostPulse.settled(previous: shown, sample: sample(cpu: 33, mem: 57))
-        XCTAssertEqual(moved.cpuPercent, 33, "the shown number is always one the host really reported")
-        XCTAssertEqual(moved.memoryPercent, 57)
-    }
-
-    func testMetricsAreHeldIndependently() {
+    /// Each metric is held on its own, so a mixed sample proves both halves of the pair survived the
+    /// crossing rather than one being copied over the other.
+    func testTheTwoPercentsCrossIndependently() {
         let shown = HostPulse(cpuPercent: 30, memoryPercent: 60, memoryPressure: .normal)
         let mixed = HostPulse.settled(previous: shown, sample: sample(cpu: 90, mem: 61))
-        XCTAssertEqual(mixed.cpuPercent, 90, "a real climb lands within one poll")
-        XCTAssertEqual(mixed.memoryPercent, 60, "…while the quiet metric stays put")
+        XCTAssertEqual(mixed.cpuPercent, 90)
+        XCTAssertEqual(mixed.memoryPercent, 60)
     }
 
-    func testASlowClimbStillTracksInDeadbandSteps() {
-        var pulse = HostPulse.settled(previous: nil, sample: sample(cpu: 10, mem: 50))
-        for cpu in stride(from: UInt8(11), through: 40, by: 1) {
-            pulse = HostPulse.settled(previous: pulse, sample: sample(cpu: cpu, mem: 50))
-        }
-        XCTAssertEqual(pulse.cpuPercent, 40, "the deadband delays a redraw, it never loses the trend")
+    /// Zero free bytes is the loudest real reading there is, so absence crosses as a FLAG. A door
+    /// that packed `nil` as `0` would report a full disk on the volume it could not read.
+    func testAnUnreadableVolumeCrossesBackAbsentAndNotEmpty() {
+        let shown = HostPulse(
+            cpuPercent: 30, memoryPercent: 60, memoryPressure: .normal, diskFreeMiB: 245_760,
+        )
+        XCTAssertEqual(
+            HostPulse.settled(previous: shown, sample: sample(cpu: 31, mem: 61, disk: 0)).diskFreeMiB, 0,
+        )
+        XCTAssertNil(HostPulse.settled(previous: shown, sample: sample(cpu: 31, mem: 61)).diskFreeMiB)
     }
 
-    func testDiskTakesEverySampleBecauseItsFormatIsItsOwnDeadband() {
-        // Free space is rendered coarsely (two significant figures), so the shown run only changes
-        // when the answer really has — no deadband needed, and none applied: a metric that reports
-        // in whole gigabytes must not ALSO lag behind by a threshold.
-        let shown = HostPulse(cpuPercent: 30, memoryPercent: 60, memoryPressure: .normal, diskFreeMiB: 245_760)
-        let dropped = HostPulse.settled(previous: shown, sample: sample(cpu: 31, mem: 61, disk: 245_759))
-        XCTAssertEqual(dropped.diskFreeMiB, 245_759, "the raw figure always tracks")
-        XCTAssertEqual(dropped.cpuPercent, 30, "…while the deadbanded metrics hold")
-        let lost = HostPulse.settled(previous: shown, sample: sample(cpu: 31, mem: 61, disk: nil))
-        XCTAssertNil(lost.diskFreeMiB, "an unreadable volume clears the run rather than freezing a stale figure")
-    }
-
-    func testPressureIsNeverDeadbandedBecauseAStateChangeIsNotNoise() {
+    /// Pressure crosses untouched, which is only visible while the percent beside it is being held.
+    func testThePressureLevelCrossesEvenWhileThePercentHolds() {
         let shown = HostPulse(cpuPercent: 30, memoryPercent: 60, memoryPressure: .normal)
-        let pressured = HostPulse.settled(previous: shown, sample: sample(cpu: 31, mem: 61, pressure: .critical))
+        let pressured = HostPulse.settled(
+            previous: shown, sample: sample(cpu: 31, mem: 61, pressure: .critical),
+        )
         XCTAssertEqual(pressured.memoryPressure, .critical)
-        XCTAssertEqual(pressured.memoryPercent, 60, "…even while the percent itself holds still")
+        XCTAssertEqual(pressured.memoryPercent, 60)
     }
 }

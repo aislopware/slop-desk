@@ -39,7 +39,7 @@ use slopdesk_workspace::connection::{
 };
 use slopdesk_workspace::host_name;
 
-use crate::{borrow, deliver, lent};
+use crate::{borrow, deliver, lent, push_text, saturating_u32};
 
 /// Deliberately not connected — a fresh launch, or a link the user closed.
 pub const SLOPDESK_CONNECTION_STATUS_DISCONNECTED: u32 = 0;
@@ -139,6 +139,20 @@ impl SlopDeskHostPulse {
             } else {
                 None
             },
+        }
+    }
+
+    /// The crate's pulse, on its way back out.
+    const fn of_pulse(pulse: Pulse) -> Self {
+        Self {
+            cpu_percent: pulse.cpu_percent,
+            memory_percent: pulse.memory_percent,
+            memory_pressure: pulse.memory_pressure.as_byte(),
+            disk_free_mib: match pulse.disk_free_mib {
+                Some(free) => free,
+                None => 0,
+            },
+            has_disk: pulse.disk_free_mib.is_some(),
         }
     }
 }
@@ -597,6 +611,72 @@ pub unsafe extern "C" fn slopdesk_ws_host_short_label(
     let name = unsafe { lent(text, len) };
     // SAFETY: ditto; `deliver` writes at most `cap`.
     unsafe { deliver(host_name::short_label(name).as_bytes(), out, cap) }
+}
+
+/// The pulse the footer should DRAW, given the one it is drawing and the sample that just landed.
+///
+/// A scalar door with a scalar answer, like the classifiers above: the rule is a deadband, so there
+/// is nothing to size and nothing to retry. `has_previous` is `false` on the first sample, which is
+/// shown exactly as it arrived — a presence flag rather than a sentinel pulse, because every field
+/// of a pulse has a real reading that a sentinel would collide with.
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+#[unsafe(no_mangle)]
+pub extern "C" fn slopdesk_connection_pulse_settled(
+    has_previous: bool,
+    previous: SlopDeskHostPulse,
+    sample: SlopDeskHostPulse,
+) -> SlopDeskHostPulse {
+    let previous = has_previous.then(|| previous.of());
+    SlopDeskHostPulse::of_pulse(connection::settled(previous, sample.of()))
+}
+
+/// How many span slots [`slopdesk_ws_connection_alert`]'s answer opens with, before its one run.
+///
+/// The count, the worst severity's code and the position of the pane to focus, each a big-endian
+/// `u32`. They lead the delivery rather than riding in it because they are numbers, and a number
+/// spelled as text would have to be read back.
+pub const ALERT_HEAD_BYTES: usize = 12;
+
+/// The workspace-wide connection alert: how many panes are unhealthy, how loud the worst one is,
+/// where it sits in the caller's own order, and the chip's whole label.
+///
+/// `0` is the healthy workspace — no pane is an alarm and the indicator draws nothing — which is
+/// why the count leads the answer rather than being derivable from it: a delivery of zero length
+/// and a delivery describing zero panes would otherwise be the same bytes.
+///
+/// `codes` are `StatusKind` bytes in the caller's own STABLE order; the tie-break is positional, so
+/// a caller that reorders between draws moves the click target.
+///
+/// # Safety
+/// `(codes, count)` must be null, or name `count` initialised bytes live for the call, and
+/// `(out, cap)` must be writable for `cap` bytes.
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and both pointers are the caller's"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slopdesk_ws_connection_alert(
+    codes: *const c_uchar,
+    count: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    let bytes = unsafe { borrow(codes, count) };
+    let statuses: Vec<StatusKind> = bytes.iter().map(|byte| StatusKind::from_byte(*byte)).collect();
+    let Some(alert) = connection::alert(&statuses) else {
+        return 0;
+    };
+    let mut answer = Vec::with_capacity(ALERT_HEAD_BYTES + 32);
+    answer.extend_from_slice(&saturating_u32(alert.count).to_be_bytes());
+    answer.extend_from_slice(&u32::from(alert.worst.as_byte()).to_be_bytes());
+    answer.extend_from_slice(&saturating_u32(alert.worst_index).to_be_bytes());
+    push_text(&mut answer, &connection::alert_label(alert));
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&answer, out, cap) }
 }
 
 #[cfg(test)]

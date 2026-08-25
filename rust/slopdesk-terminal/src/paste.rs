@@ -244,6 +244,78 @@ pub fn preview(text: &str) -> String {
     out
 }
 
+/// The bullet a danger list is set with, in ONE place — the `AppKit` join below reads it and so
+/// does the phone's row, so the two lists cannot come to look like different lists.
+pub const BULLET: &str = "•";
+
+/// The caption over the defused payload. The one word on this surface that is not a danger sentence
+/// — it names a REGION — so it is spelled once and each renderer sets it in its own register.
+pub const PREVIEW_CAPTION: &str = "Clipboard preview";
+
+/// One clipboard confirmation, resolved once for both renderers.
+///
+/// Nothing here is a sentence of its own: the heading, the affirmative, the reason an OSC-52 ask
+/// prints where a paste prints bullets, one bullet per flagged danger in the mask's own bit order,
+/// and the defused preview all come from this module. What [`confirmation`] adds is the SHAPE the
+/// two renderers would otherwise each decide for themselves — bullets OR the reason, never both,
+/// and the preview only where there is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Confirmation {
+    /// The question, as the dialog's heading.
+    pub title: &'static str,
+    /// The affirmative button, naming the action.
+    pub affirmative: &'static str,
+    /// One line per flagged danger, in the mask's own bit order. EMPTY for every OSC-52 ask, which
+    /// carries no payload to classify.
+    pub dangers: Vec<&'static str>,
+    /// What stands in for the bullets when the mask flagged nothing. EMPTY whenever `dangers` is
+    /// non-empty, so a renderer draws exactly one of the two and never both.
+    pub reason: &'static str,
+    /// The payload as the confirmation may show it. EMPTY where there is nothing to show.
+    pub preview: String,
+    /// The whole body as ONE string, for the renderer whose dialog takes one — an `NSAlert`'s
+    /// `informativeText`. A renderer that lays the parts out reads the fields above and never this.
+    pub informative_text: String,
+}
+
+/// Resolve the confirmation for `ask` over `text` and the dangers `text` tripped.
+///
+/// The bullets-or-reason branch is the whole decision: a paste that reached a confirmation reached
+/// it because the mask flagged something, so it lists WHAT; an OSC-52 ask has an empty mask by
+/// construction, so it prints why the REQUEST is being questioned instead. A renderer asking this
+/// cannot get that branch subtly different from the other renderer's.
+#[must_use]
+pub fn confirmation(ask: Ask, text: &str, mask: u32) -> Confirmation {
+    let dangers = descriptions(mask);
+    let reason = if dangers.is_empty() { ask.reason() } else { "" };
+    let preview = preview(text);
+    let mut sections: Vec<String> = Vec::with_capacity(2);
+    if dangers.is_empty() {
+        if !reason.is_empty() {
+            sections.push(reason.to_owned());
+        }
+    } else {
+        sections.push(
+            dangers
+                .iter()
+                .map(|line| format!("{BULLET}  {line}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+    }
+    if !preview.is_empty() {
+        sections.push(format!("{PREVIEW_CAPTION}:\n{preview}"));
+    }
+    Confirmation {
+        title: ask.title(),
+        affirmative: ask.affirmative(),
+        dangers,
+        reason,
+        preview,
+        informative_text: sections.join("\n\n"),
+    }
+}
+
 /// Whether `scalars` contains a `sudo` / `su` token at a word boundary.
 ///
 /// Tokens are maximal runs of non-separator scalars; separators are whitespace and the common shell
@@ -259,8 +331,8 @@ fn contains_elevation_token(scalars: &[char]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        Ask, CONTROL_CHARS, MULTI_LINE, PREVIEW_LIMIT, SUDO_OR_SU, TRAILING_NEWLINE, dangers, descriptions,
-        preview, should_warn,
+        Ask, BULLET, CONTROL_CHARS, MULTI_LINE, PREVIEW_CAPTION, PREVIEW_LIMIT, SUDO_OR_SU, TRAILING_NEWLINE,
+        confirmation, dangers, descriptions, preview, should_warn,
     };
 
     #[test]
@@ -368,5 +440,53 @@ mod tests {
         assert!(shown.ends_with('…'));
         let exact = "x".repeat(PREVIEW_LIMIT);
         assert_eq!(preview(&exact), exact, "exactly at the cap is not elided");
+    }
+
+    /// A paste only ever reaches a confirmation because the mask flagged something, so it lists
+    /// what — and prints no reason beside the list, which would be two answers to one question.
+    #[test]
+    fn a_flagged_paste_lists_its_dangers_and_prints_no_reason() {
+        let shown = confirmation(Ask::UnsafePaste, "sudo rm -rf /\n", dangers("sudo rm -rf /\n"));
+        assert_eq!(shown.title, Ask::UnsafePaste.title());
+        assert_eq!(shown.affirmative, "Paste Anyway");
+        assert_eq!(shown.dangers, descriptions(TRAILING_NEWLINE | SUDO_OR_SU));
+        assert_eq!(shown.reason, "", "the bullets already answered it");
+        assert!(shown.informative_text.starts_with(BULLET));
+        assert!(shown.informative_text.contains(PREVIEW_CAPTION));
+    }
+
+    /// An OSC-52 ask has an empty mask by construction — the REQUEST is the reason, so the body
+    /// prints it where a paste would have printed bullets.
+    #[test]
+    fn an_osc52_ask_prints_its_reason_where_a_paste_prints_bullets() {
+        let shown = confirmation(Ask::ClipboardRead, "", 0);
+        assert!(shown.dangers.is_empty());
+        assert_eq!(shown.reason, Ask::ClipboardRead.reason());
+        assert_eq!(shown.affirmative, "Allow");
+        assert_eq!(
+            shown.informative_text,
+            Ask::ClipboardRead.reason(),
+            "no payload, so no caption"
+        );
+    }
+
+    /// The caption may not stand over nothing: a request with no payload has no preview section at
+    /// all, rather than a heading with an empty block under it.
+    #[test]
+    fn an_empty_payload_carries_no_preview_section() {
+        let shown = confirmation(Ask::ClipboardWrite, "", 0);
+        assert_eq!(shown.preview, "");
+        assert!(!shown.informative_text.contains(PREVIEW_CAPTION));
+    }
+
+    /// The escape being warned about must not run inside the warning — the body carries the defused
+    /// spelling, never the payload.
+    #[test]
+    fn the_body_shows_the_defused_payload_and_never_the_raw_one() {
+        let raw = "\u{1b}[31mred";
+        let shown = confirmation(Ask::UnsafePaste, raw, dangers(raw));
+        assert_eq!(shown.preview, preview(raw));
+        assert!(shown.informative_text.contains("^["));
+        assert!(!shown.informative_text.contains('\u{1b}'));
     }
 }

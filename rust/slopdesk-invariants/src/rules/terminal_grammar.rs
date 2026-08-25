@@ -152,14 +152,18 @@ pub fn one_paste_guard_secret_one(tree: &Tree) -> Report {
         },
         Claim::Mentions {
             path: "Sources/SlopDeskWorkspaceCore/Terminal/PasteSafetyAnalyzer.swift",
-            names: &[
-                "slopdesk_paste_dangers",
-                "slopdesk_paste_should_warn",
-                "slopdesk_paste_danger_description",
-                "slopdesk_paste_preview",
-            ],
+            names: &["slopdesk_paste_dangers", "slopdesk_paste_should_warn"],
             message: "Sources/SlopDeskWorkspaceCore/Terminal/PasteSafetyAnalyzer.swift no longer asks \
                       {entry} — the guard is one implementation",
+        },
+        // The WORDS moved off the analyzer and into the presentation, and from six doors to one. The
+        // face pinned here is the one that draws the dialog rather than the one that decides there
+        // should be a dialog, and what it must not do is assemble that dialog itself.
+        Claim::Mentions {
+            path: "Sources/SlopDeskClientCore/Overlays/ClipboardConfirmPresentation.swift",
+            names: &["slopdesk_paste_confirmation"],
+            message: "Sources/SlopDeskClientCore/Overlays/ClipboardConfirmPresentation.swift no longer asks \
+                      {entry} — the confirmation's words are one implementation",
         },
         Claim::NoneOf {
             paths: &["Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift"],
@@ -170,7 +174,12 @@ pub fn one_paste_guard_secret_one(tree: &Tree) -> Report {
         },
         Claim::Mentions {
             path: "rust/slopdesk-terminal/src/paste.rs",
-            names: &["pub fn descriptions", "pub fn preview", "pub enum Ask"],
+            names: &[
+                "pub fn descriptions",
+                "pub fn preview",
+                "pub fn confirmation",
+                "pub enum Ask",
+            ],
             message: "rust/slopdesk-terminal/src/paste.rs lost {entry} — the sheet's words live beside its \
                       rules",
         },
@@ -331,8 +340,11 @@ mod tests {
         fixture
             .write(
                 "Sources/SlopDeskWorkspaceCore/Terminal/PasteSafetyAnalyzer.swift",
-                "slopdesk_paste_dangers\nslopdesk_paste_should_warn\nslopdesk_paste_danger_description\\
-                 nslopdesk_paste_preview\nkept so the ban has a haystack\n",
+                "slopdesk_paste_dangers\nslopdesk_paste_should_warn\nkept so the ban has a haystack\n",
+            )
+            .write(
+                "Sources/SlopDeskClientCore/Overlays/ClipboardConfirmPresentation.swift",
+                "slopdesk_paste_confirmation\nkept so the ban has a haystack\n",
             )
             .write(
                 "Sources/SlopDeskMacUI/Terminal/PasteProtectionSheet.swift",
@@ -340,9 +352,9 @@ mod tests {
             )
             .write(
                 "rust/slopdesk-terminal/src/paste.rs",
-                "pub fn descriptions\npub fn preview\npub enum Ask\nMULTI_LINE: u32 = 1 << \
-                 0\nTRAILING_NEWLINE: u32 = 1 << 1\nSUDO_OR_SU: u32 = 1 << 2\nCONTROL_CHARS: u32 = 1 << \
-                 3\nkept so the ban has a haystack\n",
+                "pub fn descriptions\npub fn preview\npub fn confirmation\npub enum Ask\nMULTI_LINE: u32 = \
+                 1 << 0\nTRAILING_NEWLINE: u32 = 1 << 1\nSUDO_OR_SU: u32 = 1 << 2\nCONTROL_CHARS: u32 = 1 \
+                 << 3\nkept so the ban has a haystack\n",
             );
     }
 

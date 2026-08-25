@@ -20,7 +20,7 @@ use core::ffi::c_uchar;
 
 use slopdesk_terminal::paste::Ask;
 
-use crate::{borrow, deliver};
+use crate::{borrow, deliver, push_text, saturating_u32};
 
 /// The four dangers `text` trips, as `slopdesk_terminal::paste`'s bit constants.
 ///
@@ -68,87 +68,27 @@ pub unsafe extern "C" fn slopdesk_paste_should_warn(
     )
 }
 
-/// How many bullets a mask spells out. `0` is a real answer — an OSC-52 ask arrives with no
-/// dangers at all and prints its reason instead.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_paste_danger_count(mask: u32) -> usize {
-    slopdesk_terminal::paste::descriptions(mask).len()
-}
+/// How many bytes [`slopdesk_paste_confirmation`]'s answer opens with, before its runs: the number
+/// of danger bullets, as a big-endian `u32`.
+pub const CONFIRMATION_HEAD_BYTES: usize = 4;
 
-/// One bullet of a mask, in bit order. `0` past the end.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_paste_danger_description(
-    mask: u32,
-    index: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    let lines = slopdesk_terminal::paste::descriptions(mask);
-    let line = lines.get(index).copied().unwrap_or_default();
-    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
-    unsafe { deliver(line.as_bytes(), out, cap) }
-}
+/// How many runs follow the head before the bullets do: the heading, the affirmative, the reason,
+/// the defused preview and the one-string body, in that order.
+pub const CONFIRMATION_FIXED_RUNS: usize = 5;
 
-/// The confirmation's heading for one ask. `0` for an ask index no ask has.
+/// The WHOLE confirmation for one ask, in one crossing.
 ///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_paste_ask_title(ask: u8, out: *mut c_uchar, cap: usize) -> usize {
-    // SAFETY: as above.
-    unsafe { ask_field(ask, out, cap, Ask::title) }
-}
-
-/// The affirmative button's title for one ask. `0` for an ask index no ask has.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_paste_ask_affirmative(ask: u8, out: *mut c_uchar, cap: usize) -> usize {
-    // SAFETY: as above.
-    unsafe { ask_field(ask, out, cap, Ask::affirmative) }
-}
-
-/// What the body says when the mask flagged nothing.
-///
-/// `0` for the unsafe paste, which never arrives without a danger to list, and for an ask index no
-/// ask has — the two read identically because neither prints a line.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_paste_ask_reason(ask: u8, out: *mut c_uchar, cap: usize) -> usize {
-    // SAFETY: as above.
-    unsafe { ask_field(ask, out, cap, Ask::reason) }
-}
-
-/// The payload as the confirmation shows it — capped, with every control character made visible.
+/// It used to be six: a heading door, a button door, a reason door, a count, a bullet-at-index and
+/// a preview — which is `5 + n` crossings to draw one dialog, and, more to the point, six chances
+/// for a renderer to take the heading of one ask beside the bullets of another. The
+/// bullets-or-reason branch is a rule and not a layout, so it is decided here too: a caller draws
+/// exactly one of the two and never has to know which.
 ///
 /// A payload that is not valid UTF-8 is read lossily rather than refused, for the same reason
 /// [`slopdesk_paste_dangers`] does it: a clipboard is whatever the platform handed over.
+///
+/// `0` for an ask index no ask has — the answer is a whole dialog or nothing, never a dialog with a
+/// blank heading.
 ///
 /// # Safety
 /// `(text, len)` must be null, or describe `len` live bytes for the call; `(out, cap)` must be
@@ -156,45 +96,44 @@ pub unsafe extern "C" fn slopdesk_paste_ask_reason(ask: u8, out: *mut c_uchar, c
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+    reason = "`no_mangle` on an exported C entry point, and both pointers are the caller's"
 )]
-pub unsafe extern "C" fn slopdesk_paste_preview(
+pub unsafe extern "C" fn slopdesk_paste_confirmation(
+    ask: u8,
+    mask: u32,
     text: *const c_uchar,
     len: usize,
     out: *mut c_uchar,
     cap: usize,
 ) -> usize {
-    // SAFETY: the caller's obligation, restated above; `borrow` and `deliver` state their own.
+    let Some(ask) = Ask::from_index(ask) else { return 0 };
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
     let bytes = unsafe { borrow(text, len) };
-    let shown = slopdesk_terminal::paste::preview(&String::from_utf8_lossy(bytes));
-    // SAFETY: as above.
-    unsafe { deliver(shown.as_bytes(), out, cap) }
-}
-
-/// One ask's string, or nothing for an index no ask has.
-///
-/// # Safety
-/// `(out, cap)` must be writable for `cap` bytes.
-#[expect(
-    unsafe_code,
-    reason = "the shared body of the exported doors above, and it carries their obligation"
-)]
-unsafe fn ask_field(ask: u8, out: *mut c_uchar, cap: usize, field: fn(Ask) -> &'static str) -> usize {
-    let answer = Ask::from_index(ask).map(field).unwrap_or_default();
+    let shown = slopdesk_terminal::paste::confirmation(ask, &String::from_utf8_lossy(bytes), mask);
+    let mut answer = Vec::with_capacity(CONFIRMATION_HEAD_BYTES + shown.informative_text.len() * 2 + 256);
+    answer.extend_from_slice(&saturating_u32(shown.dangers.len()).to_be_bytes());
+    push_text(&mut answer, shown.title);
+    push_text(&mut answer, shown.affirmative);
+    push_text(&mut answer, shown.reason);
+    push_text(&mut answer, &shown.preview);
+    push_text(&mut answer, &shown.informative_text);
+    for line in shown.dangers {
+        push_text(&mut answer, line);
+    }
     // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
-    unsafe { deliver(answer.as_bytes(), out, cap) }
+    unsafe { deliver(&answer, out, cap) }
 }
 
 #[cfg(test)]
 #[expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 mod tests {
-    use slopdesk_terminal::paste::{CONTROL_CHARS, MULTI_LINE};
+    use slopdesk_terminal::paste::{Ask, CONTROL_CHARS, MULTI_LINE, PREVIEW_CAPTION};
 
     use super::{
-        slopdesk_paste_ask_affirmative, slopdesk_paste_ask_reason, slopdesk_paste_ask_title,
-        slopdesk_paste_danger_count, slopdesk_paste_danger_description, slopdesk_paste_dangers,
-        slopdesk_paste_preview, slopdesk_paste_should_warn,
+        CONFIRMATION_FIXED_RUNS, CONFIRMATION_HEAD_BYTES, slopdesk_paste_confirmation,
+        slopdesk_paste_dangers, slopdesk_paste_should_warn,
     };
+    use crate::testing::delivered;
 
     fn dangers(text: &str) -> u32 {
         // SAFETY: the pointer names a live local for the duration of the call.
@@ -227,53 +166,73 @@ mod tests {
         assert_eq!(mask, 0);
     }
 
-    /// Reads one `(out, cap)` door at a capacity generous enough that nothing here retries.
-    fn read(door: impl Fn(*mut u8, usize) -> usize) -> String {
-        let mut buffer = [0_u8; 256];
-        let written = door(buffer.as_mut_ptr(), buffer.len());
-        // A door that reported MORE than it wrote asked for a retry — nothing here is long enough
-        // to need one, so an empty answer here is the failure rather than a truncated read.
-        let answer = buffer.get(..written).unwrap_or_default();
-        String::from_utf8_lossy(answer).into_owned()
-    }
-
-    #[test]
-    fn the_bullets_cross_in_bit_order_and_stop_at_the_end() {
-        let mask = MULTI_LINE | CONTROL_CHARS;
-        assert_eq!(slopdesk_paste_danger_count(mask), 2);
-        // SAFETY: the buffer is a live local for the duration of each call.
-        let line =
-            |index| read(|out, cap| unsafe { slopdesk_paste_danger_description(mask, index, out, cap) });
-        assert!(line(0).starts_with("Multiple lines"));
-        assert!(line(1).starts_with("Contains control characters"));
-        assert!(line(2).is_empty(), "past the end is nothing, not a panic");
-        assert_eq!(slopdesk_paste_danger_count(0), 0);
-    }
-
-    #[test]
-    fn every_ask_crosses_with_a_heading_and_a_button_and_only_two_with_a_reason() {
-        // SAFETY: the buffer is a live local for the duration of each call.
-        let title = |ask| read(|out, cap| unsafe { slopdesk_paste_ask_title(ask, out, cap) });
-        let button = |ask| read(|out, cap| unsafe { slopdesk_paste_ask_affirmative(ask, out, cap) });
-        let reason = |ask| read(|out, cap| unsafe { slopdesk_paste_ask_reason(ask, out, cap) });
-        for ask in 0..3 {
-            assert!(!title(ask).is_empty(), "ask {ask} crossed headless");
-            assert!(!button(ask).is_empty(), "ask {ask} crossed with no button");
-        }
-        assert_eq!(button(0), "Paste Anyway");
-        assert!(reason(0).is_empty(), "the dangers are the unsafe paste's reason");
-        assert!(!reason(1).is_empty() && !reason(2).is_empty());
-        assert!(title(3).is_empty(), "past the end is nothing, not a panic");
-    }
-
-    #[test]
-    fn the_preview_crosses_with_its_escapes_already_defused() {
-        let text = "go \u{1B}[31m";
+    /// Cuts the confirmation delivery into its bullet count and its runs.
+    fn confirmation(ask: u8, mask: u32, text: &str) -> (usize, Vec<String>) {
         // SAFETY: both pointers name live locals for the duration of the call.
-        let shown = read(|out, cap| unsafe { slopdesk_paste_preview(text.as_ptr(), text.len(), out, cap) });
-        assert_eq!(shown, "go ^[[31m");
-        // SAFETY: a null payload with a zero length is what `borrow` documents.
-        let empty = read(|out, cap| unsafe { slopdesk_paste_preview(std::ptr::null(), 0, out, cap) });
-        assert!(empty.is_empty());
+        let blob = delivered(|out, cap| unsafe {
+            slopdesk_paste_confirmation(ask, mask, text.as_ptr(), text.len(), out, cap)
+        });
+        let count = blob
+            .get(..CONFIRMATION_HEAD_BYTES)
+            .and_then(|four| <[u8; 4]>::try_from(four).ok())
+            .map_or(0, u32::from_be_bytes) as usize;
+        let mut runs = Vec::new();
+        let mut cursor = CONFIRMATION_HEAD_BYTES;
+        while let Some(four) = blob
+            .get(cursor..cursor + 4)
+            .and_then(|four| <[u8; 4]>::try_from(four).ok())
+        {
+            let length = u32::from_be_bytes(four) as usize;
+            cursor += 4;
+            let Some(run) = blob.get(cursor..cursor + length) else {
+                break;
+            };
+            runs.push(String::from_utf8_lossy(run).into_owned());
+            cursor += length;
+        }
+        (count, runs)
+    }
+
+    /// One crossing carries the whole dialog — its head, its button, its bullets and the body a
+    /// single-string renderer sets — in the boundary's own order.
+    #[test]
+    fn the_whole_dialog_crosses_in_one_delivery() {
+        let mask = MULTI_LINE | CONTROL_CHARS;
+        let (count, runs) = confirmation(0, mask, "one\ntwo\u{1B}[31m");
+        assert_eq!(count, 2);
+        assert_eq!(runs.len(), CONFIRMATION_FIXED_RUNS + count);
+        assert_eq!(runs.first().map(String::as_str), Some(Ask::UnsafePaste.title()));
+        assert_eq!(runs.get(1).map(String::as_str), Some("Paste Anyway"));
+        assert_eq!(
+            runs.get(2).map(String::as_str),
+            Some(""),
+            "the bullets are the paste's reason"
+        );
+        assert_eq!(runs.get(3).map(String::as_str), Some("one\ntwo^[[31m"));
+        assert!(runs.get(5).is_some_and(|line| line.starts_with("Multiple lines")));
+        assert!(
+            runs.get(6)
+                .is_some_and(|line| line.starts_with("Contains control characters"))
+        );
+    }
+
+    /// An OSC-52 ask arrives with an empty mask by construction, so the reason takes the bullets'
+    /// place and the body carries no preview caption over an empty payload.
+    #[test]
+    fn an_osc52_ask_crosses_with_a_reason_and_no_bullets() {
+        let (count, runs) = confirmation(1, 0, "");
+        assert_eq!(count, 0);
+        assert_eq!(runs.len(), CONFIRMATION_FIXED_RUNS);
+        assert_eq!(runs.get(1).map(String::as_str), Some("Allow"));
+        assert_eq!(runs.get(2).map(String::as_str), Some(Ask::ClipboardRead.reason()));
+        assert_eq!(runs.get(4).map(String::as_str), Some(Ask::ClipboardRead.reason()));
+        assert!(runs.iter().all(|run| !run.contains(PREVIEW_CAPTION)));
+    }
+
+    #[test]
+    fn an_ask_index_no_ask_has_crosses_as_nothing_rather_than_as_a_blank_dialog() {
+        let (count, runs) = confirmation(3, 0, "");
+        assert_eq!(count, 0);
+        assert!(runs.is_empty());
     }
 }

@@ -322,20 +322,6 @@ package enum ConnectionReading {
 
 // MARK: - The vocabulary the doors speak
 
-private extension HostPulse {
-    /// This sample as the door's flat struct. `diskFreeMiB`'s absence becomes a presence FLAG rather
-    /// than a sentinel, because zero free bytes is the loudest real reading there is.
-    var crossing: SlopDeskHostPulse {
-        SlopDeskHostPulse(
-            cpu_percent: UInt32(max(0, cpuPercent)),
-            memory_percent: UInt32(max(0, memoryPercent)),
-            memory_pressure: memoryPressure.rawValue,
-            disk_free_mib: diskFreeMiB ?? 0,
-            has_disk: diskFreeMiB != nil,
-        )
-    }
-}
-
 private extension ConnectionLed {
     init(code: UInt32) {
         switch code {

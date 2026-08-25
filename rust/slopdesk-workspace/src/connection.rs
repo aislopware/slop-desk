@@ -223,10 +223,17 @@ impl MemoryPressure {
             _ => Self::Normal,
         }
     }
+
+    /// The byte a verdict reports as — the inverse of [`Self::from_byte`], for a boundary handing a
+    /// held pulse back the way it received one.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
 }
 
 /// The host's displayed pulse — what the second line actually says, which is not quite what the
-/// last sample said (the deadband that holds it still is the caller's, and stays there).
+/// last sample said. [`settled`] below is the deadband that holds it still.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Pulse {
     /// All-core CPU busy percent as displayed.
@@ -690,6 +697,134 @@ pub fn short_label(status: StatusKind, attempt: u32, max_attempts: u32) -> Strin
     }
 }
 
+/// The points a metric must move before the footer redraws it.
+///
+/// Three is the smallest step that clears idle jitter on a real machine while still tracking a
+/// genuine climb within one poll of it.
+pub const PULSE_DEADBAND: u32 = 3;
+
+/// Folds a fresh sample into the SHOWN pulse.
+///
+/// The rail has no animation by design, and a raw CPU percent polled every few seconds fails that
+/// test on its own: it twitches 31 → 29 → 33 on an idle machine and pulls the eye to the corner for
+/// nothing. So each metric HOLDS its displayed number until the sample is at least
+/// [`PULSE_DEADBAND`] points away, then snaps to the sample EXACTLY — never to a midpoint, because
+/// the row must always show a percent the host really reported. That keeps the reading honest (no
+/// smoothing, no lag) while refusing to redraw for noise.
+///
+/// The first sample (`previous` is `None`) is shown as-is. Pressure and free disk are exempt and
+/// pass straight through: a pressure LEVEL change is a state change and never noise, and the disk
+/// figure is drawn so coarsely that its own format is already a deadband.
+#[must_use]
+pub const fn settled(previous: Option<Pulse>, sample: Pulse) -> Pulse {
+    let Some(previous) = previous else { return sample };
+    Pulse {
+        cpu_percent: held(previous.cpu_percent, sample.cpu_percent),
+        memory_percent: held(previous.memory_percent, sample.memory_percent),
+        memory_pressure: sample.memory_pressure,
+        disk_free_mib: sample.disk_free_mib,
+    }
+}
+
+/// One metric's hold: the sample once it has earned the redraw, the shown figure until then.
+const fn held(shown: u32, sample: u32) -> u32 {
+    let distance = sample.abs_diff(shown);
+    if distance >= PULSE_DEADBAND { sample } else { shown }
+}
+
+/// How loud a workspace-wide connection alert is, ascending.
+///
+/// Only three of the six [`StatusKind`]s raise the collapsed-sidebar indicator at all: a
+/// `Connecting` first dial, a deliberate `Disconnected`, and a live `Connected` are not alarms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum AlertSeverity {
+    /// A transport drop the supervisor is retrying — recovering, not down.
+    Reconnecting = 0,
+    /// The initial connect refused or timed out.
+    Failed = 1,
+    /// The reconnect campaign gave up after the dead-host timeout.
+    Unreachable = 2,
+}
+
+impl AlertSeverity {
+    /// The byte a severity reports as.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// The word the chip says this severity with.
+    ///
+    /// `Failed` reads as "disconnected" rather than "failed": to the user an initial connect that
+    /// never landed IS being disconnected, and the distinction between it and a mid-session drop is
+    /// carried by the fact that this one is not counting attempts.
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Reconnecting => "reconnecting",
+            Self::Failed => "disconnected",
+            Self::Unreachable => "unreachable",
+        }
+    }
+}
+
+/// The compact fold of every live pane's connection status — "is anything wrong, how bad, and which
+/// pane is the click target".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Alert {
+    /// How many panes are unhealthy, at any severity.
+    pub count: usize,
+    /// The most salient severity across them, which is the indicator's ink.
+    pub worst: AlertSeverity,
+    /// The position, in the caller's own order, of the pane the indicator focuses on click.
+    pub worst_index: usize,
+}
+
+/// One status's alert severity, or `None` when it is healthy or simply not an alarm.
+#[must_use]
+pub const fn alert_severity(status: StatusKind) -> Option<AlertSeverity> {
+    match status {
+        StatusKind::Reconnecting => Some(AlertSeverity::Reconnecting),
+        StatusKind::Failed => Some(AlertSeverity::Failed),
+        StatusKind::Unreachable => Some(AlertSeverity::Unreachable),
+        StatusKind::Disconnected | StatusKind::Connecting | StatusKind::Connected => None,
+    }
+}
+
+/// Folds live per-pane statuses into an alert, or `None` when no pane is unhealthy.
+///
+/// `statuses` must be in a STABLE order — the store passes tree DFS order — because the tie-break
+/// is positional: a strictly higher severity supersedes the current worst, and a tie keeps the
+/// EARLIER pane, so a click lands on the first pane at the worst severity rather than on whichever
+/// one the iteration happened to reach last.
+#[must_use]
+pub fn alert(statuses: &[StatusKind]) -> Option<Alert> {
+    let mut count = 0;
+    let mut found: Option<(AlertSeverity, usize)> = None;
+    for (index, status) in statuses.iter().enumerate() {
+        let Some(severity) = alert_severity(*status) else {
+            continue;
+        };
+        count += 1;
+        if found.is_none_or(|(worst, _)| severity > worst) {
+            found = Some((severity, index));
+        }
+    }
+    let (worst, worst_index) = found?;
+    Some(Alert {
+        count,
+        worst,
+        worst_index,
+    })
+}
+
+/// The chip's whole label: the unhealthy count and the worst severity's word.
+#[must_use]
+pub fn alert_label(alert: Alert) -> String {
+    format!("{} {}", alert.count, alert.worst.word())
+}
+
 /// Half-away-from-zero, the rounding `Foundation` does, kept out of the `as` cast lints' way.
 fn round_to_i64(value: f64) -> i64 {
     let rounded = value.round();
@@ -708,11 +843,12 @@ fn round_to_i64(value: f64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Alarm, DISK_CRITICAL_MIB, DISK_WARN_MIB, Led, MemoryPressure, Metric, Mount, NetworkHealth,
-        PING_GOOD_MS, PING_SLOW_MS, Pulse, StatusKind, TrailingSlot, bitrate_label, detail_alarm, disk_alarm,
-        disk_label, friendly_failure, has_raw_detail, headline, health, led_state, link_alarm, memory_alarm,
-        metric_runs, ping_label, promoted_runs, promotes, pulse_spoken, pulse_tooltip, short_label,
-        shows_retry, status_label, tooltip_detail, trailing_slot,
+        Alarm, Alert, AlertSeverity, DISK_CRITICAL_MIB, DISK_WARN_MIB, Led, MemoryPressure, Metric, Mount,
+        NetworkHealth, PING_GOOD_MS, PING_SLOW_MS, PULSE_DEADBAND, Pulse, StatusKind, TrailingSlot, alert,
+        alert_label, bitrate_label, detail_alarm, disk_alarm, disk_label, friendly_failure, has_raw_detail,
+        headline, health, led_state, link_alarm, memory_alarm, metric_runs, ping_label, promoted_runs,
+        promotes, pulse_spoken, pulse_tooltip, settled, short_label, shows_retry, status_label,
+        tooltip_detail, trailing_slot,
     };
 
     fn pulse(cpu: u32, memory: u32, pressure: MemoryPressure, disk: Option<u32>) -> Pulse {
@@ -1038,5 +1174,111 @@ mod tests {
     fn the_three_roles_differ_in_name_as_well_as_in_silhouette() {
         let names = [Metric::Cpu, Metric::Memory, Metric::Disk].map(Metric::symbol_name);
         assert_eq!(names, ["cpu", "memorychip", "internaldrive"]);
+    }
+
+    #[test]
+    fn the_first_sample_is_shown_exactly_as_it_arrived() {
+        let sample = pulse(31, 62, MemoryPressure::Warn, Some(900));
+        assert_eq!(settled(None, sample), sample);
+    }
+
+    #[test]
+    fn a_move_under_the_deadband_leaves_the_shown_figure_alone() {
+        let shown = pulse(31, 62, MemoryPressure::Normal, Some(900));
+        let jitter = pulse(
+            31 + PULSE_DEADBAND - 1,
+            62 - PULSE_DEADBAND + 1,
+            MemoryPressure::Normal,
+            Some(880),
+        );
+        let held = settled(Some(shown), jitter);
+        assert_eq!(held.cpu_percent, 31);
+        assert_eq!(held.memory_percent, 62);
+    }
+
+    /// The deadband decides WHETHER to redraw, never WHAT to draw: once a metric has earned its
+    /// redraw it prints the sample itself, so the row can only ever show a percent the host sent.
+    #[test]
+    fn a_move_at_the_deadband_snaps_to_the_sample_and_never_to_a_midpoint() {
+        let shown = pulse(31, 62, MemoryPressure::Normal, None);
+        let climbed = pulse(
+            31 + PULSE_DEADBAND,
+            62 - PULSE_DEADBAND,
+            MemoryPressure::Normal,
+            None,
+        );
+        let held = settled(Some(shown), climbed);
+        assert_eq!(held.cpu_percent, 31 + PULSE_DEADBAND);
+        assert_eq!(held.memory_percent, 62 - PULSE_DEADBAND);
+    }
+
+    /// A pressure LEVEL is a state, and a state change is never noise — it lands on the sample that
+    /// carried it even while both percents are being held still.
+    #[test]
+    fn pressure_and_disk_cross_the_deadband_untouched() {
+        let shown = pulse(31, 62, MemoryPressure::Normal, Some(900));
+        let sample = pulse(32, 61, MemoryPressure::Critical, Some(120));
+        let held = settled(Some(shown), sample);
+        assert_eq!(held.cpu_percent, 31, "the percent is still being held");
+        assert_eq!(held.memory_pressure, MemoryPressure::Critical);
+        assert_eq!(held.disk_free_mib, Some(120));
+    }
+
+    #[test]
+    fn a_healthy_workspace_raises_nothing() {
+        let statuses = [
+            StatusKind::Connected,
+            StatusKind::Connecting,
+            StatusKind::Disconnected,
+        ];
+        assert!(alert(&statuses).is_none());
+        assert!(alert(&[]).is_none());
+    }
+
+    #[test]
+    fn the_alert_counts_every_unhealthy_pane_and_names_the_loudest() {
+        let statuses = [
+            StatusKind::Connected,
+            StatusKind::Reconnecting,
+            StatusKind::Unreachable,
+            StatusKind::Failed,
+        ];
+        assert_eq!(
+            alert(&statuses),
+            Some(Alert {
+                count: 3,
+                worst: AlertSeverity::Unreachable,
+                worst_index: 2
+            }),
+        );
+    }
+
+    /// The click target has to be stable across a redraw that changed nothing, so a tie keeps the
+    /// pane the caller listed first rather than the one the walk reached last.
+    #[test]
+    fn a_tie_at_the_worst_severity_keeps_the_earlier_pane() {
+        let statuses = [StatusKind::Connected, StatusKind::Failed, StatusKind::Failed];
+        assert_eq!(
+            alert(&statuses),
+            Some(Alert {
+                count: 2,
+                worst: AlertSeverity::Failed,
+                worst_index: 1
+            }),
+        );
+    }
+
+    #[test]
+    fn the_chip_counts_panes_and_speaks_the_worst_severitys_word() {
+        let one = |kind| alert(&[kind]).map(alert_label).unwrap_or_default();
+        assert_eq!(one(StatusKind::Reconnecting), "1 reconnecting");
+        assert_eq!(
+            one(StatusKind::Failed),
+            "1 disconnected",
+            "a connect that never landed IS disconnected"
+        );
+        assert_eq!(one(StatusKind::Unreachable), "1 unreachable");
+        let two = alert(&[StatusKind::Reconnecting, StatusKind::Reconnecting]);
+        assert_eq!(two.map(alert_label).unwrap_or_default(), "2 reconnecting");
     }
 }

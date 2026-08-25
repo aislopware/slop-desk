@@ -1,13 +1,18 @@
+import CSlopDeskFFI
 import SlopDeskWorkspaceModel
 
-// WorkspaceConnectionAlert (C8 improvement 3) — the pure, `Equatable` fold of every live pane's PATH-1
-// connection status into a compact "is anything wrong" summary. It backs the collapsed-sidebar connection
-// indicator: with the tabs panel hidden (⌘⇧L) a dropped / reconnecting pane otherwise has no per-pane
-// visible surface until the user re-opens the sidebar, so a tiny always-on-top chip answers "how many panes
-// are unhealthy, how bad, and which one is worst (the click-to-focus target)" without re-opening it.
+// WorkspaceConnectionAlert (C8 improvement 3) — the `Equatable` fold of every live pane's PATH-1
+// connection status into a compact "is anything wrong" summary, as a face over
+// `slopdesk_workspace::connection`.
 //
-// `nil` (from `resolve(from:)`) ⇒ every pane is healthy — the chip renders nothing. Pure + value type so the
-// fold (hidden-when-healthy, severity ranking, worst-pane tie-break) is unit-pinned headlessly, no view.
+// It backs the collapsed-sidebar connection indicator: with the tabs panel hidden (⌘⇧L) a dropped /
+// reconnecting pane otherwise has no per-pane visible surface until the user re-opens the sidebar, so
+// a tiny always-on-top chip answers "how many panes are unhealthy, how bad, and which one is worst
+// (the click-to-focus target)" without re-opening it.
+//
+// `nil` (from `resolve(from:)`) ⇒ every pane is healthy — the chip renders nothing. What crosses is
+// the STATUS CODES, in the caller's own order, and what comes back is a position in that same order:
+// a `PaneID` is a UUID the crate has no use for, and the tie-break is positional anyway.
 
 /// A compact connection-health summary across the workspace's live panes. `nil` from ``resolve(from:)``
 /// means all panes are healthy (nothing to surface).
@@ -15,7 +20,7 @@ public struct WorkspaceConnectionAlert: Equatable, Sendable {
     /// The UNHEALTHY connection states, ordered by ascending salience (a higher `rawValue` is more urgent).
     /// Only these three raise the indicator — a `.connecting` initial dial, a deliberate `.disconnected`,
     /// and a live `.connected` are NOT alarms. Mirrors the sidebar rail's fold order
-    /// (`unreachable > failed > reconnecting`).
+    /// (`unreachable > failed > reconnecting`); the raw values ARE the boundary's own severity codes.
     public enum Severity: Int, Sendable, Comparable {
         /// A transport drop the supervisor is retrying (amber — recovering).
         case reconnecting = 0
@@ -34,65 +39,68 @@ public struct WorkspaceConnectionAlert: Equatable, Sendable {
     /// The pane the indicator focuses on click: the FIRST pane (in the caller's stable order) at the worst
     /// severity, so a click lands on the most-urgent affected pane.
     public let worstPane: PaneID
+    /// The compact chip label: the unhealthy count + the worst severity's word — "1 reconnecting",
+    /// "2 disconnected", "1 unreachable". A `.failed` reads to the user as "disconnected" (an initial
+    /// connect that never landed); `.unreachable` names the give-up state plainly.
+    public let label: String
 
-    public init(count: Int, worst: Severity, worstPane: PaneID) {
+    public init(count: Int, worst: Severity, worstPane: PaneID, label: String) {
         self.count = count
         self.worst = worst
         self.worstPane = worstPane
+        self.label = label
     }
 
     /// Classify one pane's connection status into an alert severity, or `nil` when it is healthy / not an
     /// alarm — connected, an initial `.connecting` dial, a deliberate `.disconnected`, or no PATH-1
     /// connection at all (a video pane / faked handle, whose status is `nil`).
+    ///
+    /// A pane with no connection crosses as `.disconnected`, which is the status that is not an alarm
+    /// for the same reason: nothing is trying, so nothing has failed.
     public static func severity(of status: ConnectionStatus?) -> Severity? {
-        switch status {
-        case .reconnecting: .reconnecting
-        case .failed: .failed
-        case .unreachable: .unreachable
-        case .connected,
-             .connecting,
-             .disconnected,
-             .none: nil
-        }
+        let alert = resolve(codes: [status?.terms.code ?? SLOPDESK_CONNECTION_STATUS_DISCONNECTED])
+        return alert.map(\.worst)
     }
 
     /// Fold live per-pane statuses into an alert, or `nil` when no pane is unhealthy. `entries` MUST be in a
     /// STABLE order (the store passes tree DFS order) so the worst-pane tie-break — "the FIRST pane at the
-    /// worst severity" — is deterministic. A pane at a strictly higher severity supersedes the current worst;
-    /// ties keep the earlier pane.
+    /// worst severity" — is deterministic.
     public static func resolve(
         from entries: [(pane: PaneID, status: ConnectionStatus?)],
     ) -> Self? {
-        var count = 0
-        var worst: Severity?
-        var worstPane: PaneID?
-        for entry in entries {
-            guard let severity = severity(of: entry.status) else { continue }
-            count += 1
-            if let current = worst {
-                if severity > current {
-                    worst = severity
-                    worstPane = entry.pane
-                }
-            } else {
-                worst = severity
-                worstPane = entry.pane
-            }
-        }
-        guard let worst, let worstPane else { return nil }
-        return Self(count: count, worst: worst, worstPane: worstPane)
+        let codes = entries.map { $0.status?.terms.code ?? SLOPDESK_CONNECTION_STATUS_DISCONNECTED }
+        guard let found = resolve(codes: codes),
+              let pane = entries[safe: found.worstIndex]?.pane else { return nil }
+        return Self(count: found.count, worst: found.worst, worstPane: pane, label: found.label)
     }
 
-    /// The compact chip label: the unhealthy count + the worst severity's word — "1 reconnecting",
-    /// "2 disconnected", "1 unreachable". A `.failed` reads to the user as "disconnected" (an initial
-    /// connect that never landed); `.unreachable` names the give-up state plainly.
-    public var label: String {
-        let word =
-            switch worst {
-            case .reconnecting: "reconnecting"
-            case .failed: "disconnected"
-            case .unreachable: "unreachable"
+    /// The crossing itself, in the door's own vocabulary: status codes in, a position back.
+    ///
+    /// `worstPane` is filled in by the caller from that position, which is why this answers an index
+    /// and the public fold answers a `PaneID` — the crate has no use for a UUID, and the tie-break it
+    /// is deciding is about ORDER rather than identity.
+    private static func resolve(
+        codes: [UInt32],
+    ) -> (count: Int, worst: Severity, worstIndex: Int, label: String)? {
+        var bytes = codes.map { UInt8(truncatingIfNeeded: $0) }
+        let blob = bytes.withUnsafeMutableBufferPointer { lent in
+            wsAnswerBytes { out, cap in
+                Int(slopdesk_ws_connection_alert(lent.baseAddress, lent.count, out, cap))
             }
-        return "\(count) \(word)"
+        }
+        let head = Int(SLOPDESK_WS_CONNECTION_ALERT_HEAD_BYTES)
+        guard blob.count >= head else { return nil }
+        let number = { (at: Int) in (0..<4).reduce(0) { $0 << 8 | Int(blob[at + $1]) } }
+        guard let worst = Severity(rawValue: number(4)) else { return nil }
+        let label = wsRuns(Array(blob.dropFirst(head)), count: 1)[0]
+        return (count: number(0), worst: worst, worstIndex: number(8), label: label)
+    }
+}
+
+private extension Array {
+    /// The element at `index`, or `nil` where the door and the caller disagree about how many panes
+    /// there were — which must lose the alert rather than focus whichever pane happens to be last.
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }

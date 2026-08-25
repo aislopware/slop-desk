@@ -6,9 +6,11 @@ import XCTest
 /// full-screen TUI alt-screen, bracketed-safe). Every assertion targets a SINGLE behaviour and several
 /// are deliberately discriminating (a naive substring / "any newline" implementation FAILS them), so the
 /// suite is a real revert-to-confirm-fail oracle rather than a tautology.
+///
+/// The WORDS the sheet prints are not here: the bullets, the heading, the button, the reason and the
+/// defused preview are `slopdesk_terminal::paste`'s and pinned there, and they reach Swift through
+/// ``ClipboardConfirmPresentation`` as ONE crossing rather than through this type.
 final class PasteSafetyAnalyzerTests: XCTestCase {
-    private typealias Dangers = PasteSafetyAnalyzer.PasteDangers
-
     // MARK: - analyze: empty / safe
 
     func testEmptyHasNoDangers() {
@@ -177,65 +179,5 @@ final class PasteSafetyAnalyzerTests: XCTestCase {
             programAdvertisedBracketed: false,
             isAlternateScreen: false,
         ))
-    }
-
-    // MARK: - descriptions
-
-    func testDescriptionsListEachFlaggedDangerInStableOrder() {
-        let all: Dangers = [.multiLine, .trailingNewline, .sudoOrSu, .controlChars]
-        let lines = PasteSafetyAnalyzer.descriptions(for: all)
-        XCTAssertEqual(lines.count, 4)
-        XCTAssertTrue(lines[0].localizedCaseInsensitiveContains("Multiple lines"))
-        XCTAssertTrue(lines[1].localizedCaseInsensitiveContains("newline"))
-        XCTAssertTrue(lines[2].localizedCaseInsensitiveContains("sudo"))
-        XCTAssertTrue(lines[3].localizedCaseInsensitiveContains("control"))
-    }
-
-    func testDescriptionsEmptyForNoDangers() {
-        XCTAssertEqual(PasteSafetyAnalyzer.descriptions(for: []), [])
-    }
-
-    // MARK: - The words (crossed, so a blank one is INVISIBLE rather than wrong-looking)
-
-    /// Every ask's heading and button are read through the boundary. A door that answered zero bytes
-    /// would render a headless alert with an unlabelled button — which looks like a rendering bug
-    /// rather than a missing string, so the near side asserts they arrived.
-    func testEveryAskCrossesWithAHeadingAndAButton() {
-        for ask in PasteSafetyAnalyzer.Ask.allCases {
-            XCTAssertFalse(ask.title.isEmpty, "\(ask) crossed headless")
-            XCTAssertFalse(ask.affirmative.isEmpty, "\(ask) crossed with an unlabelled button")
-        }
-        XCTAssertEqual(
-            Set(PasteSafetyAnalyzer.Ask.allCases.map(\.title)).count,
-            PasteSafetyAnalyzer.Ask.allCases.count,
-            "three asks that read identically are one surface pretending to be three",
-        )
-    }
-
-    /// Only the OSC-52 asks carry a reason: they reach the sheet with an EMPTY danger mask, so
-    /// without one the body would print nothing but a preview. The unsafe paste never arrives
-    /// without a danger to list, which is why its reason is deliberately empty.
-    func testOnlyTheClipboardAsksCarryAReasonForAnEmptyMask() {
-        XCTAssertTrue(PasteSafetyAnalyzer.Ask.unsafePaste.reason.isEmpty)
-        XCTAssertFalse(PasteSafetyAnalyzer.Ask.clipboardRead.reason.isEmpty)
-        XCTAssertFalse(PasteSafetyAnalyzer.Ask.clipboardWrite.reason.isEmpty)
-    }
-
-    /// The preview is the payload DEFUSED — a raw one would let the escape sequence the user is
-    /// being warned about run inside the warning itself.
-    func testThePreviewCrossesWithItsEscapesDefused() {
-        XCTAssertEqual(PasteSafetyAnalyzer.preview(of: "go \u{1b}[31m"), "go ^[[31m")
-        XCTAssertEqual(PasteSafetyAnalyzer.preview(of: "one\ntwo"), "one\ntwo")
-        XCTAssertEqual(PasteSafetyAnalyzer.preview(of: ""), "")
-    }
-
-    /// A long paste is capped rather than rendered whole, and the capped answer still fits the
-    /// reader's inline buffer — a preview that had to retry would be a silent second call on every
-    /// large clipboard.
-    func testALongPreviewIsElidedRatherThanRenderedWhole() {
-        let shown = PasteSafetyAnalyzer.preview(of: String(repeating: "\u{1b}", count: 4000))
-        XCTAssertTrue(shown.hasSuffix("…"))
-        XCTAssertTrue(shown.hasPrefix("^[^["))
-        XCTAssertLessThan(shown.utf8.count, 2048, "the capped answer must fit inline")
     }
 }

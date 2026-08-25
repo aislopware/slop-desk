@@ -191,16 +191,20 @@ uint32_t slopdesk_paste_dangers(const uint8_t *text, size_t len);
 bool slopdesk_paste_should_warn(const uint8_t *text, size_t len, bool protection_on,
                                 bool bracketed_safe, bool program_advertised_bracketed,
                                 bool is_alternate_screen);
-// The confirmation's whole text. `ask` is 0 unsafe paste, 1 OSC-52 read, 2 OSC-52 write. The
-// bullets are the mask SAID OUT LOUD, in bit order; the reason is what the body prints when the
-// mask is empty, so only the two OSC asks have one. The preview caps the payload and renders every
-// control character in caret notation, so the escape being warned about cannot run in the warning.
-size_t slopdesk_paste_danger_count(uint32_t mask);
-size_t slopdesk_paste_danger_description(uint32_t mask, size_t index, uint8_t *out, size_t cap);
-size_t slopdesk_paste_ask_title(uint8_t ask, uint8_t *out, size_t cap);
-size_t slopdesk_paste_ask_affirmative(uint8_t ask, uint8_t *out, size_t cap);
-size_t slopdesk_paste_ask_reason(uint8_t ask, uint8_t *out, size_t cap);
-size_t slopdesk_paste_preview(const uint8_t *text, size_t len, uint8_t *out, size_t cap);
+// The confirmation's WHOLE text, in one crossing. `ask` is 0 unsafe paste, 1 OSC-52 read, 2 OSC-52
+// write; an index no ask has answers 0, because a dialog is whole or it is nothing.
+//
+// Answer: [u32 BE bullets] then SLOPDESK_PASTE_CONFIRMATION_FIXED_RUNS runs — heading, affirmative,
+// reason, preview, one-string body — then that many bullet runs.
+//
+// The bullets are the mask SAID OUT LOUD, in bit order; the reason is what the body prints INSTEAD
+// when the mask is empty, so exactly one of the two is ever non-empty and a renderer draws whichever
+// it was handed. The preview caps the payload and renders every control character in caret notation,
+// so the escape being warned about cannot run inside the warning. The body is the AppKit join, for
+// an NSAlert's informativeText; a renderer that lays the parts out reads the runs and ignores it.
+#define SLOPDESK_PASTE_CONFIRMATION_FIXED_RUNS 5
+size_t slopdesk_paste_confirmation(uint8_t ask, uint32_t mask, const uint8_t *text, size_t len,
+                                   uint8_t *out, size_t cap);
 
 /* ---- what a gesture at the terminal surface MEANS, before anything is sent ----------------
  * Every answer is a boolean, a case index or a count, so none of these takes the (out, cap)
@@ -4301,6 +4305,16 @@ size_t slopdesk_connection_metric_runs(SlopDeskHostPulse pulse, bool promoted_on
                                        unsigned char *out, size_t cap);
 /* Two runs, length-prefixed as above: spoken, then tooltip. */
 size_t slopdesk_connection_pulse_prose(SlopDeskHostPulse pulse, unsigned char *out, size_t cap);
+/* The pulse the footer should DRAW, given the one it is drawing and the sample that just landed.
+ * Each PERCENT holds its shown figure until the sample is at least three points away, then snaps to
+ * the sample exactly — the rail has no animation by design, and a percent that twitches 31 → 29 → 33
+ * on an idle machine pulls the eye for nothing. Never a midpoint: the row only ever shows a number
+ * the host really reported. `has_previous` is false on the first sample, which is shown as it
+ * arrived — a presence flag rather than a sentinel pulse, since every field has a real reading a
+ * sentinel would collide with. Pressure and free disk are exempt and pass straight through: a
+ * pressure LEVEL change is a state change, and the disk figure's coarse format is its own deadband. */
+SlopDeskHostPulse slopdesk_connection_pulse_settled(bool has_previous, SlopDeskHostPulse previous,
+                                                    SlopDeskHostPulse sample);
 /* An SF Symbol NAME, so each framework resolves it through its own image type. */
 size_t slopdesk_connection_metric_symbol(uint32_t metric, unsigned char *out, size_t cap);
 
@@ -4317,6 +4331,23 @@ size_t slopdesk_connection_metric_symbol(uint32_t metric, unsigned char *out, si
  * field to keep it apart from. `0` means an empty label, which only an empty host produces. */
 bool   slopdesk_ws_host_is_ip_literal(const unsigned char *text, size_t len);
 size_t slopdesk_ws_host_short_label(const unsigned char *text, size_t len,
+                                    unsigned char *out, size_t cap);
+
+/* ---- Is anything wrong across the workspace's panes -----------------------------------------
+ * The collapsed sidebar hides every per-pane surface, so a dropped or reconnecting pane would have
+ * nowhere to say so until the sidebar is re-opened. This is the always-on chip's whole reading.
+ *
+ * `codes` are SLOPDESK_CONNECTION_STATUS_* bytes in the caller's own STABLE order — the store passes
+ * tree DFS order. Only three of the six raise the chip at all: a first dial, a deliberate disconnect
+ * and a live link are not alarms.
+ *
+ * Answer: [u32 BE unhealthy count][u32 BE worst severity][u32 BE worst index] then ONE run, the
+ * chip's label. `0` is the healthy workspace, which is why the count LEADS the answer: a delivery of
+ * zero length and one describing zero panes would otherwise be the same bytes. Severity ascends
+ * 0 reconnecting, 1 failed, 2 unreachable; the index is the FIRST pane at the worst severity, so a
+ * tie keeps the earlier pane and a click lands somewhere stable across a redraw.                */
+#define SLOPDESK_WS_CONNECTION_ALERT_HEAD_BYTES 12
+size_t slopdesk_ws_connection_alert(const unsigned char *codes, size_t count,
                                     unsigned char *out, size_t cap);
 
 /* ---- The keyboard reference sheet: which column each run of shortcuts belongs in ----------
@@ -10971,6 +11002,42 @@ SlopDeskWsPaletteCard slopdesk_ws_palette_card(void);
 // re-tunes the page. A row height that is not a positive, finite measurement still answers a stride
 // that MOVES, because a page key that does nothing reads as a dropped keystroke.
 uint32_t slopdesk_ws_palette_page_stride(double row_height);
+
+// ---- What a transient window-level cue SAYS ---------------------------------------------
+//
+// A notice reads `label · detail`, with a chord drawn between them as a KEYCAP rather than as text.
+// ONE door for both answers, because the spoken form is built from the CUT detail: two doors would
+// let the chip draw a clipped sentence while the screen reader spoke the whole one.
+//
+// Exactly SLOPDESK_WS_CHIP_NOTICE_SPANS spans, in the door's own order — label, keycap, detail. A
+// wrong count answers 0: the three are positional, and printing the keycap where the label goes
+// would be a sentence nobody wrote. The keycap is ABSENT rather than empty for a notice that offers
+// nothing to press, which is what stops the separator being left hanging.
+//
+// Two runs back: the detail as the chip may draw it (cut to 48 grapheme CLUSTERS with the ellipsis
+// taking one of those positions, so it is never LONGER than the cap), then the whole notice as one
+// string for the reader that has no keycap.
+#define SLOPDESK_WS_CHIP_NOTICE_SPANS 3
+size_t slopdesk_ws_chip_notice(const unsigned char *blob, size_t blob_len,
+                               const SlopDeskWsSpan *spans, size_t span_count,
+                               unsigned char *out, size_t cap);
+
+// ---- What just landed on the clipboard ---------------------------------------------------
+//
+// A copy is the highest-frequency INVISIBLE action in a terminal, so the receipt answers the one
+// real doubt — "did I get the whole thing?" — with whichever number answers it: LINES for a
+// multi-line grab (which may extend past the viewport), CHARACTERS for a single line (where
+// truncation is the failure mode). Never "1 line".
+//
+// Answer: [u32 BE characters][u32 BE lines] then two runs — the count half ("1,204 characters") and
+// the whole sentence ("Copied · 1,204 characters"). Characters are grapheme CLUSTERS, so a family
+// emoji is one. A single trailing newline is NOT a second line: `"foo\n"` is one line, but `"a\n\n"`
+// really does end with a blank one. The grouping is the app's own and never the machine's locale, so
+// the label reads identically everywhere. Never 0 — an empty copy still has a receipt, because the
+// chip is shown BECAUSE a copy happened and a silent one would read as a copy that failed.
+#define SLOPDESK_COPY_RECEIPT_HEAD_BYTES 8
+size_t slopdesk_copy_receipt(const unsigned char *text, size_t len,
+                             unsigned char *out, size_t cap);
 
 // ---- The prompt-jump landed flash ------------------------------------------------------
 //

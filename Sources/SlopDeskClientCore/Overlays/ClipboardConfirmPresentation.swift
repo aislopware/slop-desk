@@ -6,34 +6,33 @@
 // decision the EMBEDDER owes an answer to, and each is only ever a USER's answer — on the Mac through
 // `SlopDeskMacUI/PasteProtectionSheet`'s `NSAlert`, on the phone through `ClipboardConfirmCard`.
 //
-// ⚠️ NOTHING HERE IS A SENTENCE OF ITS OWN. Every word comes from ``PasteSafetyAnalyzer`` and therefore
-// from `slopdesk_terminal::paste` (docs/55): the heading, the affirmative button, the reason an OSC-52 ask
-// prints where a paste prints bullets, one bullet per flagged danger in the mask's own bit order, and the
-// defused (caret-notated, length-capped) preview. A renderer that spelled its own would be a second guard
+// ⚠️ NOTHING HERE IS A SENTENCE OF ITS OWN, AND NOTHING HERE IS A DECISION EITHER. Every word comes
+// from `slopdesk_terminal::paste` (docs/55): the heading, the affirmative button, the reason an OSC-52
+// ask prints where a paste prints bullets, one bullet per flagged danger in the mask's own bit order,
+// the defused (caret-notated, length-capped) preview — and the SHAPE, which used to be decided here:
+// bullets OR the reason (never both), the preview only where there is one, and the AppKit join for the
+// renderer whose dialog takes a single string. A renderer that spelled its own would be a second guard
 // saying something slightly different, and a fifth danger would reach the user as a blank bullet.
 //
-// What this type adds is the SHAPE the two renderers would otherwise each decide for themselves: bullets
-// OR the ask's reason (never both — an OSC-52 ask has no payload to classify, so the REQUEST is the
-// reason), the preview only where there is one, and — for the one renderer that needs a single string
-// rather than a layout — the AppKit join, so `informativeText` is composed here and not beside an
-// `NSAlert`.
-//
-// It lives HERE rather than in the domain for the reason docs/56 §2 gives: `PasteSafetyAnalyzer` owns
-// whether a payload is dangerous and what that danger is CALLED; what a dialog is shaped like is what a
-// UI asks that answer for.
+// It crosses in ONE call. It used to be six — a heading door, a button door, a reason door, a danger
+// count, a bullet-at-index and a preview — which is `5 + n` crossings to draw one dialog and six
+// chances to take the heading of one ask beside the bullets of another. This type is what a renderer
+// asks; `slopdesk_paste_confirmation` is what answers.
 
+import CSlopDeskFFI
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
-/// One clipboard confirmation, as either renderer needs it — PURE, so the whole dialog is pinnable
+/// One clipboard confirmation, as either renderer needs it — a value, so the whole dialog is pinnable
 /// without presenting anything.
 public struct ClipboardConfirmPresentation: Equatable, Sendable {
-    /// The bullet a danger list is set with, in ONE place: the AppKit join below reads it and so does the
+    /// The bullet a danger list is set with, in ONE place: the crate's join reads it and so does the
     /// phone's row, so the two lists cannot come to look like different lists.
     public static let bullet = "•"
 
-    /// The caption over the defused payload. The one word on this surface that is not a `paste` sentence
-    /// — it names a REGION rather than describing a danger — so it is spelled once here and each renderer
-    /// sets it in its own register (a line of body text on the Mac, a caps micro-label on the phone).
+    /// The caption over the defused payload. The one word on this surface that is not a danger
+    /// sentence — it names a REGION — so each renderer sets it in its own register (a line of body
+    /// text on the Mac, a caps micro-label on the phone).
     public static let previewCaption = "Clipboard preview"
 
     /// Which of the three questions this is. Kept so a renderer can differ by ask without re-deriving
@@ -53,6 +52,10 @@ public struct ClipboardConfirmPresentation: Equatable, Sendable {
     /// notation, so the escape being warned about cannot run inside the warning. EMPTY where there is
     /// nothing to show.
     public let preview: String
+    /// The whole body as ONE string, for the renderer whose dialog takes one — an `NSAlert`'s
+    /// `informativeText`. A renderer that lays the parts out (the phone draws the bullets as rows and the
+    /// preview on its own plate) reads ``dangers`` / ``reason`` / ``preview`` directly and never this.
+    public let informativeText: String
 
     public init(
         ask: PasteSafetyAnalyzer.Ask,
@@ -61,6 +64,7 @@ public struct ClipboardConfirmPresentation: Equatable, Sendable {
         dangers: [String],
         reason: String,
         preview: String,
+        informativeText: String,
     ) {
         self.ask = ask
         self.title = title
@@ -68,43 +72,45 @@ public struct ClipboardConfirmPresentation: Equatable, Sendable {
         self.dangers = dangers
         self.reason = reason
         self.preview = preview
+        self.informativeText = informativeText
     }
 
     /// Resolve the confirmation for `ask` over `preview` and the dangers `preview` tripped.
-    ///
-    /// The bullets-or-reason branch is the whole decision: a paste that reached a confirmation reached it
-    /// because the mask flagged something, so it lists what; an OSC-52 ask has an empty mask by
-    /// construction, so it prints why the REQUEST is being questioned instead. A renderer asking this
-    /// cannot get that branch subtly different from the other renderer's.
     public static func reading(
         ask: PasteSafetyAnalyzer.Ask,
         preview: String,
         dangers: PasteSafetyAnalyzer.PasteDangers,
     ) -> Self {
-        let described = PasteSafetyAnalyzer.descriptions(for: dangers)
+        var bytes = Array(preview.utf8)
+        let mask = UInt32(truncatingIfNeeded: dangers.rawValue)
+        let blob = bytes.withUnsafeMutableBufferPointer { lent in
+            wsAnswerBytes { out, cap in
+                Int(slopdesk_paste_confirmation(
+                    ask.rawValue, mask, lent.baseAddress, lent.count, out, cap,
+                ))
+            }
+        }
+        let head = 4
+        // The bullet COUNT leads the delivery so the reader knows how many runs follow the fixed
+        // five; a short delivery is a layout disagreement and loses the whole dialog rather than
+        // drawing a heading with someone else's bullets under it.
+        guard blob.count >= head else {
+            return Self(
+                ask: ask, title: "", affirmative: "", dangers: [], reason: "", preview: "",
+                informativeText: "",
+            )
+        }
+        let bulletCount = (0..<4).reduce(0) { $0 << 8 | Int(blob[$1]) }
+        let fixed = Int(SLOPDESK_PASTE_CONFIRMATION_FIXED_RUNS)
+        let runs = wsRuns(Array(blob.dropFirst(head)), count: fixed + bulletCount)
         return Self(
             ask: ask,
-            title: ask.title,
-            affirmative: ask.affirmative,
-            dangers: described,
-            reason: described.isEmpty ? ask.reason : "",
-            preview: PasteSafetyAnalyzer.preview(of: preview),
+            title: runs[0],
+            affirmative: runs[1],
+            dangers: Array(runs.dropFirst(fixed)),
+            reason: runs[2],
+            preview: runs[3],
+            informativeText: runs[4],
         )
-    }
-
-    /// The whole body as ONE string, for the renderer whose dialog takes one — an `NSAlert`'s
-    /// `informativeText`. A renderer that lays the parts out (the phone draws the bullets as rows and the
-    /// preview on its own plate) reads ``dangers`` / ``reason`` / ``preview`` directly and never this.
-    public var informativeText: String {
-        var sections: [String] = []
-        if !dangers.isEmpty {
-            sections.append(dangers.map { "\(Self.bullet)  \($0)" }.joined(separator: "\n"))
-        } else if !reason.isEmpty {
-            sections.append(reason)
-        }
-        if !preview.isEmpty {
-            sections.append("\(Self.previewCaption):\n\(preview)")
-        }
-        return sections.joined(separator: "\n\n")
     }
 }

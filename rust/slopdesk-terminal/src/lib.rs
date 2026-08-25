@@ -43,6 +43,7 @@ pub mod blocks;
 pub mod config;
 pub mod context_menu;
 pub mod controls;
+pub mod copy_receipt;
 pub mod dedup;
 pub mod echo;
 pub mod inputbox;

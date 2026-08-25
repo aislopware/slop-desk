@@ -1,51 +1,42 @@
-// CopyReceiptTests — pins the pure copy-receipt wording (`Copied · N characters` / `N lines`) and the
-// counting rules behind the transient copy chip, so a formatting regression is a test failure, not a
-// squint at the UI. Sentence case since 2026-08-11: the chip moved off the glass onto the floating
-// family's paper capsule, and took that family's voice with it (see `SlatePaperCapsule`).
+// CopyReceiptTests — the CROSSING and the WIRING, not the wording. Which number answers the doubt,
+// how it is grouped and the sentence it sits in are `slopdesk_terminal::copy_receipt`'s and pinned
+// there; the counting table lives beside the rule rather than in a second copy here.
+//
+// What is pinned here is what only Swift owns: that the two counts and the two sentences come back
+// from ONE crossing together, and that the pane model publishes a receipt on every copy path with a
+// fresh epoch (the chip's dwell identity).
 
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
 final class CopyReceiptTests: XCTestCase {
-    // MARK: Label wording (the chip's caps register)
+    // MARK: The crossing
 
-    func testSingleLineSpeaksChars() {
+    /// The counts LEAD the delivery and the sentences follow it, so a receipt that read its head at
+    /// the wrong offset would come back with a right sentence beside a zero count.
+    func testTheCountsAndTheSentencesCrossTogether() {
         let receipt = CopyReceipt(text: "make check", epoch: 1)
-        XCTAssertEqual(receipt.label, "Copied · 10 characters")
+        XCTAssertEqual(receipt.charCount, 10)
         XCTAssertEqual(receipt.lineCount, 1)
+        XCTAssertEqual(receipt.detail, "10 characters")
+        XCTAssertEqual(receipt.label, "Copied · 10 characters")
     }
 
-    func testSingleCharIsSingular() {
-        XCTAssertEqual(CopyReceipt(text: "x", epoch: 1).label, "Copied · 1 character")
-    }
-
-    func testMultiLineSpeaksLines() {
+    /// A multi-line grab speaks the other number, which is the branch the two runs have to agree on.
+    func testAMultiLineGrabCrossesSpeakingLines() {
         let receipt = CopyReceipt(text: "one\ntwo\nthree", epoch: 1)
-        XCTAssertEqual(receipt.label, "Copied · 3 lines", "a multi-line grab answers the whole-block doubt in lines")
+        XCTAssertEqual(receipt.lineCount, 3)
         XCTAssertEqual(receipt.charCount, 13)
+        XCTAssertEqual(receipt.label, "Copied · 3 lines")
     }
 
-    func testTrailingNewlineDoesNotInflateTheLineCount() {
-        XCTAssertEqual(
-            CopyReceipt(text: "foo\n", epoch: 1).label, "Copied · 4 characters",
-            "a shell line copy `foo\\n` is ONE line (chars voice), not two lines",
-        )
-        XCTAssertEqual(CopyReceipt(text: "a\nb\n", epoch: 1).lineCount, 2)
-    }
-
-    func testCountsAreGroupedDeterministically() {
-        let text = String(repeating: "x", count: 1204)
-        XCTAssertEqual(
-            CopyReceipt(text: text, epoch: 1).label, "Copied · 1,204 characters",
-            "grouping is locale-independent — the instrument voice reads identically on every machine",
-        )
-        XCTAssertEqual(CopyReceipt.grouped(999), "999")
-        XCTAssertEqual(CopyReceipt.grouped(1000), "1,000")
-        XCTAssertEqual(CopyReceipt.grouped(2_654_321), "2,654,321")
-    }
-
-    func testCharCountIsGraphemes() {
-        XCTAssertEqual(CopyReceipt(text: "é🇻🇳", epoch: 1).charCount, 2, "user-visible characters, not bytes")
+    /// An empty copy still crosses with a sentence — the door never answers nothing here, because a
+    /// silent chip would read as a copy that failed.
+    func testAnEmptyCopyStillCrossesWithASentence() {
+        let receipt = CopyReceipt(text: "", epoch: 1)
+        XCTAssertEqual(receipt.charCount, 0)
+        XCTAssertEqual(receipt.lineCount, 1)
+        XCTAssertEqual(receipt.label, "Copied · 0 characters")
     }
 
     // MARK: Model publication (the pane chip's source)
