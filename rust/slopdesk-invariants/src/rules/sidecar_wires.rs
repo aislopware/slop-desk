@@ -65,8 +65,8 @@ const SIDECARS: &str = "rust/slopdesk-sidecars/src/lib.rs";
 const SIDECARS_MANIFEST: &str = "rust/slopdesk-sidecars/src/manifest.rs";
 /// hostd's startup audit, which decodes the verdict.
 const SIDECAR_AUDIT: &str = "Sources/SlopDeskHost/SidecarVersionAudit.swift";
-/// `slopdesk sidecars`, which decodes the plan.
-const SIDECAR_CLI: &str = "Sources/SlopDeskCLICore/CLISidecars.swift";
+/// `slopdesk sidecars`, which asks for the plan — Rust, so it calls the crate, not the door.
+const SIDECAR_CLI: &str = "rust/slopdesk-cli/src/shell/local.rs";
 /// The generated header both decoders compile against.
 const FFI_HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
 /// The install side, which records what it read.
@@ -559,11 +559,7 @@ pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
         },
         Claim::Mentions {
             path: FFI_HEADER,
-            names: &[
-                "slopdesk_sidecar_audit",
-                "slopdesk_sidecar_version_banner",
-                "slopdesk_sidecar_upgrade_plan",
-            ],
+            names: &["slopdesk_sidecar_audit", "slopdesk_sidecar_version_banner"],
             message: "{entry} is not declared in slopdesk_ffi.h — Swift cannot reach the policy (docs/55)",
         },
         Claim::Matches {
@@ -574,9 +570,10 @@ pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
         },
         Claim::Matches {
             path: SIDECAR_CLI,
-            pattern: r"slopdesk_sidecar_upgrade_plan\(",
+            pattern: r"slopdesk_sidecars::manifest::plan|manifest::plan\b|use slopdesk_sidecars",
             view: View::Code,
-            message: "CLISidecars no longer asks the door for the upgrade plan (docs/49)",
+            message: "`slopdesk sidecars` no longer asks rust/slopdesk-sidecars for the upgrade plan — it \
+                      would be a second diff of the same two manifests (docs/49)",
         },
         Claim::Matches {
             path: HOMEBREW_FORMULA,
@@ -988,13 +985,12 @@ mod tests {
             .write(super::SIDECAR_AUDIT, audit)
             .write(
                 super::SIDECAR_CLI,
-                "func plan() {\n    slopdesk_sidecar_upgrade_plan(previous, next)\n}\n",
+                "use slopdesk_sidecars::manifest;\nfn plan() {\n    manifest::plan(&previous,                  &next)\n}\n",
             )
             .write(
                 super::FFI_HEADER,
                 "size_t slopdesk_sidecar_audit(const uint8_t *t, size_t n);\nsize_t \
-                 slopdesk_sidecar_version_banner(const uint8_t *b, size_t n);\nsize_t \
-                 slopdesk_sidecar_upgrade_plan(const uint8_t *p, size_t n);\n",
+                 slopdesk_sidecar_version_banner(const uint8_t *b, size_t n);\n",
             )
             .write(
                 super::HOMEBREW_FORMULA,

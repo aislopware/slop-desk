@@ -591,15 +591,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "objc2-core-text"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0cde0dfb48d25d2b4862161a4d5fcc0e3c24367869ad306b0c9ec0073bfed92d"
-dependencies = [
- "objc2-core-foundation",
-]
-
-[[package]]
 name = "objc2-core-video"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -987,14 +978,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopdesk-apple-text"
-version = "0.1.0"
-dependencies = [
- "objc2-core-foundation",
- "objc2-core-text",
-]
-
-[[package]]
 name = "slopdesk-apple-vt"
 version = "0.1.0"
 dependencies = [
@@ -1012,19 +995,6 @@ dependencies = [
  "cpal",
  "rtrb",
  "slopdesk-video",
-]
-
-[[package]]
-name = "slopdesk-cli"
-version = "0.4.0"
-dependencies = [
- "serde_json",
- "slopdesk-agent",
- "slopdesk-apple-text",
- "slopdesk-hostlaunch",
- "slopdesk-settings",
- "slopdesk-sidecars",
- "slopdesk-wire",
 ]
 
 [[package]]
@@ -1070,7 +1040,6 @@ dependencies = [
  "slopdesk-apple-sck",
  "slopdesk-apple-vt",
  "slopdesk-audio-out",
- "slopdesk-cli",
  "slopdesk-codepanel",
  "slopdesk-devicelog",
  "slopdesk-devicepanel",

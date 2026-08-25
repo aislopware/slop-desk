@@ -108,7 +108,7 @@ impl Control {
     #[must_use]
     pub fn new(root: &Path, tag: &str) -> Self {
         Self {
-            cli: root.join(".build/debug/slopdesk"),
+            cli: super::cli_binary(root),
             socket: PathBuf::from(format!("/tmp/slopdesk-gate-{}-{tag}.sock", std::process::id())),
         }
     }

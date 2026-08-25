@@ -19,21 +19,34 @@
 //! None of them shipped, because the release path is exercised by tagging and no gate is a
 //! release.
 
-/// Built by `SwiftPM`, versioned by the PRODUCT version (`docs/49` §"The six version sites").
+/// Versioned by the PRODUCT version (`docs/49` §"The six version sites"), whoever builds them.
 ///
 /// These two are the app the user installed; they do not carry a version of their own and must
-/// not. A pin entry for either would be a seventh version site.
-pub const SPM_TOOLS: &[&str] = &["slopdesk", "slopdesk-hostd"];
+/// not. A pin entry for either would be a seventh version site — so these are the names
+/// `pinned_tools` subtracts, and WHO BUILDS THEM is a separate question from who versions them.
+/// `slopdesk` is the proof that the two questions are separate: it moved to cargo when the CLI
+/// process was ported out of Swift, and its number did not move with it.
+pub const PRODUCT_TOOLS: &[&str] = &["slopdesk", "slopdesk-hostd"];
+
+/// Built by `SwiftPM`, with `--product` from the repo root.
+///
+/// One name, and the reason it is still Swift is that hostd is the app's own process. Everything
+/// else in the tarball is cargo's.
+pub const SPM_TOOLS: &[&str] = &["slopdesk-hostd"];
 
 /// `rust/Cargo.toml`'s workspace members: ONE shared `rust/target/`, built with `-p` from `rust/`.
-pub const RUST_ROOT_PACKAGES: &[&str] = &["slopdesk-ctl", "slopdesk-probe", "slopdesk-hook"];
+pub const RUST_ROOT_PACKAGES: &[&str] = &["slopdesk-cli", "slopdesk-ctl", "slopdesk-probe", "slopdesk-hook"];
 
 /// The binaries those members produce.
 ///
 /// `slopdesk-hook` is a package producing TWO of them — the relay and the installer that puts it
 /// in place — and the installer finds the relay at `executable.parent()/slopdesk-hook`, so the two
 /// must land in the same directory or the hook install silently has nothing to copy.
+///
+/// `slopdesk` is the other name that is not its own crate: `slopdesk-cli` builds it, and it is a
+/// PRODUCT tool, so it is built and staged here and versioned nowhere near here.
 pub const RUST_ROOT_TOOLS: &[&str] = &[
+    "slopdesk",
     "slopdesk-ctl",
     "slopdesk-probe",
     "slopdesk-hook",
@@ -62,6 +75,20 @@ pub fn rust_tools() -> Vec<&'static str> {
     all
 }
 
+/// Every cargo tool that carries a version of its OWN — the whole of the pin, and nothing else.
+///
+/// The subtraction is the seventh-site guard, and it is done here rather than at each reader
+/// because there are three of them: the stamper writes the pin from this, the bumper plans from
+/// the stamper's scan, and the packager checks each staged binary against the pin. A product tool
+/// reaching any one of them is a second writer of the product's number.
+#[must_use]
+pub fn pinned_tools() -> Vec<&'static str> {
+    rust_tools()
+        .into_iter()
+        .filter(|tool| !PRODUCT_TOOLS.contains(tool))
+        .collect()
+}
+
 /// Everything the CLI tarball ships, `SwiftPM` half first.
 #[must_use]
 pub fn cli_tools() -> Vec<&'static str> {
@@ -70,10 +97,10 @@ pub fn cli_tools() -> Vec<&'static str> {
     all
 }
 
-/// True when `tool` is one of the two the product version covers.
+/// True when `tool`'s version IS the product's — so it has no pin entry and no stamp.
 #[must_use]
-pub fn is_spm(tool: &str) -> bool {
-    SPM_TOOLS.contains(&tool)
+pub fn is_product(tool: &str) -> bool {
+    PRODUCT_TOOLS.contains(&tool)
 }
 
 /// True when `tool` builds into the shared `rust/target/`.
@@ -98,6 +125,11 @@ pub fn tool_crate(tool: &str) -> Option<&'static str> {
     if tool == "slopdesk-agenthooks" {
         return Some("slopdesk-hook");
     }
+    // The other name that is not its own crate: a package named for the product would collide with
+    // the product's own directory, so the binary is `slopdesk` and the package is `slopdesk-cli`.
+    if tool == "slopdesk" {
+        return Some("slopdesk-cli");
+    }
     RUST_ROOT_TOOLS
         .iter()
         .chain(RUST_CRATE_TOOLS)
@@ -107,7 +139,7 @@ pub fn tool_crate(tool: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{cli_tools, is_root_tool, rust_tools, tool_crate};
+    use super::{PRODUCT_TOOLS, SPM_TOOLS, cli_tools, is_root_tool, pinned_tools, rust_tools, tool_crate};
 
     #[test]
     fn the_hook_installer_rides_the_relays_crate() {
@@ -115,17 +147,44 @@ mod tests {
         assert_eq!(tool_crate("slopdesk-hook"), Some("slopdesk-hook"));
     }
 
+    /// The product binary is cargo's now; the crate it comes from is not named for it.
     #[test]
-    fn the_product_pair_is_not_a_cargo_tool() {
-        assert_eq!(tool_crate("slopdesk"), None);
+    fn the_product_binary_rides_the_cli_crate() {
+        assert_eq!(tool_crate("slopdesk"), Some("slopdesk-cli"));
         assert_eq!(tool_crate("slopdesk-hostd"), None);
+    }
+
+    /// THE seventh-site guard: a product tool never reaches the pin, whoever builds it.
+    ///
+    /// `slopdesk` is a cargo tool AND a product tool, which is the case the two tables did not have
+    /// to tell apart while it was Swift's. The stamper, the bumper and the packager all read
+    /// `pinned_tools`, so this one assertion covers all three.
+    #[test]
+    fn a_product_tool_is_never_pinned() {
+        let pinned = pinned_tools();
+        for tool in PRODUCT_TOOLS {
+            assert!(!pinned.contains(tool), "{tool} would be a seventh version site");
+        }
+        assert!(pinned.contains(&"slopdesk-ctl"));
+        assert_eq!(pinned.len(), rust_tools().len() - 1, "only `slopdesk` is both");
+    }
+
+    /// Who builds a tool and who versions it are separate questions.
+    #[test]
+    fn the_product_pair_is_split_across_both_build_halves() {
+        assert!(SPM_TOOLS.contains(&"slopdesk-hostd"));
+        assert!(
+            !SPM_TOOLS.contains(&"slopdesk"),
+            "the CLI is cargo's since the port"
+        );
+        assert!(is_root_tool("slopdesk"));
     }
 
     /// The tarball is the two halves and nothing else, with no name repeated.
     #[test]
     fn the_tarball_is_the_two_halves() {
         let all = cli_tools();
-        assert_eq!(all.len(), 2 + rust_tools().len());
+        assert_eq!(all.len(), SPM_TOOLS.len() + rust_tools().len());
         let mut sorted = all.clone();
         sorted.sort_unstable();
         sorted.dedup();

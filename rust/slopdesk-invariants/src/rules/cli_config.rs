@@ -13,6 +13,8 @@ use crate::tree::Tree;
 const SWIFT_FRECENCY: &str = "Sources/SlopDeskWorkspaceCore/Folders/FolderFrecency.swift";
 const SWIFT_JUMP: &str = "Sources/SlopDeskWorkspaceCore/Folders/JumpResolver.swift";
 const SWIFT_LOADER: &str = "Sources/SlopDeskVideoProtocol/Settings/KeybindConfigLoader.swift";
+/// `slopdesk config`, which prints a verdict about that same file.
+const RUST_CLI_CONFIG: &str = "rust/slopdesk-cli/src/shell/config.rs";
 const SWIFT_ENVBRIDGE: &str = "Sources/SlopDeskVideoProtocol/Settings/EnvBridge.swift";
 const SWIFT_TERMCONF: &str = "Sources/SlopDeskVideoProtocol/Settings/TerminalConfigBuilder.swift";
 const SWIFT_SWIPE_CONFIG: &str = "Sources/SlopDeskVideoHost/SwipeNavHostConfig.swift";
@@ -90,11 +92,10 @@ pub fn the_config_file_has_one_reader(tree: &Tree) -> Report {
                           reading",
             },
             Claim::Mentions {
-                path: "Sources/SlopDeskCLICore/CLIConfig.swift",
-                names: &["AppConfig.resolvedPath", "AppConfig.load"],
-                message: "Sources/SlopDeskCLICore/CLIConfig.swift no longer reaches the file through \
-                          {entry} — a                       CLI that resolves the path its own way prints a \
-                          verdict on a file the app does not read",
+                path: RUST_CLI_CONFIG,
+                names: &["settings_path::resolve_path", "settings_path::load"],
+                message: "`slopdesk config` no longer reaches the file through {entry} — a CLI that \
+                          resolves the path its own way prints a verdict on a file the app does not read",
             },
         ];
     check_all(tree, &claims)
@@ -233,8 +234,8 @@ mod tests {
                 "public static func apply(table: [String: String]) -> KeybindingPreferences {\n",
             )
             .write(
-                "Sources/SlopDeskCLICore/CLIConfig.swift",
-                "AppConfig.resolvedPath(explicit: override)\nAppConfig.load(path:)\n",
+                super::RUST_CLI_CONFIG,
+                "settings_path::resolve_path(explicit)\nsettings_path::load(path)\n",
             );
     }
 
@@ -258,7 +259,7 @@ mod tests {
 
         // And the CLI resolving the path its own way.
         loader(&fixture);
-        fixture.write("Sources/SlopDeskCLICore/CLIConfig.swift", "");
+        fixture.write(super::RUST_CLI_CONFIG, "");
         assert!(!super::the_config_file_has_one_reader(&fixture.tree()).is_clean());
     }
 

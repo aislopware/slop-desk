@@ -198,14 +198,14 @@ the app the user installed. A sidecar is versioned separately — see the next s
 
 | File | Key | Why it is separate |
 |---|---|---|
-| `Sources/SlopDeskCLICore/CLIVersion.swift` | `version` | what `slopdesk version` prints |
+| `rust/slopdesk-cli/Cargo.toml` | `[package] version` | what `slopdesk version` prints, via `CARGO_PKG_VERSION` |
 | `Sources/SlopDeskHost/HostEnvironment.swift` | `buildVersion` | advertised to the child shell as `TERM_PROGRAM_VERSION` |
 | `Apps/ClientApp-macOS/project.yml` | `MARKETING_VERSION` **and** `info.properties.CFBundleShortVersionString` | `GENERATE_INFOPLIST_FILE: NO`, so the literal in `info.properties` is what lands in Info.plist — `MARKETING_VERSION` does **not** reach it |
 | `Apps/HostApp-macOS/project.yml` | same two | same reason |
 | `Apps/ClientApp-macOS/Info.plist`, `Apps/HostApp-macOS/Info.plist` | `CFBundleShortVersionString` | xcodegen output that is nevertheless committed, so a clean checkout builds without running xcodegen first — which is exactly why it goes stale silently |
 
 `slopdesk-release package` asks the built **CLI binary** for its version and **refuses to package** on
-drift. That gate covers `CLIVersion.version` only — it never opens either Info.plist and never
+drift. That gate covers the CLI crate's own version only — it never opens either Info.plist and never
 reads `HostEnvironment.buildVersion`. At v0.2.1 both plists still read `0.1.0` and every local
 `xcodebuild` produced an app claiming that version; releases were unaffected only because
 the packager rewrites `CFBundleShortVersionString` with PlistBuddy before signing. That

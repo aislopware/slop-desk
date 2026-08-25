@@ -267,11 +267,6 @@ pub fn one_arena_reader_and_one_interner(tree: &Tree) -> Report {
             message: "it crosses §4c's convention and must not spell it",
         },
         Claim::Depends {
-            target: "SlopDeskCLICore",
-            dependency: "SlopDeskArena",
-            message: "it crosses §4c's convention and must not spell it",
-        },
-        Claim::Depends {
             target: "SlopDeskVideoHost",
             dependency: "SlopDeskArena",
             message: "it crosses §4c's convention and must not spell it",
@@ -523,7 +518,6 @@ mod tests {
         ("SlopDeskWorkspaceModel", &["SlopDeskArena"]),
         ("SlopDeskFileTransfer", &["SlopDeskArena", "SlopDeskNet"]),
         ("SlopDeskWorkspaceCore", &["SlopDeskArena"]),
-        ("SlopDeskCLICore", &["SlopDeskArena"]),
         ("SlopDeskVideoHost", &["SlopDeskArena"]),
         ("SlopDeskVideoClient", &["SlopDeskArena"]),
         ("SlopDeskInspector", &["SlopDeskNet"]),
@@ -552,7 +546,7 @@ mod tests {
         let dropped: Vec<_> = ARENA
             .iter()
             .map(|(target, deps)| {
-                if *target == "SlopDeskCLICore" {
+                if *target == "SlopDeskVideoHost" {
                     (*target, &[][..])
                 } else {
                     (*target, *deps)

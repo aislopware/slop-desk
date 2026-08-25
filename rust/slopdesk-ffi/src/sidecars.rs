@@ -6,11 +6,17 @@
 //! has both, so a daemon to ask it of would be a lifetime nothing here needs.
 //!
 //! ## Why the answers cross as JSON text
-//! Each is a small record with an optional field or two, and BOTH near-side callers already decode
-//! JSON on the same line of code: hostd shows the report in a UI as well as logging it, and
-//! `slopdesk sidecars` reads a `MANIFEST.json` to ask the question in the first place. A flat C
+//! Each is a small record with an optional field or two, and the near-side caller already decodes
+//! JSON on the same line of code: hostd shows the report in a UI as well as logging it. A flat C
 //! struct per answer would mean a presence flag per optional and a fixed char array per version —
 //! two schemas to keep in step instead of one, for a call that happens five times at start.
+//!
+//! ## The upgrade PLAN used to cross here too, and no longer crosses at all
+//! `slopdesk sidecars` was the other caller: it read the `MANIFEST.json` an install had just
+//! written, asked this door what changed, and printed the table. That whole process is Rust now, so
+//! it calls `slopdesk_sidecars::manifest::plan_json` as a function — no marshalling, no header
+//! entry, no second decode. A door with one caller in each language is a door; a door with one
+//! caller in the SAME language is a detour.
 //!
 //! ## An absent version is an EMPTY pair, not a sentinel
 //! `borrow` already folds null and zero-length together, and an empty version string is not a
@@ -20,7 +26,6 @@
 
 use std::ffi::c_uchar;
 
-use slopdesk_sidecars::manifest::{self, plan_json};
 use slopdesk_sidecars::{Report, parse_version_banner};
 
 use crate::{borrow, deliver};
@@ -110,47 +115,4 @@ pub unsafe extern "C" fn slopdesk_sidecar_version_banner(
     };
     // SAFETY: the caller's obligation, restated above; `deliver` states its own.
     unsafe { deliver(version.as_bytes(), out, cap) }
-}
-
-/// What an upgrade changed, from the `MANIFEST.json` that just landed and the one recorded before.
-///
-/// `previous` may be an empty pair — a first install — in which case every tool reads `added`.
-/// Returns 0 when `current` is not a readable manifest, which is the caller's cue to say so rather
-/// than to act on a plan it does not have.
-///
-/// # Safety
-/// Each input must be null or point to its stated number of live bytes; `out` null or writable for
-/// `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_sidecar_upgrade_plan(
-    previous: *const c_uchar,
-    previous_len: usize,
-    current: *const c_uchar,
-    current_len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
-    let (previous_bytes, current_bytes) =
-        unsafe { (borrow(previous, previous_len), borrow(current, current_len)) };
-    let Ok(current_text) = core::str::from_utf8(current_bytes) else {
-        return 0;
-    };
-    let Ok(current_manifest) = manifest::parse(current_text) else {
-        return 0;
-    };
-    // A previous manifest that is missing is a first install; one that is CORRUPT is treated the
-    // same way, deliberately. The alternative is refusing to plan at all because a file written by
-    // an install two versions ago cannot be read — which would strand exactly the user who most
-    // needs to be told what changed.
-    let previous_manifest = core::str::from_utf8(previous_bytes)
-        .ok()
-        .and_then(|text| manifest::parse(text).ok());
-    let answer = plan_json(previous_manifest.as_ref(), &current_manifest);
-    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
-    unsafe { deliver(answer.as_bytes(), out, cap) }
 }

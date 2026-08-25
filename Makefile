@@ -12,7 +12,7 @@
 # rust/slopdesk-probe, the host metadata RPC's git/directory/session half + the TERM
 # resolution — stages 24 and 25;
 # rust/slopdesk-ctl, the
-# agent-control CLI; rust/slopdesk-cli, the `slopdesk` CLI core — stage 16; rust/slopdesk-codeseed,
+# agent-control CLI; rust/slopdesk-cli, the whole `slopdesk` CLI process — stage 16; rust/slopdesk-codeseed,
 # the code panel's workbench profile — stage 22), six daemons and eight library workspaces
 # (rust/slopdesk-wire, the terminal wire codec + the replay buffer + the OSC
 # vocabulary — stages 1, 14 and 16; rust/slopdesk-video, the PATH-2 FEC math — stage 5;
@@ -283,7 +283,7 @@ lint-swift-analyze: ## SwiftLint analyzer rules (full rebuild + analyze; minutes
 
 # ---------------------------------------------------------------------------- #
 # Full gate
-.PHONY: check quick check-ios check-macos-apps check-ios-tests gui-macos gui-video gui-multiclient gui-launch-restore build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install devtools devtools-test dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test muxsession-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test config-schema codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test hostlaunch-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
+.PHONY: check quick check-ios check-macos-apps check-ios-tests gui-macos gui-video gui-multiclient gui-launch-restore build test test-touched golden ffi ffi-test hook hook-test ctl ctl-test posix-test superd superd-test superd-install screend screend-test screend-install devtools devtools-test dropd dropd-test androidd androidd-test inspectord inspectord-test wire wire-test altscreen-test muxsession-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test miri workspace workspace-test invariants-test ids ids-test tree tree-test settings settings-test config-schema codepanel codepanel-test agent agent-test terminal terminal-test cli cli-test hostlaunch-test sidecars-test codeseed codeseed-test probe probe-test git-test host host-restart host-status
 check: lint build test miri golden check-ios check-macos-apps ## lint + build + test + the unsafe memory audit + golden pin + both app triples (full local gate)
 
 # THE INNER LOOP. Run this after every edit; run `check` once before pushing.
@@ -692,6 +692,15 @@ apple-cursor-test: ## cargo test for the NSCursor read + PNG render (off-main an
 apple-ax-test: ## cargo test for the accessibility tree (refusals without a grant, walk bounds, leak check)
 	cd rust/slopdesk-apple-ax && cargo test
 
+# The one Core Text question slopdesk asks: what family name is inside a font FILE. `slopdesk font
+# import` copies a face into `~/Library/Fonts` and then has to tell the user what to paste under
+# `[terminal]`, and that string is neither the filename nor derivable from it. The suite covers the
+# refusal half exhaustively — a non-font, a missing file, an empty path all read as NO NAME, which
+# is what lets the CLI say one sentence about every way it can fail — plus the happy path against a
+# system face, which doubles as this crate's leak test: a thousand reads, three CF references each.
+apple-text-test: ## cargo test for the Core Text family-name read (refusals, real face, leak check)
+	cd rust/slopdesk-apple-text && cargo test
+
 apple-vt-test: ## cargo test for the VideoToolbox session (option dictionaries, timestamps, leak check)
 	cd rust/slopdesk-apple-vt && cargo test
 
@@ -816,15 +825,19 @@ terminal: ## Build slopdesk-terminal (rust/slopdesk-terminal)
 terminal-test: ## cargo test for the terminal mode tracker + input echo dedup
 	cd rust/slopdesk-terminal && cargo test
 
-# Stage 16: the pure core of the USER-facing `slopdesk` CLI — global flags, completions, the local
-# config-file ops and the list/inspect tables. A MEMBER of the root workspace, not a workspace of
-# its own: it wants the hook's startup-tuned profile for the same reason ctl does, and `lint-rust`
-# already reaches it through `cargo clippy --workspace`. The rest of what `SlopDeskCLICore` held
-# moved to the crate that owns the SUBJECT — see docs/DECISIONS.md, stage 16.
-cli: ## Build slopdesk-cli (rust/slopdesk-cli)
+# Stage 16: the WHOLE user-facing `slopdesk` CLI — argv in, one dispatch, an exit code out. It is
+# the process now, not a core behind a Swift face: the `[[bin]]` here IS the `slopdesk` the tarball
+# ships, and `Package.swift` declares no CLI executable at all. A MEMBER of the root workspace, not
+# a workspace of its own: it wants the hook's startup-tuned profile for the same reason ctl does,
+# and `lint-rust` already reaches it through `cargo clippy --workspace`.
+#
+# ITS Cargo.toml IS A RELEASE SITE. `slopdesk version` prints `CARGO_PKG_VERSION`, so the number
+# there is one of the six the product carries — `slopdesk-release bump-product` owns it, never a
+# hand edit. See docs/49 §"The six version sites" and docs/DECISIONS.md, stage 16.
+cli: ## Build the slopdesk CLI (rust/slopdesk-cli)
 	cd rust && cargo build --release -p slopdesk-cli
 
-cli-test: ## cargo test for the `slopdesk` CLI core
+cli-test: ## cargo test for the `slopdesk` CLI
 	cd rust && cargo test -p slopdesk-cli
 
 # hostd's argv grammar and the launch record it publishes for itself — one crate because `--port 0`
@@ -879,7 +892,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the operator tools) + swift test with the green-tree cache
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the operator tools) + swift test with the green-tree cache
 	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the

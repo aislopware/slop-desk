@@ -127,15 +127,16 @@ let package = Package(
         .library(name: "SlopDeskVideoClientPhone", targets: ["SlopDeskVideoClientPhone"]),
         // PATH 4 (dedicated drag-drop file-transfer channel).
         .library(name: "SlopDeskFileTransfer", targets: ["SlopDeskFileTransfer"]),
-        // The three SHIPPED executables (`slopdesk-release package`, docs/49). Products, not just
-        // targets, because `swift build --target <exe>` under the Swift 6.3 build backend compiles
-        // the module and never links a binary — the release tarball needs `--product`, which only
-        // exists for a declared product. Every other executableTarget below is a dev/bench tool and
-        // stays product-less on purpose: `swift build` still builds them, `--product` won't ship them.
-        .executable(name: "slopdesk", targets: ["slopdesk"]),
+        // The one SHIPPED SwiftPM executable left (`slopdesk-release package`, docs/49). A product,
+        // not just a target, because `swift build --target <exe>` under the Swift 6.3 build backend
+        // compiles the module and never links a binary — the release tarball needs `--product`,
+        // which only exists for a declared product. Every other executableTarget below is a
+        // dev/bench tool and stays product-less on purpose: `swift build` still builds them,
+        // `--product` won't ship them.
         .executable(name: "slopdesk-hostd", targets: ["slopdesk-hostd"]),
-        // No `slopdesk-ctl` product: the agent-control CLI is Rust (`rust/slopdesk-ctl`), built by
-        // `make ctl` and shipped straight out of `rust/target/release`.
+        // No `slopdesk` and no `slopdesk-ctl` product: BOTH user-facing CLIs are Rust
+        // (`rust/slopdesk-cli`, `rust/slopdesk-ctl`), built by `make cli`/`make ctl` and shipped
+        // straight out of `rust/target/release`.
     ],
     // External UI deps — attach ONLY to the UI targets so the headless core + wire/codec/controller
     // targets stay dependency-free (`swift test` / golden never fetch). Trades "clean checkout builds
@@ -494,8 +495,6 @@ let package = Package(
                 "SlopDeskInspector",
                 // `SessionResumeOutcome` — the fresh-vs-resumed reconnect verdict a toast reports.
                 "SlopDeskClient",
-                // `JumpResolver` — the PURE frecency/$HOME-toggle/`--no-cd` resolution the CLI pins.
-                "SlopDeskCLICore",
                 // The client control server answers over a mux channel and writes with `write(2)`.
                 "SlopDeskTransport",
                 "SlopDeskTTY",
@@ -610,10 +609,6 @@ let package = Package(
                 // a direct dependency of WorkspaceCore, but a `swift build` import needs the module
                 // declared here; this does NOT widen the headless graph (no HW deps in Transport).
                 "SlopDeskTransport",
-                // (`SlopDeskCLICore` is NOT here. It was, for one `import` that named no CLI symbol at
-                // all — `JumpResolver` had already stopped being reached from this target, and the
-                // resolver itself now lives beside the frecency database it lends, in
-                // `SlopDeskWorkspaceCore`.)
                 // The bundled nerd face, for `Text.nerdAware`'s SwiftUI splice.
                 "SlopDeskFontFaces",
                 // L8: external UI libraries (chrome). Cross-platform: SwiftUIIntrospect (reach AppKit
@@ -840,56 +835,12 @@ let package = Package(
         // The two NDJSON line helpers the `slopdesk` CLI still needed moved to
         // `SlopDeskWorkspaceCore/Control/ClientControlProtocol.swift`.
 
-        // PURE, testable core of the user-facing `slopdesk` CLI (E20): the global-flag parser
-        // (`CLIArgs`), the `version` summary builder (`CLIVersion`), the per-shell completion
-        // generator (`CLICompletions`), and (later WIs) list formatting / watch-progress / jump
-        // resolution. No socket I/O, no exit — Foundation-only, unit-testable without an AF_UNIX
-        // socket or a GUI (hang-safety rule). Reuses `ClientControlProtocol`'s NDJSON line protocol; reads
-        // `SlopDeskProtocol` for the wire-version summary and `SlopDeskWorkspaceCore` for the
-        // frecency/progress reuse seams.
-        .target(
-            name: "SlopDeskCLICore",
-            // SlopDeskAgentDetect supplies `ClaudeStatus`, which `WatchClaudeOutcome` (WI-8) maps to
-            // the `watch:claude` exit codes. It is a transitive dep via SlopDeskWorkspaceCore, but
-            // declared here so the `import` is explicit.
-            // CSlopDeskFFI: the flags, the completion scripts, the config file and the tables are
-            // `rust/slopdesk-cli`'s — this module is their Swift face (docs/55 §4).
-            dependencies: [
-                "SlopDeskProtocol",
-                "SlopDeskWorkspaceCore",
-                "SlopDeskAgentDetect",
-                "CSlopDeskFFI",
-                // docs/49: `slopdesk sidecars` keeps the previous release's MANIFEST.json in the
-                // Application Support container, because Homebrew replaces the Cellar wholesale and
-                // the old manifest is gone by the time anything could read it. `SlopDeskAppSupport`
-                // is that container. Transitive via SlopDeskWorkspaceCore; declared so the `import`
-                // is explicit, like SlopDeskAgentDetect above.
-                "SlopDeskVideoProtocol",
-                // SlopDeskArena: the `(offset, length)` convention docs/55 §4c spells, both ways —
-                // the CLI builds an arena for `cli_parse` and reads one back out of it.
-                "SlopDeskArena",
-            ],
-
-            linkerSettings: ffiCLibraries,
-        ),
-
-        // The user-facing `slopdesk` CLI: arg → `CLIArgs`, dispatch, GUI-launch passthrough for the
-        // bare / `-e <cmd>` invocation, the local `version` / `completions` / `config path|edit|validate`
-        // ops, and the AF_UNIX NDJSON client socket I/O for the app-driving subcommands. Pure logic
-        // (parsing, formatting, the `ClientControlProtocol` method/param vocabulary) lives in
-        // SlopDeskCLICore / SlopDeskWorkspaceCore; this thin shell adds the socket + GUI launch + exit.
-        .executableTarget(
-            name: "slopdesk",
-            // SlopDeskVideoProtocol supplies `KeybindGrammar` — the parser `config validate` injects
-            // into `CLIConfig.validate` to check the keybind config file against the real grammar. It is
-            // transitive via SlopDeskWorkspaceCore (pure wire/settings target, no HW deps), declared
-            // here so the `import` is explicit.
-            dependencies: [
-                "SlopDeskCLICore", "SlopDeskVideoProtocol", "SlopDeskWorkspaceCore",
-                // The one `write(2)`-until-done loop, for the control-socket request.
-                "SlopDeskTTY",
-            ],
-        ),
+        // NOTE: the user-facing `slopdesk` CLI and its pure core (`SlopDeskCLICore`) are GONE from
+        // this graph too — both are Rust now (`rust/slopdesk-cli`, `docs/DECISIONS.md`). The core
+        // had already been a Swift FACE over that crate through `CSlopDeskFFI`; what the executable
+        // added on top was a socket, a GUI launch and a thousand lines that ended in `exit()`, so no
+        // test could reach any of it. The Rust `shell` module reaches the app through a `Control`
+        // trait and RETURNS an exit code, which is what made the whole surface testable.
 
         // Interactive remote terminal client. Sources under Sources/slopdesk-client.
         .executableTarget(
@@ -1024,29 +975,9 @@ let package = Package(
             path: "Tests/SlopDeskTestSupport",
         ),
 
-        // The user-facing `slopdesk` CLI core: global-flag parsing (`CLIArgs`), the `version`
-        // summary builder, and the per-shell completion generator. PURE — no socket, no GUI, no
-        // subprocess (the `slopdesk` executable's socket I/O + GUI launch are compiled-only and
-        // never exercised here, per the hang-safety rule).
-        // Protocol: `WatchProgressTests` (WI-7) asserts the emitted OSC 9;4 bytes round-trip through
-        // `ProgressOSCParser`/`ProgressState`. A transitive dep of CLICore, declared here so the
-        // import is explicit.
-        // (`SlopDeskWorkspaceCore` is NOT here any more. It was named for one suite —
-        // `JumpResolverTests`, which built `FolderEntry` values — and that suite moved to
-        // `SlopDeskWorkspaceCoreTests/Folders/` with the resolver it drives.)
-        .testTarget(
-            name: "SlopDeskCLITests",
-            // SlopDeskAgentDetect: `WatchClaudeOutcomeTests` (WI-8) drives the `ClaudeStatus` →
-            // exit-code mapping directly. Transitive via CLICore, but declared so the import is explicit.
-            dependencies: [
-                "SlopDeskCLICore",
-                "SlopDeskProtocol",
-                "SlopDeskAgentDetect",
-                // `CLIConfigTests` injects the REAL `KeybindGrammar.parseLine` into `CLIConfig.validate`
-                // so the verdict tracks exactly what the app honours. Transitive via WorkspaceCore.
-                "SlopDeskVideoProtocol",
-            ],
-        ),
+        // (No `SlopDeskCLITests`. Every suite it held tested a Swift face over `rust/slopdesk-cli`,
+        // and both the face and the executable are gone — the tests live in that crate now, where
+        // they can drive a whole subcommand's exit code against a canned response.)
 
         .testTarget(name: "SlopDeskProtocolTests", dependencies: ["SlopDeskProtocol", "SlopDeskBenchClock"]),
         // W7: the pure detection core — state-machine transitions (incl. injected-clock

@@ -350,10 +350,10 @@ fn build_cli(layout: &Layout) -> Result<Option<PathBuf>, String> {
     // `--arch arm64` keeps this honest even under Rosetta or a future universal-capable toolchain:
     // the tarball claims arm64 and must contain only arm64.
     //
-    // `--product`, NOT `--target`. Under the Swift 6.3 build backend `--target slopdesk` compiles
-    // the module, reports "Build of target: 'slopdesk' complete!", and never links a binary — a
+    // `--product`, NOT `--target`. Under the Swift 6.3 build backend `--target slopdesk-hostd`
+    // compiles the module, reports "Build of target: … complete!", and never links a binary — a
     // green build that produces nothing to ship. `--product` links, which is why Package.swift
-    // declares the shipped executables as products.
+    // declares the shipped executable as a product.
     for tool in tools::SPM_TOOLS {
         proc::run(
             "swift",
@@ -434,9 +434,10 @@ fn stage_cli(layout: &Layout, swift_bin: Option<&Path>) -> Result<(), String> {
 
 /// The product's version, then every sidecar's own — both asked of the BUILT binary.
 ///
-/// `slopdesk version` reads a SOURCE constant, not the tag, so a release cut without bumping it
-/// ships a binary that lies about its own version. Asking the binary rather than grepping the
-/// source is the point: this is the string users will actually see.
+/// `slopdesk version` reads its own `CARGO_PKG_VERSION`, not the tag, so a release cut without
+/// bumping `rust/slopdesk-cli/Cargo.toml` ships a binary that lies about its own version. Asking
+/// the binary rather than grepping the source is the point: this is the string users will actually
+/// see, and it is baked in at COMPILE time — a bumped manifest with no rebuild fails here too.
 ///
 /// The sidecar half is the same question of every cargo tool, and it matters more. A `Cargo.toml`
 /// bumped without a rebuild, a stale binary picked up by the search, a crate that failed to
@@ -450,8 +451,8 @@ fn check_versions(layout: &Layout, settings: &Settings) -> Result<(), String> {
     if declared != settings.version {
         return Err(format!(
             "version drift: `slopdesk version` says {declared}, this release is {}.\n  Bump \
-             Sources/SlopDeskCLICore/CLIVersion.swift (and the MARKETING_VERSION in both\n  \
-             Apps/*/project.yml) to {} before tagging.",
+             rust/slopdesk-cli/Cargo.toml (and the MARKETING_VERSION in both\n  Apps/*/project.yml) to {} \
+             before tagging.",
             settings.version, settings.version
         ));
     }
@@ -459,7 +460,7 @@ fn check_versions(layout: &Layout, settings: &Settings) -> Result<(), String> {
     proc::step(&format!("Checking sidecar versions against {}", stamps::PIN));
     let pin = Pin::read(&layout.root)?;
     let mut drifted = false;
-    for tool in tools::rust_tools() {
+    for tool in tools::pinned_tools() {
         let Some(pinned) = pin.entry(tool) else {
             eprintln!("  MISSING  {tool} has no entry in {}", stamps::PIN);
             drifted = true;
@@ -856,12 +857,12 @@ fn write_manifest(layout: &Layout, settings: &Settings) -> Result<(), String> {
     let _ = writeln!(json, "  \"tools\": [");
     let all = tools::cli_tools();
     for (index, tool) in all.iter().enumerate() {
-        // The `SwiftPM` pair ARE the product and carry no version of their own — `docs/49` §"The
-        // six version sites" is where their number lives, and duplicating it per-tool here would
-        // invent a seventh site. They appear with the product version and an empty stamp, because
-        // a manifest that lists ten of the twelve binaries in the tarball is one a reader cannot
-        // trust.
-        let (version, stamp) = if tools::is_spm(tool) {
+        // The PRODUCT pair carry no version of their own — `docs/49` §"The six version sites" is
+        // where their number lives, and duplicating it per-tool here would invent a seventh site.
+        // They appear with the product version and an empty stamp, because a manifest that lists
+        // ten of the twelve binaries in the tarball is one a reader cannot trust. Which of the two
+        // is built by cargo and which by `SwiftPM` does not enter into it.
+        let (version, stamp) = if tools::is_product(tool) {
             (settings.version.clone(), String::new())
         } else {
             let entry = pin
@@ -988,9 +989,16 @@ mod tests {
         );
     }
 
+    /// hostd is the last `SwiftPM` binary; the product CLI beside it is cargo's and resolves to the
+    /// shared directory, which is what keeps a stale Swift `slopdesk` in `.build` from staging.
     #[test]
-    fn the_product_pair_has_no_cargo_directory() {
-        assert_eq!(cargo_bin_dir(Path::new("/tree"), "slopdesk"), None);
+    fn the_swift_half_has_no_cargo_directory_and_the_cli_does() {
+        let root = Path::new("/tree");
+        assert_eq!(cargo_bin_dir(root, "slopdesk-hostd"), None);
+        assert_eq!(
+            cargo_bin_dir(root, "slopdesk"),
+            cargo_bin_dir(root, "slopdesk-ctl")
+        );
     }
 
     #[test]

@@ -3,7 +3,8 @@
 //!
 //! ## Why one table and not five lists
 //! This surface used to be written down four times — the completion list here, the `printUsage()`
-//! prose in `Sources/slopdesk/main.swift`, the dispatch `switch` a few hundred lines below it, and
+//! prose in the deleted `Sources/slopdesk` target's `main.swift`, the dispatch `switch` a few
+//! hundred lines below it, and
 //! an "independently authored" golden in the Swift test suite. Nothing tied them together, and the
 //! failure that produced was not hypothetical: `open`, `import`, `export`, `features`,
 //! `state:claude` and `ipc` tab-completed in all five shells and then exited 2 with "not available

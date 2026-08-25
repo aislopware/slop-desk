@@ -78,7 +78,6 @@ pub mod cgdisplay;
 pub mod cgwindow;
 pub mod cheat_sheet;
 pub mod chrome;
-pub mod cli;
 pub mod client_gestures;
 pub mod client_input;
 pub mod client_jitter;

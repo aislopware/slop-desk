@@ -31,8 +31,9 @@ use crate::proc;
 /// Each anchor is the KEY, so the replacement cannot wander into some other quoted string in the
 /// same file — and the rewrite takes the FIRST match, which is what the Cargo manifest below
 /// depends on: `[package]` sits above `[dependencies]`, so `version = ` is the package's before it
-/// could be anyone else's. That site used to be `Sources/SlopDeskCLICore/CLIVersion.swift`; the CLI
-/// is Rust now and reads its own `CARGO_PKG_VERSION`, so the site MOVED rather than multiplied.
+/// could be anyone else's. That site used to be `CLIVersion.swift` in the deleted
+/// `SlopDeskCLICore`; the CLI is Rust now and reads its own `CARGO_PKG_VERSION`, so the site MOVED
+/// rather than multiplied.
 const CODE_SITES: [(&str, &str); 2] = [
     ("rust/slopdesk-cli/Cargo.toml", "version = "),
     (

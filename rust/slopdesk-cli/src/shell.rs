@@ -1,13 +1,13 @@
 //! The process the pure core sits inside: the environment it reads, the sinks it writes, the
 //! failure it can end with, and the dispatch from a parsed invocation to one subcommand.
 //!
-//! Everything here used to be `Sources/slopdesk/main.swift` — a thousand lines that no test could
-//! reach, because every one of them ended in `exit()`. The rule that kept it that way was a real
-//! one ("a CLI's socket half is compiled-and-reviewed, so keep the reviewable part small"), and the
-//! way out of it is the one `slopdesk-ctl` took next door: the subcommands talk to the app through
-//! the [`Control`] trait rather than a socket, and hand back an exit code instead of taking one.
-//! A test can then drive a whole subcommand — its flags, its rendering and the status it would give
-//! the shell — against a canned response.
+//! Everything here used to be the `Sources/slopdesk` target's `main.swift` — a thousand lines no
+//! test could reach, because every one of them ended in `exit()`. The rule that kept it that way
+//! was a real one ("a CLI's socket half is compiled-and-reviewed, so keep the reviewable part
+//! small"), and the way out of it is the one `slopdesk-ctl` took next door: the subcommands talk to
+//! the app through the [`Control`] trait rather than a socket, and hand back an exit code instead
+//! of taking one. A test can then drive a whole subcommand — its flags, its rendering and the
+//! status it would give the shell — against a canned response.
 //!
 //! [`main`](../../main/index.html) is the only thing left that a test cannot enter, and all it does
 //! is wire the real argv, the real environment and the real stdio in.

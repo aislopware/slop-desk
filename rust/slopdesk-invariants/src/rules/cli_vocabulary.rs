@@ -2,9 +2,20 @@
 //!
 //! Ported from the deleted `check-supervisor.sh` sections 1–8, which were the largest single block
 //! left in the shell. The subject is one table — `SUBCOMMANDS` in
-//! `rust/slopdesk-cli/src/vocabulary.rs` — and the four other places that used to hold a copy of
-//! it: the Swift face's flag parser, the completion scripts, the dispatch switch in `main.swift`,
-//! and two `ui-shell` markdown sections that describe the surface in prose.
+//! `rust/slopdesk-cli/src/vocabulary.rs` — and the other places that used to hold a copy of it.
+//!
+//! ## Most of this block deleted itself when the CLI stopped being Swift
+//! Four of those places were Swift: a flag parser, a completions face, an output formatter and a
+//! version banner, each a thin face over a `slopdesk_cli_*` FFI door, plus a dispatch `switch` in
+//! the deleted `Sources/slopdesk` target. A gate had to hold those together because no compiler
+//! crossed the boundary. The whole CLI process is `rust/slopdesk-cli` now, so there is no boundary
+//! and no second spelling: the dispatch-vs-availability check that was the largest rule here is a
+//! UNIT TEST in `shell.rs` reading `include_str!("shell.rs")` against `SUBCOMMANDS`, which is
+//! strictly better than a text rule — it fails the crate's own suite, not a separate gate.
+//!
+//! What survives is what no compiler can still decide: two shape bans inside the crate, the ONE
+//! cross-language vocabulary left (the client control socket, whose far end is Swift because it
+//! dispatches against the `@Observable` store), and the doc half.
 //!
 //! ## What the block is actually for
 //! The reported bug was six unimplemented verbs offered by all five shells, because
@@ -34,27 +45,21 @@
 //! * A malformed verb with a dangling family colon — the literal `state:` a BACKLOG line once wrote
 //!   — is dropped by the tokeniser rather than reported, because it matches no verb SHAPE.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
 use crate::text;
 use crate::tree::Tree;
 
-/// The face over the flag grammar.
-const SWIFT_CLI_ARGS: &str = "Sources/SlopDeskCLICore/CLIArgs.swift";
-/// The face over the completion scripts.
-const SWIFT_CLI_COMPLETIONS: &str = "Sources/SlopDeskCLICore/CLICompletions.swift";
-/// The face over the config-file rules.
-const SWIFT_CLI_CONFIG: &str = "Sources/SlopDeskCLICore/CLIConfig.swift";
-/// The face over the output tables.
-const SWIFT_CLI_FORMATTING: &str = "Sources/SlopDeskCLICore/CLIFormatting.swift";
-/// The face over the version banner.
-const SWIFT_CLI_VERSION: &str = "Sources/SlopDeskCLICore/CLIVersion.swift";
-/// The face over the help page and the planned list.
-const SWIFT_CLI_USAGE: &str = "Sources/SlopDeskCLICore/CLIUsage.swift";
-/// The executable: a dispatch switch and nothing else.
-const SWIFT_CLI_MAIN: &str = "Sources/slopdesk/main.swift";
+/// The far end of the client control socket — Swift, because it dispatches against the store.
+const SWIFT_CONTROL_PROTOCOL: &str = "Sources/SlopDeskWorkspaceCore/Control/ClientControlProtocol.swift";
+/// The `switch` that consumes those method strings.
+const SWIFT_CONTROL_DISPATCHER: &str = "Sources/SlopDeskWorkspaceCore/Control/ClientControlDispatcher.swift";
+/// The near end: the request builders and the three token vocabularies.
+const RUST_CLIENTCTL: &str = "rust/slopdesk-cli/src/clientctl.rs";
+/// The process: argv in, dispatch, exit code out.
+const RUST_CLI_SHELL: &str = "rust/slopdesk-cli/src/shell.rs";
 
 /// The one table.
 const RUST_CLI_VOCAB: &str = "rust/slopdesk-cli/src/vocabulary.rs";
@@ -74,133 +79,28 @@ const E20_HEADING: &str = "## E20 — CLI parity + watch + first-launch";
 /// The marker a line must carry to name an unbuilt verb. One literal, so a doc cannot half-say it.
 const E20_UNBUILT: &str = "NOT YET IMPLEMENTED";
 
-/// The CLI's core is `rust/slopdesk-cli`, and each face still calls it
+/// The completions module owns no list, and the flag help sits beside the grammar
 ///
-/// `rust/slopdesk-cli` was written for this port and then left unlinked on a rule — "a port ships
-/// over a socket, never FFI" — that `CLAUDE.md` has since replaced with "or as a linked library,
-/// pick by lifetime". A CLI starts, does one thing and exits, so it is in-process by necessity: the
-/// crate is linked and `SlopDeskCLICore` is the face over it.
-///
-/// The FLAG GRAMMAR, the completion SCRIPTS, the output TABLES and the version BANNER. Each is a
-/// place a second parser grows back one convenience at a time, so each is checked from both sides:
-/// the door is still called, AND the face does not respell what the door answers. A door-only check
-/// passes a face that calls the crate and then ignores it.
-///
-/// `--config-file` is named among the banned strings because the flag STRING is the parser's, not
-/// the face's; the XDG path because a second copy of it is a CLI that disagrees with the file the
-/// app actually reads. The config file's own reading is NOT here: it moved out of `slopdesk-cli`
-/// entirely when the settings became one TOML table, and the app and the CLI now share
-/// `slopdesk-settings` through `AppConfig` — which "The config file has one reader" holds, in
-/// `cli_config.rs`, from both ends. What stays here is the BAN, because a CLI that re-derives the
-/// path is a regression whichever crate the reading lives in.
-#[must_use]
-pub fn the_cli_core_is_one_law(tree: &Tree) -> Report {
-    check_all(tree, &[
-        Claim::Doors {
-            path: SWIFT_CLI_ARGS,
-            entries: &["slopdesk_cli_default_timeout_ms", "slopdesk_cli_parse"],
-            message: "CLIArgs.swift no longer calls {entry} — the CLI's core is rust/slopdesk-cli",
-        },
-        Claim::Doors {
-            path: SWIFT_CLI_COMPLETIONS,
-            entries: &[
-                "slopdesk_cli_shell",
-                "slopdesk_cli_subcommands",
-                "slopdesk_cli_completion_script",
-            ],
-            message: "CLICompletions.swift no longer calls {entry} — the CLI's core is rust/slopdesk-cli",
-        },
-        Claim::Doors {
-            path: SWIFT_CLI_FORMATTING,
-            entries: &[
-                "slopdesk_cli_table",
-                "slopdesk_cli_render_table",
-                "slopdesk_cli_render_json",
-            ],
-            message: "CLIFormatting.swift no longer calls {entry} — the CLI's core is rust/slopdesk-cli",
-        },
-        Claim::Doors {
-            path: SWIFT_CLI_VERSION,
-            entries: &["slopdesk_cli_build_hash_env_key", "slopdesk_cli_version_summary"],
-            message: "CLIVersion.swift no longer calls {entry} — the CLI's core is rust/slopdesk-cli",
-        },
-        Claim::Lacks {
-            path: SWIFT_CLI_ARGS,
-            pattern: r#"case "--(socket|timeout|format|no-headers|config-file)"|"-e""#,
-            view: View::Statements,
-            message: "CLIArgs.swift matches flag strings again — the grammar lives in args.rs",
-        },
-        Claim::Lacks {
-            path: SWIFT_CLI_COMPLETIONS,
-            pattern: r#""(bash|zsh|fish|elvish|powershell|pwsh)"|complete -F|compdef"#,
-            view: View::Statements,
-            message: "CLICompletions.swift spells a shell name or a script again — those live in \
-                      completions.rs",
-        },
-        Claim::Lacks {
-            path: SWIFT_CLI_CONFIG,
-            pattern: r"\.config/slopdesk|config\.toml|keybind = ",
-            view: View::Statements,
-            message: "CLIConfig.swift spells the XDG path or the keybind grammar again — those live in \
-                      config.rs",
-        },
-        Claim::Lacks {
-            path: SWIFT_CLI_FORMATTING,
-            pattern: r#"padding|repeating: " "|widths\[|joined\(separator: "  "\)"#,
-            view: View::Statements,
-            message: "CLIFormatting.swift pads a column again — the table renderer is formatting.rs",
-        },
-        Claim::Lacks {
-            path: SWIFT_CLI_VERSION,
-            pattern: r"remote-terminal|gui-video|read-only-inspector|terminal protocol v",
-            view: View::Statements,
-            message: "CLIVersion.swift spells the banner again — its shape lives in version.rs",
-        },
-    ])
-}
-
-/// The help page, the completion list and the flag help each live in exactly one place
-///
-/// Four claims that were sections 1, 2, 5 and 6 of the shell gate.
-///
-/// **The face calls the door.** If `CLIUsage.swift` stops calling `slopdesk_cli_usage` or
-/// `slopdesk_cli_planned_subcommands`, it has grown its own help renderer or its own planned list,
-/// which is a second table by another name.
-///
-/// **`main.swift` PRINTS the crate's help; it does not write one.** Catches someone re-adding a
-/// `printUsage()` heredoc, which is where the help text drifted from the completions the first
-/// time. The section HEADINGS are the fingerprint of that block — they can only appear in a file
-/// rendering the page itself — and they are matched WITH their parentheticals, so the
-/// `// MARK: - Local subcommands` divider cannot be mistaken for the page.
+/// What is left of sections 1, 2, 5 and 6 after the CLI stopped being Swift. Both halves that
+/// pointed at a Swift face are gone with the face; both halves that point INSIDE the crate stay,
+/// because neither is something `rustc` refuses.
 ///
 /// **The completions module owns no list of its own.** This is the exact regression the whole
 /// change undoes: a flat `SUBCOMMANDS` array in `completions.rs` with no notion of availability.
+/// The compiler is perfectly happy with two arrays; only a reader notices.
 ///
 /// **The flag help sits beside the grammar.** A help page that documents a flag the parser rejects
 /// is the same drift from the other end. The flag STRINGS live in `args.rs` next to the `match`
 /// that consumes them, and a test there feeds every documented spelling back through `parse`; a
 /// `GLOBAL_FLAGS` table anywhere else is a second copy of that fact.
+///
+/// **The process prints the vocabulary's page.** `shell.rs` calls `vocabulary::usage`; it does not
+/// render one. This is the claim that used to read `main.swift`, and it is worth keeping on the
+/// Rust side for the reason it was written: the help text drifted from the completions the first
+/// time by someone adding a section heading to the dispatcher rather than to the table.
 #[must_use]
 pub fn the_cli_help_has_one_author(tree: &Tree) -> Report {
     check_all(tree, &[
-        Claim::Doors {
-            path: SWIFT_CLI_USAGE,
-            entries: &["slopdesk_cli_usage", "slopdesk_cli_planned_subcommands"],
-            message: "CLIUsage.swift no longer calls {entry} — the CLI's vocabulary is rust/slopdesk-cli's",
-        },
-        Claim::Names {
-            path: SWIFT_CLI_MAIN,
-            needle: "CLIUsage.text(",
-            message: "main.swift no longer prints CLIUsage.text — the help text lives in vocabulary.rs",
-        },
-        Claim::Lacks {
-            path: SWIFT_CLI_MAIN,
-            pattern: r"Local subcommands \(no running app|App-driving subcommands \(require|In-pane \
-                      subcommands \(run inside|^ *Global flags:",
-            view: View::Statements,
-            message: "main.swift spells a help-page section again — the whole page is rendered by \
-                      vocabulary.rs",
-        },
         Claim::Lacks {
             path: RUST_CLI_COMPLETIONS,
             pattern: r"const SUBCOMMANDS",
@@ -214,89 +114,211 @@ pub fn the_cli_help_has_one_author(tree: &Tree) -> Report {
             message: "args.rs no longer carries GLOBAL_FLAGS — the flag help must sit beside the grammar it \
                       describes",
         },
+        Claim::Names {
+            path: RUST_CLI_SHELL,
+            needle: "vocabulary::usage",
+            message: "shell.rs no longer prints vocabulary::usage — the help page must have one author",
+        },
         Claim::Lacks {
-            path: SWIFT_CLI_MAIN,
-            pattern: r#""--no-headers"|"--config-file"|"--socket PATH""#,
-            view: View::Statements,
-            message: "main.swift spells a global flag again — the grammar and its help are args.rs's",
+            path: RUST_CLI_SHELL,
+            pattern: r"Local subcommands \(no running app|App-driving subcommands \(require|In-pane \
+                      subcommands \(run inside|Global flags:",
+            view: View::Code,
+            message: "shell.rs spells a help-page section again — the whole page is rendered by \
+                      vocabulary.rs",
         },
     ])
 }
 
-/// The dispatch switch covers exactly the verbs the shells offer — no more, no fewer
+/// The client control socket has one vocabulary
 ///
-/// THE ONE THAT WOULD HAVE CAUGHT THE BUG, in both directions:
+/// THE LAST CROSS-LANGUAGE VOCABULARY THE CLI HAS. Everything else the `slopdesk` process knows is
+/// its own crate's now; this one cannot be, because the far end dispatches against the
+/// `@Observable` workspace store, which is `SwiftUI`'s and stays Swift.
 ///
-/// * a verb marked `Ready` in the table with no `case` in `main.swift` ⇒ a completion that exits 2,
-///   which is the reported drift;
-/// * a `case` in `main.swift` for a verb the table calls `Planned` or does not list ⇒ a command
-///   that works but that no shell will ever complete, so nobody finds it.
+/// The two ends ship on different clocks and that is the whole reason this is a gate rather than a
+/// test: the app is long-running and installed from a `.app`, the CLI arrives by `brew upgrade` and
+/// is typed seconds later. A renamed method moves both ends in one commit, passes both suites
+/// green, and then meets a peer that is still the version the user launched this morning.
 ///
-/// `help` is excluded from the set comparison and asserted separately: it is handled ABOVE the
-/// switch, because `--help` has to win over the GUI launch, so it is matched by a
-/// `subcommand == "help"` guard rather than a `case` label. Excluding it without checking the guard
-/// would make it silently exempt.
+/// Three vocabularies, because all three are parsed by string on the far side and each fails the
+/// same silent way — an unknown token becomes an error response, never a compile failure:
+/// * the METHOD names, which is the `switch` itself;
+/// * the PLACEMENT tokens `view`/`edit` take;
+/// * the FONT SCOPE tokens `font list` takes.
 ///
-/// Only the TOP-LEVEL switch's labels count — `case "x":` in column 0, which is what a `switch` in
-/// a `main.swift` script file produces. Nested per-subcommand switches are indented, so they cannot
-/// be picked up here.
+/// The badge tokens are deliberately NOT compared as a set. Swift's map is `token → TabBadgeKind`
+/// and carries `unread ↦ finished`, a many-to-one row Rust's flat list cannot express; what is
+/// checked is that every token Rust offers is one Swift maps, which is the direction a user feels.
 #[must_use]
-pub fn the_dispatch_switch_matches_availability(tree: &Tree) -> Report {
+pub fn the_client_control_socket_has_one_vocabulary(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let Some(vocabulary) = report.source(tree, RUST_CLI_VOCAB, "the one CLI table lives there") else {
+    let Some(rust) = report.source(tree, RUST_CLIENTCTL, "the CLI's end of the socket lives there") else {
         return report;
     };
-    let Some(main) = report.source(tree, SWIFT_CLI_MAIN, "the dispatch switch lives there") else {
+    let Some(swift) = report.source(tree, SWIFT_CONTROL_PROTOCOL, "the far end's spellings live there")
+    else {
         return report;
     };
 
-    let ready = availability(&vocabulary.text, Availability::Ready);
-    let planned = availability(&vocabulary.text, Availability::Planned);
-    // A GATE WHOSE HAYSTACK IS EMPTY PASSES EVERY BAN AT ONCE. Both extractions are the kind that go
-    // quiet when `vocabulary.rs` is reformatted, and every rule below reads one of them.
-    if ready.is_empty() || planned.is_empty() {
-        report.fail(format!(
-            "{RUST_CLI_VOCAB}: one availability list read as EMPTY ({} Ready, {} Planned) — the checks \
-             below would pass by having nothing to check",
-            ready.len(),
-            planned.len()
-        ));
-        return report;
-    }
+    // Rust spells each method as a `pub const NAME: &str = "…";` and then COLLECTS them into
+    // `METHODS`, so the set is read through that array rather than off every `&str` const in the
+    // file — `DEFAULT_PLACEMENT` is a `&str` const too, and grepping the shape would file it as a
+    // method the app has never heard of. Reading `METHODS` also catches the other half: a method
+    // constant defined, spelled right, and left out of the array the far end is held against.
+    let rust_methods = method_constants(&rust.text);
+    let swift_methods = method_block(&swift.text)
+        .map(|block| text::capture_set(&block, r#"^ *public static let [a-zA-Z]+ = "([a-z][a-z-]*)"$"#))
+        .unwrap_or_default();
+    compare(&mut report, "method", &rust_methods, &swift_methods, METHOD_FLOOR);
 
-    let dispatchable: BTreeSet<&str> = ready
-        .iter()
-        .map(String::as_str)
-        .filter(|name| *name != "help")
-        .collect();
-    let dispatched = text::capture_set(main.code(), r#"^case "([^"]+)""#);
-    let dispatched: BTreeSet<&str> = dispatched.iter().map(String::as_str).collect();
-    if dispatchable != dispatched {
-        let undispatched: Vec<&str> = dispatchable.difference(&dispatched).copied().collect();
-        let unlisted: Vec<&str> = dispatched.difference(&dispatchable).copied().collect();
-        report.fail(format!(
-            "{SWIFT_CLI_MAIN} dispatches a different set than vocabulary.rs calls Ready — Ready with no \
-             case (a completion that exits 2): [{}]; dispatched but not Ready (a verb no shell will ever \
-             offer): [{}]",
-            undispatched.join(", "),
-            unlisted.join(", ")
-        ));
-    }
-    report.fail_if(
-        !text::matches(main.code(), r#"invocation\.subcommand == "help""#),
-        format!("{SWIFT_CLI_MAIN} no longer routes 'help' — it is Ready in vocabulary.rs and must dispatch"),
+    let rust_placements = list_tokens(&rust.text, "PLACEMENTS");
+    let swift_placements = raw_values(&swift.text, "Placement");
+    compare(
+        &mut report,
+        "placement token",
+        &rust_placements,
+        &swift_placements,
+        PLACEMENT_FLOOR,
     );
 
-    // No planned verb may be reachable by pressing Tab, or by typing it.
-    for verb in &planned {
-        if text::matches(main.code(), &format!(r#"^case "{}""#, regex::escape(verb))) {
-            report.fail(format!(
-                "{SWIFT_CLI_MAIN} dispatches '{verb}', which vocabulary.rs still calls Planned — move it to \
-                 Availability::Ready in the same change, or the shells will never offer it"
-            ));
-        }
+    let rust_scopes = list_tokens(&rust.text, "FONT_SCOPES");
+    let swift_scopes = raw_values(&swift.text, "FontScope");
+    compare(&mut report, "font-scope token", &rust_scopes, &swift_scopes, 2);
+
+    // One direction only, for the reason in the doc comment above.
+    let rust_badges = list_tokens(&rust.text, "SETTABLE_BADGE_TOKENS");
+    let swift_badges = text::capture_set(&swift.text, r#"^ *"([a-z][a-z-]*)": \.[a-zA-Z]+,$"#);
+    if rust_badges.len() < 5 || swift_badges.len() < 5 {
+        report.fail(format!(
+            "{RUST_CLIENTCTL}/{SWIFT_CONTROL_PROTOCOL}: the badge-token extraction read {} and {} — the \
+             comparison below would pass by having nothing to compare",
+            rust_badges.len(),
+            swift_badges.len()
+        ));
+    } else {
+        let unmapped: Vec<&String> = rust_badges.difference(&swift_badges).collect();
+        report.fail_if(
+            !unmapped.is_empty(),
+            format!(
+                "`tab badge --kind` offers tokens ClientControlProtocol maps to no TabBadgeKind: \
+                 {unmapped:?} — the CLI would accept them and the app would answer 'unknown'"
+            ),
+        );
+    }
+
+    // The `switch` is where a method name is actually consumed, and it reads the constants rather
+    // than respelling them. A `case "windows":` there is a literal the gate above cannot see.
+    if let Some(dispatcher) = report.source(tree, SWIFT_CONTROL_DISPATCHER, "the switch lives there") {
+        let respelled = text::capture_set(dispatcher.code(), r#"^ *case "([a-z][a-z-]*)":"#);
+        report.fail_if(
+            !respelled.is_empty(),
+            format!(
+                "{SWIFT_CONTROL_DISPATCHER} switches on method LITERALS ({respelled:?}) — it must switch on \
+                 ClientControlProtocol.Method, which is what {RUST_CLIENTCTL} is held against"
+            ),
+        );
     }
     report
+}
+
+/// How many methods the socket has at the floor. A smaller read is a stale extraction.
+const METHOD_FLOOR: usize = 10;
+/// `new-tab`, `new-window` and the four split sides.
+const PLACEMENT_FLOOR: usize = 6;
+
+/// Both sides of one vocabulary, or a named failure when either read too little to be believed.
+fn compare(report: &mut Report, what: &str, rust: &BTreeSet<String>, swift: &BTreeSet<String>, floor: usize) {
+    if rust.len() < floor || swift.len() < floor {
+        report.fail(format!(
+            "the {what} extraction read {} from {RUST_CLIENTCTL} and {} from {SWIFT_CONTROL_PROTOCOL} \
+             (floor {floor}) — a comparison against an empty set passes in silence",
+            rust.len(),
+            swift.len()
+        ));
+        return;
+    }
+    if rust == swift {
+        return;
+    }
+    let cli_only: Vec<&String> = rust.difference(swift).collect();
+    let app_only: Vec<&String> = swift.difference(rust).collect();
+    report.fail(format!(
+        "the {what}s disagree across the client control socket — the CLI sends and the app does not know: \
+         {cli_only:?}; the app answers and no CLI verb reaches: {app_only:?}"
+    ));
+}
+
+/// Every method `METHODS` collects, resolved through the constants that name them.
+///
+/// A name in the array with no `pub const` behind it would not compile, so the resolution cannot
+/// silently drop one — but a constant left OUT of the array is exactly the drift this reads for,
+/// and it comes out as a method Swift knows and no CLI verb reaches.
+fn method_constants(clientctl: &str) -> BTreeSet<String> {
+    let mut spellings = BTreeMap::new();
+    for line in clientctl.lines() {
+        if let Some(caps) = text::cached(r#"^pub const ([A-Z_]+): &str = "([a-z][a-z-]*)";$"#).captures(line)
+            && let (Some(name), Some(value)) = (caps.get(1), caps.get(2))
+        {
+            drop(spellings.insert(name.as_str().to_owned(), value.as_str().to_owned()));
+        }
+    }
+    let Some(body) = text::capture_first(clientctl, r"(?s)pub const METHODS: &\[&str\] = &\[(.*?)\]") else {
+        return BTreeSet::new();
+    };
+    text::capture_set(&body, r"^ *([A-Z_]+),$")
+        .iter()
+        .filter_map(|name| spellings.get(name).cloned())
+        .collect()
+}
+
+/// The body of Swift's `enum Method`, up to its closing `all` set.
+fn method_block(protocol: &str) -> Option<String> {
+    let mut lines = protocol
+        .lines()
+        .skip_while(|line| !line.contains("public enum Method {"));
+    lines.next()?;
+    Some(
+        lines
+            .take_while(|line| !line.contains("public static let all"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+/// The string literals of one `pub const NAME: &[&str] = &[…];` in Rust.
+fn list_tokens(source: &str, name: &str) -> BTreeSet<String> {
+    let body = text::capture_first(
+        source,
+        &format!(r"(?s)pub const {}: &\[&str\] = &\[(.*?)\]", regex::escape(name)),
+    );
+    body.map(|body| text::capture_set(&body, r#""([a-z][a-z-]*)""#))
+        .unwrap_or_default()
+}
+
+/// A Swift `String`-raw-valued enum's tokens: the explicit `= "…"` ones and the implicit ones,
+/// which Swift spells as the case name itself.
+fn raw_values(protocol: &str, name: &str) -> BTreeSet<String> {
+    let Some(body) = text::capture_first(
+        protocol,
+        &format!(
+            r"(?s)public enum {}: String[^\n]*\{{(.*?)\n    \}}",
+            regex::escape(name)
+        ),
+    ) else {
+        return BTreeSet::new();
+    };
+    let explicit = text::cached(r#"^ *case [a-zA-Z]+ = "([a-z][a-z-]*)"$"#);
+    let implicit = text::cached(r"^ *case ([a-z][a-zA-Z]*)$");
+    body.lines()
+        .filter_map(|line| {
+            explicit
+                .captures(line)
+                .or_else(|| implicit.captures(line))
+                .and_then(|caps| caps.get(1))
+                .map(|matched| matched.as_str().to_owned())
+        })
+        .collect()
 }
 
 /// The `ui-shell` docs describe the CLI the crate actually ships
@@ -803,23 +825,9 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
 ];
 "#;
 
-    const MAIN: &str = r#"
-if invocation.subcommand == "help" { print(CLIUsage.text()) }
-switch invocation.subcommand {
-case "pane": runPane()
-case "watch:claude": runWatch()
-case "config": runConfig()
-case "jump": runJump()
-case "font": runFont()
-case "tab": runTab()
-default: exit(2)
-}
-"#;
-
     fn crate_side(fixture: &Fixture) {
         fixture
             .write(super::RUST_CLI_VOCAB, VOCABULARY)
-            .write(super::SWIFT_CLI_MAIN, MAIN)
             .write(
                 super::RUST_CLI_ARGS,
                 "pub const GLOBAL_FLAGS: &[GlobalFlag] = &[];\nmatch flag { \"--json\" => {}, \"--socket\" \
@@ -851,56 +859,12 @@ default: exit(2)
         );
     }
 
-    #[test]
-    fn the_dispatch_switch_and_the_table_agree() {
-        let fixture = Fixture::new("cli-vocabulary-dispatch");
-        crate_side(&fixture);
-        assert!(super::the_dispatch_switch_matches_availability(&fixture.tree()).is_clean());
-
-        // A Ready verb with no case — the reported bug: a completion that exits 2.
-        fixture.write(
-            super::SWIFT_CLI_MAIN,
-            &MAIN.replace("case \"font\": runFont()\n", ""),
-        );
-        let report = super::the_dispatch_switch_matches_availability(&fixture.tree());
-        assert!(!report.is_clean());
-        assert!(
-            report.violations()[0].contains("font"),
-            "{:?}",
-            report.violations()
-        );
-
-        // A Planned verb that dispatches — the same drift from the other end.
-        fixture.write(
-            super::SWIFT_CLI_MAIN,
-            &MAIN.replace("default: exit(2)", "case \"ipc\": runIpc()\ndefault: exit(2)"),
-        );
-        let report = super::the_dispatch_switch_matches_availability(&fixture.tree());
-        assert!(!report.is_clean());
-        assert!(
-            report
-                .violations()
-                .iter()
-                .any(|v| v.contains("still calls Planned")),
-            "{:?}",
-            report.violations()
-        );
-
-        // `help` is excluded from the set comparison, so its guard is checked on its own.
-        fixture.write(
-            super::SWIFT_CLI_MAIN,
-            &MAIN.replace("invocation.subcommand == \"help\"", "false"),
-        );
-        assert!(!super::the_dispatch_switch_matches_availability(&fixture.tree()).is_clean());
-    }
-
     /// A reformatted table reads as no table at all, and every rule downstream passes.
     #[test]
     fn an_unreadable_vocabulary_fails_rather_than_passing() {
         let fixture = Fixture::new("cli-vocabulary-stale");
         crate_side(&fixture);
         fixture.write(super::RUST_CLI_VOCAB, &VOCABULARY.replace("name:", "nom:"));
-        assert!(!super::the_dispatch_switch_matches_availability(&fixture.tree()).is_clean());
         assert!(!super::the_ui_shell_docs_describe_the_shipped_cli(&fixture.tree()).is_clean());
     }
 
@@ -1064,5 +1028,248 @@ default: exit(2)
             "{:?}",
             report.violations()
         );
+    }
+
+    // ------------------------------------------------------------------------------------- //
+    // The client control socket
+    // ------------------------------------------------------------------------------------- //
+
+    /// The near end, in the shape `clientctl.rs` actually has: one `pub const` per method, then
+    /// three `&[&str]` token lists.
+    const CLIENTCTL: &str = r#"
+pub const WINDOWS: &str = "windows";
+pub const TABS: &str = "tabs";
+pub const PANES: &str = "panes";
+pub const TAB_BADGE: &str = "tab-badge";
+pub const JUMP: &str = "jump";
+pub const LEARN: &str = "learn";
+pub const IGNORE: &str = "ignore";
+pub const VIEW: &str = "view";
+pub const EDIT: &str = "edit";
+pub const FONT_LIST: &str = "font-list";
+pub const KEYBIND_LIST: &str = "keybind-list";
+
+pub const METHODS: &[&str] = &[
+    WINDOWS,
+    TABS,
+    PANES,
+    TAB_BADGE,
+    JUMP,
+    LEARN,
+    IGNORE,
+    VIEW,
+    EDIT,
+    FONT_LIST,
+    KEYBIND_LIST,
+];
+
+/// A `&str` const that is NOT a method — the shape the extraction must not mistake for one.
+pub const DEFAULT_PLACEMENT: &str = "new-tab";
+
+pub const SETTABLE_BADGE_TOKENS: &[&str] = &[
+    "running",
+    "completed",
+    "finished",
+    "unread",
+    "error",
+    "awaiting-input",
+];
+
+pub const PLACEMENTS: &[&str] = &["new-tab", "new-window", "left", "right", "top", "bottom"];
+
+pub const FONT_SCOPES: &[&str] = &["system", "user"];
+"#;
+
+    /// The far end, in the shape `ClientControlProtocol.swift` has: a `Method` enum of static
+    /// lets closed by `all`, a badge map, and two `String`-raw-valued enums — one with explicit
+    /// raw values and four implicit ones, which is the case `raw_values` exists for.
+    const PROTOCOL: &str = r#"
+public enum ClientControlProtocol {
+    public enum Method {
+        public static let windows = "windows"
+        public static let tabs = "tabs"
+        public static let panes = "panes"
+        public static let tabBadge = "tab-badge"
+        public static let jump = "jump"
+        public static let learn = "learn"
+        public static let ignore = "ignore"
+        public static let view = "view"
+        public static let edit = "edit"
+        public static let fontList = "font-list"
+        public static let keybindList = "keybind-list"
+
+        public static let all: Set<String> = [windows, tabs]
+    }
+
+    public static let settableBadgeTokens: [String: TabBadgeKind] = [
+        "running": .running,
+        "completed": .completed,
+        "finished": .finished,
+        "unread": .finished,
+        "error": .error,
+        "awaiting-input": .awaitingInput,
+    ]
+
+    public enum Placement: String, Sendable, Equatable, CaseIterable {
+        case newTab = "new-tab"
+        case newWindow = "new-window"
+        case left
+        case right
+        case top
+        case bottom
+    }
+
+    public enum FontScope: String, Sendable, Equatable, CaseIterable {
+        case system
+        case user
+    }
+}
+"#;
+
+    const DISPATCHER: &str = r#"
+switch method {
+case ClientControlProtocol.Method.windows: windows(id: id)
+default: Self.error(id: id, message: "unknown method: \(method)")
+}
+"#;
+
+    fn socket(fixture: &Fixture) {
+        fixture
+            .write(super::RUST_CLIENTCTL, CLIENTCTL)
+            .write(super::SWIFT_CONTROL_PROTOCOL, PROTOCOL)
+            .write(super::SWIFT_CONTROL_DISPATCHER, DISPATCHER);
+    }
+
+    #[test]
+    fn the_two_ends_of_the_socket_are_held_together() {
+        let fixture = Fixture::new("clientctl-agree");
+        socket(&fixture);
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(report.is_clean(), "{:?}", report.violations());
+
+        // A method renamed on ONE side — the drift that ships green and meets last morning's app.
+        fixture.write(
+            super::SWIFT_CONTROL_PROTOCOL,
+            &PROTOCOL.replace(r#"keybindList = "keybind-list""#, r#"keybindList = "keybinds""#),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("methods disagree")),
+            "{:?}",
+            report.violations()
+        );
+
+        // A method constant defined, spelled right, and never collected into `METHODS` — so the
+        // far end dispatches a verb the near end can no longer send.
+        socket(&fixture);
+        fixture.write(
+            super::RUST_CLIENTCTL,
+            &CLIENTCTL.replace("    KEYBIND_LIST,\n", ""),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no CLI verb reaches") && v.contains("keybind-list")),
+            "{:?}",
+            report.violations()
+        );
+
+        // A placement the CLI offers and the app cannot parse.
+        socket(&fixture);
+        fixture.write(
+            super::RUST_CLIENTCTL,
+            &CLIENTCTL.replace(r#""bottom"]"#, r#""bottom", "centre"]"#),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("placement tokens disagree") && v.contains("centre")),
+            "{:?}",
+            report.violations()
+        );
+
+        // A badge token with no TabBadgeKind behind it — the one-directional half.
+        socket(&fixture);
+        fixture.write(
+            super::RUST_CLIENTCTL,
+            &CLIENTCTL.replace(r#"    "error","#, "    \"error\",\n    \"stalled\","),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("stalled")),
+            "{:?}",
+            report.violations()
+        );
+
+        // The switch respelling a method as a literal, which the set comparison cannot see.
+        socket(&fixture);
+        fixture.write(
+            super::SWIFT_CONTROL_DISPATCHER,
+            &DISPATCHER.replace("case ClientControlProtocol.Method.windows:", r#"case "windows":"#),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("method LITERALS")),
+            "{:?}",
+            report.violations()
+        );
+    }
+
+    /// A reformat that empties either extraction must be RED, not a silent pass.
+    #[test]
+    fn an_unreadable_vocabulary_on_either_side_fails_closed() {
+        let fixture = Fixture::new("clientctl-stale");
+        socket(&fixture);
+        fixture.write(
+            super::SWIFT_CONTROL_PROTOCOL,
+            &PROTOCOL.replace("public static let", "static let"),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("floor 10")),
+            "{:?}",
+            report.violations()
+        );
+    }
+
+    /// The two bans that survived the port both fire on the shape they ban.
+    #[test]
+    fn the_crate_may_not_grow_a_second_list_or_a_second_help_page() {
+        let fixture = Fixture::new("cli-help-author");
+        fixture
+            .write(
+                super::RUST_CLI_COMPLETIONS,
+                "fn script() -> String { String::new() }\n",
+            )
+            .write(
+                super::RUST_CLI_ARGS,
+                "pub const GLOBAL_FLAGS: &[GlobalFlag] = &[];\n",
+            )
+            .write(
+                super::RUST_CLI_SHELL,
+                "print(io.out, &vocabulary::usage(&program))?;\n",
+            );
+        assert!(super::the_cli_help_has_one_author(&fixture.tree()).is_clean());
+
+        fixture.write(
+            super::RUST_CLI_COMPLETIONS,
+            "const SUBCOMMANDS: &[&str] = &[\"pane\"];\n",
+        );
+        assert!(!super::the_cli_help_has_one_author(&fixture.tree()).is_clean());
+
+        fixture
+            .write(
+                super::RUST_CLI_COMPLETIONS,
+                "fn script() -> String { String::new() }\n",
+            )
+            .write(
+                super::RUST_CLI_SHELL,
+                "print(io.out, \"Global flags:\\n  --json\")?;\n",
+            );
+        assert!(!super::the_cli_help_has_one_author(&fixture.tree()).is_clean());
     }
 }

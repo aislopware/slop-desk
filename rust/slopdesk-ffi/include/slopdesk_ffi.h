@@ -2819,73 +2819,13 @@ typedef struct {
 } SlopDeskByteSpan;
 
 /* ---------------------------------------------------------------------------- *
- * cli — what the `slopdesk` CLI asks: its flags, its completion scripts, its
- * config file and its tables.
- *
- * Everything crosses BY VALUE, because a CLI has no accumulator: a parse is a
- * function of its argv, a script is a function of its shell, a table is a
- * function of its rows. Nothing here outlives a call, so there is no handle.
- *
- * The rows cross as JSON TEXT rather than as records. They arrive at the near
- * side as JSON — the control socket answers NDJSON — and leave as JSON or as a
- * table, so decoding them into a flat record on the way through would mean a
- * schema for six lists and a re-encode on both sides.
- *
- * `config validate` asks the caller back: the grammar it checks against is the
- * app's keybind parser, which this side has no business depending on, so it
- * crosses as a callback with its context.
+ * cli — GONE. The `slopdesk` CLI is one Rust process now (`rust/slopdesk-cli`),
+ * so its flags, its completion scripts, its help page, its tables and its
+ * version banner cross no boundary at all: they are function calls inside the
+ * binary that prints them. Nine doors, two records and fourteen constants left
+ * with the Swift face they existed for. See docs/55 §"The CLI" and the module
+ * doc of rust/slopdesk-cli/src/shell.rs.
  * ---------------------------------------------------------------------------- */
-
-#define SLOPDESK_CLI_TEXT 0u
-#define SLOPDESK_CLI_JSON 1u
-
-#define SLOPDESK_CLI_OK 0u
-#define SLOPDESK_CLI_UNKNOWN_FLAG 1u
-#define SLOPDESK_CLI_MISSING_VALUE 2u
-#define SLOPDESK_CLI_INVALID_VALUE 3u
-
-#define SLOPDESK_SHELL_BASH 0u
-#define SLOPDESK_SHELL_ZSH 1u
-#define SLOPDESK_SHELL_FISH 2u
-#define SLOPDESK_SHELL_ELVISH 3u
-#define SLOPDESK_SHELL_POWERSHELL 4u
-
-#define SLOPDESK_CLI_TABLE_WINDOWS 0u
-#define SLOPDESK_CLI_TABLE_TABS 1u
-#define SLOPDESK_CLI_TABLE_PANES 2u
-#define SLOPDESK_CLI_TABLE_FONTS 3u
-#define SLOPDESK_CLI_TABLE_KEYBINDS 4u
-#define SLOPDESK_CLI_TABLE_CONFIG 5u
-
-// How much a variable-length answer needs: how many records, and how many bytes
-// of text.
-typedef struct {
-  size_t count;
-  size_t arena_len;
-} SlopDeskCliShape;
-
-// One fully-parsed invocation. The token spans live in the caller's span array:
-// the first rest_count are the residual arguments, the exec_count after them are
-// the `-e` command.
-typedef struct {
-  SlopDeskByteSpan subcommand;
-  SlopDeskByteSpan socket_path;
-  SlopDeskByteSpan config_file;
-  SlopDeskByteSpan error_flag;
-  SlopDeskByteSpan error_value;
-  int64_t timeout_ms;
-  size_t rest_count;
-  size_t exec_count;
-  uint32_t format;
-  uint32_t error;
-  bool has_socket;
-  bool has_config;
-  bool has_exec;
-  bool no_headers;
-  bool assume_yes;
-  bool wants_help;
-  bool launch_gui;
-} SlopDeskCliInvocation;
 
 /* The grammar for one `keybind` line of the user's config. A parsed binding is a fixed record plus
  * three runs of variable-length bytes — the base key, the payload (a literal action's resolved
@@ -3038,52 +2978,6 @@ size_t slopdesk_terminal_config_string(SlopDeskTerminalConfig config, const uint
  * numbers by, at the limit an env value reaches. The limit is not a thing the near side spells. */
 size_t slopdesk_settings_env_number_text(double value, uint8_t *out, size_t cap);
 
-int64_t slopdesk_cli_default_timeout_ms(void);
-size_t slopdesk_cli_build_hash_env_key(uint8_t *out, size_t cap);
-
-SlopDeskCliShape slopdesk_cli_parse(const SlopDeskByteSpan *args, size_t args_count,
-                                    const uint8_t *args_pool, size_t args_pool_len,
-                                    SlopDeskCliInvocation *out_record, SlopDeskByteSpan *out_tokens,
-                                    size_t tokens_cap, uint8_t *out_arena, size_t arena_cap);
-
-bool slopdesk_cli_shell(const uint8_t *name, size_t name_len, uint32_t *out_shell);
-size_t slopdesk_cli_completion_script(uint32_t shell, uint8_t *out, size_t cap);
-/* The subcommand surface the completions offer, in table order: the RUNNABLE verbs only. The filter
- * is the point. Six designed-but-unimplemented verbs used to cross this door, so every shell offered
- * `open`, `import`, `export`, `features`, `state:claude` and `ipc`, and every one of them exited 2
- * with "not available yet" the moment a user accepted the completion. Availability now lives beside
- * the name in one table, and this door can only see the half that runs. */
-SlopDeskCliShape slopdesk_cli_subcommands(SlopDeskByteSpan *out, size_t cap, uint8_t *out_arena,
-                                          size_t arena_cap);
-
-/* The verbs the vocabulary DOCUMENTS but does not implement, in table order. The near side asks this
- * for exactly one reason: to tell a user who typed `ipc` that it is planned, apart from a user who
- * typed `opne` and made a mistake. Nothing may offer this list for completion — that is what
- * `slopdesk_cli_subcommands` is for, and the two are disjoint by construction because one table
- * produces both. */
-SlopDeskCliShape slopdesk_cli_planned_subcommands(SlopDeskByteSpan *out, size_t cap,
-                                                  uint8_t *out_arena, size_t arena_cap);
-
-/* The complete `--help` text, terminated by a trailing newline: the synopsis, every section of the
- * subcommand table, the `config` note and the global flags. `program` is `argv[0]`'s last component
- * rather than a constant, so a renamed or symlinked binary describes itself by the name the user
- * actually typed; empty bytes fall back to `slopdesk`, because a synopsis line naming nothing is
- * worse than one naming the canonical binary. The whole block crosses rather than the rows alone,
- * because the subcommand list, its availability and its help text are one table and rendering half
- * of it on the near side is how the near side grew a second copy in the first place. */
-size_t slopdesk_cli_usage(const uint8_t *program, size_t program_len, uint8_t *out, size_t cap);
-
-size_t slopdesk_cli_table(uint32_t kind, const uint8_t *rows_json, size_t rows_json_len,
-                          uint32_t format, bool no_headers, uint8_t *out, size_t cap);
-size_t slopdesk_cli_render_table(const uint8_t *headers_json, size_t headers_json_len,
-                                 const uint8_t *rows_json, size_t rows_json_len, bool no_headers,
-                                 uint8_t *out, size_t cap);
-size_t slopdesk_cli_render_json(const uint8_t *value_json, size_t value_json_len, uint8_t *out,
-                                size_t cap);
-size_t slopdesk_cli_version_summary(const uint8_t *version, size_t version_len,
-                                    const uint8_t *build_hash, size_t build_hash_len,
-                                    uint16_t protocol_version, uint8_t *out, size_t cap);
-
 /* ---- folders: the frecency ranking, and the `jump` target it resolves ------------------- */
 
 /* Recency buckets, for `slopdesk_folder_weight`. */
@@ -3146,41 +3040,18 @@ size_t slopdesk_fuzzy_score(const uint8_t *query, size_t query_len, const uint8_
 int64_t slopdesk_fuzzy_rank(const uint8_t *query, size_t query_len, const uint8_t *candidate,
                             size_t candidate_len);
 
-/* ---- watch: what `slopdesk watch` decides, and the bytes it prints ---------------------- */
+/* ---- watch: what the host and the client READ back out of what it printed --------------- */
 
-/* One poll's observation of an `agent-status` reply. */
-#define SLOPDESK_WATCH_STATUS 0u
-#define SLOPDESK_WATCH_SEEN_NO_STATUS 1u
-#define SLOPDESK_WATCH_NOT_SEEN 2u
-
-/* The decision after one poll. */
-#define SLOPDESK_WATCH_KEEP_POLLING 0u
-#define SLOPDESK_WATCH_FINISHED 1u
-
-bool slopdesk_watch_is_at_rest(uint8_t status);
-uint32_t slopdesk_watch_observation(bool seen, const uint8_t *token, size_t token_len,
-                                    uint8_t *status);
-bool slopdesk_watch_block_deadline_nanos(uint64_t start_nanos, int64_t block_timeout_ms,
-                                         uint64_t *deadline);
-uint32_t slopdesk_watch_decide(uint32_t observation, uint8_t status, bool has_ever_been_seen,
-                               bool deadline_exceeded, int32_t *exit_code);
-uint8_t slopdesk_watch_exit_progress_state(int32_t exit_code);
-size_t slopdesk_watch_progress_bytes(uint8_t state, uint8_t *out, size_t cap);
+/* The DECISION and the BYTES both left with the wrapper: `slopdesk watch` is Rust and calls
+ * slopdesk-agent::watch and slopdesk-wire::osc directly, so eleven doors that existed only for the
+ * Swift face are gone. What crosses is the READING half — the host's byte reader parses a progress
+ * body, and the client's notification router recognises the finish sentinel. */
 bool slopdesk_osc_parse_progress(const uint8_t *body, size_t body_len, uint8_t *state,
                                  uint8_t *percent);
-size_t slopdesk_watch_spinner_bytes(uint8_t *out, size_t cap);
-size_t slopdesk_watch_finish_bytes(int32_t exit_code, uint8_t *out, size_t cap);
-size_t slopdesk_osc_notification_bytes(const uint8_t *message, size_t message_len, uint8_t *out,
-                                       size_t cap);
-size_t slopdesk_watch_finish_notification_bytes(const uint8_t *message, size_t message_len,
-                                                uint8_t *out, size_t cap);
 size_t slopdesk_watch_notification_marker(uint8_t *out, size_t cap);
 // The parse-back of the builder above: whether a notification's title IS that sentinel, which is
 // what routes the banner to the watch toggle rather than the master switch.
 bool   slopdesk_watch_notification_is_marked(const uint8_t *title, size_t title_len);
-size_t slopdesk_watch_finish_message(const SlopDeskByteSpan *command, size_t count,
-                                     const uint8_t *arena, size_t arena_len, int32_t exit_code,
-                                     uint8_t *out, size_t cap);
 
 typedef struct {
   size_t datagram_count;
@@ -8782,9 +8653,6 @@ size_t slopdesk_sidecar_version_banner(const uint8_t *banner, size_t len, uint8_
 //              "current"?}]}
 // An empty `previous` is a first install — every tool reads "added". Zero when `current` is not a
 // readable manifest, which is the caller's cue to say so rather than act on a plan it does not have.
-size_t slopdesk_sidecar_upgrade_plan(const uint8_t *previous, size_t previous_len,
-                                     const uint8_t *current, size_t current_len, uint8_t *out,
-                                     size_t cap);
 
 // ---- The pointer libghostty hands to the embedder --------------------------------
 //

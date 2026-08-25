@@ -2,7 +2,8 @@
 //! it is reachable from a test without a process boundary; this file only wires the real argv, the
 //! real environment and the real stdio in, and turns the outcome into an exit status.
 //!
-//! This is the whole of what `Sources/slopdesk/main.swift` used to be that a test could not enter.
+//! This is the whole of what the deleted `main.swift` of the `Sources/slopdesk` target used to be
+//! that a test could not enter.
 
 use std::io::Write;
 use std::process::ExitCode;

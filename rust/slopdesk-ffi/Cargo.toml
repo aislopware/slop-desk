@@ -51,7 +51,6 @@ path = "src/lib.rs"
 [dependencies]
 slopdesk-agent = { path = "../slopdesk-agent" }
 slopdesk-androidd = { path = "../slopdesk-androidd" }
-slopdesk-cli = { path = "../slopdesk-cli" }
 slopdesk-devicelog = { path = "../slopdesk-devicelog" }
 slopdesk-devicepanel = { path = "../slopdesk-devicepanel" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }

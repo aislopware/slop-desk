@@ -28,8 +28,8 @@ use std::{fs, thread};
 
 use super::control::{Control, Launch};
 use super::{
-    Hostd, Log, Suite, alive, banner, build_app, complain, kill_matching, poll, port, raise, reap, say,
-    screenshot, swift_build, window_census_binary, window_count, work_dir,
+    Hostd, Log, Suite, alive, banner, build_app, build_cli, complain, kill_matching, poll, port, raise, reap,
+    say, screenshot, swift_build, window_census_binary, window_count, work_dir,
 };
 use crate::ops::renderer;
 
@@ -241,7 +241,7 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
     // Built in EVERY mode, because every mode launches a scene and every mode asks it what it
     // mounted.
     say("macos", "building the slopdesk client CLI (the scene observer)");
-    swift_build(root, "slopdesk")?;
+    build_cli(root)?;
     let census = window_census_binary(root)?;
 
     let app_log = Log::at(work.join("app-stderr.log"));

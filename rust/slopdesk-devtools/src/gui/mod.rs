@@ -449,6 +449,32 @@ pub fn swift_build(root: &Path, product: &str) -> Result<(), String> {
     }
 }
 
+/// Where a debug `cargo build` puts the `slopdesk` CLI.
+///
+/// `rust/target/`, not `.build/`: the CLI process is a root workspace member since the port out of
+/// Swift, so it shares the one cargo target directory with `slopdesk-ctl` and the rest.
+#[must_use]
+pub fn cli_binary(root: &Path) -> PathBuf {
+    root.join("rust/target/debug/slopdesk")
+}
+
+/// `cargo build -p slopdesk-cli` from `rust/`, quietly, and where it landed.
+///
+/// The gates that drive a running app ask every question through this binary, so it is built by
+/// name rather than assumed present — a gate that ran before the port would otherwise find the
+/// stale `SwiftPM` one and answer about code this tree no longer contains.
+///
+/// # Errors
+/// When the build fails.
+pub fn build_cli(root: &Path) -> Result<PathBuf, String> {
+    proc::run(
+        "cargo",
+        &["build", "--quiet", "-p", "slopdesk-cli"],
+        &root.join("rust"),
+    )?;
+    Ok(cli_binary(root))
+}
+
 /// The window census, built if it is not there yet.
 ///
 /// It lives in `rust/slopdesk-apple-cgwindow`, which is a workspace of its own linking the `objc2`

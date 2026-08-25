@@ -1580,19 +1580,14 @@ pub fn registry() -> Vec<Rule> {
             check: shared_constants::the_opaque_cap_carries_its_inequality,
         },
         Rule {
-            name: "cli-core-is-one-law",
-            origin: "check-supervisor.sh (deleted) CLI block, docs/55 §8",
-            check: cli_vocabulary::the_cli_core_is_one_law,
-        },
-        Rule {
             name: "cli-help-has-one-author",
             origin: "check-supervisor.sh (deleted) CLI block, docs/55 §8",
             check: cli_vocabulary::the_cli_help_has_one_author,
         },
         Rule {
-            name: "cli-dispatch-matches-availability",
-            origin: "check-supervisor.sh (deleted) CLI block, docs/55 §8",
-            check: cli_vocabulary::the_dispatch_switch_matches_availability,
+            name: "client-control-vocabulary",
+            origin: "rust/slopdesk-cli/src/clientctl.rs, docs/55 §8",
+            check: cli_vocabulary::the_client_control_socket_has_one_vocabulary,
         },
         Rule {
             name: "ui-shell-cli-docs",

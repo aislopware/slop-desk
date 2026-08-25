@@ -256,15 +256,16 @@ pub fn package_version(manifest: &str) -> Option<String> {
     None
 }
 
-/// A fresh scan of every shipped cargo tool, in the order the tables declare them.
+/// A fresh scan of every tool that carries a version of its OWN, in table order.
 ///
-/// The `SwiftPM` half has no crate and no stamp: those two ARE the product, and the product
-/// version (`docs/49` §"The six version sites") is what moves for them.
+/// The PRODUCT pair is skipped, and `slopdesk` is skipped even though it is a cargo tool with a
+/// readable `Cargo.toml` version: that number IS the product's (`docs/49` §"The six version
+/// sites"), so pinning it here would make the bumper a second writer of it.
 ///
 /// # Errors
 /// When any tool's closure or manifest cannot be read.
 pub fn scan(root: &Path) -> Result<Vec<Entry>, String> {
-    tools::rust_tools()
+    tools::pinned_tools()
         .into_iter()
         .map(|tool| {
             Ok(Entry {

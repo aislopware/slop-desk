@@ -360,18 +360,29 @@ pub fn the_release_ships_every_sidecar_the_host_needs(tree: &Tree) -> Report {
 /// stops meaning "this daemon is different from the one you have", which is the only thing it is
 /// for.
 ///
-/// Only the CARGO tools: `slopdesk` and `slopdesk-hostd` are `SwiftPM`, they ARE the product, and
-/// their version is the product's (`docs/49` §"The six version sites"). A pin entry for them would
-/// be a seventh version site — exactly the thing `slopdesk-release bump-product` exists to prevent.
+/// Only the tools that carry a version of their OWN. `PRODUCT_TOOLS` — `slopdesk` and
+/// `slopdesk-hostd` — ARE the product, and their number is the product's (`docs/49` §"The six
+/// version sites"). A pin entry for either would be a seventh version site, exactly the thing
+/// `slopdesk-release bump-product` exists to prevent.
+///
+/// The subtraction is spelled out rather than left to the name pattern. It used to be implicit —
+/// `slopdesk` was `SwiftPM`'s, so reading the two cargo arrays excluded it by construction. Since
+/// the CLI process was ported out of Swift it is a cargo tool AND a product tool, and the only
+/// thing still keeping it out of `carried` would be that `slopdesk-[a-z]+` wants a hyphen. A gate
+/// that holds because of a hyphen is a gate that stops holding when someone widens a regex.
 #[must_use]
 pub fn every_shipped_sidecar_carries_its_own_version(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let carried = shipped(
+    let product = shipped(tree, &mut report, "PRODUCT_TOOLS", r"\b(slopdesk(?:-[a-z]+)?)\b");
+    let carried: BTreeSet<String> = shipped(
         tree,
         &mut report,
         "RUST_ROOT_TOOLS|RUST_CRATE_TOOLS",
-        r"\b(slopdesk-[a-z]+)\b",
-    );
+        r"\b(slopdesk(?:-[a-z]+)?)\b",
+    )
+    .difference(&product)
+    .cloned()
+    .collect();
     if carried.is_empty() {
         return report;
     }
@@ -1250,8 +1261,8 @@ mod tests {
         let fixture = Fixture::new("formula");
         fixture.write(
             "rust/slopdesk-devtools/src/release/tools.rs",
-            "pub const SPM_TOOLS: &[&str] = &[\"slopdesk\", \"slopdesk-hostd\"];\npub const \
-             RUST_ROOT_TOOLS: &[&str] = &[\"slopdesk-ctl\"];\n",
+            "pub const SPM_TOOLS: &[&str] = &[\"slopdesk-hostd\"];\npub const RUST_ROOT_TOOLS: &[&str] = \
+             &[\"slopdesk\", \"slopdesk-ctl\"];\n",
         );
         fixture.write(
             "packaging/homebrew/Formula/slopdesk.rb",

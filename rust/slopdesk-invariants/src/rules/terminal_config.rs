@@ -35,8 +35,7 @@ pub fn one_keybind_grammar_no_callback(tree: &Tree) -> Report {
         },
         Claim::NoneOf {
             paths: &[
-                "Sources/SlopDeskCLICore/CLIConfig.swift",
-                "rust/slopdesk-ffi/src/cli.rs",
+                "rust/slopdesk-cli/src/shell/config.rs",
                 "rust/slopdesk-ffi/include/slopdesk_ffi.h",
             ],
             pattern: r"SlopDeskKeybindValidFn|isValidKeybindValue",
@@ -284,10 +283,9 @@ mod tests {
                 "slopdesk_keybind_parse_line\nslopdesk_keybind_is_valid\nkept so the ban has a haystack\n",
             )
             .write(
-                "Sources/SlopDeskCLICore/CLIConfig.swift",
+                "rust/slopdesk-cli/src/shell/config.rs",
                 "kept so the ban has a haystack\n",
             )
-            .write("rust/slopdesk-ffi/src/cli.rs", "kept so the ban has a haystack\n")
             .write(
                 "rust/slopdesk-ffi/include/slopdesk_ffi.h",
                 "kept so the ban has a haystack\n",

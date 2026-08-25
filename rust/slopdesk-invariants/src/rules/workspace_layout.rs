@@ -12,36 +12,31 @@ use crate::tree::Tree;
 /// What `slopdesk watch` DECIDES and what it PRINTS.
 ///
 /// The decision is `rust/slopdesk-agent`'s `watch` and the bytes are `rust/slopdesk-wire`'s `osc`.
-/// The bytes are pinned to the crate the host's sniffer parses WITH,
-/// so the wrapper cannot emit a sequence the host would drop; the exit codes are pinned because a
-/// second at-rest set would make `watch:claude` return on a state the app calls busy.
+/// The bytes are pinned to the crate the host's sniffer parses WITH, so the wrapper cannot emit a
+/// sequence the host would drop; the exit codes are pinned because a second at-rest set would make
+/// `watch:claude` return on a state the app calls busy.
+///
+/// ## Only the READING half is still a cross-language claim
+/// The wrapper had a Swift face — two files calling eleven doors to decide and to print — and this
+/// rule held both. `slopdesk watch` is Rust now and calls `slopdesk-wire::osc` as a library, so
+/// there is no face to hold and the eleven writing doors are deleted. What remains is genuinely
+/// two-sided: the host's byte reader PARSES the progress sequence, and the client's notification
+/// router RECOGNISES the finish sentinel. Both are Swift, both read what the Rust wrapper wrote,
+/// and neither may respell the grammar it is reading.
 #[must_use]
 pub fn what_watch_decides_what_prints(tree: &Tree) -> Report {
     let claims = [
         Claim::Doors {
-            path: "Sources/SlopDeskCLICore/WatchClaudeOutcome.swift",
-            entries: &[
-                "slopdesk_watch_observation",
-                "slopdesk_watch_is_at_rest",
-                "slopdesk_watch_block_deadline_nanos",
-                "slopdesk_watch_decide",
-            ],
-            message: "Sources/SlopDeskCLICore/WatchClaudeOutcome.swift no longer calls {entry} — the watch \
-                      vocabulary is slopdesk-agent's and slopdesk-wire's",
+            path: "Sources/SlopDeskProtocol/ProgressState.swift",
+            entries: &["slopdesk_osc_parse_progress"],
+            message: "Sources/SlopDeskProtocol/ProgressState.swift no longer calls {entry} — the ConEmu \
+                      progress grammar is slopdesk-wire's osc",
         },
         Claim::Doors {
-            path: "Sources/SlopDeskCLICore/WatchProgress.swift",
-            entries: &[
-                "slopdesk_watch_spinner_bytes",
-                "slopdesk_watch_finish_bytes",
-                "slopdesk_watch_progress_bytes",
-                "slopdesk_watch_exit_progress_state",
-                "slopdesk_watch_finish_message",
-                "slopdesk_osc_notification_bytes",
-                "slopdesk_watch_finish_notification_bytes",
-            ],
-            message: "Sources/SlopDeskCLICore/WatchProgress.swift no longer calls {entry} — the watch \
-                      vocabulary is slopdesk-agent's and slopdesk-wire's",
+            path: "Sources/SlopDeskWorkspaceCore/Connection/NotificationPolicy.swift",
+            entries: &["slopdesk_watch_notification_is_marked"],
+            message: "Sources/SlopDeskWorkspaceCore/Connection/NotificationPolicy.swift no longer calls \
+                      {entry} — a watch-finish banner would route to the generic master switch",
         },
         Claim::Doors {
             path: "Sources/SlopDeskProtocol/WatchNotificationMarker.swift",
@@ -51,9 +46,9 @@ pub fn what_watch_decides_what_prints(tree: &Tree) -> Report {
         },
         Claim::NoneOf {
             paths: &[
-                "Sources/SlopDeskCLICore/WatchClaudeOutcome.swift",
-                "Sources/SlopDeskCLICore/WatchProgress.swift",
+                "Sources/SlopDeskProtocol/ProgressState.swift",
                 "Sources/SlopDeskProtocol/WatchNotificationMarker.swift",
+                "Sources/SlopDeskWorkspaceCore/Connection/NotificationPolicy.swift",
             ],
             pattern: r#"case \.idle,|0x1B|0x07|"9;4;|777;notify|watch: "#,
             view: View::Code,
@@ -173,17 +168,12 @@ mod tests {
     fn write_what_watch_decides_what_prints(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskCLICore/WatchClaudeOutcome.swift",
-                "slopdesk_watch_observation(\nslopdesk_watch_is_at_rest(\\
-                 nslopdesk_watch_block_deadline_nanos(\nslopdesk_watch_decide(\nkept so the ban has a \
-                 haystack\n",
+                "Sources/SlopDeskProtocol/ProgressState.swift",
+                "slopdesk_osc_parse_progress(\nkept so the ban has a haystack\n",
             )
             .write(
-                "Sources/SlopDeskCLICore/WatchProgress.swift",
-                "slopdesk_watch_spinner_bytes(\nslopdesk_watch_finish_bytes(\\
-                 nslopdesk_watch_progress_bytes(\nslopdesk_watch_exit_progress_state(\\
-                 nslopdesk_watch_finish_message(\nslopdesk_osc_notification_bytes(\\
-                 nslopdesk_watch_finish_notification_bytes(\nkept so the ban has a haystack\n",
+                "Sources/SlopDeskWorkspaceCore/Connection/NotificationPolicy.swift",
+                "slopdesk_watch_notification_is_marked(\nkept so the ban has a haystack\n",
             )
             .write(
                 "Sources/SlopDeskProtocol/WatchNotificationMarker.swift",
@@ -197,16 +187,13 @@ mod tests {
         write_what_watch_decides_what_prints(&fixture);
         assert!(super::what_watch_decides_what_prints(&fixture.tree()).is_clean());
 
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write("Sources/SlopDeskCLICore/WatchClaudeOutcome.swift", "");
+        // The reader stopped asking — a parse grew back where the call used to be.
+        fixture.write("Sources/SlopDeskProtocol/ProgressState.swift", "");
         assert!(!super::what_watch_decides_what_prints(&fixture.tree()).is_clean());
 
         // And the law it was banned from respelling, respelled.
         write_what_watch_decides_what_prints(&fixture);
-        fixture.append(
-            "Sources/SlopDeskCLICore/WatchClaudeOutcome.swift",
-            "case .idle,\n",
-        );
+        fixture.append("Sources/SlopDeskProtocol/ProgressState.swift", "\"9;4;\n");
         assert!(!super::what_watch_decides_what_prints(&fixture.tree()).is_clean());
     }
 
