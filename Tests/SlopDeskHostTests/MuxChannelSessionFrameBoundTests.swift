@@ -46,7 +46,7 @@ final class MuxChannelSessionFrameBoundTests: XCTestCase {
         let bell: WireMessage = .bell
         session.enqueueChunkForTesting(bytes: big, control: [bell])
 
-        guard case let .output(first, firstCount, control)? = session.takeMergedFrame() else {
+        guard case let .output(first, firstCount, control)? = session.nextOutboundFrame() else {
             XCTFail("expected the split prefix")
             return
         }
@@ -54,14 +54,14 @@ final class MuxChannelSessionFrameBoundTests: XCTestCase {
         XCTAssertEqual(firstCount, cap)
         XCTAssertEqual(control, [bell], "the chunk's sniffed control rides the first part")
 
-        guard case let .output(second, secondCount, control2)? = session.takeMergedFrame() else {
+        guard case let .output(second, secondCount, control2)? = session.nextOutboundFrame() else {
             XCTFail("expected the remainder")
             return
         }
         XCTAssertEqual(secondCount, 1000)
         XCTAssertEqual(control2, [], "control is not duplicated onto the remainder")
         XCTAssertEqual(first + second, big, "split reassembles byte-identically in order")
-        XCTAssertNil(session.takeMergedFrame())
+        XCTAssertNil(session.nextOutboundFrame())
     }
 
     /// Merging never crosses the safe cap even when the raw merge-cap env value would allow it.
@@ -72,13 +72,13 @@ final class MuxChannelSessionFrameBoundTests: XCTestCase {
         let b = Data(repeating: 0x62, count: 100)
         session.enqueueChunkForTesting(bytes: a)
         session.enqueueChunkForTesting(bytes: b)
-        guard case let .output(first, _, _)? = session.takeMergedFrame() else {
+        guard case let .output(first, _, _)? = session.nextOutboundFrame() else {
             XCTFail("expected first frame")
             return
         }
         XCTAssertLessThanOrEqual(first.count, cap, "merged frame never exceeds the safe cap")
         XCTAssertEqual(first, a, "b did not fit → not absorbed")
-        guard case let .output(second, _, _)? = session.takeMergedFrame() else {
+        guard case let .output(second, _, _)? = session.nextOutboundFrame() else {
             XCTFail("expected second frame")
             return
         }

@@ -193,7 +193,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
 
     // MARK: - Control wake must be installed before the output drain runs
 
-    /// The restarted output drain's first act on a detached backlog is `takeMergedFrame()` →
+    /// The restarted output drain's first act on a detached backlog is `nextOutboundFrame()` →
     /// `enqueueControl(sniffed control)`. `detach()` nil'd `controlWakeContinuation`, so if the
     /// drain is created + kicked BEFORE the new control wake is installed, a control message
     /// sniffed from the detached backlog (e.g. an OSC-0/2 title change while away) can land in

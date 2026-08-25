@@ -208,7 +208,7 @@ final class MuxChannelSessionSubscriberSetTests: XCTestCase {
 
     // MARK: - Per-subscriber ordering: control sender BEFORE the output drain
 
-    /// The restarted drain's first act on a detached backlog is `takeMergedFrame()` → hand the
+    /// The restarted drain's first act on a detached backlog is `nextOutboundFrame()` → hand the
     /// sniffed control to the control queue. So the joining subscriber's control sender + wake must
     /// already exist when the drain can first run — pinned structurally at the earliest instant the
     /// drain can be scheduled, together with the fact that the member is already installed by then.

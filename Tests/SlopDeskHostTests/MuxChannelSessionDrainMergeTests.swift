@@ -3,7 +3,7 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// Drain-merge semantics for the host output FIFO (`MuxChannelSession.takeMergedFrame`):
+/// Drain-merge semantics for the host output FIFO (`MuxChannelSession.nextOutboundFrame`):
 /// adjacent flood chunks coalesce into ONE `.output` frame up to
 /// `MuxFlowControl.hostMergeCapBytes` (amortizing seq/encode/send per kernel-sized chunk),
 /// while the interactive steady state (single queued chunk) passes through byte-identical
@@ -22,7 +22,7 @@ final class MuxChannelSessionDrainMergeTests: XCTestCase {
 
     func testEmptyFIFOReturnsNil() {
         let session = makeSession()
-        XCTAssertNil(session.takeMergedFrame())
+        XCTAssertNil(session.nextOutboundFrame())
     }
 
     func testAdjacentChunksUnderCapMergeIntoOneFrameInOrder() {
@@ -33,14 +33,14 @@ final class MuxChannelSessionDrainMergeTests: XCTestCase {
         session.enqueueChunkForTesting(bytes: Data("bb".utf8), control: [])
         session.enqueueChunkForTesting(bytes: Data("cccc".utf8), control: [bell])
 
-        guard case let .output(bytes, byteCount, control)? = session.takeMergedFrame() else {
+        guard case let .output(bytes, byteCount, control)? = session.nextOutboundFrame() else {
             XCTFail("expected one merged .output frame")
             return
         }
         XCTAssertEqual(bytes, Data("aaabbcccc".utf8), "bytes concatenate in FIFO order")
         XCTAssertEqual(byteCount, 9)
         XCTAssertEqual(control, [title, bell], "control lists concatenate in pop order")
-        XCTAssertNil(session.takeMergedFrame(), "everything was absorbed into one frame")
+        XCTAssertNil(session.nextOutboundFrame(), "everything was absorbed into one frame")
     }
 
     func testMergeStopsAtCapOnChunkBoundary() {
@@ -53,19 +53,19 @@ final class MuxChannelSessionDrainMergeTests: XCTestCase {
         session.enqueueChunkForTesting(bytes: b)
         session.enqueueChunkForTesting(bytes: c)
 
-        guard case let .output(first, firstCount, _)? = session.takeMergedFrame() else {
+        guard case let .output(first, firstCount, _)? = session.nextOutboundFrame() else {
             XCTFail("expected a merged first frame")
             return
         }
         XCTAssertEqual(first, a + b, "merge absorbs whole chunks while the NEXT one still fits")
         XCTAssertEqual(firstCount, a.count + b.count)
 
-        guard case let .output(second, _, _)? = session.takeMergedFrame() else {
+        guard case let .output(second, _, _)? = session.nextOutboundFrame() else {
             XCTFail("expected the over-cap remainder as frame 2")
             return
         }
         XCTAssertEqual(second, c, "chunks are never split at the cap — boundary is chunk-granular")
-        XCTAssertNil(session.takeMergedFrame())
+        XCTAssertNil(session.nextOutboundFrame())
     }
 
     /// SUPERSEDED SEMANTICS (night review): an oversized chunk used to pass through WHOLE,
@@ -78,7 +78,7 @@ final class MuxChannelSessionDrainMergeTests: XCTestCase {
         session.enqueueChunkForTesting(bytes: big)
         var reassembled = Data()
         var frames = 0
-        while case let .output(bytes, byteCount, _)? = session.takeMergedFrame() {
+        while case let .output(bytes, byteCount, _)? = session.nextOutboundFrame() {
             XCTAssertLessThanOrEqual(
                 bytes.count,
                 MuxFlowControl.maxOutputFramePayloadBytes,
@@ -99,19 +99,19 @@ final class MuxChannelSessionDrainMergeTests: XCTestCase {
         session.enqueueExitForTesting(code: 7)
         session.enqueueChunkForTesting(bytes: Data("late".utf8))
 
-        guard case let .output(tail, _, _)? = session.takeMergedFrame() else {
+        guard case let .output(tail, _, _)? = session.nextOutboundFrame() else {
             XCTFail("expected the merged tail first")
             return
         }
         XCTAssertEqual(tail, Data("tail-atail-b".utf8), "the final tail merges and stays BEFORE exit")
 
-        guard case let .exit(code)? = session.takeMergedFrame() else {
+        guard case let .exit(code)? = session.nextOutboundFrame() else {
             XCTFail("expected .exit second — it must never merge with chunks")
             return
         }
         XCTAssertEqual(code, 7)
 
-        guard case let .output(late, _, _)? = session.takeMergedFrame() else {
+        guard case let .output(late, _, _)? = session.nextOutboundFrame() else {
             XCTFail("expected the post-exit chunk last")
             return
         }
@@ -121,11 +121,11 @@ final class MuxChannelSessionDrainMergeTests: XCTestCase {
     func testExitAtHeadReturnsAlone() {
         let session = makeSession()
         session.enqueueExitForTesting(code: 0)
-        guard case .exit(0)? = session.takeMergedFrame() else {
+        guard case .exit(0)? = session.nextOutboundFrame() else {
             XCTFail("expected .exit alone at head")
             return
         }
-        XCTAssertNil(session.takeMergedFrame())
+        XCTAssertNil(session.nextOutboundFrame())
     }
 
     // MARK: - Control-out sender queue (FIFO per channel)

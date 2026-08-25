@@ -547,43 +547,18 @@ final class MuxChannelSession: @unchecked Sendable {
     private var readLoop: PaneOutputStream?
     private var started = false
 
-    /// The output FIFO: a lock-guarded deque (NOT an AsyncStream of items — iterators
-    /// cannot peek, and the drain needs to MERGE adjacent chunks). Producers append under
-    /// `fifoLock` then yield the bufferingNewest(1) wake; the single drain pops merged
-    /// frames until empty before re-parking (the proven ConnectionViewModel outQueue
-    /// discipline — append-then-yield, drain-until-empty, no lost wake, no Task-per-item).
+    /// Guards ``outbox`` and ``outputWakeContinuation`` — the pair whose atomicity is the whole
+    /// no-lost-wake discipline. Producers append under this lock then yield the bufferingNewest(1)
+    /// wake OUTSIDE it; the single drain pops until empty before re-parking (the proven
+    /// ConnectionViewModel outQueue shape — append-then-yield, drain-until-empty, no lost wake, no
+    /// Task-per-item).
     private let fifoLock = NSLock()
-    private var outFIFO: [OutputItem] = []
 
-    /// Index-cursor deque head for `outFIFO` (guarded by `fifoLock`, like the array). Producers
-    /// APPEND only; the drain pops by advancing this cursor instead of `Array.removeFirst()` —
-    /// which is an O(count) memmove per pop, so a burst that outruns the drain (one entry per
-    /// supervised chunk) would pay O(n²) element shifts across the catch-up.
-    /// ``advanceFIFOHead()`` bulk-compacts the consumed prefix (amortized O(1) per pop).
-    /// Invariant: `0 <= fifoHead <= outFIFO.count`; entries below `fifoHead` are consumed.
-    /// `outFIFO` is never cleared/reassigned anywhere else, so no other reset site is needed.
-    private var fifoHead = 0
-
-    /// Threshold for bulk-compacting the consumed FIFO prefix: only once the dead prefix is
-    /// both non-trivial (≥ 64 slots) AND at least half the array does one `removeFirst(k)`
-    /// memmove reclaim it — amortized O(1) per pop, bounded slack. A fully-drained FIFO is
-    /// emptied outright in ``advanceFIFOHead()`` so consumed chunks' `Data` never lingers.
-    private static let fifoCompactThresholdSlots = 64
-
-    /// Advances the deque cursor past a consumed head entry and compacts when warranted.
-    /// MUST be called with `fifoLock` held.
-    private func advanceFIFOHead() {
-        fifoHead += 1
-        if fifoHead >= outFIFO.count {
-            // Fully drained (the interactive steady state lands here every pop): drop the
-            // storage so consumed chunks' Data is released promptly and the cursor resets.
-            outFIFO.removeAll(keepingCapacity: false)
-            fifoHead = 0
-        } else if fifoHead >= Self.fifoCompactThresholdSlots, fifoHead >= outFIFO.count / 2 {
-            outFIFO.removeFirst(fifoHead)
-            fifoHead = 0
-        }
-    }
+    /// The output queue, whose ORDER lives in `rust/slopdesk-muxsession`'s `outbox`: what coalesces,
+    /// where an over-cap head splits, and that `.exit` is a barrier neither may cross. This side
+    /// holds the bytes each queued slot names; no byte crosses the door. Guarded by `fifoLock`,
+    /// which is why ``PaneOutbox`` carries no lock of its own.
+    private let outbox = PaneOutbox()
 
     /// Guards every subscriber's ``Subscriber/controlOut`` + ``Subscriber/controlWake`` — one queue
     /// and one wake per member (same teardown race as ``outputWakeContinuation``).
@@ -594,71 +569,16 @@ final class MuxChannelSession: @unchecked Sendable {
     /// vs data is NOT guaranteed (different TCP connections).
     private let controlOutLock = NSLock()
 
-    /// One merged data frame popped off the FIFO by the drain. Internal (not private) so the
-    /// drain-merge tests can assert on popped frames via the `_…ForTesting` seams.
-    enum MergedFrame {
-        case output(bytes: Data, byteCount: Int, control: [WireMessage])
-        case exit(code: Int32)
-    }
-
-    /// Pops the next merged frame under `fifoLock`. `.exit` is a merge BARRIER (it must
-    /// stay strictly after the final tail chunks — the EOF-latch ordering).
-    /// Single-chunk fast path returns the chunk's `Data` UNCHANGED (zero added copy — the
-    /// interactive steady state stays byte-identical work); only a multi-chunk backlog
-    /// pays one concatenation, amortized by skipping N−1 seq/encode/envelope/send rounds.
+    /// Pops the next frame the drain must ship, or `nil` when the queue is empty.
     ///
-    /// FRAME BOUND (credit progress invariant): every emitted `.output` payload is capped
-    /// at ``MuxFlowControl/maxOutputFramePayloadBytes`` — window/2 minus the frame-header
-    /// margin, cross-clamped against the merge cap. An over-cap HEAD chunk (a raw read
-    /// chunk, or env-tuned extremes) is SPLIT: the prefix ships now, the remainder is
-    /// reinserted at the FIFO head (byte order preserved; the gate accounting still sums
-    /// to the producer's enqueued total because each emitted frame dequeues exactly its
-    /// own byteCount). Without this, a max-size frame's 13-byte encode overhead could park
-    /// the sender permanently just below the receiver's grant threshold — the 13-byte
-    /// dead-zone stall.
-    func takeMergedFrame() -> MergedFrame? {
+    /// The merge, the over-cap head split and the `.exit` barrier are ``PaneOutbox``'s — the
+    /// arithmetic moved with the queue it is about. What is here is the lock the caller already
+    /// owned: every producer and this one consumer touch the queue under `fifoLock`, which is the
+    /// serialization ``PaneOutbox`` is documented to require rather than provide.
+    func nextOutboundFrame() -> PaneOutbox.Frame? {
         fifoLock.lock()
         defer { fifoLock.unlock() }
-        let cap = MuxFlowControl.maxOutputFramePayloadBytes
-        guard fifoHead < outFIFO.count else { return nil }
-        let head = outFIFO[fifoHead]
-        if case let .exit(code) = head {
-            advanceFIFOHead()
-            return .exit(code: code)
-        }
-        // Head is a chunk: pop it, then greedily absorb following chunks up to the cap.
-        guard case var .chunk(bytes, control) = head else { return nil }
-        if bytes.count > cap {
-            // SPLIT an over-cap head chunk: ship the prefix (with the chunk's sniffed
-            // control — per-channel control FIFO holds), overwrite the unconsumed HEAD
-            // SLOT with the remainder (O(1); a removeFirst + insert(at: 0) pair would be
-            // two O(count) memmoves per emitted frame) so byte order is untouched.
-            let prefix = Data(bytes.prefix(cap))
-            let remainder = Data(bytes.dropFirst(cap))
-            outFIFO[fifoHead] = .chunk(bytes: remainder, control: [])
-            return .output(bytes: prefix, byteCount: prefix.count, control: control)
-        }
-        advanceFIFOHead()
-        var byteCount = bytes.count
-        if fifoHead < outFIFO.count,
-           case let .chunk(nextBytes, _) = outFIFO[fifoHead],
-           byteCount + nextBytes.count <= cap
-        {
-            // Multi-chunk merge: one mutable accumulator, reserve once.
-            var merged = Data(capacity: min(cap, byteCount + nextBytes.count))
-            merged.append(bytes)
-            while fifoHead < outFIFO.count,
-                  case let .chunk(more, moreControl) = outFIFO[fifoHead],
-                  byteCount + more.count <= cap
-            {
-                advanceFIFOHead()
-                merged.append(more)
-                byteCount += more.count
-                control.append(contentsOf: moreControl)
-            }
-            bytes = merged
-        }
-        return .output(bytes: bytes, byteCount: byteCount, control: control)
+        return outbox.take()
     }
 
     /// EOF latch: set true by ``PaneOutputStream``'s `onEOF` once superd has drained the
@@ -813,11 +733,6 @@ final class MuxChannelSession: @unchecked Sendable {
         ClaudeStatus.mintsFinishedTurn(previous: previous, next: next)
     }
 
-    private enum OutputItem {
-        case chunk(bytes: Data, control: [WireMessage])
-        case exit(code: Int32)
-    }
-
     // MARK: - Serial PTY-input writer (ONE queue for every write path)
 
     /// The ONE serial queue every PTY input write lands on — client `input` frames (live relay AND
@@ -956,7 +871,7 @@ final class MuxChannelSession: @unchecked Sendable {
             for await _ in outputWakeups {
                 // Drain until empty BEFORE re-parking (bufferingNewest(1) holds at most one
                 // pending wake — a one-frame-per-wake drain would strand backlog).
-                while let frame = self?.takeMergedFrame() {
+                while let frame = self?.nextOutboundFrame() {
                     guard let self else { return }
                     switch frame {
                     case let .output(bytes, byteCount, controlMessages):
@@ -1824,13 +1739,13 @@ final class MuxChannelSession: @unchecked Sendable {
         // frames (and their gate accounting) would sit undelivered until the next supervised chunk.
         // bufferingNewest(1) holds the yield until the drain task starts its for-await.
         fifoLock.lock()
-        let hasCarriedFrames = fifoHead < outFIFO.count // deque-aware "not empty"
+        let hasCarriedFrames = !outbox.isEmpty
         let backlogWake = outputWakeContinuation
         fifoLock.unlock()
         if hasCarriedFrames { backlogWake?.yield(()) }
         // Race seam: fired at the EARLIEST instant the restarted output drain can be running —
         // it has been created and its backlog kick delivered. The drain's
-        // first act on a carried frame is takeMergedFrame → broadcastControl(sniffed control),
+        // first act on a carried frame is nextOutboundFrame → broadcastControl(sniffed control),
         // which reads each member's wake; the ordering test pins that the joining member's wake is
         // ALREADY installed here (the race window itself — the drain Task getting scheduled inside
         // a few rebind-thread instructions — cannot be forced deterministically from outside).
@@ -2666,7 +2581,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // observes a complete FIFO. The continuation is read under fifoLock (teardown
         // nils it); yield happens OUTSIDE the lock (it may resume the drain inline).
         fifoLock.lock()
-        outFIFO.append(.chunk(bytes: chunk, control: fifoControl))
+        outbox.append(bytes: chunk, control: fifoControl)
         let wake = outputWakeContinuation
         fifoLock.unlock()
         wake?.yield(())
@@ -2689,18 +2604,18 @@ final class MuxChannelSession: @unchecked Sendable {
         guard let restored, !restored.isEmpty else { return }
         enqueueOutput(restored.count)
         fifoLock.lock()
-        outFIFO.append(.chunk(bytes: restored, control: []))
+        outbox.append(bytes: restored, control: [])
         let wake = outputWakeContinuation
         fifoLock.unlock()
         wake?.yield(())
     }
 
     /// Enqueues `.exit` on the output FIFO (the reaper path). `.exit` is a merge BARRIER in
-    /// ``takeMergedFrame()`` — it never coalesces with chunks, so it stays strictly after the
+    /// ``PaneOutbox`` — it never coalesces with chunks, so it stays strictly after the
     /// final output tail (the EOF-latch ordering).
     private func enqueueExit(code: Int32) {
         fifoLock.lock()
-        outFIFO.append(.exit(code: code))
+        outbox.appendExit(code: code)
         let wake = outputWakeContinuation
         fifoLock.unlock()
         wake?.yield(())
@@ -3842,7 +3757,7 @@ extension MuxChannelSession {
     func isExitSentForTesting() -> Bool { isExitSent() }
     func awaitExitSentForTesting(timeout: Duration) async { await awaitExitSentOrTimeout(timeout) }
 
-    /// Drain-merge seams: drive the output FIFO + ``takeMergedFrame()`` (and the control-out
+    /// Drain-merge seams: drive the output queue + ``nextOutboundFrame()`` (and the control-out
     /// queue) WITHOUT a PTY or running drain, so merge/barrier/cap semantics are provable
     /// headlessly. The enqueue paths mirror the production producers exactly (append under
     /// the lock; the wake yield is a no-op pre-`startRelay` since the continuation is nil).
@@ -3859,7 +3774,7 @@ extension MuxChannelSession {
     func enqueueChunkForTesting(bytes: Data, control: [WireMessage] = []) {
         enqueueOutput(bytes.count)
         fifoLock.lock()
-        outFIFO.append(.chunk(bytes: bytes, control: control))
+        outbox.append(bytes: bytes, control: control)
         let wake = outputWakeContinuation
         fifoLock.unlock()
         wake?.yield(())

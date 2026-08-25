@@ -225,7 +225,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         let (_, sub) = try makeTempRepo()
         warmUp(session)
         session.ingestPTYChunkForTesting(osc("7;file://\(sub)"), sniffed: [.cwd(sub)])
-        guard case let .output(_, _, fifoControl)? = session.takeMergedFrame() else {
+        guard case let .output(_, _, fifoControl)? = session.nextOutboundFrame() else {
             XCTFail("the ingested chunk must be poppable as one merged output frame")
             return
         }

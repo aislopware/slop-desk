@@ -636,7 +636,7 @@ final class ReplayBufferTests: XCTestCase {
     /// can never cross the grant threshold (permanently silent pane right after reattach).
     func testRechunkNeverExceedsMaxOutputFramePayload() {
         let buf = ReplayBuffer(scrollbackBytes: 8 * 1024 * 1024)
-        // Production-shaped ring entries: each at the drain cap (`takeMergedFrame` bounds every
+        // Production-shaped ring entries: each at the drain cap (`nextOutboundFrame` bounds every
         // appended frame to exactly this), several of them.
         let cap = MuxFlowControl.maxOutputFramePayloadBytes
         var joinedIn = Data()

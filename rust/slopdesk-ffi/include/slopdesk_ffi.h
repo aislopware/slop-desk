@@ -3267,6 +3267,58 @@ size_t slopdesk_resize_fold_attachments(SlopDeskResizeFold *handle,
                                         SlopDeskResizeAttachment *out, size_t capacity);
 
 /* ---------------------------------------------------------------------------- *
+ * pane_outbox — one pane's outbound frame queue: which queued chunks coalesce into
+ * one `.output`, where an over-cap head splits, and that `.exit` is a barrier
+ * neither may cross (docs/59 step 2).
+ *
+ * A HANDLE, by the same test `mux_resize` answers: a queue that lives as long as
+ * the pane, mutated from the read-loop thread, the exit task and the drain under
+ * one lock.
+ *
+ * What did NOT cross: every BYTE. The queue holds `(slot, len)`; hostd holds the
+ * `Data` each slot names and concatenates where that `Data` already is. A door
+ * that took the chunk would pay a `Data` allocation per 32 KiB read — docs/55 §4c
+ * prices that at 227.5 ns against a crossing's 1.0. Nor did the wake: the
+ * `AsyncStream` continuation, the drain `Task` and the pause sink stay Swift.
+ *
+ * The SLOT is minted on this side, because it is a queue coordinate rather than an
+ * identity. That is what makes a merged run CONSECUTIVE — `.exit` takes no slot —
+ * so a frame names its run as `first_slot ..< first_slot + slots` and no counted
+ * buffer is needed at all.
+ *
+ * The payload cap is read HERE, per pop, from `mux_flow`'s
+ * `max_output_frame_payload_bytes`, so `SLOPDESK_MUX_WINDOW` /
+ * `SLOPDESK_MUX_MERGE_CAP` stay live and the number is still spelled once.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskPaneOutbox SlopDeskPaneOutbox;
+
+// `SlopDeskOutboxFrame.kind`.
+#define SLOPDESK_OUTBOX_EMPTY 0
+#define SLOPDESK_OUTBOX_OUTPUT 1
+#define SLOPDESK_OUTBOX_EXIT 2
+
+// What one pop asks the caller to ship. `split` means the head slot was over the
+// cap: `slots` is 1, its first `byte_count` bytes ship now, and it STAYS queued
+// holding the remainder — the caller keeps the slot, drops the shipped prefix from
+// its payload and clears its control, which rides the prefix.
+typedef struct {
+    uint64_t first_slot;
+    uint64_t slots;
+    uint64_t byte_count;
+    int32_t exit_code;
+    uint8_t kind;
+    bool split;
+} SlopDeskOutboxFrame;
+
+SlopDeskPaneOutbox *slopdesk_pane_outbox_new(void);
+void slopdesk_pane_outbox_free(SlopDeskPaneOutbox *handle);
+uint64_t slopdesk_pane_outbox_append_chunk(SlopDeskPaneOutbox *handle, uint64_t len);
+void slopdesk_pane_outbox_append_exit(SlopDeskPaneOutbox *handle, int32_t code);
+bool slopdesk_pane_outbox_is_empty(SlopDeskPaneOutbox *handle);
+void slopdesk_pane_outbox_take(SlopDeskPaneOutbox *handle, SlopDeskOutboxFrame *out);
+
+/* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
  * loop policies both ends of the wire were spelling twice.
  *

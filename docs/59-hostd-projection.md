@@ -123,7 +123,7 @@ that exists (`ReplayBuffer`'s `sanitize`) is exactly what cost 30 ms per reattac
 starting; a concurrent pane-runtime port may already cover the truths latches, in which case step 4
 folds into it rather than competing.
 
-**Step 1 — delete the detached FIFO; resume from superd's ring offset.** *(~350 Swift lines)*
+**Step 1 — delete the detached FIFO; resume from superd's ring offset. LANDED.** *(~350 Swift lines)*
 `detach` records the last delivered BYTE OFFSET instead of folding into 64 MiB. `rebindRelay`
 re-subscribes through `PaneOutputStream(initialOffset:)` — superd-mediated, so no new reader. Cold
 clients keep going through `ScrollbackTranscripts.restored` (`HostServer.swift:2099`), already
@@ -131,10 +131,31 @@ journal-backed. `Resume::is_lossy` becomes the announced gap. Deletes `:685-714`
 `:1678-1686`, `:1799`, `:4364-4380`, `DetachedBacklogPeek`, `:1966-1997`. No new Rust logic —
 subtraction plus one env decision. Record the ring-bytes choice in `docs/DECISIONS.md`.
 
-**Step 2 — `PaneOutbox`.** *(~300 removed, ~120 face added)* Replaces `outFIFO`/`fifoHead`/
-`advanceFIFOHead()` (`:559`, `:569`, `:579-590`) and `takeMergedFrame()` (`:623-666`) including the
-`maxOutputFramePayloadBytes` cap, the over-cap head split and the greedy multi-chunk merge. Bytes never
-cross. `BoundedQueuePolicy` is already Rust, so this reunites the accounting with the queue.
+**Step 2 — `PaneOutbox`. LANDED.** *(~150 removed, ~120 face added)* `outFIFO`, `fifoHead`,
+`fifoCompactThresholdSlots`, `advanceFIFOHead()`, `takeMergedFrame()`, `MergedFrame` and `OutputItem`
+are gone; the cap, the over-cap head split and the greedy multi-chunk merge are
+`rust/slopdesk-muxsession`'s `outbox`, behind `rust/slopdesk-ffi/src/pane_outbox.rs`. The face is
+`Sources/SlopDeskHost/PaneOutbox.swift`; `MuxChannelSession` keeps `fifoLock`, the wake and a
+`nextOutboundFrame()` that is four lines.
+
+Two shapes worth carrying into steps 3–7:
+
+- **The slot is minted on the RUST side.** It is a queue coordinate, not an identity — nothing outside
+  names it and it dies with the frame that ships it. Minting it there buys the property the verdict is
+  built on: chunk slots are CONSECUTIVE (`.exit` takes none), so a merged run is
+  `first_slot ..< first_slot + slots` and the verdict is four scalars rather than a counted buffer.
+  This is docs/55 §4b's "identity mints near-side" read the right way round; `mux_host.rs`'s "the flow
+  id is the caller's" is about an `NWConnection` Swift owns, which a queue coordinate is not.
+- **The cap is read in the DOOR, per pop.** `max_output_frame_payload_bytes` is `slopdesk-wire`'s, and
+  `slopdesk-muxsession` deliberately has no edge to the protocol crate — so the fold takes it as an
+  argument and `pane_outbox.rs` supplies it. The number stays spelled once and
+  `SLOPDESK_MUX_WINDOW`/`SLOPDESK_MUX_MERGE_CAP` stay live, with no constant crossing and nothing for
+  `shared_constants` to ratchet.
+
+Bytes never cross: the door reads lengths, Swift holds a slot→`Data` map and does the concatenation
+where the `Data` already is. The single-slot fast path returns the chunk unchanged, so the interactive
+steady state is byte-identical work. `BoundedQueuePolicy` was already Rust; the accounting and the
+queue are now on the same side of the door.
 
 **Step 3 — `PaneFanout`.** *(~700 Swift lines)* The whole `:4161-4665` extension:
 `sequenceAndFanOut` `:4167` · `deliverExit` `:4196` · `enqueueData`/`takeDataBatch` ·
@@ -267,8 +288,14 @@ class, and the BREAK-TESTED convention every new rule follows) · `crate_policy.
    plus `Claim::Mentions` that `PaneOutputStream(initialOffset:)` is how a rebind resumes. *Message:
    the pane's detached bytes are superd's ring and superd's journal; a third copy in hostd is the
    four-copies defect.*
-2. **the outbound frame is merged once, in Rust** — ban `takeMergedFrame`/`advanceFIFOHead`/`fifoHead`
-   in Swift; require `slopdesk_pane_outbox_*`.
+2. **the outbound frame is merged once, in Rust** — LANDED, as two rules rather than one, because
+   `deleted_host_swift.rs` is bans and half this claim is about a face.
+   `deleted_host_swift::pane_outbound_queue` bans `takeMergedFrame|advanceFIFOHead|fifoHead|outFIFO`
+   anywhere under `Sources`; `hot_paths::the_outbound_frame_merges_once` (rule
+   `outbound-frame-merge`) requires `PaneOutbox.swift` to exist, to call every one of the six
+   `slopdesk_pane_outbox_*` doors, and to hold NO ordering of its own — no array of queued items, no
+   head cursor, no `removeFirst`. `hot_paths` is the right home for the second half: its header is
+   *the Swift face must stay a marshaller*, and this path runs once per 32 KiB chunk forever.
 3. **the subscriber roster is one table** — ban
    `evictLaggingSubscribers|releaseRetentionToMinimum|admitJoiner|reserveSubscriberID` bodies in
    Swift; require `slopdesk_pane_fanout_*`.

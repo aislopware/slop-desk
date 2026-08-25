@@ -1460,6 +1460,11 @@ pub fn registry() -> Vec<Rule> {
             check: hot_paths::nerd_font_run_splitter_linear,
         },
         Rule {
+            name: "outbound-frame-merge",
+            origin: "docs/59 §4, §8 rule 2",
+            check: hot_paths::the_outbound_frame_merges_once,
+        },
+        Rule {
             name: "live-docs-cite-real-files",
             origin: "CLAUDE.md §Read before you touch",
             check: repo_invariants::live_docs_cite_files_that_exist,

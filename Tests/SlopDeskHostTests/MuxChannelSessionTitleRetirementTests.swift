@@ -26,7 +26,7 @@ final class MuxChannelSessionTitleRetirementTests: XCTestCase {
     /// queue. Frames first, so a sniffed title and the retirement that follows it stay in order.
     private func drainControl(_ session: MuxChannelSession) -> [WireMessage] {
         var out: [WireMessage] = []
-        while case let .output(_, _, control)? = session.takeMergedFrame() {
+        while case let .output(_, _, control)? = session.nextOutboundFrame() {
             out.append(contentsOf: control)
         }
         while let batch = session.takeControlBatchForTesting() {

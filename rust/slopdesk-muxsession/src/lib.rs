@@ -18,8 +18,15 @@
 //! what the detached store keeps when an id arrives twice and when the opt-in cap is full. No
 //! identity crosses — the near side answers `===` and the position, and every verdict comes back as
 //! a position into the list it handed in.
+//!
+//! [`outbox`] is the fifth, and the first about BYTES — without holding any. It owns the order the
+//! pane's outbound frames leave in: which queued chunks coalesce into one `.output`, where an
+//! over-cap head splits, and that `.exit` is a barrier neither may cross. The queue holds
+//! `(slot, len)`; hostd holds the payload each slot names, so the merge decision crosses and the
+//! concatenation stays where the `Data` already is.
 
 pub mod bridge_router;
 pub mod detach_retention;
+pub mod outbox;
 pub mod resize_fold;
 pub mod spawn_env;

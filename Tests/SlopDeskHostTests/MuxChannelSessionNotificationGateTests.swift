@@ -27,7 +27,7 @@ final class MuxChannelSessionNotificationGateTests: XCTestCase {
 
     /// The control messages riding the next merged output frame (empty when no frame is queued).
     private func nextFrameControl(_ session: MuxChannelSession) -> [WireMessage] {
-        guard case let .output(_, _, control)? = session.takeMergedFrame() else { return [] }
+        guard case let .output(_, _, control)? = session.nextOutboundFrame() else { return [] }
         return control
     }
 
@@ -55,7 +55,7 @@ final class MuxChannelSessionNotificationGateTests: XCTestCase {
             .notification(title: "", body: "Claude needs your permission"),
         ])
 
-        guard case let .output(bytes, _, control)? = session.takeMergedFrame() else {
+        guard case let .output(bytes, _, control)? = session.nextOutboundFrame() else {
             XCTFail("the chunk itself must still ride the FIFO — the gate is control-only")
             return
         }

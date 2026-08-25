@@ -21,6 +21,11 @@
 //! `rust/slopdesk-instruments` now and one is `rust/slopdesk-navprobe`; the other four came back as
 //! nothing at all, which is the stronger claim.
 //!
+//! **The outbound frame queue.** What the drain pops is not what the read loop appended — chunks
+//! coalesce to the credit-safe cap, an over-cap head splits, and `.exit` is a barrier. That
+//! arithmetic is `rust/slopdesk-muxsession`'s `outbox`; hostd keeps the lock, the bytes and the
+//! wake. See [`pane_outbound_queue`].
+//!
 //! Read `View::Code`, like every other ban in this crate: the prose above a ban names the thing it
 //! forbids, and a raw read would fire on the explanation.
 
@@ -94,7 +99,38 @@ pub fn deleted_host_swift(tree: &Tree) -> Report {
     claims.extend(terminfo_files_stay_deleted());
     claims.extend(supervisor_protocol_stays_deleted());
     claims.extend(swift_instruments_stay_deleted());
+    claims.extend(pane_outbound_queue());
     check_all(tree, &claims)
+}
+
+/// The pane's OUTBOUND queue — docs/59 step 2.
+///
+/// What a pane's drain pops is not what its read loop appended: adjacent chunks COALESCE up to the
+/// credit-safe payload cap, an over-cap head SPLITS so the 13-byte `.output` header can never push
+/// a frame past the receiver's grant threshold, and `.exit` is a BARRIER neither may cross. All
+/// three are `rust/slopdesk-muxsession`'s `outbox` now, behind `slopdesk_pane_outbox_*`.
+///
+/// Worth a ratchet for this file's usual reason and one more. The usual one: a Swift re-spelling
+/// would work — it would simply be a second answer to "what ships next", drifting from the one the
+/// gate accounting is computed against. The extra one: the merge is the ONE place where a payload
+/// could be tempted across the door, and the whole design is that it is not. So the ban names the
+/// deleted machinery: the array, its cursor, and the compaction that amortized the cursor. The
+/// other half — that the face still goes through every door rather than keeping a shadow queue — is
+/// `hot_paths`' `the_outbound_frame_merges_once`, because that is a claim about a face and this
+/// file is bans.
+fn pane_outbound_queue() -> Vec<Claim> {
+    vec![Claim::NoneUnder {
+        roots: &["Sources"],
+        extensions: SWIFT,
+        pattern: r"\b(takeMergedFrame|advanceFIFOHead|fifoHead|outFIFO)\b",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "the outbound frame merge is back in {files} — rust/slopdesk-muxsession's outbox owns the \
+                  coalesce, the over-cap split and the .exit barrier; hostd owns the lock, the bytes and \
+                  the wake, and nothing else (docs/59 §4)",
+    }]
 }
 
 /// The eight Swift command-line instruments, and why each one staying gone is a RULE.
@@ -699,6 +735,15 @@ mod tests {
                 "echocanonical",
                 "    let canonical = (term.c_lflag & tcflag_t(ICANON)) != 0\n",
             ),
+            (
+                "outboxtake",
+                "    func takeMergedFrame() -> MergedFrame? { nil }\n",
+            ),
+            (
+                "outboxcursor",
+                "    private func advanceFIFOHead() { fifoHead += 1 }\n",
+            ),
+            ("outboxqueue", "    private var outFIFO: [OutputItem] = []\n"),
         ] {
             let fixture = Fixture::new(&format!("deleted-host-{name}"));
             fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");

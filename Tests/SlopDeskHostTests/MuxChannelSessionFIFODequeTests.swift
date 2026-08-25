@@ -3,8 +3,8 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// Pins the output-FIFO deque semantics of `MuxChannelSession.takeMergedFrame` across the
-/// index-cursor refactor (perf: the detached-backlog drain used to be O(n²) — every pop was
+/// Pins the output-queue semantics of `MuxChannelSession.nextOutboundFrame` across the port of the
+/// merge to `rust/slopdesk-muxsession`'s `outbox` (perf: the drain used to be O(n²) — every pop was
 /// an `Array.removeFirst()` memmove, and the over-cap split paid a `removeFirst` + an
 /// `insert(at: 0)` per emitted frame; a 64 MiB detached backlog of kernel-sized reads made
 /// reattach stall for ~10^11 element shifts).
@@ -42,7 +42,7 @@ final class MuxChannelSessionFIFODequeTests: XCTestCase {
     @discardableResult
     private func drainAll(_ session: MuxChannelSession, into stream: inout Data) -> [Data] {
         var frames: [Data] = []
-        while let frame = session.takeMergedFrame() {
+        while let frame = session.nextOutboundFrame() {
             guard case let .output(bytes, byteCount, _) = frame else {
                 XCTFail("unexpected non-output frame in drainAll")
                 return frames
@@ -72,7 +72,7 @@ final class MuxChannelSessionFIFODequeTests: XCTestCase {
         session.enqueueChunkForTesting(bytes: Data("A".utf8), control: [t1])
         session.enqueueChunkForTesting(bytes: Data("BB".utf8), control: [bell])
         expected.append(Data("ABB".utf8))
-        guard case let .output(f1, c1, ctl1)? = session.takeMergedFrame() else {
+        guard case let .output(f1, c1, ctl1)? = session.nextOutboundFrame() else {
             XCTFail("expected a merged .output frame")
             return
         }
@@ -86,7 +86,7 @@ final class MuxChannelSessionFIFODequeTests: XCTestCase {
         let big = patterned(cap * 2 + 3, seed: 5)
         session.enqueueChunkForTesting(bytes: big, control: [t1])
         expected.append(big)
-        guard case let .output(p1, _, ctlBig)? = session.takeMergedFrame() else {
+        guard case let .output(p1, _, ctlBig)? = session.nextOutboundFrame() else {
             XCTFail("expected split prefix 1")
             return
         }
@@ -98,14 +98,14 @@ final class MuxChannelSessionFIFODequeTests: XCTestCase {
         // The remainder must stay strictly AHEAD of the later chunk.
         session.enqueueChunkForTesting(bytes: Data("EE".utf8))
         expected.append(Data("EE".utf8))
-        guard case let .output(p2, _, ctlP2)? = session.takeMergedFrame() else {
+        guard case let .output(p2, _, ctlP2)? = session.nextOutboundFrame() else {
             XCTFail("expected split prefix 2")
             return
         }
         XCTAssertEqual(p2, big.dropFirst(cap).prefix(cap), "second split frame continues the remainder")
         XCTAssertEqual(ctlP2, [], "a split remainder carries no control")
         got.append(p2)
-        guard case let .output(tail, _, _)? = session.takeMergedFrame() else {
+        guard case let .output(tail, _, _)? = session.nextOutboundFrame() else {
             XCTFail("expected the 3-byte remainder tail")
             return
         }
@@ -114,30 +114,30 @@ final class MuxChannelSessionFIFODequeTests: XCTestCase {
             "the final remainder merges with the later-enqueued chunk, remainder first",
         )
         got.append(tail)
-        XCTAssertNil(session.takeMergedFrame())
+        XCTAssertNil(session.nextOutboundFrame())
 
         // Phase 4: exit is a barrier both ways; drain-through preserves order.
         session.enqueueChunkForTesting(bytes: Data("GG".utf8))
         session.enqueueExitForTesting(code: 5)
         session.enqueueChunkForTesting(bytes: Data("HH".utf8))
         expected.append(Data("GGHH".utf8))
-        guard case let .output(preExit, _, _)? = session.takeMergedFrame() else {
+        guard case let .output(preExit, _, _)? = session.nextOutboundFrame() else {
             XCTFail("expected the pre-exit tail")
             return
         }
         XCTAssertEqual(preExit, Data("GG".utf8), "exit never merges with the chunk before it")
         got.append(preExit)
-        guard case .exit(5)? = session.takeMergedFrame() else {
+        guard case .exit(5)? = session.nextOutboundFrame() else {
             XCTFail("expected .exit(5) after the tail")
             return
         }
-        guard case let .output(postExit, _, _)? = session.takeMergedFrame() else {
+        guard case let .output(postExit, _, _)? = session.nextOutboundFrame() else {
             XCTFail("expected the post-exit chunk")
             return
         }
         XCTAssertEqual(postExit, Data("HH".utf8))
         got.append(postExit)
-        XCTAssertNil(session.takeMergedFrame())
+        XCTAssertNil(session.nextOutboundFrame())
 
         XCTAssertEqual(got, expected, "the reconstructed stream is byte-identical to the enqueue order")
     }
@@ -156,7 +156,7 @@ final class MuxChannelSessionFIFODequeTests: XCTestCase {
             var got = Data()
             drainAll(session, into: &got)
             XCTAssertEqual(got, expected, "round \(round) reconstructs byte-identically")
-            XCTAssertNil(session.takeMergedFrame(), "round \(round) fully drained")
+            XCTAssertNil(session.nextOutboundFrame(), "round \(round) fully drained")
         }
     }
 
@@ -166,13 +166,13 @@ final class MuxChannelSessionFIFODequeTests: XCTestCase {
         for i in 0..<300 {
             let chunk = patterned(1 + (i % 9), seed: UInt8(truncatingIfNeeded: i))
             session.enqueueChunkForTesting(bytes: chunk)
-            guard case let .output(bytes, count, _)? = session.takeMergedFrame() else {
+            guard case let .output(bytes, count, _)? = session.nextOutboundFrame() else {
                 XCTFail("expected the single chunk back at step \(i)")
                 return
             }
             XCTAssertEqual(bytes, chunk, "single-chunk fast path returns the chunk unchanged")
             XCTAssertEqual(count, chunk.count)
-            XCTAssertNil(session.takeMergedFrame())
+            XCTAssertNil(session.nextOutboundFrame())
         }
     }
 
@@ -192,7 +192,7 @@ final class MuxChannelSessionFIFODequeTests: XCTestCase {
         }
         let start = Date()
         var total = 0
-        while let frame = session.takeMergedFrame() {
+        while let frame = session.nextOutboundFrame() {
             guard case let .output(bytes, byteCount, _) = frame else {
                 XCTFail("unexpected non-output frame")
                 return

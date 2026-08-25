@@ -1,5 +1,5 @@
-//! Three per-keystroke or per-row paths, each of which had a second implementation that was
-//! correct and slow.
+//! Four per-keystroke, per-row or per-chunk paths, each of which had a second implementation that
+//! was correct and slow.
 //!
 //! Ported from the deleted `check-supervisor.sh`. What is enforced is not the measurement — a
 //! number in a gate rots — but the call site that earned it: the engine that does not backtrack,
@@ -8,6 +8,9 @@
 use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
+
+/// The Swift face of the pane outbox — a marshaller, and the rule below says how much of one.
+const OUTBOX_FACE: &str = "Sources/SlopDeskHost/PaneOutbox.swift";
 
 /// One regex engine meets the untrusted rows, and it does not backtrack
 ///
@@ -142,9 +145,61 @@ pub fn nerd_font_run_splitter_linear(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// One outbound merge, and the face over it holds no bytes of its own
+///
+/// hostd's PTY read loop appends a chunk per supervised read and ONE drain pops, but what it pops
+/// is not what was appended: adjacent chunks coalesce up to the credit-safe payload cap, an
+/// over-cap head splits so the 13-byte `.output` header cannot push a frame past the receiver's
+/// grant threshold, and `.exit` is a barrier neither may cross. That is
+/// `rust/slopdesk-muxsession`'s `outbox` (docs/59 step 2), and `deleted_host_swift`'s
+/// `pane_outbound_queue` bans the machinery it replaced.
+///
+/// What is pinned HERE is the shape docs/55 §4c makes non-negotiable on this path: the door reads
+/// LENGTHS and the face keeps the bytes. This runs once per 32 KiB chunk, forever — a door that
+/// materialized a `Data` per chunk would cost 227.5 ns against a crossing's 1.0, which is the same
+/// trade the recorded +30 ms cold reattach paid for a `sanitize` callback. So the face must still
+/// call every entry point (a dropped door is a shadow queue beside the one the verdict is computed
+/// from) and must NOT hold a second ordering of its own: no array of queued items, no head cursor.
+/// Its one collection is a map from the slot the door minted to the payload that slot names.
+#[must_use]
+pub fn the_outbound_frame_merges_once(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: OUTBOX_FACE,
+            message: "Sources/SlopDeskHost/PaneOutbox.swift is gone — the pane's outbound queue is not \
+                      MuxChannelSession's to hold again (docs/59 §4)",
+        },
+        Claim::Doors {
+            path: OUTBOX_FACE,
+            entries: &[
+                "slopdesk_pane_outbox_new",
+                "slopdesk_pane_outbox_free",
+                "slopdesk_pane_outbox_append_chunk",
+                "slopdesk_pane_outbox_append_exit",
+                "slopdesk_pane_outbox_is_empty",
+                "slopdesk_pane_outbox_take",
+            ],
+            message: "Sources/SlopDeskHost/PaneOutbox.swift no longer calls {entry} — a face that drops a \
+                      door is an implementation coming back, and here it would be a second queue beside the \
+                      one the frame verdict is computed from",
+        },
+        Claim::NoneOf {
+            paths: &[OUTBOX_FACE],
+            pattern: r"\[(OutputItem|Payload|Frame)\]|var (head|cursor|nextSlot)\b|removeFirst",
+            view: View::Code,
+            message: "{files} keeps an ORDER of its own — the face holds a slot→payload map and nothing \
+                      else, because the order, the merge and the split are the door's (docs/59 §4)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
+
+    /// The face whose doors [`super::the_outbound_frame_merges_once`] pins.
+    const OUTBOX_FACE: &str = super::OUTBOX_FACE;
 
     fn write_one_regex_engine_over_untrusted(fixture: &Fixture) {
         fixture
@@ -184,5 +239,32 @@ mod tests {
             "NSRegularExpression\n",
         );
         assert!(!super::one_regex_engine_over_untrusted(&fixture.tree()).is_clean());
+    }
+
+    /// Every door the face must keep asking, in one string a fixture can hold.
+    const OUTBOX_DOORS: &str = "slopdesk_pane_outbox_new()\nslopdesk_pane_outbox_free()\\
+                                nslopdesk_pane_outbox_append_chunk()\nslopdesk_pane_outbox_append_exit()\\
+                                nslopdesk_pane_outbox_is_empty()\nslopdesk_pane_outbox_take()\n";
+
+    #[test]
+    fn the_outbound_frame_merges_once_holds_the_face_to_its_doors() {
+        let fixture = Fixture::new("outbound-frame-merges-once");
+        fixture.write(OUTBOX_FACE, OUTBOX_DOORS);
+        assert!(super::the_outbound_frame_merges_once(&fixture.tree()).is_clean());
+
+        // The face stopped asking — the merge grew back where the call used to be.
+        fixture.write(OUTBOX_FACE, "slopdesk_pane_outbox_new()\n");
+        assert!(!super::the_outbound_frame_merges_once(&fixture.tree()).is_clean());
+
+        // The face kept every door AND a second ordering beside it.
+        fixture.write(OUTBOX_FACE, OUTBOX_DOORS);
+        fixture.append(OUTBOX_FACE, "    private var queued: [Payload] = []\n");
+        assert!(!super::the_outbound_frame_merges_once(&fixture.tree()).is_clean());
+
+        // And the file itself, gone: a tree with no face at all fails on `Exists` rather than
+        // passing the way an empty corpus passes a ban.
+        let bare = Fixture::new("outbound-frame-merges-once-bare");
+        bare.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
+        assert!(!super::the_outbound_frame_merges_once(&bare.tree()).is_clean());
     }
 }
