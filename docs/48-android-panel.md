@@ -328,7 +328,9 @@ The panel is designed around that difference:
 
 ⚠️ **`ro.build.characteristics` is `emulator,nosdcard` on most emulators, and `nosdcard` contains
 `car`.** A substring search classifies every phone AVD as an automotive head unit.
-`AndroidDeviceKind.infer` matches **tokens**, not substrings.
+`slopdesk_devicepanel::android::device_kind` matches **tokens**, not substrings, and pins the trap
+by name (`an_ordinary_emulator_is_not_an_automotive_head_unit`). `AndroidDeviceKind.infer` is the face
+over it.
 
 ⚠️ **`ro.product.model` is `sdk_gphone64_arm64` for every AVD on the host**, so it cannot name a row;
 the AVD name can, and it is what the user typed. A physical device has no AVD name and its model is

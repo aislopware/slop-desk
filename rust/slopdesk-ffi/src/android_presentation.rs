@@ -675,18 +675,81 @@ pub extern "C" fn slopdesk_android_art_width(ratio: f64, art: f64, floor: f64, c
     android::art_width((ratio > 0.0).then_some(ratio), art, floor, cap)
 }
 
+/// Every device family's silhouette and heading, in ONE delivery, in RANK order.
+///
+/// `[u16 count]`, then per family two length-prefixed strings: the SF Symbol's name and the
+/// heading. The INDEX is the family's kind byte — the same byte [`slopdesk_android_device_kind`]
+/// answers — so the face reads a classification straight into this table.
+///
+/// Returns the bytes NEEDED. A return larger than `cap` means nothing was written.
+///
+/// # Safety
+/// `out` must be null, or point to `cap` writable bytes for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_android_device_kinds(out: *mut c_uchar, cap: usize) -> usize {
+    let kinds = android::DEVICE_KINDS;
+    let mut blob = Vec::with_capacity(128);
+    blob.extend_from_slice(&u16::try_from(kinds.len()).unwrap_or(u16::MAX).to_be_bytes());
+    for kind in kinds {
+        push_text(&mut blob, kind.symbol());
+        push_text(&mut blob, kind.group_title());
+    }
+    // SAFETY: the caller's obligation, restated above.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// The family a device belongs to, as its kind byte — which is also its rank and its index into
+/// [`slopdesk_android_device_kinds`].
+///
+/// `hint` is the platform's own word for itself — `ro.build.characteristics` on a running device,
+/// `tag.id` on an AVD on disk — and is read as TOKENS, never as a substring: `emulator,nosdcard` is
+/// the commonest value there is and `nosdcard` contains `car`. See
+/// [`slopdesk_devicepanel::android::device_kind`].
+///
+/// The three geometry arguments are the device's reported pixels and DPI bucket, and `0` on any of
+/// them means it reported no screen — which answers the phone rather than dividing by it. They are
+/// `i64` because the caller's are platform `Int`s and a negative from a hand-edited `config.ini`
+/// must reach the rule as a negative rather than wrap.
+///
+/// # Safety
+/// `hint` and `name` must each be null, or point to their stated length in live bytes for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_android_device_kind(
+    hint: *const c_uchar,
+    hint_len: usize,
+    name: *const c_uchar,
+    name_len: usize,
+    width: i64,
+    height: i64,
+    density: i64,
+) -> u8 {
+    // SAFETY: the caller's obligation, restated above.
+    let hint = unsafe { text(hint, hint_len) };
+    // SAFETY: ditto.
+    let name = unsafe { text(name, name_len) };
+    android::device_kind(hint, name, width, height, density).as_byte()
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
 
-    use slopdesk_devicepanel::android::{DeviceMenuEntry, Ink, StageReading};
+    use slopdesk_devicepanel::android::{DeviceKind, DeviceMenuEntry, Ink, StageReading};
 
     use super::{
         DEVICE_CAN_ENTER, DEVICE_IS_ATTACHED_BUT_UNUSABLE, DEVICE_IS_RUNNING, DEVICE_IS_STOPPABLE,
         slopdesk_android_art_width, slopdesk_android_aspect_ratio, slopdesk_android_device_flags,
-        slopdesk_android_device_menu, slopdesk_android_explain, slopdesk_android_facts,
-        slopdesk_android_log_ink, slopdesk_android_phrase, slopdesk_android_stage,
-        slopdesk_android_stage_verbs, slopdesk_android_words,
+        slopdesk_android_device_kind, slopdesk_android_device_kinds, slopdesk_android_device_menu,
+        slopdesk_android_explain, slopdesk_android_facts, slopdesk_android_log_ink, slopdesk_android_phrase,
+        slopdesk_android_stage, slopdesk_android_stage_verbs, slopdesk_android_words,
     };
 
     /// Cuts a run of `[u32 length][bytes]` fields, the way the Swift face does.
@@ -910,5 +973,45 @@ mod tests {
         let named = slopdesk_android_art_width(slopdesk_android_aspect_ratio(1080, 2340), 100.0, 0.0, 1000.0);
         assert!((fallback - 100.0 * (9.0 / 19.5)).abs() < 1e-9);
         assert!((named - 100.0 * (1080.0 / 2340.0)).abs() < 1e-9);
+    }
+
+    /// The table's INDEX is the kind byte, and the trap the rule turns on survives the crossing:
+    /// `emulator,nosdcard` is a phone, and `nosdcard` containing `car` changes nothing.
+    #[test]
+    fn a_classification_indexes_straight_into_the_family_table() {
+        // SAFETY: the buffers are this test's, and live across the call.
+        let blob = delivered(|out, cap| unsafe { slopdesk_android_device_kinds(out, cap) });
+        let count = usize::from(u16::from_be_bytes([
+            *blob.first().unwrap_or(&0),
+            *blob.get(1).unwrap_or(&0),
+        ]));
+        assert_eq!(count, 5);
+        let table = fields(&blob, 2);
+        assert_eq!(table.len(), count * 2);
+
+        let hint = b"emulator,nosdcard";
+        let name = b"Pixel_8";
+        // SAFETY: both borrows live across the call.
+        let byte = unsafe {
+            slopdesk_android_device_kind(
+                hint.as_ptr(),
+                hint.len(),
+                name.as_ptr(),
+                name.len(),
+                1080,
+                2400,
+                420,
+            )
+        };
+        assert_eq!(byte, DeviceKind::Phone.as_byte());
+        let row = usize::from(byte) * 2;
+        assert_eq!(table.get(row).map(String::as_str), Some("iphone"));
+        assert_eq!(table.get(row + 1).map(String::as_str), Some("Phone"));
+
+        // A device with nothing to say and no screen to measure is still a phone, not a trap.
+        // SAFETY: the null pointers are the empty strings this door documents.
+        let bare =
+            unsafe { slopdesk_android_device_kind(core::ptr::null(), 0, core::ptr::null(), 0, 0, 0, 0) };
+        assert_eq!(bare, DeviceKind::Phone.as_byte());
     }
 }

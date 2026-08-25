@@ -617,17 +617,65 @@ pub const extern "C" fn slopdesk_simulator_log_ink(severity_byte: u8) -> u8 {
     .as_byte()
 }
 
+/// Every device family's silhouette and heading, in ONE delivery, in RANK order.
+///
+/// `[u16 count]`, then per family two length-prefixed strings: the SF Symbol's name and the
+/// heading. The INDEX is the family's kind byte — the same byte
+/// [`slopdesk_simulator_device_kind`] answers — so the face reads a classification straight into
+/// this table without a second door and without a switch of its own.
+///
+/// Returns the bytes NEEDED. A return larger than `cap` means nothing was written.
+///
+/// # Safety
+/// `out` must be null, or point to `cap` writable bytes for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_simulator_device_kinds(out: *mut c_uchar, cap: usize) -> usize {
+    let kinds = simulator::DEVICE_KINDS;
+    let mut blob = Vec::with_capacity(128);
+    blob.extend_from_slice(&u16::try_from(kinds.len()).unwrap_or(u16::MAX).to_be_bytes());
+    for kind in kinds {
+        push_text(&mut blob, kind.symbol());
+        push_text(&mut blob, kind.group_title());
+    }
+    // SAFETY: the caller's obligation, restated above.
+    unsafe { deliver(&blob, out, cap) }
+}
+
+/// The family a model name names, as its kind byte — which is also its rank and its index into
+/// [`slopdesk_simulator_device_kinds`].
+///
+/// A name this build does not recognise answers `0`, the phone: the row draws a plausible
+/// silhouette beside the name rather than a question mark. See
+/// [`slopdesk_devicepanel::simulator::device_kind`] for why the checks are in the order they are.
+///
+/// # Safety
+/// `name` must be null, or point to `name_len` live bytes for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_simulator_device_kind(name: *const c_uchar, name_len: usize) -> u8 {
+    // SAFETY: the caller's obligation, restated above.
+    simulator::device_kind(unsafe { text(name, name_len) }).as_byte()
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
 
-    use slopdesk_devicepanel::simulator::{DeviceVerb, Ink, Orientation, StageState};
+    use slopdesk_devicepanel::simulator::{DeviceKind, DeviceVerb, Ink, Orientation, StageState};
 
     use super::{
-        slopdesk_simulator_bezel_fit, slopdesk_simulator_button_label, slopdesk_simulator_device_menu,
-        slopdesk_simulator_facts, slopdesk_simulator_footprint, slopdesk_simulator_log_ink,
-        slopdesk_simulator_orientation_turned, slopdesk_simulator_phrase, slopdesk_simulator_plates,
-        slopdesk_simulator_row_subtitle, slopdesk_simulator_stage, slopdesk_simulator_words,
+        slopdesk_simulator_bezel_fit, slopdesk_simulator_button_label, slopdesk_simulator_device_kind,
+        slopdesk_simulator_device_kinds, slopdesk_simulator_device_menu, slopdesk_simulator_facts,
+        slopdesk_simulator_footprint, slopdesk_simulator_log_ink, slopdesk_simulator_orientation_turned,
+        slopdesk_simulator_phrase, slopdesk_simulator_plates, slopdesk_simulator_row_subtitle,
+        slopdesk_simulator_stage, slopdesk_simulator_words,
     };
 
     /// Cuts a run of `[u32 length][bytes]` fields, the way the Swift face does.
@@ -871,6 +919,33 @@ mod tests {
         let unknown =
             unsafe { slopdesk_simulator_phrase(200, name.as_ptr(), name.len(), 0, core::ptr::null_mut(), 0) };
         assert_eq!(unknown, 0);
+    }
+
+    /// The table's INDEX is the kind byte, which is what lets the face hold no switch of its own.
+    #[test]
+    fn a_classification_indexes_straight_into_the_family_table() {
+        // SAFETY: the buffers are this test's, and live across the call.
+        let blob = delivered(|out, cap| unsafe { slopdesk_simulator_device_kinds(out, cap) });
+        let count = usize::from(u16::from_be_bytes([
+            *blob.first().unwrap_or(&0),
+            *blob.get(1).unwrap_or(&0),
+        ]));
+        assert_eq!(count, 5);
+        let table = fields(&blob, 2);
+        assert_eq!(table.len(), count * 2);
+
+        let name = "iPad Pro 13-inch (M4)";
+        // SAFETY: the borrowed name lives across the call.
+        let byte = unsafe { slopdesk_simulator_device_kind(name.as_ptr(), name.len()) };
+        assert_eq!(byte, DeviceKind::Pad.as_byte());
+        let row = usize::from(byte) * 2;
+        assert_eq!(table.get(row).map(String::as_str), Some("ipad.landscape"));
+        assert_eq!(table.get(row + 1).map(String::as_str), Some("iPad"));
+
+        // A name this build does not know draws the phone rather than nothing.
+        // SAFETY: the null pointer is the empty string this door documents.
+        let unknown = unsafe { slopdesk_simulator_device_kind(core::ptr::null(), 0) };
+        assert_eq!(unknown, DeviceKind::Phone.as_byte());
     }
 
     #[test]

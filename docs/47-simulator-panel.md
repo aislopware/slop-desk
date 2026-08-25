@@ -338,7 +338,8 @@ does not stand above every row it names:
   claim a runtime nobody has.
 - **The family glyph is back, on every row and every card** — a reversal of the round above, and the
   reason is the grid it now sits in (user-directed 2026-08-04). `SimulatorFamilyMark` reads
-  `SimulatorDeviceKind.infer`'s symbol and draws it in `Slate.Text.icon` at the row's leading slot.
+  `SimulatorDeviceKind.infer`'s symbol — the crate's classification, reconstituted from the SF Symbol
+  NAME it publishes — and draws it in `Slate.Text.icon` at the row's leading slot.
   When rows were one per line the heading was always a short glance up and the glyph was a
   thirty-times restatement of it; in three columns the last cell of a grid's second line is most of a
   panel across and two lines down from the word `IPHONE`, so the heading has stopped reaching it. A
@@ -821,7 +822,7 @@ one control in the panel with no response to the pointer at all — share it.
 | `Simulator/SimulatorVideoFormat.swift` | `CMFormatDescription` + `CMSampleBuffer` construction |
 | `Simulator/SimulatorStreamConnection.swift` | the one socket (`NWConnection` + websocket) |
 | `Simulator/SimulatorChrome.swift` | pure decoder: `definition.json` — body geometry + button boxes |
-| `Simulator/SimulatorDeviceKind.swift` | product name → family (glyph, heading, sort rank), pure |
+| `Simulator/SimulatorDeviceKind.swift` | face over `slopdesk_simulator_device_kind(s)`: the family, its glyph name and its heading |
 | `Simulator/SimulatorOrientation.swift` | the quarter-turn cycle + wire spelling + demo status bar, pure |
 | `Simulator/SimulatorControlClient.swift` | every HTTP route (`URLSession`) |
 | `Simulator/SimulatorChromeAssets.swift` | fetches the body + button art into `NSImage`s |

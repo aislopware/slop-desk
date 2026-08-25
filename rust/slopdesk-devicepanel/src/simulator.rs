@@ -804,14 +804,141 @@ pub const fn log_ink(severity: Severity) -> Ink {
     }
 }
 
+/// Which Apple device a row is, and so which silhouette and which heading it sits under.
+///
+/// FROM THE NAME, not from the server. `/simulators.json` carries no device-type field, and the
+/// definition route that does costs one request per device — for a glyph, on a list that polls. The
+/// names are Apple's own product names and are what the whole ecosystem already keys on.
+///
+/// The discriminant IS the rank, so the panel's heading order does not depend on which device set
+/// the host happens to have. Ordering a UI by a declaration order is how a reordering nobody meant
+/// as a design change becomes one; here the order is a number and moving it is an edit that shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum DeviceKind {
+    /// The fallback, and the commonest answer.
+    Phone = 0,
+    /// Drawn LANDSCAPE — see [`DeviceKind::symbol`].
+    Pad = 1,
+    /// watchOS.
+    Watch = 2,
+    /// tvOS.
+    Tv = 3,
+    /// visionOS.
+    Vision = 4,
+}
+
+impl DeviceKind {
+    /// The byte the C door answers with, which is also the heading's rank.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// The kind a byte names, or [`DeviceKind::Phone`] for one no build of this crate wrote.
+    ///
+    /// A wrong-but-plausible silhouette beats a row drawn as a question mark, which is the same
+    /// call [`device_kind`] makes about an unrecognised name.
+    #[must_use]
+    pub const fn from_byte(byte: u8) -> Self {
+        match byte {
+            1 => Self::Pad,
+            2 => Self::Watch,
+            3 => Self::Tv,
+            4 => Self::Vision,
+            _ => Self::Phone,
+        }
+    }
+
+    /// The silhouette's SF Symbol NAME.
+    ///
+    /// THE PAD IS DRAWN LANDSCAPE ON PURPOSE. `iphone` and `ipad` differ only in ASPECT, and aspect
+    /// is the one channel that does not survive being 13 points tall — rendered side by side at the
+    /// size the rows actually use they are two small vertical rounded rectangles, and the reader is
+    /// back to reading the name. Turning the pad on its side changes the SILHOUETTE, which reads at
+    /// any size. It also happens to be how the two devices are held.
+    ///
+    /// It is not a claim about orientation. Nothing else in this panel says orientation with a
+    /// device outline — the stage's rotate controls are arrows and its fact line spells the word —
+    /// so there is no second meaning for a turned rectangle to collide with. And the mark is only
+    /// ever drawn beside a shut-down device, which has no orientation, or on a card, whose
+    /// framebuffer never rotates anyway.
+    ///
+    /// Checked against the rest of the set, since a landscape rectangle is the shape a television
+    /// would want: `appletv` is not a wide box but a square carrying the Apple TV wordmark, so the
+    /// two stay apart.
+    #[must_use]
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::Phone => "iphone",
+            Self::Pad => "ipad.landscape",
+            Self::Watch => "applewatch",
+            Self::Tv => "appletv",
+            Self::Vision => "vision.pro",
+        }
+    }
+
+    /// The heading a group of these sits under.
+    #[must_use]
+    pub const fn group_title(self) -> &'static str {
+        match self {
+            Self::Phone => "iPhone",
+            Self::Pad => "iPad",
+            Self::Watch => "Apple Watch",
+            Self::Tv => "Apple TV",
+            Self::Vision => "Apple Vision",
+        }
+    }
+}
+
+/// Every kind in rank order — what the ONE table delivery iterates.
+pub const DEVICE_KINDS: [DeviceKind; 5] = [
+    DeviceKind::Phone,
+    DeviceKind::Pad,
+    DeviceKind::Watch,
+    DeviceKind::Tv,
+    DeviceKind::Vision,
+];
+
+/// The family a model name names.
+///
+/// ORDER OF THE CHECKS IS THE POINT. `iPad` and `iPhone` contain neither the other, so those two
+/// could be tested either way round; `visionOS`'s device is "Apple Vision Pro" and `watchOS`'s is
+/// "Apple Watch Series N", and BOTH contain "Apple" — matching on the specific token is what keeps
+/// them apart. `tv` is tested last of the four because it is two letters and the shortest needle
+/// here: "Apple TV 4K" is the only current name carrying it, but a name that merely contained the
+/// pair would otherwise outrank a longer word that says what the device is.
+///
+/// Anything unrecognised falls back to the phone glyph rather than a question mark: a
+/// wrong-but-plausible silhouette beats a row that looks broken, and the name is right there
+/// beside it.
+#[must_use]
+pub fn device_kind(name: &str) -> DeviceKind {
+    let folded = name.to_lowercase();
+    if folded.contains("ipad") {
+        return DeviceKind::Pad;
+    }
+    if folded.contains("watch") {
+        return DeviceKind::Watch;
+    }
+    if folded.contains("vision") {
+        return DeviceKind::Vision;
+    }
+    if folded.contains("tv") {
+        return DeviceKind::Tv;
+    }
+    DeviceKind::Phone
+}
+
 #[cfg(test)]
 mod tests {
     use slopdesk_devicelog::Severity;
 
     use super::{
-        DeviceVerb, Ink, Orientation, StageState, Turn, bezel_fit, button_label, console_empty_message,
-        console_follow_help, copy_title, device_menu, facts, footprint, location_pinned, log_ink, no_matches,
-        pixels, row_subtitle, shortened_udid, stage, status_bar_plate, unreadable_drop,
+        DeviceKind, DeviceVerb, Ink, Orientation, StageState, Turn, bezel_fit, button_label,
+        console_empty_message, console_follow_help, copy_title, device_kind, device_menu, facts, footprint,
+        location_pinned, log_ink, no_matches, pixels, row_subtitle, shortened_udid, stage, status_bar_plate,
+        unreadable_drop,
     };
 
     #[test]
@@ -1039,5 +1166,44 @@ mod tests {
         assert_eq!(no_matches("iphone"), "No devices match “iphone”.");
         assert_eq!(location_pinned("1.0, 2.0"), "Pinned to 1.0, 2.0");
         assert_eq!(unreadable_drop("App.ipa"), "Could not read App.ipa.");
+    }
+
+    /// The whole point of [`super::device_kind`] is the ORDER of its checks, and Apple's own
+    /// product names are what make the order necessary: two of the five carry the word "Apple".
+    #[test]
+    fn a_model_name_names_its_family() {
+        assert_eq!(device_kind("iPhone 17 Pro Max"), DeviceKind::Phone);
+        assert_eq!(device_kind("iPad Pro 13-inch (M4)"), DeviceKind::Pad);
+        assert_eq!(device_kind("Apple Watch Series 10 (46mm)"), DeviceKind::Watch);
+        assert_eq!(device_kind("Apple Vision Pro"), DeviceKind::Vision);
+        assert_eq!(device_kind("Apple TV 4K (3rd generation)"), DeviceKind::Tv);
+
+        // An unrecognised name draws a phone rather than a question mark — the name is right there
+        // beside the glyph, so a plausible silhouette costs nothing and a broken row costs a read.
+        assert_eq!(device_kind("Some Future Thing"), DeviceKind::Phone);
+        assert_eq!(device_kind(""), DeviceKind::Phone);
+    }
+
+    /// Every family draws its own shape and sits under its own heading, and the byte round-trips.
+    #[test]
+    fn every_family_carries_its_own_silhouette_and_heading() {
+        let mut symbols: Vec<&str> = super::DEVICE_KINDS.iter().map(|k| k.symbol()).collect();
+        let mut titles: Vec<&str> = super::DEVICE_KINDS.iter().map(|k| k.group_title()).collect();
+        symbols.sort_unstable();
+        symbols.dedup();
+        titles.sort_unstable();
+        titles.dedup();
+        assert_eq!(symbols.len(), super::DEVICE_KINDS.len());
+        assert_eq!(titles.len(), super::DEVICE_KINDS.len());
+
+        for (rank, kind) in super::DEVICE_KINDS.iter().enumerate() {
+            assert_eq!(usize::from(kind.as_byte()), rank, "the discriminant IS the rank");
+            assert_eq!(DeviceKind::from_byte(kind.as_byte()), *kind);
+        }
+        assert_eq!(
+            DeviceKind::from_byte(200),
+            DeviceKind::Phone,
+            "a byte we never wrote"
+        );
     }
 }

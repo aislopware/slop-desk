@@ -804,15 +804,187 @@ pub const fn log_ink(severity: Severity) -> Ink {
     }
 }
 
+/// Which kind of Android device a row is, and so which silhouette and heading it gets.
+///
+/// The SOURCE is better here than on the simulator side. That panel has to infer the family from
+/// the product name because `/simulators.json` carries no device-type field; Android states it
+/// outright — `ro.build.characteristics` on a running device, `tag.id` on an AVD on disk — so
+/// [`device_kind`] is a lookup with the name only as a fallback.
+///
+/// The discriminant IS the rank, for the reason [`crate::simulator::DeviceKind`] states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum DeviceKind {
+    /// The fallback, and the commonest answer.
+    Phone = 0,
+    /// Drawn LANDSCAPE, like the simulator panel's iPad.
+    Tablet = 1,
+    /// Wear OS.
+    Watch = 2,
+    /// Android TV.
+    Tv = 3,
+    /// Android Automotive.
+    Automotive = 4,
+}
+
+impl DeviceKind {
+    /// The byte the C door answers with, which is also the heading's rank.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+
+    /// The kind a byte names, or [`DeviceKind::Phone`] for one no build of this crate wrote.
+    #[must_use]
+    pub const fn from_byte(byte: u8) -> Self {
+        match byte {
+            1 => Self::Tablet,
+            2 => Self::Watch,
+            3 => Self::Tv,
+            4 => Self::Automotive,
+            _ => Self::Phone,
+        }
+    }
+
+    /// The silhouette's SF Symbol NAME.
+    ///
+    /// THE SAME GLYPH SET AS THE SIMULATOR PANEL, deliberately. These marks say PHONE, TABLET,
+    /// WATCH — a shape, not a brand — and drawing an Android tablet with a different rectangle than
+    /// an iPad would claim a distinction the reader does not need to make: the two panels are
+    /// different tabs, and the row already carries the device's name and its Android version.
+    ///
+    /// The tablet is drawn landscape for the reason [`crate::simulator::DeviceKind::symbol`]
+    /// records for the iPad: at 13 points tall, aspect is the only channel left and turning the
+    /// rectangle is what changes the silhouette.
+    #[must_use]
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::Phone => "iphone",
+            Self::Tablet => "ipad.landscape",
+            Self::Watch => "applewatch",
+            Self::Tv => "appletv",
+            Self::Automotive => "car.fill",
+        }
+    }
+
+    /// The heading a group of these sits under.
+    #[must_use]
+    pub const fn group_title(self) -> &'static str {
+        match self {
+            Self::Phone => "Phone",
+            Self::Tablet => "Tablet",
+            Self::Watch => "Wear",
+            Self::Tv => "TV",
+            Self::Automotive => "Automotive",
+        }
+    }
+}
+
+/// Every kind in rank order — what the ONE table delivery iterates.
+pub const DEVICE_KINDS: [DeviceKind; 5] = [
+    DeviceKind::Phone,
+    DeviceKind::Tablet,
+    DeviceKind::Watch,
+    DeviceKind::Tv,
+    DeviceKind::Automotive,
+];
+
+/// A tablet's shortest side, in dp. Android's own resource qualifier for a tablet layout is
+/// `sw600dp`, so this is the platform's line rather than one invented here.
+pub const TABLET_SHORTEST_WIDTH_DP: i64 = 600;
+
+/// `smallestScreenWidthDp` — the shorter side in density-independent pixels, or `None` when the
+/// device did not report a whole screen.
+///
+/// `density` is Android's DPI bucket, where 160 is the definition of 1dp = 1px. A zero on any axis
+/// is not a small screen, it is a device that answered nothing, and dividing by it would be the one
+/// arithmetic fault this whole function can have.
+#[must_use]
+#[expect(
+    clippy::integer_division,
+    reason = "`smallestScreenWidthDp` is a whole number of dp on the platform's own side — Android \
+              truncates it and the layout qualifier it feeds compares integers, so rounding here would put \
+              this panel's grouping half a dp away from the device's own answer"
+)]
+pub const fn shortest_width_dp(width: i64, height: i64, density: i64) -> Option<i64> {
+    if width <= 0 || height <= 0 || density <= 0 {
+        return None;
+    }
+    let shortest = if width < height { width } else { height };
+    // Saturating rather than wrapping: a hand-edited `config.ini` with an absurd `hw.lcd.width`
+    // must not come back as a small number that reads like a phone.
+    Some(shortest.saturating_mul(160) / density)
+}
+
+/// The family for a device, from the platform's hint first and its geometry second.
+///
+/// ## The hint is read as TOKENS, and that is the trap the whole function turns on
+///
+/// `ro.build.characteristics` is a comma-separated list whose commonest value on an emulator is
+/// `emulator,nosdcard` — and `nosdcard` CONTAINS `car`. A substring test therefore reads every
+/// ordinary emulator as an automotive head unit. The hint is split on its separators and each token
+/// matched on its own, which is also why this cannot be a plain dictionary: the platform's words do
+/// not partition cleanly. `emulator,nosdcard` says how a device RUNS and not what it is, and a
+/// tablet AVD's `tag.id` is `google_apis` like every other.
+///
+/// ## Then the name, then the size
+///
+/// The name is checked before the size because a device profile that says so is more certain than a
+/// threshold — a `Pixel_Tablet` AVD created at an unusual density would otherwise be classified by
+/// arithmetic when it had already said what it was.
+///
+/// The geometry test is what catches the case the hint cannot: every emulator, phone or tablet,
+/// reports `emulator,nosdcard`. `config.ini` gives an un-booted AVD exact `hw.lcd.*`, so the dp
+/// conversion is available on a row that has never run — which is the whole reason the panel can
+/// group a cold device list correctly at all.
+#[must_use]
+pub fn device_kind(hint: &str, name: &str, width: i64, height: i64, density: i64) -> DeviceKind {
+    let folded_hint = hint.to_lowercase();
+    // Split on anything that is not a letter or a digit, which is the Swift this replaces spelled
+    // one language over. It cut on `Character`s and this cuts on scalars; every value that reaches
+    // here is `ro.build.characteristics` or a `tag.id`, both ASCII by the platform's own grammar,
+    // so the two agree on every input and the difference is unreachable rather than tolerated.
+    let says =
+        |predicate: &dyn Fn(&str) -> bool| folded_hint.split(|c: char| !c.is_alphanumeric()).any(predicate);
+    if says(&|token| token.contains("watch") || token.contains("wear")) {
+        return DeviceKind::Watch;
+    }
+    if says(&|token| token.contains("automotive") || token == "car") {
+        return DeviceKind::Automotive;
+    }
+    if says(&|token| token == "tv" || token == "atv" || token.contains("television")) {
+        return DeviceKind::Tv;
+    }
+    if says(&|token| token.contains("tablet")) {
+        return DeviceKind::Tablet;
+    }
+
+    let folded_name = name.to_lowercase();
+    if folded_name.contains("wear") || folded_name.contains("watch") {
+        return DeviceKind::Watch;
+    }
+    if folded_name.contains("tv") {
+        return DeviceKind::Tv;
+    }
+    if folded_name.contains("tablet") || folded_name.contains("fold") {
+        return DeviceKind::Tablet;
+    }
+
+    match shortest_width_dp(width, height, density) {
+        Some(shortest) if shortest >= TABLET_SHORTEST_WIDTH_DP => DeviceKind::Tablet,
+        _ => DeviceKind::Phone,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use slopdesk_devicelog::Severity;
 
     use super::{
-        ACTION_TRAY, CONSOLE_VERB, DeviceMenuEntry, FALLBACK_ASPECT, Ink, NAVIGATION_TRAY, StageAction,
-        StageReading, art_width, aspect_ratio, can_enter, card_help, console_empty_message, copy_title,
-        device_menu, explain, explain_state, facts, is_attached_but_unusable, is_running, is_stoppable,
-        log_ink, stage, subtitle, summary,
+        ACTION_TRAY, CONSOLE_VERB, DeviceKind, DeviceMenuEntry, FALLBACK_ASPECT, Ink, NAVIGATION_TRAY,
+        StageAction, StageReading, art_width, aspect_ratio, can_enter, card_help, console_empty_message,
+        copy_title, device_kind, device_menu, explain, explain_state, facts, is_attached_but_unusable,
+        is_running, is_stoppable, log_ink, stage, subtitle, summary,
     };
 
     #[test]
@@ -1091,5 +1263,94 @@ mod tests {
         // The console plate latches its SENTENCE and keeps its glyph — the lit key already says it.
         assert_eq!(CONSOLE_VERB.symbol, CONSOLE_VERB.latched_symbol);
         assert_ne!(CONSOLE_VERB.help, CONSOLE_VERB.latched_help);
+    }
+
+    /// The reason [`super::device_kind`] reads TOKENS: `nosdcard` contains `car`, and
+    /// `emulator,nosdcard` is the commonest `ro.build.characteristics` value there is. A substring
+    /// test reads every ordinary emulator as an automotive head unit.
+    #[test]
+    fn an_ordinary_emulator_is_not_an_automotive_head_unit() {
+        assert_eq!(
+            device_kind("emulator,nosdcard", "Pixel_8", 1080, 2400, 420),
+            DeviceKind::Phone,
+        );
+        // And a real one still resolves, from the token that actually says so.
+        assert_eq!(
+            device_kind("automotive,emulator", "Automotive_1024p", 1024, 768, 160),
+            DeviceKind::Automotive,
+        );
+        assert_eq!(
+            device_kind("nosdcard,car", "Whatever", 0, 0, 0),
+            DeviceKind::Automotive,
+            "the bare token IS the platform's word for it"
+        );
+    }
+
+    /// The hint leads, the name breaks the ties it cannot, and the size answers last.
+    #[test]
+    fn the_hint_leads_the_name_follows_and_the_size_decides_what_is_left() {
+        assert_eq!(
+            device_kind("watch", "Wear_OS_Round", 454, 454, 320),
+            DeviceKind::Watch,
+        );
+        assert_eq!(
+            device_kind("tv", "Television_1080p", 1920, 1080, 320),
+            DeviceKind::Tv
+        );
+        assert_eq!(device_kind("tablet", "Tab", 800, 1280, 213), DeviceKind::Tablet);
+
+        // No usable hint: `google_apis` is what every AVD's `tag.id` says.
+        assert_eq!(
+            device_kind("google_apis", "Pixel_Tablet", 1600, 2560, 320),
+            DeviceKind::Tablet,
+            "a profile that names itself outranks the arithmetic"
+        );
+        assert_eq!(
+            device_kind("google_apis", "Pixel_Fold", 2208, 1840, 420),
+            DeviceKind::Tablet,
+        );
+
+        // Neither hint nor name: `sw600dp` is Android's own line.
+        assert_eq!(device_kind("", "AVD_1", 1600, 2560, 320), DeviceKind::Tablet);
+        assert_eq!(device_kind("", "AVD_2", 1080, 2400, 420), DeviceKind::Phone);
+        assert_eq!(
+            device_kind("", "AVD_3", 0, 0, 0),
+            DeviceKind::Phone,
+            "a device that reported no screen is a phone, not a division by zero"
+        );
+    }
+
+    /// `sw600dp` is a threshold, so the two rows either side of it are the test.
+    #[test]
+    fn the_shortest_side_is_the_shorter_one_converted_at_a_hundred_and_sixty() {
+        assert_eq!(super::shortest_width_dp(1080, 2400, 420), Some(411));
+        assert_eq!(super::shortest_width_dp(2400, 1080, 420), Some(411));
+        assert_eq!(super::shortest_width_dp(1200, 1920, 320), Some(600));
+        assert_eq!(super::shortest_width_dp(0, 1920, 320), None);
+        assert_eq!(super::shortest_width_dp(1200, 1920, 0), None);
+        assert_eq!(super::shortest_width_dp(-1, 1920, 320), None);
+    }
+
+    /// Every kind draws its own shape and sits under its own heading, and the byte round-trips.
+    #[test]
+    fn every_family_carries_its_own_silhouette_and_heading() {
+        let mut symbols: Vec<&str> = super::DEVICE_KINDS.iter().map(|k| k.symbol()).collect();
+        let mut titles: Vec<&str> = super::DEVICE_KINDS.iter().map(|k| k.group_title()).collect();
+        symbols.sort_unstable();
+        symbols.dedup();
+        titles.sort_unstable();
+        titles.dedup();
+        assert_eq!(symbols.len(), super::DEVICE_KINDS.len());
+        assert_eq!(titles.len(), super::DEVICE_KINDS.len());
+
+        for (rank, kind) in super::DEVICE_KINDS.iter().enumerate() {
+            assert_eq!(usize::from(kind.as_byte()), rank, "the discriminant IS the rank");
+            assert_eq!(DeviceKind::from_byte(kind.as_byte()), *kind);
+        }
+        assert_eq!(
+            DeviceKind::from_byte(200),
+            DeviceKind::Phone,
+            "a byte we never wrote"
+        );
     }
 }

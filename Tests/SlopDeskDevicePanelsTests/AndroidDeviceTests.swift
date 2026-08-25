@@ -177,7 +177,13 @@ final class AndroidDeviceKindTests: XCTestCase {
             AndroidDeviceKind.infer(hint: nil, name: "", width: nil, height: nil, density: nil),
             .phone,
         )
-        XCTAssertNil(AndroidDeviceKind.shortestWidthDP(width: 100, height: 100, density: 0))
+        // A zero density crosses as a zero and comes back a phone, not a division by it. The dp
+        // arithmetic itself is `slopdesk_devicepanel::android::shortest_width_dp` and is pinned
+        // there; what this asserts is that an ABSENT measurement survives the boundary as absence.
+        XCTAssertEqual(
+            AndroidDeviceKind.infer(hint: nil, name: "", width: 100, height: 100, density: 0),
+            .phone,
+        )
     }
 
     func testTheGroupOrderDoesNotDependOnDeclarationOrder() {

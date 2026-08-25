@@ -8547,6 +8547,15 @@ size_t slopdesk_sim_route(const SlopDeskSimRoute *route, uint8_t *out,
 // because that IS the distinction: a mirror the host is starting and a device
 // still booting are two waits with two owners, and the second is tens of
 // seconds. The caption for each is field `15 + answer` of the words door.
+// The five device families, in RANK order — which is also each one's index into
+// `slopdesk_android_device_kinds`. PHONE is the fallback for a device that says
+// nothing and reports no screen, so it has to be 0.
+#define SLOPDESK_ANDROID_KIND_PHONE 0
+#define SLOPDESK_ANDROID_KIND_TABLET 1
+#define SLOPDESK_ANDROID_KIND_WATCH 2
+#define SLOPDESK_ANDROID_KIND_TV 3
+#define SLOPDESK_ANDROID_KIND_AUTOMOTIVE 4
+
 #define SLOPDESK_ANDROID_STAGE_STREAMING 0
 #define SLOPDESK_ANDROID_STAGE_STARTING_DEVICE 1
 #define SLOPDESK_ANDROID_STAGE_STARTING_MIRROR 2
@@ -8718,6 +8727,24 @@ double slopdesk_android_aspect_ratio(int64_t width, int64_t height);
 double slopdesk_android_art_width(double ratio, double art, double floor,
                                   double cap);
 
+// Every device family's silhouette and heading, in RANK order: `[u16 count]`,
+// then per family two length-prefixed strings — the SF Symbol's NAME and the
+// group heading. The INDEX is the kind byte the door below answers, so the face
+// reads a classification straight into this table and holds no switch of its own.
+size_t slopdesk_android_device_kinds(unsigned char *out, size_t cap);
+
+// Which family a device belongs to, as its kind byte (also its rank, also its
+// index into the table above). `hint` is the platform's own word for itself —
+// `ro.build.characteristics` or an AVD's `tag.id` — and is read as TOKENS, never
+// as a substring: `emulator,nosdcard` is the commonest value there is, and
+// `nosdcard` CONTAINS `car`, so a substring test calls every ordinary emulator an
+// automotive head unit. A zero on any geometry axis means the device reported no
+// screen, which answers the phone rather than dividing by it.
+uint8_t slopdesk_android_device_kind(const unsigned char *hint, size_t hint_len,
+                                     const unsigned char *name, size_t name_len,
+                                     int64_t width, int64_t height,
+                                     int64_t density);
+
 // ---------------------------------------------------------------------------
 // And what the Simulators surface says — `slopdesk_devicepanel::simulator`.
 //
@@ -8733,6 +8760,15 @@ double slopdesk_android_art_width(double ratio, double art, double floor,
 #define SLOPDESK_SIMULATOR_INK_SECONDARY 1
 #define SLOPDESK_SIMULATOR_INK_TERTIARY 2
 #define SLOPDESK_SIMULATOR_INK_ALARM 3
+
+// The five device families, in RANK order — which is also each one's index into
+// `slopdesk_simulator_device_kinds`. PHONE is the fallback for a name this build
+// does not recognise, so it has to be 0.
+#define SLOPDESK_SIMULATOR_KIND_PHONE 0
+#define SLOPDESK_SIMULATOR_KIND_PAD 1
+#define SLOPDESK_SIMULATOR_KIND_WATCH 2
+#define SLOPDESK_SIMULATOR_KIND_TV 3
+#define SLOPDESK_SIMULATOR_KIND_VISION 4
 
 // The stage's three definite situations. The caption for each is field
 // `16 + answer` of the words door; LIVE's is empty by construction.
@@ -8875,6 +8911,20 @@ size_t slopdesk_simulator_phrase(uint8_t phrase, const unsigned char *value,
 // console's one alarm colour on the state of nothing being wrong. Debug still
 // recedes — the one place this differs from the Android console's answer.
 uint8_t slopdesk_simulator_log_ink(uint8_t severity_byte);
+
+// Every device family's silhouette and heading, in RANK order — the same layout
+// the Android door above documents. The pad is drawn LANDSCAPE: `iphone` and
+// `ipad` differ only in ASPECT, and aspect does not survive being 13 points tall.
+size_t slopdesk_simulator_device_kinds(unsigned char *out, size_t cap);
+
+// Which family a model NAME names, as its kind byte. From the name because
+// `/simulators.json` carries no device-type field and the route that does costs a
+// request per device — for a glyph, on a list that polls. Order of the checks is
+// the point: two of Apple's five product names contain the word "Apple". An
+// unrecognised name answers 0, the phone — a plausible silhouette beside a name
+// the reader can see beats a row drawn as a question mark.
+uint8_t slopdesk_simulator_device_kind(const unsigned char *name,
+                                       size_t name_len);
 
 // ---------------------------------------------------------------------------
 // The superd control socket's framing — `slopdesk_superwire`.
