@@ -1,4 +1,4 @@
-# `slopdesk-superwire` — the superd ↔ hostd control socket's framing, without the syscalls.
+# `slopdesk-superwire` — the superd ↔ hostd control socket, without the syscalls.
 #
 # ## Why it is its own crate
 # `slopdesk-screenwire`'s reason, exactly: two callers, one implementation. superd writes these
@@ -7,6 +7,15 @@
 # module comment each described the other as a mirror. Two spellings of one byte layout, agreeing
 # by inspection, in the one place where a disagreement shows up as a DESYNCHRONISED SOCKET rather
 # than as a wrong value.
+#
+# The same argument reached the same verdict twice more, one layer up. Inside the frames was a
+# JSON vocabulary written out on both sides too — `protocol.rs` against `SupervisorProtocol.swift`
+# (each opening by calling the other a mirror), and the two batch bodies, `sniffer.rs` and
+# `blocks.rs`'s hand-written `serialize_entry` maps against `SniffedEvent.swift` and
+# `BlockEvent.swift`'s hand-written subscripts. Those did not desynchronise a socket; they did
+# something the framing skew could not, which is pass BOTH suites green while a rename left every
+# finished command reading as still running, forever, with nothing logged. So the messages are
+# here now as well, and the Swift ends are gone.
 #
 # Splitting it out is what lets the app link the framing without linking the DAEMON. superd carries
 # `nix`, `libc`, `base64` and a PTY supervisor, none of which the reading end needs and none of
@@ -18,10 +27,16 @@
 # through `nix`, and hostd receives one through its own `FileDescriptorPassing`. What they share is
 # the LAYOUT — which tag, how long, and what the packed bodies mean — and that is all this crate is.
 #
-# ## No dependencies, on purpose
-# Every byte reaching the parsers was written by a peer that may be an older build. The whole crate
-# is `to_be_bytes`, `get` and a bounds check; a supply chain would buy nothing and would buy it on
-# the app's binary size.
+# ## Three dependencies, and the rule about which
+# The FRAMING half still has none, and that is not an accident to preserve by habit: every byte
+# reaching `parse_output` was written by a peer that may be an older build, the whole of it is
+# `to_be_bytes`, `get` and a bounds check, and a supply chain would buy nothing there.
+#
+# The MESSAGE half — `protocol`, `sniffwire`, `blockwire` — is JSON, so it carries `serde`,
+# `serde_json` and `base64`. Those three were already in every binary that links this crate:
+# superd had all three, and `slopdesk-ffi` carries serde and `serde_json` for a dozen other doors.
+# Folding the message set in here costs the app nothing it was not already paying, and buys the
+# thing the framing bought — ONE spelling, so a rename cannot be a skew.
 [workspace]
 resolver = "3"
 
@@ -39,6 +54,9 @@ name = "slopdesk_superwire"
 path = "src/lib.rs"
 
 [dependencies]
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Linked into the app AND into a daemon on the per-chunk output path.
 [profile.release]
@@ -83,6 +101,11 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 cargo = { level = "deny", priority = -1 }
+
+# superd's deviation, for superd's reason, now that this crate carries the same tree: serde's
+# published dependents do not move in lockstep, so `cargo`'s duplicate check fires on a graph
+# nobody here chose. Answering it would mean pinning transitive versions, which buys drift.
+multiple_crate_versions = "allow"
 
 unwrap_used = "deny"
 expect_used = "deny"

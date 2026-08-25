@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 /// How `slopdesk-hostd` was started — the argv it accepts, and the record it publishes about the
 /// argv it was actually given. Two faces over `slopdesk-hostlaunch`, one file because they are one
@@ -55,7 +56,7 @@ public struct HostdArguments: Sendable, Equatable {
     /// The usage string printed on `--help` or a parse error.
     public static func usage(programName: String) -> String {
         let name = Array(programName.utf8)
-        return hostAnswerText(capacity: 256) { out, cap in
+        return ffiAnswerText(capacity: 256) { out, cap in
             name.withUnsafeBufferPointer { bytes in
                 slopdesk_hostd_args_usage(bytes.baseAddress, bytes.count, out, cap)
             }
@@ -70,7 +71,7 @@ public struct HostdArguments: Sendable, Equatable {
     /// a NUL, and which is what carries a `--shell /opt/My Shells/zsh` intact.
     public static func parse(_ args: [String]) -> Self? {
         let joined = Array(args.joined(separator: "\0").utf8)
-        let blob = hostAnswerBytes(capacity: 512) { out, cap in
+        let blob = ffiAnswerBytes(capacity: 512) { out, cap in
             joined.withUnsafeBufferPointer { bytes in
                 slopdesk_hostd_args_parse(bytes.baseAddress, bytes.count, out, cap)
             }
@@ -79,7 +80,7 @@ public struct HostdArguments: Sendable, Equatable {
         // A short blob is the two sides disagreeing about the layout, which reads as a refusal
         // rather than as a daemon started on whatever the bytes happened to say.
         guard blob.count > 4, blob[0] == 1 else { return nil }
-        let texts = hostRuns(Array(blob[4...]), count: 2)
+        let texts = ffiRuns(Array(blob[4...]), count: 2)
         guard texts.count == 2 else { return nil }
         return Self(
             port: UInt16(blob[1]) << 8 | UInt16(blob[2]),
@@ -123,7 +124,7 @@ public enum HostLaunchRecord {
             slopdesk_hostd_launch_record_write(boundPort, bytes.baseAddress, bytes.count)
         }
         guard wrote else { return nil }
-        let path = hostAnswerText(capacity: 512) { out, cap in
+        let path = ffiAnswerText(capacity: 512) { out, cap in
             slopdesk_hostd_launch_record_path(out, cap)
         }
         return path.isEmpty ? nil : path

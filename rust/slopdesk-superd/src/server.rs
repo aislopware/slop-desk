@@ -156,8 +156,8 @@ impl Connection {
         // artefact, and the events are order-only facts that no split can reorder.
         if let Some(events) = sniff_backlog(&resumed.bytes)
             && !events.is_empty()
-            && let Ok(json) = serde_json::to_vec(&SniffBatch { events: &events })
         {
+            let json = slopdesk_superwire::sniffwire::encode_batch(&events);
             frame::write_sniff(self.stream.as_fd(), pane_id, &json).map_err(|error| error.to_string())?;
         }
         let limit = frame::max_output_payload(pane_id).max(1);
@@ -937,27 +937,11 @@ fn fan_out_output(
     drop(guard);
     // Serialised ONCE for every subscriber rather than per connection: the batches are identical,
     // and the common case is two empty lists that never reach `to_vec` at all.
-    let sniff = (!events.is_empty())
-        .then(|| serde_json::to_vec(&SniffBatch { events }).ok())
-        .flatten();
-    let blocks = (!blocks.is_empty())
-        .then(|| serde_json::to_vec(&BlockBatch { blocks }).ok())
-        .flatten();
+    let sniff = (!events.is_empty()).then(|| slopdesk_superwire::sniffwire::encode_batch(events));
+    let blocks = (!blocks.is_empty()).then(|| slopdesk_superwire::blockwire::encode_batch(blocks));
     for connection in targets {
         connection.send_output(pane_id, offset, bytes, sniff.as_deref(), blocks.as_deref());
     }
-}
-
-/// The body of a [`frame::write_sniff`] frame.
-#[derive(Debug, serde::Serialize)]
-struct SniffBatch<'a> {
-    events: &'a [SniffEvent],
-}
-
-/// The body of a [`frame::write_blocks`] frame.
-#[derive(Debug, serde::Serialize)]
-struct BlockBatch<'a> {
-    blocks: &'a [BlockEvent],
 }
 
 /// `getpid` as the `i32` the protocol carries.

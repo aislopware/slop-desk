@@ -22,11 +22,17 @@ use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-/// hostd's half of the spawn request.
-const SWIFT_PROTOCOL: &str = "Sources/SlopDeskSupervisor/SupervisorProtocol.swift";
+/// hostd's vocabulary — the plain values it asks with, carrying no wire spelling.
+const SWIFT_MESSAGES: &str = "Sources/SlopDeskSupervisor/SupervisorMessages.swift";
 
-/// superd's half of the same request.
-const RUST_PROTOCOL: &str = "rust/slopdesk-superd/src/protocol.rs";
+/// The doors those values cross on their way to the encoder.
+const SWIFT_DOORS: &str = "Sources/SlopDeskSupervisor/SupervisorDoors.swift";
+
+/// The encoder itself — where a Swift field becomes a request field.
+const RUST_FFI: &str = "rust/slopdesk-ffi/src/supervisor_protocol.rs";
+
+/// The ONE spelling of the request superd reads.
+const RUST_PROTOCOL: &str = "rust/slopdesk-superwire/src/protocol.rs";
 
 /// The engines, parsers and taps that moved into a sidecar, and may not come back.
 ///
@@ -77,7 +83,37 @@ const RUST_PROTOCOL: &str = "rust/slopdesk-superd/src/protocol.rs";
 pub fn deleted_host_swift(tree: &Tree) -> Report {
     let mut claims = engines_and_taps();
     claims.extend(rules_that_moved_to_rust());
+    claims.extend(supervisor_protocol_stays_deleted());
     check_all(tree, &claims)
+}
+
+/// The three files the superd-protocol fold deleted, named as paths rather than as patterns.
+///
+/// A ban on a TYPE name is the right shape when what may not come back is a second engine. Here
+/// what may not come back is a second SPELLING of a wire that is now declared once, in
+/// `slopdesk-superwire`, and reached through `slopdesk-ffi`'s doors. That is a file, not a symbol:
+/// re-adding `SupervisorProtocol.swift` with one `CodingKey` in it is the whole failure, and it has
+/// no keyword a pattern could catch. Eleven `slopdesk-invariants` claims existed to compare these
+/// files against superd's; they are gone, and these three absences are what stands in their place
+/// (`CLAUDE.md`, one implementation).
+fn supervisor_protocol_stays_deleted() -> Vec<Claim> {
+    vec![
+        Claim::Absent {
+            path: "Sources/SlopDeskSupervisor/SupervisorProtocol.swift",
+            message: "hostd is spelling superd's protocol again — the vocabulary is slopdesk-superwire's, \
+                      reached through slopdesk-ffi (docs/55)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskSupervisor/SniffedEvent.swift",
+            message: "hostd is decoding the 0x04 body again — slopdesk-superwire::sniffwire owns both \
+                      directions, and a second reading is the §6.13 spinner that never comes down",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskSupervisor/BlockEvent.swift",
+            message: "hostd is decoding the 0x05 body again — slopdesk-superwire::blockwire owns both \
+                      directions, and a second reading is the §6.14 panel of blank rows",
+        },
+    ]
 }
 
 /// The bans themselves, listed apart from the walk that runs them: each port adds a claim, and a
@@ -359,43 +395,81 @@ fn resources_that_moved_to_rust() -> Vec<Claim> {
     }]
 }
 
-/// The two request flags hostd still sends, spelled the same way at both ends.
+/// The two request flags hostd still sends, and every hop each one has to survive.
 ///
-/// hostd may still ASK for the shim and for the tap, and each request has to reach superd spelled
-/// identically or the feature silently never engages with no error anywhere. Both are AT-SPAWN
-/// decisions — a segmenter cannot be attached to a shell already running, and the shim writes rc
-/// files before the shell reads them — so a flag that fails to cross is a pane that is never
-/// segmented, and never has a prompt reprint or an OSC 133 mark, for its whole life.
+/// hostd may still ASK for the shim and for the tap, and each request has to reach superd or the
+/// feature silently never engages with no error anywhere. Both are AT-SPAWN decisions — a segmenter
+/// cannot be attached to a shell already running, and the shim writes rc files before the shell
+/// reads them — so a flag that fails to cross is a pane that is never segmented, and never has a
+/// prompt reprint or an OSC 133 mark, for its whole life.
+///
+/// It used to be two hops, one spelling each side. The port made it four, and every one of them is
+/// a place a `bool` can be dropped without a compiler saying anything: hostd's own value, the door
+/// it is copied onto, the encoder that puts it in the request, and the field superd reads. The
+/// middle two are the new ones and they are the quietest — `fields.shell_integration` left unset is
+/// `false`, which is a perfectly valid request for a pane that wanted no shim.
+///
+/// The last hop is a `Claim::Absent` in [`deleted_host_swift`] rather than here: the file that used
+/// to spell these on hostd's side is gone, and it staying gone is what keeps this four hops rather
+/// than five.
 #[must_use]
 pub fn spawn_request_flags_cross(tree: &Tree) -> Report {
     let claims = [
         Claim::Matches {
-            path: SWIFT_PROTOCOL,
+            path: SWIFT_MESSAGES,
             pattern: r"public var shellIntegration: Bool",
             view: View::Code,
-            message: "the spawn request's shellIntegration flag is not spelled on the Swift side — the shim \
-                      would silently never install",
+            message: "the spawn request's shellIntegration flag is not spelled in hostd's vocabulary — the \
+                      shim would silently never install",
+        },
+        Claim::Matches {
+            path: SWIFT_DOORS,
+            pattern: r"fields\.shell_integration = request\.shellIntegration",
+            view: View::Code,
+            message: "the spawn request's shellIntegration flag never reaches the door — it encodes as \
+                      false, which is a valid request for a pane that wanted no shim",
+        },
+        Claim::Matches {
+            path: RUST_FFI,
+            pattern: r"shell_integration: fields\.shell_integration",
+            view: View::Code,
+            message: "the encoder drops the shellIntegration flag — the request superd reads asks for no \
+                      shim and nothing fails",
         },
         Claim::Matches {
             path: RUST_PROTOCOL,
             pattern: r#"rename = "shellIntegration""#,
             view: View::Code,
-            message: "the spawn request's shellIntegration flag is not spelled on the Rust side — the shim \
-                      would silently never install",
+            message: "the spawn request's shellIntegration flag is not spelled on the wire — the shim would \
+                      silently never install",
         },
         Claim::Matches {
-            path: SWIFT_PROTOCOL,
+            path: SWIFT_MESSAGES,
             pattern: r"public var blocks: BlocksRequest\?",
             view: View::Code,
-            message: "the spawn request's blocks tap is not spelled on the Swift side — a pane can only be \
-                      tapped at spawn, so it would never be segmented",
+            message: "the spawn request's blocks tap is not spelled in hostd's vocabulary — a pane can only \
+                      be tapped at spawn, so it would never be segmented",
+        },
+        Claim::Matches {
+            path: SWIFT_DOORS,
+            pattern: r"fields\.blocks = request\.blocks != nil",
+            view: View::Code,
+            message: "the blocks tap never reaches the door — every pane encodes as untapped, so the \
+                      Commands panel is empty for the life of the process",
+        },
+        Claim::Matches {
+            path: RUST_FFI,
+            pattern: r"blocks: fields\.blocks\.then",
+            view: View::Code,
+            message: "the encoder drops the blocks tap — a pane can only be tapped at spawn, so it would \
+                      never be segmented",
         },
         Claim::Matches {
             path: RUST_PROTOCOL,
             pattern: r"pub blocks: Option<BlocksRequest>",
             view: View::Code,
-            message: "the spawn request's blocks tap is not spelled on the Rust side — a pane can only be \
-                      tapped at spawn, so it would never be segmented",
+            message: "the spawn request's blocks tap is not spelled on the wire — a pane can only be tapped \
+                      at spawn, so it would never be segmented",
         },
     ];
     check_all(tree, &claims)
@@ -483,29 +557,82 @@ mod tests {
         assert!(deleted_host_swift(&fixture.tree()).is_clean());
     }
 
+    /// The file whose return would put a second spelling of the wire back in Swift. It has no
+    /// keyword to ban, so the ban is on the PATH.
+    #[test]
+    fn a_revived_supervisor_protocol_file_is_red() {
+        for name in [
+            "SupervisorProtocol.swift",
+            "SniffedEvent.swift",
+            "BlockEvent.swift",
+        ] {
+            let fixture = Fixture::new(&format!("revived-{name}"));
+            fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
+            assert!(deleted_host_swift(&fixture.tree()).is_clean(), "{name}");
+            fixture.write(
+                &format!("Sources/SlopDeskSupervisor/{name}"),
+                "enum Key: String, CodingKey { case kind }\n",
+            );
+            assert!(
+                !deleted_host_swift(&fixture.tree()).is_clean(),
+                "{name}: the ban did not fire on its return"
+            );
+        }
+    }
+
+    /// A tree where all four hops of both flags are spelled.
+    fn spawn_flags_fixture(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fixture
+            .write(
+                "Sources/SlopDeskSupervisor/SupervisorMessages.swift",
+                "public var shellIntegration: Bool = false\npublic var blocks: BlocksRequest?\n",
+            )
+            .write(
+                "Sources/SlopDeskSupervisor/SupervisorDoors.swift",
+                "fields.shell_integration = request.shellIntegration\nfields.blocks = request.blocks != \
+                 nil\n",
+            )
+            .write(
+                "rust/slopdesk-ffi/src/supervisor_protocol.rs",
+                "shell_integration: fields.shell_integration,\nblocks: fields.blocks.then(|| todo!()),\n",
+            )
+            .write(
+                "rust/slopdesk-superwire/src/protocol.rs",
+                "#[serde(rename = \"shellIntegration\")]\npub blocks: Option<BlocksRequest>,\n",
+            );
+        fixture
+    }
+
     /// A flag spelled on one side only is the silent half-crossing the rule exists for.
     #[test]
-    fn a_flag_spelled_on_one_side_only_is_red() {
-        let fixture = Fixture::new("spawn-flags");
-        fixture.write(
-            "Sources/SlopDeskSupervisor/SupervisorProtocol.swift",
-            "public var shellIntegration: Bool = false\npublic var blocks: BlocksRequest?\n",
-        );
-        fixture.write(
-            "rust/slopdesk-superd/src/protocol.rs",
-            "#[serde(rename = \"shellIntegration\")]\npub blocks: Option<BlocksRequest>,\n",
-        );
+    fn a_flag_the_wire_stops_spelling_is_red() {
+        let fixture = spawn_flags_fixture("spawn-flags");
         assert!(spawn_request_flags_cross(&fixture.tree()).is_clean());
 
-        let half = Fixture::new("spawn-flags-half");
-        half.write(
-            "Sources/SlopDeskSupervisor/SupervisorProtocol.swift",
-            "public var shellIntegration: Bool = false\npublic var blocks: BlocksRequest?\n",
-        );
-        half.write(
-            "rust/slopdesk-superd/src/protocol.rs",
+        fixture.write(
+            "rust/slopdesk-superwire/src/protocol.rs",
             "pub blocks: Option<BlocksRequest>,\n",
         );
-        assert!(!spawn_request_flags_cross(&half.tree()).is_clean());
+        assert!(!spawn_request_flags_cross(&fixture.tree()).is_clean());
+    }
+
+    /// The hop the port ADDED, and the quietest of the four: hostd still has the flag and superd
+    /// still reads it, but the door never copies it, so every pane asks for no shim.
+    #[test]
+    fn a_flag_dropped_at_the_door_is_red() {
+        let fixture = spawn_flags_fixture("spawn-flags-door");
+        fixture.write(
+            "Sources/SlopDeskSupervisor/SupervisorDoors.swift",
+            "fields.blocks = request.blocks != nil\n",
+        );
+        let report = spawn_request_flags_cross(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("never reaches the door")),
+            "{report:?}"
+        );
     }
 }

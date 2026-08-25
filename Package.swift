@@ -259,6 +259,9 @@ let package = Package(
                 // one of the targets above: an import that works by transitivity works until the
                 // target it rode in on drops the dependency.
                 "CSlopDeskFFI",
+                // …and the ask-with-a-guess delivery + the length-prefixed run framing every door
+                // above is called through, which moved here when the second target needed them.
+                "SlopDeskArena",
             ],
 
             linkerSettings: ffiCLibraries,
@@ -800,11 +803,14 @@ let package = Package(
         // ⚠️ This is the ONE protocol here that must tolerate VERSION SKEW. The three wire paths are
         // golden-pinned at version 1 with no negotiation because both ends ship together; superd is a
         // LaunchAgent that outlives hostd's BUILD, so this one negotiates. Append-only, version in
-        // `hello`, unknown verbs answered `unsupported` — see SupervisorProtocol's doc comment before
-        // changing anything in here.
+        // `hello`, unknown verbs answered `unsupported` — and NONE of that is spelled in this target
+        // any more: the message set is `slopdesk_superwire::protocol`, reached through
+        // `slopdesk-ffi`'s `slopdesk_supervisor_*` doors. What is left here is the SOCKET.
         .target(
             name: "SlopDeskSupervisor",
-            dependencies: ["SlopDeskTTY", "CSlopDeskFFI"],
+            // SlopDeskArena: the ask-with-a-guess delivery, the length-prefixed run framing and the
+            // `(offset, length)` arena reads every one of those doors answers in.
+            dependencies: ["SlopDeskTTY", "CSlopDeskFFI", "SlopDeskArena"],
             linkerSettings: ffiCLibraries,
         ),
 

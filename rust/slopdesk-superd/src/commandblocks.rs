@@ -78,18 +78,13 @@ pub struct CommandBlock {
     pub prompt_ordinal: u64,
 }
 
-/// A synthetic progress badge the segmenter decided to drive.
+/// What a slow command's badge should do — `slopdesk_superwire::blockwire`'s, re-exported.
 ///
 /// The segmenter does not build wire frames; it says WHAT happened and the owner turns that into
-/// one. Keeping the wire vocabulary out of here is what lets this crate stay the byte reader rather
-/// than a second place the protocol is spelled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SyntheticProgress {
-    /// A slow command started — show an indeterminate spinner.
-    Indeterminate,
-    /// Its block closed — clear the spinner.
-    Clear,
-}
+/// one. That is still true, and is why this is a re-export rather than a second two-state enum: the
+/// vocabulary belongs to the crate both ends of the socket link, and a private copy here would be a
+/// third spelling of two words.
+pub use slopdesk_superwire::blockwire::SyntheticProgress;
 
 /// The escape-parser state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

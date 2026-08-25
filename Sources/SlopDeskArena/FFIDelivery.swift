@@ -1,5 +1,5 @@
-// HostFFIDelivery — the ONE way this target asks a door for bytes, and the ONE framing it reads
-// and writes length-prefixed runs in.
+// FFIDelivery — the ONE way Swift asks a door for bytes, and the ONE framing it reads and writes
+// length-prefixed runs in.
 //
 // docs/55 §4: a delivery door writes into the caller's buffer only if the answer FITS, and returns
 // the length it needed either way. So every call is ask-with-a-guess, and grow-once when the guess
@@ -7,7 +7,13 @@
 // every cross-language off-by-one in this project has come in through.
 //
 // The run framing is `crate::push_text`'s: `[UInt32 big-endian length][UTF-8 bytes]`, used in both
-// directions — a curated environment crosses out as KEY, VALUE pairs in it and comes back in it.
+// directions — a curated environment crosses out as KEY, VALUE pairs in it and comes back in it, and
+// a spawn's argv crosses out as one run per argument.
+//
+// It lives beside ``ArenaText`` and for its reason: this was hostd's alone until the supervisor
+// protocol folded into `slopdesk-ffi`, at which point the second target needed the identical four
+// lines. Neither half is a boundary — a closure and a length prefix are arithmetic — so this module
+// still depends on nothing but Foundation, not even `CSlopDeskFFI`.
 //
 // A run that would read past the end of the blob ends the walk rather than shifting into whatever
 // follows: a short delivery means the door and this file disagree about the layout, and continuing
@@ -26,7 +32,7 @@ import Foundation
 /// `capacity` is the first guess. Over it, the door reports its size and the call happens again —
 /// which is the retry the convention exists to make correct. An answer of `0`, or one that somehow
 /// still does not fit the grown buffer, is the empty delivery.
-func hostAnswerBytes(
+public func ffiAnswerBytes(
     capacity: Int = 4096,
     _ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int,
 ) -> [UInt8] {
@@ -41,16 +47,16 @@ func hostAnswerBytes(
 }
 
 /// The same, decoded as UTF-8 — what every door whose answer is one path or one word wants.
-func hostAnswerText(
+public func ffiAnswerText(
     capacity: Int = 4096,
     _ door: (UnsafeMutablePointer<UInt8>?, Int) -> Int,
 ) -> String {
     // swiftlint:disable:next optional_data_string_conversion
-    String(decoding: hostAnswerBytes(capacity: capacity, door), as: UTF8.self)
+    String(decoding: ffiAnswerBytes(capacity: capacity, door), as: UTF8.self)
 }
 
 /// Appends one `[UInt32 big-endian length][UTF-8]` run.
-func hostPushRun(_ blob: inout [UInt8], _ text: String) {
+public func ffiPushRun(_ blob: inout [UInt8], _ text: String) {
     let bytes = Array(text.utf8)
     let length = UInt32(bytes.count)
     blob.append(UInt8(truncatingIfNeeded: length >> 24))
@@ -61,7 +67,7 @@ func hostPushRun(_ blob: inout [UInt8], _ text: String) {
 }
 
 /// Reads up to `count` runs out of `blob`, stopping early on a truncated or overrunning prefix.
-func hostRuns(_ blob: [UInt8], count: Int) -> [String] {
+public func ffiRuns(_ blob: [UInt8], count: Int) -> [String] {
     var runs: [String] = []
     runs.reserveCapacity(count)
     var cursor = blob.startIndex

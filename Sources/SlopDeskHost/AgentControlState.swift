@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import SlopDeskAgentDetect
+import SlopDeskArena
 
 /// The supervision vocabulary the agent-control NDJSON socket speaks: `idle` / `working` / `done`
 /// / `blocked`.
@@ -18,15 +19,15 @@ public enum AgentControlState {
     /// validates against and both error messages print.
     public static let allStates: [String] = {
         var count = 0
-        let blob = hostAnswerBytes(capacity: 256) { out, cap in
+        let blob = ffiAnswerBytes(capacity: 256) { out, cap in
             Int(slopdesk_agent_supervision_states(out, cap, &count))
         }
-        return hostRuns(blob, count: count)
+        return ffiRuns(blob, count: count)
     }()
 
     /// Maps a host ``ClaudeStatus`` to its ctl wire string.
     public static func string(from status: ClaudeStatus) -> String {
-        hostAnswerText(capacity: 32) { out, cap in
+        ffiAnswerText(capacity: 32) { out, cap in
             Int(slopdesk_agent_supervision_state(status.ffiByte, out, cap))
         }
     }

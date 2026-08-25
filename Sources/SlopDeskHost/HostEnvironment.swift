@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 import SlopDeskVideoProtocol
 
 /// Builds the curated environment for a spawned login shell.
@@ -59,8 +60,8 @@ public enum HostEnvironment {
         // argument order — which is the drift the port exists to end. See `crate::spawn_env`.
         var blob: [UInt8] = []
         for (key, value) in parent {
-            hostPushRun(&blob, key)
-            hostPushRun(&blob, value)
+            ffiPushRun(&blob, key)
+            ffiPushRun(&blob, value)
         }
         var pairs = 0
         let delivery = blob.withUnsafeBufferPointer { parentBytes in
@@ -69,7 +70,7 @@ public enum HostEnvironment {
                     lend(agentSocketPath ?? "") { socketBytes in
                         lend(paneID ?? "") { paneBytes in
                             lend(controlSocketPath ?? "") { controlBytes in
-                                hostAnswerBytes(capacity: max(4096, blob.count + 1024)) { out, cap in
+                                ffiAnswerBytes(capacity: max(4096, blob.count + 1024)) { out, cap in
                                     slopdesk_spawn_env(
                                         parentBytes.baseAddress, parentBytes.count,
                                         termBytes.baseAddress, termBytes.count,
@@ -86,7 +87,7 @@ public enum HostEnvironment {
                 }
             }
         }
-        let runs = hostRuns(delivery, count: pairs * 2)
+        let runs = ffiRuns(delivery, count: pairs * 2)
         var env: [String: String] = [:]
         env.reserveCapacity(pairs)
         for index in stride(from: 0, to: runs.count - 1, by: 2) {
@@ -302,7 +303,7 @@ public enum HostEnvironment {
         -> String
     {
         lend(parent["SHELL"] ?? "") { shell in
-            hostAnswerText(capacity: 256) { out, cap in
+            ffiAnswerText(capacity: 256) { out, cap in
                 slopdesk_login_shell(shell.baseAddress, shell.count, out, cap)
             }
         }
@@ -312,7 +313,7 @@ public enum HostEnvironment {
     /// `.zprofile`/`.zshrc`; [12] §1.4).
     public static func loginArgv0(forShell shell: String) -> String {
         lend(shell) { bytes in
-            hostAnswerText(capacity: 256) { out, cap in
+            ffiAnswerText(capacity: 256) { out, cap in
                 slopdesk_login_argv0(bytes.baseAddress, bytes.count, out, cap)
             }
         }

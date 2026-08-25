@@ -36,6 +36,19 @@
 //! Every parser here answers `None` rather than a partial value, and none of them can panic on any
 //! byte string: the peer may be an older or corrupt build, and a desynchronised socket is the
 //! expensive failure this crate exists to make impossible to reach two different ways.
+//!
+//! # What is INSIDE the frames
+//!
+//! The three modules below, for the same reason as everything above them. [`protocol`] is the
+//! request/reply vocabulary, [`sniffwire`] the `0x04` body and [`blockwire`] the `0x05` body — and
+//! all three were written out in Rust AND in Swift, each end's file naming the other a mirror. The
+//! framing skew was expensive and loud; those three were cheap and SILENT, which is worse: a
+//! renamed key passed both suites while every finished command read as still running, forever, with
+//! nothing logged (`docs/51` §§6.13–6.14).
+
+pub mod blockwire;
+pub mod protocol;
+pub mod sniffwire;
 
 /// The control socket's name inside whichever directory resolves.
 pub const CONTROL_SOCKET_NAME: &str = "slopdesk-superd.sock";

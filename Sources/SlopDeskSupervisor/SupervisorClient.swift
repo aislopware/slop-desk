@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// One thing that happened to a pane's output stream.
@@ -30,6 +31,13 @@ public enum PaneOutputEvent: Sendable {
 /// unsolicited `exited` notifications and every pane's output. Synchronous because every caller is
 /// already on a path that used to call `openpty` + `fork` inline and blocked for exactly as long;
 /// making it async would change the shape of `spawnFreshShell` for no gain.
+///
+/// ## What this file is, now that the message set left it
+/// The connection, and nothing else: the socket, the reply-waiter table, the serial write queue and
+/// the reader thread. Each is about a connection `slopdesk-ffi` cannot see. What a request LOOKS
+/// like and what a reply MEANS crossed into `slopdesk_superwire::protocol` — see
+/// ``SupervisorEncoder`` and ``SupervisorReplyReader`` — because that half was spelled twice, once
+/// here and once in superd, and a disagreement between them passed both suites and produced a `nil`.
 ///
 /// ## Absent superd is fatal to panes, and says so
 /// There is no fallback. hostd cannot fork a shell — nothing in Swift can any more — so a failed
@@ -133,7 +141,7 @@ public final class SupervisorClient: @unchecked Sendable {
     /// and every reply, and the peer is a hook binary blocking its agent. With no handler installed
     /// the descriptor is closed rather than leaked, which is also the correct answer — a connection
     /// arriving for a kind nobody wired up has nowhere to go.
-    public var onConnection: (@Sendable (String, Int32) -> Void)?
+    public var onConnection: (@Sendable (ListenerKind, Int32) -> Void)?
     public var onLog: (@Sendable (String) -> Void)?
 
     /// Registers `handler`, to be called off the caller's thread when the connection drops.
@@ -180,28 +188,24 @@ public final class SupervisorClient: @unchecked Sendable {
 
         startReader(link)
 
-        let reply = try request(
-            SupervisorRequest(
-                id: 0, // replaced by `request`
-                verb: SupervisorProtocol.Verb.hello,
-                hello: HelloRequest(client: clientName),
-            ),
-        )
-        guard let hello = reply.body.hello else {
+        let reply = try request(verb: "hello") { id in
+            SupervisorEncoder.hello(id: id, client: clientName)
+        }
+        guard let hello = reply.reader.hello else {
             disconnect()
             throw ClientError.malformedReply
         }
-        guard hello.versionMajor == SupervisorProtocol.versionMajor else {
+        guard hello.versionMajor == SupervisorEncoder.versionMajor else {
             disconnect()
             throw ClientError.incompatible(
                 superdMajor: hello.versionMajor,
-                ourMajor: SupervisorProtocol.versionMajor,
+                ourMajor: SupervisorEncoder.versionMajor,
             )
         }
         hookSocketPath = hello.hookSocketPath
         controlSocketPath = hello.controlSocketPath
         superdPID = hello.superdPID
-        negotiatedMinor = min(hello.versionMinor, SupervisorProtocol.versionMinor)
+        negotiatedMinor = min(hello.versionMinor, SupervisorEncoder.versionMinor)
         superdBuildVersion = hello.buildVersion
         onLog?(
             "supervisor: attached to superd pid \(hello.superdPID) "
@@ -243,41 +247,35 @@ public final class SupervisorClient: @unchecked Sendable {
 
     /// Forks a pane shell in superd and returns the record plus the master fd this process now owns.
     public func spawn(_ spawn: SpawnRequest) throws -> (record: PaneRecord, masterFD: Int32) {
-        let reply = try request(
-            SupervisorRequest(id: 0, verb: SupervisorProtocol.Verb.spawn, spawn: spawn),
-        )
-        guard let record = reply.body.pane else { throw ClientError.malformedReply }
+        let reply = try request(verb: "spawn") { id in SupervisorEncoder.spawn(id: id, spawn) }
+        guard let record = reply.reader.pane else { throw ClientError.malformedReply }
         guard let descriptor = reply.descriptor else { throw ClientError.missingDescriptor }
         return (record, descriptor)
     }
 
     /// Takes back a pane that survived a restart.
     public func adopt(paneID: String) throws -> (record: PaneRecord, masterFD: Int32) {
-        let reply = try request(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.adopt,
-                adopt: AdoptRequest(paneID: paneID),
-            ),
-        )
-        guard let record = reply.body.pane else { throw ClientError.malformedReply }
+        let reply = try request(verb: "adopt") { id in
+            SupervisorEncoder.pane(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_ADOPT), id: id, paneID: paneID,
+            )
+        }
+        guard let record = reply.reader.pane else { throw ClientError.malformedReply }
         guard let descriptor = reply.descriptor else { throw ClientError.missingDescriptor }
         return (record, descriptor)
     }
 
     public func list() throws -> [PaneRecord] {
-        let reply = try request(SupervisorRequest(id: 0, verb: SupervisorProtocol.Verb.list))
-        return reply.body.panes ?? []
+        try request(verb: "list") { id in SupervisorEncoder.list(id: id) }.reader.paneList ?? []
     }
 
     public func signal(paneID: String, signal number: Int32) throws {
-        _ = try request(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.signal,
-                signal: SignalRequest(paneID: paneID, signal: number),
-            ),
-        )
+        _ = try request(verb: "signal") { id in
+            SupervisorEncoder.paneNumber(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_SIGNAL), id: id, paneID: paneID,
+                value: UInt64(bitPattern: Int64(number)),
+            )
+        }
     }
 
     /// Tells superd the pane's new size.
@@ -293,13 +291,7 @@ public final class SupervisorClient: @unchecked Sendable {
     /// what the NEXT hostd reads when it adopts this pane. Left at the spawn-time default, a 200×50
     /// pane comes back re-wrapped at 80 columns after every restart.
     public func resize(paneID: String, rows: UInt16, cols: UInt16) {
-        send(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.resize,
-                resize: ResizeRequest(paneID: paneID, rows: rows, cols: cols),
-            ),
-        )
+        send { id in SupervisorEncoder.resize(id: id, paneID: paneID, rows: rows, cols: cols) }
     }
 
     /// Claims the child-facing listeners this hostd will serve.
@@ -315,14 +307,8 @@ public final class SupervisorClient: @unchecked Sendable {
     ///
     /// - Throws: ``ClientError/unsupported(verb:message:)`` from a superd older than protocol 1.3,
     ///   which is recoverable — that superd binds nothing, so hostd is free to fall back.
-    public func listen(kinds: [String]) throws {
-        _ = try request(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.listen,
-                listen: ListenRequest(kinds: kinds),
-            ),
-        )
+    public func listen(kinds: Set<ListenerKind>) throws {
+        _ = try request(verb: "listen") { id in SupervisorEncoder.listen(id: id, kinds: kinds) }
     }
 
     /// Starts receiving a pane's output.
@@ -349,14 +335,13 @@ public final class SupervisorClient: @unchecked Sendable {
         outputHandlers[paneID] = onEvent
         lock.unlock()
         do {
-            let reply = try request(
-                SupervisorRequest(
-                    id: 0,
-                    verb: SupervisorProtocol.Verb.subscribe,
-                    subscribe: SubscribeRequest(paneID: paneID, fromOffset: fromOffset),
-                ),
-            )
-            guard let position = reply.body.stream else { throw ClientError.malformedReply }
+            let reply = try request(verb: "subscribe") { id in
+                SupervisorEncoder.paneNumber(
+                    UInt32(SLOPDESK_SUPERVISOR_VERB_SUBSCRIBE), id: id, paneID: paneID,
+                    value: fromOffset,
+                )
+            }
+            guard let position = reply.reader.stream else { throw ClientError.malformedReply }
             return position
         } catch {
             lock.lock()
@@ -368,18 +353,20 @@ public final class SupervisorClient: @unchecked Sendable {
 
     /// Retires a pane sniffer's title-coalescing anchor.
     ///
+    /// superd's sniffer drops a title identical to the one it last emitted. When a detected agent
+    /// EXITS, that anchor has to go: the next agent's opening title is very often byte-identical to
+    /// the one just retired (`✳ Claude Code`), and deduping it away leaves the pane untitled.
+    ///
     /// Best-effort and un-awaited, like ``unsubscribe(paneID:)`` and for both of its reasons: this
     /// is reached FROM the read loop (a detected agent's exit unwinding into the chunk handler), and
     /// waiting there for a reply only that loop can deliver is a deadlock. Losing it costs a stale
-    /// pane title rather than a wrong one — see ``ForgetTitleRequest``.
+    /// pane title rather than a wrong one.
     public func forgetTitleCoalescing(paneID: String) {
-        send(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.forgetTitle,
-                forgetTitle: ForgetTitleRequest(paneID: paneID),
-            ),
-        )
+        send { id in
+            SupervisorEncoder.pane(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_FORGET_TITLE), id: id, paneID: paneID,
+            )
+        }
     }
 
     /// One finished block's retained output, from superd's ring.
@@ -387,13 +374,16 @@ public final class SupervisorClient: @unchecked Sendable {
     /// - Returns: the bytes, or `nil` when this pane has no tap at all. An EMPTY array is the other
     ///   answer and a different one: the block existed and has aged out of the ring, or never was.
     public func blockOutput(paneID: String, index: UInt32) throws -> [UInt8]? {
-        try request(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.blockOutput,
-                blockOutput: BlockOutputRequest(paneID: paneID, index: index),
-            ),
-        ).body.blocks?.outputBytes
+        let reply = try request(verb: "blockOutput") { id in
+            SupervisorEncoder.paneNumber(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_BLOCK_OUTPUT), id: id, paneID: paneID,
+                value: UInt64(index),
+            )
+        }
+        // The pane having a tap is what makes this non-nil; the BLOCK having survived is what fills
+        // it. An evicted index answers `[]` under a present `blocks`, which is a different fact.
+        guard let blocks = reply.reader.blocks else { return nil }
+        return blocks.output ?? []
     }
 
     /// Every block superd's tap still knows about this pane, ascending.
@@ -404,13 +394,11 @@ public final class SupervisorClient: @unchecked Sendable {
     ///
     /// - Returns: `nil` when the pane has no tap.
     public func blockSnapshot(paneID: String) throws -> [BlockMetadata]? {
-        try request(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.blockSnapshot,
-                blockRead: BlockReadRequest(paneID: paneID),
-            ),
-        ).body.blocks?.snapshot
+        try request(verb: "blockSnapshot") { id in
+            SupervisorEncoder.pane(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_BLOCK_SNAPSHOT), id: id, paneID: paneID,
+            )
+        }.reader.blocks?.snapshot
     }
 
     /// The agent-control read: the last `limit` finished blocks with their bytes, the running
@@ -421,13 +409,12 @@ public final class SupervisorClient: @unchecked Sendable {
     ///
     /// - Returns: `nil` when the pane has no tap.
     public func blockControl(paneID: String, limit: Int) throws -> BlocksReply? {
-        try request(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.blockControl,
-                blockRead: BlockReadRequest(paneID: paneID, limit: limit),
-            ),
-        ).body.blocks
+        try request(verb: "blockControl") { id in
+            SupervisorEncoder.paneNumber(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_BLOCK_CONTROL), id: id, paneID: paneID,
+                value: UInt64(max(0, limit)),
+            )
+        }.reader.blocks
     }
 
     /// Where a session's transcript is on disk, and how much of a live stream it already holds.
@@ -438,13 +425,12 @@ public final class SupervisorClient: @unchecked Sendable {
     /// - Returns: `nil` when that session has no transcript — which is not the same as an empty
     ///   one, because only "there is nothing here" may start a pane at offset 0.
     public func journalInfo(directory: String, sessionID: String) throws -> JournalReply? {
-        try request(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.journalInfo,
-                journal: JournalRequest(directory: directory, sessionID: sessionID),
-            ),
-        ).body.journal
+        try request(verb: "journalInfo") { id in
+            SupervisorEncoder.journal(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_JOURNAL_INFO), id: id,
+                directory: directory, sessionID: sessionID,
+            )
+        }.reader.journal
     }
 
     /// Removes a session's transcript — the deliberate end of a pane, and the only thing that
@@ -454,13 +440,12 @@ public final class SupervisorClient: @unchecked Sendable {
     /// on POSIX an unlink under an open writer is not an error, it is a pane journaling the rest of
     /// its life into an inode nobody can ever open again.
     public func journalDelete(directory: String, sessionID: String) {
-        send(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.journalDelete,
-                journal: JournalRequest(directory: directory, sessionID: sessionID),
-            ),
-        )
+        send { id in
+            SupervisorEncoder.journal(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_JOURNAL_DELETE), id: id,
+                directory: directory, sessionID: sessionID,
+            )
+        }
     }
 
     /// Bounds the orphans: unlinks transcripts past `maxAge` or past the `keepNewest` newest.
@@ -468,17 +453,12 @@ public final class SupervisorClient: @unchecked Sendable {
     /// The age and the count are hostd's policy; which files a live pane is still writing is
     /// superd's knowledge, and it is the one thing a sweep must not get wrong.
     public func journalSweep(directory: String, maxAgeSeconds: UInt64, keepNewest: Int) {
-        send(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.journalSweep,
-                journal: JournalRequest(
-                    directory: directory,
-                    maxAgeSeconds: maxAgeSeconds,
-                    keepNewest: keepNewest,
-                ),
-            ),
-        )
+        send { id in
+            SupervisorEncoder.journal(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_JOURNAL_SWEEP), id: id,
+                directory: directory, maxAgeSeconds: maxAgeSeconds, keepNewest: keepNewest,
+            )
+        }
     }
 
     /// Stops receiving a pane's output. The pane keeps running and superd keeps draining it.
@@ -491,13 +471,11 @@ public final class SupervisorClient: @unchecked Sendable {
         lock.lock()
         outputHandlers.removeValue(forKey: paneID)
         lock.unlock()
-        send(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.unsubscribe,
-                unsubscribe: UnsubscribeRequest(paneID: paneID),
-            ),
-        )
+        send { id in
+            SupervisorEncoder.pane(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_UNSUBSCRIBE), id: id, paneID: paneID,
+            )
+        }
     }
 
     /// Stops or resumes superd's reads on a pane — the backpressure gate.
@@ -510,28 +488,25 @@ public final class SupervisorClient: @unchecked Sendable {
     /// Also not `throws`: the caller holds a queue lock and has nothing useful to do with an error.
     /// A pause that fails to land costs a bounded overshoot; a pause that blocks costs the pane.
     public func setPaused(paneID: String, paused: Bool) {
-        send(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.pause,
-                pause: PauseRequest(paneID: paneID, paused: paused),
-            ),
-        )
+        send { id in
+            SupervisorEncoder.paneFlag(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_PAUSE), id: id, paneID: paneID, flag: paused,
+            )
+        }
     }
 
-    /// The pane is closed for good. NEVER call this on hostd shutdown — see ``ReleaseRequest``.
+    /// The pane is closed for good. NEVER call this on hostd shutdown — a hostd that exits must
+    /// RELINQUISH its panes, or the restart takes the shells with it.
     public func release(paneID: String, kill: Bool) throws {
         lock.lock()
         exitHandlers.removeValue(forKey: paneID)
         outputHandlers.removeValue(forKey: paneID)
         lock.unlock()
-        _ = try request(
-            SupervisorRequest(
-                id: 0,
-                verb: SupervisorProtocol.Verb.release,
-                release: ReleaseRequest(paneID: paneID, kill: kill),
-            ),
-        )
+        _ = try request(verb: "release") { id in
+            SupervisorEncoder.paneFlag(
+                UInt32(SLOPDESK_SUPERVISOR_VERB_RELEASE), id: id, paneID: paneID, flag: kill,
+            )
+        }
     }
 
     // MARK: Request plumbing
@@ -542,7 +517,10 @@ public final class SupervisorClient: @unchecked Sendable {
     /// skew contract depends on that staying true. It is recorded in `unawaited` so the read loop
     /// drops the reply rather than parking it in `pending` for a waiter that will never come; an
     /// un-dropped reply per keystroke-driven pause would be an unbounded map.
-    private func send(_ template: SupervisorRequest) {
+    ///
+    /// The bytes are built by the caller's closure FROM the allocated id, because the id is part of
+    /// what is encoded — there is no half-built request to stamp afterwards.
+    private func send(_ encode: (UInt64) -> [UInt8]) {
         lock.lock()
         guard let link = connection else {
             lock.unlock()
@@ -553,9 +531,10 @@ public final class SupervisorClient: @unchecked Sendable {
         unawaited.insert(id)
         lock.unlock()
 
-        var outbound = template
-        outbound.id = id
-        guard let encoded = try? SupervisorCodec.encode(outbound) else {
+        let encoded = encode(id)
+        // An empty encoding is the door's refusal, not an empty frame: sending one would put a body
+        // superd cannot parse on a socket whose framing depends on every body being a message.
+        guard !encoded.isEmpty else {
             lock.lock()
             unawaited.remove(id)
             lock.unlock()
@@ -578,16 +557,21 @@ public final class SupervisorClient: @unchecked Sendable {
 
     /// Writes one frame from the outbound queue and waits for it to leave.
     ///
-    /// The wait is on the WRITE, not on a reply, and it is what keeps ``request(_:)`` able to
+    /// The wait is on the WRITE, not on a reply, and it is what keeps ``request(verb:_:)`` able to
     /// report a broken socket to its caller. Never called from the read loop: an awaited request
     /// there waits for a reply only that loop can deliver, which the callers document.
     private func writeInOrder(_ bytes: [UInt8], on link: SupervisorConnection) throws {
         try outboundQueue.sync { try link.send(body: bytes) }
     }
 
+    /// Sends a request and parks until its reply comes back.
+    ///
+    /// `verb` is carried only so a failure can name what failed; nothing routes on it, and the wire
+    /// spelling is the encoder's.
     private func request(
-        _ template: SupervisorRequest,
-    ) throws -> (body: SupervisorReply, descriptor: Int32?) {
+        verb: String,
+        _ encode: (UInt64) -> [UInt8],
+    ) throws -> (reader: SupervisorReplyReader, descriptor: Int32?) {
         lock.lock()
         guard let link = connection else {
             lock.unlock()
@@ -597,9 +581,9 @@ public final class SupervisorClient: @unchecked Sendable {
         nextRequestID += 1
         lock.unlock()
 
-        var outbound = template
-        outbound.id = id
-        try writeInOrder(SupervisorCodec.encode(outbound), on: link)
+        let encoded = encode(id)
+        guard !encoded.isEmpty else { throw ClientError.malformedReply }
+        try writeInOrder(encoded, on: link)
 
         // Wait for the reader thread to route this id back. No timeout: superd answers every verb
         // synchronously and the socket closing wakes the reader, which fails every waiter — so a
@@ -621,30 +605,27 @@ public final class SupervisorClient: @unchecked Sendable {
         replyArrived.unlock()
         guard let raw = arrived else { throw ClientError.notConnected }
 
-        let reply: SupervisorReply
-        do {
-            reply = try SupervisorCodec.decodeReply(raw.body)
-        } catch {
+        guard let reader = SupervisorReplyReader(raw.body) else {
             if let descriptor = raw.descriptor { close(descriptor) }
             throw ClientError.malformedReply
         }
-        switch reply.status {
+        switch reader.status {
         case .ok:
-            return (reply, raw.descriptor)
+            return (reader, raw.descriptor)
         case .unsupported:
             if let descriptor = raw.descriptor { close(descriptor) }
-            throw ClientError.unsupported(verb: outbound.verb, message: reply.message ?? "")
+            throw ClientError.unsupported(verb: verb, message: reader.message ?? "")
         case .error:
             if let descriptor = raw.descriptor { close(descriptor) }
-            throw ClientError.refused(reply.message ?? "superd refused \(outbound.verb)")
+            throw ClientError.refused(reader.message ?? "superd refused \(verb)")
         case .unrecognised:
             // A status a newer superd has and this build does not. Reported as a refusal — the one
             // thing it must NOT be is silence, which is what a throw during decode used to buy:
             // the frame dropped, this waiter never woken, the pane never opened.
             if let descriptor = raw.descriptor { close(descriptor) }
             throw ClientError.refused(
-                reply.message
-                    ?? "superd answered \(outbound.verb) with a status this hostd does not know — "
+                reader.message
+                    ?? "superd answered \(verb) with a status this hostd does not know — "
                     + "it is newer than this build",
             )
         }
@@ -670,7 +651,7 @@ public final class SupervisorClient: @unchecked Sendable {
             onLog?("supervisor: dropped an undecodable sniff frame (\(body.count) bytes)")
             return
         }
-        guard let events = SniffedEvent.decodeBatch(decoded.json) else {
+        guard let events = SupervisorBatch.sniffed(decoded.json) else {
             onLog?("supervisor: dropped a sniff batch for pane \(decoded.paneID) that would not decode")
             return
         }
@@ -689,7 +670,7 @@ public final class SupervisorClient: @unchecked Sendable {
             onLog?("supervisor: dropped an undecodable blocks frame (\(body.count) bytes)")
             return
         }
-        guard let events = BlockEvent.decodeBatch(decoded.json) else {
+        guard let events = SupervisorBatch.blocks(decoded.json) else {
             onLog?("supervisor: dropped a blocks batch for pane \(decoded.paneID) that would not decode")
             return
         }
@@ -704,20 +685,24 @@ public final class SupervisorClient: @unchecked Sendable {
     /// Hands one accepted child connection to ``onConnection``, or closes it.
     ///
     /// Every path out of here disposes of the descriptor exactly once. A `connection` event with no
-    /// descriptor, or an unnamed kind, is a peer we do not understand — validate-then-drop, the rule
-    /// every untrusted decode here follows, and a leaked fd per bad frame is the specific harm.
-    private func deliverConnection(_ kind: String?, _ descriptor: Int32?) {
+    /// descriptor, or a kind this build cannot name, is a peer we do not understand —
+    /// validate-then-drop, the rule every untrusted decode here follows, and a leaked fd per bad
+    /// frame is the specific harm.
+    private func deliverConnection(_ kind: ListenerKind?, _ descriptor: Int32?) {
         guard let descriptor else {
             onLog?("supervisor: a connection event arrived with no descriptor — ignoring")
             return
         }
         guard let kind else {
-            onLog?("supervisor: a connection event arrived with no kind — closing the descriptor")
+            onLog?(
+                "supervisor: a connection arrived for a listener kind this build has no name for — "
+                    + "closing the descriptor; superd is newer than this hostd",
+            )
             close(descriptor)
             return
         }
         guard let handler = onConnection else {
-            onLog?("supervisor: nothing serves '\(kind)' connections here — closing the descriptor")
+            onLog?("supervisor: nothing serves \(kind) connections here — closing the descriptor")
             close(descriptor)
             return
         }
@@ -764,7 +749,7 @@ public final class SupervisorClient: @unchecked Sendable {
                 // Peek only at the id: a notification is dispatched, anything else is routed to the
                 // waiter. A body that will not even decode is dropped rather than trapped —
                 // validate-then-drop, same as every other untrusted decode here.
-                guard let reply = try? SupervisorCodec.decodeReply(frame.body) else {
+                guard let reply = SupervisorReplyReader(frame.body) else {
                     if let descriptor = frame.descriptor { close(descriptor) }
                     // Loud, because the id went with it: a waiter registered under that id is now
                     // parked on a reply that has already been delivered and thrown away, and this
@@ -773,15 +758,15 @@ public final class SupervisorClient: @unchecked Sendable {
                     onLog?("supervisor: dropped an undecodable reply frame (\(frame.body.count) bytes)")
                     continue
                 }
-                if reply.id == SupervisorReply.notificationID {
+                if reply.id == SupervisorEncoder.notificationID {
                     // The one notification that carries a descriptor. Handled before the blanket
                     // close below, which every other event still needs.
-                    if reply.event == SupervisorProtocol.Event.connection {
-                        deliverConnection(reply.connection?.kind, frame.descriptor)
+                    if reply.event == .connection {
+                        deliverConnection(reply.connectionKind, frame.descriptor)
                         continue
                     }
                     if let descriptor = frame.descriptor { close(descriptor) }
-                    if reply.event == SupervisorProtocol.Event.exited, let notice = reply.exited {
+                    if reply.event == .exited, let notice = reply.exited {
                         lock.lock()
                         let handler = exitHandlers.removeValue(forKey: notice.paneID)
                         let output = outputHandlers.removeValue(forKey: notice.paneID)

@@ -88,6 +88,10 @@ fn wire_message(event: &SniffEvent) -> Option<WireMessage> {
                 percent: update.percent,
             }
         },
+        // Unreachable from a sniffer: the variant exists only on the DECODING side, for a kind a
+        // newer superd invented. It has no wire message because this build does not know what the
+        // event was — which is the point of keeping it rather than dropping it.
+        SniffEvent::Unknown { .. } => return None,
     })
 }
 

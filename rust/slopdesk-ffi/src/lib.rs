@@ -238,8 +238,13 @@ pub mod spawn_env;
 pub mod state_scalars;
 pub mod status_pill;
 pub mod supervision;
+pub mod supervisor_batch;
 pub mod supervisor_frame;
 pub mod supervisor_paths;
+// Ungated, exactly as the two above are: this is JSON and a version pair, with no macOS API behind
+// it. `slopdesk-gate ffi` asserts a symbol present on one slice and absent on the others only where
+// a `cfg` claims a platform, and nothing here claims one.
+pub mod supervisor_protocol;
 pub mod surface_gesture;
 pub mod swipe_nav_config;
 pub mod swipe_recognizer;

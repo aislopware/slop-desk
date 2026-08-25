@@ -10,8 +10,9 @@
 //! reported as "no daemon is running", which is also the healthy answer when no daemon is running.
 
 use crate::paths::{
-    RUST_CTL_LIB, RUST_PATHS, RUST_PROTOCOL, RUST_SHELLINT, RUST_SPAWN_ENV, RUST_SUPERD_SERVER,
-    RUST_SUPERWIRE, SWIFT_HOST_ENVIRONMENT, SWIFT_PATHS, SWIFT_PROTOCOL,
+    RUST_CTL_LIB, RUST_FFI_SUPERVISOR, RUST_LISTENERS, RUST_PATHS, RUST_PROTOCOL, RUST_SHELLINT,
+    RUST_SPAWN_ENV, RUST_SUPERD_SERVER, RUST_SUPERWIRE, SWIFT_HOST_ENVIRONMENT, SWIFT_PATHS,
+    SWIFT_SUPERVISOR_DOORS,
 };
 use crate::report::Report;
 use crate::text;
@@ -246,46 +247,59 @@ pub fn superd_private_paths(tree: &Tree) -> Report {
     report
 }
 
-/// §2 — protocol version, build version and the reserved notification id.
+/// §2 — the frozen numbers, and the one version handle that still crosses a language.
 ///
-/// MAJOR gates the handshake, so a skew is at least loud. MINOR is capability negotiation and a
-/// skew is quiet: hostd would send a verb this superd does not know, or withhold one it does.
+/// This gate used to COMPARE `SupervisorProtocol.swift`'s `versionMajor` against superd's
+/// `VERSION_MAJOR`, because there were two spellings. There is one now
+/// (`slopdesk-superwire::protocol`), which superd links and hostd reaches through `slopdesk-ffi`'s
+/// doors, so a MAJOR that disagrees with itself is not expressible. What remains is what a
+/// *running* peer of another build reads, and that is not comparable to anything in the tree — it
+/// is pinned.
 ///
-/// The minor says what superd can SPEAK. It cannot say which BUILD is speaking — it moves only on a
-/// wire change, so a superd rebuilt with a fixed reaper reports the minor it always did. superd
-/// outlives hostd's build, so after an upgrade the binary on disk and the process on this socket
-/// are routinely different code, and restarting it takes every live pane. `buildVersion` on the
-/// hello reply is the one handle hostd has on which (docs/49); dropped on either side it reads as
-/// absent, which the audit reports as "unknown" forever rather than failing.
+/// MAJOR and the reserved notification `id` are pinned as literals for [`frame_envelope`]'s reason:
+/// every superd already running at somebody's login speaks them, so moving one is a skew against
+/// THEM, not against a second copy here. A major bump is a deliberate, connection-refusing change
+/// and should cost an edit to this line. The reserved `id` marks a reply as an unsolicited
+/// NOTIFICATION rather than an answer; move it and hostd reads every notification as the answer to
+/// whichever request happens to carry that id, and replies to a verb nobody sent.
 ///
-/// The reserved `id` marks a reply as an unsolicited NOTIFICATION rather than an answer. A skew
-/// makes hostd read every notification as the answer to whichever request happens to carry that id,
-/// and reply to a verb nobody sent.
+/// MINOR is deliberately NOT pinned. It moves by design on every append to the vocabulary, and it
+/// has one spelling both ends read, so there is no skew left for a pin to catch — only friction.
+///
+/// `buildVersion` is what still crosses three crates and a language, and it is the reason the rest
+/// of this gate exists. The minor says what superd can SPEAK; it cannot say which BUILD is
+/// speaking, because it moves only on a wire change, so a superd rebuilt with a fixed reaper
+/// reports the minor it always did. superd outlives hostd's build — after an upgrade the binary on
+/// disk and the process on this socket are routinely different code, and restarting it takes every
+/// live pane — so `buildVersion` on the hello reply is hostd's one handle on which (docs/49).
+/// Dropped at ANY of the four hops it reads as absent, which the audit reports as "unknown" forever
+/// rather than failing: the wire field, superd's answer, the door's `has_build_version`, and
+/// hostd's read.
 #[must_use]
 pub fn protocol_version(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let (Some(swift), Some(rust), Some(server)) = (
-        report.source(tree, SWIFT_PROTOCOL, "hostd's protocol encoding lives there"),
-        report.source(tree, RUST_PROTOCOL, "superd's protocol decode lives there"),
+    let (Some(rust), Some(server), Some(ffi), Some(doors)) = (
+        report.source(tree, RUST_PROTOCOL, "the protocol's numbers live there"),
         report.source(tree, RUST_SUPERD_SERVER, "superd's hello reply is built there"),
+        report.source(
+            tree,
+            RUST_FFI_SUPERVISOR,
+            "hostd's door onto the hello reply is there",
+        ),
+        report.source(tree, SWIFT_SUPERVISOR_DOORS, "hostd reads the hello reply there"),
     ) else {
         return report;
     };
 
     report.same(
         "protocol major",
-        text::capture_first(&swift.text, r"versionMajor = (\d+)").as_deref(),
         text::capture_first(&rust.text, r"VERSION_MAJOR: i32 = (\d+)").as_deref(),
-    );
-    report.same(
-        "protocol minor",
-        text::capture_first(&swift.text, r"versionMinor = (\d+)").as_deref(),
-        text::capture_first(&rust.text, r"VERSION_MINOR: i32 = (\d+)").as_deref(),
+        Some("1"),
     );
     report.same(
         "notification id",
-        text::capture_first(&swift.text, r"notificationID: UInt64 = (\d+)").as_deref(),
         text::capture_first(&rust.text, r"NOTIFICATION_ID: u64 = (\d+)").as_deref(),
+        Some("0"),
     );
 
     report.fail_if(
@@ -302,78 +316,108 @@ pub fn protocol_version(tree: &Tree) -> Report {
         ),
     );
     report.fail_if(
-        !swift.text.contains("var buildVersion: String?"),
-        format!("{SWIFT_PROTOCOL}'s HelloReply no longer decodes buildVersion (docs/49)"),
+        !ffi.text.contains("pub has_build_version: bool"),
+        format!("{RUST_FFI_SUPERVISOR} no longer projects buildVersion — hostd cannot see it (docs/49)"),
+    );
+    report.fail_if(
+        !doors.text.contains("SLOPDESK_SUPERVISOR_TEXT_BUILD_VERSION"),
+        format!("{SWIFT_SUPERVISOR_DOORS}'s HelloReply no longer reads buildVersion (docs/49)"),
     );
     report
 }
 
-/// §3 — every verb Swift can SEND must be one Rust can dispatch.
+/// §3 — every verb in the vocabulary must be one superd can DISPATCH.
 ///
-/// Not the converse: superd is allowed to know a verb no hostd sends yet, which is how a minor bump
-/// lands in two commits. camelCase in the capture, not just lowercase: `forgetTitle` is a verb, and
-/// a pattern that could not see it would have passed this gate while hostd sent a verb superd never
-/// dispatched.
+/// The direction flipped when the second spelling went away. This gate used to check that every
+/// verb hostd could send had a constant on superd's side, and tolerated the converse so a minor
+/// bump could land in two commits. hostd sends through `slopdesk-ffi`, which builds its requests
+/// from these very constants, so vocabulary and dispatch now land in ONE commit and an undispatched
+/// constant is worse than an unused one: it is a verb hostd can already emit and that this same
+/// build answers `unsupported` to, with the fallback taken and nothing logged.
+///
+/// camelCase in the capture, not just lowercase: `forgetTitle` is a verb, and a pattern that could
+/// not see it would have passed this gate while hostd sent a verb superd never dispatched.
 #[must_use]
 pub fn verbs(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let (Some(swift), Some(rust)) = (
-        report.source(tree, SWIFT_PROTOCOL, "hostd's verbs live there"),
-        report.source(tree, RUST_PROTOCOL, "superd's dispatch lives there"),
+    let (Some(rust), Some(server)) = (
+        report.source(tree, RUST_PROTOCOL, "the verb vocabulary lives there"),
+        report.source(tree, RUST_SUPERD_SERVER, "superd's dispatch lives there"),
     ) else {
         return report;
     };
 
     let verbs = text::capture_set(
-        &swift.text,
-        r#"(?m)^ *public static let [a-zA-Z]* = "([a-zA-Z]*)"$"#,
+        &text::range(&rust.text, r"pub mod verb \{", r"^\}"),
+        r#"(?m)^ *pub const ([A-Z_]+): &str = "[a-zA-Z]*";$"#,
     );
-    // An empty list is not "every verb crosses" — it is a loop that runs zero times, and `sed`
+    // An empty list is not "every verb dispatches" — it is a loop that runs zero times, and `sed`
     // returned it without complaint. The gate below only ever reports what it iterates, so the
     // liveness of the extraction has to be asserted here or not at all.
     report.fail_if(
         verbs.is_empty(),
-        format!("no sendable verb found in {SWIFT_PROTOCOL} — the extraction in this gate has gone stale"),
+        format!("no verb found in {RUST_PROTOCOL} — the extraction in this gate has gone stale"),
     );
     for verb in &verbs {
         report.fail_if(
-            !rust.text.contains(&format!("= \"{verb}\";")),
-            format!("verb '{verb}' is sendable from Swift but has no constant in {RUST_PROTOCOL}"),
+            !server.text.contains(&format!("verb::{verb}")),
+            format!(
+                "verb::{verb} is in the vocabulary but {RUST_SUPERD_SERVER} never dispatches it — hostd can \
+                 send it and this same build answers unsupported"
+            ),
         );
     }
     report
 }
 
-/// §3b — listener kinds, equal in BOTH directions.
+/// §3b — every listener kind is bound by superd AND nameable by hostd.
 ///
-/// Unlike the verbs above, because each side's extra is silent in a different way: a kind only
-/// Swift knows is a claim superd refuses, and a kind only Rust knows is a socket nobody ever claims
-/// — and an unclaimed socket is never advertised into a child's environment (`listeners.rs`), so a
-/// `claude` would simply come up with no hook path and fall back to the screen engine. Nothing logs
-/// an error.
+/// Also not a two-sided comparison any more, and for a stronger reason than the verbs: hostd's
+/// `ListenerKind` is a typed enum with no raw values at all, so it cannot spell a kind — the wire
+/// word is chosen inside `slopdesk-ffi`'s `encode_listen` from these same constants. A kind hostd
+/// could ask for that superd never binds is no longer writable.
+///
+/// The two silences that ARE still reachable are both one-sided. A kind in the vocabulary that
+/// `listeners.rs` never binds is a socket nobody ever claims — and an unclaimed socket is never
+/// advertised into a child's environment, so a `claude` simply comes up with no hook path and falls
+/// back to the screen engine, with nothing logged. A kind the doors cannot project is one hostd's
+/// enum has no case for, so a `connection` push on it decodes to `nil` and the connection is
+/// dropped on the floor.
 #[must_use]
 pub fn listener_kinds(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let (Some(swift), Some(rust)) = (
-        report.source(tree, SWIFT_PROTOCOL, "hostd's listener kinds live there"),
-        report.source(tree, RUST_PROTOCOL, "superd's listener kinds live there"),
+    let (Some(rust), Some(listeners), Some(ffi)) = (
+        report.source(tree, RUST_PROTOCOL, "the listener kinds live there"),
+        report.source(tree, RUST_LISTENERS, "superd binds its listeners there"),
+        report.source(tree, RUST_FFI_SUPERVISOR, "hostd's door onto them is there"),
     ) else {
         return report;
     };
 
-    let swift_kinds = text::capture_set(
-        &text::range(&swift.text, r"public enum ListenerKind \{", r"^    \}"),
-        r#"public static let [a-zA-Z]* = "([a-z]*)""#,
-    );
-    let rust_kinds = text::capture_set(
+    let kinds = text::capture_set(
         &text::range(&rust.text, r"pub mod listener_kind \{", r"^\}"),
-        r#": &str = "([a-z]*)";"#,
+        r#"(?m)^ *pub const ([A-Z_]+): &str = "[a-z]*";$"#,
     );
     report.fail_if(
-        swift_kinds.is_empty(),
-        format!("no listener kinds found in {SWIFT_PROTOCOL} — the extraction in this gate has gone stale"),
+        kinds.is_empty(),
+        format!("no listener kinds found in {RUST_PROTOCOL} — the extraction in this gate has gone stale"),
     );
-    report.same_set("listener kinds", &swift_kinds, &rust_kinds);
+    for kind in &kinds {
+        report.fail_if(
+            !listeners.text.contains(&format!("listener_kind::{kind}")),
+            format!(
+                "listener_kind::{kind} is in the vocabulary but {RUST_LISTENERS} never binds it — the \
+                 socket is never advertised and the child falls back with nothing logged (docs/51 §3b)"
+            ),
+        );
+        report.fail_if(
+            !ffi.text.contains(&format!("listener_kind::{kind}")),
+            format!(
+                "listener_kind::{kind} has no door in {RUST_FFI_SUPERVISOR} — hostd's ListenerKind cannot \
+                 name it, so a connection accepted on it is dropped (docs/51 §3b)"
+            ),
+        );
+    }
     report
 }
 
@@ -504,29 +548,15 @@ pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
         );
     }
 
-    const PROTOCOL_SWIFT_OK: &str = r#"
-public enum SupervisorProtocol {
-    public static let versionMajor = 1
-    public static let versionMinor = 7
-    public static let notificationID: UInt64 = 0
-    public static let attach = "attach"
-    public static let forgetTitle = "forgetTitle"
-    public enum ListenerKind {
-        public static let hook = "hook"
-        public static let agent = "agent"
-    }
-}
-public struct HelloReply: Codable {
-    public var buildVersion: String?
-}
-"#;
-
     const PROTOCOL_RUST_OK: &str = r#"
 pub const VERSION_MAJOR: i32 = 1;
 pub const VERSION_MINOR: i32 = 7;
 pub const NOTIFICATION_ID: u64 = 0;
-pub const ATTACH: &str = "attach";
-pub const FORGET_TITLE: &str = "forgetTitle";
+pub mod verb {
+    /// A doc comment, which must not be read as a verb.
+    pub const ATTACH: &str = "attach";
+    pub const FORGET_TITLE: &str = "forgetTitle";
+}
 pub mod listener_kind {
     pub const HOOK: &str = "hook";
     pub const AGENT: &str = "agent";
@@ -535,63 +565,111 @@ pub mod listener_kind {
 pub build_version: Option<String>,
 "#;
 
+    const SERVER_OK: &str = r#"
+build_version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+match request.verb {
+    verb::ATTACH => self.attach(request),
+    verb::FORGET_TITLE => self.forget_title(request),
+}
+"#;
+
+    const LISTENERS_OK: &str = r"
+hook: bind_one(&paths.hook, listener_kind::HOOK),
+agent: bind_one(&paths.agent, listener_kind::AGENT),
+";
+
+    const FFI_SUPERVISOR_OK: &str = r"
+pub has_build_version: bool,
+kinds.push(protocol::listener_kind::HOOK.to_owned());
+kinds.push(protocol::listener_kind::AGENT.to_owned());
+";
+
     fn protocol_fixture(name: &str) -> Fixture {
         let fixture = Fixture::new(name);
         fixture
+            .write("rust/slopdesk-superwire/src/protocol.rs", PROTOCOL_RUST_OK)
+            .write("rust/slopdesk-superd/src/server.rs", SERVER_OK)
+            .write("rust/slopdesk-superd/src/listeners.rs", LISTENERS_OK)
+            .write("rust/slopdesk-ffi/src/supervisor_protocol.rs", FFI_SUPERVISOR_OK)
             .write(
-                "Sources/SlopDeskSupervisor/SupervisorProtocol.swift",
-                PROTOCOL_SWIFT_OK,
-            )
-            .write("rust/slopdesk-superd/src/protocol.rs", PROTOCOL_RUST_OK)
-            .write(
-                "rust/slopdesk-superd/src/server.rs",
-                "build_version: Some(env!(\"CARGO_PKG_VERSION\").to_owned()),\n",
+                "Sources/SlopDeskSupervisor/SupervisorDoors.swift",
+                "let v = text(SLOPDESK_SUPERVISOR_TEXT_BUILD_VERSION)\n",
             );
         fixture
     }
 
+    /// The major is a pin, not a comparison — there is only one spelling of it left. Moving it is
+    /// a handshake every deployed superd refuses, so it must cost an edit to the rule.
     #[test]
-    fn a_minor_bumped_on_one_side_only_is_caught() {
-        let fixture = protocol_fixture("minor-skew");
+    fn a_major_that_shifts_is_caught_and_a_minor_bump_is_not() {
+        let fixture = protocol_fixture("major-pin");
+        assert!(super::protocol_version(&fixture.tree()).is_clean());
+
+        // The minor moves by design on every append. It must stay green.
+        fixture.write(
+            "rust/slopdesk-superwire/src/protocol.rs",
+            &PROTOCOL_RUST_OK.replace("VERSION_MINOR: i32 = 7", "VERSION_MINOR: i32 = 8"),
+        );
         assert!(super::protocol_version(&fixture.tree()).is_clean());
 
         fixture.write(
-            "rust/slopdesk-superd/src/protocol.rs",
-            &PROTOCOL_RUST_OK.replace("VERSION_MINOR: i32 = 7", "VERSION_MINOR: i32 = 8"),
+            "rust/slopdesk-superwire/src/protocol.rs",
+            &PROTOCOL_RUST_OK.replace("VERSION_MAJOR: i32 = 1", "VERSION_MAJOR: i32 = 2"),
         );
         let report = super::protocol_version(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("protocol minor")),
+            report.violations().iter().any(|v| v.contains("protocol major")),
             "{report:?}"
         );
     }
 
-    /// The camelCase case the shell's first pattern could not see. `forgetTitle` sendable from
-    /// Swift with no Rust constant is hostd sending a verb superd never dispatches.
+    /// The hop the port added: superd still answers with its build, but the door stopped carrying
+    /// it, so hostd's audit reads "unknown" forever with nothing failing.
     #[test]
-    fn a_camel_case_verb_with_no_rust_constant_is_caught() {
+    fn a_build_version_dropped_at_the_door_is_caught() {
+        let fixture = protocol_fixture("build-version-door");
+        fixture.write(
+            "rust/slopdesk-ffi/src/supervisor_protocol.rs",
+            &FFI_SUPERVISOR_OK.replace("pub has_build_version: bool,", ""),
+        );
+        let report = super::protocol_version(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no longer projects")),
+            "{report:?}"
+        );
+    }
+
+    /// The camelCase case the shell's first pattern could not see, in its new direction:
+    /// `forgetTitle` in the vocabulary with no dispatch arm is a verb hostd can send and this same
+    /// build answers `unsupported` to.
+    #[test]
+    fn a_camel_case_verb_nothing_dispatches_is_caught() {
         let fixture = protocol_fixture("verb-skew");
         assert!(super::verbs(&fixture.tree()).is_clean());
 
         fixture.write(
-            "rust/slopdesk-superd/src/protocol.rs",
-            &PROTOCOL_RUST_OK.replace(r#"pub const FORGET_TITLE: &str = "forgetTitle";"#, ""),
+            "rust/slopdesk-superd/src/server.rs",
+            &SERVER_OK.replace("    verb::FORGET_TITLE => self.forget_title(request),\n", ""),
         );
         let report = super::verbs(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("forgetTitle")),
+            report.violations().iter().any(|v| v.contains("FORGET_TITLE")),
             "{report:?}"
         );
     }
 
-    /// Both directions, unlike the verbs: a kind only Rust knows is a socket nobody claims.
+    /// A kind in the vocabulary that superd never binds is a socket nobody claims — and an
+    /// unclaimed socket is never advertised, so the child falls back with nothing logged.
     #[test]
-    fn a_listener_kind_rust_alone_knows_is_caught() {
-        let fixture = protocol_fixture("kind-skew");
+    fn a_listener_kind_nothing_binds_is_caught() {
+        let fixture = protocol_fixture("kind-unbound");
         assert!(super::listener_kinds(&fixture.tree()).is_clean());
 
         fixture.write(
-            "rust/slopdesk-superd/src/protocol.rs",
+            "rust/slopdesk-superwire/src/protocol.rs",
             &PROTOCOL_RUST_OK.replace(
                 "    pub const AGENT: &str = \"agent\";",
                 "    pub const AGENT: &str = \"agent\";\n    pub const BLOCKS: &str = \"blocks\";",
@@ -599,10 +677,23 @@ pub build_version: Option<String>,
         );
         let report = super::listener_kinds(&fixture.tree());
         assert!(
-            report
-                .violations()
-                .iter()
-                .any(|v| v.contains("Rust alone has blocks")),
+            report.violations().iter().any(|v| v.contains("never binds it")),
+            "{report:?}"
+        );
+    }
+
+    /// The other half of the same kind: bound by superd, but with no door, so hostd's typed
+    /// `ListenerKind` has no case for it and a connection accepted on it is dropped.
+    #[test]
+    fn a_listener_kind_with_no_door_is_caught() {
+        let fixture = protocol_fixture("kind-no-door");
+        fixture.write(
+            "rust/slopdesk-ffi/src/supervisor_protocol.rs",
+            &FFI_SUPERVISOR_OK.replace("kinds.push(protocol::listener_kind::AGENT.to_owned());", ""),
+        );
+        let report = super::listener_kinds(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("has no door")),
             "{report:?}"
         );
     }

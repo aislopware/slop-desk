@@ -111,33 +111,26 @@ final class SupervisedListenerTests: XCTestCase {
         wait(for: [closed], timeout: 2)
     }
 
-    /// A claim for a listener superd does not have is REFUSED, not silently ignored.
-    ///
-    /// Rule 3 of the skew contract cuts the other way here: hostd must be able to tell "superd is
-    /// serving this for me" from "superd shrugged", because the difference decides whether it may
-    /// let superd advertise the address to a child.
-    func testAnUnknownListenerKindIsRefused() throws {
-        let superd = try SuperdFixture()
-        XCTAssertThrowsError(try superd.client.listen(kinds: ["inspector"])) { error in
-            guard case SupervisorClient.ClientError.refused = error else {
-                XCTFail("an unknown kind must be refused, not \(error)")
-                return
-            }
-        }
-    }
+    // The test that used to sit here — "a claim for a listener superd does not have is REFUSED" —
+    // asked `listen(kinds: ["inspector"])` and asserted the throw. It cannot be written any more,
+    // and that is the port's doing rather than a gap: `listen` takes a `Set<ListenerKind>` with two
+    // cases, so there is no unknown kind to send. The refusal it exercised now lives one layer down,
+    // where superd still answers it for a NEWER hostd, and the encoder's own suite pins that the
+    // door names exactly the kinds it was given
+    // (`slopdesk-ffi`'s `listen_names_the_kinds_it_claims_and_omits_the_ones_it_does_not`).
 
     // MARK: Helpers
 
     /// Claims the hook listener on `client` and routes its connections into `listener`.
     private func claim(hookOn client: SupervisorClient, servedBy listener: AgentHookListener) throws {
         client.onConnection = { kind, descriptor in
-            guard kind == SupervisorProtocol.ListenerKind.hook else {
+            guard kind == .hook else {
                 close(descriptor)
                 return
             }
             listener.serve(connection: descriptor)
         }
-        try client.listen(kinds: [SupervisorProtocol.ListenerKind.hook])
+        try client.listen(kinds: [.hook])
         listener.markServing(true)
     }
 

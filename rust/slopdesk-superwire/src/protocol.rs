@@ -1,11 +1,23 @@
-//! The `slopdesk-superd` ↔ `slopdesk-hostd` message set.
+//! The `slopdesk-superd` ↔ `slopdesk-hostd` message set — one declaration, both directions.
 //!
-//! A mirror of `Sources/SlopDeskSupervisor/SupervisorProtocol.swift`. JSON, so field names are the
-//! contract — a rename on one side is a silent `None` on the other.
+//! JSON, so field names are the contract. They used to be the contract between two FILES: this one
+//! and hostd's own `SupervisorProtocol.swift`, each opening by calling the other a
+//! mirror, ~1,660 lines spelling one vocabulary twice. A rename on one side was a silent `None` on
+//! the other, and both suites stayed green, because each end tested only itself. There is one
+//! spelling now; hostd reaches it through `slopdesk-ffi`'s doors.
+//!
+//! ## One direction each — enforced by the DOORS, not by the types
+//! The Swift half made a Swift superd impossible to write by accident: requests were `Encodable`
+//! only, replies `Decodable` only, so the types would not let hostd answer a verb. That property
+//! could not survive the fold — a crate that is the one spelling must serialise and deserialise
+//! both, or superd could not read a request and hostd could not read a reply. The asymmetry moved
+//! down a layer instead: `slopdesk_supervisor_encode_*` writes requests and
+//! `slopdesk_supervisor_reply_*` reads replies, and there is no exported door for the reverse of
+//! either. A Swift superd would have to add one, which is a diff, not an accident.
 //!
 //! ## This is the one protocol in the repo that must tolerate version skew
 //! The three wire paths (`docs/46`) are golden-pinned at version `1` with no negotiation, and they
-//! can be, because both ends ship in the same release. superd cannot: it is a LaunchAgent that
+//! can be, because both ends ship in the same release. superd cannot: it is a `LaunchAgent` that
 //! outlives not just hostd's process but hostd's **build**. You rebuild hostd all day; superd
 //! stays whatever it was at login. So (`docs/51` §3):
 //!
@@ -28,7 +40,7 @@ pub const VERSION_MAJOR: i32 = 1;
 /// Bumped when a verb or field is added. Both sides interoperate freely across minors.
 ///
 /// `2` added the output subscription — `subscribe` / `unsubscribe` / `pause` and the binary output
-/// frame ([`crate::frame::TAG_OUTPUT`]).
+/// frame ([`crate::TAG_OUTPUT`]).
 ///
 /// `3` added the child-facing listeners — `listen` and the `connection` push that hands hostd an
 /// accepted hook/ctl socket over `SCM_RIGHTS` — and [`StreamPosition::ended`], which is how a
@@ -79,7 +91,7 @@ pub mod verb {
     /// Claim the child-facing listeners superd binds, by [`listener_kind`].
     pub const LISTEN: &str = "listen";
     /// Retire a pane sniffer's title-coalescing anchor. See
-    /// [`crate::pump::Pump::forget_title_coalescing`].
+    /// superd's pump.
     pub const FORGET_TITLE: &str = "forgetTitle";
     /// Fetch one finished command block's retained output, by index.
     pub const BLOCK_OUTPUT: &str = "blockOutput";
@@ -118,11 +130,24 @@ pub mod listener_kind {
     pub const CONTROL: &str = "control";
 }
 
-/// `ok` / `error` / `unsupported`.
+/// `ok` / `error` / `unsupported`, plus the word this build has no name for.
 ///
 /// `Unsupported` is deliberately distinct from `Error`: it is the answer that lets a newer hostd
 /// discover an older superd's capability set at runtime instead of guessing from a version number.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// ## Why the fourth case exists, and why it is not derived
+/// A closed three-case enum FAILS the decode on a status a newer superd invented. That failure
+/// lands in the reading loop, which drops the frame — **without waking the waiter registered under
+/// its request id**. The pane never opens, and it never fails either; it hangs, on precisely the
+/// skew the version-in-`hello` contract exists to absorb. So an unrecognised word decodes rather
+/// than throwing, and decodes to a FAILURE: never `Ok`, so nothing downstream can read a word it
+/// does not understand as success.
+///
+/// `#[serde(other)]` is not available here — serde allows it only on internally or adjacently
+/// tagged enums, and this is a plain string — so the `Deserialize` below is written out. The
+/// `Serialize` stays derived: superd emits three of these four, and the fourth has no wire spelling
+/// to emit because it exists only on the reading side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
     /// The verb succeeded.
@@ -131,59 +156,132 @@ pub enum Status {
     Error,
     /// The verb is not in this superd's vocabulary — it is older than the caller.
     Unsupported,
+    /// A status this build has no name for. Treated as a failure, never as success.
+    Unrecognised,
+}
+
+impl<'de> Deserialize<'de> for Status {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        Ok(match raw.as_ref() {
+            "ok" => Self::Ok,
+            "error" => Self::Error,
+            "unsupported" => Self::Unsupported,
+            _ => Self::Unrecognised,
+        })
+    }
+}
+
+impl Status {
+    /// Whether this is the one status a caller may act on as success.
+    ///
+    /// Written once so no call site re-derives it — `!= Error` would read [`Self::Unrecognised`]
+    /// as a success, which is the whole failure the fourth case exists to prevent.
+    #[must_use]
+    pub const fn is_ok(self) -> bool {
+        matches!(self, Self::Ok)
+    }
 }
 
 // MARK: - Requests (hostd → superd)
 
 /// One request. Exactly one payload field is set, chosen by `verb`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Request {
     /// Correlates the reply. Monotonic per connection, never `0` (`0` marks a notification).
     pub id: u64,
     /// One of [`verb`], or something newer than us — which is why this is a `String`.
     pub verb: String,
     /// Payload for [`verb::HELLO`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hello: Option<HelloRequest>,
     /// Payload for [`verb::SPAWN`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spawn: Option<SpawnRequest>,
     /// Payload for [`verb::ADOPT`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub adopt: Option<AdoptRequest>,
     /// Payload for [`verb::SIGNAL`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signal: Option<SignalRequest>,
     /// Payload for [`verb::RELEASE`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release: Option<ReleaseRequest>,
     /// Payload for [`verb::RESIZE`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resize: Option<ResizeRequest>,
     /// Payload for [`verb::SUBSCRIBE`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subscribe: Option<SubscribeRequest>,
     /// Payload for [`verb::FORGET_TITLE`].
-    #[serde(default, rename = "forgetTitle")]
+    #[serde(default, rename = "forgetTitle", skip_serializing_if = "Option::is_none")]
     pub forget_title: Option<ForgetTitleRequest>,
     /// Payload for [`verb::UNSUBSCRIBE`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unsubscribe: Option<UnsubscribeRequest>,
     /// Payload for [`verb::PAUSE`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pause: Option<PauseRequest>,
     /// Payload for [`verb::LISTEN`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen: Option<ListenRequest>,
     /// Payload for [`verb::BLOCK_OUTPUT`].
-    #[serde(default, rename = "blockOutput")]
+    #[serde(default, rename = "blockOutput", skip_serializing_if = "Option::is_none")]
     pub block_output: Option<BlockOutputRequest>,
     /// Payload shared by [`verb::BLOCK_SNAPSHOT`] and [`verb::BLOCK_CONTROL`].
-    #[serde(default, rename = "blockRead")]
+    #[serde(default, rename = "blockRead", skip_serializing_if = "Option::is_none")]
     pub block_read: Option<BlockReadRequest>,
     /// Payload shared by the three journal verbs.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journal: Option<JournalRequest>,
+}
+
+impl Request {
+    /// A request carrying nothing but its id and verb.
+    ///
+    /// Every payload is `None`, so a caller sets exactly the one its verb names and the other
+    /// fourteen are omitted from the JSON by [`Option::is_none`]. Written once here rather than
+    /// spelled at each encoding site: fourteen `None`s per verb is fourteen chances to set the
+    /// wrong one, and the compiler cannot tell them apart — they are all `None`.
+    #[must_use]
+    pub fn new(id: u64, verb: &str) -> Self {
+        Self {
+            id,
+            verb: verb.to_owned(),
+            hello: None,
+            spawn: None,
+            adopt: None,
+            signal: None,
+            release: None,
+            resize: None,
+            subscribe: None,
+            forget_title: None,
+            unsubscribe: None,
+            pause: None,
+            listen: None,
+            block_output: None,
+            block_read: None,
+            journal: None,
+        }
+    }
+
+    /// The request as the bytes that cross the socket.
+    #[must_use]
+    pub fn encode(&self) -> Option<Vec<u8>> {
+        serde_json::to_vec(self).ok()
+    }
+}
+
+impl Reply {
+    /// One reply body, or `None` when it is not this protocol's JSON at all.
+    ///
+    /// Rule 3 lives here: an unknown VERB was answered before this, an unknown STATUS decodes to
+    /// [`Status::Unrecognised`], and an unknown FIELD is ignored. So `None` means the bytes were
+    /// not an object with an `id` and a `status` — a corrupt frame, never a skewed peer.
+    #[must_use]
+    pub fn decode(json: &[u8]) -> Option<Self> {
+        serde_json::from_slice(json).ok()
+    }
 }
 
 /// Claim the child-facing listeners.
@@ -193,7 +291,7 @@ pub struct Request {
 /// one it displaced is by definition the one that died. It is dropped when the claiming connection
 /// goes away, which is what makes an unclaimed kind — a restart in progress — a state superd can
 /// answer honestly rather than a queue of connections nobody will ever read.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ListenRequest {
     /// Which listeners to claim, from [`listener_kind`]. An unknown kind fails the whole verb.
     #[serde(default)]
@@ -201,7 +299,7 @@ pub struct ListenRequest {
 }
 
 /// The version handshake.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HelloRequest {
     /// The caller's major. A mismatch is refused.
     #[serde(rename = "versionMajor")]
@@ -219,7 +317,7 @@ pub struct HelloRequest {
 /// The environment is passed WHOLE rather than curated here: `HostEnvironment.curated` is hostd's
 /// job and changes often, and superd must not need a rebuild when it does. superd overlays only
 /// the values that are its own to know — the stable socket paths (`docs/51` §1).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SpawnRequest {
     /// The value baked into the child as `SLOPDESK_PANE_ID`. superd records it so a later hostd
     /// can recover it verbatim instead of re-deriving it (`docs/51` §5).
@@ -232,7 +330,7 @@ pub struct SpawnRequest {
     /// Absolute path to the binary.
     pub executable: String,
     /// `argv[0]`, when it must differ from `executable` — a login shell wants a leading `-`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub argv0: Option<String>,
     /// `argv[1..]`.
     #[serde(default)]
@@ -241,7 +339,7 @@ pub struct SpawnRequest {
     #[serde(default)]
     pub environment: std::collections::BTreeMap<String, String>,
     /// Working directory. A path superd cannot `chdir` into falls back to `$HOME`, then `/`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     /// Initial window size.
     pub rows: u16,
@@ -255,7 +353,7 @@ pub struct SpawnRequest {
     /// daemon's panes as indistinguishable from its own, and a pane is unattached for the whole
     /// ~0.2 s of its owner's restart. Absent (an older hostd) means "unknown", and the reader falls
     /// back to `attached` alone.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     /// Whether to install the zsh shell-integration shim for this child.
     ///
@@ -271,14 +369,14 @@ pub struct SpawnRequest {
     /// an operator who turned disk scrollback off. superd owns the FILE; every policy in this
     /// payload is hostd's, which is why it crosses the socket rather than being read from an
     /// environment superd would have to be restarted to change.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journal: Option<JournalSpawn>,
     /// Whether to segment this pane's output into command blocks, and with what.
     ///
     /// Absent — an older hostd, or a pane whose operator turned blocks off — means no tap at all:
     /// no segmenter touches the stream, no `0x05` frame is ever sent, and the block verbs answer
     /// "not tapped" rather than "nothing yet".
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocks: Option<BlocksRequest>,
 }
 
@@ -289,26 +387,30 @@ pub struct SpawnRequest {
 /// list applies, `Some("")` means they cleared it and the feature is off, and any other value is
 /// theirs. Sending a parsed list would put the built-in copy back in hostd, which is the second
 /// implementation this port exists to remove.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BlocksRequest {
     /// The verbatim `SLOPDESK_AUTO_PROGRESS_COMMANDS` value, absent when unset.
-    #[serde(default, rename = "autoProgressCommands")]
+    #[serde(
+        default,
+        rename = "autoProgressCommands",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub auto_progress_commands: Option<String>,
-    /// Per-block output ceiling; `0` takes [`crate::commandblocks::DEFAULT_OUTPUT_CAP`].
+    /// Per-block output ceiling; `0` takes superd's segmenter default.
     #[serde(default, rename = "outputCap")]
     pub output_cap: usize,
     /// How many finished blocks keep their output; `0` takes
-    /// [`crate::blocks::DEFAULT_MAX_BLOCKS`].
+    /// [`crate::blockwire::DEFAULT_MAX_BLOCKS`].
     #[serde(default, rename = "maxBlocks")]
     pub max_blocks: usize,
     /// Total retained output ceiling; `0` takes
-    /// [`crate::blocks::DEFAULT_MAX_TOTAL_OUTPUT_BYTES`].
+    /// [`crate::blockwire::DEFAULT_MAX_TOTAL_OUTPUT_BYTES`].
     #[serde(default, rename = "maxTotalOutputBytes")]
     pub max_total_output_bytes: usize,
 }
 
 /// Re-acquire a master fd for a pane superd already owns.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AdoptRequest {
     /// The pane to take back.
     #[serde(rename = "paneID")]
@@ -320,7 +422,7 @@ pub struct AdoptRequest {
 /// hostd could `kill(2)` it directly (a non-parent with the same uid may signal), but routing it
 /// through superd keeps superd's view of the pane honest and lets it distinguish a deliberate
 /// teardown from a crash.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SignalRequest {
     /// The pane whose process group is signalled.
     #[serde(rename = "paneID")]
@@ -334,7 +436,7 @@ pub struct SignalRequest {
 /// This is the distinction the whole design turns on. hostd exiting must NOT release panes, or the
 /// restart takes the shells with it; only an explicit close does. `kill: false` is the "the child
 /// already exited, just clean up" case.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ReleaseRequest {
     /// The pane to forget.
     #[serde(rename = "paneID")]
@@ -348,7 +450,7 @@ pub struct ReleaseRequest {
 /// hostd holds the master and could `TIOCSWINSZ` it itself — and does, for latency. This verb
 /// exists so superd's record stays truthful, because that record is what a *restarted* hostd reads
 /// before it has a size of its own.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ResizeRequest {
     /// The pane being resized.
     #[serde(rename = "paneID")]
@@ -362,9 +464,9 @@ pub struct ResizeRequest {
 /// Start receiving a pane's output.
 ///
 /// The reply states where the stream actually resumes, and the backlog follows it immediately on
-/// the same connection as [`crate::frame::TAG_OUTPUT`] frames, before any live byte — see
+/// the same connection as [`crate::TAG_OUTPUT`] frames, before any live byte — see
 /// `Connection::subscribe`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SubscribeRequest {
     /// The pane to follow.
     #[serde(rename = "paneID")]
@@ -380,7 +482,7 @@ pub struct SubscribeRequest {
 ///
 /// Deliberately not the same thing as `release`: superd keeps reading the pane, because a pane
 /// nobody is reading is a pane whose child blocks. This only stops the frames.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UnsubscribeRequest {
     /// The pane to stop following.
     #[serde(rename = "paneID")]
@@ -392,7 +494,7 @@ pub struct UnsubscribeRequest {
 /// Sent when hostd's detector sees an agent EXIT, so the next agent's byte-identical opening title
 /// is not deduped away. Fire-and-forget by design: the anchor is an optimisation, and the cost of
 /// losing the race is a stale pane title, not a wrong one.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ForgetTitleRequest {
     /// The pane whose anchor to retire.
     #[serde(rename = "paneID")]
@@ -404,7 +506,7 @@ pub struct ForgetTitleRequest {
 /// Answered from superd's ring rather than hostd's, because hostd's did not survive its own
 /// restart: a client that clicked a block from before a rebuild got an empty body for output superd
 /// had never stopped holding.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockOutputRequest {
     /// The pane the block belongs to.
     #[serde(rename = "paneID")]
@@ -415,7 +517,7 @@ pub struct BlockOutputRequest {
 }
 
 /// Where a pane's transcript lives and how big it may get.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct JournalSpawn {
     /// The directory journals are filed in. Created if it is not there.
     pub directory: String,
@@ -429,7 +531,7 @@ pub struct JournalSpawn {
 ///
 /// One payload for three verbs because they differ only in which fields they read: the info and the
 /// delete want a session, the sweep wants an age and a count.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct JournalRequest {
     /// The directory, as in [`JournalSpawn::directory`].
     pub directory: String,
@@ -449,7 +551,7 @@ pub struct JournalRequest {
 /// One payload for two verbs because they differ only in how much they answer: the snapshot is
 /// metadata for every block, the control read is the last `limit` blocks WITH their bytes. `limit`
 /// is ignored by the snapshot.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlockReadRequest {
     /// The pane to read.
     #[serde(rename = "paneID")]
@@ -465,7 +567,7 @@ pub struct BlockReadRequest {
 /// issues no reads at all, the kernel's PTY buffer fills, and the shell blocks — which is how this
 /// system has always kept its never-drop promise. Nothing is buffered on hostd's behalf and nothing
 /// is discarded.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PauseRequest {
     /// The pane to gate.
     #[serde(rename = "paneID")]
@@ -478,7 +580,7 @@ pub struct PauseRequest {
 
 /// One type carries both replies and notifications: `id == 0` means unsolicited, and `event` says
 /// which. Keeping them in one type means the read loop has exactly one decode.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reply {
     /// The `id` of the request being answered, or [`NOTIFICATION_ID`].
     pub id: u64,
@@ -523,17 +625,17 @@ pub struct Reply {
 /// What a block read answers with. Every field is optional because the three verbs fill different
 /// ones, and a reader that wants the whole shape can ask for it in one round trip if it ever needs
 /// to.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlocksReply {
     /// [`verb::BLOCK_OUTPUT`]: the retained bytes, base64. Absent for an evicted or unknown index.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
     /// [`verb::BLOCK_SNAPSHOT`]: every block still known, ascending.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub snapshot: Option<Vec<crate::blocks::BlockMeta>>,
+    pub snapshot: Option<Vec<crate::blockwire::BlockMeta>>,
     /// [`verb::BLOCK_CONTROL`]: the last `limit` finished blocks, oldest first, with their bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub recent: Option<Vec<crate::blocks::ControlBlock>>,
+    pub recent: Option<Vec<crate::blockwire::ControlBlock>>,
     /// [`verb::BLOCK_CONTROL`]: the block still running, if one is.
     ///
     /// Its command line and how much it has printed, never its bytes: a `last-output` call while
@@ -547,7 +649,7 @@ pub struct BlocksReply {
 }
 
 /// What [`verb::JOURNAL_INFO`] answers with.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalReply {
     /// Absolute path to the transcript. The caller reads the bytes itself — shipping a multi-MiB
     /// transcript back through JSON to hand it straight to a renderer would be a copy for nothing.
@@ -570,7 +672,7 @@ pub struct JournalReply {
 }
 
 /// The running command, as much of it as any caller has ever wanted.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenBlock {
     /// The typed command line.
     #[serde(rename = "commandText")]
@@ -662,14 +764,14 @@ impl Reply {
 }
 
 /// Which child-facing listener an `SCM_RIGHTS` descriptor was accepted on.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionNotice {
     /// One of [`listener_kind`].
     pub kind: String,
 }
 
 /// The handshake answer, and the only place hostd learns the stable child-facing socket paths.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HelloReply {
     /// superd's major.
     #[serde(rename = "versionMajor")]
@@ -716,7 +818,7 @@ pub struct HelloReply {
 /// Deliberately thin: no screen state, no scrollback, no detection state — those are hostd's and
 /// are rebuilt (`docs/51` §6). superd storing them would make superd need a restart whenever they
 /// change shape, and a superd restart costs every pane.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaneRecord {
     /// The pane's stable identity, as hostd named it at spawn.
     #[serde(rename = "paneID")]
@@ -748,7 +850,7 @@ pub struct PaneRecord {
 }
 
 /// Where a subscription actually starts, and how far the pane has already got.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct StreamPosition {
     /// The absolute offset the backlog frames begin at. **Greater** than the requested offset when
     /// the ring had already evicted past it, which is the subscriber's only warning that its
@@ -766,11 +868,17 @@ pub struct StreamPosition {
     /// short-lived enough to finish before the `subscribe` arrives was announced dead before this
     /// connection was watching — so without this field the backlog would render and the session
     /// would then wait forever for an end that already happened.
+    ///
+    /// Defaulted on the way IN, and the only field on this struct that is: it arrived at minor 3,
+    /// and a minor-2 superd is a peer this protocol promises to keep serving. Absent means "not
+    /// known to have ended", which is what a pane that is still running looks like — the safe
+    /// direction, because the alternative is a live pane rendered as finished.
+    #[serde(default)]
     pub ended: bool,
 }
 
 /// A supervised child was reaped.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExitedNotice {
     /// Which pane died.
     #[serde(rename = "paneID")]
@@ -828,9 +936,14 @@ mod tests {
         assert!(failed.contains(r#""status":"error""#), "{failed}");
     }
 
-    /// The Swift side decodes these keys by name. A rename here is a silent `nil` there.
+    /// The keys are the wire, and every deployed superd of every version writes them.
+    ///
+    /// This test used to say "match the Swift mirror", and the mirror is gone — but the assertions
+    /// are not weaker for it, they are aimed at a different peer. A rename here is no longer a
+    /// silent `nil` in another language; it is a silent `None` against every superd already
+    /// running at somebody's login, which is the peer rule 1 exists for.
     #[test]
-    fn json_keys_match_the_swift_mirror() {
+    fn json_keys_are_the_ones_every_deployed_peer_writes() {
         let reply = Reply {
             pane: Some(PaneRecord {
                 pane_id: "pane-a".to_owned(),
@@ -859,6 +972,69 @@ mod tests {
         // Absent optionals are omitted, not serialised as null — Swift decodes both, but the
         // notification path relies on `event` being absent to mean "this is an answer".
         assert!(!json.contains("event"), "{json}");
+    }
+
+    /// The reading side of rule 3, and the one that HANGS rather than failing.
+    ///
+    /// A closed enum throws here; the throw kills the frame in the read loop, and the waiter parked
+    /// under that request id is never woken. So an invented status must decode, and must not decode
+    /// to success.
+    #[test]
+    fn an_unknown_status_decodes_as_a_failure_rather_than_killing_the_frame() {
+        let reply: Reply = serde_json::from_str(r#"{"id":7,"status":"deferred"}"#).unwrap();
+        assert_eq!(reply.id, 7);
+        assert_eq!(reply.status, Status::Unrecognised);
+        assert!(!reply.status.is_ok(), "an unnameable status is never success");
+        // And the three this build does name still land where they should.
+        for (word, expected) in [
+            ("ok", Status::Ok),
+            ("error", Status::Error),
+            ("unsupported", Status::Unsupported),
+        ] {
+            let json = format!(r#"{{"id":1,"status":"{word}"}}"#);
+            let decoded: Reply = serde_json::from_str(&json).unwrap();
+            assert_eq!(decoded.status, expected, "{word}");
+        }
+    }
+
+    /// Rule 1 on the reading side: a field a NEWER superd added must be ignored, and a field an
+    /// OLDER superd never sends must default rather than fail.
+    #[test]
+    fn a_reply_from_either_side_of_the_skew_still_decodes() {
+        // A minor-2 superd: `ended` did not exist until 3, and a subscribe that failed to decode
+        // would be a pane that never opens.
+        let old: Reply =
+            serde_json::from_str(r#"{"id":2,"status":"ok","stream":{"start":0,"head":9,"lossy":false}}"#)
+                .unwrap();
+        let stream = old.stream.unwrap();
+        assert_eq!(stream.head, 9);
+        assert!(!stream.ended, "absent means not known to have ended");
+
+        // A newer superd, carrying a key this build has never heard of.
+        let new: Reply = serde_json::from_str(
+            r#"{"id":3,"status":"ok","futureKey":{"x":1},"hello":{"versionMajor":1,
+                "versionMinor":99,"superdPID":5,"futureField":"y"}}"#,
+        )
+        .unwrap();
+        assert_eq!(new.hello.unwrap().version_minor, 99);
+    }
+
+    /// The encode direction, which is hostd's: absent optionals must be OMITTED, not sent as null.
+    ///
+    /// superd reads `Option` fields, so a null would decode the same — but `spawn` carries a whole
+    /// child environment against a 4 MiB frame cap, and fourteen `"x":null` pairs on every request
+    /// is wire nobody asked for. This is what `JSONEncoder` did, kept because it was right.
+    #[test]
+    fn an_encoded_request_omits_the_payloads_it_does_not_carry() {
+        let mut request = Request::new(5, verb::ADOPT);
+        request.adopt = Some(AdoptRequest {
+            pane_id: "pane-a".to_owned(),
+        });
+        let json = String::from_utf8(request.encode().unwrap()).unwrap();
+        assert_eq!(json, r#"{"id":5,"verb":"adopt","adopt":{"paneID":"pane-a"}}"#);
+        // And it round-trips through the decode superd actually runs.
+        let back: Request = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.adopt.unwrap().pane_id, "pane-a");
     }
 
     #[test]

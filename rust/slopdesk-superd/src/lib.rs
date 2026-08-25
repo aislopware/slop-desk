@@ -48,8 +48,14 @@ pub mod journal;
 pub mod listeners;
 /// The stable, pid-free socket paths.
 pub mod paths;
-/// The version-skew-tolerant message set.
-pub mod protocol;
+/// The version-skew-tolerant message set — `slopdesk_superwire`'s, re-exported.
+///
+/// It lived here until the Swift mirror of it was deleted. Both ends of this socket now read one
+/// declaration, which is why it sits beside the framing rather than inside the daemon: the reading
+/// end links `slopdesk-superwire` and must not link `nix`, `base64` and a PTY supervisor to say
+/// `hello`. Re-exported rather than re-pathed at ~30 call sites, because `protocol::` reads the
+/// same here as it always did and the move is not something superd's dispatch has an opinion about.
+pub use slopdesk_superwire::protocol;
 /// One reader thread per pane — the always-on drain.
 pub mod pump;
 /// The pane table — what superd actually is.

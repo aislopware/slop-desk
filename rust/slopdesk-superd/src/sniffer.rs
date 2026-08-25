@@ -58,107 +58,14 @@ const RIGHT_BRACKET: u8 = b']';
 const BACKSLASH: u8 = b'\\';
 const SEMICOLON: u8 = b';';
 
-/// What the shell reported about the foreground command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CommandStatus {
-    /// A command began executing.
-    Running,
-    /// The shell is at a prompt, with the finished command's code and duration when it had one.
-    Idle {
-        /// The command's `$?`, when the shell reported one.
-        exit_code: Option<i32>,
-        /// The measured milliseconds it ran.
-        duration_ms: u32,
-    },
-}
-
-/// Something the shell said out of band.
+/// The two event types this pass produces — `slopdesk_superwire::sniffwire`'s, re-exported.
 ///
-/// Deliberately NOT wire messages. This crate is the byte reader; the owner turns an event into
-/// whatever frame the protocol calls for, so the protocol stays spelled in exactly one crate.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SniffEvent {
-    /// A new window title, already deduplicated against the last one emitted.
-    Title(String),
-    /// A real terminal bell.
-    Bell,
-    /// A command started or finished.
-    Status(CommandStatus),
-    /// The shell's working directory, verified local and percent-decoded.
-    Cwd(String),
-    /// A desktop notification.
-    Notification {
-        /// The title, empty when the source gave only a body.
-        title: String,
-        /// The body.
-        body: String,
-    },
-    /// The BODY of an OSC 9;4 progress sequence, verbatim after the `9;`.
-    ///
-    /// Handed up unparsed on purpose. The progress vocabulary belongs to the wire crate, which
-    /// already owns both halves of it; parsing it here would put a second copy of that grammar in
-    /// the one place that must not have opinions about the protocol. A body that does not parse is
-    /// dropped by the owner — it is progress either way, never a notification.
-    ProgressBody(String),
-}
-
-/// The JSON one event crosses the socket as — an object tagged by `kind`.
-///
-/// Written by hand rather than derived because the natural Rust shape here is newtype variants
-/// (`Title(String)`), and serde cannot internally-tag one of those: the derive compiles and then
-/// fails at RUN time, on the hot path, per chunk. Spelling it out also pins the field names the
-/// Swift decoder reads, which a `rename_all` two types away does not.
-impl serde::Serialize for SniffEvent {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap as _;
-
-        /// One `{"kind": …, "value": …}` object — the shape three of the variants share.
-        fn value_of<S: serde::Serializer>(serializer: S, kind: &str, value: &str) -> Result<S::Ok, S::Error> {
-            let mut map = serializer.serialize_map(Some(2))?;
-            map.serialize_entry("kind", kind)?;
-            map.serialize_entry("value", value)?;
-            map.end()
-        }
-
-        match self {
-            Self::Title(value) => value_of(serializer, "title", value),
-            Self::Cwd(value) => value_of(serializer, "cwd", value),
-            Self::ProgressBody(value) => value_of(serializer, "progress", value),
-            Self::Bell => {
-                let mut map = serializer.serialize_map(Some(1))?;
-                map.serialize_entry("kind", "bell")?;
-                map.end()
-            },
-            Self::Status(CommandStatus::Running) => {
-                let mut map = serializer.serialize_map(Some(2))?;
-                map.serialize_entry("kind", "status")?;
-                map.serialize_entry("state", "running")?;
-                map.end()
-            },
-            Self::Status(CommandStatus::Idle {
-                exit_code,
-                duration_ms,
-            }) => {
-                let mut map = serializer.serialize_map(Some(4))?;
-                map.serialize_entry("kind", "status")?;
-                map.serialize_entry("state", "idle")?;
-                // Always present, `null` for the code-less `D`: the receiver latches an exit only
-                // when it is a number, and a missing key and a null one must not be told apart by
-                // whether this build happened to skip it.
-                map.serialize_entry("exitCode", exit_code)?;
-                map.serialize_entry("durationMS", duration_ms)?;
-                map.end()
-            },
-            Self::Notification { title, body } => {
-                let mut map = serializer.serialize_map(Some(3))?;
-                map.serialize_entry("kind", "notification")?;
-                map.serialize_entry("title", title)?;
-                map.serialize_entry("body", body)?;
-                map.end()
-            },
-        }
-    }
-}
+/// They were declared here, with a hand-written `Serialize` beside them, and declared a second time
+/// in hostd's own `SniffedEvent.swift` with a hand-written decode beside THAT.
+/// Nothing compared the two and nothing could, so `state` renamed on one side left every finished
+/// command reading as still running with both suites green (`docs/51` §6.13). One declaration now,
+/// in the crate both ends link; this module is the byte reader again and nothing else.
+pub use slopdesk_superwire::sniffwire::{CommandStatus, SniffEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum State {

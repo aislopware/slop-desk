@@ -8,135 +8,60 @@ use crate::tree::Tree;
 
 const RUST_SNIFFER: &str = "rust/slopdesk-superd/src/sniffer.rs";
 const RUST_BLOCKS: &str = "rust/slopdesk-superd/src/blocks.rs";
-const RUST_SERVER: &str = "rust/slopdesk-superd/src/server.rs";
-const RUST_PROTOCOL: &str = "rust/slopdesk-superd/src/protocol.rs";
-const SWIFT_SNIFFED: &str = "Sources/SlopDeskSupervisor/SniffedEvent.swift";
-const SWIFT_BLOCK_EVENT: &str = "Sources/SlopDeskSupervisor/BlockEvent.swift";
+const RUST_SNIFFWIRE: &str = "rust/slopdesk-superwire/src/sniffwire.rs";
+const RUST_BLOCKWIRE: &str = "rust/slopdesk-superwire/src/blockwire.rs";
+/// The name of the golden test each wire module owes. Spelled once, asserted in both.
+const GOLDEN: &str = "fn every_event_serialises_to_the_shape_the_wire_has_always_carried";
 
-/// §4b — the two batch bodies, the one part of this protocol hand-written at BOTH ends.
+/// §4b — the two batch bodies: ONE alphabet each, and the golden test that holds it still.
 ///
-/// §3 and §4 pin superd's ENVELOPE — the verbs, the listener kinds, the frame tags, the cap. Inside
-/// a `0x04` or a `0x05` frame is a JSON body neither of them can see, and that body is written by
-/// hand on both sides: superd hand-writes `serialize_entry` per key (`sniffer.rs`, `blocks.rs` —
-/// serde cannot internally-tag a newtype variant, and the failure would be a run-time one on the
-/// hot path), and hostd re-spells every key as a subscript or a synthesised `CodingKey`. Nothing
-/// compares the two spellings, and nothing can: each end's suite reads only its own end, so a
-/// rename passes both suites green.
+/// This gate used to compare ALPHABETS, both ways, eleven claims of them. It had to: the bodies
+/// inside a `0x04` and a `0x05` frame were hand-written at both ends — superd hand-wrote a
+/// `serialize_entry` map per key in `sniffer.rs` and `blocks.rs`, and hostd hand-wrote the matching
+/// subscripts and `CodingKey` enums in `SniffedEvent.swift` and `BlockEvent.swift` — and nothing
+/// compared the two spellings, because each end's suite read only its own end. A rename passed both
+/// suites green while every finished command decoded as still running (docs/51 §6.13) or the
+/// Commands panel filled with blank rows (§6.14).
 ///
-/// The failure is silent in the worst available way. `guard member["state"] as? String == "idle"`
-/// is a decode with a DEFAULT — rename `state` on the Rust side and every finished command reads as
-/// still running, so the spinner never stops and nothing is logged (docs/51 §6.13). The block half
-/// is the same shape: a renamed `commandText` fills the Commands panel with blank rows (§6.14).
+/// Both directions are `slopdesk-superwire`'s now — [`sniffwire`][RUST_SNIFFWIRE] and
+/// [`blockwire`][RUST_BLOCKWIRE] serialize and deserialize the same declarations, which superd
+/// links and hostd reaches through `slopdesk-ffi`'s batch doors. There is no second alphabet to
+/// compare against, so the eleven claims are gone.
 ///
-/// So this compares the ALPHABETS, both ways, derived from each side rather than listed here.
-/// Comments are stripped from the Swift: the doc comments on both files NAME the keys on purpose —
-/// that prose is why the shape is written by hand at all — and matching it would make this gate
-/// pass on its own documentation.
+/// What replaces them is what a comparison never covered anyway. The wire is not only read by THIS
+/// build: superd outlives hostd's, so a rename that moves both directions at once in one commit is
+/// still a skew against every superd already running at somebody's login. The only thing that
+/// catches that is a LITERAL — each module carries one golden test asserting the exact bytes the
+/// wire has always carried. Delete it and a rename becomes invisible again, which is precisely the
+/// state this gate was written to end, so its presence is what is ratcheted here.
+///
+/// The second half is the one-implementation ratchet under it: a `serialize_entry` back in superd's
+/// own `sniffer.rs` or `blocks.rs` is the hand-written map returning as a second spelling, which is
+/// how the eleven claims became necessary the first time. Both files re-export from `superwire`
+/// now and neither writes JSON.
 #[must_use]
 pub fn batch_bodies(tree: &Tree) -> Report {
     let claims = [
-        // The two envelope keys, `{"events": […]}` and `{"blocks": […]}`. One word each, and the
-        // whole batch is lost if it moves: `decodeBatch` returns nil, hostd drops the frame, and a
-        // pane simply stops reporting. Rust spells them as the field names of the two batch structs.
-        Claim::SameValue {
-            label: "sniff batch envelope key",
-            swift: Extract::code(SWIFT_SNIFFED, r#"root\["([a-zA-Z_]+)"\]"#),
-            rust: Extract::code(RUST_SERVER, r"^ *([a-z_]+): ").within(r"struct SniffBatch", r"^\}"),
+        Claim::Matches {
+            path: RUST_SNIFFWIRE,
+            pattern: GOLDEN,
+            view: View::Code,
+            message: "the sniff body has no golden literal left — a renamed key is invisible again to every \
+                      superd already running (docs/51 §6.13)",
         },
-        Claim::SameValue {
-            label: "blocks batch envelope key",
-            swift: Extract::code(SWIFT_BLOCK_EVENT, r"^ *var ([a-zA-Z_]+):")
-                .within(r"private struct BlockBatch", r"^\}"),
-            rust: Extract::code(RUST_SERVER, r"^ *([a-z_]+): ").within(r"struct BlockBatch", r"^\}"),
+        Claim::Matches {
+            path: RUST_BLOCKWIRE,
+            pattern: GOLDEN,
+            view: View::Code,
+            message: "the block body has no golden literal left — a renamed commandText fills the Commands \
+                      panel with blank rows and fails nothing (docs/51 §6.14)",
         },
-        // The sniff body: `sniffer.rs`'s hand-written map against `SniffedEvent`'s subscripts.
-        Claim::SameSet {
-            label: "sniff body keys",
-            swift: Extract::code(SWIFT_SNIFFED, r#"member\["([a-zA-Z_]+)"\]"#),
-            rust: Extract::code(RUST_SNIFFER, r#"serialize_entry\("([a-zA-Z_]*)""#),
-        },
-        // The `kind` VALUES, which are the tag: an unrecognised one decodes to `.unknown` and is
-        // dropped silently by design, so a rename here loses a whole event class with nothing to
-        // see. Rust writes three of them through the shared `value_of` helper and three inline.
-        Claim::SameSet {
-            label: "sniff kind values",
-            swift: Extract::code(SWIFT_SNIFFED, r#"(?m)^ *case "([a-zA-Z_]*)""#),
-            rust: Extract::code(RUST_SNIFFER, r#"value_of\(serializer, "([a-zA-Z_]*)""#)
-                .also(&[r#"serialize_entry\("kind", "([a-zA-Z_]*)"\)"#]),
-        },
-        // The `state` values — a plain set comparison, and it only became one when the SOURCE was
-        // fixed. `SniffedEvent` used to read `guard … == "idle" else { .commandRunning }`, spelling
-        // one literal and inferring the other from its absence, so there was no Swift set to
-        // compare and this gate had to stand a cardinality pin up in its place. It spells both now,
-        // and an unrecognised state decodes to `.unknown(kind: "status")` rather than to a guess.
-        //
-        // This pins the ALPHABET; it cannot pin the MEANING — nothing textual can tell that Swift
-        // has not swapped the two arms. `testAnUnknownStateIsNeverSilentlyReadAsRunning` pins that,
-        // and the two are the pair: the test proves the mapping for the strings that exist, this
-        // proves the strings still exist.
-        Claim::SameSet {
-            label: "sniff status states",
-            swift: Extract::code(SWIFT_SNIFFED, r#"state == "([a-zA-Z_]*)""#),
-            rust: Extract::code(RUST_SNIFFER, r#"serialize_entry\("state", "([a-zA-Z_]*)"\)"#),
-        },
-        // The block body: `blocks.rs`'s three hand-written maps against `BlockEvent.swift`'s types.
-        // `BlockMeta` is the one that rides the `0x05` batch AND the reattach snapshot, which is why
-        // it is tagged `kind` at all; Swift reads that tag through its own `Tag` enum rather than as
-        // a stored property, so the two are unioned into one comparable alphabet.
-        Claim::SameSet {
-            label: "block metadata keys",
-            swift: Extract::code(SWIFT_BLOCK_EVENT, r"^ *public var ([a-zA-Z_]*):")
-                .within(r"^public struct BlockMetadata", r"public init\(")
-                .also(&[r"enum Tag: String, CodingKey \{ case ([a-zA-Z_]*)"]),
-            rust: Extract::code(RUST_BLOCKS, r#"serialize_entry\("([a-zA-Z_]*)""#)
-                .within(r"impl serde::Serialize for BlockMeta", r"^\}"),
-        },
-        Claim::SameSet {
-            label: "block kind values",
-            swift: Extract::code(SWIFT_BLOCK_EVENT, r#"(?m)^ *case "([a-zA-Z_]*)""#),
-            rust: Extract::code(RUST_BLOCKS, r#"serialize_entry\("kind", "([a-zA-Z_]*)"\)"#),
-        },
-        // The badge states. Swift decodes these as a `String`-raw-value enum, so the case NAMES are
-        // the wire; Rust writes them as literals in a `match`. An unknown one is kept as a skew on
-        // purpose (`BlockEvent.swift`), so a rename here leaves a spinner up forever rather than
-        // failing.
-        Claim::SameSet {
-            label: "block progress states",
-            swift: Extract::code(SWIFT_BLOCK_EVENT, r"(?m)^ *case ([a-zA-Z_]*)$")
-                .within(r"public enum SyntheticProgress", r"^\}"),
-            rust: Extract::code(RUST_BLOCKS, r#"SyntheticProgress::[A-Za-z]* => "([a-zA-Z_]*)""#)
-                .within(r"impl serde::Serialize for BlockEvent", r"^\}"),
-        },
-        // `ControlBlock` is the third hand-written map in `blocks.rs` — a finished block with its
-        // bytes, what the agent-control verbs read. Swift spells it as an explicit `CodingKey`
-        // enum, the only one of these types where the key list is written out rather than
-        // synthesised.
-        Claim::SameSet {
-            label: "control block keys",
-            swift: Extract::code(SWIFT_BLOCK_EVENT, r"(?m)^ *case ([a-zA-Z_]*)$")
-                .within(r"private enum Key: String, CodingKey", r"^ *\}"),
-            rust: Extract::code(RUST_BLOCKS, r#"serialize_entry\("([a-zA-Z_]*)""#)
-                .within(r"impl serde::Serialize for ControlBlock", r"^\}"),
-        },
-        // The reply that CARRIES those two — derived, not hand-written, but decoded by the same file
-        // and skewed the same way: `nextIndex` is the `run --wait` baseline, and an absent one makes
-        // the wait start counting from zero. The Rust side is read rename-first, so a
-        // `#[serde(rename)]` is what crosses and the snake-case field name never is.
-        Claim::SameSet {
-            label: "blocks reply keys",
-            swift: Extract::code(SWIFT_BLOCK_EVENT, r"(?m)^ *public var ([a-zA-Z_]*):.*[^{]$")
-                .within(r"^public struct BlocksReply", r"^\}"),
-            rust: Extract::code(RUST_PROTOCOL, "")
-                .within(r"^pub struct BlocksReply", r"^\}")
-                .serde_fields(),
-        },
-        Claim::SameSet {
-            label: "open block keys",
-            swift: Extract::code(SWIFT_BLOCK_EVENT, r"(?m)^ *public var ([a-zA-Z_]*):")
-                .within(r"^public struct OpenBlock", r"^\}"),
-            rust: Extract::code(RUST_PROTOCOL, "")
-                .within(r"^pub struct OpenBlock", r"^\}")
-                .serde_fields(),
+        Claim::NoneOf {
+            paths: &[RUST_SNIFFER, RUST_BLOCKS],
+            pattern: r"serialize_entry",
+            view: View::Code,
+            message: "{files} hand-writes a batch body again — slopdesk-superwire owns both directions, and \
+                      a second spelling is the drift eleven claims used to chase (CLAUDE.md)",
         },
     ];
     check_all(tree, &claims)
@@ -225,28 +150,54 @@ mod tests {
 
     use crate::tests::Fixture;
 
-    /// The §6.13 failure, in miniature: a key renamed on the Rust side only. `guard
-    /// member["state"]` is a decode with a default, so this is the change that leaves every
-    /// spinner up forever.
-    #[test]
-    fn a_body_key_renamed_on_one_side_only_is_caught() {
-        let fixture = Fixture::new("sniff-key");
+    /// A tree where both wire modules carry their golden literal and superd writes no JSON.
+    fn bodies_fixture(name: &str) -> Fixture {
+        let golden = "#[test]\nfn every_event_serialises_to_the_shape_the_wire_has_always_carried() {}\n";
+        let fixture = Fixture::new(name);
         fixture
-            .write(
-                "Sources/SlopDeskSupervisor/SniffedEvent.swift",
-                "let a = member[\"state\"]\nlet b = member[\"cwd\"]\n",
-            )
+            .write("rust/slopdesk-superwire/src/sniffwire.rs", golden)
+            .write("rust/slopdesk-superwire/src/blockwire.rs", golden)
             .write(
                 "rust/slopdesk-superd/src/sniffer.rs",
-                "map.serialize_entry(\"status\", &v)?;\nmap.serialize_entry(\"cwd\", &v)?;\n",
+                "pub use slopdesk_superwire::sniffwire::SniffEvent;\n",
             )
-            .write("rust/slopdesk-superd/src/blocks.rs", "\n")
-            .write("rust/slopdesk-superd/src/server.rs", "\n")
-            .write("rust/slopdesk-superd/src/protocol.rs", "\n")
-            .write("Sources/SlopDeskSupervisor/BlockEvent.swift", "\n");
+            .write(
+                "rust/slopdesk-superd/src/blocks.rs",
+                "pub use slopdesk_superwire::blockwire::BlockEvent;\n",
+            );
+        fixture
+    }
+
+    /// The §6.13 failure, in the only form it still has. Both directions move together now, so the
+    /// skew is against the superd already RUNNING — and the literal is the only thing that sees it.
+    #[test]
+    fn deleting_a_golden_literal_is_caught() {
+        let fixture = bodies_fixture("golden-gone");
+        assert!(super::batch_bodies(&fixture.tree()).is_clean());
+
+        fixture.write("rust/slopdesk-superwire/src/sniffwire.rs", "// nothing left\n");
         let report = super::batch_bodies(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("sniff body keys")),
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no golden literal")),
+            "{report:?}",
+        );
+    }
+
+    /// The one-implementation half: a hand-written map back in superd is the second spelling that
+    /// made eleven alphabet claims necessary the first time.
+    #[test]
+    fn a_hand_written_batch_body_back_in_superd_is_caught() {
+        let fixture = bodies_fixture("second-spelling");
+        fixture.write(
+            "rust/slopdesk-superd/src/sniffer.rs",
+            "map.serialize_entry(\"state\", &v)?;\n",
+        );
+        let report = super::batch_bodies(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("sniffer.rs")),
             "{report:?}",
         );
     }

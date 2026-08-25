@@ -26,156 +26,20 @@
 
 use std::collections::HashMap;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
-
-use crate::commandblocks::{CommandBlock, CommandBlockSegmenter, SyntheticProgress};
-
-/// Default ceiling on how many finished blocks keep their output.
-pub const DEFAULT_MAX_BLOCKS: usize = 64;
-
-/// Default ceiling on the retained output bytes across all held blocks, 8 MiB.
+/// The four wire types this tap reports in, and the two ceilings it defaults to —
+/// `slopdesk_superwire::blockwire`'s, re-exported.
 ///
-/// A second bound rather than a redundant one: 64 blocks at the segmenter's 256 KiB per-block cap
-/// would otherwise pin 16 MiB per pane.
-pub const DEFAULT_MAX_TOTAL_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+/// They were declared here, with three hand-written `Serialize` impls beside them, and declared
+/// again in hostd's own `BlockEvent.swift` with hand-written `CodingKey` enums
+/// beside THOSE. Nothing compared the two spellings: a renamed `commandText` filled the Commands
+/// panel with blank rows and failed nothing (`docs/51` §6.14). One declaration now, in the crate
+/// both ends link. What stays here is the part that is not the wire — the segmenter, the ring, the
+/// eviction and the dedup below.
+pub use slopdesk_superwire::blockwire::{
+    BlockEvent, BlockMeta, ControlBlock, DEFAULT_MAX_BLOCKS, DEFAULT_MAX_TOTAL_OUTPUT_BYTES, base64,
+};
 
-/// The wire-relevant facts about one block — and, being the whole of what is reported, also the
-/// dedup key: a change here is exactly what earns a fresh report.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct BlockMeta {
-    /// The block's index in emission order.
-    pub index: u32,
-    /// The command's `$?`, when the shell reported one.
-    pub exit_code: Option<i32>,
-    /// The measured `C`→`D` milliseconds, absent while the command is still running.
-    pub duration_ms: Option<u32>,
-    /// Whether the matching `D` has arrived.
-    pub complete: bool,
-    /// How many output bytes are held for this block.
-    pub output_len: u32,
-    /// The typed command line.
-    pub command_text: String,
-    /// The block's prompt-row ordinal, `0` when unknown.
-    pub prompt_ordinal: u32,
-}
-
-/// One thing that happened in a chunk, worth telling hostd about.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlockEvent {
-    /// A block was created, changed, or finished.
-    Meta(BlockMeta),
-    /// A synthetic progress badge should go up or come down for a slow command.
-    Progress(SyntheticProgress),
-}
-
-/// One finished block joined with its metadata — what the agent-control verbs read.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ControlBlock {
-    /// The block's index.
-    pub index: u32,
-    /// The typed command line, as last reported.
-    pub command_text: String,
-    /// The command's `$?`, when the shell reported one.
-    pub exit_code: Option<i32>,
-    /// The measured `C`→`D` milliseconds.
-    pub duration_ms: Option<u32>,
-    /// Whether the block closed on its own `D` rather than on a fresh prompt.
-    pub complete: bool,
-    /// The retained output bytes.
-    pub output: Vec<u8>,
-}
-
-/// The JSON one block's metadata crosses the socket as.
-///
-/// Tagged `kind` even though a snapshot is nothing but blocks, so that ONE decoder on hostd's side
-/// reads a block wherever it turns up — inside a live `0x05` batch beside a progress badge, or in a
-/// reattach snapshot. Two shapes for one fact is how the two drift.
-///
-/// `exitCode` and `durationMS` are ALWAYS present, carrying `null` when absent, so that a missing
-/// key and an absent value are never told apart by which build wrote the frame.
-///
-/// ```json
-/// {"kind":"block","index":3,"exitCode":0,"durationMS":42,"complete":true,"outputLen":19,
-///  "commandText":"ls -la","promptOrdinal":7}
-/// ```
-impl serde::Serialize for BlockMeta {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap as _;
-
-        let mut map = serializer.serialize_map(Some(8))?;
-        map.serialize_entry("kind", "block")?;
-        map.serialize_entry("index", &self.index)?;
-        map.serialize_entry("exitCode", &self.exit_code)?;
-        map.serialize_entry("durationMS", &self.duration_ms)?;
-        map.serialize_entry("complete", &self.complete)?;
-        map.serialize_entry("outputLen", &self.output_len)?;
-        map.serialize_entry("commandText", &self.command_text)?;
-        map.serialize_entry("promptOrdinal", &self.prompt_ordinal)?;
-        map.end()
-    }
-}
-
-/// The JSON one block event crosses the socket as — a block, or a badge.
-///
-/// Hand-written for the same reason [`crate::sniffer::SniffEvent`]'s is: serde cannot
-/// internally-tag an enum whose variants are newtypes, and the failure is a RUN-time one, on the
-/// hot path, per chunk.
-///
-/// ```json
-/// {"kind":"progress","state":"indeterminate"}
-/// ```
-impl serde::Serialize for BlockEvent {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap as _;
-
-        match *self {
-            // Delegated rather than repeated: a snapshot serialises the same object without the
-            // event wrapper, and two copies of the key names is one rename away from a silent skew.
-            Self::Meta(ref meta) => meta.serialize(serializer),
-            Self::Progress(state) => {
-                let mut map = serializer.serialize_map(Some(2))?;
-                map.serialize_entry("kind", "progress")?;
-                map.serialize_entry("state", match state {
-                    SyntheticProgress::Indeterminate => "indeterminate",
-                    SyntheticProgress::Clear => "clear",
-                })?;
-                map.end()
-            },
-        }
-    }
-}
-
-/// A finished block as the agent-control verbs read it, with its output base64'd.
-///
-/// Base64 rather than a binary frame because this is a fetch a person asked for — a click on a
-/// block, or a ctl `last-output` — not a stream. One block is capped at 256 KiB by the segmenter,
-/// so the encoded worst case sits an order of magnitude under the frame ceiling, and the reply
-/// stays one JSON object that every existing decode path already handles.
-impl serde::Serialize for ControlBlock {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap as _;
-
-        let mut map = serializer.serialize_map(Some(6))?;
-        map.serialize_entry("index", &self.index)?;
-        map.serialize_entry("commandText", &self.command_text)?;
-        map.serialize_entry("exitCode", &self.exit_code)?;
-        map.serialize_entry("durationMS", &self.duration_ms)?;
-        map.serialize_entry("complete", &self.complete)?;
-        map.serialize_entry("output", &base64(&self.output))?;
-        map.end()
-    }
-}
-
-/// Standard base64 with padding — the encoding the client's JSON reply carries retained output in.
-///
-/// The `base64` crate rather than the twenty lines this used to be: the decoder in
-/// [`crate::sniffer`] reads the same engine, so there is one codec in this binary instead of an
-/// encoder and a decoder written separately and agreeing by inspection.
-#[must_use]
-pub fn base64(bytes: &[u8]) -> String {
-    STANDARD.encode(bytes)
-}
+use crate::commandblocks::{CommandBlock, CommandBlockSegmenter};
 
 /// One retained block's output.
 #[derive(Debug, Clone)]
@@ -415,12 +279,13 @@ fn meaningfully_changed(last: &BlockMeta, next: &BlockMeta) -> bool {
 
 #[cfg(test)]
 #[expect(
-    clippy::expect_used,
     clippy::indexing_slicing,
-    reason = "a panic in a test is the failure report, not a runtime fault"
+    reason = "a fixed offset into a fixture this test just built is the assertion"
 )]
 mod tests {
-    use super::{BlockEvent, BlockTracker, SyntheticProgress};
+    use slopdesk_superwire::blockwire::SyntheticProgress;
+
+    use super::{BlockEvent, BlockTracker};
 
     /// A whole command, as the shim's marks spell it.
     fn command(text: &str, output: &str, exit: &str) -> Vec<u8> {
@@ -438,7 +303,8 @@ mod tests {
             .filter_map(|event| {
                 match *event {
                     BlockEvent::Meta(ref meta) => Some(meta),
-                    BlockEvent::Progress(_) => None,
+                    // `Unknown` exists only on the reading side; this tap cannot produce one.
+                    BlockEvent::Progress(_) | BlockEvent::Unknown { .. } => None,
                 }
             })
             .collect()
@@ -578,62 +444,6 @@ mod tests {
             3,
             "a command already running consumes index 2 itself"
         );
-    }
-
-    /// The cross-language contract, pinned as a literal here and as the same literal in
-    /// `SlopDeskHost`'s decode suite. A rename on either side is otherwise silent: hostd would
-    /// decode a block with a missing field and the Commands panel would simply stop filling in,
-    /// with nothing logged.
-    #[test]
-    fn every_event_serialises_to_the_shape_the_client_decodes() {
-        let meta = super::BlockMeta {
-            index: 3,
-            exit_code: Some(0),
-            duration_ms: Some(42),
-            complete: true,
-            output_len: 19,
-            command_text: "ls -la".to_owned(),
-            prompt_ordinal: 7,
-        };
-        assert_eq!(
-            serde_json::to_string(&BlockEvent::Meta(meta)).expect("a block meta serialises"),
-            r#"{"kind":"block","index":3,"exitCode":0,"durationMS":42,"complete":true,"outputLen":19,"commandText":"ls -la","promptOrdinal":7}"#
-        );
-        // The running shape: both absent values present as null, never as a missing key.
-        assert_eq!(
-            serde_json::to_string(&BlockEvent::Meta(super::BlockMeta::default()))
-                .expect("a default serialises"),
-            r#"{"kind":"block","index":0,"exitCode":null,"durationMS":null,"complete":false,"outputLen":0,"commandText":"","promptOrdinal":0}"#
-        );
-        assert_eq!(
-            serde_json::to_string(&BlockEvent::Progress(SyntheticProgress::Indeterminate))
-                .expect("a badge serialises"),
-            r#"{"kind":"progress","state":"indeterminate"}"#
-        );
-        assert_eq!(
-            serde_json::to_string(&BlockEvent::Progress(SyntheticProgress::Clear))
-                .expect("a badge serialises"),
-            r#"{"kind":"progress","state":"clear"}"#
-        );
-    }
-
-    /// The RFC 4648 vectors, including every padding case — a hand-rolled codec earns its own pin,
-    /// and a block whose output decodes to the wrong bytes is a transcript that silently lies.
-    #[test]
-    fn the_base64_encoder_pads_exactly_as_the_standard_says() {
-        assert_eq!(super::base64(b""), "");
-        assert_eq!(super::base64(b"f"), "Zg==");
-        assert_eq!(super::base64(b"fo"), "Zm8=");
-        assert_eq!(super::base64(b"foo"), "Zm9v");
-        assert_eq!(super::base64(b"foob"), "Zm9vYg==");
-        assert_eq!(super::base64(b"fooba"), "Zm9vYmE=");
-        assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
-        // The whole byte range, so the alphabet's tail (`+` and `/`) is covered rather than assumed.
-        let every: Vec<u8> = (0..=255_u8).collect();
-        let encoded = super::base64(&every);
-        assert_eq!(encoded.len(), 344);
-        assert!(encoded.contains('+') && encoded.contains('/'));
-        assert!(encoded.ends_with("/w=="));
     }
 
     #[test]

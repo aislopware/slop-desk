@@ -7,8 +7,10 @@
 
 /// hostd's side of superd's rendezvous.
 pub const SWIFT_PATHS: &str = "Sources/SlopDeskSupervisor/SupervisorPaths.swift";
-/// hostd's encoding of superd's protocol.
-pub const SWIFT_PROTOCOL: &str = "Sources/SlopDeskSupervisor/SupervisorProtocol.swift";
+/// hostd's vocabulary for superd — plain values, with no wire spelling in them.
+pub const SWIFT_SUPERVISOR_MESSAGES: &str = "Sources/SlopDeskSupervisor/SupervisorMessages.swift";
+/// The doors those values cross, and the only place hostd touches the protocol at all.
+pub const SWIFT_SUPERVISOR_DOORS: &str = "Sources/SlopDeskSupervisor/SupervisorDoors.swift";
 /// hostd's env curation — the allowlist a daemon-side setting has to survive.
 pub const SWIFT_HOST_ENVIRONMENT: &str = "Sources/SlopDeskHost/HostEnvironment.swift";
 
@@ -16,10 +18,15 @@ pub const SWIFT_HOST_ENVIRONMENT: &str = "Sources/SlopDeskHost/HostEnvironment.s
 pub const RUST_PATHS: &str = "rust/slopdesk-superd/src/paths.rs";
 /// The shared control-socket rule, reached by both ends.
 pub const RUST_SUPERWIRE: &str = "rust/slopdesk-superwire/src/lib.rs";
-/// superd's decode of the protocol.
-pub const RUST_PROTOCOL: &str = "rust/slopdesk-superd/src/protocol.rs";
+/// The ONE spelling of superd's request/reply vocabulary — superd links it, and so does the FFI
+/// hostd reaches it through. There is no second copy to compare it against any more.
+pub const RUST_PROTOCOL: &str = "rust/slopdesk-superwire/src/protocol.rs";
+/// The doors hostd calls that vocabulary through — `slopdesk-ffi`'s supervisor half.
+pub const RUST_FFI_SUPERVISOR: &str = "rust/slopdesk-ffi/src/supervisor_protocol.rs";
 /// superd's connection loop, which answers `hello`.
 pub const RUST_SUPERD_SERVER: &str = "rust/slopdesk-superd/src/server.rs";
+/// superd's child-facing listeners — the sockets a `listen` claims.
+pub const RUST_LISTENERS: &str = "rust/slopdesk-superd/src/listeners.rs";
 /// superd's shell-integration shim generator.
 pub const RUST_SHELLINT: &str = "rust/slopdesk-superd/src/shellintegration.rs";
 /// hostd's curated child environment — the allowlist a spawned login shell is handed.

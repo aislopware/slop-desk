@@ -840,9 +840,9 @@ public final class HostServer: @unchecked Sendable {
     /// path and nothing else: detection falls back to the screen engine, exactly as it does for a
     /// host whose hooks were never installed.
     private func claimChildListeners() {
-        var kinds: [String] = []
-        if agentHookListener != nil { kinds.append(SupervisorProtocol.ListenerKind.hook) }
-        if agentControlEnabled { kinds.append(SupervisorProtocol.ListenerKind.control) }
+        var kinds: Set<ListenerKind> = []
+        if agentHookListener != nil { kinds.insert(.hook) }
+        if agentControlEnabled { kinds.insert(.control) }
         guard !kinds.isEmpty else { return }
 
         supervisor.onConnection = { [weak self] kind, descriptor in
@@ -850,8 +850,10 @@ public final class HostServer: @unchecked Sendable {
         }
         do {
             try supervisor.listen(kinds: kinds)
-            agentHookListener?.markServing(kinds.contains(SupervisorProtocol.ListenerKind.hook))
-            onLog?("supervisor: serving the \(kinds.joined(separator: " + ")) listener(s)")
+            agentHookListener?.markServing(kinds.contains(.hook))
+            onLog?(
+                "supervisor: serving the \(kinds.map(String.init(describing:)).sorted().joined(separator: " + ")) listener(s)",
+            )
         } catch {
             agentHookListener?.markServing(false)
             onLog?(
@@ -867,15 +869,17 @@ public final class HostServer: @unchecked Sendable {
     /// descriptor off and return at once — that thread also carries every pane's output, and the
     /// peer on a hook connection is blocking its agent. Both servers below dispatch and return.
     ///
-    /// An unrecognised kind closes the descriptor rather than leaking one per connection.
-    private func serveChildConnection(kind: String, descriptor: Int32) {
+    /// A kind with no listener behind it closes the descriptor rather than leaking one per
+    /// connection. A kind this BUILD cannot name never reaches here — the client closes it and says
+    /// so, because it is the half that still holds the descriptor at that point.
+    private func serveChildConnection(kind: ListenerKind, descriptor: Int32) {
         switch kind {
-        case SupervisorProtocol.ListenerKind.hook where agentHookListener != nil:
+        case .hook where agentHookListener != nil:
             agentHookListener?.serve(connection: descriptor)
-        case SupervisorProtocol.ListenerKind.control where agentControlListener != nil:
+        case .control where agentControlListener != nil:
             agentControlListener?.serve(connection: descriptor)
         default:
-            onLog?("supervisor: nothing here serves a '\(kind)' connection — closing it")
+            onLog?("supervisor: nothing here serves a \(kind) connection — closing it")
             close(descriptor)
         }
     }

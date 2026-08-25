@@ -30,6 +30,7 @@
 
 import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 
 /// The provisioned third-party prefix, resolved from the running binary's location.
 enum VendoredTools {
@@ -66,7 +67,7 @@ enum VendoredTools {
         guard let start else { return nil }
         let bytes = Array(start.utf8)
         let answer = bytes.withUnsafeBufferPointer { input in
-            hostAnswerText { out, cap in door(input.baseAddress, input.count, out, cap) }
+            ffiAnswerText { out, cap in door(input.baseAddress, input.count, out, cap) }
         }
         return answer.isEmpty ? nil : answer
     }
