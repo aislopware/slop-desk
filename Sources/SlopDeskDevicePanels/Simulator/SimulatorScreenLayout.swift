@@ -46,44 +46,6 @@ package enum SimulatorScreenLayout {
         SimulatorInputEnvelope.Surface(width: fitted.width, height: fitted.height)
     }
 
-    /// What a classic wheel NOTCH is worth in points — shared, see
-    /// ``DevicePanelGeometry/pointsPerLine``.
-    package static var pointsPerLine: CGFloat { DevicePanelGeometry.pointsPerLine }
-
-    /// One scroll event's delta as FINGER TRAVEL on the framebuffer, in points. Measured 2026-08-04
-    /// against a live device; getting this wrong produces a panel that scrolls backwards or not at all.
-    ///
-    /// SCALE and SIGN are the shared rule — see ``DevicePanelGeometry/scrollVector(delta:isPrecise:)``,
-    /// which carries the measurement behind the pass-through sign.
-    ///
-    /// ORIENTATION is the one thing this panel adds, and it was wrong before this existed. A scroll
-    /// delta arrives in SCREEN space — AppKit knows nothing about the `rotationEffect` the bezel is
-    /// drawn under — while the framebuffer never turns, so on a device on its side the two disagree
-    /// by a quarter turn. Points do not need this (SwiftUI hit-tests a rotated view in its unrotated
-    /// local space, so a click already arrives in framebuffer coordinates); a delta that never passed
-    /// through the view's geometry does. The Android panel has no such step: `scrcpy` rotates on the
-    /// DEVICE, so its frame is always already the right way up.
-    package static func scrollVector(
-        delta: CGSize, isPrecise: Bool, orientation: SimulatorOrientation,
-    ) -> CGSize {
-        unrotated(
-            DevicePanelGeometry.scrollVector(delta: delta, isPrecise: isPrecise),
-            by: orientation.viewAngle,
-        )
-    }
-
-    /// A screen-space vector in the space of a view drawn at `angle` degrees clockwise — shared, see
-    /// ``DevicePanelGeometry/unrotated(_:by:)``.
-    package static func unrotated(_ vector: CGSize, by angle: Double) -> CGSize {
-        DevicePanelGeometry.unrotated(vector, by: angle)
-    }
-
-    /// How far into the frame iOS's own edge gestures reach, as a fraction of the framebuffer.
-    /// `baguette`'s own web UI uses these two numbers and this classification; they are copied rather
-    /// than re-derived because the server interprets the `edge` hint against them.
-    package static var bottomBand: CGFloat { DevicePanelGeometry.bottomBand }
-    package static var topBand: CGFloat { DevicePanelGeometry.topBand }
-
     /// Which system edge, if any, a contact starting at `point` belongs to — the hint that lets the
     /// host drive the home indicator, the app switcher and the pull-down shades from a drag instead
     /// of only from a button.

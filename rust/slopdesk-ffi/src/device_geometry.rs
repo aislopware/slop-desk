@@ -9,23 +9,19 @@
 //! The two answers that can DECLINE — a click on the bars beside the frame, a contact that belongs
 //! to no system edge — say so with a code rather than a sentinel coordinate, because every
 //! coordinate is a real one.
+//!
+//! What is NOT here is the scroll machine — the wheel's scale, the quarter turn, the plant and the
+//! re-grip, and the four metrics they are written against. Those were doors while Swift still ran
+//! the gesture; the gesture is now [`crate::panel_scroll`]'s handle, which reaches
+//! `geometry::{scroll_vector, unrotated, planted, regrip}` inside Rust. Re-exporting them would be
+//! an entry point with no caller, which is how a hand-maintained header drifts.
 
 use slopdesk_devicepanel::geometry::{
-    BOTTOM_BAND, EDGE_MARGIN, POINTS_PER_LINE, SystemEdge, TOP_BAND, clamp_to_i32, clamp_to_u16,
-    clamped_device_point, device_point, fitted_rect, pinch_fingers, planted, regrip, scroll_vector,
-    surface_is_usable, system_edge, unrotated, video_pixels,
+    SystemEdge, clamp_to_i32, clamp_to_u16, clamped_device_point, device_point, fitted_rect, pinch_fingers,
+    surface_is_usable, system_edge, video_pixels,
 };
 
 use crate::video_policy::{SlopDeskVideoPoint, SlopDeskVideoRect, SlopDeskVideoSize};
-
-/// How far in from the frame's edge a synthetic contact must stay, in points.
-pub const SLOPDESK_PANEL_METRIC_EDGE_MARGIN: u32 = 0;
-/// What one classic wheel notch is worth, in points.
-pub const SLOPDESK_PANEL_METRIC_POINTS_PER_LINE: u32 = 1;
-/// Where the bottom system-gesture band starts, as a fraction of the framebuffer.
-pub const SLOPDESK_PANEL_METRIC_BOTTOM_BAND: u32 = 2;
-/// Where the top system-gesture band ends, as a fraction of the framebuffer.
-pub const SLOPDESK_PANEL_METRIC_TOP_BAND: u32 = 3;
 
 /// The contact belongs to no system edge.
 pub const SLOPDESK_PANEL_EDGE_NONE: u32 = 0;
@@ -42,23 +38,6 @@ pub struct SlopDeskPinchPair {
     pub first: SlopDeskVideoPoint,
     /// The contact on the near side.
     pub second: SlopDeskVideoPoint,
-}
-
-/// The numbers both panels are written against, by code, so neither language writes them down
-/// twice. An unknown code answers `0`, which is not one of them.
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-#[unsafe(no_mangle)]
-pub const extern "C" fn slopdesk_panel_metric(metric: u32) -> f64 {
-    match metric {
-        SLOPDESK_PANEL_METRIC_EDGE_MARGIN => EDGE_MARGIN,
-        SLOPDESK_PANEL_METRIC_POINTS_PER_LINE => POINTS_PER_LINE,
-        SLOPDESK_PANEL_METRIC_BOTTOM_BAND => BOTTOM_BAND,
-        SLOPDESK_PANEL_METRIC_TOP_BAND => TOP_BAND,
-        _ => 0.0,
-    }
 }
 
 /// Where the frame sits inside a panel of `bounds`: aspect-fit, centred, on whole points. A
@@ -143,31 +122,6 @@ pub extern "C" fn slopdesk_panel_surface_is_usable(
     surface_is_usable(fitted.of(), video.of())
 }
 
-/// One scroll event's delta as finger travel, in points: scaled for a wheel, pass-through for a
-/// trackpad, and never re-signed.
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-#[unsafe(no_mangle)]
-pub extern "C" fn slopdesk_panel_scroll_vector(
-    delta: SlopDeskVideoSize,
-    is_precise: bool,
-) -> SlopDeskVideoSize {
-    SlopDeskVideoSize::from(scroll_vector(delta.of(), is_precise))
-}
-
-/// A screen-space vector in the space of a view drawn at `angle` degrees clockwise — the quarter
-/// turn the simulator's never-rotating framebuffer needs undone.
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-#[unsafe(no_mangle)]
-pub extern "C" fn slopdesk_panel_unrotated(vector: SlopDeskVideoSize, angle: f64) -> SlopDeskVideoSize {
-    SlopDeskVideoSize::from(unrotated(vector.of(), angle))
-}
-
 /// A pinch's two contacts: a pair straddling `centre` along the diagonal, clamped inside the frame.
 #[expect(
     unsafe_code,
@@ -184,32 +138,6 @@ pub extern "C" fn slopdesk_panel_pinch_fingers(
         first: SlopDeskVideoPoint::from(first),
         second: SlopDeskVideoPoint::from(second),
     }
-}
-
-/// `point`, moved out of the platform's own system-gesture band.
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-#[unsafe(no_mangle)]
-pub extern "C" fn slopdesk_panel_planted(
-    point: SlopDeskVideoPoint,
-    fitted: SlopDeskVideoRect,
-) -> SlopDeskVideoPoint {
-    SlopDeskVideoPoint::from(planted(point.of(), fitted.of()))
-}
-
-/// Where a finger replants after running out of screen: the far end of the axis it was travelling.
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-#[unsafe(no_mangle)]
-pub extern "C" fn slopdesk_panel_regrip(
-    travel: SlopDeskVideoSize,
-    fitted: SlopDeskVideoRect,
-) -> SlopDeskVideoPoint {
-    SlopDeskVideoPoint::from(regrip(travel.of(), fitted.of()))
 }
 
 /// Which system edge a contact starting at `point` belongs to, or `SLOPDESK_PANEL_EDGE_NONE`.
@@ -259,12 +187,9 @@ pub extern "C" fn slopdesk_panel_clamp_i32(value: f64) -> i32 {
 mod tests {
     use super::{
         SLOPDESK_PANEL_EDGE_BOTTOM, SLOPDESK_PANEL_EDGE_NONE, SLOPDESK_PANEL_EDGE_TOP,
-        SLOPDESK_PANEL_METRIC_EDGE_MARGIN, SLOPDESK_PANEL_METRIC_POINTS_PER_LINE, slopdesk_panel_clamp_i32,
-        slopdesk_panel_clamp_u16, slopdesk_panel_clamped_device_point, slopdesk_panel_device_point,
-        slopdesk_panel_fitted_rect, slopdesk_panel_metric, slopdesk_panel_pinch_fingers,
-        slopdesk_panel_planted, slopdesk_panel_regrip, slopdesk_panel_scroll_vector,
-        slopdesk_panel_surface_is_usable, slopdesk_panel_system_edge, slopdesk_panel_unrotated,
-        slopdesk_panel_video_pixels,
+        slopdesk_panel_clamp_i32, slopdesk_panel_clamp_u16, slopdesk_panel_clamped_device_point,
+        slopdesk_panel_device_point, slopdesk_panel_fitted_rect, slopdesk_panel_pinch_fingers,
+        slopdesk_panel_surface_is_usable, slopdesk_panel_system_edge, slopdesk_panel_video_pixels,
     };
     use crate::video_policy::{SlopDeskVideoPoint, SlopDeskVideoRect, SlopDeskVideoSize};
 
@@ -281,13 +206,6 @@ mod tests {
 
     const fn size(width: f64, height: f64) -> SlopDeskVideoSize {
         SlopDeskVideoSize { width, height }
-    }
-
-    #[test]
-    fn the_metrics_come_from_the_crate_and_an_unknown_code_is_not_one() {
-        assert_eq!(slopdesk_panel_metric(SLOPDESK_PANEL_METRIC_EDGE_MARGIN), 24.0);
-        assert_eq!(slopdesk_panel_metric(SLOPDESK_PANEL_METRIC_POINTS_PER_LINE), 32.0);
-        assert_eq!(slopdesk_panel_metric(99), 0.0);
     }
 
     #[test]
@@ -329,27 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn a_scroll_crosses_scaled_and_a_quarter_turn_crosses_undone() {
-        assert_eq!(
-            slopdesk_panel_scroll_vector(size(0.0, 3.0), false),
-            size(0.0, 96.0)
-        );
-        assert_eq!(slopdesk_panel_scroll_vector(size(0.0, 3.0), true), size(0.0, 3.0));
-        assert_eq!(slopdesk_panel_unrotated(size(3.0, 7.0), 90.0), size(7.0, -3.0));
-        assert_eq!(slopdesk_panel_unrotated(size(3.0, 7.0), 0.0), size(3.0, 7.0));
-    }
-
-    #[test]
     fn a_pinch_crosses_as_the_pair_it_is() {
         let pair = slopdesk_panel_pinch_fingers(point(100.0, 200.0), 80.0, FRAME);
         assert!(pair.first.x > pair.second.x && pair.first.y > pair.second.y);
         assert_eq!(f64::midpoint(pair.first.x, pair.second.x), 100.0);
-    }
-
-    #[test]
-    fn a_synthetic_finger_crosses_planted_and_regripped() {
-        assert_eq!(slopdesk_panel_planted(point(0.0, 0.0), FRAME), point(24.0, 24.0));
-        assert_eq!(slopdesk_panel_regrip(size(0.0, 30.0), FRAME), point(100.0, 24.0));
     }
 
     #[test]

@@ -7788,13 +7788,6 @@ bool slopdesk_device_panel_video_is_news(bool has_video,
 // here IS `slopdesk_geometry_displayed_video_rect` — a panel with its own
 // aspect fit is how a click ends up beside the pixel it was drawn for.
 
-// The numbers both panels are written against, for `slopdesk_panel_metric`. An
-// unknown code answers 0, which is not one of them.
-#define SLOPDESK_PANEL_METRIC_EDGE_MARGIN 0u
-#define SLOPDESK_PANEL_METRIC_POINTS_PER_LINE 1u
-#define SLOPDESK_PANEL_METRIC_BOTTOM_BAND 2u
-#define SLOPDESK_PANEL_METRIC_TOP_BAND 3u
-
 // Which system-gesture band a contact starts in, for `slopdesk_panel_system_edge`.
 #define SLOPDESK_PANEL_EDGE_NONE 0u
 #define SLOPDESK_PANEL_EDGE_BOTTOM 1u
@@ -7805,8 +7798,6 @@ typedef struct {
   SlopDeskVideoPoint first;
   SlopDeskVideoPoint second;
 } SlopDeskPinchPair;
-
-double slopdesk_panel_metric(uint32_t metric);
 
 // Aspect-fit, centred, on whole points; the ZERO rect for a degenerate input,
 // which the view reads as "nothing to draw yet".
@@ -7832,24 +7823,8 @@ SlopDeskVideoPoint slopdesk_panel_video_pixels(SlopDeskVideoPoint point,
 bool slopdesk_panel_surface_is_usable(SlopDeskVideoRect fitted,
                                       SlopDeskVideoSize video);
 
-// A scroll delta as finger travel: scaled for a wheel, pass-through for a
-// trackpad, and never re-signed. `unrotated` is the quarter turn the
-// simulator's never-rotating framebuffer needs undone; the Android lane rotates
-// on the device and does not call it.
-SlopDeskVideoSize slopdesk_panel_scroll_vector(SlopDeskVideoSize delta,
-                                               bool is_precise);
-SlopDeskVideoSize slopdesk_panel_unrotated(SlopDeskVideoSize vector, double angle);
-
 SlopDeskPinchPair slopdesk_panel_pinch_fingers(SlopDeskVideoPoint centre, double spread,
                                                SlopDeskVideoRect fitted);
-
-// Where a synthetic finger may be planted, and where it replants after running
-// out of screen — what makes a long scroll one gesture rather than a series of
-// unrelated flicks.
-SlopDeskVideoPoint slopdesk_panel_planted(SlopDeskVideoPoint point,
-                                          SlopDeskVideoRect fitted);
-SlopDeskVideoPoint slopdesk_panel_regrip(SlopDeskVideoSize travel,
-                                         SlopDeskVideoRect fitted);
 
 uint32_t slopdesk_panel_system_edge(SlopDeskVideoPoint point, SlopDeskVideoRect fitted,
                                     bool is_upside_down);

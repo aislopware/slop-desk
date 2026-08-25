@@ -110,18 +110,6 @@ package final class SimulatorScrollGesture {
         slopdesk_panel_scroll_abandon(handle)
     }
 
-    /// The safe-area helpers both device panels share — ``DevicePanelGeometry``. A synthetic finger
-    /// obeys the same margin whichever platform it is planted on; only the message it becomes differs.
-    package static var edgeMargin: CGFloat { DevicePanelGeometry.edgeMargin }
-
-    package static func planted(_ point: CGPoint, in fitted: CGRect) -> CGPoint {
-        DevicePanelGeometry.planted(point, in: fitted)
-    }
-
-    package static func regrip(travel: CGSize, in fitted: CGRect) -> CGPoint {
-        DevicePanelGeometry.regrip(travel: travel, in: fitted)
-    }
-
     // MARK: - Marshalling
 
     /// One event's contacts. `SLOPDESK_PANEL_CONTACT_MAX` is the longest an event can be — the

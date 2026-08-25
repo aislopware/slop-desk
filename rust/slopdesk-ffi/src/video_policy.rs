@@ -100,16 +100,13 @@ impl SlopDeskVideoPoint {
 
 impl SlopDeskVideoSize {
     /// The crate's size.
+    ///
+    /// One direction only, unlike the point beside it: a size crosses INTO the doors — the frame's
+    /// content, the panel's bounds, the grid a stream is encoding — and never comes back out of
+    /// one. The two that used to answer a size, the scroll scale and the quarter turn, are
+    /// inside `slopdesk_devicepanel::scroll` now.
     pub(crate) const fn of(self) -> VideoSize {
         VideoSize::new(self.width, self.height)
-    }
-
-    /// The record a size reports as.
-    pub(crate) const fn from(size: VideoSize) -> Self {
-        Self {
-            width: size.width,
-            height: size.height,
-        }
     }
 }
 

@@ -726,11 +726,12 @@ one control in the panel with no response to the pointer at all — share it.
   folding the flag in double-applies it, and a synthesized `CGEvent` reports it `false` whatever the
   setting says. Measured 2026-08-04 both ways against a live device: with the flag folded in, one
   gesture moved the device's list opposite to the way the same gesture moved a native scroll view in
-  the same window. `scrollVector` passes the sign straight through.
+  the same window. `slopdesk_devicepanel::scroll` passes the sign straight through.
 - **A scroll DELTA needs the orientation; a scroll POINT does not.** SwiftUI hit-tests a rotated view
   in its unrotated local space, so a click already arrives in framebuffer coordinates — but a
   `scrollingDeltaY` never passed through the view's geometry, and the framebuffer never turns. Before
-  `scrollVector` took `orientation`, a device held sideways scrolled sideways.
+  the un-rotation took the orientation — today the `angle` argument to `slopdesk_panel_scroll_accept`
+  — a device held sideways scrolled sideways.
 - **Do not replay macOS scroll MOMENTUM as finger movement.** The deltas that keep arriving after the
   fingers lift are the Mac's own inertia; iOS computes its own from the touch history at the moment of
   the `touch1-up`. Sending both scrolls twice. `SimulatorScreenView` drops every event with a
@@ -811,11 +812,12 @@ one control in the panel with no response to the pointer at all — share it.
 
 | File | Role |
 | --- | --- |
-| `Simulator/SimulatorWireProtocol.swift` | pure decoder: envelope + avcC record |
-| `Simulator/SimulatorInputEnvelope.swift` | pure encoder: every upstream JSON envelope |
+| `Simulator/SimulatorWireProtocol.swift` | face over `slopdesk_devicepanel::sim_stream`: envelope + avcC record |
+| `Simulator/SimulatorInputEnvelope.swift` | face over `slopdesk_devicepanel::sim_input`: every upstream JSON envelope |
 | `Simulator/SimulatorDevice.swift` | pure decoder: `/simulators.json` |
-| `Simulator/SimulatorEndpoints.swift` | the whole route table, pure |
-| `Simulator/SimulatorScreenLayout.swift` | fitted rect ↔ device point, scroll vector, edge bands, pinch pair — pure |
+| `Simulator/SimulatorEndpoints.swift` | face over `slopdesk_devicepanel::sim_routes`: the whole route table |
+| `Simulator/SimulatorScreenLayout.swift` | fitted rect ↔ device point, edge bands, pinch pair — a face over `slopdesk_devicepanel::geometry` |
+| `Simulator/SimulatorScrollGesture.swift` | handle over `slopdesk_panel_scroll_accept`: wheel scale, un-rotation, plant, re-grip |
 | `Simulator/SimulatorVideoFormat.swift` | `CMFormatDescription` + `CMSampleBuffer` construction |
 | `Simulator/SimulatorStreamConnection.swift` | the one socket (`NWConnection` + websocket) |
 | `Simulator/SimulatorChrome.swift` | pure decoder: `definition.json` — body geometry + button boxes |

@@ -13,37 +13,20 @@
 //
 // ## What the two panels still do not share, and should not
 //
-// The simulator's framebuffer never turns, so its scroll deltas must be un-rotated; `scrcpy` rotates
-// on the device, so the Android panel's must not. The Android lane sends touches in the video's own
-// pixel grid because the server DROPS a mismatched pair; the simulator lane sends them in the fitted
-// rect's space because the host rescales. Those are different protocols, and they read as different
-// files calling different doors.
+// The Android lane sends touches in the video's own pixel grid because the server DROPS a mismatched
+// pair; the simulator lane sends them in the fitted rect's space because the host rescales. Those are
+// different protocols, and they read as different files calling different doors.
+//
+// The scroll machine used to be half here — the wheel's scale, the quarter turn the simulator's
+// never-rotating framebuffer needs undone, the plant and the re-grip. It is now `SimulatorScrollGesture`
+// and `AndroidScrollGesture`, both handles over `slopdesk_panel_scroll_accept`, which applies all four
+// inside Rust. The un-rotation survives as that door's `angle` argument: the simulator passes its
+// orientation's, the Android lane passes zero because `scrcpy` rotates on the device.
 
 import CoreGraphics
 import CSlopDeskFFI
 
 package enum DevicePanelGeometry {
-    // MARK: The numbers both panels are written against
-
-    /// How far in from the frame's edge a synthetic contact must stay.
-    ///
-    /// Planting ON the boundary puts the contact inside the platform's own system-gesture band — the
-    /// home indicator and the pull-down shades on iOS, the gesture-navigation strip on Android — so
-    /// a scroll would read as a Back or a Home. The number is the same on both because it is a
-    /// property of a finger, not of an OS.
-    package static let edgeMargin = CGFloat(slopdesk_panel_metric(SLOPDESK_PANEL_METRIC_EDGE_MARGIN))
-
-    /// What a classic wheel NOTCH is worth in points. AppKit reports a trackpad's delta already in
-    /// points and a wheel's in LINES, and a line taken as a point is a finger movement of one or two
-    /// pixels — under both platforms' own touch slop, so the device discards it and the panel looks
-    /// like it eats scrolls.
-    package static let pointsPerLine = CGFloat(slopdesk_panel_metric(SLOPDESK_PANEL_METRIC_POINTS_PER_LINE))
-
-    /// How far up the framebuffer iOS's bottom edge gesture reaches, as a fraction.
-    package static let bottomBand = CGFloat(slopdesk_panel_metric(SLOPDESK_PANEL_METRIC_BOTTOM_BAND))
-    /// How far down the framebuffer iOS's top edge gesture reaches, as a fraction.
-    package static let topBand = CGFloat(slopdesk_panel_metric(SLOPDESK_PANEL_METRIC_TOP_BAND))
-
     // MARK: Where the frame is, and what a point in it means
 
     /// The largest rect with `contentSize`'s aspect ratio that fits inside `bounds`, centred and
@@ -87,29 +70,7 @@ package enum DevicePanelGeometry {
         slopdesk_panel_surface_is_usable(lent(fitted), lent(video))
     }
 
-    // MARK: Scroll
-
-    /// One scroll event's delta as FINGER TRAVEL, in points.
-    ///
-    /// SCALE only: a trackpad's delta is already in points, a classic wheel's is in lines.
-    ///
-    /// SIGN — pass-through, and deliberately so. AppKit has ALREADY applied the user's
-    /// scroll-direction preference to `scrollingDeltaY`. `NSEvent.isDirectionInvertedFromDevice`
-    /// reports the RAW device direction; folding it in double-applies the preference, and
-    /// synthesized events report it `false` regardless of the setting. That trap cost the simulator
-    /// panel a round and is recorded in `docs/47`.
-    package static func scrollVector(delta: CGSize, isPrecise: Bool) -> CGSize {
-        read(slopdesk_panel_scroll_vector(lent(delta), isPrecise))
-    }
-
-    /// A screen-space vector in the space of a view drawn at `angle` degrees clockwise. Quarter
-    /// turns only, spelled out per angle rather than run through trigonometry, so a `sin(90°)` that
-    /// comes back as 0.9999999 can never leave a scroll drifting sideways.
-    package static func unrotated(_ vector: CGSize, by angle: Double) -> CGSize {
-        read(slopdesk_panel_unrotated(lent(vector), angle))
-    }
-
-    // MARK: Where a synthetic finger may be planted
+    // MARK: Multi-touch
 
     /// The two contacts a pinch is made of: a pair straddling `centre`, `spread` points apart along
     /// the diagonal. The diagonal rather than the horizontal so a spread has room in both axes on a
@@ -120,21 +81,6 @@ package enum DevicePanelGeometry {
     ) -> (CGPoint, CGPoint) {
         let pair = slopdesk_panel_pinch_fingers(lent(centre), spread, lent(fitted))
         return (read(pair.first), read(pair.second))
-    }
-
-    /// `point`, moved inside the frame by ``edgeMargin``. The fallback is the CENTRE of the axis,
-    /// for a frame too small to hold two margins: a sliver has no valid band, and the middle is the
-    /// only place that is not an edge.
-    package static func planted(_ point: CGPoint, in fitted: CGRect) -> CGPoint {
-        read(slopdesk_panel_planted(lent(point), lent(fitted)))
-    }
-
-    /// Where the finger lands after running out of screen: at the far end of the axis it was
-    /// travelling along, so the next stretch of the same gesture has the full height to move
-    /// through. This is a hand lifting and planting again, which is what makes a long scroll one
-    /// gesture rather than a series of unrelated flicks.
-    package static func regrip(travel: CGSize, in fitted: CGRect) -> CGPoint {
-        read(slopdesk_panel_regrip(lent(travel), lent(fitted)))
     }
 
     // MARK: Edges
@@ -194,10 +140,6 @@ package enum DevicePanelGeometry {
 
     private static func read(_ record: SlopDeskVideoPoint) -> CGPoint {
         CGPoint(x: record.x, y: record.y)
-    }
-
-    private static func read(_ record: SlopDeskVideoSize) -> CGSize {
-        CGSize(width: record.width, height: record.height)
     }
 
     private static func read(_ record: SlopDeskVideoRect) -> CGRect {

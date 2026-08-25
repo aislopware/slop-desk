@@ -1,10 +1,14 @@
 // SimulatorScreenLayoutTests — the two things about this panel's geometry that are not shared.
 //
-// The fit, the hit test, the scroll scale, the pinch and the edge BANDS are `DevicePanelGeometry`'s
-// and are pinned by `DevicePanelGeometryTests` (and, exhaustively, by `rust/slopdesk-devicepanel`).
-// What is only the simulator's is ORIENTATION — its framebuffer never turns, so a delta measured in
-// screen space has to be un-rotated — and the wire's SPELLING of an edge, which the host reads as a
-// lowercase name rather than a kind.
+// The fit, the hit test, the scroll scale, the un-rotation, the pinch and the edge BANDS are
+// `DevicePanelGeometry`'s and are pinned by `DevicePanelGeometryTests` (and, exhaustively, by
+// `rust/slopdesk-devicepanel`). What is only the simulator's is which orientation counts as
+// UPSIDE-DOWN — the one case that moves the bands onto the other axis — and the wire's SPELLING of
+// an edge, which the host reads as a lowercase name rather than a kind.
+//
+// The scroll delta's un-rotation used to be spelled here too. It is now an `angle` argument to
+// `slopdesk_panel_scroll_accept`, applied inside the same door that plants the contact, so there is
+// no longer a Swift function between the wheel and the finger for a case to hold.
 
 #if os(macOS)
 import CoreGraphics
@@ -21,34 +25,6 @@ final class SimulatorScreenLayoutTests: XCTestCase {
         let surface = SimulatorScreenLayout.surface(fitted: CGRect(x: 10, y: 20, width: 200, height: 400))
         XCTAssertEqual(surface.width, 200)
         XCTAssertEqual(surface.height, 400)
-    }
-
-    func testATurnedDeviceScrollsTheWayTheUserIsLooking() {
-        // The one thing that is NOT pass-through. A scroll delta arrives in SCREEN space — AppKit
-        // knows nothing about the `rotationEffect` the bezel is drawn under — while the framebuffer
-        // never turns. Before this the panel scrolled sideways on a device held on its side.
-        let down = CGSize(width: 0, height: 10)
-        XCTAssertEqual(
-            SimulatorScreenLayout.scrollVector(delta: down, isPrecise: true, orientation: .landscapeLeft),
-            CGSize(width: 10, height: 0),
-        )
-        XCTAssertEqual(
-            SimulatorScreenLayout.scrollVector(delta: down, isPrecise: true, orientation: .landscapeRight),
-            CGSize(width: -10, height: 0),
-        )
-        XCTAssertEqual(
-            SimulatorScreenLayout.scrollVector(
-                delta: down, isPrecise: true, orientation: .portraitUpsideDown,
-            ),
-            CGSize(width: 0, height: -10),
-        )
-        // Upright, the shared scale is all that is left — a wheel notch still becomes finger travel.
-        XCTAssertEqual(
-            SimulatorScreenLayout.scrollVector(
-                delta: CGSize(width: 0, height: 3), isPrecise: false, orientation: .portrait,
-            ),
-            CGSize(width: 0, height: 3 * SimulatorScreenLayout.pointsPerLine),
-        )
     }
 
     func testAnEdgeIsSpelledTheWayTheHostReadsIt() {

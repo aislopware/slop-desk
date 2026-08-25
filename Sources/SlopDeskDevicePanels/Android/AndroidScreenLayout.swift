@@ -98,20 +98,6 @@ package enum AndroidScreenLayout {
         DevicePanelGeometry.clampToInt32(value)
     }
 
-    /// What a classic wheel NOTCH is worth in points — shared, see
-    /// ``DevicePanelGeometry/pointsPerLine``.
-    package static var pointsPerLine: CGFloat { DevicePanelGeometry.pointsPerLine }
-
-    /// One scroll event's delta as FINGER TRAVEL, in points — shared, see
-    /// ``DevicePanelGeometry/scrollVector(delta:isPrecise:)``, which carries the note about why the
-    /// SIGN is pass-through.
-    ///
-    /// No un-rotation, for the reason in the file comment: the frame is never drawn turned. That is
-    /// the whole difference between this call and the simulator panel's.
-    package static func scrollVector(delta: CGSize, isPrecise: Bool) -> CGSize {
-        DevicePanelGeometry.scrollVector(delta: delta, isPrecise: isPrecise)
-    }
-
     /// A pinch's two contacts — shared, see ``DevicePanelGeometry/pinchFingers(centre:spread:fitted:)``.
     package static func pinchFingers(
         centre: CGPoint, spread: CGFloat, fitted: CGRect,

@@ -98,36 +98,7 @@ final class DevicePanelGeometryTests: XCTestCase {
         XCTAssertEqual(DevicePanelGeometry.clampToInt32(-3.7), -3)
     }
 
-    // MARK: Scrolling
-
-    func testAWheelNotchIsWorthManyPointsAndATrackpadDeltaIsWorthItself() {
-        XCTAssertEqual(
-            DevicePanelGeometry.scrollVector(delta: CGSize(width: 0, height: -3), isPrecise: true),
-            CGSize(width: 0, height: -3),
-        )
-        XCTAssertEqual(
-            DevicePanelGeometry.scrollVector(delta: CGSize(width: 0, height: -3), isPrecise: false),
-            CGSize(width: 0, height: -3 * DevicePanelGeometry.pointsPerLine),
-        )
-        // Sign is pass-through: AppKit has ALREADY applied the user's scroll-direction preference,
-        // and folding `isDirectionInvertedFromDevice` in on top double-applies it (`docs/47`).
-        XCTAssertEqual(
-            DevicePanelGeometry.scrollVector(delta: CGSize(width: 5, height: 9), isPrecise: true),
-            CGSize(width: 5, height: 9),
-        )
-    }
-
-    func testAQuarterTurnIsUndoneRatherThanApproximated() {
-        let vector = CGSize(width: 3, height: 7)
-        XCTAssertEqual(DevicePanelGeometry.unrotated(vector, by: 0), vector)
-        XCTAssertEqual(DevicePanelGeometry.unrotated(vector, by: 180), CGSize(width: -3, height: -7))
-        XCTAssertEqual(
-            DevicePanelGeometry.unrotated(DevicePanelGeometry.unrotated(vector, by: 90), by: -90),
-            vector,
-        )
-    }
-
-    // MARK: Pinch, and where a synthetic finger may be planted
+    // MARK: Pinch
 
     func testAPinchsTwoContactsStraddleTheCentreOnTheDiagonal() {
         // The diagonal rather than the horizontal, so a spread has room in both axes on a screen far
@@ -152,36 +123,6 @@ final class DevicePanelGeometryTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(point.y, 1)
             XCTAssertLessThanOrEqual(point.y, frame.height - 1)
         }
-    }
-
-    func testASyntheticFingerIsPlantedOutOfTheSystemGestureBand() {
-        let margin = DevicePanelGeometry.edgeMargin
-        XCTAssertEqual(DevicePanelGeometry.planted(.zero, in: frame), CGPoint(x: margin, y: margin))
-        XCTAssertEqual(
-            DevicePanelGeometry.planted(CGPoint(x: 9999, y: 9999), in: frame),
-            CGPoint(x: 200 - margin, y: 400 - margin),
-        )
-        // A sliver has no valid band at all, so the middle — the only place that is not an edge.
-        let sliver = CGRect(x: 0, y: 0, width: 10, height: 10)
-        XCTAssertEqual(DevicePanelGeometry.planted(.zero, in: sliver), CGPoint(x: 5, y: 5))
-    }
-
-    func testARegripLandsAtTheFarEndOfTheAxisTheFingerWasTravelling() {
-        // What makes a long scroll one gesture rather than a series of unrelated flicks: the hand
-        // lifts and replants with the full height still to move through.
-        let margin = DevicePanelGeometry.edgeMargin
-        XCTAssertEqual(
-            DevicePanelGeometry.regrip(travel: CGSize(width: 0, height: 30), in: frame),
-            CGPoint(x: 100, y: margin),
-        )
-        XCTAssertEqual(
-            DevicePanelGeometry.regrip(travel: CGSize(width: 0, height: -30), in: frame),
-            CGPoint(x: 100, y: 400 - margin),
-        )
-        XCTAssertEqual(
-            DevicePanelGeometry.regrip(travel: CGSize(width: -30, height: 1), in: frame),
-            CGPoint(x: 200 - margin, y: 200),
-        )
     }
 
     // MARK: Edges

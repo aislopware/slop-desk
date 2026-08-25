@@ -28,8 +28,8 @@
 // gestures server-side. `scrcpy` injects a real `MotionEvent` into the input pipeline, so Android's
 // own `SystemGestureExclusion` and `WindowInsets` logic classifies it exactly as it would a finger on
 // the glass — the client neither can nor should pre-empt that. What the panel does instead is keep
-// its synthetic contacts out of those bands (``AndroidScrollGesture/edgeMargin``) so a scroll is never
-// mistaken for a Back.
+// its synthetic contacts out of those bands — `slopdesk_devicepanel::geometry::EDGE_MARGIN`, applied
+// inside `slopdesk_panel_scroll_accept` — so a scroll is never mistaken for a Back.
 //
 // ⚠️ THE GATE IS `canImport(AppKit)`, NEVER `os(macOS)`. Every file in this target was once wrapped
 // whole in the latter, inherited from the days the panels were a Mac-only surface, and a build of

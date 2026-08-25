@@ -61,7 +61,9 @@ package final class SimulatorScreenNSView: NSView, SimulatorFrameRenderer {
     package var send: ((SimulatorInputEnvelope) -> Void)?
 
     /// Which way the device is being held. Needed for the SCROLL DELTA and the edge bands, neither of
-    /// which passes through the view's own geometry — see ``SimulatorScreenLayout/scrollVector(delta:isPrecise:orientation:)``.
+    /// which passes through the view's own geometry: a delta arrives in SCREEN space while the
+    /// framebuffer never turns, so it is handed to `slopdesk_panel_scroll_accept` as an ANGLE and
+    /// un-rotated there — see ``SimulatorScrollGesture/accept(delta:isPrecise:phase:pointer:fitted:orientation:)``.
     package var orientation: SimulatorOrientation = .portrait
 
     /// Reports the framebuffer size upward the moment the decoder works it out. The header prints
