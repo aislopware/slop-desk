@@ -855,6 +855,11 @@ pub fn registry() -> Vec<Rule> {
             check: pane_wiring::one_escape_monitor_installed_and_removed_once,
         },
         Rule {
+            name: "one-connect-one-ladder",
+            origin: "docs/45 Phase 6",
+            check: pane_wiring::one_connect_one_ladder,
+        },
+        Rule {
             name: "phone-key-path",
             origin: "check-supervisor.sh (deleted)",
             check: pane_wiring::the_phone_key_path_is_rust,

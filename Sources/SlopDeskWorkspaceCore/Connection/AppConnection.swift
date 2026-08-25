@@ -153,13 +153,13 @@ public final class AppConnection {
 
     private let registry: ConnectionRegistry
 
-    /// Monotonic connect-attempt counter (the ``ConnectionViewModel`` supersede-guard pattern): a
-    /// teardown / second connect during a pin `await` supersedes us, so post-await status writes from a
-    /// stale attempt are discarded.
-    private var connectGeneration = 0
-    /// True between a deliberate ``disconnect()`` and the next ``connect()`` so a trailing supervisor
-    /// tick is not mis-read as a drop to reconnect.
-    private var deliberatelyClosed = false
+    /// The connect ladder — the same one a pane's ``ConnectionViewModel`` holds, minus the two host
+    /// latches this side never sets: a host reaps or evicts a PANE's channel, never the app's mux
+    /// pin. What is left is the generation (a teardown / second connect during a pin `await`
+    /// supersedes us, so post-await status writes from a stale attempt are discarded) and the
+    /// deliberate-close latch (so a trailing supervisor tick is not mis-read as a drop to
+    /// reconnect). Both decisions are `rust/slopdesk-workspace`'s `connect_run`. See ``ConnectRun``.
+    private let connectRun = ConnectRun()
     /// The currently-pinned target, so a host change unpins the old endpoint before pinning the new, and
     /// `disconnect()`/`pause()` unpin the right one.
     private var pinnedTarget: ConnectionTarget?
@@ -252,19 +252,17 @@ public final class AppConnection {
     /// - there are no saved recent targets (fresh install, or the user never successfully connected).
     ///
     /// Otherwise fills the form from the MRU target and fires the SAME silent establish path the
-    /// Connect button uses — committing the target, setting `deliberatelyClosed = false`, and running
+    /// Connect button uses — committing the target, opening a fresh attempt, and running
     /// the liveness supervisor — so the app is live without any manual gate interaction.
     public func connectIfSavedTarget() async {
         guard ProcessInfo.processInfo.environment["SLOPDESK_SKIP_AUTO_RECONNECT"] != "1" else { return }
         guard let saved = recentTargets.first else { return }
         fillForm(from: saved)
         status = .connecting
-        deliberatelyClosed = false
         target = saved
         seedHostDisplayName(for: saved.host)
         onTargetCommitted?(saved)
-        connectGeneration &+= 1
-        let gen = connectGeneration
+        let gen = connectRun.begin()
         await establish(saved, generation: gen, isRetry: false)
     }
 
@@ -303,21 +301,19 @@ public final class AppConnection {
             return
         }
         status = .connecting
-        deliberatelyClosed = false
         // A fresh dial knows nothing about the machine it is dialling — drop the previous host's
         // pulse rather than let it flash for a beat when the gate opens on a DIFFERENT Mac.
         sampledPulse = nil
         target = t
         seedHostDisplayName(for: t.host)
         onTargetCommitted?(t)
-        connectGeneration &+= 1
-        let gen = connectGeneration
+        let gen = connectRun.begin()
         await establish(t, generation: gen, isRetry: false)
     }
 
     /// The shared establish path used by ``connect()`` and ``resume()``: unpin a stale endpoint, pin the
-    /// new one, and (on success) start the supervisor. Guarded by `gen`/`deliberatelyClosed`.
-    private func establish(_ t: ConnectionTarget, generation gen: Int, isRetry _: Bool) async {
+    /// new one, and (on success) start the supervisor. Guarded by the connect ladder.
+    private func establish(_ t: ConnectionTarget, generation gen: UInt64, isRetry _: Bool) async {
         // Host changed since the last pin → release the old shared connection first.
         if let prev = pinnedTarget, prev.host != t.host || prev.port != t.port {
             await registry.unpin(host: prev.host, port: prev.port)
@@ -329,12 +325,12 @@ public final class AppConnection {
         pinnedTarget = t
         do {
             try await registry.pin(host: t.host, port: t.port)
-            guard gen == connectGeneration, !deliberatelyClosed else { return }
+            guard connectRun.isCurrent(gen), !connectRun.wasClosedDeliberately else { return }
             markConnected()
             recordRecentTarget(t)
             startSupervisor(t, generation: gen)
         } catch {
-            guard gen == connectGeneration, !deliberatelyClosed else { return }
+            guard connectRun.isCurrent(gen), !connectRun.wasClosedDeliberately else { return }
             status = .failed(ConnectGate.failureReason(for: error))
         }
     }
@@ -343,8 +339,8 @@ public final class AppConnection {
     /// per-pane channels are torn down separately by the store; if any still hold the mux it survives
     /// until they release (the registry refcount), but the app is no longer pinned.
     public func disconnect() async {
-        deliberatelyClosed = true
-        connectGeneration &+= 1 // supersede any in-flight establish/supervisor
+        connectRun.closeDeliberately()
+        connectRun.supersede() // disown any in-flight establish/supervisor
         superviseTask?.cancel()
         superviseTask = nil
         if let prev = pinnedTarget {
@@ -363,15 +359,16 @@ public final class AppConnection {
     /// mounts the canvas so that pane can open its UDP lane. Never used in the normal user flow (which
     /// always pins the terminal mux via ``connect()``).
     public func markConnectedForAutomation() {
-        deliberatelyClosed = false
+        // Nothing was dialled here, so nothing may be superseded — only the latch clears.
+        connectRun.admitWithoutDialling()
         markConnected()
     }
 
     /// iOS background: unpin so the shared mux closes (the OS kills an app that strands a background
     /// socket). The per-pane `pauseAll` pauses channels; `resume()` re-pins + the channels re-open.
     public func pause() async {
-        guard !deliberatelyClosed, let prev = pinnedTarget else { return }
-        connectGeneration &+= 1 // stop the supervisor cleanly without flipping `deliberatelyClosed`
+        guard !connectRun.wasClosedDeliberately, let prev = pinnedTarget else { return }
+        connectRun.supersede() // stop the supervisor cleanly without claiming the user asked
         superviseTask?.cancel()
         superviseTask = nil
         await registry.unpin(host: prev.host, port: prev.port)
@@ -380,9 +377,8 @@ public final class AppConnection {
 
     /// iOS foreground: re-establish the committed target (re-pins the mux) so channels can re-open.
     public func resume() async {
-        guard !deliberatelyClosed else { return }
-        connectGeneration &+= 1
-        let gen = connectGeneration
+        guard !connectRun.wasClosedDeliberately else { return }
+        let gen = connectRun.begin()
         status = .connecting
         await establish(target, generation: gen, isRetry: true)
     }
@@ -392,16 +388,16 @@ public final class AppConnection {
     /// Polls the registry's liveness while connected; on a drop, reappears `.reconnecting` and retries
     /// `pin` (which evicts the dead pooled connection and rebuilds) with capped backoff until it is back,
     /// or gives up to `.unreachable` (manual Retry then re-runs `connect()`).
-    private func startSupervisor(_ t: ConnectionTarget, generation gen: Int) {
+    private func startSupervisor(_ t: ConnectionTarget, generation gen: UInt64) {
         superviseTask?.cancel()
         superviseTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var attempt = 0
             var healthyTicks = 0
             while !Task.isCancelled {
-                guard gen == connectGeneration, !deliberatelyClosed else { return }
+                guard connectRun.isCurrent(gen), !connectRun.wasClosedDeliberately else { return }
                 let alive = await registry.isConnectionAlive(host: t.host, port: t.port)
-                guard gen == connectGeneration, !deliberatelyClosed else { return }
+                guard connectRun.isCurrent(gen), !connectRun.wasClosedDeliberately else { return }
                 if alive {
                     attempt = 0
                     // Re-affirm connected (a poll that finds the link back after a blip recovers here). Route
@@ -421,13 +417,13 @@ public final class AppConnection {
                 status = .reconnecting(attempt: attempt, nextRetry: nil)
                 do {
                     try await registry.pin(host: t.host, port: t.port) // rebuilds via dead-eviction
-                    guard gen == connectGeneration, !deliberatelyClosed else { return }
+                    guard connectRun.isCurrent(gen), !connectRun.wasClosedDeliberately else { return }
                     // `pinnedTarget` is already `t` (set in establish, kept across reconnect). Route through
                     // `markConnected` so recovering from a drop re-dials any panes that gave up meanwhile.
                     markConnected()
                     attempt = 0
                 } catch {
-                    guard gen == connectGeneration, !deliberatelyClosed else { return }
+                    guard connectRun.isCurrent(gen), !connectRun.wasClosedDeliberately else { return }
                     if attempt >= Self.maxReconnectAttempts {
                         status = .unreachable
                         return // campaign exhausted; the gate's Retry re-runs connect()

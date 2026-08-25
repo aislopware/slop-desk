@@ -1708,7 +1708,15 @@ REAP — so the app-connection fan-out and the leaf's connect-on-remount reattac
 Rulings in [DECISIONS](DECISIONS.md#a-pane-the-host-retired-is-not-re-dialled-2026-07-28) and
 [its amendment](DECISIONS.md#an-evicted-subscriber-can-come-back-a-reaped-pane-cannot-2026-07-28);
 headless regression in `HostRetiredPaneRedialTests`, `EvictedSubscriberRedialTests`,
-`HostServerCloseReasonTests` + `MuxPeerCloseMarkTests`. The gate no longer tolerates it: step 7a
+`HostServerCloseReasonTests` + `MuxPeerCloseMarkTests`. **The ladder both facts live on is Rust's, as of
+2026-08-26:** the generation an attempt quotes across its handshake `await` and the three latches
+(deliberate close, reap, eviction) are `rust/slopdesk-workspace`'s `connect_run`, reached through
+`ConnectRun.swift` and held by `ConnectionViewModel` and `AppConnection` alike — the app's mux pin
+simply never sets the two host latches, because a host reaps a PANE's channel, never the pin. The
+asymmetry above is the reason it is a type and not four `Bool`s: `may_auto_dial` gates on the reap
+ALONE while `disconnect_is_quiet` gates on all three, and a hand-kept copy of either latch beside it
+is a guard that silently stops guarding. The ratchet is `one-connect-one-ladder` in
+`rust/slopdesk-invariants`. The gate no longer tolerates it: step 7a
 asserts no pane uuid appears twice in `attached for pane …` — permanent evidence, unlike a live
 census, which passed even on the buggy build — and the settle it had been given drops 20 s → 4 s.
 

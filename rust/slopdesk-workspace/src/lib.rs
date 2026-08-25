@@ -88,6 +88,8 @@
 //!   layers answer when they are read.
 //! - [`channel_run`] — which run of the workspace channel is still speaking, what it still owns and
 //!   whose presence clock wins: the four scalars the client's loop races over.
+//! - [`connect_run`] — which connect attempt still owns a pane, and what a `.disconnected` MEANS:
+//!   the generation and the three close latches every dial path reads first.
 //! - [`preference`] — what the preference SURFACE decides about itself, once the file is already
 //!   resolved: which `UserDefaults` store this process's own state lands in, the band a zoom chord
 //!   may walk, and the zip of the two parallel Hint Mode lists.
@@ -125,6 +127,7 @@ pub mod close_confirm;
 pub mod command_navigator;
 pub mod connect_form;
 pub mod connect_gate;
+pub mod connect_run;
 pub mod connection;
 pub mod control_request;
 pub mod drop_action;

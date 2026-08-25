@@ -11378,6 +11378,50 @@ uint8_t slopdesk_channel_run_finish(SlopDeskChannelRun *handle, uint8_t tag, int
 bool slopdesk_channel_run_publish(SlopDeskChannelRun *handle, uint8_t tag, int64_t state_num);
 int64_t slopdesk_channel_run_mint_presence_clock(SlopDeskChannelRun *handle);
 
+// ---- Which connect attempt owns the pane, and what a drop MEANS --------------------------------
+//
+// One pane's client is dialled from four places — the user's "Reconnect Pane", the leaf's
+// connect-on-remount `.task`, the app-connection fan-out, and the reconnect campaign — while the
+// host may end the same channel underneath for two entirely different reasons. Swift owns the
+// tasks, the teardown and the OUT FIFO; these four scalars are what every path reads first.
+//
+// THE GENERATION. `connect()` quotes a number before its handshake `await` and re-checks it after.
+// Without that, a teardown landing during the suspension lets the `do` branch paint a dead pane
+// `.connected` and overwrite its session id — a green dot over a torn-down transport.
+//
+// THE TWO HOST CLOSES ARE NOT THE SAME CLOSE. A REAP deleted the pane, and the host answers
+// `channelClose` first and the document frame second: in that window every AUTOMATIC dial would
+// re-open a session the host no longer holds, which is a fresh SPAWN. So a reap gates them. An
+// EVICTION dropped this subscriber from a pane that is still running, and nothing will ever remove
+// that pane from this client's topology — gating the automatic paths on it strands the pane
+// undiallable for the process lifetime, so it does NOT gate them. Both read `.disconnected` rather
+// than `.reconnecting`: no campaign follows either, and a spinner for a retry nobody is making is
+// the "frozen dot" this codebase keeps closing.
+//
+// A DEAD HANDLE dials nothing and campaigns for nothing: `may_auto_dial` and
+// `reconnect_is_welcome` answer false, `disconnect_is_quiet` and `was_closed_deliberately` answer
+// true.
+
+typedef struct SlopDeskConnectRun SlopDeskConnectRun;
+
+/* What the host said on a `.disconnected` edge. LINK latches nothing. */
+#define SLOPDESK_CONNECT_CLOSE_LINK    0
+#define SLOPDESK_CONNECT_CLOSE_RETIRED 1
+#define SLOPDESK_CONNECT_CLOSE_EVICTED 2
+
+SlopDeskConnectRun *slopdesk_connect_run_new(void);
+void slopdesk_connect_run_free(SlopDeskConnectRun *handle);
+uint64_t slopdesk_connect_run_begin(SlopDeskConnectRun *handle);
+bool slopdesk_connect_run_is_current(SlopDeskConnectRun *handle, uint64_t generation);
+void slopdesk_connect_run_close_deliberately(SlopDeskConnectRun *handle);
+void slopdesk_connect_run_supersede(SlopDeskConnectRun *handle);
+void slopdesk_connect_run_admit_without_dialling(SlopDeskConnectRun *handle);
+void slopdesk_connect_run_note_host_close(SlopDeskConnectRun *handle, uint8_t cause);
+bool slopdesk_connect_run_may_auto_dial(SlopDeskConnectRun *handle);
+bool slopdesk_connect_run_disconnect_is_quiet(SlopDeskConnectRun *handle);
+bool slopdesk_connect_run_reconnect_is_welcome(SlopDeskConnectRun *handle);
+bool slopdesk_connect_run_was_closed_deliberately(SlopDeskConnectRun *handle);
+
 // ---- What a whole set of leaves says, and what a ring keeps -------------------------------------
 //
 // `slopdesk_ws_pane_*` above answers what ONE status landing on ONE pane moves. These are the other

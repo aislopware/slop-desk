@@ -94,6 +94,7 @@ pub mod command_navigator;
 pub mod config;
 pub mod connect_form;
 pub mod connect_gate;
+pub mod connect_run;
 pub mod connection;
 pub mod context_menu;
 pub mod control_request;

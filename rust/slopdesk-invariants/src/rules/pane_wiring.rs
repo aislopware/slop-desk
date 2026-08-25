@@ -266,9 +266,131 @@ const PHONE_DOORS: &[&str] = &[
     "slopdesk_phone_floating_cursor_feed",
 ];
 
+/// The Swift face of the connect ladder.
+const CONNECT_FACE: &str = "Sources/SlopDeskWorkspaceCore/Connection/ConnectRun.swift";
+
+/// The two objects that dial — a pane's client, and the app's shared mux pin.
+const CONNECT_DIALLERS: &[&str] = &[
+    "Sources/SlopDeskWorkspaceCore/Connection/ConnectionViewModel.swift",
+    "Sources/SlopDeskWorkspaceCore/Connection/AppConnection.swift",
+];
+
+/// Every door the connect face must keep asking.
+const CONNECT_DOORS: &[&str] = &[
+    "slopdesk_connect_run_new",
+    "slopdesk_connect_run_free",
+    "slopdesk_connect_run_begin",
+    "slopdesk_connect_run_is_current",
+    "slopdesk_connect_run_close_deliberately",
+    "slopdesk_connect_run_supersede",
+    "slopdesk_connect_run_admit_without_dialling",
+    "slopdesk_connect_run_note_host_close",
+    "slopdesk_connect_run_may_auto_dial",
+    "slopdesk_connect_run_disconnect_is_quiet",
+    "slopdesk_connect_run_reconnect_is_welcome",
+    "slopdesk_connect_run_was_closed_deliberately",
+];
+
+/// ONE CONNECT LADDER, AND IT IS NOT SWIFT'S.
+///
+/// A generation and three latches decide whether a post-handshake write still owns the pane,
+/// whether an automatic dial may proceed, and whether a `.disconnected` is a definite disconnect or
+/// the start of a campaign. The two host closes answer the automatic paths DIFFERENTLY — a reap
+/// gates them, an eviction must not — and a second copy of either latch beside the far side's is a
+/// guard that silently stops guarding (docs/45 Phase 6).
+#[must_use]
+pub fn one_connect_one_ladder(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: CONNECT_FACE,
+            message: "Sources/SlopDeskWorkspaceCore/Connection/ConnectRun.swift is gone — which attempt \
+                      owns the pane, and whether a reap or an eviction was said, are not the diallers' to \
+                      re-derive (docs/45 Phase 6)",
+        },
+        Claim::Doors {
+            path: CONNECT_FACE,
+            entries: CONNECT_DOORS,
+            message: "ConnectRun.swift no longer calls {entry} — a face that drops a door is a ladder step \
+                      growing back beside the one that owns it",
+        },
+        Claim::NoneOf {
+            paths: CONNECT_DIALLERS,
+            pattern: r"var connectGeneration|var deliberatelyClosed|var retiredByHost|var evictedByHost",
+            view: View::Code,
+            message: "{files} STORES a connect generation or one of the three close latches — each is the \
+                      far side's, and the reap/eviction asymmetry is exactly what a hand-kept copy loses \
+                      (docs/45 Phase 6)",
+        },
+        Claim::Matches {
+            path: CONNECT_DIALLERS[0],
+            pattern: r"private let connectRun = ConnectRun\(\)",
+            view: View::Code,
+            message: "ConnectionViewModel.swift no longer holds a ConnectRun — the ladder it answers is \
+                      what keeps a superseded attempt from painting a torn-down pane green (docs/45 Phase 6)",
+        },
+        Claim::Matches {
+            path: CONNECT_DIALLERS[1],
+            pattern: r"private let connectRun = ConnectRun\(\)",
+            view: View::Code,
+            message: "AppConnection.swift no longer holds a ConnectRun — the same ladder, minus the two \
+                      host latches it never sets (docs/45 Phase 6)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
+
+    fn connect_ladder(fixture: &Fixture) {
+        let mut face = String::new();
+        for door in super::CONNECT_DOORS {
+            face.push_str(door);
+            face.push_str("()\n");
+        }
+        fixture.write(super::CONNECT_FACE, &face);
+        for dialler in super::CONNECT_DIALLERS {
+            fixture.write(dialler, "    private let connectRun = ConnectRun()\n");
+        }
+    }
+
+    #[test]
+    fn one_connect_one_ladder_keeps_the_two_host_closes_apart() {
+        let fixture = Fixture::new("one-connect-one-ladder");
+        connect_ladder(&fixture);
+        assert!(super::one_connect_one_ladder(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a ladder step grew back beside the one that owns it.
+        fixture.write(super::CONNECT_FACE, "slopdesk_connect_run_new()\n");
+        assert!(!super::one_connect_one_ladder(&fixture.tree()).is_clean());
+        connect_ladder(&fixture);
+
+        // Each scalar the far side owns, in each dialler, one at a time.
+        for drift in [
+            "    private var connectGeneration = 0\n",
+            "    private var deliberatelyClosed = false\n",
+            "    private var retiredByHost = false\n",
+            "    private var evictedByHost = false\n",
+        ] {
+            for dialler in super::CONNECT_DIALLERS {
+                fixture.append(dialler, drift);
+                assert!(
+                    !super::one_connect_one_ladder(&fixture.tree()).is_clean(),
+                    "the ban missed {drift} in {dialler}",
+                );
+                connect_ladder(&fixture);
+            }
+        }
+
+        // A dialler that dropped the handle the whole ladder is reached through.
+        fixture.write(super::CONNECT_DIALLERS[1], "public final class AppConnection {\n");
+        assert!(!super::one_connect_one_ladder(&fixture.tree()).is_clean());
+
+        // A bare tree has no face at all.
+        let bare = Fixture::new("one-connect-one-ladder-bare");
+        assert!(!super::one_connect_one_ladder(&bare.tree()).is_clean());
+    }
 
     const CLEAR: &str = "\
     func clearSecureInput() {

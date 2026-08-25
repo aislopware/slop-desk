@@ -152,13 +152,17 @@ public final class ConnectionViewModel {
     /// on disconnect. Drives the sidebar git line + Open-Quickly/path actions; this VM folds inbound
     /// `.metadataResponse` events into its pending-request registry. `nil` while disconnected.
     private var metadataClient: MetadataClient?
-    /// Monotonic connect-attempt counter — the VM analogue of `SlopDeskClient.connectGeneration`.
-    /// `connect()`/`resume()` capture it before the long handshake `await`; a teardown / reconnect /
-    /// second connect landing during that suspension means the post-await `status`/`sessionID` writes
-    /// belong to a SUPERSEDED attempt and must be discarded. Needed because `SlopDeskClient.connect` now
-    /// RETURNS (not throws) when closed/paused/superseded mid-handshake — else the `do` branch whitewashes
-    /// an already-torn-down pane to `.connected` (and overwrites `sessionID`).
-    private var connectGeneration = 0
+    /// The connect ladder: the generation this pane's attempts are numbered by, and the three
+    /// latches that say what a `.disconnected` MEANT.
+    ///
+    /// `connect()`/`resume()` quote the generation before the long handshake `await`; a teardown /
+    /// reconnect / second connect landing during that suspension means the post-await
+    /// `status`/`sessionID` writes belong to a SUPERSEDED attempt and must be discarded. Needed
+    /// because `SlopDeskClient.connect` RETURNS (not throws) when closed/paused/superseded
+    /// mid-handshake — else the `do` branch whitewashes an already-torn-down pane to `.connected`.
+    /// Every decision on those four scalars is `rust/slopdesk-workspace`'s `connect_run`, including
+    /// the reap/eviction asymmetry; this side performs what it answers. See ``ConnectRun``.
+    private let connectRun = ConnectRun()
     private var reconnect: ReconnectManager?
     /// Single-flight guard for ``connect()``. `connect()` is `@MainActor`, but its body
     /// SUSPENDS at `await teardown()` (which awaits `outDrainTask?.value` / `client?.close()`), so two
@@ -173,45 +177,6 @@ public final class ConnectionViewModel {
     private var observeTask: Task<Void, Never>?
     /// The terminal model's `output` byte-pump loop (separate from events).
     private var outputTask: Task<Void, Never>?
-    /// True between a deliberate ``disconnect()`` and the next ``connect()`` so a trailing
-    /// `.disconnected` is not mis-read as a drop to reconnect.
-    private var deliberatelyClosed = false
-
-    /// True once the HOST reaped the PANE under this channel
-    /// (``SlopDeskClient/hostChannelCloseReason`` `== .retired`) and until the next EXPLICIT
-    /// ``connect()``.
-    ///
-    /// A tab closed on one client is a host-side topology delete, and the host answers it
-    /// `channelClose` FIRST, document frame SECOND. In that window this client
-    /// still has the pane on screen and a dead channel under it — and every automatic dial path
-    /// would re-open it, which for a session the host no longer holds is a fresh SPAWN. So the
-    /// window is closed on BOTH counts: nothing dials (``connectIfNeeded()`` returns, and the
-    /// campaign never starts), and the pane reads a definite `.disconnected` rather than a
-    /// `.reconnecting` no retry will ever follow — a "frozen dot" is the failure this codebase
-    /// keeps closing elsewhere. Cleared by ``performConnect()``: an explicit re-dial is a decision
-    /// this client is entitled to make, and it builds a NEW client anyway.
-    ///
-    /// Scoped to the REAP, never to "the host closed the channel": the other host close — a laggard
-    /// eviction — leaves the pane in the topology forever, so latching this on it would strand the
-    /// pane undiallable for the process lifetime. That one is ``evictedByHost``.
-    private var retiredByHost = false
-
-    /// True once the host EVICTED this client from a pane that is still running
-    /// (``SlopDeskClient/hostChannelCloseReason`` `== .subscriberEvicted`), until the next
-    /// ``performConnect()``.
-    ///
-    /// The pane, its shell and its other members survive an eviction, and nothing will ever remove
-    /// the pane from this client's topology — so unlike a reap, the ONLY way back is a dial this
-    /// client makes. That makes the two answers different from `retiredByHost`'s:
-    ///
-    /// - the pane still reads a definite `.disconnected`, because the campaign is gated for this
-    ///   too: an instant re-dial re-joins to be evicted again and bills the host a state transfer
-    ///   every lap, so recovery must be an EVENT and not a reflex;
-    /// - but ``connectIfNeeded()`` is NOT gated, so the app-connection fan-out
-    ///   (``WorkspaceStore/redialDisconnectedPanes()``) and the leaf's connect-on-remount both
-    ///   reattach. Each is a coarse, user-or-link-level transition that happens once — exactly the
-    ///   moment this client is likely to be healthy enough to keep up.
-    private var evictedByHost = false
 
     /// Serial OUT path (renderer → host). Keystrokes + resizes funnel through ONE ordered FIFO drained
     /// by ONE task, so a fast burst (typing / multi-segment paste / an escape sequence split across
@@ -322,20 +287,16 @@ public final class ConnectionViewModel {
         status = .connecting
         // Tear down any prior session first (re-connect to a new target).
         await teardown()
-        deliberatelyClosed = false
-        // An EXPLICIT re-dial ("Reconnect Pane", the connect-gate) overrides EITHER host close: the
-        // user is asking for a shell on this pane, and `makeClient()` below builds a client that
-        // carries none of the old one's terminal state.
-        retiredByHost = false
-        evictedByHost = false
         terminal.reset()
 
         let client = makeClient()
         self.client = client
-        // Claim a generation for THIS attempt. A teardown/reconnect/second connect during the
-        // handshake `await` below supersedes us; the post-await status writes are then discarded.
-        connectGeneration &+= 1
-        let myGeneration = connectGeneration
+        // Open an EXPLICIT attempt. It claims a generation — a teardown/reconnect/second connect
+        // during the handshake `await` below supersedes us, and the post-await status writes are
+        // then discarded — and clears all three latches, because an explicit re-dial ("Reconnect
+        // Pane", the connect-gate) overrides EITHER host close: the user is asking for a shell on
+        // this pane, and `makeClient()` above builds a client carrying none of the old one's state.
+        let myGeneration = connectRun.begin()
 
         // OUT path (renderer → host): the terminal model's `sendInput`/`sendResize` (driven by
         // `GhosttyTerminalView`'s onWrite/onResize) append into ONE main-actor FIFO; a single drain task
@@ -464,9 +425,9 @@ public final class ConnectionViewModel {
             // `SlopDeskClient.connect` RETURNS (not throws) when closed/paused/superseded mid-handshake, so
             // without this guard a torn-down/superseded pane would be whitewashed to `.connected`.
             // `self.client === client` catches a racing teardown (it nils `self.client`); the generation
-            // catches a second connect (it bumped `connectGeneration`). No `await` between guard and writes.
+            // catches a second connect (it opened a newer attempt). No `await` between guard and writes.
             let learnedID = await client.sessionID
-            guard myGeneration == connectGeneration, self.client === client else { return }
+            guard connectRun.isCurrent(myGeneration), self.client === client else { return }
             sessionID = learnedID
             effectiveSessionID = learnedID
             if let learnedID { onResumeIdentitySnapshot?(learnedID, 0) }
@@ -487,7 +448,7 @@ public final class ConnectionViewModel {
                 terminal.resendCurrentSize()
             }
         } catch {
-            guard myGeneration == connectGeneration, self.client === client else { return }
+            guard connectRun.isCurrent(myGeneration), self.client === client else { return }
             supervisor.cancel()
             supervisorTask = nil
             status = .failed(ConnectGate.failureReason(for: error))
@@ -516,12 +477,12 @@ public final class ConnectionViewModel {
         // `.disconnected`, which is exactly the arm that dials. Gating on the reason, not on the
         // status, is what keeps a re-dial from slipping in behind the document diff.
         //
-        // `evictedByHost` is deliberately NOT gated here. An eviction leaves the pane running and
+        // An EVICTION is deliberately NOT gated here — it leaves the pane running and
         // in the topology, so this is where it comes back: the fan-out fires when the app
         // connection re-establishes and the remount when the user returns to the tab, and both are
         // one-shot events rather than the campaign's immediate retry. Gating it here is what left
         // an evicted client rendering a pane it could never reattach to.
-        guard !retiredByHost else { return }
+        guard connectRun.mayAutoDial else { return }
         switch status {
         case .disconnected,
              .failed,
@@ -536,7 +497,7 @@ public final class ConnectionViewModel {
 
     /// A deliberate disconnect: close the client + stop the supervisor (no reconnect).
     public func disconnect() async {
-        deliberatelyClosed = true
+        connectRun.closeDeliberately()
         await teardown()
         status = .disconnected
         terminal.reset()
@@ -598,9 +559,9 @@ public final class ConnectionViewModel {
                 // fold itself stays synchronous, and every other event skips the hop.
                 if case .disconnected = event {
                     switch await client.hostChannelCloseReason {
-                    case .retired: retiredByHost = true
-                    case .subscriberEvicted: evictedByHost = true
-                    case nil: break // the link died; nothing was said about this pane
+                    case .retired: connectRun.noteHostClose(.retired)
+                    case .subscriberEvicted: connectRun.noteHostClose(.evicted)
+                    case nil: connectRun.noteHostClose(.link) // the link died; nothing was said here
                     }
                 }
                 foldEvent(event)
@@ -624,7 +585,7 @@ public final class ConnectionViewModel {
             // fact), so showing "reconnecting" would be a spinner for a retry nobody is making.
             // That the eviction is RECOVERABLE does not make it a retry: what recovers it is the
             // fan-out or the user, and until one of them happens the pane is honestly disconnected.
-            if deliberatelyClosed || retiredByHost || evictedByHost {
+            if connectRun.disconnectIsQuiet {
                 status = .disconnected
             } else {
                 // A fresh drop: enter reconnecting with no attempt info yet (the supervisor's `onProgress`
@@ -639,7 +600,7 @@ public final class ConnectionViewModel {
             // back to green .connected with a stale sessionID + dead transport. `return` (not break) also
             // skips the terminal.handle(event) forward below, which would otherwise wedge the terminal
             // model's connectionStatus to .connected past disconnect()'s terminal.reset().
-            if deliberatelyClosed { return }
+            if !connectRun.reconnectIsWelcome { return }
             self.sessionID = sessionID
             effectiveSessionID = sessionID
             onResumeIdentitySnapshot?(sessionID, snapshotedContiguousSeq)
@@ -788,7 +749,7 @@ public final class ConnectionViewModel {
     /// it says to adopt.
     func applyReconnectProgress(attempt: Int, nextRetry: Date?) {
         guard case .reconnecting = ConnectGate.reconnectFold(
-            status: status, deliberatelyClosed: deliberatelyClosed, gaveUp: false,
+            status: status, deliberatelyClosed: connectRun.wasClosedDeliberately, gaveUp: false,
         ) else { return }
         status = .reconnecting(attempt: attempt, nextRetry: nextRetry)
     }
@@ -798,7 +759,7 @@ public final class ConnectionViewModel {
     /// races — see ``ConnectGate/reconnectFold(status:deliberatelyClosed:gaveUp:)``.
     func applyReconnectGaveUp() {
         guard case .unreachable = ConnectGate.reconnectFold(
-            status: status, deliberatelyClosed: deliberatelyClosed, gaveUp: true,
+            status: status, deliberatelyClosed: connectRun.wasClosedDeliberately, gaveUp: true,
         ) else { return }
         status = .unreachable
     }
