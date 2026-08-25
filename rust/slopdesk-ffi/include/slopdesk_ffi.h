@@ -12666,6 +12666,27 @@ size_t slopdesk_ws_open_quickly_row_actions(uint8_t act, uint8_t kind, bool has_
                                             bool cwd_empty, bool folders_backed, uint8_t *out,
                                             size_t cap);
 
+// ---- The ⌘J Jump-To panel ----------------------------------------------------------------------
+//
+// Which of the caller's own detections and blocks earn a row, and what each is called — the collapse
+// of four path forms into one badge, the dedup of a path a build log printed forty times, the
+// ceiling on a pathological scrollback, the skip of a block still being captured. ORDER crosses, not
+// TEXT: the answer is indices INTO the arrays the caller already holds, so no scrollback string
+// makes a second trip to be handed back unchanged. The kinds are the picker's own, so a Jump-To row
+// and its Open-Quickly twin cannot badge differently.
+//
+// `[u32 link count]`, then that many `[u32 index][u32 kind]` pairs, then one `[u32 index]` per
+// surviving block. `link_kinds` and `link_spans` are POSITIONAL: a length disagreement, or a code no
+// kind answers to, loses the whole reading rather than badging a detection with its neighbour's kind
+// or shifting every later index by one.
+#define SLOPDESK_WS_JUMP_TO_HEAD_BYTES     4
+#define SLOPDESK_WS_JUMP_TO_MAX_LINK_ITEMS 200
+size_t slopdesk_ws_jump_to_rows(const uint32_t *link_kinds, size_t link_kind_count,
+                                const uint8_t *blob, size_t blob_len,
+                                const SlopDeskWsSpan *link_spans, size_t link_span_count,
+                                const SlopDeskWsSpan *block_spans, size_t block_span_count,
+                                uint8_t *out, size_t cap);
+
 // ---- The pane's eight stored control vocabularies ----------------------------------------------
 //
 // Each is a small closed set with a stored spelling per case and a repair for a token this build

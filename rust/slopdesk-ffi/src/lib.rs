@@ -166,6 +166,7 @@ pub mod input_event;
 pub mod input_routing;
 pub mod inspector;
 pub mod inspector_store;
+pub mod jump_to;
 pub mod key_capture;
 pub mod key_naming;
 pub mod keybind;

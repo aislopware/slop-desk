@@ -58,6 +58,13 @@ slopdesk-agent = { path = "../slopdesk-agent" }
 # with a second matcher would put the palette and the fuzzy tests in different orders.
 slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
 
+# What a detected span IS. `src/jump_to.rs` classifies the focused pane's detections into the
+# picker's own kinds, and the vocabulary it classifies FROM is the detector's `DetectedLinkKind` —
+# a second copy of those six cases here would be the drift pair the one-implementation rule exists
+# for, exactly as with `slopdesk-agent` above. The edge points DOWN: `slopdesk-terminal` names only
+# `slopdesk-sanitize`, never this crate.
+slopdesk-terminal = { path = "../slopdesk-terminal" }
+
 # The secret shapes. `src/secrets.rs` scans text a remote shell wrote — a title, a notification
 # body, a clipboard — for credential patterns published as regular expressions, which is the
 # notation they should stay in: a new vendor prefix is then one line, not a new byte loop to review.

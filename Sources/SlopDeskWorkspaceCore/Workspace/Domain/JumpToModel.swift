@@ -1,12 +1,21 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskWorkspaceModel
 
-// MARK: - The pure Jump-To panel model (⌘J)
+// MARK: - The Jump-To panel's rows (⌘J)
 
 /// The classification of one ``JumpToItem`` — drives the row's type badge + icon (`jump-to.png`:
-/// File / Folder / URL / Cmd / Prompt). The pure detector cannot `stat` a path to know file-vs-folder
-/// (no host round-trip), so every path-like ``DetectedLinkKind`` collapses to ``path`` here; the
-/// `file://` URL form keeps its own ``fileURL`` badge and a plain URL keeps ``url``.
+/// File / Folder / URL / Cmd / Prompt).
+///
+/// The five cases are a SUBSET of the picker's own kinds, and the badge and the glyph each one wears
+/// are `slopdesk_workspace::open_quickly::Kind`'s and pinned there: a Jump-To row and the
+/// Open-Quickly row it becomes under Current are the same row, so a second table here would be the
+/// one place they could badge differently.
+///
+/// The pure detector cannot `stat` a path to know file-vs-folder (no host round-trip), so every
+/// path-like ``DetectedLinkKind`` collapses to ``path``; the `file://` URL form keeps its own
+/// ``fileURL`` badge and a plain URL keeps ``url``. That collapse is
+/// `slopdesk_workspace::jump_to::kind_of`'s, reached through ``JumpToModel/items(links:blocks:)``.
 public enum JumpToItemKind: Equatable, Hashable, Sendable, CaseIterable {
     /// A filesystem path detected in the scrollback (abs / `~` / relative / `path:line:col`).
     case path
@@ -20,27 +29,11 @@ public enum JumpToItemKind: Equatable, Hashable, Sendable, CaseIterable {
     case prompt
 
     /// The short type badge string the row renders flush-right (`jump-to.png`).
-    public var badge: String {
-        switch self {
-        case .path: "Path"
-        case .url: "URL"
-        case .fileURL: "File"
-        case .command: "Cmd"
-        case .prompt: "Prompt"
-        }
-    }
+    public var badge: String { OpenQuicklyKind(jumpTo: self).badge }
 
     /// The SF Symbol name for the row's leading icon. Passed to `Image(systemName:)` (the string API — no
-    /// deprecation), so a plain name is fine. `terminal` is the prompt-box `>_` glyph for a command row.
-    public var symbol: String {
-        switch self {
-        case .path: "doc.text"
-        case .url: "link"
-        case .fileURL: "doc"
-        case .command: "terminal"
-        case .prompt: "text.bubble"
-        }
-    }
+    /// deprecation), so a plain name is fine.
+    public var symbol: String { OpenQuicklyKind(jumpTo: self).symbol }
 }
 
 /// A pure, headless summary of one OSC-133 block the Jump-To panel consumes — the view builds these from
@@ -108,46 +101,51 @@ public struct JumpToItem: Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
-/// The PURE builder + filter for the Jump-To panel: assemble the focused pane's detected links
+/// The builder + filter for the Jump-To panel: assemble the focused pane's detected links
 /// (paths/URLs) + its OSC-133 command/prompt index into ``JumpToItem`` rows, then fuzzy-filter them.
 ///
-/// ## Why a pure enum
-/// Assembly is a deterministic map over the already-pure ``DetectedLink`` (from ``TerminalLinkDetector``)
-/// and the per-pane block index — no host round-trip, no SwiftUI. The view feeds it `viewportTextRows()` /
-/// scrollback + `navigatorBlocks` and renders the rows; the ranking is
-/// `slopdesk_workspace::search_rank`, the one every search field in the app asks for.
+/// ## Where the decisions live
+/// WHICH detections and WHICH blocks earn a row is `slopdesk_workspace::jump_to` — the collapse of
+/// four path forms into one badge, the dedup of a path a build log printed forty times, the ceiling
+/// on a pathological scrollback, the skip of a block still being captured. The ranking is
+/// `slopdesk_workspace::search_rank`, the one every search field in the app asks for. What is left
+/// here is the row VALUES themselves, which never cross: the door answers indices into the arrays
+/// this side already holds, so no scrollback string makes a second trip through the boundary to be
+/// handed back unchanged.
 public enum JumpToModel {
     /// The cap on how many distinct LINK rows are assembled — a long scrollback can detect thousands of
     /// repeated paths, so the deduped link set is bounded (validate-then-bound, the CLAUDE.md §3 habit
     /// applied to attacker-influenced terminal output). Commands are already bounded by `maxBlocks`.
-    public static let maxLinkItems = 200
+    public static let maxLinkItems = Int(SLOPDESK_WS_JUMP_TO_MAX_LINK_ITEMS)
 
-    /// Assemble the panel rows: deduped detected LINKS first (in detection order), then the BLOCKS in the
-    /// order given (the caller passes `navigatorBlocks`, newest-first). A block with empty `commandText` is
-    /// skipped (a still-forming block). Links carry no timestamp (no jump target / receive-time); blocks
-    /// carry their `firstSeen` for the relative stamp.
+    /// Assemble the panel rows: the detected LINKS that earned one first, in detection order, then the
+    /// BLOCKS in the order given (the caller passes `navigatorBlocks`, newest-first). Links carry no
+    /// timestamp (no jump target / receive-time); blocks carry their `firstSeen` for the relative stamp.
     ///
     /// - Parameters:
     ///   - links: the detected path/URL spans over the pane's scrollback (``TerminalLinkDetector/detect``).
     ///   - blocks: the pane's OSC-133 command/prompt summaries (caller-ordered; `navigatorBlocks` = newest-first).
     public static func items(links: [DetectedLink], blocks: [BlockSummary]) -> [JumpToItem] {
+        let (kept, captured) = rows(links: links, blocks: blocks)
         var out: [JumpToItem] = []
-        var seenLinkIDs = Set<String>()
+        out.reserveCapacity(kept.count + captured.count)
 
-        for link in links {
-            let kind = itemKind(for: link.kind)
-            let id = "link:\(kind):\(link.raw)"
-            // Dedup: the same path/URL printed many times in the scrollback is ONE row.
-            guard seenLinkIDs.insert(id).inserted else { continue }
-            out.append(JumpToItem(id: id, kind: kind, title: link.raw, timestamp: nil, act: .link(link)))
-            if out.count >= maxLinkItems { break }
+        for (index, kind) in kept where index < links.count {
+            let link = links[index]
+            out.append(JumpToItem(
+                id: "link:\(kind):\(link.raw)",
+                kind: kind,
+                title: link.raw,
+                timestamp: nil,
+                act: .link(link),
+            ))
         }
 
-        for block in blocks where !block.commandText.isEmpty {
-            let kind: JumpToItemKind = block.isPrompt ? .prompt : .command
+        for index in captured where index < blocks.count {
+            let block = blocks[index]
             out.append(JumpToItem(
                 id: "block:\(block.index)",
-                kind: kind,
+                kind: block.isPrompt ? .prompt : .command,
                 title: block.commandText,
                 timestamp: block.firstSeen,
                 act: .block(index: block.index),
@@ -156,24 +154,70 @@ public enum JumpToModel {
         return out
     }
 
-    /// Map a detected-span kind onto a Jump-To badge kind. Every path-like form collapses to ``path`` —
-    /// the pure detector cannot `stat` to tell file-from-folder (no host round-trip), so a single honest
-    /// "Path" badge is used rather than a guessed File/Folder split.
-    static func itemKind(for kind: DetectedLinkKind) -> JumpToItemKind {
-        switch kind {
-        case .absolutePath,
-             .tildePath,
-             .relativePath,
-             .pathLineCol: .path
-        case .url: .url
-        case .fileURL: .fileURL
-        }
-    }
-
     /// Fuzzy-filter + rank `items` by `query`. An EMPTY query returns `items` unchanged (the
     /// zero-state list). A non-empty query drops every item the matcher rejects and orders the
     /// survivors best-first, with the assembly order — links before commands — breaking ties.
     public static func filtered(_ items: [JumpToItem], query: String) -> [JumpToItem] {
         wsSearchRanked(items, query: query) { $0.searchText }
     }
+
+    // MARK: - The crossing
+
+    /// Which detections earned a row and what each is called, then which blocks did — both as indices
+    /// into the caller's own arrays. One crossing, whatever the scrollback held.
+    private static func rows(
+        links: [DetectedLink],
+        blocks: [BlockSummary],
+    ) -> (links: [(index: Int, kind: JumpToItemKind)], blocks: [Int]) {
+        var arena = WsStrings()
+        let linkSpans = links.map { arena.span($0.raw) }
+        let blockSpans = blocks.map { arena.span($0.commandText) }
+        let kinds = links.map { TerminalLinkDetector.code(of: $0.kind) }
+        var bytes = arena.bytes
+
+        let answer = bytes.withUnsafeMutableBufferPointer { lent in
+            kinds.withUnsafeBufferPointer { codes in
+                linkSpans.withUnsafeBufferPointer { detected in
+                    blockSpans.withUnsafeBufferPointer { captured in
+                        wsAnswerBytes { out, cap in
+                            Int(slopdesk_ws_jump_to_rows(
+                                codes.baseAddress, codes.count,
+                                lent.baseAddress, lent.count,
+                                detected.baseAddress, detected.count,
+                                captured.baseAddress, captured.count,
+                                out, cap,
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+
+        // Every field is one big-endian word, so the answer reads as a flat word array: the count,
+        // then that many index/kind PAIRS, then the block indices.
+        var words: [Int] = []
+        words.reserveCapacity(answer.count / 4)
+        var cursor = 0
+        while cursor + 4 <= answer.count {
+            words.append((0..<4).reduce(0) { $0 << 8 | Int(answer[cursor + $1]) })
+            cursor += 4
+        }
+        guard let count = words.first, count * 2 <= words.count - 1 else { return ([], []) }
+
+        let kept = stride(from: 1, to: 1 + count * 2, by: 2).map { slot in
+            (index: words[slot], kind: kindOf(code: words[slot + 1]))
+        }
+        return (kept, Array(words.dropFirst(1 + count * 2)))
+    }
+
+    /// The Jump-To kind an Open-Quickly kind code names. A code no kind answers to reads as ``path``,
+    /// which is the same floor `OpenQuicklyKind.jumpToKind` already lands on.
+    private static func kindOf(code: Int) -> JumpToItemKind {
+        kindByCode[code] ?? .path
+    }
+
+    /// Every picker kind's Jump-To reading, resolved once per process rather than once per row.
+    private static let kindByCode: [Int: JumpToItemKind] = Dictionary(
+        uniqueKeysWithValues: OpenQuicklyKind.allCases.map { ($0.code, $0.jumpToKind) },
+    )
 }

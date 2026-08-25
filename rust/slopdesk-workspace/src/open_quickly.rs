@@ -776,6 +776,35 @@ mod tests {
         assert_eq!(Act::from_code(5), None);
     }
 
+    /// The nine badges and their nine glyphs, letter for letter.
+    ///
+    /// Distinctness alone would let "Cmd" widen to "Command" — the badge column is sized for the
+    /// short form — and would let a mistyped symbol name through, which renders as a BLANK glyph
+    /// rather than a wrong one. Both are the drift a second renderer introduces by re-typing a
+    /// table it read once, so the table is pinned where the table lives.
+    #[test]
+    fn every_badge_and_glyph_is_pinned_letter_for_letter() {
+        assert_eq!(Kind::Pane.badge(), "Pane");
+        assert_eq!(Kind::Folder.badge(), "Folder");
+        assert_eq!(Kind::Agent.badge(), "Agent");
+        assert_eq!(Kind::RecentTab.badge(), "Tab");
+        assert_eq!(Kind::Command.badge(), "Cmd");
+        assert_eq!(Kind::Prompt.badge(), "Prompt");
+        assert_eq!(Kind::Path.badge(), "Path");
+        assert_eq!(Kind::Url.badge(), "URL");
+        assert_eq!(Kind::FileUrl.badge(), "File");
+
+        assert_eq!(Kind::Pane.symbol(), "rectangle.split.2x1");
+        assert_eq!(Kind::Folder.symbol(), "folder");
+        assert_eq!(Kind::Agent.symbol(), "sparkles");
+        assert_eq!(Kind::RecentTab.symbol(), "clock.arrow.circlepath");
+        assert_eq!(Kind::Command.symbol(), "terminal");
+        assert_eq!(Kind::Prompt.symbol(), "text.bubble");
+        assert_eq!(Kind::Path.symbol(), "doc.text");
+        assert_eq!(Kind::Url.symbol(), "link");
+        assert_eq!(Kind::FileUrl.symbol(), "doc");
+    }
+
     /// `All` is the merged view of the others, never a section of its own.
     #[test]
     fn the_merged_pill_is_not_one_of_the_sections_it_merges() {

@@ -1244,6 +1244,7 @@ dependencies = [
  "slopdesk-agent",
  "slopdesk-fuzzy",
  "slopdesk-ids",
+ "slopdesk-terminal",
  "slopdesk-tree",
  "unicode-segmentation",
 ]

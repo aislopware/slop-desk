@@ -26,6 +26,7 @@ const MAC_SEARCH: &str = "Sources/SlopDeskMacUI/Overlays/MacGlobalSearch.swift";
 const PHONE_SEARCH: &str = "Sources/SlopDeskPhoneUI/Overlays/GlobalSearchView.swift";
 const MAC_PICKER: &str = "Sources/SlopDeskMacUI/Overlays/MacOpenQuickly.swift";
 const PHONE_PICKER: &str = "Sources/SlopDeskPhoneUI/Overlays/OpenQuicklyView.swift";
+const JUMP_TO: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/JumpToModel.swift";
 const MAC_PALETTE: &str = "Sources/SlopDeskMacUI/Overlays/MacPalette.swift";
 const PHONE_PALETTE: &str = "Sources/SlopDeskPhoneUI/Overlays/PaletteView.swift";
 const MAC_ROOT: &str = "Sources/SlopDeskMacUI/App/MacWorkspaceRootView.swift";
@@ -295,6 +296,24 @@ pub fn one_picker_two_frameworks(tree: &Tree) -> Report {
             names: &["FuzzyMatcher.runs("],
             message: "OpenQuicklyView.swift stopped reading {entry} — a fifth spelling of one fzf mark",
         },
+        // The ⌘J panel's rows become the picker's Current rows, so the two lists are ONE list read
+        // twice. Which detections and blocks earn a row is `slopdesk_workspace::jump_to`'s, and the
+        // badge and glyph each kind wears are `open_quickly::Kind`'s — an assembly that came back to
+        // Swift would dedup, cap and skip on its own, and nothing would be red until a user noticed
+        // their picker listing a path their Jump-To panel had dropped.
+        Claim::Mentions {
+            path: JUMP_TO,
+            names: &["slopdesk_ws_jump_to_rows", "OpenQuicklyKind(jumpTo:"],
+            message: "JumpToModel.swift stopped reading {entry} — the panel and the picker would assemble \
+                      the same scrollback into two different lists",
+        },
+        Claim::Lacks {
+            path: JUMP_TO,
+            pattern: r#""Path"|"URL"|"Cmd"|"Prompt"|"doc\.text"|"text\.bubble""#,
+            view: View::Code,
+            message: "JumpToModel respells a badge or a glyph — every one of them is \
+                      `open_quickly::Kind`'s, pinned beside the table",
+        },
     ];
     check_all(tree, &claims)
 }
@@ -541,6 +560,10 @@ mod tests {
                     "OpenQuicklyPresentation\nOpenQuicklyActions\nOpenQuicklyMetrics\nFuzzyMatcher.runs(\n",
                 )
                 .write(super::MAC_PALETTE, "FuzzyMatcher.runs(\n")
+                .write(
+                    super::JUMP_TO,
+                    "slopdesk_ws_jump_to_rows(\nOpenQuicklyKind(jumpTo: self).badge\n",
+                )
                 .write(super::PHONE_PALETTE, "FuzzyMatcher.runs(\n")
                 .write(super::PHONE_HOST, "CloseConfirmationCopy\n")
                 .write(super::MAC_ROOT, "MacSplitView()\n")
@@ -582,6 +605,16 @@ mod tests {
         // A verb respelled in a half.
         seed(&fixture);
         fixture.append(super::MAC_PICKER, "Button(\"Split Right\") {}\n");
+        assert!(!super::one_picker_two_frameworks(&fixture.tree()).is_clean());
+
+        // The Jump-To assembly, back in Swift.
+        seed(&fixture);
+        fixture.write(super::JUMP_TO, "OpenQuicklyKind(jumpTo: self).badge\n");
+        assert!(!super::one_picker_two_frameworks(&fixture.tree()).is_clean());
+
+        // A badge respelled beside the crossing that already answers it.
+        seed(&fixture);
+        fixture.append(super::JUMP_TO, "case .path: \"Path\"\n");
         assert!(!super::one_picker_two_frameworks(&fixture.tree()).is_clean());
     }
 }

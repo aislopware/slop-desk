@@ -144,6 +144,7 @@ pub mod hint_overlay;
 pub mod host_name;
 pub mod inspector_store;
 pub mod jump;
+pub mod jump_to;
 pub mod keybind;
 pub mod keystroke_replay;
 pub mod list_nav;
