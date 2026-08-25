@@ -342,14 +342,14 @@ pub fn the_scan_and_the_mirror_derive_once(tree: &Tree) -> Report {
         // W4 — hoisted above the closure, not built inside it.
         Claim::Lacks {
             path: LOOPBACK,
-            pattern: r"projectKey: *\{ *box\.mirror\.resolved",
+            pattern: r"projectKey: *\{ *box\.resolved",
             view: View::Code,
             message: "W4: the loopback document resolves the mirror inside its projectKey closure again — \
                       one copy of the whole entry map per pane, quadratic in the workspace",
         },
         Claim::Matches {
             path: LOOPBACK,
-            pattern: r"let resolved = box\.mirror\.resolved",
+            pattern: r"let resolved = box\.resolved",
             view: View::Code,
             message: "W4: the loopback document no longer hoists the resolved mirror above its projectKey \
                       closure — see WorkspaceMirrorBox.stageIntent, which is the same contract",
@@ -469,7 +469,7 @@ mod tests {
             )
             .write(
                 "Sources/SlopDeskWorkspaceCore/Workspace/Sync/LoopbackWorkspaceDocument.swift",
-                "let resolved = box.mirror.resolved\napply(projectKey: { resolved.key(for: $0) })\n",
+                "let resolved = box.resolved\napply(projectKey: { resolved.key(for: $0) })\n",
             )
             .write(
                 "Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift",

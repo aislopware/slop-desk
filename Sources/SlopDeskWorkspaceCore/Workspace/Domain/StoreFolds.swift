@@ -122,123 +122,21 @@ public enum SupervisionFold {
     }
 }
 
-// MARK: - MirrorFold (what one frame does to the replica, and what its layers answer)
+// MARK: - MirrorFold (what this side still asks about the replica)
 
-/// The decisions the client's replica of the host-owned document used to make in place, as
-/// `slopdesk-workspace::mirror_fold` answers them.
+/// What this side still asks ABOUT the replica of the host-owned document, as
+/// `slopdesk-workspace::mirror_fold` answers it.
 ///
-/// The replica itself — the three layers, their values and the keys they are filed under — stays
-/// here, because it is a value type the interface binds to. What crossed is every DECISION: whether
-/// a frame may be folded, when an optimistic patch retires or expires, which candidate is the running
-/// command, whether the host published a grid, whether a document change may reconcile, which intent
-/// a spec edit becomes, and who — other than you — is viewing or holding a pane.
+/// The replica is not here and neither is any decision about a frame: `WorkspaceMirrorBox` holds
+/// the document itself, on the Rust side of one handle. What is left is the folds whose inputs are
+/// values this side already has in hand — which candidate is the running command, whether the host
+/// published a grid, whether a document change may reconcile, which intent a spec edit becomes, and
+/// who, other than you, is viewing or holding a pane.
 ///
 /// No identity crosses. The two roster joins see clients as dense `UInt32` tokens this side minted
 /// and answer POSITIONS into the array it still holds, so the join decides WHICH label and the caller
 /// reads it.
 public enum MirrorFold {
-    // MARK: One frame
-
-    /// What a DIFF frame may do to the replica. A snapshot is self-contained and is not a decision.
-    public enum FrameVerdict: UInt8, Sendable {
-        /// The frame cannot be based on what is held. The caller re-sends `subscribe`.
-        case needsResubscribe = 0
-        /// Already superseded — a duplicate or a reorder, which assign-not-mutate makes a no-op.
-        case ignored = 1
-        /// Fold it.
-        case applied = 2
-    }
-
-    /// Whether a diff frame based on `base` and declaring `new` may be folded onto a replica at
-    /// `held`.
-    ///
-    /// `epochHeld` is this side's own comparison — it holds a document AND that document is the
-    /// frame's — because the identity is a `UUID` and only the answer crosses.
-    public static func diffFrame(epochHeld: Bool, base: Int64, new: Int64, held: Int64) -> FrameVerdict {
-        FrameVerdict(rawValue: slopdesk_ws_mirror_diff_frame(epochHeld, base, new, held)) ?? .needsResubscribe
-    }
-
-    /// What `subscribe` should declare as the state it holds. All-or-nothing with the epoch: a state
-    /// number with no document behind it reads as "I know nothing", which is what makes a snapshot
-    /// the answer.
-    public static func knownStateNum(epochHeld: Bool, stateNum: Int64) -> Int64 {
-        slopdesk_ws_mirror_known_state(epochHeld, stateNum)
-    }
-
-    // MARK: The optimistic layer
-
-    /// One in-flight optimistic patch, as both pending folds read it.
-    public struct Patch: Equatable, Sendable {
-        /// The frame count at which host truth has certainly superseded this patch, once the host has
-        /// answered `applied`.
-        public var retireAtFrame: UInt64?
-        /// When the intent was issued, in the caller's own clock.
-        public var issuedAt: TimeInterval
-
-        public init(retireAtFrame: UInt64?, issuedAt: TimeInterval) {
-            self.retireAtFrame = retireAtFrame
-            self.issuedAt = issuedAt
-        }
-    }
-
-    /// What the host's verdict on one intent does to its patch: `nil` drops it NOW, a frame count
-    /// holds it until host truth arrives.
-    ///
-    /// A refusal snapping back immediately is the anti-flicker rule stated the useful way round: it
-    /// is the one case where waiting shows the user something the host has already said is not true.
-    public static func intentRetire(applied: Bool, framesApplied: UInt64) -> UInt64? {
-        let answer = slopdesk_ws_mirror_intent_retire(applied, framesApplied)
-        return answer.holds ? answer.retire_at : nil
-    }
-
-    /// Which patches survive the document frame that just landed, as POSITIONS into `patches`.
-    /// `framesApplied` is the count INCLUDING that frame.
-    public static func survivorsAfterFrame(_ patches: [Patch], framesApplied: UInt64) -> [Int] {
-        survivors(patches) { rows, out in
-            slopdesk_ws_mirror_frame_survivors(
-                rows.baseAddress, rows.count, framesApplied, out.baseAddress, out.count,
-            )
-        }
-    }
-
-    /// Which patches survive the expiry sweep at `now`, as POSITIONS into `patches` — the backstop
-    /// for a host that accepted an intent and died before answering.
-    public static func survivorsAfterTimeout(
-        _ patches: [Patch],
-        now: TimeInterval,
-        timeout: TimeInterval,
-    ) -> [Int] {
-        survivors(patches) { rows, out in
-            slopdesk_ws_mirror_timeout_survivors(
-                rows.baseAddress, rows.count, now, timeout, out.baseAddress, out.count,
-            )
-        }
-    }
-
-    /// The shared marshalling for both pending folds: the answer is a SUBSET of the input, so one
-    /// buffer of the input's size is the arithmetic bound and the retry path is never travelled.
-    private static func survivors(
-        _ patches: [Patch],
-        _ call: (UnsafeBufferPointer<SlopDeskWsPendingPatch>, UnsafeMutableBufferPointer<UInt32>) -> Int,
-    ) -> [Int] {
-        guard !patches.isEmpty else { return [] }
-        let lent = patches.map { patch in
-            SlopDeskWsPendingPatch(
-                retire_at: patch.retireAtFrame ?? 0,
-                issued_at: patch.issuedAt,
-                retiring: patch.retireAtFrame != nil,
-            )
-        }
-        var out = [UInt32](repeating: 0, count: patches.count)
-        let count = lent.withUnsafeBufferPointer { rows in
-            out.withUnsafeMutableBufferPointer { buffer in call(rows, buffer) }
-        }
-        guard count <= out.count else { return Array(patches.indices) }
-        return out.prefix(count).compactMap { position in
-            patches.indices.contains(Int(position)) ? Int(position) : nil
-        }
-    }
-
     // MARK: Reads
 
     /// Which of the three candidates names the command a pane is RUNNING.

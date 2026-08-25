@@ -11222,56 +11222,123 @@ bool slopdesk_ws_badge_clear_settles(uint8_t status);
 // buffer of that size is the arithmetic bound and the retry path is never travelled.
 size_t slopdesk_ws_normalized_text(const uint8_t *text, size_t len, uint8_t *out, size_t capacity);
 
-// ---- What one frame does to the replica of the document ----------------------------------------
+// ---- The replica of the document itself ---------------------------------------------------------
 //
-// The replica itself — the three layers, their values and the keys they are filed under — stays in
-// Swift, because it is a value type the interface binds to. What is here is every DECISION it used
-// to make in place.
+// One client's whole copy: host truth (`entries`), the control-push overlay (`fastPath`) it is read
+// under, and the optimistic patches ahead of both. Reads funnel through the same precedence —
+// pending, then host truth, then the overlay — so the order lives in exactly one place.
 //
-// No identity crosses. "Is this frame's epoch the one I hold" is a UUID comparison, so the answer
-// crosses as a BIT and the identity stays put; the two roster joins see clients as dense tokens the
-// caller minted and answer POSITIONS into the array it still holds, so the join decides WHICH label
-// and the caller reads it. A label's text never crosses in either direction.
+// A cell holding a ZERO-LENGTH value is RETIRED, which this wire gives a meaning distinct from
+// missing all the way to the UI. So the byte doors need a third answer beyond §4's retry, and
+// SLOPDESK_WS_MIRROR_ABSENT is it: 0 means "held, and empty", not "not there".
 //
-// The replica stays clockless: `now` and `timeout` arrive as seconds from the caller, the same
-// split `slopdesk_ws_settle_step` takes.
-// Whether a DIFF frame may be folded: 0 re-subscribe, 1 ignore it, 2 apply it. A base the replica
-// is not at is either a frame already passed (a duplicate or a reorder, which assign-not-mutate
-// makes a no-op) or one reaching FORWARD from a state never applied — only the second is
-// unrecoverable. A snapshot is self-contained and is not a decision, so it has no case here.
-uint8_t slopdesk_ws_mirror_diff_frame(bool epoch_held, int64_t base, int64_t new_state,
-                                      int64_t held);
+// The presence ROSTER did NOT come with it. It is never diffed, never versioned, and its lifetime
+// is the connection rather than the document, so the near side decodes it and holds it beside this
+// handle. The two frame kinds that carry it and an intent's verdict are routed on the near side
+// too; a kind this door does not fold answers DROPPED, which is the forward-tolerance rule stated
+// once rather than in two languages.
+typedef struct SlopDeskWorkspaceMirror SlopDeskWorkspaceMirror;
+#define SLOPDESK_WS_MIRROR_APPLIED            0
+#define SLOPDESK_WS_MIRROR_IGNORED            1
+#define SLOPDESK_WS_MIRROR_NEEDS_RESUBSCRIBE  2
+#define SLOPDESK_WS_MIRROR_DROPPED            3
+#define SLOPDESK_WS_MIRROR_RESET              4
+#define SLOPDESK_WS_MIRROR_ABSENT             SIZE_MAX
+// A replica that has never been spoken to; NULL if the allocation fails.
+SlopDeskWorkspaceMirror *slopdesk_ws_mirror_new(void);
+// Frees one. NULL is a no-op; the same pointer must not be freed twice.
+void slopdesk_ws_mirror_free(SlopDeskWorkspaceMirror *handle);
+// Folds one type-37 DOCUMENT frame — snapshot, diff or reset. `state_num` receives the state to ACK
+// on APPLIED and 0 on every other verdict, which is the "I know nothing" sentinel and never a state
+// anything acks. `epoch` is sixteen bytes.
+uint8_t slopdesk_ws_mirror_apply(SlopDeskWorkspaceMirror *handle, uint8_t kind,
+                                 const uint8_t *epoch, int64_t base_state_num,
+                                 int64_t new_state_num, const uint8_t *payload, size_t payload_len,
+                                 int64_t *state_num);
+// Forgets everything, host truth included — what the workspace channel does when it STOPS. Distinct
+// from a reset frame, which keeps the overlay because the pane channels are still painting it.
+void slopdesk_ws_mirror_forget(SlopDeskWorkspaceMirror *handle);
+// Records a value pushed on a pane's own control channel, answering whether the overlay MOVED — so
+// the caller repaints only when it did. `key` is 18 bytes: [kind][16B objectID][field]. `has_value`
+// false RETIRES the entry, which stays distinct from a push of zero bytes. Ignored where host truth
+// already holds the key: the document is authoritative, and a push that raced a diff must not win.
+bool slopdesk_ws_mirror_write_fast_path(SlopDeskWorkspaceMirror *handle, const uint8_t *key,
+                                        const uint8_t *value, size_t value_len, bool has_value);
+// Whether the OVERLAY holds one cell — NOT the full chain. The caller re-evaluating a verdict it
+// computed itself must only do so where it has something to re-evaluate; asking the chain instead
+// would read host truth and put this client's guess beside the host's own.
+bool slopdesk_ws_mirror_fast_path_holds(SlopDeskWorkspaceMirror *handle, const uint8_t *key);
+// Drops every overlay entry for one pane — what a client does when that pane's channel closes.
+void slopdesk_ws_mirror_clear_fast_path(SlopDeskWorkspaceMirror *handle, const uint8_t *pane);
+// Stages one intent's optimistic effect, answering whether anything was staged. false means do NOT
+// send it: this client can already see the host will refuse — a round trip and a rollback for
+// nothing. An intent that changes no cell still stages and still goes out; taking ownership of a
+// pristine document is an effect no cell on this side carries. The patch is the two TOPOLOGY
+// projections diffed, never
+// the resolved documents: sweeping liveness or overlay cells in would have host truth erase entries
+// the patch then re-asserts. `minted` is the identity pool; a client PROPOSES object ids.
+bool slopdesk_ws_mirror_stage_intent(SlopDeskWorkspaceMirror *handle, const uint8_t *intent_id,
+                                     uint8_t op, const uint8_t *args, size_t args_len,
+                                     const uint8_t *minted, size_t minted_count,
+                                     double issued_at);
+// Folds the host's verdict on one intent, answering whether a patch was found and moved. A refusal
+// snaps the layout back NOW — the anti-flicker rule the useful way round, since it is the one case
+// where waiting shows the user something the host has already denied. An acceptance only ARMS the
+// patch: it retires at the next document frame, which provably already carries its effect.
+bool slopdesk_ws_mirror_note_intent_result(SlopDeskWorkspaceMirror *handle,
+                                           const uint8_t *intent_id, bool applied);
+// Drops patches the host never answered, answering whether anything went. The caller owns the clock
+// — the replica only compares.
+bool slopdesk_ws_mirror_expire_pending(SlopDeskWorkspaceMirror *handle, double now, double timeout);
+// How long an unanswered patch may stand, in seconds. Asked for so the near side never spells it.
+double slopdesk_ws_mirror_pending_timeout(void);
+// Drops ONE staged patch outright — a send that never left the machine needs no grace period.
+bool slopdesk_ws_mirror_drop_pending(SlopDeskWorkspaceMirror *handle, const uint8_t *intent_id);
+// How many optimistic patches are standing, and whether one particular intent's is.
+size_t slopdesk_ws_mirror_pending_count(SlopDeskWorkspaceMirror *handle);
+bool slopdesk_ws_mirror_is_pending(SlopDeskWorkspaceMirror *handle, const uint8_t *intent_id);
+// One cell's bytes, through the full precedence chain. SLOPDESK_WS_MIRROR_ABSENT for a cell no
+// layer holds; 0 for one holding a retired value; otherwise §4's retry count.
+size_t slopdesk_ws_mirror_value(SlopDeskWorkspaceMirror *handle, const uint8_t *key, uint8_t *out,
+                                size_t capacity);
+// The whole replica as an encoded SNAPSHOT — host truth with the overlay and this client's
+// unanswered intents already on it. The wire's own encoding rather than a marshalled cell array:
+// it already exists, it is golden-pinned, and the caller already holds its decoder.
+size_t slopdesk_ws_mirror_resolved(SlopDeskWorkspaceMirror *handle, uint8_t *out, size_t capacity);
+// HOST TRUTH alone, as an encoded snapshot — no overlay, no pending. The one caller is the
+// in-process document, which ADOPTS what a store seeded and must not adopt this client's own
+// guesses along with it: the fast path is a lane a real host's document never holds.
+size_t slopdesk_ws_mirror_host_truth(SlopDeskWorkspaceMirror *handle, uint8_t *out, size_t capacity);
+// The version of host truth as HELD, whatever the epoch says — which is not what subscribe declares.
+int64_t slopdesk_ws_mirror_state_num(SlopDeskWorkspaceMirror *handle);
+// Every pane the DOCUMENT knows about, sixteen bytes each, in canonical order. Membership is the
+// liveness field: a pane with only overlay values is not a document pane and must not be
+// enumerated as one.
+size_t slopdesk_ws_mirror_pane_ids(SlopDeskWorkspaceMirror *handle, uint8_t *out, size_t capacity);
+// Every pane with an OVERLAY entry, which is the other question.
+size_t slopdesk_ws_mirror_fast_path_pane_ids(SlopDeskWorkspaceMirror *handle, uint8_t *out,
+                                             size_t capacity);
+// The document identity actually HELD, false when none is — which the subscribe pair cannot say,
+// since it reports a fresh identity for "snapshot me". `out` takes sixteen bytes.
+bool slopdesk_ws_mirror_epoch(SlopDeskWorkspaceMirror *handle, uint8_t *out);
 // What `subscribe` declares as the state it holds. All-or-nothing with the epoch: a state number
 // with no document behind it reads as "I know nothing", which is what makes a snapshot the answer.
-int64_t slopdesk_ws_mirror_known_state(bool epoch_held, int64_t state_num);
-// What the host's verdict on one intent does to its patch. `holds` is the guard: a refusal zeroes
-// `retire_at` rather than leaving it undefined.
-typedef struct {
-    bool     holds;     // hold the patch until a frame retires it; false => drop it now
-    uint64_t retire_at; // the frame count that retires it
-} SlopDeskWsIntentRetire;
-// A refusal drops the patch NOW rather than at the next frame — the anti-flicker rule the useful
-// way round: it is the one case where waiting shows the user something the host has already denied.
-// An acceptance holds it one more frame, so the pane does not blink out between the answer and the
-// frame that makes it real. `applied` is the caller's own comparison of the wire status.
-SlopDeskWsIntentRetire slopdesk_ws_mirror_intent_retire(bool applied, uint64_t frames_applied);
-// One in-flight optimistic patch. One record for two doors on purpose: the caller holds ONE array
-// and asks two questions about it, so building the rows twice would be two chances to differ.
-typedef struct {
-    uint64_t retire_at; // the frame count that supersedes it; read only when `retiring`
-    double   issued_at; // when the intent was issued, in the caller's own timebase
-    bool     retiring;  // the host has ANSWERED it, so it waits on a frame rather than on the host
-} SlopDeskWsPendingPatch;
-// Which patches survive the document frame that just landed, as POSITIONS into `rows`.
-// `frames_applied` is the count INCLUDING that frame, so the bump and the comparison cannot
-// disagree about which frame this is. Returns the count NEEDED.
-size_t slopdesk_ws_mirror_frame_survivors(const SlopDeskWsPendingPatch *rows, size_t len,
-                                          uint64_t frames_applied, uint32_t *out, size_t capacity);
-// Which survive the expiry sweep at `now` — the backstop for a host that accepted an intent and
-// died before answering. An age nothing can compare leaves its patch STANDING.
-size_t slopdesk_ws_mirror_timeout_survivors(const SlopDeskWsPendingPatch *rows, size_t len,
-                                            double now, double timeout, uint32_t *out,
-                                            size_t capacity);
+int64_t slopdesk_ws_mirror_known_state_num(SlopDeskWorkspaceMirror *handle);
+// How many document frames have been folded. Back to zero after a forget, so a caller can tell a
+// fold from every other reason its observers fire.
+uint64_t slopdesk_ws_mirror_frames_applied(SlopDeskWorkspaceMirror *handle);
+
+// ---- The replica of the document, and what the near side still asks about it -------------------
+//
+// The replica ITSELF is `slopdesk_wire::document::mirror` now: host truth, the control-push overlay
+// it is read under, and the optimistic patches for intents the host has not answered — one handle,
+// below. What stays here is the handful of folds the near side asks OUTSIDE it: the roster joins
+// (the roster is not a layer of the replica), the running-command chain, the grid predicate, the
+// reconcile admission and the spec-intent choice.
+//
+// No identity crosses in either direction. The two roster joins see clients as dense tokens the
+// caller minted and answer POSITIONS into the array it still holds, so the join decides WHICH label
+// and the caller reads it. A label's text never crosses.
 // Which candidate names the command a pane is RUNNING, and its text. `source` is written whatever
 // the buffer does: 0 nothing, 1 the host's own open block, 2 this client's newest one, 3 the
 // caller's process label. 3 and 0 write no text — the process label is the caller's own string,

@@ -122,6 +122,13 @@ pub(crate) mod tests {
             self.write(path, &held)
         }
 
+        /// Takes a file back out, so a break-test for an ABSENT claim can seed the file and then
+        /// restore the tree that satisfied the rule.
+        pub fn remove(&self, path: &str) -> &Self {
+            let _ = fs::remove_file(self.0.join(path));
+            self
+        }
+
         /// Indexes what has been written so far.
         #[must_use]
         pub fn tree(&self) -> Tree {

@@ -159,7 +159,7 @@ final class BackgroundCompletionWiringTests: XCTestCase {
 
         XCTAssertEqual(store.liveProgramTitle(for: paneID), "main.swift - NVIM")
         XCTAssertTrue(
-            store.workspaceMirror.mirror.fastPath.isEmpty,
+            store.workspaceMirror.fastPathPaneIDs.isEmpty,
             "the overlay the host contradicted is erased, so it can never win back",
         )
     }

@@ -22,7 +22,7 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
     @discardableResult
     private func applySnapshot(
         _ record: PaneLiveness, to store: WorkspaceStore, epoch: UUID = UUID(), stateNum: Int64 = 1,
-    ) -> HostWorkspaceMirror.ApplyOutcome {
+    ) -> WorkspaceMirrorBox.ApplyOutcome {
         store.workspaceMirror.apply(
             kind: WorkspaceEventKind.snapshot.rawValue,
             epoch: epoch,
@@ -57,7 +57,7 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
 
         XCTAssertEqual(store.liveProgramTitle(for: paneID), "main.swift - NVIM")
         XCTAssertTrue(
-            store.workspaceMirror.mirror.fastPath.isEmpty,
+            store.workspaceMirror.fastPathPaneIDs.isEmpty,
             "host truth erases the overlay it contradicted — which needs both to be keyed the same",
         )
     }

@@ -474,6 +474,88 @@ pub fn one_run_one_ladder(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// The Swift face of the client's replica of the document.
+const MIRROR_FACE: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Sync/WorkspaceMirrorBox.swift";
+
+/// The value type it replaced. It held the three layers AND the pending patches in Swift, and asked
+/// Rust one question at a time about numbers it kept itself.
+const MIRROR_DELETED: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Sync/HostWorkspaceMirror.swift";
+
+/// Every door the mirror face must keep asking. Each names a LAYER or a decision over one, and a
+/// face that stopped asking is that layer growing back on this side.
+const MIRROR_DOORS: &[&str] = &[
+    "slopdesk_ws_mirror_new",
+    "slopdesk_ws_mirror_free",
+    "slopdesk_ws_mirror_apply",
+    "slopdesk_ws_mirror_forget",
+    "slopdesk_ws_mirror_write_fast_path",
+    "slopdesk_ws_mirror_fast_path_holds",
+    "slopdesk_ws_mirror_clear_fast_path",
+    "slopdesk_ws_mirror_stage_intent",
+    "slopdesk_ws_mirror_note_intent_result",
+    "slopdesk_ws_mirror_expire_pending",
+    "slopdesk_ws_mirror_drop_pending",
+    "slopdesk_ws_mirror_pending_count",
+    "slopdesk_ws_mirror_is_pending",
+    "slopdesk_ws_mirror_value",
+    "slopdesk_ws_mirror_resolved",
+    "slopdesk_ws_mirror_host_truth",
+    "slopdesk_ws_mirror_state_num",
+    "slopdesk_ws_mirror_known_state_num",
+    "slopdesk_ws_mirror_frames_applied",
+    "slopdesk_ws_mirror_pane_ids",
+    "slopdesk_ws_mirror_fast_path_pane_ids",
+];
+
+/// One replica, and its three layers are Rust's
+///
+/// The client's replica of the host-owned document is `slopdesk_wire::document::mirror` — host
+/// truth, the control-push overlay and the optimistic patches, behind ONE handle. It was a Swift
+/// value type that kept all three and crossed to Rust for a verdict per question, which is the
+/// split state machine `docs/55` §8 names: the erasure rule lived on one side of the boundary and
+/// the bytes it erased on the other, so every new question was a new door and a new chance for the
+/// two halves to disagree.
+///
+/// What this pins is the shape that keeps it ONE implementation. The face asks every door. The
+/// value type it replaced stays deleted. And the near side keeps no layer of its own: a `fastPath`
+/// dictionary, an `entries` state or a pending-patch array declared beside the handle is the same
+/// bug in a smaller font, because the erasure rule cannot reach it.
+///
+/// The presence roster is deliberately NOT behind the handle and this rule does not ask for it: it
+/// is never versioned, never diffed and its lifetime is the CONNECTION rather than the document, so
+/// it is not a layer of the replica at all.
+#[must_use]
+pub fn one_replica_three_layers(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: MIRROR_FACE,
+            message: "Sources/SlopDeskWorkspaceCore/Workspace/Sync/WorkspaceMirrorBox.swift is gone — the \
+                      client's replica of the host document has no face, and the store and the channel must \
+                      share ONE (docs/45 §7.1)",
+        },
+        Claim::Absent {
+            path: MIRROR_DELETED,
+            message: "HostWorkspaceMirror.swift is back — the three layers in Swift with a door per \
+                      question is the split state machine that port ended (docs/45 §7.1, docs/55 §8)",
+        },
+        Claim::Doors {
+            path: MIRROR_FACE,
+            entries: MIRROR_DOORS,
+            message: "WorkspaceMirrorBox.swift no longer calls {entry} — a face that drops a door is a \
+                      layer of the replica growing back on this side",
+        },
+        Claim::NoneOf {
+            paths: &[MIRROR_FACE],
+            pattern: r"var fastPath:|var entries:|var pending:|var pendingPatches|var framesApplied",
+            view: View::Code,
+            message: "{files} STORES a layer of the replica beside the handle — host truth, the overlay and \
+                      the pending patches are all one document, and a copy on this side is a cell the \
+                      erasure rule cannot reach (docs/45 §7.1)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -531,6 +613,54 @@ mod tests {
         // A bare tree has no face at all.
         let bare = Fixture::new("one-run-one-ladder-bare");
         assert!(!super::one_run_one_ladder(&bare.tree()).is_clean());
+    }
+
+    /// A tree where the replica lives behind the handle and the face asks for all of it.
+    fn write_one_replica(fixture: &Fixture) {
+        let mut body = String::new();
+        for door in super::MIRROR_DOORS {
+            body.push_str(door);
+            body.push_str("()\n");
+        }
+        fixture.write(super::MIRROR_FACE, &body);
+        fixture.remove(super::MIRROR_DELETED);
+    }
+
+    #[test]
+    fn one_replica_keeps_its_three_layers_behind_the_handle() {
+        let fixture = Fixture::new("one-replica-three-layers");
+        write_one_replica(&fixture);
+        assert!(super::one_replica_three_layers(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a layer grew back on this side.
+        fixture.write(super::MIRROR_FACE, "slopdesk_ws_mirror_new()\n");
+        assert!(!super::one_replica_three_layers(&fixture.tree()).is_clean());
+        write_one_replica(&fixture);
+
+        // The value type that kept all three layers in Swift is back.
+        fixture.write(super::MIRROR_DELETED, "public struct HostWorkspaceMirror {}\n");
+        assert!(!super::one_replica_three_layers(&fixture.tree()).is_clean());
+        write_one_replica(&fixture);
+
+        // Each layer, declared beside the handle, one at a time.
+        for drift in [
+            "    private var fastPath: [WorkspaceKey: Data] = [:]\n",
+            "    private var entries: HostWorkspaceState = .init()\n",
+            "    private var pending: [PendingPatch] = []\n",
+            "    private var pendingPatches = 0\n",
+            "    private var framesApplied: UInt64 = 0\n",
+        ] {
+            fixture.append(super::MIRROR_FACE, drift);
+            assert!(
+                !super::one_replica_three_layers(&fixture.tree()).is_clean(),
+                "the ban missed {drift}",
+            );
+            write_one_replica(&fixture);
+        }
+
+        // A bare tree has no face at all.
+        let bare = Fixture::new("one-replica-bare");
+        assert!(!super::one_replica_three_layers(&bare.tree()).is_clean());
     }
 
     /// A cap transcribed back does not conflict, it renders: a ring whose tail the host reaped.

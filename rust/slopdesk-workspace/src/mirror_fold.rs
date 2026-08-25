@@ -1,12 +1,15 @@
-//! What one frame does to the client's replica of the host-owned document, and what the replica's
-//! layers answer when they are read.
+//! What the near side asks ABOUT the client's replica of the host-owned document, once it has one.
 //!
-//! The replica itself — the three layers, their `Data` values and the keys they are filed under —
-//! stays on the near side, because it is a value type the interface binds to. What crossed is every
-//! DECISION it used to make in place: whether a frame may be folded at all, when an optimistic
-//! patch is retired or expires, which of the three candidate strings is the running command,
-//! whether the host has published a grid, whether a document change may reconcile, which intent a
-//! spec edit becomes, and who — other than you — is looking at or holding a pane.
+//! The replica itself is `slopdesk_wire::document::mirror` — the three layers, their bytes, the
+//! keys they are filed under, and every decision one frame makes about them. This module is what
+//! is left over: folds whose inputs are values the near side already holds in hand, none of which
+//! is a document. Which of three candidate strings names the running command, whether the host has
+//! published a grid, whether a document change may reconcile, which intent a spec edit becomes,
+//! and who — other than you — is looking at or holding a pane.
+//!
+//! Every one of them is a pure function of its arguments with no state between calls, which is
+//! exactly why they did not go with the document: a handle would have had to be told these values
+//! to answer, so the handle would buy nothing.
 //!
 //! ## No identity crosses
 //!
@@ -14,179 +17,8 @@
 //! as dense `u32` tokens the caller minted: a client is a token and a flag, an attachment is a
 //! token. The answers are POSITIONS into the list the caller still holds. A `UUID` never crosses,
 //! and neither does a label — the join decides WHICH label, and the caller reads it.
-//!
-//! ## The mirror stays clockless
-//!
-//! `now` and `timeout` arrive as seconds from the caller. The replica only ever COMPARES instants,
-//! which is the same discipline the freshness rule keeps one layer down, and it is what makes
-//! expiry pinnable at a chosen moment instead of by sleeping.
 
 use crate::attention_fold::normalized_text;
-
-// MARK: - Folding one frame
-
-/// What a DIFF frame may do to the replica.
-///
-/// A snapshot is self-contained and is folded whatever the replica holds — including across an
-/// epoch change with no intervening reset, which is exactly the cold-connect case — so it is not a
-/// decision and has no case here. A diff is only meaningful against a document already held, and
-/// this is that test.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FrameVerdict {
-    /// The frame cannot be based on what is held: the wrong document, or a base this replica is not
-    /// at and cannot reach. The caller re-sends `subscribe`, which IS the resync verb.
-    NeedsResubscribe,
-    /// Already superseded. Nothing changes — and deliberately NOT an error: duplicates and reorders
-    /// are no-ops by construction.
-    Ignored,
-    /// Fold it. Host truth moves to the new state number.
-    Applied,
-}
-
-impl FrameVerdict {
-    /// Every verdict, in the order their bytes are numbered.
-    pub const ALL: [Self; 3] = [Self::NeedsResubscribe, Self::Ignored, Self::Applied];
-
-    /// The byte this verdict crosses as — its position in [`ALL`](Self::ALL).
-    #[must_use]
-    pub const fn code(self) -> u8 {
-        match self {
-            Self::NeedsResubscribe => 0,
-            Self::Ignored => 1,
-            Self::Applied => 2,
-        }
-    }
-
-    /// The inverse of [`code`](Self::code). An unnamed byte reads as
-    /// [`NeedsResubscribe`](Self::NeedsResubscribe) — the answer that costs a round trip and can
-    /// never leave the replica claiming a state it is not at.
-    #[must_use]
-    pub const fn from_code(code: u8) -> Self {
-        match code {
-            1 => Self::Ignored,
-            2 => Self::Applied,
-            _ => Self::NeedsResubscribe,
-        }
-    }
-}
-
-/// Whether a diff frame may be folded onto a replica at `held`.
-///
-/// `epoch_held` is the caller's own comparison — it holds an epoch AND that epoch is this frame's —
-/// collapsed to the one bit the rule needs, because the identity is a `UUID` and stays on the near
-/// side.
-///
-/// The middle clause is the subtle one. A base the replica is not at is either a frame it has
-/// already passed (a duplicate or a reorder, which assign-not-mutate makes a no-op) or one reaching
-/// FORWARD from a state that was never applied — and only the second is unrecoverable.
-#[must_use]
-pub const fn diff_frame(epoch_held: bool, base: i64, new: i64, held: i64) -> FrameVerdict {
-    if !epoch_held {
-        return FrameVerdict::NeedsResubscribe;
-    }
-    if base != held {
-        if new <= held {
-            return FrameVerdict::Ignored;
-        }
-        return FrameVerdict::NeedsResubscribe;
-    }
-    if new <= held {
-        return FrameVerdict::Ignored;
-    }
-    FrameVerdict::Applied
-}
-
-/// What `subscribe` should declare as the state it holds.
-///
-/// All-or-nothing with the epoch: a state number without a document to attach it to reads as "I
-/// know nothing", which is what makes a snapshot the answer. There is deliberately no way to ask
-/// for a diff against a document this replica does not hold.
-#[must_use]
-pub const fn known_state_num(epoch_held: bool, state_num: i64) -> i64 {
-    if epoch_held { state_num } else { 0 }
-}
-
-// MARK: - The optimistic layer
-
-/// What the host's verdict on one in-flight intent does to its optimistic patch.
-///
-/// `applied` is the caller's own comparison of the wire status against `applied`, collapsed to a
-/// bit — the status vocabulary belongs to the wire, and re-spelling it here would be a second place
-/// for it to drift.
-///
-/// A REFUSAL drops the patch immediately (the answer is [`None`]) rather than at the next frame.
-/// That is the anti-flicker rule stated the useful way round: a refusal is the one case where
-/// waiting shows the user something the host has already said is not true.
-///
-/// An acceptance holds the patch until the NEXT document frame, so the pane does not blink out
-/// between the answer and the frame that makes it real. A frame count rather than a state number
-/// because the result carries none — and it does not need to: the host bumps the state and queues
-/// the new document BEFORE it queues the result, so the first frame after an acceptance provably
-/// already contains that intent's effect.
-#[must_use]
-pub const fn intent_retire(applied: bool, frames_applied: u64) -> Option<u64> {
-    if !applied {
-        return None;
-    }
-    // Saturating rather than wrapping: a count that reached `u64::MAX` would have to be wrong, and
-    // an answer that wrapped to zero would retire every standing patch at the next frame.
-    Some(frames_applied.saturating_add(1))
-}
-
-/// Which patches survive the document frame that just landed, as POSITIONS into `retire_at`.
-///
-/// `frames_applied` is the count INCLUDING the frame being folded — the caller bumps its own
-/// watermark and asks about the result, so the comparison and the bump cannot disagree about which
-/// frame this is.
-#[must_use]
-pub fn survivors_after_frame(retire_at: &[Option<u64>], frames_applied: u64) -> Vec<u32> {
-    retire_at
-        .iter()
-        .enumerate()
-        .filter(|(_, retire)| !matches!(**retire, Some(at) if frames_applied >= at))
-        .filter_map(|(index, _)| u32::try_from(index).ok())
-        .collect()
-}
-
-/// One in-flight patch's age evidence.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Age {
-    /// When the intent was issued, in the caller's own timebase.
-    pub issued_at: f64,
-    /// Whether the host has already ANSWERED this patch, so it is waiting on a frame rather than on
-    /// the host. A patch with an answer is never expired out from under the frame that will retire
-    /// it.
-    pub retiring: bool,
-}
-
-/// Which patches survive the expiry sweep at `now`, as POSITIONS into `ages`.
-///
-/// The backstop for the case with no other signal: a host that accepted the intent and died before
-/// answering. Everything else has a definite end — a verdict retires it, a failed send drops it —
-/// and this is only for the silence.
-///
-/// The comparison is `>=` on the elapsed seconds, which is the near side's verbatim: a `NaN`
-/// elapsed (an issue instant the caller never set) leaves the patch STANDING rather than expiring
-/// it on arithmetic nobody wrote.
-#[must_use]
-pub fn survivors_after_timeout(ages: &[Age], now: f64, timeout: f64) -> Vec<u32> {
-    ages.iter()
-        .enumerate()
-        .filter(|(_, age)| {
-            let elapsed = now - age.issued_at;
-            // Written as the NEGATION of the expiry test, not as its De Morgan twin: the two agree
-            // on every ordered pair and disagree on NaN, where `!(NaN >= t)` keeps the patch and
-            // `NaN < t` drops it. The paragraph above is the whole point, so the shape stays.
-            #[expect(
-                clippy::nonminimal_bool,
-                reason = "`elapsed < timeout || age.retiring` is NOT this expression for a NaN elapsed — \
-                          see `an_uncomparable_age_never_expires`"
-            )]
-            !(elapsed >= timeout && !age.retiring)
-        })
-        .filter_map(|(index, _)| u32::try_from(index).ok())
-        .collect()
-}
 
 // MARK: - Reads
 
@@ -411,121 +243,9 @@ pub fn holders(attachments: &[u32], clients: &[RosterClient], own: Option<u32>) 
 #[cfg(test)]
 mod tests {
     use super::{
-        Age, FrameVerdict, RosterClient, RunningCommand, SpecIntent, diff_frame, grid_published, holders,
-        intent_retire, known_state_num, reconcile_admitted, running_command, spec_intent,
-        survivors_after_frame, survivors_after_timeout, viewers,
+        RosterClient, RunningCommand, SpecIntent, grid_published, holders, reconcile_admitted,
+        running_command, spec_intent, viewers,
     };
-
-    /// Both verdict vocabularies round-trip, and an unnamed byte reads as the conservative case.
-    #[test]
-    fn the_verdict_bytes_round_trip() {
-        for verdict in FrameVerdict::ALL {
-            assert_eq!(FrameVerdict::from_code(verdict.code()), verdict);
-        }
-        assert_eq!(FrameVerdict::from_code(9), FrameVerdict::NeedsResubscribe);
-        for intent in SpecIntent::ALL {
-            assert_eq!(SpecIntent::from_code(intent.code()), intent);
-        }
-        assert_eq!(SpecIntent::from_code(9), SpecIntent::Refused);
-    }
-
-    /// A frame for another document — or for none — is never folded, whatever its numbers say.
-    #[test]
-    fn a_frame_without_a_document_resubscribes() {
-        for base in [0_i64, 1, 7] {
-            for new in [0_i64, 1, 8] {
-                assert_eq!(diff_frame(false, base, new, 7), FrameVerdict::NeedsResubscribe);
-            }
-        }
-    }
-
-    /// The whole small domain of `(base, new)` around a replica at 5.
-    #[test]
-    fn the_diff_ladder_over_a_small_domain() {
-        let held = 5_i64;
-        for base in 0..=8_i64 {
-            for new in 0..=8_i64 {
-                let expected = if base == held {
-                    if new <= held {
-                        FrameVerdict::Ignored
-                    } else {
-                        FrameVerdict::Applied
-                    }
-                } else if new <= held {
-                    FrameVerdict::Ignored
-                } else {
-                    FrameVerdict::NeedsResubscribe
-                };
-                assert_eq!(diff_frame(true, base, new, held), expected, "{base} → {new}");
-            }
-        }
-    }
-
-    /// The three cases worth naming: the ordinary advance, the duplicate, and the gap.
-    #[test]
-    fn the_three_named_diff_cases() {
-        assert_eq!(diff_frame(true, 5, 6, 5), FrameVerdict::Applied);
-        assert_eq!(diff_frame(true, 4, 5, 5), FrameVerdict::Ignored);
-        assert_eq!(diff_frame(true, 6, 7, 5), FrameVerdict::NeedsResubscribe);
-    }
-
-    /// A state number with no document behind it is not a state number.
-    #[test]
-    fn the_declared_state_is_all_or_nothing() {
-        assert_eq!(known_state_num(true, 12), 12);
-        assert_eq!(known_state_num(false, 12), 0);
-        assert_eq!(known_state_num(true, 0), 0);
-    }
-
-    /// An acceptance holds one more frame; a refusal holds nothing.
-    #[test]
-    fn a_refusal_retires_now_and_an_acceptance_next_frame() {
-        assert_eq!(intent_retire(true, 4), Some(5));
-        assert_eq!(intent_retire(false, 4), None);
-        assert_eq!(intent_retire(true, u64::MAX), Some(u64::MAX));
-    }
-
-    /// Only a patch whose watermark has been REACHED goes; an unanswered one always stays.
-    #[test]
-    fn a_frame_retires_only_what_it_supersedes() {
-        let rows = [None, Some(3_u64), Some(4_u64), Some(9_u64)];
-        assert_eq!(survivors_after_frame(&rows, 4), vec![0, 3]);
-        assert_eq!(survivors_after_frame(&rows, 2), vec![0, 1, 2, 3]);
-        assert_eq!(survivors_after_frame(&rows, 9), vec![0]);
-        assert_eq!(survivors_after_frame(&[], 1), Vec::<u32>::new());
-    }
-
-    /// Expiry takes the silent ones only, and REACHING the timeout is enough.
-    #[test]
-    fn expiry_takes_the_unanswered_at_the_window() {
-        let rows = [
-            Age {
-                issued_at: 0.0,
-                retiring: false,
-            },
-            Age {
-                issued_at: 0.0,
-                retiring: true,
-            },
-            Age {
-                issued_at: 1.0,
-                retiring: false,
-            },
-        ];
-        assert_eq!(survivors_after_timeout(&rows, 3.0, 3.0), vec![1, 2]);
-        assert_eq!(survivors_after_timeout(&rows, 2.9, 3.0), vec![0, 1, 2]);
-        assert_eq!(survivors_after_timeout(&rows, 4.0, 3.0), vec![1]);
-    }
-
-    /// An elapsed nobody can compare leaves the patch standing rather than expiring it.
-    #[test]
-    fn an_uncomparable_age_never_expires() {
-        let rows = [Age {
-            issued_at: f64::NAN,
-            retiring: false,
-        }];
-        assert_eq!(survivors_after_timeout(&rows, 100.0, 3.0), vec![0]);
-    }
 
     /// The chain in order, with blank rungs skipped rather than answered.
     #[test]

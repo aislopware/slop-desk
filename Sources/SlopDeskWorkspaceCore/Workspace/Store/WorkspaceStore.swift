@@ -76,8 +76,8 @@ public final class WorkspaceStore {
     /// The mirror's WHOLE topology — the tree, the sync-input set, the focus MRU, the closed-tab ring
     /// and the `spawnCwd` map — memoized against ``workspaceMirrorRevision``, exactly as ``tree`` is.
     ///
-    /// ``HostWorkspaceMirror/topology`` is a plain computed property over
-    /// ``HostWorkspaceMirror/resolved``, so every read of it copies the entire entry map and then
+    /// ``WorkspaceMirrorBox/topology`` is a plain computed property over
+    /// ``WorkspaceMirrorBox/resolved``, so every read of it copies the entire entry map and then
     /// re-runs ``WorkspaceTopology/init(entries:)`` over every cell in the document. ``tree`` had a
     /// memo and the OTHER halves did not, which made ``syncInputTabs`` — read once per keystroke by
     /// ``fanSyncInput(from:_:)`` and once per SIDEBAR ROW by
@@ -172,7 +172,7 @@ public final class WorkspaceStore {
     /// published only when a frame folds), and a hold with no release is a window of panes that never
     /// connect — strictly worse than the churn it prevents. Injectable so a test can pin the release
     /// without spending it.
-    var paneDialHoldBackstop: Duration = .seconds(HostWorkspaceMirror.pendingTimeout)
+    var paneDialHoldBackstop: Duration = .seconds(WorkspaceMirrorBox.pendingTimeout)
 
     /// The `host:port` whose OWN document is what the panes on screen came from, or `nil` while
     /// nothing a host published has landed.

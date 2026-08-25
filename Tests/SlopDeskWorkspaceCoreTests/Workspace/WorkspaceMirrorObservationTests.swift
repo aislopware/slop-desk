@@ -31,7 +31,7 @@ final class WorkspaceMirrorObservationTests: XCTestCase {
     @discardableResult
     private func applySnapshot(
         _ record: PaneLiveness, to store: WorkspaceStore, epoch: UUID = UUID(), stateNum: Int64 = 1,
-    ) -> HostWorkspaceMirror.ApplyOutcome {
+    ) -> WorkspaceMirrorBox.ApplyOutcome {
         store.workspaceMirror.apply(
             kind: WorkspaceEventKind.snapshot.rawValue,
             epoch: epoch,
@@ -85,7 +85,7 @@ final class WorkspaceMirrorObservationTests: XCTestCase {
             payload: WorkspaceStateCodec.encodeDiff(WorkspaceStateDiff(sets: [], deletes: [])),
         )
 
-        XCTAssertEqual(outcome, HostWorkspaceMirror.ApplyOutcome.ignored)
+        XCTAssertEqual(outcome, WorkspaceMirrorBox.ApplyOutcome.ignored)
         XCTAssertFalse(flag.raised, "a duplicate the mirror discards is not a repaint")
     }
 

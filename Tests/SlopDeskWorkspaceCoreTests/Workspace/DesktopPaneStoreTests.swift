@@ -68,7 +68,7 @@ final class DesktopPaneStoreTests: XCTestCase {
         }
 
         XCTAssertEqual(store.tree.spec(for: id)?.video?.displayID, 1, "the projection follows the re-pick")
-        let host = try XCTUnwrap(WorkspaceTopology(entries: store.workspaceMirror.mirror.entries))
+        let host = try XCTUnwrap(WorkspaceTopology(entries: store.workspaceMirror.hostTruth))
         XCTAssertEqual(
             host.tree.sessions.first?.specs[id]?.video?.displayID, 1,
             "…and so does host truth, which is what a relaunch restores from",

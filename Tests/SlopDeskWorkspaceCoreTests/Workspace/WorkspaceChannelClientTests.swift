@@ -346,10 +346,10 @@ final class WorkspaceChannelClientTests: XCTestCase {
         await MainActor.run {
             XCTAssertEqual(rig.client.state, .live(4))
             XCTAssertEqual(
-                rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle),
+                rig.box.string(.pane, self.pane, WorkspacePaneField.liveTitle),
                 "main.swift - NVIM",
             )
-            XCTAssertTrue(rig.box.mirror.bool(.pane, self.pane, WorkspacePaneField.titleFresh))
+            XCTAssertTrue(rig.box.bool(.pane, self.pane, WorkspacePaneField.titleFresh))
         }
     }
 
@@ -373,7 +373,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         let acked = rig.pipe.requests(verb: .ack).compactMap { WorkspaceStateCodec.decodeI64($0) }
         XCTAssertEqual(acked, [1, 2])
         await MainActor.run {
-            XCTAssertEqual(rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "new")
+            XCTAssertEqual(rig.box.string(.pane, self.pane, WorkspacePaneField.liveTitle), "new")
         }
     }
 
@@ -399,7 +399,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         XCTAssertEqual(resub?.knownEpoch, epoch)
         await MainActor.run {
             XCTAssertEqual(
-                rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "held",
+                rig.box.string(.pane, self.pane, WorkspacePaneField.liveTitle), "held",
                 "the rejected frame changed nothing",
             )
         }
@@ -426,7 +426,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         await expect("the resubscribe") { rig.pipe.requests(verb: .subscribe).count == 2 }
         await MainActor.run {
-            XCTAssertEqual(rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "held")
+            XCTAssertEqual(rig.box.string(.pane, self.pane, WorkspacePaneField.liveTitle), "held")
         }
     }
 
@@ -558,9 +558,9 @@ final class WorkspaceChannelClientTests: XCTestCase {
             epoch: epoch, baseStateNum: 0, newStateNum: 0, payload: roster.encode(),
         ))
 
-        await expect("the roster") { rig.box.mirror.roster?.clients.count == 1 }
+        await expect("the roster") { rig.box.roster?.clients.count == 1 }
         await MainActor.run {
-            XCTAssertEqual(rig.box.mirror.roster?.clients.first?.label, "iPad")
+            XCTAssertEqual(rig.box.roster?.clients.first?.label, "iPad")
         }
         await expectNever("an ack for presence") { !rig.pipe.requests(verb: .ack).isEmpty }
     }
@@ -592,9 +592,9 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         await MainActor.run {
             XCTAssertEqual(rig.client.state, .closed)
-            XCTAssertNil(rig.box.mirror.epoch)
-            XCTAssertEqual(rig.box.mirror.knownStateNum, 0)
-            XCTAssertTrue(rig.box.mirror.entries.isEmpty)
+            XCTAssertNil(rig.box.documentEpoch)
+            XCTAssertEqual(rig.box.knownStateNum, 0)
+            XCTAssertTrue(rig.box.hostTruth.isEmpty)
         }
         await expect("the channel to be released") { rig.released() == [7] }
     }
@@ -642,7 +642,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         await expect("the channel still works") { rig.pipe.requests(verb: .ack).count == 2 }
         await MainActor.run {
-            XCTAssertEqual(rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.cwd), "/after")
+            XCTAssertEqual(rig.box.string(.pane, self.pane, WorkspacePaneField.cwd), "/after")
         }
     }
 
@@ -745,7 +745,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         await expect("the failed intent's patch to be dropped") { rig.box.pendingIntentCount == 0 }
         XCTAssertEqual(
-            rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "one",
+            rig.box.topology?.tree.sessions.first?.tabs.first?.title, "one",
             "the layout snapped back to host truth rather than freezing on the optimistic title",
         )
     }
@@ -775,11 +775,11 @@ final class WorkspaceChannelClientTests: XCTestCase {
         ))
         await expect("the intent to reach the wire") { !rig.pipe.requests(verb: .intent).isEmpty }
         XCTAssertEqual(
-            rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "renamed",
+            rig.box.topology?.tree.sessions.first?.tabs.first?.title, "renamed",
             "the optimistic patch is what the user is looking at while the host is asked",
         )
 
-        clock.mutate { $0 += HostWorkspaceMirror.pendingTimeout }
+        clock.mutate { $0 += WorkspaceMirrorBox.pendingTimeout }
         rig.pipe.deliver(diff(
             WorkspaceStateDiff(sets: [WorkspaceEntry(
                 key: WorkspaceKey(.pane, pane, WorkspacePaneField.cwd),
@@ -791,7 +791,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         await expect("the unanswered patch to be swept") { rig.box.pendingIntentCount == 0 }
         XCTAssertEqual(
-            rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "one",
+            rig.box.topology?.tree.sessions.first?.tabs.first?.title, "one",
             "with the patch gone the row shows what the host actually says",
         )
     }
@@ -831,7 +831,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         XCTAssertEqual(rig.box.pendingIntentCount, 1, "precondition: the patch is standing")
 
         // The verdict is not coming, and neither is anything else.
-        clock.mutate { $0 += HostWorkspaceMirror.pendingTimeout }
+        clock.mutate { $0 += WorkspaceMirrorBox.pendingTimeout }
 
         await expect("the armed sweep to drop the patch") { rig.box.pendingIntentCount == 0 }
         XCTAssertEqual(
@@ -839,7 +839,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
             "the snapshot is the only frame this channel ever folded, so nothing else could have swept it",
         )
         XCTAssertEqual(
-            rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "one",
+            rig.box.topology?.tree.sessions.first?.tabs.first?.title, "one",
             "the layout snapped back to host truth rather than freezing on the prediction",
         )
     }

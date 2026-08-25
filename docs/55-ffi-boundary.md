@@ -954,7 +954,7 @@ not crossings at all. All three are the same shape — **a value that reads like
 a projection** — and all three sat behind a `var` or a computed property, so nothing in the type
 system, the tests or `make lint` could see them.
 
-1. **`HostWorkspaceMirror.topology`, read once per sidebar ROW.** It copies the entire entry map and
+1. **The replica's `topology`, read once per sidebar ROW.** It copies the entire entry map and
    re-runs `WorkspaceTopology.init(entries:)` over every cell. Measured in a scratch `swiftc -O`
    harness, the dictionary copy alone is 6.4 µs at 12 panes and 23.9 µs at 48; the per-cell walk takes
    those to 10.3 µs and 37.9 µs, which is a FLOOR — the real projection also rebuilds every split
@@ -1067,7 +1067,7 @@ grows or reorders a case fails the build rather than reporting `working` for `bl
 
 `PaneLiveness` is the same line drawn one level up, and it is worth naming because nothing was
 deleted and the port is still complete. The Swift `struct` stays: it is what `PaneLiveness+Capture`
-builds off a live `MuxChannelSession`, what `HostWorkspaceMirror` publishes and what a view reads —
+builds off a live `MuxChannelSession`, what the client's replica projects and what a view reads —
 a vocabulary by the rule above. What went is every BODY behind it. `entries()`, `init?(paneID:)`,
 `merge(paneLiveness:)`, `markPaneDead(_:)` and `reconcile(captured:)` are now argument marshalling
 around `slopdesk-wire`'s `document::liveness`, and the ~25-line classify-and-reap loop that used to

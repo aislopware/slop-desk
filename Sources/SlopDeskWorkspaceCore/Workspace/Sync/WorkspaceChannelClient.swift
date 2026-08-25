@@ -5,7 +5,7 @@ import SlopDeskWorkspaceModel
 
 /// The client end of the workspace-document channel (`channelClass == 1`, docs/45 §5.1).
 ///
-/// Owns one ``HostWorkspaceMirror`` and the loop that feeds it: open → **await the ack** →
+/// Owns one ``WorkspaceMirrorBox`` and the loop that feeds it: open → **await the ack** →
 /// subscribe → apply → ack. Everything the UI reads comes off the mirror; everything the host needs
 /// to know goes out as a type-17 request. There is no other traffic on this channel.
 ///
@@ -611,7 +611,7 @@ public final class WorkspaceChannelClient {
     /// in production, so the check is already past the deadline when it runs. `nil` disables it,
     /// which is what isolates the FRAME-driven sweep in a test — the two would otherwise race and
     /// whichever won would look like the one under test.
-    var pendingSweepDelay: Duration? = .seconds(HostWorkspaceMirror.pendingTimeout)
+    var pendingSweepDelay: Duration? = .seconds(WorkspaceMirrorBox.pendingTimeout)
 
     /// How long the open waits for the host's `channelOpenAck` before treating the silence as a dead
     /// handshake. The pane path's own bound, to the second (`SlopDeskClient.connect`).

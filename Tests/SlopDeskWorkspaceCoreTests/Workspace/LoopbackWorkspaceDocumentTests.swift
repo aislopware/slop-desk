@@ -73,7 +73,7 @@ final class LoopbackWorkspaceDocumentTests: XCTestCase {
     }
 
     private func title(of tab: TabID, in box: WorkspaceMirrorBox) -> String? {
-        box.mirror.entries.string(WorkspaceKey(.tab, tab.raw, WorkspaceTabField.title))
+        box.hostTruth.string(WorkspaceKey(.tab, tab.raw, WorkspaceTabField.title))
     }
 
     // MARK: - The failure this seam exists to remove
@@ -257,13 +257,13 @@ final class LoopbackWorkspaceDocumentTests: XCTestCase {
     /// the store restored is the document's opening state, per-pane cache included.
     func testInstallingOnAStoreAdoptsTheLaunchSeed() {
         let store = WorkspaceStore(makeSession: { FakePaneSession($0.spec) })
-        let seeded = store.workspaceMirror.mirror.entries
+        let seeded = store.workspaceMirror.hostTruth
 
         let document = store.attachLoopbackWorkspaceDocument()
 
         XCTAssertEqual(document.snapshot, seeded)
         XCTAssertEqual(document.stateNum, store.workspaceMirror.knownStateNum)
-        XCTAssertEqual(store.workspaceMirror.mirror.entries, seeded, "no re-publish, no churn")
+        XCTAssertEqual(store.workspaceMirror.hostTruth, seeded, "no re-publish, no churn")
     }
 
     /// A default store still has no channel and no document. This commit is a seam, not a cutover:

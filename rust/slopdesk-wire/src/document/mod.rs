@@ -15,6 +15,8 @@
 //!   cells and read back out of them, with the predicate that says which half a key belongs to.
 //! - [`apply`] — the rule that turns one intent into the next topology, or into a refusal. Shared
 //!   by the host and by every client's optimistic overlay, so the two cannot disagree.
+//! - [`mirror`] — a CLIENT's replica of all of the above: host truth, the control-push overlay it
+//!   is read under, and the optimistic patches for intents the host has not answered yet.
 //! - [`state_file`] — which half of the document survives a restart, and its on-disk shape.
 //!
 //! ## Where this sits
@@ -33,6 +35,7 @@ pub mod codec;
 pub mod fields;
 pub mod intent;
 pub mod liveness;
+pub mod mirror;
 pub mod state;
 pub mod state_file;
 pub mod topology;
@@ -62,6 +65,7 @@ pub use liveness::{
     AgentState, Grid, LIVENESS_FIELDS, PaneLiveness, Progress, TOPOLOGY_FIELDS, mark_pane_dead,
     merge_pane_liveness, reconcile,
 };
+pub use mirror::{ApplyOutcome, PENDING_TIMEOUT, WorkspaceMirror};
 pub use state::{
     HostWorkspaceState, ROOT_OBJECT_ID, WorkspaceEntry, WorkspaceKey, WorkspaceObjectKind, WorkspaceStateDiff,
 };

@@ -15,22 +15,26 @@ import XCTest
 private final class MirroringChannel: MessageChannel, @unchecked Sendable {
     let channel: Channel = .control
 
-    private let lock = NSLock()
-    private var _mirror = HostWorkspaceMirror()
-    private var _acks: [Int64] = []
+    /// A real client's replica, on the actor a real client's replica lives on. The alternative was a
+    /// second replica written for the test, which is the cross-language mirror fixture the porting
+    /// rule bars — and `send` already suspends, so the hop costs the test nothing.
+    @MainActor let mirror: WorkspaceMirrorBox
 
-    var mirror: HostWorkspaceMirror {
-        lock.lock()
-        defer { lock.unlock() }
-        return _mirror
+    /// The stateNums this client owes an ack for. On the same actor as the replica that produced
+    /// them, which is what replaced the lock: a lock may not be held across the hop, and holding one
+    /// on ONE side of it guards nothing the actor did not already.
+    @MainActor private var acks: [Int64] = []
+
+    @MainActor
+    init() {
+        mirror = WorkspaceMirrorBox()
     }
 
     /// The stateNums this client owes an ack for, taken once.
+    @MainActor
     func drainAcks() -> [Int64] {
-        lock.lock()
-        defer { lock.unlock() }
-        let out = _acks
-        _acks = []
+        let out = acks
+        acks = []
         return out
     }
 
@@ -43,18 +47,12 @@ private final class MirroringChannel: MessageChannel, @unchecked Sendable {
         // a frame is in flight must land rather than be swallowed by the single buffered wake.
         await Task.yield()
         guard case let .workspaceEvent(kind, epoch, base, new, payload) = message else { return }
-        // Synchronous, so the lock is never held across a suspension — `NSLock` is unavailable from
-        // an async context precisely to stop that.
-        apply(kind: kind, epoch: epoch, base: base, new: new, payload: payload)
-    }
-
-    private func apply(kind: UInt8, epoch: UUID, base: Int64, new: Int64, payload: Data) {
-        lock.lock()
-        defer { lock.unlock() }
-        let outcome = _mirror.apply(
-            kind: kind, epoch: epoch, baseStateNum: base, newStateNum: new, payload: payload,
-        )
-        if case let .applied(stateNum) = outcome { _acks.append(stateNum) }
+        await MainActor.run {
+            let outcome = mirror.apply(
+                kind: kind, epoch: epoch, baseStateNum: base, newStateNum: new, payload: payload,
+            )
+            if case let .applied(stateNum) = outcome { acks.append(stateNum) }
+        }
     }
 }
 
@@ -70,6 +68,7 @@ private final class MirroringChannel: MessageChannel, @unchecked Sendable {
 /// This test is the end-to-end evidence, driven through the REAL `WorkspaceChannelSession` — the
 /// coalescing send task, the retained sent-state window and the acked-base diff — rather than
 /// through the value layer, which `WorkspaceIntentApplierTests` already covers.
+@MainActor
 final class WorkspaceConvergenceTests: XCTestCase {
     private struct Rig {
         let document: HostWorkspaceDocument
@@ -165,13 +164,13 @@ final class WorkspaceConvergenceTests: XCTestCase {
         let hostBytes = WorkspaceStateCodec.encodeSnapshot(hostState)
         for (index, client) in rig.clients.enumerated() {
             XCTAssertEqual(
-                WorkspaceStateCodec.encodeSnapshot(client.mirror.entries), hostBytes,
+                WorkspaceStateCodec.encodeSnapshot(client.mirror.hostTruth), hostBytes,
                 "client \(index) diverged from the host",
             )
         }
         // …and the projection agrees, which is the part a user would actually notice.
-        let first = try XCTUnwrap(rig.clients[0].mirror.entries.topology)
-        let second = try XCTUnwrap(rig.clients[1].mirror.entries.topology)
+        let first = try XCTUnwrap(rig.clients[0].mirror.hostTruth.topology)
+        let second = try XCTUnwrap(rig.clients[1].mirror.hostTruth.topology)
         XCTAssertEqual(first, second)
         XCTAssertEqual(first.tree.sessions[0].tabs[0].title, "build")
         XCTAssertEqual(first.tree.sessions[0].name, "renamed")
@@ -208,8 +207,8 @@ final class WorkspaceConvergenceTests: XCTestCase {
         }
 
         let hostBytes = await WorkspaceStateCodec.encodeSnapshot(rig.document.snapshot)
-        XCTAssertEqual(WorkspaceStateCodec.encodeSnapshot(latecomer.mirror.entries), hostBytes)
-        XCTAssertEqual(latecomer.mirror.entries.topology?.tree.sessions[0].tabs[0].title, "four")
+        XCTAssertEqual(WorkspaceStateCodec.encodeSnapshot(latecomer.mirror.hostTruth), hostBytes)
+        XCTAssertEqual(latecomer.mirror.hostTruth.topology?.tree.sessions[0].tabs[0].title, "four")
     }
 
     /// A REFUSED intent must move nothing anywhere. A rejection that half-applied would be the worst
@@ -219,7 +218,7 @@ final class WorkspaceConvergenceTests: XCTestCase {
         let rig = await makeRig(topology)
         defer { for session in rig.sessions { session.close() } }
         await settle(rig)
-        let before = rig.clients.map { WorkspaceStateCodec.encodeSnapshot($0.mirror.entries) }
+        let before = rig.clients.map { WorkspaceStateCodec.encodeSnapshot($0.mirror.hostTruth) }
         let stateNumBefore = await rig.document.stateNum
 
         let status = await rig.document.apply(
@@ -231,7 +230,7 @@ final class WorkspaceConvergenceTests: XCTestCase {
 
         let stateNumAfter = await rig.document.stateNum
         XCTAssertEqual(stateNumAfter, stateNumBefore, "a refusal must not cost a version")
-        XCTAssertEqual(rig.clients.map { WorkspaceStateCodec.encodeSnapshot($0.mirror.entries) }, before)
+        XCTAssertEqual(rig.clients.map { WorkspaceStateCodec.encodeSnapshot($0.mirror.hostTruth) }, before)
     }
 
     /// The idle host is SILENT. Every version bump costs every subscriber a frame, so an intent that

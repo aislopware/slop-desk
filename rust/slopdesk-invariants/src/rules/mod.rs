@@ -435,6 +435,11 @@ pub fn registry() -> Vec<Rule> {
             check: workspace_document::one_run_one_ladder,
         },
         Rule {
+            name: "one-replica-three-layers",
+            origin: "docs/45 §7.1",
+            check: workspace_document::one_replica_three_layers,
+        },
+        Rule {
             name: "big-endian-helpers",
             origin: "docs/20 §2",
             check: wire_codecs::big_endian_helpers,

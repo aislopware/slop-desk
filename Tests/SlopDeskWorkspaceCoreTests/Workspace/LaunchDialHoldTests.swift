@@ -477,7 +477,7 @@ final class LaunchDialHoldTests: XCTestCase {
 
         // The sweep the channel arms for exactly this case, run on the test's own clock.
         rig.store.workspaceMirror.expirePending(
-            now: Date().timeIntervalSince1970 + HostWorkspaceMirror.pendingTimeout,
+            now: Date().timeIntervalSince1970 + WorkspaceMirrorBox.pendingTimeout,
         )
         await expect("the backstop to release the hold") { rig.store.panesMayDial }
         await megaYield()

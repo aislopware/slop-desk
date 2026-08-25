@@ -247,7 +247,7 @@ public struct VideoPaneModes: Codable, Sendable, Equatable {
 /// The pane's live FACTS — its working directory, its By-Project key, the shell title it last asserted,
 /// and the host session it resumes — are not here. They are per-pane state the workspace document owns
 /// (`pane/cwd`, `pane/projectKey`, `pane/liveTitle`, `pane/spawnCwd`; docs/45 §5.3), read through
-/// ``HostWorkspaceMirror``. The spec is what ``WorkspaceTopology/spec(_:from:)`` can rebuild from the
+/// the workspace mirror. The spec is what ``WorkspaceTopology/spec(_:from:)`` can rebuild from the
 /// document and nothing more, so there is exactly one place each fact lives. The pane's resume identity
 /// is its own ``PaneID``: the client proposes object ids (DECISIONS, Multi-client Phase 5 ruling 1), so
 /// the id the host keys its liveness records by IS the id the layout uses.

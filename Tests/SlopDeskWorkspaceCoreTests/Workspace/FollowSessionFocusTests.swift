@@ -61,12 +61,12 @@ final class FollowSessionFocusTests: XCTestCase {
 
     /// The tab HOST TRUTH calls active — `entries`, never the optimistic layer and never the projection.
     private func hostTruthActiveTab(_ store: WorkspaceStore) -> TabID? {
-        WorkspaceTopology(entries: store.workspaceMirror.mirror.entries)?
+        WorkspaceTopology(entries: store.workspaceMirror.hostTruth)?
             .tree.activeSession?.activeTab?.id
     }
 
     private func hostTruthActivePane(_ store: WorkspaceStore) -> PaneID? {
-        WorkspaceTopology(entries: store.workspaceMirror.mirror.entries)?
+        WorkspaceTopology(entries: store.workspaceMirror.hostTruth)?
             .tree.activeSession?.activeTab?.activePane
     }
 
@@ -108,12 +108,12 @@ final class FollowSessionFocusTests: XCTestCase {
     func testFollowingOffMovesThisDeviceOnly() {
         let seed = seed()
         let store = makeStore(seed.workspace, following: false)
-        let before = store.workspaceMirror.mirror.entries
+        let before = store.workspaceMirror.hostTruth
 
         store.selectTab(1)
 
         XCTAssertEqual(
-            store.workspaceMirror.mirror.entries, before,
+            store.workspaceMirror.hostTruth, before,
             "not one cell of host truth moves — no intent was sent",
         )
         XCTAssertEqual(hostTruthActiveTab(store), seed.first)
@@ -132,11 +132,11 @@ final class FollowSessionFocusTests: XCTestCase {
     func testFollowingOffKeepsAPaneFocusLocal() {
         let seed = seed()
         let store = makeStore(seed.workspace, following: false)
-        let before = store.workspaceMirror.mirror.entries
+        let before = store.workspaceMirror.hostTruth
 
         store.focusPaneTree(seed.secondPane)
 
-        XCTAssertEqual(store.workspaceMirror.mirror.entries, before, "host truth is untouched")
+        XCTAssertEqual(store.workspaceMirror.hostTruth, before, "host truth is untouched")
         XCTAssertEqual(hostTruthActivePane(store), seed.firstPane)
         XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, seed.secondPane)
         XCTAssertEqual(store.tree.activeSession?.activeTab?.id, seed.second)
@@ -244,7 +244,7 @@ final class FollowSessionFocusTests: XCTestCase {
 
         store.splitActivePane(axis: .horizontal, kind: .terminal)
 
-        let host = try XCTUnwrap(WorkspaceTopology(entries: store.workspaceMirror.mirror.entries))
+        let host = try XCTUnwrap(WorkspaceTopology(entries: store.workspaceMirror.hostTruth))
         let split = try XCTUnwrap(host.tree.sessions.first?.tabs.first { $0.id == seed.second })
         XCTAssertEqual(split.allPaneIDs().count, 2, "the tab this device is looking at gained the leaf")
         XCTAssertEqual(
@@ -285,7 +285,7 @@ final class FollowSessionFocusTests: XCTestCase {
         XCTAssertNotEqual(focused, seed.secondPane, "focus moved to the leaf the split created")
         // Host truth's own ACTIVE tab never moved (this device is unfollowing), so the leaf to compare
         // against is the one the applier focused inside the tab the split actually landed in.
-        let host = try XCTUnwrap(WorkspaceTopology(entries: store.workspaceMirror.mirror.entries))
+        let host = try XCTUnwrap(WorkspaceTopology(entries: store.workspaceMirror.hostTruth))
         let split = try XCTUnwrap(host.tree.sessions.first?.tabs.first { $0.id == seed.second })
         XCTAssertEqual(focused, split.activePane, "and it is the leaf host truth focused")
     }
@@ -309,12 +309,12 @@ final class FollowSessionFocusTests: XCTestCase {
     func testTheFlagIsADevicePreference() {
         let seed = seed()
         let store = makeStore(seed.workspace, following: false)
-        let before = store.workspaceMirror.mirror.entries
+        let before = store.workspaceMirror.hostTruth
 
         XCTAssertFalse(store.devicePreferences.followSessionFocus)
         store.setFollowSessionFocus(true)
 
         XCTAssertTrue(store.devicePreferences.followSessionFocus)
-        XCTAssertEqual(store.workspaceMirror.mirror.entries, before, "the flag never reaches the document")
+        XCTAssertEqual(store.workspaceMirror.hostTruth, before, "the flag never reaches the document")
     }
 }

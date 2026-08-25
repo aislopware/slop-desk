@@ -1,13 +1,11 @@
-//! What one frame does to the client's replica of the workspace document, in C.
+//! What the near side still asks about the replica of the workspace document, in C.
 //!
 //! The rules are `slopdesk_workspace::mirror_fold`; what is here is the marshalling.
 //!
-//! ## Why the frame verdict takes a BIT where the wire has a UUID
-//!
-//! "Is this frame's epoch the one I hold" is a `UUID` comparison, and a `UUID` is the near side's.
-//! The rule needs the ANSWER, not the identity, so the comparison stays where the values are and
-//! one bool crosses. The same is true of the intent verdict: the wire's status vocabulary belongs
-//! to the codec, and re-spelling it here would be a second place for it to drift.
+//! The replica's own state machine is NOT here — it moved wholesale into
+//! [`crate::workspace_mirror`], which holds the document rather than answering questions about
+//! numbers the near side kept. What is left is the shape that genuinely takes its inputs from the
+//! near side: a fold over values Swift already has in hand, answering one verdict per call.
 //!
 //! ## The two roster joins, and why nothing is named
 //!
@@ -18,27 +16,9 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_workspace::mirror_fold::{self, Age, RosterClient};
+use slopdesk_workspace::mirror_fold::{self, RosterClient};
 
 use crate::{borrow, deliver, optional_of};
-
-/// One in-flight optimistic patch, as both pending folds need to see it.
-///
-/// One record for two doors on purpose: the caller holds ONE array of patches and asks two
-/// questions about it — what the frame that just landed retires, and what the clock has expired —
-/// so building the rows twice would be two chances to build them differently.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct SlopDeskWsPendingPatch {
-    /// The frame count at which host truth has certainly superseded this patch. Read only when
-    /// `retiring` is `true`.
-    pub retire_at: u64,
-    /// When the intent was issued, in the caller's own timebase.
-    pub issued_at: f64,
-    /// Whether the host has already ANSWERED this patch, so it is waiting on a frame rather than on
-    /// the host.
-    pub retiring: bool,
-}
 
 /// One roster client, as the two presence joins need to see it.
 #[repr(C)]
@@ -50,20 +30,6 @@ pub struct SlopDeskWsPresenceClient {
     pub labelled: bool,
     /// Whether the client is looking at the pane being asked about.
     pub viewing: bool,
-}
-
-/// What the host's verdict on one intent does to its optimistic patch.
-///
-/// `holds` is the guard: `retire_at` is meaningless when it is `false`, which is the [`Option`] the
-/// rule answers flattened for a caller that has no such type. A refusal zeroes it rather than
-/// leaving it undefined.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SlopDeskWsIntentRetire {
-    /// Whether the patch is HELD until a frame retires it. `false` ⇒ drop it now.
-    pub holds: bool,
-    /// The frame count that retires it.
-    pub retire_at: u64,
 }
 
 /// Copies an answer of POSITIONS into the caller's buffer if it fits, and reports the count either
@@ -85,120 +51,6 @@ const unsafe fn deliver_positions(answer: &[u32], out: *mut u32, cap: usize) -> 
     // overlap.
     unsafe { core::ptr::copy_nonoverlapping(answer.as_ptr(), out, needed) };
     needed
-}
-
-/// Whether a DIFF frame may be folded: `0` re-subscribe · `1` ignore it · `2` apply it.
-///
-/// `epoch_held` is the caller's own "I hold a document AND it is this frame's" — the identity is a
-/// `UUID`, and only the answer crosses.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_mirror_diff_frame(
-    epoch_held: bool,
-    base: i64,
-    new: i64,
-    held: i64,
-) -> c_uchar {
-    mirror_fold::diff_frame(epoch_held, base, new, held).code()
-}
-
-/// What `subscribe` should declare as the state it holds. All-or-nothing with the epoch.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub const extern "C" fn slopdesk_ws_mirror_known_state(epoch_held: bool, state_num: i64) -> i64 {
-    mirror_fold::known_state_num(epoch_held, state_num)
-}
-
-/// What the host's verdict does to one optimistic patch: dropped now, or held one more frame.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_ws_mirror_intent_retire(
-    applied: bool,
-    frames_applied: u64,
-) -> SlopDeskWsIntentRetire {
-    mirror_fold::intent_retire(applied, frames_applied).map_or_else(
-        SlopDeskWsIntentRetire::default,
-        |retire_at| {
-            SlopDeskWsIntentRetire {
-                holds: true,
-                retire_at,
-            }
-        },
-    )
-}
-
-/// Which patches survive the document frame that just landed, as POSITIONS into `rows`.
-///
-/// `frames_applied` is the count INCLUDING that frame. Returns the count NEEDED; a short or null
-/// `out` is written nothing and told the length.
-///
-/// # Safety
-/// `(rows, len)` must be readable for the call and `out` writable for `capacity` `u32`s.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point, and both pointers are the caller's"
-)]
-pub unsafe extern "C" fn slopdesk_ws_mirror_frame_survivors(
-    rows: *const SlopDeskWsPendingPatch,
-    len: usize,
-    frames_applied: u64,
-    out: *mut u32,
-    capacity: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
-    let lent = unsafe { borrow(rows, len) };
-    let retire_at: Vec<Option<u64>> = lent
-        .iter()
-        .map(|row| optional_of(row.retiring, row.retire_at))
-        .collect();
-    let survivors = mirror_fold::survivors_after_frame(&retire_at, frames_applied);
-    // SAFETY: `out` is null or writable for `capacity` elements by the caller's obligation.
-    unsafe { deliver_positions(&survivors, out, capacity) }
-}
-
-/// Which patches survive the expiry sweep at `now`, as POSITIONS into `rows`.
-///
-/// Returns the count NEEDED; a short or null `out` is written nothing and told the length.
-///
-/// # Safety
-/// `(rows, len)` must be readable for the call and `out` writable for `capacity` `u32`s.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point, and both pointers are the caller's"
-)]
-pub unsafe extern "C" fn slopdesk_ws_mirror_timeout_survivors(
-    rows: *const SlopDeskWsPendingPatch,
-    len: usize,
-    now: f64,
-    timeout: f64,
-    out: *mut u32,
-    capacity: usize,
-) -> usize {
-    // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
-    let lent = unsafe { borrow(rows, len) };
-    let ages: Vec<Age> = lent
-        .iter()
-        .map(|row| {
-            Age {
-                issued_at: row.issued_at,
-                retiring: row.retiring,
-            }
-        })
-        .collect();
-    let survivors = mirror_fold::survivors_after_timeout(&ages, now, timeout);
-    // SAFETY: `out` is null or writable for `capacity` elements by the caller's obligation.
-    unsafe { deliver_positions(&survivors, out, capacity) }
 }
 
 /// Which of the three candidates names the command a pane is RUNNING, and its text.
@@ -377,46 +229,17 @@ const fn seat_of(client: SlopDeskWsPresenceClient) -> RosterClient {
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
 
-    use slopdesk_workspace::mirror_fold::{self, Age, RosterClient};
+    use slopdesk_workspace::mirror_fold::{self, RosterClient};
 
     use super::{
-        SlopDeskWsPendingPatch, SlopDeskWsPresenceClient, slopdesk_ws_mirror_diff_frame,
-        slopdesk_ws_mirror_frame_survivors, slopdesk_ws_mirror_grid_published, slopdesk_ws_mirror_holders,
-        slopdesk_ws_mirror_intent_retire, slopdesk_ws_mirror_known_state,
+        SlopDeskWsPresenceClient, slopdesk_ws_mirror_grid_published, slopdesk_ws_mirror_holders,
         slopdesk_ws_mirror_reconcile_admitted, slopdesk_ws_mirror_running_command,
-        slopdesk_ws_mirror_spec_intent, slopdesk_ws_mirror_timeout_survivors, slopdesk_ws_mirror_viewers,
+        slopdesk_ws_mirror_spec_intent, slopdesk_ws_mirror_viewers,
     };
 
-    /// Every `(epoch_held, base, new)` the rule can be asked about crosses to the same verdict the
-    /// rule gives directly.
-    #[test]
-    fn every_frame_verdict_crosses_verbatim() {
-        for epoch_held in [false, true] {
-            for base in 0..=6_i64 {
-                for new in 0..=6_i64 {
-                    assert_eq!(
-                        slopdesk_ws_mirror_diff_frame(epoch_held, base, new, 3),
-                        mirror_fold::diff_frame(epoch_held, base, new, 3).code(),
-                        "({epoch_held}, {base}, {new})"
-                    );
-                }
-            }
-        }
-    }
-
-    /// The declared state, and the intent verdict's guard-plus-value shape.
+    /// The scalar doors cross verbatim.
     #[test]
     fn the_scalar_doors_cross_verbatim() {
-        assert_eq!(slopdesk_ws_mirror_known_state(true, 9), 9);
-        assert_eq!(slopdesk_ws_mirror_known_state(false, 9), 0);
-
-        let held = slopdesk_ws_mirror_intent_retire(true, 4);
-        assert!(held.holds);
-        assert_eq!(held.retire_at, 5);
-        let dropped = slopdesk_ws_mirror_intent_retire(false, 4);
-        assert!(!dropped.holds);
-        assert_eq!(dropped.retire_at, 0, "a refusal is zeroed, not arbitrary");
-
         assert!(slopdesk_ws_mirror_grid_published(80, 24));
         assert!(!slopdesk_ws_mirror_grid_published(80, 0));
 
@@ -461,75 +284,10 @@ mod tests {
         }
     }
 
-    /// The two pending folds cross their positions, and a short buffer is told the length.
-    #[test]
-    fn the_pending_folds_cross_as_positions() {
-        let rows = [
-            SlopDeskWsPendingPatch {
-                retire_at: 0,
-                issued_at: 0.0,
-                retiring: false,
-            },
-            SlopDeskWsPendingPatch {
-                retire_at: 4,
-                issued_at: 1.0,
-                retiring: true,
-            },
-            SlopDeskWsPendingPatch {
-                retire_at: 9,
-                issued_at: 2.0,
-                retiring: true,
-            },
-        ];
-        let mut out = [0_u32; 3];
-        // SAFETY: both arrays are live locals for the call.
-        let count =
-            unsafe { slopdesk_ws_mirror_frame_survivors(rows.as_ptr(), rows.len(), 4, out.as_mut_ptr(), 3) };
-        assert_eq!(count, 2);
-        assert_eq!(out.get(..count), Some([0_u32, 2].as_slice()));
-
-        let mut short = [7_u32; 1];
-        // SAFETY: both arrays are live locals for the call.
-        let needed = unsafe {
-            slopdesk_ws_mirror_frame_survivors(rows.as_ptr(), rows.len(), 4, short.as_mut_ptr(), 1)
-        };
-        assert_eq!(needed, 2);
-        assert_eq!(short, [7], "and written nothing");
-
-        let ages: Vec<Age> = rows
-            .iter()
-            .map(|row| {
-                Age {
-                    issued_at: row.issued_at,
-                    retiring: row.retiring,
-                }
-            })
-            .collect();
-        let mut timed = [0_u32; 3];
-        // SAFETY: both arrays are live locals for the call.
-        let expired = unsafe {
-            slopdesk_ws_mirror_timeout_survivors(rows.as_ptr(), rows.len(), 3.0, 3.0, timed.as_mut_ptr(), 3)
-        };
-        let native = mirror_fold::survivors_after_timeout(&ages, 3.0, 3.0);
-        assert_eq!(expired, native.len());
-        assert_eq!(timed.get(..expired), Some(native.as_slice()));
-    }
-
     /// An empty fold is zero, and a null buffer is answered rather than dereferenced.
     #[test]
     fn empty_folds_and_null_buffers_are_inert() {
         // SAFETY: a zero-length read of a dangling-but-aligned pointer; `out` is never touched.
-        let empty = unsafe {
-            slopdesk_ws_mirror_frame_survivors(
-                core::ptr::NonNull::dangling().as_ptr(),
-                0,
-                1,
-                core::ptr::null_mut(),
-                0,
-            )
-        };
-        assert_eq!(empty, 0);
-        // SAFETY: as above.
         let none = unsafe {
             slopdesk_ws_mirror_holders(
                 core::ptr::NonNull::dangling().as_ptr(),

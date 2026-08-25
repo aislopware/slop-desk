@@ -10,7 +10,7 @@ import SlopDeskWorkspaceModel
 ///
 /// **It is not a second implementation of the workspace.** The decision is
 /// ``WorkspaceIntentApplier``, the same pure function the host runs; the frames go out through
-/// `WorkspaceStateCodec` and come back in through ``HostWorkspaceMirror/apply(kind:epoch:baseStateNum:newStateNum:payload:)``,
+/// `WorkspaceStateCodec` and come back in through ``WorkspaceMirrorBox/apply(kind:epoch:baseStateNum:newStateNum:payload:)``,
 /// the same entry point a socket frame takes. What is reproduced here is only the ~30 lines of
 /// versioning around the decision, and ``LoopbackWorkspaceDocumentTests`` pins those against the real
 /// host byte for byte, because that is precisely the part a suite running only one of the two cannot
@@ -87,10 +87,10 @@ public final class LoopbackWorkspaceDocument {
     ///   authoritative about, and inventing an epoch would make the next diff unbasable.
     @discardableResult
     public func adopt(pristine: Bool = false) -> Bool {
-        guard let seeded = box.mirror.epoch else { return false }
+        guard let seeded = box.documentEpoch else { return false }
         epoch = seeded
-        stateNum = box.mirror.stateNum
-        state = box.mirror.entries
+        stateNum = box.stateNum
+        state = box.hostTruth
         isPristine = pristine
         return true
     }
@@ -126,7 +126,7 @@ public final class LoopbackWorkspaceDocument {
         // pending patch over it, and the applier asks the closure once per pane the document names —
         // live specs UNION the reopen ring. Built inside the closure it was that copy per pane, which is
         // quadratic in the workspace. The two call sites are the same contract and now read the same way.
-        let resolved = box.mirror.resolved
+        let resolved = box.resolved
         let outcome = WorkspaceIntentApplier.apply(
             op: op, args: args, to: current, documentIsPristine: isPristine,
             projectKey: { resolved.projectKey(forPane: $0) },

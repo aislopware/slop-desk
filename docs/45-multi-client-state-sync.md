@@ -764,23 +764,41 @@ Also delete the two now-false comments: `MuxChannelSession.swift:1300-1304` and 
 
 ## 7. Client-side model
 
-### 7.1 `HostWorkspaceMirror` — pure, headless, `SlopDeskWorkspaceCore/Workspace/Sync/`
+### 7.1 The replica — `slopdesk_wire::document::mirror`, behind `WorkspaceMirrorBox`
 
-```swift
-struct HostWorkspaceMirror: Sendable {
-    private(set) var epoch: UUID?
-    private(set) var stateNum: Int64
-    private(set) var entries:  [WorkspaceKey: Data]              // applied host truth — kinds 0/1 ONLY
-    private(set) var fastPath: [WorkspaceKey: Data]              // control-push overlay (§7.2)
-    private(set) var pending:  [IntentID: WorkspaceStatePatch]   // optimistic overlay
-
-    mutating func apply(_ e: WorkspaceEvent) -> ApplyOutcome     // .applied(Int64)/.needsResubscribe/.dropped
-    func project() -> TreeWorkspace                              // derived, never stored
+```rust
+pub struct WorkspaceMirror {
+    epoch: Option<RawUuid>,
+    state_num: i64,
+    entries: HostWorkspaceState,                       // applied host truth — kinds 0/1 ONLY
+    fast_path: BTreeMap<WorkspaceKey, Vec<u8>>,        // control-push overlay (§7.2)
+    pending: Vec<PendingPatch>,                        // optimistic overlay
+    frames_applied: u64,
 }
 ```
 
-Precedence on read: `pending` → `entries` → `fastPath`. No SwiftUI, no transport import beyond
-`SlopDeskProtocol` + `SlopDeskWorkspaceModel`. This is the headless-testable core.
+Precedence on read: `pending` → `entries` → `fastPath`. `resolved()` folds the three; `entries()`
+answers host truth ALONE, which is what the loopback document adopts — adopting `resolved` would let
+a client's own guesses become the thing it then reconciles against.
+
+**Why the replica is Rust's.** It was a Swift value type holding all three layers, crossing to Rust
+for a verdict per question: may this frame fold, does this patch retire, has this one expired. That
+is a state machine split down the middle of a boundary — the erasure rule on one side and the bytes
+it erases on the other — so every new question was a new door, and roughly eleven crossings answered
+what one handle now answers in place. `WorkspaceMirrorBox` is the Swift face: it opens the handle,
+frees it in `deinit`, and keeps NO layer of its own. `slopdesk-invariants`' `one-replica-three-layers`
+rule pins exactly that — the face asks every door, the value type stays deleted, and no `fastPath`,
+`entries` or `pending` is declared beside the handle.
+
+Two things stayed on this side on purpose. The **presence roster** is not a layer of the replica: it
+is never versioned, never diffed, and its lifetime is the CONNECTION rather than the document. And an
+**intent result**'s status byte belongs to the codec, so the box decodes it and crosses the one bit
+the rule needs.
+
+One convention beyond [`docs/55`](55-ffi-boundary.md) §4: a cell holding a ZERO-LENGTH value is
+RETIRED, and that is distinct from absent all the way to the UI. `slopdesk_ws_mirror_value` therefore
+answers `SLOPDESK_WS_MIRROR_ABSENT` (`SIZE_MAX`) for "no such key", which the retry convention has no
+way to spell.
 
 ### 7.2 `WorkspaceStore` changes
 

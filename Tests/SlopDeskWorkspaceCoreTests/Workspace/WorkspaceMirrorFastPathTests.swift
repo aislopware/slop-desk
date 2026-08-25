@@ -4,13 +4,14 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// ``HostWorkspaceMirror`` — the client replica of the host-owned document (docs/45 §7.1).
+/// ``WorkspaceMirrorBox`` — the client replica of the host-owned document (docs/45 §7.1).
 ///
 /// The property under test throughout is that host truth and the low-latency overlay never merge
 /// into one another. `entries` is only ever `apply(diffs, base)`; `fastPath` is only ever read where
 /// `entries` is silent, and is erased by any host value for the same key. Without that erasure a
 /// disagreement between the two producers freezes permanently — the bug class the whole document
 /// exists to end.
+@MainActor
 final class WorkspaceMirrorFastPathTests: XCTestCase {
     private let pane = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
     private let epoch = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
@@ -35,8 +36,8 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     }
 
     /// Applies a snapshot and returns the mirror, so the diff cases start from a known base.
-    private func mirrorAtSnapshot(_ entries: [WorkspaceEntry], stateNum: Int64 = 1) -> HostWorkspaceMirror {
-        var mirror = HostWorkspaceMirror()
+    private func mirrorAtSnapshot(_ entries: [WorkspaceEntry], stateNum: Int64 = 1) -> WorkspaceMirrorBox {
+        let mirror = WorkspaceMirrorBox()
         let outcome = mirror.apply(
             kind: WorkspaceEventKind.snapshot.rawValue,
             epoch: epoch,
@@ -53,7 +54,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// The headline case from docs/45 Phase 4: write a key on the fast path, then have a diff supply
     /// a DIFFERENT value for it. The projection must follow the diff.
     func testADiffOverridesAFastPathValueForTheSameKey() {
-        var mirror = mirrorAtSnapshot([livenessEntry()])
+        let mirror = mirrorAtSnapshot([livenessEntry()])
         mirror.writeFastPath(titleKey(), WorkspaceStateCodec.encodeString("vi ."))
         XCTAssertEqual(mirror.string(.pane, pane, WorkspacePaneField.liveTitle), "vi .")
 
@@ -71,13 +72,13 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
             mirror.string(.pane, pane, WorkspacePaneField.liveTitle), "main.swift - NVIM",
             "host truth wins over the push overlay",
         )
-        XCTAssertNil(mirror.fastPath[titleKey()], "the overlay entry is erased, not merely outranked")
+        XCTAssertFalse(mirror.fastPathHolds(titleKey()), "the overlay entry is erased, not merely outranked")
     }
 
     /// The half that makes the first half permanent: once erased, a LATER frame that says nothing
     /// about the key must not let the stale push resurface.
     func testALaterEmptyDiffDoesNotResurrectTheFastPathValue() {
-        var mirror = mirrorAtSnapshot([livenessEntry()])
+        let mirror = mirrorAtSnapshot([livenessEntry()])
         mirror.writeFastPath(titleKey(), WorkspaceStateCodec.encodeString("vi ."))
         _ = mirror.apply(
             kind: WorkspaceEventKind.diff.rawValue,
@@ -109,7 +110,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// A DELETE supplies a fact too: "this key is now absent". If the overlay survived a delete, a
     /// retired title would reappear from the push that first set it.
     func testADeleteAlsoErasesTheFastPathValue() {
-        var mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "NVIM")])
+        let mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "NVIM")])
         mirror.writeFastPath(WorkspaceKey(.pane, pane, WorkspacePaneField.cwd), WorkspaceStateCodec.encodeString("/x"))
 
         let diff = WorkspaceStateDiff(deletes: [
@@ -137,29 +138,29 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// A push that races a document value must lose. Otherwise the two producers' disagreement is
     /// decided by arrival order, which is exactly what the erasure rule removes.
     func testAFastPathWriteIsIgnoredWhereHostTruthAlreadyHoldsTheKey() {
-        var mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "NVIM")])
+        let mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "NVIM")])
 
         mirror.writeFastPath(titleKey(), WorkspaceStateCodec.encodeString("vi ."))
 
         XCTAssertEqual(mirror.string(.pane, pane, WorkspacePaneField.liveTitle), "NVIM")
-        XCTAssertNil(mirror.fastPath[titleKey()], "the write is refused, not stored-and-outranked")
+        XCTAssertFalse(mirror.fastPathHolds(titleKey()), "the write is refused, not stored-and-outranked")
     }
 
     /// With no host truth at all the overlay drives the UI unchanged — the flag-off behaviour, and
     /// the pre-first-snapshot window of every cold connect.
     func testTheFastPathDrivesReadsBeforeAnySnapshot() {
-        var mirror = HostWorkspaceMirror()
+        let mirror = WorkspaceMirrorBox()
         mirror.writeFastPath(titleKey(), WorkspaceStateCodec.encodeString("vi ."))
 
         XCTAssertEqual(mirror.string(.pane, pane, WorkspacePaneField.liveTitle), "vi .")
         XCTAssertEqual(mirror.stateNum, 0)
-        XCTAssertNil(mirror.epoch)
+        XCTAssertNil(mirror.documentEpoch)
     }
 
     /// The overlay is not a pane. Enumeration reads the document's `liveness` marker, so a row can
     /// never be conjured out of a stray push for a pane the host does not have.
     func testFastPathEntriesDoNotConjureAPane() {
-        var mirror = HostWorkspaceMirror()
+        let mirror = WorkspaceMirrorBox()
         mirror.writeFastPath(titleKey(), WorkspaceStateCodec.encodeString("vi ."))
 
         XCTAssertTrue(mirror.paneIDs.isEmpty)
@@ -168,7 +169,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
 
     func testClearingAPanesFastPathLeavesOtherPanesAlone() {
         let other = UUID()
-        var mirror = HostWorkspaceMirror()
+        let mirror = WorkspaceMirrorBox()
         mirror.writeFastPath(titleKey(), WorkspaceStateCodec.encodeString("mine"))
         mirror.writeFastPath(titleKey(other), WorkspaceStateCodec.encodeString("theirs"))
 
@@ -182,7 +183,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// first can never decide a value. Refusing a write over host truth and erasing on supply are the
     /// two halves that maintain it; this drives an adversarial mix of both and checks the result.
     func testTheTwoLayersNeverHoldTheSameKey() {
-        var mirror = HostWorkspaceMirror()
+        let mirror = WorkspaceMirrorBox()
         let fields = [
             WorkspacePaneField.liveTitle, WorkspacePaneField.cwd,
             WorkspacePaneField.foregroundProcess, WorkspacePaneField.runningCommand,
@@ -202,7 +203,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
                     kind: 0, epoch: epoch, baseStateNum: 0, newStateNum: version,
                     payload: snapshotPayload([livenessEntry(), entry(field, "snap-\(step)")]),
                 )
-            } else if mirror.epoch != nil {
+            } else if mirror.documentEpoch != nil {
                 let base = version
                 version += 1
                 let diff = step.isMultiple(of: 5)
@@ -214,8 +215,15 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
                 )
             }
 
-            for key in mirror.fastPath.keys {
-                XCTAssertNil(mirror.entries[key], "step \(step): \(key.field) is in BOTH layers")
+            // The overlay does not enumerate through the door — nothing outside the replica needs
+            // to walk it — so the disjointness is checked over every key this run has ever pushed,
+            // which is a superset of whatever the overlay holds now.
+            for field in fields {
+                let key = WorkspaceKey(.pane, pane, field)
+                XCTAssertFalse(
+                    mirror.fastPathHolds(key) && mirror.hostTruth[key] != nil,
+                    "step \(step): \(field) is in BOTH layers",
+                )
             }
         }
         XCTAssertGreaterThan(version, 0, "the sequence actually exercised host frames")
@@ -224,7 +232,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     // MARK: - Snapshot
 
     func testASnapshotReplacesHostTruthWholesale() {
-        var mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "first")])
+        let mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "first")])
 
         let outcome = mirror.apply(
             kind: WorkspaceEventKind.snapshot.rawValue,
@@ -243,7 +251,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// A snapshot is self-contained, so it needs no base and no matching epoch. That is what makes a
     /// post-restart client converge in ONE frame.
     func testASnapshotWithANewEpochIsAcceptedWithoutAReset() {
-        var mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "old host")])
+        let mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "old host")])
         let newEpoch = UUID()
 
         let outcome = mirror.apply(
@@ -255,7 +263,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
         )
 
         XCTAssertEqual(outcome, .applied(1))
-        XCTAssertEqual(mirror.epoch, newEpoch)
+        XCTAssertEqual(mirror.documentEpoch, newEpoch)
         XCTAssertEqual(mirror.string(.pane, pane, WorkspacePaneField.liveTitle), "new host")
     }
 
@@ -264,7 +272,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// The rule that makes duplicates and reorders free: a frame the mirror has already superseded is
     /// IGNORED, never an error and never a resubscribe storm.
     func testASupersededDiffIsIgnoredRatherThanTreatedAsAFault() {
-        var mirror = mirrorAtSnapshot([livenessEntry()], stateNum: 5)
+        let mirror = mirrorAtSnapshot([livenessEntry()], stateNum: 5)
 
         let outcome = mirror.apply(
             kind: WorkspaceEventKind.diff.rawValue,
@@ -284,7 +292,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// A diff reaching FORWARD from a base we are not at is the unrecoverable case — applying it
     /// would land cleanly and corrupt silently.
     func testAMisBasedForwardDiffAsksForAResubscribe() {
-        var mirror = mirrorAtSnapshot([livenessEntry()], stateNum: 5)
+        let mirror = mirrorAtSnapshot([livenessEntry()], stateNum: 5)
 
         let outcome = mirror.apply(
             kind: WorkspaceEventKind.diff.rawValue,
@@ -303,7 +311,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// The epoch's entire job: a delta from a DIFFERENT document must never apply, even when its
     /// `stateNum` arithmetic lines up perfectly — which after a hostd restart it does.
     func testADiffFromAnotherEpochIsRefusedEvenWhenTheNumbersLineUp() {
-        var mirror = mirrorAtSnapshot([livenessEntry()], stateNum: 4)
+        let mirror = mirrorAtSnapshot([livenessEntry()], stateNum: 4)
 
         let outcome = mirror.apply(
             kind: WorkspaceEventKind.diff.rawValue,
@@ -320,7 +328,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     }
 
     func testADiffBeforeAnySnapshotAsksForAResubscribe() {
-        var mirror = HostWorkspaceMirror()
+        let mirror = WorkspaceMirrorBox()
 
         let outcome = mirror.apply(
             kind: WorkspaceEventKind.diff.rawValue,
@@ -338,7 +346,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// Convergence, the way the host actually drives it: apply the same diff twice. Because a diff
     /// ASSIGNS rather than mutates, the second is a no-op by construction.
     func testApplyingTheSameDiffTwiceIsANoOp() {
-        var mirror = mirrorAtSnapshot([livenessEntry()])
+        let mirror = mirrorAtSnapshot([livenessEntry()])
         let payload = WorkspaceStateCodec.encodeDiff(
             WorkspaceStateDiff(sets: [entry(WorkspacePaneField.liveTitle, "once")]),
         )
@@ -346,17 +354,17 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
         XCTAssertEqual(
             mirror.apply(kind: 1, epoch: epoch, baseStateNum: 1, newStateNum: 2, payload: payload), .applied(2),
         )
-        let afterFirst = mirror.entries
+        let afterFirst = mirror.hostTruth
         XCTAssertEqual(
             mirror.apply(kind: 1, epoch: epoch, baseStateNum: 1, newStateNum: 2, payload: payload), .ignored,
         )
-        XCTAssertEqual(mirror.entries, afterFirst)
+        XCTAssertEqual(mirror.hostTruth, afterFirst)
     }
 
     // MARK: - Reset
 
     func testAResetEmptiesHostTruthAndKeepsTheOverlayVisible() {
-        var mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "before")])
+        let mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "before")])
         // A push for a key host truth does NOT hold — so it is genuinely stored on the overlay.
         mirror.writeFastPath(
             WorkspaceKey(.pane, pane, WorkspacePaneField.cwd),
@@ -367,8 +375,8 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
         XCTAssertEqual(mirror.apply(kind: 4, epoch: newEpoch, baseStateNum: 0, newStateNum: 0, payload: Data()), .reset)
 
         XCTAssertEqual(mirror.stateNum, 0)
-        XCTAssertEqual(mirror.epoch, newEpoch)
-        XCTAssertTrue(mirror.entries.isEmpty)
+        XCTAssertEqual(mirror.documentEpoch, newEpoch)
+        XCTAssertTrue(mirror.hostTruth.isEmpty)
         XCTAssertNil(mirror.string(.pane, pane, WorkspacePaneField.liveTitle), "host truth is gone")
         XCTAssertEqual(
             mirror.string(.pane, pane, WorkspacePaneField.cwd), "/still/painted",
@@ -379,7 +387,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     // MARK: - Subscribe parameters
 
     func testSubscribeAsksForASnapshotUntilOneHasLanded() {
-        var mirror = HostWorkspaceMirror()
+        let mirror = WorkspaceMirrorBox()
         XCTAssertEqual(mirror.knownEpoch, WireMessage.newSessionID)
         XCTAssertEqual(mirror.knownStateNum, 0)
 
@@ -395,7 +403,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// After a reset the mirror holds the new epoch but nothing under it. `stateNum 0` is the "I know
     /// nothing" sentinel, so the host answers with a snapshot — which is what it is about to send.
     func testSubscribeAfterAResetAsksForASnapshotUnderTheNewEpoch() {
-        var mirror = mirrorAtSnapshot([livenessEntry()], stateNum: 3)
+        let mirror = mirrorAtSnapshot([livenessEntry()], stateNum: 3)
         let newEpoch = UUID()
         _ = mirror.apply(kind: 4, epoch: newEpoch, baseStateNum: 0, newStateNum: 0, payload: Data())
 
@@ -406,7 +414,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     // MARK: - Untrusted bytes
 
     func testAMalformedPayloadIsDroppedWithoutDisturbingTheMirror() {
-        var mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "intact")])
+        let mirror = mirrorAtSnapshot([livenessEntry(), entry(WorkspacePaneField.liveTitle, "intact")])
         let garbage = Data([0xFF, 0xFF, 0xFF, 0xFF, 0x01])
 
         XCTAssertEqual(
@@ -423,7 +431,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// Forward tolerance: a kind this build does not know is one dropped frame, never a torn channel.
     /// There is no version negotiation on this wire, so this is the only correct answer.
     func testAnUnknownEventKindIsDropped() {
-        var mirror = mirrorAtSnapshot([livenessEntry()])
+        let mirror = mirrorAtSnapshot([livenessEntry()])
         XCTAssertEqual(
             mirror.apply(kind: 200, epoch: epoch, baseStateNum: 0, newStateNum: 0, payload: Data()), .dropped,
         )
@@ -433,7 +441,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     // MARK: - Presence and intent results
 
     func testAPresenceFrameReplacesTheRosterWithoutTouchingTheDocument() {
-        var mirror = mirrorAtSnapshot([livenessEntry()])
+        let mirror = mirrorAtSnapshot([livenessEntry()])
         let roster = WorkspacePresenceRoster(
             clients: [WorkspaceRosterClient(
                 clientInstanceID: UUID(), clientKind: WorkspaceClientKind.iOS.rawValue, flags: 0, label: "iPad",
@@ -451,7 +459,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     }
 
     func testAnIntentResultIsSurfacedToTheCaller() {
-        var mirror = mirrorAtSnapshot([livenessEntry()])
+        let mirror = mirrorAtSnapshot([livenessEntry()])
         let intentID = UUID()
         let result = WorkspaceIntentResult(intentID: intentID, status: .unknownOp)
 
@@ -491,7 +499,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// The projection reads through the overlay too — that is what keeps the focused pane painting
     /// sub-frame while the reconciler's tick is still in flight.
     func testAPaneProjectionReadsThroughTheFastPathWhereHostTruthIsSilent() {
-        var mirror = mirrorAtSnapshot([livenessEntry()])
+        let mirror = mirrorAtSnapshot([livenessEntry()])
         mirror.writeFastPath(titleKey(), WorkspaceStateCodec.encodeString("pushed"))
 
         XCTAssertEqual(mirror.paneLiveness(pane)?.liveTitle, "pushed")
@@ -515,8 +523,8 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
     /// will; every mirror that ends at the same `stateNum` holds the same document.
     func testTwoMirrorsConvergeUnderDroppedAndDuplicatedFrames() {
         var truth = HostWorkspaceState([livenessEntry()])
-        var perfect = mirrorAtSnapshot([livenessEntry()])
-        var lossy = mirrorAtSnapshot([livenessEntry()])
+        let perfect = mirrorAtSnapshot([livenessEntry()])
+        let lossy = mirrorAtSnapshot([livenessEntry()])
         // `lossy` acks nothing for a while, so the host keeps re-diffing from ITS acked base — the
         // mosh rule. Modelled here as: every frame is recomputed from the receiver's own stateNum.
         var version: Int64 = 1
@@ -543,7 +551,7 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
             // The lossy client misses one in three — and the host recomputes from where it actually
             // is, which is the only thing that makes the miss self-healing.
             if !step.isMultiple(of: 3) {
-                let catchUp = WorkspaceStateCodec.encodeDiff(next.diff(from: lossy.entries))
+                let catchUp = WorkspaceStateCodec.encodeDiff(next.diff(from: lossy.hostTruth))
                 _ = lossy.apply(
                     kind: 1, epoch: epoch, baseStateNum: lossy.stateNum, newStateNum: version, payload: catchUp,
                 )
@@ -552,12 +560,12 @@ final class WorkspaceMirrorFastPathTests: XCTestCase {
         }
 
         // One final frame recomputed from the laggard's own base — the reconnect case.
-        let finalPayload = WorkspaceStateCodec.encodeDiff(truth.diff(from: lossy.entries))
+        let finalPayload = WorkspaceStateCodec.encodeDiff(truth.diff(from: lossy.hostTruth))
         _ = lossy.apply(
             kind: 1, epoch: epoch, baseStateNum: lossy.stateNum, newStateNum: version + 1, payload: finalPayload,
         )
 
-        XCTAssertEqual(perfect.entries, truth, "every frame applied, some twice — still exact")
-        XCTAssertEqual(lossy.entries, truth, "a client that missed a third of the stream catches up in one diff")
+        XCTAssertEqual(perfect.hostTruth, truth, "every frame applied, some twice — still exact")
+        XCTAssertEqual(lossy.hostTruth, truth, "a client that missed a third of the stream catches up in one diff")
     }
 }

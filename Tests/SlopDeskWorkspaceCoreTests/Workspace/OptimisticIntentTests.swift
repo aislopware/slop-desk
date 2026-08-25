@@ -51,14 +51,14 @@ final class OptimisticIntentTests: XCTestCase {
         _ topology: WorkspaceTopology,
         to f: Fixture,
         stateNum: Int64,
-    ) -> HostWorkspaceMirror.ApplyOutcome {
+    ) -> WorkspaceMirrorBox.ApplyOutcome {
         var next = HostWorkspaceState()
         next.write(topology: topology)
-        let diff = next.diff(from: f.box.mirror.entries)
+        let diff = next.diff(from: f.box.hostTruth)
         return f.box.apply(
             kind: WorkspaceEventKind.diff.rawValue,
-            epoch: f.box.mirror.epoch ?? WireMessage.newSessionID,
-            baseStateNum: f.box.mirror.stateNum,
+            epoch: f.box.documentEpoch ?? WireMessage.newSessionID,
+            baseStateNum: f.box.stateNum,
             newStateNum: stateNum,
             payload: WorkspaceStateCodec.encodeDiff(diff),
         )
@@ -84,7 +84,7 @@ final class OptimisticIntentTests: XCTestCase {
         XCTAssertNotNil(intent)
         XCTAssertEqual(f.box.topology?.tree.sessions[0].tabs[0].title, "build")
         XCTAssertEqual(
-            f.box.mirror.entries.string(WorkspaceKey(.tab, f.tab.raw, WorkspaceTabField.title)), "one",
+            f.box.hostTruth.string(WorkspaceKey(.tab, f.tab.raw, WorkspaceTabField.title)), "one",
             "host truth is untouched — the overlay is a separate layer, not a write",
         )
     }
@@ -143,10 +143,10 @@ final class OptimisticIntentTests: XCTestCase {
         let f = fixture()
         _ = f.box.stageIntent(op: .renameTab, args: renameArgs(f, "build"), issuedAt: 100)
 
-        f.box.expirePending(now: 100 + HostWorkspaceMirror.pendingTimeout - 0.001)
+        f.box.expirePending(now: 100 + WorkspaceMirrorBox.pendingTimeout - 0.001)
         XCTAssertEqual(f.box.pendingIntentCount, 1, "a slow link is not a lost intent")
 
-        f.box.expirePending(now: 100 + HostWorkspaceMirror.pendingTimeout)
+        f.box.expirePending(now: 100 + WorkspaceMirrorBox.pendingTimeout)
         XCTAssertEqual(f.box.pendingIntentCount, 0)
         XCTAssertEqual(f.box.topology?.tree.sessions[0].tabs[0].title, "one")
     }
@@ -158,7 +158,7 @@ final class OptimisticIntentTests: XCTestCase {
         let intent = try XCTUnwrap(f.box.stageIntent(op: .renameTab, args: renameArgs(f, "build"), issuedAt: 100))
         result(intent.intentID, .applied, to: f)
 
-        f.box.expirePending(now: 100 + HostWorkspaceMirror.pendingTimeout * 10)
+        f.box.expirePending(now: 100 + WorkspaceMirrorBox.pendingTimeout * 10)
 
         XCTAssertEqual(f.box.pendingIntentCount, 1)
         XCTAssertEqual(f.box.topology?.tree.sessions[0].tabs[0].title, "build")
@@ -171,7 +171,7 @@ final class OptimisticIntentTests: XCTestCase {
         let f = fixture()
         _ = f.box.stageIntent(op: .renameTab, args: renameArgs(f, "build"), issuedAt: 0)
 
-        var unrelated = try XCTUnwrap(f.box.mirror.entries.topology)
+        var unrelated = try XCTUnwrap(f.box.hostTruth.topology)
         unrelated.tree.sessions[0].name = "renamed elsewhere"
         hostPublishes(unrelated, to: f, stateNum: 2)
 

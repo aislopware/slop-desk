@@ -111,7 +111,7 @@ extension WorkspaceStore {
     func documentFactsSnapshot() -> HostWorkspaceState {
         let live = Set(tree.allPaneIDs()).union(tree.detachedPaneIDs())
         let ids = Set(live.map { documentPaneID($0) }).union(reopenableDocumentPaneIDs())
-        let resolved = workspaceMirror.mirror.resolved
+        let resolved = workspaceMirror.resolved
         var out = HostWorkspaceState()
         for id in ids {
             for field in Self.cachedPaneFields {
@@ -166,7 +166,7 @@ extension WorkspaceStore {
         let objectID = documentPaneID(id)
         let key = WorkspaceKey(.pane, objectID, WorkspacePaneField.liveTitle)
         // No title observed ⇒ no verdict to hold. Writing one would claim a fact about nothing.
-        guard workspaceMirror.mirror.fastPath[key] != nil else { return }
+        guard workspaceMirror.fastPathHolds(key) else { return }
         workspaceMirror.writeFastPath(
             pane: objectID,
             field: WorkspacePaneField.titleFresh,
@@ -191,7 +191,7 @@ extension WorkspaceStore {
     func pruneWorkspaceMirror(keeping leaves: Set<PaneID>) {
         let live = Set(leaves.map { documentPaneID($0) })
             .union(reopenableDocumentPaneIDs())
-        for paneID in workspaceMirror.mirror.fastPathPaneIDs where !live.contains(paneID) {
+        for paneID in workspaceMirror.fastPathPaneIDs where !live.contains(paneID) {
             workspaceMirror.clearFastPath(pane: paneID)
         }
     }
@@ -497,15 +497,6 @@ private struct RosterTokens {
 struct WorkspaceViewReport: Equatable {
     let tabID: UUID
     let paneID: UUID
-}
-
-extension HostWorkspaceMirror {
-    /// Every pane with an overlay entry. Distinct from ``paneIDs``, which enumerates the DOCUMENT.
-    var fastPathPaneIDs: Set<UUID> {
-        var ids = Set<UUID>()
-        for key in fastPath.keys where key.kind == WorkspaceObjectKind.pane.rawValue { ids.insert(key.objectID) }
-        return ids
-    }
 }
 
 // MARK: - The workspace channel's lifecycle

@@ -5,7 +5,7 @@ import XCTest
 /// The cutover itself: what the store renders is what the DOCUMENT holds.
 ///
 /// Every mutator here is asserted twice — once against `store.tree` (what the user sees) and once
-/// against `workspaceMirror.mirror.entries` (host truth, with the optimistic layer deliberately
+/// against `workspaceMirror.hostTruth` (host truth, with the optimistic layer deliberately
 /// excluded). Asserting only the first would pass on a store that still owned its own tree, which is
 /// precisely the state this phase removes.
 ///
@@ -70,7 +70,7 @@ final class WorkspaceStoreIntentCutoverTests: XCTestCase {
     }
 
     private func hostTruthTopology(_ store: WorkspaceStore) -> WorkspaceTopology? {
-        WorkspaceTopology(entries: store.workspaceMirror.mirror.entries)
+        WorkspaceTopology(entries: store.workspaceMirror.hostTruth)
     }
 
     // MARK: - The cutover
@@ -144,13 +144,13 @@ final class WorkspaceStoreIntentCutoverTests: XCTestCase {
         let store = makeStore(seed.workspace)
         store.splitActivePane(axis: .horizontal, kind: .terminal)
         let split = try XCTUnwrap(firstSplitID(in: store.tree), "no split to drag")
-        let before = store.workspaceMirror.mirror.stateNum
+        let before = store.workspaceMirror.stateNum
 
         store.setDividerWeightLive(splitID: split, leadingChildIndex: 0, leadingWeight: 1.5)
 
         XCTAssertEqual(leadingWeight(of: split, in: store.tree), 1.5)
         XCTAssertEqual(store.workspaceMirror.pendingIntentCount, 0, "a drag frame stages nothing")
-        XCTAssertEqual(store.workspaceMirror.mirror.stateNum, before, "a drag frame publishes nothing")
+        XCTAssertEqual(store.workspaceMirror.stateNum, before, "a drag frame publishes nothing")
     }
 
     /// The commit sends exactly ONE intent, and the preview stops overlaying the moment it does.
@@ -160,11 +160,11 @@ final class WorkspaceStoreIntentCutoverTests: XCTestCase {
         store.splitActivePane(axis: .horizontal, kind: .terminal)
         let split = try XCTUnwrap(firstSplitID(in: store.tree), "no split to drag")
         store.setDividerWeightLive(splitID: split, leadingChildIndex: 0, leadingWeight: 1.5)
-        let before = store.workspaceMirror.mirror.stateNum
+        let before = store.workspaceMirror.stateNum
 
         store.commitDividerResize()
 
-        XCTAssertEqual(store.workspaceMirror.mirror.stateNum, before + 1, "exactly one document frame")
+        XCTAssertEqual(store.workspaceMirror.stateNum, before + 1, "exactly one document frame")
         XCTAssertEqual(leadingWeight(of: hostTruthTopology(store)?.tree, of: split), 1.5)
         XCTAssertEqual(
             leadingWeight(of: split, in: store.tree), 1.5,

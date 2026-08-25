@@ -49,7 +49,7 @@ public extension WorkspaceStore {
     }
 
     /// Bumps this client's OWN counter for `id` — what runs before a snapshot lands, and a no-op the
-    /// moment host truth holds the key (``HostWorkspaceMirror/writeFastPath(_:_:)`` refuses to write
+    /// moment host truth holds the key (``WorkspaceMirrorBox/writeFastPath(_:_:)`` refuses to write
     /// over `entries`).
     ///
     /// Which is the point: the client's guess and the host's truth are the same KIND of value in the
@@ -122,7 +122,7 @@ public extension WorkspaceStore {
     /// ``WorkspaceStore/seedEpoch``, which is what the store's own restored layout carries until a
     /// real host frame arrives.
     internal func reconcileSeenCompletionEpochDocument() {
-        let live: UUID? = workspaceMirror.mirror.epoch
+        let live: UUID? = workspaceMirror.documentEpoch
         guard let live, live != Self.seedEpoch else { return }
         guard seenCompletionEpochDocument != live else { return }
         if seenCompletionEpochDocument != nil { seenCompletionEpoch.removeAll() }
