@@ -2,8 +2,9 @@
 //!
 //! The sidebar prints one git line per PROJECT section — branch, ahead/behind, dirty count — and
 //! the client keeps it fresh from three sources: a poll on the ~3 s snapshot edge, a probe fired by
-//! a command completing or a `cd`, and the host's own FSEvents push. [`git_line`](crate::git_line)
-//! decides what that line SAYS. This decides when it is asked for and where the answer lands.
+//! a command completing or a `cd`, and the host's own `FSEvents` push.
+//! [`git_line`](crate::git_line) decides what that line SAYS. This decides when it is asked for and
+//! where the answer lands.
 //!
 //! ## Two decisions, and they are not the same one
 //!

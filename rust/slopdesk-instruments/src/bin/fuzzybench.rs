@@ -295,7 +295,7 @@ fn compare_with_fzf(
     let their_top: HashSet<&str> = theirs.iter().map(String::as_str).take(TOP_K).collect();
     if !their_top.is_empty() {
         let shared = ours_top.intersection(&their_top).count();
-        let agreement = shared as f64 / their_top.len().min(TOP_K).max(1) as f64;
+        let agreement = shared as f64 / their_top.len().clamp(1, TOP_K) as f64;
         top_k = format!("{:.0}%", agreement * 100.0);
         totals.top_k_sum += agreement;
         totals.top_k_count = totals.top_k_count.saturating_add(1);
@@ -304,7 +304,7 @@ fn compare_with_fzf(
     let mut top1 = "—".to_owned();
     if let (Some(theirs_best), Some(ours_best)) = (theirs.first(), ours.first()) {
         let agreed = theirs_best.as_str() == *ours_best;
-        top1 = if agreed { "OK" } else { "no" }.to_owned();
+        if agreed { "OK" } else { "no" }.clone_into(&mut top1);
         if agreed {
             totals.top1_agree = totals.top1_agree.saturating_add(1);
         }
@@ -317,8 +317,7 @@ fn compare_with_fzf(
         let (Some(before), Some(after)) = (pair.first(), pair.get(1)) else {
             continue;
         };
-        let (Some(earlier), Some(later)) =
-            (score_of.get(before.as_str()), score_of.get(after.as_str()))
+        let (Some(earlier), Some(later)) = (score_of.get(before.as_str()), score_of.get(after.as_str()))
         else {
             continue;
         };
@@ -467,7 +466,8 @@ fn main() {
     println!("ours throughput: {ours_rate:.2} M comparisons/sec  ({ours_each:.1} ns/comparison avg)");
     let (rank_rate, rank_each) = throughput(totals.comparisons, totals.rank_time);
     println!(
-        "score-only door: {rank_rate:.2} M comparisons/sec  ({rank_each:.1} ns/comparison avg)  •  {} disagreements with the scoring door",
+        "score-only door: {rank_rate:.2} M comparisons/sec  ({rank_each:.1} ns/comparison avg)  •  {} \
+         disagreements with the scoring door",
         totals.rank_disagreements
     );
     if totals.set_checks > 0 {
@@ -487,8 +487,8 @@ fn main() {
     }
     if totals.score_pairs > 0 {
         println!(
-            "score monotonicity over fzf's order: {}/{} strict inversions (0 ⇒ our scores never \
-             contradict fzf's ranking; differences are tiebreaks only)",
+            "score monotonicity over fzf's order: {}/{} strict inversions (0 ⇒ our scores never contradict \
+             fzf's ranking; differences are tiebreaks only)",
             totals.score_inversions, totals.score_pairs
         );
     }

@@ -166,15 +166,18 @@ package final class TerminalPaneWiring {
     /// Read-only releases through the MODEL, whose `onReadOnlyChanged` hook converges the store's
     /// `paneReadOnly` set; sync input disarms the WHOLE tab, because the mode is the tab's and clearing
     /// it on one pane only would leave the siblings still fanning input. Secure input carries no `×`
-    /// (``PaneStatusPill/dismissHelp``), so it never reaches here — and the case is spelled out rather
-    /// than defaulted, so a fourth pill is red until someone answers for it.
+    /// (``PaneStatusPill/dismissHelp``), so it never reaches here.
+    ///
+    /// WHICH chip goes where is ``PaneWiringRules/dismissRoute(_:)``'s, pinned on the far side against
+    /// the same chip's own `isDismissible` — so a fourth pill cannot ship with a `×` that does nothing.
+    /// What is left here is the ACTUATING, which is the half that touches a live model and a store.
     package static func dismiss(_ pill: PaneStatusPill, live: LivePaneSession?, store: WorkspaceStore) {
-        switch pill {
+        switch PaneWiringRules.dismissRoute(pill) {
         case .readOnly:
             live?.terminalModel?.exitReadOnly()
         case .syncInput:
             if let paneID = live?.id { store.disarmSyncInput(for: paneID) }
-        case .secureInput:
+        case .nothing:
             break
         }
     }

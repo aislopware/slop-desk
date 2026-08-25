@@ -47,6 +47,7 @@ pub mod agent_readout;
 pub mod android_control;
 pub mod android_log_level;
 pub mod android_presentation;
+pub mod android_sidebar;
 pub mod android_stream;
 pub mod annexb;
 // macOS only: `NSRunningApplication`, which no iOS slice has. See the module.
@@ -94,6 +95,7 @@ pub mod connect_form;
 pub mod connect_gate;
 pub mod connection;
 pub mod context_menu;
+pub mod control_request;
 pub mod cursor_overlay;
 // macOS only: `NSCursor` and the window server's cursor seed. The one handle here that two threads
 // may call at once, because the pointer must keep flowing while the main thread is busy. See the
@@ -159,6 +161,7 @@ pub mod input_box;
 pub mod input_event;
 pub mod input_routing;
 pub mod inspector;
+pub mod inspector_store;
 pub mod key_capture;
 pub mod key_naming;
 pub mod keybind;
@@ -195,6 +198,7 @@ pub mod palette_rows;
 pub mod pane_drop;
 pub mod pane_facts;
 pub mod pane_kind;
+pub mod pane_session;
 pub mod pane_switcher;
 // macOS only: Darwin `proc_*` over every live pid, plus an `lsof` spawn. Only hostd asks, and only
 // about a PTY it holds. See the module.

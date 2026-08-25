@@ -205,8 +205,10 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// the same `TerminalSurfaceActions` seam find/copy-mode use (``TerminalViewModel/searchScrollbackLines()``
     /// → `[]` on a headless / preview surface, hang-safety). `nil` terminal (a video pane) ⇒ `[]`.
     public func captureScrollback(lines count: Int) -> [String] {
-        guard count > 0, let lines = terminalModel?.searchScrollbackLines() else { return [] }
-        return Array(lines.suffix(count))
+        guard let lines = terminalModel?.searchScrollbackLines(),
+              let start = PaneSessionRules.captureStart(lines: count, available: lines.count)
+        else { return [] }
+        return Array(lines.dropFirst(start))
     }
 
     /// GENERIC resize-scrim signal: TRUE while this pane's content has been resized but the fresh
@@ -378,23 +380,29 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         spec: PaneSpec,
         target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
+        let video = spec.video
         let model =
-            if let v = spec.video, v.displayID == nil, v.windowID != 0 {
+            switch PaneSessionRules.videoMount(
+                hasVideoSpec: video != nil,
+                hasDisplayID: video?.displayID != nil,
+                windowID: video?.windowID ?? 0,
+            ) {
+            case .window:
                 // Window-shaped endpoint — the AUTOMATION seam only (`slopdesk-guigate video` serves one
                 // window; docs/DECISIONS.md 2026-07-23): the classic window `hello`.
                 RemoteWindowModel(
                     target: target,
-                    windowID: String(v.windowID),
-                    title: v.title,
-                    appName: v.appName,
+                    windowID: String(video?.windowID ?? 0),
+                    title: video?.title ?? "",
+                    appName: video?.appName ?? "",
                 )
-            } else {
+            case .desktop:
                 // FULL-DESKTOP pane: the model carries the display target (0 = main) — no window id.
                 // `setVideoActive` opens it like any configured video pane.
                 RemoteWindowModel(
                     target: target,
-                    title: spec.video?.title ?? spec.title,
-                    desktopDisplayID: spec.video?.displayID ?? 0,
+                    title: video?.title ?? spec.title,
+                    desktopDisplayID: video?.displayID ?? 0,
                 )
             }
         // LATCHED-MODE RESTORE is NOT seeded here: the modes are TARGET-keyed in the device preferences
@@ -432,8 +440,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         // Gated on the RUNTIME Claude status, not a stored kind — a plain terminal opens NO
         // inspector socket until a `claude` is detected (`claudeStatus` ≠ `.none`). Re-driven on that
         // transition (see feedAgentSignal).
-        guard claudeStatus != .none, let model = inspector else { return }
-        guard inspectorClient == nil else { return }
+        guard inspectorGateOpens(.subscribe), let model = inspector else { return }
         guard let target, let client = makeInspector?(target()) else { return }
         // Cancelled before we stored anything (pause()/teardown() fired between resume's spawn and here)
         // — close the just-built client so its lazily-opened socket is never stranded.
@@ -475,41 +482,46 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         _ event: SlopDeskClient.Event,
         now _: TimeInterval = Date().timeIntervalSinceReferenceDate,
     ) -> ClaudeStatus {
-        guard isAgentDetectable else { return claudeStatus }
         switch event {
         case let .foregroundProcess(name):
             // DISPLAY-ONLY: a coarse process-name hint. Never touches `claudeStatus` (the type-27 verdict
             // is authoritative) — so a child process briefly taking the PTY can't clobber a hook status.
-            let trimmed = name.isEmpty ? nil : name
-            if foregroundProcessName != trimmed { foregroundProcessName = trimmed }
-            return claudeStatus
+            // A pane with no PTY has no foreground process to show, which is why the build-time fact
+            // gates the hint as well as the fold.
+            let named = isAgentDetectable && PaneSessionRules.namesForegroundProcess(name)
+            let hint = named ? name : nil
+            if foregroundProcessName != hint { foregroundProcessName = hint }
         case let .claudeStatus(state, kind, _):
-            // TRUST the host's verdict: map the raw urgency byte → ClaudeStatus directly (forward-tolerant
-            // — an unknown/future byte degrades to `.none`; a hostile datagram can never trap the client).
-            // The `kind` qualifier rides alongside (same forward-tolerance) so the store can tell an
-            // ANNOUNCEABLE transition from a bookkeeping one — see ``lastStatusKind``.
+            // TRUST the host's verdict. The `kind` qualifier is recorded for every frame (the store reads
+            // it in the same turn — see ``lastStatusKind``); the `state` byte goes through the fold, which
+            // dedupes a repeat and answers what the `.none` boundary does to the second channel.
             lastStatusKind = AgentStatusKind(wireByte: kind)
-            applyDetectedStatus(ClaudeStatus(urgency: Int(state)))
-            return claudeStatus
+            let fold = PaneSessionRules.fold(
+                status: claudeStatus,
+                wireState: state,
+                detectable: isAgentDetectable,
+            )
+            guard fold.changed else { return claudeStatus }
+            claudeStatus = fold.status
+            applyInspectorEffect(fold.effect)
         default:
             // Not an agent-detect event — ignore (the store only forwards 26/27 here).
-            return claudeStatus
+            break
         }
+        return claudeStatus
     }
 
-    /// Applies the host's freshly-trusted status: dedupes no-op updates, then opens/closes the inspector
-    /// second channel on the `.none` boundary. `.none → non-none` spawns a subscribe; `non-none → .none`
-    /// tears the client down (the pane is back to a plain terminal — hold no inspector socket).
-    private func applyDetectedStatus(_ newStatus: ClaudeStatus) {
-        let wasActive = claudeStatus != .none
-        let isActive = newStatus != .none
-        guard claudeStatus != newStatus else { return } // dedupe identical updates (no churn)
-        claudeStatus = newStatus
-        if !wasActive, isActive {
+    /// Opens or closes the inspector second channel on the `.none` boundary the fold found. The
+    /// cancellation and the sockets are here because they are the parts that are not a rule.
+    private func applyInspectorEffect(_ effect: PaneSessionRules.InspectorEffect) {
+        switch effect {
+        case .nothing:
+            break
+        case .open:
             // A claude just appeared in this terminal → open the read-only inspector second channel.
             inspectorTask?.cancel()
             inspectorTask = Task { [weak self] in await self?.subscribeInspector() }
-        } else if wasActive, !isActive {
+        case .close:
             // The claude is gone → close the inspector socket (idempotent).
             inspectorTask?.cancel()
             inspectorTask = nil
@@ -521,18 +533,42 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         }
     }
 
+    /// Whether one of the three inspector gates opens on this pane right now.
+    ///
+    /// The facts are the pane's; the gate is ``PaneSessionRules``'. Subscribe and resume read the live
+    /// client (they must not stack a second one); reconnect does not, because it drops the stale client
+    /// itself and would otherwise early-out on the very dead socket it exists to replace.
+    private func inspectorGateOpens(_ gate: PaneSessionRules.InspectorGate) -> Bool {
+        PaneSessionRules.allows(
+            gate,
+            agentPresent: claudeStatus != .none,
+            hasModel: inspector != nil,
+            hasClient: inspectorClient != nil,
+        )
+    }
+
     // MARK: - PaneSessionHandle: video activation
 
     public func setVideoActive(_ active: Bool) {
-        guard kind.isVideo, let model = remoteWindow else { return }
-        if active {
-            // Open only if configured; mirror the resulting active state.
-            if model.active == nil, model.canOpen {
-                model.open()
-            }
-            isVideoActive = model.active != nil
-        } else {
-            model.close()
+        let model = remoteWindow
+        switch PaneSessionRules.videoStep(
+            isVideo: kind.isVideo,
+            hasModel: model != nil,
+            isOpen: model?.active != nil,
+            canOpen: model?.canOpen ?? false,
+            active: active,
+        ) {
+        case .ignore:
+            break
+        case .open:
+            // Open, then mirror the resulting active state.
+            model?.open()
+            isVideoActive = model?.active != nil
+        case .mirror:
+            // Already open, or not configured enough to open — mirror what the model actually holds.
+            isVideoActive = model?.active != nil
+        case .close:
+            model?.close()
             isVideoActive = false
         }
     }
@@ -573,11 +609,11 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         await connection?.resume()
         // Restore live video for a video pane that was active before pause (cap-safe: re-opens
         // at most the set already admitted, so it cannot exceed liveVideoCap — no store consult needed).
-        if kind.isVideo, wasVideoActiveBeforePause {
+        if PaneSessionRules.resumeReopensVideo(isVideo: kind.isVideo, wasActive: wasVideoActiveBeforePause) {
             wasVideoActiveBeforePause = false
             setVideoActive(true)
         }
-        if claudeStatus != .none, inspector != nil, inspectorClient == nil {
+        if inspectorGateOpens(.resume) {
             // Re-subscribe only when a claude is still detected (runtime status, not a stored kind).
             // Track + cancel a prior re-subscribe before spawning a fresh one, so a teardown/pause in the
             // same main-actor turn can cancel this (subscribeInspector() re-checks then closes the
@@ -590,17 +626,17 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     /// TRANSPORT RECONNECT edge (wifi flap; macOS — where `pause()`/`resume()` never run). The inspector
     /// second channel (terminal port + 1) died with the same link drop, but nothing re-armed it: the
-    /// host's reattach re-assert re-emits the SAME type-27 status verbatim, so ``applyDetectedStatus``'s
-    /// dedupe guard eats it and the `.none → active` transition that opens the channel never fires again —
+    /// host's reattach re-assert re-emits the SAME type-27 status verbatim, so the fold's dedupe eats it
+    /// and the `.none → active` transition that opens the channel never fires again —
     /// the Inspector pane stayed dead until the agent's status happened to change. Called from the store's
     /// once-per-reconnect `onReconnected` hook: while a claude is still detected, unconditionally tear
     /// down any stale client (mirroring ``resume()``'s cancel-then-rebuild shape — the fire-and-forget
-    /// close is the same idiom as `applyDetectedStatus`'s close arm; this runs in the sync reconnect
+    /// close is the same idiom as the fold's close effect; this runs in the sync reconnect
     /// closure, so the close cannot be awaited inline) and re-subscribe a FRESH one from seq 0. The full
     /// re-tail is safe — the model upserts/dedupes by id. A `.none` pane holds no inspector socket and is
     /// a no-op.
     public func reestablishInspectorOnReconnect() {
-        guard claudeStatus != .none, inspector != nil else { return }
+        guard inspectorGateOpens(.reconnect) else { return }
         // Cancel the in-flight subscribe FIRST (its cancellation re-checks close the client it built),
         // then drop + close the stale client so the fresh `subscribeInspector()` below passes its
         // `inspectorClient == nil` idempotence gate instead of early-outing on the dead socket.
@@ -629,7 +665,10 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             await client.close()
             inspectorClient = nil
         }
-        if isVideoActive || remoteWindow?.active != nil {
+        if PaneSessionRules.teardownClosesVideo(
+            isActive: isVideoActive,
+            hasDescriptor: remoteWindow?.active != nil,
+        ) {
             remoteWindow?.close()
             isVideoActive = false
         }

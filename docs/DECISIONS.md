@@ -17014,3 +17014,50 @@ was deleted rather than kept as a second proof of the same thing.
   that text back, require the same chord. Comparing the two dispatchers directly for the first time
   found a real divergence — the phone accepted the DEL scalar as a printable base while the Mac
   refused it, so ⌘⌫ resolved to a chord no `keybind` line on the other client could ever match.
+
+## The detached window is superd's ring, not a fourth copy in hostd (2026-08-25)
+
+**Detail: [59-hostd-projection.md](59-hostd-projection.md) §5 step 1 · [51-process-supervision.md](51-process-supervision.md) §6.5.**
+
+- ✅ **`detach()` DROPS the subscription and keeps a byte OFFSET.** hostd's out-FIFO used to be
+  re-sized to `MuxFlowControl.detachedHostQueueCapacityBytes` (64 MiB) on detach and fed by a read
+  loop that kept running with nobody to send to — the same PTY bytes buffered a fourth time, beside
+  superd's ring, superd's journal, and hostd's own `ReplayBuffer`. It is gone. `detach()` now
+  unsubscribes the `PaneOutputStream` and records `streamOffset`, the absolute ring offset the
+  stream had reached; `rebindRelay` opens a NEW subscription at exactly that offset. It is a
+  `subscribe`, never a `read` — superd owns the only reader on the master, and a second one would
+  steal bytes rather than observe them.
+- ✅ **The retention contract is the ring (4 MiB, `SLOPDESK_PANE_RING_BYTES`), and the drop is
+  DELIBERATE.** Raising `DEFAULT_CAPACITY_BYTES` to match the old 64 MiB was the alternative and is
+  rejected: superd never calls `ring.forget()` in production, so a raised default is resident per
+  busy pane ALWAYS — twenty panes ≈ 1.3 GiB inside the daemon whose entire job is to be small —
+  whereas the old 64 MiB was hostd's only while detached. Anyone who wants the old window sets
+  `SLOPDESK_PANE_RING_BYTES`; that is what the knob is for.
+- ✅ **What the drop buys is that a detached agent NEVER FREEZES.** The 64 MiB budget did not buy
+  retention so much as postpone a stall: at the ceiling the gate paused the read loop, superd stopped
+  reading, the kernel PTY buffer filled and the shell blocked — the exact failure `docs/51` exists to
+  prevent, arriving after 64 MiB instead of after 64 KiB. With no subscriber superd's pump keeps
+  draining and the ring evicts, and losing the last subscriber CLEARS the pause, so the agent runs at
+  full speed for as long as it is away.
+- ✅ **The loss is ANNOUNCED, and the cold case never sees it.** A resume older than the ring's start
+  sets `Resume::is_lossy` on superd's side and `PaneOutputStream.resumedLossily` on hostd's, and the
+  gap is logged with the byte count. A COLD client does not go through the resume at all — it is
+  restored from the journal (`ScrollbackTranscripts.restored(sessionID:supervisor:)`, gated on
+  `open.lastReceivedSeq == 0`), which is disk-backed and unaffected.
+- ⚠️ **This REVERSES "Detach folds the ring in the background"** (2026-07-25, `scheduleDetachedRingFold`,
+  floor 128 KiB). The fold rendered the acked `ReplayBuffer` ring at detach so the reattach compose
+  would walk O(canonical + delta). It went with this change for two reasons: its stated payoff was
+  "an idle detached session's ring collapses from up-to-64 MiB of churn", and up-to-64 MiB of churn
+  is precisely what no longer accumulates; and the compose it optimised no longer folds the FIFO
+  backlog in, so its input is the acked ring alone. `ReplayBuffer.ringFoldSource()` /
+  `adoptFoldedRing(_:from:)` have no caller left in the host.
+- ⚠️ **A cold reattach after a long detached window now ships raw churn where it used to ship
+  cleaned bytes**, because `compactDetachedBacklogForColdClient` is deleted with the FIFO it
+  compacted. It is bounded by the ring rather than by the old 64 MiB budget, so the worst case
+  SHRANK by 16×; the snapshot still renders the sequenced history, and the resumed bytes land after
+  it on the ordinary drain.
+- ⚠️ **A command started while detached re-asserts no busy indicator on reattach.** superd re-runs
+  `sniff_backlog` over resumed bytes, so sniffed control (titles, cwd) replays — but block events
+  (`0x05`) do not, and `commandRunningSince` is fed only by those. `blockSnapshot()` still rebuilds
+  the navigator for CLOSED blocks; what is missing is the type-23 `.running` re-assert for a command
+  still executing, until its next edge.

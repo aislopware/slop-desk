@@ -6,7 +6,7 @@ import Foundation
 /// The sidebar git line's CADENCE and BOOKING rules, as `slopdesk-workspace::store_git_cadence`
 /// answers them.
 ///
-/// ``GitLine`` decides what the line says. This decides when it is asked for and which section
+/// `git_line` (`rust/slopdesk-workspace/src/git_line.rs`) decides what the line says. This decides when it is asked for and which section
 /// header the answer lands under — two questions the store used to answer in place, with the
 /// project-key precedence transcribed at three of the call sites.
 ///
@@ -127,6 +127,7 @@ public enum StoreGitCadence {
         }
         guard plan.booked, plan.primary > 0, plan.primary <= out.count else { return nil }
         return Booking(
+            // swiftlint:disable:next optional_data_string_conversion
             primary: String(decoding: out.prefix(plan.primary), as: UTF8.self), alias: plan.alias,
         )
     }
@@ -157,6 +158,7 @@ public enum StoreGitCadence {
             }
         }
         guard count > 0, count <= out.count else { return nil }
+        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: out.prefix(count), as: UTF8.self)
     }
 }

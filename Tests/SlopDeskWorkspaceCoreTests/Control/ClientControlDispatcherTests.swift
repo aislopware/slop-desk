@@ -436,13 +436,20 @@ final class ClientControlDispatcherTests: XCTestCase {
     func testPaneCaptureDefaultLines() {
         backend.capturePaneReturn = ["a", "b"]
         let obj = run(ClientControlProtocol.Method.paneCapture)
-        XCTAssertEqual(backend.recordedCaptureLines, ClientControlDispatcher.defaultCaptureLines)
+        // The number itself is the far side's; what this pins is that an ABSENT `lines` reaches the
+        // backend as whatever the door answers for one.
+        XCTAssertEqual(
+            backend.recordedCaptureLines,
+            ControlRequestRules.captureLines(present: false, isInteger: false, raw: 0),
+        )
         XCTAssertEqual(result(obj)["lines"] as? [String], ["a", "b"])
     }
 
     func testPaneCaptureClampsHugeCount() {
         _ = run(ClientControlProtocol.Method.paneCapture, ["lines": 5_000_000])
-        XCTAssertEqual(backend.recordedCaptureLines, ClientControlDispatcher.maxCaptureLines)
+        let clamped = ControlRequestRules.captureLines(present: true, isInteger: true, raw: 5_000_000)
+        XCTAssertEqual(backend.recordedCaptureLines, clamped)
+        XCTAssertNotEqual(backend.recordedCaptureLines, 5_000_000)
     }
 
     func testPaneCapturePassesPaneIdAndLines() {
@@ -594,10 +601,14 @@ final class ClientControlDispatcherTests: XCTestCase {
     }
 
     func testHandleLineOversizedRejected() {
+        // A megabyte is over ANY cap the door could be carrying; the scan assertion is what ties this
+        // line to the bound instead of restating the number.
         let huge = "{\"id\":\"1\",\"method\":\"windows\",\"params\":{\"x\":\""
-            + String(repeating: "a", count: ClientControlDispatcher.maxRequestBytes + 16) + "\"}}"
+            + String(repeating: "a", count: 1 << 20) + "\"}}"
+        XCTAssertEqual(ControlRequestRules.scan(huge).verdict, .tooLarge)
         let obj = decodeLine(dispatcher.handleLine(huge))
         XCTAssertEqual(obj?["ok"] as? Bool, false)
+        XCTAssertEqual(obj?["error"] as? String, ControlRequestRules.message(.tooLarge))
         XCTAssertEqual(obj?["error"] as? String, "request too large")
     }
 

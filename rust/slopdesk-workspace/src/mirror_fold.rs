@@ -174,6 +174,14 @@ pub fn survivors_after_timeout(ages: &[Age], now: f64, timeout: f64) -> Vec<u32>
         .enumerate()
         .filter(|(_, age)| {
             let elapsed = now - age.issued_at;
+            // Written as the NEGATION of the expiry test, not as its De Morgan twin: the two agree
+            // on every ordered pair and disagree on NaN, where `!(NaN >= t)` keeps the patch and
+            // `NaN < t` drops it. The paragraph above is the whole point, so the shape stays.
+            #[expect(
+                clippy::nonminimal_bool,
+                reason = "`elapsed < timeout || age.retiring` is NOT this expression for a NaN elapsed — \
+                          see `an_uncomparable_age_never_expires`"
+            )]
             !(elapsed >= timeout && !age.retiring)
         })
         .filter_map(|(index, _)| u32::try_from(index).ok())

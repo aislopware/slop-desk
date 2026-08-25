@@ -42,9 +42,12 @@ package final class ClientControlServer: @unchecked Sendable {
     private var listenFD: Int32 = -1
     private var boundPath: String?
 
-    /// Max bytes per request line (validate-then-drop beyond this) — matches the host ctl socket + the
-    /// dispatcher's own `maxRequestBytes`.
-    package static let maxRequestBytes = 64 * 1024
+    /// Max bytes per request line (validate-then-drop beyond this).
+    ///
+    /// Read from the rule that enforces it rather than typed: the host ctl socket keeps the same cap
+    /// and reads the same door, so the two ends of this socket cannot disagree about which line was
+    /// too long.
+    package static let maxRequestBytes = ControlRequestRules.maxRequestBytes
 
     /// The env var the running app exports + the CLI reads to find the socket (the `--socket` flag overrides
     /// it on the CLI side; this server only resolves env > default).

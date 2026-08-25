@@ -3,32 +3,31 @@ import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport
 
-/// Detach/reattach OUTPUT retention + gate rebalance.
+/// Detach/reattach carry-over of UNSENT out-FIFO frames + gate rebalance.
 ///
-/// While a session is DETACHED the PTY read loop keeps running and appends chunks to the
-/// out-FIFO, but the output drain is cancelled — so those bytes are NEVER sequenced into the
-/// ReplayBuffer (seq assignment happens at drain time). `rebindRelay` therefore must NOT clear
-/// the out-FIFO (the "bytes already in ReplayBuffer" premise is false for exactly these
-/// bytes): the restarted drain must ship them on the NEW data sub-channel, and — because every
-/// chunk was accounted into the ``PausableQueueGate`` at enqueue time — sending them is also
-/// what rebalances the gate so a read loop paused by the detached-era backlog RESUMES.
+/// `detach()` cancels the output drain where it stands, so frames already ingested and not yet
+/// sent stay in the out-FIFO — and those were NEVER sequenced into the ReplayBuffer (seq
+/// assignment happens at drain time). `rebindRelay` therefore must NOT clear the out-FIFO (the
+/// "bytes already in ReplayBuffer" premise is false for exactly these frames): the restarted
+/// drain must ship them on the NEW data sub-channel, and — because every chunk was accounted
+/// into the ``PausableQueueGate`` at enqueue time — sending them is also what rebalances the
+/// gate so a read loop those frames paused RESUMES.
+///
+/// What is NOT here: the bytes a pane produced WHILE detached. Those never reach this host until
+/// the reattach asks for them — `detach()` drops the subscription and keeps only the stream's
+/// byte offset, and `rebindRelay` re-subscribes there, so the detached window is superd's ring.
+/// That path needs a real daemon and belongs with the `SuperdFixture` suites.
 ///
 /// Driven WITHOUT a PTY or `startRelay()` (hang-safety): the unspawned ``PTYProcess`` is never
-/// read; the detached-era producer is simulated via `enqueueChunkForTesting` (the exact
-/// production `onChunk` accounting+append), and `rebindRelay` restarts the REAL drain against
-/// recording sub-channels.
+/// read; the producer is simulated via `enqueueChunkForTesting` (the exact production `onChunk`
+/// accounting+append), and `rebindRelay` restarts the REAL drain against recording sub-channels.
+/// Never having run `startRelay()` is also what keeps the injected gate: with no subscription to
+/// re-open, the rebind leaves the pair alone.
 ///
 /// REVERT-TO-FAIL: restoring `outFIFO.removeAll()` (without a matching gate dequeue) in
-/// `rebindRelay` makes BOTH tests fail — the recorder never sees the detached-era bytes, and
-/// the gate stays at full `outstanding` with the read loop paused forever.
+/// `rebindRelay` makes BOTH tests fail — the recorder never sees the carried frames, and the
+/// gate stays at full `outstanding` with the read loop paused forever.
 final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
-    /// Visible text followed by a CLOSED alt-screen segment — a whole TUI redrawing itself, which
-    /// pass 2 of the linked transform drops. The transform is no longer injectable, so a case that
-    /// wants to observe it running has to feed it bytes it demonstrably changes.
-    private static func churn(_ visible: String) -> Data {
-        Data("\(visible)\u{1B}[?1049hDRAW\n\u{1B}[?1049l".utf8)
-    }
-
     // MARK: - Helpers
 
     /// Records every framed byte a sub-channel's `muxSend` writes and decodes them back into
@@ -122,20 +121,21 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         }
     }
 
-    // MARK: - Bug 1 — detached-era output must survive the reattach
+    // MARK: - Bug 1 — unsent FIFO frames must survive the reattach
 
-    /// Output produced while detached (accumulated in the out-FIFO, never sequenced into the
-    /// ReplayBuffer) must be DELIVERED on the new data sub-channel after `rebindRelay` — the
-    /// "lossless reconnect" promise covers exactly the window the user was away.
-    func testDetachedWindowOutputIsDeliveredAfterReattach() async {
+    /// Frames the cancelled drain never sent (in the out-FIFO, never sequenced into the
+    /// ReplayBuffer) must be DELIVERED on the new data sub-channel after `rebindRelay`. Nothing
+    /// else can recover them: `replayTail` has no seqs for them, and the offset resume starts
+    /// PAST them.
+    func testUnsentFIFOFramesAreDeliveredAfterReattach() async {
         let session = makeSession()
         session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
 
         session.detach(onDetachedExit: { _ in })
 
-        // The still-running command prints while the client is away: the read loop appends to
-        // the FIFO (accounting into the gate), but with the drain cancelled no seq is assigned
-        // and nothing enters the ReplayBuffer — replayTail can NOT replay these bytes.
+        // Ingested-but-unsent frames, exactly as `onChunk` leaves them when detach cancels the
+        // drain mid-flight: appended to the FIFO and accounted into the gate, with no seq
+        // assigned and nothing in the ReplayBuffer.
         let away1 = Data("while-you-were-away-1\n".utf8)
         let away2 = Data("while-you-were-away-2\n".utf8)
         session.enqueueChunkForTesting(bytes: away1)
@@ -151,33 +151,29 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         await waitUntil { recorder.outputBytes == expected }
         XCTAssertEqual(
             recorder.outputBytes, expected,
-            "the detached-window output must be shipped to the returning client by the restarted drain "
-                + "(it was never in the ReplayBuffer, so clearing the FIFO would drop it permanently)",
+            "the carried frames must be shipped to the returning client by the restarted drain "
+                + "(they were never in the ReplayBuffer, so clearing the FIFO would drop them permanently)",
         )
     }
 
     // MARK: - Bug 2 — gate accounting must rebalance so the pane never freezes
 
-    /// A busy detached window fills the bounded-queue gate and pauses the read loop. After
-    /// reattach the drain must send the backlog AND dequeue its gate accounting — `outstanding`
-    /// returns to 0 and the loop resumes. (The old `outFIFO.removeAll()` dropped the bytes
-    /// WITHOUT any gate dequeue, leaving `outstanding ≥ capacity` forever: the read loop stayed
-    /// paused and the pane went permanently silent.)
+    /// Carried frames past the bound pause the read loop. After reattach the drain must send them
+    /// AND dequeue their gate accounting — `outstanding` returns to 0 and the loop resumes. (The
+    /// old `outFIFO.removeAll()` dropped the bytes WITHOUT any gate dequeue, leaving
+    /// `outstanding ≥ capacity` forever: the read loop stayed paused and the pane went
+    /// permanently silent.)
     func testReattachRebalancesGateAndResumesPausedReadLoop() async {
         let rec = PauseRec()
         let session = makeSession()
-        // Tiny capacity so the detached-era backlog crosses the bound (production: 64 KiB).
+        // Tiny capacity so the carried frames cross the bound (production: 64 KiB).
         let gate = PausableQueueGate(capacity: 32) { rec.apply($0) }
         session.installGateForTesting(gate)
 
         session.detach(onDetachedExit: { _ in })
 
         session.enqueueChunkForTesting(bytes: Data(repeating: 0x61, count: 40))
-        // (Since the detached-budget re-sizing, the 40-byte backlog no longer pauses the loop —
-        // detach() raised the bound. The leak this test guards against is now caught by the
-        // `gate.outstanding == 0` assert below: the old bug cleared the FIFO WITHOUT dequeuing
-        // its accounting, stranding `outstanding` forever.)
-        XCTAssertEqual(gate.outstanding, 40, "precondition: the backlog is accounted in the gate")
+        XCTAssertEqual(gate.outstanding, 40, "precondition: the carried frame is accounted in the gate")
 
         let recorder = SendRecorder()
         let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
@@ -193,43 +189,6 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
             rec.isPaused,
             "the read loop must RESUME after reattach (a leaked full gate froze the pane forever)",
         )
-    }
-
-    // MARK: - Detached queue budget (loosened caps: agent keeps running while away)
-
-    /// detach() re-sizes the gate from the attached LATENCY bound to the detached "output
-    /// while away" budget: a burst far past the attached bound must NOT pause the read loop
-    /// while detached (the old behaviour stalled a still-working agent at 64 KiB + one kernel
-    /// buffer). rebindRelay restores the attached bound — the backlog re-pauses the loop until
-    /// the restarted drain ships it, which is exactly the rebalance the sibling tests pin.
-    func testDetachRaisesQueueBudgetSoAwayOutputDoesNotStallAgent() async {
-        let rec = PauseRec()
-        let session = makeSession()
-        let gate = PausableQueueGate(capacity: 64 * 1024) { rec.apply($0) } // attached sizing
-        session.installGateForTesting(gate)
-
-        session.detach(onDetachedExit: { _ in })
-        // 1 MiB of while-away output — 16× the attached bound.
-        for _ in 0..<16 {
-            session.enqueueChunkForTesting(bytes: Data(repeating: 0x61, count: 64 * 1024))
-        }
-        XCTAssertFalse(
-            rec.isPaused,
-            "detached output within the detached budget must never pause the read loop (agent stall)",
-        )
-
-        // Reattach: the attached bound returns; the >64 KiB backlog re-pauses the loop, the
-        // restarted drain ships it and the gate rebalances (loop resumes).
-        let recorder = SendRecorder()
-        let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
-        let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
-        // The recording channel has no real peer granting window updates — top up the send
-        // window so the whole 1 MiB backlog (+ frame overhead) can ship without suspending.
-        await newData.grantCredit(4 * 1024 * 1024)
-        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
-        await waitUntil { recorder.outputBytes.count == 16 * 64 * 1024 && !rec.isPaused }
-        XCTAssertEqual(recorder.outputBytes.count, 16 * 64 * 1024, "the whole away-backlog ships on reattach")
-        XCTAssertFalse(rec.isPaused, "gate rebalances back below the restored attached bound")
     }
 
     // MARK: - Control wake must be installed before the output drain runs
@@ -296,73 +255,6 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
             recorder.allMessages.contains(.title("away-title")),
             "the detached-window title sniffed off the backlog must reach the new control channel",
         )
-    }
-
-    // MARK: - Cold-client backlog transform (reconnect-while-Claude-runs hygiene)
-
-    /// COLD reattach (`transformDetachedBacklog: true` — the client presented seq 0, a fresh
-    /// surface): the detached-window backlog must ship TRANSFORMED (it is history to a terminal
-    /// that has rendered nothing — raw live-TUI churn would replay for seconds and render wrong
-    /// at the new geometry), and the gate accounting must rebalance by the shrink delta so the
-    /// books still reach zero once the drain ships the smaller backlog.
-    func testColdReattachTransformsDetachedBacklog() async {
-        let session = MuxChannelSession(
-            channelID: 1,
-            pty: unattachedPTY(),
-            data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
-            control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
-            replay: ReplayBuffer(scrollbackBytes: 4096),
-        )
-        let gate = PausableQueueGate(capacity: 1_000_000) { _ in }
-        session.installGateForTesting(gate)
-        session.detach(onDetachedExit: { _ in })
-
-        let first = Self.churn("churn1\n"), second = Self.churn("churn2\n")
-        session.enqueueChunkForTesting(bytes: first)
-        session.enqueueChunkForTesting(bytes: second)
-        XCTAssertEqual(gate.outstanding, first.count + second.count, "precondition: raw backlog accounted")
-
-        let recorder = SendRecorder()
-        let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
-        let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
-        XCTAssertTrue(session.rebindRelay(
-            data: newData, control: newControl, onExit: nil, transformDetachedBacklog: true,
-        ))
-
-        let expected = Data("churn1\nchurn2\n".utf8)
-        XCTAssertLessThan(expected.count, first.count + second.count, "the transform must actually shrink it")
-        await waitUntil { recorder.outputBytes == expected && gate.outstanding == 0 }
-        XCTAssertEqual(recorder.outputBytes, expected, "cold backlog ships transformed")
-        XCTAssertEqual(
-            gate.outstanding, 0,
-            "compaction dequeues the shrink delta and the drain dequeues the rest — no leaked bytes",
-        )
-    }
-
-    /// WARM reattach (default `transformDetachedBacklog: false`): the backlog ships RAW —
-    /// the client's live grid needs byte-exact continuation.
-    func testWarmReattachKeepsRawDetachedBacklog() async {
-        let session = MuxChannelSession(
-            channelID: 1,
-            pty: unattachedPTY(),
-            data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
-            control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
-            replay: ReplayBuffer(scrollbackBytes: 4096),
-        )
-        session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
-        session.detach(onDetachedExit: { _ in })
-        // Carries a closed segment the cold path WOULD strip, so byte-exactness here is evidence
-        // the transform did not run rather than evidence it had nothing to do.
-        let raw = Self.churn("raw bytes\n")
-        session.enqueueChunkForTesting(bytes: raw)
-
-        let recorder = SendRecorder()
-        let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
-        let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
-        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
-
-        await waitUntil { recorder.outputBytes == raw }
-        XCTAssertEqual(recorder.outputBytes, raw, "warm backlog stays byte-exact")
     }
 
     // MARK: - rebindRelay must NOT register a second PTY exit waiter

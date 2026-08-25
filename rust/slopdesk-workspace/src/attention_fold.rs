@@ -162,7 +162,7 @@ pub const fn badge_clear_settles(status: ClaudeStatus) -> bool {
 /// removed its key on the empty push so the row falls back down its own chain rather than titling
 /// itself with a blank.
 ///
-/// Trimming is the Unicode White_Space set, which is the same set the near side's
+/// Trimming is the Unicode `White_Space` set, which is the same set the near side's
 /// `whitespacesAndNewlines` names — so a non-breaking space is whitespace on both sides of the
 /// boundary rather than a label that looks empty and is not.
 #[must_use]

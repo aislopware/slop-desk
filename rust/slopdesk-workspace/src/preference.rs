@@ -2,31 +2,31 @@
 //!
 //! The settings themselves are `slopdesk-settings`: every key, its domain, its default, and the
 //! resolver that reads a `config.toml` against that table. Nothing here restates any of that — a
-//! rule in this module never learns a PATH, never holds a default and never repairs a token, because
-//! all three of those are answered one crate down before a value reaches this side at all.
+//! rule in this module never learns a PATH, never holds a default and never repairs a token,
+//! because all three of those are answered one crate down before a value reaches this side at all.
 //!
-//! What is left is the three decisions the app makes ABOUT its own preference surface, none of which
-//! a config file can state:
+//! What is left is the three decisions the app makes ABOUT its own preference surface, none of
+//! which a config file can state:
 //!
-//! - [`state_suite_source`] — which `UserDefaults` store this process binds. Not a setting: the four
-//!   keys it backs are things the app LEARNED (a window frame, a panel width), and which store they
-//!   land in is decided by whether this process is a test worker.
+//! - [`state_suite_source`] — which `UserDefaults` store this process binds. Not a setting: the
+//!   four keys it backs are things the app LEARNED (a window frame, a panel width), and which store
+//!   they land in is decided by whether this process is a test worker.
 //! - [`zoom`] and [`effective_font_size`] — the runtime font-size band ⌘± moves inside. Also not a
 //!   setting: the size the FILE may state is `terminal.font-size`, whose domain is the table's
 //!   (`4.0..=96.0`); this is the much narrower band a KEY PRESS may reach, and it is deliberately
 //!   ephemeral — zooming is a thing you do to read a stack trace, not a preference you are stating.
 //! - [`hint_patterns`] — the zip of the two parallel Hint Mode lists. The file carries the regexes
 //!   and their actions as two arrays rather than an array of tables, because the common case (a
-//!   pattern with no action) would otherwise be noisier to write than the whole feature is worth. So
-//!   the pairing is this side's rule, and it has three cases the file's shape cannot express.
+//!   pattern with no action) would otherwise be noisier to write than the whole feature is worth.
+//!   So the pairing is this side's rule, and it has three cases the file's shape cannot express.
 //!
 //! ## Nothing here learns a string
 //!
-//! [`hint_patterns`] is handed one EMPTINESS flag per entry of each list and answers [`HintSlot`]s —
-//! positions into the pattern list the caller still holds — for the same reason
+//! [`hint_patterns`] is handed one EMPTINESS flag per entry of each list and answers [`HintSlot`]s
+//! — positions into the pattern list the caller still holds — for the same reason
 //! [`push`](crate::store_rollup::push) is handed roles: a regex and its action template are the
-//! user's own text, the rule reads exactly one bit of each, and marshalling them across to have them
-//! handed back unchanged would be the whole cost of the feature for nothing.
+//! user's own text, the rule reads exactly one bit of each, and marshalling them across to have
+//! them handed back unchanged would be the whole cost of the feature for nothing.
 //!
 //! [`state_suite_source`] is the same shape at a different width: it answers WHICH of the three
 //! candidates wins, and the caller reads back the name it already had.
@@ -95,13 +95,13 @@ pub const FONT_SIZE_STEP: f64 = 1.0;
 
 /// `size` held inside the zoom band, NaN-faithfully.
 ///
-/// [`f64::max`] and [`f64::min`] rather than a `<`/`>` ternary or [`f64::clamp`], and the difference
-/// is not cosmetic: both of these are IEEE-ordered, so a `NaN` takes the bound rather than
-/// propagating through it, and `f64::clamp` would additionally assert its own arguments are ordered.
-/// The answer is therefore always a finite point size inside the band, for EVERY input — which is
-/// what lets [`zoom`] below compare two of them by subtraction.
+/// [`f64::max`] and [`f64::min`] rather than a `<`/`>` ternary or [`f64::clamp`], and the
+/// difference is not cosmetic: both of these are IEEE-ordered, so a `NaN` takes the bound rather
+/// than propagating through it, and `f64::clamp` would additionally assert its own arguments are
+/// ordered. The answer is therefore always a finite point size inside the band, for EVERY input —
+/// which is what lets [`zoom`] below compare two of them by subtraction.
 #[must_use]
-pub fn clamp_font_size(size: f64) -> f64 {
+pub const fn clamp_font_size(size: f64) -> f64 {
     f64::max(FONT_SIZE_MIN, f64::min(FONT_SIZE_MAX, size))
 }
 
@@ -144,10 +144,10 @@ pub fn zoom(configured: f64, delta: f64, press: Zoom) -> Option<f64> {
 /// The delta that puts the terminal at `requested`, or `None` when `requested` clamps back to where
 /// it already is.
 ///
-/// The comparison is a SUBTRACTION against zero rather than an equality between two sizes, and it is
-/// the same predicate: [`clamp_font_size`] answers inside `[FONT_SIZE_MIN, FONT_SIZE_MAX]` for every
-/// input — a NaN takes a bound rather than propagating — so both sides here are finite, and the
-/// difference of two finite doubles is zero exactly when they are equal.
+/// The comparison is a SUBTRACTION against zero rather than an equality between two sizes, and it
+/// is the same predicate: [`clamp_font_size`] answers inside `[FONT_SIZE_MIN, FONT_SIZE_MAX]` for
+/// every input — a NaN takes a bound rather than propagating — so both sides here are finite, and
+/// the difference of two finite doubles is zero exactly when they are equal.
 fn landed(configured: f64, effective: f64, requested: f64) -> Option<f64> {
     let clamped = clamp_font_size(requested);
     let step = clamped - effective;
@@ -168,11 +168,11 @@ pub struct HintSlot {
 /// Both arguments carry one EMPTINESS flag per entry, in the file's own order. Three cases, and
 /// each one is a thing a hand-written file does:
 ///
-/// - **An empty PATTERN is dropped.** An empty regex matches everything, so a stray `""` left in the
-///   array while editing would label every character on screen.
-/// - **An action list SHORTER than the pattern list** leaves the trailing patterns without one. This
-///   is the common shape: actions are the exception, so a reader writes as many as they need and
-///   stops.
+/// - **An empty PATTERN is dropped.** An empty regex matches everything, so a stray `""` left in
+///   the array while editing would label every character on screen.
+/// - **An action list SHORTER than the pattern list** leaves the trailing patterns without one.
+///   This is the common shape: actions are the exception, so a reader writes as many as they need
+///   and stops.
 /// - **An empty ACTION is no action**, exactly as an absent one is. A zero-length template and a
 ///   missing template behave identically at the actuation site, so telling them apart would name a
 ///   distinction nothing downstream can act on.
@@ -185,9 +185,11 @@ pub fn hint_patterns(patterns_empty: &[bool], actions_empty: &[bool]) -> Vec<Hin
         .iter()
         .enumerate()
         .filter(|&(_, empty)| !*empty)
-        .map(|(pattern, _)| HintSlot {
-            pattern,
-            has_action: actions_empty.get(pattern).is_some_and(|empty| !*empty),
+        .map(|(pattern, _)| {
+            HintSlot {
+                pattern,
+                has_action: actions_empty.get(pattern).is_some_and(|empty| !*empty),
+            }
         })
         .collect()
 }
@@ -203,10 +205,7 @@ mod tests {
     /// must not be able to redirect a parallel worker's writes back onto one shared domain.
     #[test]
     fn the_test_process_suite_outranks_the_environment() {
-        assert_eq!(
-            state_suite_source(true, Some("run.42")),
-            SuiteSource::TestProcess
-        );
+        assert_eq!(state_suite_source(true, Some("run.42")), SuiteSource::TestProcess);
         assert_eq!(state_suite_source(true, None), SuiteSource::TestProcess);
     }
 
@@ -285,8 +284,8 @@ mod tests {
         );
     }
 
-    /// A press that arrives with the delta out past the band lands back INSIDE it, because the delta
-    /// is recomputed from the clamped size rather than added to.
+    /// A press that arrives with the delta out past the band lands back INSIDE it, because the
+    /// delta is recomputed from the clamped size rather than added to.
     #[test]
     fn a_press_pulls_an_out_of_band_delta_back() {
         assert_eq!(

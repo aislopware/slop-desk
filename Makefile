@@ -213,9 +213,14 @@ invariants-test: ## cargo test for the ratchets and their break-tests
 # prints its findings and the gate still passes. `if` yields 0 for the empty list and the
 # tool's own exit status otherwise. Same tools, flags and file set as the CI `shell` job, so local
 # green implies CI green rather than the reverse.
+#
+# `strip` is load-bearing for the same reason, one layer down: two empty `$(wildcard …)` still join
+# with the SPACE between them, and `[ -n " " ]` is true — the guard fired, shellcheck was handed no
+# files, and printed its usage with exit 3. Now that every script in this repo is Rust that empty
+# list is the ORDINARY case, not the odd one.
 lint-shell: ## shellcheck + shfmt --diff
-	@if [ -n "$(SHELL_FILES)" ]; then shellcheck $(SHELL_FILES); fi
-	@if [ -n "$(SHELL_FILES)" ]; then shfmt $(SHFMT_FLAGS) -d $(SHELL_FILES); fi
+	@if [ -n "$(strip $(SHELL_FILES))" ]; then shellcheck $(SHELL_FILES); fi
+	@if [ -n "$(strip $(SHELL_FILES))" ]; then shfmt $(SHFMT_FLAGS) -d $(SHELL_FILES); fi
 
 # Rust: clippy at all/pedantic/nursery/cargo + a curated restriction slice, every group DENY
 # (rust/Cargo.toml `[workspace.lints]`), so `-D warnings` is the belt to those braces. `--all-targets`
@@ -894,7 +899,7 @@ host-status: ## Report the running hostd (pid, port, flags) and superd's child c
 # any more (docs/51), so every test that needs a real pty boots a private daemon and SKIPS without
 # the binary (`SuperdFixture`). A bare `swift test` on a clean checkout still works and still never
 # sees cargo — it just reports those tests skipped, by name.
-test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the operator tools) + swift test with the green-tree cache
+test: ffi hook-test invariants-test devtools-test ctl-test probe-test posix-test ffi-test git-test superd-test screend-test dropd-test androidd-test inspectord-test wire-test altscreen-test muxsession-test fuzzy-test devicelog-test devicepanel-test superwire-test hookevent-test rowscan-test video-test gfsimd-test apple-cgevent-test apple-cgwindow-test apple-cgdisplay-test apple-power-test apple-app-test apple-cursor-test apple-ax-test apple-text-test apple-vt-test apple-audio-test audio-out-test apple-sck-test panecensus-test workspace-test ids-test tree-test settings-test codepanel-test agent-test terminal-test cli-test hostlaunch-test sidecars-test codeseed-test provision-test ctl superd screend dropd androidd inspectord ## cargo test (relay + agent CLI + metadata probe + the unsafe surface + the C ABI + the git engine + custodian + screen engine + file drop + android bridge + inspector + wire codec + alt-screen cut scanner + one pane session's decisions + fuzzy matcher + device console grammars + device panel decisions + superd framing + hook bodies + row scans + FEC codec + SIMD kernels + CoreGraphics injection + the window and display lists + the two sleep assertions + the running-application reads + the cursor shape + the accessibility tree + the Core Text family name + the VideoToolbox session + the AudioToolbox codecs + client audio output + the capture stream + one pane's process and port census + workspace rules + identity + the document tree + the settings catalogue + the code panel dressing + agent detection + terminal input + CLI core + hostd's launch + sidecar versions + code-server profile + the pinned-dependency provisioner + the operator tools) + swift test with the green-tree cache
 	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-gate -- pre-push
 
 # `superd` for the same load-bearing reason as `test:` above, and it matters MORE here: this is the
@@ -948,7 +953,7 @@ tool-versions: ## Show which sidecars changed since the last release, and the bu
 	cd rust/slopdesk-devtools && cargo run --release --quiet --bin slopdesk-release -- bump-tools --dry-run
 
 # ---------------------------------------------------------------------------- #
-.PHONY: provision provision-check
+.PHONY: provision provision-check provision-test
 # The panel's RUNTIME deps (code-server, baguette, adb, scrcpy-server), pinned by URL + SHA-256 in
 # ThirdParty/tools/tools.lock. Not part of `build` or `test`: the whole Swift package builds and
 # tests headless without any of them, and provisioning downloads ~250 MB.
@@ -959,6 +964,14 @@ provision: ## Fetch + verify the pinned host-side runtime deps into ThirdParty/t
 
 provision-check: ## Report which pinned deps are present; download nothing
 	cd rust/slopdesk-provision && cargo run --release --quiet -- --check
+
+# The crate's OWN suite: the lock parser, the archive readers and the digest walk. It is in `test`
+# even though `provision` is not in `build`, and the two facts do not conflict — running the tests
+# opens no socket and downloads nothing, while the target above is the one that transfers 250 MB.
+# `check-reach` is what insists on the distinction: a crate that carries tests and has no target
+# reports green about code nobody ran.
+provision-test: ## cargo test for the pinned-dependency provisioner
+	cd rust/slopdesk-provision && cargo test
 
 # ---------------------------------------------------------------------------- #
 .PHONY: install-tools hooks

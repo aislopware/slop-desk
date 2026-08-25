@@ -39,13 +39,15 @@ typealias MuxSubscriberID = UInt64
 /// the drain brings the queue back under the bound.
 ///
 /// ### Detach / reattach (tmux-style survival)
-/// On client disconnect with detach enabled, ``detach()`` runs instead of
-/// ``shutdown()``: it cancels the relay tasks and engages the ReplayBuffer's offline gate to pause
-/// the PTY drain, but does NOT stop/close the ``PaneOutputStream`` — `stop()` is irreversible. The shell
-/// (and the paused read loop) survive. On return, ``rebindRelay(data:control:)`` swaps the stale
-/// sub-channels, KEEPS the out-FIFO (its chunks were never sequenced into the ReplayBuffer — they
-/// are the detached-window output the restarted drain must ship), clears the stateless control-out,
-/// rebuilds the wake streams, and restarts the relay tasks.
+/// On client disconnect with detach enabled, ``detach()`` runs instead of ``shutdown()``: it cancels
+/// the relay tasks and DROPS this pane's supervised output subscription, keeping only the byte
+/// OFFSET the stream had reached. The shell survives, and it keeps running at full speed — superd's
+/// pump drains the master into its ring with or without a subscriber, so nothing about being
+/// detached backpressures the agent. On return, ``rebindRelay(data:control:onExit:)`` swaps the
+/// stale sub-channels, re-subscribes at that offset (the detached window arrives from superd's ring,
+/// with an announced gap if it has evicted past it), KEEPS the out-FIFO (its frames were never
+/// sequenced into the ReplayBuffer, so the cancelled drain's leftovers are only recoverable there),
+/// clears the stateless control-out, rebuilds the wake streams, and restarts the relay tasks.
 ///
 /// `@unchecked Sendable`: mutable state is touched under `taskLock` / `replayLock` / the
 /// ``PausableQueueGate``'s own lock; the PTY/channels are themselves thread-safe.
@@ -517,11 +519,6 @@ final class MuxChannelSession: @unchecked Sendable {
     private let taskLock = NSLock()
     private var replay: ReplayBuffer
     private let replayLock = NSLock()
-    /// The replay transform (``ScrollbackReplayTransform``), captured at init from the injected
-    /// ``ReplayBuffer/scrollbackDistiller`` so ``compactDetachedBacklogForColdClient()`` can run
-    /// the SAME pipeline over the out-FIFO's detached-window backlog without touching `replay`
-    /// under a lock (the field is immutable; the pre-concurrency init read is race-free).
-    private let coldBacklogTransform: (@Sendable (Data) -> Data)?
 
     /// State-transfer replay (docs/DECISIONS.md 2026-07-25): compose the reattach replay by
     /// RENDERING the screen model once instead of replaying (however distilled) byte history.
@@ -529,8 +526,8 @@ final class MuxChannelSession: @unchecked Sendable {
         /// `(raw chronological history, rows, cols) -> rendered snapshot stream`
         /// (``TerminalReplaySnapshot/compose(raw:rows:cols:)`` in production).
         let compose: @Sendable (Data, Int, Int) -> Data
-        /// A WARM reconnect whose pending raw replay (un-acked tail + detached FIFO backlog)
-        /// meets this many bytes is snapshotted (the rendered preamble wipes the live grid);
+        /// A WARM reconnect whose pending raw replay (the un-acked tail) meets this many bytes is
+        /// snapshotted (the rendered preamble wipes the live grid);
         /// below it the tail replays raw, byte-exact. Cold clients always snapshot.
         let warmThresholdBytes: Int
     }
@@ -560,9 +557,8 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Index-cursor deque head for `outFIFO` (guarded by `fifoLock`, like the array). Producers
     /// APPEND only; the drain pops by advancing this cursor instead of `Array.removeFirst()` —
-    /// which is an O(count) memmove per pop, and a DETACHED session accumulates one entry per
-    /// PTY `read()` (nothing drains) up to the 64 MiB budget, so the reattach drain would pay
-    /// O(n²) element shifts (~10^11 at a full kernel-chunk backlog — a huge reattach stall).
+    /// which is an O(count) memmove per pop, so a burst that outruns the drain (one entry per
+    /// supervised chunk) would pay O(n²) element shifts across the catch-up.
     /// ``advanceFIFOHead()`` bulk-compacts the consumed prefix (amortized O(1) per pop).
     /// Invariant: `0 <= fifoHead <= outFIFO.count`; entries below `fifoHead` are consumed.
     /// `outFIFO` is never cleared/reassigned anywhere else, so no other reset site is needed.
@@ -665,54 +661,6 @@ final class MuxChannelSession: @unchecked Sendable {
         return .output(bytes: bytes, byteCount: byteCount, control: control)
     }
 
-    /// Replaces the out-FIFO's detached-window chunk backlog with its replay-transformed
-    /// equivalent — the un-sequenced counterpart of ``ReplayBuffer/replay(after:)``'s cold path.
-    ///
-    /// Called ONLY from ``rebindRelay`` with `transformDetachedBacklog: true` (a COLD client),
-    /// BEFORE the output drain restarts: bytes produced while detached live in the out-FIFO (seq
-    /// assignment happens at drain time), so the ring/tail transform inside the ReplayBuffer
-    /// never sees them — without this pass a client whose Claude Code ran detached for hours
-    /// receives up to the detached budget (64 MiB) of raw repaint churn AFTER the clean replay.
-    ///
-    /// The chunk prefix is snapshotted under `fifoLock`, transformed UNLOCKED (the transform is
-    /// seconds-scale on a full budget; producers may append meanwhile), then spliced back under
-    /// the lock. The splice range stays valid across the unlock: only the drain advances
-    /// `fifoHead` (not running yet) and producers only append past the snapshot — appended
-    /// chunks stay chronologically AFTER the transformed block. Sniffed control messages ride
-    /// the single replacement chunk in order (same coalescing `takeMergedFrame` performs).
-    /// The queue-gate accounting is rebalanced by the size delta so the books still sum to zero
-    /// after the backlog ships (a leaked positive residue would wedge the read loop paused).
-    private func compactDetachedBacklogForColdClient() {
-        guard let transform = coldBacklogTransform else { return }
-        fifoLock.lock()
-        var chunkEnd = fifoHead
-        var raw = Data()
-        var control: [WireMessage] = []
-        while chunkEnd < outFIFO.count, case let .chunk(bytes, chunkControl) = outFIFO[chunkEnd] {
-            raw.append(bytes)
-            control.append(contentsOf: chunkControl)
-            chunkEnd += 1
-        }
-        let spliceRange = fifoHead..<chunkEnd
-        fifoLock.unlock()
-        guard !raw.isEmpty else { return }
-        let cleaned = transform(raw)
-        var replacement: [OutputItem] = []
-        // An all-churn backlog can clean to zero bytes; the sniffed control must still ship.
-        if !cleaned.isEmpty || !control.isEmpty {
-            replacement.append(.chunk(bytes: cleaned, control: control))
-        }
-        fifoLock.lock()
-        outFIFO.replaceSubrange(spliceRange, with: replacement)
-        fifoLock.unlock()
-        let delta = raw.count - cleaned.count
-        if delta > 0 {
-            outputGate?.dequeue(delta)
-        } else if delta < 0 {
-            outputGate?.enqueue(-delta)
-        }
-    }
-
     /// EOF latch: set true by ``PaneOutputStream``'s `onEOF` once superd has drained the
     /// master to EOF — which, per the read-loop contract, happens only AFTER every buffered output chunk
     /// has been yielded into the FIFO. The exit task awaits this before yielding `.exit`, so the
@@ -720,6 +668,25 @@ final class MuxChannelSession: @unchecked Sendable {
     /// truncate the client's last screen). Guarded by `eofLock`.
     private let eofLock = NSLock()
     private var eofReached = false
+
+    /// The supervised stream's RESUME CURSOR: the absolute ring offset one past the last byte this
+    /// session has ingested. Seeded with ``resumeFromOffset`` and advanced by the read loop's
+    /// `onChunk`, which is handed the offset each chunk ENDS at — the same cursor
+    /// ``PaneOutputStream/resubscribe()`` keeps for a supervisor reconnect, kept here too because a
+    /// detach DESTROYS that stream. ``detach()`` unsubscribes and leaves this behind;
+    /// ``rebindRelay`` opens a fresh subscription at exactly this offset, so the detached window is
+    /// superd's ring — not a third copy in this host. Guarded by `eofLock`: both latches are written
+    /// by the read-loop thread and read by the reattach path, both are leaves (nothing is called
+    /// while holding it), and this file's lock count is a thing to hold DOWN, not add to.
+    ///
+    /// The seeds fall out without a special case. A fresh spawn seeds `0` — the ring's start — so a
+    /// detach before the first chunk resumes from the beginning, which is the whole pane. An adopted
+    /// pane seeds its predecessor's stop offset, whose earlier bytes are already in
+    /// ``restoredScrollback``, so a detach before its first chunk still delivers them exactly once.
+    /// An adopted pane with NO recorded boundary seeds ``PaneOutputStream/fromNowOn``; detaching
+    /// before its first chunk re-opens "from now" a second time, which is the same nothing the first
+    /// subscription had — the cursor becomes real the moment one chunk lands.
+    private var streamOffset: UInt64
 
     /// Set true once the drain has actually SENT the `.exit(code:)` frame on the DATA channel.
     /// The exit task awaits this between yielding `.exit` and calling `onExit` (which triggers teardown),
@@ -958,7 +925,6 @@ final class MuxChannelSession: @unchecked Sendable {
         fold = PaneResizeFold(openedSizePassive: isSizePassive)
         self.replay = replay
         self.snapshotReplay = snapshotReplay
-        coldBacklogTransform = replay.scrollbackDistiller
         self.agentDetectEnabled = agentDetectEnabled
         agentScreenDetectEnabled = agentDetectEnabled
         self.agentPollInterval = agentPollInterval
@@ -966,6 +932,7 @@ final class MuxChannelSession: @unchecked Sendable {
         self.blocksEnabled = blocksEnabled
         self.restoredScrollback = restoredScrollback
         self.resumeFromOffset = resumeFromOffset
+        streamOffset = resumeFromOffset
         inputQueue = DispatchQueue(label: "slopdesk.host.pty-input.\(channelID)", qos: .userInitiated)
     }
 
@@ -1237,6 +1204,40 @@ final class MuxChannelSession: @unchecked Sendable {
         setClientOnline(!subscriberList().isEmpty)
     }
 
+    /// Opens this pane's supervised output subscription at `offset` and installs it together with a
+    /// fresh ``PausableQueueGate`` wired to it — the two are built as a PAIR because a gate whose
+    /// `setPaused` sink names a dead stream silently breaks the never-drop invariant (the gate would
+    /// pause a stream nobody reads while the live one keeps filling the FIFO).
+    ///
+    /// The subscription is NOT started: the caller does that after leaving whatever lock it holds,
+    /// because `subscribe` is a socket round trip, and because ``startRelay()`` seeds the FIFO in
+    /// between so restored history precedes every live byte.
+    ///
+    /// This is the ONLY place a `PaneOutputStream` is minted after init, on purpose. superd owns
+    /// `read` on the master; a rebind that opened its own reader would STEAL bytes from the pane's
+    /// other subscribers rather than observe them.
+    private func openSupervisedOutput(from offset: UInt64) -> PaneOutputStream {
+        let stream = pty.makeOutputStream(
+            fromOffset: offset,
+            onChunk: { [weak self] chunk, endOffset, sniffed, blocks in
+                // The offset is the RESUME CURSOR: `detach()` keeps it and `rebindRelay` re-opens
+                // there, which is how the detached window stays superd's ring instead of becoming a
+                // third copy in this host.
+                self?.recordStreamOffset(endOffset)
+                self?.ingestPTYChunk(chunk, sniffed: sniffed, blocks: blocks)
+            },
+            onEOF: { [weak self] in self?.signalEOFReached() },
+        )
+        stream.onLog = { [weak self] line in self?.onLog?("mux: \(line)") }
+        readLoop = stream
+        // Build the bounded-queue gate now that the read loop exists, so pause/resume is
+        // applied ATOMICALLY with the accounting (no lost-wakeup freeze).
+        outputGate = PausableQueueGate(capacity: MuxFlowControl.hostQueueCapacityBytes) { paused in
+            stream.setPaused(paused)
+        }
+        return stream
+    }
+
     func startRelay() {
         taskLock.lock()
         guard !started else { taskLock.unlock()
@@ -1262,30 +1263,14 @@ final class MuxChannelSession: @unchecked Sendable {
         // writes, `TIOCSWINSZ` and `tcgetpgrp` only. An unspawned pane's stream is EOF from the
         // start, exactly as `PTYReadLoop` was with `masterFD == -1`, so nothing below is
         // conditional on a child existing.
-        let readLoop = pty.makeOutputStream(
-            fromOffset: resumeFromOffset,
-            onChunk: { [weak self] chunk, _, sniffed, blocks in
-                // The offset is dropped on the floor here, and that is the shape of stage 27: the
-                // only thing hostd ever did with it was tell the journal how far the stream had
-                // got, and the process that numbers the stream writes the journal now.
-                self?.ingestPTYChunk(chunk, sniffed: sniffed, blocks: blocks)
-            },
-            onEOF: { [weak self] in self?.signalEOFReached() },
-        )
-        readLoop.onLog = { [weak self] line in self?.onLog?("mux: \(line)") }
-        self.readLoop = readLoop
-        // Build the bounded-queue gate now that the read loop exists, so pause/resume is
-        // applied ATOMICALLY with the accounting (no lost-wakeup freeze).
-        outputGate = PausableQueueGate(capacity: MuxFlowControl.hostQueueCapacityBytes) { paused in
-            readLoop.setPaused(paused)
-        }
+        let stream = openSupervisedOutput(from: resumeFromOffset)
         // Fresh-spawn history restore MUST land between the gate build (so its bytes are
         // accounted) and the read-loop start (so it precedes every live shell byte).
         enqueueRestoredScrollback()
         // The geometry a later life's restore parses at is superd's to record: it stamps the
         // spawn-time winsize when it forks the pane and every `resize` this session sends
         // afterwards (`PTYProcess.setWindowSize`), so there is nothing to seed here.
-        readLoop.start()
+        stream.start()
 
         startInputRelay(for: sub)
         startControlRelay(for: sub)
@@ -1630,11 +1615,18 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Non-destructively detaches the relay from its current client connection.
     ///
-    /// **The read loop is NOT stopped.** `PaneOutputStream.stop()` sets a PERMANENT `stopped`
-    /// flag (irreversible) and would prevent rebinding. Instead, `setClientOnline(false)`
-    /// engages the ReplayBuffer's 64 MiB offline gate which causes `PausableQueueGate` to
-    /// pause the read loop via its replay-pause source. The shell stays alive; the loop
-    /// parks on the `NSCondition` gate consuming zero syscalls.
+    /// **The subscription is DROPPED, and the resume cursor is what survives.** The pane's bytes
+    /// while away are superd's ring — absolute-offset addressed, with announced eviction — so hostd
+    /// buffers none of them: ``streamOffset`` records how far this session got, the stream is
+    /// unsubscribed, and ``rebindRelay`` opens a fresh subscription at exactly that offset. The
+    /// shell keeps running at full speed: superd's pump keeps draining the master into its ring
+    /// whether or not anyone is subscribed, and losing the last subscriber CLEARS the pause
+    /// (`docs/51` §6.5), so a detached agent is never the one that blocks.
+    ///
+    /// This is why the read loop is not merely paused. Pausing it (the old shape) transitively
+    /// backpressured the SHELL through the kernel PTY buffer the moment the host-side queue filled,
+    /// which is the exact failure `docs/51` exists to prevent — the detached budget only chose how
+    /// long a detached agent ran before it froze.
     ///
     /// **onExit is rewired before detach completes** so a shell that exits WHILE IN THE
     /// STORE fires `onDetachedExit` (provided by the caller) rather than a handler the
@@ -1651,8 +1643,8 @@ final class MuxChannelSession: @unchecked Sendable {
         // Idempotence: a second detach on an already-detached session — the failed-rebind re-park
         // racing handleLinkDown's own detach — must be a no-op past the exit-handler refresh above.
         // The relay tasks/continuations are already torn down, the offline gate engaged, and the
-        // queue bound already re-sized; re-running the teardown would only churn state another
-        // thread may be inspecting.
+        // subscription already dropped; re-running the teardown would only churn state another
+        // thread may be inspecting — and would re-read a resume cursor that has stopped advancing.
         if alreadyDetached {
             taskLock.unlock()
             return
@@ -1670,30 +1662,38 @@ final class MuxChannelSession: @unchecked Sendable {
         fifoLock.unlock()
         outputTask?.cancel()
         outputTask = nil
+        // Hand the pane's detached window back to superd. The cursor is already recorded — the read
+        // loop advanced it on every chunk it ingested — so all that is left is to stop consuming.
+        // `stop()` is PERMANENT for a `PaneOutputStream` (the `stopped` flag is irreversible), which
+        // is why the rebind mints a NEW one at ``streamOffset`` rather than reviving this one; both
+        // go through `PaneOutputStream`, so neither is a second `read` on the master.
+        //
+        // The GATE is deliberately left standing, holding its accounting. Its `setPaused` sink names
+        // the stream being stopped here, which is inert (a stopped stream ignores `setPaused`), and
+        // its `outstanding` is the only record of FIFO bytes the cancelled drain never shipped —
+        // `rebindRelay` carries that number onto the gate it builds around the new stream, so the
+        // books still sum to zero once the restarted drain sends them.
+        let stream = readLoop
+        readLoop = nil
         taskLock.unlock()
-        // Engage the offline gate so the PTY drain pauses: the read loop parks on its
-        // NSCondition and the kernel PTY buffer backpressures the shell.
+        stream?.stop()
+        // Nobody holds the pane, which the ReplayBuffer's retention still wants to know: with no
+        // client online its offline gate bounds what the buffer keeps for a return. There is no read
+        // loop left to pause, so this is now accounting only.
         recomputeClientOnline()
-        // Re-size the queue bound for detached life. The set is empty here, so this resolves to the
-        // "output while away" budget (``MuxFlowControl/detachedHostQueueCapacityBytes``, default
-        // 64 MiB) rather than the 64 KiB latency bound; a join restores the attached sizing. Routed
-        // through the population helper so the capacity is a function of who is listening, not of
-        // which lifecycle method last ran.
-        applyQueueCapacityForPopulation()
-        // With the client gone this is the one moment a multi-second render is FREE — fold the
-        // ring now so the eventual reattach compose is O(canonical + delta), not O(raw churn).
-        scheduleDetachedRingFold()
     }
 
     /// Rebinds the relay to a fresh pair of sub-channels from a returning client.
     ///
-    /// **Keeps the out-FIFO, clears only control-out.** FIFO chunks are never in
-    /// the ReplayBuffer (seq assignment happens at drain time, AFTER the pop), so the FIFO holds
-    /// exactly the output produced WHILE DETACHED — the restarted drain ships it after the
-    /// caller's `replayTail` (fresh seqs above every replayed seq → byte order preserved) and
-    /// dequeues its ``PausableQueueGate`` accounting as it sends, un-pausing a read loop the
-    /// detached backlog parked. Control-out IS cleared: control is stateless/re-derived (the
-    /// echo truth and block metadata are re-asserted below).
+    /// **Re-opens the supervised output at the cursor `detach()` left.** The detached window is
+    /// superd's ring, so the recovery is a `subscribe` at ``streamOffset`` and nothing else — the
+    /// resumed bytes enter the FIFO exactly as live ones do, are sequenced at drain time, and land
+    /// after the caller's `replayTail` (fresh seqs above every replayed seq → byte order preserved).
+    ///
+    /// **Keeps the out-FIFO, clears only control-out.** The FIFO can still hold frames the cancelled
+    /// drain never shipped; clearing them would drop bytes `replayTail` cannot replay (they were
+    /// never sequenced) and leak their ``PausableQueueGate`` accounting. Control-out IS cleared:
+    /// control is stateless/re-derived (the echo truth and block metadata are re-asserted below).
     ///
     /// **onExit atomicity**: `onExit` is assigned INSIDE `taskLock`, BEFORE the new `exitTask`
     /// is started, so the handler installed by `detach()` (which routes to `shutdownDetached`)
@@ -1707,11 +1707,6 @@ final class MuxChannelSession: @unchecked Sendable {
     ///   - onExit: The handler the reattached session's exit task must fire. Assigned under
     ///     `taskLock` before `exitTask` is (re)started, making the assignment atomic with the
     ///     task launch and eliminating the race between a racing exit and a post-call assignment.
-    ///   - transformDetachedBacklog: `true` for a COLD client (`channelOpen.lastReceivedSeq == 0`
-    ///     — a fresh surface that has rendered nothing). The detached-window backlog in the
-    ///     out-FIFO is then replay-transformed before the drain restarts (see
-    ///     ``compactDetachedBacklogForColdClient()``); a WARM client keeps the raw backlog —
-    ///     its live grid needs byte-exact continuation.
     ///
     /// - Precondition: `isDetached == true`. A no-op (safe) if called on a live session —
     ///   returning `false` so the caller can REFUSE the channel instead of acking a pane whose
@@ -1724,7 +1719,6 @@ final class MuxChannelSession: @unchecked Sendable {
         data newData: MuxSubChannel,
         control newControl: MuxSubChannel,
         onExit newOnExit: (@Sendable (UInt32) -> Void)?,
-        transformDetachedBacklog: Bool = false,
     ) -> Bool {
         // Lock order `fanoutLock` → `taskLock`, matching ``admitJoiner`` — the only two places that
         // hold both. Taken across the guards as well as the clear below, so the decision "this
@@ -1776,32 +1770,43 @@ final class MuxChannelSession: @unchecked Sendable {
         onExit = newOnExit
 
         // ONLY the control-out queue is dropped — the out-FIFO is KEPT (see the doc comment).
-        // Clearing the FIFO here would drop the detached-window bytes permanently (`replayTail`
-        // cannot replay them — they were never sequenced → silent transcript gap) AND leak their
-        // PausableQueueGate accounting (no matching dequeue → a ≥64 KiB detached burst would leave
-        // the read loop paused FOREVER — a frozen pane). The queue goes with the retired member,
-        // which is the REPLACE-path-only semantics this wipe always had: control is
-        // stateless/re-derived (the echo truth and block metadata are re-asserted below), and the
-        // joining member starts with an empty one.
+        // `detach()` cancels the drain where it stands, so the FIFO can hold frames the pane had
+        // already ingested and not yet sent. Clearing them here would drop those bytes permanently
+        // (`replayTail` cannot replay them — they were never sequenced → silent transcript gap; nor
+        // can the resume below, whose cursor is already PAST them) AND leak their PausableQueueGate
+        // accounting (no matching dequeue → a ≥64 KiB residue would leave the read loop paused
+        // FOREVER — a frozen pane). The queue goes with the retired member, which is the
+        // REPLACE-path-only semantics this wipe always had: control is stateless/re-derived (the
+        // echo truth and block metadata are re-asserted below), and the joining member starts with
+        // an empty one.
 
-        // Restore the ATTACHED queue sizing (detach() raised it to the detached budget — the set
-        // now has a member again, so the population helper resolves to the latency bound). With a
-        // >64 KiB detached backlog outstanding this immediately re-pauses the read loop; the
-        // restarted drain ships the backlog, dequeues its accounting, and resumes it — the exact
-        // rebalance the note above describes.
-        applyQueueCapacityForPopulation()
-
-        // COLD client: the detached-window backlog is history to a terminal that has rendered
-        // nothing — run the replay transform over it BEFORE the drain restarts (the drain would
-        // otherwise ship up to the detached budget of raw live-TUI churn, seconds of stale
-        // Claude Code repaint frames rendering wrong at the new geometry). Placed after the
-        // capacity restore so the gate rebalance below acts on the attached sizing.
-        if transformDetachedBacklog { compactDetachedBacklogForColdClient() }
+        // RE-OPEN the supervised output at the cursor `detach()` left behind. This is the whole of
+        // the detached-window recovery: superd kept pumping the master into its ring the entire time
+        // (it does that with no subscribers, and unsubscribing CLEARED the pause, so the shell never
+        // stalled), and a subscribe at `streamOffset` replays exactly the bytes produced since. It
+        // is a `subscribe`, not a `read` — superd owns the only reader on this master, and a second
+        // one would STEAL bytes from the pane rather than observe them.
+        //
+        // The gate is rebuilt with the stream because its `setPaused` sink names it; the outstanding
+        // count from the pre-detach FIFO leftovers is carried onto the new gate so the books still
+        // sum to zero when the restarted drain ships them. Sessions that never started a relay
+        // (tests that inject a gate directly) have no subscription to re-open and keep theirs.
+        //
+        // A resume older than the ring's start is LOSSY, and announced as such: `PaneOutputStream`
+        // logs the gap and sets `resumedLossily`. The window is bounded by the ring
+        // (`SLOPDESK_PANE_RING_BYTES`) and the client's own repaint on reattach covers the seam —
+        // see docs/DECISIONS.md, "the detached window is superd's ring".
+        var resumedStream: PaneOutputStream?
+        if started, readLoop == nil {
+            let carried = outputGate?.outstanding ?? 0
+            resumedStream = openSupervisedOutput(from: currentStreamOffset())
+            if carried > 0 { outputGate?.enqueue(carried) }
+        }
 
         // Build the joining member's control sender FIRST — BEFORE the output drain below exists.
-        // The restarted drain pops the detached backlog and hands its sniffed control to
+        // The restarted drain pops whatever the cancelled one left and hands its sniffed control to
         // `broadcastControl`, which reads each member's wake; were the output drain built + kicked
-        // first, it could run in the window before this member has one and strand a detached-window
+        // first, it could run in the window before this member has one and strand a carried-over
         // control message (e.g. an OSC-0/2 title change) in its queue with no wake.
         // `reestablishActivityOnReattach(to:)` re-asserts `.title`, so a stranded one is no longer
         // unrecoverable — but it would still arrive a beat late and out of order with the batch, so
@@ -1813,19 +1818,19 @@ final class MuxChannelSession: @unchecked Sendable {
         // sender above — its sniffed-control hand-off needs the member's wake already installed).
         startOutputDrain()
 
-        // Kick the restarted drain ONCE if detached-window chunks are already waiting: their
-        // producer-side wakes landed on the FINISHED old continuation (detach() nil'd it), and a
-        // shell that has gone idle since produces no future chunk to re-wake the drain — without
-        // this the retained backlog (and its gate accounting) would sit undelivered until the next
-        // PTY read. bufferingNewest(1) holds the yield until the drain task starts its for-await.
+        // Kick the restarted drain ONCE if unsent frames are already waiting: their producer-side
+        // wakes landed on the FINISHED old continuation (detach() nil'd it), and a shell that has
+        // gone idle since produces no future chunk to re-wake the drain — without this the retained
+        // frames (and their gate accounting) would sit undelivered until the next supervised chunk.
+        // bufferingNewest(1) holds the yield until the drain task starts its for-await.
         fifoLock.lock()
-        let hasDetachedBacklog = fifoHead < outFIFO.count // deque-aware "not empty"
+        let hasCarriedFrames = fifoHead < outFIFO.count // deque-aware "not empty"
         let backlogWake = outputWakeContinuation
         fifoLock.unlock()
-        if hasDetachedBacklog { backlogWake?.yield(()) }
+        if hasCarriedFrames { backlogWake?.yield(()) }
         // Race seam: fired at the EARLIEST instant the restarted output drain can be running —
         // it has been created and its backlog kick delivered. The drain's
-        // first act on a detached backlog is takeMergedFrame → broadcastControl(sniffed control),
+        // first act on a carried frame is takeMergedFrame → broadcastControl(sniffed control),
         // which reads each member's wake; the ordering test pins that the joining member's wake is
         // ALREADY installed here (the race window itself — the drain Task getting scheduled inside
         // a few rebind-thread instructions — cannot be forced deterministically from outside).
@@ -1890,6 +1895,11 @@ final class MuxChannelSession: @unchecked Sendable {
         // bufferingNewest(1)), so the wake is retained even if the drain task hasn't started its
         // `for await` loop yet — bufferingNewest(1) holds one pending yield. No output is lost.
         recomputeClientOnline()
+        // Started OUTSIDE taskLock: `subscribe` is a round trip to superd, and this file's rule is
+        // that no arbitrary wait happens under a lock the drain and the exit path also take. Ordered
+        // after `recomputeClientOnline()` so the gate's replay-pause source is already at its
+        // attached value when the first resumed chunk lands.
+        resumedStream?.start()
         return true
     }
 
@@ -1930,55 +1940,46 @@ final class MuxChannelSession: @unchecked Sendable {
         return (replay.replay(after: lastReceivedSeq), false)
     }
 
-    /// Builds the RENDERED-snapshot replay: ring + un-acked tail + the detached-window
-    /// out-FIFO backlog fed through the screen model at the live PTY size, rendered once, and
-    /// re-chunked across the replay seqs. On success the FIFO backlog is CONSUMED (spliced
-    /// out with its sniffed control preserved and its queue-gate accounting released) — its
-    /// bytes are inside the snapshot, so the restarted drain must not ship them again.
+    /// Builds the RENDERED-snapshot replay: the ring plus the un-acked tail, fed through the screen
+    /// model at the live PTY size, rendered once, and re-chunked across the replay seqs.
+    ///
+    /// It composes SEQUENCED history and nothing else. The pane's detached window is not in scope
+    /// here: those bytes are in superd's ring, and ``rebindRelay`` re-subscribes at
+    /// ``streamOffset`` AFTER this replay ships — so they reach the client on the ordinary drain,
+    /// after the snapshot, in order.
     ///
     /// Returns `nil` (compose nothing, caller falls back) when:
     /// - there are no replay seqs to carry the stream (nothing retained above
-    ///   `lastReceivedSeq` — e.g. an idle warm reconnect, or a backlog-only session);
+    ///   `lastReceivedSeq` — e.g. an idle warm reconnect);
     /// - the client is WARM and the pending raw replay is under the policy threshold
     ///   (byte-exact continuation is worth more than a wipe+re-render);
     /// - the rendered bytes exceed the seq budget's frame-cap ceiling (pathological tiny-
     ///   session expansion — the raw path is cheap there anyway).
     ///
-    /// `adopting: false` is the JOIN mode: read-only. Both destructive acts above belong to the
-    /// caller sequence [detached → drain stopped → replay → rebind] and are justified by the drain
-    /// NOT running (see ``peekDetachedBacklog()``). A join to a live session has no such window, so
-    /// it neither splices the FIFO (deleting a window of the incumbent's un-shipped, pre-seq output
-    /// that no replay could recover) nor adopts the history (rewriting the seqs the incumbent is
-    /// mid-stream on). The read-only compose therefore ignores the FIFO backlog entirely — those
-    /// bytes reach the joiner the ordinary way, on the live drain it has just joined.
+    /// `adopting: false` is the JOIN mode: read-only. Adopting the rendered stream as the retained
+    /// history belongs to the caller sequence [detached → drain stopped → replay → rebind]; a join
+    /// to a LIVE session must not do it, because that rewrites the seqs the incumbent is mid-stream
+    /// on.
     private func composeSnapshotReplay(
         after lastReceivedSeq: Int64,
         policy: SnapshotReplayPolicy,
         adopting: Bool = true,
     ) -> [WireMessage]? {
         // Cheap eligibility first — the warm-below-threshold case is EVERY ordinary
-        // reconnect, and must not pay the backlog/history copies just to say "no".
+        // reconnect, and must not pay the history copy just to say "no".
         let cold = lastReceivedSeq == 0
         if !cold {
             replayLock.lock()
             let tailBytes = replay.retainedBytes
             replayLock.unlock()
-            guard tailBytes + pendingDetachedBacklogBytes() >= policy.warmThresholdBytes else {
-                return nil
-            }
+            guard tailBytes >= policy.warmThresholdBytes else { return nil }
         }
         replayLock.lock()
         let source = replay.snapshotSource(after: lastReceivedSeq)
         replayLock.unlock()
         guard !source.replaySeqs.isEmpty else { return nil }
-        // A JOIN never touches the FIFO — not even to READ it, because bytes it rendered into the
-        // snapshot would ALSO reach the joiner when the live drain ships them.
-        let backlog = adopting ? peekDetachedBacklog() : DetachedBacklogPeek.empty
-        guard cold || source.replayBytes + backlog.bytes.count >= policy.warmThresholdBytes else {
-            return nil
-        }
-        var input = source.history
-        input.append(backlog.bytes)
+        guard cold || source.replayBytes >= policy.warmThresholdBytes else { return nil }
+        let input = source.history
         guard !input.isEmpty else { return nil }
         let size = pty.currentWindowSize()
         let rows = Int(size?.rows ?? 24)
@@ -1994,107 +1995,13 @@ final class MuxChannelSession: @unchecked Sendable {
         let messages = replay.rechunkSnapshot(rendered, across: source.replaySeqs)
         replayLock.unlock()
         guard adopting else { return messages }
-        consumeDetachedBacklog(backlog)
         // Adopt the rendered stream AS the retained history ("as if the host had emitted it
-        // all along"): the consumed backlog got no seqs of its own — without this it would
-        // exist only in the delivered bytes and vanish from every later cold replay — and the
-        // next compose parses the small canonical history instead of re-walking the raw ring.
+        // all along") so the next compose parses the small canonical history instead of
+        // re-walking the raw ring.
         replayLock.lock()
         replay.adoptSnapshotReplay(messages)
         replayLock.unlock()
         return messages
-    }
-
-    /// Below this many ring bytes a detach-time fold isn't worth a render (the next compose
-    /// walks a ring this small in well under a frame's time).
-    private static let ringFoldFloorBytes = 128 * 1024
-
-    /// Detach-time ring canonicalization: render the acked ring ONCE while nobody is waiting
-    /// (the client just left) and splice the rendered bytes back in as the ring's content.
-    /// The next cold compose — the moment the user is staring at an empty pane — then parses
-    /// O(rendered + delta) instead of the raw history (up to 64 MiB of build/test churn:
-    /// seconds of stall at the measured ~20 MiB/s model walk). The splice is
-    /// generation-guarded; any concurrent ring mutation drops the fold harmlessly.
-    private func scheduleDetachedRingFold() {
-        guard let policy = snapshotReplay else { return }
-        replayLock.lock()
-        let source = replay.ringFoldSource()
-        replayLock.unlock()
-        guard let source, source.bytes.count >= Self.ringFoldFloorBytes else { return }
-        let size = pty.currentWindowSize()
-        let rows = Int(size?.rows ?? 24)
-        let cols = Int(size?.cols ?? 80)
-        Task.detached(priority: .utility) { [weak self] in
-            let rendered = policy.compose(source.bytes, rows, cols)
-            // A render that GREW the ring would be pathological (the floor above makes it
-            // implausible) — keeping the raw bytes is strictly better then.
-            guard rendered.count < source.bytes.count else { return }
-            self?.spliceFoldedRing(rendered, from: source)
-        }
-    }
-
-    /// The sync half of ``scheduleDetachedRingFold()`` — NSLock is unavailable from async
-    /// contexts (the `snapshotReplayTailForSend` discipline).
-    private func spliceFoldedRing(_ rendered: Data, from source: ReplayBuffer.RingFoldSource) {
-        replayLock.lock()
-        replay.adoptFoldedRing(rendered, from: source)
-        replayLock.unlock()
-    }
-
-    /// A non-destructive read of the detached-window chunk backlog (the
-    /// ``compactDetachedBacklogForColdClient()`` snapshot discipline: the drain is not
-    /// running, producers only append PAST the recorded range, so the range stays valid
-    /// until ``consumeDetachedBacklog(_:)`` splices under the lock).
-    private struct DetachedBacklogPeek {
-        let bytes: Data
-        let control: [WireMessage]
-        let range: Range<Int>
-
-        /// The "read nothing, consume nothing" peek a JOIN composes against.
-        static let empty = Self(bytes: Data(), control: [], range: 0..<0)
-    }
-
-    /// Byte count of the detached-window chunk backlog WITHOUT copying it (the warm-threshold
-    /// pre-check).
-    private func pendingDetachedBacklogBytes() -> Int {
-        fifoLock.lock()
-        defer { fifoLock.unlock() }
-        var total = 0
-        var index = fifoHead
-        while index < outFIFO.count, case let .chunk(bytes, _) = outFIFO[index] {
-            total += bytes.count
-            index += 1
-        }
-        return total
-    }
-
-    private func peekDetachedBacklog() -> DetachedBacklogPeek {
-        fifoLock.lock()
-        defer { fifoLock.unlock() }
-        var end = fifoHead
-        var raw = Data()
-        var control: [WireMessage] = []
-        while end < outFIFO.count, case let .chunk(bytes, chunkControl) = outFIFO[end] {
-            raw.append(bytes)
-            control.append(contentsOf: chunkControl)
-            end += 1
-        }
-        return DetachedBacklogPeek(bytes: raw, control: control, range: fifoHead..<end)
-    }
-
-    /// Splices the peeked backlog out of the FIFO. Sniffed control still ships (an empty
-    /// replacement chunk carries it, the compactor's all-churn idiom) and the queue-gate
-    /// accounting is released for every consumed byte — a leaked positive residue would
-    /// wedge the read loop paused.
-    private func consumeDetachedBacklog(_ peek: DetachedBacklogPeek) {
-        guard !peek.range.isEmpty else { return }
-        fifoLock.lock()
-        let replacement: [OutputItem] = peek.control.isEmpty
-            ? []
-            : [.chunk(bytes: Data(), control: peek.control)]
-        outFIFO.replaceSubrange(peek.range, with: replacement)
-        fifoLock.unlock()
-        if !peek.bytes.isEmpty { outputGate?.dequeue(peek.bytes.count) }
     }
 
     /// Non-blocking check: returns `true` if the child shell has already exited (been reaped
@@ -3704,6 +3611,28 @@ final class MuxChannelSession: @unchecked Sendable {
         return eofReached
     }
 
+    /// Advances the resume cursor to where the just-ingested chunk ends.
+    ///
+    /// Monotone by `Swift.max` rather than by assignment: a cursor that ever walked backwards would
+    /// re-deliver bytes this session has already shipped, and monotonicity is cheaper to hold here
+    /// than to prove across every path that can hand back an offset.
+    ///
+    /// ``PaneOutputStream/fromNowOn`` is the one seed that is a SENTINEL and not a position — it is
+    /// `UInt64.max`, so a plain `max` would pin the cursor at it forever. The first real chunk
+    /// replaces it outright, which is exactly what "from now on" resolved to.
+    private func recordStreamOffset(_ endOffset: UInt64) { eofLock.lock()
+        streamOffset = streamOffset == PaneOutputStream.fromNowOn
+            ? endOffset
+            : Swift.max(streamOffset, endOffset)
+        eofLock.unlock()
+    }
+
+    /// Where a rebind re-opens the subscription. See ``streamOffset``.
+    private func currentStreamOffset() -> UInt64 { eofLock.lock()
+        defer { eofLock.unlock() }
+        return streamOffset
+    }
+
     /// Awaits the read loop reaching EOF (so the final tail is fully enqueued) OR a bounded timeout —
     /// whichever first — before the exit task yields `.exit`. Polling (2 ms granularity): the exit task
     /// runs once per pane, so the cost is negligible, and polling avoids a cancellation-leaked
@@ -3892,14 +3821,6 @@ extension MuxChannelSession {
         return replay.isClientOnline
     }
 
-    /// The ring's current byte total — the detach-time fold's observability seam (the splice
-    /// lands asynchronously; tests wait for the ring to shrink instead of sleeping).
-    func scrollbackRingBytesForTesting() -> Int {
-        replayLock.lock()
-        defer { replayLock.unlock() }
-        return replay.scrollbackRingBytesForTesting
-    }
-
     /// Whether an exit-waiter task exists (regression seam): only ``startRelay()`` may ever create
     /// one — `rebindRelay` must NOT cancel+recreate it, because `PTYProcess.waitForExit()` parks a
     /// plain CheckedContinuation with no cancellation plumbing, so each recreate would leave one
@@ -3980,7 +3901,6 @@ extension MuxChannelSession {
         subscribers[id] = Subscriber(id: id, data: data, control: control)
         subscribersLock.unlock()
         recomputeClientOnline()
-        applyQueueCapacityForPopulation()
         return id
     }
 
@@ -4332,8 +4252,9 @@ extension MuxChannelSession {
     ///
     /// `0` unless somebody is delivered from an OUTBOX: a pane on the inline path is already bounded
     /// by the out-FIFO's own accounting (the drain parks IN the send, so the bytes stay `outstanding`),
-    /// and an EMPTY set is the detached budget's business, not this source's. That is what keeps a
-    /// one-member pane and the whole detach/reattach sequence on the plain inline path.
+    /// and an EMPTY set has no consumer to lag behind — a parked pane has no subscription at all.
+    /// That is what keeps a one-member pane and the whole detach/reattach sequence on the plain
+    /// inline path.
     ///
     /// The frontier is a MAX, which is the entire difference between this and "the slowest member":
     /// one parked phone can never assert the pause while a Studio is still consuming. Its cost is
@@ -4348,24 +4269,6 @@ extension MuxChannelSession {
         replayLock.lock()
         defer { replayLock.unlock() }
         return replay.retainedBytes(above: frontier)
-    }
-
-    /// Sizes the bounded output queue for the CURRENT population.
-    ///
-    /// 64 KiB attached is a LATENCY bound (head-of-line delay to a consuming client); the detached
-    /// budget (default 64 MiB) is the "output while away" allowance that keeps a working agent from
-    /// stalling at 64 KiB plus one kernel buffer. Which one applies is a function of the subscriber
-    /// set being EMPTY — not of a detach/rebind pair — because with a fan-out one member leaving
-    /// says nothing about whether anybody is still consuming.
-    ///
-    /// This gate is a SECOND ledger, distinct from the ReplayBuffer's: it accounts the out-FIFO
-    /// (enqueued-not-yet-sent, single-consumer), while ``ReplayBuffer/retainedBytes`` accounts
-    /// sent-not-yet-acked. Their thresholds mean different things and must not be conflated.
-    private func applyQueueCapacityForPopulation() {
-        let capacity = subscriberList().isEmpty
-            ? MuxFlowControl.detachedHostQueueCapacityBytes
-            : MuxFlowControl.hostQueueCapacityBytes
-        outputGate?.setCapacity(capacity)
     }
 
     // MARK: - The subscriber set: join, leave, and the laggard
@@ -4496,7 +4399,6 @@ extension MuxChannelSession {
 
         startInputRelay(for: sub)
         startControlRelay(for: sub)
-        applyQueueCapacityForPopulation()
         recomputeClientOnline()
         return id
     }
@@ -4636,10 +4538,11 @@ extension MuxChannelSession {
         // Retention releases to the MIN over the members that REMAIN — a departed member's stale
         // cursor must not keep pinning the buffer for a reader that has gone.
         releaseRetentionToMinimum()
-        // The queue bound follows the population: still attached → the 64 KiB latency bound;
-        // emptied → the detached "output while away" budget, which is what `detach()` would set
-        // anyway when the caller parks the session.
-        applyQueueCapacityForPopulation()
+        // The queue bound does NOT follow the population any more: 64 KiB is a LATENCY bound, and it
+        // is the only one. An emptied set that has not yet been parked keeps draining (the drain
+        // discards a frame with no target, dequeue included), so the bound is never what an idle
+        // set backs up against; and once the caller parks it, `detach()` drops the subscription
+        // outright and the pane's bytes wait in superd's ring instead of this host's FIFO.
         return emptied
     }
 

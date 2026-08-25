@@ -302,10 +302,10 @@ const fn is_entry_whitespace(character: char) -> bool {
 #[must_use]
 pub fn parse_window_id(entered: &str) -> Option<u32> {
     let trimmed = entered.trim_matches(is_entry_whitespace);
-    let (negative, digits) = match trimmed.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
-    };
+    let (negative, digits) = trimmed.strip_prefix('-').map_or_else(
+        || (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
+        |rest| (true, rest),
+    );
     if digits.is_empty() {
         return None;
     }
@@ -432,7 +432,7 @@ mod tests {
     /// Every id round-trips through the parser, over a sweep that includes both ends.
     #[test]
     fn every_id_survives_being_written_and_read() {
-        for id in (0_u32..4096).chain([u32::MAX / 2, u32::MAX - 1, u32::MAX]) {
+        for id in (0_u32..4096).chain([u32::MAX >> 1_u32, u32::MAX - 1, u32::MAX]) {
             assert_eq!(parse_window_id(&id.to_string()), Some(id));
             assert_eq!(parse_window_id(&format!(" {id}\u{00A0}")), Some(id));
         }

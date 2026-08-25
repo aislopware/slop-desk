@@ -68,6 +68,7 @@ public enum HostServiceRules {
             }
         }
         guard needed > 0, needed <= room.count else { return nil }
+        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: room.prefix(needed), as: UTF8.self)
     }
 
@@ -268,6 +269,7 @@ public enum HostServiceRules {
             slopdesk_host_code_cli_flag(command.rawValue, out.baseAddress, out.count)
         }
         guard needed > 0, needed <= room.count else { return [value] }
+        // swiftlint:disable:next optional_data_string_conversion
         return [String(decoding: room.prefix(needed), as: UTF8.self), value]
     }
 
@@ -288,6 +290,7 @@ public enum HostServiceRules {
             }
         }
         guard needed > 0, needed <= room.count else { return nil }
+        // swiftlint:disable:next optional_data_string_conversion
         return String(decoding: room.prefix(needed), as: UTF8.self)
     }
 

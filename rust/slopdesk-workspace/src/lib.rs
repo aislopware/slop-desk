@@ -64,8 +64,8 @@
 //! - [`gui_readout`] — what the chrome over a live desktop stream says, where every reading is
 //!   ABSENT rather than wrong.
 //! - [`remote_window`] — what a live video pane ADMITS: which telemetry sample is a reading at all,
-//!   which geometry push carries a size, what an entry field's window id is, and the two sentences a
-//!   pane says about itself.
+//!   which geometry push carries a size, what an entry field's window id is, and the two sentences
+//!   a pane says about itself.
 //! - [`window_feed`] — the host-windows rail's fold: the positions a snapshot keeps and the ones it
 //!   appends, which ack may mark the lane live, and when silence becomes staleness.
 //! - [`toast`] — the three events that raise a notification card, and what each one says.
@@ -89,6 +89,14 @@
 //! - [`preference`] — what the preference SURFACE decides about itself, once the file is already
 //!   resolved: which `UserDefaults` store this process's own state lands in, the band a zoom chord
 //!   may walk, and the zip of the two parallel Hint Mode lists.
+//! - [`pane_session`] — what a live pane may do next: how a status frame lands, whether the
+//!   inspector may attach, what its video window does about a resume or a teardown, and where a
+//!   dismissed chip routes. Nothing that is ALIVE appears — only the facts a decision reads.
+//! - [`control_request`] — the client control socket's validate-then-drop rules, answered as
+//!   OFFSETS into the caller's own line so a large request costs a comparison rather than a copy.
+//! - [`inspector_store`] — the read-only inspector CLIENT's fold over what the daemon's frame
+//!   delivered: the four card rings and their eviction, the zero-state gate, and the subagent tree
+//!   flattened to one pre-order `(position, parent)` row per rendered agent.
 //!
 //! ## Invariants
 //!
@@ -115,6 +123,7 @@ pub mod command_navigator;
 pub mod connect_form;
 pub mod connect_gate;
 pub mod connection;
+pub mod control_request;
 pub mod drop_action;
 pub mod drop_register;
 pub mod drop_zone;
@@ -125,6 +134,7 @@ pub mod global_search;
 pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
+pub mod inspector_store;
 pub mod jump;
 pub mod keybind;
 pub mod keystroke_replay;
@@ -138,6 +148,7 @@ pub mod palette_card;
 pub mod palette_rows;
 pub mod pane_drop;
 pub mod pane_facts;
+pub mod pane_session;
 pub mod pane_switcher;
 pub mod panel_tabs;
 pub mod peek_reply;

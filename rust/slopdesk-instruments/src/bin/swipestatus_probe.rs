@@ -311,8 +311,7 @@ fn main() -> ExitCode {
         viewport: VIEWPORT,
     };
     let hello_datagram = mux_header::encode_media(lane, CONTROL_TAG, &hello.encode());
-    let bye_datagram =
-        mux_header::encode_media(lane, CONTROL_TAG, &VideoControlMessage::Bye.encode());
+    let bye_datagram = mux_header::encode_media(lane, CONTROL_TAG, &VideoControlMessage::Bye.encode());
     // The cursor flow is primed with a one-byte body on the lane, exactly as the GUI client primes it.
     let prime_datagram = mux_header::encode(lane, &[0x00]);
 
@@ -328,8 +327,7 @@ fn main() -> ExitCode {
     let media_state = Arc::clone(&learned);
     let _media_thread = std::thread::spawn(move || drain_media(&media_drain, &media_state, started));
     let cursor_state = Arc::clone(&learned);
-    let _cursor_thread =
-        std::thread::spawn(move || drain_cursor(&cursor_drain, &cursor_state, started));
+    let _cursor_thread = std::thread::spawn(move || drain_cursor(&cursor_drain, &cursor_state, started));
 
     let deadline = started + Duration::from_secs_f64(options.seconds);
     let mut until_prime = 0_u32;

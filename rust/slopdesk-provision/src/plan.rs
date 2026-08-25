@@ -23,9 +23,7 @@ impl Layout {
     /// The layout rooted at a `ThirdParty/tools` directory.
     #[must_use]
     pub fn new(tools: impl Into<PathBuf>) -> Self {
-        Self {
-            tools: tools.into(),
-        }
+        Self { tools: tools.into() }
     }
 
     /// The pin file.
@@ -100,10 +98,11 @@ impl Layout {
             .url
             .rsplit('/')
             .next()
-            .filter(|segment| !segment.is_empty() && !segment.contains(['/', '\\']) && *segment != ".." && *segment != ".")
+            .filter(|segment| {
+                !segment.is_empty() && !segment.contains(['/', '\\']) && *segment != ".." && *segment != "."
+            })
             .unwrap_or(pin.name.as_str());
-        self.cache()
-            .join(format!("{}-{}-{tail}", pin.name, pin.version))
+        self.cache().join(format!("{}-{}-{tail}", pin.name, pin.version))
     }
 
     /// The relative link target, so the whole checkout stays movable — an absolute one breaks the
@@ -126,8 +125,9 @@ pub fn stamp_contents(pin: &Pin) -> String {
 /// Whether the installed copy of `pin` is the pinned one.
 ///
 /// Two facts, and BOTH are load-bearing. The binary being present says something was installed; the
-/// stamp matching says it was THIS version at THIS digest. A lock edit is exactly the case where the
-/// bytes on disk look fine and are the old bytes, and the stamp is the only thing that can tell.
+/// stamp matching says it was THIS version at THIS digest. A lock edit is exactly the case where
+/// the bytes on disk look fine and are the old bytes, and the stamp is the only thing that can
+/// tell.
 #[must_use]
 pub fn is_current(pin: &Pin, binary_exists: bool, stamp: Option<&str>) -> bool {
     binary_exists && stamp.is_some_and(|recorded| recorded.trim() == stamp_contents(pin))
@@ -239,9 +239,6 @@ mod tests {
         assert!(is_wanted(&pin(), &[]));
         assert!(is_wanted(&pin(), &["adb".to_owned()]));
         assert!(!is_wanted(&pin(), &["code-server".to_owned()]));
-        assert!(is_wanted(
-            &pin(),
-            &["code-server".to_owned(), "adb".to_owned()]
-        ));
+        assert!(is_wanted(&pin(), &["code-server".to_owned(), "adb".to_owned()]));
     }
 }

@@ -2012,15 +2012,11 @@ public final class HostServer: @unchecked Sendable {
         let rebound = session.rebindRelay(
             data: open.data,
             control: open.control,
+            // The detached window is superd's ring, so there is no client-warmth argument to pass:
+            // `rebindRelay` re-subscribes at the cursor `detach()` left and the bytes produced
+            // while nobody was attached arrive as live ones do. A cold client's fresh surface is
+            // already served by the `replayTail` above.
             onExit: { [weak self] _ in self?.removeMuxSession(key) },
-            // COLD client (fresh surface): the detached-window out-FIFO backlog is replay-
-            // transformed before the drain restarts, mirroring the ring/tail transform the
-            // replayTail above already applied. A warm client needs the raw backlog.
-            //
-            // Keyed on the VERDICT rather than on what the client asked for, so the two agree: a
-            // warm client reattaching to an adopted pane is being told to reset its marks and will
-            // render this session from scratch, which is the cold case however warm the client was.
-            transformDetachedBacklog: resumeFrom == 0,
         )
         guard rebound else {
             // The new link can die MID-REPLAY: `finishLink` parks the sub-channels and

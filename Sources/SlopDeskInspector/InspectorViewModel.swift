@@ -7,6 +7,12 @@
 ///
 /// `@MainActor` + `@Observable` so SwiftUI tracks changes automatically. It is built
 /// in the library target and compiles on macOS + iOS.
+///
+/// **The rules are not here.** The tree's shape, the empty-state gate and the five drop-oldest
+/// ladders are `slopdesk_workspace::inspector_store`, reached through ``InspectorStoreRules`` — see
+/// that file's header for what crosses and what deliberately does not. What is left is the
+/// `@Observable` writes, the arrival-order bookkeeping, and the dictionary indices that keep an
+/// upsert O(1).
 import Foundation
 
 @preconcurrency
@@ -33,21 +39,21 @@ public final class InspectorViewModel {
     /// Message timeline (user/assistant text for the main session).
     public private(set) var messages: [MessageEvent] = []
 
-    /// Drop-oldest caps so a long session (or a host emitting tens of thousands of tool calls) cannot
-    /// grow client memory without bound — `slopdesk-inspectord` already bounds its analogues (the
-    /// replay window at 50k, the builder's processed keys at 100k), so the client was the unbounded end. Eviction is batched
-    /// (cap → retain, not one-at-a-time) so it stays amortized O(1) like the host. The OUTER agent-count
-    /// dimension is bounded too: `subagentOrder` evicts the oldest agents' node + cards + index
-    /// TOGETHER so `subagentTree` never references an orphan (drop-oldest, NOT terminal-status — a
-    /// `.stopped` agent is still rendered, so status eviction would vanish a visible node).
-    static let toolCardCap = 20000
-    static let toolCardRetain = 15000
-    static let subagentCardCap = 10000
-    static let subagentCardRetain = 7500
-    static let messageCap = 20000
-    static let messageRetain = 15000
-    static let maxAgents = 2000
-    static let maxAgentsRetain = 1500
+    /// The drop-oldest CEILINGS, read out of `slopdesk_workspace::inspector_store` rather than
+    /// spelled here — the ladder and its batched retain marks are one rule, and half of it written
+    /// down on this side is the drift the port removed. See ``InspectorStoreRules``.
+    ///
+    /// They exist as members because they are what the panel and its tests talk about; the number
+    /// of entries an arrival actually evicts is ``InspectorStoreRules/overflow(_:count:)``, and no
+    /// call site below does that subtraction itself.
+    static let toolCardCap = InspectorStoreRules.cap(.toolCards)
+    /// The per-agent card ceiling. Per agent, not across them.
+    static let subagentCardCap = InspectorStoreRules.cap(.subagentCards)
+    /// The message timeline's ceiling.
+    static let messageCap = InspectorStoreRules.cap(.messages)
+    /// The distinct-agent ceiling — the OUTER dimension, whose eviction takes an agent's node,
+    /// cards and index TOGETHER so `subagentTree` never references an orphan.
+    static let maxAgents = InspectorStoreRules.cap(.agents)
     /// Insertion order of distinct agentIDs (drives the drop-oldest agent-count cap above).
     private var subagentOrder: [String] = []
 
@@ -70,7 +76,6 @@ public final class InspectorViewModel {
     /// (drop-oldest) so a malformed-feed flood cannot grow it without limit (cf. the daemon's builder
     /// unbounded-maps history).
     public private(set) var recentUnknownLines: [String] = []
-    private static let recentUnknownLinesCap = 50
 
     /// Number of oldest events the HOST replay log dropped (retention overflow) before the prefix this
     /// client subscribed from. `> 0` means the timeline starts mid-transcript; the UI
@@ -90,8 +95,13 @@ public final class InspectorViewModel {
     /// empty-id subagent must NOT suppress the placeholder while rendering nothing (the exact blank-void
     /// this gate exists to prevent — `subagentTree.isEmpty` ⟺ the subagent section renders nothing).
     public var hasRenderableActivity: Bool {
-        !toolCards.isEmpty || !todos.isEmpty || !subagentTree.isEmpty
-            || lastThinking != nil || unknownLineCount > 0
+        InspectorStoreRules.hasRenderableActivity(
+            hasToolCards: !toolCards.isEmpty,
+            hasTodos: !todos.isEmpty,
+            hasSubagentTree: !subagentTree.isEmpty,
+            hasThinking: lastThinking != nil,
+            unknownLineCount: unknownLineCount,
+        )
     }
 
     public init() {}
@@ -114,9 +124,8 @@ public final class InspectorViewModel {
             thinkingCount += 1
         case let .message(message):
             messages.append(message)
-            if messages.count > Self.messageCap {
-                messages.removeFirst(messages.count - Self.messageRetain)
-            }
+            let overflow = InspectorStoreRules.overflow(.messages, count: messages.count)
+            if overflow > 0 { messages.removeFirst(overflow) }
         case let .sessionStarted(info):
             session = info
         case let .workflow(marker):
@@ -124,9 +133,10 @@ public final class InspectorViewModel {
         case let .unknownLine(raw):
             unknownLineCount += 1
             recentUnknownLines.append(raw)
-            if recentUnknownLines.count > Self.recentUnknownLinesCap {
-                recentUnknownLines.removeFirst(recentUnknownLines.count - Self.recentUnknownLinesCap)
-            }
+            let overflow = InspectorStoreRules.overflow(
+                .unknownLines, count: recentUnknownLines.count,
+            )
+            if overflow > 0 { recentUnknownLines.removeFirst(overflow) }
         case let .historyTruncated(droppedCount):
             // Latest-wins (a re-replay re-sends the current drop count) — not accumulated.
             droppedReplayEventCount = droppedCount
@@ -165,41 +175,20 @@ public final class InspectorViewModel {
         }
     }
 
-    /// The subagent tree as roots + children, sorted by id for stable rendering. (Sort
-    /// in-level — doc 16: subagent ordering is async; sort within a level, not globally.)
+    /// The subagent tree as roots + children, each level ordered by id, as
+    /// `slopdesk_workspace::inspector_store` builds it. (Sort in-level — doc 16: subagent ordering
+    /// is async; sort within a level, not globally.)
     ///
     /// **In practice this is flat today.** Nesting is keyed off ``SubagentNode/parentID``,
     /// and no documented Claude Code signal in the doc-16 corpus carries a cross-file
     /// parent link (the `SubagentStop` hook has no `parent_agent_id`; sidechain lines
     /// only carry intra-file `parentUuid`). So every node currently has `parentID == nil`
-    /// and attaches directly under the main session — a single flat level. The recursive
-    /// build is retained so that when a real parent-linkage source lands (e.g. correlating
-    /// the parent session's `Task` `tool_use` id), nesting works without an API change;
+    /// and attaches directly under the main session — a single flat level. The nesting build
+    /// is retained so that when a real parent-linkage source lands (e.g. correlating
+    /// the parent session's `Task` `tool_use` id), it works without an API change;
     /// it is not a claim that nested data exists today.
     public var subagentTree: [SubagentTreeNode] {
-        let all = Array(subagents.values)
-        let byParent = Dictionary(grouping: all) { $0.parentID ?? "" }
-        // `visited` is the set of parent keys on the CURRENT recursion path. A node whose id is
-        // already on the path must NOT be recursed into — otherwise a self-parent, or the degenerate
-        // EMPTY-STRING id (which groups under the `""` root and would recurse `build("")` forever →
-        // stack-overflow / @MainActor SIGSEGV from one malformed/empty subagent id in tolerant input),
-        // runs away. We also drop empty-id nodes from rendering (a meaningless phantom subagent).
-        func build(parent: String, visited: Set<String>) -> [SubagentTreeNode] {
-            (byParent[parent] ?? [])
-                .filter { !$0.id.isEmpty }
-                .sorted { $0.id < $1.id }
-                .map { node in
-                    let children = visited.contains(node.id)
-                        ? [] // cycle (self-parent / already on the path) — bound the recursion.
-                        : build(parent: node.id, visited: visited.union([node.id]))
-                    return SubagentTreeNode(
-                        node: node,
-                        cards: subagentCards[node.id] ?? [],
-                        children: children,
-                    )
-                }
-        }
-        return build(parent: "", visited: [""])
+        InspectorStoreRules.subagentTree(subagents, cards: subagentCards)
     }
 
     // MARK: - Card upsert
@@ -210,8 +199,8 @@ public final class InspectorViewModel {
         } else {
             toolCardIndex[card.id] = toolCards.count
             toolCards.append(card)
-            if toolCards.count > Self.toolCardCap {
-                let drop = toolCards.count - Self.toolCardRetain
+            let drop = InspectorStoreRules.overflow(.toolCards, count: toolCards.count)
+            if drop > 0 {
                 toolCards.removeFirst(drop)
                 evictedToolCardCount += drop // track the truncation so the UI can disclose it
                 // Every surviving card's index shifted down by `drop` — rebuild the lookup from the
@@ -226,8 +215,8 @@ public final class InspectorViewModel {
     /// orphan. Call EXACTLY when an agent is first created (the `subagents[id] == nil` branches).
     private func registerAgent(_ agentID: String) {
         subagentOrder.append(agentID)
-        guard subagentOrder.count > Self.maxAgents else { return }
-        let drop = subagentOrder.count - Self.maxAgentsRetain
+        let drop = InspectorStoreRules.overflow(.agents, count: subagentOrder.count)
+        guard drop > 0 else { return }
         for id in subagentOrder.prefix(drop) {
             subagents.removeValue(forKey: id)
             subagentCards.removeValue(forKey: id)
@@ -249,8 +238,8 @@ public final class InspectorViewModel {
         } else {
             index[card.id] = cards.count
             cards.append(card)
-            if cards.count > Self.subagentCardCap {
-                let drop = cards.count - Self.subagentCardRetain
+            let drop = InspectorStoreRules.overflow(.subagentCards, count: cards.count)
+            if drop > 0 {
                 cards.removeFirst(drop)
                 index = Dictionary(uniqueKeysWithValues: cards.enumerated().map { ($1.id, $0) })
             }

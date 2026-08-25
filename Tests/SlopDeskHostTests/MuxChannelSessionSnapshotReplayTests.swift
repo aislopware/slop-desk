@@ -8,8 +8,12 @@ import XCTest
 /// screen model once instead of replaying byte history (docs/DECISIONS.md 2026-07-25).
 ///
 /// Driven WITHOUT a PTY or `startRelay()` (hang-safety): sequenced history enters via
-/// `appendForTesting` (the real `nextSeq` glue), the detached-window backlog via
+/// `appendForTesting` (the real `nextSeq` glue), frames the drain has not shipped yet via
 /// `enqueueChunkForTesting`, and `replayTail` sends into recording sub-channels.
+///
+/// The compose walks SEQUENCED history only. A detached pane's output is not hostd's to hold:
+/// it lives in superd's ring, and the rebind re-subscribes at the recorded byte offset (see
+/// `docs/DECISIONS.md` 2026-08-25).
 final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
     /// The composer under test IS `slopdesk-screend`, and so is the oracle these tests read the
     /// result with. Skips by name when the engine is not built rather than passing vacuously.
@@ -89,15 +93,13 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
 
     /// A cold reattach with the policy injected replays a RENDERED snapshot: the recorded
     /// stream is a render (reset preamble first), rides the retained seqs with the LAST seq
-    /// covered (ack-release), and reproduces the terminal's final visible state — including
-    /// the detached-window FIFO backlog, which is consumed INTO the snapshot.
-    func testColdReattachComposesSnapshotIncludingDetachedBacklog() async throws {
+    /// covered (ack-release), and reproduces the terminal's final visible state.
+    func testColdReattachComposesSnapshotFromSequencedHistory() async throws {
         let session = makeSession()
         session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
         session.appendForTesting(Data("hello\r\n".utf8)) // seq 1
         session.appendForTesting(Data("world".utf8)) // seq 2
         session.detach(onDetachedExit: { _ in })
-        session.enqueueChunkForTesting(bytes: Data("-away".utf8))
 
         let recorder = SendRecorder()
         let composed = await session.replayTail(after: 0, on: recordingChannel(recorder))
@@ -112,17 +114,18 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
         let bytes = recorder.outputBytes
         XCTAssertTrue(bytes.starts(with: Data("\u{1B}[?1049l".utf8)))
 
-        // Feeding it to a fresh terminal reproduces the final state — backlog included.
+        // Feeding it to a fresh terminal reproduces the final state.
         let snap = try screen(bytes)
         XCTAssertEqual(snap.lines[0], "hello")
-        XCTAssertEqual(snap.lines[1], "world-away")
+        XCTAssertEqual(snap.lines[1], "world")
         XCTAssertEqual(snap.cursorRow, 1)
-        XCTAssertEqual(snap.cursorCol, 10)
+        XCTAssertEqual(snap.cursorCol, 5)
     }
 
-    /// The consumed backlog must NOT be shipped again by the restarted drain — its bytes are
-    /// inside the snapshot, and a re-send would double-print.
-    func testConsumedBacklogIsNotReshippedByRestartedDrain() async {
+    /// A frame the drain never shipped carries no seq yet, so the snapshot cannot contain it:
+    /// it must reach the client EXACTLY ONCE, from the restarted drain, after the snapshot.
+    /// (Double-print is the failure this pins — it was live while the compose consumed the FIFO.)
+    func testUnsentFrameShipsOnceAfterTheSnapshot() async {
         let session = makeSession()
         session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
         session.appendForTesting(Data("prompt$ ".utf8)) // seq 1
@@ -135,71 +138,15 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
         let composed = await session.replayTail(after: 0, on: newData)
         XCTAssertTrue(composed)
         XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
-        // Give the restarted drain a chance to (wrongly) ship the consumed backlog.
+        // Wait for the restarted drain to ship it, then give a duplicate room to arrive.
+        await waitUntil { String(bytes: recorder.outputBytes, encoding: .utf8)?.contains("backlog-marker") == true }
         try? await Task.sleep(for: .milliseconds(150))
 
         let text = String(bytes: recorder.outputBytes, encoding: .utf8) ?? ""
         XCTAssertEqual(
             text.components(separatedBy: "backlog-marker").count - 1, 1,
-            "the backlog renders exactly once (inside the snapshot)",
+            "the unsent frame reaches the client exactly once, from the drain",
         )
-        session.shutdown()
-    }
-
-    /// Consuming the backlog must release its queue-gate accounting (the compactor's
-    /// rebalance contract) — a leaked residue would leave the read loop paused forever.
-    ///
-    /// Uses a STUB composer (1-byte render): the recording sub-channel grants no credit, so a
-    /// realistically-sized rendered stream would park `send` on the credit window — and the
-    /// accounting under test is the CONSUME side, not the render.
-    func testConsumedBacklogReleasesGateAccounting() async {
-        let session = MuxChannelSession(
-            channelID: 1,
-            pty: unattachedPTY(),
-            data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
-            control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
-            snapshotReplay: MuxChannelSession.SnapshotReplayPolicy(
-                compose: { _, _, _ in Data("S".utf8) },
-                warmThresholdBytes: 0,
-            ),
-        )
-        final class PauseRec: @unchecked Sendable {
-            private let lock = NSLock()
-            private var current = false
-            func apply(_ paused: Bool) {
-                lock.lock()
-                current = paused
-                lock.unlock()
-            }
-
-            var isPaused: Bool {
-                lock.lock()
-                defer { lock.unlock() }
-                return current
-            }
-        }
-        let rec = PauseRec()
-        // `detach()` raises the gate to the detached budget and `rebindRelay` restores the
-        // 64 KiB attached bound — so a >64 KiB backlog whose accounting LEAKED (consumed
-        // without a dequeue) would leave the gate paused forever after the rebind, with
-        // nothing left in the FIFO to ship and rebalance it.
-        session.installGateForTesting(PausableQueueGate(capacity: MuxFlowControl.hostQueueCapacityBytes) {
-            rec.apply($0)
-        })
-        // Several retained seqs so the ~100 KiB rendered stream fits the per-seq frame-cap
-        // budget (one lone seq would trip the credit-invariant guard and fall back).
-        for _ in 0..<8 { session.appendForTesting(Data("x".utf8)) }
-        session.detach(onDetachedExit: { _ in })
-        session.enqueueChunkForTesting(bytes: Data(repeating: UInt8(ascii: "b"), count: 100 * 1024))
-
-        let recorder = SendRecorder()
-        let composed = await session.replayTail(after: 0, on: recordingChannel(recorder))
-        XCTAssertTrue(composed)
-        let newData = recordingChannel(SendRecorder())
-        let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
-        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
-        try? await Task.sleep(for: .milliseconds(100))
-        XCTAssertFalse(rec.isPaused, "consuming the backlog must dequeue its gate accounting")
         session.shutdown()
     }
 
@@ -235,19 +182,17 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
         )
     }
 
-    // MARK: History canonicalization (adopt + detach-time fold)
+    // MARK: History canonicalization (adopt)
 
-    /// The backlog-hole pin: the consumed detached-window backlog got no seqs of its own, so
-    /// unless the compose ADOPTS the rendered stream as the retained history, a SECOND cold
-    /// reattach (the first client died before acking) replays a history the backlog has
-    /// vanished from.
-    func testDetachedBacklogSurvivesIntoSecondColdSnapshot() async throws {
+    /// The adoption pin: the cold compose REPLACES the retained history with the rendered
+    /// stream ("as if the host had emitted it all along"), so a SECOND cold reattach (the
+    /// first client died before acking) reproduces the same screen while walking the small
+    /// canonical render instead of re-parsing the raw churn.
+    func testSecondColdSnapshotWalksTheAdoptedHistory() async throws {
         let spy = ComposeSpy()
         let session = makeSpySession(spy)
-        session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
-        session.appendForTesting(Data("hello\r\n".utf8)) // seq 1
-        session.detach(onDetachedExit: { _ in })
-        session.enqueueChunkForTesting(bytes: Data("away-output".utf8))
+        // ~24 KiB of CR-overprint churn: one visible line, thousands of retained seqs.
+        for tick in 0..<2000 { session.appendForTesting(Data("\rtick \(tick)".utf8)) }
 
         let first = SendRecorder()
         let firstComposed = await session.replayTail(after: 0, on: recordingChannel(first))
@@ -256,50 +201,13 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
         let second = SendRecorder()
         let secondComposed = await session.replayTail(after: 0, on: recordingChannel(second))
         XCTAssertTrue(secondComposed)
-        let snap = try screen(second.outputBytes)
-        XCTAssertEqual(snap.lines[0], "hello")
-        XCTAssertEqual(snap.lines[1], "away-output", "the consumed backlog must survive adoption")
+        XCTAssertEqual(try screen(second.outputBytes).lines[0], "tick 1999", "adopted state stays correct")
 
-        // And the second compose walked the ADOPTED canonical history, not the raw one —
-        // its input is exactly the stream the first compose delivered.
+        // The second compose walked the ADOPTED canonical history, not the raw one —
+        // its input is exactly the stream the first compose delivered, and far smaller.
         XCTAssertEqual(spy.inputs.count, 2)
         XCTAssertEqual(spy.inputs[1], first.outputBytes, "compose #2 input = adopted stream")
-    }
-
-    /// Detaching folds the acked ring in the background: the eventual reattach compose walks
-    /// the small canonical render instead of the raw churn (the "reattach stalls for seconds
-    /// re-parsing 64 MiB of build output" fix).
-    func testDetachFoldsRingSoReattachComposeIsSmall() async {
-        let spy = ComposeSpy()
-        let session = makeSpySession(spy)
-        session.installGateForTesting(PausableQueueGate(capacity: 100 * 1024 * 1024) { _ in })
-        // ~240 KiB of CR-overprint churn (over the 128 KiB fold floor), fully acked → ring.
-        var seq: Int64 = 0
-        for tick in 0..<20000 {
-            session.appendForTesting(Data("\rtick \(tick)".utf8))
-            seq += 1
-        }
-        session.ackForTesting(upTo: seq)
-        let rawRingBytes = session.scrollbackRingBytesForTesting()
-        session.detach(onDetachedExit: { _ in })
-
-        // The fold splices asynchronously — wait for the ring to actually SHRINK (the spy
-        // recording its input only proves the render started).
-        await waitUntil { session.scrollbackRingBytesForTesting() < rawRingBytes }
-        XCTAssertLessThan(session.scrollbackRingBytesForTesting(), rawRingBytes, "fold must land")
-
-        let recorder = SendRecorder()
-        let composed = await session.replayTail(after: 0, on: recordingChannel(recorder))
-        XCTAssertTrue(composed)
-        guard let reattachInput = spy.inputs.last else {
-            XCTFail("no reattach compose")
-            return
-        }
-        XCTAssertLessThan(
-            reattachInput.count, 64 * 1024,
-            "reattach compose must walk the folded canonical ring, not ~240 KiB of raw churn",
-        )
-        XCTAssertEqual(try screen(recorder.outputBytes).lines[0], "tick 19999", "folded state stays correct")
+        XCTAssertLessThan(spy.inputs[1].count, spy.inputs[0].count, "adoption shrinks the history")
     }
 
     // MARK: Warm reconnect

@@ -66,13 +66,10 @@ pub unsafe extern "C" fn slopdesk_host_detach_insert(
 ) -> SlopDeskHostDetachInsert {
     // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
     let lent = unsafe { borrow(stamps, len) };
-    let held = optional_of(
-        has_occupant,
-        Occupant {
-            position: occupant,
-            same_session,
-        },
-    );
+    let held = optional_of(has_occupant, Occupant {
+        position: occupant,
+        same_session,
+    });
     let verdict = detach_retention::insert_verdict(lent, held, optional_of(has_cap, cap));
     let (has_victim, victim) = optional(verdict.victim, 0);
     SlopDeskHostDetachInsert {
@@ -145,12 +142,7 @@ mod tests {
         let mut room = vec![0_u32; stamps.len()];
         // SAFETY: both spans are live Rust slices for the length of the call.
         let count = unsafe {
-            slopdesk_host_detach_order(
-                stamps.as_ptr(),
-                stamps.len(),
-                room.as_mut_ptr(),
-                room.len(),
-            )
+            slopdesk_host_detach_order(stamps.as_ptr(), stamps.len(), room.as_mut_ptr(), room.len())
         };
         room.truncate(count.min(stamps.len()));
         room
@@ -188,9 +180,7 @@ mod tests {
     #[test]
     fn a_null_stamp_list_is_an_empty_store() {
         // SAFETY: a null pointer with a zero length is exactly what `borrow` accepts as empty.
-        let verdict = unsafe {
-            slopdesk_host_detach_insert(core::ptr::null(), 0, false, 0, false, true, 0)
-        };
+        let verdict = unsafe { slopdesk_host_detach_insert(core::ptr::null(), 0, false, 0, false, true, 0) };
         assert!(!verdict.has_victim, "there is nothing to take");
     }
 

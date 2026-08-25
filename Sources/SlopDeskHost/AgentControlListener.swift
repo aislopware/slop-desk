@@ -886,7 +886,10 @@ public final class AgentControlConnectionServer: @unchecked Sendable {
     public var onLog: (@Sendable (String) -> Void)?
 
     /// Max bytes per request line (validate-then-drop beyond this).
-    static let maxRequestBytes = 64 * 1024
+    ///
+    /// Read from the door rather than typed: the CLIENT's control socket keeps the same cap and
+    /// reads the same number, so the two ends cannot disagree about which line was too long.
+    static let maxRequestBytes = Int(slopdesk_ws_ctl_max_request_bytes())
 
     public init(server: HostServer) {
         self.server = server

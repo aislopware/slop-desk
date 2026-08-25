@@ -278,7 +278,11 @@ pub extern "C" fn slopdesk_ws_inspector_port(terminal: u16) -> i32 {
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point, and the buffer is the caller's"
 )]
-pub const unsafe extern "C" fn slopdesk_ws_scroll_action(code: c_uchar, out: *mut c_uchar, cap: usize) -> usize {
+pub const unsafe extern "C" fn slopdesk_ws_scroll_action(
+    code: c_uchar,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
     let Some(action) = ScrollAction::from_code(code) else {
         return 0;
     };

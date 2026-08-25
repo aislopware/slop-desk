@@ -318,7 +318,7 @@ mod tests {
             unsafe { slopdesk_ws_normalized_text(blank.as_ptr(), blank.len(), core::ptr::null_mut(), 0) };
         assert_eq!(needed, 0);
 
-        let raw = "  cargo build  ".as_bytes();
+        let raw = b"  cargo build  ";
         let mut out = [0_u8; 32];
         // SAFETY: both buffers are live locals for the call.
         let count = unsafe { slopdesk_ws_normalized_text(raw.as_ptr(), raw.len(), out.as_mut_ptr(), 32) };

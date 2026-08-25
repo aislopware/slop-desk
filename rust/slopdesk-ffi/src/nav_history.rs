@@ -25,16 +25,15 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use slopdesk_apple_ax::{App, Element, Step, Window, walk};
-use slopdesk_video::nav_history::{
-    Cache, Direction, Flags, MENU_MAX_DEPTH, MENU_NODE_BUDGET, MESSAGE_TIMEOUT, Plan, SCAN_DEADLINE,
-    Strategy, TOOLBAR_MAX_DEPTH, TOOLBAR_NODE_BUDGET, fold, menu_visit, toolbar_visit,
-};
-
 /// Both directions, as a Rust caller sees them — what [`SlopDeskNavHistory::read`] answers.
 ///
 /// Re-exported so a crate holding the reader natively need not also take an edge to
 /// `slopdesk-video` just to name the return type.
 pub use slopdesk_video::nav_history::Flags as NavFlags;
+use slopdesk_video::nav_history::{
+    Cache, Direction, Flags, MENU_MAX_DEPTH, MENU_NODE_BUDGET, MESSAGE_TIMEOUT, Plan, SCAN_DEADLINE,
+    Strategy, TOOLBAR_MAX_DEPTH, TOOLBAR_NODE_BUDGET, fold, menu_visit, toolbar_visit,
+};
 
 /// The two controls a reading is taken from, and the window they belong to.
 #[derive(Debug)]

@@ -75,7 +75,7 @@ pub struct SlopDeskWsIntentRetire {
     unsafe_code,
     reason = "writing into the caller's buffer is the other half of the boundary"
 )]
-unsafe fn deliver_positions(answer: &[u32], out: *mut u32, cap: usize) -> usize {
+const unsafe fn deliver_positions(answer: &[u32], out: *mut u32, cap: usize) -> usize {
     let needed = answer.len();
     if needed == 0 || needed > cap || out.is_null() {
         return needed;
@@ -365,7 +365,7 @@ pub unsafe extern "C" fn slopdesk_ws_mirror_holders(
 }
 
 /// One lent roster row, as the rules know it.
-fn seat_of(client: SlopDeskWsPresenceClient) -> RosterClient {
+const fn seat_of(client: SlopDeskWsPresenceClient) -> RosterClient {
     RosterClient {
         token: client.token,
         labelled: client.labelled,
@@ -548,8 +548,8 @@ mod tests {
     /// The chain names its rung on the way out, and delivers the winner's text trimmed.
     #[test]
     fn the_running_command_crosses_its_rung_and_its_text() {
-        let hosted = "  cargo build  ".as_bytes();
-        let open = " make test ".as_bytes();
+        let hosted = b"  cargo build  ";
+        let open = b" make test ";
         let mut source = 9_u8;
         let mut out = [0_u8; 32];
         // SAFETY: every pointer is a live local for the call.

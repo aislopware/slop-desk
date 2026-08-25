@@ -65,7 +65,10 @@ package enum PaneStatusPill: String, CaseIterable, Sendable {
     case syncInput
 
     /// The chip's own index, which is both the door's argument and its bit in the visible mask.
-    var index: UInt8 {
+    ///
+    /// `package` because the chip's `×` route is decided by `slopdesk_ws_session_dismiss_route`,
+    /// which takes this same index — one numbering, read by both doors.
+    package var index: UInt8 {
         switch self {
         case .readOnly: 0
         case .secureInput: 1

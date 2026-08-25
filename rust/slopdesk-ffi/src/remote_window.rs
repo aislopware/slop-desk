@@ -404,7 +404,7 @@ mod tests {
         let mut parsed = 0_u32;
         // SAFETY: `bytes` is a live slice and `parsed` a live local for the call.
         let found = unsafe { slopdesk_ws_stream_window_id(bytes.as_ptr(), bytes.len(), &raw mut parsed) };
-        if found { Some(parsed) } else { None }
+        found.then_some(parsed)
     }
 
     /// The parse crosses verbatim, including both halves of the Swift dialect the rule spells out.
@@ -455,6 +455,11 @@ mod tests {
 
     /// The two geometry verdicts cross apart — the case a host that knows its window but not its
     /// display bounds produces on every open.
+    #[expect(
+        clippy::float_cmp,
+        reason = "the point of the assertion is that the door hands BACK the caller's own bits — an epsilon \
+                  here would pass on a value the boundary had rounded"
+    )]
     #[test]
     fn the_two_sizes_cross_apart() {
         let crossed = slopdesk_ws_stream_geometry(800.0, 600.0, 0.0, 0.0);
@@ -483,6 +488,11 @@ mod tests {
 
     /// A measured sample crosses with every axis, and its latency flags follow the rule and not the
     /// number beside them.
+    #[expect(
+        clippy::float_cmp,
+        reason = "same reason as `the_two_sizes_cross_apart`: an axis that crossed unchanged is the claim, \
+                  so exact equality IS the test"
+    )]
     #[test]
     fn a_measured_sample_crosses_with_its_flags() {
         let crossed = slopdesk_ws_stream_network(SlopDeskWsStreamSample {

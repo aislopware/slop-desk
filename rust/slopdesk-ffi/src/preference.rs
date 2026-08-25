@@ -141,9 +141,9 @@ pub extern "C" fn slopdesk_ws_font_zoom(configured: f64, delta: f64, press: c_uc
 /// The zip of the two parallel Hint Mode lists, as slots into the pattern list.
 ///
 /// Both inputs carry one EMPTINESS flag per entry, in the file's own order — no regex and no action
-/// template crosses, because the rule reads exactly one bit of each. An empty PATTERN is dropped (an
-/// empty regex matches everything); an action that is absent, empty, or past the end of its list is
-/// no action.
+/// template crosses, because the rule reads exactly one bit of each. An empty PATTERN is dropped
+/// (an empty regex matches everything); an action that is absent, empty, or past the end of its
+/// list is no action.
 ///
 /// Returns the count NEEDED. A short or null `out` is written nothing and told the length.
 ///
@@ -200,15 +200,15 @@ mod tests {
 
     /// Reads the suite door with a value the caller lends as bytes.
     fn suite(under_test: bool, named: Option<&str>) -> u8 {
-        match named {
-            // SAFETY: `bytes` is the caller's live slice for the duration of the call.
-            Some(value) => {
+        named.map_or_else(
+            // SAFETY: a null pointer with a zero length is the documented absent case.
+            || unsafe { slopdesk_ws_state_suite_source(under_test, core::ptr::null(), 0) },
+            |value| {
                 let bytes = value.as_bytes();
+                // SAFETY: `bytes` is the caller's live slice for the duration of the call.
                 unsafe { slopdesk_ws_state_suite_source(under_test, bytes.as_ptr(), bytes.len()) }
             },
-            // SAFETY: a null pointer with a zero length is the documented absent case.
-            None => unsafe { slopdesk_ws_state_suite_source(under_test, core::ptr::null(), 0) },
-        }
+        )
     }
 
     /// The whole precedence, crossed: the test suite first, then a named environment value, then
@@ -332,23 +332,20 @@ mod tests {
     #[test]
     fn the_zip_crosses_as_original_positions() {
         // ["ERR-\d+", "", "TODO", "FIXME"] × ["open", "open", ""]
-        assert_eq!(
-            zipped(&[false, true, false, false], &[false, false, true]),
-            vec![
-                SlopDeskWsHintSlot {
-                    pattern: 0,
-                    has_action: true
-                },
-                SlopDeskWsHintSlot {
-                    pattern: 2,
-                    has_action: false
-                },
-                SlopDeskWsHintSlot {
-                    pattern: 3,
-                    has_action: false
-                },
-            ]
-        );
+        assert_eq!(zipped(&[false, true, false, false], &[false, false, true]), vec![
+            SlopDeskWsHintSlot {
+                pattern: 0,
+                has_action: true
+            },
+            SlopDeskWsHintSlot {
+                pattern: 2,
+                has_action: false
+            },
+            SlopDeskWsHintSlot {
+                pattern: 3,
+                has_action: false
+            },
+        ]);
     }
 
     /// No patterns at all — and a null pair — answer zero rather than being dereferenced.

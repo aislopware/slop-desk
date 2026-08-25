@@ -6,13 +6,14 @@
 //! slopdesk-provision --check         # verify what is installed; download nothing
 //! ```
 //!
-//! Exit codes are the shell's, verbatim, because `make provision-check` reads them: `0` all present,
-//! `1` something is missing or a digest did not match, `2` the arguments were wrong.
+//! Exit codes are the shell's, verbatim, because `make provision-check` reads them: `0` all
+//! present, `1` something is missing or a digest did not match, `2` the arguments were wrong.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use slopdesk_provision::{Mode, Tally, plan::Layout, run};
+use slopdesk_provision::plan::Layout;
+use slopdesk_provision::{Mode, Tally, run};
 
 /// The argument grammar, parsed.
 struct Invocation {
@@ -30,7 +31,7 @@ fn main() -> ExitCode {
         Err(failure) => {
             eprintln!("ERROR: {failure}");
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -44,7 +45,7 @@ fn parse(args: impl Iterator<Item = String>) -> Option<Invocation> {
             flag if flag.starts_with('-') => {
                 eprintln!("unknown flag: {flag}");
                 return None;
-            }
+            },
             name => wanted.push(name.to_owned()),
         }
     }
@@ -56,16 +57,13 @@ fn report(layout: &Layout, mode: Mode, tally: Tally) -> ExitCode {
     println!();
     match mode {
         Mode::Check => {
-            println!(
-                "checked: {} present, {} missing",
-                tally.current, tally.missing
-            );
+            println!("checked: {} present, {} missing", tally.current, tally.missing);
             if tally.missing == 0 {
                 ExitCode::SUCCESS
             } else {
                 ExitCode::FAILURE
             }
-        }
+        },
         Mode::Provision => {
             println!(
                 "provisioned: {} installed, {} already current",
@@ -73,15 +71,16 @@ fn report(layout: &Layout, mode: Mode, tally: Tally) -> ExitCode {
             );
             println!("prefix: {}", layout.prefix().display());
             ExitCode::SUCCESS
-        }
+        },
     }
 }
 
-/// `ThirdParty/tools`, found the way the shell found it: relative to this program rather than to the
-/// caller's working directory.
+/// `ThirdParty/tools`, found the way the shell found it: relative to this program rather than to
+/// the caller's working directory.
 ///
 /// `SLOPDESK_TOOLS_DIR` overrides it, which is what lets the gate point a run at a scratch tree —
-/// the shell had no such seam, and adding it is why the layout is a value rather than four `const`s.
+/// the shell had no such seam, and adding it is why the layout is a value rather than four
+/// `const`s.
 fn tools_dir() -> PathBuf {
     if let Some(override_path) = std::env::var_os("SLOPDESK_TOOLS_DIR") {
         return PathBuf::from(override_path);
@@ -107,7 +106,10 @@ mod tests {
     use super::parse;
 
     fn args(list: &[&str]) -> impl Iterator<Item = String> {
-        list.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>().into_iter()
+        list.iter()
+            .map(|arg| (*arg).to_owned())
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     #[test]

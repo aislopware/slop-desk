@@ -106,7 +106,7 @@ fn parse_options() -> Result<Options, String> {
                 index = index.saturating_add(2);
             },
             other => {
-                options.bundle = other.to_owned();
+                other.clone_into(&mut options.bundle);
                 index = index.saturating_add(1);
             },
         }
@@ -116,10 +116,10 @@ fn parse_options() -> Result<Options, String> {
 
 /// The first running process whose bundle identifier is `bundle`.
 ///
-/// The census is one syscall and the identifier is one AppKit lookup per pid; the Swift instrument
-/// asked AppKit to do both at once, which this crate's `slopdesk-apple-app` deliberately does not
-/// expose — the reverse lookup is a search, and a search over a list belongs to the caller holding
-/// the list.
+/// The census is one syscall and the identifier is one `AppKit` lookup per pid; the Swift
+/// instrument asked `AppKit` to do both at once, which this crate's `slopdesk-apple-app`
+/// deliberately does not expose — the reverse lookup is a search, and a search over a list belongs
+/// to the caller holding the list.
 fn pid_for_bundle(bundle: &str) -> Option<i32> {
     slopdesk_posix::proc::all_pids()
         .into_iter()
@@ -145,9 +145,15 @@ fn main() -> ExitCode {
     eprintln!("target {} pid {pid}", options.bundle);
 
     let reader = SlopDeskNavHistory::reader();
-    // Clamped because `Duration::from_secs_f64` panics on a negative or non-finite argument and
+    // Bounded because `Duration::from_secs_f64` panics on a negative or non-finite argument and
     // `Instant + Duration` panics on overflow, and a typo in an operator's command line is not a
-    // reason for a diagnostic to abort. `f64::max`/`min` rather than a comparison, per `CLAUDE.md`.
+    // reason for a diagnostic to abort.
+    #[expect(
+        clippy::manual_clamp,
+        reason = "`clamp` PROPAGATES NaN, which is the one input this bound exists to absorb — `max` \
+                  answers the non-NaN operand, so `--seconds nan` reads as 0 rather than panicking inside \
+                  `Duration::from_secs_f64`"
+    )]
     let watched = options.seconds.max(0.0).min(MAX_SECONDS);
     let deadline = Instant::now() + Duration::from_secs_f64(watched);
     let mut beat = 0_u32;

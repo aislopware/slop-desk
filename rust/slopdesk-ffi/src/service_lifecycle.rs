@@ -30,8 +30,9 @@ use crate::{borrow, deliver, optional_of};
 ///
 /// Two optionals cross as a value plus a presence flag rather than a sentinel — `docs/55` §4b —
 /// because both of their absences are ordinary: a child that has not printed its announce line yet
-/// has no port, and one on its first round has no probe stamp. A `0` port would be indistinguishable
-/// from the `--port 0` echo the parse already refuses, and a `0` elapsed is a probe that ran now.
+/// has no port, and one on its first round has no probe stamp. A `0` port would be
+/// indistinguishable from the `--port 0` echo the parse already refuses, and a `0` elapsed is a
+/// probe that ran now.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SlopDeskHostProbeRecord {
@@ -192,23 +193,34 @@ pub const extern "C" fn slopdesk_host_probe_step(
     has_probe: bool,
     probe: bool,
 ) -> SlopDeskHostProbeStep {
-    let live = optional_of(
-        record.has_record,
-        ProbeRecord {
-            port: optional_of(record.has_port, record.port),
-            since_probe: optional_of(record.has_probe_stamp, record.since_probe_nanos),
-            ready: record.ready,
-            running: record.is_running,
-        },
-    );
+    let live = optional_of(record.has_record, ProbeRecord {
+        port: optional_of(record.has_port, record.port),
+        since_probe: optional_of(record.has_probe_stamp, record.since_probe_nanos),
+        ready: record.ready,
+        running: record.is_running,
+    });
     match service_lifecycle::probe_step(live, probe_interval_nanos, optional_of(has_probe, probe)) {
-        ProbeStep::Boot => SlopDeskHostProbeStep { port: 0, action: 0, state: 0 },
-        ProbeStep::Report { state, port } => SlopDeskHostProbeStep {
-            port,
-            action: 1,
-            state: state.byte(),
+        ProbeStep::Boot => {
+            SlopDeskHostProbeStep {
+                port: 0,
+                action: 0,
+                state: 0,
+            }
         },
-        ProbeStep::Probe { port } => SlopDeskHostProbeStep { port, action: 2, state: 0 },
+        ProbeStep::Report { state, port } => {
+            SlopDeskHostProbeStep {
+                port,
+                action: 1,
+                state: state.byte(),
+            }
+        },
+        ProbeStep::Probe { port } => {
+            SlopDeskHostProbeStep {
+                port,
+                action: 2,
+                state: 0,
+            }
+        },
     }
 }
 
@@ -225,12 +237,7 @@ pub const extern "C" fn slopdesk_host_accepts_announcement(
     has_record: bool,
     already_recorded: bool,
 ) -> bool {
-    service_lifecycle::accepts_announcement(
-        line_generation,
-        spawn_generation,
-        has_record,
-        already_recorded,
-    )
+    service_lifecycle::accepts_announcement(line_generation, spawn_generation, has_record, already_recorded)
 }
 
 /// What to do with the port a daemon announced, against the one hostd advertises: `0` adopt it,
@@ -306,7 +313,7 @@ pub const extern "C" fn slopdesk_host_code_open_attempts() -> u32 {
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point, and the buffer is the caller's"
 )]
-pub unsafe extern "C" fn slopdesk_host_code_cli_flag(
+pub const unsafe extern "C" fn slopdesk_host_code_cli_flag(
     command: c_uchar,
     out: *mut c_uchar,
     cap: usize,
@@ -354,10 +361,9 @@ mod tests {
 
     use super::{
         SlopDeskHostCodeGates, SlopDeskHostProbeRecord, SlopDeskHostProbeStep,
-        slopdesk_host_accepts_announcement, slopdesk_host_adopt_verdict,
-        slopdesk_host_announced_port, slopdesk_host_announced_version, slopdesk_host_canonical_root,
-        slopdesk_host_code_boot_step, slopdesk_host_code_cli_flag, slopdesk_host_code_open_attempts,
-        slopdesk_host_probe_step,
+        slopdesk_host_accepts_announcement, slopdesk_host_adopt_verdict, slopdesk_host_announced_port,
+        slopdesk_host_announced_version, slopdesk_host_canonical_root, slopdesk_host_code_boot_step,
+        slopdesk_host_code_cli_flag, slopdesk_host_code_open_attempts, slopdesk_host_probe_step,
     };
 
     const INTERVAL: u64 = 500_000_000;
@@ -392,7 +398,10 @@ mod tests {
 
     #[test]
     fn both_dialects_cross() {
-        assert_eq!(port("on 127.0.0.1:", "dropd on 127.0.0.1:5123 (v0.2.0)", false), 5123);
+        assert_eq!(
+            port("on 127.0.0.1:", "dropd on 127.0.0.1:5123 (v0.2.0)", false),
+            5123
+        );
         let marker = "HTTP server listening on http://";
         let line = "info  HTTP server listening on http://0.0.0.0:62636/";
         assert_eq!(port(marker, line, true), 62636);
@@ -401,16 +410,19 @@ mod tests {
     #[test]
     fn a_line_with_no_port_answers_zero() {
         assert_eq!(port("on :", "nothing at all", false), 0);
-        assert_eq!(port("on :", "on :0", false), 0, "the --port 0 echo is never an answer");
+        assert_eq!(
+            port("on :", "on :0", false),
+            0,
+            "the --port 0 echo is never an answer"
+        );
     }
 
     #[test]
     fn an_empty_marker_reads_as_no_marker_rather_than_every_marker() {
         // A null, zero-length pair is `borrow`'s empty slice, which the rule refuses.
         // SAFETY: a null pointer with a zero length is exactly what `borrow` accepts as empty.
-        let answered = unsafe {
-            slopdesk_host_announced_port(core::ptr::null(), 0, "on :5123".as_ptr(), 8, false)
-        };
+        let answered =
+            unsafe { slopdesk_host_announced_port(core::ptr::null(), 0, "on :5123".as_ptr(), 8, false) };
         assert_eq!(answered, 0);
     }
 
@@ -435,7 +447,10 @@ mod tests {
             })
         };
         assert_eq!(read_version("on 127.0.0.1:", line).as_deref(), Some("0.2.0"));
-        assert_eq!(read_version("on 127.0.0.1:", "dropd on 127.0.0.1:5123").as_deref(), None);
+        assert_eq!(
+            read_version("on 127.0.0.1:", "dropd on 127.0.0.1:5123").as_deref(),
+            None
+        );
     }
 
     #[test]
@@ -464,7 +479,11 @@ mod tests {
         let empty = SlopDeskHostProbeRecord::default();
         assert_eq!(
             slopdesk_host_probe_step(empty, INTERVAL, false, false),
-            SlopDeskHostProbeStep { port: 0, action: 0, state: 0 }
+            SlopDeskHostProbeStep {
+                port: 0,
+                action: 0,
+                state: 0
+            }
         );
         let latched = SlopDeskHostProbeRecord {
             since_probe_nanos: 0,
@@ -477,7 +496,11 @@ mod tests {
         };
         assert_eq!(
             slopdesk_host_probe_step(latched, INTERVAL, false, false),
-            SlopDeskHostProbeStep { port: 5123, action: 1, state: 1 }
+            SlopDeskHostProbeStep {
+                port: 5123,
+                action: 1,
+                state: 1
+            }
         );
     }
 
@@ -494,15 +517,27 @@ mod tests {
         };
         assert_eq!(
             slopdesk_host_probe_step(waiting, INTERVAL, false, false),
-            SlopDeskHostProbeStep { port: 5123, action: 2, state: 0 }
+            SlopDeskHostProbeStep {
+                port: 5123,
+                action: 2,
+                state: 0
+            }
         );
         assert_eq!(
             slopdesk_host_probe_step(waiting, INTERVAL, true, true),
-            SlopDeskHostProbeStep { port: 5123, action: 1, state: 1 }
+            SlopDeskHostProbeStep {
+                port: 5123,
+                action: 1,
+                state: 1
+            }
         );
         assert_eq!(
             slopdesk_host_probe_step(waiting, INTERVAL, true, false),
-            SlopDeskHostProbeStep { port: 5123, action: 1, state: 0 }
+            SlopDeskHostProbeStep {
+                port: 5123,
+                action: 1,
+                state: 0
+            }
         );
     }
 
@@ -542,8 +577,10 @@ mod tests {
         assert_eq!(deferring.install, 1);
         assert!(deferring.install_extensions);
 
-        let barren =
-            slopdesk_host_code_boot_step(SlopDeskHostCodeGates { launchable: false, ..cold });
+        let barren = slopdesk_host_code_boot_step(SlopDeskHostCodeGates {
+            launchable: false,
+            ..cold
+        });
         assert!(!barren.spawn);
         assert_eq!(barren.state, 2, "unavailable");
         assert!(!barren.seed_settings);
@@ -568,7 +605,11 @@ mod tests {
         let flag = |command| read(|out, cap| unsafe { slopdesk_host_code_cli_flag(command, out, cap) });
         assert_eq!(flag(0).as_deref(), Some("--install-extension"));
         assert_eq!(flag(1).as_deref(), Some("-r"));
-        assert_eq!(flag(200).as_deref(), Some("--install-extension"), "anything unnamed");
+        assert_eq!(
+            flag(200).as_deref(),
+            Some("--install-extension"),
+            "anything unnamed"
+        );
         assert_eq!(slopdesk_host_code_open_attempts(), 10);
     }
 
@@ -576,9 +617,7 @@ mod tests {
     fn a_root_crosses_normalized_and_a_relative_one_answers_zero() {
         // SAFETY: both spans are live Rust slices for the length of each call.
         let root = |path: &'static str| {
-            read(|out, cap| unsafe {
-                slopdesk_host_canonical_root(path.as_ptr(), path.len(), out, cap)
-            })
+            read(|out, cap| unsafe { slopdesk_host_canonical_root(path.as_ptr(), path.len(), out, cap) })
         };
         assert_eq!(root("/Users/x/proj//").as_deref(), Some("/Users/x/proj"));
         assert_eq!(root("/").as_deref(), Some("/"));

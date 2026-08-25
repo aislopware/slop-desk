@@ -1,9 +1,10 @@
 //! The download, and the digest computed on the way past.
 //!
 //! The shell wrote the file and then read it back to hash it. For code-server's 206 MB tarball that
-//! is a second full pass over the bytes for no information the first pass did not already have. Here
-//! the hasher sits between the socket and the file, so a verified download costs exactly one pass —
-//! and an unverified one costs the same, because the answer is known the instant the last byte lands.
+//! is a second full pass over the bytes for no information the first pass did not already have.
+//! Here the hasher sits between the socket and the file, so a verified download costs exactly one
+//! pass — and an unverified one costs the same, because the answer is known the instant the last
+//! byte lands.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -49,15 +50,13 @@ impl core::fmt::Display for FetchError {
     fn fmt(&self, out: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Transport { url, cause } => write!(out, "download failed: {url}\n  {cause}"),
-            Self::Digest {
-                url,
-                expected,
-                got,
-            } => write!(
-                out,
-                "SHA-256 mismatch for {url}\n  expected {expected}\n  got      {got}\nA corrupt \
-                 download, a re-cut upstream release, or a wrong pin — none of which are safe to run."
-            ),
+            Self::Digest { url, expected, got } => {
+                write!(
+                    out,
+                    "SHA-256 mismatch for {url}\n  expected {expected}\n  got      {got}\nA corrupt \
+                     download, a re-cut upstream release, or a wrong pin — none of which are safe to run."
+                )
+            },
             Self::Io { path, cause } => write!(out, "{}: {cause}", path.display()),
         }
     }
@@ -70,16 +69,20 @@ impl std::error::Error for FetchError {}
 /// # Errors
 /// Any read failure, naming the file.
 pub fn digest_of(path: &Path) -> Result<String, FetchError> {
-    let mut file = File::open(path).map_err(|cause| FetchError::Io {
-        path: path.to_path_buf(),
-        cause,
+    let mut file = File::open(path).map_err(|cause| {
+        FetchError::Io {
+            path: path.to_path_buf(),
+            cause,
+        }
     })?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0_u8; CHUNK];
     loop {
-        let read = file.read(&mut buffer).map_err(|cause| FetchError::Io {
-            path: path.to_path_buf(),
-            cause,
+        let read = file.read(&mut buffer).map_err(|cause| {
+            FetchError::Io {
+                path: path.to_path_buf(),
+                cause,
+            }
         })?;
         if read == 0 {
             break;
@@ -99,8 +102,9 @@ pub fn digest_of(path: &Path) -> Result<String, FetchError> {
 /// re-run after an interrupted extraction cheap.
 ///
 /// The transfer lands on `dest.partial` and is only renamed once the digest matches, so an
-/// interrupted transfer can never be mistaken for a verified one on the next run. A mismatch deletes
-/// the partial rather than keeping it: bytes that are not the pinned bytes have no second use.
+/// interrupted transfer can never be mistaken for a verified one on the next run. A mismatch
+/// deletes the partial rather than keeping it: bytes that are not the pinned bytes have no second
+/// use.
 ///
 /// # Errors
 /// [`FetchError`], which names the pin's URL rather than the transport's own message.
@@ -109,9 +113,11 @@ pub fn fetch_verified(url: &str, sha256: &str, dest: &Path) -> Result<Cached, Fe
         return Ok(Cached::Already);
     }
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).map_err(|cause| FetchError::Io {
-            path: parent.to_path_buf(),
-            cause,
+        fs::create_dir_all(parent).map_err(|cause| {
+            FetchError::Io {
+                path: parent.to_path_buf(),
+                cause,
+            }
         })?;
     }
     let partial = dest.with_extension("partial");
@@ -125,9 +131,11 @@ pub fn fetch_verified(url: &str, sha256: &str, dest: &Path) -> Result<Cached, Fe
             got,
         });
     }
-    fs::rename(&partial, dest).map_err(|cause| FetchError::Io {
-        path: dest.to_path_buf(),
-        cause,
+    fs::rename(&partial, dest).map_err(|cause| {
+        FetchError::Io {
+            path: dest.to_path_buf(),
+            cause,
+        }
     })?;
     Ok(Cached::Downloaded)
 }
@@ -143,9 +151,11 @@ pub enum Cached {
 
 /// Streams `url` into `path`, returning the digest of what was written.
 fn stream_to(url: &str, path: &Path) -> Result<String, FetchError> {
-    let transport = |cause: String| FetchError::Transport {
-        url: url.to_owned(),
-        cause,
+    let transport = |cause: String| {
+        FetchError::Transport {
+            url: url.to_owned(),
+            cause,
+        }
     };
     let mut body = ureq::get(url)
         .call()
@@ -153,9 +163,11 @@ fn stream_to(url: &str, path: &Path) -> Result<String, FetchError> {
         .into_body()
         .into_reader();
 
-    let file = File::create(path).map_err(|cause| FetchError::Io {
-        path: path.to_path_buf(),
-        cause,
+    let file = File::create(path).map_err(|cause| {
+        FetchError::Io {
+            path: path.to_path_buf(),
+            cause,
+        }
     })?;
     let mut writer = io::BufWriter::with_capacity(CHUNK, file);
     let mut hasher = Sha256::new();
@@ -171,14 +183,18 @@ fn stream_to(url: &str, path: &Path) -> Result<String, FetchError> {
             break;
         };
         hasher.update(filled);
-        writer.write_all(filled).map_err(|cause| FetchError::Io {
-            path: path.to_path_buf(),
-            cause,
+        writer.write_all(filled).map_err(|cause| {
+            FetchError::Io {
+                path: path.to_path_buf(),
+                cause,
+            }
         })?;
     }
-    writer.flush().map_err(|cause| FetchError::Io {
-        path: path.to_path_buf(),
-        cause,
+    writer.flush().map_err(|cause| {
+        FetchError::Io {
+            path: path.to_path_buf(),
+            cause,
+        }
     })?;
     Ok(hex(&hasher.finalize()))
 }

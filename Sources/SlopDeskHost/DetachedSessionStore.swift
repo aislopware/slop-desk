@@ -99,7 +99,7 @@ final class DetachedSessionStore: @unchecked Sendable {
             (position: position, isSameSession: entries[position].session === session)
         }
         let verdict = DetachRetentionRules.insertVerdict(
-            stamps: entries.map { $0.detachedAt.timeIntervalSinceReferenceDate },
+            stamps: entries.map(\.detachedAt.timeIntervalSinceReferenceDate),
             occupant: occupant,
             cap: maxSessions,
         )
@@ -226,7 +226,7 @@ final class DetachedSessionStore: @unchecked Sendable {
         defer { lock.unlock() }
         let entries = Array(store.values)
         let order = DetachRetentionRules.order(
-            stamps: entries.map { $0.detachedAt.timeIntervalSinceReferenceDate },
+            stamps: entries.map(\.detachedAt.timeIntervalSinceReferenceDate),
         )
         return order.compactMap { position in
             entries.indices.contains(position) ? entries[position].session : nil

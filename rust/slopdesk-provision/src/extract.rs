@@ -1,8 +1,8 @@
 //! Unpacking an archive, with its single top-level directory stripped.
 //!
-//! Every pinned archive has exactly ONE top-level directory whose name carries the version, which is
-//! redundant with the `<name>/<version>/` it is being extracted into — so it is stripped. That is a
-//! claim about upstream, and the point of doing it in-process is that a future release which
+//! Every pinned archive has exactly ONE top-level directory whose name carries the version, which
+//! is redundant with the `<name>/<version>/` it is being extracted into — so it is stripped. That
+//! is a claim about upstream, and the point of doing it in-process is that a future release which
 //! flattens its tarball is REFUSED by name here rather than landing its files one level up and
 //! failing the post-extract binary check with nothing to say about why.
 //!
@@ -51,21 +51,25 @@ pub enum ExtractError {
 impl core::fmt::Display for ExtractError {
     fn fmt(&self, out: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Shape { archive, roots } => write!(
-                out,
-                "expected one top-level directory in {}, got {roots} — the upstream archive layout \
-                 changed",
-                name_of(archive)
-            ),
-            Self::Escape { archive, member } => write!(
-                out,
-                "{} holds a member that points outside the target: `{member}`",
-                name_of(archive)
-            ),
+            Self::Shape { archive, roots } => {
+                write!(
+                    out,
+                    "expected one top-level directory in {}, got {roots} — the upstream archive layout \
+                     changed",
+                    name_of(archive)
+                )
+            },
+            Self::Escape { archive, member } => {
+                write!(
+                    out,
+                    "{} holds a member that points outside the target: `{member}`",
+                    name_of(archive)
+                )
+            },
             Self::Io { path, cause } => write!(out, "{}: {cause}", path.display()),
             Self::Unsupported(kind) => {
                 write!(out, "`{}` is not an archive kind", kind.as_str())
-            }
+            },
         }
     }
 }
@@ -74,8 +78,10 @@ impl std::error::Error for ExtractError {}
 
 /// The archive's own name, for a message a reader can match against the lock file.
 fn name_of(path: &Path) -> String {
-    path.file_name()
-        .map_or_else(|| path.display().to_string(), |name| name.to_string_lossy().into_owned())
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 /// Unpacks `archive` into `target`, replacing whatever was there.
@@ -121,9 +127,11 @@ fn untar_gz(archive: &Path, target: &Path) -> Result<(), ExtractError> {
         let Some(stripped) = strip_one(&raw) else {
             continue; // the root directory entry itself
         };
-        let destination = safe_join(target, &stripped).ok_or_else(|| ExtractError::Escape {
-            archive: archive.to_path_buf(),
-            member: raw.display().to_string(),
+        let destination = safe_join(target, &stripped).ok_or_else(|| {
+            ExtractError::Escape {
+                archive: archive.to_path_buf(),
+                member: raw.display().to_string(),
+            }
         })?;
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent).map_err(io_at(parent))?;
@@ -149,9 +157,11 @@ fn unzip(archive: &Path, target: &Path) -> Result<(), ExtractError> {
     })?;
     let mut roots = std::collections::BTreeSet::new();
     for index in 0..zip.len() {
-        let mut member = zip.by_index(index).map_err(|cause| ExtractError::Io {
-            path: archive.to_path_buf(),
-            cause: io::Error::other(cause),
+        let mut member = zip.by_index(index).map_err(|cause| {
+            ExtractError::Io {
+                path: archive.to_path_buf(),
+                cause: io::Error::other(cause),
+            }
         })?;
         // `enclosed_name` is the crate's OWN traversal check; a member it refuses never becomes a
         // path here, and `safe_join` below is the second, independent one.
@@ -167,9 +177,11 @@ fn unzip(archive: &Path, target: &Path) -> Result<(), ExtractError> {
         let Some(stripped) = strip_one(&raw) else {
             continue;
         };
-        let destination = safe_join(target, &stripped).ok_or_else(|| ExtractError::Escape {
-            archive: archive.to_path_buf(),
-            member: raw.display().to_string(),
+        let destination = safe_join(target, &stripped).ok_or_else(|| {
+            ExtractError::Escape {
+                archive: archive.to_path_buf(),
+                member: raw.display().to_string(),
+            }
         })?;
         if member.is_dir() {
             fs::create_dir_all(&destination).map_err(io_at(&destination))?;
@@ -213,14 +225,14 @@ fn strip_one(path: &Path) -> Option<PathBuf> {
 /// `root` joined with `relative`, or [`None`] if the result would leave `root`.
 ///
 /// Purely lexical, and deliberately so: it is applied BEFORE anything is written, where a
-/// canonicalising check would have to create the file first to ask about it. Every component must be
-/// a plain name — a root, a prefix, or a `..` is refused outright rather than resolved.
+/// canonicalising check would have to create the file first to ask about it. Every component must
+/// be a plain name — a root, a prefix, or a `..` is refused outright rather than resolved.
 fn safe_join(root: &Path, relative: &Path) -> Option<PathBuf> {
     let mut out = root.to_path_buf();
     for component in relative.components() {
         match component {
             Component::Normal(name) => out.push(name),
-            Component::CurDir => {}
+            Component::CurDir => {},
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
         }
     }
@@ -242,11 +254,11 @@ fn set_mode(_path: &Path, _mode: u32) -> io::Result<()> {
 
 /// Clears `com.apple.quarantine` off everything under `root`.
 ///
-/// Belt-and-braces: this program's own downloads never carry the attribute, because `LaunchServices`
-/// sets it and a socket does not. It is here for anyone who hand-drops a tarball into the cache from
-/// a browser — Gatekeeper refusing to exec a panel's server surfaces as "not found", which is a
-/// miserable thing to debug. Best-effort by design: a filesystem with no extended attributes at all
-/// is not a provisioning failure.
+/// Belt-and-braces: this program's own downloads never carry the attribute, because
+/// `LaunchServices` sets it and a socket does not. It is here for anyone who hand-drops a tarball
+/// into the cache from a browser — Gatekeeper refusing to exec a panel's server surfaces as "not
+/// found", which is a miserable thing to debug. Best-effort by design: a filesystem with no
+/// extended attributes at all is not a provisioning failure.
 fn unquarantine(root: &Path) {
     const QUARANTINE: &str = "com.apple.quarantine";
     let mut stack = vec![root.to_path_buf()];

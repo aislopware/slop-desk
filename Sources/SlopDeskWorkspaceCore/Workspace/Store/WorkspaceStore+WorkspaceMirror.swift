@@ -467,7 +467,8 @@ extension WorkspaceStore {
             open: commandBlocks(for: id).last { !$0.complete }?.commandText,
             hasProcessLabel: processLabel != nil,
         ) {
-        case let .hosted(text), let .open(text): return text
+        case let .hosted(text),
+             let .open(text): return text
         case .processLabel: return processLabel
         case .absent: return nil
         }

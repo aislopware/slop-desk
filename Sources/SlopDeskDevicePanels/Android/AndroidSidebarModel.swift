@@ -16,6 +16,12 @@
 // ONE mirror at a time. Selecting a device tears the previous socket down rather than holding both.
 // This matters more than it did for simulators: `scrcpy`'s encoder runs ON the device, so a
 // forgotten stream is a real battery drain on someone's phone.
+//
+// WHAT IS LEFT HERE IS PLUMBING. Every list fold, every clock, every sentence and every one of the
+// eleven numbers is `slopdesk_devicepanel::android_sidebar`, reached through ``AndroidSidebarRules``
+// — see that file's header for what crosses and what deliberately does not. What stays is the
+// `@Observable` writes, the `Task`/`DeadlineLatch` juggling, the live sockets, and the lifecycle
+// guards that read the in-flight `pending` set across an `await`.
 
 import CoreGraphics
 import Foundation
@@ -96,7 +102,7 @@ package final class AndroidSidebarModel {
     /// How many rows the console keeps. An Android device under load emits far more than an iOS one —
     /// `logcat` carries the whole system, not one process — so the trim matters more, but the cap is
     /// the same: far more than fits on screen, far less than a session.
-    package static let logCapacity = 600
+    package static let logCapacity = AndroidSidebarRules.count(.logCapacity)
 
     /// Bumped by the strip's reload button — part of the column's `.task` id, so a bump cancels the
     /// settled loop and re-ensures from scratch.
@@ -156,7 +162,7 @@ package final class AndroidSidebarModel {
     /// of a sidebar, and `scrcpy`'s own default for the same reason is 1920. Measured 2026-08-04
     /// against this host's emulator at 1024: 4 Mbit/s ceiling, 25 frames/s under a continuous drag,
     /// and an idle floor of 547 B/s.
-    package static let streamMaxSize = 1024
+    package static let streamMaxSize = AndroidSidebarRules.count(.streamMaxSize)
 
     /// How long a freshly opened mirror may stay silent before the panel stops believing in it.
     ///
@@ -164,19 +170,12 @@ package final class AndroidSidebarModel {
     /// has to push the server jar over `adb`, start `app_process`, and wait for the device's encoder
     /// to produce its first IDR. A warm emulator did it in 0.83 s; a cold physical device on USB is
     /// the slow case this covers.
-    package static let firstFrameDeadline: Duration = .seconds(8)
-
-    /// How long a selection keeps chasing a device that is not ready before the panel declares
-    /// failure. Measured on this host, 2026-08-07: a cold boot sits `offline` in `adb` for ~21 s
-    /// and produces its first video at ~39 s, with `open` refused or stalling throughout; a
-    /// first-ever boot that still has dexopt to do runs minutes on a slower machine. The window is
-    /// generous because everything inside it stays QUIET — the veil, not an error.
-    package static let deviceGrace: Duration = .seconds(120)
+    package static let firstFrameDeadline = AndroidSidebarRules.duration(.firstFrameDeadline)
 
     /// The pause between attempts while the device is coming up. Short enough that the mirror opens
     /// within a beat or two of the device turning ready; long enough that a booting host is not
     /// answering a `list` and an `open` for the same panel every frame.
-    package static let reattemptPause: Duration = .milliseconds(1500)
+    package static let reattemptPause = AndroidSidebarRules.duration(.reattemptPause)
 
     // MARK: The ensure loop
 
@@ -186,7 +185,7 @@ package final class AndroidSidebarModel {
     package func poll(
         host: @MainActor () -> String?,
         ensure: () async -> MetadataCodec.ServiceEndpoint?,
-        interval: Duration = .milliseconds(900),
+        interval: Duration = AndroidSidebarRules.duration(.ensurePoll),
     ) async {
         // A KNOWN-GOOD address survives a restart: this loop runs again every time the surface is
         // mounted, and resetting to `.starting` unconditionally would replace the whole surface for
@@ -219,7 +218,9 @@ package final class AndroidSidebarModel {
     /// `adb devices -l` plus one `adb shell` per RUNNING device. Devices that are `offline` or
     /// `unauthorized` are listed without a probe (host-side), which is what keeps a half-connected
     /// phone from spending the whole interval on a timeout.
-    package func watchDevices(interval: Duration = .seconds(4)) async {
+    package func watchDevices(
+        interval: Duration = AndroidSidebarRules.duration(.deviceWatch),
+    ) async {
         while !Task.isCancelled {
             await refreshDevices()
             try? await Task.sleep(for: interval)
@@ -234,7 +235,7 @@ package final class AndroidSidebarModel {
             failure = nil
             // A device that disappeared (unplugged, or an AVD deleted) cannot stay selected — the
             // mirror is already dead and the panel would show a frozen last frame forever.
-            if let selection, !list.contains(where: { $0.key == selection }) {
+            if let selection, AndroidSidebarRules.rowPosition(list, key: selection) == nil {
                 select(nil)
             }
         case let .failure(problem):
@@ -266,23 +267,10 @@ package final class AndroidSidebarModel {
         }
         let key = device.key
         if await !holdWhilePending(deadline: Self.bootVisibleDeadline, until: {
-            Self.bootIsVisible($0, key: key)
+            AndroidSidebarRules.bootIsVisible($0, key: key)
         }) {
-            failure = "\(device.name) did not start."
+            failure = AndroidSidebarRules.report(.bootNeverSurfaced, name: device.name)
         }
-    }
-
-    /// The launch has SURFACED: the booted serial folded into the row that was pressed. State does
-    /// not matter — `offline` is a boot in progress and the row already says so from the shelf.
-    package static func bootIsVisible(_ list: [AndroidDevice], key: String) -> Bool {
-        list.first { $0.key == key }?.serial != nil
-    }
-
-    /// The shutdown has LANDED: no row carries the serial any more, under whatever key the dying
-    /// emulator was listed. Keyed on the serial rather than the row because the row itself outlives
-    /// the shutdown — the AVD stays listed, merely no longer running.
-    package static func shutdownIsVisible(_ list: [AndroidDevice], serial: String) -> Bool {
-        !list.contains { $0.serial == serial }
     }
 
     package func shutdown(_ device: AndroidDevice) async {
@@ -302,9 +290,9 @@ package final class AndroidSidebarModel {
         // keeps the card from sitting there as a healthy-looking "Attached" with a pressable stop
         // for however long that takes.
         if await !holdWhilePending(deadline: Self.shutdownVisibleDeadline, until: {
-            Self.shutdownIsVisible($0, serial: serial)
+            AndroidSidebarRules.shutdownIsVisible($0, serial: serial)
         }) {
-            failure = "\(device.name) did not shut down."
+            failure = AndroidSidebarRules.report(.shutdownNeverLanded, name: device.name)
         }
     }
 
@@ -322,7 +310,7 @@ package final class AndroidSidebarModel {
         while clock.now - began < deadline {
             await refreshDevices()
             if visible(devices) { return true }
-            try? await Task.sleep(for: .seconds(1))
+            try? await Task.sleep(for: AndroidSidebarRules.duration(.pendingHold))
         }
         return false
     }
@@ -330,9 +318,10 @@ package final class AndroidSidebarModel {
     /// How long a launch may stay invisible before the panel calls it failed. Generous on purpose:
     /// the serial itself registers within seconds, but its NAME (the fold) needs the QEMU console,
     /// whose accept-and-greet can lag on a loaded host.
-    package static let bootVisibleDeadline: Duration = .seconds(60)
+    package static let bootVisibleDeadline = AndroidSidebarRules.duration(.bootVisibleDeadline)
     /// A snapshot save on the way down is the slow case (measured runs land well inside this).
-    package static let shutdownVisibleDeadline: Duration = .seconds(45)
+    package static let shutdownVisibleDeadline =
+        AndroidSidebarRules.duration(.shutdownVisibleDeadline)
 
     /// Stop every emulator that is running. Offered only where more than one is up, because that is
     /// the only place it is a different verb from the card's own stop button — and it is the state a
@@ -343,7 +332,10 @@ package final class AndroidSidebarModel {
     /// flight but not for a different one, and firing every shutdown at once would have each read
     /// the device list back while the others were still landing.
     package func shutdownAll() async {
-        for device in devices where device.isRunning && device.isEmulator {
+        // ``AndroidPresentation/stoppable(in:)`` rather than `isRunning && isEmulator` spelled here:
+        // the crate already decides which devices a sweep may act on, and half of that rule written
+        // out beside it is the drift the device-flags bitfield exists to end.
+        for device in AndroidPresentation.stoppable(in: devices) {
             await shutdown(device)
         }
     }
@@ -371,7 +363,7 @@ package final class AndroidSidebarModel {
         logStream?.disconnect()
         logStream = nil
 
-        guard let key, let device = devices.first(where: { $0.key == key }),
+        guard let key, let device = AndroidSidebarRules.device(devices, key: key),
               case let .ready(host, port) = phase
         else {
             // Leaving the list open with the drawer still latched would reopen a console for whatever
@@ -399,9 +391,9 @@ package final class AndroidSidebarModel {
     }
 
     /// Whether the current wait still has patience left. With no campaign running there is nothing
-    /// to be out of patience with.
+    /// to be out of patience with — the crate's rule, over the one clock the whole campaign shares.
     private var withinGrace: Bool {
-        awaitBegan.map { clock.now - $0 < Self.deviceGrace } ?? true
+        AndroidSidebarRules.withinGrace(elapsed: awaitBegan.map { clock.now - $0 })
     }
 
     /// Open the mirror for `key` and start the clock on it. Shared by selection, resume and retry, so
@@ -478,12 +470,14 @@ package final class AndroidSidebarModel {
     /// inside that staleness.
     private func reattemptStream(_ key: String) async {
         guard selection == key, isAwaitingStream, case let .ready(host, port) = phase else { return }
-        let name = devices.first { $0.key == key }?.name ?? "This device"
+        // Read BEFORE the await, off the list this campaign started against. Empty is not a hole:
+        // the crate's sentences name an anonymous subject for a device nothing can name.
+        let name = AndroidSidebarRules.device(devices, key: key)?.name ?? ""
         let live = try? await bridge.devices().get()
         // The await let the world move: a frame may have landed, or the selection moved on.
         guard selection == key, isAwaitingStream else { return }
         if let live { devices = live }
-        let device = devices.first { $0.key == key }
+        let device = AndroidSidebarRules.device(devices, key: key)
         // The rule that turns a boot from a dead end into a wait — ``DevicePanelRules``, shared with
         // the simulator panel. `nil` for a device the fresh list no longer carries, which is the one
         // answer that does not consult the clock.
@@ -501,14 +495,14 @@ package final class AndroidSidebarModel {
             scheduleReattempt(key)
         case .gone:
             settleStream()
-            failure = "\(name) is no longer running."
+            failure = AndroidSidebarRules.report(.noLongerRunning, name: name)
             select(nil)
         case .stalled:
             settleStream()
-            failure = lastEndReason ?? "The device is running, but no video has arrived."
+            failure = lastEndReason ?? AndroidSidebarRules.report(.noVideo)
         case .neverReady:
             settleStream()
-            failure = lastEndReason ?? "\(name) never finished starting."
+            failure = lastEndReason ?? AndroidSidebarRules.report(.neverFinishedStarting, name: name)
         }
     }
 
@@ -576,7 +570,7 @@ package final class AndroidSidebarModel {
     /// the stream is unaffected.
     package func setDisplayPower(on: Bool) {
         send(AndroidControlMessage.displayPower(on: on))
-        show(notice: on ? "Device screen on" : "Device screen off")
+        show(notice: AndroidSidebarRules.notice(on ? .screenOn : .screenOff))
     }
 
     /// Push text to the device's clipboard, optionally pasting it. Sequence 0 always — see
@@ -584,7 +578,7 @@ package final class AndroidSidebarModel {
     package func setClipboard(_ text: String, paste: Bool) {
         guard let message = AndroidControlMessage.setClipboard(text, paste: paste) else { return }
         send(message)
-        show(notice: paste ? "Pasted to device" : "Copied to device")
+        show(notice: AndroidSidebarRules.notice(paste ? .pasted : .copied))
     }
 
     /// The emulator console, for the things that are not input: GPS, battery, network, folding.
@@ -616,10 +610,10 @@ package final class AndroidSidebarModel {
             // reach the pasteboard as something nothing can paste, and the panel would call that a
             // success.
             guard ClientPasteboard.writeImage(png) else {
-                failure = "The screenshot could not be read."
+                failure = AndroidSidebarRules.report(.screenshotUnreadable)
                 return
             }
-            show(notice: "Screenshot copied")
+            show(notice: AndroidSidebarRules.notice(.screenshotCopied))
         case let .failure(problem):
             failure = problem.message
         }
@@ -627,17 +621,19 @@ package final class AndroidSidebarModel {
 
     /// The size the session packet named. The stream's only writer — see ``streamSize``.
     package func observed(streamSize size: CGSize) {
-        guard size.width > 0, size.height > 0, streamSize != size else { return }
+        guard AndroidSidebarRules.streamSizeIsNews(current: streamSize, incoming: size) else {
+            return
+        }
         streamSize = size
     }
 
     package func serial(for key: String) -> String? {
-        devices.first { $0.key == key }?.serial
+        AndroidSidebarRules.device(devices, key: key)?.serial
     }
 
     package var selectedDevice: AndroidDevice? {
         guard let selection else { return nil }
-        return devices.first { $0.key == selection }
+        return AndroidSidebarRules.device(devices, key: selection)
     }
 
     // MARK: The console
@@ -712,9 +708,8 @@ package final class AndroidSidebarModel {
             line.id = logSequence
             return line
         })
-        if logLines.count > Self.logCapacity {
-            logLines.removeFirst(logLines.count - Self.logCapacity)
-        }
+        let overflow = AndroidSidebarRules.logOverflow(logLines.count)
+        if overflow > 0 { logLines.removeFirst(overflow) }
     }
 
     /// A failure raised by the VIEW rather than by a call.
@@ -726,7 +721,7 @@ package final class AndroidSidebarModel {
 
     /// How long a confirmation stays up. Long enough to read one short line, short enough that it is
     /// gone before it can be mistaken for state.
-    package static let noticeLifetime: Duration = .seconds(2)
+    package static let noticeLifetime = AndroidSidebarRules.duration(.noticeLifetime)
 
     private func show(notice text: String) {
         failure = nil

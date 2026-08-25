@@ -61,9 +61,10 @@ pub fn port_directly_after(marker: &str, line: &str) -> Option<u16> {
     port_of(digit_run(after(marker, line)?))
 }
 
-/// The port after the LAST colon of what follows `marker`, for a third-party line naming an
-/// address we do not control: bracketed IPv6, a bare IPv4 and a whole URL all put the port after
-/// the final colon and nothing else does.
+/// The port after the LAST colon of what follows `marker`.
+///
+/// For a third-party line naming an address we do not control: bracketed IPv6, a bare IPv4 and a
+/// whole URL all put the port after the final colon and nothing else does.
 #[must_use]
 pub fn port_after_last_colon_following(marker: &str, line: &str) -> Option<u16> {
     let rest = after(marker, line)?;
@@ -175,21 +176,17 @@ pub const fn probe_step(
     probe_interval_nanos: u64,
     probe: Option<bool>,
 ) -> ProbeStep {
-    let live = match record {
-        Some(live) => live,
-        None => return ProbeStep::Boot,
+    let Some(live) = record else {
+        return ProbeStep::Boot;
     };
     if !live.running {
         return ProbeStep::Boot;
     }
-    let port = match live.port {
-        Some(port) => port,
-        None => {
-            return ProbeStep::Report {
-                state: ServiceState::Starting,
-                port: 0,
-            };
-        }
+    let Some(port) = live.port else {
+        return ProbeStep::Report {
+            state: ServiceState::Starting,
+            port: 0,
+        };
     };
     if live.ready {
         return ProbeStep::Report {
@@ -388,22 +385,25 @@ pub const fn boot_step(gates: BootGates) -> BootStep {
                     install_extensions: true,
                 }
             }
-        }
-        ExtensionInstall::Installing => BootStep {
-            install: ExtensionInstall::Installing,
-            action: BootAction::Report(ServiceState::Starting),
-            seed_settings,
-            start_bridge,
-            install_extensions: false,
+        },
+        ExtensionInstall::Installing => {
+            BootStep {
+                install: ExtensionInstall::Installing,
+                action: BootAction::Report(ServiceState::Starting),
+                seed_settings,
+                start_bridge,
+                install_extensions: false,
+            }
         },
         ExtensionInstall::Done => spawn,
     }
 }
 
-/// CLI open retries: 10 attempts × the caller's 2 s delay ≈ an 18 s window — enough for a cold
-/// server boot, the client's poll and the webview's workbench boot before the session socket
-/// exists. The workbench SESSION registers only once a client's webview has booted the page, and
-/// the client typically expands the panel in the same breath as the open.
+/// CLI open retries: 10 attempts × the caller's 2 s delay ≈ an 18 s window.
+///
+/// Enough for a cold server boot, the client's poll and the webview's workbench boot before the
+/// session socket exists. The workbench SESSION registers only once a client's webview has booted
+/// the page, and the client typically expands the panel in the same breath as the open.
 pub const OPEN_ATTEMPTS: u32 = 10;
 
 /// Which one-shot the code-server CLI is being run as.
@@ -436,7 +436,7 @@ pub const fn code_cli_flag(command: CodeCommand) -> &'static str {
 /// Whether it EXISTS and is a directory is the caller's — that is a `stat`, and the answer to it
 /// changes between two calls with the same argument.
 #[must_use]
-pub fn canonical_root<'path>(path: &'path str) -> Option<&'path str> {
+pub fn canonical_root(path: &str) -> Option<&str> {
     if !path.starts_with('/') {
         return None;
     }
@@ -449,8 +449,8 @@ mod tests {
     use super::{
         AdoptVerdict, BootAction, BootGates, BootStep, CodeCommand, ExtensionInstall, OPEN_ATTEMPTS,
         ProbeRecord, ProbeStep, ServiceState, accepts_announcement, adopt_verdict, announced_version,
-        boot_step, canonical_root, code_cli_flag, port_after_last_colon_following,
-        port_directly_after, probe_step,
+        boot_step, canonical_root, code_cli_flag, port_after_last_colon_following, port_directly_after,
+        probe_step,
     };
 
     const INTERVAL: u64 = 500_000_000;
@@ -458,7 +458,10 @@ mod tests {
     #[test]
     fn a_port_is_the_digit_run_after_the_marker() {
         assert_eq!(
-            port_directly_after("listening on 127.0.0.1:", "dropd listening on 127.0.0.1:5123 (v0.2.0)"),
+            port_directly_after(
+                "listening on 127.0.0.1:",
+                "dropd listening on 127.0.0.1:5123 (v0.2.0)"
+            ),
             Some(5123)
         );
     }
@@ -478,7 +481,10 @@ mod tests {
     fn a_zero_port_is_the_ask_echoed_back_and_never_an_answer() {
         assert_eq!(port_directly_after("on :", "bound on :0"), None);
         assert_eq!(
-            port_after_last_colon_following("HTTP server listening on http://", "HTTP server listening on http://0.0.0.0:0/"),
+            port_after_last_colon_following(
+                "HTTP server listening on http://",
+                "HTTP server listening on http://0.0.0.0:0/"
+            ),
             None
         );
     }
@@ -519,11 +525,19 @@ mod tests {
     #[test]
     fn a_version_is_read_from_the_end_of_the_port_marker() {
         assert_eq!(
-            announced_version("listening on 127.0.0.1:", "(v", "dropd listening on 127.0.0.1:5123 (v0.2.0)"),
+            announced_version(
+                "listening on 127.0.0.1:",
+                "(v",
+                "dropd listening on 127.0.0.1:5123 (v0.2.0)"
+            ),
             Some("0.2.0")
         );
         assert_eq!(
-            announced_version("listening on 127.0.0.1:", "(v", "dropd listening on 127.0.0.1:5123 (v0.2.0, pid 44)"),
+            announced_version(
+                "listening on 127.0.0.1:",
+                "(v",
+                "dropd listening on 127.0.0.1:5123 (v0.2.0, pid 44)"
+            ),
             Some("0.2.0")
         );
     }
@@ -531,7 +545,11 @@ mod tests {
     #[test]
     fn a_version_marker_before_the_port_cannot_win() {
         assert_eq!(
-            announced_version("listening on :", "(v", "/opt/(v9)/dropd listening on :5123 (v0.2.0)"),
+            announced_version(
+                "listening on :",
+                "(v",
+                "/opt/(v9)/dropd listening on :5123 (v0.2.0)"
+            ),
             Some("0.2.0")
         );
     }
@@ -562,13 +580,10 @@ mod tests {
             ready: false,
             running: true,
         };
-        assert_eq!(
-            probe_step(Some(fresh), INTERVAL, None),
-            ProbeStep::Report {
-                state: ServiceState::Starting,
-                port: 0,
-            }
-        );
+        assert_eq!(probe_step(Some(fresh), INTERVAL, None), ProbeStep::Report {
+            state: ServiceState::Starting,
+            port: 0,
+        });
     }
 
     #[test]
@@ -579,13 +594,10 @@ mod tests {
             ready: true,
             running: true,
         };
-        assert_eq!(
-            probe_step(Some(latched), INTERVAL, None),
-            ProbeStep::Report {
-                state: ServiceState::Ready,
-                port: 5123,
-            }
-        );
+        assert_eq!(probe_step(Some(latched), INTERVAL, None), ProbeStep::Report {
+            state: ServiceState::Ready,
+            port: 5123,
+        });
     }
 
     #[test]
@@ -596,26 +608,24 @@ mod tests {
             ready: false,
             running: true,
         };
-        assert_eq!(
-            probe_step(Some(never), INTERVAL, None),
-            ProbeStep::Probe { port: 5123 }
-        );
+        assert_eq!(probe_step(Some(never), INTERVAL, None), ProbeStep::Probe {
+            port: 5123
+        });
         let recent = ProbeRecord {
             since_probe: Some(INTERVAL - 1),
             ..never
         };
-        assert_eq!(
-            probe_step(Some(recent), INTERVAL, None),
-            ProbeStep::Report {
-                state: ServiceState::Starting,
-                port: 5123,
-            }
-        );
+        assert_eq!(probe_step(Some(recent), INTERVAL, None), ProbeStep::Report {
+            state: ServiceState::Starting,
+            port: 5123,
+        });
         let due = ProbeRecord {
             since_probe: Some(INTERVAL),
             ..never
         };
-        assert_eq!(probe_step(Some(due), INTERVAL, None), ProbeStep::Probe { port: 5123 });
+        assert_eq!(probe_step(Some(due), INTERVAL, None), ProbeStep::Probe {
+            port: 5123
+        });
     }
 
     #[test]
@@ -645,7 +655,10 @@ mod tests {
     #[test]
     fn only_the_current_generations_first_announcement_is_written() {
         assert!(accepts_announcement(3, 3, true, false));
-        assert!(!accepts_announcement(2, 3, true, false), "a dying child's last line");
+        assert!(
+            !accepts_announcement(2, 3, true, false),
+            "a dying child's last line"
+        );
         assert!(!accepts_announcement(3, 3, false, false), "nothing to write onto");
         assert!(!accepts_announcement(3, 3, true, true), "first writer wins");
     }
@@ -677,16 +690,13 @@ mod tests {
             launchable: false,
             ..gates(ExtensionInstall::Unchecked, 3)
         });
-        assert_eq!(
-            step,
-            BootStep {
-                install: ExtensionInstall::Unchecked,
-                action: BootAction::Report(ServiceState::Unavailable),
-                seed_settings: false,
-                start_bridge: false,
-                install_extensions: false,
-            }
-        );
+        assert_eq!(step, BootStep {
+            install: ExtensionInstall::Unchecked,
+            action: BootAction::Report(ServiceState::Unavailable),
+            seed_settings: false,
+            start_bridge: false,
+            install_extensions: false,
+        });
     }
 
     #[test]
@@ -758,7 +768,10 @@ mod tests {
 
     #[test]
     fn the_cli_one_shots_lead_with_two_flags() {
-        assert_eq!(code_cli_flag(CodeCommand::InstallExtension), "--install-extension");
+        assert_eq!(
+            code_cli_flag(CodeCommand::InstallExtension),
+            "--install-extension"
+        );
         assert_eq!(code_cli_flag(CodeCommand::ReuseWindow), "-r");
         assert_eq!(OPEN_ATTEMPTS, 10);
     }

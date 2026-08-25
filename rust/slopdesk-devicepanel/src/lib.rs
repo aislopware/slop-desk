@@ -54,8 +54,17 @@
 //! on the phone, `AppKit` on the Mac — so its copy, its verb tables and its silhouettes had one
 //! speller by accident and now have one on purpose. They are two modules and not one for the
 //! reason each header states: the surfaces look alike and share not one byte of protocol.
+//!
+//! ## And what the Android sidebar DECIDES
+//!
+//! [`android_sidebar`] is the sixth, and the only one so far that is one panel's alone: which row a
+//! device key or serial names, whether the boot and shutdown verbs may be offered over that list,
+//! the eleven clocks and caps the loop runs on, and the six reports it writes. It keeps the rule
+//! above — the lookup answers a POSITION into the list the caller still holds, and neither the key
+//! nor the serial crosses.
 
 pub mod android;
+pub mod android_sidebar;
 pub mod geometry;
 pub mod panel_key;
 pub mod scroll;

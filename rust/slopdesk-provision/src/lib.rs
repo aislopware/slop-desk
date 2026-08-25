@@ -8,9 +8,9 @@
 //! ## This is provisioning, not a runtime path
 //!
 //! `hostd` never downloads anything. It only ever LOOKS in `.prefix/bin`, and reports the surface
-//! unavailable when a dependency is not there. That split is the point: a coding host must not reach
-//! the network because someone opened a panel. This crate is the only thing in the tree that opens a
-//! socket to the internet, and it runs from `make provision` and nowhere else.
+//! unavailable when a dependency is not there. That split is the point: a coding host must not
+//! reach the network because someone opened a panel. This crate is the only thing in the tree that
+//! opens a socket to the internet, and it runs from `make provision` and nowhere else.
 //!
 //! ## The shape
 //!
@@ -61,13 +61,11 @@ pub type Failure = String;
 /// names the URL, a changed archive layout names the archive.
 pub fn run(layout: &Layout, mode: Mode, wanted: &[String]) -> Result<Tally, Failure> {
     let lock_path = layout.lock();
-    let text = fs::read_to_string(&lock_path)
-        .map_err(|cause| format!("{}: {cause}", lock_path.display()))?;
+    let text = fs::read_to_string(&lock_path).map_err(|cause| format!("{}: {cause}", lock_path.display()))?;
     let pins = lock::parse(&text).map_err(|error| error.to_string())?;
 
     for directory in [layout.bin(), layout.cache(), layout.prefix().join(".stamp")] {
-        fs::create_dir_all(&directory)
-            .map_err(|cause| format!("{}: {cause}", directory.display()))?;
+        fs::create_dir_all(&directory).map_err(|cause| format!("{}: {cause}", directory.display()))?;
     }
 
     let mut tally = Tally::default();
@@ -77,7 +75,7 @@ pub fn run(layout: &Layout, mode: Mode, wanted: &[String]) -> Result<Tally, Fail
             Kind::File => {
                 verify_vendored(layout, pin)?;
                 tally.current += 1;
-            }
+            },
             Kind::TarGz | Kind::Zip => step(layout, pin, mode, &mut tally)?,
         }
     }
@@ -101,8 +99,7 @@ fn step(layout: &Layout, pin: &Pin, mode: Mode, tally: &mut Tally) -> Result<(),
     }
 
     let archive = layout.archive(pin);
-    match fetch::fetch_verified(&pin.url, &pin.sha256, &archive).map_err(|error| error.to_string())?
-    {
+    match fetch::fetch_verified(&pin.url, &pin.sha256, &archive).map_err(|error| error.to_string())? {
         fetch::Cached::Already => log(&format!("cached   {}", relative(&archive, &layout.tools))),
         fetch::Cached::Downloaded => log(&format!("fetched  {}", pin.url)),
     }
@@ -112,8 +109,7 @@ fn step(layout: &Layout, pin: &Pin, mode: Mode, tally: &mut Tally) -> Result<(),
     extract::extract_into(pin.kind, &archive, &target).map_err(|error| error.to_string())?;
     if !is_executable(&binary) {
         return Err(format!(
-            "{} {} extracted but {} is not there or not executable — the upstream archive layout \
-             changed",
+            "{} {} extracted but {} is not there or not executable — the upstream archive layout changed",
             pin.name, pin.version, pin.binary
         ));
     }
@@ -160,8 +156,7 @@ fn relink(layout: &Layout, pin: &Pin) -> Result<(), Failure> {
     // and is wrong. Remove-then-create rather than a rename dance: the window is a developer's
     // machine mid-provision, not a live serving path.
     drop(fs::remove_file(&link));
-    symlink(&Layout::link_target(pin), &link)
-        .map_err(|cause| format!("{}: {cause}", link.display()))
+    symlink(&Layout::link_target(pin), &link).map_err(|cause| format!("{}: {cause}", link.display()))
 }
 
 /// The relative symlink, so the whole checkout stays movable.
@@ -191,10 +186,7 @@ fn is_executable(path: &Path) -> bool {
 
 /// A path as the reader would type it, relative to `ThirdParty/tools/` when it lives under it.
 fn relative(path: &Path, tools: &Path) -> String {
-    path.strip_prefix(tools)
-        .unwrap_or(path)
-        .display()
-        .to_string()
+    path.strip_prefix(tools).unwrap_or(path).display().to_string()
 }
 
 /// One indented progress line, matching the shell's own two-space `log`.
@@ -211,14 +203,11 @@ mod tests {
 
     #[test]
     fn a_fresh_tally_counts_nothing() {
-        assert_eq!(
-            Tally::default(),
-            Tally {
-                installed: 0,
-                current: 0,
-                missing: 0
-            }
-        );
+        assert_eq!(Tally::default(), Tally {
+            installed: 0,
+            current: 0,
+            missing: 0
+        });
     }
 
     #[test]

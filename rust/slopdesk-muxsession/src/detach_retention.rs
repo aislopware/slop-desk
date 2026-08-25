@@ -55,16 +55,12 @@ pub struct InsertVerdict {
 ///
 /// `cap` is the OPT-IN `SLOPDESK_DETACH_MAX_SESSIONS` bound, and `None` is UNBOUNDED — the default,
 /// and the tmux/zellij semantics: neither imposes a session count limit and neither ever silently
-/// kills a live detached session. The resource bound in that mode is per-pane, and SlopDesk's is
+/// kills a live detached session. The resource bound in that mode is per-pane, and `SlopDesk`'s is
 /// the stricter of the two.
 ///
 /// The victim is chosen AFTER the displacement, because the displaced entry is already leaving.
 #[must_use]
-pub fn insert_verdict(
-    stamps: &[f64],
-    occupant: Option<Occupant>,
-    cap: Option<usize>,
-) -> InsertVerdict {
+pub fn insert_verdict(stamps: &[f64], occupant: Option<Occupant>, cap: Option<usize>) -> InsertVerdict {
     let displaced = match occupant {
         Some(held) if held.same_session => {
             return InsertVerdict {
@@ -72,7 +68,7 @@ pub fn insert_verdict(
                 idempotent: true,
                 displace: false,
             };
-        }
+        },
         Some(held) => Some(held.position),
         None => None,
     };
@@ -134,14 +130,11 @@ mod tests {
     #[test]
     fn an_unbounded_store_never_evicts() {
         let stamps = [10.0, 20.0, 30.0];
-        assert_eq!(
-            insert_verdict(&stamps, None, None),
-            InsertVerdict {
-                victim: None,
-                idempotent: false,
-                displace: false,
-            }
-        );
+        assert_eq!(insert_verdict(&stamps, None, None), InsertVerdict {
+            victim: None,
+            idempotent: false,
+            displace: false,
+        });
     }
 
     #[test]

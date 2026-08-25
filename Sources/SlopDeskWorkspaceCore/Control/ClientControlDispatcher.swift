@@ -26,12 +26,6 @@ import SlopDeskProtocol
 public struct ClientControlDispatcher {
     private let backend: any ClientControlBackend
 
-    /// Max bytes per request line (validate-then-drop beyond this) — matches the host ctl socket.
-    static let maxRequestBytes = 64 * 1024
-    /// Default `pane-capture` line count when the request omits `lines`.
-    static let defaultCaptureLines = 100
-    /// Upper bound on `pane-capture` `lines` so a hostile count can't force an unbounded read.
-    static let maxCaptureLines = 100_000
     public init(backend: any ClientControlBackend) {
         self.backend = backend
     }
@@ -42,16 +36,22 @@ public struct ClientControlDispatcher {
     /// `nil` for a blank/whitespace-only line (nothing to respond to). Validate-then-drop: an
     /// oversized, non-JSON, or structurally-malformed line yields an error response (id `"?"`), never
     /// a trap.
+    ///
+    /// The trim, the size cap and the refusal words are ``ControlRequestRules``' — the scan answers a
+    /// verdict plus the trimmed request, so the bound is spelled once and not in this language.
     public func handleLine(_ line: String) -> String? {
-        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        guard trimmed.utf8.count <= Self.maxRequestBytes else {
-            return Self.encodeLine(Self.error(id: "?", message: "request too large"))
+        let scanned = ControlRequestRules.scan(line)
+        switch scanned.verdict {
+        case .blank:
+            return nil
+        case .tooLarge:
+            return Self.encodeLine(Self.error(id: "?", refusal: .tooLarge))
+        case .parse:
+            guard let (id, method, params) = Self.parseRequest(scanned.request) else {
+                return Self.encodeLine(Self.error(id: "?", refusal: .malformed))
+            }
+            return Self.encodeLine(dispatch(id: id, method: method, params: params))
         }
-        guard let (id, method, params) = Self.parseRequest(trimmed) else {
-            return Self.encodeLine(Self.error(id: "?", message: "malformed request"))
-        }
-        return Self.encodeLine(dispatch(id: id, method: method, params: params))
     }
 
     // MARK: - Dispatch
@@ -90,7 +90,7 @@ public struct ClientControlDispatcher {
         case ClientControlProtocol.Method.agentStatus:
             agentStatus(id: id, params: params)
         default:
-            Self.error(id: id, message: "unknown method: \(method)")
+            Self.error(id: id, refusal: .unknownMethod, detail: method)
         }
     }
 
@@ -137,14 +137,14 @@ public struct ClientControlDispatcher {
     /// unknown tab → error.
     private func tabBadge(id: String, params: [String: Any]) -> [String: Any] {
         guard let token = params["kind"] as? String else {
-            return Self.error(id: id, message: "missing params.kind")
+            return Self.error(id: id, refusal: .missingBadgeKind)
         }
         guard let kind = ClientControlProtocol.tabBadgeKind(forToken: token) else {
-            return Self.error(id: id, message: "invalid badge kind '\(token)'")
+            return Self.error(id: id, refusal: .invalidBadgeKind, detail: token)
         }
         let tabId = params["tabId"] as? String
         guard backend.setTabBadge(tabId: tabId, kind: kind) else {
-            return Self.error(id: id, message: "tab not found")
+            return Self.error(id: id, refusal: .tabNotFound)
         }
         return Self.success(id: id, result: ["kind": ClientControlProtocol.badgeToken(for: kind)])
     }
@@ -154,7 +154,7 @@ public struct ClientControlDispatcher {
         let query = params["query"] as? String
         let noCd = (params["noCd"] as? Bool) ?? false
         guard let outcome = backend.jump(query: query, changeDirectory: !noCd) else {
-            return Self.error(id: id, message: "no jump target")
+            return Self.error(id: id, refusal: .noJumpTarget)
         }
         return Self.success(
             id: id,
@@ -167,7 +167,7 @@ public struct ClientControlDispatcher {
     private func learn(id: String, params: [String: Any]) -> [String: Any] {
         let path = params["path"] as? String
         guard let recorded = backend.learn(path: path) else {
-            return Self.error(id: id, message: "no directory to learn (give a path or focus a pane with a cwd)")
+            return Self.error(id: id, refusal: .nothingToLearn)
         }
         return Self.success(id: id, result: ["path": recorded])
     }
@@ -175,10 +175,10 @@ public struct ClientControlDispatcher {
     /// `ignore` → remove a directory from the frecency DB. `path` required + non-empty (validate-then-drop).
     private func ignore(id: String, params: [String: Any]) -> [String: Any] {
         guard let path = params["path"] as? String, !path.isEmpty else {
-            return Self.error(id: id, message: "missing params.path")
+            return Self.error(id: id, refusal: .missingPath)
         }
         guard backend.ignore(path: path) else {
-            return Self.error(id: id, message: "could not ignore path")
+            return Self.error(id: id, refusal: .couldNotIgnore)
         }
         return Self.success(id: id, result: ["path": path])
     }
@@ -191,19 +191,19 @@ public struct ClientControlDispatcher {
         mode: ClientControlOpenMode,
     ) -> [String: Any] {
         guard let target = params["target"] as? String, !target.isEmpty else {
-            return Self.error(id: id, message: "missing params.target")
+            return Self.error(id: id, refusal: .missingTarget)
         }
         let placement: ClientControlProtocol.Placement
         if let token = params["placement"] as? String {
             guard let parsed = ClientControlProtocol.placement(forToken: token) else {
-                return Self.error(id: id, message: "invalid placement '\(token)'")
+                return Self.error(id: id, refusal: .invalidPlacement, detail: token)
             }
             placement = parsed
         } else {
             placement = .newTab
         }
         guard backend.open(target: target, mode: mode, placement: placement) else {
-            return Self.error(id: id, message: "could not open target")
+            return Self.error(id: id, refusal: .couldNotOpen)
         }
         return Self.success(id: id, result: [:])
     }
@@ -215,7 +215,7 @@ public struct ClientControlDispatcher {
         var scope: ClientControlProtocol.FontScope?
         if let token = params["scope"] as? String {
             guard let parsed = ClientControlProtocol.fontScope(forToken: token) else {
-                return Self.error(id: id, message: "invalid scope '\(token)'")
+                return Self.error(id: id, refusal: .invalidScope, detail: token)
             }
             scope = parsed
         }
@@ -237,19 +237,22 @@ public struct ClientControlDispatcher {
 
     /// `pane-capture` → `{lines: [...]}`. Validates `lines` (positive Int, bounded) BEFORE the
     /// backend reads; an unknown pane → error.
+    ///
+    /// The default, the ceiling and the refusal are ``ControlRequestRules``' — this reads the JSON
+    /// and hands over what it FOUND, which is the only part of the decision that is Swift's.
     private func paneCapture(id: String, params: [String: Any]) -> [String: Any] {
         let paneId = params["paneId"] as? String
-        let lines: Int
-        if let raw = params["lines"] {
-            guard let n = raw as? Int, n > 0 else {
-                return Self.error(id: id, message: "lines must be a positive integer")
-            }
-            lines = min(n, Self.maxCaptureLines)
-        } else {
-            lines = Self.defaultCaptureLines
+        let raw = params["lines"]
+        let count = raw as? Int
+        guard let lines = ControlRequestRules.captureLines(
+            present: raw != nil,
+            isInteger: count != nil,
+            raw: count ?? 0,
+        ) else {
+            return Self.error(id: id, refusal: .captureLines)
         }
         guard let captured = backend.capturePane(paneId: paneId, lines: lines) else {
-            return Self.error(id: id, message: "pane not found")
+            return Self.error(id: id, refusal: .paneNotFound)
         }
         return Self.success(id: id, result: ["lines": captured])
     }
@@ -260,17 +263,16 @@ public struct ClientControlDispatcher {
     private func paneSendKeys(id: String, params: [String: Any]) -> [String: Any] {
         let paneId = params["paneId"] as? String
         let text = params["text"] as? String ?? ""
-        let keys: [String]
-        if let rawKeys = params["keys"] {
-            guard let arr = rawKeys as? [Any] else {
-                return Self.error(id: id, message: "keys must be an array of strings")
-            }
-            keys = arr.compactMap { $0 as? String }
-        } else {
-            keys = []
-        }
-        guard !text.isEmpty || !keys.isEmpty else {
-            return Self.error(id: id, message: "nothing to send (need text or keys)")
+        let rawKeys = params["keys"]
+        let arrayKeys = rawKeys as? [Any]
+        let keys = arrayKeys?.compactMap { $0 as? String } ?? []
+        if let refusal = ControlRequestRules.sendKeysRefusal(
+            keysPresent: rawKeys != nil,
+            keysIsArray: arrayKeys != nil,
+            hasText: !text.isEmpty,
+            hasKeys: !keys.isEmpty,
+        ) {
+            return Self.error(id: id, refusal: refusal)
         }
         // An unknown key name is its OWN refusal, not a missing pane. Reporting it as one was the
         // shape this verb had before the key table moved behind the door: the backend swallowed the
@@ -279,9 +281,9 @@ public struct ClientControlDispatcher {
         case .sent:
             return Self.success(id: id, result: [:])
         case .paneNotFound:
-            return Self.error(id: id, message: "pane not found")
+            return Self.error(id: id, refusal: .paneNotFound)
         case let .unknownKey(name):
-            return Self.error(id: id, message: "unknown key: \(name)")
+            return Self.error(id: id, refusal: .unknownKey, detail: name)
         }
     }
 
@@ -290,7 +292,7 @@ public struct ClientControlDispatcher {
     /// window) keeps `watch:claude` polling; `seen:true` + `status` carries the rolled-up status.
     private func agentStatus(id: String, params: [String: Any]) -> [String: Any] {
         guard let target = params["id"] as? String, !target.isEmpty else {
-            return Self.error(id: id, message: "missing params.id")
+            return Self.error(id: id, refusal: .missingID)
         }
         switch backend.agentStatus(id: target) {
         case .unresolved:
@@ -311,9 +313,18 @@ public struct ClientControlDispatcher {
         return obj
     }
 
-    /// Build an error response object.
-    nonisolated static func error(id: String, message: String) -> [String: Any] {
-        ControlLine.error(id: id, message: message)
+    /// Build an error response object, in ``ControlRequestRules``' words.
+    ///
+    /// There is no `message:` spelling of this any more: a refusal the socket can answer with is one
+    /// the far side has a `Refusal` case for, and a sentence typed here would be a second vocabulary
+    /// for the same socket. `detail` is the token the caller mistyped, ignored by the refusals that
+    /// name none.
+    nonisolated static func error(
+        id: String,
+        refusal: ControlRequestRules.Refusal,
+        detail: String = "",
+    ) -> [String: Any] {
+        ControlLine.error(id: id, message: ControlRequestRules.message(refusal, detail: detail))
     }
 
     /// Serialize a response object to a NDJSON line (sorted keys + trailing `\n`). Falls back to a

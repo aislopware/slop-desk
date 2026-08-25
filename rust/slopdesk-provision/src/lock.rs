@@ -85,8 +85,8 @@ const DIGEST_HEX_LEN: usize = 64;
 
 /// Parses every record in `text`, in file order.
 ///
-/// Blank lines and `#`-leading lines are comments and are skipped — the lock file's prose is most of
-/// its bytes, and the reason each pin is what it is lives there rather than in a changelog.
+/// Blank lines and `#`-leading lines are comments and are skipped — the lock file's prose is most
+/// of its bytes, and the reason each pin is what it is lives there rather than in a changelog.
 ///
 /// # Errors
 /// Returns the first malformed record, naming its line and what was wrong with it. Deliberately
@@ -224,9 +224,7 @@ mod tests {
     #[test]
     fn a_digest_that_is_not_sixty_four_hex_digits_is_refused() {
         for bad in ["", "abc", &"z".repeat(64), &"a".repeat(63), &"a".repeat(65)] {
-            let text = format!(
-                "adb|37.0.1|zip|adb|https://example.invalid/p.zip|{bad}"
-            );
+            let text = format!("adb|37.0.1|zip|adb|https://example.invalid/p.zip|{bad}");
             assert!(parse(&text).is_err(), "{bad:?} must not parse");
         }
     }

@@ -442,7 +442,7 @@ mod tests {
         // SAFETY: `root` is a live local and `out` is a live 64-byte buffer.
         let needed =
             unsafe { slopdesk_ws_git_pushed_key(root.as_ptr(), root.len(), out.as_mut_ptr(), out.len()) };
-        assert_eq!(out.get(..needed), Some("/work/alpha".as_bytes()));
+        assert_eq!(out.get(..needed), Some(b"/work/alpha".as_slice()));
     }
 
     /// A null pair at every text input is the documented empty case.

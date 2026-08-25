@@ -32,8 +32,8 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use slopdesk_screenwire::{
-    FLAG_REASSERT_INPUT_MODES, HEADER_LEN, LENGTH_PREFIX_LEN, MAX_FRAME, Request, SOCKET_ENV_KEY,
-    Status, Verb, decode_reply, encode_request, reply_body_length, socket_path,
+    FLAG_REASSERT_INPUT_MODES, HEADER_LEN, LENGTH_PREFIX_LEN, MAX_FRAME, Request, SOCKET_ENV_KEY, Status,
+    Verb, decode_reply, encode_request, reply_body_length, socket_path,
 };
 
 /// The pane geometry every size is composed at — a typical pane, and the one the Swift bench used,
@@ -78,14 +78,7 @@ impl Lcg {
 }
 
 /// The words a synthetic build line uses.
-const WORDS: [&str; 6] = [
-    "Compiling",
-    "Testing",
-    "Building",
-    "Linking",
-    "Planning",
-    "Write",
-];
+const WORDS: [&str; 6] = ["Compiling", "Testing", "Building", "Linking", "Planning", "Write"];
 
 /// The files a synthetic build line names.
 const FILES: [&str; 4] = [
@@ -116,8 +109,7 @@ fn make_churn(target: usize) -> Vec<u8> {
                     .unwrap_or("ReplayBuffer.swift");
                 let step = rng.below(9000);
                 out.extend_from_slice(
-                    format!("\u{1b}[1m[{step}/9000]\u{1b}[0m {word} SlopDeskHost {file}\r\n")
-                        .as_bytes(),
+                    format!("\u{1b}[1m[{step}/9000]\u{1b}[0m {word} SlopDeskHost {file}\r\n").as_bytes(),
                 );
             },
             5..=7 => {
@@ -128,10 +120,8 @@ fn make_churn(target: usize) -> Vec<u8> {
                     let bar = "=".repeat(usize::try_from(percent / 4).unwrap_or(0));
                     let counter = rng.below(100_000);
                     out.extend_from_slice(
-                        format!(
-                            "\r\u{1b}[K\u{1b}[32m[{bar}>\u{1b}[0m] {percent}% ({counter} / 100000)"
-                        )
-                        .as_bytes(),
+                        format!("\r\u{1b}[K\u{1b}[32m[{bar}>\u{1b}[0m] {percent}% ({counter} / 100000)")
+                            .as_bytes(),
                     );
                 }
                 out.extend_from_slice(b"\r\n");
@@ -204,8 +194,8 @@ fn main() -> ExitCode {
 
     let Ok(mut stream) = UnixStream::connect(&path) else {
         eprintln!(
-            "no screend listening at {} — `make screend` builds it, and hostd starts one. \
-             Without it there is no compose to time.",
+            "no screend listening at {} — `make screend` builds it, and hostd starts one. Without it there \
+             is no compose to time.",
             path.display()
         );
         return ExitCode::from(1);
@@ -227,9 +217,7 @@ fn main() -> ExitCode {
         },
     }
 
-    println!(
-        "compose bench — rows={ROWS} cols={COLS} (typical pane), churn=synthetic build/test stream"
-    );
+    println!("compose bench — rows={ROWS} cols={COLS} (typical pane), churn=synthetic build/test stream");
     for mib in sizes {
         let target = std::cmp::min(mib.saturating_mul(MIB), largest_raw());
         let input = make_churn(target);

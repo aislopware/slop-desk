@@ -205,7 +205,7 @@ unsafe crate. Every step deletes the Swift it replaces and adds a ratchet (§8).
 - **The Apple-framework performers** — `HostClipboardPerformer` (NSPasteboard),
   `HostPathActionPerformer` (NSWorkspace), `RepoStatusWatcher` (FSEvents). `PreventSleepDriver` shows
   the pattern when they DO move: behind `slopdesk-apple-power`, `objc2` only.
-- **`Sources/SlopDeskHost/MuxNWConnection.swift`** (837 lines of Network.framework), for as long as
+- **`Sources/SlopDeskTransport/Mux/MuxNWConnection.swift`** (837 lines of Network.framework), for as long as
   hostd is a Swift process. The single largest thing between step 7 and the horizon — and the thing
   inspectord/dropd/androidd prove is replaceable.
 - **The `Task`s and the timeouts.** Every ladder step answers WHAT to do and WHEN to arm a timer under
