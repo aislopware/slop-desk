@@ -261,10 +261,12 @@ public final class WorkspaceStore {
     /// The store can't flip a pane's liveness itself — admission is **view-driven**: only an on-screen pane
     /// decodes, via `RemoteGUIPaneView`'s `.onAppear` → ``activateVideo(_:)``. So when a slot frees (a
     /// video pane deactivated, or an active-video pane closed), no one promotes a queued-but-still-on-screen
-    /// gated pane. Bumped on exactly those slot-freeing events; gated leaves observe it via `.onChange` and
-    /// re-call `activateVideo` (still cap-gated, so the ceiling holds). Only the store bumps it
-    /// (`private(set)`), GUARDED to real slot-freeing transitions so a no-op deactivate / non-video close
-    /// never churns the view. Pure MainActor `Int` bookkeeping (no new concurrency / Sendable surface).
+    /// gated pane. Gated leaves observe it via `.onChange` and re-call `activateVideo` (still cap-gated, so
+    /// the ceiling holds).
+    ///
+    /// A PROJECTION of ``VideoSlotLedger/generation``, written only by ``publishVideoSlots(_:)`` from a
+    /// door result. The guard that keeps a no-op deactivate or a non-video close from churning the view is
+    /// the ledger's, not this side's — this property carries no logic at all, only the last answer.
     public private(set) var videoPromotionGeneration: Int = 0
 
     /// The TAB whose sidebar row should open its inline rename field — set by the ⌘R / palette "Rename Pane"
@@ -422,26 +424,24 @@ public final class WorkspaceStore {
     /// The next teardown-task id (monotonic, wraps harmlessly).
     private var nextTeardownID = 0
 
-    /// The ids of video panes whose video stack is STILL tearing down (orphaned + removed from the
-    /// registry, but their async `teardown()` — stopping the UDP / VTDecompression / CVDisplayLink stack —
-    /// has not completed). Protects the ``liveVideoCap`` ceiling across a same-tick close+reopen (docs/22
-    /// §7): a pane gone from the registry but still holding its video resources must keep counting
-    /// against the cap until they release. `reconcile()` inserts an orphan's id (reading `isVideoActive`
-    /// BEFORE teardown nils it); the teardown task removes it after the `await`. ``activateVideo(_:)`` adds
-    /// `tearingDownVideo.count` to the live count; ``quiesce()`` defensively clears it. Every site runs on
-    /// `@MainActor`, serialized with the `teardownTasks` self-prune — no data race.
-    private var tearingDownVideo: Set<PaneID> = []
+    /// The live-video admission LEDGER (docs/22 §7): the ceiling, which panes are decoding, which have
+    /// closed but not finished letting go, and the promotion counter over them. A Rust handle
+    /// (``VideoSlotLedger``) rather than three stored properties, because it is state AND the decisions
+    /// over that state — see its own doc-comment for why that earns a handle.
+    ///
+    /// A `let` to a reference type, so nothing about mutating it is `@Observable`; ``videoSlotsRevision``
+    /// is what carries the change back into the view graph.
+    private let videoSlots: VideoSlotLedger
 
-    /// The ids of every currently VIDEO-ACTIVE pane — a small, narrowly-scoped `@Observable` mirror of
-    /// "which handles have `isVideoActive == true`" kept in lockstep with the registry at every site that
-    /// can flip it: ``activateVideo(_:)`` / ``deactivateVideo(_:)`` (the store-driven cap admission), the
-    /// iOS ``pauseSession(_:)`` / ``resumeSession(_:)`` fan-out (which flips `isVideoActive` on the handle
-    /// directly, bypassing the store verbs), and orphan removal in ``reconcileRegistry(desiredLeafIDs:spec:onMaterialize:)``
-    /// (a closed pane's id must not linger). ``hasFreeVideoSlot(for:)`` reads ONLY this set (never the
-    /// `registry` stored property) — Swift's Observation tracks per STORED PROPERTY, so a
-    /// `GuiLeafView.display` reading the whole `registry` would re-render on EVERY unrelated pane
-    /// materializing/closing; reading this instead means it only re-renders on an actual cap-relevant edge.
-    private var activeVideoPaneIDs: Set<PaneID> = []
+    /// The narrow `@Observable` counter that makes ``hasFreeVideoSlot(for:)`` reactive, bumped from every
+    /// site that mutates ``videoSlots`` and from nowhere else.
+    ///
+    /// It exists because Swift's Observation tracks per STORED PROPERTY and the ledger is not one: a
+    /// `GuiLeafView.display` reading the whole `registry` instead would re-render on EVERY unrelated pane
+    /// materializing or closing, where this re-renders only on a cap-relevant edge. Deliberately NOT
+    /// ``videoPromotionGeneration``, which is guarded to slot-FREEING transitions and would therefore miss
+    /// a pane going live — and whose count the cap tests pin.
+    private var videoSlotsRevision = 0
 
     /// The last layout the view solved, cached so geometric ``move(_:)`` can resolve a neighbour
     /// without the store knowing the view's size. `nil` until the view reports one (compact mode never
@@ -505,6 +505,7 @@ public final class WorkspaceStore {
     ) {
         self.makeSession = makeSession
         self.liveVideoCap = liveVideoCap
+        videoSlots = VideoSlotLedger(cap: liveVideoCap)
         self.persistence = persistence
         devicePreferencesStore = devicePreferences
         self.devicePreferences = devicePreferences?.load() ?? DevicePreferences()
@@ -1168,51 +1169,74 @@ public final class WorkspaceStore {
     /// `true` if it is already active. Non-video panes return `false`.
     @discardableResult
     public func activateVideo(_ id: PaneID) -> Bool {
-        guard let handle = registry[id], handle.kind.isVideo else { return false }
-        if handle.isVideoActive { return true }
-        guard hasFreeVideoSlot(for: id) else { return false }
-        handle.setVideoActive(true)
-        if handle.isVideoActive { activeVideoPaneIDs.insert(id) }
-        return handle.isVideoActive
+        guard let handle = registry[id] else { return false }
+        // The two facts the ledger cannot know — whether this pane decodes video at all, and whether it
+        // is decoding right now — are readings off the live handle, so they cross as ARGUMENTS. The
+        // ladder they used to be spelled as is the door's.
+        switch videoSlots.admit(id, isVideo: handle.kind.isVideo, alreadyLive: handle.isVideoActive) {
+        case .refuse:
+            return false
+        case .alreadyLive:
+            return true
+        case .proceed:
+            handle.setVideoActive(true)
+            // Report what the pane ACTUALLY did, not what was asked of it: an activation the stack
+            // refused must not book a slot nobody is standing in.
+            noteVideoLiveness(id, handle.isVideoActive)
+            return handle.isVideoActive
+        }
     }
 
-    /// Whether a live-video slot is currently free FOR pane `id` — a pure READ that mirrors the exact
-    /// admission guard ``activateVideo(_:)`` uses, with NO mutation. The view layer consults
+    /// Whether a live-video slot is currently free FOR pane `id` — a pure READ that answers with the
+    /// exact arithmetic ``activateVideo(_:)``'s admission uses, with NO mutation. The view layer consults
     /// this to tell the two false-activation reasons apart: a video pane whose `activateVideo`
     /// would refuse because the cap is **saturated** (→ the gated placeholder) versus one that is merely
-    /// **unconfigured** (→ the entry form so the user can still dial in). It self-excludes `id` exactly
-    /// as `activateVideo` does (an already-active pane sees its own slot as free), and counts the
-    /// in-flight `tearingDownVideo` stacks against the cap so the answer agrees with what an admission
-    /// attempt this same tick would actually decide.
+    /// **unconfigured** (→ the entry form so the user can still dial in).
     ///
-    /// `@Observable` reads of ``activeVideoPaneIDs`` (NOT the whole `registry`) make this reactive to
-    /// exactly cap-relevant edges — but the view layer ALSO re-attempts via the explicit
-    /// ``videoPromotionGeneration`` nudge on slot-freeing events, so this read need not be the only
-    /// liveness trigger; it is the cap-vs-config discriminator for the display decision.
+    /// The self-exclusion (an already-decoding pane sees its own slot as free) and the accounting for a
+    /// closed pane whose stack has not released are the ledger's, so this side cannot drift from what an
+    /// admission attempt this same tick would decide — it is the same door.
+    ///
+    /// ``observeVideoSlots()`` is what makes it reactive, and it is deliberately narrow: a read of the
+    /// whole `registry` would re-render this leaf on EVERY unrelated pane materializing or closing.
     public func hasFreeVideoSlot(for id: PaneID) -> Bool {
-        let activeOthers = activeVideoPaneIDs.subtracting([id]).count
-        // Count panes whose video stack is still TEARING DOWN against the cap too: an orphan
-        // closed this same tick is already gone from the registry but its UDP / VTDecompression /
-        // CVDisplayLink stack is not released until its async teardown completes, so admitting a new
-        // pane before then would transiently overlap two live stacks and breach the resource ceiling.
-        // `tearingDownVideo` excludes `id` by construction (an in-flight-teardown id is not in the
-        // registry, so it can never equal a live pane's id).
-        let inFlight = tearingDownVideo.count
-        return activeOthers + inFlight < liveVideoCap
+        observeVideoSlots()
+        return videoSlots.admits(id)
     }
 
     /// Deactivates live video for pane `id` (the view's `.onDisappear`), freeing a cap slot.
     ///
-    /// If this actually freed a LIVE slot (the pane was video-active), nudge ``videoPromotionGeneration``
-    /// so an on-screen pane sitting gated re-attempts admission. The `wasActive`
-    /// guard is load-bearing: a no-op deactivate (an already-idle / unknown / non-video pane) freed
-    /// nothing, so it must NOT churn the generation — otherwise an `.onDisappear` of a never-admitted
-    /// pane would spuriously re-trigger every gated sibling's retry for no gained slot.
+    /// `wasActive` is the reading taken BEFORE the pane is stood down, and it is what the ledger's guard
+    /// reads: a no-op deactivate (an already-idle / unknown / non-video pane) freed nothing, so
+    /// ``videoPromotionGeneration`` must not move — otherwise an `.onDisappear` of a never-admitted pane
+    /// would spuriously re-trigger every gated sibling's retry for no gained slot.
     public func deactivateVideo(_ id: PaneID) {
         let wasActive = registry[id]?.isVideoActive == true
         registry[id]?.setVideoActive(false)
-        activeVideoPaneIDs.remove(id)
-        if wasActive { videoPromotionGeneration &+= 1 }
+        publishVideoSlots(videoSlots.standDown(id, wasLive: wasActive))
+    }
+
+    /// Registers an Observation dependency on the live-video ledger, for a read that answers from it.
+    ///
+    /// The ledger is a Rust handle, not a stored property, so nothing about calling into it is
+    /// observable on its own. Mirrors ``observeWorkspaceMirror()``, which does the same job for the
+    /// document replica.
+    private func observeVideoSlots() { _ = videoSlotsRevision }
+
+    /// Writes the ledger's answer into the two projections and nowhere else.
+    ///
+    /// ``videoPromotionGeneration`` is dirty-guarded because the ledger only moves it on a transition
+    /// that actually FREED a slot; ``videoSlotsRevision`` always moves, because every call here changed
+    /// something a cap read would see.
+    private func publishVideoSlots(_ generation: Int) {
+        if videoPromotionGeneration != generation { videoPromotionGeneration = generation }
+        videoSlotsRevision &+= 1
+    }
+
+    /// Records what a pane's stack ACTUALLY is after something flipped it, and republishes.
+    private func noteVideoLiveness(_ id: PaneID, _ live: Bool) {
+        videoSlots.noteLive(id, live)
+        videoSlotsRevision &+= 1
     }
 
     // MARK: - Lifecycle fan-out (one site, AWAITED)
@@ -1249,7 +1273,7 @@ public final class WorkspaceStore {
     private func pauseSession(_ id: PaneID) async {
         await registry[id]?.pause()
         // `pause()` flips `isVideoActive` directly on the handle (bypassing ``deactivateVideo(_:)``) —
-        // resync the ``activeVideoPaneIDs`` mirror so ``hasFreeVideoSlot(for:)`` stays truthful.
+        // resync the ledger so ``hasFreeVideoSlot(for:)`` stays truthful.
         syncActiveVideoMirror(id)
     }
 
@@ -1259,15 +1283,14 @@ public final class WorkspaceStore {
         syncActiveVideoMirror(id)
     }
 
-    /// Reconciles ``activeVideoPaneIDs`` for `id` against its CURRENT handle state — idempotent, the
-    /// single re-sync point for the two sites that flip `isVideoActive` OUTSIDE ``activateVideo(_:)``/
+    /// Reconciles the ledger's view of `id` against its CURRENT handle state — idempotent, the single
+    /// re-sync point for the two sites that flip `isVideoActive` OUTSIDE ``activateVideo(_:)`` /
     /// ``deactivateVideo(_:)`` (``pauseSession(_:)`` / ``resumeSession(_:)``).
+    ///
+    /// Deliberately silent on the promotion counter: a pause is a fan-out over every pane at once, and a
+    /// resume consumes a slot rather than freeing one, so neither is a promotion edge for a gated pane.
     private func syncActiveVideoMirror(_ id: PaneID) {
-        if registry[id]?.isVideoActive == true {
-            activeVideoPaneIDs.insert(id)
-        } else {
-            activeVideoPaneIDs.remove(id)
-        }
+        noteVideoLiveness(id, registry[id]?.isVideoActive == true)
     }
 
     /// Awaits every in-flight orphan ``PaneSessionHandle/teardown()`` spawned by ``reconcile()`` to
@@ -1291,10 +1314,11 @@ public final class WorkspaceStore {
             }
         }
         // Defensive: after every teardown has completed, no video stack can still be tearing
-        // down, so the in-flight video accounting must be empty. Clear it so a dropped self-remove (a
-        // task whose `tearingDownVideo.remove` somehow did not run) can never strand a phantom slot
-        // against the cap.
-        tearingDownVideo.removeAll()
+        // down, so the in-flight video accounting must be empty. Clear it so a dropped release (a task
+        // whose ``VideoSlotLedger/release(_:)`` somehow did not run) can never strand a phantom slot
+        // against the cap. Silent on the promotion counter — a repair is not a slot opening.
+        videoSlots.clearReleasing()
+        videoSlotsRevision &+= 1
     }
 
     // MARK: - Tree-path mutations (delegate to WorkspaceTreeOps, then reconcileTree)
@@ -1551,8 +1575,7 @@ public final class WorkspaceStore {
     /// spawn-seed guard in `LivePaneSession.initialCwd` and the write guard in ``setLastKnownCwd(_:for:)``.
     /// `nil` pane / no cwd ⇒ `nil` (the policy then resolves the host default).
     private func inheritableCwd(of id: PaneID?) -> String? {
-        id.flatMap { paneCwd(for: $0) }
-            .flatMap { PaneSpec.looksLikeTransientPluginCwd($0) ? nil : $0 }
+        StoreSeed.inheritableCwd(id.flatMap { paneCwd(for: $0) })
     }
 
     /// The parent pane's HOST-pushed `pane/projectKey`, seeded onto a new split/tab/window pane so the
@@ -1566,12 +1589,9 @@ public final class WorkspaceStore {
     /// it beside the parent. The host's own push (seeded server-side at spawn) re-confirms or
     /// corrects the seed either way.
     private func inheritableProjectKey(of id: PaneID?, covering inheritedCwd: String?) -> String? {
-        guard let id, let key = projectKey(for: id),
-              !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key),
-              let cwd = inheritedCwd,
-              cwd == key || cwd.hasPrefix(key.hasSuffix("/") ? key : key + "/")
-        else { return nil }
-        return key
+        StoreSeed.inheritableProjectKey(
+            id.flatMap { projectKey(for: $0) }, coveringCwd: inheritedCwd,
+        )
     }
 
     /// Closes tab `tabID` (dropping its panes) and cascades like ``closePaneTree(_:)``.
@@ -2344,7 +2364,7 @@ public final class WorkspaceStore {
     /// The tree-driven counterpart of ``reconcile()``, diffing `tree.allPaneIDs()` against the registry.
     /// Delegates the whole load-bearing diff to the shared
     /// ``reconcileRegistry(desiredLeafIDs:spec:onMaterialize:)`` — the same orphan-remove-then-teardown,
-    /// `tearingDownVideo` ceiling-accounting, cache pruning, and `makeSession`/`adopt(id:)` materialize the
+    /// ``VideoSlotLedger`` ceiling-accounting, cache pruning, and `makeSession`/`adopt(id:)` materialize the
     /// canvas path uses — but sourced from ``tree`` via `tree.spec(for:)`.
     ///
     /// It wires the SAME per-leaf side effects the canvas `reconcile()` does (pane-rebind /
@@ -2666,7 +2686,7 @@ public final class WorkspaceStore {
 
     /// The leaf-source-agnostic core BOTH ``reconcile()`` (canvas) and ``reconcileTree()`` (tree) share, so
     /// the subtlest store logic — orphan detection/removal, the ``liveVideoCap`` ceiling-accounting
-    /// (`tearingDownVideo` / `videoPromotionGeneration` / the `videoTeardownSettle` teardown `Task`),
+    /// (``videoSlots`` / `videoPromotionGeneration` / the `videoTeardownSettle` teardown `Task`),
     /// per-pane cache pruning, and materialize-via-`makeSession` + `adopt(id:)` — exists ONCE. Two
     /// hand-synced copies would be a maintenance hazard: the two paths must diff IDENTICALLY. The caller
     /// supplies the canonical-order `desiredLeafIDs` + a `spec(for:)` lookup; an optional `onMaterialize`
@@ -2679,7 +2699,7 @@ public final class WorkspaceStore {
     ///    grow unbounded).
     /// 2. **Orphan removal (synchronous) + teardown (async, launched not awaited)** — the registry entry is
     ///    removed synchronously so `keys == leafIDs` holds the instant this returns; an orphan holding a live
-    ///    video stack keeps its cap slot (`tearingDownVideo` + the close-time / completion-site
+    ///    video stack keeps its cap slot (the ledger's releasing set + the close-time / completion-site
     ///    `videoPromotionGeneration` nudges + the `videoTeardownSettle` hold) until it actually releases.
     /// 3. **Materialize new leaves** — `makeSession(spec)` + `adopt(id:)` per new leaf, then `onMaterialize`.
     private func reconcileRegistry(
@@ -2782,22 +2802,13 @@ public final class WorkspaceStore {
         let orphans = registry.filter { !leafSet.contains($0.key) }.map(\.value)
         for orphan in orphans {
             registry.removeValue(forKey: orphan.id)
-            // A closed pane must not linger in the cap mirror — its occupancy (if it was active) is about
-            // to transfer entirely to `tearingDownVideo` below, so drop it here unconditionally (a no-op
-            // for a never-active / non-video orphan).
-            activeVideoPaneIDs.remove(orphan.id)
-            // Hold the cap slot for an orphan that is STILL holding a live video stack. Read
-            // `isVideoActive` NOW, before the async teardown nils it, and record the id so
-            // `activateVideo` keeps counting it until its teardown task actually releases the resources.
-            if orphan.kind.isVideo, orphan.isVideoActive {
-                tearingDownVideo.insert(orphan.id)
-                // Closing an ACTIVE video pane is a slot-freeing event: once this orphan's teardown
-                // releases its stack, a gated on-screen sibling should re-attempt
-                // admission. Nudge here (the close path) so gated leaves observe it and retry; the
-                // retry still flows through `activateVideo`, which keeps counting `tearingDownVideo`
-                // until the real release — so the ceiling holds even though the nudge fires now.
-                videoPromotionGeneration &+= 1
-            }
+            // Whether this orphan is STILL holding a live video stack, read NOW — before the async
+            // teardown nils it. That reading is the whole of what the ledger needs: a pane that was
+            // decoding keeps its cap slot booked until its teardown actually releases the resources,
+            // and closing one is itself a slot-freeing event worth nudging a gated sibling for. Which
+            // of those two things happens is the door's decision, not this line's.
+            let holdsStack = orphan.kind.isVideo && orphan.isVideoActive
+            publishVideoSlots(videoSlots.orphan(orphan.id, holdsStack: holdsStack))
         }
         if !orphans.isEmpty {
             // Teardown in a dedicated task, in registry-removal order, each awaited inside the task (no
@@ -2817,24 +2828,21 @@ public final class WorkspaceStore {
                     // SwiftUI dismantle → `VideoWindowPipeline.deactivate()` → detached `session.stop()`.
                     // Hold the cap slot for `videoTeardownSettle` past `teardown()` so a same-tick sibling
                     // cannot be admitted while the outgoing stack is still up (transient cap+1). Only
-                    // entered for an id actually IN `tearingDownVideo` (a video pane that was live)
-                    // and only when a settle is configured, so the terminal-only / `.zero`-settle paths are
+                    // entered for an orphan the ledger actually booked (a video pane that was live) and
+                    // only when a settle is configured, so the terminal-only / `.zero`-settle paths are
                     // unaffected. The sleep is cancel-safe.
-                    if self.tearingDownVideo.contains(orphan.id), self.videoTeardownSettle > .zero {
+                    if self.videoSlots.isReleasing(orphan.id), self.videoTeardownSettle > .zero {
                         try? await Task.sleep(for: self.videoTeardownSettle)
                     }
-                    // The orphan's video resources are released — stop counting it against the cap.
+                    // The orphan's video resources are released — stop counting it against the cap, and
+                    // publish the COMPLETION-SITE nudge. The close-time bump fired while this slot was
+                    // STILL counted, so a same-tick gated reopen was refused and parked on the "Video
+                    // paused" placeholder; this is the instant the slot ACTUALLY frees, so that pane
+                    // re-attempts now rather than waiting for an unrelated event to nudge it. Whether
+                    // there is a nudge at all is the ledger's — an unbooked orphan freed nothing.
                     // Serialized on the main actor with `activateVideo`'s read, so a same-tick reopen sees
                     // the slot freed only after the real release.
-                    if self.tearingDownVideo.remove(orphan.id) != nil {
-                        // COMPLETION-SITE nudge: the close-time bump (above) fires while this slot is STILL
-                        // counted against the cap, so a same-tick gated reopen is refused and parks on the
-                        // "Video paused" placeholder. Removing the id here is the instant the slot ACTUALLY
-                        // frees — nudge again so that gated on-screen pane re-attempts admission now,
-                        // instead of waiting for an unrelated event (another deactivate / re-appear) to
-                        // happen to nudge it.
-                        self.videoPromotionGeneration &+= 1
-                    }
+                    self.publishVideoSlots(self.videoSlots.release(orphan.id))
                 }
                 self.teardownTasks.removeValue(forKey: id)
             }
@@ -3486,14 +3494,12 @@ public extension WorkspaceStore {
     /// the moment the document supplies the same key; guarded against an unchanged value so a re-focus
     /// spends nothing.
     func setLastKnownCwd(_ cwd: String, for paneID: PaneID) {
-        // Drop a TRANSIENT plugin-cache-dir reading before it can poison the inherit source (see
-        // ``PaneSpec/looksLikeTransientPluginCwd(_:)``). The live-cwd sources are `proc_pidinfo`-based
+        // Both gates at once: drop a TRANSIENT plugin-cache-dir reading before it can poison the
+        // inherit source, and drop an unchanged one. The live-cwd sources are `proc_pidinfo`-based
         // (`refreshCwd` on command completion, the palette's `cwd()` resolver), which race a plugin
-        // manager's turbo `builtin cd`; without this a later new-tab / split / relaunch spawns its PTY in
-        // e.g. `…/zsh-users---zsh-autosuggestions` instead of the real project cwd.
-        guard !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return }
-        let current = paneCwd(for: paneID)
-        guard current != cwd else { return }
+        // manager's turbo `builtin cd`; without the first guard a later new-tab / split / relaunch
+        // spawns its PTY in e.g. `…/zsh-users---zsh-autosuggestions` instead of the real project cwd.
+        guard StoreSeed.acceptsCwd(cwd, current: paneCwd(for: paneID)) else { return }
         workspaceMirror.writeFastPath(
             pane: documentPaneID(paneID), field: WorkspacePaneField.cwd, string: cwd,
         )
@@ -3524,8 +3530,7 @@ public extension WorkspaceStore {
     /// unchanged value short-circuits so a reattach re-assert spends nothing.
     /// ``paneProjectKey(_:)`` reads it back for the sidebar sectioning.
     func setProjectKey(_ key: String, for paneID: PaneID) {
-        guard !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key) else { return }
-        guard projectKey(for: paneID) != key else { return }
+        guard StoreSeed.acceptsProjectKey(key, current: projectKey(for: paneID)) else { return }
         workspaceMirror.writeFastPath(
             pane: documentPaneID(paneID), field: WorkspacePaneField.projectKey, string: key,
         )
@@ -3615,11 +3620,7 @@ public extension WorkspaceStore {
     /// the sidebar's bucketing key exactly. `nil` ⇒ the pane has no section identity yet (no cwd) —
     /// no git bookkeeping.
     func effectiveGitProjectKey(_ id: PaneID) -> String? {
-        if let key = projectKey(for: id), !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key) {
-            return TabOrderingEngine.normalizedProjectKey(key)
-        }
-        guard let cwd = paneCwd(for: id), !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return nil }
-        return TabOrderingEngine.normalizedProjectKey(cwd)
+        StoreGitCadence.sectionKey(hostKey: projectKey(for: id), cwd: paneCwd(for: id))
     }
 
     /// Refreshes the git summary of pane `id`'s PROJECT (``projectGitSummary`` → the sidebar section
@@ -3642,7 +3643,9 @@ public extension WorkspaceStore {
         // key. A host key can be STALE across an un-re-pushed cross-repo `cd` (nothing client-side
         // invalidates it; the host re-pushes asynchronously), and booking the NEW repo's reply
         // under the OLD repo's key would overwrite an unrelated section's genuinely-correct header.
-        let aliasKey = hostPushedProjectKey(id) == nil ? key : nil
+        let aliasKey = StoreGitCadence.aliasCandidate(
+            hostKey: projectKey(for: id), cwd: paneCwd(for: id),
+        )
         Task { @MainActor [weak self] in
             let payload = await connection.activeMetadataClient?.gitStatus()
             guard let self else { return }
@@ -3659,9 +3662,7 @@ public extension WorkspaceStore {
     /// the code panel's ensure gate (`MacCodePanelColumn`): ensuring on the transient pre-push cwd
     /// would spawn a stranded code-server for a root the project does not actually have.
     func hostPushedProjectKey(_ id: PaneID) -> String? {
-        guard let key = projectKey(for: id), !key.isEmpty,
-              !PaneSpec.looksLikeTransientPluginCwd(key) else { return nil }
-        return key
+        StoreGitCadence.hostPushedKey(projectKey(for: id))
     }
 
     /// Re-probe pane `id`'s project git line on demand through its OWN live connection. A video /
@@ -3693,48 +3694,53 @@ public extension WorkspaceStore {
     func applyGitSummary(
         _ summary: PaneGitSummary, toplevel: String, fallbackKey: String?, at now: Date = Date(),
     ) {
-        // Validate-then-drop a reading taken while the shell was transiently inside a plugin-cache dir
-        // (a zinit turbo `builtin cd` the `gitStatus` RPC raced): its `toplevel` is the PLUGIN's repo
-        // and its branch/changed counts are that plugin's, not the user's project. Discard the WHOLE
-        // reading; the next completion edge re-probes at the settled cwd.
-        guard !PaneSpec.looksLikeTransientPluginCwd(toplevel) else { return }
-        guard let key = TabOrderingEngine.normalizedProjectKey(toplevel) ?? fallbackKey else { return }
+        // Which keys this reading is the truth for — including whether it is a truth at all. A reading
+        // taken while the shell was transiently inside a plugin-cache dir (a zinit turbo `builtin cd`
+        // the `gitStatus` RPC raced) is dropped WHOLE: its `toplevel` is the PLUGIN's repo and its
+        // branch/changed counts are that plugin's, not the user's project.
+        guard let plan = StoreGitCadence.booking(toplevel: toplevel, fallbackKey: fallbackKey) else {
+            return
+        }
+        bookGitSummary(summary, under: plan.primary, at: now)
+        // The alias is the caller's own fallback key, and it rides along only when the rule says it
+        // sits INSIDE the toplevel's subtree — any other relation means a stale/foreign key, and
+        // booking there would poison an unrelated section's header.
+        if plan.alias, let fallbackKey { bookGitSummary(summary, under: fallbackKey, at: now) }
+    }
+
+    /// Files one reading under one key: dirty-guarded so a quiet re-fetch spends no `@Observable`
+    /// churn, with the freshness stamp landing either way — that is what makes the cadence back off
+    /// for a section whose line did not change.
+    private func bookGitSummary(_ summary: PaneGitSummary, under key: String, at now: Date) {
         if projectGitSummary[key] != summary { projectGitSummary[key] = summary }
         projectGitFetchedAt[key] = now
-        // The alias must sit INSIDE the toplevel's subtree (a cwd-fallback subdir of THIS repo) —
-        // any other relation means a stale/foreign key, and booking there would poison an unrelated
-        // section's header (the caller's cwd-only guard is the first line; this is the backstop).
-        if let fallbackKey, fallbackKey != key, fallbackKey.hasPrefix(key + "/") {
-            if projectGitSummary[fallbackKey] != summary { projectGitSummary[fallbackKey] = summary }
-            projectGitFetchedAt[fallbackKey] = now
-        }
     }
 
     /// Applies a HOST-PUSHED project git summary (wire type 35 — the FSEvents watcher's event-driven
     /// truth, already folded by the connection layer). Books the push clock so the snapshot-cadence
     /// poll backs off (``gitSummaryPushGraceWindow``) while pushes keep arriving.
     func applyPushedProjectGitSummary(_ summary: PaneGitSummary, repoRoot: String, at now: Date = Date()) {
-        guard !PaneSpec.looksLikeTransientPluginCwd(repoRoot) else { return }
-        guard let key = TabOrderingEngine.normalizedProjectKey(repoRoot) else { return }
-        if projectGitSummary[key] != summary { projectGitSummary[key] = summary }
-        projectGitFetchedAt[key] = now
+        guard let key = StoreGitCadence.pushedKey(repoRoot: repoRoot) else { return }
+        bookGitSummary(summary, under: key, at: now)
         projectGitPushedAt[key] = now
     }
 
     /// How long a BACKGROUND project's header line stays "fresh" on the ~3 s RTT-snapshot edge before
     /// a re-fetch is allowed — long enough that the snapshot cadence is never a git-status poll, short
     /// enough that every visible section self-heals within a minute.
-    static let gitSummaryStaleWindow: TimeInterval = 60
+    static var gitSummaryStaleWindow: TimeInterval { StoreGitCadence.staleWindow }
 
     /// The tighter window for the ACTIVE project (the section the focused pane sits in) — the header
     /// the user is most likely acting on tracks external changes (editor saves, another terminal's
     /// commit) within seconds, still only ~4 subprocess spawns per window host-side.
-    static let gitSummaryStaleWindowActiveProject: TimeInterval = 15
+    static var gitSummaryStaleWindowActiveProject: TimeInterval {
+        StoreGitCadence.staleWindowActiveProject
+    }
 
     /// The poll back-off while HOST PUSHES (wire type 35) are fresh: the watcher already delivers
     /// event-driven updates, so the poll degrades to a slow safety net (it re-arms itself the moment
     /// pushes stop arriving for this long).
-    static let gitSummaryPushGraceWindow: TimeInterval = 300
+    static var gitSummaryPushGraceWindow: TimeInterval { StoreGitCadence.pushGraceWindow }
 
     /// Whether the ~3 s RTT-snapshot edge should re-fetch pane `id`'s PROJECT git line: ALWAYS when
     /// the project has no entry yet (initial populate), else when its entry is older than the
@@ -3746,18 +3752,15 @@ public extension WorkspaceStore {
     /// header honest without a per-pane poll.
     func shouldRefreshGitOnSnapshot(_ id: PaneID, now: Date = Date()) -> Bool {
         guard let key = effectiveGitProjectKey(id) else { return false }
-        guard !projectGitInFlight.contains(key) else { return false }
-        guard let fetchedAt = projectGitFetchedAt[key] else { return true }
-        let window: TimeInterval =
-            if let pushedAt = projectGitPushedAt[key],
-            now.timeIntervalSince(pushedAt) < Self.gitSummaryPushGraceWindow {
-                Self.gitSummaryPushGraceWindow
-            } else if isActiveProject(key) {
-                Self.gitSummaryStaleWindowActiveProject
-            } else {
-                Self.gitSummaryStaleWindow
-            }
-        return now.timeIntervalSince(fetchedAt) > window
+        // The two clocks stay here and cross as INTERVALS; the two sets stay here and cross as the
+        // booleans the rule actually reads. A project with no entry lends no interval, which is the
+        // initial populate the rule answers `true` for.
+        return StoreGitCadence.refreshDue(
+            inFlight: projectGitInFlight.contains(key),
+            sinceFetch: projectGitFetchedAt[key].map(now.timeIntervalSince),
+            sincePush: projectGitPushedAt[key].map(now.timeIntervalSince),
+            activeProject: isActiveProject(key),
+        )
     }
 
     /// Whether `key` is the FOCUSED pane's project — the active session's active tab's active pane.

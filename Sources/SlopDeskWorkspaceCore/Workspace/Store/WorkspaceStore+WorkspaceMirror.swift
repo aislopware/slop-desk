@@ -139,7 +139,9 @@ extension WorkspaceStore {
     /// asserted before the relaunch could never be believed again — `nvim`'s title decaying back to
     /// `vi .` was exactly that.
     func noteTitlePushed(_ title: String, for id: PaneID) {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A title that trims to nothing is written as the empty string, not skipped: an empty
+        // wire-21 is the agent RETIRING its title, which stays distinct from absent all the way down.
+        let trimmed = SupervisionFold.normalized(title) ?? ""
         let objectID = documentPaneID(id)
         workspaceMirror.writeFastPath(pane: objectID, field: WorkspacePaneField.liveTitle, string: trimmed)
         workspaceMirror.writeFastPath(
@@ -218,31 +220,19 @@ extension WorkspaceStore {
     /// leaves would tear down every live pane and rebuild it from the snapshot a moment later, so a
     /// reconnect would dismantle every terminal on screen and replay it back.
     func reconcileTreeFromDocument() {
-        guard !isReconcilingTree, mirroredTopology != nil else { return }
-        // …and so does an ARMED BOOTSTRAP. That is a layout this client was told at launch to publish
-        // and has not yet had a channel to say it on, and the frame that arrives first is the host's
-        // own first-run default. Materializing it would tear down the pane the window is already
-        // showing — and the shell behind it — for the one turn it takes the bootstrap to run.
-        //
-        // One turn is all it is: the channel folds a frame and publishes `.live` with no suspension
-        // between, and that `.live` edge is what fires ``runArmedBootstrapIfPossible()``. So the
-        // reconcile the bootstrap's own optimistic patch triggers is the first one SwiftUI can see.
-        guard armedBootstrapEnvironment == nil else { return }
-        // …and so does an OUTSTANDING LAUNCH ADOPT, which is the same race on the ORDINARY user's
-        // path. The layout this client restored from `workspace.json` is about to be offered to a host
-        // that has never had one (``runArmedLaunchAdoptIfPossible()``), and the frame that arrives
-        // first is that host's own first-run default. Projecting it would tear down every restored
-        // terminal and the shell behind it, materialize the host's default pane and give THAT a shell,
-        // and then rebuild all of them as new sessions when the offer is accepted a round trip later.
-        //
-        // The same one turn as the bootstrap's, and the same edge releases it: the frame lands, then
-        // `.live` publishes, and the offer's own optimistic patch triggers the first reconcile SwiftUI
-        // can see.
-        //
-        // Scoped to a REAL host document. Before one lands the mirror holds this client's own seed,
-        // which IS the tree on offer — nothing to hold against — and a client whose host refuses
-        // `channelClass 1` would otherwise stop reconciling for good.
-        guard pendingLaunchAdopt == nil || workspaceMirror.knownEpoch == Self.seedEpoch else { return }
+        // The four refusals are one rule — `slopdesk-workspace::mirror_fold::reconcile_admitted`,
+        // where each is written out. What stays here is reading the four facts off the store: a pass
+        // already in flight, no projection at all, an armed bootstrap, and an outstanding launch
+        // adopt against a REAL host document (this client's own seed IS the tree on offer, so there
+        // is nothing to hold against — and a host that refuses `channelClass 1` would otherwise stop
+        // this client reconciling for good).
+        guard MirrorFold.reconcileAdmitted(
+            reconciling: isReconcilingTree,
+            projected: mirroredTopology != nil,
+            bootstrapArmed: armedBootstrapEnvironment != nil,
+            adoptPending: pendingLaunchAdopt != nil,
+            epochIsSeed: workspaceMirror.knownEpoch == Self.seedEpoch,
+        ) else { return }
         reconcileTree(acknowledgingFocus: false)
     }
 
@@ -265,18 +255,22 @@ extension WorkspaceStore {
         let before = spec
         transform(&spec)
         guard spec != before else { return }
-        if spec.video != before.video {
+        switch MirrorFold.specIntent(
+            videoMoved: spec.video != before.video,
+            userRenamed: spec.userRenamed,
+            titleMoved: spec.title != before.title,
+            wasUserRenamed: before.userRenamed,
+        ) {
+        case .videoTarget:
             guard stage(.setPaneVideoTarget, WorkspaceIntentArgs.encode(
                 pane: id, video: spec.video,
             )) else { return }
-            reconcileTree()
-            return
-        }
-        guard spec.userRenamed, spec.title != before.title || !before.userRenamed else {
+        case .rename:
+            guard stage(.renamePane, WorkspaceIntentArgs.encode(id: id.raw, name: spec.title)) else { return }
+        case .refused:
             logIntentRefusal(.renamePane, "spec change with no intent for pane \(id.raw)")
             return
         }
-        guard stage(.renamePane, WorkspaceIntentArgs.encode(id: id.raw, name: spec.title)) else { return }
         reconcileTree()
     }
 
@@ -329,10 +323,8 @@ extension WorkspaceStore {
         observeWorkspaceMirror()
         let objectID = documentPaneID(id)
         guard workspaceMirror.bool(.pane, objectID, WorkspacePaneField.titleFresh) else { return nil }
-        let title = workspaceMirror.string(.pane, objectID, WorkspacePaneField.liveTitle)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let title, !title.isEmpty else { return nil }
-        return title
+        // A RETIRED title (the empty wire-21) and a title of pure whitespace are both absence here.
+        return SupervisionFold.normalized(workspaceMirror.string(.pane, objectID, WorkspacePaneField.liveTitle))
     }
 
     /// The banner/toast title for a command that just finished in pane `id`
@@ -359,10 +351,17 @@ extension WorkspaceStore {
         let objectID = documentPaneID(id)
         guard let roster = workspaceMirror.roster, let mine = workspaceChannel?.clientInstanceID
         else { return [] }
-        return roster.clients
-            .filter { $0.viewingPaneID == objectID && $0.clientInstanceID != mine }
-            .map(\.label)
-            .filter { !$0.isEmpty }
+        var tokens = RosterTokens()
+        let clients = roster.clients.map { client in
+            MirrorFold.PresenceClient(
+                token: tokens.token(for: client.clientInstanceID),
+                labelled: !client.label.isEmpty,
+                viewing: client.viewingPaneID == objectID,
+            )
+        }
+        return MirrorFold.viewers(clients, own: tokens.token(for: mine)).compactMap { position in
+            roster.clients.indices.contains(position) ? roster.clients[position].label : nil
+        }
     }
 
     /// What an attachment with no workspace channel behind it is called.
@@ -388,14 +387,19 @@ extension WorkspaceStore {
         guard let roster = workspaceMirror.roster else { return [] }
         let objectID = documentPaneID(id)
         guard let record = roster.panes.first(where: { $0.paneID == objectID }) else { return [] }
-        let mine = workspaceChannel?.clientInstanceID
-        var labels: [String: String] = [:]
-        for client in roster.clients where !client.label.isEmpty {
-            labels[client.clientInstanceID.uuidString] = client.label
+        var tokens = RosterTokens()
+        let clients = roster.clients.map { client in
+            MirrorFold.PresenceClient(
+                token: tokens.token(for: client.clientInstanceID),
+                labelled: !client.label.isEmpty,
+                viewing: false,
+            )
         }
-        return record.attachments.compactMap { attachment in
-            guard attachment.clientInstanceID != mine else { return nil }
-            return labels[attachment.clientInstanceID.uuidString] ?? Self.unlabelledHolder
+        let attachments = record.attachments.map { tokens.token(for: $0.clientInstanceID) }
+        let mine = workspaceChannel.map { tokens.token(for: $0.clientInstanceID) }
+        return MirrorFold.holders(attachments: attachments, clients: clients, own: mine).map { position in
+            guard let position, roster.clients.indices.contains(position) else { return Self.unlabelledHolder }
+            return roster.clients[position].label
         }
     }
 
@@ -416,7 +420,8 @@ extension WorkspaceStore {
         guard let roster = workspaceMirror.roster else { return nil }
         let objectID = documentPaneID(id)
         guard let record = roster.panes.first(where: { $0.paneID == objectID }),
-              record.resolvedCols > 0, record.resolvedRows > 0 else { return nil }
+              MirrorFold.gridPublished(cols: Int(record.resolvedCols), rows: Int(record.resolvedRows))
+        else { return nil }
         return (cols: Int(record.resolvedCols), rows: Int(record.resolvedRows))
     }
 
@@ -457,13 +462,33 @@ extension WorkspaceStore {
     /// an overlay entry would only be a second place for it to go stale.
     public func liveRunningCommand(for id: PaneID, processLabel: String?) -> String? {
         observeWorkspaceMirror()
-        let hosted = workspaceMirror.string(.pane, documentPaneID(id), WorkspacePaneField.runningCommand)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let hosted, !hosted.isEmpty { return hosted }
-        let open = commandBlocks(for: id).last { !$0.complete }?
-            .commandText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let open, !open.isEmpty { return open }
-        return processLabel
+        switch MirrorFold.runningCommand(
+            hosted: workspaceMirror.string(.pane, documentPaneID(id), WorkspacePaneField.runningCommand),
+            open: commandBlocks(for: id).last { !$0.complete }?.commandText,
+            hasProcessLabel: processLabel != nil,
+        ) {
+        case let .hosted(text), let .open(text): return text
+        case .processLabel: return processLabel
+        case .absent: return nil
+        }
+    }
+}
+
+/// Dense `UInt32` tokens for the roster's client ids — the minting the presence joins are asked in.
+///
+/// The joins themselves run in `slopdesk-workspace::mirror_fold` and answer POSITIONS, so no `UUID`
+/// and no label ever crosses. What they need instead is a number per identity that is stable for the
+/// length of one join, which is all this is: first sight mints the next number, every later sight
+/// gets the same one. An id nothing has seen — this client, when it is not in the roster — simply
+/// mints a token that matches nothing, which is the right answer rather than a special case.
+private struct RosterTokens {
+    private var minted: [UUID: UInt32] = [:]
+
+    mutating func token(for id: UUID) -> UInt32 {
+        if let held = minted[id] { return held }
+        let next = UInt32(minted.count)
+        minted[id] = next
+        return next
     }
 }
 

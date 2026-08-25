@@ -107,8 +107,7 @@ public extension WorkspaceStore {
     /// Sets (or clears, on empty) the per-pane host agent label. Idempotent. The cheap activity summary
     /// the sidebar surfaces.
     func setAgentLabel(_ label: String?, for id: PaneID) {
-        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = (trimmed?.isEmpty == false) ? trimmed : nil
+        let value = SupervisionFold.normalized(label)
         guard paneAgentLabel[id] != value else { return }
         if let value { paneAgentLabel[id] = value } else { paneAgentLabel.removeValue(forKey: id) }
     }
@@ -118,8 +117,7 @@ public extension WorkspaceStore {
     /// the empty push (session ended) removes the key so the row title falls back down its chain.
     /// Mirrors ``setAgentLabel``; pruned to the live leaf set on reconcile.
     func setAgentIntent(_ intent: String?, for id: PaneID) {
-        let trimmed = intent?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = (trimmed?.isEmpty == false) ? trimmed : nil
+        let value = SupervisionFold.normalized(intent)
         guard paneAgentIntent[id] != value else { return }
         if let value { paneAgentIntent[id] = value } else { paneAgentIntent.removeValue(forKey: id) }
     }
@@ -130,8 +128,7 @@ public extension WorkspaceStore {
     /// an empty / whitespace-only name removes the key (treated as "no process"). Mirrors ``setAgentLabel``;
     /// the stored ``WorkspaceStore/paneForegroundProcess`` is PRUNED to the live leaf set on reconcile.
     func setForegroundProcess(_ name: String?, for id: PaneID) {
-        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let value = (trimmed?.isEmpty == false) ? trimmed : nil
+        let value = SupervisionFold.normalized(name)
         guard paneForegroundProcess[id] != value else { return }
         if let value { paneForegroundProcess[id] = value } else { paneForegroundProcess.removeValue(forKey: id) }
     }
@@ -194,7 +191,7 @@ public extension WorkspaceStore {
         refreshUnseenDone(for: id)
         // The acknowledge already happened — a watch still ticking on this pane has nothing left to settle.
         paneDoneDwellSince.removeValue(forKey: id)
-        if agentStatus(for: id) == .done { setAgentStatus(.idle, for: id) }
+        if SupervisionFold.badgeClearSettles(agentStatus(for: id)) { setAgentStatus(.idle, for: id) }
     }
 
     // MARK: The focused-pane finish settle (a marker you have READ stops being unread)
@@ -219,25 +216,35 @@ public extension WorkspaceStore {
     /// nothing else would look again. Re-entrant-safe: the acknowledge feeds back through
     /// ``setAgentStatus(_:for:at:)``, and by then the pane is no longer a candidate, so the recursion ends.
     internal func refreshFocusedDoneSettle(at now: Date = Date()) {
-        if !paneDoneDwellSince.isEmpty {
-            for id in paneDoneDwellSince.keys where !isFinishSettleCandidate(id) {
-                paneDoneDwellSince.removeValue(forKey: id)
-            }
-        }
+        // The UNION of "a clock is running here" and "a clock may run here", which is the one list
+        // `slopdesk-workspace::attention_fold` folds. Two separate loops were how a pane fell out of
+        // one and stayed in the other.
+        let candidates = focusedFinishSettleCandidates()
+        var panes = Array(paneDoneDwellSince.keys)
+        panes.append(contentsOf: candidates.filter { paneDoneDwellSince[$0] == nil })
+        guard !panes.isEmpty else { return }
+        let step = SupervisionFold.settleStep(
+            panes.map { id in
+                let since = paneDoneDwellSince[id]
+                return SupervisionFold.Watch(
+                    watching: since != nil,
+                    watched: since.map { now.timeIntervalSince($0) } ?? 0,
+                    candidate: candidates.contains(id),
+                )
+            },
+            window: Self.focusedDoneSettleWindow,
+        )
         var due: [PaneID] = []
-        var startedAWatch = false
-        for id in focusedFinishSettleCandidates() {
-            guard let since = paneDoneDwellSince[id] else {
-                paneDoneDwellSince[id] = now
-                startedAWatch = true
-                continue
-            }
-            if PaneFacts.settleDue(watched: now.timeIntervalSince(since), window: Self.focusedDoneSettleWindow) {
-                due.append(id)
+        for (id, verdict) in zip(panes, step.verdicts) {
+            switch verdict {
+            case .start: paneDoneDwellSince[id] = now
+            case .drop: paneDoneDwellSince.removeValue(forKey: id)
+            case .settle: due.append(id)
+            case .hold: break
             }
         }
         for id in due { clearAgentBadge(id) }
-        if startedAWatch {
+        if step.armsScheduler {
             doneSettleScheduler(Self.focusedDoneSettleWindow) { [weak self] in
                 self?.refreshFocusedDoneSettle()
             }
@@ -264,8 +271,12 @@ public extension WorkspaceStore {
     /// `.working`/`.needsPermission` is never unread OUTPUT, so it never starts a clock — the settle can
     /// therefore never silence a waiting approval gate.
     private func isFinishSettleCandidate(_ id: PaneID) -> Bool {
-        guard isAppActive, isPaneFocused(id) else { return false }
-        return agentStatus(for: id) == .done || paneUnseenDone.contains(id)
+        SupervisionFold.isSettleCandidate(
+            appActive: isAppActive,
+            focused: isPaneFocused(id),
+            finished: agentStatus(for: id) == .done,
+            unseenFinish: paneUnseenDone.contains(id),
+        )
     }
 
     // MARK: Rollups (the sidebar/tab/chrome dot derivations)
@@ -447,7 +458,9 @@ public extension WorkspaceStore {
     func jumpToOldestAttentionPane() {
         let box = attentionWalk
         let focusedBeforeStep = tree.activeSession?.activeTab?.activePane
-        if box.origin != nil, focusedBeforeStep != box.lastWalkFocused {
+        if SupervisionFold.walkInterrupted(
+            walking: box.origin != nil, focusHeld: focusedBeforeStep == box.lastWalkFocused,
+        ) {
             box.reset() // an external focus change intervened since the last press — abandon the old walk
         }
         let queue = unseenAttentionPanes.map(\.pane)

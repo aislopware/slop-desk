@@ -1,0 +1,114 @@
+# `slopdesk-instruments` — the command-line instruments, in the language the code they measure is in.
+#
+# ## Why they moved
+# Every program here was a `Sources/slopdesk-*/main.swift`, and a `main.swift` is by definition not
+# UI — the one thing `CLAUDE.md` keeps in Swift. What each one measures had already moved: the
+# reattach composer is `slopdesk-screend` behind a 47-line Swift face, the swipe-nav push is
+# `slopdesk_video::{video_control, cursor, swipe_nav}` behind another, and the palette's ranking is
+# `slopdesk-fuzzy`. An instrument written on the far side of a marshalling face measures the face;
+# written here it measures the thing.
+#
+# ## Why one crate with three bins and not three crates
+# `slopdesk-devtools`'s argument, unchanged: these have nothing in common at the domain level — one
+# times a UNIX-socket round trip, one speaks UDP to a live daemon, one spawns `fzf` — but they share
+# the only property that decides where code lives, which is that they are short-lived operator tools
+# shipping in nothing. None is a gate (`slopdesk-invariants` is where a gate goes), none is linked
+# into the app, none is `execve`d by a daemon. Three workspaces would triple the `cargo fmt` and
+# clippy passes `make lint` walks to buy a boundary nobody crosses.
+#
+# `slopdesk-fuzzybench` is a bin HERE rather than an example in `slopdesk-fuzzy` for one mechanical
+# reason: `examples/` is auto-discovered, so it would silently join that crate's own build and lint
+# surface — a harness that spawns a foreign binary has no business inside the crate under test.
+#
+# `slopdesk-navhistory-probe` is NOT here, and that is the same rule applied honestly: it needs
+# `slopdesk-ffi`, whose dependency tree is the whole app. Paying that to time a socket round trip is
+# exactly the cost this file's `[workspace]` exists to refuse, so it has its own crate next door.
+#
+# ## Its own workspace, for the usual reason
+# Profiles are workspace-global. `rust/Cargo.toml` is `opt-level = "z"` because its members are
+# forked per event and startup time is their whole cost; a throughput bench under that profile
+# reports a number nothing in production would ever see.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-instruments"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The slopdesk command-line instruments — the reattach-compose bench, the swipe-nav status probe and the fuzzy-ranking parity bench"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[[bin]]
+name = "slopdesk-replay-bench"
+path = "src/bin/replay_bench.rs"
+
+[[bin]]
+name = "slopdesk-swipestatus-probe"
+path = "src/bin/swipestatus_probe.rs"
+
+[[bin]]
+name = "slopdesk-fuzzybench"
+path = "src/bin/fuzzybench.rs"
+
+[dependencies]
+# The screend wire, including where the socket is. The bench must dial it the way hostd does or it
+# is timing a different link.
+slopdesk-screenwire = { path = "../slopdesk-screenwire" }
+# The PATH-2 wire: the mux prefix, the control messages and the cursor channel the probe reads.
+slopdesk-video = { path = "../slopdesk-video" }
+# The scorer under test, held DIRECTLY. `slopdesk-fuzzy` is zero-dependency, so it costs this
+# workspace nothing but itself — and measuring it through the FFI door instead would report the
+# marshalling, which `docs/55` already timed.
+slopdesk-fuzzy = { path = "../slopdesk-fuzzy" }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+
+# Disabled, with reasons:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate". A throughput number folded
+#   with one rounding instead of two is not the number the Swift instrument printed, and the whole
+#   point of a bench is that today's number is comparable with the one in `docs/DECISIONS.md`.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+# - `cast_precision_loss` (pedantic): a byte count or a candidate count becomes an `f64` to be
+#   divided into a rate. The counts here are tens of megabytes and millions of comparisons, and
+#   `f64` is exact to 2^53, so the "loss" the lint names cannot occur; the alternative is a
+#   `try_from` ladder around arithmetic that has no failure mode.
+cast_precision_loss = "allow"
+# - `multiple_crate_versions` (cargo): both dependencies are path crates with no registry tree
+#   between them, so this can only ever fire on a toolchain artefact outside our control.
+multiple_crate_versions = "allow"
+# - `significant_drop_tightening` (nursery): the probe's whole state is one mutex, and its summary
+#   is written FROM that state — a report assembled outside the lock would be a report of a moment
+#   that never existed, which is the one thing a diagnostic may not print.
+significant_drop_tightening = "allow"
+# - `too_many_lines` (pedantic): each `main` here is one straight-line procedure — parse, dial,
+#   run, report. Splitting it to satisfy a line count would scatter an order that has to be read in
+#   order.
+too_many_lines = "allow"
+
+# A bench reports throughput and a probe waits on a live daemon. Neither is startup-bound, and the
+# bench's number is only meaningful at the optimisation level the daemon it dials ships with.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

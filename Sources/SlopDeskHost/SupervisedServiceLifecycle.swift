@@ -2,7 +2,7 @@ import Foundation
 import SlopDeskProtocol
 
 // SupervisedServiceLifecycle — the two lifecycles the five sidecar managers in this target were
-// each written out longhand, and the one number-reading they all end in.
+// each written out longhand, and the process work that is left of them.
 //
 // ``HostServiceProcess`` already held the shape's PROSE ("spawn with port 0 and learn the bound
 // port from the child's own log line, merge stdout+stderr, probe with a bounded loopback connect")
@@ -19,39 +19,32 @@ import SlopDeskProtocol
 // isolation. That is the argument for one implementation — `docs/55` §6's `process::basename`
 // precedent, in a second target.
 //
-// What is NOT here is anything about which daemon this is: the socket name, the announce marker,
-// the argv, the env override and the reason a given spawn failure reads `unavailable` rather than
-// `starting` all stay with the face, because those are the places the daemons genuinely disagree.
+// Every DECISION below now lives once more, one language down, in
+// `slopdesk-sidecars::service_lifecycle` behind ``HostServiceRules``: which digits on a line are a
+// port, when a probe is due, whether a survivor on the wrong port may be adopted. What is left here
+// is the `NSLock`, the `Process` handle, the `Task` and the loopback connect — the things that are
+// what they are.
+//
+// What is NOT here, and never was, is anything about which daemon this is: the socket name, the
+// announce marker, the argv, the env override and the reason a given spawn failure reads
+// `unavailable` rather than `starting` all stay with the face, because those are the places the
+// daemons genuinely disagree.
 
-/// The last step of every announce parse: a run of digits is a port, and `0` never is.
-///
-/// A `:0` in an announce line is the port the child was ASKED for under `--port 0`, echoed back
-/// before the OS had picked one — the one value that is always a lie. It was rejected by two of the
-/// five parsers and accepted by three.
+/// The announce line's port, in the two dialects the five backends print.
 enum AnnouncedPort {
     /// The digit run IMMEDIATELY after `marker`, which ends with the address and its colon.
     ///
-    /// The marker is matched exactly and the digits are taken as a run, so a build that adds words
-    /// after the port keeps parsing. Deliberately not the last-colon rule: these lines carry a
-    /// parenthetical after the port (`(adb 127.0.0.1:5037)`) whose own colon would win it.
+    /// Deliberately not the last-colon rule: these lines carry a parenthetical after the port
+    /// (`(adb 127.0.0.1:5037)`) whose own colon would win it.
     static func directlyAfter(_ marker: String, in line: String) -> UInt16? {
-        guard let markerRange = line.range(of: marker) else { return nil }
-        return port(line[markerRange.upperBound...].prefix(while: \.isNumber))
+        HostServiceRules.announcedPort(marker: marker, in: line)
     }
 
     /// The digit run after the LAST colon of what follows `marker`, for a third-party framework
     /// line that names an address we do not control: bracketed IPv6, a bare IPv4 or a whole URL all
     /// put the port after the final colon and nothing else does.
     static func afterLastColonFollowing(_ marker: String, in line: String) -> UInt16? {
-        guard let markerRange = line.range(of: marker) else { return nil }
-        let rest = line[markerRange.upperBound...]
-        guard let colon = rest.lastIndex(of: ":") else { return nil }
-        return port(rest[rest.index(after: colon)...].prefix(while: \.isNumber))
-    }
-
-    private static func port(_ digits: Substring) -> UInt16? {
-        guard let port = UInt16(digits), port > 0 else { return nil }
-        return port
+        HostServiceRules.announcedPort(marker: marker, in: line, afterLastColon: true)
     }
 }
 
@@ -67,21 +60,14 @@ enum AnnouncedPort {
 /// audit never turns into "current".
 enum AnnouncedVersion {
     /// Spelled identically as `ANNOUNCE_VERSION_PREFIX` in the three announcing daemons' `server.rs`,
-    /// and compared by `rust/slopdesk-invariants`.
+    /// and compared by `rust/slopdesk-invariants`. It is passed INTO the rule rather than spelled
+    /// inside it, so this stays the one Swift-side spelling those comparisons reach.
     static let marker = "(v"
 
     /// The version between ``marker`` and the parenthetical's first `,` or `)`, searched from the
     /// end of `portMarker` so a `(v` inside a path earlier on the line cannot win.
-    ///
-    /// The daemons put it FIRST in the parenthetical for that reason, and so the position holds
-    /// however the rest of that text grows. Empty parses to `nil` — an empty string is not a
-    /// version, and reporting one as if it were would compare unequal to every real one forever.
     static func directlyAfter(_ portMarker: String, in line: String) -> String? {
-        guard let markerRange = line.range(of: portMarker) else { return nil }
-        let rest = line[markerRange.upperBound...]
-        guard let versionRange = rest.range(of: marker) else { return nil }
-        let version = rest[versionRange.upperBound...].prefix { $0 != "," && $0 != ")" }
-        return version.isEmpty ? nil : String(version)
+        HostServiceRules.announcedVersion(portMarker: portMarker, versionMarker: marker, in: line)
     }
 }
 
@@ -221,43 +207,48 @@ final class ProbedPortService: @unchecked Sendable {
     // MARK: - Internals
 
     /// The endpoint of the LIVE child, or `nil` when there is none to report on — the caller's cue
-    /// to boot. Drops a child that has exited. Caller holds the lock.
+    /// to boot. Caller holds the lock.
+    ///
+    /// The whole round is ``HostServiceRules/probeStep(hasRecord:isRunning:port:isReady:sinceProbe:probeInterval:probe:)``;
+    /// what happens here is the three things it cannot do: forget an exited child, make the
+    /// loopback connect, and stamp the record with when that connect ran.
     private func liveEndpointLocked() -> MetadataCodec.ServiceEndpoint? {
-        guard let existing = instance else { return nil }
-        guard existing.handle.isRunning else {
+        guard var live = instance else { return nil }
+        let sinceProbe = live.lastProbe.map { clock.now - $0 }
+        let step = HostServiceRules.probeStep(
+            hasRecord: true,
+            isRunning: live.handle.isRunning,
+            port: live.port,
+            isReady: live.ready,
+            sinceProbe: sinceProbe,
+            probeInterval: probeInterval,
+            probe: nil,
+        )
+        switch step {
+        case .boot:
             instance = nil
             return nil
+        case let .report(endpoint):
+            return endpoint
+        case let .probe(port):
+            live.lastProbe = clock.now
+            live.ready = probe(port)
+            instance = live
+            return HostServiceRules.probedEndpoint(port: port, isReady: live.ready)
         }
-        return endpointLocked(for: existing)
-    }
-
-    /// The endpoint for a LIVE instance, probing readiness at most once per ``probeInterval``.
-    /// Mutates the record (latched `ready`, probe stamp) — caller holds the lock.
-    private func endpointLocked(for live: Instance) -> MetadataCodec.ServiceEndpoint {
-        guard let port = live.port else {
-            return MetadataCodec.ServiceEndpoint(state: .starting, port: 0)
-        }
-        if live.ready {
-            return MetadataCodec.ServiceEndpoint(state: .ready, port: port)
-        }
-        var updated = live
-        let now = clock.now
-        let due = live.lastProbe.map { now - $0 >= probeInterval } ?? true
-        if due {
-            updated.lastProbe = now
-            updated.ready = probe(port)
-        }
-        instance = updated
-        // The learned port rides along even while starting: it is the honest answer to "where will
-        // it be", and the client gates on the STATE.
-        return MetadataCodec.ServiceEndpoint(state: updated.ready ? .ready : .starting, port: port)
     }
 
     private func recordPort(_ port: UInt16, spawnedAs generation: Int) {
         locked {
-            guard generation == spawnGeneration, var live = instance, live.port == nil else { return }
-            live.port = port
-            instance = live
+            let live = instance
+            guard HostServiceRules.acceptsAnnouncement(
+                line: generation,
+                current: spawnGeneration,
+                hasRecord: live != nil,
+                alreadyRecorded: live?.port != nil,
+            ), var updated = live else { return }
+            updated.port = port
+            instance = updated
         }
     }
 
@@ -265,9 +256,15 @@ final class ProbedPortService: @unchecked Sendable {
     /// announces once, and a later line that happened to contain the marker is not a new fact.
     private func recordVersion(_ version: String, spawnedAs generation: Int) {
         locked {
-            guard generation == spawnGeneration, var live = instance, live.version == nil else { return }
-            live.version = version
-            instance = live
+            let live = instance
+            guard HostServiceRules.acceptsAnnouncement(
+                line: generation,
+                current: spawnGeneration,
+                hasRecord: live != nil,
+                alreadyRecorded: live?.version != nil,
+            ), var updated = live else { return }
+            updated.version = version
+            instance = updated
         }
     }
 }
@@ -286,7 +283,9 @@ final class ProbedPortService: @unchecked Sendable {
 /// different `--port` wants a different sidecar port, and the survivor is on the old one. Adopting
 /// it would leave hostd advertising a port nothing listens on, which fails with no log line to say
 /// why. So the announced port is compared against the wanted one, and a mismatch is ended and
-/// respawned — the same answer a daemon that never spoke at all gets.
+/// respawned — the same answer a daemon that never spoke at all gets. That comparison is
+/// ``HostServiceRules/adoptVerdict(attempt:announced:wanted:)``; the terminate and the relaunch are
+/// here.
 final class AnnouncedPortService: @unchecked Sendable {
     private let lock = NSLock()
     private let spawn: HostServiceProcess.Spawner
@@ -323,22 +322,32 @@ final class AnnouncedPortService: @unchecked Sendable {
     /// Returns the port actually being served, or `nil` when there is no binary, superd is
     /// unreachable, or the child never announced. A `nil` is NOT fatal to hostd: it logs and serves
     /// the other paths, exactly as a failed bind used to.
+    ///
+    /// The loop is bounded by the rule rather than by a count spelled here — `.respawn` is only
+    /// ever answered for the first attempt, so the second round can end in `.adopt` or `.giveUp`
+    /// and nothing else.
     @discardableResult
     func start(port: UInt16, arguments: [String]) async -> UInt16? {
         guard let binary = locateBinary() else { return nil }
-        guard let first = try? launch(binary: binary, arguments: arguments) else { return nil }
-        if let announced = await awaitAnnouncedPort(), announced == port { return announced }
-
-        // Either it never spoke, or it is the survivor of a hostd that wanted a different port.
-        // Both are answered the same way: end it and start one on the port this hostd advertises.
-        first.terminate()
-        clearAnnouncement()
-        guard let second = try? launch(binary: binary, arguments: arguments) else { return nil }
-        guard let announced = await awaitAnnouncedPort(), announced == port else {
-            second.terminate()
-            return nil
+        var attempt = 0
+        while true {
+            guard let started = try? launch(binary: binary, arguments: arguments) else { return nil }
+            let announced = await awaitAnnouncedPort()
+            switch HostServiceRules.adoptVerdict(attempt: attempt, announced: announced, wanted: port) {
+            case .adopt:
+                return announced
+            case .respawn:
+                // Either it never spoke, or it is the survivor of a hostd that wanted a different
+                // port. Both are answered the same way: end it and start one on the port this
+                // hostd advertises.
+                started.terminate()
+                clearAnnouncement()
+                attempt += 1
+            case .giveUp:
+                started.terminate()
+                return nil
+            }
         }
-        return announced
     }
 
     /// Lets the daemon GO: hostd stops listening to its log and superd keeps it, with everything it

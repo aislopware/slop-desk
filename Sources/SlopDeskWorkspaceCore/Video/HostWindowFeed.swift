@@ -56,8 +56,9 @@ public struct HostWindowInfo: Equatable, Sendable, Identifiable {
         self.isFocused = isFocused
     }
 
-    /// The row's display title — the window title, falling back to the app name (docs/45 §2).
-    public var displayTitle: String { title.isEmpty ? appName : title }
+    /// The row's display title — the window title, falling back to the app name (docs/45 §2), as
+    /// ``HostWindowFeedRules/displayTitle(title:appName:)`` answers it.
+    public var displayTitle: String { HostWindowFeedRules.displayTitle(title: title, appName: appName) }
 }
 
 /// One feed answer through the seam: "you're current" or a full snapshot (the mirror of the video
@@ -230,7 +231,11 @@ public final class HostWindowFeed {
                 }
             }
             link?.send(knownGeneration: knownGeneration)
-            try? await Task.sleep(for: answeredSinceOpen ? renewalGap : firstAnswerGap)
+            try? await Task.sleep(for: HostWindowFeedRules.renewalWait(
+                answeredSinceOpen: answeredSinceOpen,
+                renewalGap: renewalGap,
+                firstAnswerGap: firstAnswerGap,
+            ))
             // A cancelled wake-up — thrown mid-sleep OR resumed past its deadline with teardown
             // already requested — is not an elapsed renewal interval: a staleness verdict here
             // would time an interval that never ran and dim the rail on its way out.
@@ -246,12 +251,17 @@ public final class HostWindowFeed {
         link = nil
     }
 
-    /// Staleness check after each renewal interval: no answer (reply or push) for two full renewal
-    /// gaps ⇒ dim the rail. UDP weather loses single datagrams, not multi-second stretches.
+    /// Staleness check after each renewal interval, as ``HostWindowFeedRules/goesStale(isLive:answeredSinceOpen:elapsed:renewalGap:firstAnswerGap:)``
+    /// decides it. The CLOCK is this side's — the rule is handed one elapsed span and a grace.
     private func noteRenewalElapsed() {
-        guard isLive, answeredSinceOpen else { return }
-        let grace = renewalGap * 2 + firstAnswerGap
-        if let last = lastAnswerAt, ContinuousClock.now - last > grace {
+        let elapsed = lastAnswerAt.map { ContinuousClock.now - $0 }
+        if HostWindowFeedRules.goesStale(
+            isLive: isLive,
+            answeredSinceOpen: answeredSinceOpen,
+            elapsed: elapsed,
+            renewalGap: renewalGap,
+            firstAnswerGap: firstAnswerGap,
+        ) {
             isLive = false
         }
     }
@@ -274,7 +284,11 @@ public final class HostWindowFeed {
         case let .current(generation):
             // The host says our generation is current. A mismatched ack (stale/duplicated datagram)
             // is NOT confirmation of what we hold — liveness only when it names OUR generation.
-            if !isLive, generation == knownGeneration { isLive = true }
+            if HostWindowFeedRules.ackMarksLive(
+                isLive: isLive, acked: generation, known: knownGeneration,
+            ) {
+                isLive = true
+            }
         }
     }
 
@@ -284,12 +298,18 @@ public final class HostWindowFeed {
         knownGeneration = generation
 
         // STRUCTURE: survivors keep their frozen positions; new windows append in snapshot order.
-        let liveIDs = Set(windows.map(\.windowID))
-        var next = structure.filter { liveIDs.contains($0.windowID) }
-        let known = Set(next.map(\.windowID))
-        for w in windows where !known.contains(w.windowID) {
-            next.append(HostWindowIdentity(windowID: w.windowID, bundleID: w.bundleID, appName: w.appName))
-        }
+        // The fold is `slopdesk-workspace::window_feed::structure_plan` — the CGWindowIDs stay here
+        // and it answers positions into these two arrays.
+        let next = HostWindowFeedRules.foldStructure(
+            structure, windows,
+            existingID: \.windowID,
+            incomingID: \.windowID,
+            adopting: { window in
+                HostWindowIdentity(
+                    windowID: window.windowID, bundleID: window.bundleID, appName: window.appName,
+                )
+            },
+        )
         if next != structure { structure = next }
 
         // VOLATILE: whole-dictionary swaps, one write per field per snapshot, only on change.
@@ -305,7 +325,9 @@ public final class HostWindowFeed {
             ))
         })
         if nextStates != states { states = nextStates }
-        let nextFrontmost = windows.first(where: \.isFocused)?.windowID
+        // The rule answers a POSITION in `windows`; the id it names never crosses.
+        let focused = HostWindowFeedRules.frontmost(windows.map(\.isFocused))
+        let nextFrontmost = focused.map { windows[$0].windowID }
         if nextFrontmost != frontmostWindowID { frontmostWindowID = nextFrontmost }
 
         if !hasEverLoaded { hasEverLoaded = true }

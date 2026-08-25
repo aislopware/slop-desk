@@ -136,7 +136,7 @@ public final class PreferencesStore {
         // reads `SlateTheme.app` (GUI only; `nil` headless ⇒ the config's own colours stand).
         let themeColors = AppearanceApplier.resolveTerminalColors?()
         var prefs = TerminalPreferences(config)
-        prefs.fontSize = Self.clampedFontSize(prefs.fontSize + fontSizeDelta)
+        prefs.fontSize = PreferenceRules.effectiveFontSize(configured: prefs.fontSize, delta: fontSizeDelta)
         let config = TerminalConfigBuilder.string(
             for: prefs,
             backgroundOverride: themeColors?.background,
@@ -159,44 +159,37 @@ public final class PreferencesStore {
 
     // MARK: Font-size zoom (⌘+ / ⌘- / ⌘0)
 
-    /// The point-size step ⌘± moves by, and the band it stays inside.
-    static let fontSizeStep: Double = 1
-    static let fontSizeRange: ClosedRange<Double> = 8...32
-
     /// ⌘+ / ⌘= — one step bigger. A font-SIZE change DOES reflow the remote PTY grid (the cell box
     /// resizes → SIGWINCH); that is correct, not a bug — only font FAMILY/STYLE rebuilds are
     /// grid-preserving.
-    public func increaseFontSize() { setFontSize(effectiveFontSize + Self.fontSizeStep) }
+    public func increaseFontSize() { applyZoom(.increase) }
 
     /// ⌘- — one step smaller.
-    public func decreaseFontSize() { setFontSize(effectiveFontSize - Self.fontSizeStep) }
+    public func decreaseFontSize() { applyZoom(.decrease) }
 
     /// ⌘0 — back to the size the config file states.
-    public func resetFontSize() {
-        guard fontSizeDelta != 0 else { return }
-        fontSizeDelta = 0
-        applyTerminal()
-    }
+    public func resetFontSize() { applyZoom(.reset) }
 
     /// The size the terminal is drawing at right now: the file's answer plus whatever ⌘± has moved
-    /// it by.
+    /// it by, held inside the zoom band.
     public var effectiveFontSize: Double {
-        Self.clampedFontSize(TerminalPreferences(config).fontSize + fontSizeDelta)
+        PreferenceRules.effectiveFontSize(
+            configured: TerminalPreferences(config).fontSize, delta: fontSizeDelta,
+        )
     }
 
-    /// Move the runtime size to `size`, clamped, and re-apply. A no-op at the clamp boundary, so a
-    /// ⌘± held down against the edge does not churn the broadcaster.
-    private func setFontSize(_ size: Double) {
-        let clamped = Self.clampedFontSize(size)
-        guard clamped != effectiveFontSize else { return }
-        fontSizeDelta = clamped - TerminalPreferences(config).fontSize
+    /// Take the new delta ``PreferenceRules/zoom(configured:delta:_:)`` lands on and re-apply.
+    ///
+    /// A press the rule refuses — either edge of the band, or ⌘0 with nothing zoomed — leaves the
+    /// delta alone and never reaches ``applyTerminal()``, which is what keeps a ⌘± held down against
+    /// the edge from churning the broadcaster: its generation bumps unconditionally, so a re-publish
+    /// of an identical string still rebuilds every live terminal's config and re-measures its grid.
+    private func applyZoom(_ press: PreferenceRules.Zoom) {
+        guard let moved = PreferenceRules.zoom(
+            configured: TerminalPreferences(config).fontSize, delta: fontSizeDelta, press,
+        ) else { return }
+        fontSizeDelta = moved
         applyTerminal()
-    }
-
-    /// NaN-faithfully clamped to ``fontSizeRange`` (``Double/maximum(_:_:)`` /
-    /// ``Double/minimum(_:_:)``, never a bare ternary).
-    private static func clampedFontSize(_ size: Double) -> Double {
-        Double.maximum(fontSizeRange.lowerBound, Double.minimum(fontSizeRange.upperBound, size))
     }
 
     /// Map the fire-time ``TerminalControls`` bundle to the leaf ``TerminalControlsConfig`` the

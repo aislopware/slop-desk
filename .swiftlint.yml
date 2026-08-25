@@ -34,10 +34,6 @@ excluded:
   - Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj
   - Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj
   - Apps/HostApp-macOS/HostApp-macOS.xcodeproj
-  # Capture-cadence + latency diagnostic instruments (not shipped product), test-adjacent like the
-  # Tests tree — their scaffolding/size is by design, so don't strict-lint them.
-  - Sources/slopdesk-capture-probe
-  - Sources/slopdesk-fake-client
   # Headless VT encode/decode TIMING benchmark (perf instrument, not shipped product).
   - Sources/slopdesk-perfbench
 

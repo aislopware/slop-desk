@@ -251,23 +251,45 @@ final class SettingsKeyTests: XCTestCase {
     /// Every state key binds the SAME suite, and under XCTest that suite is a per-process one — so a
     /// test that writes state cannot leave it in the developer's own domain. The env override is
     /// what an automation run sets to get the same isolation outside XCTest.
+    ///
+    /// The precedence itself is the Rust rule's, read back through the face: the verdict picks which
+    /// of the two candidate names wins, and this side hands back the name it already had.
     func testTheStateStoreIsAPerProcessSuiteUnderTest() {
         XCTAssertNotEqual(SettingsKey.store, .standard)
         XCTAssertEqual(
-            SettingsKey.suiteName(testProcessSuite: "under.xctest", environment: [:]),
+            PreferenceRules.stateSuite(testProcess: "under.xctest", environment: nil),
+            "under.xctest",
+        )
+        XCTAssertEqual(
+            PreferenceRules.stateSuite(testProcess: "under.xctest", environment: "run.42"),
             "under.xctest",
             "the XCTest suite wins outright — an automation env var must not redirect a test's writes",
         )
-        XCTAssertEqual(
-            SettingsKey.suiteName(
-                testProcessSuite: nil, environment: [SettingsKey.defaultsSuiteEnvKey: "run.42"],
-            ),
-            "run.42",
-        )
+        XCTAssertEqual(PreferenceRules.stateSuite(testProcess: nil, environment: "run.42"), "run.42")
         XCTAssertNil(
-            SettingsKey.suiteName(testProcessSuite: nil, environment: [SettingsKey.defaultsSuiteEnvKey: ""]),
+            PreferenceRules.stateSuite(testProcess: nil, environment: ""),
             "an empty override is no override — `.standard`, not a suite named the empty string",
         )
-        XCTAssertNil(SettingsKey.suiteName(testProcessSuite: nil, environment: [:]))
+        XCTAssertNil(PreferenceRules.stateSuite(testProcess: nil, environment: nil))
+    }
+
+    // MARK: - The runtime zoom band
+
+    /// The band ⌘± walks is NOT `terminal.font-size`'s domain. The table lets a file state
+    /// `4.0…96.0` — a file is somebody who meant it — and the chord stops at 8 and 32, so a press
+    /// against either edge moves NOTHING rather than churning the terminal broadcaster, whose
+    /// generation bumps on every publish whether the string changed or not.
+    func testTheZoomBandRefusesAtBothEdges() {
+        XCTAssertEqual(PreferenceRules.zoom(configured: 14, delta: 0, .increase), 1)
+        XCTAssertEqual(PreferenceRules.zoom(configured: 14, delta: 0, .decrease), -1)
+        XCTAssertNil(PreferenceRules.zoom(configured: 32, delta: 0, .increase))
+        XCTAssertNil(PreferenceRules.zoom(configured: 8, delta: 0, .decrease))
+        XCTAssertEqual(PreferenceRules.zoom(configured: 14, delta: 4, .reset), 0)
+        XCTAssertNil(
+            PreferenceRules.zoom(configured: 14, delta: 0, .reset),
+            "nothing to reset is a refusal, not a re-publish of the same string",
+        )
+        XCTAssertEqual(PreferenceRules.effectiveFontSize(configured: 14, delta: 900), 32)
+        XCTAssertEqual(PreferenceRules.effectiveFontSize(configured: 14, delta: -900), 8)
     }
 }

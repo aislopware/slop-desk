@@ -91,8 +91,11 @@ public final class RemoteWindowModel {
     /// Current pre-fills the popover; max (once known) caps its fields. A zero/absent max leaves the max
     /// uncapped — and once known it persists (a later zero-max push never clears it).
     public func noteWindowGeometry(currentW: Double, currentH: Double, maxW: Double, maxH: Double) {
-        if currentW > 0, currentH > 0 { windowPointSize = CGSize(width: currentW, height: currentH) }
-        if maxW > 0, maxH > 0 { windowMaxPointSize = CGSize(width: maxW, height: maxH) }
+        let admitted = RemoteWindowRules.geometry(
+            currentW: currentW, currentH: currentH, maxW: maxW, maxH: maxH,
+        )
+        if let current = admitted.current { windowPointSize = current }
+        if let max = admitted.max { windowMaxPointSize = max }
     }
 
     /// The host-announced stream CADENCE (frames/sec), pushed by the live video pane on the initial cadence
@@ -104,7 +107,7 @@ public final class RemoteWindowModel {
     /// Records the host-announced cadence. A non-positive value is ignored (a spurious zero never blanks the
     /// row — the last good reading stands). Only writes the observable on a real change.
     public func noteStreamFps(_ fps: Int) {
-        guard fps > 0, streamFps != fps else { return }
+        guard RemoteWindowRules.admitsStreamFps(fps), streamFps != fps else { return }
         streamFps = fps
     }
 
@@ -115,7 +118,7 @@ public final class RemoteWindowModel {
 
     /// Records one ~1 Hz bitrate reading. Only writes the observable on a real change.
     public func noteStreamKbps(_ kbps: Int) {
-        guard kbps >= 0, streamKbps != kbps else { return }
+        guard RemoteWindowRules.admitsStreamKbps(kbps), streamKbps != kbps else { return }
         streamKbps = kbps
     }
 
@@ -144,20 +147,21 @@ public final class RemoteWindowModel {
         fps: Double, fecPerSec: Double, unrecoveredPerSec: Double, holdMs: Int, pacerDepth: Int,
         rttMs: Double = 0, encodeMs: Double = 0, decodeMs: Double = 0,
     ) {
-        guard fps >= 0, fecPerSec >= 0, unrecoveredPerSec >= 0, holdMs >= 0, pacerDepth >= 0,
-              rttMs >= 0, encodeMs >= 0, decodeMs >= 0 else { return }
-        if statsFps != fps { statsFps = fps }
-        if statsFecPerSec != fecPerSec { statsFecPerSec = fecPerSec }
-        if statsUnrecoveredPerSec != unrecoveredPerSec { statsUnrecoveredPerSec = unrecoveredPerSec }
-        if statsHoldMs != holdMs { statsHoldMs = holdMs }
-        if statsPacerDepth != pacerDepth { statsPacerDepth = pacerDepth }
-        // 0 = "no reading yet" on the latency axes → nil (dash), and a later real reading upgrades it.
-        let rtt: Double? = rttMs > 0 ? rttMs : nil
-        let enc: Double? = encodeMs > 0 ? encodeMs : nil
-        let dec: Double? = decodeMs > 0 ? decodeMs : nil
-        if statsRttMs != rtt { statsRttMs = rtt }
-        if statsEncodeMs != enc { statsEncodeMs = enc }
-        if statsDecodeMs != dec { statsDecodeMs = dec }
+        guard let reading = RemoteWindowRules.networkReading(
+            fps: fps, fecPerSec: fecPerSec, unrecoveredPerSec: unrecoveredPerSec,
+            holdMs: holdMs, pacerDepth: pacerDepth,
+            rttMs: rttMs, encodeMs: encodeMs, decodeMs: decodeMs,
+        ) else { return }
+        if statsFps != reading.fps { statsFps = reading.fps }
+        if statsFecPerSec != reading.fecPerSec { statsFecPerSec = reading.fecPerSec }
+        if statsUnrecoveredPerSec != reading.unrecoveredPerSec {
+            statsUnrecoveredPerSec = reading.unrecoveredPerSec
+        }
+        if statsHoldMs != reading.holdMs { statsHoldMs = reading.holdMs }
+        if statsPacerDepth != reading.pacerDepth { statsPacerDepth = reading.pacerDepth }
+        if statsRttMs != reading.rttMs { statsRttMs = reading.rttMs }
+        if statsEncodeMs != reading.encodeMs { statsEncodeMs = reading.encodeMs }
+        if statsDecodeMs != reading.decodeMs { statsDecodeMs = reading.decodeMs }
     }
 
     /// STREAM SETTINGS (fps cap / bitrate ceiling): the live video pane publishes this once its
@@ -322,11 +326,14 @@ public final class RemoteWindowModel {
     /// An EXPLICIT off also drops the fullscreen auto-arm (the escape hatch must win — the Moonlight
     /// lesson: capture with no in-stream off switch traps the user).
     public func setImmersiveDesired(_ on: Bool) {
-        if !on, fullscreenImmersiveOverride {
-            fullscreenImmersiveOverride = false
+        let commit = RemoteWindowRules.immersiveCommit(
+            on: on, desired: immersiveDesired, fullscreenOverride: fullscreenImmersiveOverride,
+        )
+        if fullscreenImmersiveOverride != commit.fullscreenOverride {
+            fullscreenImmersiveOverride = commit.fullscreenOverride
         }
-        guard immersiveDesired != on else { return }
-        immersiveDesired = on
+        guard commit.notifies else { return }
+        immersiveDesired = commit.desired
         notifyModesChanged()
     }
 
@@ -379,8 +386,11 @@ public final class RemoteWindowModel {
         immersiveDesired = modes.immersive
         audioStreamEnabled = modes.audioEnabled
         viewportLocked = modes.viewportLocked
-        streamFpsCap = Swift.max(0, modes.fpsCap)
-        streamBitrateCeilingBps = Swift.max(0, modes.bitrateCeilingBps)
+        let caps = RemoteWindowRules.seededCaps(
+            fpsCap: modes.fpsCap, bitrateCeilingBps: modes.bitrateCeilingBps,
+        )
+        streamFpsCap = caps.fpsCap
+        streamBitrateCeilingBps = caps.bitrateCeilingBps
     }
 
     /// SYSTEM-KEY INJECTOR (immersive-capture plumbing): programmatic key events driven through the
@@ -590,7 +600,9 @@ public final class RemoteWindowModel {
         self.pasteFeedbackDuration = pasteFeedbackDuration
     }
 
-    var parsedWindowID: UInt32? { UInt32(windowID.trimmingCharacters(in: .whitespaces)) }
+    /// The entered window id, as ``RemoteWindowRules/parseWindowID(_:)`` reads it — Swift's own
+    /// `UInt32(_:)` over Swift's own `CharacterSet.whitespaces`, spelled out one language over.
+    var parsedWindowID: UInt32? { RemoteWindowRules.parseWindowID(windowID) }
 
     /// Whether the model can open. A DESKTOP target always can (the display id is fixed at init);
     /// a window target needs a valid entered window id (host + UDP ports come from the app target).
@@ -615,8 +627,9 @@ public final class RemoteWindowModel {
             return
         }
         guard let wid = parsedWindowID else { return }
+        let named = RemoteWindowRules.descriptorTitle(title, windowID: wid)
         active = RemoteWindowDescriptor(
-            title: title.isEmpty ? "window \(wid)" : title,
+            title: named,
             appName: appName,
             windowID: wid,
             host: t.host,
@@ -625,11 +638,7 @@ public final class RemoteWindowModel {
         )
         // PANE REBIND: persist the now-live binding (app+title travel with the id so a future
         // restore can re-resolve it). Fired on every open — a re-pick updates the spec too.
-        onEndpointCommitted?(VideoEndpoint(
-            windowID: wid,
-            title: title.isEmpty ? "window \(wid)" : title,
-            appName: appName,
-        ))
+        onEndpointCommitted?(VideoEndpoint(windowID: wid, title: named, appName: appName))
     }
 
     // MARK: Resize-reflow scrim signal (generic with the terminal pane)
@@ -677,9 +686,9 @@ public final class RemoteWindowModel {
     /// duplicate refusal after a user close must not stamp an error onto a fresh pane).
     public func noteSessionRejected() {
         guard active != nil else { return }
-        let name = title.isEmpty ? "The stream target" : "“\(title)”"
+        let sentence = RemoteWindowRules.rejectionMessage(title: title)
         close()
-        loadError = "\(name) is no longer available on the host."
+        loadError = sentence
     }
 
     /// Closes the remote window (tears down the live view → its orchestrator `stop()`).

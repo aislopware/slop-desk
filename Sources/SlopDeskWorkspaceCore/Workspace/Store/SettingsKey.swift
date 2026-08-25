@@ -120,22 +120,6 @@ public enum SettingsKey {
         )
     }
 
-    /// Which suite ``store`` binds, given the two things that can ask for one. `nil` = `.standard`.
-    ///
-    /// Pure, so the precedence can be pinned without a second process: the XCTest per-pid suite
-    /// FIRST (a stray `SLOPDESK_DEFAULTS_SUITE` in the environment must never put parallel xctest
-    /// workers back on one domain), then the environment, then nothing. An empty environment value
-    /// is unset — `FOO="${BAR}"` with `BAR` unset is how a shell delivers one by accident, and
-    /// `UserDefaults(suiteName: "")` is not a store anybody meant to name.
-    static func suiteName(
-        testProcessSuite: String?,
-        environment: [String: String],
-    ) -> String? {
-        if let testProcessSuite { return testProcessSuite }
-        guard let named = environment[defaultsSuiteEnvKey], !named.isEmpty else { return nil }
-        return named
-    }
-
     /// The environment variable an automation run sets to keep its writes off the developer's domain.
     public static let defaultsSuiteEnvKey = "SLOPDESK_DEFAULTS_SUITE"
 
@@ -597,18 +581,15 @@ public enum SettingsKey {
         }
     }
 
-    /// The resolved user Hint Mode patterns — zips the parallel `controls.hint-patterns` /
-    /// `controls.hint-pattern-actions` lists into ``HintPattern`` values the assigner consumes. A
-    /// pattern with no paired action carries `nil`; an empty pattern string is dropped. The ONE seam
-    /// Hint Mode reads.
+    /// The resolved user Hint Mode patterns — the parallel `controls.hint-patterns` /
+    /// `controls.hint-pattern-actions` lists, zipped by
+    /// ``PreferenceRules/hintPatterns(_:actions:)``, which is where the three cases the file's shape
+    /// cannot express live. The ONE seam Hint Mode reads.
     public static var hintPatternList: [HintPattern] {
-        let patterns = AppConfig.current.list("controls.hint-patterns")
-        let actions = AppConfig.current.list("controls.hint-pattern-actions")
-        return patterns.enumerated().compactMap { index, regex in
-            guard !regex.isEmpty else { return nil }
-            let action = index < actions.count && !actions[index].isEmpty ? actions[index] : nil
-            return HintPattern(regex: regex, action: action)
-        }
+        PreferenceRules.hintPatterns(
+            AppConfig.current.list("controls.hint-patterns"),
+            actions: AppConfig.current.list("controls.hint-pattern-actions"),
+        )
     }
 }
 
@@ -629,9 +610,15 @@ private let testProcessSuiteName: String? =
 
 /// The suite ``SettingsKey/store`` actually binds. Same file-scope reason as above: the `atexit`
 /// hook is a non-capturing C function pointer and can only reach a global.
-private let resolvedSuiteName: String? = SettingsKey.suiteName(
-    testProcessSuite: testProcessSuiteName,
-    environment: ProcessInfo.processInfo.environment,
+///
+/// The PRECEDENCE is ``PreferenceRules/stateSuite(testProcess:environment:)``: the XCTest per-pid
+/// suite first (a stray `SLOPDESK_DEFAULTS_SUITE` in the environment must never put parallel xctest
+/// workers back on one domain), then the environment, then nothing — and an empty environment value
+/// is unset, because `FOO="${BAR}"` with `BAR` unset is how a shell delivers one by accident and
+/// `UserDefaults(suiteName: "")` is not a store anybody meant to name.
+private let resolvedSuiteName: String? = PreferenceRules.stateSuite(
+    testProcess: testProcessSuiteName,
+    environment: ProcessInfo.processInfo.environment[SettingsKey.defaultsSuiteEnvKey],
 )
 
 private extension Defaults.Key {

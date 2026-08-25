@@ -29,10 +29,17 @@
 //! Not a design nicety: a type that both decides and acts is a type whose decision cannot be tested
 //! without a process tree. Every function in this crate is a value transform, and the caller that
 //! owns a child's lifetime is the caller that ends it.
+//!
+//! [`service_lifecycle`] is that rule applied one level up: the two shapes every sidecar manager
+//! restarts through — the OS picks the port and hostd probes for readiness, or hostd picks it and
+//! waits for the child to ANNOUNCE it back — plus the four gates the embedded workbench adds in
+//! front of its own spawn. The `Process`, the socket and the task that owns a child's lifetime stay
+//! with the caller; what is here is every decision they consult.
 
 #![forbid(unsafe_code)]
 
 pub mod manifest;
+pub mod service_lifecycle;
 
 /// What may be done about a sidecar that is running code the install has replaced.
 ///

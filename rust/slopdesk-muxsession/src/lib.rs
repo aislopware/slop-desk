@@ -13,7 +13,13 @@
 //! its own: which of the host's live sessions a command issued from the embedded editor should be
 //! typed into. It is here because the answer is a ranking over pane facts — a cwd, an agent flag, a
 //! foreground basename — and none of those needs a descriptor either.
+//!
+//! [`detach_retention`] is the fourth, and the only one about a SET of sessions rather than one:
+//! what the detached store keeps when an id arrives twice and when the opt-in cap is full. No
+//! identity crosses — the near side answers `===` and the position, and every verdict comes back as
+//! a position into the list it handed in.
 
 pub mod bridge_router;
+pub mod detach_retention;
 pub mod resize_fold;
 pub mod spawn_env;

@@ -885,61 +885,6 @@ let package = Package(
         // Parsec windows alike). GUI+TCC-gated at runtime; no video file is written.
         .executableTarget(name: "slopdesk-framewatch"),
 
-        // Capture-mode probe: drives the REAL `WindowCapturer` (the production capture path,
-        // including the `SLOPDESK_DISPLAY_CAPTURE` mode seam) against one window and dumps
-        // delivered frames as PNGs — the host-side instrument for geometric capture artifacts
-        // (the Chrome-tooltip 1px crop shift) where a client-side screenshot would be polluted
-        // by pane scaling. GUI+TCC-gated at runtime.
-        .executableTarget(name: "slopdesk-capture-probe", dependencies: ["SlopDeskVideoHost"]),
-
-        // Fake video client: a minimal UDP `hello` trigger that makes the real host start capturing a
-        // window, so the FULL host pipeline (capture→encode→FEC→send) runs on one machine without the
-        // GUI client. Diagnostic-only (overnight capture-cadence root-cause work). GUI+TCC at runtime.
-        .executableTarget(name: "slopdesk-fake-client", dependencies: ["SlopDeskVideoProtocol"]),
-
-        // SwipeNavStatus push probe: a headless client that mints a real display session against a
-        // RUNNING videohostd, primes the cursor socket, and reports whether type-3 SwipeNavStatus
-        // datagrams (the swipe-peel eligibility push) actually arrive — the runtime proof the
-        // kicker→registry→scheduler→cursor-flow chain is alive, which has no host-side logging.
-        // Diagnostic-only, sibling of slopdesk-fake-client. `swift run slopdesk-swipestatus-probe`.
-        .executableTarget(name: "slopdesk-swipestatus-probe", dependencies: ["SlopDeskVideoProtocol"]),
-
-        // Nav-history AX probe: runs the REAL `HostNavHistory` reader (toolbar/menu strategy,
-        // per-window cache currency) against a live app and prints canGoBack/canGoForward per
-        // beat — the runtime proof for the swipe-nav history gate that unit tests cannot give
-        // (hang-safety bars process-external AX from XCTest). Needs Accessibility TCC.
-        // Diagnostic-only. `swift run slopdesk-navhistory-probe [bundle-id] [--seconds N]`.
-        .executableTarget(name: "slopdesk-navhistory-probe", dependencies: ["SlopDeskVideoHost", "CSlopDeskFFI"]),
-
-        // VD-120Hz DE-RISK probe: creates a headless CGVirtualDisplay advertising a >60Hz mode and
-        // reports the refresh rate WindowServer actually grants — the make-or-break for the
-        // "beat-free 60fps via a 120Hz virtual-display capture source" plan (a 60Hz panel can never
-        // oversample; a 120Hz VD source can). Diagnostic-only; GUI+WindowServer-attached at runtime.
-        .executableTarget(name: "slopdesk-vd-probe", dependencies: ["SlopDeskVideoHost"]),
-
-        // Micro-benchmark for the Swift-level hot paths (frame hash, GF region multiply, RS FEC).
-        .executableTarget(
-            name: "slopdesk-bench",
-            dependencies: [
-                "SlopDeskVideoProtocol", "SlopDeskProtocol", "SlopDeskFileTransfer",
-                "SlopDeskInspector",
-            ],
-        ),
-
-        // Snapshot-replay composer benchmark: times `TerminalReplaySnapshot.compose` (the cold
-        // reattach state-transfer render) over synthetic build/test churn at realistic history
-        // sizes — the instrument for "how long does a reattach stall on the compose".
-        // `swift run -c release slopdesk-replay-bench [mib...]`.
-        .executableTarget(name: "slopdesk-replay-bench", dependencies: ["SlopDeskHost"]),
-
-        // Fuzzy-match benchmark + parity validator: drives the vendored `FuzzyMatcher` (the in-tree fzf
-        // FuzzyMatchV2 port behind the command palette) against the REAL `fzf --filter` binary and a
-        // Bitap (Fuse-style) baseline on a shared corpus — reports ranking parity (match-set + top-K
-        // agreement) and throughput. macOS dev instrument: shells out to `fzf` when present (skips that
-        // comparison otherwise), so it is NOT part of `swift test`. Depends on SlopDeskClientCore for
-        // `FuzzyMatcher`. `swift run -c release slopdesk-fuzzybench [scaleN]`.
-        .executableTarget(name: "slopdesk-fuzzybench", dependencies: ["SlopDeskClientCore"]),
-
         // Golden-vector dumper: emits the golden reference corpus — a deterministic JSON corpus from
         // the SlopDeskVideoProtocol codecs + the pure realtime controllers (public API only) that the
         // Rust `slopdesk-core` crate asserts byte-/bit-identical against in its `golden_parity` test.

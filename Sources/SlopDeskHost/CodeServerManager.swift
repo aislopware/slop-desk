@@ -72,13 +72,10 @@ final class CodeServerManager: @unchecked Sendable {
     /// seeder itself is also a no-op when the file exists; this just skips the repeat file checks).
     private var settingsSeeded = false
     /// The one-shot marketplace install of ``missingExtensions``' answer, checked before the
-    /// first spawn: `.installing` DEFERS the spawn (ensure keeps answering `.starting`; the client
-    /// polls ~1 Hz) so the workbench's very first boot already scans the icon pack — install and
-    /// boot writing `extensions.json` concurrently is also how registrations get lost. `.done` is
-    /// latched even when an install FAILS (no network): the panel is never held hostage by a
-    /// nicety, and the next hostd launch retries because the registry still misses the id.
-    private enum BundledExtensionInstall { case unchecked, installing, done }
-    private var bundledExtensionInstall: BundledExtensionInstall = .unchecked
+    /// first spawn. The three states and the ladder over them are
+    /// ``HostServiceRules/ExtensionInstall`` and ``HostServiceRules/codeBootStep(launchable:settingsSeeded:bridgeStarted:install:missingExtensions:)``;
+    /// what is latched here is the answer.
+    private var bundledExtensionInstall: HostServiceRules.ExtensionInstall = .unchecked
     private let locateBinary: BinaryLocator
     private let spawn: Spawner
     private let seedSettings: SettingsSeeder
@@ -154,42 +151,35 @@ final class CodeServerManager: @unchecked Sendable {
     /// and the reason this manager walks the pieces rather than taking ``ProbedPortService/ensure``.
     private func bootLocked() -> MetadataCodec.ServiceEndpoint {
         service.bootLocked { generation in
-            guard let binary = locateBinary() else { return .notYet(.unavailable) }
+            let binary = locateBinary()
             // A host with no `slopdesk-codeseed` has no argv and no bridge socket to give the child.
             // Reporting unavailable is the honest answer: a workbench launched on guessed arguments
-            // (`--auth none` on a guessed port) is a different program, not a degraded panel.
-            guard let profile = readProfile() else { return .notYet(.unavailable) }
-            // Seed the workbench defaults before the FIRST child ever boots — after it has read an
-            // absent settings file once, a seed would need a reload to take. One fork under the
-            // lock, once per manager lifetime.
-            if !settingsSeeded {
+            // (`--auth none` on a guessed port) is a different program, not a degraded panel — which
+            // is why the rule reads the two as one `launchable`.
+            let profile = readProfile()
+            let launchable = binary != nil && profile != nil
+            // Reading the registry is a fork, so it happens only on the round that could act on it.
+            let missing = launchable && bundledExtensionInstall == .unchecked ? missingExtensions() : []
+            let step = HostServiceRules.codeBootStep(
+                launchable: launchable,
+                settingsSeeded: settingsSeeded,
+                bridgeStarted: bridgeStarted,
+                install: bundledExtensionInstall,
+                missingExtensions: missing.count,
+            )
+            bundledExtensionInstall = step.install
+            if step.seedSettings {
                 settingsSeeded = true
                 seedSettings()
             }
-            // The bridge listener must exist BEFORE the child inherits its path, or the extension's
-            // first connect races the bind and burns a 5 s reconnect delay on every cold start.
-            if !bridgeStarted {
+            if step.startBridge, let profile {
                 bridgeStarted = true
                 bridge.start(path: profile.bridgeSocket)
             }
-            // Bundled marketplace extensions install before the FIRST spawn (see
-            // ``BundledExtensionInstall``); while the one-shot CLI runs, ensure keeps its never-wait
-            // contract by answering `.starting`.
-            switch bundledExtensionInstall {
-            case .unchecked:
-                let missing = missingExtensions()
-                if missing.isEmpty {
-                    bundledExtensionInstall = .done
-                } else {
-                    bundledExtensionInstall = .installing
-                    installBundledExtensions(missing, binary: binary)
-                    return .notYet(.starting)
-                }
-            case .installing:
-                return .notYet(.starting)
-            case .done:
-                break
+            if step.installExtensions, let binary {
+                installBundledExtensions(missing, binary: binary)
             }
+            guard step.spawn, let binary, let profile else { return .notYet(step.state) }
             let onLine = service.portSink(generation: generation) {
                 Self.parseListeningPort(fromLogLine: $0)
             }
@@ -224,15 +214,18 @@ final class CodeServerManager: @unchecked Sendable {
         let run = runCLI
         let delay = openRetryDelay
         let bridge = bridge
+        let attempts = Self.openAttempts
         return Task {
-            for attempt in 0..<Self.openAttempts {
+            for attempt in 0..<attempts {
                 // The bridge is tried FIRST on every attempt, not just the first: on a cold start
                 // neither route exists yet, and whichever appears first should win the race. Once
                 // a window is attached this returns on the opening attempt, so the CLI — a whole
                 // Node process — never runs at all.
                 if bridge.open(target: target) { return true }
-                if await run(binary, ["-r", target]) == 0 { return true }
-                guard attempt + 1 < Self.openAttempts else { break }
+                if await run(binary, HostServiceRules.codeCLIArguments(.reuseWindow, target)) == 0 {
+                    return true
+                }
+                guard attempt + 1 < attempts else { break }
                 try? await Task.sleep(for: delay)
             }
             FileHandle.standardError.write(Data(
@@ -244,7 +237,8 @@ final class CodeServerManager: @unchecked Sendable {
 
     /// CLI open retries: 10 × the 2 s ``openRetryDelay`` ≈ an 18 s window — covers a cold server
     /// boot + the client's poll + the webview's workbench boot before the session socket exists.
-    static let openAttempts = 10
+    /// The count is `slopdesk-sidecars::service_lifecycle::OPEN_ATTEMPTS`.
+    static var openAttempts: Int { HostServiceRules.codeOpenAttempts }
 
     /// Installs what the editor's "run this in my terminal" menu items actuate. Wired by
     /// ``HostServer`` (the only object that owns terminal sessions) and held for the host's
@@ -295,7 +289,8 @@ final class CodeServerManager: @unchecked Sendable {
         let run = runCLI
         Task { [weak self] in
             for identifier in identifiers {
-                let status = await run(binary, ["--install-extension", identifier])
+                let arguments = HostServiceRules.codeCLIArguments(.installExtension, identifier)
+                let status = await run(binary, arguments)
                 if status != 0 {
                     FileHandle.standardError.write(Data(
                         "slopdesk-hostd: code-server --install-extension \(identifier) failed\n".utf8,
@@ -321,12 +316,13 @@ final class CodeServerManager: @unchecked Sendable {
 
     /// Normalizes a request root: absolute, trailing-`/` trimmed (matching `projectKey`'s own
     /// normalization so one project cannot spawn twins), and an EXISTING directory. `nil` otherwise.
+    ///
+    /// The normalization is ``HostServiceRules/canonicalRoot(_:)``; only the `stat` is here, because
+    /// only the `stat` can answer differently on two calls with the same argument.
     static func canonicalRoot(
         _ path: String, fileManager: FileManager = .default,
     ) -> String? {
-        guard path.hasPrefix("/") else { return nil }
-        var root = path
-        while root.count > 1, root.hasSuffix("/") { root.removeLast() }
+        guard let root = HostServiceRules.canonicalRoot(path) else { return nil }
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: root, isDirectory: &isDirectory),
               isDirectory.boolValue

@@ -47,6 +47,11 @@
 //!   one ring policy every recents list in the store runs.
 //! - [`store_shape`] — what one gesture moved between two snapshots of the trees, and what one
 //!   launch asks the store to mount.
+//! - [`store_video_slots`] — who is decoding, who is still letting go, and who may start.
+//! - [`store_git_cadence`] — when the git line is worth re-fetching, and the keys a reply is filed
+//!   under.
+//! - [`store_seed`] — what a pane born beside another one inherits, and which readings are worth
+//!   storing at all.
 //! - [`connect_gate`] — the app-global link's six decisions: the OUT batch plan, the recent-hosts
 //!   menu, the failure reason, the connect form's parse, and the reconnect fold.
 //! - [`vi_hints`] — the copy-mode reference card's tables, its mode pill, and the width ladder it
@@ -58,6 +63,11 @@
 //!   rather than trap.
 //! - [`gui_readout`] — what the chrome over a live desktop stream says, where every reading is
 //!   ABSENT rather than wrong.
+//! - [`remote_window`] — what a live video pane ADMITS: which telemetry sample is a reading at all,
+//!   which geometry push carries a size, what an entry field's window id is, and the two sentences a
+//!   pane says about itself.
+//! - [`window_feed`] — the host-windows rail's fold: the positions a snapshot keeps and the ones it
+//!   appends, which ack may mark the lane live, and when silence becomes staleness.
 //! - [`toast`] — the three events that raise a notification card, and what each one says.
 //! - [`palette_card`] — how big the command palette is, and how far one page of it moves.
 //! - [`close_confirm`] — what a close prompt promises before it takes something away, over the four
@@ -72,6 +82,13 @@
 //! - [`sidebar_row`] — a session row's ink, its spoken state, its presence lines and its menu.
 //! - [`open_quickly`] — the Open Quickly panel: its filters, its result kinds, the verbs each kind
 //!   offers, and the order its lines are drawn in.
+//! - [`attention_fold`] — when a watch on the pane under the user's eyes starts, is abandoned or
+//!   settles, and the two one-line policies that stood beside it.
+//! - [`mirror_fold`] — what one frame may do to the client's replica of the document, and what its
+//!   layers answer when they are read.
+//! - [`preference`] — what the preference SURFACE decides about itself, once the file is already
+//!   resolved: which `UserDefaults` store this process's own state lands in, the band a zoom chord
+//!   may walk, and the zip of the two parallel Hint Mode lists.
 //!
 //! ## Invariants
 //!
@@ -89,6 +106,7 @@
 //!   with trusted local input; through the workspace channel they now run against a network peer.
 //!   Nothing here indexes, unwraps or panics — the lint table denies all three.
 
+pub mod attention_fold;
 pub mod binding_rows;
 pub mod binding_search;
 pub mod cheat_sheet;
@@ -112,6 +130,7 @@ pub mod keybind;
 pub mod keystroke_replay;
 pub mod list_nav;
 pub mod listen;
+pub mod mirror_fold;
 pub mod notify;
 pub mod open_quickly;
 pub mod outline;
@@ -125,19 +144,25 @@ pub mod peek_reply;
 pub mod persist;
 pub mod phone_key;
 pub mod platform;
+pub mod preference;
 pub mod rail_list;
 pub mod rail_title;
+pub mod remote_window;
 pub mod search_rank;
 pub mod secrets;
 pub mod send_keys;
 pub mod sidebar_row;
 pub mod state_codec;
 pub mod status_pill;
+pub mod store_git_cadence;
 pub mod store_rollup;
+pub mod store_seed;
 pub mod store_shape;
+pub mod store_video_slots;
 pub mod templates;
 pub mod toast;
 pub mod vi_hints;
+pub mod window_feed;
 pub mod window_size;
 pub mod workdir;
 

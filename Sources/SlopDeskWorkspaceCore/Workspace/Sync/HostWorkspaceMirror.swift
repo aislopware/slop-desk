@@ -44,6 +44,12 @@ public struct HostWorkspaceMirror: Sendable {
         /// been superseded by host truth.
         public var retireAtFrame: UInt64?
 
+        /// The patch as the two pending FOLDS read it: its age evidence and its retirement
+        /// watermark, and nothing about what it patches — the keys are this side's.
+        var fold: MirrorFold.Patch {
+            MirrorFold.Patch(retireAtFrame: retireAtFrame, issuedAt: issuedAt)
+        }
+
         public init(intentID: UUID, diff: WorkspaceStateDiff, issuedAt: TimeInterval) {
             self.intentID = intentID
             sets = Dictionary(diff.sets.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
@@ -120,7 +126,9 @@ public struct HostWorkspaceMirror: Sendable {
     /// The pair is all-or-nothing: an epoch with no state is `stateNum 0`, which reads as "snapshot
     /// me". There is no way to ask for a diff against a document this mirror does not hold.
     public var knownEpoch: UUID { epoch ?? WireMessage.newSessionID }
-    public var knownStateNum: Int64 { epoch == nil ? 0 : stateNum }
+    public var knownStateNum: Int64 {
+        MirrorFold.knownStateNum(epochHeld: epoch != nil, stateNum: stateNum)
+    }
 
     // MARK: - Apply
 
@@ -176,14 +184,13 @@ public struct HostWorkspaceMirror: Sendable {
     }
 
     private mutating func applyDiff(epoch frameEpoch: UUID, base: Int64, new: Int64, payload: Data) -> ApplyOutcome {
-        // Nothing to base on. A diff is only meaningful against a document we hold.
-        guard let epoch, epoch == frameEpoch else { return .needsResubscribe }
-        guard base == stateNum else {
-            // Already past it — a duplicate or a reorder, which the assign-not-mutate rule makes a
-            // no-op. Only a frame that reaches FORWARD from a base we are not at is unrecoverable.
-            return new <= stateNum ? .ignored : .needsResubscribe
+        // Whether this frame may be folded at all is `slopdesk-workspace::mirror_fold` — the epoch
+        // comparison stays here because a `UUID` is ours, and only its answer crosses.
+        switch MirrorFold.diffFrame(epochHeld: epoch == frameEpoch, base: base, new: new, held: stateNum) {
+        case .needsResubscribe: return .needsResubscribe
+        case .ignored: return .ignored
+        case .applied: break
         }
-        guard new > stateNum else { return .ignored }
         guard let diff = try? WorkspaceStateCodec.decodeDiff(payload) else { return .dropped }
         entries = entries.applying(diff)
         stateNum = new
@@ -250,21 +257,25 @@ public struct HostWorkspaceMirror: Sendable {
     /// the user something the host has already said is not true.
     private mutating func note(result: WorkspaceIntentResult) {
         guard let index = pending.firstIndex(where: { $0.intentID == result.intentID }) else { return }
-        guard result.status == WorkspaceIntentStatus.applied.rawValue else {
+        // The status vocabulary is the codec's, so the comparison stays here and one bit crosses.
+        guard let retireAt = MirrorFold.intentRetire(
+            applied: result.status == WorkspaceIntentStatus.applied.rawValue,
+            framesApplied: framesApplied,
+        ) else {
             pending.remove(at: index)
             return
         }
-        // Applied: hold the patch until host truth arrives, so the pane does not blink out between
-        // the answer and the frame that makes it real.
-        pending[index].retireAtFrame = framesApplied + 1
+        pending[index].retireAtFrame = retireAt
     }
 
     private mutating func noteDocumentFrame() {
         framesApplied &+= 1
-        pending.removeAll { patch in
-            guard let retireAt = patch.retireAtFrame else { return false }
-            return framesApplied >= retireAt
-        }
+        pending = keeping(MirrorFold.survivorsAfterFrame(pending.map(\.fold), framesApplied: framesApplied))
+    }
+
+    /// The patches at `positions`, in order — the shape both pending folds answer in.
+    private func keeping(_ positions: [Int]) -> [PendingPatch] {
+        positions.compactMap { position in pending.indices.contains(position) ? pending[position] : nil }
     }
 
     /// Drops patches the host never answered. The caller owns the clock.
@@ -274,7 +285,7 @@ public struct HostWorkspaceMirror: Sendable {
     @discardableResult
     public mutating func expirePending(now: TimeInterval, timeout: TimeInterval = pendingTimeout) -> Bool {
         let before = pending.count
-        pending.removeAll { now - $0.issuedAt >= timeout && $0.retireAtFrame == nil }
+        pending = keeping(MirrorFold.survivorsAfterTimeout(pending.map(\.fold), now: now, timeout: timeout))
         return pending.count != before
     }
 

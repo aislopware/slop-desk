@@ -90,16 +90,26 @@ final class DetachedSessionStore: @unchecked Sendable {
         var overflowVictim: Entry?
         var displaced: Entry?
         lock.lock()
-        if let existing = store[id] {
-            if existing.session === session {
-                // Idempotent re-park (the failed-rebind recovery can race handleLinkDown's own
-                // insert): the session is already stored — keep the ORIGINAL entry (its
-                // detachedAt and armed TTL task). Overwriting the dictionary here would leak the
-                // first entry's TTL task un-cancelled, and that stale timer would later evict
-                // (kill) whatever live entry holds this id.
-                lock.unlock()
-                return
-            }
+        // The store is a dictionary and the rule reads a LIST, so one ordering of it is taken here
+        // and every answer comes back as a position into that same ordering. Nothing about a
+        // session crosses: the `===` that separates an idempotent re-park from a displacement is
+        // asked on this side, because only this side can ask it.
+        let entries = Array(store.values)
+        let occupant = entries.firstIndex { $0.session.sessionID == id }.map { position in
+            (position: position, isSameSession: entries[position].session === session)
+        }
+        let verdict = DetachRetentionRules.insertVerdict(
+            stamps: entries.map { $0.detachedAt.timeIntervalSinceReferenceDate },
+            occupant: occupant,
+            cap: maxSessions,
+        )
+        if verdict.isIdempotent {
+            // The session is already stored — keep the ORIGINAL entry, its detachedAt and its armed
+            // TTL task. The failed-rebind recovery can race handleLinkDown's own insert.
+            lock.unlock()
+            return
+        }
+        if verdict.displaces {
             // Same id, DIFFERENT session: newest wins, but the displaced entry's TTL task must be
             // cancelled (it would evict the NEW entry later) and its now-unreachable session
             // reaped instead of leaking.
@@ -108,16 +118,13 @@ final class DetachedSessionStore: @unchecked Sendable {
             // already exists, so two connections holding one pane share ONE session object and park
             // it exactly once, when the LAST subscriber leaves. But "should be unreachable" is not
             // a licence to reap blind: the displaced session is only reaped below if NOBODY holds
-            // it. A session with
-            // subscribers is live, reachable through `muxSessions`, and its life belongs to whoever
-            // is on it — killing it here would take down a client's running agent to make room for
-            // a store entry.
+            // it. A session with subscribers is live, reachable through `muxSessions`, and its life
+            // belongs to whoever is on it — killing it here would take down a client's running
+            // agent to make room for a store entry.
             displaced = store.removeValue(forKey: id)
         }
-        if let maxSessions, store.count >= maxSessions,
-           let oldest = store.values.min(by: { $0.detachedAt < $1.detachedAt })
-        {
-            overflowVictim = store.removeValue(forKey: oldest.session.sessionID)
+        if let victim = verdict.victim, entries.indices.contains(victim) {
+            overflowVictim = store.removeValue(forKey: entries[victim].session.sessionID)
         }
 
         let ttlTask: Task<Void, Never>? = ttl.map { ttl in
@@ -217,7 +224,13 @@ final class DetachedSessionStore: @unchecked Sendable {
     func allSessions() -> [MuxChannelSession] {
         lock.lock()
         defer { lock.unlock() }
-        return store.values.sorted { $0.detachedAt < $1.detachedAt }.map(\.session)
+        let entries = Array(store.values)
+        let order = DetachRetentionRules.order(
+            stamps: entries.map { $0.detachedAt.timeIntervalSinceReferenceDate },
+        )
+        return order.compactMap { position in
+            entries.indices.contains(position) ? entries[position].session : nil
+        }
     }
 
     // MARK: Remove (clean exit while in store)

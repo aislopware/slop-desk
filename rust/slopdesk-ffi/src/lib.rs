@@ -52,6 +52,7 @@ pub mod annexb;
 // macOS only: `NSRunningApplication`, which no iOS slice has. See the module.
 #[cfg(target_os = "macos")]
 pub mod app;
+pub mod attention_fold;
 // Apple only, both, and for the same reason `decoder`/`encoder` are: they are the audio row's other
 // half. `audio_codec` gates its ENCODER half to macOS inside the module, exactly as
 // `slopdesk-apple-audio` does — every client decodes, only the host encodes. `audio_player` is the
@@ -106,6 +107,7 @@ pub mod decode_admission;
 // UNGATED, and the only `slopdesk-apple-*` door that is: every client decodes, so this ships on
 // every slice. Its macOS-only twin below is the asymmetry, not this. See the module.
 pub mod decoder;
+pub mod detach_retention;
 pub mod device_geometry;
 pub mod device_log;
 pub mod device_panel;
@@ -169,6 +171,7 @@ pub mod listen_port;
 pub mod metadata;
 pub mod metadata_wire;
 pub mod mint_rescue;
+pub mod mirror_fold;
 pub mod mux_channels;
 pub mod mux_client;
 pub mod mux_decoder;
@@ -213,6 +216,7 @@ pub mod power;
 // (address, stride) into a slice is this crate's remit and no other crate's. See the module.
 pub mod pixel_plane;
 pub mod pointer_shape;
+pub mod preference;
 pub mod present_queue;
 // macOS only, with `git_status`: the walk is portable, but the crate it lives in vendors `libgit2`,
 // and hostd is the only caller — a phone has no pane whose directory it could key.
@@ -222,6 +226,7 @@ pub mod rail_list;
 pub mod rail_structure;
 pub mod rate_control;
 pub mod recovery;
+pub mod remote_window;
 pub mod replay;
 pub mod responsive;
 pub mod sanitize;
@@ -231,6 +236,7 @@ pub mod scroll_reproject;
 pub mod scroll_resample;
 pub mod search_rank;
 pub mod send_pacing;
+pub mod service_lifecycle;
 pub mod session_state;
 pub mod sidebar_row;
 pub mod sidecars;
@@ -244,8 +250,11 @@ pub mod simulator_wire;
 pub mod spawn_env;
 pub mod state_scalars;
 pub mod status_pill;
+pub mod store_git_cadence;
 pub mod store_rollup;
+pub mod store_seed;
 pub mod store_shape;
+pub mod store_video_slots;
 pub mod supervision;
 pub mod supervisor_batch;
 pub mod supervisor_frame;
@@ -286,6 +295,7 @@ pub mod window_feed;
 pub mod window_feed_host;
 pub mod window_list;
 pub mod window_placement;
+pub mod window_rail;
 pub mod window_size;
 pub mod wire_message;
 pub mod workspace;

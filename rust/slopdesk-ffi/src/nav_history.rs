@@ -30,6 +30,12 @@ use slopdesk_video::nav_history::{
     Strategy, TOOLBAR_MAX_DEPTH, TOOLBAR_NODE_BUDGET, fold, menu_visit, toolbar_visit,
 };
 
+/// Both directions, as a Rust caller sees them — what [`SlopDeskNavHistory::read`] answers.
+///
+/// Re-exported so a crate holding the reader natively need not also take an edge to
+/// `slopdesk-video` just to name the return type.
+pub use slopdesk_video::nav_history::Flags as NavFlags;
+
 /// The two controls a reading is taken from, and the window they belong to.
 #[derive(Debug)]
 struct Pair {
@@ -175,8 +181,21 @@ pub struct SlopDeskNavHistory {
 }
 
 impl SlopDeskNavHistory {
+    /// A reader with an empty cache.
+    ///
+    /// The Rust-native face beside [`slopdesk_nav_history_new`]: the same handle, without the raw
+    /// pointer, so a `forbid(unsafe_code)` caller can hold one. `reader` rather than `new` because
+    /// a `new` returning `Self` with no `Default` is the shape `clippy::new_without_default` names.
+    #[must_use]
+    pub fn reader() -> Self {
+        Self {
+            state: Mutex::new(State::default()),
+        }
+    }
+
     /// The current flags for `pid`, or `None` for unknown.
-    fn read(&self, pid: i32, rescan_unknown: bool, verify_window: bool) -> Option<Flags> {
+    #[must_use]
+    pub fn read(&self, pid: i32, rescan_unknown: bool, verify_window: bool) -> Option<Flags> {
         let Ok(mut state) = self.state.lock() else {
             return None;
         };
@@ -221,9 +240,7 @@ pub struct SlopDeskNavFlags {
 )]
 #[must_use]
 pub extern "C" fn slopdesk_nav_history_new() -> *mut SlopDeskNavHistory {
-    Box::into_raw(Box::new(SlopDeskNavHistory {
-        state: Mutex::new(State::default()),
-    }))
+    Box::into_raw(Box::new(SlopDeskNavHistory::reader()))
 }
 
 /// Releases a reader. Null is inert.
