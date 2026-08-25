@@ -35,7 +35,7 @@ use slopdesk_agent::status::ClaudeStatus;
 use slopdesk_muxsession::truths::{CwdGate, Fact, Kind, Reassert, Scalars, Stamps, Truths};
 use slopdesk_terminal::echo::is_edge;
 
-use crate::{arena_span, deliver, optional, records_of, spill};
+use crate::{arena_span, deliver, lent, optional, records_of, spill};
 
 /// One thing the shell said, as the caller's decoded row.
 ///
@@ -575,27 +575,6 @@ pub unsafe extern "C" fn slopdesk_pane_truths_reanchor_echo(
         return -1;
     };
     emitted(truths.inner.reanchor_echo(echo_on, is_edge))
-}
-
-/// One caller-lent UTF-8 span as borrowed text — the direction Swift fills.
-///
-/// Empty for a null pointer or a zero length, and empty for bytes that are not UTF-8: a path or a
-/// project key that failed to decode is not a truth to latch, and the fold's own dedupe treats
-/// empty as "nothing accepted".
-///
-/// # Safety
-/// `bytes` must be null, or point to `len` readable bytes for the whole call.
-#[expect(
-    unsafe_code,
-    reason = "reconstituting the caller's span IS the boundary this module documents"
-)]
-unsafe fn lent<'a>(bytes: *const c_uchar, len: usize) -> &'a str {
-    if bytes.is_null() || len == 0 {
-        return "";
-    }
-    // SAFETY: non-null and, by the caller's obligation, readable for `len` bytes for this call.
-    let span = unsafe { core::slice::from_raw_parts(bytes, len) };
-    std::str::from_utf8(span).unwrap_or_default()
 }
 
 /// Opens one batch's cwd derivation: `0` skip, `1` use the batch's OSC-7, `2` prefer the probe.

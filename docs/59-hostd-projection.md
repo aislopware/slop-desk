@@ -255,12 +255,32 @@ took the activity ladder, so what is left is the detach/rebind I/O itself. **Dep
 `fanoutLock` → `taskLock` order in `rebindRelay` stops existing once the roster is a handle, rather
 than being re-encoded.
 
-**Step 6 — `MuxOpenRouter`.** *(~600 Swift lines)* `spawnMuxChannel(_:on:connectionID:)`
-`HostServer.swift:1736-1873` — the workspace-class route `:1741`, the unknown-class decline `:1750`,
-the critical section `:1769-1824` — becomes: gather `OpenFacts`, ask, act. Plus
-`resumePointForSurvivor` `:1166`, `paneOwnershipAllowsAdoption` `:1074`, and the decision half of
-`performReattach` `:1968-2077` including the clamp at `:1990`. The restore-before-spawn ORDERING
-`:2090-2100` stays Swift (an I/O sequence); the GATE crosses.
+**Step 6 — `MuxOpenRouter`. LANDED.** *(~90 removed from the server, ~155 face added)* The seven
+exits of `spawnMuxChannel` — workspace, decline, refuse-while-stopping, re-ack, join, claim,
+spawn-fresh — were decided by five booleans read under one lock in an order that was only ever a
+comment, and the comment is load-bearing three separate ways: an unserved class that reaches the PTY
+path forks a login shell nobody asked for, a live id that falls past the JOIN rotates the
+incumbent's journal writer out mid-session, and a resume verdict above what a session can number
+tells a returning client to drop every frame it is about to be sent. None of the three fails a
+build. The precedence is `open_route::route` now, over an `OpenFacts` hostd fills under the same
+critical section it always had.
+
+Two booleans became one value on the way: `already_live` and `live_elsewhere` could never both be
+true — the second was computed only when the first was false — so the pair had a fourth state that
+meant nothing and a route that would have been undefined for it. `Incumbent` has the three states
+the question has.
+
+The claim stays Swift (it mutates a store and cancels a TTL task); what crosses is whether to
+ATTEMPT it, and `settle` turns its three outcomes into the next action. The other four decisions in
+the cluster came with it: the resume clamp (`resume_from`, and it is `i64` because a seq is signed
+on the wire), the redraw choice (`redraw` — jiggle only for a cold client on a raw replay), the
+fresh-spawn restore gate (`restores_transcript`) and the adoption pair (`survivor_resume`,
+`ownership_allows_adoption`). Every door is stateless: there is nothing to allocate, nothing to
+free, and no handle whose lifetime could be got wrong.
+
+`slopdesk-muxsession` took its first `slopdesk-wire` edge here, for the class byte alone —
+`MuxChannelClass::from_byte` owns which bytes this build routes, and a copy of that list is exactly
+the one that decides whether a peer's unknown class gets declined or gets a shell.
 
 **Step 7 — `HostSessionRegistry`.** *(~700 Swift lines)* `controlSessions` `:125` · `muxSessions`
 `:152` · `muxSubscriberIDs` `:163` · `muxConnections` `:172` · `hookPaneIDsBySession` `:192` ·
@@ -400,10 +420,16 @@ class, and the BREAK-TESTED convention every new rule follows) · `crate_policy.
    `MuxChannelSession.swift` for `messages.append(.title|.cwd|.projectKey|.commandStatus` — the
    re-assert may not be hand-built, because a re-ordering that puts the title before the command
    stamp still compiles and still passes every content assertion.
-6. **the channel-open route is decided once** — ban the four-path `switch` in
-   `HostServer.spawnMuxChannel`; require `slopdesk_mux_open_route`. Include the
-   `min(lastReceivedSeq, highestAssignedSeq)` clamp in the ban pattern — a clamp spelled twice is
-   docs/55 §8's `PortValidation.port` row.
+6. **the channel-open route is decided once** — LANDED as `hot_paths::one_open_one_route` (rule
+   `one-open-one-route`). Requires `MuxOpenRouter.swift` to exist, to call every one of the seven
+   `slopdesk_mux_open_*` doors, and to reach for none of the host's own state (no `NSLock`, no
+   `muxSessions`, no `store.claim`) — a router that could read a map would be a second copy of the
+   map. Bans four hand-derived answers in `HostServer.swift`: `min(open.lastReceivedSeq` (the clamp,
+   docs/55 §8's `PortValidation.port` row exactly), `open.channelClass == MuxChannelClass` (the class
+   routing), `owner == supervisorOwnerIdentity` (the adoption test) and `PaneOutputStream.fromNowOn`
+   (the live-edge sentinel). The sentinel itself is pinned on BOTH sides — `FROM_NOW_ON == u64::MAX`
+   in `open_route.rs`, `fromNowOn = UInt64.max` in `PaneOutputStream.swift` — because a survivor
+   resume whose two halves disagree replays a whole transcript twice.
 7. **the host's session maps are one relation** — ban the seven dictionary declarations at
    `HostServer.swift:125-338` except `muxSessions`; require `slopdesk_host_registry_*`.
 

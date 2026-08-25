@@ -191,6 +191,7 @@ pub mod new_tab_position;
 pub mod notify;
 pub mod notify_rate_limit;
 pub mod open_quickly;
+pub mod open_route;
 pub mod outline;
 pub mod pacer_depth;
 pub mod palette_card;
@@ -336,6 +337,26 @@ pub(crate) const unsafe fn borrow<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     // SAFETY: the caller's obligation above is discharged by Swift's `withUnsafeBytes` /
     // `withUnsafeBufferPointer`, whose scope is exactly this call.
     unsafe { std::slice::from_raw_parts(ptr, len) }
+}
+
+/// Borrows a caller-provided `(ptr, len)` as `&str`, reading absent and unreadable as `""`.
+///
+/// The text half of [`borrow`], and separate from it because the failure it folds is a different
+/// one: a null pair is a caller that HAS no text, while a non-UTF-8 pair is a caller whose text
+/// this side cannot read. Both answer empty, because every door that lends text here treats empty
+/// as "nothing to latch" — so a span that cannot be decoded latches nothing rather than latching a
+/// replacement-character string that would then dedupe against itself forever.
+///
+/// # Safety
+/// `bytes` must either be null or name `len` initialised bytes that stay live for the whole call.
+#[expect(
+    unsafe_code,
+    reason = "this IS the boundary: a C pointer/length pair becoming a str"
+)]
+pub(crate) unsafe fn lent<'a>(bytes: *const c_uchar, len: usize) -> &'a str {
+    // SAFETY: the caller's obligation above, discharged by the shared slice helper.
+    let span = unsafe { borrow(bytes, len) };
+    std::str::from_utf8(span).unwrap_or_default()
 }
 
 /// The low 32 bits of a length — Swift's `UInt32(truncatingIfNeeded:)`.

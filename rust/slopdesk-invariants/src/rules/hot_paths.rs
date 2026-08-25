@@ -22,6 +22,18 @@ const SESSION: &str = "Sources/SlopDeskHost/MuxChannelSession.swift";
 /// The face that marshals one pane's latched truths.
 const TRUTHS_FACE: &str = "Sources/SlopDeskHost/PaneTruths.swift";
 
+/// The face that marshals where an inbound `channelOpen` goes.
+const ROUTER_FACE: &str = "Sources/SlopDeskHost/MuxOpenRouter.swift";
+
+/// The one file that reads its own maps to answer the router's questions.
+const HOST_SERVER: &str = "Sources/SlopDeskHost/HostServer.swift";
+
+/// The stream cursor that means "the live edge", on the Rust side.
+const ROUTE_RULES: &str = "rust/slopdesk-muxsession/src/open_route.rs";
+
+/// …and on the Swift side, where the subscriber reads it.
+const OUTPUT_STREAM: &str = "Sources/SlopDeskHost/PaneOutputStream.swift";
+
 /// One regex engine meets the untrusted rows, and it does not backtrack
 ///
 /// Hint Mode ran ten compiled `NSRegularExpressions` over rows a remote program wrote, bridged
@@ -359,6 +371,75 @@ pub fn one_batch_one_pass_one_lock(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// One open, one route
+///
+/// `spawnMuxChannel` decided between seven exits by reading five booleans under one lock, in an
+/// order that was only ever a comment. The order is load-bearing three separate ways: an unserved
+/// class that reaches the PTY path forks a login shell nobody asked for; a live session id that
+/// falls past the JOIN into the spawn path rotates the incumbent's journal writer out and stops its
+/// transcript mid-session; and a resume verdict above what a session can number tells a returning
+/// client to drop every frame it is about to be sent.
+///
+/// None of those fails a build, and none of them fails a content assertion. So the precedence is
+/// `rust/slopdesk-muxsession`'s `open_route` now, and this pins the two halves that keep it one
+/// implementation: the face asks every door, and hostd re-derives none of the four answers by hand.
+#[must_use]
+pub fn one_open_one_route(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: ROUTER_FACE,
+            message: "Sources/SlopDeskHost/MuxOpenRouter.swift is gone — which of the seven exits a \
+                      channelOpen takes is not HostServer's to re-derive (docs/59 §5, step 6)",
+        },
+        Claim::Doors {
+            path: ROUTER_FACE,
+            entries: &[
+                "slopdesk_mux_open_route",
+                "slopdesk_mux_open_settle",
+                "slopdesk_mux_open_resume_from",
+                "slopdesk_mux_open_redraw",
+                "slopdesk_mux_open_restores_transcript",
+                "slopdesk_mux_open_survivor_resume",
+                "slopdesk_mux_open_ownership_allows_adoption",
+            ],
+            message: "Sources/SlopDeskHost/MuxOpenRouter.swift no longer calls {entry} — a face that drops \
+                      a door is a routing rule growing back beside the one that owns it",
+        },
+        Claim::NoneOf {
+            paths: &[ROUTER_FACE],
+            pattern: r"\bNSLock\b|muxSessions|\bstore\.claim\b|ProcessInfo",
+            view: View::Code,
+            message: "{files} reaches for the host's own state — the face marshals SCALARS and nothing \
+                      else, because a router that could read a map would be a second copy of the map \
+                      (docs/59 §5, step 6)",
+        },
+        Claim::NoneOf {
+            paths: &[HOST_SERVER],
+            pattern: r"min\(open\.lastReceivedSeq|open\.channelClass == MuxChannelClass|owner == supervisorOwnerIdentity|PaneOutputStream\.fromNowOn",
+            view: View::Code,
+            message: "{files} re-derives one of the router's four answers by hand — the class routing, the \
+                      resume clamp, the adoption owner test and the live-edge sentinel are all the door's, \
+                      and each of them is a rule that still compiles when it is wrong (docs/59 §5, step 6)",
+        },
+        Claim::Matches {
+            path: ROUTE_RULES,
+            pattern: r"pub const FROM_NOW_ON: u64 = u64::MAX;",
+            view: View::Code,
+            message: "rust/slopdesk-muxsession/src/open_route.rs stopped spelling the live-edge sentinel as \
+                      u64::MAX — it is PaneOutputStream.fromNowOn's twin, and a survivor resume that \
+                      disagrees replays a whole transcript twice",
+        },
+        Claim::Matches {
+            path: OUTPUT_STREAM,
+            pattern: r"static let fromNowOn = UInt64\.max",
+            view: View::Code,
+            message: "Sources/SlopDeskHost/PaneOutputStream.swift stopped spelling the live-edge sentinel \
+                      as UInt64.max — see open_route.rs's FROM_NOW_ON, which it must equal",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -479,6 +560,73 @@ mod tests {
         // A bare fixture has no face at all.
         let bare = Fixture::new("one-batch-one-pass-one-lock-bare");
         assert!(!super::one_batch_one_pass_one_lock(&bare.tree()).is_clean());
+    }
+
+    /// Every door the router face must keep asking, in one string a fixture can hold.
+    const ROUTE_DOORS: &str = concat!(
+        "slopdesk_mux_open_route()\n",
+        "slopdesk_mux_open_settle()\n",
+        "slopdesk_mux_open_resume_from()\n",
+        "slopdesk_mux_open_redraw()\n",
+        "slopdesk_mux_open_restores_transcript()\n",
+        "slopdesk_mux_open_survivor_resume()\n",
+        "slopdesk_mux_open_ownership_allows_adoption()\n",
+    );
+
+    /// A tree where the router owns the precedence and both sentinels agree.
+    fn write_one_open_one_route(fixture: &Fixture) {
+        fixture
+            .write(super::ROUTER_FACE, ROUTE_DOORS)
+            .write(super::HOST_SERVER, "kept so the bans have a haystack\n")
+            .write(super::ROUTE_RULES, "pub const FROM_NOW_ON: u64 = u64::MAX;\n")
+            .write(
+                super::OUTPUT_STREAM,
+                "    public static let fromNowOn = UInt64.max\n",
+            );
+    }
+
+    #[test]
+    fn one_open_one_route_keeps_the_precedence_on_one_side() {
+        let fixture = Fixture::new("one-open-one-route");
+        write_one_open_one_route(&fixture);
+        assert!(super::one_open_one_route(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a routing rule grew back beside the one that owns it.
+        fixture.write(super::ROUTER_FACE, "slopdesk_mux_open_route()\n");
+        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
+
+        // The face reaches for the host's own map instead of taking the shape as a scalar.
+        write_one_open_one_route(&fixture);
+        fixture.append(super::ROUTER_FACE, "        muxSessions[key]\n");
+        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
+
+        // The clamp comes back by hand — the answer that still compiles when it is wrong.
+        write_one_open_one_route(&fixture);
+        fixture.append(
+            super::HOST_SERVER,
+            "        let resumeFrom = min(open.lastReceivedSeq, session.highestAssignedSeq)\n",
+        );
+        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
+
+        // …and so does the class routing.
+        write_one_open_one_route(&fixture);
+        fixture.append(
+            super::HOST_SERVER,
+            "        if open.channelClass == MuxChannelClass.workspace.rawValue { return }\n",
+        );
+        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
+
+        // The two sentinels stop agreeing, on either side.
+        write_one_open_one_route(&fixture);
+        fixture.write(super::ROUTE_RULES, "pub const FROM_NOW_ON: u64 = 0;\n");
+        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
+        write_one_open_one_route(&fixture);
+        fixture.write(super::OUTPUT_STREAM, "    public static let fromNowOn = 0\n");
+        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
+
+        // A bare fixture has no face at all.
+        let bare = Fixture::new("one-open-one-route-bare");
+        assert!(!super::one_open_one_route(&bare.tree()).is_clean());
     }
 
     /// Every door the face must keep asking, in one string a fixture can hold.

@@ -1470,6 +1470,11 @@ pub fn registry() -> Vec<Rule> {
             check: hot_paths::one_batch_one_pass_one_lock,
         },
         Rule {
+            name: "one-open-one-route",
+            origin: "docs/59 §5, step 6",
+            check: hot_paths::one_open_one_route,
+        },
+        Rule {
             name: "subscriber-set-one-table",
             origin: "docs/59 §4, §8 rule 3",
             check: hot_paths::the_subscriber_set_is_one_table,

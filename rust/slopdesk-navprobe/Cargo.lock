@@ -1125,6 +1125,7 @@ version = "0.1.0"
 dependencies = [
  "slopdesk-ids",
  "slopdesk-probe",
+ "slopdesk-wire",
 ]
 
 [[package]]

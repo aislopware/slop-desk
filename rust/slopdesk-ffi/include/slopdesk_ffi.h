@@ -3512,6 +3512,36 @@ size_t slopdesk_pane_truths_reestablish_tail(SlopDeskPaneTruths *handle,
                                              uint8_t *out, size_t capacity);
 
 /* ---------------------------------------------------------------------------- *
+ * open_route — where an inbound channelOpen GOES, and the three numbers a
+ * reattach turns on. docs/59 step 6.
+ *
+ * Stateless: hostd reads its maps under its own one critical section, hands
+ * the SHAPE of what it found across as scalars, and resolves the verdict byte
+ * against the objects it already holds. No identity crosses, nothing is
+ * retained, and there is nothing to free.
+ *
+ * route:      1 workspace · 2 decline · 3 refuse (stopping) · 4 re-ack ·
+ *             5 join · 6 attempt the detached claim · 7 spawn fresh
+ * incumbent:  0 nobody · 1 this composite key · 2 the same id, another key
+ * settle:     in 1 claimed / 2 reaped a dead child / 3 not found
+ *             out 1 reattach · 2 reap then spawn · 3 spawn fresh
+ * redraw:     1 a plain SIGWINCH nudge · 2 the one-row size jiggle
+ * ---------------------------------------------------------------------------- */
+uint8_t slopdesk_mux_open_route(uint8_t channel_class, uint8_t incumbent,
+                                bool stopping, bool real_session_id,
+                                bool detached_store);
+uint8_t slopdesk_mux_open_settle(uint8_t outcome);
+int64_t slopdesk_mux_open_resume_from(int64_t last_received_seq,
+                                      int64_t highest_assigned_seq);
+uint8_t slopdesk_mux_open_redraw(bool cold_client, bool snapshot_composed);
+bool slopdesk_mux_open_restores_transcript(bool real_session_id,
+                                           int64_t last_received_seq);
+uint64_t slopdesk_mux_open_survivor_resume(uint64_t stored_bytes, bool has_head,
+                                           uint64_t head, bool *unpositioned);
+bool slopdesk_mux_open_ownership_allows_adoption(const uint8_t *owner, size_t owner_len,
+                                                 const uint8_t *ours, size_t ours_len);
+
+/* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
  * loop policies both ends of the wire were spelling twice.
  *

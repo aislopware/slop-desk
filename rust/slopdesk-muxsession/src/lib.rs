@@ -29,10 +29,17 @@
 //! order, each member's ack and delivery cursors, which of them has fallen too far behind to keep,
 //! and how far retention may be released. Sockets and tasks stay where they are; what crosses is an
 //! `id` and the cursors that decide what the pane does next.
+//!
+//! [`open_route`] is the seventh, and the one that decides whether a pane session EXISTS: which of
+//! seven exits an inbound `channelOpen` takes, and the three numbers a reattach turns on. It is the
+//! first thing here that reads a wire vocabulary — the open's class byte, through the enum that
+//! owns it — because routing a class this build does not serve into the PTY path forks a shell
+//! nobody asked for, and a second copy of "0 is a pane" is how that happens.
 
 pub mod bridge_router;
 pub mod detach_retention;
 pub mod fanout;
+pub mod open_route;
 pub mod outbox;
 pub mod resize_fold;
 pub mod spawn_env;

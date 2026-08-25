@@ -34,6 +34,12 @@ path = "src/lib.rs"
 slopdesk-ids = { path = "../slopdesk-ids" }
 slopdesk-probe = { path = "../slopdesk-probe" }
 
+# `open_route` reads no frame, but it does read one frame FIELD: the `channel_class` byte of a
+# `ChannelOpen`. Which bytes this build routes is `MuxChannelClass`'s, and a copy of it here would
+# be the fourth — the one that decides whether a peer's unknown class gets declined or gets a login
+# shell. hostd links both crates already, so the edge costs nothing it was not paying.
+slopdesk-wire = { path = "../slopdesk-wire" }
+
 # In hostd, in the resize path of every attached client.
 [profile.release]
 opt-level = 3

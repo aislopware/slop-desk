@@ -1072,8 +1072,7 @@ public final class HostServer: @unchecked Sendable {
     ///   older than protocol 1.4). Treated exactly as it was before this check existed, because
     ///   refusing here would strand real shells on the one upgrade where they most need adopting.
     private func paneOwnershipAllowsAdoption(_ record: PaneRecord) -> Bool {
-        guard let owner = record.owner, !owner.isEmpty else { return true }
-        return owner == supervisorOwnerIdentity
+        MuxOpenRouter.ownershipAllowsAdoption(owner: record.owner, ours: supervisorOwnerIdentity)
     }
 
     /// One pane's adoption: take the master back, rebuild the session, park it.
@@ -1164,15 +1163,16 @@ public final class HostServer: @unchecked Sendable {
     /// head when it closes the journal), which is the one case worth a log line: the transcript we
     /// have, plus everything from NOW.
     private func resumePointForSurvivor(sessionID: UUID, paneID: String) -> UInt64 {
-        guard let info = scrollbackTranscripts?.info(sessionID: sessionID, supervisor: supervisor),
-              info.bytes > 0
+        guard let info = scrollbackTranscripts?.info(sessionID: sessionID, supervisor: supervisor)
         else { return 0 }
-        if let head = info.head { return head }
-        onLog?(
-            "supervisor: pane \(paneID) has a stored transcript but superd holds no position in "
-                + "its stream — resuming from now, so nothing is shown twice",
-        )
-        return PaneOutputStream.fromNowOn
+        let answer = MuxOpenRouter.survivorResume(storedBytes: info.bytes, head: info.head)
+        if answer.unpositioned {
+            onLog?(
+                "supervisor: pane \(paneID) has a stored transcript but superd holds no position in "
+                    + "its stream — resuming from now, so nothing is shown twice",
+            )
+        }
+        return answer.offset
     }
 
     private func reportUnclaimedPanes(reason: String) {
@@ -1734,96 +1734,79 @@ public final class HostServer: @unchecked Sendable {
     ///   with `resumeFromSeq=0` (the `sendOpenAck` with `accepted: true` on a fresh shell)
     ///   signals this.
     private func spawnMuxChannel(_ open: MuxChannelOpen, on connection: MuxNWConnection, connectionID: UUID) {
-        // FIRST line, and deliberately BEFORE the pane-routing critical section below: a workspace
-        // channel carries no PTY, so it must never touch the JOIN / detached-claim reasoning that
-        // keeps ONE shell per sessionID. Routing here leaves that invariant literally untouched
-        // (docs/45 §5.1).
-        if open.channelClass == MuxChannelClass.workspace.rawValue {
-            openWorkspaceChannel(open, on: connection, connectionID: connectionID)
-            return
-        }
-        // Anything this host does not route is DECLINED, never guessed at — and declined HERE, before
-        // the exclusivity critical section, for the same reason the workspace route sits above it.
-        // Falling through into the PTY spawn path instead would hand a peer one version ahead a login
-        // shell it never asked for: a pty, a reaper thread and a scrollback journal addressed by
-        // nobody.
-        guard open.channelClass == MuxChannelClass.pane.rawValue else {
-            onLog?(
-                "mux channel \(open.channelID) (conn \(connectionID)): declined — "
-                    + "channel class \(open.channelClass) is not served by this host",
-            )
-            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
-            return
-        }
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
         // (`hasRealSessionID` compares the ZERO sentinel `WireMessage.newSessionID` — a
         // first-connect preamble from a raw/old client. Our mux client replaces the sentinel
         // with a fresh real UUID before sending, so this is normally always true.)
         let hasRealSessionID = open.sessionID != WireMessage.newSessionID
-        // ONE critical section decides the route: the composite-key idempotency guard, the stopping
-        // gate, the "sessionID already attached elsewhere" refusal, and the exclusive detached-store
-        // claim all happen under `lock` — paired with `detachMuxSession`'s synchronous insert, no two
-        // channelOpens can ever route the same sessionID to two attachments. That double-attach alias
-        // would let one client's later close kill the OTHER client's live PTY and delete its
-        // scrollback journal.
+        // ONE critical section reads the facts: the composite-key idempotency guard, the stopping
+        // gate and the "sessionID already attached elsewhere" lookup all happen under `lock` —
+        // paired with `detachMuxSession`'s synchronous insert, no two channelOpens can ever route
+        // the same sessionID to two attachments. That double-attach alias would let one client's
+        // later close kill the OTHER client's live PTY and delete its scrollback journal.
+        //
+        // The ROUTE those facts imply is ``MuxOpenRouter``'s, not this function's: the precedence
+        // between them (class, then the host's condition, then the incumbent, then the store) is
+        // load-bearing and used to be a comment.
         lock.lock()
         let isStopping = stopping
-        // Idempotency guard (defense-in-depth with the `isNewChannel` gate in `MuxNWConnection.route`):
-        // if a session already exists for this composite key, a duplicate/retransmitted `channelOpen`
-        // must NOT spawn a SECOND PTY and overwrite the live session in `muxSessions` (orphaning the
-        // first PTY + master fd + reaper thread). Re-ack idempotently and return.
-        let alreadyLive = muxSessions[key] != nil
-        // Same sessionID already LIVE under a DIFFERENT composite key (a second connection / window
-        // presenting an id somebody is still holding): this is the JOIN, and it is what a host does
-        // — a pane is shared, never handed over and never duplicated.
+        // Idempotency (defense-in-depth with the `isNewChannel` gate in `MuxNWConnection.route`): a
+        // duplicate/retransmitted `channelOpen` must NOT spawn a SECOND PTY and overwrite the live
+        // session in `muxSessions`, orphaning the first PTY + master fd + reaper thread.
         //
-        // The invariant the routing keeps is about the SHELL: exactly one `openpty()` + `fork()` per
-        // sessionID, ever. `store.claim` only ever finds DETACHED sessions, so a live id that failed
-        // to route here would fall through to `spawnFreshShell` and `claimJournal` would rotate the
-        // live session's journal writer out — the incumbent's transcript stopping mid-session.
-        let liveElsewhere: MuxChannelSession? = (!isStopping && !alreadyLive && hasRealSessionID)
+        // Same sessionID live under a DIFFERENT composite key is the JOIN — a pane is shared, never
+        // handed over and never duplicated. The invariant is about the SHELL: exactly one
+        // `openpty()` + `fork()` per sessionID, ever.
+        let liveElsewhere: MuxChannelSession? = (!isStopping && muxSessions[key] == nil && hasRealSessionID)
             ? muxSessions.first { $0.key != key && $0.value.sessionID == open.sessionID }?.value
             : nil
+        let incumbent: MuxOpenRouter.Incumbent =
+            if muxSessions[key] != nil { .thisKey } else if liveElsewhere != nil { .otherKey } else { .none }
+        let route = MuxOpenRouter.route(
+            channelClass: open.channelClass,
+            incumbent: incumbent,
+            stopping: isStopping,
+            realSessionID: hasRealSessionID,
+            detachedStore: detachedStore != nil,
+        )
         // PATH D — JOIN: take THAT session object (never a second one) and register this key against
         // it now, inside the same critical section, so a third concurrent open sees the pane as held
         // and routes here too. The subscriber itself is added OUTSIDE the lock — it composes a
         // snapshot and awaits sends.
-        var joining: MuxChannelSession?
         var joiningSubscriber: MuxSubscriberID?
-        if let live = liveElsewhere {
-            joining = live
+        if route == .join, let live = liveElsewhere {
             joiningSubscriber = registerJoiningKeyLocked(live, key: key)
         }
-        // PATH A claim: exclusively TAKE the detached session (removes the entry + cancels
-        // its TTL task atomically — `claim` auto-evicts a child-exited entry and returns nil,
-        // PATH C → falls to B). Registering the claimed session under its NEW key in this same
-        // critical section makes the sessionID immediately visible as "attached" to every later
-        // channelOpen — closing the two-concurrent-reattach and reattach-vs-TTL races.
+        // PATH A claim: exclusively TAKE the detached session (removes the entry + cancels its TTL
+        // task atomically). Registering the claimed session under its NEW key in this same critical
+        // section makes the sessionID immediately visible as "attached" to every later channelOpen —
+        // closing the two-concurrent-reattach and reattach-vs-TTL races.
         var claimed: MuxChannelSession?
         // A dead child reaped BY the claim (PATH C): the claim took over the entry, so the
         // reaped session's own detached-exit closure stands down (`remove` returns false) —
         // the per-id teardown it would have done is finished below, outside the lock.
         var reapedDeadChild: MuxChannelSession?
-        // `joining == nil` rather than a lookup that happens to miss: a key that JOINED must never
-        // also take the claim, because the `muxSessions[key] = session` below would overwrite the
-        // registration `registerJoiningKeyLocked` just wrote — leaving the key naming the CLAIMED
-        // session while `muxSubscriberIDs[key]` names a member of the JOINED one. A live session is
-        // never simultaneously in the detached store, but that is a fact about the store; the
-        // exclusion belongs here, where the two writes are.
-        if !isStopping, !alreadyLive, joining == nil, hasRealSessionID, let store = detachedStore {
+        // A key that JOINED must never also take the claim — the router's precedence is what
+        // guarantees it, because `.join` and `.claim` are different verdicts of one answer. Two
+        // separate gates here is how the `muxSessions[key] = session` below could have overwritten
+        // the registration `registerJoiningKeyLocked` just wrote.
+        var settled = MuxOpenRouter.Settled.spawnFresh
+        if route == .claim, let store = detachedStore {
             switch store.claim(open.sessionID) {
             case let .claimed(session):
+                settled = MuxOpenRouter.settle(.claimed)
                 claimed = session
                 muxSessions[key] = session
             case let .reapedDeadChild(session):
+                settled = MuxOpenRouter.settle(.reapedDeadChild)
                 reapedDeadChild = session
             case .notFound:
-                break
+                settled = MuxOpenRouter.settle(.notFound)
             }
         }
         lock.unlock()
 
-        if let reapedDeadChild {
+        if settled == .reapThenSpawn, let reapedDeadChild {
             // Prevent-sleep strict balance: the dead session may still carry a `.working`
             // status nobody will ever clear (its stale exit closure is gated off) — fan the
             // final `.none` here. Drop its hook-sink key BEFORE the fresh spawn below
@@ -1834,18 +1817,35 @@ public final class HostServer: @unchecked Sendable {
             unregisterHookSink(session: reapedDeadChild)
         }
 
-        if isStopping {
-            // Shutting down — refuse the channel so we never fork a PTY that would outlive the daemon
-            // (a channelOpen racing stop() after the session map was drained).
+        switch route {
+        case .workspace:
+            // A workspace channel carries no PTY, so it never touches the JOIN / detached-claim
+            // reasoning that keeps ONE shell per sessionID (docs/45 §5.1).
+            openWorkspaceChannel(open, on: connection, connectionID: connectionID)
+        case .decline:
+            // Never guessed at: falling through into the PTY spawn path would hand a peer one
+            // version ahead a login shell it never asked for — a pty, a reaper thread and a
+            // scrollback journal addressed by nobody.
+            onLog?(
+                "mux channel \(open.channelID) (conn \(connectionID)): declined — "
+                    + "channel class \(open.channelClass) is not served by this host",
+            )
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
-            return
-        }
-        if alreadyLive {
+        case .refuseStopping:
+            // Shutting down — refuse so we never fork a PTY that would outlive the daemon (a
+            // channelOpen racing stop() after the session map was drained).
+            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
+        case .reAck:
             Task { await connection.sendOpenAck(open.channelID, accepted: true) }
-            return
-        }
-        if let session = joining, let subscriber = joiningSubscriber {
-            // PATH D: the pane is LIVE and somebody else is already watching it — join them.
+        case .join:
+            // Both are non-nil by construction: `.join` is only returned for `.otherKey`, which
+            // only exists when `liveElsewhere` found a session, and that is exactly when the
+            // registration above ran. The else is unreachable — but a dropped open with no ack
+            // hangs the client until its timeout, so refuse rather than fall silent.
+            guard let session = liveElsewhere, let subscriber = joiningSubscriber else {
+                Task { await connection.sendOpenAck(open.channelID, accepted: false) }
+                return
+            }
             Task { [weak self] in
                 await self?.performJoin(
                     session: session,
@@ -1855,20 +1855,21 @@ public final class HostServer: @unchecked Sendable {
                     connectionID: connectionID,
                 )
             }
-        } else if let session = claimed {
-            // PATH A: live detached session claimed — reattach.
-            Task { [weak self] in
-                await self?.performReattach(
-                    session: session,
-                    open: open,
-                    connection: connection,
-                    connectionID: connectionID,
-                )
+        case .claim,
+             .spawnFresh:
+            if settled == .reattach, let session = claimed {
+                Task { [weak self] in
+                    await self?.performReattach(
+                        session: session,
+                        open: open,
+                        connection: connection,
+                        connectionID: connectionID,
+                    )
+                }
+            } else {
+                // No detached session (or its child exited), detach disabled, or the zero sentinel.
+                spawnFreshShell(open: open, connection: connection, connectionID: connectionID, key: key)
             }
-        } else {
-            // PATH B/C: no detached session (or child exited), detach disabled, or zero UUID
-            // (first connect) — spawn fresh.
-            spawnFreshShell(open: open, connection: connection, connectionID: connectionID, key: key)
         }
     }
 
@@ -1977,17 +1978,12 @@ public final class HostServer: @unchecked Sendable {
         // rides, before any of its resize frames can land.
         session.addResizeContributor(sizePassive: sizePassiveForConnection(connectionID))
         // The verdict is host-authoritative, so it must not exceed what this session can actually
-        // number. `lastReceivedSeq` is the client's memory of a PREVIOUS session object; an ADOPTED
-        // pane is a new object around an old shell (`adoptSurvivingPane` builds a fresh
-        // `MuxChannelSession`, so its ReplayBuffer starts at zero and its first frame is seq 1).
-        // Echoing 4000 back at a warm client then told it to keep its dedup marks, and every frame
-        // this session went on to send — the restored transcript first, then all live output —
-        // arrived below the mark and was dropped. The terminal rendered nothing while keystrokes
-        // still reached the shell: a dead-looking pane, arrived at by the very path that exists to
-        // bring one back. Clamping to `highestAssignedSeq` makes the answer honest, and the zero it
-        // produces here is precisely the "reset your marks" the client already understands
-        // (`docs/20` §8.2 — only `resumeFromSeq == 0` resets).
-        let resumeFrom = min(open.lastReceivedSeq, session.highestAssignedSeq)
+        // number — ``MuxOpenRouter/resumeFrom(lastReceivedSeq:highestAssignedSeq:)`` is the clamp
+        // and carries the reasoning.
+        let resumeFrom = MuxOpenRouter.resumeFrom(
+            lastReceivedSeq: open.lastReceivedSeq,
+            highestAssignedSeq: session.highestAssignedSeq,
+        )
         // Ack FIRST — synchronously, before the replay: the resume verdict rides the DATA link
         // FIFO-ahead of the replayed `output` frames, so the awaiting client learns "same session
         // resumed" before the first byte. If the rebind below then fails, the `accepted: false`
@@ -2054,16 +2050,18 @@ public final class HostServer: @unchecked Sendable {
         // live frame arrives incomplete — and a differential renderer (Claude Code) ignores a
         // same-size SIGWINCH for the rows it believes are already painted, leaving the
         // collapsed rows (input dividers, status line) blank forever. Only a REAL size change
-        // forces the full re-layout: shrink one row, hold long enough for the app's event loop
-        // to observe the intermediate size (too short and both SIGWINCHes coalesce into
-        // "unchanged"), then restore. A RENDERED-snapshot replay needs none of this — every
-        // row the app believes painted IS painted — so it takes the plain nudge, like a warm
-        // client whose grid survived.
+        // forces the full re-layout, and the hold between the two SIGWINCHes has to be long
+        // enough for the app's event loop to observe the intermediate size — too short and the
+        // pair coalesces into "unchanged". Which of the two a reattach earns is
+        // ``MuxOpenRouter/redraw(coldClient:snapshotComposed:)``.
         let nudgePTY = session.pty
-        let coldClient = open.lastReceivedSeq == 0
+        let repaint = MuxOpenRouter.redraw(
+            coldClient: open.lastReceivedSeq == 0,
+            snapshotComposed: snapshotComposed,
+        )
         Task.detached {
             try? await Task.sleep(for: .milliseconds(200))
-            if coldClient, !snapshotComposed, let jiggle = nudgePTY.beginRedrawJiggle() {
+            if repaint == .jiggle, let jiggle = nudgePTY.beginRedrawJiggle() {
                 try? await Task.sleep(for: .milliseconds(200))
                 nudgePTY.endRedrawJiggle(jiggle)
             } else {
@@ -2086,14 +2084,14 @@ public final class HostServer: @unchecked Sendable {
         // The RESTORE runs before the spawn, because the spawn is what starts writing under it:
         // superd keeps a returning id's transcript and appends the new shell's output below it, so
         // reading afterwards could hand the client bytes the live stream is about to deliver again.
-        // Gate: a fresh spawn for a RETURNING id whose
-        // client is COLD (`lastReceivedSeq == 0` — a brand-new terminal surface). A WARM client
-        // (non-zero seq: transport dropped but the app kept running) still holds its rendered grid;
-        // replaying the transcript there would double-print it.
+        // Both halves of the gate — a real id, and a COLD client — are
+        // ``MuxOpenRouter/restoresTranscript(realSessionID:lastReceivedSeq:)``.
         let restored: ScrollbackTranscripts.Restored? =
-            (hasResumableID && open.lastReceivedSeq == 0)
-                ? scrollbackTranscripts?.restored(sessionID: open.sessionID, supervisor: supervisor)
-                : nil
+            MuxOpenRouter.restoresTranscript(
+                realSessionID: hasResumableID, lastReceivedSeq: open.lastReceivedSeq,
+            )
+            ? scrollbackTranscripts?.restored(sessionID: open.sessionID, supervisor: supervisor)
+            : nil
         if let restored {
             onLog?(
                 "mux channel \(open.channelID) (conn \(connectionID)): restored "
