@@ -11,6 +11,8 @@ const SWIFT_LINKS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalLinkDe
 const RUST_LINK: &str = "rust/slopdesk-terminal/src/link.rs";
 const SWIFT_BLOCKS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalBlockModel.swift";
 const RUST_BLOCKS: &str = "rust/slopdesk-terminal/src/blocks.rs";
+const SWIFT_SEARCH: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift";
+const SWIFT_SEARCH_ACTION: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchSurfaceAction.swift";
 
 /// The input surface: which box to offer, and which bytes coming back are the PTY echoing what the
 /// compose box just typed.
@@ -274,6 +276,73 @@ pub fn command_blocks(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// The SEARCH surfaces: libghostty's binding grammar, and the two decisions both of them make.
+///
+/// `rust/slopdesk-workspace`'s `find_bar`, through `TerminalSearchSurfaceAction` — the one Swift
+/// type allowed to hold the vocabulary, and the reason it sits in `SlopDeskWorkspaceCore` rather
+/// than beside either bar: THREE callers speak it, in two targets.
+///
+/// The five spellings are the rare table where a second copy is not a style question. They are a
+/// FOREIGN protocol — libghostty parses them, and the parser is vendored under `ThirdParty/`, so
+/// nothing on this side regenerates them — and a typo produces a control that silently does nothing
+/// rather than a build error. All three callers had written them out; two of those copies had
+/// already drifted from the third on which modes may arm the literal matcher.
+///
+/// `Tests` is deliberately NOT scanned: the suites assert the strings AS STRINGS on purpose,
+/// because a test comparing `.end` to `.end` would pass on the day the spelling drifted from what
+/// the surface parses.
+#[must_use]
+pub fn search_surface(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Doors {
+            path: SWIFT_SEARCH_ACTION,
+            entries: &[
+                "slopdesk_ws_find_bar_wire",
+                "slopdesk_ws_find_bar_row_driven",
+                "slopdesk_ws_find_bar_arming",
+                "slopdesk_ws_find_bar_nav_forward",
+            ],
+            message: "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchSurfaceAction.swift no longer \
+                      calls {entry} — libghostty's binding grammar and the modes it may be armed in are \
+                      rust/slopdesk-workspace's find_bar",
+        },
+        Claim::Doors {
+            path: SWIFT_SEARCH,
+            entries: &["slopdesk_ws_find_reanchor", "slopdesk_ws_find_step"],
+            message: "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift no longer calls \
+                      {entry} — where the selection lands after a rescan or a step is find_bar's",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r#""(search:|navigate_search|end_search|scroll_to_row:)"#,
+            all: &[],
+            unless: &[],
+            view: View::Statements,
+            exempt: &[],
+            message: "a libghostty search binding-action string is spelled in {files} — the grammar is \
+                      foreign and lives in ONE place, `TerminalSearchSurfaceAction.wire`, which crosses for \
+                      the whole string rather than assembling it from a prefix",
+        },
+        // The three-flag verdict, matched on the shape it had at each of the two call sites it was
+        // written out at. Either one growing back is the drift that let the case-sensitive arm land on
+        // one search surface and not the other.
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"(isRegex|controller\.isRegex) *\|\| *(controller\.)?wholeWord|!isRegex, *!caseSensitive",
+            all: &[],
+            unless: &[],
+            view: View::Statements,
+            exempt: &[],
+            message: "the row-driven-nav partition is spelled again in {files} — both search surfaces read \
+                      `TerminalSearchSurfaceAction.needsRowDrivenNav`, so neither can decide alone which \
+                      modes libghostty may be trusted with",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -395,6 +464,74 @@ static let maxBookmarks = 32
                 .violations()
                 .iter()
                 .any(|v| v.contains("width door is back")),
+            "{report:?}"
+        );
+    }
+
+    /// The two ways one search surface starts disagreeing with the other: it retypes libghostty's
+    /// grammar, or it retypes the partition that decides when the grammar may be used. Both had
+    /// already happened once, and neither failed a test — the strings still parsed, and each
+    /// surface's own suite passed against its own reading.
+    #[test]
+    fn a_second_copy_of_the_binding_grammar_or_its_partition_is_caught() {
+        let fixture = Fixture::new("search-surface");
+        let vocabulary = "\
+slopdesk_ws_find_bar_wire(kind, forward, row, text.baseAddress, text.count, out, cap)
+slopdesk_ws_find_bar_row_driven(isRegex, wholeWord, caseSensitive)
+slopdesk_ws_find_bar_arming(queryEmpty, isRegex, wholeWord, caseSensitive)
+slopdesk_ws_find_bar_nav_forward(repeatingSameWay, searchBackward)
+";
+        let controller = "\
+slopdesk_ws_find_reanchor(previous != nil, previous ?? 0, matches.count)
+slopdesk_ws_find_step(current != nil, current ?? 0, forward, count)
+";
+        fixture
+            .write(super::SWIFT_SEARCH_ACTION, vocabulary)
+            .write(super::SWIFT_SEARCH, controller);
+        assert!(super::search_surface(&fixture.tree()).is_clean());
+
+        // A door dropped: the vocabulary went back to building the strings itself.
+        fixture.write(
+            super::SWIFT_SEARCH_ACTION,
+            &vocabulary.replace(
+                "slopdesk_ws_find_bar_wire(kind",
+                "\"navigate_search:next\" // (kind",
+            ),
+        );
+        let report = super::search_surface(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk_ws_find_bar_wire")),
+            "{report:?}"
+        );
+
+        // The grammar retyped at a third call site, in code rather than in the prose that explains it.
+        fixture.write(super::SWIFT_SEARCH_ACTION, vocabulary).write(
+            "Sources/SlopDeskWorkspaceCore/Terminal/GlobalSearchController.swift",
+            "// clears the stale highlight with end_search, then scrolls\nreturn [\"end_search\"]\n",
+        );
+        let report = super::search_surface(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("binding-action string is spelled")),
+            "{report:?}"
+        );
+
+        // …and the partition, spelled out beside a surface that then owns its own reading of it.
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/Terminal/GlobalSearchController.swift",
+            "if !isRegex, !caseSensitive { return arm(query) }\n",
+        );
+        let report = super::search_surface(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("row-driven-nav partition")),
             "{report:?}"
         );
     }

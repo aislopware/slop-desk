@@ -11,6 +11,7 @@
 
 import XCTest
 @testable import SlopDeskClientCore
+@testable import SlopDeskWorkspaceCore
 
 final class FindBarPresentationTests: XCTestCase {
     // MARK: - The counter

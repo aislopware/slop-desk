@@ -920,8 +920,8 @@ public final class TerminalViewModel {
     private func stepFindInSearchDirection(_ actions: TerminalSurfaceActions?, reverse: Bool) {
         if let hook = reverse ? onRequestFindPrev : onRequestFindNext {
             hook()
-        } else {
-            actions?.performBindingAction(reverse ? "navigate_search:previous" : "navigate_search:next")
+        } else if let wire = TerminalSearchSurfaceAction.navigate(forward: !reverse).wire {
+            actions?.performBindingAction(wire)
         }
     }
 

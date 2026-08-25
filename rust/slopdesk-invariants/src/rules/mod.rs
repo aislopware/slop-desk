@@ -231,6 +231,11 @@ pub fn registry() -> Vec<Rule> {
             check: terminal_surface::command_blocks,
         },
         Rule {
+            name: "search-surface",
+            origin: "docs/55 §4b",
+            check: terminal_surface::search_surface,
+        },
+        Rule {
             name: "video-admission",
             origin: "docs/55 §4b",
             check: video_control::admission,

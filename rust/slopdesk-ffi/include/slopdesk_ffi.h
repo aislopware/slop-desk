@@ -11007,6 +11007,45 @@ SlopDeskWsFindBarRung slopdesk_ws_find_bar_rung(bool touch);
 
 uint8_t slopdesk_ws_find_toggle_appearance(bool is_on, bool hovering);
 
+// The five binding actions the bar sends its surface. The kind names the action; only the argument
+// that kind reads is looked at — `needle` for SEARCH, `forward` for NAVIGATE, `row` for
+// SCROLL_TO_ROW. A kind outside this table delivers NOTHING, so the caller sends nothing rather
+// than a string libghostty would reject.
+#define SLOPDESK_WS_FIND_ACTION_SEARCH         0
+#define SLOPDESK_WS_FIND_ACTION_NAVIGATE       1
+#define SLOPDESK_WS_FIND_ACTION_END            2
+#define SLOPDESK_WS_FIND_ACTION_SCROLL_TO_ROW  3
+
+// 1 BARE run of UTF-8 (no length prefix) — the whole binding-action string, needle included. The
+// grammar is libghostty's own and lives nowhere else: a door answering `"search:"` for the caller
+// to append to would put one protocol in two languages.
+size_t slopdesk_ws_find_bar_wire(uint32_t kind, bool forward, uint32_t row, const uint8_t *needle,
+                                 size_t needle_len, uint8_t *out, size_t cap);
+
+// True when libghostty's own search cannot express the bar's mode, so navigation must be driven
+// from the caller's own match rows. All three flags say the same thing about that matcher: it is a
+// literal, case-INSENSITIVE substring scan with no word-boundary filter.
+bool slopdesk_ws_find_bar_row_driven(bool regex, bool whole_word, bool case_sensitive);
+
+// What arming the search does. The mode flags cross rather than the verdict above, so the two doors
+// cannot answer from different readings of the same state.
+#define SLOPDESK_WS_FIND_ARM_END              0
+#define SLOPDESK_WS_FIND_ARM_END_THEN_SCROLL  1
+#define SLOPDESK_WS_FIND_ARM_SEARCH           2
+
+uint8_t slopdesk_ws_find_bar_arming(bool query_empty, bool regex, bool whole_word,
+                                    bool case_sensitive);
+
+// Which way vi's `n` / `N` steps: set `repeat_same_way` for `n`, clear it for `N`. vim's rule is
+// "`n` repeats in its ORIGINAL direction", so a `?`-opened search inverts both.
+bool slopdesk_ws_find_bar_nav_forward(bool repeat_same_way, bool search_backward);
+
+// Where the selection lands after a rescan / after one step, or `-1` for no selection — the signed
+// answer `slopdesk_list_quick_pick` already uses. The companion index is read ONLY when its `has_`
+// flag is set.
+intptr_t slopdesk_ws_find_reanchor(bool has_previous, size_t previous, size_t count);
+intptr_t slopdesk_ws_find_step(bool has_current, size_t current, bool forward, size_t count);
+
 // ---- The cross-tab search overlay ---------------------------------------------------
 
 typedef struct {

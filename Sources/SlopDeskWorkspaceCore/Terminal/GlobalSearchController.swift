@@ -260,12 +260,15 @@ public enum GlobalSearchController {
         let row = ScrollbackWrapMapper.physicalRow(forLogicalLine: hit.line, in: lines, columns: columns)
         // Literal + case-insensitive is the ONLY mode where libghostty's literal matcher highlights the SAME
         // spans this engine found — arm it for the amber highlight, THEN scroll_to_row to land on the exact
-        // clicked row (the arm itself only scrolls to the nearest match, so the scroll must follow it).
-        if !isRegex, !caseSensitive {
-            return ["search:\(query)", "scroll_to_row:\(row)"]
-        }
-        // Case-sensitive literal OR regex: don't arm the (case-insensitive / non-regex) literal matcher — it
-        // would highlight wrong/zero spans. Clear any stale highlight and scroll straight to the clicked row.
-        return ["end_search", "scroll_to_row:\(row)"]
+        // clicked row (the arm itself only scrolls to the nearest match, so the scroll must follow it). In
+        // case-sensitive literal OR regex mode arming it would highlight wrong/zero spans, so the stale
+        // highlight is cleared instead and the viewport scrolls on its own.
+        //
+        // WHICH modes those are is `TerminalSearchSurfaceAction.needsRowDrivenNav` — the SAME verdict the
+        // in-pane ⌘F bar reads. This branch and the bar's used to be two spellings of one rule, and they had
+        // already drifted once: the case-sensitive arm landed here before it landed there.
+        let rowDriven = TerminalSearchSurfaceAction.needsRowDrivenNav(isRegex: isRegex, caseSensitive: caseSensitive)
+        let lead: TerminalSearchSurfaceAction = rowDriven ? .end : .search(needle: query)
+        return [lead, .scrollToRow(row)].compactMap(\.wire)
     }
 }

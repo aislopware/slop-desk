@@ -9,8 +9,8 @@
 use core::ffi::c_uchar;
 
 use slopdesk_workspace::find_bar::{
-    self, CLOSE_HELP, NEXT_MATCH_HELP, PLACEHOLDER, PREVIOUS_MATCH_HELP, Rung, SEARCH_ALL_TABS_HELP,
-    TogglePillAppearance,
+    self, Action, Arming, CLOSE_HELP, NEXT_MATCH_HELP, PLACEHOLDER, PREVIOUS_MATCH_HELP, Rung,
+    SEARCH_ALL_TABS_HELP, TogglePillAppearance,
 };
 
 use crate::{borrow, deliver, push_text};
@@ -132,14 +132,148 @@ pub const extern "C" fn slopdesk_ws_find_toggle_appearance(is_on: bool, hovering
     TogglePillAppearance::resolve(is_on, hovering).code()
 }
 
+/// The binding-action string the bar sends its surface, as ONE bare run of UTF-8.
+///
+/// `kind` names the action — `0` search, `1` navigate, `2` end, `3` scroll-to-row — and the other
+/// three arguments carry only what that kind reads: `needle` for `0`, `forward` for `1`, `row` for
+/// `3`. A kind no action answers to delivers NOTHING, so the near side sends nothing rather than
+/// handing libghostty a string it would reject.
+///
+/// The whole string crosses, needle and all. A door answering `"search:"` for the caller to append
+/// to would put one grammar in two languages, which is the drift this door exists to close; the
+/// copy is nothing beside the scrollback scan the same keystroke already pays for.
+///
+/// # Safety
+/// `needle` must be null or `needle_len` live bytes; `(out, cap)` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and both pointers are the caller's"
+)]
+pub unsafe extern "C" fn slopdesk_ws_find_bar_wire(
+    kind: u32,
+    forward: bool,
+    row: u32,
+    needle: *const c_uchar,
+    needle_len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above; the borrow dies with this call.
+    let needle = String::from_utf8_lossy(unsafe { borrow(needle, needle_len) });
+    let action = match kind {
+        0 => Action::Search { needle: &needle },
+        1 => Action::Navigate { forward },
+        2 => Action::End,
+        3 => Action::ScrollToRow(row),
+        _ => return 0,
+    };
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(action.wire().as_bytes(), out, cap) }
+}
+
+/// Whether the bar's mode is one libghostty's own search cannot express: `true` ⇒ drive navigation
+/// from the caller's own match rows.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_find_bar_row_driven(
+    regex: bool,
+    whole_word: bool,
+    case_sensitive: bool,
+) -> bool {
+    find_bar::needs_row_driven_nav(regex, whole_word, case_sensitive)
+}
+
+/// What arming the search does: `0` end it, `1` end it then scroll to the current match, `2` arm
+/// libghostty's literal search with the needle.
+///
+/// The three mode flags cross rather than the verdict [`slopdesk_ws_find_bar_row_driven`] would
+/// give, so the two doors cannot answer from different readings of the same state.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_find_bar_arming(
+    query_empty: bool,
+    regex: bool,
+    whole_word: bool,
+    case_sensitive: bool,
+) -> u8 {
+    Arming::resolve(
+        query_empty,
+        find_bar::needs_row_driven_nav(regex, whole_word, case_sensitive),
+    )
+    .code()
+}
+
+/// Which way vi's `n` / `N` steps: set `repeat_same_way` for `n`, clear it for `N`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_find_bar_nav_forward(
+    repeat_same_way: bool,
+    search_backward: bool,
+) -> bool {
+    find_bar::nav_forward(repeat_same_way, search_backward)
+}
+
+/// Where the selection lands after the match list is rebuilt, or `-1` for no selection.
+///
+/// `previous` is read only when `has_previous` is set. The signed answer is
+/// [`slopdesk_list_quick_pick`](crate::list_nav::slopdesk_list_quick_pick)'s convention: an index
+/// or the one value no index can be.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_find_reanchor(has_previous: bool, previous: usize, count: usize) -> isize {
+    index_or_none(find_bar::reanchor(has_previous.then_some(previous), count))
+}
+
+/// Where the selection lands after one step, or `-1` when there is nothing to select.
+///
+/// `current` is read only when `has_current` is set; with no current match the landing is the FIRST
+/// match going forward and the LAST going back.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_ws_find_step(
+    has_current: bool,
+    current: usize,
+    forward: bool,
+    count: usize,
+) -> isize {
+    index_or_none(find_bar::step(has_current.then_some(current), forward, count))
+}
+
+/// An index as itself, and the absence of one as `-1`.
+///
+/// An index too large to be signed also reads as absent: a match list that long cannot be reached
+/// by a scrollback this side holds, and a wrapped negative would name a slot rather than the
+/// nothing it means.
+fn index_or_none(index: Option<usize>) -> isize {
+    index.map_or(-1, |index| isize::try_from(index).unwrap_or(-1))
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
 
-    use slopdesk_workspace::find_bar::{self, TogglePillAppearance};
+    use slopdesk_workspace::find_bar::{self, Action, Arming, TogglePillAppearance};
 
     use super::{
-        slopdesk_ws_find_bar_counter, slopdesk_ws_find_bar_rung, slopdesk_ws_find_bar_words,
+        slopdesk_ws_find_bar_arming, slopdesk_ws_find_bar_counter, slopdesk_ws_find_bar_nav_forward,
+        slopdesk_ws_find_bar_row_driven, slopdesk_ws_find_bar_rung, slopdesk_ws_find_bar_wire,
+        slopdesk_ws_find_bar_words, slopdesk_ws_find_reanchor, slopdesk_ws_find_step,
         slopdesk_ws_find_toggle_appearance,
     };
     use crate::testing::{delivered, runs};
@@ -198,6 +332,124 @@ mod tests {
             assert!((crossed.plate - expected.plate).abs() < f64::EPSILON);
             assert!((crossed.icon_size - expected.icon_size).abs() < f64::EPSILON);
             assert!((crossed.field_width - expected.field_width).abs() < f64::EPSILON);
+        }
+    }
+
+    /// Crosses one action and returns the string the near side would hand libghostty.
+    fn wire(kind: u32, forward: bool, row: u32, needle: &str) -> String {
+        let bytes = needle.as_bytes().to_vec();
+        let blob = delivered(|out, cap| {
+            // SAFETY: `bytes` and `out` are live locals for the call.
+            unsafe { slopdesk_ws_find_bar_wire(kind, forward, row, bytes.as_ptr(), bytes.len(), out, cap) }
+        });
+        // The producer is a Rust `String`, so the bytes cannot be invalid UTF-8.
+        String::from_utf8_lossy(&blob).into_owned()
+    }
+
+    /// Every spelling survives the crossing — the door is the only place they exist, so this is the
+    /// pin that a face reads the grammar it was given.
+    #[test]
+    fn all_five_binding_actions_cross_verbatim() {
+        assert_eq!(
+            wire(0, false, 0, "docs"),
+            Action::Search { needle: "docs" }.wire()
+        );
+        assert_eq!(wire(1, true, 0, ""), Action::Navigate { forward: true }.wire());
+        assert_eq!(wire(1, false, 0, ""), Action::Navigate { forward: false }.wire());
+        assert_eq!(wire(2, false, 0, ""), Action::End.wire());
+        assert_eq!(wire(3, false, 42, ""), Action::ScrollToRow(42).wire());
+    }
+
+    /// The needle crosses the arena whole — a query with a colon, a space or CJK in it is TEXT, and
+    /// a byte lost here would arm libghostty with a different search than the counter counted.
+    #[test]
+    fn a_needle_is_not_reshaped_by_the_crossing() {
+        for needle in ["a: b  c/d", "现在", "", "end_search"] {
+            assert_eq!(
+                wire(0, false, 0, needle),
+                format!("search:{needle}"),
+                "{needle:?}"
+            );
+        }
+    }
+
+    /// A kind no action answers to delivers nothing, so the face sends nothing — never an empty
+    /// string libghostty would parse as an unknown binding.
+    #[test]
+    fn an_unknown_kind_delivers_no_string_at_all() {
+        for kind in [4, 5, u32::MAX] {
+            let blob = delivered(|out, cap| {
+                // SAFETY: `out` is a live local for the call.
+                unsafe { slopdesk_ws_find_bar_wire(kind, false, 0, core::ptr::null(), 0, out, cap) }
+            });
+            assert!(blob.is_empty(), "kind {kind} answered");
+        }
+    }
+
+    /// The three flags and the empty field decide together, and the two doors that read them must
+    /// agree on every one of the sixteen states.
+    #[test]
+    fn the_arming_and_the_row_driven_verdict_never_disagree() {
+        for query_empty in [false, true] {
+            for regex in [false, true] {
+                for whole_word in [false, true] {
+                    for case_sensitive in [false, true] {
+                        let row_driven = slopdesk_ws_find_bar_row_driven(regex, whole_word, case_sensitive);
+                        assert_eq!(
+                            row_driven,
+                            find_bar::needs_row_driven_nav(regex, whole_word, case_sensitive),
+                        );
+                        assert_eq!(
+                            slopdesk_ws_find_bar_arming(query_empty, regex, whole_word, case_sensitive),
+                            Arming::resolve(query_empty, row_driven).code(),
+                            "{query_empty} {regex} {whole_word} {case_sensitive}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_vi_direction_crosses_as_the_rule_states_it() {
+        for repeat_same_way in [false, true] {
+            for search_backward in [false, true] {
+                assert_eq!(
+                    slopdesk_ws_find_bar_nav_forward(repeat_same_way, search_backward),
+                    find_bar::nav_forward(repeat_same_way, search_backward),
+                );
+            }
+        }
+    }
+
+    /// Both index doors answer `-1` for the absence of a selection — and never for a real slot,
+    /// which is what makes the sentinel readable.
+    #[test]
+    fn an_absent_selection_crosses_as_minus_one_and_an_index_as_itself() {
+        assert_eq!(slopdesk_ws_find_reanchor(true, 4, 12), 4);
+        assert_eq!(slopdesk_ws_find_reanchor(true, 40, 12), 11);
+        assert_eq!(slopdesk_ws_find_reanchor(false, 0, 12), 0);
+        assert_eq!(slopdesk_ws_find_reanchor(true, 4, 0), -1);
+        assert_eq!(slopdesk_ws_find_reanchor(false, 0, 0), -1);
+
+        assert_eq!(slopdesk_ws_find_step(true, 2, true, 3), 0, "wraps past the last");
+        assert_eq!(
+            slopdesk_ws_find_step(true, 0, false, 3),
+            2,
+            "wraps past the first"
+        );
+        assert_eq!(slopdesk_ws_find_step(false, 0, true, 3), 0);
+        assert_eq!(slopdesk_ws_find_step(false, 0, false, 3), 2);
+        assert_eq!(slopdesk_ws_find_step(true, 0, true, 0), -1);
+    }
+
+    /// The `has_*` flag is what says "nothing selected" — the companion number is never read, so a
+    /// caller that left it at whatever was in the register still gets the first-landing answer.
+    #[test]
+    fn the_companion_index_is_ignored_when_its_flag_is_clear() {
+        for junk in [0, 7, usize::MAX] {
+            assert_eq!(slopdesk_ws_find_reanchor(false, junk, 12), 0, "{junk}");
+            assert_eq!(slopdesk_ws_find_step(false, junk, true, 3), 0, "{junk}");
         }
     }
 

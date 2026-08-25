@@ -1,6 +1,5 @@
 import CSlopDeskFFI
 import Foundation
-import SlopDeskWorkspaceModel
 
 // MARK: - TerminalSearch (pure scrollback find-in-terminal core)
 
@@ -109,18 +108,11 @@ public struct TerminalSearchController: Equatable, Sendable {
 
     /// Advances the selection to the next match (wrapping past the last back to the first). No-op with no matches.
     ///
-    /// The wrap is ``ListNavigation/wrappedIndex(_:delta:count:)``, the same ring step the ⌃⇥ pane
-    /// switcher and the picker's filter pills take. With NOTHING selected there is no index to step
-    /// FROM, so the first match is named outright — a ring rule cannot express "start here", and
-    /// asking it to would mean picking an origin the user never sat on.
+    /// Where it lands is `slopdesk_workspace::find_bar::step` — the ring wrap, and the no-selection arm
+    /// that a ring rule cannot express: ⏎ into an unvisited match list names the FIRST match outright
+    /// rather than picking an origin the user never sat on.
     public mutating func next() {
-        guard !matches.isEmpty else { currentIndex = nil
-            return
-        }
-        guard let cur = currentIndex else { currentIndex = 0
-            return
-        }
-        currentIndex = ListNavigation.wrappedIndex(cur, delta: 1, count: matches.count) ?? cur
+        currentIndex = Self.landing(from: currentIndex, forward: true, of: matches.count)
     }
 
     /// Moves the selection to the previous match (wrapping past the first to the last). No-op with no matches.
@@ -128,13 +120,7 @@ public struct TerminalSearchController: Equatable, Sendable {
     /// The mirror of ``next()``, down to the no-selection arm: ⇧⏎ into an unvisited match list lands
     /// on the LAST match, which is where wrapping backwards off the first one goes.
     public mutating func previous() {
-        guard !matches.isEmpty else { currentIndex = nil
-            return
-        }
-        guard let cur = currentIndex else { currentIndex = matches.count - 1
-            return
-        }
-        currentIndex = ListNavigation.wrappedIndex(cur, delta: -1, count: matches.count) ?? cur
+        currentIndex = Self.landing(from: currentIndex, forward: false, of: matches.count)
     }
 
     /// Clears the query + matches (the find bar's "close" / ⎋). The buffer is kept so reopening is cheap.
@@ -166,14 +152,24 @@ public struct TerminalSearchController: Equatable, Sendable {
             // the fixed guess against 1.83 ms at the carried one.
             expecting: matches.count,
         )
-        if matches.isEmpty {
-            currentIndex = nil
-        } else if let prev = previous {
-            // Keep the user near where they were: clamp the old ordinal into the new range.
-            currentIndex = Swift.min(prev, matches.count - 1)
-        } else {
-            currentIndex = 0
-        }
+        // Keep the user near where they were: the same ORDINAL when it is still in range, the last
+        // match when the list shrank under it, the first when they had not chosen one, and nothing
+        // when the query now matches nothing. The rule is `slopdesk_workspace::find_bar::reanchor`.
+        currentIndex = Self.index(slopdesk_ws_find_reanchor(
+            previous != nil, previous ?? 0, matches.count,
+        ))
+    }
+
+    // MARK: The two selection doors
+
+    /// Where one step lands, as an index into ``matches`` or `nil`.
+    private static func landing(from current: Int?, forward: Bool, of count: Int) -> Int? {
+        index(slopdesk_ws_find_step(current != nil, current ?? 0, forward, count))
+    }
+
+    /// The door's `-1`-for-nothing answer as an optional index — `ListNavigation`'s own convention.
+    private static func index(_ answer: Int) -> Int? {
+        answer < 0 ? nil : answer
     }
 
     /// The match scanner (static so it can be reused / tested without an instance). Returns matches

@@ -27,45 +27,15 @@
 // Hang-safety: NO `GhosttySurface` / VideoToolbox / Metal is touched here — the model only calls the
 // terminal seam, which probes `surface as? TerminalSurfaceActions` and degrades to a no-op on a
 // headless surface.
+//
+// WHERE THE RULES LIVE. Four of the decisions this file used to make are `slopdesk_workspace::find_bar`'s
+// and reached through doors: the five binding-action SPELLINGS, the three-flag test for whether
+// libghostty can be trusted with the mode, the branch a keystroke arms, and vi's `n`/`N` against the
+// direction the bar opened in. What stayed is the `@Observable` lifetime — the weak model ref, the
+// focus token, the focus hand-back on close — which is Swift by necessity, not by habit.
 
 import Observation
 import SlopDeskWorkspaceCore
-
-// MARK: - The five things the find bar can ask a surface for
-
-/// The CLOSED vocabulary of libghostty binding actions the find bar drives.
-///
-/// It is an enum rather than five interpolations because the five spellings were built inline at five
-/// call sites inside one file — `"search:\(query)"`, the two `"navigate_search:…"`, `"end_search"`,
-/// `"scroll_to_row:\(row)"` — and a protocol whose grammar lives in string interpolation has no place
-/// that can be read to learn it. `wire` is the ONE place a colon or an underscore is typed; every
-/// caller names the intent.
-///
-/// The two nav actions are one case with a direction rather than two cases, because every caller that
-/// has one has already resolved `forward` (``TerminalFindBarModel/step(forward:)`` is the single place
-/// `next()`/`previous()` become a direction) — two cases would just move that `if` outward.
-package enum TerminalSearchSurfaceAction: Equatable, Sendable {
-    /// Arm libghostty's LITERAL in-surface search with `needle` — it then owns the amber highlight and
-    /// the scroll-to-match. Only the modes libghostty can express faithfully send this.
-    case search(needle: String)
-    /// Step libghostty's own stateful search cursor, which moves the highlight and the viewport.
-    case navigate(forward: Bool)
-    /// End the in-surface search, dropping every highlight it painted.
-    case end
-    /// Scroll the viewport to a PHYSICAL grid row — the row-driven modes' whole navigation, since
-    /// libghostty cannot match what they matched.
-    case scrollToRow(Int)
-
-    /// The binding-action string libghostty's `performBindingAction` parses.
-    package var wire: String {
-        switch self {
-        case let .search(needle): "search:\(needle)"
-        case let .navigate(forward): forward ? "navigate_search:next" : "navigate_search:previous"
-        case .end: "end_search"
-        case let .scrollToRow(row): "scroll_to_row:\(row)"
-        }
-    }
-}
 
 // MARK: - The driver
 
@@ -152,20 +122,26 @@ package final class TerminalFindBarModel {
 
     /// Whether the controller's current mode CANNOT be expressed FAITHFULLY by libghostty's literal search, so
     /// the bar must drive nav from its OWN match rows via ``TerminalSearchSurfaceAction/scrollToRow(_:)``
-    /// instead of `search:` / `navigate_search:`. True for regex (no regex engine), whole-word (no
-    /// word-boundary filter), AND case-SENSITIVE (libghostty's matcher is HARD-WIRED case-insensitive —
-    /// `std.ascii.indexOfIgnoreCase`). Arming `search:` in case-sensitive mode would highlight (and
-    /// `navigate_search:` would step) extra case-folded hits the case-sensitive counter says don't exist —
-    /// counter, highlight, and chevrons would permanently disagree. Mirrors ``GlobalSearchController``'s
-    /// click-to-line fix, which already routes case-sensitive jumps through `end_search` + `scroll_to_row`.
-    private var needsRowDrivenNav: Bool { controller.isRegex || controller.wholeWord || controller.caseSensitive }
+    /// instead of `search:` / `navigate_search:`.
+    ///
+    /// Which three flags say that, and why the case-sensitive one is among them, is
+    /// `slopdesk_workspace::find_bar::needs_row_driven_nav` — the same rule
+    /// ``GlobalSearchController``'s click-to-line jump reads, so the two surfaces cannot start
+    /// disagreeing about which modes libghostty can be trusted with.
+    private var needsRowDrivenNav: Bool {
+        TerminalSearchSurfaceAction.needsRowDrivenNav(
+            isRegex: controller.isRegex,
+            wholeWord: controller.wholeWord,
+            caseSensitive: controller.caseSensitive,
+        )
+    }
 
     /// ↩ / ⌘G / vi `n` — step to the next match IN THE SEARCH DIRECTION + move the live grid to it. Opens the
     /// bar first if closed, preserving direction. Forward search advances (down); a `?`-opened backward search
     /// retreats (up) — vim's "`n` repeats in its original direction".
     package func next() {
         if !visible { open(backward: searchBackward) }
-        step(forward: !searchBackward)
+        step(forward: TerminalSearchSurfaceAction.forwardStep(repeatingSameWay: true, searchBackward: searchBackward))
     }
 
     /// ⇧↩ / ⇧⌘G / vi `N` — step to the next match AGAINST the search direction + move the live grid to it.
@@ -173,7 +149,7 @@ package final class TerminalFindBarModel {
     /// — vim's "`N` repeats in the opposite direction".
     package func previous() {
         if !visible { open(backward: searchBackward) }
-        step(forward: searchBackward)
+        step(forward: TerminalSearchSurfaceAction.forwardStep(repeatingSameWay: false, searchBackward: searchBackward))
     }
 
     /// Step one match `forward` (down) or backward (up) + drive the live grid to it. The single place
@@ -247,20 +223,29 @@ package final class TerminalFindBarModel {
     /// CEILING note).
     private func armSearch() {
         let query = controller.query
-        guard !query.isEmpty else {
-            perform(.end)
-            return
-        }
-        if needsRowDrivenNav {
+        switch TerminalSearchSurfaceAction.arming(
+            queryEmpty: query.isEmpty,
+            isRegex: controller.isRegex,
+            wholeWord: controller.wholeWord,
+            caseSensitive: controller.caseSensitive,
+        ) {
+        case .search:
+            perform(.search(needle: query))
+        case .endThenScroll:
             perform(.end)
             scrollToCurrentMatchRow()
-        } else {
-            perform(.search(needle: query))
+        case .end:
+            perform(.end)
         }
     }
 
     /// The ONE place a ``TerminalSearchSurfaceAction`` becomes a string on the way to libghostty.
+    ///
+    /// An action the door does not spell is not sent: handing `performBindingAction` a blank string
+    /// would be a binding libghostty parses and rejects, which reads in a log as the surface refusing
+    /// a real action rather than as this side never having had one.
     private func perform(_ action: TerminalSearchSurfaceAction) {
-        model?.performSearchSurfaceAction(action.wire)
+        guard let wire = action.wire else { return }
+        model?.performSearchSurfaceAction(wire)
     }
 }

@@ -19,6 +19,15 @@
 //! import it. The alternative — leaving the two rungs absent and letting each renderer fall back to
 //! its own ladder — is the `#if` again with extra steps, because then the phone's numbers are
 //! values and the Mac's are not, and only one of the two is reviewable here.
+//!
+//! ## The half that is not words
+//!
+//! The bar also DRIVES the live surface, and that half was spelled in Swift: the five
+//! binding-action strings libghostty parses, the three-flag test for whether libghostty's own
+//! search can express the bar's mode, the branch that decides what a keystroke arms, vi's `n`/`N`
+//! against the direction the bar opened in, and where the selection lands after a step or a rescan.
+//! None of it needs a view, and every one of those is a rule the phone's bar and the Mac's must not
+//! answer differently.
 
 /// The query field's placeholder — the one word the bar shows before anything is typed.
 pub const PLACEHOLDER: &str = "Find";
@@ -144,9 +153,176 @@ impl TogglePillAppearance {
     }
 }
 
+// MARK: - What the bar asks the live surface to do
+
+/// One thing the find bar asks its terminal surface for, and the string libghostty parses.
+///
+/// The vocabulary is CLOSED: these five spellings are the whole of what the bar can say. They were
+/// built inline at five Swift call sites — a protocol whose grammar lives in string interpolation
+/// has no place that can be read to learn it, and the parser on the other end is
+/// `ghostty`'s own, not something this side can regenerate. So the colons and the underscores are
+/// typed exactly once, here, and pinned letter for letter below.
+///
+/// The two nav actions are ONE case with a direction rather than two, because every caller has
+/// already resolved `forward` through [`nav_forward`]; two cases would only move that branch
+/// outward.
+#[expect(
+    variant_size_differences,
+    reason = "a needle is a borrowed str — two pointer-wide words — and a grid row is a u32; the gap is \
+              libghostty's, since only one of its five actions takes text"
+)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action<'a> {
+    /// Arm libghostty's LITERAL in-surface search with a needle — it owns the highlight and the
+    /// scroll from there. Only the modes it can express faithfully send this.
+    Search {
+        /// The query text, verbatim: libghostty matches it as a substring, not as a pattern.
+        needle: &'a str,
+    },
+    /// Step libghostty's own stateful search cursor, which moves both the highlight and the
+    /// viewport.
+    Navigate {
+        /// Down the buffer when set, up when clear.
+        forward: bool,
+    },
+    /// End the in-surface search, dropping every highlight it painted.
+    End,
+    /// Scroll the viewport to a PHYSICAL grid row — the row-driven modes' whole navigation, since
+    /// libghostty cannot match what they matched.
+    ScrollToRow(u32),
+}
+
+impl Action<'_> {
+    /// The binding-action string `performBindingAction` parses.
+    #[must_use]
+    pub fn wire(self) -> String {
+        match self {
+            Self::Search { needle } => format!("search:{needle}"),
+            Self::Navigate { forward: true } => String::from("navigate_search:next"),
+            Self::Navigate { forward: false } => String::from("navigate_search:previous"),
+            Self::End => String::from("end_search"),
+            Self::ScrollToRow(row) => format!("scroll_to_row:{row}"),
+        }
+    }
+
+    /// The discriminant a face names instead of a spelling.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Search { .. } => 0,
+            Self::Navigate { .. } => 1,
+            Self::End => 2,
+            Self::ScrollToRow(_) => 3,
+        }
+    }
+}
+
+/// Whether the bar's current mode CANNOT be expressed faithfully by libghostty's own search, so the
+/// bar must drive navigation from its OWN match rows.
+///
+/// All three flags say the same thing about that matcher: it is a literal, case-INSENSITIVE
+/// substring scan with no word-boundary filter. Regex has no engine behind it; whole-word has no
+/// filter; and case-sensitive is the one that reads like it should work and does not — arming
+/// `search:` there would highlight, and `navigate_search:` would step, case-folded hits the
+/// case-sensitive counter says do not exist. Counter, highlight and chevrons would then disagree
+/// permanently.
+#[must_use]
+pub const fn needs_row_driven_nav(regex: bool, whole_word: bool, case_sensitive: bool) -> bool {
+    regex || whole_word || case_sensitive
+}
+
+/// What a keystroke, a toggle or an open does to the live surface.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Arming {
+    /// End the in-surface search and stop: an empty field has nothing to highlight, and a stale
+    /// highlight under a cleared query is the bug this arm exists to prevent.
+    End,
+    /// End it, then scroll to the current match's row — the row-driven modes' whole navigation. The
+    /// `end` is not decoration: it clears the highlight a previous literal arming painted.
+    EndThenScroll,
+    /// Arm libghostty's literal search with the needle; it owns the highlight and the scroll.
+    Search,
+}
+
+impl Arming {
+    /// The empty field outranks the mode — nothing to search is nothing to search either way.
+    #[must_use]
+    pub const fn resolve(query_empty: bool, row_driven: bool) -> Self {
+        if query_empty {
+            return Self::End;
+        }
+        if row_driven {
+            Self::EndThenScroll
+        } else {
+            Self::Search
+        }
+    }
+
+    /// The discriminant a face maps back to its own three arms.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::End => 0,
+            Self::EndThenScroll => 1,
+            Self::Search => 2,
+        }
+    }
+}
+
+/// Which way vi's `n` / `N` steps, given the direction the bar OPENED in.
+///
+/// vim's rule is "`n` repeats the search in its ORIGINAL direction, `N` in the opposite one", so a
+/// `?`-opened backward search makes `n` walk UP the buffer and `N` down. `repeat_same_way` is `n`;
+/// clear it for `N`. A forward search — ⌘F and `/` — keeps the natural sense on both.
+#[must_use]
+pub const fn nav_forward(repeat_same_way: bool, search_backward: bool) -> bool {
+    repeat_same_way != search_backward
+}
+
+/// Where the selection lands after the match list is rebuilt.
+///
+/// Keep the user near where they were: the same ORDINAL when it is still in range, the last match
+/// when the list shrank under it, the first when they had not chosen one, and nothing at all when
+/// the query now matches nothing. Typing into a find bar narrows, so the clamp is the common arm,
+/// not the exceptional one.
+#[must_use]
+pub const fn reanchor(previous: Option<usize>, count: usize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let Some(prev) = previous else {
+        return Some(0);
+    };
+    Some(if prev < count { prev } else { count - 1 })
+}
+
+/// Where the selection lands after one step `forward` (down the buffer) or back.
+///
+/// The wrap is [`crate::list_nav::wrapped_index`], the same ring step the ⌃⇥ pane switcher and the
+/// picker's filter pills take. With NOTHING selected there is no index to step FROM, so the landing
+/// is named outright — forward into an unvisited list lands on the FIRST match, backward on the
+/// LAST, which is where wrapping off either end goes. A ring rule cannot express "start here", and
+/// asking it to would mean picking an origin the user never sat on.
+#[must_use]
+pub const fn step(current: Option<usize>, forward: bool, count: usize) -> Option<usize> {
+    if count == 0 {
+        return None;
+    }
+    let Some(cur) = current else {
+        return Some(if forward { 0 } else { count - 1 });
+    };
+    match crate::list_nav::wrapped_index(cur, if forward { 1 } else { -1 }, count) {
+        Some(landed) => Some(landed),
+        None => Some(cur),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{POINTER, Rung, TOUCH, TogglePillAppearance, counter_text, rung};
+    use super::{
+        Action, Arming, POINTER, Rung, TOUCH, TogglePillAppearance, counter_text, nav_forward,
+        needs_row_driven_nav, reanchor, rung, step,
+    };
 
     /// The three-way rule, and the branch worth having: a blank field reports nothing.
     #[test]
@@ -213,5 +389,125 @@ mod tests {
         {
             assert_eq!(usize::from(appearance.code()), index);
         }
+    }
+
+    /// The five spellings, letter for letter. This is the one table in the module that CANNOT be
+    /// re-derived from anything on this side: it is libghostty's own binding grammar, parsed by a
+    /// vendored embedder, so a typo here is a control that silently does nothing.
+    #[test]
+    fn the_five_binding_actions_are_pinned_letter_for_letter() {
+        assert_eq!(Action::Search { needle: "docs" }.wire(), "search:docs");
+        assert_eq!(Action::Navigate { forward: true }.wire(), "navigate_search:next");
+        assert_eq!(
+            Action::Navigate { forward: false }.wire(),
+            "navigate_search:previous"
+        );
+        assert_eq!(Action::End.wire(), "end_search");
+        assert_eq!(Action::ScrollToRow(0).wire(), "scroll_to_row:0");
+        assert_eq!(Action::ScrollToRow(42).wire(), "scroll_to_row:42");
+    }
+
+    /// A needle crosses VERBATIM — libghostty matches it as a substring, so a colon or a space in
+    /// the query is query text, never grammar.
+    #[test]
+    fn the_needle_is_not_escaped_or_trimmed() {
+        assert_eq!(Action::Search { needle: "a: b  c/d" }.wire(), "search:a: b  c/d");
+        assert_eq!(Action::Search { needle: "" }.wire(), "search:");
+        assert_eq!(Action::Search { needle: "现在" }.wire(), "search:现在");
+    }
+
+    #[test]
+    fn each_action_carries_a_distinct_code() {
+        let codes = [
+            Action::Search { needle: "x" }.code(),
+            Action::Navigate { forward: true }.code(),
+            Action::End.code(),
+            Action::ScrollToRow(3).code(),
+        ];
+        assert_eq!(codes, [0, 1, 2, 3]);
+        // The direction is a FIELD, not a kind — both navigations answer to the one code.
+        assert_eq!(
+            Action::Navigate { forward: false }.code(),
+            Action::Navigate { forward: true }.code()
+        );
+    }
+
+    /// Each of the three flags alone is enough — the case-sensitive one being the arm that reads
+    /// like it should not need to be there.
+    #[test]
+    fn any_one_of_the_three_flags_takes_the_bar_off_the_literal_path() {
+        assert!(!needs_row_driven_nav(false, false, false));
+        assert!(needs_row_driven_nav(true, false, false));
+        assert!(needs_row_driven_nav(false, true, false));
+        assert!(needs_row_driven_nav(false, false, true));
+        assert!(needs_row_driven_nav(true, true, true));
+    }
+
+    /// An empty field ends the search whatever the mode — a stale highlight under a cleared query
+    /// is the thing this arm exists to prevent.
+    #[test]
+    fn an_empty_query_ends_the_search_in_every_mode() {
+        for row_driven in [false, true] {
+            assert_eq!(Arming::resolve(true, row_driven), Arming::End);
+        }
+        assert_eq!(Arming::resolve(false, true), Arming::EndThenScroll);
+        assert_eq!(Arming::resolve(false, false), Arming::Search);
+        assert_eq!(
+            [
+                Arming::End.code(),
+                Arming::EndThenScroll.code(),
+                Arming::Search.code()
+            ],
+            [0, 1, 2]
+        );
+    }
+
+    /// vim's rule, both ways round: a `?`-opened search inverts `n` and `N`, a `/`-opened one does
+    /// not.
+    #[test]
+    fn a_backward_search_inverts_n_and_n_shifted() {
+        assert!(nav_forward(true, false), "/ then n walks DOWN");
+        assert!(!nav_forward(false, false), "/ then N walks UP");
+        assert!(!nav_forward(true, true), "? then n walks UP");
+        assert!(nav_forward(false, true), "? then N walks DOWN");
+    }
+
+    #[test]
+    fn a_rescan_keeps_the_ordinal_it_can_and_clamps_the_one_it_cannot() {
+        assert_eq!(reanchor(Some(4), 12), Some(4), "still in range — held");
+        assert_eq!(reanchor(Some(11), 12), Some(11), "the last slot is in range");
+        assert_eq!(reanchor(Some(40), 12), Some(11), "the list shrank under it");
+        assert_eq!(reanchor(None, 12), Some(0), "nothing chosen yet — the first");
+        assert_eq!(reanchor(Some(4), 0), None, "nothing matches — nothing selected");
+        assert_eq!(reanchor(None, 0), None);
+    }
+
+    #[test]
+    fn a_step_wraps_at_both_ends_and_names_its_own_first_landing() {
+        assert_eq!(step(Some(0), true, 3), Some(1));
+        assert_eq!(step(Some(2), true, 3), Some(0), "past the last → the first");
+        assert_eq!(step(Some(0), false, 3), Some(2), "past the first → the last");
+        assert_eq!(
+            step(None, true, 3),
+            Some(0),
+            "⏎ into an unvisited list → the first"
+        );
+        assert_eq!(step(None, false, 3), Some(2), "⇧⏎ into one → the last");
+        assert_eq!(step(Some(0), true, 0), None);
+        assert_eq!(step(None, true, 0), None);
+        assert_eq!(
+            step(Some(9), true, 3),
+            Some(9),
+            "an index off the ring is held, never wrapped to a slot the user never sat on"
+        );
+    }
+
+    /// A one-match list is where the row-driven modes re-issue an IDENTICAL `scroll_to_row`, which
+    /// the find bar's own header calls expected rather than a stall. Pinned so the ring cannot
+    /// start answering `None` there.
+    #[test]
+    fn a_single_match_steps_to_itself_in_both_directions() {
+        assert_eq!(step(Some(0), true, 1), Some(0));
+        assert_eq!(step(Some(0), false, 1), Some(0));
     }
 }
