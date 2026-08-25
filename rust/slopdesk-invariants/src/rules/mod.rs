@@ -430,6 +430,11 @@ pub fn registry() -> Vec<Rule> {
             check: workspace_document::optional_fills,
         },
         Rule {
+            name: "one-run-one-ladder",
+            origin: "docs/45 §5.1",
+            check: workspace_document::one_run_one_ladder,
+        },
+        Rule {
             name: "big-endian-helpers",
             origin: "docs/20 §2",
             check: wire_codecs::big_endian_helpers,

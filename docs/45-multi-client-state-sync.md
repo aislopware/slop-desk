@@ -315,6 +315,24 @@ if open.channelClass == MuxChannelClass.workspace {
 Exactly **one** workspace channel per mux connection; a second is `accepted: false`. Only the CONTROL
 sub-channel is used (unwindowed); the DATA sub-channel `openChannel` also creates stays idle.
 
+**The client's run ladder is Rust's, as of 2026-08-25.** `WorkspaceChannelClient`'s loop is restarted
+by the connection layer on every link, so at any moment a run may be unwinding behind an `await`
+while a newer one is already opening. Three scalars settle that, and each has a failure no build
+catches: the run GENERATION (a dying run that publishes over a live one reports the channel dead, and
+nothing reopens it), the channel CLAIM (a release performed by both `stop()` and the run's own exit
+path closes a pooled connection a reconnect has already rebuilt under the same key) and the presence
+CLOCK (restarted below what the host has kept, it leaves every other client looking at the view this
+user already left, permanently). All three are `rust/slopdesk-workspace`'s `channel_run` now, reached
+through `ChannelRun.swift`; the ratchet is `one-run-one-ladder` in `rust/slopdesk-invariants`. A
+finish answers THREE things and not two, because "publish nothing" hides two different endings: a
+superseded run touches nothing, while a current run that ended on the state it was already in has
+still ended and must retire its own task slot — collapse those and the next start sees a run in
+flight forever.
+
+The queues, their two ordered drains and the bounded handshake race stay Swift on purpose. An ORDER
+argument about main-actor hops is not a decision and a `Task` slot is not a number — the same line
+`docs/59` draws for hostd.
+
 ### 5.2 Two new wire types — and only ever two
 
 Both are verb/kind-multiplexed envelopes shaped exactly like `metadataRequest` (16) /

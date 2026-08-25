@@ -78,6 +78,7 @@ pub mod capture_region;
 pub mod cgdisplay;
 #[cfg(target_os = "macos")]
 pub mod cgwindow;
+pub mod channel_run;
 pub mod cheat_sheet;
 pub mod chrome;
 pub mod client_gestures;

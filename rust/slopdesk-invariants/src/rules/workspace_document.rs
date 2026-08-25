@@ -404,9 +404,134 @@ pub fn optional_fills(tree: &Tree) -> Report {
     report
 }
 
+/// The Swift face of the channel client's run ladder.
+const RUN_FACE: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Sync/ChannelRun.swift";
+
+/// The one client that drives it — and may keep none of what it answers.
+const CHANNEL_CLIENT: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Sync/WorkspaceChannelClient.swift";
+
+/// Every door the run face must keep asking.
+const RUN_DOORS: &[&str] = &[
+    "slopdesk_channel_run_new",
+    "slopdesk_channel_run_free",
+    "slopdesk_channel_run_state",
+    "slopdesk_channel_run_may_send_intent",
+    "slopdesk_channel_run_start",
+    "slopdesk_channel_run_stop",
+    "slopdesk_channel_run_claim",
+    "slopdesk_channel_run_release_if_owned",
+    "slopdesk_channel_run_finish",
+    "slopdesk_channel_run_publish",
+    "slopdesk_channel_run_mint_presence_clock",
+];
+
+/// One run, one ladder — the generation, the channel claim and the presence clock
+///
+/// The workspace channel's client loop is restarted on every link, so at any moment a run may be
+/// unwinding behind an `await` while a newer one is already opening. Three scalars settle that, and
+/// each has a failure no build catches. A generation kept beside the state lets a dying run publish
+/// `closed` over a live channel, and nothing reopens it. A channel id released by both `stop()` and
+/// the run's own exit path closes a pooled connection a reconnect has already rebuilt under the
+/// same key. A presence clock restarted below what the host has kept leaves every other client
+/// looking at the view this user already left, permanently.
+///
+/// So the three are `rust/slopdesk-workspace`'s `channel_run` now, and this pins the halves that
+/// keep it one implementation: the face asks every door, and the client keeps none of them back.
+/// The queues, the drains and the bounded handshake race stay Swift on purpose — an ORDER argument
+/// about main-actor hops is not a decision, and a `Task` slot is not a number.
+#[must_use]
+pub fn one_run_one_ladder(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: RUN_FACE,
+            message: "Sources/SlopDeskWorkspaceCore/Workspace/Sync/ChannelRun.swift is gone — which run \
+                      still speaks, who releases the channel and which presence clock is next are not \
+                      WorkspaceChannelClient's to re-derive (docs/45 §5.1)",
+        },
+        Claim::Doors {
+            path: RUN_FACE,
+            entries: RUN_DOORS,
+            message: "ChannelRun.swift no longer calls {entry} — a face that drops a door is a ladder step \
+                      growing back beside the one that owns it",
+        },
+        Claim::NoneOf {
+            paths: &[CHANNEL_CLIENT],
+            pattern: r"var runGeneration|var presenceClock|var channelID|var state:\s*State\s*=",
+            view: View::Code,
+            message: "{files} STORES a run generation, a presence clock, a channel claim or a state of its \
+                      own — each is the far side's, and a second copy beside it is a guard that silently \
+                      stops guarding. The projection `var state: State { run.state }` is the shape that is \
+                      allowed: it reads the ladder, it does not keep one (docs/45 §5.1)",
+        },
+        Claim::Matches {
+            path: CHANNEL_CLIENT,
+            pattern: r"private let run = ChannelRun\(\)",
+            view: View::Code,
+            message: "WorkspaceChannelClient.swift no longer holds a ChannelRun — the ladder it answers is \
+                      what keeps a superseded run from reporting the live one dead (docs/45 §5.1)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
+
+    /// Every door the run face must keep asking, as a fixture body.
+    fn run_doors() -> String {
+        let mut body = String::new();
+        for door in super::RUN_DOORS {
+            body.push_str(door);
+            body.push_str("()\n");
+        }
+        body
+    }
+
+    /// A tree where the run ladder lives on one side and the client holds the handle.
+    fn write_one_run_one_ladder(fixture: &Fixture) {
+        fixture
+            .write(super::RUN_FACE, &run_doors())
+            .write(super::CHANNEL_CLIENT, "    private let run = ChannelRun()\n");
+    }
+
+    #[test]
+    fn one_run_one_ladder_keeps_the_ladder_on_one_side() {
+        let fixture = Fixture::new("one-run-one-ladder");
+        write_one_run_one_ladder(&fixture);
+        assert!(super::one_run_one_ladder(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a ladder step grew back beside the one that owns it.
+        fixture.write(super::RUN_FACE, "slopdesk_channel_run_new()\n");
+        assert!(!super::one_run_one_ladder(&fixture.tree()).is_clean());
+        write_one_run_one_ladder(&fixture);
+
+        // Each scalar the far side owns, one at a time.
+        for drift in [
+            "    private var runGeneration = 0\n",
+            "    private var presenceClock: Int64 = 0\n",
+            "    private var channelID: UInt32?\n",
+            "    public private(set) var state: State = .idle\n",
+        ] {
+            fixture.append(super::CHANNEL_CLIENT, drift);
+            assert!(
+                !super::one_run_one_ladder(&fixture.tree()).is_clean(),
+                "the ban missed {drift}",
+            );
+            write_one_run_one_ladder(&fixture);
+        }
+
+        // The client dropped the handle the whole ladder is reached through.
+        fixture.write(
+            super::CHANNEL_CLIENT,
+            "public final class WorkspaceChannelClient {\n",
+        );
+        assert!(!super::one_run_one_ladder(&fixture.tree()).is_clean());
+
+        // A bare tree has no face at all.
+        let bare = Fixture::new("one-run-one-ladder-bare");
+        assert!(!super::one_run_one_ladder(&bare.tree()).is_clean());
+    }
 
     /// A cap transcribed back does not conflict, it renders: a ring whose tail the host reaped.
     #[test]

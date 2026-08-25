@@ -86,6 +86,8 @@
 //!   settles, and the two one-line policies that stood beside it.
 //! - [`mirror_fold`] — what one frame may do to the client's replica of the document, and what its
 //!   layers answer when they are read.
+//! - [`channel_run`] — which run of the workspace channel is still speaking, what it still owns and
+//!   whose presence clock wins: the four scalars the client's loop races over.
 //! - [`preference`] — what the preference SURFACE decides about itself, once the file is already
 //!   resolved: which `UserDefaults` store this process's own state lands in, the band a zoom chord
 //!   may walk, and the zip of the two parallel Hint Mode lists.
@@ -117,6 +119,7 @@
 pub mod attention_fold;
 pub mod binding_rows;
 pub mod binding_search;
+pub mod channel_run;
 pub mod cheat_sheet;
 pub mod close_confirm;
 pub mod command_navigator;

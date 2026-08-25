@@ -11314,6 +11314,70 @@ size_t slopdesk_ws_mirror_holders(const uint32_t *attachments, size_t attachment
                                   const SlopDeskWsPresenceClient *clients, size_t clients_len,
                                   bool has_own, uint32_t own, ptrdiff_t *out, size_t capacity);
 
+/* ---------------------------------------------------------------------------- *
+ * channel_run — which run of the workspace channel still speaks, and what it
+ * still owns.
+ *
+ * The client end of channelClass 1 is a loop the connection layer restarts on
+ * every link: open → await the ack → subscribe → apply → ack. Nearly all of it
+ * is I/O and Task discipline and stays in Swift — the two ordered drains, the
+ * bounded handshake race, the optimistic patch staged into the mirror. What is
+ * here is the part that is neither: the four scalars three concurrent callers
+ * read to decide whether their own work is still wanted.
+ *
+ * THE GENERATION.  stop() and a later start() both publish, while the run they
+ * superseded is still unwinding behind an await. Every publish from inside a run
+ * quotes the generation it was born under, and one that no longer matches says
+ * nothing — without it a channel that reconnected in the same turn reports
+ * itself closed a moment after going live, and nothing reopens it.
+ *
+ * THE SINGLE RELEASE.  Both stop() and the run's own exit path release the
+ * channel by id, and a second release tears down a pooled connection a reconnect
+ * has already rebuilt under the same key. Whoever CLAIMS the id first wins:
+ * release_if_owned is that claim, and it clears the slot in the same step.
+ *
+ * THE MONOTONE CLOCK.  The host keeps the newest presence clock per subscriber
+ * and ignores anything older, so a reversal leaves everyone else looking at the
+ * view the user already left, permanently. Minting is monotone here; the ORDER
+ * the updates reach the wire in is the single drain's job in Swift.
+ *
+ * A STATE IS A PAIR.  RunState is a tag plus the .live stateNum, and both cross:
+ * collapsing to the tag alone would make .live(5) and .live(6) the same state
+ * and swallow every document frame after the first.
+ *
+ * A DEAD HANDLE.  Reads idle, refuses every start, claims nothing and mints 0.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskChannelRun SlopDeskChannelRun;
+
+#define SLOPDESK_CHANNEL_RUN_IDLE    0
+#define SLOPDESK_CHANNEL_RUN_OPENING 1
+#define SLOPDESK_CHANNEL_RUN_LIVE    2
+#define SLOPDESK_CHANNEL_RUN_REFUSED 3
+#define SLOPDESK_CHANNEL_RUN_CLOSED  4
+/* No run was admitted. Generations start at 1, so zero is unambiguous. */
+#define SLOPDESK_CHANNEL_RUN_START_REFUSED 0
+/* What a finish leaves the caller to do. STALE is a superseded run, which owns nothing and touches
+ * nothing; QUIET and NEWS both END the current run — retire its task slot, or the next start sees a
+ * run in flight forever — and only NEWS announces. */
+#define SLOPDESK_CHANNEL_RUN_FINISH_STALE 0
+#define SLOPDESK_CHANNEL_RUN_FINISH_QUIET 1
+#define SLOPDESK_CHANNEL_RUN_FINISH_NEWS  2
+
+SlopDeskChannelRun *slopdesk_channel_run_new(void);
+void slopdesk_channel_run_free(SlopDeskChannelRun *handle);
+uint8_t slopdesk_channel_run_state(SlopDeskChannelRun *handle, int64_t *state_num);
+bool slopdesk_channel_run_may_send_intent(SlopDeskChannelRun *handle);
+uint64_t slopdesk_channel_run_start(SlopDeskChannelRun *handle, bool run_in_flight);
+bool slopdesk_channel_run_stop(SlopDeskChannelRun *handle, uint32_t *release,
+                               bool *has_release);
+void slopdesk_channel_run_claim(SlopDeskChannelRun *handle, uint32_t channel);
+bool slopdesk_channel_run_release_if_owned(SlopDeskChannelRun *handle, uint32_t channel);
+uint8_t slopdesk_channel_run_finish(SlopDeskChannelRun *handle, uint8_t tag, int64_t state_num,
+                                    uint64_t generation);
+bool slopdesk_channel_run_publish(SlopDeskChannelRun *handle, uint8_t tag, int64_t state_num);
+int64_t slopdesk_channel_run_mint_presence_clock(SlopDeskChannelRun *handle);
+
 // ---- What a whole set of leaves says, and what a ring keeps -------------------------------------
 //
 // `slopdesk_ws_pane_*` above answers what ONE status landing on ONE pane moves. These are the other

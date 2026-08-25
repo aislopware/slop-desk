@@ -57,18 +57,10 @@ public final class WorkspaceChannelClient {
     /// Releases the channel by id.
     public typealias Close = @Sendable (UInt32) async -> Void
 
-    public enum State: Equatable, Sendable {
-        case idle
-        case opening
-        /// Subscribed and applying frames. The associated value is the last acked `stateNum`.
-        case live(Int64)
-        /// The host does not serve this channel — a subscriber for this connection already exists, or
-        /// the peer does not route the class at all. A definite answer, so the client stops rather
-        /// than retrying.
-        case refused
-        /// The channel died. The connection layer restarts us; nothing retries in here.
-        case closed
-    }
+    /// The ladder itself lives behind ``ChannelRun`` — `.idle`, `.opening`, `.live(stateNum)`,
+    /// `.refused` (the host does not serve this class, a definite answer nothing retries) and
+    /// `.closed` (the connection layer decides whether to open another).
+    public typealias State = ChannelRunState
 
     /// What this device calls itself in the presence roster — what OTHER clients see when a pane is
     /// held elsewhere. `hostName` rather than a UIKit device name so this stays headless and
@@ -82,7 +74,13 @@ public final class WorkspaceChannelClient {
     /// The SHARED mirror. Host frames land here and the store's per-pane control sinks write its
     /// fast path — one instance, so host truth erases an overlay entry the UI would actually read.
     public let box: WorkspaceMirrorBox
-    public private(set) var state: State = .idle
+
+    /// The four scalars this loop races over — the state, the generation, the channel claim and the
+    /// presence clock. See ``ChannelRun``.
+    private let run = ChannelRun()
+
+    /// What the interface binds to. Written only through ``publish(_:)``.
+    public var state: State { run.state }
 
     /// Whether this client answers out of an in-process document rather than a host.
     ///
@@ -92,10 +90,7 @@ public final class WorkspaceChannelClient {
 
     /// Whether this client can carry an intent right now. `false` while opening, after a refusal and
     /// after a close — the states in which ``send(intent:args:now:)`` drops on the floor.
-    public var isLive: Bool {
-        guard case .live = state else { return false }
-        return true
-    }
+    public var isLive: Bool { run.maySendIntent }
 
     /// Fired on the main actor when the CHANNEL's own state changes. Document changes are announced
     /// by the box, not here.
@@ -119,15 +114,8 @@ public final class WorkspaceChannelClient {
     /// it below is inert in the shipped app.
     private var localDocument: LoopbackWorkspaceDocument?
 
-    private var channelID: UInt32?
     private var control: (any MessageChannel)?
     private var runTask: Task<Void, Never>?
-    /// Bumped by every `start`/`stop`. A run whose generation is stale publishes nothing — that is
-    /// what lets `stop()` have the last word without the state itself becoming a lock.
-    private var runGeneration = 0
-    /// Monotonic, per-connection. The host keeps the NEWEST and ignores anything older, so a
-    /// reconnecting client must never restart this below what it has already sent.
-    private var presenceClock: Int64 = 0
     private var lastPresence: WorkspacePresenceUpdate?
     /// Presence updates waiting to go out, oldest first, and the single task that drains them.
     ///
@@ -203,11 +191,12 @@ public final class WorkspaceChannelClient {
     public func start() {
         // A loopback client is already live against a document that is already installed.
         guard localDocument == nil else { return }
-        guard runTask == nil, state != .refused else { return }
-        runGeneration &+= 1
-        let generation = runGeneration
-        publish(.opening)
-        runTask = Task { [weak self] in await self?.run(generation: generation) }
+        // The far side refuses a client that is already running and one the host has refused, and
+        // the admitted run is `.opening` before this returns — a `stop()` arriving mid-handshake has
+        // to find a client that is not idle.
+        guard let generation = run.start(runInFlight: runTask != nil) else { return }
+        announceStateChange()
+        runTask = Task { [weak self] in await self?.runLoop(generation: generation) }
     }
 
     /// Tears the channel down and forgets host truth.
@@ -223,11 +212,12 @@ public final class WorkspaceChannelClient {
         // document it is authoritative over. The store re-opens its channel on every connection
         // establish, so this holds structurally rather than by nobody calling it.
         guard localDocument == nil else { return }
-        runGeneration &+= 1
+        // Bumps the generation, claims the channel and answers whether `.closed` is news, all in one
+        // step: the run behind an `await` wakes up holding a stale number and says nothing.
+        let verdict = run.stop()
         runTask?.cancel()
         runTask = nil
-        let id = channelID
-        channelID = nil
+        let id = verdict.release
         control = nil
         // Forgetting host truth is what the reset is FOR, and a mirror no host has spoken into holds
         // none: every entry in it is the seed the store restored from disk. Resetting there empties
@@ -251,9 +241,10 @@ public final class WorkspaceChannelClient {
         intentQueue.removeAll()
         clearPresence()
         // A deliberate teardown clears a refusal too: the next `start()` may be against a DIFFERENT
-        // host, or the same one restarted, and a refusal is a fact about one connection.
-        publish(.closed)
-        // Claiming `channelID` above is what makes this the SINGLE release: the run task's exit path
+        // host, or the same one restarted, and a refusal is a fact about one connection — the far
+        // side does that in `stop()` above, and answers here whether it is news.
+        if verdict.publish { announceStateChange() }
+        // The claim `run.stop()` took above is what makes this the SINGLE release: the run's exit path
         // releases only the channel it still owns, so a stop that races the loop unwinding cannot
         // close the same id twice — and a second close would tear down a shared connection a
         // reconnect had already rebuilt under the same pool key.
@@ -263,7 +254,7 @@ public final class WorkspaceChannelClient {
         }
     }
 
-    private func run(generation: Int) async {
+    private func runLoop(generation: UInt64) async {
         let opened: Handle
         do {
             opened = try await open()
@@ -277,7 +268,7 @@ public final class WorkspaceChannelClient {
         // there is something to release. `control` stays nil until the ack lands, which is what
         // makes the ordering rule below unbreakable rather than merely observed: `send` has nothing
         // to write through.
-        channelID = opened.channelID
+        run.claim(opened.channelID)
 
         // **Await the ack BEFORE the first request** (docs/45 §11.3, DECISIONS Phase-4 ruling 7).
         // `channelOpen` is announced on the DATA link while every request rides CONTROL, so a
@@ -333,8 +324,7 @@ public final class WorkspaceChannelClient {
     /// Releases `id` only while this client still owns it. A `stop()` that already claimed the
     /// channel wins, and the loser does nothing.
     private func releaseIfOwned(_ id: UInt32) async {
-        guard channelID == id else { return }
-        channelID = nil
+        guard run.releaseIfOwned(id) else { return }
         control = nil
         await close(id)
     }
@@ -362,19 +352,24 @@ public final class WorkspaceChannelClient {
         }
     }
 
-    private func finish(_ next: State, generation: Int) {
-        // A superseded run says nothing: `stop()` (or a later `start()`) already published the state
-        // it wanted, and letting a dying loop overwrite it is how a live channel reports itself dead.
-        guard generation == runGeneration else { return }
+    private func finish(_ next: State, generation: UInt64) {
+        // A superseded run says nothing and clears nothing: `stop()` (or a later `start()`) already
+        // published the state it wanted, and letting a dying loop overwrite it is how a live channel
+        // reports itself dead. A CURRENT run that ended where it began still ended, so its task slot
+        // goes either way. Which of the three this is, is the far side's verdict.
+        let verdict = run.finish(next, generation: generation)
+        guard verdict != .stale else { return }
         runTask = nil
-        publish(next)
+        if verdict == .news { announceStateChange() }
     }
 
     private func publish(_ next: State) {
-        guard state != next else { return }
-        state = next
-        onStateChange?()
+        guard run.publish(next) else { return }
+        announceStateChange()
     }
+
+    /// Fires the CHANNEL's own state-change callback. Called only where a publish was news.
+    private func announceStateChange() { onStateChange?() }
 
     // MARK: - Apply
 
@@ -463,9 +458,8 @@ public final class WorkspaceChannelClient {
         {
             return
         }
-        presenceClock += 1
         let update = WorkspacePresenceUpdate(
-            presenceClock: presenceClock,
+            presenceClock: run.mintPresenceClock(),
             viewingTabID: viewingTabID,
             viewingPaneID: viewingPaneID,
             cols: cols,
