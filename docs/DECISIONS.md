@@ -3809,7 +3809,7 @@ hole.
   the ONLY reference and mutations run in place. With the scrollback cap eviction de-O(n²)'d (dead
   prefix index + amortized compaction instead of `removeFirst` per scrolled line), a contiguous
   feed walk, and an ASCII fast path (prebuilt single-scalar strings; width lookup short-circuits
-  below U+0300), the walk measures ~21 MiB/s (`swift run -c release slopdesk-replay-bench`) —
+  below U+0300), the walk measures ~21 MiB/s (`cd rust/slopdesk-instruments && cargo run --release --bin slopdesk-replay-bench`) —
   rendered output byte-identical before/after.
 - ✅ **The retained history is ADOPTED after every successful compose** (`ReplayBuffer/
   adoptSnapshotReplay`): ring + un-acked tail are replaced by the rendered chunks exactly as sent,

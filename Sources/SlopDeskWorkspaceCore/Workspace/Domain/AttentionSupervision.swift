@@ -59,13 +59,6 @@ public enum PaneFacts {
         }
     }
 
-    /// Whether an unbroken watch of `watched` seconds has earned the finish-marker acknowledge.
-    /// Settles once the watch REACHES the window — a window is how long you have to look, not that
-    /// plus a tick — and compares NaN-faithfully, per the repo's convention.
-    public static func settleDue(watched: TimeInterval, window: TimeInterval) -> Bool {
-        slopdesk_ws_pane_settle_due(watched, window)
-    }
-
     /// Reorders `entries` the way the unseen-attention queue is walked: rank first (a waiting
     /// question, then a failure, then an unread finish), then longest-waiting, then the caller's own
     /// traversal order as the tie.

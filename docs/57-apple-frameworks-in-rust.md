@@ -495,8 +495,8 @@ through the runtime. It was implicit until this row, because `WindowCapturer.swi
 of every macOS product, long after both the crate and `make ffi` are green.
 
 **The ban this row earned had to be NARROWER than the two before it.** Nothing else in Swift touches
-VideoToolbox, so `hevc-encode-is-rusts` could sweep the whole framework. Here the window feed,
-`slopdesk-framewatch` and `slopdesk-vd-probe` all still enumerate through `SCShareableContent`,
+VideoToolbox, so `hevc-encode-is-rusts` could sweep the whole framework. Here the window feed and
+`slopdesk-framewatch` both still enumerate through `SCShareableContent`,
 `SCWindow` and `SCDisplay` — a read of what exists, not a capture — so `capture-is-rusts` bans the
 STREAM vocabulary and exempts two files by name: the measurement harness, which runs two streams at
 once and would otherwise be measuring the port with the port, and the preview glue, which asks

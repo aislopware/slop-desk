@@ -123,16 +123,6 @@ pub const extern "C" fn slopdesk_ws_pane_unseen_done(
     }
 }
 
-/// Whether an unbroken watch of `watched` seconds has earned the finish-marker acknowledge.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_ws_pane_settle_due(watched: f64, window: f64) -> bool {
-    pane_facts::settle_due(watched, window)
-}
-
 /// The order the unseen-attention queue is walked in, as POSITIONS into `entries`.
 ///
 /// Returns the count NEEDED. A short or null `out` is written nothing and told the length, the same
@@ -188,8 +178,8 @@ mod tests {
     use slopdesk_workspace::pane_facts;
 
     use super::{
-        SlopDeskWaitingPane, slopdesk_ws_attention_order, slopdesk_ws_pane_settle_due,
-        slopdesk_ws_pane_status_commit, slopdesk_ws_pane_unseen_done,
+        SlopDeskWaitingPane, slopdesk_ws_attention_order, slopdesk_ws_pane_status_commit,
+        slopdesk_ws_pane_unseen_done,
     };
 
     /// The byte a status crosses as — `ClaudeStatus::ALL`'s own order, which is the Swift enum's.
@@ -271,12 +261,6 @@ mod tests {
     fn an_absent_record_marks_where_a_matching_one_clears() {
         assert_eq!(slopdesk_ws_pane_unseen_done(7, false, 7, false), 2);
         assert_eq!(slopdesk_ws_pane_unseen_done(7, true, 7, false), 0);
-    }
-
-    #[test]
-    fn the_watch_settles_when_it_reaches_the_window() {
-        assert!(!slopdesk_ws_pane_settle_due(1.9, 2.0));
-        assert!(slopdesk_ws_pane_settle_due(2.0, 2.0));
     }
 
     /// The queue order crosses as positions, and a short buffer is told the length.

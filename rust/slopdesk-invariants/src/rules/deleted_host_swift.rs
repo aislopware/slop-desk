@@ -15,6 +15,12 @@
 //! silently — a second canonical form keys one repository as two sidebar sections, and a second
 //! reading of "a turn ended" mints an unread badge nobody earned.
 //!
+//! **The eight command-line instruments.** They are the easiest second implementation to write and
+//! the hardest to notice — nothing links one, no suite runs it, and its whole job is to re-ask a
+//! question about the tree, which means re-spelling whatever it asks about. Three are `[[bin]]`s of
+//! `rust/slopdesk-instruments` now and one is `rust/slopdesk-navprobe`; the other four came back as
+//! nothing at all, which is the stronger claim.
+//!
 //! Read `View::Code`, like every other ban in this crate: the prose above a ban names the thing it
 //! forbids, and a raw read would fire on the explanation.
 
@@ -87,7 +93,81 @@ pub fn deleted_host_swift(tree: &Tree) -> Report {
     claims.extend(rules_that_moved_to_rust());
     claims.extend(terminfo_files_stay_deleted());
     claims.extend(supervisor_protocol_stays_deleted());
+    claims.extend(swift_instruments_stay_deleted());
     check_all(tree, &claims)
+}
+
+/// The eight Swift command-line instruments, and why each one staying gone is a RULE.
+///
+/// An instrument is the easiest second implementation to write and the hardest to notice: nothing
+/// links it, no suite runs it, and its whole job is to answer a question about the tree — so it
+/// re-spells whatever it is asking about, and then quietly disagrees. Six of these were already
+/// asking a settled question when they were deleted, and the two benches were measuring a Swift
+/// path that no longer exists.
+///
+/// Three came back as Rust and their names are the ones to look for, because a `swift run`
+/// respelling would compile: `slopdesk-replay-bench`, `slopdesk-swipestatus-probe` and
+/// `slopdesk-fuzzybench` are `[[bin]]`s of `rust/slopdesk-instruments`, and
+/// `slopdesk-navhistory-probe` is `rust/slopdesk-navprobe`. The other four came back as nothing at
+/// all, which is the stronger claim: the virtual-display probe re-asked what
+/// `VirtualDisplayPlanner.refreshRates` already ships, the capture probe matched a window title
+/// with the very predicate `panel_predicates` bans, and the loopback and fake-client harnesses were
+/// each a second speaker of a wire that is golden-pinned.
+///
+/// The ban is on the target DIRECTORY, not on a `main.swift` inside it, for two reasons: an
+/// instrument re-added under any other filename is the same failure, and
+/// `package_graph::every_source_directory_is_a_target` would then demand a `Package.swift` entry
+/// for it — so a resurrection fires two rules rather than slipping past one. Paths rather than
+/// patterns for the reason `terminfo_files_stay_deleted` gives: a command-line tool has no keyword
+/// left that a `View::Code` scan could catch.
+fn swift_instruments_stay_deleted() -> Vec<Claim> {
+    vec![
+        Claim::Absent {
+            path: "Sources/slopdesk-replay-bench",
+            message: "the model-walk bench is back in Swift — it is rust/slopdesk-instruments' \
+                      slopdesk-replay-bench bin, and a Swift one would be measuring a replay path that is \
+                      no longer the one that ships",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-swipestatus-probe",
+            message: "the swipe-status probe is back in Swift — it is rust/slopdesk-instruments' \
+                      slopdesk-swipestatus-probe bin, which holds the reader instead of questioning it \
+                      through a marshaller that can only prove it forwarded",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-fuzzybench",
+            message: "the ranking-parity bench is back in Swift — it is rust/slopdesk-instruments' \
+                      slopdesk-fuzzybench bin, and a Swift one would score with a second matcher and order \
+                      the same list two ways",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-navhistory-probe",
+            message: "the nav-history probe is back in Swift — it is rust/slopdesk-navprobe, which holds \
+                      the AX reader itself rather than asking it through HostNavHistory",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-vd-probe",
+            message: "the virtual-display probe is back — it re-asked what \
+                      VirtualDisplayPlanner.refreshRates already decides, and its WindowServer enumeration \
+                      was the second spelling of HostDisplays",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-capture-probe",
+            message: "the capture probe is back — it matched a window title with the very predicate \
+                      panel_predicates bans, and read SCShareableContent a second time",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-loopback-validate",
+            message: "loopback validation is back in Swift — it is rust/slopdesk-loopback-validate, driving \
+                      the real encoder and decoder; a Swift speaker of a golden-pinned wire is a second \
+                      encoder by definition",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-fake-client",
+            message: "the fake client is back — it spoke the mux wire in Swift, and the wire is \
+                      golden-pinned with slopdesk-muxwire as the one that speaks it",
+        },
+    ]
 }
 
 /// The two files the terminfo LINK deleted, named as paths because neither has a keyword left.
@@ -662,6 +742,31 @@ mod tests {
             assert!(
                 !deleted_host_swift(&fixture.tree()).is_clean(),
                 "{name}: the ban did not fire on its return"
+            );
+        }
+    }
+
+    /// The eight retired instruments. Each ban is on the target DIRECTORY, so the seed is a source
+    /// file under it — a resurrection under any other filename fails the same way.
+    #[test]
+    fn a_revived_swift_instrument_is_red() {
+        for target in [
+            "slopdesk-replay-bench",
+            "slopdesk-swipestatus-probe",
+            "slopdesk-fuzzybench",
+            "slopdesk-navhistory-probe",
+            "slopdesk-vd-probe",
+            "slopdesk-capture-probe",
+            "slopdesk-loopback-validate",
+            "slopdesk-fake-client",
+        ] {
+            let fixture = Fixture::new(&format!("revived-{target}"));
+            fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
+            assert!(deleted_host_swift(&fixture.tree()).is_clean(), "{target}");
+            fixture.write(&format!("Sources/{target}/main.swift"), "print(\"probing\")\n");
+            assert!(
+                !deleted_host_swift(&fixture.tree()).is_clean(),
+                "{target}: the ban did not fire on its return"
             );
         }
     }

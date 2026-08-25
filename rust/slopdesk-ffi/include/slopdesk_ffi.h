@@ -10688,9 +10688,6 @@ SlopDeskWsPaneStatusCommit slopdesk_ws_pane_status_commit(uint8_t previous, uint
 // `has_seen` separates "never recorded" from "recorded zero" — the first can never match a live
 // counter, the second is every pane's state before the document arrives.
 uint8_t slopdesk_ws_pane_unseen_done(uint32_t epoch, bool has_seen, uint32_t seen, bool is_visible);
-// Whether an unbroken watch of `watched` seconds has earned the finish-marker acknowledge. Settles
-// once the watch REACHES the window: a window is how long you have to look, not that plus a tick.
-bool slopdesk_ws_pane_settle_due(double watched, double window);
 // One pane in the unseen-attention queue. `since` is a flag plus a value because the absent case is
 // REAL — a manual badge override carries no age evidence — and a sentinel would sort as itself.
 typedef struct {
@@ -10754,7 +10751,7 @@ size_t slopdesk_ws_normalized_text(const uint8_t *text, size_t len, uint8_t *out
 // and the caller reads it. A label's text never crosses in either direction.
 //
 // The replica stays clockless: `now` and `timeout` arrive as seconds from the caller, the same
-// split `slopdesk_ws_pane_settle_due` takes.
+// split `slopdesk_ws_settle_step` takes.
 // Whether a DIFF frame may be folded: 0 re-subscribe, 1 ignore it, 2 apply it. A base the replica
 // is not at is either a frame already passed (a duplicate or a reorder, which assign-not-mutate
 // makes a no-op) or one reaching FORWARD from a state never applied — only the second is
@@ -11152,7 +11149,7 @@ size_t slopdesk_ws_gui_mbps_label(bool has_kbps, int64_t kbps, uint8_t *out, siz
 size_t slopdesk_ws_gui_per_sec_label(bool has_value, double value, uint8_t *out, size_t cap);
 size_t slopdesk_ws_gui_ms_label(bool has_value, double value, uint8_t *out, size_t cap);
 // `RECONNECTING`, plus a floored, zero-clamped age once the stall's epoch is known. `elapsed` is
-// SECONDS and not an instant: the caller owns the clock, exactly as `slopdesk_ws_pane_settle_due`
+// SECONDS and not an instant: the caller owns the clock, exactly as `slopdesk_ws_settle_step`
 // has it, so the rule can be asked about a chosen moment.
 size_t slopdesk_ws_gui_stall_caption(bool has_since, double elapsed, uint8_t *out, size_t cap);
 // What the non-live placeholder says, for a display of 0 live, 1 entry form, 2 cap-gated. The gated

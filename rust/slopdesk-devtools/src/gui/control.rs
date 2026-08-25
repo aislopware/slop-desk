@@ -32,6 +32,17 @@ use serde::Deserialize;
 
 use super::Suite;
 
+/// The variable the SHIPPING app reads to bind a named `UserDefaults` suite instead of the standard
+/// domain.
+///
+/// It is spelled here and in `SettingsKey.defaultsSuiteEnvKey`, and nowhere else. The two cannot be
+/// one constant: this crate is its OWN workspace with no `path =` edge into the app graph — see the
+/// manifest header for why — so neither side can link the other's, and a gate that launches the
+/// shipping bundle has no door to ask through. `slopdesk-invariants`' `defaults-suite-env-key`
+/// ratchets the two spellings against each other instead, which is what `docs/55`'s "across a
+/// socket, the two spellings are ratcheted" prescribes for exactly this shape.
+pub const DEFAULTS_SUITE_ENV: &str = "SLOPDESK_DEFAULTS_SUITE";
+
 /// One window (a "session", on the wire) as the client reports it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WindowRow {
@@ -244,7 +255,7 @@ impl Launch<'_> {
         let mut environment = vec![
             ("CFFIXED_USER_HOME".to_owned(), container.clone()),
             ("HOME".to_owned(), container),
-            ("SLOPDESK_DEFAULTS_SUITE".to_owned(), self.suite.name().to_owned()),
+            (DEFAULTS_SUITE_ENV.to_owned(), self.suite.name().to_owned()),
         ];
         if let Some(socket) = self.socket {
             environment.push((
@@ -306,7 +317,7 @@ impl Launch<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PaneRow, Projection, TabRow, WindowRow};
+    use super::{DEFAULTS_SUITE_ENV, PaneRow, Projection, TabRow, WindowRow};
 
     fn projection_of(windows: &[WindowRow], tabs: &[TabRow], panes: &[PaneRow]) -> Projection {
         let mut lines = Vec::new();
@@ -475,7 +486,7 @@ mod tests {
         };
         assert_eq!(value("CFFIXED_USER_HOME").as_deref(), Some("/tmp/gate-container"));
         assert_eq!(value("HOME").as_deref(), Some("/tmp/gate-container"));
-        assert_eq!(value("SLOPDESK_DEFAULTS_SUITE").as_deref(), Some(suite.name()));
+        assert_eq!(value(DEFAULTS_SUITE_ENV).as_deref(), Some(suite.name()));
         // No socket asked for, so none is bound: an instance nobody addresses must not squat a path.
         assert_eq!(value("SLOPDESK_CLIENT_SOCKET"), None);
     }
@@ -496,7 +507,7 @@ mod tests {
         assert_eq!(names, [
             "CFFIXED_USER_HOME",
             "HOME",
-            "SLOPDESK_DEFAULTS_SUITE",
+            DEFAULTS_SUITE_ENV,
             "SLOPDESK_CLIENT_SOCKET",
             "SLOPDESK_AUTOCONNECT_HOST",
         ]);

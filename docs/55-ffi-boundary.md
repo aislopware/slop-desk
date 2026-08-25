@@ -820,7 +820,8 @@ however many times it goes round.
 
 ### The scorer, measured against the Swift it replaced
 
-`slopdesk-fuzzybench` is in the tree and is not a second implementation — it is a harness that runs
+`fuzzybench` (`rust/slopdesk-instruments/src/bin/fuzzybench.rs`) is in the tree and is not a second
+implementation — it is a harness that runs
 the door over every Swift path in the package (1333 candidates × 16 queries) and diffs the result
 against the real `fzf --filter` binary. Release build, same corpus, same machine:
 

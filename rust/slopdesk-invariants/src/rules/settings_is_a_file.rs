@@ -38,6 +38,9 @@ const SETTINGS_KEY: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/Settin
 /// The key table every path is declared in, defaults and all.
 const KEY_TABLE: &str = "rust/slopdesk-settings/src/config/table.rs";
 
+/// The GUI gates' launcher — the other end of the defaults-suite variable.
+const GUI_CONTROL: &str = "rust/slopdesk-devtools/src/gui/control.rs";
+
 const GUI_DIRECTORIES: &[&str] = &[
     "Sources/SlopDeskMacUI/Settings",
     "Sources/SlopDeskMacUI/FirstLaunch",
@@ -124,6 +127,34 @@ pub fn the_settings_gui_stays_deleted(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// The defaults-suite variable is spelled the same on both sides of the launch
+///
+/// One name, two processes, and no way to make it one constant: the GUI gates SET it before
+/// `execve`ing the shipping bundle, and the app READS it to decide which `UserDefaults` store its
+/// own state lands in. `slopdesk-devtools` is its own cargo workspace with no `path =` edge into
+/// the app graph — deliberately, so a startup-tuned profile does not follow the tools around — so
+/// neither side can link the other's constant, and there is no door to ask through because the
+/// value has to exist in the ENVIRONMENT before the process that owns the doors starts.
+///
+/// That is exactly the case `shared_constants`' header files under "across a socket, the two
+/// spellings are ratcheted": a separately-shipped binary cannot link the other's constant, so the
+/// gate compares the two literals instead. [`Claim::SameValue`] rather than two `Matches` on the
+/// name, so that renaming the variable on BOTH sides stays green and this rule never becomes the
+/// third spelling.
+///
+/// What it cannot see: a THIRD reader that hard-codes the string somewhere neither file is. The
+/// mechanism is confined to a launch, so a third one would have to be a second gate harness, and
+/// that is a shape `rules_that_moved_to_rust` would already be arguing with.
+#[must_use]
+pub fn the_defaults_suite_variable_is_spelled_once(tree: &Tree) -> Report {
+    let claims = [Claim::SameValue {
+        label: "defaults-suite-env-key",
+        swift: Extract::code(SETTINGS_KEY, r#"defaultsSuiteEnvKey = "([A-Z_]+)""#),
+        rust: Extract::code(GUI_CONTROL, r#"DEFAULTS_SUITE_ENV: &str = "([A-Z_]+)""#),
+    }];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -148,6 +179,46 @@ mod tests {
                 "        path: \"appearance.density\",\n        path: \"general.redact-secrets\",\n",
             )
             .write("docs/config.schema.json", "{}\n")
+    }
+
+    /// A tree where the launcher and the app agree on the variable's name.
+    fn agreeing_suite<'a>(fixture: &'a Fixture, swift: &str, rust: &str) -> &'a Fixture {
+        fixture
+            .write(
+                super::SETTINGS_KEY,
+                &format!("public static let defaultsSuiteEnvKey = \"{swift}\"\n"),
+            )
+            .write(
+                super::GUI_CONTROL,
+                &format!("pub const DEFAULTS_SUITE_ENV: &str = \"{rust}\";\n"),
+            )
+    }
+
+    /// Renaming on BOTH sides is fine; renaming on one is the drift that leaves a gate configuring
+    /// a variable the app has stopped reading — and nothing fails, because a shipping app with no
+    /// override simply binds the standard domain and looks completely normal.
+    #[test]
+    fn a_one_sided_rename_of_the_suite_variable_is_red() {
+        let fixture = Fixture::new("defaults-suite-agree");
+        agreeing_suite(&fixture, "SLOPDESK_DEFAULTS_SUITE", "SLOPDESK_DEFAULTS_SUITE");
+        assert!(
+            super::the_defaults_suite_variable_is_spelled_once(&fixture.tree()).is_clean(),
+            "two identical spellings are not a violation"
+        );
+
+        let renamed = Fixture::new("defaults-suite-both");
+        agreeing_suite(&renamed, "SLOPDESK_STATE_SUITE", "SLOPDESK_STATE_SUITE");
+        assert!(
+            super::the_defaults_suite_variable_is_spelled_once(&renamed.tree()).is_clean(),
+            "the rule must not be the third spelling — a rename on both sides stays green"
+        );
+
+        let drifted = Fixture::new("defaults-suite-drift");
+        agreeing_suite(&drifted, "SLOPDESK_STATE_SUITE", "SLOPDESK_DEFAULTS_SUITE");
+        assert!(
+            !super::the_defaults_suite_variable_is_spelled_once(&drifted.tree()).is_clean(),
+            "the ratchet did not fire on a one-sided rename"
+        );
     }
 
     #[test]

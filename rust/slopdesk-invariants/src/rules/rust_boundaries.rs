@@ -192,9 +192,12 @@ pub fn agent_detection(tree: &Tree) -> Report {
 /// version fired on its own documentation. Stripping whole-line comments first lets prose name what
 /// code may not, which is the only way a ban and an honest comment can coexist.
 ///
-/// `AppIconGlue` and `slopdesk-navhistory-probe` are not exempt and do not need to be: they ask
-/// `runningApplications(withBundleIdentifier:)` for an ICON, which is image work and stays Swift's.
-/// The banned shape is the pid lookup, which is the one this port replaced.
+/// The ban carries no exemption at all now. It once had two candidates it did not need —
+/// `AppIconGlue` and the Swift `slopdesk-navhistory-probe`, which asked
+/// `runningApplications(withBundleIdentifier:)` for an ICON rather than for a pid — and both are
+/// gone: the probe is `rust/slopdesk-navprobe` and looks its target up through
+/// `slopdesk_posix::proc` plus `slopdesk_apple_app::bundle_id`. The banned shape was always the pid
+/// lookup, which is the one this port replaced.
 ///
 /// ## The pane census joined it, so the ban widened
 /// This rule once banned two calls and said so: the all-pids census and the `PROC_PIDVNODEPATHINFO`
@@ -208,8 +211,8 @@ pub fn agent_detection(tree: &Tree) -> Report {
 /// `SlopDeskMetadataPort(proc_name:)` is the wire record's own field label and naming a struct
 /// field is not making a syscall.
 ///
-/// `AppIconGlue` and `slopdesk-navhistory-probe` are still not exempt and still do not need to be,
-/// for the reason above: an icon lookup is image work.
+/// The widened ban still carries no exemption, for the reason above: the two icon lookups that
+/// were never the banned shape have both left Swift.
 ///
 /// ## And the accessibility tree, all but the subscription
 /// The fourth claim is the only one here that bans less than the whole framework area, and what it
@@ -518,7 +521,7 @@ pub fn hevc_decode_is_rusts(tree: &Tree) -> Report {
 ///
 /// The third row of `docs/57` §5's video group, and the one whose ban has to be NARROW. The other
 /// two could sweep a whole framework because nothing else in Swift touches `VideoToolbox`; here the
-/// window feed, `slopdesk-framewatch` and `slopdesk-vd-probe` all still ENUMERATE through
+/// window feed and `slopdesk-framewatch` both still ENUMERATE through
 /// `SCShareableContent`, `SCWindow` and `SCDisplay`, which is a read of what exists and not a
 /// capture. So the ban is on the STREAM: the filter, the configuration, the two protocols, the
 /// lifecycle calls and the per-sample attachment vocabulary. A rule that fired on the tree it ships

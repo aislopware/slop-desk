@@ -191,7 +191,7 @@ pub unsafe extern "C" fn slopdesk_ws_gui_ms_label(
 /// The stall caption: `RECONNECTING`, plus a floored age once the stall's epoch is known.
 ///
 /// `elapsed` is SECONDS, not an instant. The caller owns the clock and does the subtraction, so the
-/// rule can be asked about a chosen moment — the same split `slopdesk_ws_pane_settle_due` takes.
+/// rule can be asked about a chosen moment — the same split `slopdesk_ws_settle_step` takes.
 ///
 /// # Safety
 /// `(out, cap)` must be writable for `cap` bytes.

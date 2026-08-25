@@ -875,6 +875,11 @@ pub fn registry() -> Vec<Rule> {
             check: settings_is_a_file::the_settings_gui_stays_deleted,
         },
         Rule {
+            name: "defaults-suite-env-key",
+            origin: "docs/55 §shared constants, docs/58",
+            check: settings_is_a_file::the_defaults_suite_variable_is_spelled_once,
+        },
+        Rule {
             name: "settings-constant-answers",
             origin: "check-supervisor.sh (deleted)",
             check: settings_catalog::the_cheat_sheet_and_menu_bar_hold_their_constants,

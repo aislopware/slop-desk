@@ -84,7 +84,12 @@ public final class VirtualDisplay {
         // real multi-monitor layout) and place the VD past the rightmost edge where it can never
         // overlap a real display. On a single-display host this reduces to: pin
         // main at (0,0), VD at (mainWidth, 0).
-        let physicalDisplays = Self.onlineDisplayBounds()
+        // ONLINE and not active: a sleeping or mirrored display still owns its origin, and pinning
+        // only the drawable ones would let WindowServer reflow the rest. The enumeration is
+        // ``HostDisplays`` — `rust/slopdesk-apple-cgdisplay` — because the two-call
+        // `CGGetOnlineDisplayList` dance is exactly the shape that reads as correct while dropping
+        // a display, and the tree gets to spell it once.
+        let physicalDisplays = HostDisplays.displays(online: true)
         let vdOrigin = VirtualDisplayPlanner.originToRight(of: physicalDisplays.map(\.bounds))
 
         let desc = CGVirtualDisplayDescriptor()
@@ -194,22 +199,6 @@ public final class VirtualDisplay {
         onTerminated?()
     }
 
-    /// The online displays' `(id, global-bounds)`, main first — the physical set when called before
-    /// the VD exists.
-    ///
-    /// Not private, because `slopdesk-vd-probe` asks WindowServer the same question between every
-    /// step of its reconfigure-and-restore and had written the same four calls out itself. The
-    /// two-call `CGGetOnlineDisplayList` dance (size, then fill) is exactly the shape that reads as
-    /// correct while dropping a display: the second call rewrites `n`, and a copy that forgot to
-    /// re-`prefix` it would report stale ids from the buffer's tail.
-    public static func onlineDisplayBounds() -> [(id: CGDirectDisplayID, bounds: CGRect)] {
-        var n: UInt32 = 0
-        guard CGGetOnlineDisplayList(0, nil, &n) == .success, n > 0 else { return [] }
-        var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
-        guard CGGetOnlineDisplayList(n, &ids, &n) == .success else { return [] }
-        return ids.prefix(Int(n)).map { (id: $0, bounds: CGDisplayBounds($0)) }
-    }
-
     /// The extend + origin-pin transaction. Stops any auto-mirror on the VD, pins every captured
     /// physical display at its original origin, and places the VD at `vdOrigin`, committing
     /// `.forAppOnly`. Each CGError is checked + logged; on a complete-failure the half-built
@@ -217,7 +206,7 @@ public final class VirtualDisplay {
     private func applyExtendConfiguration(
         vdID id: CGDirectDisplayID,
         vdOrigin: CGPoint,
-        physicalDisplays: [(id: CGDirectDisplayID, bounds: CGRect)],
+        physicalDisplays: [HostDisplays.Display],
     ) {
         var cfg: CGDisplayConfigRef?
         let begin = CGBeginDisplayConfiguration(&cfg)
@@ -410,7 +399,7 @@ public enum VirtualDisplayPlanner {
     }
 
     /// The 120 Hz ceiling for advertised VD modes — the highest refresh WindowServer was empirically
-    /// confirmed to both GRANT and genuinely CLOCK for a headless VD (slopdesk-vd-probe Q1/Q2). We do
+    /// confirmed to both GRANT and genuinely CLOCK for a headless VD (measured Q1/Q2, `docs/DECISIONS.md`). We do
     /// not advertise above it because an unclocked/ungranted mode would be a silent no-op.
     public static let maxAdvertisedHz = 120
 

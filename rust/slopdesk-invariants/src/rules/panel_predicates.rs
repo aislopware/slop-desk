@@ -43,8 +43,10 @@ const ANDROID_KEYCODE_RUST: &str = "rust/slopdesk-devicepanel/src/panel_key.rs";
 /// A miss is the state every keystroke passes through, and the drawer repaints on every arriving
 /// log line.
 ///
-/// The ban is by FILE, not tree-wide: `Sources/slopdesk-capture-probe` matches one window title
-/// with it and is a dev tool, not a panel. The corpus is floored first — a ban over a file that was
+/// The ban is by FILE, not tree-wide: `DeviceRowFilterTests` and `PasteSafetyAnalyzerTests` both
+/// call it on purpose — the first to hold the fold's ASCII answer against the platform's
+/// normalizing one, the second to read a warning sentence — and neither is a panel. The corpus is
+/// floored first — a ban over a file that was
 /// renamed away passes silently, and this one names seven files across three targets, which is
 /// exactly the shape that rots.
 ///
