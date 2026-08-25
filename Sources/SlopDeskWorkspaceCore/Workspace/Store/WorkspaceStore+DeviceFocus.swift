@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceStore × device-local focus (docs/45 §8.2)
@@ -39,16 +40,37 @@ extension WorkspaceStore {
     /// Resolution is checked against the projection every time, never cached: a tab or pane another
     /// client closed simply stops applying, and host truth shows through. That is what keeps this
     /// device off a blank view when the thing it was watching goes away.
+    /// The rule is `slopdesk_workspace::store_shape::device_focus_landing`, and the pane branch of it
+    /// is `slopdesk_tree::tree_ops::focus_pane` run over a SKELETON of the four facts each tab
+    /// contributes — which session it belongs to, whether it holds the pane, whether it is the named
+    /// tab, whether its zoom is showing that pane. No id crosses; the verdict comes back as a
+    /// POSITION into the flat tab list this side built, plus the two booleans applied below.
     static func applying(_ focus: DeviceFocus, to tree: TreeWorkspace) -> TreeWorkspace {
-        if let pane = focus.pane, tree.contains(pane) {
-            return WorkspaceTreeOps.focusPane(pane, in: tree)
+        var rows: [SlopDeskWsFocusTab] = []
+        var addresses: [(session: Int, tab: Int)] = []
+        for (sIdx, session) in tree.sessions.enumerated() {
+            for (tIdx, tab) in session.tabs.enumerated() {
+                rows.append(SlopDeskWsFocusTab(
+                    session: UInt32(sIdx),
+                    holds_pane: focus.pane.map { tab.contains($0) } ?? false,
+                    is_focus_tab: tab.id == focus.tab,
+                    zoom_is_target: focus.pane != nil && tab.zoomedPane == focus.pane,
+                ))
+                addresses.append((sIdx, tIdx))
+            }
         }
-        guard let sIdx = tree.sessions.firstIndex(where: { $0.tabs.contains { $0.id == focus.tab } }),
-              let tIdx = tree.sessions[sIdx].tabs.firstIndex(where: { $0.id == focus.tab })
-        else { return tree }
+        let landing = rows.withUnsafeBufferPointer {
+            slopdesk_ws_device_focus_landing($0.baseAddress, $0.count, focus.pane != nil)
+        }
+        guard landing.resolved, addresses.indices.contains(landing.tab) else { return tree }
+        let (sIdx, tIdx) = addresses[landing.tab]
         var out = tree
         out.activeSessionID = out.sessions[sIdx].id
         out.sessions[sIdx].activeTabIndex = tIdx
+        if landing.focuses_pane, let pane = focus.pane {
+            out.sessions[sIdx].tabs[tIdx].activePane = pane
+            if landing.clears_zoom { out.sessions[sIdx].tabs[tIdx].zoomedPane = nil }
+        }
         return out
     }
 

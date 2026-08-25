@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// PURE OUT-path coalescer tests (the terminal resize-corruption fix). Verifies that a fast
+/// PURE OUT-path plan tests (the terminal resize-corruption fix). Verifies that a fast
 /// window-drag's burst of DISTINCT `.resize` events collapses to its LATEST while `.input(Data)`
 /// is an order-preserving hard BARRIER — so the host PTY converges to the FINAL size with as few
 /// `TIOCSWINSZ` as possible (one clean zsh SIGWINCH → one clean prompt redraw) without ever
@@ -9,15 +9,20 @@ import XCTest
 ///
 /// This is the 1:1 analog of `InputMotionCoalescerTests`: `.resize` is the coalescible class
 /// (latest-wins) and `.input` is the barrier (the role mouse buttons/keys play there). No
-/// `ConnectionViewModel`, no `SlopDeskClient`, no clock, no socket — `coalesceOut` is pure, so the
+/// `ConnectionViewModel`, no `SlopDeskClient`, no clock, no socket — the plan is pure, so the
 /// TRAILING-EDGE GUARANTEE (the last resize of every batch always survives) is asserted with zero
 /// wall-clock dependence.
+///
+/// The rule is `slopdesk_workspace::connect_gate`, where the coalesce is still its own function and
+/// its own properties (idempotence, no-adjacent-resize) are pinned directly. What crosses is one
+/// record per event and what comes back names slices of this side's own blob — the door takes no
+/// keystroke bytes at all — so these tests are also the pin on that marshalling round-tripping.
 final class OutEventCoalescerTests: XCTestCase {
     private func resize(_ c: UInt16) -> ConnectionViewModel.OutEvent { .resize(cols: c, rows: c) }
     private func input(_ bytes: [UInt8]) -> ConnectionViewModel.OutEvent { .input(Data(bytes)) }
 
     private func coalesce(_ b: [ConnectionViewModel.OutEvent]) -> [ConnectionViewModel.OutEvent] {
-        ConnectionViewModel.coalesceOut(b)
+        ConnectGate.plan(b, maxInputFrameBytes: 4096)
     }
 
     /// A continuous drag (59→60→…→145 cols) collapses to ONLY the final size — the headline fix.
@@ -57,14 +62,14 @@ final class OutEventCoalescerTests: XCTestCase {
         )
     }
 
-    /// Empty / single passthrough (identity) — the `batch.count > 1` fast path.
+    /// Empty / single passthrough (identity).
     func testEmptyAndSinglePassthrough() {
         XCTAssertEqual(coalesce([]), [])
         XCTAssertEqual(coalesce([resize(120)]), [resize(120)], "identity for a single resize")
         XCTAssertEqual(coalesce([input([0x7A])]), [input([0x7A])], "identity for a single input")
     }
 
-    /// Coalescing is idempotent: `coalesceOut(coalesceOut(x)) == coalesceOut(x)`.
+    /// Planning is idempotent: `plan(plan(x)) == plan(x)`.
     func testIdempotent() {
         let batches: [[ConnectionViewModel.OutEvent]] = [
             (10...30).map { resize(UInt16($0)) },
@@ -73,12 +78,13 @@ final class OutEventCoalescerTests: XCTestCase {
         ]
         for b in batches {
             let once = coalesce(b)
-            XCTAssertEqual(coalesce(once), once, "coalesce(coalesce(x)) == coalesce(x)")
+            XCTAssertEqual(coalesce(once), once, "plan(plan(x)) == plan(x)")
         }
     }
 
     /// The two load-bearing invariants over many hand-built + seeded-random batches:
-    /// (a) the `.input` subsequence is byte-identical in count + order (input never dropped/reordered),
+    /// (a) the input BYTES come back in order and in full (never dropped or reordered — adjacent
+    /// payloads merge, which is why this is concatenation identity and not a subsequence compare),
     /// and (b) the output has no two ADJACENT `.resize` (every run collapsed to one). Together these
     /// prove "collapses N resizes to the latest but never drops/reorders an input byte".
     func testInvariantsOverManyBatches() {
@@ -91,7 +97,7 @@ final class OutEventCoalescerTests: XCTestCase {
             let len = Int.random(in: 0...20, using: &rng)
             let batch = (0..<len).map { _ in alphabet[Int.random(in: 0..<alphabet.count, using: &rng)]() }
             let out = coalesce(batch)
-            XCTAssertEqual(inputsOnly(out), inputsOnly(batch), "input subsequence preserved exactly")
+            XCTAssertEqual(concatInputs(out), concatInputs(batch), "input bytes preserved exactly")
             XCTAssertFalse(hasAdjacentResize(out), "no two adjacent resizes survive (each run collapsed)")
         }
     }
@@ -103,8 +109,10 @@ final class OutEventCoalescerTests: XCTestCase {
         return false
     }
 
-    private func inputsOnly(_ events: [ConnectionViewModel.OutEvent]) -> [ConnectionViewModel.OutEvent] {
-        events.filter { !isResize($0) }
+    private func concatInputs(_ events: [ConnectionViewModel.OutEvent]) -> Data {
+        events.reduce(into: Data()) { acc, e in
+            if case let .input(d) = e { acc.append(d) }
+        }
     }
 
     private func hasAdjacentResize(_ events: [ConnectionViewModel.OutEvent]) -> Bool {

@@ -2,10 +2,15 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pure tests for ``ConnectionViewModel/packInputs(_:maxInputFrameBytes:)`` — the OUT-batch
-/// input normalizer (merge adjacent tiny inputs, split oversized ones, `.resize` is a hard
-/// barrier). The load-bearing property is CONCATENATION BYTE-IDENTITY: the emitted input
-/// payloads concatenate to exactly the input payloads, in order.
+/// Pure tests for the INPUT half of ``ConnectGate/plan(_:maxInputFrameBytes:)`` — merge adjacent
+/// tiny inputs, split oversized ones, `.resize` is a hard barrier. The load-bearing property is
+/// CONCATENATION BYTE-IDENTITY: the emitted input payloads concatenate to exactly the input
+/// payloads, in order.
+///
+/// Byte-identity is also the pin on the boundary's shape. The rule is
+/// `slopdesk_workspace::connect_gate`, which never sees a keystroke: it takes one length per event
+/// and answers `(offset, length)` frames naming slices of the blob this side concatenated, so an
+/// off-by-one in either half of that marshalling shows up here as bytes that do not reassemble.
 final class PackInputsTests: XCTestCase {
     private typealias OutEvent = ConnectionViewModel.OutEvent
 
@@ -17,13 +22,13 @@ final class PackInputsTests: XCTestCase {
 
     func testAdjacentTinyInputsMergeIntoOneFrame() {
         let events: [OutEvent] = [.input(Data("a".utf8)), .input(Data("b".utf8)), .input(Data("c".utf8))]
-        let packed = ConnectionViewModel.packInputs(events, maxInputFrameBytes: 1024)
+        let packed = ConnectGate.plan(events, maxInputFrameBytes: 1024)
         XCTAssertEqual(packed, [.input(Data("abc".utf8))], "key-repeat runs merge to one frame")
     }
 
     func testOversizedInputSplitsAtCap() {
         let big = Data((0..<10000).map { UInt8($0 % 251) })
-        let packed = ConnectionViewModel.packInputs([.input(big)], maxInputFrameBytes: 4096)
+        let packed = ConnectGate.plan([.input(big)], maxInputFrameBytes: 4096)
         XCTAssertEqual(packed.count, 3, "10000 bytes at cap 4096 → 3 frames")
         for case let .input(d) in packed {
             XCTAssertLessThanOrEqual(d.count, 4096)
@@ -37,7 +42,7 @@ final class PackInputsTests: XCTestCase {
             .resize(cols: 100, rows: 30),
             .input(Data("after".utf8)),
         ]
-        let packed = ConnectionViewModel.packInputs(events, maxInputFrameBytes: 1024)
+        let packed = ConnectGate.plan(events, maxInputFrameBytes: 1024)
         XCTAssertEqual(packed, [
             .input(Data("before".utf8)),
             .resize(cols: 100, rows: 30),
@@ -54,7 +59,7 @@ final class PackInputsTests: XCTestCase {
             expected.append(payload)
             if i.isMultiple(of: 11) { events.append(.resize(cols: UInt16(80 + i), rows: 24)) }
         }
-        let packed = ConnectionViewModel.packInputs(events, maxInputFrameBytes: 2048)
+        let packed = ConnectGate.plan(events, maxInputFrameBytes: 2048)
         XCTAssertEqual(concatInputs(packed), expected, "byte-identity holds for arbitrary mixes")
         for case let .input(d) in packed {
             XCTAssertLessThanOrEqual(d.count, 2048, "every emitted frame respects the cap")
@@ -63,21 +68,21 @@ final class PackInputsTests: XCTestCase {
     }
 
     func testEmptyAndResizeOnlyBatchesPassThrough() {
-        XCTAssertEqual(ConnectionViewModel.packInputs([]), [])
+        XCTAssertEqual(ConnectGate.plan([]), [])
         let resizeOnly: [OutEvent] = [.resize(cols: 80, rows: 24)]
-        XCTAssertEqual(ConnectionViewModel.packInputs(resizeOnly), resizeOnly)
+        XCTAssertEqual(ConnectGate.plan(resizeOnly), resizeOnly)
     }
 
     func testPackAfterCoalesceKeepsTrailingResize() {
-        // The production pipeline is packInputs(coalesceOut(batch)) — the trailing-edge
-        // resize guarantee must survive the pack stage.
+        // The plan is coalesce-then-pack in one door — the trailing-edge resize guarantee must
+        // survive the pack stage.
         let events: [OutEvent] = [
             .resize(cols: 90, rows: 25),
             .input(Data("x".utf8)),
             .resize(cols: 100, rows: 30),
             .resize(cols: 110, rows: 35),
         ]
-        let packed = ConnectionViewModel.packInputs(ConnectionViewModel.coalesceOut(events))
+        let packed = ConnectGate.plan(events)
         XCTAssertEqual(
             packed.last,
             .resize(cols: 110, rows: 35),

@@ -8,6 +8,11 @@
 // hang-unsafe thing CLAUDE.md rule #6 forbids a test from doing. That is the whole argument: a
 // formatter inside a view is a formatter nothing can check.
 //
+// THE FORMATTERS, THE CONVERSION AND THE MARKS ARE RUST NOW (`slopdesk_workspace::gui_readout`). What
+// survived that move is the SHAPE of this face: the same signatures, the same names, the same call
+// sites — every body below is one door call plus the byte a Swift enum crosses as. Nothing here
+// decides anything, which is the test for whether the boundary landed in the right place.
+//
 // TWO RULES ABOUT WHAT CROSSES:
 //
 // A COLOUR DOES NOT. `tint(_:)` returned a `Color`, and this layer sits below the token floor and draws
@@ -15,7 +20,13 @@
 // token. Only the BRANCH descends, which is the part that could ever be wrong.
 //
 // A SYMBOL DOES, AS A NAME. An SF Symbol name is data — the same shape `SlateEmptyState.symbol(for:)`
-// already ships — so the phase→mark mapping lives here and the view spells `Image(systemName:)`.
+// already ships — so the phase→mark mapping lives one floor down and the view spells
+// `Image(systemName:)`.
+//
+// A CLOCK DOES NOT CROSS EITHER. ``GuiPaneReadout/stallCaption(since:now:)`` still takes two `Date`s,
+// because that is what a view has; what it hands the door is the ELAPSED SECONDS between them. A rule
+// that read the wall clock could not be asked about a chosen moment, which is half of what its own
+// tests do.
 //
 // EVERY READING IS ABSENT, NEVER WRONG: a stat with no sample yet prints `—` rather than `0`, and a
 // stall with no epoch prints `RECONNECTING` with no age rather than `· 0S`. A zero that means "no
@@ -30,6 +41,7 @@
 // snapshot renderer is ever wanted again it gets ONE gate where the render starts, not a flag that
 // every predicate under the canvas has to carry and every AppKit rewrite has to re-type.
 
+import CSlopDeskFFI
 import Foundation
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -96,6 +108,75 @@ package struct GuiStreamTelemetry: Equatable, Sendable {
     }
 }
 
+// MARK: - Reading a door that always has something to say
+
+/// One `(out, cap)` answer, read as the string it delivered.
+///
+/// Every door this file calls answers a non-empty string — a formatter has at least the em dash to
+/// say, and a table has a word for the byte it could not name — so the `nil` arm is unreachable by
+/// construction. It is `""` rather than a trap because a readout that somehow lost a formatter should
+/// print nothing, not take the pane down with it.
+private func guiAnswer(_ call: (UnsafeMutablePointer<UInt8>?, Int) -> Int) -> String {
+    wsAnswer(call) ?? ""
+}
+
+private extension GuiStreamTelemetry {
+    /// The sample as the door takes it: ten values with ten presence flags beside them, laid out
+    /// widest-first.
+    ///
+    /// A FLAG and not a sentinel, because `nil` and `0` are the two facts this whole file exists to
+    /// keep apart — no number could have carried "nothing has measured this yet". The value beside a
+    /// `false` flag is never read; it is zero so a debugger sees a zero.
+    var ffiRecord: SlopDeskWsGuiTelemetry {
+        SlopDeskWsGuiTelemetry(
+            stats_fps: statsFps ?? 0,
+            stats_fec_per_sec: statsFecPerSec ?? 0,
+            stats_unrecovered_per_sec: statsUnrecoveredPerSec ?? 0,
+            stats_rtt_ms: statsRttMs ?? 0,
+            stats_encode_ms: statsEncodeMs ?? 0,
+            stats_decode_ms: statsDecodeMs ?? 0,
+            stream_fps: Int64(streamFps ?? 0),
+            stream_kbps: Int64(streamKbps ?? 0),
+            stats_pacer_depth: Int64(statsPacerDepth ?? 0),
+            stats_hold_ms: Int64(statsHoldMs ?? 0),
+            has_stats_fps: statsFps != nil,
+            has_stats_fec_per_sec: statsFecPerSec != nil,
+            has_stats_unrecovered_per_sec: statsUnrecoveredPerSec != nil,
+            has_stats_rtt_ms: statsRttMs != nil,
+            has_stats_encode_ms: statsEncodeMs != nil,
+            has_stats_decode_ms: statsDecodeMs != nil,
+            has_stream_fps: streamFps != nil,
+            has_stream_kbps: streamKbps != nil,
+            has_stats_pacer_depth: statsPacerDepth != nil,
+            has_stats_hold_ms: statsHoldMs != nil,
+        )
+    }
+}
+
+/// The byte a display state crosses as — this enum's own declaration order, which the far side's
+/// `Display` mirrors case for case.
+private extension RemoteGUIDisplay {
+    var ffiByte: UInt8 {
+        switch self {
+        case .live: 0
+        case .entryForm: 1
+        case .gated: 2
+        }
+    }
+}
+
+/// The byte an upload phase crosses as — this enum's own declaration order, mirrored by the far
+/// side's `UploadPhase`.
+private extension FileUploadProgress.Phase {
+    var ffiByte: UInt8 {
+        switch self {
+        case .sending: 0
+        case .completed: 1
+        case .failed: 2
+        }
+    }
+}
+
 // MARK: - The readout
 
 /// What a video (PATH 2) pane's chrome says, and when it is up at all.
@@ -107,38 +188,34 @@ package enum GuiPaneReadout {
     /// Grouped by WHAT IS BEING MEASURED rather than by where the number came from: what the host is
     /// sending, what this client is receiving, what the error correction is costing, where the latency
     /// sits, and how stale the newest frame is.
+    ///
+    /// ONE crossing for all five, because the readout draws them together or not at all.
     package static func statRows(_ stats: GuiStreamTelemetry) -> [String] {
-        [
-            "\(stats.streamFps.map(String.init) ?? absent) FPS · \(mbpsLabel(kbps: stats.streamKbps)) MBPS",
-            "RX \(stats.statsFps.map { String(format: "%.0f", $0) } ?? absent) FPS · "
-                + "DEPTH \(stats.statsPacerDepth.map(String.init) ?? absent)",
-            "FEC \(perSecLabel(stats.statsFecPerSec)) · LOST \(perSecLabel(stats.statsUnrecoveredPerSec))",
-            "RTT \(msLabel(stats.statsRttMs)) · ENC \(msLabel(stats.statsEncodeMs)) · "
-                + "DEC \(msLabel(stats.statsDecodeMs))",
-            "HOLD \(stats.statsHoldMs.map(String.init) ?? absent) MS",
-        ]
+        let record = stats.ffiRecord
+        return wsRuns(
+            wsAnswerBytes { out, cap in Int(slopdesk_ws_gui_stat_rows(record, out, cap)) },
+            count: 5,
+        )
     }
-
-    /// The em dash that stands for "no reading yet". One spelling, so a row cannot invent its own.
-    package static let absent = "—"
 
     /// Mbps at the surface from kbps on the wire, one decimal. `—` until the first measurement lands.
     package static func mbpsLabel(kbps: Int?) -> String {
-        guard let kbps else { return absent }
-        return String(format: "%.1f", Double(kbps) / 1000.0)
+        guiAnswer { out, cap in
+            Int(slopdesk_ws_gui_mbps_label(kbps != nil, Int64(kbps ?? 0), out, cap))
+        }
     }
 
     /// A per-second rate, one decimal, with its unit attached — so an absent one still reads as a rate
     /// (`—/S`) rather than as a missing word.
     package static func perSecLabel(_ value: Double?) -> String {
-        guard let value else { return absent + "/S" }
-        return String(format: "%.1f/S", value)
+        guiAnswer { out, cap in
+            Int(slopdesk_ws_gui_per_sec_label(value != nil, value ?? 0, out, cap))
+        }
     }
 
     /// A millisecond duration, one decimal. The unit lives in the row label, not here.
     package static func msLabel(_ value: Double?) -> String {
-        guard let value else { return absent }
-        return String(format: "%.1f", value)
+        guiAnswer { out, cap in Int(slopdesk_ws_gui_ms_label(value != nil, value ?? 0, out, cap)) }
     }
 
     // MARK: The stall caption
@@ -148,10 +225,14 @@ package enum GuiPaneReadout {
     /// The drained (desaturated) last frame already says "this is the past" — MERIDIAN L1, colour is
     /// live data — so the caption carries only what the material cannot: that recovery is running, and
     /// how OLD the frozen frame is. The age floors at 0 so a clock skew can never print a negative.
+    ///
+    /// Two `Date`s in, ELAPSED SECONDS across: the caller is the one with a clock, and the rule is
+    /// asked about an interval so its own tests can pick the moment.
     package static func stallCaption(since: Date?, now: Date) -> String {
-        guard let since else { return "RECONNECTING" }
-        let age = max(0, Int(now.timeIntervalSince(since).rounded(.down)))
-        return "RECONNECTING · \(age)S"
+        let elapsed = since.map { now.timeIntervalSince($0) }
+        return guiAnswer { out, cap in
+            Int(slopdesk_ws_gui_stall_caption(elapsed != nil, elapsed ?? 0, out, cap))
+        }
     }
 
     // MARK: The placeholder
@@ -159,7 +240,7 @@ package enum GuiPaneReadout {
     /// What the non-live placeholder says. The cap-gated state names its own cause — two live streams
     /// is a deliberate ceiling, so "paused" without the reason would read as a failure.
     package static func placeholderLabel(_ state: RemoteGUIDisplay) -> String {
-        state == .gated ? "Video paused — too many live streams" : "desktop"
+        guiAnswer { out, cap in Int(slopdesk_ws_gui_placeholder_label(state.ffiByte, out, cap)) }
     }
 
     // MARK: Stream quality
@@ -171,20 +252,24 @@ package enum GuiPaneReadout {
 
     /// An fps choice's label. `0` is not "0 fps", it is the absence of a cap.
     package static func fpsChoiceLabel(_ fps: Int) -> String {
-        fps == 0 ? "Auto" : "\(fps)"
+        guiAnswer { out, cap in Int(slopdesk_ws_gui_fps_choice_label(Int64(fps), out, cap)) }
     }
 
     /// A bitrate choice's label, with its unit. Same `0 → Auto` rule.
     package static func mbpsChoiceLabel(_ mbps: Int) -> String {
-        mbps == 0 ? "Auto" : "\(mbps) Mb"
+        guiAnswer { out, cap in Int(slopdesk_ws_gui_mbps_choice_label(Int64(mbps), out, cap)) }
     }
 
     /// Mbps at the surface, bps on the model and the wire. Integer division on purpose: the picker
     /// offers whole Mbps only, so a value that is not one is a value the picker cannot show.
-    package static func mbps(fromBps bps: Int) -> Int { bps / 1_000_000 }
+    package static func mbps(fromBps bps: Int) -> Int {
+        Int(slopdesk_ws_gui_mbps_from_bps(Int64(bps)))
+    }
 
     /// The inverse. `0` stays `0`, which is Auto on both sides of the conversion.
-    package static func bps(fromMbps mbps: Int) -> Int { mbps * 1_000_000 }
+    package static func bps(fromMbps mbps: Int) -> Int {
+        Int(slopdesk_ws_gui_bps_from_mbps(Int64(mbps)))
+    }
 
     // MARK: Gates
 
@@ -216,7 +301,10 @@ package enum GuiPaneReadout {
         streamFpsCap: Int,
         streamBitrateCeilingBps: Int,
     ) -> Bool {
-        immersive || viewportLocked || audioEnabled || streamFpsCap != 0 || streamBitrateCeilingBps != 0
+        slopdesk_ws_gui_has_latched_mode(
+            immersive, viewportLocked, audioEnabled,
+            Int64(streamFpsCap), Int64(streamBitrateCeilingBps),
+        )
     }
 
     /// Whether this is a LIVE desktop pane that accepts drag-drop uploads.
@@ -234,28 +322,25 @@ package enum GuiPaneReadout {
     package static func activationKey(
         paneHash: Int, promotionGeneration: Int, isVisible: Bool,
     ) -> String {
-        "\(paneHash):\(promotionGeneration):\(isVisible ? 1 : 0)"
+        guiAnswer { out, cap in
+            Int(slopdesk_ws_gui_activation_key(
+                Int64(paneHash), Int64(promotionGeneration), isVisible, out, cap,
+            ))
+        }
     }
 
     // MARK: Upload marks
 
     /// The upload row's glyph name: rising while it sends, a settled check on success, a warning
-    /// triangle on failure. An SF Symbol NAME is data, so the mapping is here and the drawing is not.
+    /// triangle on failure. An SF Symbol NAME is data, so the mapping is one floor down and the
+    /// drawing is not.
     package static func uploadGlyph(_ phase: FileUploadProgress.Phase) -> String {
-        switch phase {
-        case .sending: "arrow.up.circle"
-        case .completed: "checkmark.circle.fill"
-        case .failed: "exclamationmark.triangle.fill"
-        }
+        guiAnswer { out, cap in Int(slopdesk_ws_gui_upload_glyph(phase.ffiByte, out, cap)) }
     }
 
     /// The upload row's tone. Settled either way takes the accent; the glyph carries which.
     package static func uploadTint(_ phase: FileUploadProgress.Phase) -> GuiUploadTint {
-        switch phase {
-        case .sending: .icon
-        case .completed,
-             .failed: .accent
-        }
+        slopdesk_ws_gui_upload_tint(phase.ffiByte) == 0 ? .icon : .accent
     }
 
     // MARK: Control-bar tooltips

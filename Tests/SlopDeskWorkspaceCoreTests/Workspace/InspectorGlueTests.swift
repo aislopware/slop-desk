@@ -594,11 +594,12 @@ final class InspectorGlueTests: XCTestCase {
 
     // MARK: - 4. The real makeInspector wiring — pure port convention (no socket dialed)
 
-    /// Binds to the real production wiring: the inspector second channel rides the
-    /// terminal port **+ `inspectorPortOffset`**. Pure math — never opens a socket. Pins the
-    /// single-source convention so a host that later advertises a distinct port is a one-line change.
+    /// Binds to the real production wiring: the inspector second channel rides the terminal port
+    /// **+ 1**. Pure math — never opens a socket. Pins the convention through the one face that
+    /// answers it (`slopdesk_workspace::store_shape::inspector_port`), rather than through a Swift
+    /// constant beside it: the offset is spelled once, on the Rust side, so a host that later
+    /// advertises a distinct port is a one-line change there.
     func testInspectorPortConventionIsTerminalPortPlusOffset() {
-        XCTAssertEqual(WorkspaceStore.inspectorPortOffset, 1, "documented single-source offset")
         XCTAssertEqual(
             WorkspaceStore.inspectorPort(for: ConnectionTarget(host: "127.0.0.1", port: 7420)),
             7421,
@@ -608,7 +609,7 @@ final class InspectorGlueTests: XCTestCase {
 
     /// The convention saturates safely: a terminal on the TOP port has no room above it, so the
     /// inspector port is `nil` (and `liveMakeInspector` then returns `nil` — no inspector, terminal
-    /// unaffected). Guards the `addingReportingOverflow` boundary.
+    /// unaffected). Guards the rule's own checked-add boundary, which answers `-1` there.
     func testInspectorPortReturnsNilWhenTerminalIsOnTopPort() {
         XCTAssertNil(
             WorkspaceStore.inspectorPort(for: ConnectionTarget(host: "127.0.0.1", port: .max)),

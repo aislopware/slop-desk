@@ -33,9 +33,19 @@ public extension WorkspaceStore {
     ) -> [String: String] {
         var inputs = environment
         // Skip argv[0] (the executable path); a matching `SLOPDESK_…=value` argument overrides env.
+        // Which arguments qualify and where the key ends is
+        // `slopdesk_workspace::store_shape::automation_override`, which answers a BYTE offset onto
+        // the `=` — so both halves either side of it are whole UTF-8 and the split cannot land
+        // mid-scalar.
         for arg in arguments.dropFirst() {
-            guard arg.hasPrefix("SLOPDESK_"), let eq = arg.firstIndex(of: "=") else { continue }
-            inputs[String(arg[..<eq])] = String(arg[arg.index(after: eq)...])
+            let bytes = Array(arg.utf8)
+            let at = bytes.withUnsafeBufferPointer {
+                slopdesk_ws_automation_override($0.baseAddress, $0.count)
+            }
+            guard at >= 0, at < bytes.count,
+                  let key = String(bytes: bytes[..<at], encoding: .utf8),
+                  let value = String(bytes: bytes[(at + 1)...], encoding: .utf8) else { continue }
+            inputs[key] = value
         }
         return inputs
     }
@@ -45,10 +55,39 @@ public extension WorkspaceStore {
     }
 
     /// The app target from the terminal-autoconnect env vars, or `nil`.
+    ///
+    /// The var NAMES stay here — they are the launch seam `slopdesk-guigate macos` writes, and a
+    /// spelling, not a decision. What crosses is
+    /// `slopdesk_workspace::store_shape::terminal_target`: whether these two strings describe a
+    /// target at all, and what port they name. An unset var and one set to nothing are the same
+    /// answer, which is why the lookups default to empty rather than branching twice.
     static func terminalTarget(from env: [String: String]) -> ConnectionTarget? {
-        guard let host = env["SLOPDESK_AUTOCONNECT_HOST"], !host.isEmpty,
-              let portStr = env["SLOPDESK_AUTOCONNECT_PORT"], let port = UInt16(portStr) else { return nil }
+        let host = env["SLOPDESK_AUTOCONNECT_HOST"] ?? ""
+        let hostBytes = Array(host.utf8)
+        let portBytes = Array((env["SLOPDESK_AUTOCONNECT_PORT"] ?? "").utf8)
+        var port: UInt16 = 0
+        let resolved = hostBytes.withUnsafeBufferPointer { h in
+            portBytes.withUnsafeBufferPointer { p in
+                slopdesk_ws_terminal_target_port(h.baseAddress, h.count, p.baseAddress, p.count, &port)
+            }
+        }
+        guard resolved else { return nil }
         return ConnectionTarget(host: host, port: port)
+    }
+
+    /// The inspector port for the app ``ConnectionTarget``, or `nil` when there is no room above the
+    /// terminal port.
+    ///
+    /// The wire-protocol convention for a pane's inspector second channel (docs/16, docs/20 §0): the
+    /// inspector's NWConnection #2 rides the **same NetBird tunnel** beside the terminal PTY, one
+    /// port above it. The offset and the arithmetic that applies it are ONE decision and both live in
+    /// `slopdesk_workspace::store_shape::inspector_port` — a constant spelled on this side as well
+    /// would be the two-languages drift written across a single line. `-1` is the refusal, which a
+    /// `UInt16` answer can never collide with.
+    static func inspectorPort(for target: ConnectionTarget) -> UInt16? {
+        let port = slopdesk_ws_inspector_port(target.port)
+        guard port >= 0, let resolved = UInt16(exactly: port) else { return nil }
+        return resolved
     }
 
     /// The app target + the per-pane window from the video-autoconnect env vars, or `nil`. The terminal
@@ -137,21 +176,32 @@ extension WorkspaceStore {
     ///
     /// The video shape's TREE is a lone terminal exactly like the terminal shape's — the desktop pane
     /// is detached and travels as its own intent, never in the tree.
+    /// The precedence itself is `slopdesk_workspace::store_shape::BootstrapKind`: `0` the default
+    /// workspace, `1` the terminal autoconnect, `2` the video one. Only the MINTING stays here,
+    /// because a tree carries pane ids and those never cross.
     static func bootstrapShape(from env: [String: String]) -> BootstrapShape {
         func singleTerminal(named host: String) -> TreeWorkspace {
             let spec = PaneSpec(kind: .terminal, title: TreeWorkspaceDefaults.paneTitle)
             let session = Session.singlePane(name: host, spec: spec)
             return TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized()
         }
-        if let (target, video) = videoTarget(from: env) {
-            return BootstrapShape(
-                tree: singleTerminal(named: target.host),
-                target: target,
-                desktop: (pane: PaneID(), video: video),
-            )
-        }
-        if let target = terminalTarget(from: env) {
-            return BootstrapShape(tree: singleTerminal(named: target.host), target: target, desktop: nil)
+        let video = videoTarget(from: env)
+        let terminal = terminalTarget(from: env)
+        switch slopdesk_ws_bootstrap_kind(video != nil, terminal != nil) {
+        case 2:
+            if let (target, endpoint) = video {
+                return BootstrapShape(
+                    tree: singleTerminal(named: target.host),
+                    target: target,
+                    desktop: (pane: PaneID(), video: endpoint),
+                )
+            }
+        case 1:
+            if let target = terminal {
+                return BootstrapShape(tree: singleTerminal(named: target.host), target: target, desktop: nil)
+            }
+        default:
+            break
         }
         return BootstrapShape(tree: .defaultWorkspace(), target: nil, desktop: nil)
     }

@@ -215,17 +215,17 @@ public final class AppConnection {
         loadRecentTargets(from: defaults).first ?? .default
     }
 
-    /// Pure MRU push: dedupe by host:port (a re-connect with changed video ports REPLACES the entry —
+    /// MRU push: dedupe by host:port (a re-connect with changed video ports REPLACES the entry —
     /// host:port is the identity, ports are settings), insert at the front, cap at `limit`.
+    ///
+    /// The rule is ``ConnectGate/pushingRecent(_:into:limit:)``; this is the seat the default
+    /// `limit` sits in, so the cap is spelled beside the list it caps.
     static func pushingRecent(
         _ target: ConnectionTarget,
         into list: [ConnectionTarget],
         limit: Int = AppConnection.recentTargetsLimit,
     ) -> [ConnectionTarget] {
-        var out = list.filter { !($0.host == target.host && $0.port == target.port) }
-        out.insert(target, at: 0)
-        if out.count > limit { out.removeLast(out.count - limit) }
-        return out
+        ConnectGate.pushingRecent(target, into: list, limit: limit)
     }
 
     /// Records a SUCCESSFUL connect into the MRU (failures don't pollute the menu) and persists it.
@@ -270,15 +270,19 @@ public final class AppConnection {
 
     // MARK: Form validation (the gate's Connect button)
 
+    /// The form's ONE verdict — a target, or the words that say why there is none.
+    ///
+    /// Both readings below come off this single call, which is what makes `validationHint == nil`
+    /// ⟺ `canConnect` structural rather than a promise: the rule is
+    /// ``ConnectGate/parse(host:port:mediaPort:cursorPort:)``, and it answers exactly once.
+    private var parsedForm: ConnectGate.Parsed {
+        ConnectGate.parse(host: host, port: port, mediaPort: mediaPort, cursorPort: cursorPort)
+    }
+
     /// The parsed target from the form, or `nil` if any field is invalid.
     private func parsedTarget() -> ConnectionTarget? {
-        let h = host.trimmingCharacters(in: .whitespaces)
-        guard !h.isEmpty,
-              let p = UInt16(port.trimmingCharacters(in: .whitespaces)), p >= 1,
-              let m = UInt16(mediaPort.trimmingCharacters(in: .whitespaces)), m >= 1,
-              let c = UInt16(cursorPort.trimmingCharacters(in: .whitespaces)), c >= 1,
-              m != c else { return nil }
-        return ConnectionTarget(host: h, port: p, mediaPort: m, cursorPort: c)
+        guard case let .target(t) = parsedForm else { return nil }
+        return t
     }
 
     /// Whether the form parses to a valid target (the Connect button's enabled state).
@@ -286,17 +290,8 @@ public final class AppConnection {
 
     /// Why Connect is disabled, or `nil` when enabled (`validationHint == nil` ⟺ `canConnect`).
     public var validationHint: String? {
-        if host.trimmingCharacters(in: .whitespaces).isEmpty { return "Enter a host" }
-        if UInt16(port.trimmingCharacters(in: .whitespaces)).map({ $0 < 1 }) ?? true {
-            return "Port must be a number from 1–65535"
-        }
-        let m = UInt16(mediaPort.trimmingCharacters(in: .whitespaces))
-        let c = UInt16(cursorPort.trimmingCharacters(in: .whitespaces))
-        if (m.map { $0 < 1 } ?? true) || (c.map { $0 < 1 } ?? true) {
-            return "Video ports must be numbers from 1–65535"
-        }
-        if m == c { return "Media and cursor ports must differ" }
-        return nil
+        guard case let .refused(hint) = parsedForm else { return nil }
+        return hint
     }
 
     // MARK: Lifecycle
@@ -340,7 +335,7 @@ public final class AppConnection {
             startSupervisor(t, generation: gen)
         } catch {
             guard gen == connectGeneration, !deliberatelyClosed else { return }
-            status = .failed(Self.failureReason(for: error))
+            status = .failed(ConnectGate.failureReason(for: error))
         }
     }
 
@@ -442,11 +437,5 @@ public final class AppConnection {
                 }
             }
         }
-    }
-
-    /// The user-facing `.failed` reason for a thrown error (humanized for `LocalizedError`, else the
-    /// readable Swift payload) — same policy as ``ConnectionViewModel/failureReason(for:)``.
-    static func failureReason(for error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? String(describing: error)
     }
 }

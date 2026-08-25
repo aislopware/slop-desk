@@ -90,6 +90,7 @@ pub mod code_surface;
 pub mod command_navigator;
 pub mod config;
 pub mod connect_form;
+pub mod connect_gate;
 pub mod connection;
 pub mod context_menu;
 pub mod cursor_overlay;
@@ -134,6 +135,7 @@ pub mod global_search;
 // macOS only: behind it is a vendored `libgit2`, and only hostd asks the question. See the module.
 #[cfg(target_os = "macos")]
 pub mod git_status;
+pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
 pub mod hint_scan;
@@ -242,6 +244,8 @@ pub mod simulator_wire;
 pub mod spawn_env;
 pub mod state_scalars;
 pub mod status_pill;
+pub mod store_rollup;
+pub mod store_shape;
 pub mod supervision;
 pub mod supervisor_batch;
 pub mod supervisor_frame;

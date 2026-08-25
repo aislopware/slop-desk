@@ -80,10 +80,12 @@ public extension WorkspaceStore {
 
     /// The rolled-up completion badge over every leaf of session `sessionID` — `.failure` dominates
     /// `.success` (a failure is the more urgent thing to surface); `nil` when no leaf carries one. The
-    /// sidebar session-row badge. Mirrors ``rollupStatus(forSession:)``.
+    /// ladder is ``StoreRollup/rollupCompletion(_:)`` — `slopdesk_workspace::store_rollup` — which is
+    /// handed the COLUMN of per-leaf badges and never a pane. The sidebar session-row badge. Mirrors
+    /// ``rollupStatus(forSession:)``.
     func rollupPendingCompletion(forSession sessionID: SessionID) -> PaneCompletionBadge? {
         guard let session = tree.sessions.first(where: { $0.id == sessionID }) else { return nil }
-        return Self.rollupCompletion(session.allPaneIDs().map { panePendingCompletion[$0] })
+        return StoreRollup.rollupCompletion(session.allPaneIDs().map { panePendingCompletion[$0] })
     }
 
     /// The rolled-up completion badge over every leaf of tab `tabID` (the tab-pill badge). `.failure`
@@ -91,23 +93,10 @@ public extension WorkspaceStore {
     func rollupPendingCompletion(forTab tabID: TabID) -> PaneCompletionBadge? {
         for session in tree.sessions {
             if let tab = session.tabs.first(where: { $0.id == tabID }) {
-                return Self.rollupCompletion(tab.allPaneIDs().map { panePendingCompletion[$0] })
+                return StoreRollup.rollupCompletion(tab.allPaneIDs().map { panePendingCompletion[$0] })
             }
         }
         return nil
-    }
-
-    /// `.failure` if any leaf failed, else `.success` if any succeeded, else `nil`. Pure helper.
-    internal static func rollupCompletion(_ badges: [PaneCompletionBadge?]) -> PaneCompletionBadge? {
-        var sawSuccess = false
-        for badge in badges {
-            switch badge {
-            case .failure: return .failure
-            case .success: sawSuccess = true
-            case nil: break
-            }
-        }
-        return sawSuccess ? .success : nil
     }
 
     /// Folds a finished command (OSC 133;D `.idle`, wire type 23) for pane `id`: updates the

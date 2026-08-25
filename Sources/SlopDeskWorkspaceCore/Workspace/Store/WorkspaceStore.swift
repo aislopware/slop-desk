@@ -813,12 +813,9 @@ public final class WorkspaceStore {
 
     /// Fronts `id` in the visit ring. Dead ids are not pruned here — ``PaneSwitcher/candidates(active:mru:ordered:)``
     /// intersects with the live pane set on every open, so a pane that closes simply stops being offered.
+    /// The push is ``RecentsRing/pushing(_:into:cap:retaining:)``, the one ring policy every ring here runs.
     func notePaneVisit(_ id: PaneID) {
-        paneVisitMRU.removeAll { $0 == id }
-        paneVisitMRU.insert(id, at: 0)
-        if paneVisitMRU.count > Self.paneVisitMRUCap {
-            paneVisitMRU.removeLast(paneVisitMRU.count - Self.paneVisitMRUCap)
-        }
+        paneVisitMRU = RecentsRing.pushing(id, into: paneVisitMRU, cap: Self.paneVisitMRUCap)
     }
 
     // MARK: - Recent-pane MRU (quick-switch to the previously-focused pane)
@@ -924,13 +921,10 @@ public final class WorkspaceStore {
     /// How many recents to keep.
     public static let recentCommandsCap = 5
 
-    /// Records a run command's catalog id at the front of the recents ring (dedup-to-front, capped).
+    /// Records a run command's catalog id at the front of the recents ring (dedup-to-front, capped) through
+    /// ``RecentsRing/pushing(_:into:cap:retaining:)``, the one ring policy every ring here runs.
     public func recordRecentCommand(_ catalogID: String) {
-        recentCommands.removeAll { $0 == catalogID }
-        recentCommands.insert(catalogID, at: 0)
-        if recentCommands.count > Self.recentCommandsCap {
-            recentCommands.removeLast(recentCommands.count - Self.recentCommandsCap)
-        }
+        recentCommands = RecentsRing.pushing(catalogID, into: recentCommands, cap: Self.recentCommandsCap)
     }
 
     // MARK: - Clipboard history ring
@@ -1028,17 +1022,15 @@ public final class WorkspaceStore {
     }
 
     /// Records `text` at the front of the ring (deduped — a repeat moves to front), capped at
-    /// ``clipboardRingCap``. Skips empty/whitespace, and skips everything when the user has turned OFF
-    /// clipboard-history recording (Settings ▸ Advanced ▸ Privacy) — the single chokepoint, so a copied
-    /// secret is never retained when recording is disabled. Read at fire-time so the toggle applies live.
+    /// ``clipboardRingCap`` through ``RecentsRing/pushing(_:into:cap:retaining:)``, the one ring policy every
+    /// ring here runs. The two GATES stay in Swift because they are gates rather than ring policy: it skips
+    /// empty/whitespace, and skips everything when the user has turned OFF clipboard-history recording
+    /// (Settings ▸ Advanced ▸ Privacy) — the single chokepoint, so a copied secret is never retained when
+    /// recording is disabled. Read at fire-time so the toggle applies live.
     public func recordClip(_ text: String) {
         guard SettingsKey.recordClipboardHistoryEnabled else { return }
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        clipboardRing.removeAll { $0 == text }
-        clipboardRing.insert(text, at: 0)
-        if clipboardRing.count > Self.clipboardRingCap {
-            clipboardRing.removeLast(clipboardRing.count - Self.clipboardRingCap)
-        }
+        clipboardRing = RecentsRing.pushing(text, into: clipboardRing, cap: Self.clipboardRingCap)
     }
 
     /// Clears the clipboard history (a privacy affordance).
@@ -3415,20 +3407,6 @@ public extension WorkspaceStore {
                 resumeSeed: resumeSeed,
             )
         }
-    }
-
-    /// The wire-protocol convention for a pane's inspector second channel (docs/16, docs/20 §0): the
-    /// inspector's NWConnection #2 rides the **same NetBird tunnel** beside the terminal PTY, on the
-    /// terminal port **+ 1**. Documented + isolated here so it is the single place to revise if the
-    /// host ever advertises a distinct inspector port. Saturates at `UInt16.max` (a terminal on the
-    /// top port has no room above it — the inspector is then unavailable, handled by the `nil` path).
-    static let inspectorPortOffset: UInt16 = 1
-
-    /// The inspector port for the app ``ConnectionTarget`` (the `+ inspectorPortOffset` convention
-    /// above), or `nil` when there is no room above the terminal port.
-    static func inspectorPort(for target: ConnectionTarget) -> UInt16? {
-        let (sum, overflow) = target.port.addingReportingOverflow(inspectorPortOffset)
-        return overflow ? nil : sum
     }
 
     /// Builds the production read-only ``InspectorClient`` for a terminal pane's `endpoint` (subscribed

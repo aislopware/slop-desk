@@ -207,34 +207,25 @@ extension WorkspaceStore {
     /// session's surfaces on-window. Beyond this the LRU evicts the least-recently-active session.
     static var retainedSessionCap: Int { 2 }
 
-    /// Pure LRU push for ``retainedSessionIDs``: promote the newly-`selected` session to the front, KEEP the
-    /// `previous` (outgoing) active session retained behind it (seeding it on the first switch away — it was
-    /// never itself `selected` via this path), dedupe, and cap at `cap`.
-    static func pushingSessionRetention(
-        _ selected: SessionID,
-        previous: SessionID?,
-        into list: [SessionID],
-        cap: Int = retainedSessionCap,
-    ) -> [SessionID] {
-        var out = list
-        if let previous, !out.contains(previous) { out.insert(previous, at: 0) }
-        out.removeAll { $0 == selected }
-        out.insert(selected, at: 0)
-        if out.count > cap { out.removeLast(out.count - cap) }
-        return out
-    }
-
     /// Records that the active session changed to `selected` (from `previous`) into the retention LRU so the
     /// outgoing session's surfaces stay mounted across the switch.
+    ///
+    /// The push is ``RecentsRing/pushing(_:into:cap:retaining:)`` — the one dedupe-to-front-and-cap every
+    /// ring in the store runs — with the outgoing session as the `retaining` half, which is what seeds it
+    /// on the first switch away (it was never itself selected through this path).
     func noteActiveSessionChanged(to selected: SessionID, from previous: SessionID?) {
-        retainedSessionIDs = Self.pushingSessionRetention(selected, previous: previous, into: retainedSessionIDs)
+        retainedSessionIDs = RecentsRing.pushing(
+            selected, into: retainedSessionIDs, cap: Self.retainedSessionCap, retaining: previous,
+        )
     }
 
     /// Drops a closed session from the retention LRU and re-seeds the now-active session so it renders.
     func noteSessionClosed(_ sessionID: SessionID) {
         retainedSessionIDs.removeAll { $0 == sessionID }
         if let active = tree.activeSessionID {
-            retainedSessionIDs = Self.pushingSessionRetention(active, previous: nil, into: retainedSessionIDs)
+            retainedSessionIDs = RecentsRing.pushing(
+                active, into: retainedSessionIDs, cap: Self.retainedSessionCap,
+            )
         }
     }
 }

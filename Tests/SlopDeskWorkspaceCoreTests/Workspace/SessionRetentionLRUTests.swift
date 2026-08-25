@@ -43,15 +43,32 @@ final class SessionRetentionLRUTests: XCTestCase {
     }
 
     /// Pure LRU: beyond the cap the least-recently-active session is evicted (A→B→C drops A at cap 2).
+    /// The push is the shared ``RecentsRing`` policy every ring in the store runs, with the outgoing
+    /// session as the `retaining` half.
     func testPureLRUEvictsBeyondCap() {
         let a = SessionID(), b = SessionID(), c = SessionID()
-        // A active, switch to B: [B, A]
-        let afterB = WorkspaceStore.pushingSessionRetention(b, previous: a, into: [], cap: 2)
+        // A active, switch to B: [B, A] — A is SEEDED, having never been pushed through this path.
+        let afterB = RecentsRing.pushing(b, into: [], cap: 2, retaining: a)
         XCTAssertEqual(afterB, [b, a])
         // switch to C: [C, B] — A evicted (LRU)
-        let afterC = WorkspaceStore.pushingSessionRetention(c, previous: b, into: afterB, cap: 2)
+        let afterC = RecentsRing.pushing(c, into: afterB, cap: 2, retaining: b)
         XCTAssertEqual(afterC, [c, b])
         XCTAssertFalse(afterC.contains(a), "the least-recently-active session A is evicted beyond the cap")
+    }
+
+    /// A `previous` already in the ring keeps the place it had rather than being promoted — it is not what
+    /// was just chosen, only what must not be lost.
+    func testAPreviousAlreadyRetainedIsNotPromoted() {
+        let a = SessionID(), b = SessionID(), c = SessionID()
+        XCTAssertEqual(RecentsRing.pushing(c, into: [a, b], cap: 3, retaining: b), [c, a, b])
+    }
+
+    /// Retaining the session you are switching TO is not a second entry: it collapses to the plain push,
+    /// whether or not the ring already held it.
+    func testRetainingTheSelectedSessionIsThePlainPush() {
+        let a = SessionID(), b = SessionID()
+        XCTAssertEqual(RecentsRing.pushing(a, into: [b, a], cap: 2, retaining: a), [a, b])
+        XCTAssertEqual(RecentsRing.pushing(a, into: [b], cap: 2, retaining: a), [a, b])
     }
 
     /// Closing a session drops it from the retention set and keeps the now-active session retained.

@@ -8,15 +8,16 @@ import XCTest
 /// arbitrary pane"). The store names the landing from its visit ring instead, and says it as a focus
 /// INTENT so every client agrees on it.
 ///
-/// Pins the pure pick (``WorkspaceStore/mostRecentSurvivor(mru:survivors:)``); the store wiring that
-/// feeds it is exercised by the close paths in `TabCloseSuccessorTests`.
+/// Pins the pure pick (``RecentsRing/mostRecentSurvivor(mru:survivors:)``, which answers a POSITION into
+/// the ring it was handed); the store wiring that feeds it is exercised by the close paths in
+/// `TabCloseSuccessorTests`.
 @MainActor
 final class PaneCloseLandingTests: XCTestCase {
     func testTheMostRecentSURVIVORWins() {
         let a = PaneID(), b = PaneID(), c = PaneID()
         // The ring's front is the pane being closed; `c` is where the user was before it.
         XCTAssertEqual(
-            WorkspaceStore.mostRecentSurvivor(mru: [b, c, a], survivors: [a, c]),
+            RecentsRing.mostRecentSurvivor(mru: [b, c, a], survivors: [a, c]),
             c,
             "the pane the user was just in, not the first survivor in tree order",
         )
@@ -26,14 +27,14 @@ final class PaneCloseLandingTests: XCTestCase {
         let a = PaneID(), ghost = PaneID()
         // The ring is never pruned on close (the switcher intersects with the live set instead), so
         // the pick has to walk past ids nothing can focus any more.
-        XCTAssertEqual(WorkspaceStore.mostRecentSurvivor(mru: [ghost, a], survivors: [a]), a)
+        XCTAssertEqual(RecentsRing.mostRecentSurvivor(mru: [ghost, a], survivors: [a]), a)
     }
 
     func testARingWithNoLiveSurvivorDecidesNothing() {
         // Nothing recorded, or nothing recorded that is still open — the tree op's neighbour rule
         // stands rather than being overridden with a guess.
-        XCTAssertNil(WorkspaceStore.mostRecentSurvivor(mru: [], survivors: [PaneID()]))
-        XCTAssertNil(WorkspaceStore.mostRecentSurvivor(mru: [PaneID()], survivors: [PaneID()]))
+        XCTAssertNil(RecentsRing.mostRecentSurvivor(mru: [], survivors: [PaneID()]))
+        XCTAssertNil(RecentsRing.mostRecentSurvivor(mru: [PaneID()], survivors: [PaneID()]))
     }
 
     // MARK: - Store wiring (the reported repro)

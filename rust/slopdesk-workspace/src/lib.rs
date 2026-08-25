@@ -43,6 +43,12 @@
 //! - [`templates`] — the two things that spawn panes, and the bytes they type into them.
 //! - [`workdir`] — where a freshly-opened pane starts, and why naming no directory is an answer.
 //! - [`status_pill`] — the pane's status chips: which are up, in what order, and what each says.
+//! - [`store_rollup`] — what a whole set of leaves says when their facts are read together, and the
+//!   one ring policy every recents list in the store runs.
+//! - [`store_shape`] — what one gesture moved between two snapshots of the trees, and what one
+//!   launch asks the store to mount.
+//! - [`connect_gate`] — the app-global link's six decisions: the OUT batch plan, the recent-hosts
+//!   menu, the failure reason, the connect form's parse, and the reconnect fold.
 //! - [`vi_hints`] — the copy-mode reference card's tables, its mode pill, and the width ladder it
 //!   re-flows on.
 //! - [`panel_tabs`] — the right panel's four tabs, and how many of them get to say their name.
@@ -50,6 +56,8 @@
 //! - [`find_bar`] — what the in-pane find bar says, and the two rungs an INPUT DEVICE earns.
 //! - [`global_search`] — the cross-tab results surface, and the excerpt cut that must degrade
 //!   rather than trap.
+//! - [`gui_readout`] — what the chrome over a live desktop stream says, where every reading is
+//!   ABSENT rather than wrong.
 //! - [`toast`] — the three events that raise a notification card, and what each one says.
 //! - [`palette_card`] — how big the command palette is, and how far one page of it moves.
 //! - [`close_confirm`] — what a close prompt promises before it takes something away, over the four
@@ -87,6 +95,7 @@ pub mod cheat_sheet;
 pub mod close_confirm;
 pub mod command_navigator;
 pub mod connect_form;
+pub mod connect_gate;
 pub mod connection;
 pub mod drop_action;
 pub mod drop_register;
@@ -95,6 +104,7 @@ pub mod find_bar;
 pub mod frecency;
 pub mod git_line;
 pub mod global_search;
+pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
 pub mod jump;
@@ -123,6 +133,8 @@ pub mod send_keys;
 pub mod sidebar_row;
 pub mod state_codec;
 pub mod status_pill;
+pub mod store_rollup;
+pub mod store_shape;
 pub mod templates;
 pub mod toast;
 pub mod vi_hints;

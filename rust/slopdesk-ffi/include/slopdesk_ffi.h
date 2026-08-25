@@ -10517,6 +10517,302 @@ typedef struct {
 size_t slopdesk_ws_attention_order(const SlopDeskWsWaitingPane *entries, size_t len, uint32_t *out,
                                    size_t capacity);
 
+// ---- What a whole set of leaves says, and what a ring keeps -------------------------------------
+//
+// `slopdesk_ws_pane_*` above answers what ONE status landing on ONE pane moves. These are the other
+// half of the same store: the rules handed a whole COLUMN of per-leaf facts, or a whole ring, that
+// answer one thing about it. The two by-value rollups take a NULL column with a zero length as the
+// empty set, which is what an empty Swift array lends: `withUnsafeBufferPointer` hands over a null
+// base address, and a workspace with no progress anywhere is the state the Dock tile is usually in.
+//
+// No identity crosses any of them, which is what lets ONE ring door serve four call sites. A
+// session id, a pane id, a palette catalogue id and a clipboard text have nothing in common as data
+// and one thing in common as policy, so what crosses is a ROLE per entry and what comes back names
+// POSITIONS in the list the caller still holds.
+typedef struct {
+    uint8_t kind;     // 0 none · 1 determinate · 2 error · 3 indeterminate — the wire's own OSC 9;4
+    uint8_t percent;  // what the two value-carrying kinds hold; meaningless for the other two
+} SlopDeskWsLeafProgress;
+// The ERROR-DOMINANT progress rollup: any error wins, at the FIRST failing leaf's percent — a later
+// failure must not rewrite the number already on screen — else any determinate at the MAX percent,
+// else any spinner. No leaf having one comes back as a `kind` of 0, which is a real answer rather
+// than a refusal: the same byte the door already takes on the way in.
+SlopDeskWsLeafProgress slopdesk_ws_aggregate_progress(const SlopDeskWsLeafProgress *states,
+                                                      size_t len);
+// The completion rollup: 2 if any leaf failed, else 1 if any succeeded, else 0. A badge byte this
+// build cannot name reads as NO badge — inventing a failure for a pane that reported nothing is the
+// one answer that interrupts somebody for no reason.
+uint8_t slopdesk_ws_rollup_completion(const uint8_t *badges, size_t len);
+// Where one entry of a pushed ring came from. `index` is meaningful only for kind 0; the other two
+// name entries that are not in the caller's list at all, which is why this is a flag beside a value
+// rather than a position with two reserved numbers in it.
+typedef struct {
+    uint32_t index;  // the position in the caller's existing ring
+    uint8_t  kind;   // 0 keep `index` · 1 the incoming entry · 2 the seeded previous
+} SlopDeskWsRingSlot;
+// The one dedupe-to-front-and-cap every ring in the store runs — the session-retention LRU, the
+// pane visit ring, the palette recents, the clipboard history. `roles` carries one byte per
+// existing entry, in the ring's order: 1 the entry being pushed, 2 the outgoing entry to retain,
+// anything else an ordinary one, which is the reading that cannot lose an entry. `has_previous`
+// says there IS an outgoing entry; when no role names it, it is SEEDED as the second slot — the
+// first-switch-away case, where nothing else would have put it in the ring. A `previous` equal to
+// the pushed entry is not a previous, and the near side says so by passing false. Returns the count
+// NEEDED; a short or null `out` is written nothing and told the length.
+size_t slopdesk_ws_ring_push(const uint8_t *roles, size_t len, bool has_previous, size_t cap,
+                             SlopDeskWsRingSlot *out, size_t capacity);
+// The POSITION of the first ring entry that still survives, or -1 when none does. The ring is
+// never pruned, so walking past ids nothing can focus is the normal case. -1 is outside the
+// answer's range by construction, which is what keeps 0 — the most common landing a visit ring
+// has — a real answer.
+ptrdiff_t slopdesk_ws_most_recent_survivor(const bool *survives, size_t len);
+
+// ---- What one gesture moved, and what one launch asks for --------------------------------------
+//
+// The store's SHAPE questions. Two of them compare two flattenings of the same trees — which
+// divider the drag moved, which pane the swap put where — and the rest are the launch seam: what
+// the automation environment describes, and what the four named scrolls fire.
+//
+// No identity crosses. A split id and a pane id are UUIDs, so the near side mints a dense TOKEN per
+// distinct id, one table spanning BOTH snapshots of a comparison, and the answers come back as
+// POSITIONS into the list the caller still holds. A split's children are the maximal RUN of slots
+// carrying its token, which is what a depth-first flattening already produces.
+typedef struct {
+    double   weight;   // the slot's own weight; meaningless when `is_flex` is false
+    uint32_t split;    // the token of the split this slot is a child of
+    bool     is_flex;  // false => a fixed child, which owns no share of the divider
+} SlopDeskWsWeightSlot;
+// The leading child's share of `split`'s divider at `index`, or false when that slot is not a flex
+// child of that split. A null `out` asks only whether there is an answer.
+bool slopdesk_ws_leading_weight(const SlopDeskWsWeightSlot *rows, size_t len, uint32_t split,
+                                size_t index, double *out);
+// The one weight that differs between two flattenings, as the split it belongs to plus the POSITION
+// of the changed child. `found` false => nothing moved, which is the ordinary answer for every
+// gesture that was not a divider drag.
+typedef struct {
+    double   weight;
+    size_t   index;
+    uint32_t split;
+    bool     found;   // false => ignore every field above
+} SlopDeskWsWeightChange;
+// A gesture moves ONE divider, so the first difference in emission order IS the difference. Two
+// moved weights answer the first, where the Swift walked a dictionary and answered an arbitrary
+// one — no caller stages two.
+SlopDeskWsWeightChange slopdesk_ws_changed_divider_weight(const SlopDeskWsWeightSlot *before,
+                                                          size_t before_len,
+                                                          const SlopDeskWsWeightSlot *after,
+                                                          size_t after_len);
+// The POSITION in `before` of the pane a swap moved `active` out of the way of, or -1 when the two
+// flattenings do not describe one swap. -1 is outside the answer's range by construction, so 0 —
+// swapping with the first pane — stays a real answer.
+ptrdiff_t slopdesk_ws_swap_partner(const uint32_t *before, size_t before_len, const uint32_t *after,
+                                   size_t after_len, uint32_t active);
+// The BYTE offset of the `=` in a `SLOPDESK_…=value` launch argument, or -1 when the argument is not
+// one. An offset rather than two strings because nothing needs to be allocated to split at it, and
+// both halves either side of a `=` are whole UTF-8 by construction.
+ptrdiff_t slopdesk_ws_automation_override(const uint8_t *argument, size_t len);
+// Whether the terminal-autoconnect vars describe a target at all, and what port they name. An unset
+// var and one set to nothing are the same answer, so both arrive as bytes and the empty case is not
+// branched on twice.
+bool slopdesk_ws_terminal_target_port(const uint8_t *host, size_t host_len, const uint8_t *port,
+                                      size_t port_len, uint16_t *out);
+// Which layout one set of automation inputs describes: 0 the default workspace, 1 the terminal
+// autoconnect, 2 the video one. Video takes precedence. Only the MINTING stays on the near side,
+// because a tree carries pane ids and those never cross.
+uint8_t slopdesk_ws_bootstrap_kind(bool has_video, bool has_terminal);
+// The inspector's second channel, one port above the terminal's (docs/16, docs/20 §0), or -1 when
+// there is no room above it. The offset and the arithmetic that applies it are ONE decision, so
+// neither is spelled on the near side; -1 can never collide with a `uint16_t` answer.
+int32_t slopdesk_ws_inspector_port(uint16_t terminal);
+// The libghostty named binding action one of the four viewport scrolls fires — 0 page up, 1 page
+// down, 2 top, 3 bottom. Two conventions live in those strings and neither survives being written
+// twice: the SIGN (negative is up, toward older scrollback) and the FRACTION (0.9 ≈ a page minus a
+// sliver of overlap, deliberately not copy mode's half page). Returns the bytes NEEDED; a short or
+// null `out` is written nothing and told the length.
+size_t slopdesk_ws_scroll_action(uint8_t code, uint8_t *out, size_t cap);
+// One tab of the flattened workspace, carrying only the four facts a device focus reads.
+typedef struct {
+    uint32_t session;         // the token of the session this tab belongs to
+    bool     holds_pane;      // the focused pane is in this tab
+    bool     is_focus_tab;    // this is the tab the device focus names
+    bool     zoom_is_target;  // this tab's zoom is showing that same pane
+} SlopDeskWsFocusTab;
+// Where a device focus lands, as a POSITION into the flat tab list the caller built.
+typedef struct {
+    size_t tab;
+    bool   resolved;      // false => the tab or pane is gone; host truth shows through
+    bool   focuses_pane;  // also write the pane, not just the tab
+    bool   clears_zoom;   // the zoom-exit rule fired: focus must not land on a hidden pane
+} SlopDeskWsFocusLanding;
+// The device-focus overlay, run through the SAME `focus_pane` op the intent applier uses — over a
+// skeleton built from the facts above, so the zoom-exit rule is not spelled a second time.
+SlopDeskWsFocusLanding slopdesk_ws_device_focus_landing(const SlopDeskWsFocusTab *tabs, size_t len,
+                                                        bool has_pane);
+
+// ---- The connect gate --------------------------------------------------------------------------
+//
+// The app-global link's six decisions: what one drained OUT batch is actually sent as, what the
+// recent-hosts menu becomes after a connect, what a thrown error says, what the form's four fields
+// parse to, and what a reconnect callback does to the status it lands on.
+//
+// The first of those is the only one on the keystroke path, and it takes no keystrokes. The rule
+// reads LENGTHS — merging two adjacent inputs is addition, splitting an oversized one is division,
+// and the barrier is the event's kind — so what crosses is one record per buffered event and what
+// comes back names `(offset, length)` slices of the caller's OWN concatenated blob. A pasted
+// megabyte crosses as the same handful of records a single keystroke does. The form's parse answers
+// its host the same way and for the same reason: trimming is the only thing it did to it.
+typedef struct {
+    size_t   length;  // input only: how many bytes this event puts in the batch's blob
+    uint16_t cols;    // resize only
+    uint16_t rows;    // resize only
+    uint8_t  kind;    // 0 input · 1 resize — anything else contributes nothing and is DROPPED
+} SlopDeskWsOutEvent;
+typedef struct {
+    size_t   offset;  // input only: where in the caller's blob this frame starts
+    size_t   length;  // input only: how far it runs — never 0
+    uint16_t cols;    // resize only
+    uint16_t rows;    // resize only
+    uint8_t  kind;    // 0 input · 1 resize
+} SlopDeskWsOutFrame;
+// The frames one drained OUT batch should be sent as, in send order: resizes coalesced LATEST-WINS
+// with input as a hard barrier, then adjacent input payloads merged and oversized ones split at
+// `max_input_frame_bytes`. The last resize of every batch always survives — the trailing-edge
+// guarantee, which is what makes the final drag size reach the PTY by construction rather than by a
+// timer that could be dropped. A ceiling of 0 is clamped to 1 rather than refused. Returns the count
+// NEEDED; the bound worth lending is one frame per event plus
+// ceil(total_input_bytes / max_input_frame_bytes).
+size_t slopdesk_ws_out_batch_plan(const SlopDeskWsOutEvent *events, size_t count,
+                                  size_t max_input_frame_bytes, SlopDeskWsOutFrame *out,
+                                  size_t capacity);
+// One entry in the gate's recent-hosts menu. The host and the mux port are the entry's IDENTITY; the
+// video ports are settings, which is why a re-connect that changed only those REPLACES its entry.
+typedef struct {
+    SlopDeskWsSpan host;
+    uint16_t       port;
+} SlopDeskWsRecentTarget;
+// The menu after one successful connect, as positions into a VIRTUAL list where 0 is the candidate
+// and i + 1 is `entries[i]`. The virtual index is what lets one answer carry the dedupe, the
+// push-front and the cap at once — and why an entry the candidate replaced comes back as the NEW
+// target's ports rather than the stale ones it matched on. A span that does not resolve reads as an
+// empty host, which is the reading that cannot silently match a real one. Returns the count NEEDED,
+// which is at most `limit`.
+size_t slopdesk_ws_recent_targets_push(SlopDeskWsSpan host, uint16_t port,
+                                       const SlopDeskWsRecentTarget *entries, size_t count,
+                                       const uint8_t *blob, size_t blob_len, size_t limit,
+                                       uint32_t *out, size_t capacity);
+// The user-facing reason for a thrown connect error: the localized description when it has WORDS,
+// else the readable payload behind it. An `Error` cannot cross a C ABI, so what crosses is what the
+// near side can get out of one. A description that is present but blank has told the user nothing,
+// which is why empty and absent are deliberately ONE case here and not two.
+size_t slopdesk_ws_failure_reason(const uint8_t *localized, size_t localized_len,
+                                  const uint8_t *fallback, size_t fallback_len, uint8_t *out,
+                                  size_t cap);
+// The target the connect form's four fields parse to, or the refusal they earn. `hint` is the guard:
+// non-zero => every other field is meaningless, and the refused case is zeroed rather than
+// undefined, so a near side that forgets the guard dials nothing instead of something arbitrary.
+typedef struct {
+    size_t   host_offset;  // the TRIMMED host, into the `host` bytes the caller lent
+    size_t   host_length;
+    uint16_t port;
+    uint16_t media_port;
+    uint16_t cursor_port;
+    uint8_t  hint;         // 0 => the fields parse; else the code the door below turns into words
+} SlopDeskWsConnectTarget;
+// ONE verdict for both readings the gate needs — whether Connect is live, and what the hint under it
+// says — because they are one fact: `hint == 0` IS `canConnect`. Every field is trimmed, and the trim
+// is Unicode White_Space, so a host pasted with a trailing newline is accepted rather than refused. A
+// port of 0 earns the same refusal a non-numeric one does: it is the kernel's "pick one for me",
+// which a client dialling OUT cannot use.
+SlopDeskWsConnectTarget slopdesk_ws_connect_gate_parse(const uint8_t *host, size_t host_len,
+                                                       const uint8_t *port, size_t port_len,
+                                                       const uint8_t *media_port,
+                                                       size_t media_port_len,
+                                                       const uint8_t *cursor_port,
+                                                       size_t cursor_port_len);
+// What a refusal code says. 0 — no refusal — delivers nothing, which is the ABI's own "no answer",
+// and so does a code this build cannot name: a hint with no words is a hint the near side does not
+// draw, and inventing one would put a second vocabulary beside the rule's.
+size_t slopdesk_ws_connect_gate_hint(uint8_t code, uint8_t *out, size_t cap);
+// What one reconnect-campaign callback does to the status it lands on: 0 leave it alone, 1 adopt
+// reconnecting, 2 adopt unreachable. `status` is a SLOPDESK_CONNECTION_STATUS_* code — the same
+// vocabulary every other connection door takes. The attempt count and the next-retry instant
+// deliberately do not cross: they are the caller's payload for the status it adopts, and the rule
+// reads neither. `gave_up` picks which of the two callbacks this is, and both read the same two
+// states, which is why they are one door.
+uint8_t slopdesk_ws_reconnect_fold(uint32_t status, bool deliberately_closed, bool gave_up);
+
+// ---- A video pane's readout --------------------------------------------------------------------
+//
+// What the chrome over a live desktop stream SAYS: five telemetry rows, three number formatters, a
+// stall caption, the cap-gated placeholder, the two quality-choice labels and the marks an upload
+// wears. It lived in a Swift enum one floor under two renderers and named no view type anywhere.
+//
+// EVERY READING IS ABSENT, NEVER WRONG. A stat with no sample prints an em dash and not `0`; a
+// stall with no epoch prints `RECONNECTING` and no age. That is why the sample below is ten values
+// with ten presence FLAGS beside them: a measured zero and a stream nothing has sampled yet are
+// different facts, and no number could have carried the difference.
+//
+// The formatters are printf's — `%.1f` and `%.0f`, exact conversion with ties broken to even.
+typedef struct {
+    double  stats_fps;                     // the ~2 Hz mirror's received rate
+    double  stats_fec_per_sec;
+    double  stats_unrecovered_per_sec;
+    double  stats_rtt_ms;
+    double  stats_encode_ms;
+    double  stats_decode_ms;
+    int64_t stream_fps;                    // host-announced cadence
+    int64_t stream_kbps;                   // client-measured payload bitrate
+    int64_t stats_pacer_depth;
+    int64_t stats_hold_ms;
+    bool    has_stats_fps;                 // one flag per value, IN THE SAME ORDER
+    bool    has_stats_fec_per_sec;
+    bool    has_stats_unrecovered_per_sec;
+    bool    has_stats_rtt_ms;
+    bool    has_stats_encode_ms;
+    bool    has_stats_decode_ms;
+    bool    has_stream_fps;
+    bool    has_stream_kbps;
+    bool    has_stats_pacer_depth;
+    bool    has_stats_hold_ms;
+} SlopDeskWsGuiTelemetry;
+size_t slopdesk_ws_gui_stat_rows(SlopDeskWsGuiTelemetry stats, uint8_t *out, size_t cap);  // 5 runs
+// The three formatters, each on its own so a caller holding ONE number need not build a sample.
+// A false `has_*` answers the absent form: an em dash, or `—/S` for a rate, still reading as one.
+size_t slopdesk_ws_gui_mbps_label(bool has_kbps, int64_t kbps, uint8_t *out, size_t cap);
+size_t slopdesk_ws_gui_per_sec_label(bool has_value, double value, uint8_t *out, size_t cap);
+size_t slopdesk_ws_gui_ms_label(bool has_value, double value, uint8_t *out, size_t cap);
+// `RECONNECTING`, plus a floored, zero-clamped age once the stall's epoch is known. `elapsed` is
+// SECONDS and not an instant: the caller owns the clock, exactly as `slopdesk_ws_pane_settle_due`
+// has it, so the rule can be asked about a chosen moment.
+size_t slopdesk_ws_gui_stall_caption(bool has_since, double elapsed, uint8_t *out, size_t cap);
+// What the non-live placeholder says, for a display of 0 live, 1 entry form, 2 cap-gated. The gated
+// state names its own CAUSE; a code this build cannot name answers the neutral word instead of
+// accusing a cap that may not be saturated.
+size_t slopdesk_ws_gui_placeholder_label(uint8_t display, uint8_t *out, size_t cap);
+// The two quality labels. `0` is not a quantity on either axis — it is the ABSENCE of a cap, so
+// both print "Auto" rather than a digit that would read as "cap the stream at zero frames".
+size_t slopdesk_ws_gui_fps_choice_label(int64_t fps, uint8_t *out, size_t cap);
+size_t slopdesk_ws_gui_mbps_choice_label(int64_t mbps, uint8_t *out, size_t cap);
+// Mbps at the surface, bps on the model and the wire. The first TRUNCATES, because the picker has
+// no fractional row to land on; the second SATURATES, because a panic here aborts the process. `0`
+// stays `0` through both, which is Auto on either side.
+int64_t slopdesk_ws_gui_mbps_from_bps(int64_t bps);
+int64_t slopdesk_ws_gui_bps_from_mbps(int64_t mbps);
+// Whether any LATCHED mode is engaged — what the control bar tints and the collapsed chip inherits,
+// so folding the bar away never hides a status light. Both caps are `!= 0`, because `0` is Auto and
+// a negative cap is a corrupt setting that is still not Auto.
+bool slopdesk_ws_gui_has_latched_mode(bool immersive, bool viewport_locked, bool audio_enabled,
+                                      int64_t stream_fps_cap, int64_t stream_bitrate_ceiling_bps);
+// The video activation task's identity, as `hash:generation:visible`. Three components because a
+// pane returning to screen is never remounted: a key that ignored visibility would leave it waiting
+// for a remount that never comes.
+size_t slopdesk_ws_gui_activation_key(int64_t pane_hash, int64_t promotion_generation,
+                                      bool is_visible, uint8_t *out, size_t cap);
+// The upload row's SF Symbol name and its TONE (0 the resting icon tone, 1 the accent), for a phase
+// of 0 sending, 1 completed, 2 failed. A colour never crosses — only the branch does. A code this
+// build cannot name reads as still-sending, because the other two claim the transfer SETTLED.
+size_t  slopdesk_ws_gui_upload_glyph(uint8_t phase, uint8_t *out, size_t cap);
+uint8_t slopdesk_ws_gui_upload_tint(uint8_t phase);
+
 // ---- The pane switcher -------------------------------------------------------------------------
 //
 // Two width rungs, not one: NEITHER desktop bound survives the move to a phone, which is arithmetic

@@ -5,6 +5,13 @@
 // rule #6 forbids a test from doing. So the five telemetry rows, the stall caption, the fps/bitrate
 // choice tables and five predicates shipped unpinned for as long as they existed.
 //
+// THE RULES ARE RUST NOW (`slopdesk_workspace::gui_readout`), AND THIS SUITE DID NOT MOVE WITH THEM.
+// Every assertion below was written against the deleted Swift and passes unchanged against the
+// doors, which is the evidence the port is behaviour-identical — the same standard
+// `WorkspaceIntentApplierTests` sets one boundary over (docs/55 §4b). It is not a mirror of the
+// crate's own tests: what it pins is the CROSSING — that ten `Optional`s reach the far side as ten
+// presence flags in the right order, and that the strings come back byte for byte.
+//
 // The claim these suites keep is one sentence: ABSENT, NEVER WRONG. A stat with no sample prints `—`
 // and not `0`; a stall with no epoch prints `RECONNECTING` and not `· 0S`. A zero that means "no
 // reading" is the one lie an instrument readout must not tell — and it is the easy regression, since
@@ -57,6 +64,34 @@ final class GuiPaneReadoutFormatterTests: XCTestCase {
         XCTAssertEqual(rows[2], "FEC —/S · LOST —/S", "an absent RATE still reads as a rate")
         XCTAssertEqual(rows[3], "RTT — · ENC — · DEC —")
         XCTAssertEqual(rows[4], "HOLD — MS")
+    }
+
+    /// EACH SLOT ON ITS OWN, because the sample crosses as ten values with ten flags beside them and
+    /// the failure a whole-sample test cannot see is a flag wired to its NEIGHBOUR. All-present and
+    /// all-absent both pass with any two same-typed pairs transposed; a sample with exactly one
+    /// reading in it does not.
+    func testEachReadingCrossesIntoItsOwnSlotAndNoOther() {
+        let cases: [(GuiStreamTelemetry, String)] = [
+            (GuiStreamTelemetry(streamFps: 9), "9 FPS"),
+            (GuiStreamTelemetry(streamKbps: 9000), "9.0 MBPS"),
+            (GuiStreamTelemetry(statsFps: 9), "RX 9 FPS"),
+            (GuiStreamTelemetry(statsPacerDepth: 9), "DEPTH 9"),
+            (GuiStreamTelemetry(statsFecPerSec: 9), "FEC 9.0/S"),
+            (GuiStreamTelemetry(statsUnrecoveredPerSec: 9), "LOST 9.0/S"),
+            (GuiStreamTelemetry(statsRttMs: 9), "RTT 9.0"),
+            (GuiStreamTelemetry(statsEncodeMs: 9), "ENC 9.0"),
+            (GuiStreamTelemetry(statsDecodeMs: 9), "DEC 9.0"),
+            (GuiStreamTelemetry(statsHoldMs: 9), "HOLD 9 MS"),
+        ]
+
+        for (sample, expected) in cases {
+            let joined = GuiPaneReadout.statRows(sample).joined(separator: "\n")
+            XCTAssertTrue(joined.contains(expected), "\(expected) is missing from\n\(joined)")
+            XCTAssertEqual(
+                joined.filter { $0 == "9" }.count, expected.filter { $0 == "9" }.count,
+                "exactly one slot may carry a reading:\n\(joined)",
+            )
+        }
     }
 
     /// kbps on the wire, Mbps at the surface — the one conversion the readout does.

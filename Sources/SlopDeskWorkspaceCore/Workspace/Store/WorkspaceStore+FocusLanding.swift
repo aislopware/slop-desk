@@ -64,7 +64,8 @@ extension WorkspaceStore {
     /// in it (the tree op's neighbour rule stands rather than being overridden with a guess).
     ///
     /// The ring's front is the pane being closed, so "most recent survivor" is simply the first entry
-    /// that is still there.
+    /// that is still there — ``RecentsRing/mostRecentSurvivor(mru:survivors:)``, which is handed one
+    /// flag per ring entry and answers a POSITION, so no pane id crosses.
     func paneCloseLanding(closing target: PaneID) -> PaneID? {
         guard let (sessionID, tabID) = tree.tab(containing: target),
               let tab = tree.sessions.first(where: { $0.id == sessionID })?
@@ -73,11 +74,6 @@ extension WorkspaceStore {
         else { return nil }
         let survivors = Set(tab.allPaneIDs()).subtracting([target])
         guard survivors.count > 1 else { return nil }
-        return Self.mostRecentSurvivor(mru: paneVisitMRU, survivors: survivors)
-    }
-
-    /// The first id in `mru` that is still in `survivors`. Pure — pinned by `PaneCloseLandingTests`.
-    static func mostRecentSurvivor(mru: [PaneID], survivors: Set<PaneID>) -> PaneID? {
-        mru.first { survivors.contains($0) }
+        return RecentsRing.mostRecentSurvivor(mru: paneVisitMRU, survivors: survivors)
     }
 }

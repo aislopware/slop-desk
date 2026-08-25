@@ -1,3 +1,5 @@
+import CSlopDeskFFI
+import Foundation
 import SlopDeskTerminal
 
 // MARK: - FontSizeStep (the ⌘+ / ⌘- / ⌘0 font-zoom intent the active-pane hooks route through)
@@ -36,17 +38,38 @@ public enum ScrollAction: Equatable, Sendable {
     /// ⇧End — jump to the very bottom (newest) of the scrollback buffer.
     case bottom
 
-    /// The libghostty named binding action this scroll intent fires through
-    /// ``TerminalSurfaceActions/performBindingAction(_:)`` — the SINGLE source of the intent→action mapping
-    /// (so the store hook and any test pin the same string). `0.9` ≈ one page; the sign follows the
-    /// negative-is-up convention.
-    var libghosttyAction: String {
+    /// The discriminant this scroll crosses as — `slopdesk_workspace::store_shape::ScrollAction`'s
+    /// own order, which is this case list's. The cases stay in Swift because a `switch` in the
+    /// routing reads them; the STRINGS do not, for the reason ``libghosttyAction`` gives.
+    private var ffiByte: UInt8 {
         switch self {
-        case .pageUp: "scroll_page_fractional:-0.9"
-        case .pageDown: "scroll_page_fractional:0.9"
-        case .top: "scroll_to_top"
-        case .bottom: "scroll_to_bottom"
+        case .pageUp: 0
+        case .pageDown: 1
+        case .top: 2
+        case .bottom: 3
         }
+    }
+
+    /// The libghostty named binding action this scroll intent fires through
+    /// ``TerminalSurfaceActions/performBindingAction(_:)`` — the SINGLE source of the intent→action
+    /// mapping (so the store hook and any test pin the same string), and it is
+    /// `slopdesk_workspace::store_shape::ScrollAction::libghostty_action`. Two conventions live in
+    /// those four strings and neither survives being written twice: the SIGN (negative is up, toward
+    /// older scrollback) and the FRACTION (`0.9` ≈ a page minus a sliver of overlap — deliberately
+    /// not copy mode's half page, which is a different gesture on a different key).
+    var libghosttyAction: String {
+        func read(_ capacity: Int) -> (bytes: [UInt8], written: Int) {
+            var out = [UInt8](repeating: 0, count: capacity)
+            let written = out.withUnsafeMutableBufferPointer {
+                slopdesk_ws_scroll_action(ffiByte, $0.baseAddress, $0.count)
+            }
+            return (out, written)
+        }
+        // Generous by an order of magnitude; the retry exists to be correct rather than to be used.
+        var answer = read(64)
+        if answer.written > answer.bytes.count { answer = read(answer.written) }
+        guard answer.written > 0, answer.written <= answer.bytes.count else { return "" }
+        return String(bytes: answer.bytes[..<answer.written], encoding: .utf8) ?? ""
     }
 }
 

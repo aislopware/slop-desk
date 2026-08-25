@@ -31,11 +31,12 @@ public extension WorkspaceStore {
     /// The rolled-up OSC 9;4 progress over every leaf of session `sessionID` — the Dock aggregate source.
     /// **Error-dominant**: any leaf in `.error` makes the whole session read error (the most urgent thing to
     /// surface — the macOS Dock tile turns red on error); else any determinate value (the bar fills toward done, so the
-    /// MAX percent across leaves); else any indeterminate spinner; else `nil`. Mirrors
-    /// ``rollupPendingCompletion(forSession:)``.
+    /// MAX percent across leaves); else any indeterminate spinner; else `nil`. The ladder is
+    /// ``StoreRollup/aggregateProgress(_:)`` — `slopdesk_workspace::store_rollup` — which is handed the
+    /// COLUMN of per-leaf states and never a pane. Mirrors ``rollupPendingCompletion(forSession:)``.
     func rollupProgress(forSession sessionID: SessionID) -> PaneProgress? {
         guard let session = tree.sessions.first(where: { $0.id == sessionID }) else { return nil }
-        return Self.aggregateProgress(session.allPaneIDs().map { paneProgress[$0] })
+        return StoreRollup.aggregateProgress(session.allPaneIDs().map { paneProgress[$0] })
     }
 
     /// The rolled-up OSC 9;4 progress over every leaf of tab `tabID` (the tab-level aggregate). Error-dominant,
@@ -43,7 +44,7 @@ public extension WorkspaceStore {
     func rollupProgress(forTab tabID: TabID) -> PaneProgress? {
         for session in tree.sessions {
             if let tab = session.tabs.first(where: { $0.id == tabID }) {
-                return Self.aggregateProgress(tab.allPaneIDs().map { paneProgress[$0] })
+                return StoreRollup.aggregateProgress(tab.allPaneIDs().map { paneProgress[$0] })
             }
         }
         return nil
@@ -56,7 +57,7 @@ public extension WorkspaceStore {
     /// leaf wins, else the MAX determinate percent, else any spinner, else `nil`. The Dock tile is
     /// process-global, so it rolls up the whole tree.
     func rollupProgressAcrossSessions() -> PaneProgress? {
-        Self.aggregateProgress(paneProgress.values.map { $0 as PaneProgress? })
+        StoreRollup.aggregateProgress(paneProgress.values.map { $0 as PaneProgress? })
     }
 
     /// Whether ANY pane carries a `.failure` completion badge (a non-zero exit) — the OTHER half of the macOS
@@ -129,32 +130,5 @@ public extension WorkspaceStore {
     private func acknowledgeError(_ id: PaneID) {
         if case .error = paneProgress[id] { handleProgress(nil, for: id) }
         if panePendingCompletion[id] == .failure { setCompletionBadge(nil, for: id) }
-    }
-
-    /// Error-dominant aggregation over a set of per-leaf progress states (pure helper). Precedence:
-    /// any `.error` → error (the first failing percent seen) > any `.determinate` → the MAX percent (closest
-    /// to done) > any `.indeterminate` → spinner > `nil`. `Swift.max` on the integer percent is an ordered
-    /// integer compare — no float math, no fused multiply (CLAUDE.md §2 is about float codec math; this is a
-    /// `UInt8` aggregate).
-    internal static func aggregateProgress(_ states: [PaneProgress?]) -> PaneProgress? {
-        var errorPercent: UInt8?
-        var determinatePercent: UInt8?
-        var sawIndeterminate = false
-        for state in states {
-            switch state {
-            case let .error(percent):
-                if errorPercent == nil { errorPercent = percent } // first failing leaf wins the held percent
-            case let .determinate(percent):
-                determinatePercent = Swift.max(determinatePercent ?? 0, percent)
-            case .indeterminate:
-                sawIndeterminate = true
-            case nil:
-                break
-            }
-        }
-        if let errorPercent { return .error(percent: errorPercent) }
-        if let determinatePercent { return .determinate(percent: determinatePercent) }
-        if sawIndeterminate { return .indeterminate }
-        return nil
     }
 }

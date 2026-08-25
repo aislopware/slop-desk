@@ -219,103 +219,23 @@ public final class ConnectionViewModel {
     /// preserve order — independent unstructured tasks race on the reentrant `SlopDeskClient` actor and
     /// can deliver B before A.
     ///
-    /// `internal` (not `private`) so the pure ``coalesceOut(_:)`` algorithm is headlessly unit-testable;
-    /// `Equatable` so a test can assert WHICH events survived a coalesce. The `.resize` payload is the
-    /// libghostty grid (cols,rows) only — the wire's px/py path is driven downstream by
-    /// `SlopDeskClient.sendResize` (px/py = 0), unchanged.
+    /// `internal` (not `private`) so ``ConnectGate/plan(_:maxInputFrameBytes:)`` — which is what
+    /// decides how this FIFO leaves — is headlessly testable; `Equatable` so a test can assert WHICH
+    /// events survived. The `.resize` payload is the libghostty grid (cols,rows) only — the wire's
+    /// px/py path is driven downstream by `SlopDeskClient.sendResize` (px/py = 0), unchanged.
     enum OutEvent: Equatable { case input(Data)
         case resize(cols: UInt16, rows: UInt16)
     }
 
-    /// LATEST-WINS coalescer for one drained OUT batch — the resize-corruption fix.
+    /// Sends one planned batch over `client`, sequentially (the single-consumer FIFO leg).
     ///
-    /// ### Why (the zsh incremental-redraw desync)
-    /// A fast/continuous window drag makes libghostty emit a DISTINCT grid size per layout pass
-    /// (59→60→…→145 cols), so ``TerminalViewModel/sendResize(cols:rows:)``'s identical-size dedup never
-    /// fires and ~100 distinct `.resize` reach this path. Forwarding every one sends ~100 `TIOCSWINSZ` to
-    /// the host PTY spread over time (serial drain + network + per-message await), so the child's
-    /// `SIGWINCH` handler fires repeatedly at INTERMEDIATE sizes. zsh's handler does an INCREMENTAL prompt
-    /// redraw (cursor-up N lines, clear, redraw) with N computed for a size that keeps changing under it →
-    /// the redraw math desyncs → an orphaned cursor / misplaced prompt that only a fresh prompt clears. A
-    /// LOCAL terminal never hits this: the kernel COALESCES SIGWINCH, so the app reads the LATEST size
-    /// once and jumps straight to final. This restores that on the wire: collapse a drag to as few
-    /// `TIOCSWINSZ` as possible (ideally one after it settles) so zsh gets one clean SIGWINCH → one redraw.
-    ///
-    /// ### Algorithm (1:1 with `InputMotionCoalescer.coalesce` — `.input` is the barrier)
-    /// Walk the arrival-ordered batch buffering the LATEST `.resize` in a single `pending` slot;
-    /// consecutive `.resize` collapse to the last. An `.input(Data)` is a HARD BARRIER: flush `pending`
-    /// BEFORE appending the input, so input byte order is never corrupted and a resize that physically
-    /// preceded a keystroke is never emitted after it. At end-of-batch the trailing `pending` is appended
-    /// (the `InputMotionCoalescer.coalesce` line-398 invariant) — the TRAILING-EDGE GUARANTEE: the last
-    /// `.resize` in every batch is ALWAYS emitted, so the final drag size reaches the PTY by construction,
-    /// not by any timer that could be dropped.
-    ///
-    /// Pure ⇒ no clock, no client, no actor — `nonisolated` so it runs synchronously off the main actor
-    /// (the drain task + a headless test call it directly), like the motion coalescer.
-    nonisolated static func coalesceOut(_ batch: [OutEvent]) -> [OutEvent] {
-        guard batch.count > 1 else { return batch }
-        var output: [OutEvent] = []
-        output.reserveCapacity(batch.count)
-        var pending: OutEvent? // the latest buffered `.resize` in the current run (nil ⇔ none)
-        for event in batch {
-            switch event {
-            case .resize:
-                pending = event // same run: keep only the latest
-            case .input:
-                if let p = pending { output.append(p)
-                    pending = nil
-                } // barrier: flush resize FIRST
-                output.append(event) // then the input (byte order intact)
-            }
-        }
-        if let p = pending { output.append(p) } // trailing resize run (line-398 analog)
-        return output
-    }
-
-    /// Normalizes the `.input` payloads of an (already-coalesced) batch: MERGES adjacent tiny inputs
-    /// (key repeats, mouse-report storms — each would otherwise pay a full actor-hop + send round trip)
-    /// and SPLITS oversized ones, emitting `.input` frames of at most `maxInputFrameBytes`. `.resize` passes
-    /// through as a HARD BARRIER (input bytes never cross it — the ``coalesceOut(_:)`` ordering contract).
-    /// Concatenation byte-identity holds by construction: the emitted input payloads concatenate to
-    /// exactly the input payloads, in order.
-    ///
-    /// Pure ⇒ `nonisolated` (the off-main drain + headless tests call it directly).
-    nonisolated static func packInputs(
-        _ events: [OutEvent],
-        maxInputFrameBytes: Int = MuxFlowControl.maxDataMessagePayloadBytes,
-    ) -> [OutEvent] {
-        var output: [OutEvent] = []
-        output.reserveCapacity(events.count)
-        var buffer = Data()
-        func flushBuffer() {
-            guard !buffer.isEmpty else { return }
-            var offset = buffer.startIndex
-            while offset < buffer.endIndex {
-                let end = buffer.index(offset, offsetBy: maxInputFrameBytes, limitedBy: buffer.endIndex)
-                    ?? buffer.endIndex
-                output.append(.input(Data(buffer[offset..<end])))
-                offset = end
-            }
-            buffer.removeAll(keepingCapacity: true)
-        }
-        for event in events {
-            switch event {
-            case let .input(data):
-                buffer.append(data)
-            case .resize:
-                flushBuffer() // barrier: a resize never crosses input bytes
-                output.append(event)
-            }
-        }
-        flushBuffer()
-        return output
-    }
-
-    /// Sends one coalesced+packed batch over `client`, sequentially (the single-consumer FIFO leg).
-    /// Shared by the off-main drain and headless tests. Errors are swallowed per-event (`try?`) as the
-    /// old inline drain did — disconnected sends drop.
+    /// The plan — resizes coalesced latest-wins with input as a hard barrier, input payloads merged
+    /// and oversized ones split at the data sub-channel's ceiling — is
+    /// ``ConnectGate/plan(_:maxInputFrameBytes:)``, which crosses lengths rather than bytes; see its
+    /// doc for why the boundary sits there. Shared by the off-main drain and headless tests. Errors
+    /// are swallowed per-event (`try?`) as the old inline drain did — disconnected sends drop.
     nonisolated static func sendBatch(_ batch: [OutEvent], over client: SlopDeskClient) async {
-        for event in packInputs(coalesceOut(batch)) {
+        for event in ConnectGate.plan(batch) {
             switch event {
             case let .input(data): try? await client.sendInput(data)
             case let .resize(cols, rows): try? await client.sendResize(cols: cols, rows: rows)
@@ -328,7 +248,8 @@ public final class ConnectionViewModel {
     /// main actor; `outWake` (a `bufferingNewest(1)` signal) coalesces wakeups so the drain runs once per
     /// backlog. Because the per-event `await` on the reentrant `SlopDeskClient` actor is slower than the
     /// main-actor appends during a drag, the queue accumulates between drains → a fast drag collapses to
-    /// ~1 resize via ``coalesceOut(_:)``; a slow settle keeps batch size ~1 so it is byte-identical to
+    /// ~1 resize via ``ConnectGate/plan(_:maxInputFrameBytes:)``; a slow settle keeps batch size ~1 so
+    /// it is byte-identical to
     /// forwarding each event (same self-regulating property as the host inbound pump). One ordered
     /// consumer, no per-resize Task — satisfies the anti-reorder rule.
     private var outQueue: [OutEvent] = []
@@ -418,7 +339,7 @@ public final class ConnectionViewModel {
 
         // OUT path (renderer → host): the terminal model's `sendInput`/`sendResize` (driven by
         // `GhosttyTerminalView`'s onWrite/onResize) append into ONE main-actor FIFO; a single drain task
-        // BATCH-pulls it, coalesces (latest-wins resizes, `.input` as a barrier — see ``coalesceOut(_:)``),
+        // BATCH-pulls it, PLANS it (latest-wins resizes, `.input` as a barrier — see `ConnectGate.plan`),
         // and awaits the client SEQUENTIALLY so bytes/resizes are never reordered. The wake is a
         // `bufferingNewest(1)` signal so N appends collapse to one drain. Captures `weak client/self` so a
         // torn-down client is never targeted; `teardown()` finishes the wake + cancels the drain + nils
@@ -569,7 +490,7 @@ public final class ConnectionViewModel {
             guard myGeneration == connectGeneration, self.client === client else { return }
             supervisor.cancel()
             supervisorTask = nil
-            status = .failed(Self.failureReason(for: error))
+            status = .failed(ConnectGate.failureReason(for: error))
         }
     }
 
@@ -613,16 +534,6 @@ public final class ConnectionViewModel {
         }
     }
 
-    /// The user-facing `.failed` reason for a thrown error. A `LocalizedError` (e.g.
-    /// ``SlopDeskTransportError``) yields its clean `errorDescription` ("Connection timed out — host
-    /// unreachable?"); ANY OTHER error falls back to `String(describing:)`, preserving the readable Swift
-    /// payload (`invalidState("resume before first connect")`) rather than Foundation's bridged "The
-    /// operation couldn't be completed. (… error N.)" dump that bare `.localizedDescription` produces for
-    /// a plain `Error` enum like `SlopDeskClient.ClientError` or `CancellationError`.
-    static func failureReason(for error: Error) -> String {
-        (error as? LocalizedError)?.errorDescription ?? String(describing: error)
-    }
-
     /// A deliberate disconnect: close the client + stop the supervisor (no reconnect).
     public func disconnect() async {
         deliberatelyClosed = true
@@ -664,7 +575,7 @@ public final class ConnectionViewModel {
             if wasLive { status = .connected }
         } catch {
             guard self.client === client else { return }
-            status = .failed(Self.failureReason(for: error)) // humanized + payload-safe (see connect()'s catch)
+            status = .failed(ConnectGate.failureReason(for: error)) // humanized (see connect()'s catch)
         }
     }
 
@@ -869,42 +780,27 @@ public final class ConnectionViewModel {
     func foldEventForTesting(_ event: SlopDeskClient.Event) { foldEvent(event) }
     #endif
 
-    /// Folds a ``ReconnectManager`` progress callback into `status` (WF3 backoff → UI). Only enriches the
-    /// `.reconnecting`/dropped states — a campaign attempt arriving after the resume already flipped the
-    /// pane back to `.connected` (the supervisor's `onProgress` for the SUCCESSFUL attempt can race the
-    /// `.reconnected` event) must NOT drag a live pane back to "reconnecting". So it is a no-op unless the
-    /// pane is currently reconnecting-ish (`.reconnecting`/`.disconnected`).
+    /// Folds a ``ReconnectManager`` progress callback into `status` (WF3 backoff → UI).
+    ///
+    /// The DECISION is ``ConnectGate/reconnectFold(status:deliberatelyClosed:gaveUp:)``; what is left
+    /// here is the mutation, because the `@Observable` property is Swift's. `attempt` and `nextRetry`
+    /// never cross — the rule reads neither, so they stay on this side as the payload of the status
+    /// it says to adopt.
     func applyReconnectProgress(attempt: Int, nextRetry: Date?) {
-        // R11: a reconnect callback's hop-Task can land AFTER a deliberate `disconnect()` (which sets
-        // `status = .disconnected` + `deliberatelyClosed`, cancels the supervisor). Cancelling the
-        // supervisor does NOT cancel an already-fired callback's hop-Task, and `.disconnected` is BOTH the
-        // transient-drop state AND the deliberate-close terminal state — so without this guard a late
-        // callback whitewashes a closed pane to `.reconnecting` (orange "Reconnecting…" that never
-        // resolves, since the supervisor is dead). `observeEvents` already guards `.disconnected` this way.
-        guard !deliberatelyClosed else { return }
-        switch status {
-        case .reconnecting,
-             .disconnected:
-            status = .reconnecting(attempt: attempt, nextRetry: nextRetry)
-        default:
-            break // already connected / failed — do not regress
-        }
+        guard case .reconnecting = ConnectGate.reconnectFold(
+            status: status, deliberatelyClosed: deliberatelyClosed, gaveUp: false,
+        ) else { return }
+        status = .reconnecting(attempt: attempt, nextRetry: nextRetry)
     }
 
     /// Folds the terminal "gave up after maxReconnectAttempts" callback into `status`: a pane stuck
-    /// reconnecting flips to `.unreachable` (the visible WF3 give-up state). Guarded so a give-up racing a
-    /// late resume cannot whitewash a `.connected` pane.
+    /// reconnecting flips to `.unreachable` (the visible WF3 give-up state). Same rule, same two
+    /// races — see ``ConnectGate/reconnectFold(status:deliberatelyClosed:gaveUp:)``.
     func applyReconnectGaveUp() {
-        // R11: same deliberate-close guard as `applyReconnectProgress` — a give-up callback racing a
-        // `disconnect()` must not whitewash the closed pane to `.unreachable` (red "Unreachable").
-        guard !deliberatelyClosed else { return }
-        switch status {
-        case .reconnecting,
-             .disconnected:
-            status = .unreachable
-        default:
-            break
-        }
+        guard case .unreachable = ConnectGate.reconnectFold(
+            status: status, deliberatelyClosed: deliberatelyClosed, gaveUp: true,
+        ) else { return }
+        status = .unreachable
     }
 
     private func teardown() async {
@@ -940,7 +836,7 @@ public final class ConnectionViewModel {
         // disconnected/reconnected — the wake fired but the drain lost the race to cancellation). Flush
         // the residual backlog ONCE here, synchronously on the main actor, through the SAME coalesce so
         // the final size still reaches the PTY before the client closes. The only place the queue is
-        // drained outside the loop; `coalesceOut` keeps the last resize.
+        // drained outside the loop; the plan's coalesce keeps the last resize.
         //
         // Residual `.input` is DROPPED, not flushed: input rides the WINDOWED data sub-channel, and under
         // credit-at-consumption an exhausted window would park this await BEFORE `client.close()` (the very
@@ -950,7 +846,9 @@ public final class ConnectionViewModel {
         if let client, !outQueue.isEmpty {
             let residual = outQueue
             outQueue.removeAll(keepingCapacity: true)
-            for event in Self.coalesceOut(residual) {
+            // The SAME plan the drain runs — resizes pass through the packing stage unchanged and in
+            // order, so reading its answer and skipping the input frames is the coalesce alone.
+            for event in ConnectGate.plan(residual) {
                 switch event {
                 case .input: break
                 case let .resize(cols, rows): try? await client.sendResize(cols: cols, rows: rows)

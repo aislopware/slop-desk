@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskWorkspaceModel
 
@@ -225,28 +226,30 @@ public extension WorkspaceStore {
 
     /// The leading child's resolved FLEX weight at `index` of `split`, or `nil` when that seam is
     /// absent or fixed-width. What the divider ops read back after the pure op has clamped.
+    ///
+    /// The rule is `slopdesk_workspace::store_shape::leading_weight`. The tree is flattened here
+    /// because the tree is what this side holds; what crosses is the CHOICE — which run of children
+    /// carries the split, and whether the one at `index` is flex at all.
     static func leadingWeight(splitID: SplitNodeID, index: Int, in tree: TreeWorkspace) -> Double? {
-        for session in tree.sessions {
-            for tab in session.tabs {
-                if let weight = leadingWeight(splitID: splitID, index: index, in: tab.root) { return weight }
-            }
+        guard index >= 0 else { return nil }
+        var tokens = SplitTokens()
+        let slots = weightSlots(of: tree, tokens: &tokens)
+        guard let token = tokens.token(of: splitID) else { return nil }
+        var weight = 0.0
+        let found = slots.withUnsafeBufferPointer {
+            slopdesk_ws_leading_weight($0.baseAddress, $0.count, token, index, &weight)
         }
-        return nil
-    }
-
-    private static func leadingWeight(splitID: SplitNodeID, index: Int, in node: SplitNode) -> Double? {
-        guard case let .split(id, _, children) = node else { return nil }
-        if id == splitID, children.indices.contains(index), case let .flex(weight) = children[index].weight {
-            return weight
-        }
-        for child in children {
-            if let found = leadingWeight(splitID: splitID, index: index, in: child.node) { return found }
-        }
-        return nil
+        return found ? weight : nil
     }
 
     /// The pane a directional MOVE exchanged `active` with: the one leaf whose position in the tab
     /// changed places with it. `nil` when the op found no neighbour and returned the tree untouched.
+    ///
+    /// The rule is `slopdesk_workspace::store_shape::swap_partner`, which answers a POSITION into the
+    /// new leaf order. The pane ids never cross: they are tokenised against one table spanning both
+    /// orders and mapped back here. The two identity comparisons that stay — locating `active` and
+    /// checking that both locations name the SAME tab — are `==` on a `UUID`, which is exactly the
+    /// kind of predicate `docs/55` §6 leaves near.
     static func swapPartner(of active: PaneID, before: TreeWorkspace, after: TreeWorkspace) -> PaneID? {
         guard let (sIdx, tIdx) = WorkspaceTreeOps.locate(active, in: before),
               let (nsIdx, ntIdx) = WorkspaceTreeOps.locate(active, in: after),
@@ -254,41 +257,106 @@ public extension WorkspaceStore {
         else { return nil }
         let oldOrder = before.sessions[sIdx].tabs[tIdx].allPaneIDs()
         let newOrder = after.sessions[nsIdx].tabs[ntIdx].allPaneIDs()
-        guard let from = oldOrder.firstIndex(of: active), let to = newOrder.firstIndex(of: active),
-              from != to, newOrder.indices.contains(from)
-        else { return nil }
-        // A swap exchanges exactly two positions, so whoever now stands where `active` stood IS the
-        // partner. Anything else means the op did something other than a swap and is refused.
-        let partner = newOrder[from]
-        guard partner != active, oldOrder.count == newOrder.count, oldOrder[to] == partner else { return nil }
-        return partner
+        var tokens = PaneTokens()
+        let was = oldOrder.map { tokens.token(for: $0) }
+        let now = newOrder.map { tokens.token(for: $0) }
+        let target = tokens.token(for: active)
+        let position = was.withUnsafeBufferPointer { old in
+            now.withUnsafeBufferPointer { new in
+                slopdesk_ws_swap_partner(old.baseAddress, old.count, new.baseAddress, new.count, target)
+            }
+        }
+        guard position >= 0, newOrder.indices.contains(position) else { return nil }
+        return newOrder[position]
     }
 
     /// The one `splitNode/weight` a structural resize changed, or `nil` when nothing moved.
+    ///
+    /// The rule is `slopdesk_workspace::store_shape::changed_divider_weight`. Both snapshots are
+    /// flattened against ONE token table, which is what makes "the same split" decidable without a
+    /// `UUID` leaving this side.
     static func changedDividerWeight(
         before: TreeWorkspace, after: TreeWorkspace,
     ) -> (split: SplitNodeID, index: Int, weight: Double)? {
-        var old: [SplitNodeID: [Double?]] = [:]
-        for session in before.sessions { for tab in session.tabs { collectWeights(tab.root, into: &old) } }
-        var new: [SplitNodeID: [Double?]] = [:]
-        for session in after.sessions { for tab in session.tabs { collectWeights(tab.root, into: &new) } }
-        for (id, weights) in new {
-            guard let previous = old[id], previous.count == weights.count else { continue }
-            for index in weights.indices where previous[index] != weights[index] {
-                guard let weight = weights[index] else { continue }
-                return (id, index, weight)
+        var tokens = SplitTokens()
+        let was = weightSlots(of: before, tokens: &tokens)
+        let now = weightSlots(of: after, tokens: &tokens)
+        let change = was.withUnsafeBufferPointer { old in
+            now.withUnsafeBufferPointer { new in
+                slopdesk_ws_changed_divider_weight(old.baseAddress, old.count, new.baseAddress, new.count)
             }
         }
-        return nil
+        guard change.found, let split = tokens.id(at: change.split) else { return nil }
+        return (split, change.index, change.weight)
     }
 
-    private static func collectWeights(_ node: SplitNode, into out: inout [SplitNodeID: [Double?]]) {
-        guard case let .split(id, _, children) = node else { return }
-        out[id] = children.map { child in
-            guard case let .flex(weight) = child.weight else { return nil }
-            return weight
+    // MARK: - The token tables (an identity is a `UInt32` for the length of one call)
+
+    /// A dense `UInt32` per distinct ``SplitNodeID``, and the way back.
+    ///
+    /// One table spans both snapshots of a comparison on purpose: the rules decide whether two
+    /// flattenings describe the same split, and they can only do that if the same id mints the same
+    /// token twice.
+    private struct SplitTokens {
+        private var minted: [SplitNodeID] = []
+        private var index: [SplitNodeID: UInt32] = [:]
+
+        /// This id's token, minting one if it is new.
+        mutating func token(for id: SplitNodeID) -> UInt32 {
+            if let existing = index[id] { return existing }
+            let next = UInt32(minted.count)
+            minted.append(id)
+            index[id] = next
+            return next
         }
-        for child in children { collectWeights(child.node, into: &out) }
+
+        /// This id's token, or `nil` when it was never minted — which is a tree that has no such
+        /// split, and is a refusal rather than a new token.
+        func token(of id: SplitNodeID) -> UInt32? { index[id] }
+
+        /// The id a token names.
+        func id(at token: UInt32) -> SplitNodeID? {
+            minted.indices.contains(Int(token)) ? minted[Int(token)] : nil
+        }
+    }
+
+    /// A dense `UInt32` per distinct ``PaneID``, for the leaf orders a swap is diffed from.
+    private struct PaneTokens {
+        private var index: [PaneID: UInt32] = [:]
+
+        /// This pane's token, minting one if it is new.
+        mutating func token(for id: PaneID) -> UInt32 {
+            if let existing = index[id] { return existing }
+            let next = UInt32(index.count)
+            index[id] = next
+            return next
+        }
+    }
+
+    /// Every split's children, flattened in the pre-order the rules read them in.
+    ///
+    /// One split's children are a maximal RUN of slots sharing its token — the shape the old
+    /// `children.map { … }` produced, kept because both weight rules are defined against it.
+    private static func weightSlots(
+        of tree: TreeWorkspace, tokens: inout SplitTokens,
+    ) -> [SlopDeskWsWeightSlot] {
+        var slots: [SlopDeskWsWeightSlot] = []
+        func walk(_ node: SplitNode) {
+            guard case let .split(id, _, children) = node else { return }
+            let token = tokens.token(for: id)
+            for child in children {
+                guard case let .flex(weight) = child.weight else {
+                    slots.append(SlopDeskWsWeightSlot(weight: 0, split: token, is_flex: false))
+                    continue
+                }
+                slots.append(SlopDeskWsWeightSlot(weight: weight, split: token, is_flex: true))
+            }
+            for child in children { walk(child.node) }
+        }
+        for session in tree.sessions {
+            for tab in session.tabs { walk(tab.root) }
+        }
+        return slots
     }
 
     /// The pane every "do this to the focused thing" intent names.
