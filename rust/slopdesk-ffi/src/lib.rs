@@ -201,6 +201,7 @@ pub mod pane_drop;
 pub mod pane_facts;
 pub mod pane_fanout;
 pub mod pane_kind;
+pub mod pane_lifecycle;
 pub mod pane_outbox;
 pub mod pane_session;
 pub mod pane_switcher;

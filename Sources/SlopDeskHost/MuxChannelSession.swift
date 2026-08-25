@@ -70,9 +70,10 @@ final class MuxChannelSession: @unchecked Sendable {
     let registrySlot: UInt64 = HostSessionRegistry.mintSlot()
 
     /// Whether this session is currently in the detached state (client gone, shell alive).
-    /// Guarded by `taskLock`. A detached session must NOT be `shutdown()`'d — use
-    /// ``detach()`` / ``shutdownDetached()`` from ``DetachedSessionStore.evict`` paths.
-    private(set) var isDetached: Bool = false
+    /// Answered by ``PaneLifecycle``, which serializes it. A detached session must NOT be
+    /// `shutdown()`'d — use ``detach()`` / ``shutdownDetached()`` from ``DetachedSessionStore.evict``
+    /// paths.
+    var isDetached: Bool { life.isDetached }
 
     /// One subscriber's half of the relay: the sub-channel PAIR it rides, the three tasks bound to
     /// that pair, its own control-out queue, and its own ack cursor.
@@ -448,7 +449,13 @@ final class MuxChannelSession: @unchecked Sendable {
     /// read would race the teardown).
     private var outputWakeContinuation: AsyncStream<Void>.Continuation?
     private var readLoop: PaneOutputStream?
-    private var started = false
+
+    /// The pane's own arc, whose decisions live in `rust/slopdesk-muxsession`'s `lifecycle`: the
+    /// one-time relay start, whether THIS detach is the one that tears down, whether a returning
+    /// client may rebind, where its subscription re-opens, and the two latches the exit task waits
+    /// on. It serializes itself — see ``PaneLifecycle`` — which is why `eofLock` and `exitSentLock`
+    /// are gone and `taskLock` is left guarding only the objects that cannot cross.
+    private let life = PaneLifecycle()
 
     /// Guards ``outbox`` and ``outputWakeContinuation`` — the pair whose atomicity is the whole
     /// no-lost-wake discipline. Producers append under this lock then yield the bufferingNewest(1)
@@ -483,40 +490,6 @@ final class MuxChannelSession: @unchecked Sendable {
         defer { fifoLock.unlock() }
         return outbox.take()
     }
-
-    /// EOF latch: set true by ``PaneOutputStream``'s `onEOF` once superd has drained the
-    /// master to EOF — which, per the read-loop contract, happens only AFTER every buffered output chunk
-    /// has been yielded into the FIFO. The exit task awaits this before yielding `.exit`, so the
-    /// reaper-driven exit can never overtake the final output tail on the shared FIFO (which would
-    /// truncate the client's last screen). Guarded by `eofLock`.
-    private let eofLock = NSLock()
-    private var eofReached = false
-
-    /// The supervised stream's RESUME CURSOR: the absolute ring offset one past the last byte this
-    /// session has ingested. Seeded with ``resumeFromOffset`` and advanced by the read loop's
-    /// `onChunk`, which is handed the offset each chunk ENDS at — the same cursor
-    /// ``PaneOutputStream/resubscribe()`` keeps for a supervisor reconnect, kept here too because a
-    /// detach DESTROYS that stream. ``detach()`` unsubscribes and leaves this behind;
-    /// ``rebindRelay`` opens a fresh subscription at exactly this offset, so the detached window is
-    /// superd's ring — not a third copy in this host. Guarded by `eofLock`: both latches are written
-    /// by the read-loop thread and read by the reattach path, both are leaves (nothing is called
-    /// while holding it), and this file's lock count is a thing to hold DOWN, not add to.
-    ///
-    /// The seeds fall out without a special case. A fresh spawn seeds `0` — the ring's start — so a
-    /// detach before the first chunk resumes from the beginning, which is the whole pane. An adopted
-    /// pane seeds its predecessor's stop offset, whose earlier bytes are already in
-    /// ``restoredScrollback``, so a detach before its first chunk still delivers them exactly once.
-    /// An adopted pane with NO recorded boundary seeds ``PaneOutputStream/fromNowOn``; detaching
-    /// before its first chunk re-opens "from now" a second time, which is the same nothing the first
-    /// subscription had — the cursor becomes real the moment one chunk lands.
-    private var streamOffset: UInt64
-
-    /// Set true once the drain has actually SENT the `.exit(code:)` frame on the DATA channel.
-    /// The exit task awaits this between yielding `.exit` and calling `onExit` (which triggers teardown),
-    /// so `shutdown()` can never cancel the drain before the buffered exit code reaches the wire. Guarded
-    /// by `exitSentLock`.
-    private let exitSentLock = NSLock()
-    private var exitSent = false
 
     /// Bounded-queue backpressure GATE: fuses the ``BoundedQueuePolicy`` accounting with the
     /// read-loop pause/resume action ATOMICALLY under one lock (see ``PausableQueueGate``).
@@ -747,7 +720,13 @@ final class MuxChannelSession: @unchecked Sendable {
         self.blocksEnabled = blocksEnabled
         self.restoredScrollback = restoredScrollback
         self.resumeFromOffset = resumeFromOffset
-        streamOffset = resumeFromOffset
+        // The resume cursor's seed. It falls out without a special case: a fresh spawn seeds `0` —
+        // the ring's start — so a detach before the first chunk resumes from the beginning; an
+        // adopted pane seeds its predecessor's stop offset, whose earlier bytes are already in
+        // ``restoredScrollback``; an adopted pane with NO recorded boundary seeds
+        // ``PaneOutputStream/fromNowOn``, and re-opening "from now" a second time is the same
+        // nothing the first subscription had. The cursor becomes real the moment one chunk lands.
+        life.recordOffset(resumeFromOffset)
         inputQueue = DispatchQueue(label: "slopdesk.host.pty-input.\(channelID)", qos: .userInitiated)
     }
 
@@ -1052,6 +1031,9 @@ final class MuxChannelSession: @unchecked Sendable {
         )
         stream.onLog = { [weak self] line in self?.onLog?("mux: \(line)") }
         readLoop = stream
+        // Tell the ladder a subscription is open, so a later ``detach()`` knows to stop it and a
+        // later ``rebindRelay(...)`` knows to mint a fresh one at the cursor this one leaves.
+        life.streamOpened()
         // Build the bounded-queue gate now that the read loop exists, so pause/resume is
         // applied ATOMICALLY with the accounting (no lost-wakeup freeze).
         outputGate = PausableQueueGate(capacity: MuxFlowControl.hostQueueCapacityBytes) { paused in
@@ -1061,12 +1043,9 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     func startRelay() {
-        taskLock.lock()
-        guard !started else { taskLock.unlock()
-            return
-        }
-        started = true
-        taskLock.unlock()
+        // The one-time claim is ``PaneLifecycle``'s, which serializes it — a second caller loses
+        // here rather than under `taskLock`, which is left guarding only the tasks and the stream.
+        guard life.start() else { return }
 
         let pty = pty
         let masterFD = pty.masterFD
@@ -1409,7 +1388,7 @@ final class MuxChannelSession: @unchecked Sendable {
     ///
     /// **The subscription is DROPPED, and the resume cursor is what survives.** The pane's bytes
     /// while away are superd's ring — absolute-offset addressed, with announced eviction — so hostd
-    /// buffers none of them: ``streamOffset`` records how far this session got, the stream is
+    /// buffers none of them: the resume cursor records how far this session got, the stream is
     /// unsubscribed, and ``rebindRelay`` opens a fresh subscription at exactly that offset. The
     /// shell keeps running at full speed: superd's pump keeps draining the master into its ring
     /// whether or not anyone is subscribed, and losing the last subscriber CLEARS the pause
@@ -1425,9 +1404,11 @@ final class MuxChannelSession: @unchecked Sendable {
     /// HostServer may have installed for a since-gone connection. Pass a closure that calls
     /// `store.remove(sessionID)` + `session.shutdownDetached()`.
     func detach(onDetachedExit: @escaping @Sendable (UUID) -> Void) {
+        // The flag flip and the "is this call the one that tears down" answer are ``PaneLifecycle``'s
+        // — taken BEFORE `taskLock`, because the ladder serializes itself and the lock below now
+        // guards only the tasks, the wake and the stream.
+        let verdict = life.detach()
         taskLock.lock()
-        let alreadyDetached = isDetached
-        isDetached = true
         // Rewire onExit: if the child exits while we are in the store, fire the detached-exit
         // handler instead of whatever the previous connection wired.
         let id = sessionID
@@ -1437,7 +1418,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // The relay tasks/continuations are already torn down, the offline gate engaged, and the
         // subscription already dropped; re-running the teardown would only churn state another
         // thread may be inspecting — and would re-read a resume cursor that has stopped advancing.
-        if alreadyDetached {
+        if !verdict.first {
             taskLock.unlock()
             return
         }
@@ -1457,7 +1438,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // Hand the pane's detached window back to superd. The cursor is already recorded — the read
         // loop advanced it on every chunk it ingested — so all that is left is to stop consuming.
         // `stop()` is PERMANENT for a `PaneOutputStream` (the `stopped` flag is irreversible), which
-        // is why the rebind mints a NEW one at ``streamOffset`` rather than reviving this one; both
+        // is why the rebind mints a NEW one at the resume cursor rather than reviving this one; both
         // go through `PaneOutputStream`, so neither is a second `read` on the master.
         //
         // The GATE is deliberately left standing, holding its accounting. Its `setPaused` sink names
@@ -1465,7 +1446,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // its `outstanding` is the only record of FIFO bytes the cancelled drain never shipped —
         // `rebindRelay` carries that number onto the gate it builds around the new stream, so the
         // books still sum to zero once the restarted drain sends them.
-        let stream = readLoop
+        let stream = verdict.stopStream ? readLoop : nil
         readLoop = nil
         taskLock.unlock()
         stream?.stop()
@@ -1478,7 +1459,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Rebinds the relay to a fresh pair of sub-channels from a returning client.
     ///
     /// **Re-opens the supervised output at the cursor `detach()` left.** The detached window is
-    /// superd's ring, so the recovery is a `subscribe` at ``streamOffset`` and nothing else — the
+    /// superd's ring, so the recovery is a `subscribe` at the resume cursor and nothing else — the
     /// resumed bytes enter the FIFO exactly as live ones do, are sequenced at drain time, and land
     /// after the caller's `replayTail` (fresh seqs above every replayed seq → byte order preserved).
     ///
@@ -1518,19 +1499,21 @@ final class MuxChannelSession: @unchecked Sendable {
         // between reading it and acting on it.
         fanoutLock.lock()
         taskLock.lock()
-        guard isDetached else { taskLock.unlock()
-            fanoutLock.unlock()
-            return false
-        }
-        // Refuse DEAD sub-channels: `MuxNWConnection.finishLink` finishes every sub-channel BEFORE
-        // firing `linkDownHandler`, so already-finished targets mean the NEW connection died while
-        // the reattach was still replaying — and `handleLinkDown` has re-parked (or is about to
-        // re-park) this session in the DetachedSessionStore. Rebinding would flip
-        // `isDetached = false` onto channels every send throws on, leaving a stored session that
-        // reads as "attached" — the next claim then fails its rebind and the session is orphaned
-        // (live agent unreachable by every map, store, TTL, and stop()). Refusing keeps the session
-        // detached and claimable; the caller re-parks/reaps via its failed-rebind path.
-        guard !newData.isFinished, !newControl.isFinished else { taskLock.unlock()
+        // BOTH guards are one call to ``PaneLifecycle``, which un-detaches only when it proceeds.
+        //
+        // The second of them is why a dead sub-channel is passed in rather than inferred:
+        // `MuxNWConnection.finishLink` finishes every sub-channel BEFORE firing `linkDownHandler`,
+        // so already-finished targets mean the NEW connection died while the reattach was still
+        // replaying — and `handleLinkDown` has re-parked (or is about to re-park) this session in
+        // the DetachedSessionStore. Rebinding would flip the detached flag onto channels every send
+        // throws on, leaving a stored session that reads as "attached" — the next claim then fails
+        // its rebind and the session is orphaned (live agent unreachable by every map, store, TTL,
+        // and stop()). Refusing keeps the session detached and claimable; the caller re-parks/reaps
+        // via its failed-rebind path.
+        let ladder = life.rebind(
+            dataFinished: newData.isFinished, controlFinished: newControl.isFinished,
+        )
+        guard case let .proceed(resumeFrom) = ladder else { taskLock.unlock()
             fanoutLock.unlock()
             return false
         }
@@ -1552,7 +1535,6 @@ final class MuxChannelSession: @unchecked Sendable {
         subscribers[sub.id] = sub
         fanout.join(sub.id, acked: 0)
         subscribersLock.unlock()
-        isDetached = false
 
         // CRITICAL — assign onExit FIRST, while taskLock is still held and BEFORE exitTask is
         // (re)started below. This atomically replaces the detached-exit handler that detach()
@@ -1576,7 +1558,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // RE-OPEN the supervised output at the cursor `detach()` left behind. This is the whole of
         // the detached-window recovery: superd kept pumping the master into its ring the entire time
         // (it does that with no subscribers, and unsubscribing CLEARED the pause, so the shell never
-        // stalled), and a subscribe at `streamOffset` replays exactly the bytes produced since. It
+        // stalled), and a subscribe at the resume cursor replays exactly the bytes produced since. It
         // is a `subscribe`, not a `read` — superd owns the only reader on this master, and a second
         // one would STEAL bytes from the pane rather than observe them.
         //
@@ -1590,9 +1572,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // (`SLOPDESK_PANE_RING_BYTES`) and the client's own repaint on reattach covers the seam —
         // see docs/DECISIONS.md, "the detached window is superd's ring".
         var resumedStream: PaneOutputStream?
-        if started, readLoop == nil {
+        if let resumeFrom {
             let carried = outputGate?.outstanding ?? 0
-            resumedStream = openSupervisedOutput(from: currentStreamOffset())
+            resumedStream = openSupervisedOutput(from: resumeFrom)
             if carried > 0 { outputGate?.enqueue(carried) }
         }
 
@@ -1738,7 +1720,7 @@ final class MuxChannelSession: @unchecked Sendable {
     ///
     /// It composes SEQUENCED history and nothing else. The pane's detached window is not in scope
     /// here: those bytes are in superd's ring, and ``rebindRelay`` re-subscribes at
-    /// ``streamOffset`` AFTER this replay ships — so they reach the client on the ordinary drain,
+    /// the resume cursor AFTER this replay ships — so they reach the client on the ordinary drain,
     /// after the snapshot, in order.
     ///
     /// Returns `nil` (compose nothing, caller falls back) when:
@@ -3272,37 +3254,13 @@ final class MuxChannelSession: @unchecked Sendable {
         pty.completeExitFromSupervisorLoss()
     }
 
-    private func signalEOFReached() { eofLock.lock()
-        eofReached = true
-        eofLock.unlock()
-    }
+    private func signalEOFReached() { life.signalEOF() }
 
-    private func isEOFReached() -> Bool { eofLock.lock()
-        defer { eofLock.unlock() }
-        return eofReached
-    }
+    private func isEOFReached() -> Bool { life.isEOF }
 
-    /// Advances the resume cursor to where the just-ingested chunk ends.
-    ///
-    /// Monotone by `Swift.max` rather than by assignment: a cursor that ever walked backwards would
-    /// re-deliver bytes this session has already shipped, and monotonicity is cheaper to hold here
-    /// than to prove across every path that can hand back an offset.
-    ///
-    /// ``PaneOutputStream/fromNowOn`` is the one seed that is a SENTINEL and not a position — it is
-    /// `UInt64.max`, so a plain `max` would pin the cursor at it forever. The first real chunk
-    /// replaces it outright, which is exactly what "from now on" resolved to.
-    private func recordStreamOffset(_ endOffset: UInt64) { eofLock.lock()
-        streamOffset = streamOffset == PaneOutputStream.fromNowOn
-            ? endOffset
-            : Swift.max(streamOffset, endOffset)
-        eofLock.unlock()
-    }
-
-    /// Where a rebind re-opens the subscription. See ``streamOffset``.
-    private func currentStreamOffset() -> UInt64 { eofLock.lock()
-        defer { eofLock.unlock() }
-        return streamOffset
-    }
+    /// Advances the resume cursor to where the just-ingested chunk ends. The monotonicity and the
+    /// `fromNowOn` sentinel are ``PaneLifecycle``'s.
+    private func recordStreamOffset(_ endOffset: UInt64) { life.recordOffset(endOffset) }
 
     /// Awaits the read loop reaching EOF (so the final tail is fully enqueued) OR a bounded timeout —
     /// whichever first — before the exit task yields `.exit`. Polling (2 ms granularity): the exit task
@@ -3316,15 +3274,9 @@ final class MuxChannelSession: @unchecked Sendable {
         }
     }
 
-    private func signalExitSent() { exitSentLock.lock()
-        exitSent = true
-        exitSentLock.unlock()
-    }
+    private func signalExitSent() { life.signalExitSent() }
 
-    private func isExitSent() -> Bool { exitSentLock.lock()
-        defer { exitSentLock.unlock() }
-        return exitSent
-    }
+    private func isExitSent() -> Bool { life.isExitSent }
 
     /// Awaits the drain having SENT `.exit` on the wire (or a bounded timeout / cancellation) before the
     /// exit task fires `onExit`. Mirrors ``awaitEOFOrTimeout`` (2 ms poll, runs once per pane).
@@ -4089,12 +4041,9 @@ extension MuxChannelSession {
         return fanout.reserveID()
     }
 
-    /// Synchronous read of the detach latch (NSLock is unavailable from an async context).
-    private func isDetachedForJoin() -> Bool {
-        taskLock.lock()
-        defer { taskLock.unlock() }
-        return isDetached
-    }
+    /// Synchronous read of the detach latch — ``PaneLifecycle`` serializes it, so this no longer
+    /// needs a lock the async caller cannot take.
+    private func isDetachedForJoin() -> Bool { life.isDetached }
 
     private func replayHighestSeqLocked() -> Int64 {
         replayLock.lock()

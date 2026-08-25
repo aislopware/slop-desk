@@ -47,10 +47,16 @@
 //! channel keys, so every event is either about one member or about all of them, and the two used
 //! to be told apart by two dictionaries that had to agree. Object identity crosses as a `slot`; the
 //! objects stay in hostd, which is the one thing that cannot.
+//!
+//! [`lifecycle`] is the tenth, and the one about a pane session's own arc: whether this `detach` is
+//! the one that tears down, whether a returning client may rebind at all, where its subscription
+//! re-opens, and the two latches the exit task waits on before it may yield `.exit` and fire
+//! `onExit`. The tasks and the stream stay in hostd; what crosses is a guard and a cursor.
 
 pub mod bridge_router;
 pub mod detach_retention;
 pub mod fanout;
+pub mod lifecycle;
 pub mod metadata_admission;
 pub mod open_route;
 pub mod outbox;

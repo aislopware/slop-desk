@@ -110,7 +110,7 @@ is the caller's, not ours* — an `NWConnection` crosses as an opaque `uint64_t`
 | `PaneOutbox` | `muxsession::outbox` | `fifoLock` `:558` | queue of `(slot, len, kind)`, head cursor, capacity, `BoundedQueuePolicy` accounting | `[UInt64: Data]` slot map, `PausableQueueGate`, the bytes | in `append(slot, len, kind)`; out `MergeVerdict { slots, split_at, pause }` |
 | `PaneFanout` | `muxsession::fanout` | `fanoutLock` `:183` | roster, per-subscriber `lastAckedSeq`/`lastSentSeq`, eviction rule, retention floor | `Subscriber`'s `Task`s, `MuxSubChannel`s, `dataWake` | in `join`/`ack`/`sent`/`remove`; out `FanoutVerdict { deliver_to, evict, retain_from }` |
 | `PaneTruths` | `muxsession::truths` | one lock replacing seven | title + anchor + retire rule, progress grammar, exit/duration latches, `runningCommand` latch, block fold, project key | the probes (`tcgetpgrp`, `tcgetattr`) | in `ingest(&[SniffedEvent], &[BlockEvent], chunk_len)`; out counted-buffer `[WireMessageDescriptor]` |
-| `PaneLifecycle` | `muxsession::lifecycle` | one lock replacing `taskLock`+`eofLock`+`exitSentLock` | the detach/rebind/teardown ladder; the reattach re-assert ORDER (`.commandStatus` before `.title`) | the `Task`s, timeouts, ioctl | in `detach`/`rebind`/`eof`/`exit`; out `LadderStep` + `[ReassertMessage]` |
+| `PaneLifecycle` | `muxsession::lifecycle` | ITSELF — the one handle held under no caller lock; it retires `eofLock` + `exitSentLock` and leaves `taskLock` guarding only objects | the one-time start claim, the detach/rebind guards, the resume cursor and its `fromNowOn` sentinel, the EOF + exit-sent latches | the `Task`s, the `PaneOutputStream`, the `onExit` swap, the two bounded polls | in `start`/`detach`/`rebind(dataFinished:controlFinished:)`/`recordOffset`; out `DetachVerdict` / `RebindVerdict` / a cursor |
 | `MuxOpenRouter` | `muxsession::open_router` | `HostServer.lock` | the 4-path decision `alreadyLive`/`liveElsewhere`→JOIN/claim→SPAWN/→REATTACH; the `min(lastReceivedSeq, highestAssignedSeq)` adopted-pane clamp (`HostServer.swift:1990`) | the `store.claim`, the ack write, the connections | in `OpenFacts`; out `OpenRoute` |
 | `HostSessionRegistry` | `muxsession::registry` | `HostServer.lock` | channel→(pane slot, subscriber) as ONE record, the standalone panes, the hook sinks, the minted project ids | the session/connection/workspace-channel OBJECTS | in a key, a slot or a connection; out a verdict, or a counted buffer of keys/members |
 
@@ -248,12 +248,38 @@ test rather than a paragraph. Two doors rather than one because the detector spl
 and two handles never hold each other. The function that used to be forty lines of hand-ordered
 appends is now six.
 
-**Step 5b — `PaneLifecycle`.** *(~500 Swift lines)* `detach(onDetachedExit:)` `:1643-1686` ·
-`rebindRelay(...)` `:1723-1894` · the `exitTask` ladder inside `startRelay()` `:1240-1346`. The two
-`reestablish…OnReattach` halves are NOT here any more — step 4 took the echo re-anchor and step 5
-took the activity ladder, so what is left is the detach/rebind I/O itself. **Depends on step 3**: the documented
-`fanoutLock` → `taskLock` order in `rebindRelay` stops existing once the roster is a handle, rather
-than being re-encoded.
+**Step 5b — `PaneLifecycle`. LANDED.** *(~70 removed from the session, ~95 face added)* Three
+decisions and two latches came out of `MuxChannelSession`, and the scope is deliberately smaller than
+this step was first written for: the detach/rebind bodies are I/O — retire the member, cancel the
+drain, stop the stream, open a new one, rebuild the sender — and I/O does not cross. What crossed is
+the part that is not.
+
+The three decisions each had a failure no build catches. A **second detach** that re-runs the
+teardown churns state another thread is reading and re-reads a cursor that has stopped advancing —
+which is not hypothetical, it is the failed-rebind re-park racing `handleLinkDown`'s own detach. A
+**rebind onto already-finished sub-channels** flips the detached flag onto channels every send throws
+on, leaving a stored session that reads as "attached": the next claim fails its rebind and the
+session is orphaned, a live agent unreachable by every map, store, TTL and `stop()`. A **resume
+cursor** kept by `Swift.max` alone stays pinned at the `fromNowOn` sentinel (`UInt64.max`) forever,
+so every rebind resumes past the end of superd's ring.
+
+The two latches are the reason this handle is the only one in the projection held under NO caller
+lock. `eofReached` is set from the supervised ingest path, `exitSent` from the output drain, and both
+are polled at 2 ms by the exit task — three callers that must never queue behind the teardown ladder,
+which is precisely why they had grown two locks of their own. `Lifecycle` serializes itself (a
+`Mutex` for the three flags and the cursor, a `Relaxed` `AtomicBool` per latch), so `eofLock` and
+`exitSentLock` are gone outright and `taskLock` is left guarding what it should always have guarded
+alone: the `Task`s, the sub-channels and the `PaneOutputStream`.
+
+Two call sites changed shape rather than moving. `rebindRelay`'s two guards became ONE
+`life.rebind(dataFinished:controlFinished:)` whose `.proceed(resumeFrom:)` payload IS the
+`if started, readLoop == nil` test that followed forty lines later — the decision and the offset now
+arrive together instead of being re-derived from two properties at the point of use. And
+`isDetachedForJoin()` lost its lock entirely: it existed only because an async caller cannot take an
+`NSLock`.
+
+What did NOT cross: the `onExit` swap. A closure is not a fact, and the atomicity that matters is
+between that assignment and the exit task's launch — both Swift's, both still under `taskLock`.
 
 **Step 6 — `MuxOpenRouter`. LANDED.** *(~90 removed from the server, ~155 face added)* The seven
 exits of `spawnMuxChannel` — workspace, decline, refuse-while-stopping, re-ack, join, claim,
@@ -485,6 +511,15 @@ class, and the BREAK-TESTED convention every new rule follows) · `crate_policy.
    performer shims: that nil IS the claim "not my verb", so an optional return is the ownership
    decision growing back beside the table that owns it. The three Swift suites that enumerated each
    shim's verb set were deleted in the same change, not kept as a cross-language mirror.
+9. **one arc, one ladder** — LANDED as `hot_paths::one_arc_one_ladder` (rule `one-arc-one-ladder`).
+   Requires `PaneLifecycle.swift` to exist and to call every one of the fifteen
+   `slopdesk_pane_lifecycle_*` doors. Bans, in `MuxChannelSession.swift`, each of the three flags and
+   the cursor (`var started`, `var eofReached`, `var exitSent`, `var streamOffset`) AND the two locks
+   they used to need (`eofLock`, `exitSentLock`) — the locks matter as much as the flags, because
+   they existed only to make two one-way latches safe, and re-introducing either puts the ingest path
+   back in a queue behind the teardown ladder. And requires the session to hold
+   `private let life = PaneLifecycle()`: the handle is what keeps `taskLock` down to the objects that
+   cannot cross.
 
 Each rule carries a `/// BREAK-TESTED <date>:` line stating the edit that failed it and the restore
 that passed, matching `latency_ratchets.rs`'s convention.

@@ -47,6 +47,29 @@ const PERFORMERS: &[&str] = &[
     "Sources/SlopDeskHost/HostAndroidPerformer.swift",
 ];
 
+/// The face that answers a pane's own arc: the start claim, the detach/rebind guards, the resume
+/// cursor and the two exit latches.
+const LIFECYCLE_FACE: &str = "Sources/SlopDeskHost/PaneLifecycle.swift";
+
+/// Every door that face must keep asking.
+const LIFECYCLE_DOORS: &[&str] = &[
+    "slopdesk_pane_lifecycle_new",
+    "slopdesk_pane_lifecycle_free",
+    "slopdesk_pane_lifecycle_start",
+    "slopdesk_pane_lifecycle_is_started",
+    "slopdesk_pane_lifecycle_stream_opened",
+    "slopdesk_pane_lifecycle_detach",
+    "slopdesk_pane_lifecycle_is_detached",
+    "slopdesk_pane_lifecycle_rebind",
+    "slopdesk_pane_lifecycle_record_offset",
+    "slopdesk_pane_lifecycle_offset",
+    "slopdesk_pane_lifecycle_from_now_on",
+    "slopdesk_pane_lifecycle_signal_eof",
+    "slopdesk_pane_lifecycle_is_eof",
+    "slopdesk_pane_lifecycle_signal_exit_sent",
+    "slopdesk_pane_lifecycle_is_exit_sent",
+];
+
 /// The face that holds the session objects and asks the far side every relation about them.
 const REGISTRY_FACE: &str = "Sources/SlopDeskHost/HostSessionRegistry.swift";
 
@@ -600,6 +623,58 @@ pub fn one_metadata_verb_one_performer(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// One arc, one ladder — and the two latches that are not locks
+///
+/// A pane's detach/rebind is all I/O except for the part that decides it: whether THIS detach is
+/// the one that tears down, whether a returning client may rebind at all, and where its
+/// subscription re-opens. Each of the three used to be a stored flag beside the objects it guarded,
+/// and each has a failure a build never catches. A second detach that re-runs the teardown churns
+/// state another thread is reading and re-reads a cursor that has stopped advancing. A rebind onto
+/// already- finished sub-channels flips the detached flag onto channels every send throws on,
+/// leaving a stored session that reads as "attached" and is reachable by no map, store, TTL or
+/// `stop()`. A resume cursor kept by `Swift.max` alone stays pinned at the `fromNowOn` sentinel
+/// forever.
+///
+/// So the ladder is `rust/slopdesk-muxsession`'s `lifecycle` now, and this pins the halves that
+/// keep it one implementation: the face asks every door, and the session keeps neither the flags
+/// nor the two latch LOCKS back. The latches matter as much as the flags: `eofLock` and
+/// `exitSentLock` existed only because two pure one-way latches were stored properties, and
+/// re-introducing either puts the ingest path back in a queue behind the teardown ladder.
+#[must_use]
+pub fn one_arc_one_ladder(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: LIFECYCLE_FACE,
+            message: "Sources/SlopDeskHost/PaneLifecycle.swift is gone — whether a detach tears down, \
+                      whether a rebind may proceed and where it resumes are not MuxChannelSession's to \
+                      re-derive (docs/59 §5, step 5b)",
+        },
+        Claim::Doors {
+            path: LIFECYCLE_FACE,
+            entries: LIFECYCLE_DOORS,
+            message: "Sources/SlopDeskHost/PaneLifecycle.swift no longer calls {entry} — a face that drops \
+                      a door is a ladder step growing back beside the one that owns it",
+        },
+        Claim::NoneOf {
+            paths: &[SESSION],
+            pattern: r"eofLock|exitSentLock|var eofReached|var exitSent|var streamOffset|var started",
+            view: View::Code,
+            message: "{files} keeps a lifecycle flag, cursor or latch LOCK of its own — the arc is the \
+                      handle's, and a second copy beside it is a guard that silently stops guarding \
+                      (docs/59 §5, step 5b)",
+        },
+        Claim::Matches {
+            path: SESSION,
+            pattern: r"private let life = PaneLifecycle\(\)",
+            view: View::Code,
+            message: "Sources/SlopDeskHost/MuxChannelSession.swift no longer holds a PaneLifecycle — the \
+                      ladder it answers is what keeps taskLock down to the objects that cannot cross \
+                      (docs/59 §5, step 5b)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -865,6 +940,60 @@ mod tests {
         // A bare tree has no face at all.
         let bare = Fixture::new("one-relation-one-table-bare");
         assert!(!super::one_relation_one_table(&bare.tree()).is_clean());
+    }
+
+    /// Every door the lifecycle face must keep asking, as a fixture body.
+    fn lifecycle_doors() -> String {
+        let mut body = String::new();
+        for door in super::LIFECYCLE_DOORS {
+            body.push_str(door);
+            body.push_str("()\n");
+        }
+        body
+    }
+
+    /// A tree where the arc lives on one side and the session holds the handle that answers it.
+    fn write_one_arc_one_ladder(fixture: &Fixture) {
+        fixture
+            .write(super::LIFECYCLE_FACE, &lifecycle_doors())
+            .write(super::SESSION, "    private let life = PaneLifecycle()\n");
+    }
+
+    #[test]
+    fn one_arc_one_ladder_keeps_the_ladder_on_one_side() {
+        let fixture = Fixture::new("one-arc-one-ladder");
+        write_one_arc_one_ladder(&fixture);
+        assert!(super::one_arc_one_ladder(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a ladder step grew back beside the one that owns it.
+        fixture.write(super::LIFECYCLE_FACE, "slopdesk_pane_lifecycle_new()\n");
+        assert!(!super::one_arc_one_ladder(&fixture.tree()).is_clean());
+        write_one_arc_one_ladder(&fixture);
+
+        // Each flag, cursor and latch lock, one at a time.
+        for drift in [
+            "    private let eofLock = NSLock()\n",
+            "    private let exitSentLock = NSLock()\n",
+            "    private var eofReached = false\n",
+            "    private var exitSent = false\n",
+            "    private var streamOffset: UInt64\n",
+            "    private var started = false\n",
+        ] {
+            fixture.append(super::SESSION, drift);
+            assert!(
+                !super::one_arc_one_ladder(&fixture.tree()).is_clean(),
+                "the ban missed {drift}",
+            );
+            write_one_arc_one_ladder(&fixture);
+        }
+
+        // The session dropped the handle the whole ladder is reached through.
+        fixture.write(super::SESSION, "final class MuxChannelSession {\n");
+        assert!(!super::one_arc_one_ladder(&fixture.tree()).is_clean());
+
+        // A bare tree has no face at all.
+        let bare = Fixture::new("one-arc-one-ladder-bare");
+        assert!(!super::one_arc_one_ladder(&bare.tree()).is_clean());
     }
 
     #[test]

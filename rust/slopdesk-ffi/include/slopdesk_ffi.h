@@ -3580,6 +3580,69 @@ uint32_t slopdesk_metadata_admission_cap(void);
 uint8_t slopdesk_metadata_performer(uint8_t verb);
 
 /* ---------------------------------------------------------------------------- *
+ * pane_lifecycle — the detach/rebind ladder, and the two latches exit waits on.
+ *
+ * Everything a pane session does when a client leaves and comes back is I/O.
+ * What is here is the part that is not: whether THIS detach is the one that
+ * tears down, whether a returning client may rebind at all, and where its
+ * subscription re-opens. Getting the guards wrong never crashes either — a
+ * second detach that re-runs the teardown churns state another thread is
+ * reading, and a rebind onto already-finished sub-channels leaves a stored
+ * session that reads as "attached" and is reachable by nothing.
+ *
+ * WHY IT IS A HANDLE, AND WHY IT IS THE ONLY UNLOCKED ONE.  Every other pane
+ * handle here is reached under exactly one of hostd's NSLocks. This one cannot
+ * be: the EOF latch is set from the supervised ingest path, the exit-sent latch
+ * from the output drain, and both are polled by the exit task — three callers
+ * that must never queue behind the teardown ladder. So the far side serializes
+ * itself, and hostd keeps only `taskLock`, which guards the Tasks, the
+ * sub-channels and the stream. `eofLock` and `exitSentLock` are gone.
+ *
+ * THE CURSOR'S SENTINEL.  A stream seeded `fromNowOn` starts at UINT64_MAX, so
+ * record_offset is not a plain maximum: the first real chunk REPLACES the
+ * sentinel, and every chunk after that is a maximum, because a cursor that
+ * walked backwards would re-deliver bytes this session already shipped.
+ *
+ * WHAT DID NOT CROSS.  The onExit swap, the task cancellation, the
+ * PaneOutputStream open and the two bounded polls. A closure is not a fact and
+ * a Task is not a number; the door answers WHETHER and FROM WHERE, hostd acts.
+ *
+ * A DEAD HANDLE.  Refuses every decision, and answers TRUE to both latch reads
+ * so a bounded poll on a torn-down pane returns at once instead of spinning to
+ * its timeout.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskPaneLifecycle SlopDeskPaneLifecycle;
+
+/* slopdesk_pane_lifecycle_detach: one bit per obligation. */
+#define SLOPDESK_PANE_DETACH_FIRST 1
+#define SLOPDESK_PANE_DETACH_STOP_STREAM 2
+
+/* slopdesk_pane_lifecycle_rebind verdicts. */
+#define SLOPDESK_PANE_REBIND_REFUSE 0
+#define SLOPDESK_PANE_REBIND_PROCEED 1
+#define SLOPDESK_PANE_REBIND_PROCEED_RESUME 2
+
+SlopDeskPaneLifecycle *slopdesk_pane_lifecycle_new(void);
+void slopdesk_pane_lifecycle_free(SlopDeskPaneLifecycle *handle);
+bool slopdesk_pane_lifecycle_start(const SlopDeskPaneLifecycle *handle);
+bool slopdesk_pane_lifecycle_is_started(const SlopDeskPaneLifecycle *handle);
+void slopdesk_pane_lifecycle_stream_opened(const SlopDeskPaneLifecycle *handle);
+uint8_t slopdesk_pane_lifecycle_detach(const SlopDeskPaneLifecycle *handle);
+bool slopdesk_pane_lifecycle_is_detached(const SlopDeskPaneLifecycle *handle);
+uint8_t slopdesk_pane_lifecycle_rebind(const SlopDeskPaneLifecycle *handle,
+                                       bool data_finished,
+                                       bool control_finished,
+                                       uint64_t *resume_from);
+void slopdesk_pane_lifecycle_record_offset(const SlopDeskPaneLifecycle *handle, uint64_t end);
+uint64_t slopdesk_pane_lifecycle_offset(const SlopDeskPaneLifecycle *handle);
+uint64_t slopdesk_pane_lifecycle_from_now_on(void);
+void slopdesk_pane_lifecycle_signal_eof(const SlopDeskPaneLifecycle *handle);
+bool slopdesk_pane_lifecycle_is_eof(const SlopDeskPaneLifecycle *handle);
+void slopdesk_pane_lifecycle_signal_exit_sent(const SlopDeskPaneLifecycle *handle);
+bool slopdesk_pane_lifecycle_is_exit_sent(const SlopDeskPaneLifecycle *handle);
+
+/* ---------------------------------------------------------------------------- *
  * registry — which channel names which pane, and what a reap takes with it.
  *
  * A fanned-out pane is ONE session object under N channel keys, one per watching

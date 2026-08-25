@@ -1480,6 +1480,11 @@ pub fn registry() -> Vec<Rule> {
             check: hot_paths::one_relation_one_table,
         },
         Rule {
+            name: "one-arc-one-ladder",
+            origin: "docs/59 §5, step 5b",
+            check: hot_paths::one_arc_one_ladder,
+        },
+        Rule {
             name: "one-metadata-verb-one-performer",
             origin: "docs/59 §5, step 8",
             check: hot_paths::one_metadata_verb_one_performer,
