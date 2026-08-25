@@ -1123,6 +1123,10 @@ dependencies = [
 [[package]]
 name = "slopdesk-muxsession"
 version = "0.1.0"
+dependencies = [
+ "slopdesk-ids",
+ "slopdesk-probe",
+]
 
 [[package]]
 name = "slopdesk-panecensus"

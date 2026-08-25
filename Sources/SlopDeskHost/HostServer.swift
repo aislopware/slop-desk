@@ -201,12 +201,11 @@ public final class HostServer: @unchecked Sendable {
         let owner: ObjectIdentifier
     }
 
-    /// Cache of the resolved effective TERM keyed by `requested|explicitOverride`, guarded by `lock`.
-    /// The host's terminfo state doesn't change during a session, so the (possibly `infocmp`-spawning)
-    /// probe runs at most ~once per key instead of on EVERY channel-open (new pane/tab), and the
-    /// fallback diagnostic is logged exactly once — no per-open re-probe, no unbounded synchronous
-    /// `infocmp` on the channel-open path.
-    private var resolvedTermCache: [String: ClaudeCodeProfile.Term] = [:]
+    /// The resolved effective TERM, guarded by `lock`. The host's terminfo state does not change
+    /// during a session, so the search — which reads directories and may run `infocmp` — happens
+    /// once instead of on EVERY channel-open (new pane/tab), and the fallback diagnostic is logged
+    /// exactly once.
+    private var resolvedTerm: String?
 
     /// A hook the daemon can set to log session lifecycle to stderr.
     public var onLog: (@Sendable (String) -> Void)?
@@ -585,14 +584,13 @@ public final class HostServer: @unchecked Sendable {
         try await transport.start(port: port, onListenerFailed: { [weak self] err in
             self?.onListenerFailed?(err)
         })
-        // Pre-warm the terminfo resolution OFF any connection's receive loop: the resolution can run a
-        // directory probe and (on a host lacking the ghostty terminfo) spawn `infocmp`, which done lazily
+        // Pre-warm the terminfo resolution OFF any connection's receive loop: the search reads
+        // directories and (on a host lacking the ghostty terminfo) runs `infocmp`, which done lazily
         // inside `spawnMuxChannel` would block the MuxNWConnection actor's receive loop on the first
-        // channel-open. Resolving the common key (.ghostty, false) here in a detached task
-        // warms `resolvedTermCache`, so `spawnMuxChannel` reads it with no probe/IO on the connection's
-        // actor. (The .xterm256-explicit path short-circuits the probe entirely.)
+        // channel-open. Resolving here in a detached task warms `resolvedTerm`, so `spawnMuxChannel`
+        // reads it with no search and no IO on the connection's actor.
         Task.detached(priority: .utility) { [weak self] in
-            _ = self?.resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
+            _ = self?.resolveEffectiveTerm()
         }
         await installWorkspaceDocument()
         startWorkspaceReconciler()
@@ -2127,12 +2125,12 @@ public final class HostServer: @unchecked Sendable {
                 // default is `xterm-ghostty`, but on a host that cannot resolve that entry we
                 // auto-fall back to `xterm-256color` (#54700) so vim/htop/less/tmux/top don't
                 // degrade. No explicit override exists on the plain-shell path.
-                let term = resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
+                let term = resolveEffectiveTerm()
                 // When the opt-in hook listener is bound, export its socket path + this
                 // pane's id so an installed Claude hook can POST status events for this pane.
                 let paneID = Self.paneID(sessionID: open.sessionID)
                 var env = HostEnvironment.curated(
-                    term: term.rawValue,
+                    term: term,
                     agentSocketPath: agentHookListener != nil ? agentHookSocketPath : nil,
                     paneID: agentHookListener != nil ? paneID : nil,
                     controlSocketPath: agentControlSocketPath.isEmpty ? nil : agentControlSocketPath,
@@ -2336,44 +2334,32 @@ public final class HostServer: @unchecked Sendable {
     /// Resolves the effective `TERM` for a new PTY against the host's terminfo database, logging
     /// the auto-fallback exactly when it fires.
     ///
-    /// Delegates to ``TerminfoResolver``, which forks `slopdesk-probe terminfo`. When the host cannot
-    /// resolve `xterm-ghostty` — or cannot be asked at all, because there is no probe beside hostd —
-    /// the resolver returns `.xterm256` with `fellBack == true`; we
-    /// then emit ONE diagnostic via ``onLog`` (host stderr, NOT the PTY byte stream, so it never
-    /// pollutes what the client renders). Gated on `fellBack`: nothing is logged when ghostty resolves
-    /// or `.xterm256` was the explicit request. (The plain-shell path always passes `.ghostty` with no
-    /// override, so the fallback only fires on a host lacking the ghostty terminfo.)
-    private func resolveEffectiveTerm(
-        requested: ClaudeCodeProfile.Term,
-        explicitOverride: Bool,
-    ) -> ClaudeCodeProfile.Term {
-        // Cache by (requested, explicitOverride): the host terminfo state is stable for the session,
-        // so resolve (and possibly spawn infocmp) at most once per key, not on every channel-open.
-        let key = "\(requested.rawValue)|\(explicitOverride)"
+    /// The search itself is ``HostEnvironment/resolveTerm(requested:)``. When the host cannot
+    /// resolve `xterm-ghostty` it answers `xterm-256color` with `fellBack == true`, and we emit ONE
+    /// diagnostic via ``onLog`` — host stderr, NOT the PTY byte stream, so it never pollutes what the
+    /// client renders. Gated on `fellBack`: nothing is logged when the ghostty entry resolves.
+    private func resolveEffectiveTerm() -> String {
         lock.lock()
-        if let cached = resolvedTermCache[key] { lock.unlock()
+        if let cached = resolvedTerm { lock.unlock()
             return cached
         }
         lock.unlock()
 
-        let result = TerminfoResolver.resolve(
-            requested: requested,
-            explicitOverride: explicitOverride,
-        )
+        let result = HostEnvironment.resolveTerm()
 
         // Store under lock; the FIRST writer logs the fallback (a concurrent first-open that already
         // cached wins and we return its value without a duplicate log).
         lock.lock()
-        if let cached = resolvedTermCache[key] { lock.unlock()
+        if let cached = resolvedTerm { lock.unlock()
             return cached
         }
-        resolvedTermCache[key] = result.term
+        resolvedTerm = result.term
         lock.unlock()
 
         if result.fellBack {
             onLog?(
-                "TERM: host cannot resolve '\(requested.rawValue)' terminfo entry; "
-                    + "falling back to '\(result.term.rawValue)' (#54700) so TUI apps work",
+                "TERM: host cannot resolve '\(HostEnvironment.defaultTerm)' terminfo entry; "
+                    + "falling back to '\(result.term)' (#54700) so TUI apps work",
             )
         }
         return result.term

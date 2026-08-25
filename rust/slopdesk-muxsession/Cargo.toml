@@ -27,6 +27,12 @@ name = "slopdesk_muxsession"
 path = "src/lib.rs"
 
 [dependencies]
+# The two rules `bridge_router` asks rather than restates. Both were written more than once before
+# — containment in three languages, the shell word in eight places — so a fourth and a ninth copy
+# here would be exactly the drift pair the one-implementation rule exists for. Both edges point
+# DOWN and neither crate names this one back.
+slopdesk-ids = { path = "../slopdesk-ids" }
+slopdesk-probe = { path = "../slopdesk-probe" }
 
 # In hostd, in the resize path of every attached client.
 [profile.release]

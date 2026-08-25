@@ -19,28 +19,37 @@ final class SlopDeskHostSmokeTests: XCTestCase {
 
     func testCuratedEnvironmentHasSaneTerminalDefaults() {
         let env = HostEnvironment.curated(parent: ["PATH": "/usr/bin", "HOME": "/Users/x"])
-        // The plain-shell path advertises the libghostty TERM that ``ClaudeCodeProfile`` still
-        // owns as the single source of truth (the curated Claude launch is a client-side
-        // preset, but the TERM constant lives on the profile) — the client renders with libghostty.
+        // The client renders with libghostty, so a spawned shell advertises the native ghostty TERM.
         XCTAssertEqual(env["TERM"], "xterm-ghostty")
         XCTAssertEqual(env["TERM"], HostEnvironment.defaultTerm)
-        XCTAssertEqual(
-            env["TERM"],
-            ClaudeCodeProfile.Term.ghostty.rawValue,
-            "plain-shell TERM must share the ClaudeCodeProfile ghostty source of truth",
-        )
         XCTAssertEqual(env["COLORTERM"], "truecolor")
         XCTAssertEqual(env["NCURSES_NO_UTF8_ACS"], "1")
         XCTAssertEqual(env["LANG"], "en_US.UTF-8")
         XCTAssertEqual(env["HOME"], "/Users/x")
     }
 
+    /// The TERM resolution crosses the door and comes back with both halves of its answer.
+    ///
+    /// The rule itself — the search order, the two on-disk layouts, the `infocmp` authority — is
+    /// `slopdesk-probe`'s and is pinned there. What is pinned HERE is the crossing: a name in, a
+    /// name and a `fellBack` flag out, and the short-circuit that a request which IS the fallback is
+    /// authoritative rather than a fallback (nothing gets logged for it).
+    func testTheTermResolutionCrossesTheDoorWithBothHalvesOfItsAnswer() {
+        let explicit = HostEnvironment.resolveTerm(requested: HostEnvironment.fallbackTerm)
+        XCTAssertEqual(explicit.term, HostEnvironment.fallbackTerm)
+        XCTAssertFalse(explicit.fellBack, "the fallback asked for by name is a choice, not a fallback")
+
+        let absent = HostEnvironment.resolveTerm(requested: "xterm-nothing-ships-this")
+        XCTAssertEqual(absent.term, HostEnvironment.fallbackTerm)
+        XCTAssertTrue(absent.fellBack, "an unresolvable entry must report itself so the log says so")
+    }
+
     func testCuratedEnvironmentHonoursExplicitTermOverride() {
         // The TERM is a parameter so a caller can select the documented fallback
-        // (xterm-256color, #54700) — the constant still lives on ClaudeCodeProfile.Term.
+        // (xterm-256color, #54700), which is the one the resolution lands on.
         let env = HostEnvironment.curated(
             parent: ["PATH": "/usr/bin"],
-            term: ClaudeCodeProfile.Term.xterm256.rawValue,
+            term: HostEnvironment.fallbackTerm,
         )
         XCTAssertEqual(env["TERM"], "xterm-256color")
     }

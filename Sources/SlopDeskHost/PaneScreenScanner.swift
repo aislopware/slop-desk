@@ -1,90 +1,63 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskAgentDetect
+import SlopDeskArena
 import SlopDeskScreen
 
-/// One pane's screen-detection pipeline (the herdr port's pane layer): drives the pane's resident
-/// grid in `slopdesk-screend` and applies the temporal layer (startup grace, idle-scan skip, the
-/// working→idle hold, the visible-blocker refresh heartbeat, the cap on an open synchronized frame).
+/// One pane's screen-detection pipeline: the socket to `slopdesk-screend`, and nothing else.
 ///
-/// ## The screen tier is not in this process
-/// The grid, the OSC tracker, the synchronized-frame parser and the manifest rule ladder all live
-/// in `rust/slopdesk-screend`, and one `detect` verb (`src/detect.rs`) per tick drives all four. hostd used to
-/// walk every PTY chunk four times for this — once across the socket for the grid, then again for
-/// the OSC title, again for the frame parser, and once more for ~20 `NSRegularExpression`s over a
-/// whole grid that had been shipped back as JSON. Now the bytes go one way and a verdict comes back.
+/// ## Neither half of this is hostd's judgement any more
+/// The grid, the OSC tracker, the synchronized-frame parser and the manifest rule ladder are
+/// `rust/slopdesk-screend`, reached by one `detect` verb per tick. The TEMPORAL layer — the startup
+/// grace, the idle-scan skip, the working→idle hold, the visible-blocker heartbeat, the cap on an
+/// open synchronized frame — is `rust/slopdesk-agent`'s `panescan`, reached by the two doors below.
+/// The old split, "screend owns everything that reads the BYTES and hostd owns everything that
+/// reads the CLOCK", is unchanged; what changed is that the clock half is no longer written twice
+/// over, once here and once in a crate.
 ///
-/// The line between the two sides is not "hot code": **screend owns everything that reads the
-/// BYTES, hostd owns everything that reads the CLOCK.** Every deadline below is a decision about
-/// time, taken next to the scan timer that measures it, and the far side reports facts.
+/// What is left in this file is the one thing that genuinely is this process's: it holds the screend
+/// connection, so it makes the call.
+///
+/// ## The tick is TWO door calls around ONE exchange
+/// `plan` folds the tick's timing facts and says whether the exchange is worth making and with which
+/// flags; the exchange happens here; `finish` takes the outcome and says what to publish. Nothing is
+/// remembered on this side between the two — the handle holds all of it — so there is no scan state
+/// in Swift to drift.
 ///
 /// ## Absent screend costs this pane its screen tier, and nothing else
-/// A failed exchange marks the grid stale (the next tick rebuilds it from the ring) and publishes
-/// NOTHING — not idle, not the previous verdict. Hook and ctl `report` evidence is authoritative
-/// anyway (`docs/50`) and never passes through here. Only the scan task calls ``scan(_:)``.
+/// A failed exchange is reported as such and publishes NOTHING — not idle, not the previous verdict.
+/// Hook and ctl `report` evidence is authoritative anyway (`docs/50`) and never passes through here.
+/// Only the scan task calls ``scan(_:)``.
 struct PaneScreenScanner {
+    /// The scan state, in Rust, for exactly as long as this scanner lives.
+    ///
+    /// A class rather than a stored pointer for the reason `docs/55` §4b gives: a struct holding a
+    /// raw handle frees it once per COPY, and the one owner here (``MuxChannelSession``) resets its
+    /// scanner by assignment. The box makes the free the box's.
+    private final class Handle {
+        let pointer: OpaquePointer
+
+        init() {
+            guard let pointer = slopdesk_pane_scan_new() else {
+                // A scanner is a few counters; a failure here is the allocator being gone, and a
+                // pane with no scanner would flap rather than fail quietly.
+                preconditionFailure("slopdesk_pane_scan_new returned null")
+            }
+            self.pointer = pointer
+        }
+
+        deinit { slopdesk_pane_scan_free(pointer) }
+    }
+
     /// This pane's key in screend's registry. Distinct per scanner, never reused across panes.
     private let paneKey: String
     private let screen: ScreenClient
-    /// TRUE until a fold has landed on a grid of the CURRENT size — the next request carries the
-    /// reset flag. Set by a rebuild request, a geometry change, and any failed exchange.
-    private var gridIsStale = true
-    private var gridRows = 0
-    private var gridCols = 0
-    /// The last verdict screend answered for the CURRENT agent and the CURRENT screen, or `nil`
-    /// when the ladder has not run against them.
-    ///
-    /// Reused verbatim on a tick that folds no bytes: the verdict is a pure function of (grid, OSC
-    /// evidence, agent), so with none of the three changed there is nothing to ask. That is
-    /// strictly less work than the Swift engine did — a quiescent WORKING pane re-ran the whole
-    /// ladder every tick against a snapshot it had already cached.
-    private var cachedDetection: AgentScreenDetection?
-    private var hold = AgentDetectionHold()
-    /// The last PUBLISHED detection (herdr's `previous` — held stable through a pending hold).
-    private var lastPublished: AgentScreenDetection?
-    private var lastPublishedAt: TimeInterval?
-    private var lastAgent: AgentKind?
-    private var agentSince: TimeInterval?
-    private var lastScanSeq: UInt64 = 0
-    /// TRUE between a ring REBUILD and the first output that lands on the rebuilt grid — while it
-    /// stands, the ladder is not even asked to run.
-    ///
-    /// A rebuild re-feeds the RAW scrollback ring into a grid of the CURRENT size, and a resize is
-    /// the reason a rebuild happens at all. Claude Code (like every inline TUI) dismisses its
-    /// dialogs with RELATIVE motion — `CSI nA` + `CSI J` for a row count it measured at the OLD
-    /// width — so replaying those bytes at the NEW width lands the erase in the wrong place and
-    /// leaves the top of a long-dismissed permission dialog sitting in the visible rows. The engine
-    /// reads that faithfully and calls the pane BLOCKED, which is how switching tabs conjured a
-    /// "waiting for your input" banner for a pane sitting quietly at its prompt.
-    ///
-    /// The grid is only ever trustworthy again once the program has repainted at the new size — the
-    /// SIGWINCH the resize already delivered (plus ``MuxChannelSession``'s redraw nudge) is what
-    /// makes that arrive. So the reconstruction stays a WARM GUESS: good enough to fold, never good
-    /// enough to publish. Nothing is lost by waiting — the last published verdict stands, and a
-    /// resize changes what is on screen, not what the agent is doing.
-    private var awaitingRepaintAfterRebuild = false
+    private let state = Handle()
 
-    /// Whether the bytes folded so far end inside an OPEN synchronized update, as screend last
-    /// reported it (``ScreenDetection/frameOpen``). Carried between ticks because a tick that folds
-    /// no bytes cannot have changed it.
-    private var frameOpen = false
-    private var frameGeneration: UInt64 = 0
-
-    /// The scan time at which the currently-open synchronized frame was first OBSERVED open
-    /// (`nil` when no frame is open). Anchors ``syncFrameHoldCap``.
-    private var syncFrameOpenSince: TimeInterval?
-
-    /// ``ScreenDetection/frameGeneration`` of the frame ``syncFrameOpenSince`` anchors.
-    /// ⚠️ The cap is per FRAME, and a busy TUI opens a new one every few milliseconds — anchoring
-    /// on "a frame was open last time too" would let one second of ordinary repainting retire the
-    /// hold permanently, and every scan after that reads a torn grid. Held together they say what
-    /// is meant: THIS frame has been open too long.
-    private var syncFrameAnchorGeneration: UInt64?
-
-    /// Ceiling on how long an open synchronized frame may suppress publishing. A frame is one
-    /// repaint — milliseconds — so any frame still open a second later is a program that died
-    /// mid-paint or a stream that lost its closer, and detection must not be frozen by it.
-    /// (Terminal emulators bound the mode the same way, for the same reason.)
-    static let syncFrameHoldCap: TimeInterval = 1.0
+    /// Ceiling on how long an open synchronized frame may suppress publishing, as the state machine
+    /// spells it. A frame is one repaint — milliseconds — so any frame still open a second later is
+    /// a program that died mid-paint, and detection must not be frozen by it.
+    static var syncFrameHoldCap: TimeInterval { slopdesk_pane_scan_sync_frame_cap() }
 
     /// The key defaults to a fresh identity, which is all it has to be: screend's registry is a
     /// CACHE, not durable state — a key nobody holds is evicted, and a grid that goes missing is
@@ -126,155 +99,102 @@ struct PaneScreenScanner {
     }
 
     mutating func scan(_ input: Input) -> Output {
-        let agentChanged = input.agent != lastAgent
-        if agentChanged {
-            lastAgent = input.agent
-            agentSince = input.now
-            lastPublished = nil
-            lastPublishedAt = nil
-            cachedDetection = nil
-            hold = AgentDetectionHold()
+        let plan = plan(input)
+        var verdict = SlopDeskScanVerdict()
+        var outcome: UInt8 = 0
+        var labels: (rule: String?, fallback: String?) = (nil, nil)
+        if plan.exchange {
+            var payload = input.rebuildReplay ?? Data()
+            payload.append(input.pending)
+            do {
+                let reply = try screen.detect(
+                    pane: paneKey,
+                    agent: plan.label_suppressed ? "" : input.agent?.label ?? "",
+                    raw: payload,
+                    rows: input.rows,
+                    cols: input.cols,
+                    reset: plan.reset,
+                    rebuildReplay: input.rebuildReplay != nil,
+                    agentChanged: plan.agent_changed,
+                )
+                let detection = AgentScreenDetection(reply)
+                outcome = 1
+                verdict = SlopDeskScanVerdict(
+                    detection: detection.crossing,
+                    frame_open: reply.frameOpen,
+                    frame_generation: reply.frameGeneration,
+                )
+                labels = (detection.matchedRuleID, detection.fallbackReason)
+            } catch {
+                outcome = 2
+            }
         }
+        return finish(outcome: outcome, verdict: verdict, labels: labels)
+    }
 
-        // Grid upkeep runs regardless of agent — the model must be warm when one appears.
-        if input.rows != gridRows || input.cols != gridCols {
-            // A VT grid cannot be reflowed, so a size change is not an adjustment, it is a
-            // different grid. screend resets on a geometry change of its own accord; the flag is
-            // what stops this side trusting the OLD verdict in the meantime.
-            gridIsStale = true
-            gridRows = input.rows
-            gridCols = input.cols
-        }
-        if input.rebuildReplay != nil {
-            gridIsStale = true
-            // A reconstruction is not an observation — hold publishing until the program repaints
-            // onto it (see `awaitingRepaintAfterRebuild`). The hold goes with it: a pending
-            // working→idle confirmation was counting reads of a grid that no longer exists.
-            awaitingRepaintAfterRebuild = true
-            hold = AgentDetectionHold()
-        }
-
-        let seqUnchanged = input.contentSeq == lastScanSeq
-        lastScanSeq = input.contentSeq
-        // Output landing AFTER the rebuild is the repaint the guess was waiting for. The rebuild
-        // tick itself never clears the flag: `markScreenModelDirty` drops the pending buffer, so the
-        // bytes replayed there are the ring's, not the resized program's.
-        if awaitingRepaintAfterRebuild, input.rebuildReplay == nil, !seqUnchanged {
-            awaitingRepaintAfterRebuild = false
-        }
-
-        // The suppressions below all decide the same thing twice over: whether this tick's verdict
-        // could be PUBLISHED. When it could not, the label goes over as empty and screend folds the
-        // bytes without running the ladder — the grid and the trackers still advance, which is the
-        // whole point of the upkeep, and no rule is evaluated for an answer nobody would read.
-        let suppression = suppression(input, agentChanged: agentChanged, seqUnchanged: seqUnchanged)
-        if !exchange(input, agentChanged: agentChanged, label: suppression == nil ? input.agent?.label ?? "" : "") {
-            // A grid whose last fold was lost is behind the pane by an unknown amount, and a
-            // detection read off a stale screen is how a dismissed dialog gets reported as a live
-            // one. Publish NOTHING — not the fallback the empty screen would have produced.
-            return Output(publish: nil, nextInterval: AgentDetectionHold.scanInterval)
-        }
-        anchorOpenFrame(now: input.now)
-
-        if let suppression { return Output(publish: nil, nextInterval: suppression) }
-        // Mid-repaint the grid is HALF a frame: the program said so with mode 2026, and it erases
-        // lines before it rewrites them. Wait for the closer rather than read a screen that shows
-        // a dialog with its footer missing. Recheck fast — the frame closes in milliseconds — and
-        // never wait past the cap.
-        if frameOpen, let since = syncFrameOpenSince,
-           Double.minimum(input.now - since, Self.syncFrameHoldCap) < Self.syncFrameHoldCap
-        {
-            return Output(publish: nil, nextInterval: AgentDetectionHold.pendingIdleRecheck)
-        }
-        guard let detection = cachedDetection else {
-            return Output(publish: nil, nextInterval: AgentDetectionHold.scanInterval)
-        }
-        // A freeze rule (transcript viewer / model picker) publishes nothing — the machine
-        // holds its previous status.
-        if detection.skipStateUpdate {
-            return Output(publish: nil, nextInterval: AgentDetectionHold.scanInterval)
-        }
-        let previous = lastPublished ?? AgentScreenDetection(state: .unknown)
-        let publishNow = hold.decide(
-            previous: previous,
-            next: detection,
-            agentChanged: agentChanged,
-            processExited: false,
-            lastRefresh: lastPublishedAt,
+    /// The first door: what to ask screend this tick.
+    private func plan(_ input: Input) -> SlopDeskScanPlan {
+        var tick = SlopDeskScanTick(
+            payload_empty: input.pending.isEmpty && (input.rebuildReplay?.isEmpty ?? true),
+            rebuild_replay: input.rebuildReplay != nil,
+            rows: UInt16(truncatingIfNeeded: input.rows),
+            cols: UInt16(truncatingIfNeeded: input.cols),
+            content_seq: input.contentSeq,
             now: input.now,
         )
-        let interval = hold.isHoldingIdle
-            ? AgentDetectionHold.pendingIdleRecheck
-            : AgentDetectionHold.scanInterval
-        guard publishNow else { return Output(publish: nil, nextInterval: interval) }
-        lastPublished = detection
-        lastPublishedAt = input.now
-        return Output(publish: detection, nextInterval: interval)
-    }
-
-    /// The interval to answer with when this tick cannot publish, or `nil` when it can.
-    private func suppression(_ input: Input, agentChanged: Bool, seqUnchanged: Bool) -> TimeInterval? {
-        guard input.agent != nil else { return AgentDetectionHold.scanInterval }
-        // Startup grace: suppress detection while the TUI paints its splash.
-        if let since = agentSince, input.now - since < AgentDetectionHold.startupGraceWindow {
-            return AgentDetectionHold.scanInterval
-        }
-        // Idle-scan skip: a quiescent idle pane with no new bytes asks no question.
-        if lastPublished?.state == .idle, seqUnchanged, !hold.isHoldingIdle, !agentChanged {
-            return AgentDetectionHold.scanInterval
-        }
-        // The rebuilt grid is a guess until the program repaints onto it — fold it, never read it.
-        if awaitingRepaintAfterRebuild { return AgentDetectionHold.scanInterval }
-        return nil
-    }
-
-    /// One screend `detect` verb, or none at all. Returns whether the pane's state is still
-    /// trustworthy — `false` only when an exchange failed.
-    ///
-    /// A tick with nothing to fold and nothing new to ask skips the socket entirely: the grid, the
-    /// OSC evidence and the agent are all unchanged, so ``cachedDetection`` is still the answer to
-    /// the same question.
-    private mutating func exchange(_ input: Input, agentChanged: Bool, label: String) -> Bool {
-        var payload = input.rebuildReplay ?? Data()
-        payload.append(input.pending)
-        let mustFold = !payload.isEmpty || gridIsStale || agentChanged
-        let mustAsk = !label.isEmpty && cachedDetection == nil
-        guard mustFold || mustAsk else { return true }
-        do {
-            let verdict = try screen.detect(
-                pane: paneKey,
-                agent: label,
-                raw: payload,
-                rows: input.rows,
-                cols: input.cols,
-                reset: gridIsStale,
-                rebuildReplay: input.rebuildReplay != nil,
-                agentChanged: agentChanged,
+        var plan = SlopDeskScanPlan()
+        ffiLend(input.agent?.label ?? "") { bytes in
+            slopdesk_pane_scan_plan(
+                state.pointer, &tick, bytes.baseAddress, bytes.count, input.agent != nil, &plan,
             )
-            gridIsStale = false
-            frameOpen = verdict.frameOpen
-            frameGeneration = verdict.frameGeneration
-            cachedDetection = label.isEmpty ? nil : AgentScreenDetection(verdict)
-            return true
-        } catch {
-            gridIsStale = true
-            cachedDetection = nil
-            return false
         }
+        return plan
     }
 
-    /// Anchors the open frame the first scan that sees THIS frame open; drops the anchor when it
-    /// closes, and re-arms when the generation moves (a different frame is a fresh deadline).
-    private mutating func anchorOpenFrame(now: TimeInterval) {
-        guard frameOpen else {
-            syncFrameOpenSince = nil
-            syncFrameAnchorGeneration = nil
-            return
+    /// The second door: the exchange's outcome in, the tick's answer out.
+    ///
+    /// The two labels go over on every answered exchange and come back only on a publish — the
+    /// state machine caches them so this side does not have to mirror the three places its own
+    /// cache is cleared.
+    private func finish(
+        outcome: UInt8, verdict: SlopDeskScanVerdict, labels: (rule: String?, fallback: String?),
+    ) -> Output {
+        var verdict = verdict
+        var answer = SlopDeskScanAnswer()
+        ffiLend(labels.rule ?? "") { ruleBytes in
+            ffiLend(labels.fallback ?? "") { fallbackBytes in
+                slopdesk_pane_scan_finish(
+                    state.pointer, outcome, &verdict,
+                    ruleBytes.baseAddress, ruleBytes.count, labels.rule != nil,
+                    fallbackBytes.baseAddress, fallbackBytes.count, labels.fallback != nil,
+                    &answer,
+                )
+            }
         }
-        if syncFrameOpenSince == nil || syncFrameAnchorGeneration != frameGeneration {
-            syncFrameOpenSince = now
-            syncFrameAnchorGeneration = frameGeneration
+        guard answer.publish else { return Output(publish: nil, nextInterval: answer.next_interval) }
+        let published = publishedLabels(answer)
+        return Output(
+            publish: AgentScreenDetection(
+                answer.detection,
+                matchedRuleID: answer.has_rule ? published.rule : nil,
+                fallbackReason: answer.has_fallback ? published.fallback : nil,
+            ),
+            nextInterval: answer.next_interval,
+        )
+    }
+
+    /// The published verdict's two labels, split at ``SlopDeskScanAnswer/rule_len``. A pure read of
+    /// the handle, so the §4 retry is safe: asking twice cannot advance a tick.
+    private func publishedLabels(_ answer: SlopDeskScanAnswer) -> (rule: String, fallback: String) {
+        let buffer = ffiAnswerBytes(capacity: 256) { out, cap in
+            slopdesk_pane_scan_published_labels(state.pointer, out, cap)
         }
+        guard answer.rule_len <= buffer.count else { return ("", "") }
+        // swiftlint:disable optional_data_string_conversion
+        let rule = String(decoding: buffer[..<answer.rule_len], as: UTF8.self)
+        let fallback = String(decoding: buffer[answer.rule_len...], as: UTF8.self)
+        // swiftlint:enable optional_data_string_conversion
+        return (rule, fallback)
     }
 }
 
@@ -294,5 +214,59 @@ extension AgentScreenDetection {
             matchedRuleID: verdict.matchedRuleId,
             fallbackReason: verdict.fallbackReason,
         )
+    }
+}
+
+private extension AgentScreenDetection {
+    /// The same verdict in the shape the temporal layer compares, with the two LABELS left behind:
+    /// they are diagnostics, they can be long, and the door carries them on their own so a tick
+    /// that publishes nothing pays nothing for them.
+    init(
+        _ crossing: SlopDeskAgentDetection, matchedRuleID: String?, fallbackReason: String?,
+    ) {
+        self.init(
+            state: AgentScreenState(byte: crossing.state),
+            skipStateUpdate: crossing.skip_state_update,
+            visibleIdle: crossing.visible_idle,
+            visibleBlocker: crossing.visible_blocker,
+            visibleWorking: crossing.visible_working,
+            matchedRuleID: matchedRuleID,
+            fallbackReason: fallbackReason,
+        )
+    }
+
+    /// This verdict as the door's five fields. The inverse of the initializer above.
+    var crossing: SlopDeskAgentDetection {
+        SlopDeskAgentDetection(
+            state: state.crossing,
+            skip_state_update: skipStateUpdate,
+            visible_idle: visibleIdle,
+            visible_blocker: visibleBlocker,
+            visible_working: visibleWorking,
+        )
+    }
+}
+
+private extension AgentScreenState {
+    /// The discriminant this state crosses as — screend answers a NAME, the door speaks a byte.
+    var crossing: UInt8 {
+        switch self {
+        case .idle: 0
+        case .working: 1
+        case .blocked: 2
+        case .unknown: 3
+        }
+    }
+
+    /// The inverse, in the order the door documents. An unknown byte is `unknown`, for the reason
+    /// an unknown NAME is: the two ends ship together, and a spelling must not cost a screen tier.
+    init(byte: UInt8) {
+        self =
+            switch byte {
+            case 0: .idle
+            case 1: .working
+            case 2: .blocked
+            default: .unknown
+            }
     }
 }

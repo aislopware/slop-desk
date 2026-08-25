@@ -55,6 +55,15 @@ public func ffiAnswerText(
     String(decoding: ffiAnswerBytes(capacity: capacity, door), as: UTF8.self)
 }
 
+/// Lends one string's UTF-8 to a door for the length of the call, and nothing longer.
+///
+/// The other half of §4: a door that TAKES text takes `(ptr, len)`, and the pointer is only valid
+/// inside the closure. Written here because a face that lends three strings nests three of these,
+/// and every one of them spelled by hand is a chance to let a temporary array die early.
+public func ffiLend<T>(_ text: String, _ body: (UnsafeBufferPointer<UInt8>) -> T) -> T {
+    Array(text.utf8).withUnsafeBufferPointer(body)
+}
+
 /// Appends one `[UInt32 big-endian length][UTF-8]` run.
 public func ffiPushRun(_ blob: inout [UInt8], _ text: String) {
     let bytes = Array(text.utf8)

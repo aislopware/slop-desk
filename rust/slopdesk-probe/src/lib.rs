@@ -3,8 +3,12 @@
 //! ## What is here, and what stayed in hostd
 //! The Swift `HostMetadataProbe` answered ten queries for the pure `MetadataResponseBuilder`. Four
 //! of them are subprocesses and filesystem walks with nothing behind them but a path, and those are
-//! here: `gitDiff`, `listDirectory`, `listAgentSessions`, `readAgentSession`. The terminfo
-//! resolution joined them for the same reason — it is one `stat` sweep and one `infocmp`.
+//! here: `gitDiff`, `listDirectory`, `listAgentSessions`, `readAgentSession`.
+//!
+//! The terminfo resolution came here for the same reason and then stopped being a FORK: it is a
+//! pure function of a name and an environment, remembering nothing, so `slopdesk-ffi`'s
+//! `terminfo` door links [`terminfo::resolve`] straight into hostd and the subcommand is gone.
+//! The module stays here because this is where the machine gets asked about itself.
 //!
 //! `gitStatus` was the fifth and is no longer a fork at all: `rust/slopdesk-git` is LINKED into
 //! hostd and answers it from an open repository handle, so the verb the repo watcher polls on a

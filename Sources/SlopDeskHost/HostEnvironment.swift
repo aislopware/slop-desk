@@ -6,23 +6,61 @@ import SlopDeskVideoProtocol
 /// Builds the curated environment for a spawned login shell.
 ///
 /// A Claude session is an auto-detected `.terminal` pane (see `ClaudePaneDetector`), not a curated
-/// `claude` launch mode; the only Claude-specific surface left is the ``Term`` choice in
-/// ``ClaudeCodeProfile``. This generic profile is the Claude-agnostic env for a plain login shell.
+/// `claude` launch mode, so there is no per-agent env here at all — this is the env for a plain
+/// login shell, whatever the user then runs in it.
 ///
-/// TERM is shared: the client renders with libghostty, so the plain-shell path advertises the SAME
-/// `TERM=xterm-ghostty` as the Claude path (``ClaudeCodeProfile/Term/ghostty``) — one source of
-/// truth, not a divergent `xterm-256color` default. `curated(term:)` takes the value so callers can pick
-/// the documented `.xterm256` fallback.
+/// ## The two `TERM` names live here because hostd is what advertises one
+/// The client renders with libghostty, so a spawned shell advertises the native ghostty `TERM` —
+/// which unlocks the kitty keyboard protocol and DEC 2026 synchronized output, and which a fresh
+/// host very often has no terminfo entry for (it ships with Ghostty, not with the base OS). On such
+/// a host every curses app would call `setupterm("xterm-ghostty")`, find nothing, and either refuse
+/// to start or degrade to the wrong key sequences. That is Ghostty's own documented third option
+/// (#54700): keep the name when the host resolves it, fall back to the universally-present
+/// `xterm-256color` when it does not. Pushing terminfo the way kitty's `ssh` kitten does stays out
+/// of scope — it mutates somebody else's machine.
+///
+/// The RESOLUTION — the search order, the two on-disk layouts, the `infocmp` authority — is
+/// `slopdesk-probe`'s `terminfo` module, reached through ``resolveTerm(requested:)``. The two names
+/// are passed INTO it: it resolves what it is handed and knows neither of them.
 ///
 /// The allowlist, the defaults layered on top and the two login-shell answers are a face over
 /// `slopdesk-muxsession`'s `spawn_env`, which is where the twelve mirrored keys are named and the
 /// reasons for each are argued. What stays here is what is genuinely hostd's: the `EnvConfig`
 /// overlay the `SLOPDESK_*` gates below resolve through, and the release-owned ``buildVersion``.
 public enum HostEnvironment {
-    /// The default `TERM` for a spawned shell. Single source of truth shared with
-    /// ``ClaudeCodeProfile`` (its `.ghostty` raw value): the client renders with libghostty,
-    /// so a plain shell advertises the native ghostty TERM.
-    public static let defaultTerm = ClaudeCodeProfile.Term.ghostty.rawValue
+    /// The default `TERM` for a spawned shell: the native libghostty entry the client can actually
+    /// render (kitty keyboard, DEC 2026).
+    public static let defaultTerm = "xterm-ghostty"
+
+    /// The entry every fallback lands on — present on effectively every Unix host. Advertising it
+    /// costs DEC 2026 synchronized output and avoids the multi-line paste bug (#54700).
+    public static let fallbackTerm = "xterm-256color"
+
+    /// The effective `TERM` for a new PTY, resolved against this host's terminfo database, plus
+    /// whether getting there meant giving up on `requested` (so the caller can log it once).
+    ///
+    /// A `requested` that IS the fallback short-circuits: the request is authoritative and there is
+    /// nothing to fall back from. A host whose database cannot be read at all answers the fallback
+    /// and reports it as one — advertising an entry nobody verified is a guess, and the fallback is
+    /// right on every machine either way.
+    public static func resolveTerm(
+        requested: String = Self.defaultTerm,
+    ) -> (term: String, fellBack: Bool) {
+        var fellBack = false
+        let term = ffiLend(requested) { requestedBytes in
+            ffiLend(Self.fallbackTerm) { fallbackBytes in
+                ffiAnswerText(capacity: 64) { out, cap in
+                    slopdesk_terminfo_resolve(
+                        requestedBytes.baseAddress, requestedBytes.count,
+                        fallbackBytes.baseAddress, fallbackBytes.count,
+                        &fellBack, out, cap,
+                    )
+                }
+            }
+        }
+        guard !term.isEmpty else { return (Self.fallbackTerm, true) }
+        return (term, fellBack)
+    }
 
     /// The build/marketing version advertised via `TERM_PROGRAM_VERSION`. Kept in step with the app
     /// target's `MARKETING_VERSION` (`Apps/ClientApp-macOS/project.yml`) and `CLIVersion.version`.
@@ -65,11 +103,11 @@ public enum HostEnvironment {
         }
         var pairs = 0
         let delivery = blob.withUnsafeBufferPointer { parentBytes in
-            lend(term) { termBytes in
-                lend(Self.buildVersion) { versionBytes in
-                    lend(agentSocketPath ?? "") { socketBytes in
-                        lend(paneID ?? "") { paneBytes in
-                            lend(controlSocketPath ?? "") { controlBytes in
+            ffiLend(term) { termBytes in
+                ffiLend(Self.buildVersion) { versionBytes in
+                    ffiLend(agentSocketPath ?? "") { socketBytes in
+                        ffiLend(paneID ?? "") { paneBytes in
+                            ffiLend(controlSocketPath ?? "") { controlBytes in
                                 ffiAnswerBytes(capacity: max(4096, blob.count + 1024)) { out, cap in
                                     slopdesk_spawn_env(
                                         parentBytes.baseAddress, parentBytes.count,
@@ -94,15 +132,6 @@ public enum HostEnvironment {
             env[runs[index]] = runs[index + 1]
         }
         return env
-    }
-
-    /// Lends `text`'s UTF-8 to `body` for the duration of the call — the `(ptr, len)` half of §4's
-    /// borrow convention, spelled once instead of six times in the nest above.
-    private static func lend<T>(
-        _ text: String,
-        _ body: (UnsafeBufferPointer<UInt8>) -> T,
-    ) -> T {
-        Array(text.utf8).withUnsafeBufferPointer(body)
     }
 
     /// The PTY env var carrying the agent-hook listener socket path. The installed
@@ -302,7 +331,7 @@ public enum HostEnvironment {
     public static func loginShell(parent: [String: String] = ProcessInfo.processInfo.environment)
         -> String
     {
-        lend(parent["SHELL"] ?? "") { shell in
+        ffiLend(parent["SHELL"] ?? "") { shell in
             ffiAnswerText(capacity: 256) { out, cap in
                 slopdesk_login_shell(shell.baseAddress, shell.count, out, cap)
             }
@@ -312,7 +341,7 @@ public enum HostEnvironment {
     /// The login-shell `argv[0]`: the shell's basename with a leading `-` (so it sources
     /// `.zprofile`/`.zshrc`; [12] §1.4).
     public static func loginArgv0(forShell shell: String) -> String {
-        lend(shell) { bytes in
+        ffiLend(shell) { bytes in
             ffiAnswerText(capacity: 256) { out, cap in
                 slopdesk_login_argv0(bytes.baseAddress, bytes.count, out, cap)
             }

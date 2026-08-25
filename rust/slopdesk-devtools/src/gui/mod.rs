@@ -542,7 +542,7 @@ pub struct DaemonChild {
 ///
 /// **A bare child count is wrong**, and it is what made two of these gates flaky — 2 of 8 runs red
 /// on a clean tree, 3 of 3 under an `FSEvents` burst. The daemon forks non-PTY helpers as well as
-/// shells: `TerminfoResolver` runs `/usr/bin/infocmp`, `HostMetadataProbe` runs `/usr/bin/git` and
+/// shells: the TERM resolution runs `/usr/bin/infocmp`, `HostMetadataProbe` runs `/usr/bin/git` and
 /// `/usr/sbin/lsof`, superd's shim probes `$ZDOTDIR` with a `--norcs` zsh. Each is a child for as
 /// long as it lives, and one fires REPEATEDLY inside a watch window: a gate's own work directory is
 /// under this repo, so the daemon's home is too, so a pane's project key resolves to slop-desk

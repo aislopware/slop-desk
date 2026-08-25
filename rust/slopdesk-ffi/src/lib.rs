@@ -84,6 +84,7 @@ pub mod client_jitter;
 pub mod client_session;
 pub mod client_view;
 pub mod close_confirm;
+pub mod code_bridge;
 pub mod code_panel;
 pub mod code_surface;
 pub mod command_navigator;
@@ -250,6 +251,10 @@ pub mod swipe_recognizer;
 pub mod terminal_config;
 pub mod terminal_controls;
 pub mod terminal_mode;
+// macOS only: the search reads the HOST's terminfo database and may spawn its `infocmp`, and only
+// hostd asks — a phone advertises no `TERM` into a PTY it does not own. See the module.
+#[cfg(target_os = "macos")]
+pub mod terminfo;
 pub mod toast;
 pub mod tool_path;
 pub mod trendline;

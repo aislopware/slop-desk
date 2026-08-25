@@ -2,12 +2,18 @@ import Foundation
 import XCTest
 @testable import SlopDeskHost
 
-/// ``CodeBridgeTerminalRouter`` — which pane a command from the embedded editor lands in.
+/// ``CodeBridgeTerminalRouter`` — the CROSSING, not the choice.
 ///
-/// This is the file to read before changing that choice. The router's failure mode is REFUSING,
-/// because the alternative is typing a shell command somewhere the user did not mean: into another
-/// project, into a running build, or — worst — at an agent's prompt, where it becomes a message to
-/// the agent rather than a command to a shell.
+/// The choice moved: cwd confinement, the two safety gates (no agent, a shell in the foreground),
+/// the closest-to-the-acting-file ranking and the deterministic tie-break are
+/// `rust/slopdesk-muxsession::bridge_router`, pinned there against the same cases this file used to
+/// hold. Re-asserting them here would be the cross-language mirror fixture the one-implementation
+/// rule exists to prevent — the second copy is what drifts.
+///
+/// What is pinned HERE is the half that is genuinely this side's: a pane list flattened into records
+/// over one blob, an INDEX coming back, and the negative codes turning into the two sentences the
+/// editor shows. A record whose offsets were built wrong would still answer *an* index — so the
+/// cases below are the ones where a marshalling bug picks the wrong pane rather than crashing.
 final class CodeBridgeTerminalRouterTests: XCTestCase {
     private func pane(
         _ id: String, cwd: String?, agent: Bool = false, foreground: String = "zsh",
@@ -32,90 +38,57 @@ final class CodeBridgeTerminalRouterTests: XCTestCase {
         }
     }
 
-    // MARK: Containment
-
-    func testTheCommandStaysInsideItsOwnProject() throws {
-        let panes = [pane("a", cwd: "/work/other"), pane("b", cwd: "/work/alpha/src")]
-
-        XCTAssertEqual(try chosen(panes, root: "/work/alpha").paneId, "b")
-    }
-
-    /// A pane whose cwd was never observed is not a candidate: containment is the only thing
-    /// keeping the command in this project, and an unknown cwd cannot be contained.
-    func testAPaneWithNoObservedCWDIsNeverChosen() {
-        XCTAssertEqual(refusal([pane("a", cwd: nil)], root: "/work"), .noPaneInProject)
-    }
-
-    func testNoPaneInTheProjectRefuses() {
-        XCTAssertEqual(refusal([pane("a", cwd: "/elsewhere")], root: "/work"), .noPaneInProject)
-        XCTAssertEqual(refusal([], root: "/work"), .noPaneInProject)
-    }
-
-    // MARK: The two safety gates
-
-    /// The one that matters most: a pane hosting an agent is skipped even though its foreground
-    /// process is a shell between turns. Typing `npm test` at Claude Code's prompt does not run
-    /// `npm test` — it SAYS "npm test" to the agent.
-    func testAnAgentsPaneIsNeverTypedInto() {
-        let panes = [pane("a", cwd: "/work", agent: true)]
-
-        XCTAssertEqual(refusal(panes, root: "/work"), .noIdlePane)
-    }
-
-    /// A pane in vim, in a pager, or mid-build is not waiting for a command line — its keystrokes
-    /// mean something else entirely.
-    func testABusyPaneIsNeverTypedInto() {
-        for foreground in ["vim", "less", "node", "swift", "ssh", ""] {
-            let panes = [pane("a", cwd: "/work", foreground: foreground)]
-            XCTAssertEqual(refusal(panes, root: "/work"), .noIdlePane, "busy in \(foreground)")
-        }
-    }
-
-    /// Login shells arrive from the process table with a leading dash; the same pane must not
-    /// become ineligible because the user logged in rather than spawned a subshell.
-    func testLoginShellsCount() throws {
-        XCTAssertEqual(try chosen([pane("a", cwd: "/work", foreground: "-zsh")], root: "/work").paneId, "a")
-    }
-
-    /// Busy panes exist but none can take it ⇒ a DIFFERENT refusal from "no pane at all", because
-    /// the two sentences send the user to different places.
-    func testBusyAndAbsentAreDistinctRefusals() {
-        XCTAssertEqual(refusal([pane("a", cwd: "/work", foreground: "vim")], root: "/work"), .noIdlePane)
-        XCTAssertNotEqual(
-            CodeBridgeTerminalRouter.message(for: .noIdlePane),
-            CodeBridgeTerminalRouter.message(for: .noPaneInProject),
-        )
-    }
-
-    // MARK: Ranking
-
-    /// With several idle shells, the one standing closest to the acting file wins — running a
-    /// command about `src/app` in the pane already sitting there is what the user would have done.
-    func testTheClosestPaneToTheFileWins() throws {
+    /// The index maps back to the pane the caller handed in, with a pane in front of it and one
+    /// behind — an off-by-one in the record table would answer a neighbour, and a neighbour is a
+    /// shell in someone else's project.
+    func testTheAnsweredIndexNamesThePaneTheCallerHandedIn() throws {
         let panes = [
-            pane("a", cwd: "/work"),
-            pane("b", cwd: "/work/src/app"),
-            pane("c", cwd: "/work/docs"),
+            pane("a", cwd: "/work/other"),
+            pane("b", cwd: "/work/alpha/src"),
+            pane("c", cwd: "/work/elsewhere"),
         ]
+
+        let winner = try chosen(panes, root: "/work/alpha")
+        XCTAssertEqual(winner.paneId, "b")
+        XCTAssertEqual(winner.title, "pane b", "the title rides past the door untouched")
+    }
+
+    /// Three variable-length strings per record, and a pane whose cwd is ABSENT rather than empty.
+    /// The absent one is what proves `has_cwd` crossed as a flag instead of being inferred from a
+    /// zero length — an empty-string cwd and an unobserved cwd must not become the same pane.
+    func testEachRecordFindsItsOwnFieldsInTheSharedBlob() throws {
+        let panes = [
+            pane("first", cwd: nil, foreground: "vim"),
+            pane("second-with-a-much-longer-id", cwd: "/work/deep/nested/place", foreground: "-zsh"),
+        ]
+
+        XCTAssertEqual(try chosen(panes, root: "/work").paneId, "second-with-a-much-longer-id")
+    }
+
+    /// Ranking still has to see the acting directory, which crosses as its own optional pair.
+    func testTheActingDirectoryReachesTheRanking() throws {
+        let panes = [pane("a", cwd: "/work"), pane("b", cwd: "/work/src/app"), pane("c", cwd: "/work/docs")]
 
         XCTAssertEqual(try chosen(panes, root: "/work", near: "/work/src/app").paneId, "b")
         XCTAssertEqual(try chosen(panes, root: "/work", near: "/work/docs/notes").paneId, "c")
     }
 
-    /// Nothing to rank on (a selection run with no file directory, or a tie) still resolves the
-    /// same way every time — a coin-flip target would make the feature untrustworthy, not just
-    /// unpredictable.
-    func testTheChoiceIsDeterministic() throws {
-        let panes = [pane("b9", cwd: "/work"), pane("a1", cwd: "/work")]
+    /// The two refusals are distinct codes and distinct sentences: they send the user to different
+    /// places, and collapsing them at the door would make the feature look broken in one case and
+    /// misleading in the other.
+    func testEachRefusalCrossesBackAsItsOwnSentence() {
+        XCTAssertEqual(refusal([pane("a", cwd: "/elsewhere")], root: "/work"), .noPaneInProject)
+        XCTAssertEqual(refusal([], root: "/work"), .noPaneInProject)
+        XCTAssertEqual(refusal([pane("a", cwd: "/work", agent: true)], root: "/work"), .noIdlePane)
+        XCTAssertEqual(refusal([pane("a", cwd: "/work", foreground: "vim")], root: "/work"), .noIdlePane)
 
-        XCTAssertEqual(try chosen(panes, root: "/work").paneId, "a1")
-        XCTAssertEqual(try chosen(panes.reversed(), root: "/work").paneId, "a1")
-    }
-
-    func testSharedComponentsCountsComponentsNotCharacters() {
-        XCTAssertEqual(CodeBridgeTerminalRouter.sharedComponents("/a/b/c", "/a/b/d"), 2)
-        XCTAssertEqual(CodeBridgeTerminalRouter.sharedComponents("/a/bee", "/a/b"), 1)
-        XCTAssertEqual(CodeBridgeTerminalRouter.sharedComponents("/a/b", nil), 0)
+        for refusal in [CodeBridgeTerminalRouter.Refusal.noPaneInProject, .noIdlePane] {
+            XCTAssertFalse(CodeBridgeTerminalRouter.message(for: refusal).isEmpty)
+        }
+        XCTAssertNotEqual(
+            CodeBridgeTerminalRouter.message(for: .noIdlePane),
+            CodeBridgeTerminalRouter.message(for: .noPaneInProject),
+        )
     }
 
     // MARK: Bytes
@@ -124,13 +97,12 @@ final class CodeBridgeTerminalRouterTests: XCTestCase {
     /// newline the shell reads. Same convention as the agent-control `run` verb: two ways to type
     /// into a pane must not disagree about what Enter is.
     func testCommandsEndInACarriageReturn() {
-        XCTAssertEqual(
-            CodeBridgeTerminalRouter.keystrokes(for: "ls -la"), Data("ls -la\r".utf8),
-        )
+        XCTAssertEqual(CodeBridgeTerminalRouter.keystrokes(for: "ls -la"), Data("ls -la\r".utf8))
     }
 
     /// The quoting is what stands between a project path with a space in it and a command that
-    /// runs on the wrong arguments.
+    /// runs on the wrong arguments. Pinned at the crossing too because this text is typed into a
+    /// live shell, and a truncated delivery would type a HALF-quoted path.
     func testChangeDirectoryQuotesHostilePaths() {
         XCTAssertEqual(
             CodeBridgeTerminalRouter.changeDirectoryCommandLine("/work/my project"),

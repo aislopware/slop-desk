@@ -342,7 +342,7 @@ typedef struct {
     bool    visible_working;
 } SlopDeskAgentDetection;
 
-typedef struct SlopDeskAgentHold     SlopDeskAgentHold;
+typedef struct SlopDeskPaneScan      SlopDeskPaneScan;
 typedef struct SlopDeskAgentDetector SlopDeskAgentDetector;
 
 typedef struct {
@@ -470,33 +470,69 @@ bool    slopdesk_agent_supervision_presence(uint8_t status_byte);
 bool    slopdesk_agent_supervision_valid(const uint8_t *name, size_t len);
 size_t  slopdesk_agent_supervision_states(uint8_t *out, size_t cap, size_t *count);
 
-// The temporal layer. hold_constant index: 0 pending-idle recheck, 1 pending-idle confirmations,
-// 2 pending-idle cap, 3 stable-visible refresh, 4 startup grace, 5 scan interval.
+// The temporal layer — one pane's SCAN, which is the only thing that drives the holds now.
+//
+// hold_constant index: 0 pending-idle recheck, 1 pending-idle confirmations, 2 pending-idle cap,
+// 3 stable-visible refresh, 4 startup grace, 5 scan interval. The scanner reads all six itself;
+// they cross so a caller can name the cadence it was handed back.
 double slopdesk_agent_hold_constant(uint8_t index);
-bool   slopdesk_agent_hold_refresh_due(const SlopDeskAgentDetection *previous,
-                                       const SlopDeskAgentDetection *next,
-                                       double last_refresh, bool has_last_refresh, double now);
-bool   slopdesk_agent_hold_should_publish(const SlopDeskAgentDetection *previous,
-                                          const SlopDeskAgentDetection *next,
-                                          bool agent_changed, bool process_exited,
-                                          bool refresh_due);
 
-SlopDeskAgentHold *slopdesk_agent_hold_new(void);
-void slopdesk_agent_hold_free(SlopDeskAgentHold *handle);
-bool slopdesk_agent_hold_is_holding_idle(SlopDeskAgentHold *handle);
-bool slopdesk_agent_hold_working_to_idle(SlopDeskAgentHold *handle,
-                                         const SlopDeskAgentDetection *previous,
-                                         const SlopDeskAgentDetection *next,
-                                         bool agent_changed, bool process_exited, double now);
-bool slopdesk_agent_hold_blocked_to_idle(SlopDeskAgentHold *handle,
-                                         const SlopDeskAgentDetection *previous,
-                                         const SlopDeskAgentDetection *next,
-                                         bool agent_changed, bool process_exited, double now);
-bool slopdesk_agent_hold_decide(SlopDeskAgentHold *handle,
-                                const SlopDeskAgentDetection *previous,
-                                const SlopDeskAgentDetection *next,
-                                bool agent_changed, bool process_exited,
-                                double last_refresh, bool has_last_refresh, double now);
+// The tick is TWO calls because the SOCKET is the caller's. hostd already holds a screend client
+// with its own connection, reconnect and framing, and a second dialler inside the artifact would be
+// the cross-language mirror this tree forbids. So: plan, then make (or skip, or fail) exactly one
+// exchange, then finish. Everything remembered between the two halves lives on the handle, so the
+// caller carries no scan state at all. §4b's convention: no two calls on one handle may overlap.
+//
+// finish's `outcome`: 0 the plan asked for no exchange, 1 screend answered, anything else failed.
+// A failed exchange publishes NOTHING — not the last verdict — because a grid whose last fold was
+// lost is behind the pane by an unknown amount.
+typedef struct {
+    bool     payload_empty;   /* pending output AND rebuild replay both empty */
+    bool     rebuild_replay;  /* this tick carries a ring replay */
+    uint16_t rows;
+    uint16_t cols;
+    uint64_t content_seq;     /* bumped per non-empty PTY chunk — the idle-scan skip */
+    double   now;
+} SlopDeskScanTick;
+
+typedef struct {
+    bool exchange;          /* false → skip the socket entirely and finish with outcome 0 */
+    bool reset;             /* the exchange's reset flag */
+    bool agent_changed;     /* the exchange's agent-changed flag */
+    bool label_suppressed;  /* send the agent label EMPTY: fold the bytes, run no rule */
+} SlopDeskScanPlan;
+
+typedef struct {
+    SlopDeskAgentDetection detection;
+    bool                   frame_open;        /* the fold ended inside an open DEC 2026 update */
+    uint64_t               frame_generation;  /* bumped per frame OPENED — the cap's anchor */
+} SlopDeskScanVerdict;
+
+// `rule_len` splits slopdesk_pane_scan_published_labels' answer: the matched rule id, then the
+// fallback reason. Both are absent unless their flag says otherwise.
+typedef struct {
+    bool                   publish;
+    SlopDeskAgentDetection detection;
+    bool                   has_rule;
+    bool                   has_fallback;
+    size_t                 rule_len;
+    double                 next_interval;
+} SlopDeskScanAnswer;
+
+double slopdesk_pane_scan_sync_frame_cap(void);
+SlopDeskPaneScan *slopdesk_pane_scan_new(void);
+void slopdesk_pane_scan_free(SlopDeskPaneScan *handle);
+void slopdesk_pane_scan_plan(SlopDeskPaneScan *handle, const SlopDeskScanTick *tick,
+                             const uint8_t *agent, size_t agent_len, bool has_agent,
+                             SlopDeskScanPlan *plan);
+void slopdesk_pane_scan_finish(SlopDeskPaneScan *handle, uint8_t outcome,
+                               const SlopDeskScanVerdict *verdict,
+                               const uint8_t *rule, size_t rule_len, bool has_rule,
+                               const uint8_t *fallback, size_t fallback_len, bool has_fallback,
+                               SlopDeskScanAnswer *answer);
+// A PURE read of the handle, which is why it is its own call: §4's "call again with a bigger
+// buffer" would otherwise have to advance a tick to retry.
+size_t slopdesk_pane_scan_published_labels(SlopDeskPaneScan *handle, uint8_t *out, size_t cap);
 
 // The per-pane DETECTOR: one machine, plus everything that turns its verdicts into a control
 // stream — the type-26 basename edge, the type-27 dedupe anchor, the type-36 intent latch and the
@@ -9611,6 +9647,21 @@ size_t slopdesk_audio_encoder_push_sample_buffer(SlopDeskAudioEncoder *handle,
 // A refusal is `--help`, `-h`, a flag with no value, a `--port` that is not a port, or a
 // flag this daemon does not have. NUL-joining is lossless because an `execve` argument
 // cannot contain a NUL, and it is what carries `--shell "/opt/My Shells/zsh"` intact.
+// Which `TERM` this host can actually honour.
+//
+// The client renders with libghostty, so the host's first instinct is `TERM=xterm-ghostty` — but
+// that entry ships with Ghostty, not with the base OS, and on a host without it every curses app
+// finds nothing and degrades. The rule is Ghostty's own documented third option: keep the request
+// when the host resolves it, else say `fallback`. Both names are the CALLER's; nothing behind this
+// door knows them.
+//
+// It used to be a FORK of `slopdesk-probe terminfo`. The search order and the `infocmp` authority
+// are still that crate's — the same module, not a mirror — but the resolution is a pure function
+// that remembers nothing, so it links rather than spawns.
+size_t slopdesk_terminfo_resolve(const uint8_t *requested, size_t requested_len,
+                                 const uint8_t *fallback, size_t fallback_len,
+                                 bool *fell_back, uint8_t *out, size_t cap);
+
 size_t slopdesk_hostd_args_parse(const uint8_t *argv, size_t argv_len,
                                  uint8_t *out, size_t cap);
 // The usage line, rendered here because the flag list IS the grammar: a usage string that
@@ -9766,6 +9817,49 @@ double slopdesk_video_decoder_millis_ewma(SlopDeskVideoDecoder *handle);
 #define SLOPDESK_CODE_PANEL_TIPS_SCRIPT            9  /* document START, main frame */
 #define SLOPDESK_CODE_PANEL_NERD_FONT_FAMILY      10  /* gated against codeseed, never shared */
 #define SLOPDESK_CODE_PANEL_MONO_FONT_FAMILY      11  /* gated against codeseed, never shared */
+
+// ---- Which PANE a command from the embedded editor lands in -------------------
+//
+// The workbench's own integrated terminal is outside everything this app provides — no agent
+// detection, no PTY fan-out, no replay, no journal — so the editor's "run this" affordances are
+// pointed at a real SlopDesk pane. Pointing them somewhere means CHOOSING, and the editor cannot:
+// focus is a client-side fact and a project may have panes across several clients. So the host
+// picks, under rules whose failure mode is REFUSING rather than typing into the wrong shell.
+//
+// The pane list crosses as records into ONE text blob, for the reason the agent section gives.
+// The ANSWER is an index into that array — the caller already holds the panes, so handing one back
+// would mean re-encoding a string it is looking at. A negative answer is a refusal:
+#define SLOPDESK_CODE_BRIDGE_NO_PANE_IN_PROJECT  (-1)
+#define SLOPDESK_CODE_BRIDGE_NO_IDLE_PANE        (-2)
+#define SLOPDESK_CODE_BRIDGE_MALFORMED           (-3)  /* a record left the blob, or a bad string */
+
+typedef struct {
+    size_t pane_id_offset;
+    size_t pane_id_len;
+    size_t cwd_offset;
+    size_t cwd_len;
+    bool   has_cwd;         /* false → never chosen: containment keeps a command in its project */
+    size_t foreground_offset;
+    size_t foreground_len;
+    bool   has_agent;       /* true → refused: typing at an agent's prompt runs it AS the agent */
+} SlopDeskBridgePaneRecord;
+
+// `directory` is where the command is ABOUT — used only to RANK, never to filter, so a project
+// with one shell always works no matter which file is open.
+int32_t slopdesk_code_bridge_choose(const SlopDeskBridgePaneRecord *panes, size_t count,
+                                    const uint8_t *blob, size_t blob_len,
+                                    const uint8_t *root, size_t root_len,
+                                    const uint8_t *directory, size_t directory_len,
+                                    bool has_directory);
+// The sentence the editor shows for a refusal code. A non-refusal answers 0 — silence reads as a
+// broken feature, so every refusal explains itself.
+size_t  slopdesk_code_bridge_message(int32_t code, uint8_t *out, size_t cap);
+size_t  slopdesk_code_bridge_cd_line(const uint8_t *directory, size_t len,
+                                     uint8_t *out, size_t cap);
+// The bytes a command line becomes on the PTY: the text, then the carriage RETURN a real Return
+// key sends. Same convention as the agent-control `run` verb, deliberately.
+size_t  slopdesk_code_bridge_keystrokes(const uint8_t *text, size_t len,
+                                        uint8_t *out, size_t cap);
 
 size_t slopdesk_code_panel_text(uint8_t kind, uint8_t *out, size_t cap);
 

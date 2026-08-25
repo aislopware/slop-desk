@@ -31,7 +31,8 @@ use core::ffi::c_uchar;
 
 use slopdesk_agent::{
     AgentDetectionHold, AgentScreenDetection, AgentScreenState, ClaudeHookEvent, ClaudeStatus,
-    ClaudeStatusMachine, Emission, NotificationKind, PaneDetector, attention, badge,
+    ClaudeStatusMachine, Emission, NotificationKind, Outcome, PaneDetector, PaneScan, ScanInput, Verdict,
+    attention, badge,
 };
 
 use crate::{borrow, deliver, push_text, records_of, saturating_u32};
@@ -857,82 +858,142 @@ pub extern "C" fn slopdesk_agent_hold_constant(index: u8) -> f64 {
     }
 }
 
-/// Whether a still-visible blocker is due its periodic re-announcement. `has_last_refresh == false`
-/// means "never refreshed", which is always due.
+/// One pane's scan handle: the temporal state machine of `slopdesk_agent::panescan`, plus the two
+/// labels its last published verdict carried.
 ///
-/// # Safety
-/// Both pointers must be null or point to live, initialised [`Detection`]s for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_hold_refresh_due(
-    previous: *const Detection,
-    next: *const Detection,
-    last_refresh: f64,
-    has_last_refresh: bool,
-    now: f64,
-) -> bool {
-    // SAFETY: the caller's obligation, restated above; `detection_at` states its own.
-    unsafe {
-        AgentDetectionHold::stable_visible_signal_refresh_due(
-            &detection_at(previous),
-            &detection_at(next),
-            has_last_refresh.then_some(last_refresh),
-            now,
-        )
+/// The labels ride here rather than in [`Detection`] for that struct's own stated reason — the
+/// temporal layer reads neither — but the CACHE of them is still the state machine's, so a caller
+/// holds no scan state at all. [`slopdesk_pane_scan_published_labels`] reads them back, and it is a
+/// pure read: retrying an undersized buffer cannot advance a tick.
+#[derive(Debug)]
+pub struct SlopDeskPaneScan {
+    scan: PaneScan,
+    matched_rule_id: Option<String>,
+    fallback_reason: Option<String>,
+}
+
+/// One tick's timing facts. The pane's BYTES are deliberately absent: the caller sends them to
+/// screend itself, and `payload_empty` is the whole of what this side needs to know about them.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ScanTick {
+    /// The pending output AND the rebuild replay are both empty — nothing to fold.
+    pub payload_empty: bool,
+    /// This tick carries a ring replay: the model is stale and is being rebuilt.
+    pub rebuild_replay: bool,
+    /// The pane's current row count.
+    pub rows: u16,
+    /// The pane's current column count.
+    pub cols: u16,
+    /// Monotonic content sequence — bumped per non-empty PTY chunk (the idle-scan skip).
+    pub content_seq: u64,
+    /// The scan clock, in seconds.
+    pub now: f64,
+}
+
+/// What the caller should do with its socket this tick.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScanPlanOut {
+    /// FALSE when the tick has nothing to fold and nothing new to ask — skip the socket entirely
+    /// and finish with outcome 0.
+    pub exchange: bool,
+    /// The `reset` flag for the exchange.
+    pub reset: bool,
+    /// The `agent_changed` flag for the exchange, which clears screend's retained OSC evidence.
+    pub agent_changed: bool,
+    /// Send the agent label EMPTY: this tick could not publish whatever came back, so screend folds
+    /// the bytes and runs no rule.
+    pub label_suppressed: bool,
+}
+
+/// screend's reply, in the fields the clock half reads.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ScanVerdict {
+    /// The rule ladder's verdict.
+    pub detection: Detection,
+    /// The bytes folded so far end inside an OPEN synchronized update.
+    pub frame_open: bool,
+    /// Bumped every time a frame OPENS — two scans see the SAME frame only if this matches.
+    pub frame_generation: u64,
+}
+
+/// The tick's answer.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScanAnswer {
+    /// There is a verdict worth folding into the pane's status machine.
+    pub publish: bool,
+    /// It, when `publish` — every field zero otherwise.
+    pub detection: Detection,
+    /// Its matched rule id is present, and is `rule_len` bytes of
+    /// [`slopdesk_pane_scan_published_labels`]' answer.
+    pub has_rule: bool,
+    /// Its fallback reason is present, and is the REMAINING bytes of that answer.
+    pub has_fallback: bool,
+    /// How many of those bytes the rule id occupies.
+    pub rule_len: usize,
+    /// Seconds until the next scan (tightens to 100 ms while an idle hold is pending).
+    pub next_interval: f64,
+}
+
+impl Default for Detection {
+    fn default() -> Self {
+        Self {
+            state: 3,
+            skip_state_update: false,
+            visible_idle: false,
+            visible_blocker: false,
+            visible_working: false,
+        }
     }
 }
 
-/// Whether a verdict differs enough from the last published one to be worth announcing.
-///
-/// # Safety
-/// Both pointers must be null or point to live, initialised [`Detection`]s for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_agent_hold_should_publish(
-    previous: *const Detection,
-    next: *const Detection,
-    agent_changed: bool,
-    process_exited: bool,
-    refresh_due: bool,
-) -> bool {
-    // SAFETY: the caller's obligation, restated above; `detection_at` states its own.
-    unsafe {
-        AgentDetectionHold::should_publish(
-            &detection_at(previous),
-            &detection_at(next),
-            agent_changed,
-            process_exited,
-            refresh_due,
-        )
+/// The byte an `AgentScreenState` crosses back as — the inverse of [`screen_state_from`].
+const fn screen_state_byte(state: AgentScreenState) -> u8 {
+    match state {
+        AgentScreenState::Idle => 0,
+        AgentScreenState::Working => 1,
+        AgentScreenState::Blocked => 2,
+        AgentScreenState::Unknown => 3,
     }
 }
 
-/// Creates a hold. Exactly one [`slopdesk_agent_hold_free`] per call; see `docs/55` §4b.
+/// The ceiling on how long an open synchronized frame may suppress publishing.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
-pub extern "C" fn slopdesk_agent_hold_new() -> *mut AgentDetectionHold {
-    Box::into_raw(Box::new(AgentDetectionHold::new()))
+pub const extern "C" fn slopdesk_pane_scan_sync_frame_cap() -> f64 {
+    PaneScan::SYNC_FRAME_HOLD_CAP
 }
 
-/// Frees a hold. Null is a no-op.
+/// Creates a pane scanner. Exactly one [`slopdesk_pane_scan_free`] per call; see `docs/55` §4b.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_pane_scan_new() -> *mut SlopDeskPaneScan {
+    Box::into_raw(Box::new(SlopDeskPaneScan {
+        scan: PaneScan::new(),
+        matched_rule_id: None,
+        fallback_reason: None,
+    }))
+}
+
+/// Frees a pane scanner. Null is a no-op.
 ///
 /// # Safety
-/// `handle` must be null, or a live pointer from [`slopdesk_agent_hold_new`] not yet freed.
+/// `handle` must be null, or a live pointer from [`slopdesk_pane_scan_new`] not yet freed.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_agent_hold_free(handle: *mut AgentDetectionHold) {
+pub unsafe extern "C" fn slopdesk_pane_scan_free(handle: *mut SlopDeskPaneScan) {
     if handle.is_null() {
         return;
     }
@@ -940,106 +1001,199 @@ pub unsafe extern "C" fn slopdesk_agent_hold_free(handle: *mut AgentDetectionHol
     drop(unsafe { Box::from_raw(handle) });
 }
 
-/// Whether the hold is currently suppressing an idle transition.
+/// Fold this tick's timing facts and answer what to ask screend.
+///
+/// A null handle or a null `tick` writes the all-false plan, which asks for no exchange and
+/// publishes nothing — the conservative reading of a call that could not be made.
 ///
 /// # Safety
-/// `handle` must be null, or a live hold with no other call on it in flight.
+/// `handle` must be null, or a live scanner with no other call on it in flight; `tick` and `plan`
+/// must be null or point to live, writable values for the call; `agent` must be null or point to
+/// `agent_len` initialised bytes live for the call.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_agent_hold_is_holding_idle(handle: *mut AgentDetectionHold) -> bool {
-    if handle.is_null() {
-        return false;
+pub unsafe extern "C" fn slopdesk_pane_scan_plan(
+    handle: *mut SlopDeskPaneScan,
+    tick: *const ScanTick,
+    agent: *const c_uchar,
+    agent_len: usize,
+    has_agent: bool,
+    plan: *mut ScanPlanOut,
+) {
+    if plan.is_null() {
+        return;
     }
-    // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
-    unsafe { &*handle }.is_holding_idle()
+    // SAFETY: non-null and, by the caller's obligation, writable for this call.
+    unsafe { plan.write(ScanPlanOut::default()) };
+    if handle.is_null() || tick.is_null() {
+        return;
+    }
+    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
+    unsafe {
+        let tick = *tick;
+        let label = has_agent
+            .then(|| core::str::from_utf8(borrow(agent, agent_len)).ok())
+            .flatten();
+        let answer = (*handle).scan.plan(&ScanInput {
+            payload_empty: tick.payload_empty,
+            rebuild_replay: tick.rebuild_replay,
+            rows: tick.rows,
+            cols: tick.cols,
+            agent: label,
+            content_seq: tick.content_seq,
+            now: tick.now,
+        });
+        plan.write(ScanPlanOut {
+            exchange: answer.exchange,
+            reset: answer.reset,
+            agent_changed: answer.agent_changed,
+            label_suppressed: answer.label_suppressed,
+        });
+    }
 }
 
-/// One of the two idle holds, by name. Both are consulted on every real decision — see
-/// [`slopdesk_agent_hold_decide`] — and each is exported on its own only because each is a rule
-/// with its own tests.
-macro_rules! hold_arm {
-    ($(#[$meta:meta])* $name:ident, $method:ident) => {
-        $(#[$meta])*
-        ///
-        /// # Safety
-        /// `handle` must be null, or a live hold with no other call on it in flight; both detection
-        /// pointers must be null or point to live, initialised values for the call.
-        #[unsafe(no_mangle)]
-        #[expect(
-            unsafe_code,
-            reason = "an exported C entry point is unsafe by definition in edition 2024"
-        )]
-        pub unsafe extern "C" fn $name(
-            handle: *mut AgentDetectionHold,
-            previous: *const Detection,
-            next: *const Detection,
-            agent_changed: bool,
-            process_exited: bool,
-            now: f64,
-        ) -> bool {
-            if handle.is_null() {
-                return false;
-            }
-            // SAFETY: the caller's obligations, restated above; `detection_at` states its own.
-            unsafe {
-                (*handle).$method(
-                    &detection_at(previous),
-                    &detection_at(next),
-                    agent_changed,
-                    process_exited,
-                    now,
-                )
-            }
+/// Take the exchange's outcome — `0` skipped, `1` answered, anything else failed — and answer the
+/// tick.
+///
+/// Mutates the scanner exactly once, which is why the published verdict's two LABELS are read back
+/// by a separate call: an undersized buffer here would have to advance a tick to retry.
+///
+/// # Safety
+/// `handle` must be null, or a live scanner with no other call on it in flight; `verdict` and
+/// `answer` must be null or point to live, writable values for the call; `rule` and `fallback` must
+/// be null or point to their stated lengths of initialised bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_scan_finish(
+    handle: *mut SlopDeskPaneScan,
+    outcome: u8,
+    verdict: *const ScanVerdict,
+    rule: *const c_uchar,
+    rule_len: usize,
+    has_rule: bool,
+    fallback: *const c_uchar,
+    fallback_len: usize,
+    has_fallback: bool,
+    answer: *mut ScanAnswer,
+) {
+    if answer.is_null() {
+        return;
+    }
+    // SAFETY: non-null and, by the caller's obligation, writable for this call.
+    unsafe { answer.write(ScanAnswer::default()) };
+    if handle.is_null() {
+        return;
+    }
+    // SAFETY: the caller's obligations, restated above; `borrow` states its own.
+    let outcome = unsafe {
+        match outcome {
+            0 => Outcome::Skipped,
+            1 if !verdict.is_null() => {
+                let read = *verdict;
+                Outcome::Answered(Verdict {
+                    detection: AgentScreenDetection {
+                        matched_rule_id: has_rule.then(|| text_of(rule, rule_len)),
+                        fallback_reason: has_fallback.then(|| text_of(fallback, fallback_len)),
+                        ..read.detection.resolve()
+                    },
+                    frame_open: read.frame_open,
+                    frame_generation: read.frame_generation,
+                })
+            },
+            // A `1` with no verdict to read is a caller that lost its reply between the socket and
+            // this call, which is the failure case however it got there.
+            _ => Outcome::Failed,
         }
     };
+    // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
+    let handle = unsafe { &mut *handle };
+    let output = handle.scan.finish(&outcome);
+    let Some(published) = output.publish else {
+        handle.matched_rule_id = None;
+        handle.fallback_reason = None;
+        // SAFETY: non-null and, by the caller's obligation, writable for this call.
+        unsafe {
+            answer.write(ScanAnswer {
+                next_interval: output.next_interval,
+                ..ScanAnswer::default()
+            });
+        }
+        return;
+    };
+    handle.matched_rule_id = published.matched_rule_id;
+    handle.fallback_reason = published.fallback_reason;
+    // SAFETY: non-null and, by the caller's obligation, writable for this call.
+    unsafe {
+        answer.write(ScanAnswer {
+            publish: true,
+            detection: Detection {
+                state: screen_state_byte(published.state),
+                skip_state_update: published.skip_state_update,
+                visible_idle: published.visible_idle,
+                visible_blocker: published.visible_blocker,
+                visible_working: published.visible_working,
+            },
+            has_rule: handle.matched_rule_id.is_some(),
+            has_fallback: handle.fallback_reason.is_some(),
+            rule_len: handle.matched_rule_id.as_ref().map_or(0, String::len),
+            next_interval: output.next_interval,
+        });
+    }
 }
 
-hold_arm!(
-    /// The working→idle confirmation hold: three confirming reads, or the 700 ms cap, release it.
-    slopdesk_agent_hold_working_to_idle, should_hold_working_to_idle
-);
-hold_arm!(
-    /// The blocked→idle hold, which a visible idle deliberately does NOT bypass.
-    slopdesk_agent_hold_blocked_to_idle, should_hold_blocked_to_idle
-);
-
-/// The whole temporal decision: hold the transition, or publish it.
+/// The last PUBLISHED verdict's matched rule id followed by its fallback reason, concatenated —
+/// `ScanAnswer::rule_len` is where one ends and the other begins.
+///
+/// A pure read of the handle, so §4's "call again with a bigger buffer" is safe here in a way it
+/// would not be beside a state advance.
 ///
 /// # Safety
-/// `handle` must be null, or a live hold with no other call on it in flight; both detection
-/// pointers must be null or point to live, initialised values for the call.
+/// `handle` must be null, or a live scanner with no other call on it in flight; `out` must be null
+/// or writable for `cap` bytes.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub unsafe extern "C" fn slopdesk_agent_hold_decide(
-    handle: *mut AgentDetectionHold,
-    previous: *const Detection,
-    next: *const Detection,
-    agent_changed: bool,
-    process_exited: bool,
-    last_refresh: f64,
-    has_last_refresh: bool,
-    now: f64,
-) -> bool {
+pub unsafe extern "C" fn slopdesk_pane_scan_published_labels(
+    handle: *mut SlopDeskPaneScan,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
     if handle.is_null() {
-        return false;
+        return 0;
     }
-    // SAFETY: the caller's obligations, restated above; `detection_at` states its own.
-    unsafe {
-        (*handle).decide(
-            &detection_at(previous),
-            &detection_at(next),
-            agent_changed,
-            process_exited,
-            has_last_refresh.then_some(last_refresh),
-            now,
-        )
+    // SAFETY: non-null and, by the caller's obligation, live and unaliased for this call.
+    let handle = unsafe { &*handle };
+    let mut labels = String::new();
+    if let Some(rule) = &handle.matched_rule_id {
+        labels.push_str(rule);
     }
+    if let Some(fallback) = &handle.fallback_reason {
+        labels.push_str(fallback);
+    }
+    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
+    unsafe { deliver(labels.as_bytes(), out, cap) }
+}
+
+/// A borrowed `(ptr, len)` as an owned `String`, lossily — a label is a diagnostic, and a byte
+/// sequence that is not UTF-8 is worth reporting approximately rather than dropping.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` initialised bytes live for the call.
+#[expect(
+    unsafe_code,
+    reason = "this IS the boundary: a caller's (ptr, len) becoming an owned value"
+)]
+unsafe fn text_of(bytes: *const c_uchar, len: usize) -> String {
+    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
+    String::from_utf8_lossy(unsafe { borrow(bytes, len) }).into_owned()
 }
 
 // MARK: The pane detector
@@ -1608,7 +1762,9 @@ pub const extern "C" fn slopdesk_agent_dissent_seconds(index: c_uchar) -> f64 {
 #[cfg(test)]
 #[expect(
     unsafe_code,
-    reason = "driving the C ABI the way Swift does is the thing under test"
+    clippy::indexing_slicing,
+    reason = "driving the C ABI the way Swift does is the thing under test, and a panic in a test IS the \
+              failure report"
 )]
 mod tests {
     use super::*;
@@ -1678,50 +1834,242 @@ mod tests {
         }
     }
 
+    /// The door and the crate must walk one pane's ticks identically, holds and all — the hold is
+    /// no longer reachable on its own, so the SCANNER is where that equivalence is now proved.
     #[test]
-    fn the_hold_suppresses_the_first_working_to_idle_the_same_way_in_process() {
-        let hold = slopdesk_agent_hold_new();
-        let working = Detection {
-            state: 1,
-            skip_state_update: false,
-            visible_idle: false,
-            visible_blocker: false,
-            visible_working: true,
-        };
+    fn the_scanner_walks_the_same_ticks_over_the_door_as_in_process() {
+        let handle = slopdesk_pane_scan_new();
+        let mut reference = PaneScan::new();
+        let agent = b"claude";
         let idle = Detection {
             state: 0,
             skip_state_update: false,
-            visible_idle: true,
+            visible_idle: false,
             visible_blocker: false,
             visible_working: false,
         };
+        let working = Detection {
+            state: 1,
+            visible_working: true,
+            ..idle
+        };
 
-        let mut reference = AgentDetectionHold::new();
-        for step in 0..6 {
+        for step in 0_u8..12 {
             // Kept as a separate multiply and add, never `mul_add`: this repo pins float results
             // bit-exactly, and a fused op rounds once instead of twice.
-            let elapsed = f64::from(step) * AgentDetectionHold::PENDING_IDLE_RECHECK;
-            let now = 10.0 + elapsed;
-            let over_ffi = unsafe {
-                slopdesk_agent_hold_decide(
-                    hold,
-                    &raw const working,
-                    &raw const idle,
-                    false,
-                    false,
-                    0.0,
-                    false,
-                    now,
-                )
+            let now = 4.0 + f64::from(step) * 0.1;
+            // The first four ticks are working; the rest are a plain idle, so the working→idle
+            // hold engages and then releases inside the walk.
+            let seen = if step < 4 { working } else { idle };
+            let tick = ScanTick {
+                payload_empty: false,
+                rebuild_replay: false,
+                rows: 24,
+                cols: 80,
+                content_seq: u64::from(step) + 1,
+                now,
             };
-            let native = reference.decide(&working.resolve(), &idle.resolve(), false, false, None, now);
-            assert_eq!(over_ffi, native, "step {step}");
+            let mut plan = ScanPlanOut::default();
+            unsafe {
+                slopdesk_pane_scan_plan(
+                    handle,
+                    &raw const tick,
+                    agent.as_ptr(),
+                    agent.len(),
+                    true,
+                    &raw mut plan,
+                );
+            }
+            let native_plan = reference.plan(&ScanInput {
+                payload_empty: false,
+                rebuild_replay: false,
+                rows: 24,
+                cols: 80,
+                agent: Some("claude"),
+                content_seq: u64::from(step) + 1,
+                now,
+            });
+            assert_eq!(plan.exchange, native_plan.exchange, "step {step}: exchange");
+            assert_eq!(plan.reset, native_plan.reset, "step {step}: reset");
+            assert_eq!(
+                plan.label_suppressed, native_plan.label_suppressed,
+                "step {step}: label"
+            );
+
+            let verdict = ScanVerdict {
+                detection: seen,
+                frame_open: false,
+                frame_generation: 0,
+            };
+            let mut answer = ScanAnswer::default();
+            unsafe {
+                slopdesk_pane_scan_finish(
+                    handle,
+                    1,
+                    &raw const verdict,
+                    core::ptr::null(),
+                    0,
+                    false,
+                    core::ptr::null(),
+                    0,
+                    false,
+                    &raw mut answer,
+                );
+            }
+            let native = reference.finish(&Outcome::Answered(Verdict {
+                detection: seen.resolve(),
+                frame_open: false,
+                frame_generation: 0,
+            }));
+            assert_eq!(answer.publish, native.publish.is_some(), "step {step}: publish");
+            assert!(
+                (answer.next_interval - native.next_interval).abs() < f64::EPSILON,
+                "step {step}: interval"
+            );
+            if let Some(published) = native.publish {
+                assert_eq!(answer.detection.state, screen_state_byte(published.state));
+            }
         }
+        unsafe { slopdesk_pane_scan_free(handle) };
+    }
+
+    /// The two labels ride the handle and come back off it, split at `rule_len`.
+    #[test]
+    fn a_published_verdict_carries_its_rule_id_back_across() {
+        let handle = slopdesk_pane_scan_new();
+        let agent = b"claude";
+        let blocked = Detection {
+            state: 2,
+            skip_state_update: false,
+            visible_idle: false,
+            visible_blocker: true,
+            visible_working: false,
+        };
+        let rule = b"live_prompt_box";
+        let fallback = b"no_rule_matched";
+        let mut answer = ScanAnswer::default();
+        for step in 0_u8..2 {
+            let tick = ScanTick {
+                payload_empty: false,
+                rebuild_replay: false,
+                rows: 24,
+                cols: 80,
+                content_seq: u64::from(step) + 1,
+                // Past the startup grace on the second tick, which is the one that publishes.
+                now: f64::from(step) * 4.0,
+            };
+            let mut plan = ScanPlanOut::default();
+            unsafe {
+                slopdesk_pane_scan_plan(
+                    handle,
+                    &raw const tick,
+                    agent.as_ptr(),
+                    agent.len(),
+                    true,
+                    &raw mut plan,
+                );
+            }
+            let verdict = ScanVerdict {
+                detection: blocked,
+                frame_open: false,
+                frame_generation: 0,
+            };
+            unsafe {
+                slopdesk_pane_scan_finish(
+                    handle,
+                    1,
+                    &raw const verdict,
+                    rule.as_ptr(),
+                    rule.len(),
+                    true,
+                    fallback.as_ptr(),
+                    fallback.len(),
+                    true,
+                    &raw mut answer,
+                );
+            }
+        }
+        assert!(answer.publish);
+        assert_eq!(answer.rule_len, rule.len());
+        assert!(answer.has_fallback);
+        let mut out = [0u8; 64];
+        let written = unsafe { slopdesk_pane_scan_published_labels(handle, out.as_mut_ptr(), out.len()) };
+        assert_eq!(&out[..answer.rule_len], rule);
+        assert_eq!(&out[answer.rule_len..written], fallback);
+        // The read is pure: asking twice cannot advance a tick.
+        let again = unsafe { slopdesk_pane_scan_published_labels(handle, core::ptr::null_mut(), 0) };
+        assert_eq!(again, written);
+        unsafe { slopdesk_pane_scan_free(handle) };
+    }
+
+    /// A failed exchange publishes nothing and drops the labels with the verdict.
+    #[test]
+    fn a_failed_exchange_answers_the_steady_cadence_and_no_labels() {
+        let handle = slopdesk_pane_scan_new();
+        let tick = ScanTick {
+            payload_empty: false,
+            rebuild_replay: false,
+            rows: 24,
+            cols: 80,
+            content_seq: 1,
+            now: 0.0,
+        };
+        let mut plan = ScanPlanOut::default();
+        unsafe {
+            slopdesk_pane_scan_plan(
+                handle,
+                &raw const tick,
+                core::ptr::null(),
+                0,
+                false,
+                &raw mut plan,
+            );
+        };
+        let mut answer = ScanAnswer::default();
+        unsafe {
+            slopdesk_pane_scan_finish(
+                handle,
+                2,
+                core::ptr::null(),
+                core::ptr::null(),
+                0,
+                false,
+                core::ptr::null(),
+                0,
+                false,
+                &raw mut answer,
+            );
+        }
+        assert!(!answer.publish);
+        assert!((answer.next_interval - AgentDetectionHold::SCAN_INTERVAL).abs() < f64::EPSILON);
         assert_eq!(
-            unsafe { slopdesk_agent_hold_is_holding_idle(hold) },
-            reference.is_holding_idle()
+            unsafe { slopdesk_pane_scan_published_labels(handle, core::ptr::null_mut(), 0) },
+            0
         );
-        unsafe { slopdesk_agent_hold_free(hold) };
+        unsafe { slopdesk_pane_scan_free(handle) };
+    }
+
+    /// Every entry point survives a null handle without touching memory it was not given.
+    #[test]
+    fn a_null_scanner_answers_the_conservative_plan() {
+        let mut plan = ScanPlanOut {
+            exchange: true,
+            reset: true,
+            agent_changed: true,
+            label_suppressed: true,
+        };
+        unsafe {
+            slopdesk_pane_scan_plan(
+                core::ptr::null_mut(),
+                core::ptr::null(),
+                core::ptr::null(),
+                0,
+                false,
+                &raw mut plan,
+            );
+        }
+        assert!(!plan.exchange, "a call that could not be made asks for nothing");
+        unsafe { slopdesk_pane_scan_free(core::ptr::null_mut()) };
     }
 
     #[test]

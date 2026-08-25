@@ -41,11 +41,13 @@ const RUST_PROTOCOL: &str = "rust/slopdesk-superwire/src/protocol.rs";
 /// **The detection ladder.** The manifest schema, its TOML parser, the region resolver, the rule
 /// engine, the bundled manifests, the explain trace, the OSC tracker and the sync-frame tracker
 /// moved into screend's `detect` verb and were DELETED here in the same change (`docs/50` §3,
-/// `docs/52`). The temporal layer did NOT move and is not named: `AgentDetectionHold` and
-/// `PaneScreenScanner` are hostd's, because screend owns everything that reads the BYTES and hostd
-/// owns everything that reads the CLOCK. `ClaudeManifestMatcher` is named for a different reason —
-/// it was a SECOND screen matcher in Swift, three tables of literal Claude cues next to a
-/// nineteen-agent rule ladder. Its process-name half outlived it for a while as
+/// `docs/52`). The TEMPORAL layer followed later, and the split it was named for survived it:
+/// screend still owns everything that reads the BYTES and hostd still owns everything that reads
+/// the CLOCK — what changed is the LANGUAGE of the clock half, which is `slopdesk-agent`'s
+/// `panescan` now. hostd keeps the socket, because it is the process holding the connection; what
+/// it may not keep is a second copy of when to publish. `ClaudeManifestMatcher` is named for a
+/// different reason — it was a SECOND screen matcher in Swift, three tables of literal Claude cues
+/// next to a nineteen-agent rule ladder. Its process-name half outlived it for a while as
 /// `ClaudeProcessMatcher`, a wrapper over the crate's own predicates; that wrapper is gone too, so
 /// neither half may come back under either name.
 ///
@@ -83,11 +85,19 @@ const RUST_PROTOCOL: &str = "rust/slopdesk-superwire/src/protocol.rs";
 pub fn deleted_host_swift(tree: &Tree) -> Report {
     let mut claims = engines_and_taps();
     claims.extend(rules_that_moved_to_rust());
+    claims.extend(terminfo_files_stay_deleted());
     claims.extend(supervisor_protocol_stays_deleted());
     check_all(tree, &claims)
 }
 
-/// The three files the superd-protocol fold deleted, named as paths rather than as patterns.
+/// The two files the terminfo LINK deleted, named as paths because neither has a keyword left.
+///
+/// `TerminfoResolver` was a wrapper around a FORK of `slopdesk-probe terminfo`; the wrapper's whole
+/// job — hand the probe two names, map its answer back to an enum — stopped existing when the
+/// module became a linked door, so what would come back is not a second rule but a second HOP. And
+/// the enum it mapped to, `ClaudeCodeProfile.Term`, was the closed two-case list the crate would
+/// have had to agree with; the two names live on `HostEnvironment` as strings for exactly that
+/// reason.
 ///
 /// A ban on a TYPE name is the right shape when what may not come back is a second engine. Here
 /// what may not come back is a second SPELLING of a wire that is now declared once, in
@@ -96,6 +106,23 @@ pub fn deleted_host_swift(tree: &Tree) -> Report {
 /// no keyword a pattern could catch. Eleven `slopdesk-invariants` claims existed to compare these
 /// files against superd's; they are gone, and these three absences are what stands in their place
 /// (`CLAUDE.md`, one implementation).
+fn terminfo_files_stay_deleted() -> Vec<Claim> {
+    vec![
+        Claim::Absent {
+            path: "Sources/SlopDeskHost/TerminfoResolver.swift",
+            message: "hostd is resolving TERM in Swift again — slopdesk-probe's terminfo module is the rule \
+                      and HostEnvironment.resolveTerm LINKS it, so there is no fork left to wrap",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskHost/ClaudeCodeProfile.swift",
+            message: "the TERM enum is back — hostd advertises two NAMES (HostEnvironment.defaultTerm and \
+                      fallbackTerm) and the resolution takes strings, so a two-case enum is a closed list \
+                      the crate would have to agree with",
+        },
+    ]
+}
+
+/// The three files the superd-protocol fold deleted, named as paths rather than as patterns.
 fn supervisor_protocol_stays_deleted() -> Vec<Claim> {
     vec![
         Claim::Absent {
@@ -239,19 +266,21 @@ fn rules_that_moved_to_rust() -> Vec<Claim> {
 /// The DECISIONS: each of these fails because the same rule spelled twice can answer differently,
 /// and the two answers are the bug. See [`rules_that_moved_to_rust`] for what each one is.
 ///
-/// Split by what the fold is ABOUT, which is also where a new one belongs: [`pane_folds`] answers a
-/// question about ONE pane — its size, its project, its turn, its shell's environment, its queue,
-/// its line discipline — and [`machine_folds`] answers one about the machine or about this daemon
-/// itself. The two have different blast radii and neither list is a bucket for the other's
-/// overflow.
+/// Split by what the fold is ABOUT, which is also where a new one belongs: [`pane_shape_folds`]
+/// answers a question about what ONE pane IS — its size, its project, its shell's environment, its
+/// queue, its line discipline; [`pane_activity_folds`] answers one about what that pane is DOING —
+/// its turn, what its screen means, when to look again, whether it is free to take a command; and
+/// [`machine_folds`] answers one about the machine or about this daemon itself. The three have
+/// different blast radii and no list is a bucket for another's overflow.
 fn folds_that_moved_to_rust() -> Vec<Claim> {
-    let mut claims = pane_folds();
+    let mut claims = pane_shape_folds();
+    claims.extend(pane_activity_folds());
     claims.extend(machine_folds());
     claims
 }
 
-/// The folds about ONE pane. See [`folds_that_moved_to_rust`] for the split.
-fn pane_folds() -> Vec<Claim> {
+/// The folds about what ONE pane IS. See [`folds_that_moved_to_rust`] for the split.
+fn pane_shape_folds() -> Vec<Claim> {
     vec![
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -275,28 +304,6 @@ fn pane_folds() -> Vec<Claim> {
             message: "a pane's project key or its logical-line split is back in {files} — \
                       rust/slopdesk-git's project_key walks it and rust/slopdesk-sanitize's lines splits \
                       it, each behind one door",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"next == \.done \{ return previous != \.done \}|previous == \.working \|\| previous == \.needsPermission",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "what mints a finished turn is spelled in Swift again in {files} — \
-                      slopdesk_agent_finished_turn is the rule (rust/slopdesk-agent, attention)",
-        },
-        Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=",
-            all: &[],
-            unless: &[],
-            view: View::Code,
-            exempt: &[],
-            message: "manifest TOML is back in {files} — it lives in rust/slopdesk-screend/manifests \
-                      (docs/52)",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -336,6 +343,58 @@ fn pane_folds() -> Vec<Claim> {
     ]
 }
 
+/// The folds about what ONE pane is DOING. See [`folds_that_moved_to_rust`] for the split.
+fn pane_activity_folds() -> Vec<Claim> {
+    vec![
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"next == \.done \{ return previous != \.done \}|previous == \.working \|\| previous == \.needsPermission",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "what mints a finished turn is spelled in Swift again in {files} — \
+                      slopdesk_agent_finished_turn is the rule (rust/slopdesk-agent, attention)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"\[\[rules\]\]|min_engine_version\s*=|skip_state_update\s*=|line_regex\s*=",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "manifest TOML is back in {files} — it lives in rust/slopdesk-screend/manifests \
+                      (docs/52)",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"func (shouldHoldWorkingToIdle|shouldHoldBlockedToIdle|stableVisibleSignalRefreshDue)\b|awaitingRepaintAfterRebuild|syncFrameOpenSince",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the pane scan's temporal layer is back in {files} — rust/slopdesk-agent's panescan \
+                      sequences the tick and hostd owns only the screend socket; a second copy of the \
+                      working-to-idle hold is a pane that publishes an idle screend never confirmed",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r"static let shellNames|func sharedComponents\b|no terminal pane is open in this project",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the code bridge's pane choice is back in {files} — rust/slopdesk-muxsession's \
+                      bridge_router owns the two safety gates and the ranking, and a second shell list here \
+                      is a command typed at an agent's prompt",
+        },
+    ]
+}
+
 /// The folds about the MACHINE, or about this daemon's own launch. See
 /// [`folds_that_moved_to_rust`].
 fn machine_folds() -> Vec<Claim> {
@@ -350,6 +409,18 @@ fn machine_folds() -> Vec<Claim> {
             exempt: &[],
             message: "the host-vitals readings are back in {files} — rust/slopdesk-posix makes the four \
                       syscalls and rust/slopdesk-panecensus's vitals interprets them",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: SWIFT,
+            pattern: r#"(enum|struct) (TerminfoResolver|ClaudeCodeProfile)\b|"terminfo", "--requested""#,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the TERM resolution is back in {files} — slopdesk-probe's terminfo module decides it \
+                      and HostEnvironment.resolveTerm LINKS that module rather than forking the probe; the \
+                      two names hostd advertises are the only part of it that is Swift's",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -525,6 +596,24 @@ mod tests {
                 "runningexe",
                 "    if _NSGetExecutablePath(&buffer, &capacity) == 0 { return \"\" }\n",
             ),
+            (
+                "panescanhold",
+                "    func shouldHoldWorkingToIdle() -> Bool { false }\n",
+            ),
+            ("panescanrebuild", "    var awaitingRepaintAfterRebuild = false\n"),
+            (
+                "bridgeshells",
+                "    static let shellNames: Set<String> = [\"zsh\"]\n",
+            ),
+            (
+                "bridgerefusal",
+                "    let m = \"SlopDesk: no terminal pane is open in this project.\"\n",
+            ),
+            ("terminfo", "enum TerminfoResolver {}\n"),
+            (
+                "terminfofork",
+                "    let a = ask([\"terminfo\", \"--requested\", name])\n",
+            ),
             ("echoprobe", "    let on = (term.c_lflag & tcflag_t(ECHO)) != 0\n"),
             (
                 "echocanonical",
@@ -555,6 +644,26 @@ mod tests {
             "// `final class HostOutputSniffer` used to live here; superd owns it now.\nlet x = 1\n",
         );
         assert!(deleted_host_swift(&fixture.tree()).is_clean());
+    }
+
+    /// The two files the terminfo LINK deleted. Neither has a keyword left to ban — what would come
+    /// back is a HOP (a fork the port removed) and a closed two-case enum — so the ban is on the
+    /// PATH.
+    #[test]
+    fn a_revived_terminfo_file_is_red() {
+        for name in ["TerminfoResolver.swift", "ClaudeCodeProfile.swift"] {
+            let fixture = Fixture::new(&format!("revived-{name}"));
+            fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
+            assert!(deleted_host_swift(&fixture.tree()).is_clean(), "{name}");
+            fixture.write(
+                &format!("Sources/SlopDeskHost/{name}"),
+                "public enum Term: String { case ghostty }\n",
+            );
+            assert!(
+                !deleted_host_swift(&fixture.tree()).is_clean(),
+                "{name}: the ban did not fire on its return"
+            );
+        }
     }
 
     /// The file whose return would put a second spelling of the wire back in Swift. It has no

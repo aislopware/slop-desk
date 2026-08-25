@@ -65,7 +65,7 @@ What the 2026-06 survey called absent is now largely present or deliberately gon
 | **Claude-specific: TerminalMode / alt-screen detection (B1 compose mode)** | done, moved to Rust | `TerminalMode.swift` / `TerminalModeStream.swift` / `TerminalModeTracker.swift` / `InputBoxModel.swift` in `Sources/SlopDeskClaudeCode/`. `InputBoxModel` is now the Swift face of `rust/slopdesk-terminal`'s `inputbox` through `rust/slopdesk-ffi`'s `input_box` door and owns one thing, an opaque handle's lifetime (`InputBoxModel.swift:1-26`). **`InputDedupRing` is no longer a Swift type** — the hold-and-confirm ring is `rust/slopdesk-terminal/src/dedup.rs`, this model's interior; its name survives only in that file's comment at `:14` |
 | **Claude-specific: OSC title detection** | done | `ClaudeStatusMachine::title_names_claude` at `rust/slopdesk-agent/src/machine.rs:627` (used by the ladder at `:601,639`); the `slopdesk_agent_detector_title` fold (`rust/slopdesk-ffi/src/agent.rs:1292`) lifts the presence floor, called from `ClaudePaneDetector.title(_:at:)` at `:211`. `ClaudePaneDetector.topicLine(fromTitle:)` `:257` extracts the type-36 intent from the same title |
 | **Agent-generic: subscribe verb (output streaming over ctl socket)** | done | `serveSubscribe` (per-pane) at `AgentControlListener.swift:999` and `serveSubscribeAll` (supervision stream) at `:1123`, dispatched at `:958`; `agent_status_changed` NDJSON events on status change, fanned out by `HostServer.wireAgentStatusFanOut` (`HostServer.swift:1120,2207`, observer registry `:128-136`) |
-| **Agent-generic: Claude Code profile (TERM, env seams)** | done | `ClaudeCodeProfile` at `Sources/SlopDeskHost/ClaudeCodeProfile.swift:16`; injected via `HostEnvironment.curated` in `spawnFreshShell` (`HostServer.swift:2078`) |
+| **Agent-generic: TERM + env seams** | done | `HostEnvironment.defaultTerm`/`fallbackTerm`, resolved by `resolveTerm` and injected via `HostEnvironment.curated` in `spawnFreshShell` |
 
 ---
 
@@ -82,7 +82,7 @@ What the 2026-06 survey called absent is now largely present or deliberately gon
 - `Sources/SlopDeskHost/AgentHookListener.swift` — hook socket server (the fold itself is Rust's now)
 - `Sources/SlopDeskHost/AgentControlListener.swift` — ctl socket server, all verbs incl. subscribe
 - `Sources/SlopDeskHost/AgentControlState.swift` — valid self-report states
-- `Sources/SlopDeskHost/ClaudeCodeProfile.swift` — TERM + env for Claude Code panes
+- `Sources/SlopDeskHost/HostEnvironment.swift` — TERM + the curated env every pane spawns with
 - `Sources/SlopDeskHost/PreventSleepAssertion.swift` / `PreventSleepDriver.swift` / `PreventSleepPolicy.swift` — the `IOPMAssertion` behind "Prevent Sleep While Processing"
 - `Sources/SlopDeskHost/HostServer.swift` — `wireAgentStatusFanOut`, fan-out observer registry
 - `Sources/SlopDeskHost/MuxChannelSession.swift` — `agentDetector`, `agentWatchTask`, `onAgentStatusChanged`

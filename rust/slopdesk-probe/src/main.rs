@@ -1,7 +1,7 @@
 //! One subcommand per metadata query, one answer on stdout.
 //!
 //! ## Two output shapes, on purpose
-//! Four subcommands print one JSON object. Two — `git-diff` and `read-session` — print RAW BYTES,
+//! Three subcommands print one JSON object. Two — `git-diff` and `read-session` — print RAW BYTES,
 //! because their answer IS bytes: a patch or a transcript, up to 15 MiB of it, that hostd forwards
 //! into an opaque wire payload without looking inside. Wrapping those in JSON would mean escaping
 //! every byte on the way out and unescaping it on the way in, to move a blob neither side reads.
@@ -21,7 +21,6 @@
 //! list-dir      --path P               → {"entries":[{"isDir":…,"name":…}]}
 //! list-sessions --project P            → {"sessions":[{"kind":…,"id":…,"title":…,"cwd":…,"mtimeMS":…}]}
 //! read-session  --id P                 → raw transcript bytes
-//! terminfo      --requested T --fallback F → {"term":…,"fellBack":…}
 //! ```
 
 use std::collections::BTreeMap;
@@ -29,7 +28,7 @@ use std::io::Write as _;
 use std::path::Path;
 use std::process::ExitCode;
 
-use slopdesk_probe::{files, git, terminfo};
+use slopdesk_probe::{files, git};
 
 /// The exit code for a query whose subject does not exist.
 const NOT_FOUND: u8 = 3;
@@ -69,16 +68,6 @@ fn main() -> ExitCode {
             })
         },
         "read-session" => flag("--id").map_or_else(usage, |id| print_bytes(files::read_session(&home, &id))),
-        "terminfo" => {
-            match (flag("--requested"), flag("--fallback")) {
-                (Some(requested), Some(fallback)) => {
-                    let (term, fell_back) =
-                        terminfo::resolve(&requested, &fallback, &terminfo::process_environment());
-                    print_json(&terminfo::to_json(&term, fell_back))
-                },
-                _ => usage(),
-            }
-        },
         _ => usage(),
     }
 }
@@ -151,7 +140,7 @@ fn usage() -> ExitCode {
     let _unused = writeln!(
         err,
         "usage: slopdesk-probe <git-status --cwd P | git-diff --cwd P --file F | list-dir --path P | \
-         list-sessions --project P | read-session --id P | terminfo --requested T --fallback F>"
+         list-sessions --project P | read-session --id P>"
     );
     ExitCode::from(BAD_ARGUMENTS)
 }

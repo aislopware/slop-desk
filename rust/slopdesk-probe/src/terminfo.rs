@@ -27,8 +27,6 @@
 use std::collections::BTreeMap;
 use std::process::{Command, Stdio};
 
-use serde_json::{Value, json};
-
 /// Where `infocmp` is. Absolute for [`crate::git::GIT`]'s reason: the answer must be the one the
 /// spawned TUI apps will get, not whatever a `PATH` earlier in someone's profile points at.
 pub const INFOCMP: &str = "/usr/bin/infocmp";
@@ -174,12 +172,6 @@ pub fn resolve(requested: &str, fallback: &str, environment: &Environment) -> (S
     decide(requested, fallback, resolvable(requested, environment))
 }
 
-/// The answer hostd decodes.
-#[must_use]
-pub fn to_json(term: &str, fell_back: bool) -> Value {
-    json!({ "term": term, "fellBack": fell_back })
-}
-
 #[cfg(test)]
 #[expect(
     clippy::indexing_slicing,
@@ -306,14 +298,6 @@ mod tests {
         assert_eq!(
             resolve("xterm-256color", "xterm-256color", &env),
             ("xterm-256color".to_owned(), false,)
-        );
-    }
-
-    #[test]
-    fn the_answer_carries_both_fields() {
-        assert_eq!(
-            to_json("xterm-256color", true).to_string(),
-            r#"{"fellBack":true,"term":"xterm-256color"}"#,
         );
     }
 

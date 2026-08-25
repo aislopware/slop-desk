@@ -11,8 +11,13 @@ import SlopDeskSupervisor
 /// them was untestable in Swift for the reason the whole file carries — the hang-safety rule keeps a
 /// real `Process` out of a unit test, so the slug convention and the diff-base ladder were
 /// compiled-and-reviewed only. In Rust they are ordinary functions over strings with the process
-/// boundary at the edge, and they are covered (`docs/DECISIONS.md`, stage 24). ``TerminfoResolver``'s
-/// host probe joined them for the same reason (stage 25).
+/// boundary at the edge, and they are covered (`docs/DECISIONS.md`, stage 24).
+///
+/// The `TERM` resolution joined them at stage 25 and then went FURTHER: it is a pure function of a
+/// name and an environment, so once it was Rust there was nothing for the fork to carry, and
+/// ``HostEnvironment/resolveTerm(requested:)`` links `slopdesk-probe`'s module directly. The probe's
+/// `terminfo` verb stays — it is how the resolution is inspected from a shell on an odd host — but
+/// hostd no longer pays a `posix_spawn` to reach it.
 ///
 /// `gitStatus` was the fifth and has left entirely: ``HostGitStatus`` answers it IN PROCESS through
 /// `slopdesk-git`, so the verb the repo watcher polls on a cadence costs no spawn at all.
@@ -93,23 +98,6 @@ enum HostProbe {
     /// the probe itself — a second check under the builder's own.
     static func readAgentSession(id: String) -> Data? {
         askBytes(["read-session", "--id", id])
-    }
-
-    /// What a `TERM` resolution came back with: the entry to advertise, and whether getting there
-    /// meant falling back.
-    struct Terminfo: Sendable {
-        var term: String
-        var fellBack: Bool
-    }
-
-    /// Resolves `requested` against this host's terminfo database, answering `fallback` when the
-    /// host cannot honour it. `nil` on a missing binary — the caller decides what a host that cannot
-    /// be asked should advertise.
-    static func terminfo(requested: String, fallback: String) -> Terminfo? {
-        guard let answer = ask(["terminfo", "--requested", requested, "--fallback", fallback]),
-              let term = answer["term"] as? String
-        else { return nil }
-        return Terminfo(term: term, fellBack: answer["fellBack"] as? Bool ?? false)
     }
 
     // MARK: - The fork
