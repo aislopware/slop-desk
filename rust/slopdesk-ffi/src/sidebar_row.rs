@@ -10,7 +10,7 @@ use core::ffi::c_uchar;
 use slopdesk_agent::badge::TabBadge;
 use slopdesk_workspace::sidebar_row::{self, Entry, Switch, Verb};
 
-use crate::workspace::{Span, text_of};
+use crate::workspace::{Span, borrow_array, text_of};
 use crate::{borrow, deliver, push_text, records_of, saturating_u32};
 
 /// A badge discriminant back to its variant. `-1`, and anything naming no badge, is an all-clear
@@ -237,6 +237,83 @@ pub const extern "C" fn slopdesk_ws_sidebar_row_separator_code() -> u8 {
     Entry::Separator.code()
 }
 
+/// How many spans [`slopdesk_ws_sidebar_row_detail`] reads, and what each one is.
+///
+/// A `const` per stop rather than a bare literal at the call: the order IS the precedence ladder,
+/// and a caller that packed its blob one slot out would silently hand the running command to the
+/// question rung. `slopdesk-invariants` pins these against the Swift side's own indices.
+pub const DETAIL_SPANS: usize = 7;
+
+/// The one LIVE-DETAIL line a rail row's tooltip carries, resolved and delivered.
+///
+/// ```text
+/// 1 × [u32 length][UTF-8 bytes]
+/// ```
+///
+/// `0` — nothing delivered — is the resting state and NOT an error: a row with nothing happening
+/// carries no detail line at all.
+///
+/// The spans arrive in precedence order and index one blob, `present` marking a rung as LIT rather
+/// than merely empty (the caller gates the prose rungs on state this side cannot see — a live
+/// inspector feed, an unseen finish — so an absent rung and a rung whose text came back empty are
+/// two different facts):
+///
+/// ```text
+/// 0 question   1 scent   2 working label   3 done line
+/// 4 the failed block's command text   5 the running command   6 the row's title
+/// ```
+///
+/// The TEXT crosses rather than the winning index because one rung's answer is not any of the
+/// caller's own strings: the error line is span 4 TRIMMED, and an index would leave the near side
+/// re-spelling the trim — one implementation, in the language that owns it.
+///
+/// `has_exit_code` is the whole of what this side needs about the failure: the code itself rides
+/// the badge's `!<code>` one line up, so passing it would be passing a number nobody reads.
+///
+/// # Safety
+/// `blob` must be readable for `blob_len` bytes, `spans` must describe `span_count` live entries,
+/// and `(out, cap)` must be writable for `cap` bytes — all for the duration of the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and every pointer here is the caller's"
+)]
+pub unsafe extern "C" fn slopdesk_ws_sidebar_row_detail(
+    blob: *const c_uchar,
+    blob_len: usize,
+    spans: *const Span,
+    span_count: usize,
+    has_exit_code: bool,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, restated above.
+    let bytes = unsafe { borrow(blob, blob_len) };
+    // SAFETY: ditto.
+    let spans = unsafe { borrow_array(spans, span_count) };
+    // A short array answers nothing rather than reading a neighbour's slot: a layout disagreement
+    // must lose the whole line, never shift the ladder by one rung.
+    if spans.len() != DETAIL_SPANS {
+        return 0;
+    }
+    let at = |index: usize| spans.get(index).and_then(|span| text_of(*span, bytes));
+    let Some((_, line)) = sidebar_row::detail(
+        at(0),
+        at(1),
+        at(2),
+        at(3),
+        sidebar_row::error_line(has_exit_code, at(4)),
+        at(5),
+        at(6).unwrap_or_default(),
+    ) else {
+        return 0;
+    };
+    let mut answer = Vec::new();
+    push_text(&mut answer, line);
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(&answer, out, cap) }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
@@ -249,9 +326,10 @@ mod tests {
     use slopdesk_workspace::sidebar_row::{self, Entry, Switch, Verb};
 
     use super::{
-        slopdesk_ws_sidebar_row_command_line, slopdesk_ws_sidebar_row_hover, slopdesk_ws_sidebar_row_menu,
-        slopdesk_ws_sidebar_row_menu_titles, slopdesk_ws_sidebar_row_separator_code,
-        slopdesk_ws_sidebar_row_spoken_state, slopdesk_ws_sidebar_row_title,
+        DETAIL_SPANS, slopdesk_ws_sidebar_row_command_line, slopdesk_ws_sidebar_row_detail,
+        slopdesk_ws_sidebar_row_hover, slopdesk_ws_sidebar_row_menu, slopdesk_ws_sidebar_row_menu_titles,
+        slopdesk_ws_sidebar_row_separator_code, slopdesk_ws_sidebar_row_spoken_state,
+        slopdesk_ws_sidebar_row_title,
     };
     use crate::testing::{delivered, runs};
     use crate::workspace::Span;
@@ -503,6 +581,103 @@ mod tests {
         let codes: Vec<u8> = expected.iter().map(|entry| entry.code()).collect();
         assert_eq!(blob[4..], codes[..]);
         assert_eq!(slopdesk_ws_sidebar_row_separator_code(), Entry::Separator.code());
+    }
+
+    /// The ladder crosses intact, the error rung crosses TRIMMED, and a span array of the wrong
+    /// length loses the whole line rather than reading a neighbour's slot.
+    #[test]
+    fn the_detail_line_crosses_resolved_and_a_short_layout_loses_it_whole() {
+        // Six candidates in one arena, in the door's own precedence order.
+        let arena = b"why?3/5 editingthinking  npm test  vim".to_vec();
+        let at = |offset: usize, len: usize| {
+            Span {
+                offset,
+                len,
+                present: true,
+            }
+        };
+        let absent = Span {
+            offset: 0,
+            len: 0,
+            present: false,
+        };
+        let line = |spans: [Span; DETAIL_SPANS], has_exit_code: bool| {
+            let blob = delivered(|out, cap| {
+                // SAFETY: `arena`, `spans` and `out` are live locals for the call.
+                unsafe {
+                    slopdesk_ws_sidebar_row_detail(
+                        arena.as_ptr(),
+                        arena.len(),
+                        spans.as_ptr(),
+                        spans.len(),
+                        has_exit_code,
+                        out,
+                        cap,
+                    )
+                }
+            });
+            runs(&blob, 1).first().cloned().unwrap_or_default()
+        };
+
+        let question = at(0, 4);
+        let error_text = at(23, 12); // "  npm test  " — untrimmed on purpose
+        let command = at(35, 3); // "vim"
+        let title = at(25, 8); // "npm test"
+
+        assert_eq!(
+            line(
+                [question, absent, absent, absent, error_text, command, title],
+                true
+            ),
+            "why?",
+            "the question outranks everything below it",
+        );
+        assert_eq!(
+            line(
+                [absent, absent, absent, absent, error_text, command, absent],
+                true
+            ),
+            "npm test",
+            "the error rung crosses trimmed, which is why the TEXT crosses and not the index",
+        );
+        assert_eq!(
+            line([absent, absent, absent, absent, error_text, command, title], true),
+            "vim",
+            "the error rung only echoed the title; the ladder walks on",
+        );
+        assert_eq!(
+            line(
+                [absent, absent, absent, absent, error_text, command, title],
+                false
+            ),
+            "vim",
+            "no exit code, no failure to attribute",
+        );
+        assert_eq!(
+            line([absent, absent, absent, absent, absent, absent, title], false),
+            "",
+            "nothing live — absence is the resting state",
+        );
+
+        let short = [question, absent, absent, absent, absent, absent];
+        let blob = delivered(|out, cap| {
+            // SAFETY: every pointer is a live local for the call.
+            unsafe {
+                slopdesk_ws_sidebar_row_detail(
+                    arena.as_ptr(),
+                    arena.len(),
+                    short.as_ptr(),
+                    short.len(),
+                    false,
+                    out,
+                    cap,
+                )
+            }
+        });
+        assert!(
+            blob.is_empty(),
+            "a six-slot layout loses the line whole, not by one rung"
+        );
     }
 
     #[test]

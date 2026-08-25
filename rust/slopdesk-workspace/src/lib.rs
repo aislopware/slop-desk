@@ -140,6 +140,7 @@ pub mod global_search;
 pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
+pub mod host_name;
 pub mod inspector_store;
 pub mod jump;
 pub mod keybind;

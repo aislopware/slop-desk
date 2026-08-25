@@ -55,6 +55,11 @@ slopdesk-sanitize = { path = "../slopdesk-sanitize" }
 # those 110 lines moved to, and it has no dependencies of its own.
 slopdesk-ids = { path = "../slopdesk-ids" }
 
+# `prompt_flash`'s cell count is a GRAPHEME count, because the Swift it replaces measured
+# `String.count` and the flash's width must not change under it. Scalars would over-count every
+# combining mark and every emoji sequence a prompt puts in front of the cursor.
+unicode-segmentation = "1"
+
 # Every byte of terminal output passes through the tracker, so this is a hot-path library — the same
 # shape as the wire crate rather than the hook's startup-tuned profile.
 [profile.release]

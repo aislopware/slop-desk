@@ -1,18 +1,21 @@
-// PromptJumpFlashGeometry — where the prompt-jump "landed" flash paints, as a value (docs/56 §3).
+// PromptJumpFlashGeometry — the FACE over `slopdesk_terminal::prompt_flash` (docs/56 §3).
 //
-// A ⌘PageUp/⌘PageDown (or navigator) prompt jump replaces the whole viewport in one frame — the eye has
-// no scroll motion to follow, so the user lands with zero orientation. The overlay paints ONE accent
-// fade over the landed prompt row the instant the jump settles. WHERE that row is has nothing to do
-// with SwiftUI: it is a walk over the viewport's text rows plus a `TerminalCellMetrics` mapping, and it
-// was already `static` and pure inside a view for exactly that reason.
+// A ⌘PageUp/⌘PageDown (or navigator) prompt jump replaces the whole viewport in one frame — the eye
+// has no scroll motion to follow, so the user lands with zero orientation. The overlay paints ONE
+// accent fade over the landed prompt row the instant the jump settles.
 //
-// It lives here rather than in `SlopDeskTerminal` because the alt-screen gate is a decision about the
-// pane's MODE, not about the grid: an alt-screen TUI has no prompt block to anchor to, so the honest
-// answer is no flash at all (absent, never wrong — the rule the whole decoration family keeps).
+// WHERE that row is is the crate's: the spacer skip, the soft-wrap walk, the row cap and the
+// grapheme count all live in `prompt_flash` and are pinned there. What is left here is the two
+// things a Rust crate has no business deciding — the alt-screen GATE, which is a fact about the
+// pane's mode rather than about the grid (an alt-screen TUI has no prompt block to anchor to, so
+// the honest answer is no flash at all), and the CELL→RECT mapping, which is the surface's own
+// metrics.
 
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 import SlopDeskTerminal
+import SlopDeskWorkspaceModel
 
 /// The landed-flash anchor rules and the rects they map to.
 package enum PromptJumpFlashGeometry {
@@ -27,55 +30,39 @@ package enum PromptJumpFlashGeometry {
         }
     }
 
-    /// The viewport rows the flash anchors to: the first row with visible TEXT within the top
-    /// `searchDepth` rows, PLUS that line's soft-wrap continuations.
+    /// The viewport rows the flash anchors to, walked across the door in one crossing.
     ///
-    /// libghostty pins the jumped-to prompt at row 0, but the OSC-133 `A` mark is emitted at the
-    /// pre-prompt cursor position — with a spacer-printing prompt (starship's default `add_newline`
-    /// blank line) the PINNED row is that BLANK spacer and the visible prompt text sits on row 1/2. A
-    /// whitespace-only row never anchors (a space-flash reads as a rendering artifact); all blank ⇒
-    /// empty (absent, never wrong).
-    ///
-    /// WRAP RULE: a row whose text fills the whole grid width soft-wrapped, so the next row continues
-    /// the SAME logical prompt line — the flash walks those continuations (field report: a wrapped
-    /// prompt flashed only its first row, reading as a truncated cue). The walk stops at the first
-    /// non-full row (the line's true end), a blank row, or the `maxRows` cap (a pathological
-    /// grid-filling line must not flash half the screen). An exactly-grid-width line over-includes at
-    /// most one following row — benign versus under-flashing every wrapped prompt.
-    ///
-    /// `cellCount` is the row's grapheme count — under-measures a wide (2-cell) glyph's span,
-    /// acceptable: the flash covers the text from column 0, just stopping a few cells early on
-    /// CJK-heavy prompts (and its wrap detection errs the same safe way: a wide-glyph row reads as
-    /// non-full, ending the walk early rather than over-flashing).
-    package static func anchorRows(
-        in rows: [String], cols: Int, searchDepth: Int = 3, maxRows: Int = 4,
-    ) -> [Anchor] {
-        var anchor: Int?
-        for (index, text) in rows.prefix(searchDepth).enumerated()
-            where !text.trimmingCharacters(in: .whitespaces).isEmpty
-        {
-            anchor = index
-            break
+    /// Empty for an all-blank landing or a torn-down surface — absent, never wrong.
+    package static func anchorRows(in rows: [String], cols: Int) -> [Anchor] {
+        var arena = WsStrings()
+        let spans = rows.map { arena.span($0) }
+        let blob = spans.withUnsafeBufferPointer { lentSpans in
+            arena.bytes.withUnsafeBufferPointer { lent in
+                wsAnswerBytes { out, cap in
+                    Int(slopdesk_prompt_flash_anchors(
+                        lentSpans.baseAddress, lentSpans.count,
+                        lent.baseAddress, lent.count,
+                        Swift.max(0, cols), out, cap,
+                    ))
+                }
+            }
         }
-        guard let start = anchor else { return [] }
-        var result: [Anchor] = []
-        var row = start
-        while row < rows.count, result.count < maxRows {
-            let cellCount = rows[row].count
-            guard cellCount > 0 else { break }
-            result.append(Anchor(row: row, cellCount: cellCount))
-            guard cols > 0, cellCount >= cols else { break } // a non-full row ends the logical line
-            row += 1
+        // `[u32 anchor_count]` then that many `[u32 row][u32 cell_count]`.
+        guard blob.count >= 4 else { return [] }
+        let word = { (at: Int) -> Int in
+            Int(blob[at]) << 24 | Int(blob[at + 1]) << 16 | Int(blob[at + 2]) << 8 | Int(blob[at + 3])
         }
-        return result
+        let count = word(0)
+        guard blob.count >= 4 + count * 8 else { return [] }
+        return (0..<count).map { Anchor(row: word(4 + $0 * 8), cellCount: word(8 + $0 * 8)) }
     }
 
     /// The landed prompt line's rects: each anchored row spanning that row's text extent (a
     /// full-grid-width bar reads as a selection band; the line's own width reads as "this line").
     ///
-    /// Empty — no flash — for an alt-screen TUI, a surface with no usable cell metrics (a placeholder
-    /// has none), or a blank landing (nothing to anchor to). The composition is the whole decision: the
-    /// view's job after this is a `Rectangle` per rect and one shared opacity.
+    /// Empty — no flash — for an alt-screen TUI, a surface with no usable cell metrics (a
+    /// placeholder has none), or a blank landing. The composition is the whole decision: the view's
+    /// job after this is a `Rectangle` per rect and one shared opacity.
     package static func rects(
         rows: [String], metrics: TerminalCellMetrics?, isAlternateScreen: Bool,
     ) -> [CGRect] {

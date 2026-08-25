@@ -220,9 +220,8 @@ package enum SidebarRowPresentation {
             workingLabel: working ? store.agentLabel(for: row.id) : nil,
             // Done-unseen surfaces the agent's FINAL assistant line (the wire-27 label at `.done`).
             doneLine: agentFinish ? store.agentLabel(for: row.id) : nil,
-            errorLine: RailRowReadout.errorLine(
-                exitCode: failedBlock?.exitCode, commandText: failedBlock?.commandText,
-            ),
+            exitCode: failedBlock?.exitCode,
+            failedCommand: failedBlock?.commandText,
             commandLine: runningCommand,
             title: title,
         )

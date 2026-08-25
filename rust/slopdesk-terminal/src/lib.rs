@@ -53,6 +53,7 @@ pub mod link_hit;
 pub mod mode;
 pub mod paste;
 pub mod pointer;
+pub mod prompt_flash;
 pub mod surface;
 pub mod tracker;
 pub mod vimotion;

@@ -322,6 +322,122 @@ pub fn menu() -> Vec<Entry> {
     ]
 }
 
+/// Which of the row's six detail sources won, so the near side can hand back the string it already
+/// holds instead of taking a copy of it home.
+///
+/// A source rather than a text for the reason the two list doors answer in indices: the caller
+/// owns every candidate already, and the only thing it cannot decide for itself is the ORDER.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Detail {
+    /// The blocked question — the caller gates it on `needsPermission` plus a non-empty label.
+    Question = 0,
+    /// The todo scent, while working and the inspector feed is live.
+    Scent = 1,
+    /// The host's last assistant line, while working and the feed is cold.
+    WorkingLabel = 2,
+    /// The agent's FINAL assistant line, at done-unseen.
+    DoneLine = 3,
+    /// The FAILING command, off the block model.
+    ErrorLine = 4,
+    /// The RUNNING command of a busy non-agent shell.
+    CommandLine = 5,
+}
+
+impl Detail {
+    /// The byte the C door answers with.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
+}
+
+/// The row's ONE live-detail line, by precedence — question, scent, working label, done line, then
+/// the two command-shaped rungs.
+///
+/// The two command rungs are DROPPED when they would only echo `title` one line up, and dropping
+/// one falls through to the next rather than ending the ladder: a shell that titles its pane after
+/// the command it runs must not silence a genuine failure line sitting behind it. Prose sources are
+/// never gated — a sentence quoting the title is still news.
+///
+/// `None` is the resting state and never a placeholder: nothing live means the tooltip carries no
+/// detail line at all.
+///
+/// The answer carries the WINNER as well as its line, because the two are different facts: a caller
+/// drawing the line wants the string, and a caller pinning the ladder wants to know which rung it
+/// came off. Absence, not emptiness, is what darkens a rung — every one of these is pre-gated by
+/// the caller on state this rule cannot see (a live inspector feed, an unseen finish), so a rung
+/// that is present-but-blank is a caller's own answer and is taken at its word.
+#[must_use]
+pub fn detail<'a>(
+    question: Option<&'a str>,
+    scent: Option<&'a str>,
+    working_label: Option<&'a str>,
+    done_line: Option<&'a str>,
+    error_line: Option<&'a str>,
+    command_line: Option<&'a str>,
+    title: &str,
+) -> Option<(Detail, &'a str)> {
+    if let Some(question) = question {
+        return Some((Detail::Question, question));
+    }
+    if let Some(scent) = scent {
+        return Some((Detail::Scent, scent));
+    }
+    if let Some(label) = working_label {
+        return Some((Detail::WorkingLabel, label));
+    }
+    if let Some(done) = done_line {
+        return Some((Detail::DoneLine, done));
+    }
+    if let Some(error) = error_line
+        && !echoes_title(error, title)
+    {
+        return Some((Detail::ErrorLine, error));
+    }
+    if let Some(command) = command_line
+        && !echoes_title(command, title)
+    {
+        return Some((Detail::CommandLine, command));
+    }
+    None
+}
+
+/// Whether a command-shaped line would only REPEAT the title one line up: equal, or one is the
+/// other's leading word(s) — `npm` over `npm test`, the shell titling the pane by its command.
+///
+/// Case-insensitive and WORD-BOUNDED, which is the whole subtlety: the prefix test carries a
+/// trailing space so `api` never swallows `apitool run`.
+#[must_use]
+pub fn echoes_title(line: &str, title: &str) -> bool {
+    let line = line.trim().to_lowercase();
+    let title = title.trim().to_lowercase();
+    if line.is_empty() || title.is_empty() {
+        return false;
+    }
+    line == title
+        || line
+            .strip_prefix(&title)
+            .is_some_and(|rest| rest.starts_with(' '))
+        || title
+            .strip_prefix(&line)
+            .is_some_and(|rest| rest.starts_with(' '))
+}
+
+/// The error readout: the FAILING command, trimmed — the culprit's NAME, never its number.
+///
+/// The exit code rides the badge's `!<code>` one line up, so this takes only whether there IS one:
+/// no code means no failure evidence to attribute, and a blank command means the badge's reading
+/// stands alone. Both answer `None`, and the caller falls through to the running command.
+#[must_use]
+pub fn error_line(has_exit_code: bool, command_text: Option<&str>) -> Option<&str> {
+    if !has_exit_code {
+        return None;
+    }
+    let command = command_text.unwrap_or_default().trim();
+    (!command.is_empty()).then_some(command)
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -330,8 +446,9 @@ mod tests {
     )]
 
     use super::{
-        Attention, Entry, Switch, TabBadge, TitleInk, TitleWeight, Verb, command_line, menu, presence,
-        presence_lines, spoken_state, title_ink, title_weight, tooltip,
+        Attention, Detail, Entry, Switch, TabBadge, TitleInk, TitleWeight, Verb, command_line, detail,
+        echoes_title, error_line, menu, presence, presence_lines, spoken_state, title_ink, title_weight,
+        tooltip,
     };
 
     /// A row you are standing on that just broke still reads as broken.
@@ -466,5 +583,98 @@ mod tests {
         let count = titles.len();
         titles.dedup();
         assert_eq!(titles.len(), count);
+    }
+
+    /// One source at a time, hard cut between them — and the ladder is the ladder even when every
+    /// rung is lit.
+    #[test]
+    fn the_detail_ladder_takes_the_highest_lit_rung() {
+        let lit = [Some("why?"), Some("3/5"), Some("thinking"), Some("finished")];
+        let [question, scent, working, done] = lit;
+        let error = Some("npm test");
+        let command = Some("vim");
+        assert_eq!(
+            detail(question, scent, working, done, error, command, ""),
+            Some((Detail::Question, "why?")),
+        );
+        assert_eq!(
+            detail(None, scent, working, done, error, command, ""),
+            Some((Detail::Scent, "3/5")),
+        );
+        assert_eq!(
+            detail(None, None, working, done, error, command, ""),
+            Some((Detail::WorkingLabel, "thinking")),
+        );
+        assert_eq!(
+            detail(None, None, None, done, error, command, ""),
+            Some((Detail::DoneLine, "finished")),
+        );
+        assert_eq!(
+            detail(None, None, None, None, error, command, ""),
+            Some((Detail::ErrorLine, "npm test")),
+        );
+        assert_eq!(
+            detail(None, None, None, None, None, command, ""),
+            Some((Detail::CommandLine, "vim")),
+        );
+        assert_eq!(detail(None, None, None, None, None, None, ""), None);
+    }
+
+    /// A rung that is present but BLANK is the caller's own answer, and is taken at its word: only
+    /// absence darkens a rung.
+    #[test]
+    fn a_lit_but_blank_rung_still_outranks_everything_under_it() {
+        assert_eq!(
+            detail(Some(""), Some("3/5"), None, None, None, None, ""),
+            Some((Detail::Question, "")),
+        );
+    }
+
+    /// A shell that titles its pane after the command it runs must not silence the failure line
+    /// sitting behind the running one: a dropped rung falls THROUGH rather than ending the ladder.
+    #[test]
+    fn a_title_echo_drops_its_rung_and_keeps_walking() {
+        assert_eq!(
+            detail(None, None, None, None, Some("npm test"), Some("vim"), "npm test"),
+            Some((Detail::CommandLine, "vim")),
+            "the error rung echoed the title; the running command is still news",
+        );
+        assert_eq!(
+            detail(None, None, None, None, Some("npm test"), Some("npm"), "npm test"),
+            None,
+            "both command rungs echo it — absence is the resting state",
+        );
+    }
+
+    /// Word-BOUNDED, which is the whole subtlety of the echo test.
+    #[test]
+    fn an_echo_is_the_whole_leading_word_and_never_half_of_one() {
+        assert!(echoes_title("npm test", "NPM TEST"), "case-insensitive");
+        assert!(echoes_title("npm", "npm test"), "the title extends the line");
+        assert!(echoes_title("  npm test  ", "npm"), "the line extends the title");
+        assert!(
+            !echoes_title("apitool run", "api"),
+            "`api` never swallows `apitool`"
+        );
+        assert!(!echoes_title("", "npm"), "an empty side echoes nothing");
+        assert!(!echoes_title("npm", "   "), "a blank title echoes nothing");
+    }
+
+    /// The badge already carries the number, so this carries only the name — and only when there is
+    /// a failure to attribute one to.
+    #[test]
+    fn the_error_line_is_the_culprits_name_and_never_its_number() {
+        assert_eq!(error_line(true, Some("  npm test  ")), Some("npm test"));
+        assert_eq!(
+            error_line(false, Some("npm test")),
+            None,
+            "no code, no attribution"
+        );
+        assert_eq!(
+            error_line(true, Some("   ")),
+            None,
+            "the badge's reading stands alone"
+        );
+        assert_eq!(error_line(true, None), None);
     }
 }

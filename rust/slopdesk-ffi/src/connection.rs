@@ -37,8 +37,9 @@ use core::ffi::c_uchar;
 use slopdesk_workspace::connection::{
     self, Alarm, Led, MemoryPressure, Metric, Mount, NetworkHealth, Pulse, StatusKind, TrailingSlot,
 };
+use slopdesk_workspace::host_name;
 
-use crate::{borrow, deliver};
+use crate::{borrow, deliver, lent};
 
 /// Deliberately not connected — a fresh launch, or a link the user closed.
 pub const SLOPDESK_CONNECTION_STATUS_DISCONNECTED: u32 = 0;
@@ -553,6 +554,51 @@ pub const unsafe extern "C" fn slopdesk_connection_metric_symbol(
     unsafe { deliver(metric.symbol_name().as_bytes(), out, cap) }
 }
 
+/// Whether the connected host was named by ADDRESS rather than by name.
+///
+/// The rule is `slopdesk_workspace::host_name::is_ip_literal`, and it answers what Darwin's
+/// `inet_pton` answers rather than what `std::net`'s parser does — the two disagree on inputs a
+/// person types, and the disagreement comes back as a wrong titlebar label rather than an error.
+/// The module says which inputs and why.
+///
+/// # Safety
+/// `(text, len)` must be null, or name `len` initialised bytes live for the call.
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(text, len)` is the caller's"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slopdesk_ws_host_is_ip_literal(text: *const c_uchar, len: usize) -> bool {
+    // SAFETY: the caller's obligation, forwarded unchanged.
+    host_name::is_ip_literal(unsafe { lent(text, len) })
+}
+
+/// The chrome's short label for a host: its first DNS label, or an ADDRESS whole.
+///
+/// The answer is raw UTF-8 rather than a length-prefixed run — it is one string and there is no
+/// second field for a length to keep it apart from. `0` means the label is empty, which only an
+/// empty input produces.
+///
+/// # Safety
+/// `(text, len)` must be null, or name `len` initialised bytes live for the call, and `(out, cap)`
+/// must be writable for `cap` bytes.
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and both pointers are the caller's"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn slopdesk_ws_host_short_label(
+    text: *const c_uchar,
+    len: usize,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: the caller's obligation, forwarded unchanged.
+    let name = unsafe { lent(text, len) };
+    // SAFETY: ditto; `deliver` writes at most `cap`.
+    unsafe { deliver(host_name::short_label(name).as_bytes(), out, cap) }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the boundary IS what these tests are for")]
@@ -565,7 +611,9 @@ mod tests {
         SLOPDESK_CONNECTION_TRAILING_ABSENT, SlopDeskHostPulse, slopdesk_connection_disk_alarm,
         slopdesk_connection_has_raw_detail, slopdesk_connection_health, slopdesk_connection_led,
         slopdesk_connection_metric_runs, slopdesk_connection_trailing_slot, slopdesk_connection_words,
+        slopdesk_ws_host_is_ip_literal, slopdesk_ws_host_short_label,
     };
+    use crate::testing::delivered;
 
     /// Cuts a `[u32 length][bytes]` delivery back into its runs.
     fn split(bytes: &[u8]) -> Vec<String> {
@@ -752,5 +800,34 @@ mod tests {
             vec![0, 0],
             "a calm host on a one-line mount still delivers its header, and says nothing in it"
         );
+    }
+
+    /// The label crosses whole for an ADDRESS and cut for a NAME — and the padded address is the
+    /// one a `std::net`-based test would have shortened to `010`.
+    #[test]
+    fn a_name_crosses_cut_and_an_address_crosses_whole() {
+        let label = |host: &str| {
+            let bytes = host.as_bytes().to_vec();
+            String::from_utf8(delivered(|out, cap| {
+                // SAFETY: `bytes` and `out` are live locals for the call.
+                unsafe { slopdesk_ws_host_short_label(bytes.as_ptr(), bytes.len(), out, cap) }
+            }))
+            .unwrap_or_default()
+        };
+        let literal = |host: &str| {
+            let bytes = host.as_bytes().to_vec();
+            // SAFETY: `bytes` is a live local for the call.
+            unsafe { slopdesk_ws_host_is_ip_literal(bytes.as_ptr(), bytes.len()) }
+        };
+
+        assert_eq!(label("mac-studio.local"), "mac-studio");
+        assert_eq!(label("192.168.1.7"), "192.168.1.7");
+        assert_eq!(label("010.0.0.1"), "010.0.0.1");
+        assert_eq!(label(""), "", "an empty host crosses as nothing delivered");
+
+        assert!(literal("fe80::1%en0"));
+        assert!(!literal("mac-studio.local"));
+        // SAFETY: a null pair is the documented absent case.
+        assert!(!unsafe { slopdesk_ws_host_is_ip_literal(std::ptr::null(), 0) });
     }
 }

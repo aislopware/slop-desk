@@ -4304,6 +4304,21 @@ size_t slopdesk_connection_pulse_prose(SlopDeskHostPulse pulse, unsigned char *o
 /* An SF Symbol NAME, so each framework resolves it through its own image type. */
 size_t slopdesk_connection_metric_symbol(uint32_t metric, unsigned char *out, size_t cap);
 
+/* ---- What the chrome CALLS the connected host --------------------------------------------
+ * A typed hostname is cut to its first DNS label (`mac-studio.local` → `mac-studio`); a typed IP
+ * literal passes through WHOLE, because its dots separate octets rather than labels.
+ *
+ * `_is_ip_literal` answers what Darwin's `inet_pton` answers and NOT what `std::net`'s parser does.
+ * The two disagree on things people type — `010.0.0.1` (padded decimal octets, accepted), and
+ * `fe80::1%en0` (the zone a link-local address is useless without) — and the disagreement surfaces
+ * as a WRONG LABEL rather than an error. The rule module carries the measured table.
+ *
+ * `_short_label` answers RAW UTF-8, not a length-prefixed run: it is one string with no second
+ * field to keep it apart from. `0` means an empty label, which only an empty host produces. */
+bool   slopdesk_ws_host_is_ip_literal(const unsigned char *text, size_t len);
+size_t slopdesk_ws_host_short_label(const unsigned char *text, size_t len,
+                                    unsigned char *out, size_t cap);
+
 /* ---- The keyboard reference sheet: which column each run of shortcuts belongs in ----------
  * Balanced by RENDERED HEIGHT (a section costs its rows plus its own header line), not by section
  * count — three short categories beside one long one is the case that makes a halve-the-list split
@@ -10957,6 +10972,24 @@ SlopDeskWsPaletteCard slopdesk_ws_palette_card(void);
 // that MOVES, because a page key that does nothing reads as a dropped keystroke.
 uint32_t slopdesk_ws_palette_page_stride(double row_height);
 
+// ---- The prompt-jump landed flash ------------------------------------------------------
+//
+// Only the CELL walk crosses: turning an anchored `(row, cell_count)` into a rectangle needs the
+// surface's own metrics, and the alt-screen gate is a decision about the pane's MODE and not about
+// the grid. Both stay with whichever half is drawing.
+//
+// `[u32 anchor_count]` then that many `[u32 row][u32 cell_count]`, or 0 for an all-blank landing or
+// a torn-down surface — absent, never wrong. The rule caps the walk at four rows, so the first lend
+// is always big enough and the retry never fires here. `cell_count` is a GRAPHEME count: it
+// under-measures a wide glyph's span, which stops the flash a few cells early on a CJK-heavy prompt
+// rather than over-painting it.
+//
+// A span that cannot be read crosses as a BLANK row, never as a missing one — the walk is
+// positional, and dropping a row would shift every anchor below it onto the wrong line.
+size_t slopdesk_prompt_flash_anchors(const SlopDeskWsSpan *rows, size_t row_count,
+                                     const uint8_t *blob, size_t blob_len, size_t cols,
+                                     uint8_t *out, size_t cap);
+
 // ---- The terminal's context menu ------------------------------------------------------
 //
 // The ORDER crosses separately from the WORDS. A menu is built twice for two reasons — once from a
@@ -12443,6 +12476,21 @@ size_t   slopdesk_ws_sidebar_row_command_line(SlopDeskWsSpan command, SlopDeskWs
 size_t   slopdesk_ws_sidebar_row_menu(uint8_t *out, size_t cap);
 size_t   slopdesk_ws_sidebar_row_menu_titles(uint8_t *out, size_t cap);  // 5 runs: 2 verbs, 3 switches
 uint8_t  slopdesk_ws_sidebar_row_separator_code(void);
+// The row's ONE live-detail line: 1 run, or 0 for a row with nothing happening — the resting state,
+// never an error. Exactly SLOPDESK_WS_SIDEBAR_ROW_DETAIL_SPANS spans, in PRECEDENCE order:
+//
+//   0 question   1 scent   2 working label   3 done line
+//   4 the failed block's command text   5 the running command   6 the row's title
+//
+// `present` marks a rung LIT rather than merely empty — the caller gates the prose rungs on state
+// this side cannot see. Any other span count answers 0: a layout disagreement loses the whole line
+// rather than shifting the ladder by one rung. The TEXT crosses and not the winning index because
+// the error rung's answer is span 4 TRIMMED, and an index would leave Swift re-spelling the trim.
+// `has_exit_code` is all this side needs about the failure — the code rides the badge one line up.
+#define SLOPDESK_WS_SIDEBAR_ROW_DETAIL_SPANS 7
+size_t   slopdesk_ws_sidebar_row_detail(const uint8_t *blob, size_t blob_len,
+                                        const SlopDeskWsSpan *spans, size_t span_count,
+                                        bool has_exit_code, uint8_t *out, size_t cap);
 
 // ---- The Open Quickly picker -------------------------------------------------------------------
 //

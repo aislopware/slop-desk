@@ -1,64 +1,69 @@
-// RailRowReadout — the row's live-detail precedence: ONE source at a time, hard cut between them.
-// The resolved line is the thing you'd focus the tab to find out — since the otty reset it rides the
-// row's hover TOOLTIP (the rendered row is bare: title + one trailing slot), and it EARNS its place:
-// there are no structural filler rungs (cwd echoes, shell identity, shortcut hints — derivable or
-// decorative), so a settled row's tooltip is path + history alone and a detail line always means
-// "something is happening here". Command-shaped sources are additionally suppressed when they would
-// only echo the title (a shell that titles the pane after the command it runs). Pure + static so the
-// precedence is unit-pinned headlessly (no view, no store).
+// RailRowReadout — the FACE over `slopdesk_workspace::sidebar_row`'s detail ladder.
+//
+// The row's live-detail line is ONE source at a time, hard cut between them, and the resolved line
+// is the thing you'd focus the tab to find out — since the otty reset it rides the row's hover
+// TOOLTIP (the rendered row is bare: title + one trailing slot). It EARNS its place: there are no
+// structural filler rungs (cwd echoes, shell identity, shortcut hints — derivable or decorative),
+// so a settled row's tooltip is path + history alone and a detail line always means "something is
+// happening here".
+//
+// The ladder, the title-echo suppression and the trim on the failed command are all
+// `slopdesk_ws_sidebar_row_detail`'s; what is left here is packing seven spans into one arena in
+// the door's own precedence order.
 
+import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 package enum RailRowReadout {
-    /// Resolve the row's one readout source, by precedence:
-    ///   1. the blocked QUESTION (the caller gates it on `.needsPermission` + a non-empty label);
-    ///   2. working + a live inspector feed → the todo SCENT (`3/5 · Editing …` — the fixed counter
-    ///      prefix leads, so `.tail` can never eat it);
-    ///   3. working, feed cold → the host's last assistant line (wire-27 label);
-    ///   4. done-unseen → the agent's FINAL assistant line (the same label at `.done` — you read the
-    ///      result without focusing the tab);
-    ///   5. error → the FAILING command from the block model (the badge's `!<code>` carries the number);
-    ///   6. the RUNNING command (a busy non-agent shell — the command text is what the row is doing).
-    /// The command-shaped rungs (5–6) are dropped when they only echo `title`. Nothing live → `nil`:
-    /// the tooltip carries no detail line — absence is the resting state, never a placeholder.
-    /// Every input is pre-gated by the caller (only handed over when its state holds), so the resolver
-    /// is a pure precedence ladder.
+    /// The row's one readout source, resolved across the door in a single crossing.
+    ///
+    /// Every input is pre-gated by the CALLER — each is handed over only when its own state holds
+    /// (`.needsPermission` and a non-empty label for the question, a live inspector feed for the
+    /// scent, an unseen finish for the done line). That gating is why the presence of a span, and
+    /// not its emptiness, is what lights a rung.
+    ///
+    /// The failure is passed as its two halves rather than as a resolved line: the door decides
+    /// whether an exit code with a blank command says anything at all, and the trimmed command it
+    /// answers with is the one string here that is not already one of ours.
     package static func resolve(
         question: String?,
         scent: String?,
         workingLabel: String?,
         doneLine: String?,
-        errorLine: String?,
+        exitCode: Int32?,
+        failedCommand: String?,
         commandLine: String? = nil,
         title: String = "",
     ) -> String? {
-        if let question { return question }
-        if let scent { return scent }
-        if let workingLabel { return workingLabel }
-        if let doneLine { return doneLine }
-        if let errorLine, !echoesTitle(errorLine, title: title) { return errorLine }
-        if let commandLine, !echoesTitle(commandLine, title: title) { return commandLine }
-        return nil
-    }
-
-    /// Whether a command-shaped line would only REPEAT the title one line up: equal, or one is the
-    /// other's leading word(s) (`npm` over `npm test` — the shell titled the pane by the command).
-    /// Case-insensitive; word-bounded so `api` never swallows `apitool run`. Prose sources
-    /// (question / scent / labels) are never gated — a sentence quoting the title is still news.
-    package static func echoesTitle(_ line: String, title: String) -> Bool {
-        let line = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let title = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !line.isEmpty, !title.isEmpty else { return false }
-        return line == title || line.hasPrefix(title + " ") || title.hasPrefix(line + " ")
-    }
-
-    /// The error readout: the FAILING command (`npm test`) — the culprit's name; the exit code
-    /// already rides the badge's `!<code>` reading one line up, so the pair never repeats a number.
-    /// `nil` without a code (no failure evidence — the caller may not attribute a stale block) and
-    /// `nil` for a blank command (the badge's reading stands alone).
-    package static func errorLine(exitCode: Int32?, commandText: String?) -> String? {
-        guard exitCode != nil else { return nil }
-        let command = commandText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return command.isEmpty ? nil : command
+        var arena = WsStrings()
+        // The door's own order — index 0 is the top of the ladder and index 6 is the title.
+        let spans = [
+            arena.span(question),
+            arena.span(scent),
+            arena.span(workingLabel),
+            arena.span(doneLine),
+            arena.span(failedCommand),
+            arena.span(commandLine),
+            arena.span(title),
+        ]
+        assert(spans.count == Int(SLOPDESK_WS_SIDEBAR_ROW_DETAIL_SPANS))
+        let blob = spans.withUnsafeBufferPointer { lentSpans in
+            arena.bytes.withUnsafeBufferPointer { lent in
+                wsAnswerBytes { out, cap in
+                    Int(slopdesk_ws_sidebar_row_detail(
+                        lent.baseAddress, lent.count,
+                        lentSpans.baseAddress, lentSpans.count,
+                        exitCode != nil, out, cap,
+                    ))
+                }
+            }
+        }
+        // The door's `0` — an empty delivery — is "nothing live", which is the resting state and
+        // never a placeholder. A lit rung whose own text was blank reads the same way: the caller
+        // gates every prose rung on a non-empty label already.
+        guard !blob.isEmpty else { return nil }
+        let line = wsRuns(blob, count: 1)[0]
+        return line.isEmpty ? nil : line
     }
 }

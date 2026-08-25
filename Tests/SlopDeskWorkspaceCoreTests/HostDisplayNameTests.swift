@@ -1,31 +1,25 @@
-// HostDisplayNameTests — pins the pure parts of the host-identity resolution (the titlebar speaks
-// hostnames, never IPs): the IP-literal detector and the first-DNS-label shortener. The reverse-DNS
-// lookup itself is network-dependent and stays untested (its failure mode is the raw-host fallback).
+// HostDisplayNameTests — pins the CROSSING, not the rule. Which strings are addresses and where a
+// name ends is `slopdesk_workspace::host_name`'s, and its table of platform-MEASURED answers is the
+// pin for that; restating any of it here would be the same rule in two languages. What only Swift can
+// get wrong is the marshalling: the arena in, the answer out, and the empty answer that is a real
+// answer rather than a missing one.
 
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
 final class HostDisplayNameTests: XCTestCase {
-    func testIPLiteralDetection() {
+    func testTheDoorCarriesBothVerdictsAndBothShapesOfLabel() {
         XCTAssertTrue(HostDisplayName.isIPLiteral("192.168.1.7"))
-        XCTAssertTrue(HostDisplayName.isIPLiteral("100.94.23.11"))
-        XCTAssertTrue(HostDisplayName.isIPLiteral("fe80::1"))
-        XCTAssertFalse(HostDisplayName.isIPLiteral("mac-studio"))
         XCTAssertFalse(HostDisplayName.isIPLiteral("mac-studio.local"))
-        // A dotted name whose labels aren't all numeric is a NAME, not a literal.
-        XCTAssertFalse(HostDisplayName.isIPLiteral("192.168.host"))
-        XCTAssertFalse(HostDisplayName.isIPLiteral(""))
-    }
-
-    func testShortLabelTakesFirstDNSLabel() {
         XCTAssertEqual(HostDisplayName.shortLabel("mac-studio.local"), "mac-studio")
-        XCTAssertEqual(HostDisplayName.shortLabel("herdr.example.com"), "herdr")
-        XCTAssertEqual(HostDisplayName.shortLabel("macstudio"), "macstudio")
-    }
-
-    func testShortLabelPassesIPLiteralsThrough() {
         // An IP's dots separate octets, not labels — never truncate "192.168.1.7" to "192".
         XCTAssertEqual(HostDisplayName.shortLabel("192.168.1.7"), "192.168.1.7")
-        XCTAssertEqual(HostDisplayName.shortLabel("fe80::1"), "fe80::1")
+    }
+
+    /// The door spells an empty label `0`, which is also how it spells "no answer" — so the face must
+    /// hand back `""` here and not crash on the `nil` the shared reader produces.
+    func testAnEmptyNameCrossesBackAsAnEmptyLabel() {
+        XCTAssertEqual(HostDisplayName.shortLabel(""), "")
+        XCTAssertFalse(HostDisplayName.isIPLiteral(""))
     }
 }

@@ -1,19 +1,28 @@
 // HostDisplayName — resolves the human identity of the connected host for the chrome (the titlebar
-// monogram + hostname label). The user often connects by IP; the chrome should still speak the host's
-// NAME ("mac-studio"), so: a typed hostname is shortened to its first DNS label, and a typed IP literal
-// is reverse-resolved once per connect (getnameinfo — on a LAN the peer's mDNS responder answers for
-// `.local` names, no wire change and no host daemon involvement). Unresolvable stays `nil` and the
-// chrome falls back to the raw target host.
+// monogram + hostname label), as a face over `slopdesk_workspace::host_name` plus the one lookup that
+// cannot be a pure rule.
+//
+// The user often connects by IP; the chrome should still speak the host's NAME ("mac-studio"), so: a
+// typed hostname is shortened to its first DNS label, and a typed IP literal is reverse-resolved once
+// per connect (getnameinfo — on a LAN the peer's mDNS responder answers for `.local` names, no wire
+// change and no host daemon involvement). Unresolvable stays `nil` and the chrome falls back to the
+// raw target host.
+//
+// The two DECISIONS — is this an address, and where does its name end — crossed to Rust, where they
+// are spelled out against the answers `inet_pton` was MEASURED giving rather than against
+// `std::net`'s stricter grammar. The LOOKUP stayed here: `getaddrinfo`/`getnameinfo` is the socket
+// owner's, and a resolver is not a rule.
 
+import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 public enum HostDisplayName {
     /// Whether `s` parses as a bare IPv4/IPv6 literal (no DNS labels — octets, not names).
     public static func isIPLiteral(_ s: String) -> Bool {
-        var v4 = in_addr()
-        var v6 = in6_addr()
-        return s.withCString { c in
-            inet_pton(AF_INET, c, &v4) == 1 || inet_pton(AF_INET6, c, &v6) == 1
+        var bytes = Array(s.utf8)
+        return bytes.withUnsafeMutableBufferPointer {
+            slopdesk_ws_host_is_ip_literal($0.baseAddress, $0.count)
         }
     }
 
@@ -21,8 +30,14 @@ public enum HostDisplayName {
     /// An IP literal passes through unchanged (its dots separate octets, not labels), as does a
     /// label-less string.
     public static func shortLabel(_ name: String) -> String {
-        guard !isIPLiteral(name) else { return name }
-        return name.split(separator: ".").first.map(String.init) ?? name
+        var bytes = Array(name.utf8)
+        let answer = bytes.withUnsafeMutableBufferPointer { lent in
+            wsAnswer { out, cap in
+                Int(slopdesk_ws_host_short_label(lent.baseAddress, lent.count, out, cap))
+            }
+        }
+        // The door spells an empty label `0`, which is the same nothing an empty input asks for.
+        return answer ?? ""
     }
 
     /// Reverse-resolves an IP literal to its hostname, already shortened via ``shortLabel(_:)``.
