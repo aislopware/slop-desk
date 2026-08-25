@@ -157,20 +157,17 @@ final class MacPaneDropOverlay: NSView {
         for (zone, blob) in blobs {
             let isActive = zone == active
             let isAllowed = allowed.contains(zone)
-            let tint = DropZonePresentation.tint(zone, active: isActive, allowed: isAllowed)
+            let wash = DropZonePresentation.wash(zone, active: isActive, allowed: isAllowed)
             blob.apply(
-                fill: Self.ink(tint.ink).slateScalingAlpha(tint.opacity),
+                fill: Self.ink(wash.ink).slateScalingAlpha(wash.opacity),
                 // The ring says "release NOW", so it is only ever the status rung. An inactive zone
                 // gets that SAME colour at zero rather than no stroke at all, because a colour can
-                // cross-fade to a colour and cannot cross-fade to nothing — the ring would pop.
-                ring: Slate.Native.Status.ok.slateScalingAlpha(
-                    isActive ? DropZonePresentation.activeStrokeOpacity : 0,
-                ),
+                // cross-fade to a colour and cannot cross-fade to nothing — the ring would pop, and
+                // the zero is the crossing's own rather than a branch spelled here.
+                ring: Slate.Native.Status.ok.slateScalingAlpha(wash.strokeOpacity),
                 animated: animated,
             )
-            labels[zone]?.textColor = Self.labelInk(
-                DropZonePresentation.labelInk(active: isActive, allowed: isAllowed),
-            )
+            labels[zone]?.textColor = Self.labelInk(wash.labelInk)
         }
     }
 
@@ -208,7 +205,8 @@ final class MacPaneDropOverlay: NSView {
         CATransaction.setDisableActions(true)
         for zone in layout.zones {
             let shape = layout.shape(for: zone)
-            let size = DropZonePresentation.blobSize(for: shape)
+            let marks = DropZonePresentation.marks(zone, in: bounds.size)
+            let size = marks.blobSize
             blobs[zone]?.frame = NSRect(
                 x: shape.center.x - size.width / 2,
                 y: shape.center.y - size.height / 2,
@@ -216,7 +214,7 @@ final class MacPaneDropOverlay: NSView {
                 height: size.height,
             )
             guard let label = labels[zone] else { continue }
-            let centre = DropZonePresentation.labelCenter(zone, shape: shape, in: bounds.size)
+            let centre = marks.labelCenter
             let fit = label.fittingSize
             label.frame = NSRect(
                 x: centre.x - fit.width / 2,

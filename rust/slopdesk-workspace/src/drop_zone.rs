@@ -143,6 +143,196 @@ pub fn zone_at(point: Point, size: Size) -> Option<DropZone> {
     best.map(|(zone, _)| zone)
 }
 
+/// Which rung of the one ink ladder a blob's wash is drawn from.
+///
+/// Named, never coloured: this crate holds no design tokens, and each renderer resolves the rung
+/// through its own view of the ladder (`Slate.Status.ok` / `Slate.State.accent` in `SwiftUI`,
+/// `Slate.Native.*` in `AppKit`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Ink {
+    /// The status-OK rung (green): the hovered zone, and the terminal half at rest.
+    Ok = 0,
+    /// The accent rung: the pane half at rest.
+    Accent = 1,
+    /// The muted-accent rung: a zone the dragged content cannot act on — a barely-there neutral,
+    /// not a faded accent, so a disabled blob never reads as merely "further away".
+    AccentMuted = 2,
+}
+
+impl Ink {
+    /// This rung in the byte the boundary carries.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Which rung a zone's LABEL is drawn in — the reading ladder, not the status one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum LabelInk {
+    /// The hovered zone: full-strength reading ink.
+    Primary = 0,
+    /// An allowed but un-hovered zone.
+    Secondary = 1,
+    /// A zone the content cannot act on — faded, matching its muted blob.
+    Tertiary = 2,
+}
+
+impl LabelInk {
+    /// This rung in the byte the boundary carries.
+    #[must_use]
+    pub const fn as_byte(self) -> u8 {
+        self as u8
+    }
+}
+
+/// The alpha the active zone's ring is stroked at. The ring is what says "release now", and two
+/// halves that ringed a hover differently would be two different affordances.
+pub const ACTIVE_STROKE_OPACITY: f64 = 0.7;
+
+/// The hovered blob's wash: bright enough to read as the target, not so bright it hides the label.
+const ACTIVE_WASH: f64 = 0.5;
+/// A resting terminal-half blob's wash.
+const TERMINAL_WASH: f64 = 0.14;
+/// A resting pane-half blob's wash, a shade fainter — the accent rung already reads stronger.
+const PANE_WASH: f64 = 0.10;
+/// The muted rung is the faint one already, so it is laid down undiluted.
+const MUTED_WASH: f64 = 1.0;
+
+/// WHERE one blob and its word are drawn, over a pane of a given size.
+///
+/// A pair rather than two calls, because the label's place is read off the same ellipse the blob's
+/// size is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Marks {
+    /// The blob's drawn size, clamped away from negative dimensions: a pane mid-layout answers with
+    /// a degenerate box, and neither framework may be handed a negative width.
+    pub blob: Size,
+    /// Where the zone's label sits in pane-local coordinates.
+    pub label_center: Point,
+}
+
+/// HOW one blob and its word are inked, for one `(zone, active, allowed)`.
+///
+/// One value rather than three calls: the wash, the ring and the label's rung all turn on the same
+/// two booleans, and a renderer that asked for them separately would be free to ask with a stale
+/// pair — a lit blob under a faded word. Nothing here is a colour; see [`Ink`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Wash {
+    /// The blob's wash rung.
+    pub ink: Ink,
+    /// The alpha that rung is laid down at.
+    pub opacity: f64,
+    /// The alpha the ring is stroked at — `0` when this zone is not the hovered one, so the ring is
+    /// one number rather than a branch each renderer writes out.
+    pub stroke_opacity: f64,
+    /// The label's rung.
+    pub label_ink: LabelInk,
+}
+
+/// Whether `zone` belongs to the "green / terminal half".
+///
+/// Those are the two zones that act on the TERMINAL (a new rooted tab, an inject into the live PTY)
+/// rather than on the PANE TREE, and so tint green even at rest. The split is the user's whole
+/// mental model of the overlay.
+#[must_use]
+pub const fn is_terminal_half(zone: DropZone) -> bool {
+    matches!(zone, DropZone::NewTab | DropZone::InsertPath)
+}
+
+/// The label under a zone's blob. Title Case, and "Open In-Place" keeps its capital I and its
+/// hyphen — it names the verb the ⌘-click menu already spells that way.
+#[must_use]
+pub const fn label(zone: DropZone) -> &'static str {
+    match zone {
+        DropZone::NewTab => "New Tab",
+        DropZone::InsertPath => "Insert Path",
+        DropZone::OpenInPlace => "Open In-Place",
+        DropZone::SplitLeft => "Split Left",
+        DropZone::SplitRight => "Split Right",
+    }
+}
+
+/// Where a zone's label sits in pane-local coordinates: at the blob centre for the three central
+/// circles, and inset from the edge for the two side ellipses — whose true centre is ON the pane
+/// edge (half the blob is clipped away), so a centred label would be half off-pane. Half the
+/// x-radius in from the edge lands it inside the visible half of the ellipse.
+///
+/// EVERY ZONE IS SPELLED AND THERE IS NO WILDCARD ARM. The three central circles share one arm
+/// because they share one ANSWER — an unclipped blob wants its label at its own centre — not
+/// because the arm is a place to put the cases nobody has thought about yet: a `_` here would hand
+/// a sixth zone the centred label silently, and "centred" is correct only for a blob the pane box
+/// does not cut in half.
+#[must_use]
+fn label_center(zone: DropZone, drawn: ZoneShape, size: Size) -> Point {
+    match zone {
+        DropZone::NewTab | DropZone::InsertPath | DropZone::OpenInPlace => drawn.center,
+        DropZone::SplitLeft => Point::new(drawn.radius_x * 0.5, drawn.center.y),
+        DropZone::SplitRight => Point::new(size.width - drawn.radius_x * 0.5, drawn.center.y),
+    }
+}
+
+/// The blob's wash: the hovered zone glows status-green at half strength; an allowed zone sits as a
+/// faint wash (green for the terminal half, accent for the pane half); a disabled zone is a
+/// barely-there neutral.
+#[must_use]
+const fn rung(zone: DropZone, active: bool, allowed: bool) -> (Ink, f64) {
+    if active {
+        return (Ink::Ok, ACTIVE_WASH);
+    }
+    if !allowed {
+        return (Ink::AccentMuted, MUTED_WASH);
+    }
+    if is_terminal_half(zone) {
+        (Ink::Ok, TERMINAL_WASH)
+    } else {
+        (Ink::Accent, PANE_WASH)
+    }
+}
+
+/// The label's rung: bright on the active zone, secondary on an allowed one, tertiary (faded) on a
+/// disabled one — so the text tracks its blob rather than announcing a target that is inert.
+#[must_use]
+const fn label_ink(active: bool, allowed: bool) -> LabelInk {
+    if active {
+        LabelInk::Primary
+    } else if allowed {
+        LabelInk::Secondary
+    } else {
+        LabelInk::Tertiary
+    }
+}
+
+/// Where `zone`'s blob and word are drawn over a pane of `size`.
+///
+/// The shape is [`shape`]'s, recomputed here rather than passed in, so the size a renderer draws
+/// and the ellipse the receiver hit-tests are the same function's — see the module header.
+#[must_use]
+pub fn marks(zone: DropZone, size: Size) -> Marks {
+    let drawn = shape(zone, size);
+    Marks {
+        // `max` rather than a `<` ternary, per the float convention. A pane that has not been laid
+        // out yet answers proportionally, and a negative dimension makes SwiftUI log and `AppKit`
+        // draw garbage.
+        blob: Size::new((drawn.radius_x * 2.0).max(0.0), (drawn.radius_y * 2.0).max(0.0)),
+        label_center: label_center(zone, drawn, size),
+    }
+}
+
+/// How `zone`'s blob and word are inked while `active` / `allowed`.
+#[must_use]
+pub const fn wash(zone: DropZone, active: bool, allowed: bool) -> Wash {
+    let (ink, opacity) = rung(zone, active, allowed);
+    Wash {
+        ink,
+        opacity,
+        stroke_opacity: if active { ACTIVE_STROKE_OPACITY } else { 0.0 },
+        label_ink: label_ink(active, allowed),
+    }
+}
+
 #[cfg(test)]
 #[expect(
     clippy::float_cmp,
@@ -151,7 +341,9 @@ pub fn zone_at(point: Point, size: Size) -> Option<DropZone> {
 mod tests {
     use slopdesk_tree::geometry::{Point, Size};
 
-    use super::{ZONES, shape, zone_at};
+    use super::{
+        ACTIVE_STROKE_OPACITY, Ink, LabelInk, ZONES, is_terminal_half, label, marks, shape, wash, zone_at,
+    };
     use crate::drop_action::DropZone;
 
     const PANE: Size = Size::new(800.0, 600.0);
@@ -234,5 +426,120 @@ mod tests {
             zone_at(Point::new(800.0, 130.0), squat),
             Some(DropZone::InsertPath)
         );
+    }
+
+    #[test]
+    fn the_terminal_half_is_the_two_zones_that_act_on_the_terminal() {
+        assert!(is_terminal_half(DropZone::NewTab));
+        assert!(is_terminal_half(DropZone::InsertPath));
+        for zone in [DropZone::OpenInPlace, DropZone::SplitLeft, DropZone::SplitRight] {
+            assert!(!is_terminal_half(zone), "{zone:?} acts on the PANE TREE");
+        }
+    }
+
+    /// The five words verbatim. "Open In-Place" keeps its capital I and its hyphen because it names
+    /// the verb the `⌘`-click menu already spells that way, and that spelling is exactly what a
+    /// second renderer re-types slightly differently — a drift no other gate can see.
+    #[test]
+    fn the_five_words_are_pinned_letter_for_letter() {
+        assert_eq!(label(DropZone::NewTab), "New Tab");
+        assert_eq!(label(DropZone::InsertPath), "Insert Path");
+        assert_eq!(label(DropZone::OpenInPlace), "Open In-Place");
+        assert_eq!(label(DropZone::SplitLeft), "Split Left");
+        assert_eq!(label(DropZone::SplitRight), "Split Right");
+    }
+
+    #[test]
+    fn every_zone_is_labelled_and_no_two_share_a_word() {
+        let mut labels: Vec<&str> = ZONES.iter().map(|zone| label(*zone)).collect();
+        assert!(!labels.iter().any(|word| word.is_empty()));
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(
+            labels.len(),
+            ZONES.len(),
+            "two blobs that read alike are one target twice"
+        );
+    }
+
+    #[test]
+    fn the_edge_labels_sit_inside_the_visible_half_and_the_others_at_their_centre() {
+        for zone in [DropZone::NewTab, DropZone::InsertPath, DropZone::OpenInPlace] {
+            let drawn = shape(zone, PANE);
+            assert_eq!(marks(zone, PANE).label_center, drawn.center);
+        }
+        // The edge ellipses are centred ON the edge, so a centred label would be half off-pane.
+        let left = marks(DropZone::SplitLeft, PANE).label_center;
+        let right = marks(DropZone::SplitRight, PANE).label_center;
+        assert!(left.x > 0.0 && left.x < PANE.width);
+        assert!(right.x > 0.0 && right.x < PANE.width);
+        assert_eq!(left.y, right.y);
+    }
+
+    #[test]
+    fn a_pane_mid_layout_never_hands_a_renderer_a_negative_blob() {
+        let degenerate = Size::new(-40.0, -10.0);
+        for zone in ZONES {
+            let drawn = marks(zone, degenerate);
+            assert!(drawn.blob.width >= 0.0, "{zone:?} width");
+            assert!(drawn.blob.height >= 0.0, "{zone:?} height");
+        }
+    }
+
+    #[test]
+    fn the_hovered_zone_glows_and_rings_and_nothing_else_rings() {
+        let hovered = wash(DropZone::SplitRight, true, true);
+        assert_eq!(
+            hovered.ink,
+            Ink::Ok,
+            "the hover is status-green whichever half it is in"
+        );
+        assert_eq!(hovered.stroke_opacity, ACTIVE_STROKE_OPACITY);
+        assert_eq!(hovered.label_ink, LabelInk::Primary);
+        for zone in ZONES {
+            assert_eq!(wash(zone, false, true).stroke_opacity, 0.0);
+            assert_eq!(wash(zone, false, false).stroke_opacity, 0.0);
+        }
+    }
+
+    #[test]
+    fn a_zone_the_content_cannot_act_on_is_neutral_rather_than_a_faded_accent() {
+        for zone in ZONES {
+            let barred = wash(zone, false, false);
+            assert_eq!(
+                barred.ink,
+                Ink::AccentMuted,
+                "{zone:?} must not read as merely further away"
+            );
+            assert_eq!(barred.opacity, 1.0, "the muted rung is the faint one already");
+            assert_eq!(barred.label_ink, LabelInk::Tertiary, "the word tracks its blob");
+        }
+    }
+
+    #[test]
+    fn at_rest_the_partition_is_what_inks_the_blob() {
+        for zone in ZONES {
+            let resting = wash(zone, false, true);
+            assert_eq!(resting.label_ink, LabelInk::Secondary);
+            if is_terminal_half(zone) {
+                assert_eq!(resting.ink, Ink::Ok);
+            } else {
+                assert_eq!(resting.ink, Ink::Accent);
+            }
+            assert!(
+                resting.opacity > 0.0 && resting.opacity < 0.5,
+                "a wash, never a glow"
+            );
+        }
+    }
+
+    #[test]
+    fn the_bytes_the_boundary_carries_are_distinct_per_rung() {
+        assert_eq!(Ink::Ok.as_byte(), 0);
+        assert_eq!(Ink::Accent.as_byte(), 1);
+        assert_eq!(Ink::AccentMuted.as_byte(), 2);
+        assert_eq!(LabelInk::Primary.as_byte(), 0);
+        assert_eq!(LabelInk::Secondary.as_byte(), 1);
+        assert_eq!(LabelInk::Tertiary.as_byte(), 2);
     }
 }

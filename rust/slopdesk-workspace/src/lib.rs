@@ -155,6 +155,7 @@ pub mod outline;
 pub mod palette_card;
 pub mod palette_rows;
 pub mod pane_drop;
+pub mod pane_empty;
 pub mod pane_facts;
 pub mod pane_session;
 pub mod pane_switcher;

@@ -100,7 +100,7 @@ final class PaneDropOverlayRenderTests: XCTestCase {
     }
 
     func testTheEdgeLabelsStayOnThePane() {
-        // The label's centre is `DropZonePresentation.labelCenter`'s, NOT the blob's: the blob's
+        // The label's centre is `DropZonePresentation.marks`'s, NOT the blob's: the blob's
         // centre is ON the pane edge, so a label centred there would be half clipped away.
         let overlay = makeOverlay(dragging: true)
         for zone in [DropZone.splitLeft, .splitRight] {

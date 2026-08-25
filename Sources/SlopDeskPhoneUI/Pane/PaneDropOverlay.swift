@@ -52,13 +52,15 @@ struct PaneDropOverlay: View {
         let shape = layout.shape(for: zone)
         let active = activeZone == zone
         let allowed = allowedZones.contains(zone)
-        let size = DropZonePresentation.blobSize(for: shape)
+        let marks = DropZonePresentation.marks(zone, in: layout.size)
+        let wash = DropZonePresentation.wash(zone, active: active, allowed: allowed)
+        let size = marks.blobSize
         Ellipse()
-            .fill(fill(zone, active: active, allowed: allowed))
+            .fill(ink(wash.ink).opacity(wash.opacity))
             .overlay {
                 if active {
                     Ellipse().strokeBorder(
-                        Slate.Status.ok.opacity(DropZonePresentation.activeStrokeOpacity),
+                        Slate.Status.ok.opacity(wash.strokeOpacity),
                         lineWidth: Slate.Metric.hairline,
                     )
                 }
@@ -67,19 +69,11 @@ struct PaneDropOverlay: View {
             .position(shape.center)
         Text(DropZonePresentation.label(zone))
             .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-            .foregroundStyle(labelColor(active: active, allowed: allowed))
-            .position(DropZonePresentation.labelCenter(zone, shape: shape, in: layout.size))
+            .foregroundStyle(labelColor(wash.labelInk))
+            .position(marks.labelCenter)
     }
 
     // MARK: - Per-zone styling (the rung → `Color` lookup, and nothing else)
-
-    /// The blob fill: ``DropZonePresentation/tint(_:active:allowed:)`` decides which rung at which alpha;
-    /// this resolves the rung through SwiftUI's spelling of the ladder. `.opacity(1)` on the muted rung is
-    /// the identity (alpha × 1), so the disabled wash is bit-identical to the token itself.
-    private func fill(_ zone: DropZone, active: Bool, allowed: Bool) -> Color {
-        let tint = DropZonePresentation.tint(zone, active: active, allowed: allowed)
-        return ink(tint.ink).opacity(tint.opacity)
-    }
 
     /// SwiftUI's view of the one ink ladder (`Slate.Native.*` is AppKit's view of the same rungs).
     private func ink(_ rung: DropZoneInk) -> Color {
@@ -90,10 +84,10 @@ struct PaneDropOverlay: View {
         }
     }
 
-    /// The label colour tracks the zone state — the branch is
-    /// ``DropZonePresentation/labelInk(active:allowed:)``; this is its reading-ink lookup.
-    private func labelColor(active: Bool, allowed: Bool) -> Color {
-        switch DropZonePresentation.labelInk(active: active, allowed: allowed) {
+    /// The label colour tracks the zone state — the branch is the crossing's; this is its
+    /// reading-ink lookup.
+    private func labelColor(_ rung: DropZoneLabelInk) -> Color {
+        switch rung {
         case .primary: Slate.Text.primary
         case .secondary: Slate.Text.secondary
         case .tertiary: Slate.Text.tertiary

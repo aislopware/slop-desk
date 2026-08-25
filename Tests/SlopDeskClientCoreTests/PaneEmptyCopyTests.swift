@@ -1,45 +1,59 @@
-// PaneEmptyCopyTests — pins the typed empty-state COPY (cause → symbol/title/caption/action), so the
-// pane area's "nothing here" wording cannot drift per call site OR per renderer.
+// PaneEmptyCopyTests — the CROSSING behind the typed empty-state copy, not the wording.
 //
-// It was `SlateEmptyStateTests` in `SlopDeskClientUITests` until R12, and it followed the tables down:
-// the four are `String`-valued and frameworkless, so they descended to the floor both canvases read
-// instead of being pinned as a cross-renderer pair (docs/56 §3, P6). The status → cause RESOLUTION
-// already lived here — `PaneEmptyCause.resolve`, pinned by `PaneCanvasPolicyTests`.
+// WHICH four things each cause says are `slopdesk_workspace::pane_empty`'s and pinned there; a second
+// copy of the table here would be the same sentences in two languages. What only Swift can get wrong
+// is the marshalling: that the four strings come back from ONE call in their own slots, that the
+// host and the reason are read from the slot each belongs in rather than from the one beside it, and
+// that an ABSENT action stays absent instead of arriving as an empty label — because a button offered
+// under "Connection Lost" would tell the user to act on a redial the supervisor is already driving.
+//
+// It was `SlateEmptyStateTests` in `SlopDeskClientUITests` until R12, and it followed the tables down
+// twice: to `PaneEmptyCause` (docs/56 §3, P6 — a frameworkless value goes to the floor), and from
+// there to the crate both floors read.
 
 import XCTest
 @testable import SlopDeskClientCore
 
 final class PaneEmptyCopyTests: XCTestCase {
-    func testPinnedCopyPerCause() {
-        XCTAssertEqual(PaneEmptyCause.neverConnected.title, "Not Connected")
-        XCTAssertEqual(PaneEmptyCause.neverConnected.caption, "Connect to a host to open a terminal.")
-        XCTAssertEqual(PaneEmptyCause.neverConnected.actionLabel, "Connect to Host…")
-        XCTAssertEqual(PaneEmptyCause.neverConnected.symbolName, "bolt.horizontal")
-
-        XCTAssertEqual(PaneEmptyCause.linkDown(host: "mac-studio").title, "Connection Lost")
-        XCTAssertEqual(PaneEmptyCause.linkDown(host: "mac-studio").caption, "Reconnecting to mac-studio…")
-        // Link-down redials itself — offering a button would suggest the user must act.
-        XCTAssertNil(PaneEmptyCause.linkDown(host: "mac-studio").actionLabel)
-
-        XCTAssertEqual(PaneEmptyCause.noTabs.title, "No Open Tabs")
-        XCTAssertEqual(PaneEmptyCause.noTabs.caption, "Open a tab to get started.")
-        XCTAssertEqual(PaneEmptyCause.noTabs.actionLabel, "New Tab")
-
-        // Connect-failed names the REAL reason verbatim and re-offers the Connect editor.
-        let failed = PaneEmptyCause.connectFailed(reason: "Connection refused")
-        XCTAssertEqual(failed.title, "Connect Failed")
-        XCTAssertEqual(failed.caption, "Connection refused")
-        XCTAssertEqual(failed.actionLabel, "Connect to Host…")
+    /// All four crossings answer, in their own slots — a reading that read its head at the wrong
+    /// offset would come back with a right title beside an empty symbol.
+    func testEveryCauseCrossesWithAllFourAnswers() {
+        let causes: [PaneEmptyCause] = [
+            .neverConnected, .linkDown(host: "mac-studio"), .noTabs,
+            .connectFailed(reason: "Connection refused"),
+        ]
+        for cause in causes {
+            XCTAssertFalse(cause.symbolName.isEmpty, "\(cause) crossed with no glyph")
+            XCTAssertFalse(cause.title.isEmpty, "\(cause) crossed headless")
+            XCTAssertFalse(cause.caption.isEmpty, "\(cause) crossed with nothing under the title")
+        }
+        XCTAssertEqual(
+            Set(causes.map(\.symbolName)).count, causes.count,
+            "the glyph is part of the distinction the copy is spent making",
+        )
+        XCTAssertEqual(
+            Set(causes.map(\.title)).count, causes.count,
+            "four causes that read alike are one surface pretending to be four",
+        )
     }
 
-    /// Every cause names a symbol, and no two causes share one — the glyph is part of the distinction
-    /// the copy is spent making, so a copy-paste that left two causes on `terminal` must be loud.
-    func testEverySymbolIsDistinct() {
-        let causes: [PaneEmptyCause] = [
-            .neverConnected, .linkDown(host: "h"), .noTabs, .connectFailed(reason: "r"),
-        ]
-        let symbols = causes.map(\.symbolName)
-        XCTAssertFalse(symbols.contains(where: \.isEmpty))
-        XCTAssertEqual(Set(symbols).count, causes.count)
+    /// The host rides in its own span and the reason in the next one, so a caption drawn from the
+    /// wrong slot would name the wrong thing confidently.
+    func testTheHostAndTheReasonCrossInTheirOwnSlots() {
+        XCTAssertEqual(PaneEmptyCause.linkDown(host: "mac-studio").caption, "Reconnecting to mac-studio…")
+        XCTAssertEqual(PaneEmptyCause.connectFailed(reason: "Connection refused").caption, "Connection refused")
+        XCTAssertFalse(
+            PaneEmptyCause.noTabs.caption.contains("Reconnecting"),
+            "a cause that names nobody must not borrow a neighbour's slot",
+        )
+    }
+
+    /// The action's ABSENCE is a flag on the crossing rather than an empty string, which is what stops
+    /// a redial being drawn with a button the user is not meant to press.
+    func testAnAbsentActionIsNotAnEmptyOne() {
+        XCTAssertNil(PaneEmptyCause.linkDown(host: "mac-studio").actionLabel)
+        for cause in [PaneEmptyCause.neverConnected, .noTabs, .connectFailed(reason: "r")] {
+            XCTAssertEqual(cause.actionLabel?.isEmpty, false, "\(cause) crossed with an unlabelled button")
+        }
     }
 }

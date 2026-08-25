@@ -12,6 +12,7 @@
 //   • ``PaneEmptyCause``    — WHY the canvas is empty, which is a reading of the connection, not a view.
 
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
@@ -103,8 +104,11 @@ package enum PaneCanvasMetrics {
 /// as a cross-renderer pair, but a FRAMEWORKLESS value can just move to the floor where neither half
 /// can drift from it. These four return `String` — a symbol NAME, not an `Image`; a label, not a
 /// `Button` — so there is nothing to pin. They lived as `static func`s on `SlateEmptyState` (a
-/// `some View`), which is the same "a function spelled inside a type the other half cannot import"
-/// this file's header opens with.
+/// `some View`), and the floor they descended to is now `slopdesk_workspace::pane_empty`.
+///
+/// WHAT STAYS HERE IS THE CASE, NOT THE COPY. The branch and the four strings are the crate's; the
+/// associated values are Swift's, because a renderer switches on the case to decide what its one
+/// button does and the host / reason it carries are what the caption is drawn from.
 package enum PaneEmptyCause: Equatable, Sendable {
     /// No host connected (fresh launch / disconnected) — the next action is the Connect editor.
     case neverConnected
@@ -118,63 +122,85 @@ package enum PaneEmptyCause: Equatable, Sendable {
     /// Connect editor to correct it.
     case connectFailed(reason: String)
 
-    /// Resolves the empty pane area's CAUSE from the live connection: connected ⇒ the only thing
-    /// missing is a tab; an active redial ⇒ link-down (named host, no action — the supervisor is
-    /// already dialing); anything else (fresh launch, give-up states, a first `connecting`) reads
-    /// not-connected, whose action opens the Connect editor.
+    /// Resolves the empty pane area's CAUSE from the live connection. The branch is
+    /// `slopdesk_workspace::pane_empty`'s; what stays here is the ASSOCIATED VALUE each cause carries,
+    /// because a renderer switches on the case to decide what its one button does.
     package static func resolve(status: ConnectionStatus, host: String) -> Self {
-        switch status {
-        case .connected: .noTabs
-        case .reconnecting: .linkDown(host: host)
-        case let .failed(reason): .connectFailed(reason: ConnectionPresenter.friendlyFailure(reason))
-        case .disconnected,
-             .connecting,
-             .unreachable: .neverConnected
+        switch slopdesk_ws_pane_empty_cause(status.terms.code) {
+        case UInt8(SLOPDESK_WS_PANE_EMPTY_LINK_DOWN): .linkDown(host: host)
+        case UInt8(SLOPDESK_WS_PANE_EMPTY_NO_TABS): .noTabs
+        case UInt8(SLOPDESK_WS_PANE_EMPTY_CONNECT_FAILED):
+            .connectFailed(reason: ConnectionPresenter.friendlyFailure(status.terms.raw))
+        default: .neverConnected
         }
     }
 
-    // MARK: The pinned copy (pure, unit-pinned by `PaneEmptyCopyTests`)
+    // MARK: The copy (one crossing, four strings)
+
+    /// The symbol, the title, the caption and the action label, from one crossing.
+    ///
+    /// Each of the four properties below asks again rather than sharing one stored reading, which is
+    /// safe here and nowhere else: the answer is a pure function of the cause VALUE, so four calls
+    /// with the same cause cannot come back saying four different things. A renderer that wants all
+    /// four in one go destructures this directly.
+    ///
+    /// The action's ABSENCE is a flag on the delivery rather than an empty label, so a redial offers
+    /// no button at all instead of an unlabelled one.
+    private var copy: (symbol: String, title: String, caption: String, action: String?) {
+        var arena = WsStrings()
+        let spans = [arena.span(host), arena.span(reason)]
+        var bytes = arena.bytes
+        let blob = bytes.withUnsafeMutableBufferPointer { lent in
+            spans.withUnsafeBufferPointer { slots in
+                wsAnswerBytes { out, cap in
+                    Int(slopdesk_ws_pane_empty_copy(
+                        crossing, lent.baseAddress, lent.count,
+                        slots.baseAddress, slots.count, out, cap,
+                    ))
+                }
+            }
+        }
+        let head = Int(SLOPDESK_WS_PANE_EMPTY_HEAD_BYTES)
+        let hasAction = blob.count >= head && (0..<head).reduce(0) { $0 << 8 | Int(blob[$1]) } == 1
+        let runs = wsRuns(blob.count >= head ? Array(blob.dropFirst(head)) : [], count: 4)
+        return (runs[0], runs[1], runs[2], hasAction ? runs[3] : nil)
+    }
 
     /// The muted SF Symbol above the title. A NAME, so the two renderers resolve it through their own
     /// image type rather than sharing one they cannot both import.
-    package var symbolName: String {
-        switch self {
-        case .neverConnected: "bolt.horizontal"
-        case .linkDown: "wifi.exclamationmark"
-        case .noTabs: "terminal"
-        case .connectFailed: "exclamationmark.triangle"
-        }
-    }
+    package var symbolName: String { copy.symbol }
 
     /// The short headline. It names the ACTUAL reason ("Not Connected" vs "Connection Lost" vs "No Open
     /// Tabs") rather than one generic "No Session" for all three.
-    package var title: String {
-        switch self {
-        case .neverConnected: "Not Connected"
-        case .linkDown: "Connection Lost"
-        case .noTabs: "No Open Tabs"
-        case .connectFailed: "Connect Failed"
-        }
-    }
+    package var title: String { copy.title }
 
     /// The one-line cause under the title.
-    package var caption: String {
-        switch self {
-        case .neverConnected: "Connect to a host to open a terminal."
-        case let .linkDown(host): "Reconnecting to \(host)…"
-        case .noTabs: "Open a tab to get started."
-        case let .connectFailed(reason): reason
-        }
-    }
+    package var caption: String { copy.caption }
 
     /// The single next action's label, or `nil` when the cause has none — link-down redials itself, and
     /// offering a button there would suggest the user must do something.
-    package var actionLabel: String? {
+    package var actionLabel: String? { copy.action }
+
+    /// This cause in the door's own numbering.
+    private var crossing: UInt8 {
         switch self {
-        case .neverConnected: "Connect to Host…"
-        case .linkDown: nil
-        case .noTabs: "New Tab"
-        case .connectFailed: "Connect to Host…"
+        case .neverConnected: UInt8(SLOPDESK_WS_PANE_EMPTY_NEVER_CONNECTED)
+        case .linkDown: UInt8(SLOPDESK_WS_PANE_EMPTY_LINK_DOWN)
+        case .noTabs: UInt8(SLOPDESK_WS_PANE_EMPTY_NO_TABS)
+        case .connectFailed: UInt8(SLOPDESK_WS_PANE_EMPTY_CONNECT_FAILED)
         }
+    }
+
+    /// The host being redialled, absent for every other cause — the door reads this slot only for
+    /// link-down, and an absent span is what keeps it from being captioned somewhere else.
+    private var host: String? {
+        guard case let .linkDown(host) = self else { return nil }
+        return host
+    }
+
+    /// The failure's own sentence, absent for every other cause.
+    private var reason: String? {
+        guard case let .connectFailed(reason) = self else { return nil }
+        return reason
     }
 }

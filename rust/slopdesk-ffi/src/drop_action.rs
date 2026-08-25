@@ -31,6 +31,20 @@ pub const SLOPDESK_DROP_ZONE_SPLIT_LEFT: u8 = 3;
 /// Right edge: split trailing.
 pub const SLOPDESK_DROP_ZONE_SPLIT_RIGHT: u8 = 4;
 
+/// The status-OK rung (green): the hovered zone, and the terminal half at rest.
+pub const SLOPDESK_DROP_ZONE_INK_OK: u8 = 0;
+/// The accent rung: the pane half at rest.
+pub const SLOPDESK_DROP_ZONE_INK_ACCENT: u8 = 1;
+/// The muted-accent rung: a zone the dragged content cannot act on.
+pub const SLOPDESK_DROP_ZONE_INK_ACCENT_MUTED: u8 = 2;
+
+/// Full-strength reading ink: the hovered zone's label.
+pub const SLOPDESK_DROP_ZONE_LABEL_INK_PRIMARY: u8 = 0;
+/// An allowed but un-hovered zone's label.
+pub const SLOPDESK_DROP_ZONE_LABEL_INK_SECONDARY: u8 = 1;
+/// A barred zone's label, faded to match its blob.
+pub const SLOPDESK_DROP_ZONE_LABEL_INK_TERTIARY: u8 = 2;
+
 /// A directory path.
 pub const SLOPDESK_DROP_CONTENT_FOLDER: u8 = 0;
 /// A regular file path.
@@ -188,6 +202,93 @@ pub unsafe extern "C" fn slopdesk_drop_zone_at(point: CPoint, width: f64, height
     true
 }
 
+/// WHERE one blob and its word are drawn, over a pane of a given size.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SlopDeskDropZoneMarks {
+    /// The blob's drawn size, clamped away from the negative dimensions a pane mid-layout answers
+    /// with.
+    pub blob_width: f64,
+    /// The other half of that size.
+    pub blob_height: f64,
+    /// Where the zone's label sits in pane-local points — the blob's centre for the three circles,
+    /// and inset from the edge for the two ellipses the pane box cuts in half.
+    pub label_center: CPoint,
+}
+
+/// HOW one blob and its word are inked, for one `(zone, active, allowed)`.
+///
+/// ONE value rather than three doors: the wash, the ring and the label's rung all turn on the same
+/// two booleans, so a renderer that asked for them separately would be free to ask with a stale
+/// pair — a lit blob under a faded word. The two rungs are NAMED codes, never colours: this side
+/// holds no design tokens and each half resolves the rung through its own view of the one ladder.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct SlopDeskDropZoneWash {
+    /// The alpha the wash rung is laid down at.
+    pub opacity: f64,
+    /// The alpha the ring is stroked at, `0` when this zone is not the hovered one — one number
+    /// rather than a branch each renderer writes out.
+    pub stroke_opacity: f64,
+    /// The wash rung, as a `SLOPDESK_DROP_ZONE_INK_*` code.
+    pub ink: u8,
+    /// The label's rung, as a `SLOPDESK_DROP_ZONE_LABEL_INK_*` code.
+    pub label_ink: u8,
+}
+
+/// Where a `SLOPDESK_DROP_ZONE_*` zone's blob and word are drawn over a pane of `width` × `height`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_drop_zone_marks(zone: u8, width: f64, height: f64) -> SlopDeskDropZoneMarks {
+    let drawn = drop_zone::marks(zone_of(zone), Size::new(width, height));
+    SlopDeskDropZoneMarks {
+        blob_width: drawn.blob.width,
+        blob_height: drawn.blob.height,
+        label_center: CPoint {
+            x: drawn.label_center.x,
+            y: drawn.label_center.y,
+        },
+    }
+}
+
+/// How a `SLOPDESK_DROP_ZONE_*` zone is inked while `active` / `allowed`.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_drop_zone_wash(
+    zone: u8,
+    active: bool,
+    allowed: bool,
+) -> SlopDeskDropZoneWash {
+    let inked = drop_zone::wash(zone_of(zone), active, allowed);
+    SlopDeskDropZoneWash {
+        opacity: inked.opacity,
+        stroke_opacity: inked.stroke_opacity,
+        ink: inked.ink.as_byte(),
+        label_ink: inked.label_ink.as_byte(),
+    }
+}
+
+/// The label under a zone's blob, written to `out`. Both halves read this one, so a Mac's "Open
+/// In-Place" and a phone's "Open in place" cannot be two spellings of one verb.
+///
+/// # Safety
+/// `out` must be null or point to `cap` writable bytes, live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const unsafe extern "C" fn slopdesk_drop_zone_label(zone: u8, out: *mut u8, cap: usize) -> usize {
+    // SAFETY: the caller's obligation, restated above; `deliver` writes at most `cap`.
+    unsafe { deliver(drop_zone::label(zone_of(zone)).as_bytes(), out, cap) }
+}
+
 /// The `SLOPDESK_DROP_ZONE_*` code a zone answers to — [`zone_of`]'s inverse, so a hit test and a
 /// shape request are asked in the same numbers.
 const fn code_of(zone: DropZone) -> u8 {
@@ -203,14 +304,23 @@ const fn code_of(zone: DropZone) -> u8 {
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
+    #![expect(
+        clippy::float_cmp,
+        reason = "the alphas and proportions are exact, and a drifted one IS the bug these pin"
+    )]
 
     use super::{
         SLOPDESK_DROP_ACTION_INJECT_TEXT, SLOPDESK_DROP_ACTION_NEW_TAB_CD, SLOPDESK_DROP_ACTION_NOTHING,
         SLOPDESK_DROP_ACTION_SPLIT_TRAILING, SLOPDESK_DROP_CONTENT_FOLDER, SLOPDESK_DROP_CONTENT_URL,
-        SLOPDESK_DROP_ZONE_INSERT_PATH, SLOPDESK_DROP_ZONE_NEW_TAB, SLOPDESK_DROP_ZONE_OPEN_IN_PLACE,
-        SLOPDESK_DROP_ZONE_SPLIT_LEFT, SLOPDESK_DROP_ZONE_SPLIT_RIGHT, slopdesk_drop_action,
-        slopdesk_drop_zone_at, slopdesk_drop_zone_shape,
+        SLOPDESK_DROP_ZONE_INK_ACCENT, SLOPDESK_DROP_ZONE_INK_ACCENT_MUTED, SLOPDESK_DROP_ZONE_INK_OK,
+        SLOPDESK_DROP_ZONE_INSERT_PATH, SLOPDESK_DROP_ZONE_LABEL_INK_PRIMARY,
+        SLOPDESK_DROP_ZONE_LABEL_INK_SECONDARY, SLOPDESK_DROP_ZONE_LABEL_INK_TERTIARY,
+        SLOPDESK_DROP_ZONE_NEW_TAB, SLOPDESK_DROP_ZONE_OPEN_IN_PLACE, SLOPDESK_DROP_ZONE_SPLIT_LEFT,
+        SLOPDESK_DROP_ZONE_SPLIT_RIGHT, slopdesk_drop_action, slopdesk_drop_zone_at,
+        slopdesk_drop_zone_label, slopdesk_drop_zone_marks, slopdesk_drop_zone_shape,
+        slopdesk_drop_zone_wash,
     };
+    use crate::testing::delivered;
     use crate::workspace::CPoint;
 
     fn action(zone: u8, kind: u8, value: &str) -> (u8, String) {
@@ -311,5 +421,78 @@ mod tests {
     #[test]
     fn a_pane_that_has_not_been_laid_out_swallows_the_drop() {
         assert_eq!(zone_at(0.0, 0.0, 0.0, 0.0), None);
+    }
+
+    /// The label crosses for every zone, and no two blobs read alike — both halves draw this one
+    /// word, so a Mac's "Open In-Place" cannot become a phone's "Open in place".
+    #[test]
+    fn every_zone_crosses_with_its_own_word() {
+        let mut words: Vec<String> = Vec::new();
+        for code in [
+            SLOPDESK_DROP_ZONE_NEW_TAB,
+            SLOPDESK_DROP_ZONE_INSERT_PATH,
+            SLOPDESK_DROP_ZONE_OPEN_IN_PLACE,
+            SLOPDESK_DROP_ZONE_SPLIT_LEFT,
+            SLOPDESK_DROP_ZONE_SPLIT_RIGHT,
+        ] {
+            // SAFETY: one live local buffer, borrowed for the duration of the call.
+            let answer = delivered(|out, cap| unsafe { slopdesk_drop_zone_label(code, out, cap) });
+            let word = String::from_utf8_lossy(&answer).into_owned();
+            assert!(!word.is_empty(), "zone {code} crossed unlabelled");
+            words.push(word);
+        }
+        words.sort();
+        words.dedup();
+        assert_eq!(words.len(), 5, "two blobs that read alike are one target twice");
+    }
+
+    /// The wash, the ring and the label's rung come back from ONE call, so a renderer cannot draw a
+    /// lit blob under a faded word.
+    #[test]
+    fn one_call_answers_the_whole_wash_and_the_hover_is_green_in_either_half() {
+        let hovered = slopdesk_drop_zone_wash(SLOPDESK_DROP_ZONE_SPLIT_RIGHT, true, true);
+        assert_eq!(hovered.ink, SLOPDESK_DROP_ZONE_INK_OK);
+        assert_eq!(hovered.label_ink, SLOPDESK_DROP_ZONE_LABEL_INK_PRIMARY);
+        assert!(hovered.stroke_opacity > 0.0, "the ring is what says release now");
+
+        let resting = slopdesk_drop_zone_wash(SLOPDESK_DROP_ZONE_NEW_TAB, false, true);
+        assert_eq!(
+            resting.ink, SLOPDESK_DROP_ZONE_INK_OK,
+            "the terminal half is green at rest"
+        );
+        assert_eq!(resting.label_ink, SLOPDESK_DROP_ZONE_LABEL_INK_SECONDARY);
+        assert_eq!(resting.stroke_opacity, 0.0, "only the hovered zone rings");
+
+        let pane_half = slopdesk_drop_zone_wash(SLOPDESK_DROP_ZONE_SPLIT_LEFT, false, true);
+        assert_eq!(pane_half.ink, SLOPDESK_DROP_ZONE_INK_ACCENT);
+
+        let barred = slopdesk_drop_zone_wash(SLOPDESK_DROP_ZONE_NEW_TAB, false, false);
+        assert_eq!(barred.ink, SLOPDESK_DROP_ZONE_INK_ACCENT_MUTED);
+        assert_eq!(barred.label_ink, SLOPDESK_DROP_ZONE_LABEL_INK_TERTIARY);
+    }
+
+    /// A pane mid-layout answers proportionally, and a negative dimension makes `SwiftUI` log and
+    /// `AppKit` draw garbage — so the clamp crosses rather than being written in two view bodies.
+    #[test]
+    fn a_pane_mid_layout_never_hands_a_renderer_a_negative_blob() {
+        for code in [SLOPDESK_DROP_ZONE_NEW_TAB, SLOPDESK_DROP_ZONE_SPLIT_LEFT] {
+            let drawn = slopdesk_drop_zone_marks(code, -40.0, -10.0);
+            assert!(drawn.blob_width >= 0.0);
+            assert!(drawn.blob_height >= 0.0);
+        }
+    }
+
+    /// An edge ellipse's centre sits ON the pane edge, so its label is inset into the visible half
+    /// rather than centred where half of it would be clipped away.
+    #[test]
+    fn an_edge_label_sits_inside_the_pane_and_a_circles_sits_at_its_centre() {
+        let circle = slopdesk_drop_zone_marks(SLOPDESK_DROP_ZONE_INSERT_PATH, 800.0, 600.0);
+        let drawn = slopdesk_drop_zone_shape(SLOPDESK_DROP_ZONE_INSERT_PATH, 800.0, 600.0);
+        assert_eq!(circle.label_center.x, drawn.center.x);
+        assert_eq!(circle.label_center.y, drawn.center.y);
+        for code in [SLOPDESK_DROP_ZONE_SPLIT_LEFT, SLOPDESK_DROP_ZONE_SPLIT_RIGHT] {
+            let edge = slopdesk_drop_zone_marks(code, 800.0, 600.0);
+            assert!(edge.label_center.x > 0.0 && edge.label_center.x < 800.0);
+        }
     }
 }

@@ -158,7 +158,7 @@ impl SlopDeskHostPulse {
 }
 
 /// The status a code names. An unknown code reads as disconnected.
-const fn status(code: u32) -> StatusKind {
+pub(crate) const fn status(code: u32) -> StatusKind {
     #[expect(
         clippy::cast_possible_truncation,
         reason = "the wrapped `from_byte` is total, and every legal code is under 256"

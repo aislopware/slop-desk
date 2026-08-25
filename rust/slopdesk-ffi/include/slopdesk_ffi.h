@@ -4146,6 +4146,40 @@ typedef struct { SlopDeskWsPoint center; double radius_x, radius_y; } SlopDeskDr
 SlopDeskDropZoneShape slopdesk_drop_zone_shape(uint8_t zone, double width, double height);
 bool slopdesk_drop_zone_at(SlopDeskWsPoint point, double width, double height, uint8_t *out);
 
+/* WHAT a blob is drawn with, in two answers split the way the two questions are asked. WHERE it and
+ * its word go is a function of the pane box alone, so a resize asks for it and a hover does not; HOW
+ * it is inked turns on `(active, allowed)`, and those three verdicts come together because a
+ * renderer asking separately would be free to ask with a stale pair — a lit blob under a faded word.
+ *
+ * The two rungs are NAMED codes, never colours: this side holds no design tokens and each half
+ * resolves the rung through its own view of the one ladder (`Slate.Status.ok` / `Slate.State.accent`
+ * in SwiftUI, `Slate.Native.*` in AppKit).
+ *
+ * `stroke_opacity` is `0` on every zone but the hovered one, so the ring is one number rather than a
+ * branch each renderer writes out, and the blob size is clamped away from the negative dimensions a
+ * pane mid-layout answers with. `slopdesk_drop_zone_label` is the wording both halves draw.        */
+#define SLOPDESK_DROP_ZONE_INK_OK            0u
+#define SLOPDESK_DROP_ZONE_INK_ACCENT        1u
+#define SLOPDESK_DROP_ZONE_INK_ACCENT_MUTED  2u
+
+#define SLOPDESK_DROP_ZONE_LABEL_INK_PRIMARY   0u
+#define SLOPDESK_DROP_ZONE_LABEL_INK_SECONDARY 1u
+#define SLOPDESK_DROP_ZONE_LABEL_INK_TERTIARY  2u
+
+typedef struct {
+  double blob_width, blob_height;
+  SlopDeskWsPoint label_center;
+} SlopDeskDropZoneMarks;
+
+typedef struct {
+  double opacity, stroke_opacity;
+  uint8_t ink, label_ink;
+} SlopDeskDropZoneWash;
+
+SlopDeskDropZoneMarks slopdesk_drop_zone_marks(uint8_t zone, double width, double height);
+SlopDeskDropZoneWash slopdesk_drop_zone_wash(uint8_t zone, bool active, bool allowed);
+size_t slopdesk_drop_zone_label(uint8_t zone, uint8_t *out, size_t cap);
+
 /* ---- The OTHER drop: a dragged PANE over another pane ------------------------------------
  * The five blobs above resolve a FILE. These resolve a pane: a central swap box, four edge bands,
  * and an outer dock gutter around the whole container. Different shapes because they are different
@@ -4233,6 +4267,31 @@ SlopDeskVideoRect slopdesk_pane_drop_rail_rect(SlopDeskVideoRect container, uint
 #define SLOPDESK_CONNECTION_STATUS_RECONNECTING 3u
 #define SLOPDESK_CONNECTION_STATUS_UNREACHABLE  4u
 #define SLOPDESK_CONNECTION_STATUS_FAILED       5u
+
+/* WHY the pane area is empty, and WHAT IT SAYS. A reading of the CONNECTION rather than a fact about
+ * either drawing: "connected but no tabs" and "the link is down and the supervisor is redialing" are
+ * different sentences the user needs to hear, and a canvas rewritten in AppKit must say the same
+ * four things the SwiftUI one does.
+ *
+ * The CAUSE is resolved once when the connection changes and carried around as the branch a
+ * renderer's action button switches on; the COPY is asked for at draw time with the host and the
+ * failure reason the caller already holds, and answers `[u32 has_action]` then four `[u32 len][UTF-8]`
+ * runs — the SF Symbol NAME, the title, the caption, the action label. The flag is what separates a
+ * cause with NO action (a redial, which the supervisor is already driving) from one whose label
+ * happens to be empty. Spans are `[host, reason]` and POSITIONAL: a wrong count answers 0 rather than
+ * captioning the pane with the host.                                                               */
+#define SLOPDESK_WS_PANE_EMPTY_NEVER_CONNECTED 0u
+#define SLOPDESK_WS_PANE_EMPTY_LINK_DOWN       1u
+#define SLOPDESK_WS_PANE_EMPTY_NO_TABS         2u
+#define SLOPDESK_WS_PANE_EMPTY_CONNECT_FAILED  3u
+
+#define SLOPDESK_WS_PANE_EMPTY_SPANS      2
+#define SLOPDESK_WS_PANE_EMPTY_HEAD_BYTES 4
+
+uint8_t slopdesk_ws_pane_empty_cause(uint32_t status_code);
+size_t slopdesk_ws_pane_empty_copy(uint8_t cause, const uint8_t *blob, size_t blob_len,
+                                   const SlopDeskWsSpan *spans, size_t span_count,
+                                   uint8_t *out, size_t cap);
 
 #define SLOPDESK_CONNECTION_HEALTH_OFFLINE 0u
 #define SLOPDESK_CONNECTION_HEALTH_GOOD    1u

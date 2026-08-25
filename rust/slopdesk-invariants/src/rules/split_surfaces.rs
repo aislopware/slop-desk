@@ -25,6 +25,12 @@ use crate::tree::Tree;
 /// user was not pointing at — silently, because both halves still look right on screen. So
 /// `PaneDropZoneLayout` may only forward, and the fractions live once in
 /// `slopdesk_workspace::drop_zone`.
+///
+/// The same reach holds for what the blobs SAY and how they are inked. The five labels, the label's
+/// inset for the two clipped edge ellipses, the terminal-half / pane-half partition and the
+/// three-way wash branch are each small enough that a second renderer re-derives them slightly
+/// differently — a Mac's "Open In-Place" against a phone's "Open in place", an edge label that
+/// drifts off-pane — and none of it is red on screen. `DropZonePresentation` may only forward.
 #[must_use]
 pub fn the_drop_overlay_draws_one_shape(tree: &Tree) -> Report {
     let claims = [
@@ -32,6 +38,16 @@ pub fn the_drop_overlay_draws_one_shape(tree: &Tree) -> Report {
             path: "Sources/SlopDeskWorkspaceCore/Workspace/Domain/Drop/PaneDropZoneLayout.swift",
             names: &["slopdesk_drop_zone_shape", "slopdesk_drop_zone_at"],
             message: "PaneDropZoneLayout stopped calling {entry} — a drop lands where it is not drawn",
+        },
+        Claim::Mentions {
+            path: "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift",
+            names: &[
+                "slopdesk_drop_zone_label",
+                "slopdesk_drop_zone_marks",
+                "slopdesk_drop_zone_wash",
+            ],
+            message: "DropZonePresentation stopped calling {entry} — the two renderers would word or ink \
+                      the same blob differently",
         },
         Claim::NoneUnder {
             roots: &["Sources/SlopDeskPhoneUI/Pane"],
@@ -213,6 +229,10 @@ mod tests {
                 "slopdesk_drop_zone_shape\nslopdesk_drop_zone_at\n",
             )
             .write(
+                "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift",
+                "slopdesk_drop_zone_label\nslopdesk_drop_zone_marks\nslopdesk_drop_zone_wash\n",
+            )
+            .write(
                 "Sources/SlopDeskPhoneUI/Pane/PaneDropOverlay.swift",
                 "kept so the ban has a haystack\n",
             );
@@ -228,6 +248,14 @@ mod tests {
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Workspace/Domain/Drop/PaneDropZoneLayout.swift",
             "slopdesk_drop_zone_shape\n",
+        );
+        assert!(!super::the_drop_overlay_draws_one_shape(&fixture.tree()).is_clean());
+
+        // The presentation stopped forwarding — one renderer's word drifts from the other's.
+        drop_overlay(&fixture);
+        fixture.write(
+            "Sources/SlopDeskClientCore/Pane/DropZonePresentation.swift",
+            "slopdesk_drop_zone_marks\nslopdesk_drop_zone_wash\n",
         );
         assert!(!super::the_drop_overlay_draws_one_shape(&fixture.tree()).is_clean());
 

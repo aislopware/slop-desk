@@ -19,160 +19,84 @@ import XCTest
 @testable import SlopDeskClientCore
 
 final class PaneDropPresentationTests: XCTestCase {
-    // MARK: - The five labels
+    // MARK: - The crossing
 
-    /// Every zone is spelled, exactly once, in Title Case — and "Open In-Place" keeps the capital I and the
-    /// hyphen it has in the ⌘-click menu. A `CaseIterable` sweep rather than five asserts, so a SIXTH zone
-    /// added to the enum cannot reach the overlay unlabelled.
-    func testEveryZoneHasItsLabel() {
-        let expected: [DropZone: String] = [
-            .newTab: "New Tab",
-            .insertPath: "Insert Path",
-            .openInPlace: "Open In-Place",
-            .splitLeft: "Split Left",
-            .splitRight: "Split Right",
-        ]
-        for zone in DropZone.allCases {
-            XCTAssertEqual(DropZonePresentation.label(zone), expected[zone] ?? "", "label for \(zone)")
-        }
+    /// Every zone crosses with its own word. WHICH word is `slopdesk_workspace::drop_zone`'s and
+    /// pinned there; what only Swift can get wrong is a zone whose code never reaches the door, which
+    /// would come back as an unlabelled blob rather than as a wrong one.
+    func testEveryZoneCrossesWithItsOwnWord() {
         let labels = DropZone.allCases.map(DropZonePresentation.label)
-        XCTAssertEqual(Set(labels).count, labels.count, "two zones sharing a label would be unreadable")
+        XCTAssertFalse(labels.contains(where: \.isEmpty), "a zone crossed unlabelled")
+        XCTAssertEqual(Set(labels).count, labels.count, "two blobs that read alike are one target twice")
     }
 
-    // MARK: - The terminal-half / pane-half partition
+    /// The marks come back as a DIAMETER and a point, and the clamp crosses with them: a pane
+    /// mid-layout answers with a degenerate box, and a negative dimension must never reach a framework
+    /// (SwiftUI logs it, AppKit draws garbage).
+    func testTheMarksCrossClampedAndAtDiameter() {
+        let size = CGSize(width: 800, height: 600)
+        let shape = PaneDropZoneLayout(size: size).shape(for: .insertPath)
+        let marks = DropZonePresentation.marks(.insertPath, in: size)
+        XCTAssertEqual(marks.blobSize.width, shape.radiusX * 2, accuracy: 0.001, "drawn at DIAMETER")
+        XCTAssertEqual(marks.labelCenter, shape.center, "a central circle labels its own centre")
 
-    /// The green half is the two zones that act on the TERMINAL (a rooted new tab, an inject into the live
-    /// PTY); the blue half is the three that act on the PANE TREE. Asserted as a partition — every zone on
-    /// exactly one side — because the failure that matters is a zone sliding across, not the set's size.
-    func testTerminalHalfPartitionsTheZones() {
-        XCTAssertEqual(DropZonePresentation.terminalHalf, [.newTab, .insertPath])
-        let paneHalf = Set(DropZone.allCases).subtracting(DropZonePresentation.terminalHalf)
-        XCTAssertEqual(paneHalf, [.openInPlace, .splitLeft, .splitRight])
-        XCTAssertTrue(
-            DropZonePresentation.terminalHalf.isDisjoint(with: paneHalf),
-            "a zone on both sides would tint green AND accent depending on which branch ran first",
-        )
-    }
-
-    // MARK: - Label geometry
-
-    /// The three central circles put their label at the blob's own centre.
-    func testCentralZoneLabelsSitAtTheBlobCentre() {
-        let shape = DropZoneShape(center: CGPoint(x: 200, y: 120), radiusX: 40, radiusY: 40)
-        let size = CGSize(width: 400, height: 300)
-        for zone in [DropZone.newTab, .insertPath, .openInPlace] {
-            XCTAssertEqual(
-                DropZonePresentation.labelCenter(zone, shape: shape, in: size), shape.center,
-                "\(zone) is a central circle — nothing to inset from",
-            )
+        for zone in DropZone.allCases {
+            let degenerate = DropZonePresentation.marks(zone, in: CGSize(width: -40, height: -10))
+            XCTAssertGreaterThanOrEqual(degenerate.blobSize.width, 0, "\(zone) crossed inverted")
+            XCTAssertGreaterThanOrEqual(degenerate.blobSize.height, 0, "\(zone) crossed inverted")
         }
     }
 
-    /// The two edge ellipses have their true centre ON the pane edge (half the blob is clipped away), so a
-    /// centred label would be half off-pane. The inset is half the x-radius IN from the edge, and it must
-    /// leave the label inside the pane box — which is what the range assert checks, not just the arithmetic.
-    func testEdgeZoneLabelsAreInsetFromTheirEdge() {
-        let size = CGSize(width: 400, height: 300)
-        let left = DropZoneShape(center: CGPoint(x: 0, y: 150), radiusX: 60, radiusY: 140)
-        let right = DropZoneShape(center: CGPoint(x: 400, y: 150), radiusX: 60, radiusY: 140)
-
-        let leftLabel = DropZonePresentation.labelCenter(.splitLeft, shape: left, in: size)
-        XCTAssertEqual(leftLabel, CGPoint(x: 30, y: 150))
-        XCTAssertGreaterThan(leftLabel.x, left.center.x, "the left label is inset INWARD from the edge")
-
-        let rightLabel = DropZonePresentation.labelCenter(.splitRight, shape: right, in: size)
-        XCTAssertEqual(rightLabel, CGPoint(x: 370, y: 150))
-        XCTAssertLessThan(rightLabel.x, right.center.x, "the right label is inset INWARD from the edge")
-        XCTAssertTrue(
-            (0...size.width).contains(rightLabel.x),
-            "an edge label outside the pane box is a label the clip rectangle eats",
-        )
-    }
-
-    /// The claim the inset has to make is not "half an x-radius" — it is "the label is ON the pane". So this
-    /// sweeps EVERY zone against the real ``PaneDropZoneLayout`` (the same Rust shapes the overlay draws,
-    /// not hand-written ones) at three pane sizes and asserts the point lands inside the box. A sixth zone
-    /// hugging an edge is now caught twice over: `labelCenter` is exhaustive, so the compiler demands an
-    /// answer for it, and this demands that the answer be somewhere the clip rectangle will not eat.
-    func testEveryZoneLabelLandsInsideThePaneBox() {
+    /// The claim the label inset has to make is not "half an x-radius" — it is "the label is ON the
+    /// pane". So this sweeps EVERY zone at three pane sizes and asserts the crossed point lands inside
+    /// the box, which is what the clip rectangle would otherwise eat.
+    func testEveryZoneLabelCrossesBackInsideThePaneBox() {
         let sizes = [
             CGSize(width: 400, height: 300),
             CGSize(width: 1600, height: 900),
             CGSize(width: 220, height: 180),
         ]
         for size in sizes {
-            let layout = PaneDropZoneLayout(size: size)
             for zone in DropZone.allCases {
-                let point = DropZonePresentation.labelCenter(zone, shape: layout.shape(for: zone), in: size)
+                let point = DropZonePresentation.marks(zone, in: size).labelCenter
                 XCTAssertTrue(
                     (0...size.width).contains(point.x) && (0...size.height).contains(point.y),
-                    "\(zone)'s label at \(point) falls outside the \(size) pane — the clip rectangle eats it",
+                    "\(zone)'s label at \(point) falls outside the \(size) pane",
                 )
             }
         }
     }
 
-    /// A pane mid-layout answers with a degenerate box; a NEGATIVE dimension must never reach a framework
-    /// (SwiftUI logs it, AppKit draws garbage). The clamp is the overlay's, so it is pinned here.
-    func testBlobSizeClampsAwayFromNegativeDimensions() {
-        let ok = DropZonePresentation.blobSize(for: .init(center: .zero, radiusX: 10, radiusY: 25))
-        XCTAssertEqual(ok, CGSize(width: 20, height: 50), "a blob is drawn at DIAMETER, not radius")
-        let degenerate = DropZonePresentation.blobSize(for: .init(center: .zero, radiusX: -4, radiusY: -9))
-        XCTAssertEqual(degenerate, .zero, "a negative radius collapses to nothing, never inverts")
+    /// The four ink verdicts come back from ONE call, so a renderer cannot draw a lit blob under a
+    /// faded word. WHICH rung each state picks is the crate's; what is pinned here is that the rung
+    /// BYTES resolve to distinct cases and that the ring's alpha rides along rather than being a branch
+    /// either renderer writes out.
+    func testTheWashCrossesWholeAndTheRungBytesResolveDistinctly() {
+        let hovered = DropZonePresentation.wash(.splitRight, active: true, allowed: true)
+        XCTAssertEqual(hovered.ink, .ok)
+        XCTAssertEqual(hovered.labelInk, .primary)
+        XCTAssertGreaterThan(hovered.strokeOpacity, 0, "the ring is what says release now")
+
+        let resting = DropZonePresentation.wash(.splitRight, active: false, allowed: true)
+        XCTAssertEqual(resting.ink, .accent)
+        XCTAssertEqual(resting.labelInk, .secondary)
+        XCTAssertEqual(resting.strokeOpacity, 0, "only the hovered zone rings")
+
+        let barred = DropZonePresentation.wash(.newTab, active: false, allowed: false)
+        XCTAssertEqual(barred.ink, .accentMuted, "a disabled blob must not stay green")
+        XCTAssertEqual(barred.labelInk, .tertiary)
     }
 
-    // MARK: - The ink verdict
-
-    /// The hovered zone glows status-green at half strength REGARDLESS of which half it is on — the active
-    /// branch runs before the partition, so a hovered Split-Right is as green as a hovered New Tab.
-    func testActiveZoneGlowsOkOnBothHalves() {
+    /// Every zone crosses with a wash at a drawable alpha — a rung that came back at zero would be a
+    /// blob nobody can see, which reads as an overlay that failed to appear rather than as a wrong ink.
+    func testEveryZoneCrossesWithADrawableWash() {
         for zone in DropZone.allCases {
-            XCTAssertEqual(
-                DropZonePresentation.tint(zone, active: true, allowed: true),
-                DropZoneTint(ink: .ok, opacity: 0.5),
-                "the hover glow is one value for every zone (\(zone))",
-            )
+            for allowed in [true, false] {
+                let wash = DropZonePresentation.wash(zone, active: false, allowed: allowed)
+                XCTAssertGreaterThan(wash.opacity, 0, "\(zone) allowed=\(allowed) crossed invisible")
+                XCTAssertLessThanOrEqual(wash.opacity, 1)
+            }
         }
-    }
-
-    /// A DISABLED zone is the muted neutral, and it beats the partition: a disallowed New Tab must not stay
-    /// green just because it sits on the terminal half. (`active` cannot be true here — the gate refuses to
-    /// activate a disallowed zone — so only the `allowed: false` arm is meaningful.)
-    func testDisallowedZoneIsMutedOnBothHalves() {
-        for zone in DropZone.allCases {
-            XCTAssertEqual(
-                DropZonePresentation.tint(zone, active: false, allowed: false),
-                DropZoneTint(ink: .accentMuted, opacity: 1),
-                "a disabled blob is a barely-there neutral (\(zone))",
-            )
-        }
-    }
-
-    /// At rest the partition decides: the terminal half washes green, the pane half washes accent, and the
-    /// two alphas differ (green reads heavier at equal alpha, which is why they were tuned apart).
-    func testRestingTintFollowsThePartition() {
-        for zone in DropZonePresentation.terminalHalf {
-            XCTAssertEqual(
-                DropZonePresentation.tint(zone, active: false, allowed: true),
-                DropZoneTint(ink: .ok, opacity: 0.14),
-                "the terminal half is green even at rest (\(zone))",
-            )
-        }
-        for zone in Set(DropZone.allCases).subtracting(DropZonePresentation.terminalHalf) {
-            XCTAssertEqual(
-                DropZonePresentation.tint(zone, active: false, allowed: true),
-                DropZoneTint(ink: .accent, opacity: 0.10),
-                "the pane half is accent at rest (\(zone))",
-            )
-        }
-    }
-
-    /// The label tracks its blob: bright on the hovered zone, secondary while allowed, faded when the zone
-    /// is inert — so text never announces a target that cannot be dropped on.
-    func testLabelInkTracksTheZoneState() {
-        XCTAssertEqual(DropZonePresentation.labelInk(active: true, allowed: true), .primary)
-        XCTAssertEqual(DropZonePresentation.labelInk(active: false, allowed: true), .secondary)
-        XCTAssertEqual(DropZonePresentation.labelInk(active: false, allowed: false), .tertiary)
     }
 
     // MARK: - The entry gate
