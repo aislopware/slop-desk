@@ -1,9 +1,9 @@
 [package]
 name = "slopdesk-cli"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2024"
 publish = false
-description = "The pure core of the user-facing slopdesk CLI: flags, completions, config and output formatting"
+description = "The user-facing slopdesk CLI: flags, completions, config, output formatting and the process itself"
 license = "MIT"
 repository = "https://github.com/aislopware/slop-desk"
 
@@ -19,12 +19,50 @@ workspace = true
 # colleague connection for `panic = "unwind"` to protect. That is the same argument `slopdesk-ctl`
 # makes next door, which is why the two share a workspace rather than each having their own.
 #
-# This is the LIBRARY half only. The socket I/O, the GUI launch and the `exit` calls are the shell's,
-# and the shell is still Swift — see docs/DECISIONS.md, stage 16.
+# ## The `version` above is a RELEASE SITE
+# `docs/49` names six version sites and `slopdesk-release bump-product` owns all six, because no
+# gate can see most of them. This is one: `shell::version_summary` reads it through
+# `CARGO_PKG_VERSION`, which is why `version.rs` still refuses to hold a constant of its own — a
+# constant there would be a SEVENTH site the bumper does not know about. The anchor the bumper
+# rewrites is the first `version = ` in this file, so `[package]` must stay above `[dependencies]`.
 [dependencies]
-# The same one dependency `slopdesk-ctl` takes, for the same reason: the rows this formats were
-# decoded from JSON a host produced out of bytes a foreign program drew into a PTY — pane titles,
-# cwd paths, command output. Hand-rolling an unescaper for that is the classic place to be wrong,
-# and `serde_json`'s object is a `BTreeMap`, so re-encoding reproduces Foundation's `.sortedKeys`
+# The same dependency `slopdesk-ctl` takes, for the same reason: the rows this formats were decoded
+# from JSON a host produced out of bytes a foreign program drew into a PTY — pane titles, cwd paths,
+# command output. Hand-rolling an unescaper for that is the classic place to be wrong, and
+# `serde_json`'s object is a `BTreeMap`, so re-encoding reproduces Foundation's `.sortedKeys`
 # ordering for free — which is what keeps `--json` greppable and pipe-compatible across the port.
 serde_json = "1"
+
+# The four crates that own an ANSWER this program only asks for and prints. None of them is a
+# convenience: each is already the single implementation of its question, and a second one here
+# would be a second opinion that drifts.
+#
+# * `slopdesk-agent` — `watch:claude`'s exit-code state machine. The loop is here; every decision
+#   about what a reply MEANS is the detection crate's.
+# * `slopdesk-settings` — the config table, the resolver, the schema and the path order. `config
+#   validate` prints the diagnostics the APP produced, so a key it says nothing about is a key the
+#   app honours.
+# * `slopdesk-sidecars` — the upgrade diff and the restart policy behind it.
+# * `slopdesk-wire` — the protocol version in the banner, and the OSC bytes `watch` emits, framed by
+#   the same crate the HOST parses them with.
+# * `slopdesk-hostlaunch` — the Application Support container's env override, so the sidecars record
+#   and the host's launch record cannot name two different containers.
+slopdesk-agent = { path = "../slopdesk-agent" }
+slopdesk-hostlaunch = { path = "../slopdesk-hostlaunch" }
+slopdesk-settings = { path = "../slopdesk-settings" }
+slopdesk-sidecars = { path = "../slopdesk-sidecars" }
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+# `font import` asks Core Text what the system calls the face it just copied. macOS-only, through
+# the one `slopdesk-apple-*` crate that wraps that framework area — this crate stays
+# `forbid(unsafe_code)` and always will.
+[target.'cfg(target_os = "macos")'.dependencies]
+slopdesk-apple-text = { path = "../slopdesk-apple-text" }
+
+[[bin]]
+name = "slopdesk"
+path = "src/main.rs"
+
+[lib]
+name = "slopdesk_cli"
+path = "src/lib.rs"

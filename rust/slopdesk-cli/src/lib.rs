@@ -1,16 +1,21 @@
-//! The pure core of the user-facing `slopdesk` CLI.
+//! The user-facing `slopdesk` CLI, whole.
 //!
-//! One binary exposing a subcommand surface onto the control plane. Everything here is a value
-//! transform: no socket, no `exit`, no GUI launch — so the whole flag, table and validation surface
-//! is exhaustively testable without a running app, which is the hang-safety rule that shaped the
-//! Swift original and is worth keeping.
+//! One binary exposing a subcommand surface onto the control plane. The PURE core is still pure —
+//! flags, tables, formatting are value transforms with no socket and no process — and the two
+//! modules that do touch the world are shaped so a test can still enter them: [`shell`]'s
+//! subcommands talk to the app through a `Control` trait and hand back an exit code instead of
+//! taking one, so the only thing left that a test cannot reach is `main.rs` wiring the real argv,
+//! the real environment and the real stdio in.
 //!
 //! - [`vocabulary`] — WHICH subcommands exist, which of them run, and what each is for. The one
 //!   table the completions, the help text and the dispatcher all derive from.
 //! - [`args`] — the global-flag parser, and the flags' own help rows beside the grammar.
 //! - [`completions`] — the five shells' completion scripts, from the runnable half of that table.
 //! - [`formatting`] — the list/inspect tables and their JSON form.
-//! - [`version`] — the `version` banner.
+//! - [`version`] — the `version` banner's shape (the NUMBER is the package's, and is passed in).
+//! - [`clientctl`] — the client control protocol: the method names, the parameter builders and the
+//!   NDJSON framing, pinned byte-for-byte against the app's own dispatcher.
+//! - [`shell`] — the process: the environment, the sinks, the failure, and one arm per verb.
 //!
 //! ## What is deliberately elsewhere
 //! - The **`watch` byte vocabulary** — `OSC 9;4` progress and the `OSC 777` finish banner — lives
@@ -31,12 +36,15 @@
 #![forbid(unsafe_code)]
 
 pub mod args;
+pub mod clientctl;
 pub mod completions;
 pub mod formatting;
+pub mod shell;
 pub mod version;
 pub mod vocabulary;
 
 pub use args::{GlobalFlag, Invocation, OutputFormat, ParseError};
 pub use completions::Shell;
 pub use formatting::Row;
+pub use shell::{Control, Ctx, Environment, Failure, Io, Run, run};
 pub use vocabulary::{Availability, Subcommand};

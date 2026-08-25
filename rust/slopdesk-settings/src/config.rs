@@ -3,7 +3,9 @@
 //! One TOML document at `~/.config/slopdesk/config.toml`, one table describing every key it may
 //! carry ([`table`]), one resolver that turns the two into the values the app runs on, and one
 //! JSON Schema written out of the same table ([`schema`]) so an editor can complete and validate
-//! the file while it is being typed. [`path`] answers where the file IS, and reads it.
+//! the file while it is being typed. [`path`] answers where the file IS, and reads it, and
+//! [`render`] reads the result back out — one value bare, the whole thing as re-pasteable TOML, and
+//! every complaint the file earns.
 //!
 //! ## The contract
 //!
@@ -23,6 +25,7 @@
 //! crossing cost is a launch cost, and no Swift file holds a default of its own to disagree with.
 
 pub mod path;
+pub mod render;
 pub mod schema;
 pub mod table;
 

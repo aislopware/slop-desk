@@ -18,7 +18,26 @@
 members = ["slopdesk-hook", "slopdesk-ctl", "slopdesk-cli", "slopdesk-probe", "slopdesk-sidecars", "slopdesk-hostlaunch"]
 # `slopdesk-superd` is a SEPARATE workspace living in this directory, not a member — see
 # `slopdesk-superd/Cargo.toml` for why. The exclude is what keeps cargo from adopting it.
-exclude = ["slopdesk-superd"]
+#
+# The rest of the list is the same rule applied to a different cause. Every crate below is its OWN
+# workspace root (a daemon's profile, or a library shared with one) and every one is a path
+# DEPENDENCY of `slopdesk-cli` — directly or through another. Cargo adopts a path dependency that
+# lives inside the workspace directory as a member unless it is excluded, and adopting a crate that
+# declares `[workspace]` itself is the "multiple workspace roots" error. Excluding them keeps each
+# one its own root while still letting a member link it, which is exactly what `slopdesk-ffi` does
+# with the same crates from the other side.
+exclude = [
+  "slopdesk-superd",
+  "slopdesk-agent",
+  "slopdesk-altscreen",
+  "slopdesk-apple-text",
+  "slopdesk-ids",
+  "slopdesk-sanitize",
+  "slopdesk-settings",
+  "slopdesk-terminal",
+  "slopdesk-tree",
+  "slopdesk-wire",
+]
 resolver = "3"
 
 # The hook runs on EVERY PreToolUse/PostToolUse — twice per tool call, and ctl runs once per agent

@@ -1,0 +1,132 @@
+# `slopdesk-apple-text` — what Core Text can read out of a FONT FILE, and nothing else.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# One question: given a path to a `.ttf`/`.otf`/`.ttc`/`.dfont`, what family name does the system
+# font machinery see inside it? `slopdesk font import` asks it, because the family name is the
+# awkward half of installing a font — it is not the filename, and it is what has to be pasted under
+# `[terminal]` for the app to find the face.
+#
+# Everything ABOUT the answer — which extensions are fonts, where `~/Library/Fonts` is, whether the
+# copy succeeded, what to print — is `slopdesk-cli`'s, which forbids `unsafe` and always will.
+#
+# ## What is deliberately NOT here
+# Font ENUMERATION. `slopdesk font list` asks the running app over the control socket, because the
+# list it wants is the one the app's own text stack resolved, filtered by what it can actually
+# render. A second enumeration here would answer a slightly different question and look like the
+# same one.
+#
+# ## The `unsafe` in this crate
+# Four blocks, all in one function, each a Core Foundation naming rule rather than a Rust one and
+# each with a `# Safety` note naming the rule: the CREATE-rule descriptor array, the extern static
+# holding the family-name key, the COPY-rule attribute read, and the `cast_unchecked` that names
+# the array's element type — the same one `slopdesk-apple-cgwindow` and `slopdesk-apple-ax` write,
+# because C's `CFArrayRef` has nowhere to carry it. No raw-pointer dereference and no transmute,
+# which §2 bars from this family; the URL is built through the SAFE `CFURLCreateWithFileSystemPath`
+# rather than the byte-buffer form beside it, so no pointer is handed over at all.
+#
+# ## macOS ONLY, and how that is kept true
+# `slopdesk-cli` links it behind `[target.'cfg(target_os = "macos")'.dependencies]`, and the one
+# caller sits behind the same `cfg`. Nothing in the iOS slices reaches it: there is no font import
+# on a device whose filesystem the CLI cannot see.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-text"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The family name Core Text reads out of a font file, for slopdesk font import"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_text"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CFBase",
+  "CFArray",
+  "CFString",
+  "CFURL",
+] }
+objc2-core-text = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CTFontDescriptor",
+  "CTFontManager",
+] }
+
+# Mirrors the other read crates': this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` because
+# every site sits under its own self-expiring `#[expect(unsafe_code, reason = …)]`, so an exemption
+# that stops being needed turns red rather than lingering.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
