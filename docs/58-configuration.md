@@ -60,7 +60,7 @@ default, in one place, and it is the source of three separate things:
   author. A stale schema is worse than none — it tells the reader a key exists that this build
   ignores, in the editor where they are most likely to believe it.
 - **The diagnostics.** `slopdesk config validate` prints one line per thing wrong with the file:
-  every per-ROW complaint the table can make, folded with `KeybindConfigLoader.conflicts(table:)`,
+  every per-ROW complaint the table can make, folded with `config::render::keybind_conflicts`,
   which is the per-PAIR one it cannot — two rows spelling ONE chord differently (`"cmd+leftarrow"`
   and `"cmd+left"`), where TOML sees two distinct keys and the last one silently wins.
 

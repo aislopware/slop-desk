@@ -54,8 +54,9 @@ public extension WorkspaceBindingRegistry {
 
     /// The chord → action lookup table WITH the active overrides applied — the override-aware sibling of
     /// ``chordTable``. The keyboard dispatcher reads THIS so a rebind routes the new chord. A binding whose
-    /// override collides with another binding's chord is last-writer-wins in the map (the UI surfaces the
-    /// collision via ``KeybindingPreferences/conflicts()`` so the user resolves it).
+    /// override collides with another binding's chord is last-writer-wins in the map — arbitrary, so the
+    /// collision is REPORTED rather than resolved here: `slopdesk config validate` prints one line per
+    /// pair, out of `config::render::keybind_conflicts`.
     static var resolvedChordTable: [KeyChord: WorkspaceAction] {
         if let liveChordTable { return liveChordTable }
         let built = resolvedChordTable(overrides: activeOverrides)

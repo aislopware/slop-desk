@@ -43,6 +43,13 @@ import Foundation
 /// ``KeybindingPreferences/overrides``; when `nil` (or when the caller returns `nil` for an unknown
 /// action id), the entry is dropped. The `text:` / `csi:` / `esc:` / `unbind:` directives need NO
 /// registry and are handled here unconditionally — that is the core of this loader.
+///
+/// ## The conflict diagnostic is NOT here
+///
+/// Two rows spelling one chord differently (`"cmd+leftarrow"` and `"cmd+left"`) is the one
+/// `[keybind]` problem TOML cannot see, and it is reported by `slopdesk config validate` — which is
+/// Rust, and reads `config::render::keybind_conflicts`. This loader stays a plain fold: the app runs
+/// it on every activation and has nowhere to put a complaint.
 public enum KeybindConfigLoader {
     /// The action word the grammar reads chord-last, and this loader therefore has to turn around.
     private static let unbindAction = "unbind"
@@ -111,35 +118,5 @@ public enum KeybindConfigLoader {
             textBindings: textBindings,
             unbinds: unbinds,
         )
-    }
-
-    /// The entries of `table` that name ONE chord under two spellings, as one sentence each.
-    ///
-    /// A TOML table cannot declare the same key twice, so the parser already refuses the obvious
-    /// duplicate. What it cannot see is that `"cmd+leftarrow"` and `"cmd+left"` are the same chord,
-    /// or that `"CMD+D"` and `"cmd+d"` are — the alias fold happens after the parse, in
-    /// ``KeybindGrammar``. Two rows that collide there are last-writer-wins over a dictionary, which
-    /// is to say arbitrary: the reader wrote two bindings and one of them silently does nothing.
-    ///
-    /// This is the only `[keybind]` problem worth a sentence, and it is why ``apply(table:to:resolveNamedBinding:)``
-    /// can stay a plain fold — the diagnostic is asked for separately, by `slopdesk config validate`,
-    /// rather than being threaded back out of a load the app runs on every activation.
-    ///
-    /// An entry that does not parse is NOT reported here; it never becomes a binding, so it cannot
-    /// contend for one, and the row's own diagnostic belongs to the table that declared it.
-    public static func conflicts(table: [String: String]) -> [String] {
-        var spellings: [String: [String]] = [:]
-        for (chord, action) in table where !chord.isEmpty && !action.isEmpty {
-            let line = action == Self.unbindAction ? "\(action):\(chord)" : "\(chord):\(action)"
-            guard let parsed = KeybindGrammar.parseLine(line) else { continue }
-            spellings[parsed.chord.canonical, default: []].append(chord)
-        }
-        return spellings
-            .filter { $0.value.count > 1 }
-            .sorted { $0.key < $1.key }
-            .map { canonical, written in
-                let named = written.sorted().map { "\"\($0)\"" }.joined(separator: " and ")
-                return "[keybind]: \(named) are the same chord (\(canonical)) — only one of them binds"
-            }
     }
 }
