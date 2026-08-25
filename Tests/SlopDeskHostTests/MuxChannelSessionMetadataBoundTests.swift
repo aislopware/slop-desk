@@ -47,7 +47,7 @@ final class MuxChannelSessionMetadataBoundTests: XCTestCase {
 
     func testMetadataRequestFloodIsBoundedAndEveryRequestGetsAReply() async {
         let session = makeSession()
-        let cap = MuxChannelSession.maxMetadataInFlightForTesting
+        let cap = MuxChannelSession.metadataAdmissionCapForTesting
         let total = cap * 3
 
         // Hold the serial queue so admitted work items stay in-flight for the whole flood.
@@ -59,8 +59,8 @@ final class MuxChannelSessionMetadataBoundTests: XCTestCase {
         // Bounded admission: exactly `cap` closures were enqueued (in-flight); the 2×cap overflow
         // requests were answered IMMEDIATELY with the standard error status + empty payload.
         XCTAssertEqual(
-            session.metadataInFlightForTesting, cap,
-            "at most maxMetadataInFlight work items may be queued per session — a metadataRequest "
+            session.metadataAdmissionInFlightForTesting, cap,
+            "at most `MetadataAdmission.cap` work items may be queued per session — a metadataRequest "
                 + "flood must not grow the serial queue (payload + self retained per closure) unboundedly",
         )
         let immediate = drainMetadataResponses(session)
@@ -92,7 +92,7 @@ final class MuxChannelSessionMetadataBoundTests: XCTestCase {
                 + "every one of the \(total) requests was answered",
         )
         XCTAssertEqual(
-            session.metadataInFlightForTesting, 0,
+            session.metadataAdmissionInFlightForTesting, 0,
             "each finished work item must release its in-flight slot (the defer-decrement)",
         )
 
@@ -105,19 +105,19 @@ final class MuxChannelSessionMetadataBoundTests: XCTestCase {
     /// counter decrements — the cap is in-flight, not lifetime).
     func testInFlightSlotsAreReleasedForLaterRequests() async {
         let session = makeSession()
-        let cap = MuxChannelSession.maxMetadataInFlightForTesting
+        let cap = MuxChannelSession.metadataAdmissionCapForTesting
 
         session.suspendMetadataQueueForTesting()
         for i in 0..<cap {
             session.serveMetadataForTesting(requestID: UInt32(i), verb: unknownVerb, payload: Data())
         }
-        XCTAssertEqual(session.metadataInFlightForTesting, cap, "precondition: the cap is reached")
+        XCTAssertEqual(session.metadataAdmissionInFlightForTesting, cap, "precondition: the cap is reached")
         session.resumeMetadataQueueForTesting()
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
-        while ContinuousClock.now < deadline, session.metadataInFlightForTesting > 0 {
+        while ContinuousClock.now < deadline, session.metadataAdmissionInFlightForTesting > 0 {
             try? await Task.sleep(for: .milliseconds(10))
         }
-        XCTAssertEqual(session.metadataInFlightForTesting, 0, "the drained flood released every slot")
+        XCTAssertEqual(session.metadataAdmissionInFlightForTesting, 0, "the drained flood released every slot")
 
         // A fresh request after the flood is served normally (not busy-rejected).
         _ = drainMetadataResponses(session)

@@ -707,32 +707,16 @@ final class HostCodeServerPerformerTests: XCTestCase {
         func relinquish() {}
     }
 
-    func testOtherVerbsFallThrough() {
-        let embedded: Set<MetadataVerb> = [.ensureCodeServer, .openInCodeServer, .syncCodeFont]
-        for verb in MetadataVerb.allCases where !embedded.contains(verb) {
-            XCTAssertNil(
-                HostCodeServerPerformer.response(
-                    requestID: 1, verb: verb.rawValue, payload: Data(), manager: makeManager(),
-                    fallbackOpen: { _ in .ok },
-                ),
-                "verb \(verb) must fall through to the read-only builder",
-            )
-        }
-        XCTAssertNil(
-            HostCodeServerPerformer.response(
-                requestID: 1, verb: 250, payload: Data(), manager: makeManager(),
-                fallbackOpen: { _ in .ok },
-            ),
-            "an unknown future verb must fall through (the builder answers unsupportedVerb)",
-        )
-    }
+    // (WHICH verbs reach this performer is `metadata_admission::performer`'s answer and is pinned
+    // in Rust — `the_side_effecting_verbs_never_reach_the_read_only_builder`. A Swift copy of that
+    // set here was the second implementation of it.)
 
     func testMalformedPayloadIsError() {
         let relative = HostCodeServerPerformer.response(
             requestID: 7, verb: MetadataVerb.ensureCodeServer.rawValue,
             payload: Data("relative/path".utf8), manager: makeManager(),
         )
-        guard case let .metadataResponse(requestID, status, payload)? = relative else {
+        guard case let .metadataResponse(requestID, status, payload) = relative else {
             XCTFail("expected a metadataResponse")
             return
         }
@@ -747,7 +731,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
                 requestID: 11, verb: MetadataVerb.syncCodeFont.rawValue,
                 payload: payload, manager: makeManager(),
             )
-            guard case let .metadataResponse(requestID, status, body)? = response else {
+            guard case let .metadataResponse(requestID, status, body) = response else {
                 XCTFail("expected a metadataResponse")
                 return
             }
@@ -765,7 +749,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
             payload: MetadataCodec.encodeCodeFontSpec(spec),
             manager: makeManager(fonts: fonts),
         )
-        guard case let .metadataResponse(requestID, status, body)? = response else {
+        guard case let .metadataResponse(requestID, status, body) = response else {
             XCTFail("expected a metadataResponse")
             return
         }
@@ -790,7 +774,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
             requestID: 13, verb: MetadataVerb.syncCodeFont.rawValue,
             payload: MetadataCodec.encodeCodeFontSpec(spec), manager: makeManager(fonts: fonts),
         )
-        guard case let .metadataResponse(_, status, _)? = response else {
+        guard case let .metadataResponse(_, status, _) = response else {
             XCTFail("expected a metadataResponse")
             return
         }
@@ -803,7 +787,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
             requestID: 9, verb: MetadataVerb.ensureCodeServer.rawValue,
             payload: Data("/definitely/not/a/real/dir".utf8), manager: makeManager(),
         )
-        guard case let .metadataResponse(_, status, _)? = response else {
+        guard case let .metadataResponse(_, status, _) = response else {
             XCTFail("expected a metadataResponse")
             return
         }
@@ -819,7 +803,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
             requestID: 3, verb: MetadataVerb.ensureCodeServer.rawValue,
             payload: Data(root.utf8), manager: makeManager(),
         )
-        guard case let .metadataResponse(requestID, status, payload)? = response else {
+        guard case let .metadataResponse(requestID, status, payload) = response else {
             XCTFail("expected a metadataResponse")
             return
         }
@@ -843,7 +827,7 @@ final class HostCodeServerPerformerTests: XCTestCase {
                 return fallbackStatus
             },
         )
-        guard case let .metadataResponse(requestID, status, payload)? = response else { return nil }
+        guard case let .metadataResponse(requestID, status, payload) = response else { return nil }
         XCTAssertEqual(requestID, 21)
         return (status, payload, fallback.calls)
     }

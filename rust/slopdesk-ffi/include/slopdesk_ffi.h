@@ -3542,6 +3542,44 @@ bool slopdesk_mux_open_ownership_allows_adoption(const uint8_t *owner, size_t ow
                                                  const uint8_t *ours, size_t ours_len);
 
 /* ---------------------------------------------------------------------------- *
+ * metadata_admission — how much host-metadata work one pane may have in flight,
+ * and which performer owns a verb.
+ *
+ * WHY THE COUNTER IS A HANDLE.  The control sub-channel is deliberately
+ * unwindowed, so this counter is the ONLY thing between a peer streaming tiny
+ * metadataRequest frames and an unbounded pile of closures forking git/lsof. It
+ * lives as long as the session, is bumped on the control loop and dropped on
+ * every work item's completion, and is serialized by exactly ONE NSLock. Past the
+ * cap the request is REFUSED, never deferred: "always replies" outranks
+ * "eventually serves", and the client's registry must not hang.
+ *
+ * Each `_admit` that answers true owes exactly one `_release`; a release
+ * saturates at zero, so a double-release cannot mint room the session lacks. A
+ * NULL handle refuses rather than admitting work nothing is counting.
+ *
+ * THE TABLE IS NOT A HANDLE.  Which performer owns a verb is a function of one
+ * wire byte over `MetadataVerb`, so it allocates nothing:
+ *   1 path (9,10) · 2 agent (11-13) · 3 clipboard (15,16) ·
+ *   4 code-server (18-20) · 5 simulator (21) · 6 android (22) ·
+ *   7 the read-only builder — every read verb, AND every byte this build does
+ *     not serve, because the builder already answers `unsupportedVerb` and a
+ *     second place that recognises "unknown" is how the two would drift.
+ *
+ * WHAT DID NOT CROSS.  The performing: a Finder open, a settings.json merge, a
+ * pasteboard write and a lazily-spawned child are AppKit and process work.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct SlopDeskMetadataAdmission SlopDeskMetadataAdmission;
+
+SlopDeskMetadataAdmission *slopdesk_metadata_admission_new(void);
+void slopdesk_metadata_admission_free(SlopDeskMetadataAdmission *handle);
+bool slopdesk_metadata_admission_admit(SlopDeskMetadataAdmission *handle);
+void slopdesk_metadata_admission_release(SlopDeskMetadataAdmission *handle);
+uint32_t slopdesk_metadata_admission_in_flight(SlopDeskMetadataAdmission *handle);
+uint32_t slopdesk_metadata_admission_cap(void);
+uint8_t slopdesk_metadata_performer(uint8_t verb);
+
+/* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
  * loop policies both ends of the wire were spelling twice.
  *

@@ -172,6 +172,7 @@ pub mod link_hit;
 pub mod list_nav;
 pub mod listen_port;
 pub mod metadata;
+pub mod metadata_admission;
 pub mod metadata_wire;
 pub mod mint_rescue;
 pub mod mirror_fold;

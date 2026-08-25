@@ -52,13 +52,9 @@ final class HostClipboardPerformerTests: XCTestCase {
         return (status, payload)
     }
 
-    // MARK: Routing
-
-    func testNonClipboardVerbsFallThroughToTheBuilder() {
-        for verb in MetadataVerb.allCases where verb != .setClipboard && verb != .readClipboard {
-            XCTAssertNil(respond(verb: verb, payload: Data()), "\(verb) must return nil")
-        }
-    }
+    // (WHICH verbs reach this performer is `metadata_admission::performer`'s answer and is pinned
+    // in Rust — `the_side_effecting_verbs_never_reach_the_read_only_builder`. A Swift copy of that
+    // set here was the second implementation of it.)
 
     // MARK: setClipboard (verb 15)
 

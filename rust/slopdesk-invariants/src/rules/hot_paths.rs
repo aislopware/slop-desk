@@ -34,6 +34,19 @@ const ROUTE_RULES: &str = "rust/slopdesk-muxsession/src/open_route.rs";
 /// …and on the Swift side, where the subscriber reads it.
 const OUTPUT_STREAM: &str = "Sources/SlopDeskHost/PaneOutputStream.swift";
 
+/// The face that answers how much metadata work fits and who serves a verb.
+const ADMISSION_FACE: &str = "Sources/SlopDeskHost/MetadataAdmission.swift";
+
+/// The six shims that PERFORM a side-effecting verb, none of which decides whether it owns one.
+const PERFORMERS: &[&str] = &[
+    "Sources/SlopDeskHost/HostPathActionPerformer.swift",
+    "Sources/SlopDeskHost/HostAgentActionPerformer.swift",
+    "Sources/SlopDeskHost/HostClipboardPerformer.swift",
+    "Sources/SlopDeskHost/HostCodeServerPerformer.swift",
+    "Sources/SlopDeskHost/HostSimulatorPerformer.swift",
+    "Sources/SlopDeskHost/HostAndroidPerformer.swift",
+];
+
 /// One regex engine meets the untrusted rows, and it does not backtrack
 ///
 /// Hint Mode ran ten compiled `NSRegularExpressions` over rows a remote program wrote, bridged
@@ -440,6 +453,64 @@ pub fn one_open_one_route(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// One verb, one performer — and one counter that says whether there is room to run it
+///
+/// A pane answers every host-metadata verb over the SAME unwindowed control sub-channel, so two
+/// questions have to be settled before any host work starts, and both used to be settled by
+/// arrangement rather than by an answer. The bound was a counter and a cap spelled here; the
+/// routing was a CHAIN of six shims each returning "not mine", which is a shape that cannot state
+/// the two bugs it is exposed to — a verb claimed by nobody, and a verb claimed by two. The first
+/// sends a side-effecting verb into the read-only builder, which performs no side effects, so the
+/// host answers `unsupportedVerb` for a request it is perfectly able to serve. The second runs two
+/// host operations for one request.
+///
+/// Neither fails a build. So the table is `rust/slopdesk-muxsession`'s `metadata_admission` now,
+/// and this pins the three halves that keep it one implementation: the face asks every door, the
+/// session keeps no private counter, and no performer answers an OPTIONAL — an optional return is
+/// exactly how a shim says "not mine", which is the ownership decision growing back beside the
+/// table that owns it.
+#[must_use]
+pub fn one_metadata_verb_one_performer(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: ADMISSION_FACE,
+            message: "Sources/SlopDeskHost/MetadataAdmission.swift is gone — how much metadata work fits \
+                      and who serves a verb are not MuxChannelSession's to re-derive (docs/59 §5, step 8)",
+        },
+        Claim::Doors {
+            path: ADMISSION_FACE,
+            entries: &[
+                "slopdesk_metadata_admission_new",
+                "slopdesk_metadata_admission_free",
+                "slopdesk_metadata_admission_admit",
+                "slopdesk_metadata_admission_release",
+                "slopdesk_metadata_admission_in_flight",
+                "slopdesk_metadata_admission_cap",
+                "slopdesk_metadata_performer",
+            ],
+            message: "Sources/SlopDeskHost/MetadataAdmission.swift no longer calls {entry} — a face that \
+                      drops a door is an admission rule growing back beside the one that owns it",
+        },
+        Claim::NoneOf {
+            paths: &[SESSION],
+            pattern: r"maxMetadataInFlight|metadataInFlight\s*[+-]=",
+            view: View::Code,
+            message: "{files} keeps its own metadata in-flight count or cap — the bound is the handle's, \
+                      and a second counter beside it is a bound that silently stops bounding (docs/59 §5, \
+                      step 8)",
+        },
+        Claim::NoneOf {
+            paths: PERFORMERS,
+            pattern: r"->\s*WireMessage\?",
+            view: View::Code,
+            message: "{files} answers an OPTIONAL response — that nil IS the claim \"not my verb\", and \
+                      which verbs a performer owns is metadata_admission::performer's answer, not a second \
+                      opinion at every shim (docs/59 §5, step 8)",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -627,6 +698,62 @@ mod tests {
         // A bare fixture has no face at all.
         let bare = Fixture::new("one-open-one-route-bare");
         assert!(!super::one_open_one_route(&bare.tree()).is_clean());
+    }
+
+    /// Every door the admission face must keep asking, in one string a fixture can hold.
+    const ADMISSION_DOORS: &str = concat!(
+        "slopdesk_metadata_admission_new()\n",
+        "slopdesk_metadata_admission_free()\n",
+        "slopdesk_metadata_admission_admit()\n",
+        "slopdesk_metadata_admission_release()\n",
+        "slopdesk_metadata_admission_in_flight()\n",
+        "slopdesk_metadata_admission_cap()\n",
+        "slopdesk_metadata_performer()\n",
+    );
+
+    /// A tree where the table owns the routing and every performer answers totally.
+    fn write_one_metadata_verb_one_performer(fixture: &Fixture) {
+        fixture
+            .write(super::ADMISSION_FACE, ADMISSION_DOORS)
+            .write(super::SESSION, "kept so the bans have a haystack\n");
+        for path in super::PERFORMERS {
+            fixture.write(path, "    static func response(...) -> WireMessage {\n");
+        }
+    }
+
+    #[test]
+    fn one_metadata_verb_one_performer_keeps_the_table_on_one_side() {
+        let fixture = Fixture::new("one-metadata-verb-one-performer");
+        write_one_metadata_verb_one_performer(&fixture);
+        assert!(super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
+
+        // The face stopped asking — an admission rule grew back beside the one that owns it.
+        fixture.write(super::ADMISSION_FACE, "slopdesk_metadata_admission_new()\n");
+        assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
+
+        // A private counter beside the handle — a bound that silently stops bounding.
+        write_one_metadata_verb_one_performer(&fixture);
+        fixture.append(super::SESSION, "        metadataInFlight += 1\n");
+        assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
+
+        // …and so is a second copy of the cap.
+        write_one_metadata_verb_one_performer(&fixture);
+        fixture.append(
+            super::SESSION,
+            "    private static let maxMetadataInFlight = 32\n",
+        );
+        assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
+
+        // A performer answers an optional again — the "not my verb" claim, back at the shim.
+        for path in super::PERFORMERS {
+            write_one_metadata_verb_one_performer(&fixture);
+            fixture.write(path, "    static func response(...) -> WireMessage? {\n");
+            assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
+        }
+
+        // A bare fixture has no face at all.
+        let bare = Fixture::new("one-metadata-verb-one-performer-bare");
+        assert!(!super::one_metadata_verb_one_performer(&bare.tree()).is_clean());
     }
 
     /// Every door the face must keep asking, in one string a fixture can hold.

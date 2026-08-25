@@ -64,7 +64,7 @@ enum HostClipboardPerformer {
     static func response(
         requestID: UInt32, verb: UInt8, payload: Data,
         pasteboard: NSPasteboard = .general, state: SyncState = sharedState,
-    ) -> WireMessage? {
+    ) -> WireMessage {
         switch MetadataVerb(rawValue: verb) {
         case .setClipboard:
             let status = applyClientClip(payload, to: pasteboard, state: state)
@@ -80,7 +80,11 @@ enum HostClipboardPerformer {
                 requestID: requestID, status: MetadataStatus.ok.rawValue, payload: body,
             )
         default:
-            return nil // not a clipboard-sync verb → caller uses the read-only builder
+            // Unreachable: which verbs reach here is ``MetadataAdmission/performer(for:)``'s
+            // answer. `.error` rather than a second opinion about who owns a verb.
+            return .metadataResponse(
+                requestID: requestID, status: MetadataStatus.error.rawValue, payload: Data(),
+            )
         }
     }
 

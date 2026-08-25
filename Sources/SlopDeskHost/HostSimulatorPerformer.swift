@@ -17,14 +17,18 @@ enum HostSimulatorPerformer {
     /// The production manager singleton (one host → one shared instance).
     static let sharedManager = SimulatorServerManager()
 
-    /// Routes one `metadataRequest`. Returns the `metadataResponse` when `verb` is 21; `nil` for
-    /// EVERY other verb (incl. an unknown future byte) so the caller falls through unchanged.
+    /// Serves verb 21 — ensure the host's simulator server — and answers its endpoint.
+    ///
+    /// Nothing to scope, so a payload carrying bytes is a client this host does not understand:
+    /// answering `.error` keeps a future field from being silently dropped by an old host that
+    /// would then look like it honoured a request it never read. A verb OTHER than 21 is
+    /// unreachable — which verbs reach here is ``MetadataAdmission/performer(for:)``'s answer —
+    /// and takes the same exit rather than a second opinion about who owns a verb.
     static func response(
         requestID: UInt32, verb: UInt8, payload: Data,
         manager: SimulatorServerManager = sharedManager,
-    ) -> WireMessage? {
-        guard MetadataVerb(rawValue: verb) == .ensureSimulatorServer else { return nil }
-        guard payload.isEmpty else {
+    ) -> WireMessage {
+        guard MetadataVerb(rawValue: verb) == .ensureSimulatorServer, payload.isEmpty else {
             return .metadataResponse(
                 requestID: requestID, status: MetadataStatus.error.rawValue, payload: Data(),
             )

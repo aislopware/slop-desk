@@ -29,17 +29,21 @@ import SlopDeskProtocol
 /// `#if os(macOS)` — `AppKit`/`NSWorkspace` is unavailable on iOS; it is NEVER compiled into the iOS slice
 /// (the iOS client routes open/reveal TO the host over this same wire, it never performs them locally).
 enum HostPathActionPerformer {
-    /// Routes one `metadataRequest`. If `verb` is a side-effecting path verb (9/10), actuates it on the
-    /// host and returns the `metadataResponse` (empty payload + status). Returns `nil` for EVERY other
-    /// verb (incl. an unknown future byte) so the caller falls through to the read-only
-    /// ``MetadataResponseBuilder`` unchanged — keeping this shim's responsibility to ONLY the two
-    /// side-effecting verbs.
-    static func response(requestID: UInt32, verb: UInt8, payload: Data) -> WireMessage? {
+    /// Actuates one of the side-effecting path verbs (9/10) on the host and answers the
+    /// `metadataResponse` (empty payload + status).
+    ///
+    /// Which verbs reach here is ``MetadataAdmission/performer(for:)``'s answer, not this shim's:
+    /// the default below is unreachable, and it answers `.error` rather than falling back to a
+    /// second opinion about who owns a verb.
+    static func response(requestID: UInt32, verb: UInt8, payload: Data) -> WireMessage {
         let action: (String) -> MetadataStatus
         switch MetadataVerb(rawValue: verb) {
         case .openPath: action = openInDefaultApp(path:)
         case .revealPath: action = revealInFinder(path:)
-        default: return nil // not a side-effecting path verb → caller uses the read-only builder
+        default:
+            return .metadataResponse(
+                requestID: requestID, status: MetadataStatus.error.rawValue, payload: Data(),
+            )
         }
         // A non-UTF-8 argument is a malformed request → .error (validate-then-drop, never a trap).
         let status = String(data: payload, encoding: .utf8).map(action) ?? .error

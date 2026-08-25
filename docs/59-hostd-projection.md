@@ -290,9 +290,29 @@ Absorbs `handleLinkDown` `:2371` · `leavePaneChannel` `:2410` · `reapPanesRemo
 `paneSessionsForWorkspace()` `:1469` · `paneRosterRecords()` `:1490`. Swift keeps only
 `[MuxSessionKey: MuxChannelSession]` — objects cannot cross.
 
-**Step 8 — metadata admission.** *(~200 Swift lines)* `serveMetadata(requestID:verb:payload:to:)`
-`HostServer.swift:3464-3566`: the bounded-admission counter (`maxMetadataInFlight = 32`) and the
-performer-chain routing become a verdict; the performers stay (§6).
+**Step 8 — metadata admission. LANDED.** *(~110 removed from the session, ~60 face added)* A pane
+answers every host-metadata verb over the SAME unwindowed control sub-channel, so two questions had
+to be settled before any host work started, and both were settled by arrangement rather than by an
+answer.
+
+The bound was a counter and a cap spelled in `MuxChannelSession` — the only thing between a peer
+streaming back-to-back tiny `metadataRequest` frames and an unbounded pile of closures forking
+`git`/`lsof`. It is `metadata_admission::Admission` now, a handle under the same
+`metadataInFlightLock`: every `admit` that answers true owes one `release`, and the release saturates
+at zero so a double-release cannot mint room the session does not have. Past the cap the request is
+still REFUSED rather than deferred — "always replies" outranks "eventually serves".
+
+The routing was a CHAIN of six shims each answering "not mine", which is a shape that cannot state
+either bug it is exposed to: a verb claimed by NOBODY reaches the read-only builder, which performs
+no side effects, so the host answers `unsupportedVerb` for a request it can serve; a verb claimed by
+TWO runs two host operations for one request. Neither fails a build. `metadata_admission::performer`
+is the whole table now, over `MetadataVerb` rather than byte ranges, and the six shims answer a
+NON-optional `WireMessage` — the optional return WAS the ownership claim, so removing it is what
+makes the table the only copy. Three Swift `testOtherVerbsFallThrough` suites went with it; the same
+claim is `the_side_effecting_verbs_never_reach_the_read_only_builder` in Rust.
+
+The performing stays (§6): a Finder open, a `settings.json` merge, a pasteboard write and a
+lazily-spawned child are AppKit and process work. The door names WHO, and hostd does it.
 
 **Step 9 — collapse the test seams.** *(~400 Swift lines)* `MuxChannelSession.swift:3839-4076` (~240
 lines of `_…ForTesting`) and `HostServer.swift:3060-3218` (~160). After steps 2–7 that state is
@@ -432,6 +452,14 @@ class, and the BREAK-TESTED convention every new rule follows) · `crate_policy.
    resume whose two halves disagree replays a whole transcript twice.
 7. **the host's session maps are one relation** — ban the seven dictionary declarations at
    `HostServer.swift:125-338` except `muxSessions`; require `slopdesk_host_registry_*`.
+8. **one metadata verb, one performer** — LANDED as `hot_paths::one_metadata_verb_one_performer`
+   (rule `one-metadata-verb-one-performer`). Requires `MetadataAdmission.swift` to exist and to call
+   every one of the seven `slopdesk_metadata_*` doors. Bans a private counter or cap in
+   `MuxChannelSession.swift` (`maxMetadataInFlight`, `metadataInFlight +=`) — a second counter beside
+   the handle is a bound that silently stops bounding. And bans `-> WireMessage?` in all six
+   performer shims: that nil IS the claim "not my verb", so an optional return is the ownership
+   decision growing back beside the table that owns it. The three Swift suites that enumerated each
+   shim's verb set were deleted in the same change, not kept as a cross-language mirror.
 
 Each rule carries a `/// BREAK-TESTED <date>:` line stating the edit that failed it and the restore
 that passed, matching `latency_ratchets.rs`'s convention.

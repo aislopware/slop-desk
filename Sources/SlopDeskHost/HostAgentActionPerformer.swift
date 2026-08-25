@@ -28,11 +28,10 @@ import SlopDeskProtocol
 /// `#if os(macOS)` — the host daemon is macOS-only; this is NEVER compiled into the iOS slice (the iOS
 /// client routes install/uninstall/status TO the host over this same wire, it never performs them locally).
 enum HostAgentActionPerformer {
-    /// Routes one `metadataRequest`. If `verb` is an agent-hooks verb (11/12/13), actuates it against the
-    /// host's default Claude config and returns the `metadataResponse`. Returns `nil` for EVERY other
-    /// verb (incl. an unknown future byte) so the caller falls through to the read-only
-    /// ``MetadataResponseBuilder`` unchanged — keeping this shim's responsibility to ONLY the three
-    /// agent-hooks verbs. The request `payload` is intentionally ignored (host-global, empty by contract).
+    /// Actuates one of the agent-hooks verbs (11/12/13) against the host's default Claude config and
+    /// answers the `metadataResponse`. Which verbs reach here is
+    /// ``MetadataAdmission/performer(for:)``'s answer, not this shim's. The request `payload` is
+    /// intentionally ignored (host-global, empty by contract).
     ///
     /// `hookListenerActive` is the LIVE bind state of the hostd hook listener: verb 13's reply carries it
     /// as a second flag byte so the client can distinguish "hooks written to settings.json" from "hooks
@@ -41,7 +40,7 @@ enum HostAgentActionPerformer {
     /// flag reports a bind FAILURE rather than a configuration choice.
     static func response(
         requestID: UInt32, verb: UInt8, payload _: Data, hookListenerActive: Bool = false,
-    ) -> WireMessage? {
+    ) -> WireMessage {
         switch MetadataVerb(rawValue: verb) {
         case .installAgentHooks:
             return statusResponse(requestID: requestID, status: installHooks())
@@ -55,7 +54,9 @@ enum HostAgentActionPerformer {
                 payload: statusFlags(installed: installed, listenerActive: hookListenerActive),
             )
         default:
-            return nil // not an agent-hooks verb → caller uses the read-only builder
+            // Unreachable: which verbs reach here is ``MetadataAdmission/performer(for:)``'s
+            // answer. `.error` rather than a second opinion about who owns a verb.
+            return statusResponse(requestID: requestID, status: .error)
         }
     }
 

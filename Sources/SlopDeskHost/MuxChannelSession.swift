@@ -384,21 +384,15 @@ final class MuxChannelSession: @unchecked Sendable {
     /// subprocesses.
     private let metadataQueue = DispatchQueue(label: "slopdesk.host.metadata", qos: .userInitiated)
 
-    /// The number of metadata work items currently admitted onto
-    /// `metadataQueue` for this session (guarded by `metadataInFlightLock`; incremented at
-    /// admission in ``serveMetadata(requestID:verb:payload:)``, decremented when the work item
-    /// finishes). The control sub-channel is deliberately unwindowed, so this counter is the ONLY
-    /// bound between a hostile/buggy peer streaming back-to-back tiny `.metadataRequest` frames
-    /// and an unbounded pile of queued closures (each retaining its payload + self) forking
-    /// `git`/`lsof` without limit.
+    /// The bounded-admission counter for this session's metadata work (guarded by
+    /// `metadataInFlightLock`; a slot is taken at admission in
+    /// ``serveMetadata(requestID:verb:payload:)`` and released when the work item finishes). The
+    /// control sub-channel is deliberately unwindowed, so this counter is the ONLY bound between a
+    /// hostile/buggy peer streaming back-to-back tiny `.metadataRequest` frames and an unbounded
+    /// pile of queued closures (each retaining its payload + self) forking `git`/`lsof` without
+    /// limit. The count and the cap are ``MetadataAdmission``'s; the queue stays here.
     private let metadataInFlightLock = NSLock()
-    private var metadataInFlight = 0
-
-    /// The per-session cap on admitted-not-yet-finished metadata work items. At/over the cap a
-    /// request is NOT enqueued — it is answered IMMEDIATELY with the builder's standard `.error`
-    /// status byte + empty payload (the same shape as any other failed verb), so the "ALWAYS
-    /// replies, the client never hangs" contract holds under a flood.
-    private static let maxMetadataInFlight = 32
+    private let metadataAdmission = MetadataAdmission()
 
     /// How many times the read loop has asked superd to retire the title anchor. Read only by the
     /// suite that pins WHEN the retirement is asked for; written only on the read-loop thread.
@@ -3074,7 +3068,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// empty payload), so the client's ``MetadataRequestRegistry`` never hangs waiting. Orders against
     /// nothing (like a ping / blockOutput) — deliberately NO `applyResolvedGrid`.
     ///
-    /// In-flight work is BOUNDED per session (``maxMetadataInFlight``): past the cap the request is
+    /// In-flight work is BOUNDED per session (``MetadataAdmission``): past the cap the request is
     /// answered at once with the standard `.error` status instead of being enqueued — a request
     /// flood on the unwindowed control channel must not grow `metadataQueue` (or fork subprocesses)
     /// without limit. Each admitted work item releases its slot on completion (defer).
@@ -3091,93 +3085,52 @@ final class MuxChannelSession: @unchecked Sendable {
         // the builder's standard `.error` status + empty payload (the exact shape any failed verb
         // replies with), so the "ALWAYS replies, the client never hangs" contract holds.
         metadataInFlightLock.lock()
-        guard metadataInFlight < Self.maxMetadataInFlight else {
-            metadataInFlightLock.unlock()
+        let admitted = metadataAdmission.admit()
+        metadataInFlightLock.unlock()
+        guard admitted else {
             sendControl([.metadataResponse(
                 requestID: requestID, status: MetadataStatus.error.rawValue, payload: Data(),
             )], to: id)
             return
         }
-        metadataInFlight += 1
-        metadataInFlightLock.unlock()
         let masterFD = pty.masterFD
         let shellPID = pty.pid
         metadataQueue.async { [weak self] in
             guard let self else { return }
             defer {
                 metadataInFlightLock.lock()
-                metadataInFlight -= 1
+                metadataAdmission.release()
                 metadataInFlightLock.unlock()
             }
-            // The side-effecting path verbs (openPath = 9 / revealPath = 10) actuate on the
-            // HOST's own Finder / Launch Services via `HostPathActionPerformer` and reply with an
-            // empty-payload status. They are handled HERE — BEFORE, and never reach, the read-only
-            // `MetadataResponseBuilder` (which performs NO side effects). `response` returns nil for
-            // every OTHER verb, so the read verbs fall through to the pure builder unchanged.
-            if let response = HostPathActionPerformer.response(requestID: requestID, verb: verb, payload: payload) {
-                sendControl([response], to: id)
-                return
-            }
-            // The agent-hooks verbs (installAgentHooks = 11 / uninstallAgentHooks = 12 write or
-            // strip our entries in ~/.claude/settings.json via ``AgentHooks``; agentHookStatus = 13 is a
-            // pure read returning the 2-byte `[installed][listenerActive]` flags — the second byte is the
-            // LIVE hook-listener bind state so the client can show installed-but-inactive). Handled
-            // HERE — BEFORE, and never reaching, the read-only `MetadataResponseBuilder`. `response`
-            // returns nil for every OTHER verb, so the read verbs fall through to the pure builder
-            // unchanged.
-            if let response = HostAgentActionPerformer.response(
-                requestID: requestID, verb: verb, payload: payload,
-                hookListenerActive: agentHookListenerActive(),
-            ) {
-                sendControl([response], to: id)
-                return
-            }
-            // The clipboard-sync verbs (setClipboard = 15 writes the client's clip onto the host's
-            // general pasteboard; readClipboard = 16 ships the host's clip back, with changeCount
-            // dedupe + echo suppression) actuate on host-global pasteboard state via
-            // `HostClipboardPerformer`. Handled HERE — BEFORE, and never reaching, the read-only
-            // `MetadataResponseBuilder`. `response` returns nil for every OTHER verb.
-            if let response = HostClipboardPerformer.response(
-                requestID: requestID, verb: verb, payload: payload,
-            ) {
-                sendControl([response], to: id)
-                return
-            }
-            // ensureCodeServer = 18 lazily spawns / reports the project's code-server instance
-            // (the right sidebar's embedded VS Code) via the process-wide `CodeServerManager`.
-            // Side-effecting, so handled HERE — BEFORE, and never reaching, the read-only
-            // `MetadataResponseBuilder`. `response` returns nil for every OTHER verb. It replies
-            // IMMEDIATELY with the current state (starting/ready/unavailable) — `ensure` never
-            // waits out a cold boot, so the client's 5 s registry timeout cannot starve.
-            if let response = HostCodeServerPerformer.response(
-                requestID: requestID, verb: verb, payload: payload,
-            ) {
-                sendControl([response], to: id)
-                return
-            }
-            // ensureSimulatorServer = 21 lazily spawns / reports the host's simulator server (the
-            // right panel's Simulators surface) via the process-wide `SimulatorServerManager`.
-            // Side-effecting, so handled HERE for the same reason as 18 — and with the same
-            // never-wait contract.
-            if let response = HostSimulatorPerformer.response(
-                requestID: requestID, verb: verb, payload: payload,
-            ) {
-                sendControl([response], to: id)
-                return
-            }
-            // ensureAndroidBridge = 22 does the same for the right panel's Android surface. Unlike
-            // 18 and 21 the bridge is an in-process listener rather than a child, so it answers
-            // `ready` on the first call — but it is routed here for the same reason: it binds a
-            // socket, which is a side effect the pure builder must never perform.
-            if let response = HostAndroidPerformer.response(
-                requestID: requestID, verb: verb, payload: payload,
-            ) {
-                sendControl([response], to: id)
-                return
-            }
-            let probe = HostMetadataProbe(masterFD: masterFD, shellPID: shellPID)
-            let response = MetadataResponseBuilder(query: probe)
-                .response(requestID: requestID, verb: verb, payload: payload)
+            // WHO serves this verb is ``MetadataAdmission/performer(for:)``'s answer, not a chain of
+            // "not mine" replies here: the nine side-effecting verbs actuate on the HOST's own
+            // Finder, `~/.claude/settings.json`, pasteboard or a lazily-spawned child, and must
+            // never reach the read-only `MetadataResponseBuilder`, which performs no side effects by
+            // construction. A verb claimed by nobody and a verb claimed by two are both bugs a chain
+            // could not state; the table states them, and it reads the wire's own verb enum.
+            let response: WireMessage =
+                switch MetadataAdmission.performer(for: verb) {
+                case .path:
+                    HostPathActionPerformer.response(requestID: requestID, verb: verb, payload: payload)
+                case .agent:
+                    HostAgentActionPerformer.response(
+                        requestID: requestID, verb: verb, payload: payload,
+                        hookListenerActive: agentHookListenerActive(),
+                    )
+                case .clipboard:
+                    HostClipboardPerformer.response(requestID: requestID, verb: verb, payload: payload)
+                case .codeServer:
+                    // Replies IMMEDIATELY with the current state (starting/ready/unavailable) — `ensure`
+                    // never waits out a cold boot, so the client's 5 s registry timeout cannot starve.
+                    HostCodeServerPerformer.response(requestID: requestID, verb: verb, payload: payload)
+                case .simulator:
+                    HostSimulatorPerformer.response(requestID: requestID, verb: verb, payload: payload)
+                case .android:
+                    HostAndroidPerformer.response(requestID: requestID, verb: verb, payload: payload)
+                case .builder:
+                    MetadataResponseBuilder(query: HostMetadataProbe(masterFD: masterFD, shellPID: shellPID))
+                        .response(requestID: requestID, verb: verb, payload: payload)
+                }
             sendControl([response], to: id)
         }
     }
@@ -3679,11 +3632,12 @@ extension MuxChannelSession {
 
     /// The bounded-admission cap + live in-flight count, so the flood test can pin
     /// "at most `cap` work items queued" and "every slot released when its work item finishes".
-    static var maxMetadataInFlightForTesting: Int { maxMetadataInFlight }
-    var metadataInFlightForTesting: Int {
+    /// Both are ``MetadataAdmission``'s — the session keeps no count of its own.
+    static var metadataAdmissionCapForTesting: Int { Int(MetadataAdmission.cap) }
+    var metadataAdmissionInFlightForTesting: Int {
         metadataInFlightLock.lock()
         defer { metadataInFlightLock.unlock() }
-        return metadataInFlight
+        return Int(metadataAdmission.inFlight)
     }
 
     /// Suspend/resume the serial `metadataQueue` so a flood test can hold admitted

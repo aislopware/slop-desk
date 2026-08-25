@@ -35,10 +35,16 @@
 //! first thing here that reads a wire vocabulary — the open's class byte, through the enum that
 //! owns it — because routing a class this build does not serve into the PTY path forks a shell
 //! nobody asked for, and a second copy of "0 is a pane" is how that happens.
+//!
+//! [`metadata_admission`] is the eighth, and the one about a pane's OTHER sub-channel: how many
+//! host-metadata work items one session may have in flight, and which performer owns a verb. The
+//! Finder call, the pasteboard write and the child spawn stay where the frameworks are; what
+//! crosses is whether there is room and who is being asked.
 
 pub mod bridge_router;
 pub mod detach_retention;
 pub mod fanout;
+pub mod metadata_admission;
 pub mod open_route;
 pub mod outbox;
 pub mod resize_fold;

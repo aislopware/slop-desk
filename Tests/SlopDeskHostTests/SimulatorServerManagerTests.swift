@@ -300,29 +300,16 @@ final class HostSimulatorPerformerTests: XCTestCase {
         )
     }
 
-    func testOtherVerbsFallThrough() {
-        for verb in MetadataVerb.allCases where verb != .ensureSimulatorServer {
-            XCTAssertNil(
-                HostSimulatorPerformer.response(
-                    requestID: 1, verb: verb.rawValue, payload: Data(), manager: makeManager(),
-                ),
-                "verb \(verb) must fall through to the read-only builder",
-            )
-        }
-        XCTAssertNil(
-            HostSimulatorPerformer.response(
-                requestID: 1, verb: 250, payload: Data(), manager: makeManager(),
-            ),
-            "an unknown future verb must fall through (the builder answers unsupportedVerb)",
-        )
-    }
+    // (WHICH verbs reach this performer is `metadata_admission::performer`'s answer and is pinned
+    // in Rust — `the_side_effecting_verbs_never_reach_the_read_only_builder`. A Swift copy of that
+    // set here was the second implementation of it.)
 
     func testEnsureAnswersTheEncodedEndpoint() throws {
         let response = HostSimulatorPerformer.response(
             requestID: 42, verb: MetadataVerb.ensureSimulatorServer.rawValue, payload: Data(),
             manager: makeManager(),
         )
-        guard case let .metadataResponse(requestID, status, payload)? = response else {
+        guard case let .metadataResponse(requestID, status, payload) = response else {
             XCTFail("expected a metadataResponse")
             return
         }
@@ -341,7 +328,7 @@ final class HostSimulatorPerformerTests: XCTestCase {
             requestID: 5, verb: MetadataVerb.ensureSimulatorServer.rawValue, payload: Data(),
             manager: makeManager(binary: nil),
         )
-        guard case let .metadataResponse(_, status, payload)? = response else {
+        guard case let .metadataResponse(_, status, payload) = response else {
             XCTFail("expected a metadataResponse")
             return
         }
@@ -356,7 +343,7 @@ final class HostSimulatorPerformerTests: XCTestCase {
             requestID: 9, verb: MetadataVerb.ensureSimulatorServer.rawValue,
             payload: Data([0x00]), manager: makeManager(),
         )
-        guard case let .metadataResponse(requestID, status, payload)? = response else {
+        guard case let .metadataResponse(requestID, status, payload) = response else {
             XCTFail("expected a metadataResponse")
             return
         }

@@ -39,7 +39,7 @@ enum HostCodeServerPerformer {
         requestID: UInt32, verb: UInt8, payload: Data,
         manager: CodeServerManager = sharedManager,
         fallbackOpen: FallbackOpener = defaultFallbackOpener,
-    ) -> WireMessage? {
+    ) -> WireMessage {
         switch MetadataVerb(rawValue: verb) {
         case .ensureCodeServer:
             ensureResponse(requestID: requestID, payload: payload, manager: manager)
@@ -50,7 +50,11 @@ enum HostCodeServerPerformer {
         case .syncCodeFont:
             syncFontResponse(requestID: requestID, payload: payload, manager: manager)
         default:
-            nil // not an embedded-editor verb → caller uses the read-only builder
+            // Unreachable: which verbs reach here is ``MetadataAdmission/performer(for:)``'s
+            // answer. `.error` rather than a second opinion about who owns a verb.
+            .metadataResponse(
+                requestID: requestID, status: MetadataStatus.error.rawValue, payload: Data(),
+            )
         }
     }
 

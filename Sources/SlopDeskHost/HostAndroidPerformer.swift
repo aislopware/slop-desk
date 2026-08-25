@@ -12,17 +12,17 @@ enum HostAndroidPerformer {
     /// The production manager singleton (one host → one `adb` server → one bridge daemon).
     static let sharedManager = AndroidServiceManager()
 
-    /// Routes one `metadataRequest`. Returns the `metadataResponse` when `verb` is 22; `nil` for
-    /// EVERY other verb (incl. an unknown future byte) so the caller falls through unchanged.
+    /// Serves verb 22 — ensure the host's Android bridge — and answers its endpoint.
     static func response(
         requestID: UInt32, verb: UInt8, payload: Data,
         manager: AndroidServiceManager = sharedManager,
-    ) -> WireMessage? {
-        guard MetadataVerb(rawValue: verb) == .ensureAndroidBridge else { return nil }
+    ) -> WireMessage {
         // Nothing to scope, so a payload carrying bytes is a client this host does not understand.
         // Answering `.error` keeps a future field from being silently dropped by an old host that
-        // would then look like it honoured a request it never read.
-        guard payload.isEmpty else {
+        // would then look like it honoured a request it never read. A verb OTHER than 22 is
+        // unreachable — which verbs reach here is ``MetadataAdmission/performer(for:)``'s answer —
+        // and takes the same exit rather than a second opinion about who owns a verb.
+        guard MetadataVerb(rawValue: verb) == .ensureAndroidBridge, payload.isEmpty else {
             return .metadataResponse(
                 requestID: requestID, status: MetadataStatus.error.rawValue, payload: Data(),
             )

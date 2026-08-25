@@ -1475,6 +1475,11 @@ pub fn registry() -> Vec<Rule> {
             check: hot_paths::one_open_one_route,
         },
         Rule {
+            name: "one-metadata-verb-one-performer",
+            origin: "docs/59 §5, step 8",
+            check: hot_paths::one_metadata_verb_one_performer,
+        },
+        Rule {
             name: "subscriber-set-one-table",
             origin: "docs/59 §4, §8 rule 3",
             check: hot_paths::the_subscriber_set_is_one_table,
