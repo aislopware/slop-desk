@@ -152,7 +152,15 @@ const LINK_SCHEMES: &[&str] = &[SchemeDetection::All.token(), SchemeDetection::C
 
 /// When a close is confirmed. The tab row is this list's first two: closing ONE tab can never lose
 /// more than one, so the third stop would be a policy that never fires.
-const CLOSE_CONFIRMATION: &[&str] = &["process", "always", "multiple-tabs"];
+///
+/// `multiple_tabs` IS UNDERSCORED next to hyphenated neighbours, and that is not a slip — it is the
+/// spelling already in users' `UserDefaults` and in `CloseConfirmationPolicy`'s raw value, so it is
+/// quoted rather than chosen (docs/56, which records the same about `block_hollow`). This table
+/// wrote it hyphenated until 2026-08-26, and the cost was the whole stop: the schema accepted only
+/// `multiple-tabs`, and a `config.toml` saying so reached an enum with no case for it and repaired
+/// to `process`. `rust/slopdesk-invariants`'s `choice-tokens-are-the-tables` now pins every one of
+/// these lists against the Swift cases that read it.
+const CLOSE_CONFIRMATION: &[&str] = &["process", "always", "multiple_tabs"];
 
 /// The tab row's stops.
 const CLOSE_CONFIRMATION_TAB: &[&str] = &["process", "always"];

@@ -46,7 +46,7 @@
         "close-confirm-window": {
           "description": "When to confirm before closing a window.",
           "type": "string",
-          "enum": ["process", "always", "multiple-tabs"],
+          "enum": ["process", "always", "multiple_tabs"],
           "default": "process"
         },
         "new-tab-position": {

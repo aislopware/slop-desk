@@ -137,7 +137,32 @@ The staleness gate lives in `slopdesk-settings` rather than `slopdesk-invariants
 not a pattern over the tree, it is the generator's own output compared to the artifact, and only the
 crate that can RUN the generator can ask that question.
 
-### The one duplication still standing, and the rule that would end it
+### The one duplication still standing, and the rule that ended it
+
+**LANDED 2026-08-26** as `slopdesk-invariants`'s `choice-tokens-are-the-tables`, and it caught a live
+bug on its first run. `shell.close-confirm-window`'s table row spelled its third stop `multiple-tabs`
+while `CloseConfirmationPolicy` spells it `multiple_tabs` — the underscored form is the one already in
+users' `UserDefaults`, which docs/56 records as deliberate for exactly two tokens. So the schema
+accepted only the hyphen, and the hyphen reached an enum with no case for it and repaired to
+`process`: the one stop the setting exists for was unreachable by either spelling, and nothing said
+so. The table now spells it `multiple_tabs`, and `docs/config.schema.json` was regenerated.
+
+The rule reads the table's `options:` in the three shapes it comes in — a literal array, a named
+`const` in the same file, and a list built out of the crate's own `Enum::Case.token()` calls. The
+third is CRATE-OWNED and is skipped by conclusion rather than by exemption: those Swift enums have no
+`String` raw type at all, their `rawValue` reads the same crate table through a door, and there is no
+second spelling to compare. On the Swift side it reads `enum X: String`'s cases, taking each case's
+explicit `= "…"` when it has one and its name otherwise, with a keyword case's backticks stripped.
+Then, per call site: every table stop must be spelled by a case (the load-bearing claim — a stop with
+no case is the unreachable setting above), the path must exist in the table, and the fallback's own
+token must be one of that path's stops. It also counts the pairs that reach the comparison and fails
+when none do, because both halves are regex extractions over source edited daily and the failure they
+share is going quiet.
+
+The original note, kept because it is the argument the rule encodes:
+
+---
+
 
 `AppConfig.choice(_:_:)` takes a Swift enum case as a fallback, and seventeen call sites pass one.
 Every single one of them is DEAD: `texts[path]` already carries the table's own default, so the

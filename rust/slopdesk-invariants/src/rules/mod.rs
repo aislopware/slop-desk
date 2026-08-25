@@ -8,6 +8,7 @@
 pub mod agent_fold;
 pub mod apple_floors;
 pub mod byte_scanners;
+pub mod choice_tokens;
 pub mod chrome_split;
 pub mod cli_config;
 pub mod cli_vocabulary;
@@ -893,6 +894,11 @@ pub fn registry() -> Vec<Rule> {
             name: "defaults-suite-env-key",
             origin: "docs/55 §shared constants, docs/58",
             check: settings_is_a_file::the_defaults_suite_variable_is_spelled_once,
+        },
+        Rule {
+            name: "choice-tokens-are-the-tables",
+            origin: "docs/58 §the one duplication still standing",
+            check: choice_tokens::a_choice_enum_spells_exactly_the_tables_stops,
         },
         Rule {
             name: "settings-constant-answers",
