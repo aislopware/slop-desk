@@ -40,6 +40,13 @@
 //! host-metadata work items one session may have in flight, and which performer owns a verb. The
 //! Finder call, the pasteboard write and the child spawn stay where the frameworks are; what
 //! crosses is whether there is room and who is being asked.
+//!
+//! [`registry`] is the ninth, and the only one about ALL of hostd's panes rather than one: which
+//! channel names which pane, which subscriber of it a channel is, where a pane's agent hooks route,
+//! and which document id a project path has. A fanned-out pane is ONE session object under N
+//! channel keys, so every event is either about one member or about all of them, and the two used
+//! to be told apart by two dictionaries that had to agree. Object identity crosses as a `slot`; the
+//! objects stay in hostd, which is the one thing that cannot.
 
 pub mod bridge_router;
 pub mod detach_retention;
@@ -47,6 +54,7 @@ pub mod fanout;
 pub mod metadata_admission;
 pub mod open_route;
 pub mod outbox;
+pub mod registry;
 pub mod resize_fold;
 pub mod spawn_env;
 pub mod truths;

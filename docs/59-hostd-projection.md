@@ -112,7 +112,7 @@ is the caller's, not ours* — an `NWConnection` crosses as an opaque `uint64_t`
 | `PaneTruths` | `muxsession::truths` | one lock replacing seven | title + anchor + retire rule, progress grammar, exit/duration latches, `runningCommand` latch, block fold, project key | the probes (`tcgetpgrp`, `tcgetattr`) | in `ingest(&[SniffedEvent], &[BlockEvent], chunk_len)`; out counted-buffer `[WireMessageDescriptor]` |
 | `PaneLifecycle` | `muxsession::lifecycle` | one lock replacing `taskLock`+`eofLock`+`exitSentLock` | the detach/rebind/teardown ladder; the reattach re-assert ORDER (`.commandStatus` before `.title`) | the `Task`s, timeouts, ioctl | in `detach`/`rebind`/`eof`/`exit`; out `LadderStep` + `[ReassertMessage]` |
 | `MuxOpenRouter` | `muxsession::open_router` | `HostServer.lock` | the 4-path decision `alreadyLive`/`liveElsewhere`→JOIN/claim→SPAWN/→REATTACH; the `min(lastReceivedSeq, highestAssignedSeq)` adopted-pane clamp (`HostServer.swift:1990`) | the `store.claim`, the ack write, the connections | in `OpenFacts`; out `OpenRoute` |
-| `HostSessionRegistry` | `muxsession::registry` | `HostServer.lock` `:125`–`:338` | session/subscriber/connection/hook-sink/workspace/project maps as id→id relations | the `MuxChannelSession` object map | in link-down/leave/reap/evict; out counted-buffer `[SessionAction]` |
+| `HostSessionRegistry` | `muxsession::registry` | `HostServer.lock` | channel→(pane slot, subscriber) as ONE record, the standalone panes, the hook sinks, the minted project ids | the session/connection/workspace-channel OBJECTS | in a key, a slot or a connection; out a verdict, or a counted buffer of keys/members |
 
 Direction is one-way in every row: Swift calls, Rust answers. **No callbacks into Swift** — the one
 that exists (`ReplayBuffer`'s `sanitize`) is exactly what cost 30 ms per reattach.
@@ -282,13 +282,32 @@ free, and no handle whose lifetime could be got wrong.
 `MuxChannelClass::from_byte` owns which bytes this build routes, and a copy of that list is exactly
 the one that decides whether a peer's unknown class gets declined or gets a shell.
 
-**Step 7 — `HostSessionRegistry`.** *(~700 Swift lines)* `controlSessions` `:125` · `muxSessions`
-`:152` · `muxSubscriberIDs` `:163` · `muxConnections` `:172` · `hookPaneIDsBySession` `:192` ·
-`workspaceChannels` `:317` · `projectObjectIDs` `:338` become one relation table answering ACTIONS.
-Absorbs `handleLinkDown` `:2371` · `leavePaneChannel` `:2410` · `reapPanesRemovedFromTopology` `:2438`
-· `wireSubscriberEviction` `:2473` · `detachMuxSession` `:2496` · `removeMuxSession` `:2542` ·
-`paneSessionsForWorkspace()` `:1469` · `paneRosterRecords()` `:1490`. Swift keeps only
-`[MuxSessionKey: MuxChannelSession]` — objects cannot cross.
+**Step 7 — `HostSessionRegistry`. LANDED.** *(~180 removed from `HostServer`, ~330 face added)* A
+fanned-out pane is ONE `MuxChannelSession` under N channel keys, so every event is either about one
+member or about all of them. hostd told the two apart with a key→session map and a key→subscriber
+map that had to be written in the SAME critical section to agree: a key with no subscriber entry
+MEANT the pane's original channel, so "not registered yet" and "is the primary" were one missing
+entry, and a joiner whose link died mid-state-transfer retired the INCUMBENT. It is `registry`'s one
+record now — a key either names a pane with a subscriber or does not exist.
+
+Object identity crosses as a SLOT: a `u64` minted per session object (`slopdesk_host_slot_mint`) and
+carried by it for its life. Every `===` guard hostd made is a question about that number now —
+`detach(key, ifNames:)` for the detach-window successor, `isAttached` for the failed-rebind scan,
+the hook sink's owner. Minted per OBJECT and not per session id, because the race those guards exist
+for is exactly a fresh object under an id its predecessor is still winding down on.
+
+`handleLinkDown` snapshots and removes a connection's members in one door; `leavePaneChannel` asks
+for the member rather than defaulting an absent one; `removeMuxSession` and `killPaneForControl`
+reap by slot, so an alias cannot survive its pane; `reapPanesRemovedFromTopology` resolves the
+doomed uuids to keys the same way. `paneRosterRecords` joins on slots instead of
+`ObjectIdentifier`s, and `projectObjectID` mints through the table. The maps are ORDERED there, so a
+drain, a reap and a roster walk the same order on every run; the dictionaries had none.
+
+What did NOT cross: the objects. `muxSessions` is `[UInt64: MuxChannelSession]` inside the face, and
+`muxConnections` / `workspaceChannels` stay in `HostServer` as they were — a set of ids duplicating
+a dictionary's own key set is not a relation, it is the retention itself, and porting it would have
+been the second copy this step exists to remove. `MuxNWConnection` is Network.framework and stays by
+§6.
 
 **Step 8 — metadata admission. LANDED.** *(~110 removed from the session, ~60 face added)* A pane
 answers every host-metadata verb over the SAME unwindowed control sub-channel, so two questions had
@@ -450,8 +469,14 @@ class, and the BREAK-TESTED convention every new rule follows) · `crate_policy.
    (the live-edge sentinel). The sentinel itself is pinned on BOTH sides — `FROM_NOW_ON == u64::MAX`
    in `open_route.rs`, `fromNowOn = UInt64.max` in `PaneOutputStream.swift` — because a survivor
    resume whose two halves disagree replays a whole transcript twice.
-7. **the host's session maps are one relation** — ban the seven dictionary declarations at
-   `HostServer.swift:125-338` except `muxSessions`; require `slopdesk_host_registry_*`.
+7. **one relation, one table** — LANDED as `hot_paths::one_relation_one_table` (rule
+   `one-relation-one-table`). Requires `HostSessionRegistry.swift` to exist and to call every one of
+   the thirty-four `slopdesk_host_*` doors — a face that drops one has re-derived it. Bans the
+   relation declarations in `HostServer.swift` one at a time: `[MuxSessionKey:` (the channel→pane
+   map), `muxSubscriberIDs` (its partner, the pair that had to agree), `hookPaneIDsBySession`,
+   `projectObjectIDs` and `var controlSessions`. And requires `MuxChannelSession.swift` to carry
+   `let registrySlot`: object identity cannot cross, so every `===` guard is a question about that
+   number, and a session without one cannot be asked about.
 8. **one metadata verb, one performer** — LANDED as `hot_paths::one_metadata_verb_one_performer`
    (rule `one-metadata-verb-one-performer`). Requires `MetadataAdmission.swift` to exist and to call
    every one of the seven `slopdesk_metadata_*` doors. Bans a private counter or cap in

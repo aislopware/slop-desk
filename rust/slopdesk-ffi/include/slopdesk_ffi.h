@@ -3580,6 +3580,114 @@ uint32_t slopdesk_metadata_admission_cap(void);
 uint8_t slopdesk_metadata_performer(uint8_t verb);
 
 /* ---------------------------------------------------------------------------- *
+ * registry — which channel names which pane, and what a reap takes with it.
+ *
+ * A fanned-out pane is ONE session object under N channel keys, one per watching
+ * client. Every per-client event (a link drop, a peer channelClose, a laggard
+ * eviction) concerns exactly one of them; every end of life (a topology delete, a
+ * ctl kill, a deliberate close) concerns all of them. Getting that split wrong
+ * never crashes: an alias left behind keeps a dead pane in every enumeration,
+ * and an over-eager reap takes down the OTHER client's running agent.
+ *
+ * WHY IT IS A HANDLE.  Daemon-lifetime state, written from the accept loop, from
+ * each connection's receive loops, from a session's teardown ladder and from the
+ * workspace reconciler — all serialized by exactly ONE NSLock (HostServer.lock).
+ *
+ * HOW IDENTITY CROSSES.  A session object cannot, so it crosses as a SLOT: a
+ * uint64 from slopdesk_host_slot_mint(), minted once per object and carried for
+ * its life. Zero means "no such pane", so a live slot is never zero. Every
+ * identity-guarded action hostd spelled `===` — detach this key only while it
+ * still names THIS session, is this session attached anywhere else — is a
+ * question about slots, asked of the one table that holds the relation.
+ *
+ * ONE RECORD, NOT TWO MAPS.  A member is (key → slot, subscriber). The pair of
+ * dictionaries it replaces encoded the primary subscriber BY ABSENCE, so "not
+ * registered yet" and "is the pane's original channel" were the same missing
+ * entry, kept apart only by writing both maps in one critical section.
+ *
+ * THE TWO ARRAY CONVENTIONS.  A READ door answers the total either way and
+ * writes nothing unless the whole answer fits, so a caller that guessed short
+ * retries. A door that MUTATES refuses instead: it changes nothing and reports
+ * the size, because a mutation whose result was dropped cannot be replayed.
+ *
+ * WHAT DID NOT CROSS.  The objects and the sockets — MuxChannelSession,
+ * MuxNWConnection, WorkspaceChannelSession — and the slot→session dictionary
+ * that retains them. A map keyed by an id hostd already has is not a relation,
+ * it is the retention itself.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct { SlopDeskWsUuid connection; uint32_t channel; } SlopDeskHostKey;
+typedef struct {
+    SlopDeskHostKey key;
+    uint64_t slot;
+    uint64_t subscriber;
+} SlopDeskHostMember;
+typedef struct SlopDeskHostRegistry SlopDeskHostRegistry;
+
+uint64_t slopdesk_host_slot_mint(void);
+uint64_t slopdesk_host_primary_subscriber(void);
+
+SlopDeskHostRegistry *slopdesk_host_registry_new(void);
+void slopdesk_host_registry_free(SlopDeskHostRegistry *handle);
+
+void slopdesk_host_registry_attach(SlopDeskHostRegistry *handle, SlopDeskHostKey key,
+                                   uint64_t slot, SlopDeskWsUuid session, uint64_t subscriber);
+uint64_t slopdesk_host_registry_slot(SlopDeskHostRegistry *handle, SlopDeskHostKey key);
+bool slopdesk_host_registry_member(SlopDeskHostRegistry *handle, SlopDeskHostKey key,
+                                   SlopDeskHostMember *out);
+uint64_t slopdesk_host_registry_detach_key(SlopDeskHostRegistry *handle, SlopDeskHostKey key);
+bool slopdesk_host_registry_detach_key_if_slot(SlopDeskHostRegistry *handle, SlopDeskHostKey key,
+                                               uint64_t slot);
+size_t slopdesk_host_registry_keys_for_slot(SlopDeskHostRegistry *handle, uint64_t slot,
+                                            SlopDeskHostKey *out, size_t capacity);
+size_t slopdesk_host_registry_detach_slot(SlopDeskHostRegistry *handle, uint64_t slot,
+                                          SlopDeskHostKey *out, size_t capacity);
+bool slopdesk_host_registry_slot_is_attached(SlopDeskHostRegistry *handle, uint64_t slot);
+size_t slopdesk_host_registry_members_for_connection(SlopDeskHostRegistry *handle,
+                                                     SlopDeskWsUuid connection,
+                                                     SlopDeskHostMember *out, size_t capacity);
+size_t slopdesk_host_registry_detach_connection(SlopDeskHostRegistry *handle,
+                                                SlopDeskWsUuid connection,
+                                                SlopDeskHostMember *out, size_t capacity);
+size_t slopdesk_host_registry_members(SlopDeskHostRegistry *handle, SlopDeskHostMember *out,
+                                      size_t capacity);
+size_t slopdesk_host_registry_slots(SlopDeskHostRegistry *handle, uint64_t *out, size_t capacity);
+size_t slopdesk_host_registry_member_count(SlopDeskHostRegistry *handle);
+size_t slopdesk_host_registry_connection_count(SlopDeskHostRegistry *handle);
+bool slopdesk_host_registry_key_for(SlopDeskHostRegistry *handle, uint64_t slot,
+                                    uint64_t subscriber, SlopDeskHostKey *out);
+uint64_t slopdesk_host_registry_slot_elsewhere(SlopDeskHostRegistry *handle, SlopDeskWsUuid session,
+                                               SlopDeskHostKey excluding);
+uint64_t slopdesk_host_registry_slot_for_session(SlopDeskHostRegistry *handle,
+                                                 SlopDeskWsUuid session);
+size_t slopdesk_host_registry_drain_panes(SlopDeskHostRegistry *handle, uint64_t *out,
+                                          size_t capacity);
+
+void slopdesk_host_registry_attach_control(SlopDeskHostRegistry *handle, SlopDeskWsUuid session,
+                                           uint64_t slot);
+uint64_t slopdesk_host_registry_control_slot(SlopDeskHostRegistry *handle, SlopDeskWsUuid session);
+uint64_t slopdesk_host_registry_detach_control(SlopDeskHostRegistry *handle, SlopDeskWsUuid session);
+size_t slopdesk_host_registry_control_slots(SlopDeskHostRegistry *handle, uint64_t *out,
+                                            size_t capacity);
+size_t slopdesk_host_registry_drain_control(SlopDeskHostRegistry *handle, uint64_t *out,
+                                            size_t capacity);
+
+void slopdesk_host_registry_register_hook(SlopDeskHostRegistry *handle, SlopDeskWsUuid session,
+                                          const uint8_t *pane, size_t pane_len, uint64_t owner);
+size_t slopdesk_host_registry_hook_pane(SlopDeskHostRegistry *handle, SlopDeskWsUuid session,
+                                        uint8_t *out, size_t capacity);
+bool slopdesk_host_registry_rebind_hook(SlopDeskHostRegistry *handle, SlopDeskWsUuid session,
+                                        uint64_t owner);
+size_t slopdesk_host_registry_unregister_hook(SlopDeskHostRegistry *handle, SlopDeskWsUuid session,
+                                              uint64_t owner, uint8_t *out, size_t capacity);
+size_t slopdesk_host_registry_hook_count(SlopDeskHostRegistry *handle);
+
+void slopdesk_host_registry_project_id(SlopDeskHostRegistry *handle, const uint8_t *path,
+                                       size_t path_len, SlopDeskWsUuid candidate,
+                                       SlopDeskWsUuid *out);
+size_t slopdesk_host_registry_project_count(SlopDeskHostRegistry *handle);
+
+/* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
  * loop policies both ends of the wire were spelling twice.
  *

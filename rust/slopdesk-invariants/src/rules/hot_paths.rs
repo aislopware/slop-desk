@@ -47,6 +47,95 @@ const PERFORMERS: &[&str] = &[
     "Sources/SlopDeskHost/HostAndroidPerformer.swift",
 ];
 
+/// The face that holds the session objects and asks the far side every relation about them.
+const REGISTRY_FACE: &str = "Sources/SlopDeskHost/HostSessionRegistry.swift";
+
+/// Every door that face must keep asking. A face that stops asking one has re-derived it.
+const REGISTRY_DOORS: &[&str] = &[
+    "slopdesk_host_slot_mint",
+    "slopdesk_host_primary_subscriber",
+    "slopdesk_host_registry_new",
+    "slopdesk_host_registry_free",
+    "slopdesk_host_registry_attach",
+    "slopdesk_host_registry_slot",
+    "slopdesk_host_registry_member",
+    "slopdesk_host_registry_detach_key",
+    "slopdesk_host_registry_detach_key_if_slot",
+    "slopdesk_host_registry_keys_for_slot",
+    "slopdesk_host_registry_detach_slot",
+    "slopdesk_host_registry_slot_is_attached",
+    "slopdesk_host_registry_members_for_connection",
+    "slopdesk_host_registry_detach_connection",
+    "slopdesk_host_registry_members",
+    "slopdesk_host_registry_slots",
+    "slopdesk_host_registry_member_count",
+    "slopdesk_host_registry_connection_count",
+    "slopdesk_host_registry_key_for",
+    "slopdesk_host_registry_slot_elsewhere",
+    "slopdesk_host_registry_slot_for_session",
+    "slopdesk_host_registry_drain_panes",
+    "slopdesk_host_registry_attach_control",
+    "slopdesk_host_registry_control_slot",
+    "slopdesk_host_registry_detach_control",
+    "slopdesk_host_registry_control_slots",
+    "slopdesk_host_registry_drain_control",
+    "slopdesk_host_registry_register_hook",
+    "slopdesk_host_registry_hook_pane",
+    "slopdesk_host_registry_rebind_hook",
+    "slopdesk_host_registry_unregister_hook",
+    "slopdesk_host_registry_hook_count",
+    "slopdesk_host_registry_project_id",
+    "slopdesk_host_registry_project_count",
+];
+
+/// One relation, one table — and one identity to ask it about
+///
+/// A fanned-out pane is ONE `MuxChannelSession` under N channel keys, so every event is either
+/// about one member or about all of them. hostd told the two apart with seven dictionaries, of
+/// which two had to be written in the same critical section to stay in agreement: a key with no
+/// subscriber entry MEANT the pane's original channel, so "not registered yet" and "is the primary"
+/// were the same missing entry. The identity questions on top of that — remove this key only while
+/// it still names THIS session, is this session attached anywhere else, does this teardown still
+/// own the hook sink — were `===` against objects a second reader could not see.
+///
+/// The relations are `rust/slopdesk-muxsession`'s `registry` now, and this pins the three halves
+/// that keep them one implementation: the face asks every door, hostd keeps no relation of its own
+/// beside them, and a session carries the minted slot that IS its identity over there. The objects
+/// stay — a dictionary keyed by an id hostd already has is retention, not a relation.
+#[must_use]
+pub fn one_relation_one_table(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: REGISTRY_FACE,
+            message: "Sources/SlopDeskHost/HostSessionRegistry.swift is gone — which channel names which \
+                      pane is not HostServer's to re-derive (docs/59 §5, step 7)",
+        },
+        Claim::Doors {
+            path: REGISTRY_FACE,
+            entries: REGISTRY_DOORS,
+            message: "Sources/SlopDeskHost/HostSessionRegistry.swift no longer calls {entry} — a face that \
+                      drops a door is a relation growing back beside the table that owns it",
+        },
+        Claim::NoneOf {
+            paths: &[HOST_SERVER],
+            pattern: r"\[MuxSessionKey:|muxSubscriberIDs|hookPaneIDsBySession|projectObjectIDs|var controlSessions",
+            view: View::Code,
+            message: "{files} keeps its own channel→pane, subscriber, hook-sink or project-id map — two \
+                      maps that must agree is one invariant nobody can state, which is why they are one \
+                      record on the far side (docs/59 §5, step 7)",
+        },
+        Claim::Matches {
+            path: SESSION,
+            pattern: r"let registrySlot",
+            view: View::Code,
+            message: "Sources/SlopDeskHost/MuxChannelSession.swift stopped carrying its registry slot — \
+                      object identity cannot cross, so every `===` guard hostd makes is a question about \
+                      that number and a session without one cannot be asked about",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 /// One regex engine meets the untrusted rows, and it does not backtrack
 ///
 /// Hint Mode ran ten compiled `NSRegularExpressions` over rows a remote program wrote, bridged
@@ -719,6 +808,63 @@ mod tests {
         for path in super::PERFORMERS {
             fixture.write(path, "    static func response(...) -> WireMessage {\n");
         }
+    }
+
+    /// Every door the registry face must keep asking, as a fixture body.
+    fn registry_doors() -> String {
+        let mut body = String::new();
+        for door in super::REGISTRY_DOORS {
+            body.push_str(door);
+            body.push_str("()\n");
+        }
+        body
+    }
+
+    /// A tree where the relations live on one side and the session carries its identity.
+    fn write_one_relation_one_table(fixture: &Fixture) {
+        fixture
+            .write(super::REGISTRY_FACE, &registry_doors())
+            .write(super::HOST_SERVER, "kept so the bans have a haystack\n")
+            .write(
+                super::SESSION,
+                "    let registrySlot: UInt64 = HostSessionRegistry.mintSlot()\n",
+            );
+    }
+
+    #[test]
+    fn one_relation_one_table_keeps_the_relations_on_one_side() {
+        let fixture = Fixture::new("one-relation-one-table");
+        write_one_relation_one_table(&fixture);
+        assert!(super::one_relation_one_table(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a relation grew back beside the table that owns it.
+        fixture.write(super::REGISTRY_FACE, "slopdesk_host_registry_new()\n");
+        assert!(!super::one_relation_one_table(&fixture.tree()).is_clean());
+        write_one_relation_one_table(&fixture);
+
+        // Each banned map, one at a time: the pair that had to agree, and the two id maps.
+        for drift in [
+            "    private var muxSessions: [MuxSessionKey: MuxChannelSession] = [:]\n",
+            "    private var muxSubscriberIDs: [MuxSessionKey: MuxSubscriberID] = [:]\n",
+            "    private var hookPaneIDsBySession: [UUID: HookSinkRegistration] = [:]\n",
+            "    private var projectObjectIDs: [String: UUID] = [:]\n",
+            "    private var controlSessions: [UUID: MuxChannelSession] = [:]\n",
+        ] {
+            fixture.write(super::HOST_SERVER, drift);
+            assert!(
+                !super::one_relation_one_table(&fixture.tree()).is_clean(),
+                "the ban missed {drift}",
+            );
+            write_one_relation_one_table(&fixture);
+        }
+
+        // The session dropped the identity every guard is a question about.
+        fixture.write(super::SESSION, "final class MuxChannelSession {\n");
+        assert!(!super::one_relation_one_table(&fixture.tree()).is_clean());
+
+        // A bare tree has no face at all.
+        let bare = Fixture::new("one-relation-one-table-bare");
+        assert!(!super::one_relation_one_table(&bare.tree()).is_clean());
     }
 
     #[test]

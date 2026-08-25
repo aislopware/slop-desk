@@ -60,6 +60,15 @@ final class MuxChannelSession: @unchecked Sendable {
     /// shell. Immutable after init.
     private(set) var sessionID: UUID
 
+    /// This object's identity where objects cannot go: the slot ``HostSessionRegistry`` files every
+    /// relation about this session under.
+    ///
+    /// Minted per OBJECT, not per session id — the detach window can mint a fresh session under an
+    /// id whose predecessor is still winding down, and every identity guard hostd spells `===`
+    /// (remove this key only while it still names THIS session; does this teardown still own the
+    /// hook sink) is that distinction. Unique for the life of the process and never zero.
+    let registrySlot: UInt64 = HostSessionRegistry.mintSlot()
+
     /// Whether this session is currently in the detached state (client gone, shell alive).
     /// Guarded by `taskLock`. A detached session must NOT be `shutdown()`'d — use
     /// ``detach()`` / ``shutdownDetached()`` from ``DetachedSessionStore.evict`` paths.

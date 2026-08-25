@@ -17,7 +17,7 @@ import SlopDeskTransport
 /// alive (keep-alive); a peer `channelClose` or link drop reaps it (no per-channel reconnect/resume
 /// yet). The daemon never kills a shell on a transient client disconnect.
 ///
-/// `@unchecked Sendable`: mutable state (`muxSessions`, `acceptTasks`) is guarded by `lock`.
+/// `@unchecked Sendable`: mutable state (``HostSessionRegistry``, `acceptTasks`) is guarded by `lock`.
 public final class HostServer: @unchecked Sendable {
     /// Requested TCP port (`0` lets the OS pick; read the result from ``boundPort()``).
     public let port: UInt16
@@ -119,10 +119,19 @@ public final class HostServer: @unchecked Sendable {
     /// message naming `make superd-install` rather than silently opening dead panes.
     let supervisor = SupervisorClient()
 
-    /// Agent-control: standalone sessions spawned by the `spawn` verb (no client connection).
-    /// Keyed by `sessionID` (UUID), guarded by `lock`.  Drained on `stop()` alongside
-    /// `muxSessions` so no orphan PTY outlives the daemon.
-    private var controlSessions: [UUID: MuxChannelSession] = [:]
+    /// Every relation hostd keeps about its live panes, guarded by `lock` (docs/59 step 7).
+    ///
+    /// ⚠️ The channel key is a COMPOSITE, not `channelID` alone: every connection allocates
+    /// `channelID` 1 for its first pane (``ChannelTable/allocate()`` starts at 1 per connection), so
+    /// a channelID-only key made connection B's `channelOpen(1)` silently OVERWRITE connection A's
+    /// live session at `1` (orphaning A's PTY/master-fd), and made A's close-hook shut DOWN B's live
+    /// pane. Namespacing by the per-connection identity gives each connection its own keyspace.
+    ///
+    /// Several keys name ONE session under a fan-out, so every per-client action — a link drop, a
+    /// peer `channelClose`, an eviction — names the ONE member it concerns, while a reap takes every
+    /// alias. It also holds the standalone `ctl`-spawned panes (which have no channel), each
+    /// session's agent-hook sink, and the minted project document ids.
+    private let sessions = HostSessionRegistry()
 
     /// Server-level cross-pane `agent_status_changed` observers, keyed by a
     /// per-subscription `UUID`, guarded by `agentStatusObserversLock`. Each ``MuxChannelSession``
@@ -141,27 +150,6 @@ public final class HostServer: @unchecked Sendable {
         _ ts: Double,
     ) -> Void] = [:]
 
-    /// Live per-channel mux sessions, keyed by `(connectionID, channelID)`, guarded by `lock`.
-    ///
-    /// ⚠️ The key is the COMPOSITE, not `channelID` alone: every distinct client connection
-    /// allocates `channelID` 1 for its first pane (``ChannelTable/allocate()`` starts at 1 per
-    /// connection), so a channelID-only key made connection B's `channelOpen(1)` silently
-    /// OVERWRITE connection A's live session at `1` (orphaning A's PTY/master-fd), and made A's
-    /// close-hook `removeMuxSession(1)` shut DOWN B's live pane — cross-shutting a different
-    /// client. Namespacing by the per-connection identity gives each connection its own keyspace.
-    private var muxSessions: [MuxSessionKey: MuxChannelSession] = [:]
-
-    /// Which SUBSCRIBER of its session each live key is, guarded by `lock`.
-    ///
-    /// Several keys map to ONE `MuxChannelSession`, and every per-client action — a link drop, a
-    /// peer `channelClose`, an eviction — has to name the ONE member it concerns rather than the
-    /// session. A key with no entry is the pane's original
-    /// channel (``MuxChannelSession/primarySubscriberID``), and that is the ONLY thing a missing
-    /// entry may mean: a JOIN writes its entry in the same critical section that writes
-    /// `muxSessions` (``registerJoiningKeyLocked(_:key:)``), so no key is ever briefly
-    /// indistinguishable from the primary.
-    private var muxSubscriberIDs: [MuxSessionKey: MuxSubscriberID] = [:]
-
     /// Accepted shared mux connections, keyed by their stable `connectionID`, guarded by `lock`.
     /// The host must RETAIN every accepted ``MuxNWConnection`` so it can `close()` it —
     /// cancelling its 2 receive loops + 2 `NWConnection`s/sockets — on ``stop()`` or link drop.
@@ -179,27 +167,6 @@ public final class HostServer: @unchecked Sendable {
     /// REFUSES the channel once stopping, so no orphan PTY is minted past shutdown. Monotonic; guarded
     /// by `lock`.
     private var stopping = false
-
-    /// The ORIGINAL hook-routing pane id per live session, keyed by the session's stable
-    /// `sessionID`, guarded by `lock`. The pane id is exported ONCE into the child env as
-    /// `SLOPDESK_PANE_ID` at fresh spawn and is immutable for the shell's life — the agent's
-    /// hook POSTs are forever tagged with it, so the ``AgentHookListener`` sink key must stay
-    /// pinned to this original id across every detach/reattach cycle (a per-reattach
-    /// new-connection key would both leak one dead sink per cycle and never route). Entries
-    /// are removed on every end of life: deliberate close (``removeMuxSession``), detached exit,
-    /// TTL/overflow eviction (``DetachedSessionStore/onEvicted``), and the failed-rebind
-    /// dead-child reap.
-    private var hookPaneIDsBySession: [UUID: HookSinkRegistration] = [:]
-
-    /// One session's hook-sink routing entry. `owner` (the registering session's object
-    /// identity) makes teardown IDENTITY-GUARDED: a stale end-of-life for a same-UUID ghost —
-    /// the detach-window race can mint a fresh session under a sessionID whose predecessor is
-    /// still winding down — must never remove the entry the live successor just registered
-    /// (the successor's agent-status hook POSTs would silently stop routing forever).
-    private struct HookSinkRegistration {
-        let paneID: String
-        let owner: ObjectIdentifier
-    }
 
     /// The resolved effective TERM, guarded by `lock`. The host's terminfo state does not change
     /// during a session, so the search — which reads directories and may run `infocmp` — happens
@@ -327,15 +294,6 @@ public final class HostServer: @unchecked Sendable {
 
     private var workspaceReconcileTask: Task<Void, Never>?
 
-    /// Stable document object ids for projects, keyed by the project's absolute toplevel path and
-    /// guarded by `lock`.
-    ///
-    /// MINTED, not hashed. docs/45 §5.3 proposed `UUIDv5(projectKey)`, which would need a SHA-1 this
-    /// target does not otherwise link. A minted id is exact where a hash is merely unlikely to
-    /// collide, and its only cost — a different id after a restart — is invisible: a restart mints a
-    /// new `epoch`, every client resets and re-snapshots, and `project/key` carries the actual path,
-    /// which is what the client joins on.
-    private var projectObjectIDs: [String: UUID] = [:]
     /// Depth-1 coalescing for the reconciler: a kick arriving while one runs sets the "again" flag
     /// instead of stacking another pass. Guarded by `lock`.
     private var workspaceReconcileInFlight = false
@@ -449,9 +407,9 @@ public final class HostServer: @unchecked Sendable {
         repoWatcher.push = { [weak self] status in
             guard let self else { return }
             lock.lock()
-            let sessions = Self.distinct(muxSessions.values) + Array(controlSessions.values)
+            let live = sessions.liveSessions + sessions.controlSessions
             lock.unlock()
-            for session in sessions { session.pushProjectGitStatusIfMatching(status) }
+            for session in live { session.pushProjectGitStatusIfMatching(status) }
             // …and into the document, keyed by PROJECT. Type 35 keeps pushing as the fast path; this
             // is the retained value, so a client that has never seen this host renders the git line
             // from the snapshot instead of waiting for the next FSEvents edge to fire.
@@ -515,13 +473,16 @@ public final class HostServer: @unchecked Sendable {
     }
 
     /// The document object id for a project path, minting one on first sight.
+    ///
+    /// MINTED, not hashed. docs/45 §5.3 proposed `UUIDv5(projectKey)`, which would need a SHA-1 this
+    /// target does not otherwise link. A minted id is exact where a hash is merely unlikely to
+    /// collide, and its only cost — a different id after a restart — is invisible: a restart mints a
+    /// new `epoch`, every client resets and re-snapshots, and `project/key` carries the actual path,
+    /// which is what the client joins on.
     func projectObjectID(forKey key: String) -> UUID {
         lock.lock()
         defer { lock.unlock() }
-        if let existing = projectObjectIDs[key] { return existing }
-        let minted = UUID()
-        projectObjectIDs[key] = minted
-        return minted
+        return sessions.projectID(for: key, mint: UUID.init)
     }
 
     /// Publishes one repo's git summary into the document.
@@ -746,7 +707,7 @@ public final class HostServer: @unchecked Sendable {
     /// shell superd had just listed as alive. Those panes are counted, logged and left; the
     /// reconnect ladder (``scheduleSupervisorReattach(after:)``) comes back for them.
     ///
-    /// Both maps are walked. A ctl-spawned standalone pane lives only in `controlSessions`, and
+    /// Both inventories are walked. A ctl-spawned standalone pane holds no channel, and
     /// leaving it out meant its stream was never re-opened AND it was never declared gone: `read`
     /// returned nothing forever, `wait` blocked to its timeout every time, and the entry leaked for
     /// the daemon's life because `removeControlSession` runs off an exit that could no longer come.
@@ -754,10 +715,10 @@ public final class HostServer: @unchecked Sendable {
     /// A no-op on the first connect, when there are no sessions yet.
     private func resubscribeSupervisedOutput() {
         lock.lock()
-        let live = Self.distinct(muxSessions.values) + Self.distinct(controlSessions.values)
+        let live = sessions.liveSessions + sessions.controlSessions
         lock.unlock()
-        let sessions = Self.distinct(live + (detachedStore?.allSessions() ?? []))
-        guard !sessions.isEmpty else { return }
+        let all = Self.distinct(live + (detachedStore?.allSessions() ?? []))
+        guard !all.isEmpty else { return }
 
         var supervised: Set<String>?
         do {
@@ -774,7 +735,7 @@ public final class HostServer: @unchecked Sendable {
         var resumed = 0
         var vanished = 0
         var unknown = 0
-        for session in sessions {
+        for session in all {
             guard let paneID = session.pty.paneID else { continue }
             // `nil` = superd was never asked. Only an actual answer that omits the pane is proof.
             let listed = supervised?.contains(paneID)
@@ -925,7 +886,7 @@ public final class HostServer: @unchecked Sendable {
     /// the maps are drained — after that there is nothing left to enumerate.
     private func notePanesThisProcessIsLettingGo() {
         lock.lock()
-        let live = Self.distinct(muxSessions.values) + Self.distinct(controlSessions.values)
+        let live = sessions.liveSessions + sessions.controlSessions
         lock.unlock()
         let ids = (live + (detachedStore?.allSessions() ?? [])).compactMap(\.pty.paneID)
         guard !ids.isEmpty else { return }
@@ -1328,12 +1289,10 @@ public final class HostServer: @unchecked Sendable {
     /// Synchronously removes and returns every live mux channel session (no `await` across the lock).
     private func drainMuxSessions() -> [MuxChannelSession] {
         lock.lock()
-        // DEDUPED by object identity: under a fan-out N keys alias ONE session, and returning it N
-        // times would fire N `fanAgentTeardown` calls against a strictly-balanced prevent-sleep
-        // counter and N shutdowns of the same PTY.
-        let live = Self.distinct(muxSessions.values)
-        muxSessions.removeAll()
-        muxSubscriberIDs.removeAll()
+        // DEDUPED: under a fan-out N keys alias ONE session, and returning it N times would fire N
+        // `fanAgentTeardown` calls against a strictly-balanced prevent-sleep counter and N shutdowns
+        // of the same PTY.
+        let live = sessions.drainPanes()
         lock.unlock()
         // The map is now empty → report 0 distinct client connections (the `stop()` path).
         onConnectionCountChanged?(0)
@@ -1344,8 +1303,7 @@ public final class HostServer: @unchecked Sendable {
     /// in parallel (same pattern as `drainMuxSessions()`). NSLock is unavailable from async `stop()`.
     private func drainControlSessions() -> [MuxChannelSession] {
         lock.lock()
-        let live = Array(controlSessions.values)
-        controlSessions.removeAll()
+        let live = sessions.drainControl()
         lock.unlock()
         return live
     }
@@ -1409,9 +1367,7 @@ public final class HostServer: @unchecked Sendable {
     func reresolveSizePassivity(connectionID: UUID) {
         let passive = sizePassiveForConnection(connectionID)
         lock.lock()
-        let members = muxSessions
-            .filter { $0.key.connectionID == connectionID }
-            .map { (session: $0.value, subscriber: muxSubscriberIDs[$0.key] ?? MuxChannelSession.primarySubscriberID) }
+        let members = sessions.members(on: connectionID)
         lock.unlock()
         for member in members {
             member.session.addResizeContributor(member.subscriber, sizePassive: passive)
@@ -1463,15 +1419,15 @@ public final class HostServer: @unchecked Sendable {
     /// Every pane the host knows about, split by how live it is.
     ///
     /// The three inventories are disjoint by construction — `detachMuxSession` removes from
-    /// `muxSessions` before inserting into the store, and `claim` removes before the reattach
+    /// the registry before inserting into the store, and `claim` removes before the reattach
     /// re-registers — the same argument `listPanesForControl()` relies on. `detachedStore` is read
     /// OUTSIDE `lock`: the store takes its own, and the nesting contract is one-way.
     func paneSessionsForWorkspace() -> (attachedToClient: [MuxChannelSession], unattached: [MuxChannelSession]) {
         lock.lock()
         // DEDUPED: N keys can alias one session under a fan-out, and a pane listed twice would be
         // captured twice by the workspace reconcile.
-        let mux = Self.distinct(muxSessions.values)
-        let ctrl = Array(controlSessions.values)
+        let mux = sessions.liveSessions
+        let ctrl = sessions.controlSessions
         lock.unlock()
         return (mux, ctrl + (detachedStore?.allSessions() ?? []))
     }
@@ -1489,18 +1445,16 @@ public final class HostServer: @unchecked Sendable {
     /// and this file's one-way nesting contract keeps `lock` off that path.
     func paneRosterRecords() -> [WorkspaceRosterPane] {
         lock.lock()
-        // ONE record per PANE, whoever many clients hold it: the join from a SUBSCRIBER to a
-        // connection is `muxSubscriberIDs` (a key with no entry is the pane's original channel), so
-        // a fanned-out pane publishes one row carrying one attachment per watching device rather
-        // than N duplicate rows the diff would read as churn.
-        var connectionBySubscriber: [ObjectIdentifier: [MuxSubscriberID: UUID]] = [:]
-        for (key, session) in muxSessions {
-            let subscriber = muxSubscriberIDs[key] ?? MuxChannelSession.primarySubscriberID
-            connectionBySubscriber[ObjectIdentifier(session), default: [:]][subscriber] =
-                key.connectionID
+        // ONE record per PANE, however many clients hold it: a member carries the subscriber it
+        // rides, so a fanned-out pane publishes one row with one attachment per watching device
+        // rather than N duplicate rows the diff would read as churn.
+        var connectionBySubscriber: [UInt64: [MuxSubscriberID: UUID]] = [:]
+        for member in sessions.members {
+            connectionBySubscriber[member.session.registrySlot, default: [:]][member.subscriber] =
+                member.key.connectionID
         }
-        let attached = Self.distinct(muxSessions.values)
-        let ctrl = Array(controlSessions.values)
+        let attached = sessions.liveSessions
+        let ctrl = sessions.controlSessions
         let identities = workspaceChannels.mapValues(\.clientInstanceID)
         lock.unlock()
 
@@ -1508,7 +1462,7 @@ public final class HostServer: @unchecked Sendable {
         records.reserveCapacity(attached.count + ctrl.count)
         for session in attached {
             let grid = session.resolvedGridForWorkspace
-            let connections = connectionBySubscriber[ObjectIdentifier(session)] ?? [:]
+            let connections = connectionBySubscriber[session.registrySlot] ?? [:]
             records.append(WorkspaceRosterPane(
                 paneID: session.sessionID,
                 resolvedCols: grid.cols,
@@ -1601,7 +1555,7 @@ public final class HostServer: @unchecked Sendable {
     private func emitConnectionCount() {
         guard let hook = onConnectionCountChanged else { return }
         lock.lock()
-        let count = Set(muxSessions.keys.map(\.connectionID)).count
+        let count = sessions.connectionCount
         lock.unlock()
         hook(count)
     }
@@ -1624,8 +1578,8 @@ public final class HostServer: @unchecked Sendable {
     /// - otherwise → re-park it (tmux semantics: the running agent survives, claimable again).
     private func recoverFailedRebind(session: MuxChannelSession, key: MuxSessionKey) {
         lock.lock()
-        if muxSessions[key] === session { muxSessions[key] = nil }
-        let attachedElsewhere = muxSessions.contains { $0.value === session }
+        sessions.detach(key, ifNames: session)
+        let attachedElsewhere = sessions.isAttached(session)
         let parked = detachedStore?.contains(session.sessionID) ?? false
         lock.unlock()
         if attachedElsewhere || parked { return }
@@ -1648,10 +1602,9 @@ public final class HostServer: @unchecked Sendable {
 
     /// Every DISTINCT session in `values`, first-seen order stabilised by object identity.
     ///
-    /// `muxSessions` is keyed per CHANNEL, and a fanned-out pane is one session under N keys. Every
-    /// reader that means "the panes" rather than "the attachments" has to collapse that, or the
-    /// same PTY is shut down N times, teardown-fanned N times against a strictly-balanced
-    /// prevent-sleep counter, and listed N times to an orchestrator.
+    /// ``HostSessionRegistry`` already collapses the fan-out for the panes it holds; this is for the
+    /// one reader that CONCATENATES two inventories — the live panes and the detached store — where
+    /// a session can legitimately appear in both across a claim.
     private static func distinct(
         _ values: some Sequence<MuxChannelSession>,
     ) -> [MuxChannelSession] {
@@ -1667,7 +1620,7 @@ public final class HostServer: @unchecked Sendable {
     public func liveSessionIDs() -> [UUID] {
         lock.lock()
         defer { lock.unlock() }
-        return Array(Set(muxSessions.keys.map(\.connectionID)))
+        return Array(Set(sessions.members.map(\.key.connectionID)))
     }
 
     // MARK: New mux connection / channel
@@ -1677,7 +1630,7 @@ public final class HostServer: @unchecked Sendable {
     ///
     /// Both handlers CAPTURE this connection's stable `connectionID`, so `spawnMuxChannel` /
     /// `removeMuxSession` only ever touch the OWNING connection's sessions in the composite-keyed
-    /// `muxSessions` map. Without the capture, a `channelID`-only key let one connection's
+    /// registry. Without the capture, a `channelID`-only key let one connection's
     /// close-hook resolve (and shut) a DIFFERENT connection's live session, because every
     /// connection allocates `channelID` 1 for its first pane.
     private func handleNewMuxConnection(_ connection: MuxNWConnection) async {
@@ -1752,16 +1705,17 @@ public final class HostServer: @unchecked Sendable {
         let isStopping = stopping
         // Idempotency (defense-in-depth with the `isNewChannel` gate in `MuxNWConnection.route`): a
         // duplicate/retransmitted `channelOpen` must NOT spawn a SECOND PTY and overwrite the live
-        // session in `muxSessions`, orphaning the first PTY + master fd + reaper thread.
+        // session this key already names, orphaning the first PTY + master fd + reaper thread.
         //
         // Same sessionID live under a DIFFERENT composite key is the JOIN — a pane is shared, never
         // handed over and never duplicated. The invariant is about the SHELL: exactly one
         // `openpty()` + `fork()` per sessionID, ever.
-        let liveElsewhere: MuxChannelSession? = (!isStopping && muxSessions[key] == nil && hasRealSessionID)
-            ? muxSessions.first { $0.key != key && $0.value.sessionID == open.sessionID }?.value
+        let held = sessions[key]
+        let liveElsewhere: MuxChannelSession? = (!isStopping && held == nil && hasRealSessionID)
+            ? sessions.session(open.sessionID, liveExcluding: key)
             : nil
         let incumbent: MuxOpenRouter.Incumbent =
-            if muxSessions[key] != nil { .thisKey } else if liveElsewhere != nil { .otherKey } else { .none }
+            if held != nil { .thisKey } else if liveElsewhere != nil { .otherKey } else { .none }
         let route = MuxOpenRouter.route(
             channelClass: open.channelClass,
             incumbent: incumbent,
@@ -1788,15 +1742,15 @@ public final class HostServer: @unchecked Sendable {
         var reapedDeadChild: MuxChannelSession?
         // A key that JOINED must never also take the claim — the router's precedence is what
         // guarantees it, because `.join` and `.claim` are different verdicts of one answer. Two
-        // separate gates here is how the `muxSessions[key] = session` below could have overwritten
-        // the registration `registerJoiningKeyLocked` just wrote.
+        // separate gates here is how the `sessions.attach` below could have overwritten the
+        // registration `registerJoiningKeyLocked` just wrote.
         var settled = MuxOpenRouter.Settled.spawnFresh
         if route == .claim, let store = detachedStore {
             switch store.claim(open.sessionID) {
             case let .claimed(session):
                 settled = MuxOpenRouter.settle(.claimed)
                 claimed = session
-                muxSessions[key] = session
+                sessions.attach(key, session: session)
             case let .reapedDeadChild(session):
                 settled = MuxOpenRouter.settle(.reapedDeadChild)
                 reapedDeadChild = session
@@ -1934,12 +1888,12 @@ public final class HostServer: @unchecked Sendable {
     /// Registers a JOINING key against the session it is about to join AND reserves the member id
     /// that join will use — both under the caller's `lock`, so the pair is installed atomically.
     ///
-    /// Recording the id only after the async join returned left a window in which `muxSessions` knew
-    /// the key but `muxSubscriberIDs` did not: every per-client path (`handleLinkDown`,
-    /// `leavePaneChannel`, `channelKey(for:subscriber:)`) falls back to
-    /// ``MuxChannelSession/primarySubscriberID`` for an unknown key, so a joiner whose link died
-    /// mid-state-transfer retired the INCUMBENT — and, if that was the pane's only member, parked a
-    /// session whose client was still connected.
+    /// Recording the id only after the async join returned left a window in which the key was
+    /// registered but its subscriber was not: every per-client path (`handleLinkDown`,
+    /// `leavePaneChannel`, `channelKey(for:subscriber:)`) reads an unregistered key as the pane's
+    /// primary, so a joiner whose link died mid-state-transfer retired the INCUMBENT — and, if that
+    /// was the pane's only member, parked a session whose client was still connected. The two are
+    /// ONE record now, so the pair cannot come apart.
     ///
     /// - Precondition: the caller holds `lock`.
     private func registerJoiningKeyLocked(
@@ -1947,16 +1901,14 @@ public final class HostServer: @unchecked Sendable {
         key: MuxSessionKey,
     ) -> MuxSubscriberID {
         let id = session.reserveSubscriberID()
-        muxSessions[key] = session
-        muxSubscriberIDs[key] = id
+        sessions.attach(key, session: session, subscriber: id)
         return id
     }
 
     /// Drops a join registration that never completed, iff the key still names `session`.
     private func unregisterJoinKey(_ key: MuxSessionKey, ifStill session: MuxChannelSession) {
         lock.lock()
-        if muxSessions[key] === session { muxSessions[key] = nil }
-        muxSubscriberIDs[key] = nil
+        sessions.detach(key, ifNames: session)
         lock.unlock()
     }
 
@@ -2213,7 +2165,7 @@ public final class HostServer: @unchecked Sendable {
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
         }
-        muxSessions[key] = session
+        sessions.attach(key, session: session)
         lock.unlock()
         emitConnectionCount()
         session.startRelay()
@@ -2266,7 +2218,7 @@ public final class HostServer: @unchecked Sendable {
     /// paths (mux channel and ctl) compute it the same way, which is a change: the mux path used to
     /// derive it from `(connectionID, channelID)` and so needed a second overload here.
     ///
-    /// Recorded in ``hookPaneIDsBySession`` so reattach can refresh it
+    /// Recorded in ``HostSessionRegistry`` so reattach can refresh it
     /// (``refreshHookSinkOnReattach(session:)``), never re-key, and every end of life can
     /// unregister it (``unregisterHookSink(session:)``).
     private func registerHookSink(session: MuxChannelSession) {
@@ -2277,8 +2229,7 @@ public final class HostServer: @unchecked Sendable {
     private func registerHookSink(session: MuxChannelSession, paneID: String) {
         guard let agentHookListener else { return }
         lock.lock()
-        hookPaneIDsBySession[session.sessionID] =
-            HookSinkRegistration(paneID: paneID, owner: ObjectIdentifier(session))
+        sessions.registerHook(session: session, paneID: paneID)
         lock.unlock()
         agentHookListener.register(paneID: paneID) { [weak session] bytes in
             session?.ingestAgentHookRecord(bytes)
@@ -2293,16 +2244,13 @@ public final class HostServer: @unchecked Sendable {
     private func refreshHookSinkOnReattach(session: MuxChannelSession) {
         guard let agentHookListener else { return }
         lock.lock()
-        // A reattach continues the SAME session object, so ownership transfers with it —
-        // re-point the entry's owner (the registration is keyed by the immutable env-baked
-        // paneID either way; only the teardown identity-guard reads `owner`).
-        let registration = hookPaneIDsBySession[session.sessionID].map {
-            HookSinkRegistration(paneID: $0.paneID, owner: ObjectIdentifier(session))
-        }
-        if let registration { hookPaneIDsBySession[session.sessionID] = registration }
+        // A reattach continues the SAME session object, so ownership transfers with it — re-point
+        // the entry's owner (the registration is keyed by the immutable env-baked paneID either
+        // way; only the teardown identity-guard reads the owner).
+        let paneID = sessions.rebindHook(session: session)
         lock.unlock()
-        guard let registration else { return } // hooks were off at spawn — nothing routes to this pane
-        agentHookListener.register(paneID: registration.paneID) { [weak session] bytes in
+        guard let paneID else { return } // hooks were off at spawn — nothing routes to this pane
+        agentHookListener.register(paneID: paneID) { [weak session] bytes in
             session?.ingestAgentHookRecord(bytes)
         }
     }
@@ -2314,15 +2262,12 @@ public final class HostServer: @unchecked Sendable {
     /// session is parked, or a detached window's status goes stale. Idempotent.
     /// IDENTITY-GUARDED: removes the entry only while it is still OWNED by `session` — a stale
     /// teardown for a same-UUID ghost stands down instead of dropping the key its live
-    /// successor re-registered (see ``HookSinkRegistration``).
+    /// successor re-registered.
     private func unregisterHookSink(session: MuxChannelSession) {
         lock.lock()
-        let sessionID = session.sessionID
-        let registration = hookPaneIDsBySession[sessionID]
-        let owned = registration?.owner == ObjectIdentifier(session)
-        if owned { hookPaneIDsBySession.removeValue(forKey: sessionID) }
+        let paneID = sessions.unregisterHook(session: session)
         lock.unlock()
-        if owned, let registration { agentHookListener?.unregister(paneID: registration.paneID) }
+        if let paneID { agentHookListener?.unregister(paneID: paneID) }
     }
 
     /// Resolves the effective `TERM` for a new PTY against the host's terminfo database, logging
@@ -2367,29 +2312,21 @@ public final class HostServer: @unchecked Sendable {
             // Snapshot the live sessions belonging to this connection, remove them from the
             // live map (so a racing channelOpen won't see them as "alreadyLive"), then leave.
             lock.lock()
-            let keysToDetach = muxSessions.keys.filter { $0.connectionID == connectionID }
-            var sessionsToDetach: [(MuxSessionKey, MuxSubscriberID, MuxChannelSession)] = []
-            for k in keysToDetach {
-                if let s = muxSessions.removeValue(forKey: k) {
-                    let subscriber = muxSubscriberIDs.removeValue(forKey: k)
-                        ?? MuxChannelSession.primarySubscriberID
-                    sessionsToDetach.append((k, subscriber, s))
-                }
-            }
+            let leaving = sessions.detachAll(on: connectionID)
             lock.unlock()
-            if !sessionsToDetach.isEmpty { emitConnectionCount() }
+            if !leaving.isEmpty { emitConnectionCount() }
             // Retire each of THIS connection's members, and park the session only when its LAST one
             // is gone. Detaching per key would let one client closing its lid engage the 64 MiB
             // offline gate — which pauses the PTY drain — while the other client is still watching:
             // its pane goes dead-quiet while the shell keeps producing, and the drain's wake
             // continuation is nil'd, so not even a later chunk could re-wake it.
-            for (key, subscriber, session) in sessionsToDetach {
-                guard session.removeSubscriber(subscriber) else { continue }
-                detachMuxSession(key: key, session: session)
+            for member in leaving {
+                guard member.session.removeSubscriber(member.subscriber) else { continue }
+                detachMuxSession(key: member.key, session: member.session)
             }
             // `attached` → `detached` is a visible fact: the remaining clients render the pane as
             // running with nobody watching, rather than as still held by the client that just died.
-            if !sessionsToDetach.isEmpty { noteWorkspaceFactChanged() }
+            if !leaving.isEmpty { noteWorkspaceFactChanged() }
         }
         // Always reap the connection itself (frees sockets + receive tasks + retain cycle).
         removeMuxConnection(connectionID)
@@ -2403,15 +2340,14 @@ public final class HostServer: @unchecked Sendable {
     /// rules out. Idempotent — a key already gone is a no-op.
     private func leavePaneChannel(_ key: MuxSessionKey) {
         lock.lock()
-        let session = muxSessions[key]
-        let subscriber = muxSubscriberIDs[key] ?? MuxChannelSession.primarySubscriberID
+        let session = sessions[key]
+        let subscriber = sessions.subscriber(of: key)
         lock.unlock()
         guard let session else { return }
         guard session.removeSubscriber(subscriber) else {
             // Somebody else is still holding the pane: drop only THIS client's registration.
             lock.lock()
-            if muxSessions[key] === session { muxSessions[key] = nil }
-            muxSubscriberIDs[key] = nil
+            sessions.detach(key, ifNames: session)
             lock.unlock()
             emitConnectionCount()
             noteWorkspaceFactChanged()
@@ -2432,7 +2368,9 @@ public final class HostServer: @unchecked Sendable {
     func reapPanesRemovedFromTopology(_ removed: Set<UUID>) {
         guard !removed.isEmpty else { return }
         lock.lock()
-        let doomed = muxSessions.filter { removed.contains($0.value.sessionID) }.map(\.key)
+        let doomed = removed
+            .compactMap { sessions.session($0) }
+            .flatMap { sessions.keys(naming: $0) }
         lock.unlock()
         guard !doomed.isEmpty else { return }
         for key in doomed {
@@ -2444,18 +2382,14 @@ public final class HostServer: @unchecked Sendable {
         for key in doomed { removeMuxSession(key) }
     }
 
-    /// Resolves the channel key one SUBSCRIBER of `session` rides. A key with no explicit entry is
-    /// the pane's original channel (``MuxChannelSession/primarySubscriberID``).
+    /// Resolves the channel key one SUBSCRIBER of `session` rides.
     private func channelKey(
         for session: MuxChannelSession,
         subscriber id: MuxSubscriberID,
     ) -> MuxSessionKey? {
         lock.lock()
         defer { lock.unlock() }
-        return muxSessions.first {
-            $0.value === session
-                && (muxSubscriberIDs[$0.key] ?? MuxChannelSession.primarySubscriberID) == id
-        }?.key
+        return sessions.key(of: session, subscriber: id)
     }
 
     /// Wires a session's diagnostic sink and its LAGGARD-EVICTION seam.
@@ -2535,18 +2469,12 @@ public final class HostServer: @unchecked Sendable {
     /// Idempotent: if the key is not in the map, this is a no-op.
     private func removeMuxSession(_ key: MuxSessionKey) {
         lock.lock()
-        let session = muxSessions.removeValue(forKey: key)
-        muxSubscriberIDs[key] = nil
+        let session = sessions[key]
         // A reap takes EVERY key that names this session, not just the one that asked. Under a
         // fan-out N keys alias one session object, and leaving N−1 behind would keep a dead pane
         // reported by `listPanesForControl`, re-shut by `stop()`, and read as still-attached by
         // `recoverFailedRebind`'s live-map scan.
-        if let session {
-            for alias in muxSessions.filter({ $0.value === session }).map(\.key) {
-                muxSessions[alias] = nil
-                muxSubscriberIDs[alias] = nil
-            }
-        }
+        if let session { sessions.reap(session) } else { sessions.detach(key) }
         let isStopping = stopping
         lock.unlock()
         // A pane that just went away is the one case where a client MUST hear promptly: the row is
@@ -2618,13 +2546,13 @@ public final class HostServer: @unchecked Sendable {
     /// client attached (`DetachedSessionStore`, tmux semantics). Omitting them made a pane that
     /// survived a client quit invisible to the one "describe all panes" API the product has, which
     /// is precisely the pane an orchestrator reattaching to a machine wants to find. The three
-    /// sources are disjoint: `detachMuxSession` removes from `muxSessions` before inserting into
-    /// the store, and `claim` removes before the reattach re-registers.
+    /// sources are disjoint: `detachMuxSession` unregisters the pane before inserting into the
+    /// store, and `claim` removes before the reattach re-registers.
     public func listPanesForControl() -> [PaneInfo] {
         lock.lock()
         // DEDUPED: one PaneInfo per pane, not one per attached client.
-        let mux = Self.distinct(muxSessions.values)
-        let ctrl = Array(controlSessions.values)
+        let mux = sessions.liveSessions
+        let ctrl = sessions.controlSessions
         lock.unlock()
         // Outside `lock`: the store takes its OWN lock, and the nesting contract is one-way
         // (HostServer.lock → DetachedSessionStore.lock is allowed, never the reverse). `nil` when
@@ -2658,9 +2586,9 @@ public final class HostServer: @unchecked Sendable {
     /// candidate set is exactly the terminals on screen.
     func codeBridgePanes() -> [CodeBridgePane] {
         lock.lock()
-        let sessions = Self.distinct(muxSessions.values) // deduped: one entry per pane, not per client
+        let live = sessions.liveSessions // deduped: one entry per pane, not per client
         lock.unlock()
-        return sessions.filter { !$0.isChildExited() }.map { session in
+        return live.filter { !$0.isChildExited() }.map { session in
             CodeBridgePane(
                 paneId: session.sessionID.uuidString,
                 title: session.currentTitle,
@@ -2801,40 +2729,32 @@ public final class HostServer: @unchecked Sendable {
     /// Returns `nil` when no matching pane exists (caller emits an error response).
     /// Internal: `AgentControlListener` lives in the same module.
     func lookupPaneForControl(paneId: String) -> MuxChannelSession? {
+        guard let id = UUID(uuidString: paneId) else { return nil }
         lock.lock()
         defer { lock.unlock() }
-        // Search muxSessions first (the common case), then controlSessions.
-        for session in muxSessions.values where session.sessionID.uuidString == paneId {
-            return session
-        }
-        for session in controlSessions.values where session.sessionID.uuidString == paneId {
-            return session
-        }
-        return nil
+        // The channel panes first (the common case), then the standalone ones.
+        return sessions.session(id) ?? sessions.controlSession(id)
     }
 
     /// Kills the pane identified by `paneId` and removes it from the live maps.
     /// Returns `true` if a pane was found and killed, `false` if not found.
     @discardableResult
     public func killPaneForControl(paneId: String) -> Bool {
+        guard let id = UUID(uuidString: paneId) else { return false }
         lock.lock()
-        // Check muxSessions. EVERY key naming the pane goes, not just the first match: under a
+        // The channel panes first. EVERY key naming the pane goes, not just the first match: under a
         // fan-out N keys alias one session, and a survivor keeps the killed pane in
         // `listPanesForControl`, re-shut by `stop()`, and read as attached by `recoverFailedRebind`.
-        if let session = muxSessions.values.first(where: { $0.sessionID.uuidString == paneId }) {
-            for key in muxSessions.filter({ $0.value === session }).map(\.key) {
-                muxSessions[key] = nil
-                muxSubscriberIDs[key] = nil
-            }
+        if let session = sessions.session(id) {
+            sessions.reap(session)
             lock.unlock()
             // Prevent-sleep strict balance: clear a working pane killed mid-turn by ctl.
             fanAgentTeardown(session)
             session.shutdownDetached()
             return true
         }
-        // Check controlSessions.
-        for (id, session) in controlSessions where id.uuidString == paneId {
-            controlSessions.removeValue(forKey: id)
+        // Then the standalone ones.
+        if let session = sessions.detachControl(id) {
             lock.unlock()
             // The exit callback will not find this session in the map any more, so its hook key is
             // retired here (identity-guarded + idempotent) rather than leaking one sink per kill.
@@ -2852,12 +2772,12 @@ public final class HostServer: @unchecked Sendable {
         // branch had to exist at all — a surviving pane is parked from the moment the daemon comes
         // up, so without it every pane that outlived a restart was unkillable by ctl while being
         // perfectly visible in `list-panes`.
-        if let paneUUID = UUID(uuidString: paneId), let detachedStore {
-            switch detachedStore.claim(paneUUID) {
+        if let detachedStore {
+            switch detachedStore.claim(id) {
             case let .claimed(session):
                 fanAgentTeardown(session)
                 unregisterHookSink(session: session)
-                scrollbackTranscripts?.delete(sessionID: paneUUID, supervisor: supervisor)
+                scrollbackTranscripts?.delete(sessionID: id, supervisor: supervisor)
                 session.shutdownDetached()
                 return true
             case let .reapedDeadChild(session):
@@ -2872,7 +2792,7 @@ public final class HostServer: @unchecked Sendable {
                 // awake for the rest of the daemon's life.
                 fanAgentTeardown(session)
                 unregisterHookSink(session: session)
-                scrollbackTranscripts?.delete(sessionID: paneUUID, supervisor: supervisor)
+                scrollbackTranscripts?.delete(sessionID: id, supervisor: supervisor)
                 return true
             case .notFound:
                 break
@@ -2881,7 +2801,7 @@ public final class HostServer: @unchecked Sendable {
         return false
     }
 
-    /// Spawns a standalone PTY pane (no client connection) and registers it in `controlSessions`.
+    /// Spawns a standalone PTY pane (no client connection) and registers it as a control pane.
     ///
     /// The pane's output goes into its `ReplayBuffer` (read via the `read` verb) and fires
     /// output observers (used by the `wait` verb). The `data`/`control` sub-channels are null
@@ -2999,7 +2919,7 @@ public final class HostServer: @unchecked Sendable {
         wireRepoWatch(session)
 
         // Synchronous helper: NSLock is unavailable from async context directly.
-        guard insertControlSession(sessionID, session) else {
+        guard insertControlSession(session) else {
             session.shutdown()
             throw ControlError.serverStopping
         }
@@ -3017,12 +2937,12 @@ public final class HostServer: @unchecked Sendable {
 
     /// Synchronously inserts a control session. Returns `false` if `stopping` is set
     /// (the session was NOT inserted and must be shut down by the caller).
-    private func insertControlSession(_ id: UUID, _ session: MuxChannelSession) -> Bool {
+    private func insertControlSession(_ session: MuxChannelSession) -> Bool {
         lock.lock()
         if stopping { lock.unlock()
             return false
         }
-        controlSessions[id] = session
+        sessions.attachControl(session)
         lock.unlock()
         return true
     }
@@ -3030,7 +2950,7 @@ public final class HostServer: @unchecked Sendable {
     /// Synchronously removes a control session (called from the exit callback).
     private func removeControlSession(_ id: UUID) {
         lock.lock()
-        let session = controlSessions.removeValue(forKey: id)
+        let session = sessions.detachControl(id)
         lock.unlock()
         // Retire the pane's hook routing key with the pane — the mux path does this from every end
         // of life, and a ctl pane must not leak one key + closure per spawn for the daemon's life.
@@ -3072,7 +2992,7 @@ public final class HostServer: @unchecked Sendable {
     /// critical section leaves behind for `performReattach` (testing only).
     func registerMuxSessionForTesting(_ session: MuxChannelSession, key: MuxSessionKey) {
         lock.lock()
-        muxSessions[key] = session
+        sessions.attach(key, session: session)
         lock.unlock()
     }
 
@@ -3080,7 +3000,7 @@ public final class HostServer: @unchecked Sendable {
     func muxSessionForTesting(key: MuxSessionKey) -> MuxChannelSession? {
         lock.lock()
         defer { lock.unlock() }
-        return muxSessions[key]
+        return sessions[key]
     }
 
     /// Registers `key` as an ADDITIONAL member of an already-live session — the state
@@ -3101,8 +3021,7 @@ public final class HostServer: @unchecked Sendable {
             control: MuxSubChannel(channelID: key.channelID, channel: .control) { _, _ in },
         )
         lock.lock()
-        muxSessions[key] = session
-        muxSubscriberIDs[key] = id
+        sessions.attach(key, session: session, subscriber: id)
         lock.unlock()
         return id
     }
@@ -3125,7 +3044,7 @@ public final class HostServer: @unchecked Sendable {
     var muxSessionKeyCountForTesting: Int {
         lock.lock()
         defer { lock.unlock() }
-        return muxSessions.count
+        return sessions.memberCount
     }
 
     /// Drives the REAL peer-`channelClose` route — a refcounted LEAVE (testing only).
@@ -3201,7 +3120,7 @@ public final class HostServer: @unchecked Sendable {
     var hookPaneIDCountForTesting: Int {
         lock.lock()
         defer { lock.unlock() }
-        return hookPaneIDsBySession.count
+        return sessions.hookCount
     }
 }
 
