@@ -230,10 +230,28 @@ behavioural gain — but it moved UNDER `truthsLock`, which is what actually ret
 and `suppressesChildNotifications` crosses as a `bool` parameter rather than as a second handle
 (step 3's "two handles never hold each other").
 
-**Step 5 — `PaneLifecycle`.** *(~600 Swift lines)* `detach(onDetachedExit:)` `:1643-1686` ·
-`rebindRelay(...)` `:1723-1894` · `reestablishEchoOnReattach` `:1563` ·
-`reestablishActivityOnReattach` `:1585-1627` with its load-bearing `.commandStatus`-before-`.title`
-order · the `exitTask` ladder inside `startRelay()` `:1240-1346`. **Depends on step 3**: the documented
+**Step 5 — the project truths and the reattach ladder. LANDED.** *(~80 removed from the session,
+~110 face added)* The eighth latch cluster — the freshest cwd, the By-Project key it resolved to,
+and the warm-up gate in front of both — joined `truths`, and `projectKeyLock` went with it. The cwd
+derivation crosses as a TWO-CALL ladder with a syscall between the halves: `open_cwd_gate` says
+whether a batch has anything to derive and whether the prompt-edge `proc_pidinfo` probe gets a say,
+Swift makes the probe with no lock held, and `latch_cwd` dedupes what came back. That window is
+exactly the window the Swift original had — it unlocked to probe too — so it is parity, not a new
+race. `latch_project_key` re-qualifies a resolver walk against the cwd it was started for, so a walk
+a later `cd` superseded is dropped rather than published.
+
+`reestablishActivityOnReattach` is the other half, and the more interesting one: its ORDER was only
+ever a comment, which docs/55 §8 names as its own failure mode. The ladder now crosses as two lists
+of discriminants — `reestablish_head`, the detector's own re-assert, `reestablish_tail` — so the
+rule that the title must land AFTER the command stamp its freshness is judged against is a Rust
+test rather than a paragraph. Two doors rather than one because the detector splices between them
+and two handles never hold each other. The function that used to be forty lines of hand-ordered
+appends is now six.
+
+**Step 5b — `PaneLifecycle`.** *(~500 Swift lines)* `detach(onDetachedExit:)` `:1643-1686` ·
+`rebindRelay(...)` `:1723-1894` · the `exitTask` ladder inside `startRelay()` `:1240-1346`. The two
+`reestablish…OnReattach` halves are NOT here any more — step 4 took the echo re-anchor and step 5
+took the activity ladder, so what is left is the detach/rebind I/O itself. **Depends on step 3**: the documented
 `fanoutLock` → `taskLock` order in `rebindRelay` stops existing once the roster is a handle, rather
 than being re-encoded.
 
@@ -374,9 +392,14 @@ class, and the BREAK-TESTED convention every new rule follows) · `crate_policy.
    `MuxChannelSession.swift` to name none of the seven retired locks. The `Claim::AtMost` on
    `NSLock()` this plan proposed is subsumed: banning the seven by NAME is the same ratchet without a
    number to maintain.
-5. **the reattach re-assert has one order** — ban `reestablishActivityOnReattach`/
-   `reestablishEchoOnReattach` bodies; require the ladder door. The `.commandStatus`-before-`.title`
-   order currently lives only in a comment, which docs/55 §8 names as its own failure mode.
+5. **the reattach re-assert has one order** — LANDED, folded into the two step-4 rules rather than
+   added beside them, because it is the same face and the same file.
+   `deleted_host_swift::pane_truths` gained `lastCwdTruth`, `lastProjectKey` and
+   `projectKeyWarmedUp`; `hot_paths::one_batch_one_pass_one_lock` gained the nine project/ladder
+   doors, `projectKeyLock` in the retired-lock ban, and a new `Claim::NoneOf` on
+   `MuxChannelSession.swift` for `messages.append(.title|.cwd|.projectKey|.commandStatus` — the
+   re-assert may not be hand-built, because a re-ordering that puts the title before the command
+   stamp still compiles and still passes every content assertion.
 6. **the channel-open route is decided once** — ban the four-path `switch` in
    `HostServer.spawnMuxChannel`; require `slopdesk_mux_open_route`. Include the
    `min(lastReceivedSeq, highestAssignedSeq)` clamp in the ban pattern — a clamp spelled twice is

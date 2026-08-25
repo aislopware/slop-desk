@@ -227,6 +227,113 @@ final class PaneTruths {
         edge < 0 ? nil : .inputEcho(enabled: edge != 0)
     }
 
+    // MARK: - The project
+
+    /// What a batch's cwd derivation should do next.
+    enum CwdGate: UInt8 {
+        /// Nothing to derive, or a pre-first-prompt OSC-7 the warm-up drops.
+        case skip = 0
+        /// Mid-command: only the batch's OSC-7 may speak.
+        case useOSC = 1
+        /// A prompt edge: the probe is ground truth here, with the OSC-7 as fallback.
+        case preferProbe = 2
+    }
+
+    /// Opens one batch's cwd derivation. MUTATES — a command edge warms this pane up for good.
+    func openCwdGate(hasOSC: Bool, promptEdge: Bool, commandEdge: Bool) -> CwdGate {
+        CwdGate(rawValue: slopdesk_pane_truths_open_cwd_gate(handle, hasOSC, promptEdge, commandEdge))
+            ?? .skip
+    }
+
+    /// Latches an accepted cwd, answering whether it is a change worth publishing.
+    func latchCwd(_ cwd: String) -> Bool {
+        lend(cwd) { slopdesk_pane_truths_latch_cwd(handle, $0, $1) }
+    }
+
+    /// Seeds the cwd from the SPAWN directory, which an already-latched truth always wins.
+    func seedCwd(_ cwd: String) -> Bool {
+        lend(cwd) { slopdesk_pane_truths_seed_cwd(handle, $0, $1) }
+    }
+
+    /// Latches a resolved key against the cwd it was resolved for, answering whether to publish it.
+    ///
+    /// A walk that a later `cd` superseded is dropped here rather than at the emitter, because the
+    /// anchor it re-qualifies against is the same one the reattach re-assert reads.
+    func latchProjectKey(cwd: String, key: String) -> Bool {
+        lend(cwd) { cwdBytes, cwdLength in
+            lend(key) { keyBytes, keyLength in
+                slopdesk_pane_truths_latch_project_key(handle, cwdBytes, cwdLength, keyBytes, keyLength)
+            }
+        }
+    }
+
+    /// The freshest host-observed cwd, `nil` until one is accepted.
+    var cwd: String? {
+        let cwd = text { slopdesk_pane_truths_cwd($0, $1, $2) }
+        return cwd.isEmpty ? nil : cwd
+    }
+
+    /// The freshest By-Project key, `nil` until one resolves.
+    var projectKey: String? {
+        let key = text { slopdesk_pane_truths_project_key($0, $1, $2) }
+        return key.isEmpty ? nil : key
+    }
+
+    /// Is this pane currently sectioned under `repoRoot`? The type-35 fan-in's latch compare.
+    func projectKeyMatches(_ repoRoot: String) -> Bool {
+        lend(repoRoot) { slopdesk_pane_truths_project_key_matches(handle, $0, $1) }
+    }
+
+    // MARK: - The reattach ladder
+
+    /// One entry of the re-assert a JOINING subscriber is owed, in the order it must ship.
+    enum Reassert: UInt8 {
+        case commandRunning = 1
+        case progress = 2
+        case cwd = 3
+        case projectKey = 4
+        case title = 5
+    }
+
+    /// What that subscriber is owed BEFORE the agent detector's own re-assert.
+    var reestablishHead: [Reassert] {
+        ladder { slopdesk_pane_truths_reestablish_head($0, $1, $2) }
+    }
+
+    /// What it is owed AFTER — the half whose order the title's freshness verdict depends on.
+    var reestablishTail: [Reassert] {
+        ladder { slopdesk_pane_truths_reestablish_tail($0, $1, $2) }
+    }
+
+    /// One ladder entry as the message that re-asserts it, `nil` for a truth that went away between
+    /// the fold and the read (both happen under the caller's one lock, so it cannot).
+    func message(for entry: Reassert) -> WireMessage? {
+        switch entry {
+        case .commandRunning: .commandStatus(.running)
+        case .progress: progressMessage
+        case .cwd: cwd.map { .cwd($0) }
+        case .projectKey: projectKey.map { .projectKey($0) }
+        case .title: title.isEmpty ? nil : .title(title)
+        }
+    }
+
+    /// One ladder door, read through the two-call convention against a fixed buffer: the answers are
+    /// at most two and three bytes, so the retry arm is unreachable rather than merely unlikely.
+    private func ladder(
+        _ call: (OpaquePointer?, UnsafeMutablePointer<UInt8>?, Int) -> Int,
+    ) -> [Reassert] {
+        var out = [UInt8](repeating: 0, count: 8)
+        let written = out.withUnsafeMutableBufferPointer { call(handle, $0.baseAddress, $0.count) }
+        guard written > 0, written <= out.count else { return [] }
+        return out.prefix(written).compactMap(Reassert.init(rawValue:))
+    }
+
+    /// Lends one string's UTF-8 to a door as `(ptr, len)`, without copying it.
+    private func lend<T>(_ text: String, _ call: (UnsafePointer<UInt8>?, Int) -> T) -> T {
+        var text = text
+        return text.withUTF8 { call($0.baseAddress, $0.count) }
+    }
+
     /// One block's metadata as its type-28.
     ///
     /// Shared by the live fold and the reattach backfill, which receive the same object from superd

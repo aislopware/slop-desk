@@ -317,6 +317,15 @@ pub fn one_batch_one_pass_one_lock(tree: &Tree) -> Report {
                 "slopdesk_pane_truths_completion_epoch",
                 "slopdesk_pane_truths_fold_echo",
                 "slopdesk_pane_truths_reanchor_echo",
+                "slopdesk_pane_truths_open_cwd_gate",
+                "slopdesk_pane_truths_latch_cwd",
+                "slopdesk_pane_truths_seed_cwd",
+                "slopdesk_pane_truths_latch_project_key",
+                "slopdesk_pane_truths_cwd",
+                "slopdesk_pane_truths_project_key",
+                "slopdesk_pane_truths_project_key_matches",
+                "slopdesk_pane_truths_reestablish_head",
+                "slopdesk_pane_truths_reestablish_tail",
             ],
             message: "Sources/SlopDeskHost/PaneTruths.swift no longer calls {entry} — a face that drops a \
                       door is a latch coming back beside the handle, which is the seven-lock shape the fold \
@@ -331,10 +340,20 @@ pub fn one_batch_one_pass_one_lock(tree: &Tree) -> Report {
         },
         Claim::NoneOf {
             paths: &[SESSION],
-            pattern: r"\b(titleLock|progressLock|completionLock|commandExitLock|blocksLock|echoDetectLock|agentDetectLock)\b",
+            pattern: r"\b(titleLock|progressLock|completionLock|commandExitLock|blocksLock|echoDetectLock|agentDetectLock|projectKeyLock)\b",
             view: View::Code,
-            message: "{files} declares one of the seven locks again — they collapsed into truthsLock \
-                      because the fields were never the reason they were separate (docs/59 §4, step 4)",
+            message: "{files} declares one of the eight locks again — they collapsed into truthsLock \
+                      because the fields were never the reason they were separate (docs/59 §4, steps 4-5)",
+        },
+        Claim::NoneOf {
+            paths: &[SESSION],
+            pattern: r"messages\.append\(\.(title|cwd|projectKey|commandStatus)\b",
+            view: View::Code,
+            message: "{files} builds the reattach re-assert by hand again — the ORDER is the handle's \
+                      (`reestablish_head`, the detector, `reestablish_tail`), because a re-ordering that \
+                      puts the title before the command stamp it is judged against still compiles, still \
+                      passes every content assertion, and costs every returning client its title (docs/59 \
+                      §4, step 5)",
         },
     ];
     check_all(tree, &claims)
@@ -407,10 +426,19 @@ mod tests {
         "slopdesk_pane_truths_completion_epoch()\n",
         "slopdesk_pane_truths_fold_echo()\n",
         "slopdesk_pane_truths_reanchor_echo()\n",
+        "slopdesk_pane_truths_open_cwd_gate()\n",
+        "slopdesk_pane_truths_latch_cwd()\n",
+        "slopdesk_pane_truths_seed_cwd()\n",
+        "slopdesk_pane_truths_latch_project_key()\n",
+        "slopdesk_pane_truths_cwd()\n",
+        "slopdesk_pane_truths_project_key()\n",
+        "slopdesk_pane_truths_project_key_matches()\n",
+        "slopdesk_pane_truths_reestablish_head()\n",
+        "slopdesk_pane_truths_reestablish_tail()\n",
     );
 
     #[test]
-    fn one_batch_one_pass_one_lock_keeps_the_seven_latches_on_one_side() {
+    fn one_batch_one_pass_one_lock_keeps_the_eight_latches_on_one_side() {
         let fixture = Fixture::new("one-batch-one-pass-one-lock");
         fixture
             .write(super::TRUTHS_FACE, TRUTHS_DOORS)
@@ -434,9 +462,18 @@ mod tests {
         );
         assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
 
-        // One of the seven locks is declared again.
+        // One of the eight locks is declared again.
         fixture.write(super::TRUTHS_FACE, TRUTHS_DOORS);
         fixture.append(super::SESSION, "    private let progressLock = NSLock()\n");
+        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+
+        // The project latches come back behind their own lock.
+        fixture.write(super::SESSION, "kept so the bans have a haystack\n");
+        fixture.append(super::SESSION, "    private let projectKeyLock = NSLock()\n");
+        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+
+        // The reattach ladder is re-ordered by hand in the session.
+        fixture.write(super::SESSION, "        messages.append(.title(title))\n");
         assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
 
         // A bare fixture has no face at all.

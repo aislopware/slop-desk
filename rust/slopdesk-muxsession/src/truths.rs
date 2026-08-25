@@ -210,6 +210,63 @@ pub struct Stamps {
     pub uptime: f64,
 }
 
+/// What a prompt-edge cwd derivation should do next, once the warm-up gate has had its say.
+///
+/// The ladder is TWO calls with a probe between them because the probe is a syscall the fold may
+/// not make: [`Truths::open_cwd_gate`] decides whether one is worth making, the caller makes it,
+/// and [`Truths::latch_cwd`] dedupes whatever came back. The window between the two calls is
+/// exactly the window the Swift original had — it unlocked to probe as well — so a `cd` landing
+/// inside it is dropped by the second call's dedupe, not by a lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CwdGate {
+    /// Nothing to derive: no cwd signal at all, or a pre-first-prompt OSC-7 the warm-up drops.
+    Skip = 0,
+    /// Mid-command: only the batch's OSC-7 may speak, and the probe is never consulted.
+    UseOsc = 1,
+    /// A prompt edge: the probe is ground truth at exactly this moment and beats a possibly-stale
+    /// same-batch OSC-7, which stays the fallback for a shell the probe cannot read.
+    PreferProbe = 2,
+}
+
+/// One entry of the reattach re-assert, in the order the ladder emits it.
+///
+/// The ORDER is the whole reason this crosses as a list rather than as five separate reads.
+/// `CommandRunning` before `Title` is load-bearing: the client compares the title's stamp against
+/// the command-start stamp to decide whether the title is fresh, and a title arriving first loses
+/// that comparison and falls back to the raw command line for the rest of the session. It lived in
+/// a comment before this fold existed, which `docs/55` §8 names as its own failure mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Reassert {
+    /// Type-23 `.commandStatus(.running)` — published ONLY in the running case. Idle IS the
+    /// client's reconnect reset state, and a synthetic idle would fabricate a `lastCommand` and a
+    /// completion edge for a command that never finished.
+    CommandRunning = 1,
+    /// Type-32 — the spanning OSC 9;4 spinner. A cleared progress latches nothing.
+    Progress = 2,
+    /// Type-33 — the host-authoritative cwd, so the returning client's cwd line and sidebar
+    /// section are right immediately rather than after a metadata RPC.
+    Cwd = 3,
+    /// Type-34 — the By-Project key that cwd resolved to.
+    ProjectKey = 4,
+    /// Type-21 — the pane's current window title. Empty is SKIPPED, not sent: empty is the
+    /// ownership retirement signal, and re-asserting it would resurrect a dead agent's title on
+    /// every reconnect.
+    Title = 5,
+}
+
+/// The echo detector's whole state: the last state a type-31 was emitted for, and whether this
+/// connection has seen the confirmed echo-ON sample that arms the detector at all.
+///
+/// The two travel together — every read of one is a read of the other — so they are one value
+/// rather than two flags loose in [`Truths`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct EchoLatch {
+    last_emitted: bool,
+    warmed_up: bool,
+}
+
 /// The pane's latched truths: everything a listener who was not there still has to be told.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Truths {
@@ -224,14 +281,16 @@ pub struct Truths {
     completion_epoch: u32,
     last_completion_status: u8,
     running_command: Option<String>,
-    echo_last_emitted: bool,
-    echo_warmed_up: bool,
+    echo: EchoLatch,
+    cwd: Option<String>,
+    project_key: Option<String>,
+    project_warmed_up: bool,
 }
 
 impl Truths {
     /// A pane that has said nothing yet.
     ///
-    /// `echo_last_emitted` starts TRUE because echo-on is the canonical baseline the client also
+    /// `echo.last_emitted` starts TRUE because echo-on is the canonical baseline the client also
     /// assumes: the detector stays silent until a sample DIFFERS from it, which is what keeps the
     /// control stream byte-identical on a pane that never sees a password prompt.
     #[must_use]
@@ -248,8 +307,13 @@ impl Truths {
             completion_epoch: 0,
             last_completion_status: 0,
             running_command: None,
-            echo_last_emitted: true,
-            echo_warmed_up: false,
+            echo: EchoLatch {
+                last_emitted: true,
+                warmed_up: false,
+            },
+            cwd: None,
+            project_key: None,
+            project_warmed_up: false,
         }
     }
 
@@ -475,7 +539,7 @@ impl Truths {
     /// The echo state the pane last emitted a type-31 for.
     #[must_use]
     pub const fn echo_last_emitted(&self) -> bool {
-        self.echo_last_emitted
+        self.echo.last_emitted
     }
 
     /// Folds one termios `ECHO` sample, answering the state to emit — or `None` for no edge.
@@ -486,17 +550,150 @@ impl Truths {
     /// ordinary prompt. So a no-echo reading is suppressed ENTIRELY — not folded, not emitted —
     /// until a confirmed echo-ON sample has warmed this connection up.
     pub fn fold_echo(&mut self, echo_on: bool, is_edge: impl FnOnce(bool, bool) -> bool) -> Option<bool> {
-        if !self.echo_warmed_up {
+        if !self.echo.warmed_up {
             if !echo_on {
                 return None;
             }
-            self.echo_warmed_up = true;
+            self.echo.warmed_up = true;
         }
-        if !is_edge(echo_on, self.echo_last_emitted) {
+        if !is_edge(echo_on, self.echo.last_emitted) {
             return None;
         }
-        self.echo_last_emitted = echo_on;
+        self.echo.last_emitted = echo_on;
         Some(echo_on)
+    }
+
+    // ---------------------------------------------------------------- the project
+
+    /// Opens the cwd derivation for one batch: is there anything to derive, and does the probe get
+    /// a say?
+    ///
+    /// **The warm-up gate.** OSC-7-only batches are IGNORED until the first command edge has been
+    /// seen on this pane. A plugin manager that `cd`s into its git-cloned cache directory BEFORE
+    /// the first prompt emits an OSC-7 for a directory the user was never in; latching it would
+    /// persist a bogus sidebar section on every client. The first prompt edge itself derives from
+    /// the probe, which is ground truth, so the gate costs that case nothing.
+    ///
+    /// **Cheap in the common case.** Every mid-command chunk carries neither an OSC-7 nor a prompt
+    /// edge and leaves here at the first branch, having touched no state and asked for no syscall.
+    pub const fn open_cwd_gate(&mut self, has_osc: bool, prompt_edge: bool, command_edge: bool) -> CwdGate {
+        if !has_osc && !prompt_edge {
+            return CwdGate::Skip;
+        }
+        if !self.project_warmed_up {
+            if !command_edge {
+                return CwdGate::Skip;
+            }
+            self.project_warmed_up = true;
+        }
+        if prompt_edge {
+            CwdGate::PreferProbe
+        } else {
+            CwdGate::UseOsc
+        }
+    }
+
+    /// Latches an ACCEPTED cwd, answering whether it is a change worth publishing.
+    ///
+    /// The dedupe anchor is here rather than at the emitter because it is the same anchor the
+    /// reattach re-assert reads: a client that reconnects is told the newest cwd, and a client that
+    /// stayed is told only the changes.
+    pub fn latch_cwd(&mut self, cwd: &str) -> bool {
+        if cwd.is_empty() || self.cwd.as_deref() == Some(cwd) {
+            return false;
+        }
+        self.cwd = Some(cwd.to_owned());
+        true
+    }
+
+    /// SEEDS the cwd from the spawn directory, which an already-latched truth always wins.
+    ///
+    /// The spawn cwd is server-provided (`channelOpen`'s `initialCwd`, ctl's `--cwd`) rather than
+    /// shell-controlled, so it runs with no warm-up — the gate exists to drop a plugin manager's
+    /// pre-prompt noise, and this is not that. It closes two holes: a shell that never emits
+    /// OSC-133/OSC-7 would otherwise never resolve a key at all, and every fresh split would sit
+    /// under a subdirectory-named section until its first prompt.
+    pub fn seed_cwd(&mut self, cwd: &str) -> bool {
+        if cwd.is_empty() || self.cwd.is_some() {
+            return false;
+        }
+        self.cwd = Some(cwd.to_owned());
+        true
+    }
+
+    /// Latches a RESOLVED project key against the cwd it was resolved for, answering whether to
+    /// publish it.
+    ///
+    /// Two refusals, both about a resolve that took its time: a walk that returns after a later
+    /// `cd` is DROPPED (`cwd` is no longer the latched one, and the newer change's own resolve is
+    /// already queued behind this one), and a key equal to the standing one is deduped. The walk
+    /// itself is a `stat(2)` per ancestor that can block indefinitely on a hung network mount,
+    /// which is why it happens off the read-loop thread and why its result has to re-qualify here.
+    pub fn latch_project_key(&mut self, cwd: &str, key: &str) -> bool {
+        if self.cwd.as_deref() != Some(cwd) || self.project_key.as_deref() == Some(key) {
+            return false;
+        }
+        self.project_key = Some(key.to_owned());
+        true
+    }
+
+    /// The freshest host-observed cwd, `None` until one is accepted.
+    #[must_use]
+    pub fn cwd(&self) -> Option<&str> {
+        self.cwd.as_deref()
+    }
+
+    /// The freshest By-Project key, `None` until one resolves.
+    #[must_use]
+    pub fn project_key(&self) -> Option<&str> {
+        self.project_key.as_deref()
+    }
+
+    /// Is this pane currently sectioned under `repo_root`? The type-35 fan-in's cheap latch
+    /// compare, so a project's git push reaches exactly the panes it describes.
+    #[must_use]
+    pub fn project_key_matches(&self, repo_root: &str) -> bool {
+        self.project_key.as_deref() == Some(repo_root)
+    }
+
+    // ---------------------------------------------------------------- the reattach ladder
+
+    /// What a JOINING subscriber must be told, in order, BEFORE the agent detector's own re-assert.
+    ///
+    /// Split in two around the detector because two handles never hold each other: the detector is
+    /// its own machine, and the caller splices its emission between these halves at the position
+    /// the ladder has always used. Everything here contributes only a NON-DEFAULT truth, so an
+    /// ordinary idle reconnect asks for nothing and the control stream stays byte-identical.
+    #[must_use]
+    pub fn reestablish_head(&self) -> Vec<Reassert> {
+        let mut ladder = Vec::with_capacity(2);
+        if self.command_running_since.is_some() {
+            ladder.push(Reassert::CommandRunning);
+        }
+        if self.progress.is_some() {
+            ladder.push(Reassert::Progress);
+        }
+        ladder
+    }
+
+    /// What that subscriber must be told AFTER the detector's re-assert, in order.
+    ///
+    /// [`Reassert::Title`] is last, and that is the load-bearing half of the order: the client's
+    /// freshness comparison holds the title against the command-start stamp
+    /// [`Reassert::CommandRunning`] just re-published, so a title that arrived first would lose it.
+    #[must_use]
+    pub fn reestablish_tail(&self) -> Vec<Reassert> {
+        let mut ladder = Vec::with_capacity(3);
+        if self.cwd.is_some() {
+            ladder.push(Reassert::Cwd);
+        }
+        if self.project_key.is_some() {
+            ladder.push(Reassert::ProjectKey);
+        }
+        if !self.title.is_empty() {
+            ladder.push(Reassert::Title);
+        }
+        ladder
     }
 
     /// RE-ANCHORS the echo detector to the canonical baseline and folds `echo_on` against it — the
@@ -507,11 +704,11 @@ impl Truths {
     /// mirror on reconnect, so re-folding an unchanged state would emit nothing and leave a
     /// returning client's keyboard unprotected for the rest of a password entry.
     pub fn reanchor_echo(&mut self, echo_on: bool, is_edge: impl FnOnce(bool, bool) -> bool) -> Option<bool> {
-        self.echo_last_emitted = true;
+        self.echo.last_emitted = true;
         if !is_edge(echo_on, true) {
             return None;
         }
-        self.echo_last_emitted = echo_on;
+        self.echo.last_emitted = echo_on;
         Some(echo_on)
     }
 }
@@ -830,6 +1027,115 @@ mod tests {
             Kind::from_raw(9),
             None,
             "a kind a newer superd names is skipped, not guessed"
+        );
+    }
+
+    #[test]
+    fn an_osc_seven_before_the_first_prompt_is_not_a_working_directory() {
+        let mut truths = Truths::new();
+        assert_eq!(
+            truths.open_cwd_gate(true, false, false),
+            CwdGate::Skip,
+            "a plugin manager's pre-prompt cd is noise, not a truth"
+        );
+        assert_eq!(
+            truths.open_cwd_gate(false, false, false),
+            CwdGate::Skip,
+            "every mid-command chunk leaves at the first branch"
+        );
+        assert_eq!(truths.open_cwd_gate(true, true, true), CwdGate::PreferProbe);
+        assert_eq!(
+            truths.open_cwd_gate(true, false, false),
+            CwdGate::UseOsc,
+            "past warm-up a mid-command cd re-groups with no prompt edge"
+        );
+    }
+
+    #[test]
+    fn a_command_edge_alone_warms_the_gate_up() {
+        let mut truths = Truths::new();
+        assert_eq!(truths.open_cwd_gate(true, false, true), CwdGate::UseOsc);
+    }
+
+    #[test]
+    fn the_cwd_anchor_dedupes_and_the_spawn_seed_never_clobbers_it() {
+        let mut truths = Truths::new();
+        assert!(!truths.latch_cwd(""), "an empty read is not a change");
+        assert!(truths.latch_cwd("/a"));
+        assert!(!truths.latch_cwd("/a"), "an unchanged cwd is dropped");
+        assert!(truths.latch_cwd("/b"));
+        assert_eq!(truths.cwd(), Some("/b"));
+        assert!(
+            !truths.seed_cwd("/spawn"),
+            "a real observation beats the spawn seed that lost the race"
+        );
+        assert_eq!(truths.cwd(), Some("/b"));
+        assert!(Truths::new().seed_cwd("/spawn"));
+        assert!(!Truths::new().seed_cwd(""));
+    }
+
+    #[test]
+    fn a_resolve_that_a_later_cd_superseded_is_dropped() {
+        let mut truths = Truths::new();
+        assert!(truths.latch_cwd("/a"));
+        assert!(truths.latch_project_key("/a", "/repo"));
+        assert!(
+            !truths.latch_project_key("/a", "/repo"),
+            "the standing key is not republished"
+        );
+        assert!(truths.latch_cwd("/b"));
+        assert!(
+            !truths.latch_project_key("/a", "/other"),
+            "the walk returned after the cd it was started for"
+        );
+        assert_eq!(truths.project_key(), Some("/repo"));
+        assert!(truths.project_key_matches("/repo"));
+        assert!(!truths.project_key_matches("/elsewhere"));
+        assert!(!Truths::new().project_key_matches("/repo"));
+    }
+
+    #[test]
+    fn an_idle_reconnect_asks_for_nothing_and_a_live_one_keeps_its_order() {
+        let truths = Truths::new();
+        assert!(truths.reestablish_head().is_empty());
+        assert!(truths.reestablish_tail().is_empty());
+
+        let mut live = Truths::new();
+        drop(live.ingest_sniffed(
+            &[
+                Fact::text(Kind::Title, "main.go - NVIM"),
+                Fact::bare(Kind::CommandRunning),
+                Fact {
+                    kind: Kind::Progress,
+                    primary: "",
+                    secondary: "",
+                    scalars: Scalars {
+                        progress_state: 3,
+                        progress_percent: 40,
+                        ..Scalars::new()
+                    },
+                },
+            ],
+            STAMPS,
+            false,
+        ));
+        assert!(live.latch_cwd("/a"));
+        assert!(live.latch_project_key("/a", "/repo"));
+        assert_eq!(live.reestablish_head(), vec![
+            Reassert::CommandRunning,
+            Reassert::Progress
+        ]);
+        assert_eq!(
+            live.reestablish_tail(),
+            vec![Reassert::Cwd, Reassert::ProjectKey, Reassert::Title],
+            "the title lands after the command stamp its freshness is judged against"
+        );
+
+        live.retire_title();
+        assert_eq!(
+            live.reestablish_tail(),
+            vec![Reassert::Cwd, Reassert::ProjectKey],
+            "an empty title is a retirement, not a truth to re-tell"
         );
     }
 }

@@ -264,6 +264,13 @@ final class MuxChannelSession: @unchecked Sendable {
     /// title is a detection input) and read in the same breath (the type-25 gate asks it whether the
     /// pane's agent already announces its own edges), so a second lock would only be a chance to
     /// pair a fresh title with a stale verdict.
+    ///
+    /// The PROJECT truths — the freshest cwd, the By-Project key it resolved to, and the warm-up
+    /// gate in front of both — are the eighth latch this lock absorbed (docs/59 §4, step 5). They
+    /// are written from a second context (`metadataQueue`, when a resolver walk returns) and read
+    /// by the same reattach re-assert as everything above, so the pairing argument is the one this
+    /// lock already makes: a client that reconnects must not be told a cwd and a key that were
+    /// never true at the same instant.
     private let truthsLock = NSLock()
     private let truths = PaneTruths()
 
@@ -312,25 +319,6 @@ final class MuxChannelSession: @unchecked Sendable {
     /// the reconciler would pay it per pane per tick.
     private let foregroundLock = NSLock()
     private var _lastForeground: String?
-
-    /// Host-authoritative By-Project key (type 34) — the reattach/dedupe latches. `lastCwdTruth` is
-    /// the freshest cwd this session has observed (OSC-7 sniff, else the prompt-edge `proc_pidinfo`
-    /// probe), latched at the SNIFF point on the read-loop thread (like the progress badge — a detached
-    /// window's change must be visible to the reattach re-assert immediately). `lastProjectKey` is
-    /// the last EMITTED type-34 (git toplevel containing that cwd, else the cwd itself —
-    /// ``ProjectKey/of(cwd:)``), latched at RESOLVE COMPLETION on `metadataQueue`: the resolver's
-    /// `stat(2)`-per-ancestor walk is blocking filesystem work (a hung network mount can park it
-    /// indefinitely), so ``deriveProjectKey(from:)`` dispatches it off the read-loop thread and the
-    /// emission goes straight to ``broadcastControl(_:)``. Both latches are re-asserted by
-    /// ``reestablishActivityOnReattach(to:)`` so a reconnecting client renders the FINAL sidebar
-    /// sections immediately, with zero client-side re-derivation. `projectKeyWarmedUp` gates
-    /// OSC-7-only derivation until the first command edge (see ``deriveProjectKey(from:)``).
-    /// All guarded by `projectKeyLock` (written on the read-loop thread + `metadataQueue`; read by
-    /// the reattach path).
-    private let projectKeyLock = NSLock()
-    private var lastCwdTruth: String?
-    private var lastProjectKey: String?
-    private var projectKeyWarmedUp = false
 
     /// Test seam for the prompt-edge cwd probe (the ``HostMetadataProbe`` `proc_pidinfo` read):
     /// unit tests drive ``ingestPTYChunkForTesting(_:)`` on an UNSPAWNED PTY (hang-safety rule), where
@@ -1388,45 +1376,27 @@ final class MuxChannelSession: @unchecked Sendable {
     ///
     /// Addressed to the JOINING subscriber, like the echo re-assert: everybody else was told these
     /// truths when they happened.
+    ///
+    /// **The ORDER is the handle's, not this function's** (docs/59 §4, step 5). It used to live in
+    /// a comment here, which is the failure mode `docs/55` §8 names: the title must land AFTER the
+    /// command stamp its freshness is judged against, and a re-ordering edit that broke that would
+    /// still compile, still pass every message-content assertion, and quietly cost every returning
+    /// client its `main.go - NVIM` row for the rest of the session. So the ladder crosses as two
+    /// lists of discriminants — head, then the detector's own re-assert, then tail — and
+    /// `rust/slopdesk-muxsession`'s `truths` owns both.
+    ///
+    /// The detector splices BETWEEN the two halves because two handles never hold each other. Every
+    /// entry is a non-default truth, so an ordinary idle reconnect asks for nothing and enqueues
+    /// nothing.
     private func reestablishActivityOnReattach(
         to id: MuxSubscriberID = MuxChannelSession.primarySubscriberID,
     ) {
-        var messages: [WireMessage] = []
-        if commandStatusForReattach() != nil { messages.append(.commandStatus(.running)) }
         truthsLock.lock()
-        let progress = truths.progressMessage
+        let head = truths.reestablishHead.compactMap(truths.message(for:))
         let agentEmission = agentDetector.reestablishOnReattach()
+        let tail = truths.reestablishTail.compactMap(truths.message(for:))
         truthsLock.unlock()
-        if let progress { messages.append(progress) }
-        messages.append(contentsOf: agentEmission.messages)
-        // Host-authoritative cwd + By-Project key (type 33/34): re-tell the latched truths so the
-        // returning client's sidebar sections and cwd mirror are correct IMMEDIATELY — no client-side
-        // RPC pull, no cwd-fallback→toplevel re-bucketing flash. `nil` (never observed) contributes
-        // nothing, keeping the ordinary idle reconnect chatter-free.
-        projectKeyLock.lock()
-        let cwdTruth = lastCwdTruth
-        let key = lastProjectKey
-        projectKeyLock.unlock()
-        if let cwdTruth { messages.append(.cwd(cwdTruth)) }
-        if let key { messages.append(.projectKey(key)) }
-        // Host-authoritative window TITLE (type 21): the pane's CURRENT title, re-told so a
-        // returning client's row keeps `main.go - NVIM` instead of falling back to the raw command
-        // line (`vi .`) for the rest of the session. Every other activity truth here was already
-        // re-asserted; this one's absence WAS the bug.
-        //
-        // ORDERING IS LOAD-BEARING: `commandStatusForReattach()` is appended at the TOP of this
-        // function, so the title lands AFTER it in the same batch and the client's freshness
-        // comparison (title stamp vs command-start stamp) passes. Pinned by
-        // `testTitleIsEnqueuedAfterCommandStatus`. Dies with the stamp comparison itself when
-        // `pane/titleFresh` ships the host's verdict (docs/45 §4.4).
-        //
-        // Empty is skipped, not sent: `publishAgentEmission` clears `_currentTitle` to "" as the
-        // ownership-RETIREMENT signal (:1027), so an empty here means "the agent handed the title
-        // back" — re-asserting it would resurrect a dead agent's title on every reconnect.
-        truthsLock.lock()
-        let title = truths.title
-        truthsLock.unlock()
-        if !title.isEmpty { messages.append(.title(title)) }
+        let messages = head + agentEmission.messages + tail
         if !messages.isEmpty { sendControl(messages, to: id) }
     }
 
@@ -2395,7 +2365,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // a change, hand the resolver's blocking stat-walk to the metadataQueue; the emission
         // lands on the CONTROL sender when the resolve completes. Never a filesystem touch on
         // this read-loop thread — a cwd on a hung network mount must not freeze the pane's
-        // output. `lastCwdTruth` is still latched at the sniff point, for the same reattach
+        // output. The cwd is still latched in the fold at the sniff point, for the same reattach
         // reason as the progress latch above.
         deriveProjectKey(from: controlMsgs)
         // Agent-control: fire output observers for the `wait` verb AFTER the sniffer
@@ -2689,16 +2659,16 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// The freshest host-observed cwd truth (OSC-7 sniff / prompt-edge probe), `nil` until observed.
     var cwdForControl: String? {
-        projectKeyLock.lock()
-        defer { projectKeyLock.unlock() }
-        return lastCwdTruth
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.cwd
     }
 
     /// The freshest By-Project key (type 34's current value), `nil` until resolved.
     var projectKeyForControl: String? {
-        projectKeyLock.lock()
-        defer { projectKeyLock.unlock() }
-        return lastProjectKey
+        truthsLock.lock()
+        defer { truthsLock.unlock() }
+        return truths.projectKey
     }
 
     /// The freshest OSC-133-D exit code, `nil` until the first code-carrying `D`.
@@ -2933,24 +2903,15 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Host-authoritative By-Project key (type 34) — the change-edge derivation, split so the PTY
     /// read-loop thread never touches the filesystem:
     ///
-    /// **Sync (this method — the read-loop thread):** scan `sniffed` for the freshest cwd truth.
-    /// The LAST OSC-7 `.cwd` is the shell-declared value; a shell that emits no OSC-7 (Starship /
-    /// hookless) is covered by the prompt-edge probe: a `.commandStatus(.idle)` in the batch marks
-    /// a prompt boundary (133;B/D) — exactly when a `cd` becomes observable — and triggers ONE
-    /// `proc_pidinfo` read (a single syscall, the same class as the input path's `tcgetattr`;
-    /// never a subprocess and never a `stat` on this thread). At a prompt edge the PROBE is
-    /// preferred over a same-batch OSC-7 (the probe is ground truth at exactly that moment; a
-    /// possibly-stale OSC-7 loses), falling back to the batch's OSC-7 when the probe fails
-    /// (unspawned/gone shell). An unchanged cwd is dropped at the `lastCwdTruth` anchor, which is
-    /// latched HERE (sniff time) so a reattach re-assert always sees the newest cwd.
-    ///
-    /// **Warm-up gate (mirrors `echoWarmedUp`):** OSC-7-only batches are IGNORED until the first
-    /// command edge (`.commandStatus(.idle)` or `.running`) has been observed on this session. A
-    /// plugin manager that `cd`s into its git-cloned cache dir BEFORE the first prompt emits OSC-7
-    /// for a directory the user was never in — latching it would persist a bogus sidebar section
-    /// client-side. The first prompt edge itself derives from the probe (ground truth); after
-    /// warm-up OSC-7 changes flow normally (a mid-command `cd` in a script still re-groups, no
-    /// prompt edge required).
+    /// **Sync (this method — the read-loop thread):** scan `sniffed` for the batch's shape — the
+    /// LAST OSC-7 `.cwd`, whether a `.commandStatus(.idle)` marked a prompt boundary (133;B/D,
+    /// exactly when a `cd` becomes observable), whether any command edge landed at all — and hand
+    /// it to ``PaneTruths/openCwdGate(hasOSC:promptEdge:commandEdge:)``. The gate rules (the
+    /// warm-up, the probe preference) are the fold's; what stays HERE is the syscall the fold must
+    /// not make: ONE `proc_pidinfo` read (the same class as the input path's `tcgetattr`; never a
+    /// subprocess and never a `stat` on this thread), taken with no lock held. Its answer goes
+    /// back through ``PaneTruths/latchCwd(_:)``, which is the anchor an unchanged cwd is dropped
+    /// at and the one a reattach re-assert reads.
     ///
     /// **Type-33 single-source:** an ACCEPTED change also emits `.cwd` here, synchronously — and
     /// ``ingestPTYChunk(_:)`` strips the raw sniffed OSC-7 from the FIFO ride, so the client only
@@ -2977,27 +2938,26 @@ final class MuxChannelSession: @unchecked Sendable {
         }
         // Common case first (every mid-command chunk): no cwd signal at all — zero probe cost.
         guard oscCwd != nil || promptEdge else { return }
-        projectKeyLock.lock()
-        if !projectKeyWarmedUp {
-            guard commandEdge else {
-                projectKeyLock.unlock()
-                return // pre-first-prompt OSC-7 (plugin-manager cd noise): do not latch, do not emit
+        truthsLock.lock()
+        let gate = truths.openCwdGate(
+            hasOSC: oscCwd != nil,
+            promptEdge: promptEdge,
+            commandEdge: commandEdge,
+        )
+        truthsLock.unlock()
+        // The probe is a syscall, so it happens with no lock held — the same window the fold's own
+        // dedupe closes below, and the same one this function always had.
+        let freshest: String? =
+            switch gate {
+            case .skip: nil
+            case .useOSC: oscCwd
+            case .preferProbe: probeCwd() ?? oscCwd
             }
-            projectKeyWarmedUp = true
-        }
-        projectKeyLock.unlock()
-        // At a prompt edge, ground truth (the probe) beats a possibly-stale same-batch OSC-7;
-        // a probe failure falls back to the OSC-7 value. Mid-command (no edge) only OSC-7 can
-        // speak — the probe is never consulted.
-        let freshest = promptEdge ? (probeCwd() ?? oscCwd) : oscCwd
-        guard let cwd = freshest, !cwd.isEmpty else { return }
-        projectKeyLock.lock()
-        guard cwd != lastCwdTruth else {
-            projectKeyLock.unlock()
-            return
-        }
-        lastCwdTruth = cwd
-        projectKeyLock.unlock()
+        guard let cwd = freshest else { return }
+        truthsLock.lock()
+        let accepted = truths.latchCwd(cwd)
+        truthsLock.unlock()
+        guard accepted else { return }
         // Host-authoritative cwd (type 33): emit the ACCEPTED truth change synchronously, before the
         // async key resolve — the client's tab cwd line must update even while the resolver walk is
         // parked on a hung mount. This is the ONLY live type-33 source (`ingestPTYChunk` strips the
@@ -3012,10 +2972,11 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Runs ``ProjectKey/of(cwd:)`` — the resolve and the toplevel walk, one crossing — OFF the
     /// read-loop thread, on the
     /// serial `metadataQueue` (the file's home for ALL blocking FileManager/git/lsof work; serial,
-    /// so resolves stay ordered), or the injected test executor. On completion, under
-    /// `projectKeyLock`, the resolve is DROPPED if a later `cd` superseded it (`cwd` is no longer
-    /// `lastCwdTruth` — the newer change's own resolve is already queued behind this one), deduped
-    /// against `lastProjectKey`, latched, and the type-34 enqueued directly on the CONTROL sender.
+    /// so resolves stay ordered), or the injected test executor. On completion,
+    /// ``PaneTruths/latchProjectKey(cwd:key:)`` answers under `truthsLock`: the resolve is DROPPED
+    /// if a later `cd` superseded it (its `cwd` is no longer the anchor — the newer change's own
+    /// resolve is already queued behind this one), and deduped against the latched key. An
+    /// accepted key is enqueued as the type-34 directly on the CONTROL sender.
     /// It deliberately does NOT ride the out-FIFO alongside the producing bytes — FIFO ordering is
     /// not load-bearing for this latest-state truth (the client folds the newest key it sees, and
     /// the reattach re-assert reads the latches, not the stream).
@@ -3023,13 +2984,10 @@ final class MuxChannelSession: @unchecked Sendable {
         let resolve: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
             let key = ProjectKey.of(cwd: cwd)
-            projectKeyLock.lock()
-            guard cwd == lastCwdTruth, key != lastProjectKey else {
-                projectKeyLock.unlock()
-                return
-            }
-            lastProjectKey = key
-            projectKeyLock.unlock()
+            truthsLock.lock()
+            let publish = truths.latchProjectKey(cwd: cwd, key: key)
+            truthsLock.unlock()
+            guard publish else { return }
             broadcastControl([.projectKey(key)])
             onProjectKeyResolved?(key)
         }
@@ -3052,13 +3010,10 @@ final class MuxChannelSession: @unchecked Sendable {
     /// observation.
     func seedProjectTruthAtSpawn(cwd: String) {
         guard !cwd.isEmpty else { return }
-        projectKeyLock.lock()
-        guard lastCwdTruth == nil else {
-            projectKeyLock.unlock()
-            return
-        }
-        lastCwdTruth = cwd
-        projectKeyLock.unlock()
+        truthsLock.lock()
+        let seeded = truths.seedCwd(cwd)
+        truthsLock.unlock()
+        guard seeded else { return }
         broadcastControl([.cwd(cwd)])
         scheduleProjectKeyResolve(for: cwd)
     }
@@ -3067,9 +3022,9 @@ final class MuxChannelSession: @unchecked Sendable {
     /// the pane is currently sectioned under the pushed repo (a cheap latch compare — the server
     /// never reads the latch itself, so the lock discipline stays inside this file).
     func pushProjectGitStatusIfMatching(_ status: WireMessage.ProjectGitStatus) {
-        projectKeyLock.lock()
-        let matches = lastProjectKey == status.repoRoot
-        projectKeyLock.unlock()
+        truthsLock.lock()
+        let matches = truths.projectKeyMatches(status.repoRoot)
+        truthsLock.unlock()
         guard matches else { return }
         broadcastControl([.projectGitStatus(status)])
     }
@@ -3706,7 +3661,7 @@ extension MuxChannelSession {
 
     /// Exercises the type-34 change-edge derivation (``deriveProjectKey(from:)``) directly — the
     /// exact code `ingestPTYChunk` runs over each chunk's sniffed batch. The sync part (warm-up
-    /// gate, cwd scan, probe preference, `lastCwdTruth` latch) runs inline; the resolver walk runs
+    /// gate, cwd scan, probe preference, the cwd latch) runs inline; the resolver walk runs
     /// via ``projectKeyResolveExecutorOverride`` (tests inject run-inline for deterministic
     /// emission, or a deferred executor to pin that a slow resolve never blocks ingest) and its
     /// emission lands on the control queue — read it with ``takeControlBatchForTesting()``. The

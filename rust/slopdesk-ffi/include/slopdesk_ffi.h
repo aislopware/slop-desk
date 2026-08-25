@@ -3472,6 +3472,45 @@ uint32_t slopdesk_pane_truths_completion_epoch(SlopDeskPaneTruths *handle);
 int32_t slopdesk_pane_truths_fold_echo(SlopDeskPaneTruths *handle, bool echo_on);
 int32_t slopdesk_pane_truths_reanchor_echo(SlopDeskPaneTruths *handle, bool echo_on);
 
+/* THE PROJECT LADDER, AND WHY IT IS TWO CALLS WITH A SYSCALL IN THE MIDDLE.
+ * `open_cwd_gate` answers whether a batch has anything to derive at all and whether the
+ * prompt-edge PROBE gets a say: 0 skip, 1 use the batch's OSC-7, 2 prefer the probe with the
+ * OSC-7 as fallback. It MUTATES — a command edge warms the pane up for good — so the answer is
+ * also the record that the warm-up happened. The caller then makes the `proc_pidinfo` read the
+ * fold may not make and hands the result to `latch_cwd`, whose dedupe is the anchor the reattach
+ * re-assert reads. The window between the two calls is exactly the window the Swift original had:
+ * it unlocked to probe too, so a `cd` landing inside it is dropped by the dedupe, not by a lock.
+ *
+ * `latch_project_key` re-qualifies a resolve that took its time — a `stat(2)`-per-ancestor walk
+ * that can park indefinitely on a hung mount — against the cwd it was started for, so a walk that
+ * a later `cd` superseded is dropped rather than published.
+ *
+ * THE REATTACH LADDER CROSSES AS ORDER, NOT AS FRAMES.
+ * `reestablish_head`/`_tail` answer discriminant bytes (1 commandStatus, 2 progress, 3 cwd,
+ * 4 projectKey, 5 title), in the order they must ship. Two doors rather than one because the
+ * agent detector's own re-assert splices BETWEEN them and two handles never hold each other. The
+ * order is load-bearing and now checkable: the title lands after the command stamp its freshness
+ * is judged against, and a title that arrived first would lose that comparison for the rest of the
+ * session. Both are reads, so the two-call convention applies — but the answers are at most two
+ * and three bytes, so every caller lends a fixed buffer and never sees the retry. */
+uint8_t slopdesk_pane_truths_open_cwd_gate(SlopDeskPaneTruths *handle, bool has_osc,
+                                           bool prompt_edge, bool command_edge);
+bool slopdesk_pane_truths_latch_cwd(SlopDeskPaneTruths *handle,
+                                    const uint8_t *cwd, size_t cwd_len);
+bool slopdesk_pane_truths_seed_cwd(SlopDeskPaneTruths *handle,
+                                   const uint8_t *cwd, size_t cwd_len);
+bool slopdesk_pane_truths_latch_project_key(SlopDeskPaneTruths *handle,
+                                            const uint8_t *cwd, size_t cwd_len,
+                                            const uint8_t *key, size_t key_len);
+size_t slopdesk_pane_truths_cwd(SlopDeskPaneTruths *handle, uint8_t *out, size_t capacity);
+size_t slopdesk_pane_truths_project_key(SlopDeskPaneTruths *handle, uint8_t *out, size_t capacity);
+bool slopdesk_pane_truths_project_key_matches(SlopDeskPaneTruths *handle,
+                                              const uint8_t *repo_root, size_t repo_root_len);
+size_t slopdesk_pane_truths_reestablish_head(SlopDeskPaneTruths *handle,
+                                             uint8_t *out, size_t capacity);
+size_t slopdesk_pane_truths_reestablish_tail(SlopDeskPaneTruths *handle,
+                                             uint8_t *out, size_t capacity);
+
 /* ---------------------------------------------------------------------------- *
  * mux_client — which panes share one flow, when that flow closes, and the two
  * loop policies both ends of the wire were spelling twice.

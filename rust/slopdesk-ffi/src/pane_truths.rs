@@ -32,7 +32,7 @@ use std::os::raw::c_uchar;
 
 use slopdesk_agent::attention::mints_finished_turn;
 use slopdesk_agent::status::ClaudeStatus;
-use slopdesk_muxsession::truths::{Fact, Kind, Scalars, Stamps, Truths};
+use slopdesk_muxsession::truths::{CwdGate, Fact, Kind, Reassert, Scalars, Stamps, Truths};
 use slopdesk_terminal::echo::is_edge;
 
 use crate::{arena_span, deliver, optional, records_of, spill};
@@ -577,6 +577,253 @@ pub unsafe extern "C" fn slopdesk_pane_truths_reanchor_echo(
     emitted(truths.inner.reanchor_echo(echo_on, is_edge))
 }
 
+/// One caller-lent UTF-8 span as borrowed text — the direction Swift fills.
+///
+/// Empty for a null pointer or a zero length, and empty for bytes that are not UTF-8: a path or a
+/// project key that failed to decode is not a truth to latch, and the fold's own dedupe treats
+/// empty as "nothing accepted".
+///
+/// # Safety
+/// `bytes` must be null, or point to `len` readable bytes for the whole call.
+#[expect(
+    unsafe_code,
+    reason = "reconstituting the caller's span IS the boundary this module documents"
+)]
+unsafe fn lent<'a>(bytes: *const c_uchar, len: usize) -> &'a str {
+    if bytes.is_null() || len == 0 {
+        return "";
+    }
+    // SAFETY: non-null and, by the caller's obligation, readable for `len` bytes for this call.
+    let span = unsafe { core::slice::from_raw_parts(bytes, len) };
+    std::str::from_utf8(span).unwrap_or_default()
+}
+
+/// Opens one batch's cwd derivation: `0` skip, `1` use the batch's OSC-7, `2` prefer the probe.
+///
+/// The gate MUTATES — a command edge warms this pane up permanently — so the answer is also the
+/// record that the warm-up happened.
+///
+/// # Safety
+/// The handle obligation is the module's.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub const unsafe extern "C" fn slopdesk_pane_truths_open_cwd_gate(
+    handle: *mut SlopDeskPaneTruths,
+    has_osc: bool,
+    prompt_edge: bool,
+    command_edge: bool,
+) -> u8 {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return CwdGate::Skip as u8;
+    };
+    truths.inner.open_cwd_gate(has_osc, prompt_edge, command_edge) as u8
+}
+
+/// Latches an accepted cwd, answering whether it is a change worth publishing.
+///
+/// # Safety
+/// The handle obligation is the module's; `cwd`/`cwd_len` must name a readable span for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_truths_latch_cwd(
+    handle: *mut SlopDeskPaneTruths,
+    cwd: *const c_uchar,
+    cwd_len: usize,
+) -> bool {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    // SAFETY: the caller's obligation on `cwd`/`cwd_len` is passed straight through.
+    truths.inner.latch_cwd(unsafe { lent(cwd, cwd_len) })
+}
+
+/// Seeds the cwd from the SPAWN directory, which an already-latched truth always wins.
+///
+/// # Safety
+/// The handle obligation is the module's; `cwd`/`cwd_len` must name a readable span for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_truths_seed_cwd(
+    handle: *mut SlopDeskPaneTruths,
+    cwd: *const c_uchar,
+    cwd_len: usize,
+) -> bool {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    // SAFETY: the caller's obligation on `cwd`/`cwd_len` is passed straight through.
+    truths.inner.seed_cwd(unsafe { lent(cwd, cwd_len) })
+}
+
+/// Latches a resolved project key against the cwd it was resolved for, answering whether to
+/// publish it.
+///
+/// # Safety
+/// The handle obligation is the module's; both spans must be readable for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_truths_latch_project_key(
+    handle: *mut SlopDeskPaneTruths,
+    cwd: *const c_uchar,
+    cwd_len: usize,
+    key: *const c_uchar,
+    key_len: usize,
+) -> bool {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    // SAFETY: the caller's obligation on both spans is passed straight through.
+    let (cwd, key) = unsafe { (lent(cwd, cwd_len), lent(key, key_len)) };
+    truths.inner.latch_project_key(cwd, key)
+}
+
+/// The freshest host-observed cwd, through the two-call convention. Empty means none observed.
+///
+/// # Safety
+/// The handle obligation is the module's; `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_truths_cwd(
+    handle: *mut SlopDeskPaneTruths,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let cwd = truths.inner.cwd().unwrap_or_default();
+    // SAFETY: the caller's obligation on `out`/`cap` is passed straight through.
+    unsafe { deliver(cwd.as_bytes(), out, cap) }
+}
+
+/// The freshest By-Project key, through the two-call convention. Empty means unresolved.
+///
+/// # Safety
+/// The handle obligation is the module's; `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_truths_project_key(
+    handle: *mut SlopDeskPaneTruths,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    let key = truths.inner.project_key().unwrap_or_default();
+    // SAFETY: the caller's obligation on `out`/`cap` is passed straight through.
+    unsafe { deliver(key.as_bytes(), out, cap) }
+}
+
+/// Is this pane sectioned under `repo_root`? The type-35 fan-in's latch compare.
+///
+/// # Safety
+/// The handle obligation is the module's; the span must be readable for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_truths_project_key_matches(
+    handle: *mut SlopDeskPaneTruths,
+    repo_root: *const c_uchar,
+    repo_root_len: usize,
+) -> bool {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return false;
+    };
+    // SAFETY: the caller's obligation on the span is passed straight through.
+    truths
+        .inner
+        .project_key_matches(unsafe { lent(repo_root, repo_root_len) })
+}
+
+/// The reattach ladder BEFORE the agent detector's own re-assert, in order.
+///
+/// A read, so the two-call convention applies — but the answer is at most two bytes, so every
+/// caller lends a fixed pair and never sees the retry.
+///
+/// # Safety
+/// The handle obligation is the module's; `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_truths_reestablish_head(
+    handle: *mut SlopDeskPaneTruths,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    // SAFETY: the caller's obligation on `out`/`cap` is passed straight through.
+    unsafe { ladder(&truths.inner.reestablish_head(), out, cap) }
+}
+
+/// The reattach ladder AFTER that re-assert, in order — the half the title's freshness depends on.
+///
+/// # Safety
+/// The handle obligation is the module's; `out` must be null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_pane_truths_reestablish_tail(
+    handle: *mut SlopDeskPaneTruths,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    // SAFETY: by the caller's obligation the handle is live and exclusively held for this call.
+    let Some(truths) = (unsafe { held(handle) }) else {
+        return 0;
+    };
+    // SAFETY: the caller's obligation on `out`/`cap` is passed straight through.
+    unsafe { ladder(&truths.inner.reestablish_tail(), out, cap) }
+}
+
+/// One ladder as its discriminant bytes, through the shared delivery convention.
+///
+/// # Safety
+/// `out` must be null or writable for `cap` bytes.
+#[expect(
+    unsafe_code,
+    reason = "writing into the caller's buffer is the other half of the boundary"
+)]
+unsafe fn ladder(entries: &[Reassert], out: *mut c_uchar, cap: usize) -> usize {
+    let bytes: Vec<u8> = entries.iter().map(|entry| *entry as u8).collect();
+    // SAFETY: the caller's obligation on `out`/`cap` is passed straight through to `deliver`.
+    unsafe { deliver(&bytes, out, cap) }
+}
+
 /// An echo fold's answer as the tri-state the C ABI carries: `-1` nothing to emit, else the state.
 const fn emitted(edge: Option<bool>) -> i32 {
     match edge {
@@ -830,5 +1077,120 @@ mod tests {
         assert_eq!(unsafe { slopdesk_pane_truths_completion_epoch(null) }, 0);
         unsafe { slopdesk_pane_truths_retire_title(null) };
         unsafe { slopdesk_pane_truths_free(null) };
+    }
+
+    /// Any two-call text door, read through the convention it documents.
+    fn read_back(
+        handle: *mut SlopDeskPaneTruths,
+        door: unsafe extern "C" fn(*mut SlopDeskPaneTruths, *mut c_uchar, usize) -> usize,
+    ) -> String {
+        let needed = unsafe { door(handle, std::ptr::null_mut(), 0) };
+        let mut out = vec![0_u8; needed];
+        let written = unsafe { door(handle, out.as_mut_ptr(), out.len()) };
+        out.truncate(written);
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// Text crossing the other way: the caller lends a span, the door latches what it accepts.
+    fn latch(handle: *mut SlopDeskPaneTruths, cwd: &str) -> bool {
+        unsafe { slopdesk_pane_truths_latch_cwd(handle, cwd.as_ptr(), cwd.len()) }
+    }
+
+    /// One ladder door's answer as the discriminants it wrote.
+    fn ladder_of(handle: *mut SlopDeskPaneTruths, head: bool) -> Vec<u8> {
+        let mut out = [0u8; 8];
+        let written = if head {
+            unsafe { slopdesk_pane_truths_reestablish_head(handle, out.as_mut_ptr(), out.len()) }
+        } else {
+            unsafe { slopdesk_pane_truths_reestablish_tail(handle, out.as_mut_ptr(), out.len()) }
+        };
+        // A ladder never writes past the buffer it was lent, so the fallback is unreachable — but
+        // an empty answer is the honest one for a door that claimed more than it was given.
+        out.get(..written).unwrap_or_default().to_vec()
+    }
+
+    #[test]
+    fn the_cwd_gate_crosses_as_the_three_answers_it_has() {
+        let handle = open();
+        assert_eq!(
+            unsafe { slopdesk_pane_truths_open_cwd_gate(handle, true, false, false) },
+            CwdGate::Skip as u8
+        );
+        assert_eq!(
+            unsafe { slopdesk_pane_truths_open_cwd_gate(handle, true, true, true) },
+            CwdGate::PreferProbe as u8
+        );
+        assert_eq!(
+            unsafe { slopdesk_pane_truths_open_cwd_gate(handle, true, false, false) },
+            CwdGate::UseOsc as u8
+        );
+        close(handle);
+    }
+
+    #[test]
+    fn a_project_truth_crosses_once_and_is_read_back_by_reference() {
+        let handle = open();
+        assert!(latch(handle, "/a"));
+        assert!(!latch(handle, "/a"));
+        let key = "/repo";
+        assert!(unsafe {
+            slopdesk_pane_truths_latch_project_key(handle, "/a".as_ptr(), 2, key.as_ptr(), key.len())
+        });
+        assert!(unsafe { slopdesk_pane_truths_project_key_matches(handle, key.as_ptr(), key.len()) });
+        assert_eq!(read_back(handle, slopdesk_pane_truths_cwd), "/a");
+        assert_eq!(read_back(handle, slopdesk_pane_truths_project_key), "/repo");
+        assert!(
+            !unsafe { slopdesk_pane_truths_seed_cwd(handle, "/spawn".as_ptr(), 6) },
+            "the spawn seed never clobbers a real observation"
+        );
+        close(handle);
+    }
+
+    #[test]
+    fn the_reattach_ladder_keeps_the_title_behind_the_command_stamp() {
+        let handle = open();
+        assert!(ladder_of(handle, true).is_empty());
+        assert!(ladder_of(handle, false).is_empty());
+
+        drop(sniff(
+            handle,
+            &[row(Kind::CommandRunning, 0), row(Kind::Title, 6)],
+            "claude",
+            false,
+        ));
+        assert!(latch(handle, "/a"));
+        assert_eq!(ladder_of(handle, true), vec![Reassert::CommandRunning as u8]);
+        assert_eq!(ladder_of(handle, false), vec![
+            Reassert::Cwd as u8,
+            Reassert::Title as u8
+        ]);
+        close(handle);
+    }
+
+    #[test]
+    fn a_null_handle_is_inert_on_every_project_door() {
+        let null: *mut SlopDeskPaneTruths = std::ptr::null_mut();
+        assert_eq!(
+            unsafe { slopdesk_pane_truths_open_cwd_gate(null, true, true, true) },
+            CwdGate::Skip as u8
+        );
+        assert!(!latch(null, "/a"));
+        assert!(!unsafe { slopdesk_pane_truths_seed_cwd(null, "/a".as_ptr(), 2) });
+        assert!(!unsafe { slopdesk_pane_truths_latch_project_key(null, "/a".as_ptr(), 2, "/r".as_ptr(), 2) });
+        assert!(!unsafe { slopdesk_pane_truths_project_key_matches(null, "/r".as_ptr(), 2) });
+        assert!(ladder_of(null, true).is_empty());
+        assert!(ladder_of(null, false).is_empty());
+    }
+
+    #[test]
+    fn a_span_that_is_not_utf8_latches_nothing() {
+        let handle = open();
+        let bytes = [0xFFu8, 0xFE];
+        assert!(
+            !unsafe { slopdesk_pane_truths_latch_cwd(handle, bytes.as_ptr(), bytes.len()) },
+            "an undecodable path is not a truth"
+        );
+        assert!(!unsafe { slopdesk_pane_truths_latch_cwd(handle, std::ptr::null(), 4) });
+        close(handle);
     }
 }

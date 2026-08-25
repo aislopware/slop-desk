@@ -183,7 +183,7 @@ fn pane_truths() -> Vec<Claim> {
     vec![Claim::NoneUnder {
         roots: &["Sources"],
         extensions: SWIFT,
-        pattern: r"var +(_currentTitle|_currentTitleAt|pendingTitleCoalescingReset|titleAnchorRetirements|lastProgress|lastProgressPair|lastExitTruth|lastDurationTruth|commandRunningSince|_runningCommand|_completionEpoch|_lastCompletionStatus|echoWarmedUp)\b[^{\n]*(\n|$)|\b(EchoModeDetector|latchProgress)\b",
+        pattern: r"var +(_currentTitle|_currentTitleAt|pendingTitleCoalescingReset|titleAnchorRetirements|lastProgress|lastProgressPair|lastExitTruth|lastDurationTruth|commandRunningSince|_runningCommand|_completionEpoch|_lastCompletionStatus|echoWarmedUp|lastCwdTruth|lastProjectKey|projectKeyWarmedUp)\b[^{\n]*(\n|$)|\b(EchoModeDetector|latchProgress)\b",
         all: &[],
         unless: &[],
         view: View::Code,
