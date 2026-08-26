@@ -96,6 +96,11 @@ fn ship(shared: &Arc<Shared>, bytes: Vec<u8>, byte_count: usize, control: &[Wire
             target.enqueue_control(control.to_vec());
         }
     }
+    // The PRODUCER end of the laggard rule, and the reason it is not enough to check on the ack
+    // path: a member that has stopped acking never calls `acknowledge`, so a consumer-side-only
+    // check never fires on the exact member it exists to remove. Unconditional here — the fold
+    // answers empty for a set of one, and a disabled threshold returns before touching a lock.
+    shared.evict_lagging();
 }
 
 /// Ships the pane's exit code, then waits — bounded — for it to have been handed over.

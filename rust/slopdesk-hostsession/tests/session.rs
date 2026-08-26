@@ -37,8 +37,8 @@ use slopdesk_hostnet::link::ByteLink;
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::PtyProcess;
 use slopdesk_hostsession::{
-    CloseTap, MetadataAnswer, MetadataPerformer, MetadataRequest, OutputTap, PaneSession, ResolveExecutor,
-    SessionConfig, SessionLog, SessionObserver,
+    CloseTap, Eviction, EvictionSeam, MetadataAnswer, MetadataPerformer, MetadataRequest, OutputTap,
+    PaneSession, ResolveExecutor, SessionConfig, SessionLog, SessionObserver,
 };
 use slopdesk_superclient::client::{ClientThreads, SupervisorClient, SupervisorObserver};
 use slopdesk_superwire::blockwire::BlockEvent;
@@ -886,6 +886,156 @@ fn two_members_each_receive_every_frame_at_the_same_seq() {
 
     assert_eq!(first.output(), vec![(1, b"shared".to_vec())]);
     assert_eq!(second.output(), first.output(), "one sequence, two members");
+
+    session.relinquish();
+    drop(slave);
+    wired.shut_down();
+}
+
+// MARK: - The laggard
+
+/// An eviction seam that RECORDS rather than acts.
+///
+/// Deliberately does not retire the member it is handed: a real seam does, and a member that left
+/// could not be evicted twice whatever the fold decided. Leaving it in the set is what makes the
+/// fold's one-shot latch the only thing standing between one eviction and one per frame.
+#[derive(Debug, Default)]
+struct Evictions(Mutex<Vec<u64>>);
+
+impl EvictionSeam for Evictions {
+    fn evict(&self, id: u64) {
+        self.0.lock().unwrap().push(id);
+    }
+}
+
+impl Evictions {
+    fn taken(&self) -> Vec<u64> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+fn as_seam(seam: &Arc<Evictions>) -> Arc<dyn EvictionSeam> {
+    let concrete: Arc<Evictions> = Arc::clone(seam);
+    concrete
+}
+
+/// The member that stopped acking is dropped; the one that kept up keeps the pane.
+///
+/// And exactly ONCE. The recording seam never removes the laggard, so every frame after the verdict
+/// re-enters the ladder with the same member still behind — the `evicting` latch is what stops the
+/// second, third and hundredth close from being fired at a client already on its way out.
+#[test]
+fn a_member_that_stops_acking_is_evicted_once_and_the_healthy_one_survives() {
+    let wired = Wired::up();
+    let seam = Arc::new(Evictions::default());
+    let (session, _pty, slave, _sink) = wired.session_tuned("pane-1", |config| {
+        // One byte: the rule is STRICTLY greater, so a member holding two retained bytes is over it
+        // and this suite never has to produce 32 MiB to watch the ladder run.
+        config.evict = Eviction {
+            lag_bytes: 1,
+            seam: as_seam(&seam),
+        };
+    });
+    let healthy = wired.attach(&session);
+    let laggard = wired.attach(&session);
+    session.fan_out();
+
+    wired.superd.output("pane-1", 0, b"shared");
+    eventually("both members to receive the frame", || {
+        !healthy.output().is_empty() && !laggard.output().is_empty()
+    });
+    // Only now is there a gap: until somebody acks, every cursor is the head the joiners took and
+    // the fold has no healthiest to be behind.
+    assert!(seam.taken().is_empty(), "equal cursors are not a laggard");
+
+    healthy.send_control(&WireMessage::Ack { seq: 1 });
+    eventually("the laggard to be evicted", || !seam.taken().is_empty());
+    assert_eq!(seam.taken(), vec![laggard.id]);
+
+    // The condition is still true — the recording seam left the member in the set — so this is the
+    // latch being tested, not the gap closing.
+    wired.superd.output("pane-1", 6, b"more");
+    healthy.send_control(&WireMessage::Ack { seq: 2 });
+    eventually("the healthy member to receive the second frame", || {
+        healthy.output().len() == 2
+    });
+    assert_eq!(
+        seam.taken(),
+        vec![laggard.id],
+        "the verdict fires once per member"
+    );
+
+    session.relinquish();
+    drop(slave);
+    wired.shut_down();
+}
+
+/// A LONE member is never evicted, however far behind it falls.
+///
+/// Its backpressure is the ring's own gate, exactly as it has always been, and dropping it would
+/// turn a slow link into a dropped session — a pane must never be able to evict its way to empty.
+#[test]
+fn the_only_member_of_a_pane_is_never_the_laggard() {
+    let wired = Wired::up();
+    let seam = Arc::new(Evictions::default());
+    let (session, _pty, slave, _sink) = wired.session_tuned("pane-1", |config| {
+        config.evict = Eviction {
+            lag_bytes: 1,
+            seam: as_seam(&seam),
+        };
+    });
+    let alone = wired.attach(&session);
+
+    wired.superd.output("pane-1", 0, b"unacked");
+    eventually("the frame to arrive", || !alone.output().is_empty());
+    assert!(
+        seam.taken().is_empty(),
+        "a set of one has no healthiest to be behind"
+    );
+
+    session.relinquish();
+    drop(slave);
+    wired.shut_down();
+}
+
+/// The SHIPPED default evicts nobody, and the two halves of `Eviction::off` say so together.
+///
+/// A session built without a threshold is what `slopdesk-ctl` and this suite get, and a rule that
+/// is off must cost nothing: the disabled check returns before a lock is taken, let alone the
+/// O(retained history) pricing walk.
+#[test]
+fn a_session_with_no_threshold_evicts_nobody() {
+    let wired = Wired::up();
+    let seam = Arc::new(Evictions::default());
+    let (session, _pty, slave, _sink) = wired.session_tuned("pane-1", |config| {
+        // The SEAM is wired and the threshold is not. Either half alone would leave the other
+        // looking like the oversight, which is why the assertion names the threshold.
+        config.evict = Eviction {
+            lag_bytes: 0,
+            seam: as_seam(&seam),
+        };
+    });
+    let healthy = wired.attach(&session);
+    let laggard = wired.attach(&session);
+    session.fan_out();
+
+    wired.superd.output("pane-1", 0, b"shared");
+    eventually("both members to receive the frame", || {
+        !healthy.output().is_empty() && !laggard.output().is_empty()
+    });
+    healthy.send_control(&WireMessage::Ack { seq: 1 });
+    // A second frame, and the wait for it, is what gives the ladder its chance: the ack has been
+    // handed to the relay, and by the time the drain has sequenced and shipped another frame both
+    // firing sites have run with the gap open. Asserting the negative straight after the `send`
+    // would pass on a session that evicts, simply by outrunning the relay thread.
+    wired.superd.output("pane-1", 6, b"more");
+    eventually("the healthy member to receive the second frame", || {
+        healthy.output().len() == 2
+    });
+    assert!(
+        seam.taken().is_empty(),
+        "a zero threshold is the rule switched off"
+    );
 
     session.relinquish();
     drop(slave);

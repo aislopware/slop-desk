@@ -63,7 +63,7 @@ use std::time::{Duration, Instant};
 
 use slopdesk_agent::PaneDetector;
 use slopdesk_hostpane::PaneOutputStream;
-use slopdesk_muxsession::fanout::{Fanout, SubscriberId};
+use slopdesk_muxsession::fanout::{Fanout, Priced, SubscriberId};
 use slopdesk_muxsession::lifecycle::Lifecycle;
 use slopdesk_muxsession::outbox::{Frame, Outbox, Slot};
 use slopdesk_muxsession::truths::Truths;
@@ -71,6 +71,7 @@ use slopdesk_wire::message::WireMessage;
 use slopdesk_wire::mux::flow::{MuxFlowControl, PausableQueueGate};
 use slopdesk_wire::replay::{ReplayBuffer, SnapshotSource};
 
+use crate::evict::Eviction;
 use crate::session::{SessionObserver, StatusObserver};
 use crate::subscriber::Subscriber;
 
@@ -280,6 +281,12 @@ pub(crate) struct Shared {
     /// above, this one is the SERVER's and is never swapped — see [`StatusObserver`].
     pub(crate) status: Arc<dyn StatusObserver>,
     pub(crate) log: Arc<dyn SessionLog>,
+    /// How far behind is too far, and who ends the attachment when a member gets there.
+    ///
+    /// A plain field like [`Self::status`] rather than a `Mutex` like the exit observer: the seam
+    /// belongs to the SERVER and is never swapped mid-life. A detach retires every member, so there
+    /// is no laggard left for a stale seam to be asked about.
+    evict: Eviction,
 }
 
 impl Shared {
@@ -291,8 +298,10 @@ impl Shared {
         log: Arc<dyn SessionLog>,
         observer: Arc<dyn SessionObserver>,
         status: Arc<dyn StatusObserver>,
+        evict: Eviction,
     ) -> Self {
         Self {
+            evict,
             observer: Mutex::new(observer),
             outbound: Mutex::new(Outbound::default()),
             drainable: Condvar::new(),
@@ -717,6 +726,68 @@ impl Shared {
             replay.should_pause_drain()
         };
         self.set_replay_pause(pause);
+        // A HEALTHY member's ack is the other half of the laggard check: it just moved the min, so
+        // this is the instant the gap between fastest and slowest is freshest.
+        self.evict_lagging();
+    }
+
+    /// Drops every member whose un-acked backlog has passed the pane's threshold — `docs/45` §8.6.
+    ///
+    /// Runs from BOTH ends of the flow: here, on the ack path, and at the end of one shipped frame
+    /// in [`crate::drain`]. Both, because the two miss opposite cases. A member that has stopped
+    /// acking never reaches the ack path, which is the exact member the rule exists to remove; and
+    /// a pane whose every sender is parked ships nothing, which is when evicting the slowest is
+    /// what RELEASES the retention the fastest is waiting on.
+    ///
+    /// Three acquisitions, never nested, in the order `docs/59` step 3 settled: the roster answers
+    /// which cursors are behind, the ring prices each one, the roster latches the losers. Handing
+    /// the fold a `Vec` of numbers is what keeps it from reaching for the ring itself.
+    ///
+    /// The `disabled` early-out is not an optimisation for its own sake: pricing is an
+    /// O(retained history) walk per candidate, and a rule that is switched off must not cost one.
+    pub(crate) fn evict_lagging(&self) {
+        if self.evict.disabled() {
+            return;
+        }
+        let threshold = self.evict.lag_bytes;
+        let behind = {
+            let members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
+            members.fanout.lagging_cursors(threshold)
+        };
+        if behind.is_empty() {
+            return;
+        }
+        let priced = {
+            let replay = self.replay.lock().unwrap_or_else(PoisonError::into_inner);
+            behind
+                .into_iter()
+                .map(|cursor| {
+                    Priced {
+                        id: cursor.id,
+                        retained_bytes: saturating_u64(replay.retained_bytes_above(cursor.acked)),
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let doomed = {
+            let mut members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
+            members.fanout.latch_evicting(&priced, threshold)
+        };
+        for id in doomed {
+            // The soak greps this line, so the wording is a contract: `slopdesk-ops soak` asserts
+            // eviction took the LAGGARD and not the session by reading it back.
+            self.log.line(&format!(
+                "pane subscriber {id}: evicted — more than {threshold} bytes behind"
+            ));
+            // A thread of its own, carrying the SEAM and the id and nothing else. Detached because
+            // the doomed member is parked inside the sender this call cancels, and either firing
+            // site can be reached from a thread that park is starving — the ack path from the
+            // member's own relay, the drain from the ship the park is blocking. Carrying no
+            // `Shared` is what keeps it out of the `live_threads` census too: it cannot outlive the
+            // session by holding it, so a teardown has nothing here to wait for.
+            let seam = Arc::clone(&self.evict.seam);
+            drop(std::thread::spawn(move || seam.evict(id)));
+        }
     }
 
     /// Releases retention to the MIN over the members that REMAIN, and re-applies the gate.
@@ -1091,6 +1162,15 @@ fn merge_cap() -> usize {
     usize::try_from(MuxFlowControl::max_output_frame_payload_bytes()).unwrap_or(usize::MAX)
 }
 
+/// A retained-byte count as the unsigned number the laggard threshold is compared in.
+///
+/// Saturating for the same reason the signed one below is, and in the same direction: a count that
+/// wrapped would price a member 4 GiB behind as barely behind at all, and the one member the rule
+/// exists to drop would be the one it never sees.
+fn saturating_u64(count: usize) -> u64 {
+    u64::try_from(count).unwrap_or(u64::MAX)
+}
+
 /// A byte count as the signed number the accounting speaks, saturating rather than wrapping.
 ///
 /// Unreachable in practice — a chunk is 32 KiB — and saturating rather than truncating because an
@@ -1106,7 +1186,7 @@ mod tests {
 
     use slopdesk_wire::replay::ReplayBuffer;
 
-    use super::{DiscardLog, Ready, Shared};
+    use super::{DiscardLog, Eviction, Ready, Shared};
     use crate::session::{IgnoreStatus, SilentObserver};
 
     /// A pane with a fresh ring and no client, which is all the drain's own ladder needs.
@@ -1118,6 +1198,7 @@ mod tests {
             Arc::new(DiscardLog),
             Arc::new(SilentObserver),
             Arc::new(IgnoreStatus),
+            Eviction::off(),
         )
     }
 

@@ -988,11 +988,32 @@ is paused.
   for a reason, and `PaneSession::foreground_name` is a `tcgetpgrp`+`proc_pidpath` pair the sweep
   would otherwise pay per pane per tick. 12 tests in `tests/panes.rs`, 12 more in `capture.rs`.
 
-  Still open here, and the only thing that is: the laggard-EVICTION wiring.
-  `Host::evict_subscriber` is the server half and it is complete, but the signal that a member is
-  parked on an exhausted credit window has no Rust producer yet — `slopdesk-hostsession` has the
-  eviction rule and no callback for it, and adding one is a change to that crate rather than to this
-  ladder. It is named here so stage F finds it rather than discovers it.
+  ✅ **The laggard-EVICTION wiring, closed after it.** `Host::evict_subscriber` had been the server
+  half for two ladders with nothing to call it: `slopdesk-muxsession::fanout` already decided WHICH
+  members lose — behind the healthiest, over the threshold, never with a set of one, each latched so
+  the verdict fires once — and `slopdesk-hostsession` held the fold and never asked it. What was
+  missing was the ASKING, and it is `Shared::evict_lagging`: three un-nested acquisitions in the
+  `docs/59` step-3 order (the roster answers which cursors are behind, the ring prices each, the
+  roster latches the losers), fired from BOTH ends of the flow because the two miss opposite cases —
+  a member that has stopped acking never reaches the ack path, and a pane whose every sender is
+  parked ships nothing, which is exactly when dropping the slowest is what releases the retention
+  the fastest is waiting on. The producer end is the tail of `drain::ship`, NOT `note_sent`: that one
+  runs on a member's sender thread and goes silent in the very case the rule is for.
+
+  Two things about it are contracts rather than choices. The close is fired on a thread carrying the
+  SEAM and the id and nothing else — a laggard is by definition parked inside the sender the
+  eviction cancels, and both call sites can be reached from a thread that park is starving, so an
+  inline fire would wait on the condition it exists to break; carrying no `Shared` also keeps the
+  thread out of the `live_threads` census, so a teardown has nothing there to wait for. And the log
+  line is `slopdesk-ops soak`'s, word for word — the soak asserts eviction took the LAGGARD and not
+  the session by reading it back. The threshold arrives as a NUMBER rather than being read from
+  `SLOPDESK_SUB_LAG_BYTES` here, for the reason the ring's caps do: the environment is the server's.
+  `Eviction::off()` — no threshold, no seam — is the default, so a `slopdesk-ctl` pane neither evicts
+  nor pays the O(retained history) pricing walk. 3 tests over a real PTY and two real members.
+
+  What stage F still owes this corner: the `SLOPDESK_SUB_LAG_BYTES` read itself. It is not among the
+  seven in `gates.rs` — `slopdesk-ffi`'s `pane_fanout` reads it today for the Swift face, and the
+  Rust hostd reads it once and hands it to each `SessionConfig`.
 
   **What stage D does NOT take.** `HostEnvironment` (350) and `RepoStatusWatcher` (316) are stage E:
   the first reads Apple bundle and TCC state, the second is an FSEvents stream per repo toplevel.

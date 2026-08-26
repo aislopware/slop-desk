@@ -68,6 +68,7 @@
 mod clock;
 mod detect;
 mod drain;
+mod evict;
 mod facts;
 mod history;
 mod ingest;
@@ -84,6 +85,7 @@ mod taps;
 mod timer;
 
 pub use detect::{DetectConfig, ScreenOracle, ScreenRequest};
+pub use evict::{Eviction, EvictionSeam, IgnoreEviction};
 pub use latches::PaneLatches;
 pub use metadata::{MetadataAnswer, MetadataPerformer, MetadataRequest, UnservedMetadata};
 pub use project::{IgnoreKeys, InlineResolve, KeyObserver, ResolveExecutor};

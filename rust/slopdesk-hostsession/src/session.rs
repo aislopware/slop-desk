@@ -50,6 +50,7 @@ use slopdesk_wire::mux::flow::MuxFlowControl;
 use slopdesk_wire::replay::ReplayBuffer;
 
 use crate::detect::{Detect, DetectConfig};
+use crate::evict::Eviction;
 use crate::ingest::Ingest;
 use crate::latches::PaneLatches;
 use crate::metadata::{Asked, Metadata, MetadataPerformer, UnservedMetadata};
@@ -171,6 +172,13 @@ pub struct SessionConfig {
     /// the pane's ONE serial queue on purpose: a `cd`'s key walk and a `git status` must not fork
     /// behind each other.
     pub metadata: Arc<dyn MetadataPerformer>,
+    /// How far a member may fall behind before it is dropped, and who drops it.
+    ///
+    /// [`Eviction::off`] by default, which is BOTH halves off: a caller with no wire to close a
+    /// channel on evicts nobody and prices nothing. The threshold is a number the server hands in
+    /// rather than an environment variable this crate reads, for the same reason [`Self::replay`]
+    /// arrives already built with its caps.
+    pub evict: Eviction,
     /// Whether superd segments this pane into command blocks.
     ///
     /// The same flag the spawn asked the tap for. It gates the block READS as well as the fold, so
@@ -200,6 +208,7 @@ impl SessionConfig {
             resolve: Arc::new(InlineResolve),
             project_keys: Arc::new(IgnoreKeys),
             metadata: Arc::new(UnservedMetadata),
+            evict: Eviction::off(),
             blocks_enabled: false,
         }
     }
@@ -248,6 +257,7 @@ impl PaneSession {
             Arc::clone(&config.log),
             Arc::clone(&config.observer),
             Arc::clone(&config.status),
+            config.evict.clone(),
         ));
         // Seed the resume cursor BEFORE anything can advance it. `record_offset` is monotone except
         // for the `FROM_NOW_ON` sentinel, which the first real offset replaces outright — so a pane
