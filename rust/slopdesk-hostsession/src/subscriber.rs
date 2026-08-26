@@ -35,8 +35,10 @@ use std::thread::JoinHandle;
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::PtyProcess;
 use slopdesk_muxsession::fanout::SubscriberId;
+use slopdesk_muxsession::resize_fold::Grid;
 use slopdesk_wire::message::WireMessage;
 
+use crate::resize::Resize;
 use crate::shared::Shared;
 
 /// Bound on ONE subscriber's pending control-out queue.
@@ -287,29 +289,66 @@ pub(crate) fn run_input_relay(
     shared.recompute_client_online();
 }
 
-/// Carries this member's inbound CONTROL — the acks, the byes and the probes.
+/// Carries this member's inbound CONTROL — the acks, the byes, the size offers and the probes.
 ///
-/// Resize lands here at stage C.2c and the metadata verbs at C.2d. What is here now is the set the
-/// output path itself depends on: an ack is what releases ring retention, and without it the replay
-/// pause source never clears.
+/// The metadata verbs land at stage C.2d. What is here now is the set the output path itself
+/// depends on: an ack is what releases ring retention, and without it the replay pause source never
+/// clears.
+///
+/// ## Which messages FLUSH the size fold, and why it is not all of them
+///
+/// This loop is serial, so a size offer that arrived before some other message must land before
+/// that message's effects — otherwise the ordering the client sees is the debounce's timer rather
+/// than the order it sent things in. So an ack, a bye, a channel close and anything unrecognised
+/// resolve the fold unconditionally first.
+///
+/// Three deliberately do NOT: a ping, a block-output request and a metadata request. Each orders
+/// against nothing, and a periodic ping that flushed would defeat the resize micro-debounce
+/// outright — a client that pings every second would `TIOCSWINSZ` once per second mid-drag.
 pub(crate) fn run_control_relay(
     subscriber: &Arc<Subscriber>,
     inbound: &Receiver<WireMessage>,
     shared: &Arc<Shared>,
+    resize: &Arc<Resize>,
 ) {
     while let Ok(message) = inbound.recv() {
         match message {
-            WireMessage::Ack { seq } => shared.acknowledge(subscriber.id, seq),
+            WireMessage::Resize {
+                cols,
+                rows,
+                px_width,
+                px_height,
+            } => {
+                resize.offer(subscriber.id, Grid {
+                    cols,
+                    rows,
+                    px: px_width,
+                    py: px_height,
+                });
+            },
+            WireMessage::Ack { seq } => {
+                resize.flush();
+                shared.acknowledge(subscriber.id, seq);
+            },
             // A stateless echo. The timestamp is the CLIENT's clock and only the client reads it,
             // so nothing here interprets it.
             WireMessage::Ping { timestamp_ms } => {
                 subscriber.enqueue_control(vec![WireMessage::Pong { timestamp_ms }]);
             },
+            // Served at stage C.2d. Listed here rather than left to the catch-all because the
+            // catch-all FLUSHES, and neither of these may.
+            WireMessage::RequestBlockOutput { .. } | WireMessage::MetadataRequest { .. } => {},
             // A clean departure. The peer will finish the channel; ending here rather than waiting
             // for that makes the intent explicit and costs nothing if the finish arrives anyway.
-            WireMessage::Bye => break,
-            _ => {},
+            WireMessage::Bye => {
+                resize.flush();
+                break;
+            },
+            _ => resize.flush(),
         }
     }
+    // The channel closed: apply any settled-but-undebounced final size before the loop ends, so a
+    // client leaving never strands one.
+    resize.flush();
     subscriber.retire();
 }

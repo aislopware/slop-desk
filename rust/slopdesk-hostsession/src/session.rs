@@ -41,16 +41,20 @@ use std::time::Duration;
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::{PaneOutputStream, PtyProcess};
 use slopdesk_muxsession::fanout::SubscriberId;
+use slopdesk_muxsession::lifecycle::RebindVerdict;
+use slopdesk_muxsession::resize_fold::{Attachment, Grid, PRIMARY_SUBSCRIBER};
 use slopdesk_wire::message::WireMessage;
 use slopdesk_wire::mux::flow::MuxFlowControl;
 use slopdesk_wire::replay::ReplayBuffer;
 
 use crate::ingest::Ingest;
+use crate::resize::{RESIZE_DEBOUNCE, Resize, SIZE_SETTLE};
 use crate::shared::{SessionLog, Shared};
+use crate::snapshot::SnapshotPolicy;
 use crate::subscriber::{
     Subscriber, run_control_relay, run_control_sender, run_data_sender, run_input_relay,
 };
-use crate::{drain, facts};
+use crate::{drain, facts, snapshot};
 
 /// How long the exit thread waits for the read loop to reach EOF before shipping `.exit`.
 ///
@@ -104,6 +108,38 @@ pub struct SessionConfig {
     /// `0` for a fresh pane; a recorded cursor for a rebind; [`slopdesk_hostpane::FROM_NOW_ON`] for
     /// a pane whose backlog must not be replayed at all.
     pub resume_from: u64,
+    /// How a reattach or a join renders the screen a client opens on. `None` replays raw history,
+    /// which is what a caller with no screen model wants — see [`crate::snapshot`].
+    pub snapshot: Option<Arc<dyn SnapshotPolicy>>,
+    /// Whether the subscriber this session was OPENED for votes in the size fold.
+    ///
+    /// Resolved host-side from the workspace channel's client kind, never from anything the pane
+    /// channel itself claims — a phone must not be able to declare itself a Mac.
+    pub opened_size_passive: bool,
+    /// The latest-wins window before a resolved grid reaches `TIOCSWINSZ`.
+    pub resize_debounce: Duration,
+    /// The longer window a contributor-set change arms.
+    pub size_settle: Duration,
+}
+
+impl SessionConfig {
+    /// A configuration for a pane with a fresh ring, no snapshot policy and a VOTING opener.
+    ///
+    /// The two windows come from [`RESIZE_DEBOUNCE`] and [`SIZE_SETTLE`]; a test that wants a
+    /// resize to land inside its own runtime overwrites them.
+    #[must_use]
+    pub fn new(log: Arc<dyn SessionLog>, observer: Arc<dyn SessionObserver>) -> Self {
+        Self {
+            replay: ReplayBuffer::new(),
+            log,
+            observer,
+            resume_from: 0,
+            snapshot: None,
+            opened_size_passive: false,
+            resize_debounce: RESIZE_DEBOUNCE,
+            size_settle: SIZE_SETTLE,
+        }
+    }
 }
 
 /// One pane, its members, and the threads between them.
@@ -111,10 +147,17 @@ pub struct SessionConfig {
 pub struct PaneSession {
     shared: Arc<Shared>,
     pty: Arc<PtyProcess>,
-    observer: Arc<dyn SessionObserver>,
+    /// The size fold, its one writer and its three timers.
+    resize: Arc<Resize>,
+    /// How a reattach or a join renders the screen a client opens on.
+    snapshot: Option<Arc<dyn SnapshotPolicy>>,
     /// `taskLock`'s remaining job, and only that: the objects. Every LATCH that used to sit beside
     /// them is `Lifecycle`'s.
     stream: Mutex<Option<Arc<PaneOutputStream>>>,
+    /// The drain's handle, apart from the rest because it is the one thread a DETACH ends and a
+    /// REBIND replaces. Keeping it in `threads` would leave the rebind unable to name the handle it
+    /// has to join before starting the next one.
+    drain_thread: Mutex<Option<JoinHandle<()>>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
     /// How many times the teardown ladder has run to completion — the only thing a test can watch
     /// to know the whole path ran to the END rather than merely started.
@@ -129,17 +172,26 @@ impl PaneSession {
             config.replay,
             MuxFlowControl::host_queue_capacity_bytes(),
             Arc::clone(&config.log),
+            Arc::clone(&config.observer),
         ));
         // Seed the resume cursor BEFORE anything can advance it. `record_offset` is monotone except
         // for the `FROM_NOW_ON` sentinel, which the first real offset replaces outright — so a pane
         // told to skip its backlog stays skipped until a chunk actually arrives, and a rebind's
         // recorded cursor can only move forward from here.
         shared.life.record_offset(config.resume_from);
+        let resize = Resize::new(
+            Arc::clone(&pty),
+            config.opened_size_passive,
+            config.resize_debounce,
+            config.size_settle,
+        );
         Arc::new(Self {
             shared,
             pty,
-            observer: Arc::clone(&config.observer),
+            resize,
+            snapshot: config.snapshot,
             stream: Mutex::new(None),
+            drain_thread: Mutex::new(None),
             threads: Mutex::new(Vec::new()),
             teardowns: AtomicUsize::new(0),
         })
@@ -185,15 +237,16 @@ impl PaneSession {
     /// The ORDER is the caller's, as `docs/59` step 3 settled it: reserve the id, register whatever
     /// names it, then join. A link that drops in that window stays attributable to the joiner.
     ///
-    /// A member admitted here is a plain attach. The JOIN ladder — the snapshot compose, the
-    /// catch-up replay and the fan-out switch — is stage C.2c's, and it will admit through this
-    /// same door.
+    /// A member admitted here is a plain attach — the FIRST client of a pane, or a test's. A client
+    /// arriving at a pane somebody else is already watching goes through [`Self::join`], which adds
+    /// the state transfer and the fan-out switch on top of this same door.
     pub fn attach(
         self: &Arc<Self>,
         data: Arc<SubChannel>,
         data_inbound: Receiver<WireMessage>,
         control: Arc<SubChannel>,
         control_inbound: Receiver<WireMessage>,
+        size_passive: bool,
     ) -> SubscriberId {
         let id = self.shared.reserve_subscriber_id();
         let subscriber = Subscriber::new(id, data, control);
@@ -202,25 +255,10 @@ impl PaneSession {
         // in the window would be at or below the sender's cursor, and silently skipped.
         let head = self.shared.highest_seq();
         self.shared.admit(&subscriber, 0);
+        self.resize.add_contributor(id, size_passive);
         self.shared.recompute_client_online();
-
-        let sender = Arc::clone(&subscriber);
-        self.launch_owned(&subscriber, "slopdesk-control-send", move || {
-            run_control_sender(&sender);
-        });
-
-        let relay = Arc::clone(&subscriber);
-        let shared = Arc::clone(&self.shared);
-        let pty = Arc::clone(&self.pty);
-        self.launch_owned(&subscriber, "slopdesk-input-relay", move || {
-            run_input_relay(&relay, &data_inbound, &shared, &pty);
-        });
-
-        let relay = Arc::clone(&subscriber);
-        let shared = Arc::clone(&self.shared);
-        self.launch_owned(&subscriber, "slopdesk-control-relay", move || {
-            run_control_relay(&relay, &control_inbound, &shared);
-        });
+        self.start_control_sender(&subscriber);
+        self.start_relays(&subscriber, data_inbound, control_inbound);
 
         // A member that joins after the fan-out switch needs its own data sender, and `fan_out`'s
         // one roster walk is already behind it. Without this its lane is enqueued into by the drain
@@ -231,6 +269,46 @@ impl PaneSession {
         }
 
         id
+    }
+
+    /// Starts one member's CONTROL sender, which every path does FIRST.
+    ///
+    /// Before the drain can reach this member, and before a rebind restarts one: the drain's
+    /// sniffed-control hand-off reads each member's queue, so a member the drain can already see
+    /// with no sender to drain what it is handed would strand an OSC-0/2 title change until the
+    /// next one happened to arrive. Starting it early costs nothing in the other direction — it
+    /// parks on an empty lane until the first enqueue.
+    fn start_control_sender(self: &Arc<Self>, subscriber: &Arc<Subscriber>) {
+        let sender = Arc::clone(subscriber);
+        self.launch_owned(subscriber, "slopdesk-control-send", move || {
+            run_control_sender(&sender);
+        });
+    }
+
+    /// Starts one member's two INBOUND relays.
+    ///
+    /// Last of the three on the join path, because until they exist the member cannot type — and a
+    /// keystroke arriving before its state transfer has shipped would be echoed into a screen the
+    /// client has not been given yet.
+    fn start_relays(
+        self: &Arc<Self>,
+        subscriber: &Arc<Subscriber>,
+        data_inbound: Receiver<WireMessage>,
+        control_inbound: Receiver<WireMessage>,
+    ) {
+        let relay = Arc::clone(subscriber);
+        let shared = Arc::clone(&self.shared);
+        let pty = Arc::clone(&self.pty);
+        self.launch_owned(subscriber, "slopdesk-input-relay", move || {
+            run_input_relay(&relay, &data_inbound, &shared, &pty);
+        });
+
+        let relay = Arc::clone(subscriber);
+        let shared = Arc::clone(&self.shared);
+        let resize = Arc::clone(&self.resize);
+        self.launch_owned(subscriber, "slopdesk-control-relay", move || {
+            run_control_relay(&relay, &control_inbound, &shared, &resize);
+        });
     }
 
     /// Gives one member the data sender the fan-out path requires of it.
@@ -281,8 +359,7 @@ impl PaneSession {
             return;
         }
 
-        let shared = Arc::clone(&self.shared);
-        self.launch("slopdesk-pane-drain", move || drain::run(&shared));
+        self.start_drain();
 
         // superd does the reading now: hostd's duplicate of the master is for writes, `TIOCSWINSZ`
         // and the two probes only. An unspawned pane's stream is EOF from the start, so nothing
@@ -298,7 +375,6 @@ impl PaneSession {
 
         let shared = Arc::clone(&self.shared);
         let pty = Arc::clone(&self.pty);
-        let observer = Arc::clone(&self.observer);
         self.launch("slopdesk-pane-exit", move || {
             let code = pty.wait_for_exit();
             // A teardown woke this rather than the child: the pane is being let go and its exit is
@@ -324,8 +400,371 @@ impl PaneSession {
                      rather than holding the pane open for a client that is not reading",
                 );
             }
-            observer.exited(code);
+            // Read at FIRE time, never captured: detach installs the detached-store handler and
+            // rebind installs the returning connection's, so whichever life the child dies in, the
+            // CURRENT handler is the one that runs. A captured `Arc` would see the one this pane
+            // started with — which after a reattach means killing a pane that had just come back.
+            //
+            // This thread is deliberately never cancelled and re-created by a rebind, either:
+            // `wait_for_exit` parks a registration this crate cannot retire, so a second waiter
+            // would resume BOTH and the pane would send a duplicate `.exit` per reattach cycle.
+            shared.observer().exited(code);
         });
+    }
+
+    /// Starts the pane's ONE drain thread, remembering the handle a detach will have to join.
+    fn start_drain(self: &Arc<Self>) {
+        let shared = Arc::clone(&self.shared);
+        match spawn(&self.shared, "slopdesk-pane-drain", move || drain::run(&shared)) {
+            Ok(handle) => {
+                *self.drain_thread.lock().unwrap_or_else(PoisonError::into_inner) = Some(handle);
+            },
+            Err(error) => {
+                self.shared
+                    .log
+                    .line(&format!("could not start slopdesk-pane-drain: {error}"));
+            },
+        }
+    }
+
+    // MARK: The ladders that change WHO is attached
+
+    /// Admits a client to a pane somebody else is already watching.
+    ///
+    /// The whole difference from [`Self::attach`] is that there is an INCUMBENT, and everything
+    /// below follows from not being allowed to cost it anything:
+    ///
+    /// 1. The screen is composed OUTSIDE the join lock. Rendering the model is an O(retained
+    ///    history) walk — seconds on a pane with a full scrollback — and holding the drain's
+    ///    ordering lock across it would stall the incumbent's output for that whole window.
+    /// 2. [`Shared::admit_joiner`](crate::shared::Shared::admit_joiner) then does the atomic half
+    ///    under that lock, bridging the render's gap with the frames sequenced while it ran.
+    /// 3. The joiner's own data sender is started only AFTER the state transfer has shipped, so the
+    ///    replay owns its channel until it is done and live frames queue behind it in order.
+    ///
+    /// `reserved` is the id the caller took from [`Self::reserve_subscriber_id`] inside the same
+    /// critical section that registered this channel's key. The key is visible to every per-client
+    /// teardown path the instant it is written, but the member does not exist until this returns —
+    /// so the reservation is what makes a link dropping in that window attributable to the JOINER
+    /// rather than to the incumbent it would otherwise retire.
+    ///
+    /// `None` when the pair is already dead, when the session is detached, or when the set emptied
+    /// while the render ran. The set is untouched in every one of those, so the caller may refuse
+    /// the channel rather than ack a pane the joiner is not on.
+    pub fn join(
+        self: &Arc<Self>,
+        reserved: Option<SubscriberId>,
+        data: Arc<SubChannel>,
+        data_inbound: Receiver<WireMessage>,
+        control: Arc<SubChannel>,
+        control_inbound: Receiver<WireMessage>,
+        size_passive: bool,
+    ) -> Option<SubscriberId> {
+        if data.is_finished() || control.is_finished() {
+            return None;
+        }
+        // A detached session has no drain to join; that is `rebind`'s job. Re-checked inside
+        // `admit_joiner` under the join lock — this early exit only avoids paying for a render that
+        // could not be used.
+        if self.shared.life.is_detached() {
+            return None;
+        }
+        let (rendered, composed_through) =
+            snapshot::compose_join(&self.shared, &self.pty, self.snapshot.as_ref());
+        let admission = self.shared.admit_joiner(reserved, composed_through, move |id| {
+            Subscriber::new(id, data, control)
+        })?;
+        let member = Arc::clone(&admission.subscriber);
+        let id = member.id;
+
+        // The drain fans out from here on, so every INCUMBENT needs a sender of its own — with one
+        // member the drain sends inline, and the moment there are two it must not, or the slower
+        // peer's credit window would gate the faster one. Started after the lock rather than under
+        // it: a frame sequenced in this window queues in a lane whose sender is a microsecond away,
+        // and `start_sender` is the arbiter either way.
+        for incumbent in &admission.incumbents {
+            self.start_data_sender(incumbent, admission.head);
+        }
+        self.resize.add_contributor(id, size_passive);
+        self.start_control_sender(&member);
+
+        // The state transfer, on the joiner's own channel. Its data sender does not exist yet, so
+        // this owns the channel until it is done and the live frames accumulating in its lane land
+        // strictly after — the rendered screen, then the bytes produced while it rendered, then
+        // everything since, with no hole and nothing twice.
+        for message in rendered.iter().chain(admission.catch_up.iter()) {
+            if member.data.send(message).is_err() {
+                break;
+            }
+        }
+        self.start_data_sender(&member, admission.head);
+
+        // Join-scoped re-asserts, addressed to the new member only: the incumbents were told these
+        // truths when they happened, and re-telling them would flood a client that is up to date.
+        // The echo truth and the activity burst are stage C.2d's; the blocks are here because they
+        // need nothing but the snapshot superd already holds.
+        self.resend_blocks_to(&member);
+
+        self.start_relays(&member, data_inbound, control_inbound);
+        self.shared.recompute_client_online();
+        Some(id)
+    }
+
+    /// Non-destructively detaches this session from its current client connection.
+    ///
+    /// **The subscription is DROPPED, and the resume cursor is what survives.** The pane's bytes
+    /// while away are superd's ring — absolute-offset addressed, with announced eviction — so hostd
+    /// buffers none of them. The shell keeps running at full speed: superd's pump keeps draining
+    /// the master whether or not anyone is subscribed, and losing the last subscriber CLEARS
+    /// the pause (`docs/51` §6.5), so a detached agent is never the one that blocks. Pausing
+    /// the read loop instead — the shape before — transitively backpressured the SHELL through
+    /// the kernel PTY buffer the moment the host-side queue filled, and the detached budget
+    /// only chose how long an agent ran before it froze.
+    ///
+    /// `on_detached_exit` is installed BEFORE anything else, and on the idempotent second call it
+    /// is the only thing that happens: a shell exiting while this session is in the store must
+    /// reach the store's handler and not a connection that is gone.
+    ///
+    /// The out-FIFO is KEPT. Its frames were never sequenced, so no replay can recover them, and
+    /// dropping them would leak their gate accounting too — a ≥64 KiB residue leaves the read loop
+    /// paused for ever. [`Self::rebind`] restarts a drain over the same queue.
+    pub fn detach(self: &Arc<Self>, on_detached_exit: Arc<dyn SessionObserver>) {
+        // The flag flip and the "is this call the one that tears down" answer are `Lifecycle`'s,
+        // taken FIRST because the ladder serializes itself.
+        let verdict = self.shared.life.detach();
+        self.shared.set_observer(on_detached_exit);
+        // Idempotence: a second detach — a failed rebind's re-park racing link-down's own — is a
+        // no-op past the handler refresh above. The members are already retired, the drain already
+        // stopped and the subscription already dropped; re-running this would only churn state
+        // another thread may be reading, and would re-read a cursor that has stopped advancing.
+        if !verdict.first {
+            return;
+        }
+        // Retire every member. The resize contributors are DELIBERATELY left in the fold: a reattach
+        // swaps the sub-channels while the same PTY lives on, and forgetting the standing offer here
+        // would snap the pane back to its spawn size until the returning client sent a new one.
+        for member in self.shared.roster() {
+            member.retire();
+            let _emptied = self.shared.retire(&member);
+            member.join_threads();
+        }
+        // The set is empty, so the SESSION-wide half goes too. This is the teardown that belongs to
+        // the set EMPTYING — a lone member losing its channel does not get to stop the drain for
+        // anyone else.
+        self.shared.close_drain();
+        self.join_drain();
+        // Hand the pane's detached window back to superd. `stop()` is PERMANENT for a
+        // `PaneOutputStream`, which is why the rebind mints a NEW one at the resume cursor rather
+        // than reviving this one; both go through `PaneOutputStream`, so neither is a second `read`
+        // on the master.
+        let stream = if verdict.stop_stream {
+            self.stream.lock().unwrap_or_else(PoisonError::into_inner).take()
+        } else {
+            None
+        };
+        if let Some(stream) = stream {
+            stream.stop();
+        }
+        // Nobody holds the pane, which the ring's retention still wants to know: with no client
+        // online its offline gate bounds what is kept for a return. There is no read loop left to
+        // pause, so this is accounting only.
+        self.shared.recompute_client_online();
+    }
+
+    /// Rebinds this session to a fresh pair of sub-channels from a returning client.
+    ///
+    /// Re-opens the supervised output at the cursor [`Self::detach`] left. The resumed bytes enter
+    /// the queue exactly as live ones do, are sequenced at drain time, and land after the caller's
+    /// [`Self::replay_tail`] — fresh seqs above every replayed seq, so byte order is preserved. A
+    /// resume older than superd's ring is LOSSY and announced as such; the window is bounded by the
+    /// ring and the client's own repaint covers the seam.
+    ///
+    /// `observer` is taken here rather than assigned afterwards, and that is the whole point of the
+    /// parameter: it is installed before the drain restarts, so the detached-exit handler can never
+    /// be the one a reattached pane's exit fires. A caller that assigns after this returns reopens
+    /// the window this closes.
+    ///
+    /// `false` when the session was not detached, or when the returning pair is already dead —
+    /// nothing is changed in either case. Refusing rather than silently no-op'ing is what keeps the
+    /// loser of a concurrent double-reattach from believing it owns the pane.
+    pub fn rebind(
+        self: &Arc<Self>,
+        data: Arc<SubChannel>,
+        data_inbound: Receiver<WireMessage>,
+        control: Arc<SubChannel>,
+        control_inbound: Receiver<WireMessage>,
+        observer: Arc<dyn SessionObserver>,
+    ) -> bool {
+        let ladder = self.shared.life.rebind(data.is_finished(), control.is_finished());
+        let RebindVerdict::Proceed { resume_from } = ladder else {
+            return false;
+        };
+        // Back to ONE member, so back to the inline send — see `end_fan_out` for what leaving the
+        // flag set would cost the returning client. Safe precisely because the set EMPTIED.
+        self.shared.end_fan_out();
+        self.shared.set_observer(observer);
+        // The returning client REPLACES the member the detach retired: a subscriber IS its channel
+        // pair, so a new pair is a new member under the same id, never a swap underneath the threads
+        // a departed one owned.
+        let member = Subscriber::new(PRIMARY_SUBSCRIBER, data, control);
+        self.shared.admit(&member, 0);
+
+        // Re-open the supervised output at the cursor detach left behind. This is the whole of the
+        // detached-window recovery: superd kept pumping the master into its ring the entire time,
+        // and a subscribe at the resume cursor replays exactly the bytes produced since. It is a
+        // `subscribe`, not a `read` — superd owns the only reader on this master, and a second one
+        // would STEAL bytes from the pane rather than observe them.
+        //
+        // The GATE is not rebuilt. It lives in `Shared` and outlived the detach holding its own
+        // accounting, so the bytes the stopped drain never shipped are still counted and the books
+        // still sum to zero once the restarted drain ships them. `install_throttle` only re-points
+        // the `Weak` at the new stream. The Swift had to CARRY the outstanding count onto a fresh
+        // gate because the gate's sink named the stream being stopped; ownership dissolves that.
+        let resumed = resume_from.map(|offset| {
+            let sink = Arc::new(Ingest::new(Arc::clone(&self.shared), Arc::downgrade(&self.pty)));
+            let stream = Arc::new(self.pty.make_output_stream(offset, sink));
+            self.shared.install_throttle(&stream);
+            *self.stream.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&stream));
+            stream
+        });
+
+        self.start_control_sender(&member);
+        self.shared.reopen_drain();
+        self.start_drain();
+        // Kick the restarted drain ONCE if unsent frames are already waiting: their producer-side
+        // wakes landed on the thread detach ended, and a shell that has gone idle since produces no
+        // future chunk to re-wake this one. Without it the carried frames — and their gate
+        // accounting — would sit undelivered until the pane happened to speak again.
+        let _carried = self.shared.kick_drain();
+
+        // Re-establish the control-only truths on reattach. The block metadata rides the control
+        // channel and is not in the replayed byte stream, so a returning client rebuilds its
+        // Commands navigator from this. The echo truth and the activity burst are stage C.2d's.
+        self.resend_blocks_to(&member);
+
+        self.start_relays(&member, data_inbound, control_inbound);
+        // Somebody holds the pane again, so this reads TRUE and the offline gate clears. Ordered
+        // before the stream starts, so the gate's replay-pause source is already at its attached
+        // value when the first resumed chunk lands.
+        self.shared.recompute_client_online();
+        if let Some(stream) = resumed {
+            stream.start();
+        }
+        true
+    }
+
+    /// Pumps the retained tail above `after` onto `channel` — the reconnect replay that brings a
+    /// returning client up to date.
+    ///
+    /// Called BEFORE [`Self::rebind`] starts the live drain, so the tail is delivered in order
+    /// without interleaving live output. Answers whether the replay was a RENDERED snapshot: the
+    /// caller's redraw-jiggle workaround is unnecessary then, because every row the app believes is
+    /// painted IS painted.
+    pub fn replay_tail(&self, after: i64, channel: &SubChannel) -> bool {
+        let (messages, composed) =
+            snapshot::replay_tail(&self.shared, &self.pty, self.snapshot.as_ref(), after);
+        for message in &messages {
+            if channel.send(message).is_err() {
+                break;
+            }
+        }
+        composed
+    }
+
+    /// Retires ONE member and reports whether the set is now EMPTY.
+    ///
+    /// Refcounted, deliberately: with two clients on one pane, one closing its lid must not engage
+    /// the offline gate that pauses the drain — the other client's pane would go dead-quiet while
+    /// the shell keeps producing. The session-wide teardown belongs to the set EMPTYING, and the
+    /// caller owns that decision.
+    pub fn remove_subscriber(self: &Arc<Self>, id: SubscriberId) -> bool {
+        let Some(member) = self.shared.member(id) else {
+            return self.shared.member_count() == 0;
+        };
+        member.retire();
+        let emptied = self.shared.retire(&member);
+        self.resize.remove_contributor(id);
+        // Recomputed from the SET, never asserted: with somebody still holding the pane this reads
+        // TRUE and the offline gate stays clear, which is the whole difference between a refcounted
+        // leave and a detach. Only an emptied set reads false.
+        self.shared.recompute_client_online();
+        self.shared.release_retention_to_minimum();
+        emptied
+    }
+
+    /// Reserves the id a pending join will enter the set under, before the join runs.
+    ///
+    /// See [`Self::join`] for why the reservation and the caller's key registration must share one
+    /// critical section. A reservation the join never uses simply skips an id.
+    #[must_use]
+    pub fn reserve_subscriber_id(&self) -> SubscriberId {
+        self.shared.reserve_subscriber_id()
+    }
+
+    /// The highest sequence number this session has ever assigned — the ceiling of any honest
+    /// resume verdict.
+    ///
+    /// A reattach needs it because a session's numbering is a property of the SESSION OBJECT, and
+    /// an adopted pane is a new object around an old shell: its buffer starts at zero while the
+    /// client coming back to it is warm and remembers thousands.
+    #[must_use]
+    pub fn highest_assigned_seq(&self) -> i64 {
+        self.shared.highest_seq()
+    }
+
+    /// Whether this session is parked in the detached store.
+    #[must_use]
+    pub fn is_detached(&self) -> bool {
+        self.shared.life.is_detached()
+    }
+
+    // MARK: The size fold
+
+    /// Records one client's latest size offer. Debounced — see [`crate::resize`].
+    pub fn offer_size(&self, subscriber: SubscriberId, cols: u16, rows: u16, px: u16, py: u16) {
+        self.resize.offer(subscriber, Grid { cols, rows, px, py });
+    }
+
+    /// Installs the ctl socket's size override and applies it at once.
+    pub fn set_ctl_size(&self, cols: u16, rows: u16) {
+        self.resize.set_ctl_override(Grid {
+            cols,
+            rows,
+            px: 0,
+            py: 0,
+        });
+    }
+
+    /// Applies whatever the fold resolves right now, superseding nothing — the flush every non-size
+    /// control message takes so a settled size is never stranded.
+    pub fn flush_size(&self) {
+        self.resize.flush();
+    }
+
+    /// The grid the fold resolved for this pane, as the roster publishes it.
+    #[must_use]
+    pub fn resolved_grid(&self) -> (u16, u16) {
+        self.resize.resolved_grid()
+    }
+
+    /// Every contributor's standing offer, in subscriber order — what a client turns into "who is
+    /// clamping this pane".
+    #[must_use]
+    pub fn size_contributions(&self) -> Vec<Attachment> {
+        self.resize.attachments()
+    }
+
+    /// Whether a contributor-set change is still settling. A regression seam.
+    #[must_use]
+    pub fn is_size_settling(&self) -> bool {
+        self.resize.is_settling()
+    }
+
+    /// Whether a delayed redraw nudge is armed. A regression seam: the nudge itself is a `SIGWINCH`
+    /// to somebody else's process group, which nothing this side of the kernel can observe.
+    #[must_use]
+    pub fn has_armed_redraw_nudge(&self) -> bool {
+        self.resize.has_armed_nudge()
     }
 
     /// Ends this pane: the teardown, WITH the child.
@@ -360,6 +799,12 @@ impl PaneSession {
     fn teardown(&self, kill_child: bool) {
         self.shared.mark_torn_down();
         self.stop_stream();
+        // Nobody holds a dead pane at a size, and no timer may still be pending against it. The
+        // fold's GENERATION is deliberately not rewound by `clear_members` — a body already past its
+        // sleep must not find its stale generation matching a fresh one — and `stop` then makes the
+        // question moot by dropping every pending body and joining the thread that would run them.
+        self.resize.clear_members();
+        self.resize.stop();
         // The roster, snapshotted BEFORE anything is closed. Every close below is what makes some
         // relay return, and a relay's last act is to retire its own member — so a roster read after
         // the closes would be missing exactly the members whose threads are still finishing, and
@@ -415,8 +860,27 @@ impl PaneSession {
             );
         }
 
+        self.join_drain();
         self.join_threads(&members);
         self.teardowns.fetch_add(1, Ordering::AcqRel);
+    }
+
+    /// Joins the drain thread, if one is running and it is not the caller.
+    ///
+    /// The skip is the same one [`Self::join_threads`] makes and for the same reason: a teardown
+    /// reached from inside the drain would join the thread it is running on.
+    fn join_drain(&self) {
+        let handle = self
+            .drain_thread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        let Some(handle) = handle else { return };
+        if handle.thread().id() == std::thread::current().id() {
+            *self.drain_thread.lock().unwrap_or_else(PoisonError::into_inner) = Some(handle);
+            return;
+        }
+        drop(handle.join());
     }
 
     /// The DESTROY-path child termination ladder.
@@ -529,11 +993,29 @@ impl PaneSession {
     /// the ONE constructor it goes through is what keeps a re-sent block and a live one from
     /// disagreeing about a field.
     pub fn resend_blocks(&self) {
-        let Some(blocks) = self.pty.block_snapshot() else {
+        let Some(messages) = self.block_backfill() else {
             return;
         };
-        let messages = blocks.iter().map(facts::block_message).collect::<Vec<_>>();
         self.shared.broadcast_control(&messages);
+    }
+
+    /// The same backfill, addressed to ONE member — what a join and a rebind want.
+    ///
+    /// Addressed rather than broadcast because a re-assert is a fact about what THAT client has yet
+    /// to be told, not a pane-wide edge: telling the incumbents again would rebuild a navigator
+    /// that is already correct.
+    fn resend_blocks_to(&self, member: &Arc<Subscriber>) {
+        let Some(messages) = self.block_backfill() else {
+            return;
+        };
+        member.enqueue_control(messages);
+    }
+
+    /// The pane's held blocks as control messages, through the ONE constructor that keeps a re-sent
+    /// block and a live one from disagreeing about a field.
+    fn block_backfill(&self) -> Option<Vec<WireMessage>> {
+        let blocks = self.pty.block_snapshot()?;
+        Some(blocks.iter().map(facts::block_message).collect())
     }
 }
 

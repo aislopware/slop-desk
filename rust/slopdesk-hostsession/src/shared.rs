@@ -68,8 +68,9 @@ use slopdesk_muxsession::outbox::{Frame, Outbox, Slot};
 use slopdesk_muxsession::truths::Truths;
 use slopdesk_wire::message::WireMessage;
 use slopdesk_wire::mux::flow::{MuxFlowControl, PausableQueueGate};
-use slopdesk_wire::replay::ReplayBuffer;
+use slopdesk_wire::replay::{ReplayBuffer, SnapshotSource};
 
+use crate::session::SessionObserver;
 use crate::subscriber::Subscriber;
 
 /// Where a session writes the lines that used to go to hostd's log closure.
@@ -187,6 +188,20 @@ pub(crate) enum Ready {
     },
 }
 
+/// What a successful JOIN hands back to the caller.
+#[derive(Debug)]
+pub(crate) struct Admission {
+    /// The member that entered the set.
+    pub(crate) subscriber: Arc<Subscriber>,
+    /// Whatever the drain sequenced WHILE the snapshot was rendering, byte-exact and exactly once.
+    pub(crate) catch_up: Vec<WireMessage>,
+    /// Who was already here, and who therefore needs a data sender now that the drain fans out.
+    pub(crate) incumbents: Vec<Arc<Subscriber>>,
+    /// The ring's head at admission — every sender's frontier seed, read once for the whole set so
+    /// a later joiner cannot be handed a cursor above a frame already sitting in its lane.
+    pub(crate) head: i64,
+}
+
 /// One frame, sequenced, with whoever must receive it.
 #[derive(Debug)]
 pub(crate) struct Sequenced {
@@ -231,13 +246,29 @@ pub(crate) struct Shared {
     /// RETURNS, not joins, which is the only version of the question a test can ask without
     /// blocking on the answer.
     live_threads: AtomicUsize,
+    /// Who hears about the exit, read at FIRE time rather than captured.
+    ///
+    /// The detach ladder swaps in a handler that parks the session in the detached store, and the
+    /// rebind ladder swaps the returning connection's back. A closure the exit thread captured at
+    /// `start()` would see neither — a shell that dies while detached would fire the handler of a
+    /// connection that is gone, and one that dies just after a reattach would fire the
+    /// detached-exit handler and kill a pane that had just come back. Swift kept `onExit`
+    /// mutable under `taskLock` for exactly this; here it is a lock of its own, because the
+    /// exit thread must never queue behind the teardown ladder to read it.
+    observer: Mutex<Arc<dyn SessionObserver>>,
     pub(crate) log: Arc<dyn SessionLog>,
 }
 
 impl Shared {
     /// A pane that has said nothing, with no client attached and no read loop to throttle yet.
-    pub(crate) fn new(replay: ReplayBuffer, capacity: i64, log: Arc<dyn SessionLog>) -> Self {
+    pub(crate) fn new(
+        replay: ReplayBuffer,
+        capacity: i64,
+        log: Arc<dyn SessionLog>,
+        observer: Arc<dyn SessionObserver>,
+    ) -> Self {
         Self {
+            observer: Mutex::new(observer),
             outbound: Mutex::new(Outbound::default()),
             drainable: Condvar::new(),
             gate: Mutex::new(Gate {
@@ -258,6 +289,23 @@ impl Shared {
             live_threads: AtomicUsize::new(0),
             log,
         }
+    }
+
+    // --------------------------------------------------------------- observer
+
+    /// Swaps in the handler a shell's exit must reach from here on.
+    ///
+    /// Called by detach — which routes an exit to the detached store — and by rebind, which routes
+    /// it back to the returning connection. The swap is atomic with respect to the exit thread's
+    /// read, which is the whole reason this is a lock rather than a field.
+    pub(crate) fn set_observer(&self, observer: Arc<dyn SessionObserver>) {
+        *self.observer.lock().unwrap_or_else(PoisonError::into_inner) = observer;
+    }
+
+    /// The handler as it stands right now. Cloned out, so it is CALLED under no lock — the owner's
+    /// handler is what tears the session down and it must be free to do so.
+    pub(crate) fn observer(&self) -> Arc<dyn SessionObserver> {
+        Arc::clone(&self.observer.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     // ------------------------------------------------------------------ truths
@@ -352,6 +400,39 @@ impl Shared {
             out.woken = true;
         }
         self.drainable.notify_all();
+    }
+
+    /// Re-opens the queue for a REBOUND session, so a fresh drain thread can park on it.
+    ///
+    /// The one-way close above is right for a teardown and wrong for a detach: detach stops the
+    /// drain where it stands, KEEPING the queue, because the frames it never shipped are pre-seq —
+    /// no replay can recover them, and dropping them would leak their gate accounting too (a
+    /// ≥64 KiB residue leaves the read loop paused for ever). The wake flag is cleared with the
+    /// flag so a stale wake from the dead thread's era does not spend the new thread's first park.
+    pub(crate) fn reopen_drain(&self) {
+        let mut out = self.outbound.lock().unwrap_or_else(PoisonError::into_inner);
+        out.closed = false;
+        out.woken = false;
+    }
+
+    /// Wakes a freshly started drain if frames are already waiting, and says whether any were.
+    ///
+    /// Their producer-side wakes landed on the thread detach ended, and a shell that has gone idle
+    /// since produces no future chunk to re-wake anyone — without this the carried frames, and
+    /// their gate accounting, would sit undelivered until the pane happened to speak again.
+    pub(crate) fn kick_drain(&self) -> bool {
+        let carried = {
+            let mut out = self.outbound.lock().unwrap_or_else(PoisonError::into_inner);
+            let carried = !out.outbox.is_empty();
+            if carried {
+                out.woken = true;
+            }
+            carried
+        };
+        if carried {
+            self.drainable.notify_all();
+        }
+        carried
     }
 
     /// Parks until there is something to drain. `false` means the queue was closed and the drain
@@ -475,6 +556,93 @@ impl Shared {
             .fanned_out
     }
 
+    /// Switches the drain back to the INLINE path, for a session whose set emptied and is being
+    /// rebound to one returning client.
+    ///
+    /// Safe precisely because the set emptied: detach retired every member, so no surviving sender
+    /// can be mid-lane here. Leaving the flag set would be the failure it exists to prevent — the
+    /// rebound member is built with no data sender (only the join path builds those), so every
+    /// frame would route into a lane nobody drains and the returning client would see the
+    /// caller's replay and then silence, for ever, `.exit` included.
+    pub(crate) fn end_fan_out(&self) {
+        let mut sequencing = self.sequencing.lock().unwrap_or_else(PoisonError::into_inner);
+        sequencing.fanned_out = false;
+    }
+
+    /// The JOIN's whole synchronous half: switch the drain to fan-out, bridge the render gap, and
+    /// enter the new member — all under [`Shared::sequencing`].
+    ///
+    /// Holding that lock across the lot is what makes a join ATOMIC with respect to a frame. No
+    /// frame can be sequenced between "the drain now fans out" and "every member can receive a
+    /// fan-out", nor between the snapshot's coverage point and the joiner's arrival. The joiner is
+    /// therefore either IN `targets` for a given seq or state-transferred a screen that already
+    /// contains it — never neither, and never both.
+    ///
+    /// Each innermost lock is taken and RELEASED in turn — replay for the catch-up, replay again
+    /// for the head, members for the insert — never nested, which is the aliasing `docs/59`
+    /// step 3 forbids and which [`Shared::sequence`] already models.
+    ///
+    /// `None` for a session that detached or emptied while the render ran: there is no drain to
+    /// join, and the caller must refuse the channel rather than leave a member attached to
+    /// nothing.
+    pub(crate) fn admit_joiner(
+        &self,
+        reserved: Option<SubscriberId>,
+        composed_through: i64,
+        make: impl FnOnce(SubscriberId) -> Arc<Subscriber>,
+    ) -> Option<Admission> {
+        let mut sequencing = self.sequencing.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.life.is_detached() {
+            return None;
+        }
+        let incumbents = {
+            let members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
+            members.by_id.values().map(Arc::clone).collect::<Vec<_>>()
+        };
+        if incumbents.is_empty() {
+            return None;
+        }
+        sequencing.fanned_out = true;
+        // Whatever the drain sequenced WHILE the snapshot was rendering. The render covers through
+        // `composed_through`, the joiner's lane starts collecting at the seq assigned after this
+        // lock was taken, and this bridges the two — without it the joiner's transcript has a hole
+        // the width of the render.
+        let catch_up = {
+            let replay = self.replay.lock().unwrap_or_else(PoisonError::into_inner);
+            replay
+                .messages(composed_through)
+                .into_iter()
+                .map(|(seq, bytes)| {
+                    WireMessage::Output {
+                        seq,
+                        bytes: bytes.to_vec(),
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        // The joiner starts CURRENT: it is receiving the rendered screen, not the history behind it,
+        // so its retention cursor must not pin bytes every other member has already acked.
+        let head = self
+            .replay
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .highest_seq();
+        let subscriber = {
+            let mut members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
+            let id = reserved.unwrap_or_else(|| members.fanout.reserve_id());
+            let subscriber = make(id);
+            members.fanout.join(id, head);
+            members.by_id.insert(id, Arc::clone(&subscriber));
+            subscriber
+        };
+        Some(Admission {
+            subscriber,
+            catch_up,
+            incumbents,
+            head,
+        })
+    }
+
     /// Reads the drain's mode and the roster together, for the exit ladder — the one other place
     /// that must see the same pair the sequence saw.
     pub(crate) fn hand_off_exit(&self) -> (bool, Vec<Arc<Subscriber>>) {
@@ -507,6 +675,28 @@ impl Shared {
         let pause = {
             let mut replay = self.replay.lock().unwrap_or_else(PoisonError::into_inner);
             replay.ack(floor);
+            replay.should_pause_drain()
+        };
+        self.set_replay_pause(pause);
+    }
+
+    /// Releases retention to the MIN over the members that REMAIN, and re-applies the gate.
+    ///
+    /// Called when membership changes, where a departure can only ever RAISE the floor — a departed
+    /// member's stale cursor must not keep pinning the buffer for a reader that has gone. The gate
+    /// is re-applied unconditionally, floor or no floor: a departure also moves the fan-out
+    /// frontier, and the member that just left may have been the fastest one holding the producer
+    /// open, or the last one, whose exit must clear the source entirely.
+    pub(crate) fn release_retention_to_minimum(&self) {
+        let floor = {
+            let members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
+            members.fanout.retention_floor()
+        };
+        let pause = {
+            let mut replay = self.replay.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(floor) = floor {
+                replay.ack(floor);
+            }
             replay.should_pause_drain()
         };
         self.set_replay_pause(pause);
@@ -566,6 +756,45 @@ impl Shared {
         }
         members.by_id.remove(&subscriber.id);
         members.fanout.leave(subscriber.id)
+    }
+
+    /// The raw retained tail above `after`, as the replay messages a client would receive.
+    pub(crate) fn raw_replay(&self, after: i64) -> Vec<WireMessage> {
+        self.replay
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replay(after)
+    }
+
+    /// How many un-acked bytes the ring is holding — the snapshot policy's cheap eligibility input.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        self.replay
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retained_bytes()
+    }
+
+    /// The raw material for a rendered-snapshot replay above `after`.
+    pub(crate) fn snapshot_source(&self, after: i64) -> SnapshotSource {
+        self.replay
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .snapshot_source(after)
+    }
+
+    /// Adopts a rendered stream AS the retained history — see [`crate::snapshot`] for when that is
+    /// safe, which is narrower than it looks.
+    pub(crate) fn adopt_snapshot_replay(&self, messages: &[WireMessage]) {
+        self.replay
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .adopt_snapshot_replay(messages);
+    }
+
+    /// One member by id, or `None` if nothing is attached under it.
+    pub(crate) fn member(&self, id: SubscriberId) -> Option<Arc<Subscriber>> {
+        let members = self.members.lock().unwrap_or_else(PoisonError::into_inner);
+        members.by_id.get(&id).map(Arc::clone)
     }
 
     /// Everyone currently attached, in id order.
@@ -830,4 +1059,67 @@ fn merge_cap() -> usize {
 /// silently removes the backpressure this whole path exists to apply.
 fn saturating_i64(count: usize) -> i64 {
     i64::try_from(count).unwrap_or(i64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use slopdesk_wire::replay::ReplayBuffer;
+
+    use super::{DiscardLog, Ready, Shared};
+    use crate::session::SilentObserver;
+
+    /// A pane with a fresh ring and no client, which is all the drain's own ladder needs.
+    fn shared() -> Shared {
+        Shared::new(
+            ReplayBuffer::new(),
+            1 << 20,
+            Arc::new(DiscardLog),
+            Arc::new(SilentObserver),
+        )
+    }
+
+    /// The whole reason `close_drain` gained an undo.
+    ///
+    /// A detach stops the drain with frames still in the out-FIFO: sniffed, folded, but never
+    /// sequenced, so the ring does not know about them and no replay can bring them back. The
+    /// rebind reopens the queue and kicks it, and the frame the stopped drain never shipped is
+    /// the first thing the restarted one takes.
+    #[test]
+    fn a_reopened_drain_ships_the_frame_the_stopped_one_left_behind() {
+        let shared = shared();
+        shared.append_chunk(b"carried".to_vec(), Vec::new());
+
+        shared.close_drain();
+        assert!(
+            !shared.await_drainable(),
+            "the closed queue tells its drain thread to return",
+        );
+
+        shared.reopen_drain();
+        assert!(
+            shared.kick_drain(),
+            "the frame outlived the close, so the reopened queue has something to carry",
+        );
+        assert!(
+            shared.await_drainable(),
+            "and the kick is what wakes the replacement drain, not the next chunk",
+        );
+        assert!(
+            matches!(shared.take_frame(), Some(Ready::Output { ref bytes, .. }) if bytes == b"carried"),
+            "the carried frame comes out whole and first",
+        );
+    }
+
+    /// The kick reports what it found, so a rebind that carried nothing does not claim it did.
+    #[test]
+    fn kicking_an_empty_queue_says_so_and_leaves_the_drain_parked() {
+        let shared = shared();
+        shared.close_drain();
+        shared.reopen_drain();
+
+        assert!(!shared.kick_drain(), "nothing was left to carry");
+        assert!(shared.take_frame().is_none(), "and nothing comes out of it");
+    }
 }

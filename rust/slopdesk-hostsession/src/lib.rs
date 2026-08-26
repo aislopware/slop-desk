@@ -19,11 +19,17 @@
 //!
 //! ## What it does not do yet
 //!
-//! Stage C.2a is the pane→wire direction and enough of an attach to test it end to end. The ladders
-//! that change WHO is attached — join with its snapshot compose, detach, rebind, the resize
-//! ladder — are C.2c, and the metadata verbs, the agent detector, the screen scanner and the
-//! project-key derivation are C.2d. Every one of them lands over this same [`shared::Shared`],
-//! which is why the lock partition is the module worth reading first.
+//! Stage C.2a was the pane→wire direction; C.2c added the ladders that change WHO is attached —
+//! [`PaneSession::join`] with its snapshot compose, [`PaneSession::detach`],
+//! [`PaneSession::rebind`] and the size fold with its three timers. What is left for C.2d is the
+//! CONTROL surface: the metadata verbs and their admission, the agent detector's three loops, the
+//! screen scanner, the echo probe's re-assert on join, and the project-key derivation. Every one of
+//! them lands over this same [`shared::Shared`], which is why the lock partition is the module
+//! worth reading first.
+//!
+//! Two things C.2c leaves marked rather than done, both because they need a face C.2d brings: the
+//! join and rebind re-asserts stop at the block backfill (the echo truth and the activity burst are
+//! the detector's), and [`resize::Resize::apply`] does not yet mark the screen model dirty.
 //!
 //! ## What it does not DELETE, and why
 //!
@@ -51,9 +57,14 @@ mod clock;
 mod drain;
 mod facts;
 mod ingest;
+mod resize;
 mod session;
 mod shared;
+mod snapshot;
 mod subscriber;
+mod timer;
 
+pub use resize::{RESIZE_DEBOUNCE, SIZE_SETTLE};
 pub use session::{PaneSession, SessionConfig, SessionObserver, SilentObserver};
 pub use shared::{DiscardLog, SessionLog};
+pub use snapshot::SnapshotPolicy;

@@ -329,8 +329,46 @@ Nothing in stage C can be written before it exists in Rust, so the stage is comm
     `std::process::Child` does not, and a crash-looping screend would otherwise fill hostd's process
     table.
   - **C.2c — the attach ladders.** `joinSubscriber`, `detach`, `rebindRelay`, `replayTail` and the
-    snapshot compose over C.2b, plus the resize ladder and the two generation-checked timers
-    (`docs/59` §6 left "Swift arms it", and §3 above says what that becomes when there is no Swift).
+    snapshot compose, plus the resize ladder and its generation-checked timers (`docs/59` §6 left
+    "Swift arms it", and §3 above says what that becomes when there is no Swift). Three modules:
+    `snapshot` (the compose and its three ways to decline), `resize` (the fold's two locks and the
+    one writer), `timer` (the cancel-replace table).
+
+    **The renderer stays INJECTED, and the screend client is not linked here.** `SnapshotPolicy` is a
+    trait `slopdesk-hostsession` never implements, exactly as `SnapshotReplayPolicy` was a struct
+    `MuxChannelSession` was handed. C.2b turned out to be needed for stage D rather than for this:
+    the compose takes `(history, rows, cols) -> bytes` and does not care who renders it, so hostd
+    wires the screend-backed implementation at C.2d and every test that has not asked for a screen
+    model replays raw.
+
+    **Three timers, ONE thread.** In Swift each cancel-replace window was a `Task`; a `std::thread`
+    per arm is not that cheap, and a window drag emits an offer per frame — ~60 arms a second per
+    pane. So `timer` is a table of at most three pending bodies on a single thread parked on a
+    condvar, spawned lazily on the first arm and joined by the teardown. Re-arming overwrites a slot
+    in place, which IS the cancel. No generation lives in there: `ResizeFold` already owns them, and
+    a second answer to "is this action still the newest one" is how the two drift.
+
+    **The exit handler had to stop being captured.** The Swift read `self.onExit` dynamically at fire
+    time, which is what let detach install the detached-store handler and rebind swap the returning
+    connection's back. A Rust exit thread that cloned the observer at `start()` would see neither —
+    a shell dying while detached would fire a handler for a connection that is gone, and one dying
+    just after a reattach would fire the detached-exit handler and kill the pane that had just come
+    back. The observer moved onto `Shared` under a lock of its own, read at fire time. The companion
+    rule survives intact: the exit thread is never cancelled and re-created by a rebind, because
+    `wait_for_exit` parks a registration this crate cannot retire and a second waiter would send a
+    duplicate `.exit` per reattach cycle.
+
+    **What the port does NOT copy: the gate-accounting carry.** The Swift read `outputGate.outstanding`
+    at detach and re-enqueued it onto the gate `rebindRelay` built, because the gate's `setPaused`
+    sink NAMED the stream being stopped and so had to be rebuilt with the new one. Here the gate
+    lives in `Shared`, outlives the detach holding its own numbers, and `install_throttle` only
+    re-points a `Weak` — so the frames the stopped drain never shipped are still counted and the
+    books still sum to zero when the restarted drain ships them. The carry was a consequence of the
+    Swift's ownership, not of the protocol, and it has no use site left. What the port DOES keep is
+    the reason the carry existed: the out-FIFO is not cleared on detach, because those frames were
+    never sequenced and dropping them would be both a silent transcript gap and a ≥64 KiB accounting
+    residue that leaves the read loop paused for ever. `close_drain` therefore gained a `reopen` and
+    a `kick`, since a detach's stop must be undoable where a teardown's never is.
   - **C.2d — the control surface.** The metadata verbs and their admission, the block observers, the
     agent-detection loops (the foreground poll, the screen scan and the echo probe), the project-key
     derivation, and the readouts `HostServer` calls through.
