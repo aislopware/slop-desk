@@ -43,6 +43,36 @@ slopdesk-muxsession = { path = "../slopdesk-muxsession" }
 # retention without a PTY, a superd and six threads per entry.
 slopdesk-hostsession = { path = "../slopdesk-hostsession" }
 
+# Every DECISION the two service lifecycles reach for — the announce parse, the probe step, the
+# adopt verdict, the workbench's four boot gates, the CLI flags — plus the line assembler a panel
+# backend's PTY output is cut into lines with. None of it was written for this crate; all of it was
+# already behind `HostServiceRules` before the port started.
+slopdesk-sidecars = { path = "../slopdesk-sidecars" }
+
+# superd is what forks a panel backend and what keeps it across a hostd rebuild, so the service
+# handle is a client of this rather than a `Command`.
+slopdesk-superclient = { path = "../slopdesk-superclient" }
+
+# The subscription a service's log lines arrive on, and the `resumed_lossily` answer that decides
+# whether a survivor may be adopted at all.
+slopdesk-hostpane = { path = "../slopdesk-hostpane" }
+
+# The spawn request that crosses to superd, and the two event batches a pane sink is handed — always
+# empty for a service, which is a fact about the spawn rather than about the sink.
+slopdesk-superwire = { path = "../slopdesk-superwire" }
+
+# One type, and it is the client's: the editor font spec verb 20 carries into the workbench's
+# settings file.
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+# The fake superd `tests/serviceproc.rs` drives the service handle against: `serde_json` to build the
+# replies superd would send, `nix` for the `sendmsg` that carries a descriptor across by `SCM_RIGHTS`
+# — a spawn that answered no master would fail here as a missing descriptor rather than in
+# production.
+[dev-dependencies]
+serde_json = "1"
+nix = { version = "0.31", features = ["socket"] }
+
 # In hostd, on the accept path and under the server's one lock.
 [profile.release]
 opt-level = 3

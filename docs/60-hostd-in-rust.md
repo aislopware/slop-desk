@@ -568,20 +568,56 @@ is paused.
   `slopdesk-muxsession::registry::mint_slot` and the FFI door delegates to it, because stage D gives
   hostd a SECOND minter into the same table and two counters would hand two live panes one number.
 
-  **D.2 — the two service lifecycles.** `SupervisedServiceLifecycle` (433) +
-  `SupervisedServiceProcess` (289) + `CodeServerManager` (425). None of the three decides anything:
-  the announce parse, the probe step, the adopt verdict, the boot step and the CLI flags are all
-  `HostServiceRules`' already. What lands is the two mutex-guarded state machines and the
-  ring-replay adoption with its lossy-resume refusal — a survivor whose announce line has scrolled
-  out of superd's ring is treated as a FAILED adoption, because a live handle with no port leaves
-  the panel reporting `starting` for the rest of the daemon's life.
+  **D.2 — the two service lifecycles.** ✅ `SupervisedServiceLifecycle` (433) +
+  `SupervisedServiceProcess` (289) + `CodeServerManager` (425), landed as `service`, `serviceproc`
+  and `code` in the same crate, with thirty-two tests. None of the three decides anything: the
+  announce parse, the probe step, the adopt verdict, the boot step and the CLI flags were all
+  `HostServiceRules`' already. What landed is the two mutex-guarded state machines, the ring-replay
+  adoption with its lossy-resume refusal — a survivor whose announce line has scrolled out of
+  superd's ring is a FAILED adoption, because a live handle with no port leaves the panel reporting
+  `starting` for the rest of the daemon's life — and the workbench's four boot gates.
 
-  One gap the scoping found, and it is the only thing in stage D that is not already Rust somewhere:
-  `SupervisorClient` has `observe_exit` but **no disconnect observer**. `SupervisedServiceProcess`
-  needs one — superd holds the ONLY master for a service, so superd dying kills the child, and hostd
-  would otherwise never hear it because the `exited` notice travels the connection that just died.
-  It is a registry of `Arc<dyn Fn()>` beside the exit one, fired where the client already notices its
-  socket has gone; D.2 adds it there rather than working around it here.
+  The gap the scoping found is closed first, and it was the only thing in stage D that was not
+  already Rust somewhere: `SupervisorClient` had `observe_exit` but **no disconnect observer**. The
+  service process needs one, because superd holds the ONLY master for a panel backend, so superd
+  dying kills the child and hostd would otherwise never hear it — the `exited` notice travels the
+  connection that just died. It is a token-keyed registry of `Arc<dyn Fn()>` beside the exit one,
+  drained under the client's lock and CALLED outside it, in `02f869ac`.
+
+  **The one departure, and it is a lock.** The Swift held ONE `NSLock` across the whole ensure round,
+  boot included — and the boot for a panel backend is `SupervisorClient::spawn`, a request that
+  blocks until superd's reply arrives on the client's single reader thread. That same reader thread
+  delivers the child's log lines, and a log line calls back in to record the port. One lock across
+  both is a cycle: the round holds it and waits for a reply, the reader waits for the lock to hand
+  over a line, and the reply is behind the line. So the announce record is on a mutex of its own, and
+  the boot closure runs with the other one RELEASED.
+
+  Two things follow, and both are improvements rather than trades. A second round that arrives
+  mid-boot reports `starting` instead of queueing behind a Node boot, which is the never-wait
+  contract stated one level stronger — a `booting` latch is what keeps it from spawning a twin. And
+  the announce slot opens when the generation is bumped, BEFORE the spawn rather than after it, so a
+  line that lands while the child is being spawned is recorded instead of dropped. The Swift dropped
+  it, and the path where that matters is the adopt: a survivor's ring replays from offset 0 and hands
+  the announce line back inside exactly that window. Both have a test named after them.
+
+  The workbench's gates moved with it. They were under the lifecycle's lock only to avoid keeping
+  two, and that lock is no longer a face's to take, so `CodeServerManager` holds its own — taken only
+  inside the boot closure, one-way after the service's. Nothing is lost, because the gates and the
+  child state were never read together.
+
+  `ServiceProcess` is the one piece that IS its connection end to end, so it is tested without a
+  seam: `tests/serviceproc.rs` drives it against a fake superd on a real `AF_UNIX` socket, framing
+  written with `sendmsg` and the master handed over by `SCM_RIGHTS`, the way
+  `slopdesk-hostpane`'s own suite does. Eight cases — the Swift's seven carried over one for one,
+  plus the spawn path's announce line, which the Swift only reached through the manager above it.
+  The load-bearing one is `a_survivor_whose_ring_lost_the_announce_line_is_ended_not_adopted`: every
+  other case would pass with the adopt taken on trust, and that one is the difference between a
+  panel that comes back and a panel that reports `starting` for the rest of the daemon's life.
+
+  One trap the suite named, and it is the client's shape rather than this type's: `release` is an
+  AWAITED verb where the `unsubscribe` ahead of it is fire-and-forget, so a fake superd that answers
+  the subscribe but not the release parks the terminating thread for ever. A test hangs rather than
+  fails there, so the teardown goes through one helper that answers it.
 
   **D.3 — the code bridge.** `CodeBridgeServer` (453): the accept loop, the fd table keyed by
   project root, the per-connection read loop. Parsing, routing and typeability are already Rust.

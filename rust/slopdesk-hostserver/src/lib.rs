@@ -19,6 +19,13 @@
 //! hand-off cancels against. [`pane`] and [`live`] — the six-method surface those two need of a
 //! pane, and the real one behind it.
 //!
+//! ## What D.2 landed
+//!
+//! [`service`] — the two lifecycles every lazily-spawned panel backend runs on, the
+//! OS-picks-the-port one and the hostd-picks-the-port one. [`serviceproc`] — the backend itself,
+//! forked and held by superd so a hostd rebuild costs no Node boot. [`code`] — the workbench, and
+//! the four one-shot gates in front of its spawn.
+//!
 //! ## What it does not DELETE, and why
 //!
 //! Nothing. `docs/60` §5's carve-out is the reason and it has not changed: stages A–E cannot obey
@@ -26,10 +33,13 @@
 //! cutover at stage F. `HostSessionRegistry` and `DetachedSessionStore` stand until then, and F is
 //! what takes them.
 
+pub mod code;
 mod deadline;
 mod detached;
 mod live;
 mod pane;
+pub mod service;
+mod serviceproc;
 mod sessions;
 
 pub use deadline::Deadlines;
@@ -39,4 +49,5 @@ pub use detached::{
 };
 pub use live::LivePane;
 pub use pane::{Pane, same_pane};
+pub use serviceproc::{ServiceProcess, pane_id_for};
 pub use sessions::{Held, Sessions};

@@ -276,8 +276,15 @@ dependencies = [
 name = "slopdesk-hostserver"
 version = "0.1.0"
 dependencies = [
+ "nix",
+ "serde_json",
+ "slopdesk-hostpane",
  "slopdesk-hostsession",
  "slopdesk-muxsession",
+ "slopdesk-sidecars",
+ "slopdesk-superclient",
+ "slopdesk-superwire",
+ "slopdesk-wire",
 ]
 
 [[package]]
@@ -329,6 +336,13 @@ dependencies = [
 [[package]]
 name = "slopdesk-sanitize"
 version = "0.1.0"
+
+[[package]]
+name = "slopdesk-sidecars"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "slopdesk-superclient"

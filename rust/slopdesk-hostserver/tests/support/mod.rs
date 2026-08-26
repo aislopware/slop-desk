@@ -9,6 +9,7 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use slopdesk_hostserver::service::ServiceHandle;
 use slopdesk_hostserver::{EvictionObserver, Pane, TeardownExecutor};
 use slopdesk_muxsession::registry::{self, Slot, Uuid};
 
@@ -105,6 +106,64 @@ pub fn as_pane(ghost: &Arc<Ghost>) -> Arc<dyn Pane> {
 /// The same, for an eviction ledger a test wants to keep a typed handle on.
 pub fn as_observer(seen: &Arc<Evictions>) -> Arc<dyn EvictionObserver> {
     Arc::<Evictions>::clone(seen)
+}
+
+/// A supervised child that is only its answers — the [`ServiceHandle`] half of [`Ghost`].
+///
+/// A real one is a superd fork behind a PTY and a subscription, and a lifecycle suite that had to
+/// build one per round would be testing Node's boot time.
+#[derive(Debug)]
+pub struct Backend {
+    running: AtomicBool,
+    terminates: AtomicUsize,
+    relinquishes: AtomicUsize,
+}
+
+impl Backend {
+    /// A child that is running.
+    #[must_use]
+    pub fn up() -> Arc<Self> {
+        Arc::new(Self {
+            running: AtomicBool::new(true),
+            terminates: AtomicUsize::new(0),
+            relinquishes: AtomicUsize::new(0),
+        })
+    }
+
+    /// Says the child has exited — a crash, or superd going away.
+    pub fn die(&self) {
+        self.running.store(false, Ordering::SeqCst);
+    }
+
+    /// How many times the service was ENDED.
+    pub fn terminates(&self) -> usize {
+        self.terminates.load(Ordering::SeqCst)
+    }
+
+    /// How many times it was let GO.
+    pub fn relinquishes(&self) -> usize {
+        self.relinquishes.load(Ordering::SeqCst)
+    }
+}
+
+impl ServiceHandle for Backend {
+    fn is_running(&self) -> bool {
+        self.running.load(Ordering::SeqCst)
+    }
+
+    fn terminate(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        self.terminates.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn relinquish(&self) {
+        self.relinquishes.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+/// The trait-object handle a lifecycle takes, turbofished for the reason [`as_pane`] is.
+pub fn as_service(backend: &Arc<Backend>) -> Arc<dyn ServiceHandle> {
+    Arc::<Backend>::clone(backend)
 }
 
 /// An executor that runs each kill on the calling thread, so a test never has to wait for one.
