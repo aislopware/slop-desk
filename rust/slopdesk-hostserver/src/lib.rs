@@ -57,7 +57,12 @@
 //! status fan-out that had no Rust at all before it. [`channel`] — the four ladders a `channelOpen`
 //! resolves to, the close that ends one, and the ONE critical section that makes the first four
 //! indivisible. Neither had an engine either: the precedence between the outcomes is
-//! [`slopdesk_muxsession::open_route`]'s and always was.
+//! [`slopdesk_muxsession::open_route`]'s and always was. [`adopt`] — the surviving-pane ladder a
+//! restarted daemon runs against superd, over one new verdict table in the same crate.
+//! [`workspace`], [`subscriber`] and [`wsserve`] — the document every client mirrors, one
+//! subscriber's send path over `slopdesk_workspace::sync_ladder`, and the channel that carries it.
+//! The engine was already Rust there too; what moved is the version rule, the coalescing, and the
+//! retention that makes a leaked document impossible rather than unlikely.
 
 pub mod adopt;
 pub mod bridge;
@@ -74,6 +79,9 @@ mod pane;
 pub mod service;
 mod serviceproc;
 mod sessions;
+pub mod subscriber;
+pub mod workspace;
+pub mod wsserve;
 
 pub use adopt::{Adopted, LetGo, NoSurvivors, Survivors, owner_identity};
 pub use channel::{
@@ -92,3 +100,6 @@ pub use live::LivePane;
 pub use pane::{Pane, Wires, same_pane};
 pub use serviceproc::{ServiceProcess, pane_id_for};
 pub use sessions::{Held, Sessions};
+pub use subscriber::{EventSink, WorkspaceSubscriber};
+pub use workspace::{NoPanes, NoStore, Panes, WorkspaceDocument, WorkspaceStore, topology_pane_ids};
+pub use wsserve::WorkspaceService;

@@ -91,6 +91,8 @@
 //!   the base — the widest single change, a resubscribe that matches nothing. The caller lends that
 //!   many and the write always fits, so no door here retries.
 
+use std::collections::BTreeMap;
+
 /// How many sent-but-unacked states one subscriber retains.
 ///
 /// Past this an ack falls back to a snapshot, which is always correct — see the module note.
@@ -578,6 +580,165 @@ impl SyncLadder {
     }
 }
 
+/// What one document offer becomes, with the base it names ALREADY LOOKED UP.
+///
+/// [`Plan`]'s sibling for a caller that keeps its payloads here rather than across an FFI door —
+/// see [`Retention`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Planned<T> {
+    /// A frame is already in flight. Nothing was changed and the offer must stay PENDING.
+    Hold,
+    /// Send the whole document. `reset_first` says a `reset` (kind 4) goes first, because the epoch
+    /// changed.
+    Snapshot {
+        /// Whether a `reset` precedes it.
+        reset_first: bool,
+    },
+    /// Send a diff of the offer against `base`, declaring `base_state_num`.
+    Diff {
+        /// The `baseStateNum` the frame declares.
+        base_state_num: i64,
+        /// The state the diff is computed FROM. Held here, so it cannot be missing.
+        base: T,
+    },
+}
+
+/// A [`SyncLadder`] that holds the payloads it retains, so no caller can leak one.
+///
+/// The slot is an INDIRECTION the FFI door needs and nothing else does. Swift cannot hand a Rust
+/// ladder a `HostWorkspaceState`, so the door mints a `u32` per retained state, Swift files the
+/// bytes under it, and every call that frees slots hands back a list Swift must remember to delete
+/// from — a slot released but never deleted is one whole workspace document leaked per frame, per
+/// subscriber, for the life of the daemon, and no wire assertion would ever see it.
+///
+/// A pure-Rust caller has no such barrier, so this owns both halves and releases them together.
+/// The failure mode does not become unlikely here; it stops existing, because there is no call that
+/// frees a slot without dropping its payload in the same statement.
+///
+/// `T` is cloned once per DIFF, for the base the caller computes against — which is why the host
+/// parameterises it with an `Arc` rather than the document itself.
+#[derive(Debug)]
+pub struct Retention<T> {
+    ladder: SyncLadder,
+    held: BTreeMap<u32, T>,
+}
+
+impl<T: Clone> Retention<T> {
+    /// A subscriber that holds nothing, has been sent nothing, and is owed a snapshot.
+    #[must_use]
+    pub const fn new(contributes_size: bool, follows_focus: bool) -> Self {
+        Self {
+            ladder: SyncLadder::new(contributes_size, follows_focus),
+            held: BTreeMap::new(),
+        }
+    }
+
+    /// Records an ack. Highest wins — see [`SyncLadder::note_ack`].
+    pub const fn note_ack(&mut self, state_num: i64) {
+        self.ladder.note_ack(state_num);
+    }
+
+    /// Applies the highest ack seen since the last call, dropping what it freed.
+    pub fn apply_pending_ack(&mut self) {
+        let released = self.ladder.apply_pending_ack();
+        self.drop_released(released);
+    }
+
+    /// A repeat `subscribe` IS the resync verb — see [`SyncLadder::resubscribe`].
+    pub fn resubscribe(
+        &mut self,
+        known_epoch: [u8; 16],
+        known_state_num: i64,
+        contributes_size: bool,
+        follows_focus: bool,
+    ) {
+        let released = self
+            .ladder
+            .resubscribe(known_epoch, known_state_num, contributes_size, follows_focus);
+        self.drop_released(released);
+    }
+
+    /// What to do with the freshest document offer, which the caller has NOT consumed.
+    pub fn plan(&mut self, epoch: [u8; 16]) -> Planned<T> {
+        let Plan::Send(frame) = self.ladder.plan(epoch) else {
+            return Planned::Hold;
+        };
+        self.drop_released(frame.released);
+        if frame.snapshot {
+            return Planned::Snapshot {
+                reset_first: frame.reset_first,
+            };
+        }
+        // The ladder never names a slot it has not kept, so the fall-through cannot fire. It is
+        // written out because a diff against a base the client does not hold applies CLEANLY and
+        // corrupts silently — and saying everything is the safe answer.
+        self.held.get(&frame.base_slot).cloned().map_or(
+            Planned::Snapshot {
+                reset_first: frame.reset_first,
+            },
+            |base| {
+                Planned::Diff {
+                    base_state_num: frame.base_state_num,
+                    base,
+                }
+            },
+        )
+    }
+
+    /// Records that the planned frame went out, and files the state it carried.
+    ///
+    /// Called ONLY after a successful send — see [`SyncLadder::commit`].
+    pub fn commit(&mut self, state_num: i64, payload: T) {
+        let commit = self.ladder.commit(state_num);
+        self.drop_released(commit.released);
+        if commit.slot != NO_SLOT {
+            self.held.insert(commit.slot, payload);
+        }
+    }
+
+    /// Forgets every retained payload — the subscriber is gone.
+    pub fn clear(&mut self) {
+        self.held.clear();
+    }
+
+    /// The epoch to stamp on a frame that does not depend on one.
+    #[must_use]
+    pub fn loose_epoch(&self) -> [u8; 16] {
+        self.ladder.loose_epoch()
+    }
+
+    /// Records the client's view; `false` when its clock is not strictly newer.
+    pub fn note_presence(&mut self, update: Presence) -> bool {
+        self.ladder.note_presence(update)
+    }
+
+    /// This subscriber as the host describes it to everyone else.
+    #[must_use]
+    pub fn roster_view(&self) -> Presence {
+        self.ladder.roster_view()
+    }
+
+    /// The `stateNum` of the frame in flight, `None` when the client is caught up.
+    #[must_use]
+    pub const fn outstanding(&self) -> Option<i64> {
+        self.ladder.outstanding()
+    }
+
+    /// How many document payloads this subscriber is still holding.
+    ///
+    /// The one number that proves the leak this type exists to end has not come back.
+    #[must_use]
+    pub fn held(&self) -> usize {
+        self.held.len()
+    }
+
+    fn drop_released(&mut self, released: Released) {
+        for slot in released.slots() {
+            self.held.remove(slot);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -1061,5 +1222,105 @@ mod tests {
         ladder.apply_pending_ack();
         assert!(!ladder.has_pending_ack());
         assert!(ladder.apply_pending_ack().is_empty());
+    }
+
+    /// The half a pure-Rust caller uses: the ladder holding its own payloads.
+    mod retention {
+        use super::super::{MAX_RELEASED, Planned, Retention};
+        use super::{EPOCH_A, EPOCH_B};
+
+        /// Plans and, if a frame was asked for, commits `payload` — the caller's whole loop.
+        fn ship(held: &mut Retention<String>, epoch: [u8; 16], state_num: i64, payload: &str) -> String {
+            let planned = held.plan(epoch);
+            let named = match planned {
+                Planned::Hold => return String::from("hold"),
+                Planned::Snapshot { reset_first } => {
+                    if reset_first {
+                        String::from("reset+snapshot")
+                    } else {
+                        String::from("snapshot")
+                    }
+                },
+                Planned::Diff { base_state_num, base } => format!("diff {base_state_num} from {base}"),
+            };
+            held.commit(state_num, payload.to_owned());
+            named
+        }
+
+        #[test]
+        fn a_diff_arrives_with_the_payload_it_is_computed_against_rather_than_a_number_naming_one() {
+            let mut held = Retention::new(true, false);
+            assert_eq!(ship(&mut held, EPOCH_A, 1, "one"), "snapshot");
+            held.note_ack(1);
+            held.apply_pending_ack();
+
+            assert_eq!(
+                ship(&mut held, EPOCH_A, 2, "two"),
+                "diff 1 from one",
+                "the base is HELD here, so a diff can never name a payload nobody kept",
+            );
+        }
+
+        #[test]
+        fn every_payload_the_ladder_stops_needing_is_dropped_in_the_same_call_that_frees_its_slot() {
+            let mut held = Retention::new(true, false);
+            for version in 1..=40_i64 {
+                ship(&mut held, EPOCH_A, version, &format!("v{version}"));
+                held.note_ack(version);
+                held.apply_pending_ack();
+            }
+
+            assert!(
+                held.held() <= MAX_RELEASED,
+                "a released slot whose payload nobody dropped is a whole document leaked per frame — held \
+                 {} after forty",
+                held.held(),
+            );
+        }
+
+        #[test]
+        fn a_reset_drops_every_payload_the_old_epoch_named() {
+            let mut held = Retention::new(true, false);
+            ship(&mut held, EPOCH_A, 1, "one");
+            held.note_ack(1);
+            held.apply_pending_ack();
+            ship(&mut held, EPOCH_A, 2, "two");
+            held.note_ack(2);
+            held.apply_pending_ack();
+            assert!(held.held() > 0);
+
+            assert_eq!(ship(&mut held, EPOCH_B, 1, "fresh"), "reset+snapshot");
+            assert_eq!(
+                held.held(),
+                1,
+                "a different document's payloads are unreachable the moment the epoch turns over",
+            );
+        }
+
+        #[test]
+        fn a_frame_in_flight_holds_the_offer_without_touching_a_single_payload() {
+            let mut held = Retention::new(true, false);
+            ship(&mut held, EPOCH_A, 1, "one");
+            let before = held.held();
+
+            assert_eq!(ship(&mut held, EPOCH_A, 2, "two"), "hold");
+            assert_eq!(
+                held.held(),
+                before,
+                "a hold changes nothing, which is what makes it safe"
+            );
+            assert_eq!(held.outstanding(), Some(1));
+        }
+
+        #[test]
+        fn a_subscriber_that_is_finished_with_lets_go_of_every_document_it_was_holding() {
+            let mut held = Retention::new(true, false);
+            ship(&mut held, EPOCH_A, 1, "one");
+            assert!(held.held() > 0);
+
+            held.clear();
+
+            assert_eq!(held.held(), 0);
+        }
     }
 }

@@ -212,3 +212,9 @@ imprecise_flops = "allow"
 # `slopdesk-posix` beneath it; they are the same version, and the lint prices the transitive graph
 # rather than this manifest.
 multiple_crate_versions = "allow"
+
+[dev-dependencies]
+# The tree a topology is built OVER, for the two intent tests that need a real workspace to
+# change. Not a runtime dependency: this crate reads a topology out of the document and writes one
+# back, and never constructs the tree by hand.
+slopdesk-tree = { path = "../slopdesk-tree" }

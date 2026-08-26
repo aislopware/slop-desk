@@ -848,9 +848,59 @@ is paused.
   superd holds in one call: a fresh fork that discovers a duplicate takes the offset, and this ladder
   takes the offset AND whether it had to be guessed, which is the one case worth a log line.
 
-  **D.6.4** the workspace document, reconciler and channel session. **D.6.5** link-down, detach and
-  the stop order — including the `note_panes_let_go` at the TOP of it, which is written here because
-  it is the note's writer and called there because that is where the enumeration still exists.
+  **D.6.4 ✅ landed** — the workspace document, its reconciler and the channel session, as
+  `workspace.rs`, `subscriber.rs` and `wsserve.rs` plus 40 tests, filling the `WorkspaceChannels`
+  hole D.6.2 named. 1321 lines of Swift across five files: `HostWorkspaceDocument` (312),
+  `WorkspaceChannelSession` (486), `HostServer+Workspace` (274), `HostWorkspaceStore` (188) and
+  `PaneLiveness+Capture` (61).
+
+  **There was no engine here either, and this time the survey says so twice.** Every decision the
+  document reaches for was already Rust: the cell algebra, the diff, the snapshot and diff codecs,
+  the intent applier, the liveness reconciler and the topology projection are all
+  `slopdesk_wire::document`'s, and the per-subscriber ladder is
+  `slopdesk_workspace::sync_ladder`'s — the Swift class was already CALLING that ladder through an
+  FFI door. What was left is the same thing every other D.6 stage found: order, ownership, and the
+  one rule that makes a version number mean anything. `state_num` moves if and only if the VALUE
+  changed, which is why `mutate` compares rather than trusting that a closure ran.
+
+  **The slot indirection did not survive the port, and that is the point.** Swift could not hand a
+  Rust ladder a `HostWorkspaceState`, so the door minted a `u32` per retained state, Swift filed the
+  bytes under it, and every releasing call handed back a list Swift had to remember to delete from.
+  A slot released but never deleted is one whole workspace document leaked per frame, per
+  subscriber, for the life of the daemon — and no wire assertion would ever see it, which is why the
+  Swift carried a test seam that did nothing but count. `sync_ladder::Retention<T>` owns both halves
+  now, so the failure does not become unlikely; it stops existing, because there is no call that
+  frees a slot without dropping its payload in the same statement. `T` is `Arc<HostWorkspaceState>`,
+  so a broadcast to N subscribers is N refcount bumps and a diff's base is one more — never a copy
+  of the tree.
+
+  **The send path is a thread parked on a condvar, and the queue in front of it is depth-1.** The
+  Swift needed a `Task` because `channel.send` was `async`; here the control sub-channel's send is
+  synchronous, but it can still BLOCK on a socket whose buffer is full, and a fan-out that blocked
+  in the document's own broadcast would stall every other subscriber behind the slowest one. What
+  did NOT change is the coalescing: a pending offer is DISCARDED AND RECOMPUTED, never queued, so
+  host memory is O(clients × state) no matter how asleep an iPhone is. `drain` is the pump's whole
+  body and is public to the crate, so the suite asserts the function that ships rather than a
+  scheduler; one test starts a real pump, because "a delivery wakes the thread" is the one claim
+  inline draining cannot make.
+
+  Three seams, each a thing this crate must not decide. `WorkspaceStore` is the file — the document
+  says WHEN to save and knows nothing about a path, a debounce or an atomic rename, exactly as
+  `Transcripts` holds the journal; its disk half is the store's own port, and `NoStore` is what a
+  host with no Application Support already does. `Panes` is the server's live session maps, held
+  WEAKLY and asked at broadcast time, because a copy kept in the document is one more thing that can
+  go stale — the same weak capture the Swift wrote, for the same reason. And the intent applier's
+  four id mints go through the crate's one entropy seam, `SessionIds`, rather than a second one.
+
+  The two orderings worth naming, because both are silent when wrong. `apply_intent` computes the
+  panes the topology STOPPED placing under the same lock as the apply — a set read afterwards could
+  have moved, and what it feeds is a `reap` that kills shells. And the store is offered the document
+  only on a topology change, never on a reconciler tick: liveness does not survive a restart, so
+  offering it would rewrite the same filtered bytes every tick for a host nobody is using.
+
+  **D.6.5** link-down, detach and the stop order — including the `note_panes_let_go` at the TOP of
+  it, which is written in D.6.3 because it is the note's writer and called there because that is
+  where the enumeration still exists.
 
   **What stage D does NOT take.** `HostEnvironment` (350) and `RepoStatusWatcher` (316) are stage E:
   the first reads Apple bundle and TCC state, the second is an FSEvents stream per repo toplevel.

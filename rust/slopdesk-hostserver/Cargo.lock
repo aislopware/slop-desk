@@ -338,6 +338,7 @@ dependencies = [
  "slopdesk-superclient",
  "slopdesk-superwire",
  "slopdesk-terminal",
+ "slopdesk-tree",
  "slopdesk-wire",
  "slopdesk-workspace",
 ]
