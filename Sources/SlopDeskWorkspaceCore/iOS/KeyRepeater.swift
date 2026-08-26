@@ -109,12 +109,15 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     /// the *same* held key is idempotent — the crate answers "already latched" and neither
     /// out-param is touched, so nothing fires and no second timer is armed.
     public func keyDown(_ key: Key) {
-        var generation: UInt64 = 0
+        var latched: UInt64 = 0
         var afterMS: UInt32 = 0
         let starts = withIdentity(key) { bytes, count in
-            slopdesk_key_repeat_down(latch, bytes, count, &generation, &afterMS)
+            slopdesk_key_repeat_down(latch, bytes, count, &latched, &afterMS)
         }
         guard starts else { return }
+        // A `var` cannot be captured by the escaping @Sendable timer body, and the out-parameter has
+        // to be one. The generation it names never moves, so the copy IS the whole value.
+        let generation = latched
 
         lock.lock()
         let old = timer
@@ -153,13 +156,15 @@ public final class KeyRepeater<Key: Hashable & Sendable>: @unchecked Sendable {
     private func elapsed(stage: UInt8, generation: UInt64) {
         var everyMS: UInt32 = 0
         let verdict = slopdesk_key_repeat_elapsed(latch, stage, generation, &everyMS)
-        guard verdict != 0 else { return } // STALE: the latch moved; let this timer go.
+        // The three verdicts are ASKED for, never transcribed: a `0`/`1`/`2` spelled here would be a
+        // second copy of the crate's own enum, and the copy is what drifts.
+        guard verdict != UInt8(SLOPDESK_KEY_REPEAT_STALE) else { return } // the latch moved; let this timer go.
         lock.lock()
         let key = heldKey
         lock.unlock()
         guard let key else { return }
         onFire(key)
-        guard verdict == 2 else { return }
+        guard verdict == UInt8(SLOPDESK_KEY_REPEAT_FIRE_AND_ARM) else { return }
         let armed = scheduler.scheduleRepeating(every: .milliseconds(Int(everyMS))) { [weak self] in
             self?.elapsed(stage: 1, generation: generation)
         }

@@ -132,6 +132,9 @@ final class RepoStatusWatcher: @unchecked Sendable {
     func dropOwner(_ owner: ObjectIdentifier) {
         let slot = Self.slot(owner)
         queue.async { [self] in
+            // The repairing initialiser, matching `ArenaText`: a repo path that came back through
+            // the door was a Rust `String` on the way in, so there is no reachable failure arm.
+            // swiftlint:disable:next optional_data_string_conversion
             let cancelled = String(
                 decoding: drainAnswer(slopdesk_repo_watch_drop_owner(rules, slot)), as: UTF8.self,
             )

@@ -25,12 +25,12 @@ extension SlopDeskWsUuid {
     var uuid: UUID { UUID(uuid: bytes) }
 }
 
-extension SlopDeskWsRect {
-    package init(_ rect: CGRect) {
+package extension SlopDeskWsRect {
+    init(_ rect: CGRect) {
         self.init(x: rect.origin.x, y: rect.origin.y, width: rect.size.width, height: rect.size.height)
     }
 
-    package var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
+    var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
 }
 
 extension SlopDeskWsPoint {
@@ -41,9 +41,9 @@ extension SlopDeskWsPoint {
     var point: CGPoint { CGPoint(x: x, y: y) }
 }
 
-extension PaneID {
-    package var ffi: SlopDeskWsUuid { SlopDeskWsUuid(raw) }
-    package init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
+package extension PaneID {
+    var ffi: SlopDeskWsUuid { SlopDeskWsUuid(raw) }
+    init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
 }
 
 extension TabID {

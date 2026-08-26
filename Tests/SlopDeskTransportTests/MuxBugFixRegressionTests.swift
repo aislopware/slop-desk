@@ -170,6 +170,7 @@ final class MuxBugFixRegressionTests: XCTestCase {
     }
 
     // MARK: - duplicate same-side mux preamble closes the displaced half (fd-leak guard)
+
     //
     // The pairing decision behind `HostTransport.associateMux` is
     // `rust/slopdesk-muxsession/src/pairing.rs`, and its whole eight-state space is enumerated

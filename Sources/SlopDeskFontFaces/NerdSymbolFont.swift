@@ -58,7 +58,7 @@ package enum NerdSymbolFont {
     /// scalar would be the right rule at the wrong rate.
     private static let privateUseRanges: [ClosedRange<UInt32>] = {
         let needed = Int(slopdesk_private_use_ranges(nil, 0))
-        guard needed > 0, needed % 8 == 0 else { return [] }
+        guard needed > 0, needed.isMultiple(of: 8) else { return [] }
         var blob = [UInt8](repeating: 0, count: needed)
         let written = blob.withUnsafeMutableBufferPointer {
             Int(slopdesk_private_use_ranges($0.baseAddress, $0.count))

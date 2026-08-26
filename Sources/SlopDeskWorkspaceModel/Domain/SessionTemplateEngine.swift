@@ -38,7 +38,7 @@ public enum SessionTemplateEngine {
         let pooled = layout.withUnsafeMutableBufferPointer { lent in
             slopdesk_ws_template_minted_ids(lent.baseAddress, lent.count)
         }
-        var pool = (0 ..< pooled).map { _ in SlopDeskWsUuid(UUID()) }
+        var pool = (0..<pooled).map { _ in SlopDeskWsUuid(UUID()) }
         let stream = layout.withUnsafeMutableBufferPointer { lent in
             pool.withUnsafeMutableBufferPointer { ids in
                 wsAnswerBytes { out, cap in
@@ -189,7 +189,11 @@ private struct ExpansionReader {
     private mutating func text() -> String? {
         guard let count = length(), cursor + count <= bytes.endIndex else { return nil }
         defer { cursor += count }
-        return String(decoding: bytes[cursor ..< cursor + count], as: UTF8.self)
+        // The repairing initialiser, matching `ArenaText`: these bytes came back from a Rust
+        // `String`, so a failable init has no reachable arm and answering `""` would lose the whole
+        // field rather than one character of it.
+        // swiftlint:disable:next optional_data_string_conversion
+        return String(decoding: bytes[cursor..<cursor + count], as: UTF8.self)
     }
 
     private mutating func optionalText() -> String?? {
@@ -203,7 +207,7 @@ private struct ExpansionReader {
     private mutating func uuid() -> UUID? {
         guard cursor + 16 <= bytes.endIndex else { return nil }
         defer { cursor += 16 }
-        let raw = Array(bytes[cursor ..< cursor + 16])
+        let raw = Array(bytes[cursor..<cursor + 16])
         return UUID(uuid: (
             raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
             raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15],
@@ -214,7 +218,7 @@ private struct ExpansionReader {
     private mutating func weight() -> SplitWeight? {
         guard let kind = byte(), cursor + 8 <= bytes.endIndex else { return nil }
         var pattern: UInt64 = 0
-        for offset in 0 ..< 8 { pattern = pattern << 8 | UInt64(bytes[cursor + offset]) }
+        for offset in 0..<8 { pattern = pattern << 8 | UInt64(bytes[cursor + offset]) }
         cursor += 8
         let value = Double(bitPattern: pattern)
         return kind == 0 ? .flex(value) : .fixed(value)
@@ -244,7 +248,7 @@ private struct ExpansionReader {
             else { return nil }
             var children: [WeightedChild] = []
             children.reserveCapacity(count)
-            for _ in 0 ..< count {
+            for _ in 0..<count {
                 guard let share = weight(),
                       let child = node(specs: &specs, launches: &launches)
                 else { return nil }

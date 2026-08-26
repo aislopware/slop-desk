@@ -61,7 +61,7 @@ public enum PaneChooserRegistry {
         var cursor = blob.startIndex
         let isVideo = blob.first == 1
         cursor += 1
-        let fields = (0 ..< 3).map { _ -> String in
+        let fields = (0..<3).map { _ -> String in
             guard cursor + 4 <= blob.endIndex else { return "" }
             let length = Int(
                 UInt32(blob[cursor]) << 24 | UInt32(blob[cursor + 1]) << 16
@@ -70,7 +70,11 @@ public enum PaneChooserRegistry {
             cursor += 4
             guard cursor + length <= blob.endIndex else { return "" }
             defer { cursor += length }
-            return String(decoding: blob[cursor ..< cursor + length], as: UTF8.self)
+            // The repairing initialiser, matching `ArenaText`: these bytes came back from a Rust
+            // `String`, so a failable init has no reachable arm and answering `""` would lose the
+            // whole field rather than one character of it.
+            // swiftlint:disable:next optional_data_string_conversion
+            return String(decoding: blob[cursor..<cursor + length], as: UTF8.self)
         }
         return PaneChooserOption(
             kind: kind,

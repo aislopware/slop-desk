@@ -31,10 +31,11 @@
 //     * exactly one _free per _new; NULL is inert everywhere.
 //     * NO TWO CALLS ON ONE HANDLE MAY OVERLAP — the mutators take &mut, so a concurrent call is
 //       aliasing UB. The Swift owner serialises under the lock it already held.
-//       ONE EXCEPTION, and it is declared in its own doors rather than assumed: SlopDeskCursorSampler
+//       TWO EXCEPTIONS, each declared in its own doors rather than assumed: SlopDeskCursorSampler
 //       holds its state behind locks because two threads calling it is that handle's design (the
-//       pointer must keep flowing while the main thread is blocked). Nothing else may be assumed
-//       to be shareable; a handle without that note is not.
+//       pointer must keep flowing while the main thread is blocked), and SlopDeskKeyRepeat does the
+//       same because the main thread presses and releases while a timer queue asks what is due.
+//       Nothing else may be assumed to be shareable; a handle without that note is not.
 //     * answers still come back through (out, cap) -> needed. Nothing is allocated on one side and
 //       freed on the other.
 //   Producers fill a SLOT on the handle and return its item count; the caller then reads items out
@@ -1522,6 +1523,15 @@ typedef struct {
 // with no printable output, Esc/Tab/Return/Delete and the whole nav and function block — or any of
 // ⌃⌥⌘ is encoded; everything else is typing, ⇧ and a bare space included.
 bool slopdesk_phone_key_routes_to_encoding(const SlopDeskPhoneKeyPress *press);
+// Which PHYSICAL key this press names, as one opaque token — what the key-repeat latch holds.
+//
+// NOT the press. UIKit samples the modifier flags separately for pressesBegan and pressesEnded, so a
+// user who holds ⌃L and lifts ⌃ first releases an L whose control bit is already clear. Latch the whole
+// press and that release matches nothing, the repeat is never cancelled, and the pane takes ⌃L at 20 Hz
+// until another key is pressed. A usage is a physical key under every layout and answers alone; a key
+// UIKit gives no usage for hashes its layout-independent characters with the top bit set, above every
+// 16-bit usage there is. `0` only for a null record.
+uint64_t slopdesk_phone_key_press_identity(const SlopDeskPhoneKeyPress *press);
 // The bytes this press sends, through `(out, cap)`. `0` means it sends nothing — bare typing, which
 // is the proxy's, or a ⌘ combination, which is an app shortcut. No key this encoder resolves sends
 // zero bytes, so the length is unambiguous. `application_cursor_keys` is the live DECCKM bit, which

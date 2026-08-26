@@ -63,8 +63,8 @@ public enum AgentHookRecord {
         // The bytes came back through the door, which already read them as UTF-8 to trim them —
         // there is no second chance for this to fail, and no absent case a failable init would
         // model. An id that was NOT decodable answered `has_pane == false` on the far side.
-        // swiftlint:disable:next optional_data_string_conversion
         let paneID = found.has_pane
+            // swiftlint:disable:next optional_data_string_conversion
             ? String(
                 decoding: record[(base + found.pane_offset)..<(base + found.pane_offset + found.pane_len)],
                 as: UTF8.self,

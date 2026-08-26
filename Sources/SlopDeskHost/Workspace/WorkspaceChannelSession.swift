@@ -393,7 +393,7 @@ final class WorkspaceChannelSession: @unchecked Sendable {
 
     /// Drops the payloads the far side just stopped needing. Callers hold ``lock``.
     private func release(_ freed: [UInt32], _ count: UInt32) {
-        for index in 0 ..< Int(count) where index < freed.count {
+        for index in 0..<Int(count) where index < freed.count {
             retainedStates.removeValue(forKey: freed[index])
         }
     }

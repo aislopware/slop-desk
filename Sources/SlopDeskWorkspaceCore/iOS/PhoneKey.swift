@@ -142,6 +142,46 @@ public enum PhoneKey {
         }
     }
 
+    /// Which PHYSICAL key this press names — what a key-repeat latch holds, and NOT the press.
+    ///
+    /// UIKit samples the modifier flags separately for `pressesBegan` and `pressesEnded`, so a user
+    /// who holds ⌃L and lifts ⌃ before L releases an L whose ``Press/control`` is already `false`.
+    /// Latching the whole press means that release matches nothing, the repeat is never cancelled,
+    /// and the pane takes ⌃L twenty times a second until another key is pressed. Which fields
+    /// identify a key is `slopdesk_workspace::phone_key::press_identity`'s, like every other rule
+    /// here — the responder is not allowed to assert that a usage outranks a layout.
+    public static func repeatIdentity(_ press: Press) -> UInt64 {
+        withRecord(press) { record in
+            var record = record
+            return slopdesk_phone_key_press_identity(&record)
+        }
+    }
+
+    /// One press, latched by the physical key it names — what a ``KeyRepeater`` holds.
+    ///
+    /// ``Press`` is `Hashable` over every field, modifiers included, and that is right everywhere
+    /// else: a chord is not the same chord without them. It is wrong for a repeat latch, for the
+    /// reason ``repeatIdentity(_:)`` gives, and this wrapper is the ONE place the two readings
+    /// differ — so no other holder of a `Press` has to know that a latch reads one more loosely
+    /// than `==` does.
+    ///
+    /// `==` and `hash(into:)` agree by construction, both being the identity and nothing else,
+    /// which is the law `KeyRepeater` relies on when it lends eight bytes of `hashValue` across the
+    /// boundary. Which FIELDS the identity is over stays `slopdesk_workspace::phone_key`'s.
+    public struct Held: Hashable, Sendable {
+        /// The press as it arrived, for the emitter — `onFire` sends THIS, not the identity.
+        public let press: Press
+        private let identity: UInt64
+
+        public init(_ press: Press) {
+            self.press = press
+            identity = PhoneKey.repeatIdentity(press)
+        }
+
+        public static func == (lhs: Self, rhs: Self) -> Bool { lhs.identity == rhs.identity }
+        public func hash(into hasher: inout Hasher) { hasher.combine(identity) }
+    }
+
     /// The raw bytes this press sends, or `nil` for one that sends nothing — bare typing, which is
     /// the proxy's, or a ⌘ combination, which is an app shortcut rather than terminal input.
     ///

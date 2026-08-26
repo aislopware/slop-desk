@@ -483,6 +483,35 @@ pub const fn route(press: &KeyPress<'_>) -> Route {
     }
 }
 
+/// Which PHYSICAL key a press names, as one opaque token.
+///
+/// Not the press: the modifiers are deliberately absent, and so is anything else that can change
+/// between the down and the up of one held key. `UIKit` delivers `pressesBegan` and `pressesEnded`
+/// as separate events with separately-sampled modifier flags, so a user who holds ⌃L and lifts ⌃
+/// before L releases an L whose `control` is already `false`. Latching the whole press means that
+/// release matches nothing, the repeat is never cancelled, and the pane takes ⌃L twenty times a
+/// second until another key is pressed. Latching THIS makes the two events the same key, which is
+/// what the user did.
+///
+/// A usage is a physical key under every layout, so it answers alone whenever there is one. There
+/// is not always one — `UIKit` hands [`HID_NONE`] for a key it has no usage for — and then the
+/// layout-independent characters are the only thing left that distinguishes it, hashed with the top
+/// bit set so no character key can collide with a usage (which fits in 16 bits).
+#[must_use]
+pub fn press_identity(press: &KeyPress<'_>) -> u64 {
+    if press.hid_usage != HID_NONE {
+        return u64::from(press.hid_usage);
+    }
+    // FNV-1a, spelled out rather than pulled in: it is eight lines, it must not change between
+    // builds of the same binary, and the only property asked of it is that equal keys agree.
+    let mut hash: u64 = 0xCBF2_9CE4_8422_2325;
+    for byte in press.base.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+    hash | 1 << 63
+}
+
 /// The C0 control byte a scalar folds to under ⌃.
 ///
 /// The whole C0 range, not just the letters: `⌃[` is the ESC that vim and readline users press
@@ -925,6 +954,38 @@ mod tests {
             hid_usage,
             ..press("")
         }
+    }
+
+    #[test]
+    fn a_press_identity_ignores_every_modifier() {
+        let held = KeyPress {
+            control: true,
+            shift: true,
+            ..press("l")
+        };
+        // The release `UIKit` delivers after ⌃ came up first: same key, no modifiers left.
+        assert_eq!(press_identity(&held), press_identity(&press("l")));
+        // …and it is still the modifiers that are ignored, not the key.
+        assert_ne!(press_identity(&held), press_identity(&press("k")));
+    }
+
+    #[test]
+    fn a_usage_identifies_a_key_across_layouts_and_never_collides_with_a_character() {
+        assert_eq!(press_identity(&special(HID_LEFT)), u64::from(HID_LEFT));
+        assert_ne!(
+            press_identity(&special(HID_LEFT)),
+            press_identity(&special(HID_RIGHT))
+        );
+        // A key with no usage hashes its characters, above every 16-bit usage there is.
+        assert!(press_identity(&press("l")) > u64::from(u16::MAX));
+        // The same key under a layout that renames it is the same key: the usage answers alone.
+        assert_eq!(
+            press_identity(&KeyPress {
+                hid_usage: HID_LEFT,
+                ..press("q")
+            }),
+            press_identity(&special(HID_LEFT)),
+        );
     }
 
     #[test]

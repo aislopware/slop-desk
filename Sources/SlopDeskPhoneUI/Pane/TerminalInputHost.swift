@@ -113,11 +113,15 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     /// UIKit fires `pressesBegan`/`pressesEnded` exactly ONCE per physical key — there is no
     /// auto-repeat the way `keyDown` has one on macOS — so holding an arrow does nothing past the
     /// first event unless the embedder re-emits it. This is that re-emission.
-    private lazy var repeater = KeyRepeater<PhoneKey.Press>(
+    ///
+    /// Latched by ``PhoneKey/Held``, whose identity is the PHYSICAL key rather than the press: the
+    /// release UIKit delivers carries its own sample of the modifier flags, so a ⌃ lifted before the
+    /// letter would otherwise leave the repeat running forever.
+    private lazy var repeater = KeyRepeater<PhoneKey.Held>(
         scheduler: DispatchRepeatScheduler(),
-        onFire: { [weak self] press in
+        onFire: { [weak self] held in
             // The scheduler fires on its own queue; every write below is main-actor state.
-            Task { @MainActor [weak self] in self?.send(press) }
+            Task { @MainActor [weak self] in self?.send(held.press) }
         },
     )
 
@@ -202,7 +206,7 @@ final class TerminalInputHostView: UIView, UIKeyInput {
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         for press in presses {
             guard let key = press.key else { continue }
-            repeater.keyUp(Self.read(key))
+            repeater.keyUp(PhoneKey.Held(Self.read(key)))
         }
         super.pressesEnded(presses, with: event)
     }
@@ -315,7 +319,7 @@ final class TerminalInputHostView: UIView, UIKeyInput {
             // that already bypasses the text proxy is offered: a bare letter is the mode's
             // vocabulary, never a chord.
             if PhoneKey.routesToKeyEncoding(press), swallowsAsWorkspaceChord(press) { return true }
-            repeater.keyDown(press)
+            repeater.keyDown(PhoneKey.Held(press))
             return true
         }
         guard PhoneKey.routesToKeyEncoding(press) else { return false }
@@ -327,7 +331,7 @@ final class TerminalInputHostView: UIView, UIKeyInput {
         // `swallowsAsWorkspaceChord(_:)` makes for a held ⌘D.
         if takesPromptUndo(press) { return true }
         guard encodedBytes(press) != nil else { return false }
-        repeater.keyDown(press)
+        repeater.keyDown(PhoneKey.Held(press))
         return true
     }
 

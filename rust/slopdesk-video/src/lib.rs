@@ -62,8 +62,8 @@
 //!   a healthily idle window from a dead host.
 //! - [`host_gates`] — the video host's whole `SLOPDESK_*` operating point in one table: every
 //!   default, every clamp, and the precedence between the pacing keys. LINKED, through
-//!   `slopdesk-ffi`'s `host_gates`; the LOOKUP stays in Swift, because the settings overlay is
-//!   what a raw `std::env::var` here would stop honouring.
+//!   `slopdesk-ffi`'s `host_gates`; the LOOKUP stays in Swift, because the settings overlay is what
+//!   a raw `std::env::var` here would stop honouring.
 //! - [`idle_reap`] / [`recovery_dedupe`] / [`frame_gate`] / [`recovery_idr`] / [`ltr`] /
 //!   [`qp_control`] — the host's decisions, each one a pure rule sitting beside the actor that acts
 //!   on it: when a silent flow is dead, which redundant request to act on once, which frame may be

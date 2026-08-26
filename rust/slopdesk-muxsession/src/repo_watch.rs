@@ -35,8 +35,9 @@
 //! ## What stays outside
 //! The event stream itself, the two dispatch queues, the clock the debounce is measured on and the
 //! walk that reads the status: all of that is `Sources/SlopDeskHost/RepoStatusWatcher.swift`, which
-//! is `FSEvents` and Grand Central Dispatch and a subprocess-shaped read. This module holds no handle
-//! and starts no timer — it answers, for each edge the host reports, what the host should do next.
+//! is `FSEvents` and Grand Central Dispatch and a subprocess-shaped read. This module holds no
+//! handle and starts no timer — it answers, for each edge the host reports, what the host should do
+//! next.
 //!
 //! Sources are named by their repo path rather than held, for that reason: the caller keeps a
 //! `path → handle` table and this side keeps the SET of paths a source has been asked for. The two
@@ -307,9 +308,11 @@ mod tests {
 
     /// Arms a repo and runs its debounce through to a verdict, the way the host's timer does.
     fn fire(watch: &mut RepoWatch, repo: &str, has_audience: bool) -> ProbeVerdict {
-        watch.source_event(repo).map_or(ProbeVerdict::Stale, |generation| {
-            watch.debounce_fired(repo, generation, has_audience)
-        })
+        watch
+            .source_event(repo)
+            .map_or(ProbeVerdict::Stale, |generation| {
+                watch.debounce_fired(repo, generation, has_audience)
+            })
     }
 
     /// Ported from `testNonRepoKeyNeverCreatesASource`: only a repo toplevel is ever watched.

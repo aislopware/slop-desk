@@ -183,7 +183,7 @@ final class KeyRepeaterTests: XCTestCase {
 
     /// Regression for the iOS modifier-release-first RUNAWAY repeat (round-2 [1]). The repeat key is a
     /// modifier-INDEPENDENT physical identity carrying the modifier-laden press as payload (see
-    /// `TerminalInputHost.RepeatKey`). A `keyUp` whose PAYLOAD differs — the modifier was released
+    /// ``PhoneKey/Held``). A `keyUp` whose PAYLOAD differs — the modifier was released
     /// BEFORE the letter, so the letter's release classifies as a plain key — but whose IDENTITY
     /// matches the held key MUST stop the repeat. Without identity-equality the held Ctrl+letter would
     /// repeat forever (a 20Hz control-code flood). This proves the equality contract the fix relies on.
@@ -212,5 +212,38 @@ final class KeyRepeaterTests: XCTestCase {
         let after = sink.count
         scheduler.advance(by: .milliseconds(500))
         XCTAssertEqual(sink.count, after, "no runaway flood after the identity-matched release")
+    }
+
+    /// The same regression against the REAL type. The test above proves the contract `KeyRepeater`
+    /// offers; this proves the phone's own key satisfies it — a fixture that hashes on an `identity`
+    /// field would pass no matter what `PhoneKey.Held` did.
+    func testHeldPressLatchesThePhysicalKeyNotThePress() {
+        let ctrlL = PhoneKey.Press(charactersIgnoringModifiers: "l", control: true)
+        let plainL = PhoneKey.Press(charactersIgnoringModifiers: "l")
+        XCTAssertNotEqual(ctrlL, plainL, "the presses themselves still differ — Held is the loose reading")
+
+        let scheduler = ManualRepeatScheduler()
+        let sink = Sink()
+        let repeater = KeyRepeater<PhoneKey.Held>(scheduler: scheduler) {
+            sink.append($0.press.charactersIgnoringModifiers)
+        }
+
+        repeater.keyDown(PhoneKey.Held(ctrlL))
+        scheduler.advance(by: .milliseconds(350))
+        XCTAssertTrue(repeater.isRepeating)
+
+        // ⌃ came up first, so UIKit reports the letter's release with no modifiers at all.
+        repeater.keyUp(PhoneKey.Held(plainL))
+        XCTAssertFalse(repeater.isRepeating, "the release of a held ⌃L must stop it whatever the flags say")
+
+        let after = sink.count
+        scheduler.advance(by: .milliseconds(500))
+        XCTAssertEqual(sink.count, after)
+
+        // …and it is the modifiers that are ignored, not the key: another letter's release is stale.
+        repeater.keyDown(PhoneKey.Held(ctrlL))
+        repeater.keyUp(PhoneKey.Held(PhoneKey.Press(charactersIgnoringModifiers: "k")))
+        XCTAssertTrue(repeater.isRepeating, "a different key's release must not cancel this one")
+        repeater.stop()
     }
 }

@@ -27,11 +27,11 @@
 //!
 //! Every rule below is the Swift it replaces, carried verbatim rather than tidied — including the
 //! three places the idioms are NOT the project's usual two. `SLOPDESK_VIDEO_DEBUG` and
-//! `SLOPDESK_INPUT_TRACE` test PRESENCE (`!= nil`), so `=0` enables them; `SLOPDESK_SMALL_DUP_MAX_BYTES`
-//! and the two NACK ring bounds take any parseable integer with NO clamp at all. Each is marked at
-//! its field. The one difference from Swift's parser is that a hexadecimal FLOAT literal (`0x1p3`),
-//! which `Double.init(String)` accepts and Rust's does not, now falls to the default — a spelling no
-//! operating point has ever been written in.
+//! `SLOPDESK_INPUT_TRACE` test PRESENCE (`!= nil`), so `=0` enables them;
+//! `SLOPDESK_SMALL_DUP_MAX_BYTES` and the two NACK ring bounds take any parseable integer with NO
+//! clamp at all. Each is marked at its field. The one difference from Swift's parser is that a
+//! hexadecimal FLOAT literal (`0x1p3`), which `Double.init(String)` accepts and Rust's does not,
+//! now falls to the default — a spelling no operating point has ever been written in.
 
 /// The two inputs a gate needs that are not its own environment key.
 ///
@@ -101,7 +101,10 @@ pub const KEYS: [&str; 33] = [
 // the operator's head. The lint's advice — fold pairs of them into two-variant enums — would name
 // twenty types nobody would ever mention twice, and each one would still be read as a boolean at
 // the site that acts on it. The opt-out stops at this struct.
-#[expect(clippy::struct_excessive_bools, reason = "a table of switches IS mostly switches")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "a table of switches IS mostly switches"
+)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HostGates {
     /// Mirror lifecycle beats to stderr. PRESENCE, not value: `SLOPDESK_VIDEO_DEBUG=0` enables it.
@@ -261,8 +264,7 @@ impl HostGates {
             small_dup_max_bytes: integer(at("SLOPDESK_SMALL_DUP_MAX_BYTES")).unwrap_or(1400),
             nack_enabled: default_off(at("SLOPDESK_NACK")),
             retransmit_ring_frames: integer(at("SLOPDESK_NACK_RING_FRAMES")).unwrap_or(96),
-            retransmit_ring_max_bytes: integer(at("SLOPDESK_NACK_RING_BYTES"))
-                .unwrap_or(8 << 20),
+            retransmit_ring_max_bytes: integer(at("SLOPDESK_NACK_RING_BYTES")).unwrap_or(8 << 20),
             recovery_idr_v2: default_on(at("SLOPDESK_RECOVERY_IDR_V2")),
             recovery_dedup_window: match real(at("SLOPDESK_RECOVERY_DEDUP_MS")) {
                 Some(millis) if (0.0..=200.0).contains(&millis) => millis / 1000.0,
@@ -277,9 +279,11 @@ impl HostGates {
             dialog_expand_enabled: default_on(at("SLOPDESK_DIALOG_EXPAND")),
             fec_disabled: at("SLOPDESK_FEC") == Some("0"),
             client_silence_pause_seconds: match real(at("SLOPDESK_VIDEO_PAUSE_SILENT_SEC")) {
-                Some(seconds) if seconds > 0.0 => seconds
-                    .max(context.keepalive_interval)
-                    .min(context.idle_timeout - 0.001),
+                Some(seconds) if seconds > 0.0 => {
+                    seconds
+                        .max(context.keepalive_interval)
+                        .min(context.idle_timeout - 0.001)
+                },
                 _ => 0.0,
             },
         }
@@ -301,7 +305,12 @@ mod tests {
     fn resolve(pairs: &[(&str, &str)]) -> HostGates {
         let values: Vec<Option<&str>> = KEYS
             .iter()
-            .map(|key| pairs.iter().find(|(name, _)| name == key).map(|(_, value)| *value))
+            .map(|key| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| name == key)
+                    .map(|(_, value)| *value)
+            })
             .collect();
         HostGates::from_env(&values, CONTEXT)
     }
@@ -322,7 +331,10 @@ mod tests {
         assert_eq!(gates.delta_pace_floor_bps, 12_000_000);
         assert!(gates.backpressure_enabled);
         assert_eq!(gates.backpressure_depth, 3);
-        assert!(!gates.scroll_coalesce_enabled, "the resampler is active in this context");
+        assert!(
+            !gates.scroll_coalesce_enabled,
+            "the resampler is active in this context"
+        );
         assert!((gates.scroll_inject_interval - 0.008).abs() < f64::EPSILON);
         assert!(!gates.fps_governor_enabled);
         assert!(gates.in_place_resize_enabled);
@@ -395,7 +407,11 @@ mod tests {
                 "{key}={value} changed nothing — no arm reads that name",
             );
         }
-        assert_eq!(flipping.len(), KEYS.len(), "one flipping value per key, and no more");
+        assert_eq!(
+            flipping.len(),
+            KEYS.len(),
+            "one flipping value per key, and no more"
+        );
     }
 
     /// The three keys whose idiom is PRESENCE rather than value: `=0` turns them ON.
@@ -415,8 +431,14 @@ mod tests {
         assert!(!pinned.pacing_adaptive);
 
         let nonsense = resolve(&[("SLOPDESK_PACE_US", "banana"), ("SLOPDESK_PACE_ADAPTIVE", "1")]);
-        assert_eq!(nonsense.pace_gap_nanos, 500_000, "an unparseable pin still falls to the default gap");
-        assert!(!nonsense.pacing_adaptive, "but it is still a pin, so adaptive stays off");
+        assert_eq!(
+            nonsense.pace_gap_nanos, 500_000,
+            "an unparseable pin still falls to the default gap"
+        );
+        assert!(
+            !nonsense.pacing_adaptive,
+            "but it is still a pin, so adaptive stays off"
+        );
 
         assert!(resolve(&[("SLOPDESK_PACE_ADAPTIVE", "1")]).pacing_adaptive);
     }
@@ -427,7 +449,10 @@ mod tests {
     fn an_out_of_range_window_falls_to_its_default() {
         assert_eq!(resolve(&[("SLOPDESK_PACE_US", "0")]).pace_gap_nanos, 500_000);
         assert_eq!(resolve(&[("SLOPDESK_PACE_US", "10001")]).pace_gap_nanos, 500_000);
-        assert_eq!(resolve(&[("SLOPDESK_PACE_US", "10000")]).pace_gap_nanos, 10_000_000);
+        assert_eq!(
+            resolve(&[("SLOPDESK_PACE_US", "10000")]).pace_gap_nanos,
+            10_000_000
+        );
 
         let too_fast = resolve(&[("SLOPDESK_SCROLL_INJECT_MS", "1")]);
         assert!((too_fast.scroll_inject_interval - 0.008).abs() < f64::EPSILON);
@@ -438,27 +463,45 @@ mod tests {
     /// The numeric gates that CLAMP rather than fall through, at both of their bounds.
     #[test]
     fn a_clamped_gate_is_held_at_its_bounds() {
-        assert_eq!(resolve(&[("SLOPDESK_KF_PACE_FLOOR_BPS", "1")]).kf_pace_floor_bps, 1_000_000);
+        assert_eq!(
+            resolve(&[("SLOPDESK_KF_PACE_FLOOR_BPS", "1")]).kf_pace_floor_bps,
+            1_000_000
+        );
         assert_eq!(
             resolve(&[("SLOPDESK_KF_PACE_FLOOR_BPS", "999999999")]).kf_pace_floor_bps,
             100_000_000,
         );
-        assert_eq!(resolve(&[("SLOPDESK_BACKPRESSURE_DEPTH", "0")]).backpressure_depth, 1);
-        assert_eq!(resolve(&[("SLOPDESK_BACKPRESSURE_DEPTH", "99")]).backpressure_depth, 30);
+        assert_eq!(
+            resolve(&[("SLOPDESK_BACKPRESSURE_DEPTH", "0")]).backpressure_depth,
+            1
+        );
+        assert_eq!(
+            resolve(&[("SLOPDESK_BACKPRESSURE_DEPTH", "99")]).backpressure_depth,
+            30
+        );
         let multiplier = resolve(&[("SLOPDESK_PACE_RATE_X", "0.1")]).pace_rate_multiplier;
         assert!((multiplier - 1.0).abs() < f64::EPSILON);
         let capped = resolve(&[("SLOPDESK_PACE_RATE_X", "1000")]).pace_rate_multiplier;
         assert!((capped - 10.0).abs() < f64::EPSILON);
         let infinite = resolve(&[("SLOPDESK_PACE_RATE_X", "inf")]).pace_rate_multiplier;
-        assert!((infinite - 2.5).abs() < f64::EPSILON, "a non-finite multiplier is not a request");
+        assert!(
+            (infinite - 2.5).abs() < f64::EPSILON,
+            "a non-finite multiplier is not a request"
+        );
     }
 
     /// The delta floor's explicit OFF, which is the one place a non-positive value is NOT clamped
     /// up: `max(abr, 0) == abr`, i.e. raw-ABR pacing, which is what the operator asked for.
     #[test]
     fn an_explicit_zero_delta_floor_means_off_rather_than_the_floor() {
-        assert_eq!(resolve(&[("SLOPDESK_DELTA_PACE_FLOOR_BPS", "0")]).delta_pace_floor_bps, 0);
-        assert_eq!(resolve(&[("SLOPDESK_DELTA_PACE_FLOOR_BPS", "-5")]).delta_pace_floor_bps, 0);
+        assert_eq!(
+            resolve(&[("SLOPDESK_DELTA_PACE_FLOOR_BPS", "0")]).delta_pace_floor_bps,
+            0
+        );
+        assert_eq!(
+            resolve(&[("SLOPDESK_DELTA_PACE_FLOOR_BPS", "-5")]).delta_pace_floor_bps,
+            0
+        );
         assert_eq!(
             resolve(&[("SLOPDESK_DELTA_PACE_FLOOR_BPS", "500")]).delta_pace_floor_bps,
             1_000_000,
@@ -475,7 +518,10 @@ mod tests {
     /// the moment it is set — in either direction.
     #[test]
     fn the_scroll_coalescer_follows_the_resampler_until_it_is_told_not_to() {
-        let idle = GateContext { scroll_resampler_active: false, ..CONTEXT };
+        let idle = GateContext {
+            scroll_resampler_active: false,
+            ..CONTEXT
+        };
         let values: Vec<Option<&str>> = KEYS.iter().map(|_| None).collect();
         assert!(HostGates::from_env(&values, idle).scroll_coalesce_enabled);
         assert!(!resolve(&[]).scroll_coalesce_enabled);

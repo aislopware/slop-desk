@@ -142,6 +142,27 @@ pub unsafe extern "C" fn slopdesk_phone_key_routes_to_encoding(press: *const Slo
     matches!(phone_key::route(&unsafe { press_of(raw) }), Route::KeyEncoding)
 }
 
+/// Which PHYSICAL key this press names, as one opaque token — the key-repeat latch's identity.
+///
+/// `0` for a null record, which no live press answers: a key with no usage hashes its characters
+/// into the top half of the range, and a key with one answers its usage, which is never zero here.
+///
+/// # Safety
+/// `press` must point to a live record whose `(ptr, len)` pair is live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_phone_key_press_identity(press: *const SlopDeskPhoneKeyPress) -> u64 {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(raw) = (unsafe { press.as_ref() }) else {
+        return 0;
+    };
+    // SAFETY: as above.
+    phone_key::press_identity(&unsafe { press_of(raw) })
+}
+
 /// The bytes this press sends, written through `(out, cap)`, with the length returned.
 ///
 /// `0` means the press sends nothing — a bare modifier, or a ⌘ combination, which is an app
@@ -388,6 +409,25 @@ mod tests {
             hid_usage,
             flags,
         }
+    }
+
+    /// The down and the up of one held ⌃L cross as the SAME token, which is the whole reason this
+    /// door exists: `UIKit` samples the modifier flags separately for each event.
+    #[test]
+    fn one_held_key_crosses_as_one_identity_however_its_modifiers_moved() {
+        let down = raw("l", 0, PHONE_KEY_CONTROL | PHONE_KEY_SHIFT);
+        let up = raw("l", 0, 0);
+        // SAFETY: both records borrow live locals for the call.
+        let (down_id, up_id) = unsafe {
+            (
+                slopdesk_phone_key_press_identity(&raw const down),
+                slopdesk_phone_key_press_identity(&raw const up),
+            )
+        };
+        assert_eq!(down_id, up_id);
+        assert_ne!(down_id, 0, "a live press never answers the null record's zero");
+        // SAFETY: null is the one pointer this door is asked to answer for.
+        assert_eq!(unsafe { slopdesk_phone_key_press_identity(core::ptr::null()) }, 0);
     }
 
     #[test]

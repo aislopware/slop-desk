@@ -290,8 +290,8 @@ pub fn one_private_use_table(tree: &Tree) -> Report {
             pattern: r"slopdesk_private_use_ranges",
             minimum: 1,
             message: "NerdSymbolFont.swift asks for the private-use table {found} times — it is \
-                      rust/slopdesk-sanitize's, and the two copies disagreed about plane 16 the last \
-                      time this file answered for itself",
+                      rust/slopdesk-sanitize's, and the two copies disagreed about plane 16 the last time \
+                      this file answered for itself",
         },
         // Anywhere in Swift, not just in the face: what regrows is one predicate written beside a
         // door that already answers it, and the second writer is never the file that lost the rule.
@@ -304,8 +304,8 @@ pub fn one_private_use_table(tree: &Tree) -> Report {
             view: View::Code,
             exempt: &[],
             message: "{files} — a private-use range BOUND is typed in Swift. The table is \
-                      rust/slopdesk-sanitize's and crosses whole through slopdesk_private_use_ranges; \
-                      a second copy of it is how plane 16 went missing for a year",
+                      rust/slopdesk-sanitize's and crosses whole through slopdesk_private_use_ranges; a \
+                      second copy of it is how plane 16 went missing for a year",
         },
         // And the same ban the other way: exactly one Rust file may hold the table.
         Claim::NoneUnder {
@@ -457,7 +457,8 @@ mod tests {
         );
         fixture.write(
             "rust/slopdesk-sanitize/src/plaintext.rs",
-            "const PRIVATE_USE: [(u32, u32); 3] = [(0xE000, 0xF8FF), (0xF_0000, 0xF_FFFD), (0x10_0000, 0x10_FFFD)];\n",
+            "const PRIVATE_USE: [(u32, u32); 3] = [(0xE000, 0xF8FF), (0xF_0000, 0xF_FFFD), (0x10_0000, \
+             0x10_FFFD)];\n",
         );
         assert!(
             super::one_private_use_table(&fixture.tree()).is_clean(),
@@ -468,7 +469,10 @@ mod tests {
         fixture.write(super::NERD_FONT, "func isPrivateUse() -> Bool { false }\n");
         let report = super::one_private_use_table(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("asks for the private-use table 0 times")),
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("asks for the private-use table 0 times")),
             "{report:?}"
         );
 
@@ -483,7 +487,10 @@ mod tests {
         );
         let report = super::one_private_use_table(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("SlateNativeText.swift")),
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("SlateNativeText.swift")),
             "{report:?}"
         );
 
