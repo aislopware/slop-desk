@@ -44,12 +44,14 @@ use slopdesk_hostpane::{PaneOutputStream, PtyProcess};
 use slopdesk_muxsession::fanout::SubscriberId;
 use slopdesk_muxsession::lifecycle::RebindVerdict;
 use slopdesk_muxsession::resize_fold::{Attachment, Grid, PRIMARY_SUBSCRIBER};
+use slopdesk_superwire::protocol::BlocksReply;
 use slopdesk_wire::message::WireMessage;
 use slopdesk_wire::mux::flow::MuxFlowControl;
 use slopdesk_wire::replay::ReplayBuffer;
 
 use crate::detect::{Detect, DetectConfig};
 use crate::ingest::Ingest;
+use crate::metadata::{Asked, Metadata, MetadataPerformer, UnservedMetadata};
 use crate::project::{IgnoreKeys, InlineResolve, KeyObserver, Project, ResolveExecutor};
 use crate::resize::{RESIZE_DEBOUNCE, Resize, SIZE_SETTLE};
 use crate::shared::{SessionLog, Shared};
@@ -57,7 +59,8 @@ use crate::snapshot::SnapshotPolicy;
 use crate::subscriber::{
     Subscriber, run_control_relay, run_control_sender, run_data_sender, run_input_relay,
 };
-use crate::{detect, drain, facts, snapshot};
+use crate::taps::{BlockTap, CloseTap, OutputTap, TapToken, Taps};
+use crate::{detect, drain, facts, history, snapshot};
 
 /// How long the exit thread waits for the read loop to reach EOF before shipping `.exit`.
 ///
@@ -129,6 +132,16 @@ pub struct SessionConfig {
     pub resolve: Arc<dyn ResolveExecutor>,
     /// Who hears about a new project key. hostd wires the repo-watch refcounts here.
     pub project_keys: Arc<dyn KeyObserver>,
+    /// Who runs the metadata verbs — see [`MetadataPerformer`]. Runs on [`Self::resolve`], which is
+    /// the pane's ONE serial queue on purpose: a `cd`'s key walk and a `git status` must not fork
+    /// behind each other.
+    pub metadata: Arc<dyn MetadataPerformer>,
+    /// Whether superd segments this pane into command blocks.
+    ///
+    /// The same flag the spawn asked the tap for. It gates the block READS as well as the fold, so
+    /// a pane whose tap was never installed answers "no blocks" rather than asking superd about a
+    /// segmenter that is not running.
+    pub blocks_enabled: bool,
 }
 
 impl SessionConfig {
@@ -150,6 +163,8 @@ impl SessionConfig {
             detect: DetectConfig::off(),
             resolve: Arc::new(InlineResolve),
             project_keys: Arc::new(IgnoreKeys),
+            metadata: Arc::new(UnservedMetadata),
+            blocks_enabled: false,
         }
     }
 }
@@ -167,6 +182,12 @@ pub struct PaneSession {
     detect: Arc<Detect>,
     /// The cwd latch and the project-key walk behind it.
     project: Project,
+    /// The three agent-control registries: output, close, block.
+    taps: Arc<Taps>,
+    /// The metadata RPC's bound, queue and performer.
+    metadata: Metadata,
+    /// Whether this pane is segmented into command blocks — see [`SessionConfig::blocks_enabled`].
+    blocks_enabled: bool,
     /// `taskLock`'s remaining job, and only that: the objects. Every LATCH that used to sit beside
     /// them is `Lifecycle`'s.
     stream: Mutex<Option<Arc<PaneOutputStream>>>,
@@ -212,7 +233,13 @@ impl PaneSession {
             resize,
             snapshot: config.snapshot,
             detect,
-            project: Project::new(config.resolve, config.project_keys),
+            project: Project::new(Arc::clone(&config.resolve), config.project_keys),
+            taps: Arc::new(Taps::default()),
+            // The SAME executor the project walk was handed, not another of the same type: one
+            // serial queue per pane is what keeps two `cd`s and a `git status` in the order they
+            // were asked in, and two queues would let a probe overtake the resolve that caused it.
+            metadata: Metadata::new(config.resolve, config.metadata),
+            blocks_enabled: config.blocks_enabled,
             stream: Mutex::new(None),
             drain_thread: Mutex::new(None),
             threads: Mutex::new(Vec::new()),
@@ -393,6 +420,7 @@ impl PaneSession {
             Arc::downgrade(&self.pty),
             Arc::clone(&self.detect),
             self.project.clone(),
+            Arc::clone(&self.taps),
         ));
         let stream = Arc::new(self.pty.make_output_stream(self.shared.life.offset(), sink));
         // The gate's action, wired now that there is something to throttle. Weakly — see the
@@ -404,6 +432,7 @@ impl PaneSession {
 
         let shared = Arc::clone(&self.shared);
         let pty = Arc::clone(&self.pty);
+        let taps = Arc::clone(&self.taps);
         self.launch("slopdesk-pane-exit", move || {
             let code = pty.wait_for_exit();
             // A teardown woke this rather than the child: the pane is being let go and its exit is
@@ -419,6 +448,12 @@ impl PaneSession {
                      land after .exit rather than before it",
                 );
             }
+            // Between the EOF gate and the exit message, and that position IS the contract: an
+            // orchestrator watching this pane has now been handed every output byte, and has not yet
+            // been told the pane is gone. Ahead of `append_exit` rather than after it because the
+            // exit rides a queue — a close fired afterwards would still be the SECOND thing the
+            // watcher heard only by luck of the drain's timing.
+            taps.notify_closed();
             shared.append_exit(code);
             // Wait until the drain actually SENT it before firing the observer, which is what
             // triggers the teardown that closes the drain. Otherwise a torn-down drain drops the
@@ -681,6 +716,7 @@ impl PaneSession {
                 Arc::downgrade(&self.pty),
                 Arc::clone(&self.detect),
                 self.project.clone(),
+                Arc::clone(&self.taps),
             ));
             let stream = Arc::new(self.pty.make_output_stream(offset, sink));
             self.shared.install_throttle(&stream);
@@ -868,6 +904,18 @@ impl PaneSession {
         // immediate: a `thread::sleep` would hold the teardown for up to the scan interval — which
         // the ENGINE chooses, not this crate — on every pane the host is closing.
         self.detect.stop();
+        // Announced HERE, and only when the child goes with the pane. A `shutdown` marks the session
+        // torn down before the child is signalled, so the exit thread returns at its own
+        // `is_torn_down` gate without ever firing this — teardown is the only announcer on that path.
+        // A `relinquish` is the opposite case and must stay silent: the pane is not over, superd
+        // still holds the master, the shell never sees a `SIGHUP` and the next hostd adopts it back,
+        // so an orchestrator told `{"event":"closed"}` there would hear that its agent had finished
+        // while it was still running. Nothing is left waiting by the silence — hostd is exiting, and
+        // the `subscribe` pump ends on its own socket. Idempotent with the exit thread's call, so the
+        // pane that DOES exit still announces exactly one end.
+        if kill_child {
+            self.taps.notify_closed();
+        }
         // The roster, snapshotted BEFORE anything is closed. Every close below is what makes some
         // relay return, and a relay's last act is to retire its own member — so a roster read after
         // the closes would be missing exactly the members whose threads are still finishing, and
@@ -1121,6 +1169,13 @@ impl PaneSession {
     /// The pane's held blocks as control messages, through the ONE constructor that keeps a re-sent
     /// block and a live one from disagreeing about a field.
     fn block_backfill(&self) -> Option<Vec<WireMessage>> {
+        // The gate the FOLD already honours, honoured on the read side too. Without it every
+        // arrival on a pane with no segmenter spends a blocking superd round trip to be told there
+        // are no blocks — the wire is identical either way, so this is cost rather than behaviour,
+        // and it is cost on the one path a client is waiting on.
+        if !self.blocks_enabled {
+            return None;
+        }
         let blocks = self.pty.block_snapshot()?;
         Some(blocks.iter().map(facts::block_message).collect())
     }
@@ -1270,6 +1325,106 @@ impl PaneSession {
     /// derivation is not.
     pub fn seed_project(&self, cwd: &str) {
         self.project.seed(&self.shared, cwd);
+    }
+}
+
+/// The pane as an ORCHESTRATOR sees it: what it has said, what it is running, and the three ways to
+/// be told when that changes.
+///
+/// Everything here is `slopdesk-ctl`'s side of the pane — `read`, `last-output`, `wait --until`,
+/// `run --wait`, `subscribe`, and the metadata RPC a client's own panels ask over. None of it is on
+/// the byte path: the scrollback readouts compose from the ring under its own lock, the taps are
+/// callbacks the read loop fans to, and the metadata work never touches the control loop at all.
+impl PaneSession {
+    /// The pane's retained output as plain text, escapes removed unless `ansi_strip` says not to.
+    #[must_use]
+    pub fn scrollback_text(&self, ansi_strip: bool) -> String {
+        history::text(&self.shared, ansi_strip)
+    }
+
+    /// The newest retained bytes, at most `cap` — the `screen` verb's on-demand grid rebuild.
+    #[must_use]
+    pub fn scrollback_raw(&self, cap: usize) -> Vec<u8> {
+        history::newest(&self.shared, cap)
+    }
+
+    /// The stripped scrollback as logical lines, at most `limit` counting from the end.
+    #[must_use]
+    pub fn recent_lines(&self, limit: Option<usize>) -> Vec<String> {
+        history::logical_lines(&self.shared, limit)
+    }
+
+    /// The pane's held command blocks, or `None` when it is not segmented.
+    ///
+    /// One superd round trip for all three of the reply's parts, because the three are only
+    /// consistent with each other if superd read them together.
+    #[must_use]
+    pub fn blocks(&self, limit: usize) -> Option<BlocksReply> {
+        if !self.blocks_enabled {
+            return None;
+        }
+        self.pty.block_control(limit)
+    }
+
+    /// One block's retained output. `None` means the pane has no tap; EMPTY means the block was
+    /// evicted or never existed — a distinction the `run --wait` caller acts on.
+    #[must_use]
+    pub fn block_output(&self, index: u32) -> Option<Vec<u8>> {
+        if !self.blocks_enabled {
+            return None;
+        }
+        self.pty.block_output(index)
+    }
+
+    /// Watches every output chunk. Returns the token that retires it.
+    pub fn add_output_tap(&self, tap: Arc<dyn OutputTap>) -> TapToken {
+        self.taps.add_output(tap)
+    }
+
+    /// Retires an output watcher. Idempotent.
+    pub fn remove_output_tap(&self, token: TapToken) {
+        self.taps.remove_output(token);
+    }
+
+    /// Watches this pane's end. Fires AT ONCE if the pane has already ended — see [`crate::taps`].
+    pub fn add_close_tap(&self, tap: Arc<dyn CloseTap>) -> TapToken {
+        self.taps.add_close(tap)
+    }
+
+    /// Retires a close watcher. Idempotent.
+    pub fn remove_close_tap(&self, token: TapToken) {
+        self.taps.remove_close(token);
+    }
+
+    /// Watches this pane's command blocks. Returns the token that retires it.
+    pub fn add_block_tap(&self, tap: Arc<dyn BlockTap>) -> TapToken {
+        self.taps.add_block(tap)
+    }
+
+    /// Retires a block watcher. Idempotent.
+    pub fn remove_block_tap(&self, token: TapToken) {
+        self.taps.remove_block(token);
+    }
+
+    /// Serves one metadata request, answering `id` exactly once.
+    ///
+    /// Orders against NOTHING else this pane does — like a ping, and deliberately: a `git status`
+    /// that resolved a pending grid would let a repository walk decide when the terminal resizes.
+    pub fn serve_metadata(&self, id: SubscriberId, request_id: u32, verb: u8, payload: Vec<u8>) {
+        self.metadata.serve(&self.shared, id, Asked {
+            request_id,
+            verb,
+            payload,
+            master_fd: self.pty.master_fd_snapshot().unwrap_or(-1),
+            shell_pid: self.pty.pid().unwrap_or(0),
+        });
+    }
+
+    /// How many metadata work items are admitted and unfinished — the flood test's only window on
+    /// the bound, since a refusal and a slow answer look identical from the wire.
+    #[must_use]
+    pub fn metadata_in_flight(&self) -> u32 {
+        self.metadata.in_flight()
     }
 }
 

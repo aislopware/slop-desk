@@ -36,6 +36,7 @@ use crate::detect::Detect;
 use crate::facts::{block_row_message, block_rows, sniffed_facts, sniffed_message};
 use crate::project::Project;
 use crate::shared::Shared;
+use crate::taps::Taps;
 
 /// The pane's half of the read loop.
 #[derive(Debug)]
@@ -49,6 +50,9 @@ pub(crate) struct Ingest {
     detect: Arc<Detect>,
     /// The cwd/project derivation, which needs the pane and so takes it as an argument.
     project: Project,
+    /// The agent-control registries. Held strongly for [`Detect`]'s reason — nothing in them
+    /// reaches the supervisor client, so nothing here closes a cycle through it.
+    taps: Arc<Taps>,
 }
 
 impl Ingest {
@@ -58,12 +62,14 @@ impl Ingest {
         pane: Weak<PtyProcess>,
         detect: Arc<Detect>,
         project: Project,
+        taps: Arc<Taps>,
     ) -> Self {
         Self {
             shared,
             pane,
             detect,
             project,
+            taps,
         }
     }
 
@@ -178,12 +184,19 @@ impl PaneChunkSink for Ingest {
         // WITHHELDs the sniffed OSC-7 precisely so that the only cwd on the wire is the one this
         // derivation publishes, so a cwd read back out of `fold.fifo` would always be absent.
         self.detect.note_output(payload);
+        // The orchestrator's tap, with the payload BORROWED: `wait --until` scans for a pattern and
+        // copies nothing, and a tap that needs to keep the bytes is the one that pays for them.
+        self.taps.notify_output(payload);
         if let Some(ref pane) = pane {
             self.project.derive(&self.shared, pane, sniffed);
         }
         let broadcast = self.fold_blocks(blocks);
         if !broadcast.is_empty() {
             self.shared.broadcast_control(&broadcast);
+            // AFTER the fold and after the broadcast: `run --wait` hears that its command completed
+            // only once the block's output is retained and askable, so the very next thing it does —
+            // request that output — cannot lose the race with the fold that announced it.
+            self.taps.notify_blocks(&broadcast);
         }
 
         // Account the chunk BEFORE enqueueing it: if it pushes the queue to or over the bound, the

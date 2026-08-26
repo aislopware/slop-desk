@@ -414,18 +414,50 @@ Nothing in stage C can be written before it exists in Rust, so the stage is comm
     type-31 that a plain re-fold of an unchanged state would not. Title LAST, because the client
     judges a title's freshness against the command-start stamp the head just republished, and a title
     that arrived first loses that comparison for the rest of the session.
-  - **C.2e — the metadata and observer surface.** The metadata verbs over their serial queue and the
-    bounded-admission counter that is the ONLY bound on an unwindowed control channel, the three
-    agent-control observer registries (`outputObservers`/`closeObservers`/`blockObservers`, and the
-    ordering guarantee that every output observer fires before any close observer at EOF), and the
-    remaining `last-output`/`run --wait` block verbs.
+  - **C.2e — the orchestrator's surface. DONE.** `src/taps.rs`, `src/metadata.rs`, `src/history.rs`,
+    and the `blocksEnabled` gate C.2d left open. A re-wire again, and for the same reason: the
+    admission counter and the verb-routing table are already `slopdesk-muxsession`'s
+    (`metadata_admission.rs`), the pane probes behind the read verbs are already
+    `slopdesk-ffi/src/pane_probe.rs` over `slopdesk-panecensus`, and the ANSI stripper `ANSIStripper`
+    fronts is already `slopdesk-sanitize`'s `plaintext::strip` / `lines::logical_lines`. What was
+    Swift was the driving.
 
-    One thing C.2d leaves for it, found while porting: the Swift gates `resendBlocksOnReattach` on
-    `blocksEnabled` before paying the round trip, and `block_backfill` has no such gate. The WIRE
-    behaviour is identical — with blocks off superd errors, `.ok()?` answers `None`, and no message
-    is sent — so the divergence is one wasted RPC per arrival on a blocks-disabled pane. The gate
-    belongs here rather than there: `blocksEnabled` is a spawn-time bit the Rust `PtyProcess` does
-    not carry yet, and this is where the rest of the `blocksEnabled`-gated surface lands.
+    **The metadata RPC shares the project walk's executor — the same instance, not the same type.**
+    One serial queue per pane is what `MuxChannelSession` had (`metadataQueue` served both), and it
+    is load-bearing: two queues would let a `git status` overtake the resolve of the `cd` that caused
+    it. `SessionConfig::resolve` is handed to `Project::new` and `Metadata::new` both.
+
+    **The admitted slot is a guard, not a call at the end of the closure.** Swift's `defer` released
+    it; a Rust closure handed to somebody else's executor can be dropped without ever running, and a
+    slot leaked that way shrinks the cap by one per incident until the pane refuses everything.
+
+    **`MetadataPerformer` is injected for `ScreenOracle`'s reason, and the nine side-effecting verbs
+    are why.** They actuate on the host's Finder, `~/.claude/settings.json`, the pasteboard and a
+    lazily-spawned workbench child — all still Swift under §5. What does NOT cross is the routing:
+    `performer(verb)` decides in Rust, off the wire's own enum, and the boundary carries one call
+    with the answer already in it.
+
+    **One raw descriptor crosses, and it is written down rather than hidden.**
+    `PtyProcess::master_fd_snapshot` is the only door that lets a pane's fd number out; three read
+    verbs resolve the foreground group from it, and holding the pane's lock across the `git`/`lsof`
+    behind them would stall every resize on a repository walk. Swift has the identical seam
+    (`serveMetadata` captures `pty.masterFD` before its `async`), and stage F closes it: with the
+    builder in Rust, the hold can be taken for the microsecond `tcgetpgrp` and not for the fork.
+
+    **The close tap fires between the EOF gate and the exit message, and it LATCHES.** Every output
+    tap has seen the whole stream by then, which is the promise `subscribe` makes. One departure
+    from Swift, deliberate: a tap registered AFTER the end is fired at once rather than stored where
+    nothing will read it — Swift left that caller waiting out its own timeout for an event that
+    could no longer happen. The latch is what makes it safe: exactly one end per session, however
+    many paths reach it. **A `relinquish` is NOT one of those paths**, and the asymmetry is the whole
+    point of `docs/51`: `shutdown` marks the session torn down before the child is signalled, so the
+    exit thread returns at its own gate and `teardown` is the only announcer — while a relinquish
+    leaves the pane alive in superd for the next hostd to adopt, and an orchestrator told
+    `{"event":"closed"}` there would hear that its agent had finished while it was still running.
+
+    **`block_backfill` now takes the `blocksEnabled` gate** C.2d found it missing. Wire behaviour was
+    already identical (superd errors, `.ok()?` answers `None`); the gate saves one blocking round
+    trip per arrival on a blocks-disabled pane, on the one path a client is waiting on.
 
   **Two hazards C.1 already paid for, carried up one layer.** The reference cycle is the first: a
   session that both held the pane and WAS its `PaneChunkSink` closes client → sink → `PtyProcess` →

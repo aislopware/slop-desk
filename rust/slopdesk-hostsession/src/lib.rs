@@ -17,16 +17,17 @@
 //! nothing about panes. This crate is the one place that may hold all four, so it is the one place
 //! the joins between them can live.
 //!
-//! ## What it does not do yet
+//! ## What C.2 turned out to be
 //!
 //! Stage C.2a was the pane→wire direction; C.2c added the ladders that change WHO is attached —
 //! [`PaneSession::join`] with its snapshot compose, [`PaneSession::detach`],
 //! [`PaneSession::rebind`] and the size fold with its three timers. C.2d added the DETECTION
 //! surface: the foreground poll, the screen scan, the echo probe, the cwd/project derivation, the
-//! full arrival re-assert and the readouts a supervision caller asks for. What is left is the
-//! metadata verbs with their bounded admission and the agent-control observer registries. Every one
-//! of them lands over this same [`shared::Shared`], which is why the lock partition is the module
-//! worth reading first.
+//! full arrival re-assert and the readouts a supervision caller asks for. C.2e added the
+//! ORCHESTRATOR's: the three tap registries ([`taps`]), the metadata RPC with its bound and its
+//! serial queue ([`metadata`]), and the scrollback readouts behind `read`/`last-output`
+//! ([`history`]). Every one of them lands over this same [`shared::Shared`], which is why the lock
+//! partition is the module worth reading first.
 //!
 //! Three of C.2d's decisions are worth knowing before reading it. The detector lives INSIDE the
 //! truths lock rather than beside it ([`shared::Folds`]), because every readout that pairs the two
@@ -34,6 +35,13 @@
 //! the snapshot renderer is: a session that linked the screend client would spawn a daemon the
 //! moment a test built one. And both detection loops park on a condvar rather than sleeping, so a
 //! teardown does not wait out an interval the engine chose.
+//!
+//! C.2e's are three more of the same shape. The metadata RPC and the project walk share ONE
+//! executor instance, because a `git status` overtaking the resolve of the `cd` that caused it
+//! would report a project the pane had already left. The performer is injected for
+//! [`ScreenOracle`]'s reason, while the ROUTING it is given stays in Rust. And the close tap fires
+//! between the EOF gate and the exit message, which is what makes "every output byte, then the
+//! close" a guarantee rather than a timing accident.
 //!
 //! ## What it does not DELETE, and why
 //!
@@ -61,7 +69,9 @@ mod clock;
 mod detect;
 mod drain;
 mod facts;
+mod history;
 mod ingest;
+mod metadata;
 mod probe;
 mod project;
 mod resize;
@@ -69,11 +79,14 @@ mod session;
 mod shared;
 mod snapshot;
 mod subscriber;
+mod taps;
 mod timer;
 
 pub use detect::{DetectConfig, ScreenOracle, ScreenRequest};
+pub use metadata::{MetadataAnswer, MetadataPerformer, MetadataRequest, UnservedMetadata};
 pub use project::{IgnoreKeys, InlineResolve, KeyObserver, ResolveExecutor};
 pub use resize::{RESIZE_DEBOUNCE, SIZE_SETTLE};
 pub use session::{PaneSession, SessionConfig, SessionObserver, SilentObserver};
 pub use shared::{DiscardLog, SessionLog};
 pub use snapshot::SnapshotPolicy;
+pub use taps::{BlockTap, BlockUpdate, CloseTap, OutputTap, TapToken};

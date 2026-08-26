@@ -284,6 +284,7 @@ dependencies = [
  "slopdesk-hostpane",
  "slopdesk-muxsession",
  "slopdesk-posix",
+ "slopdesk-sanitize",
  "slopdesk-superclient",
  "slopdesk-superwire",
  "slopdesk-wire",

@@ -67,6 +67,11 @@ slopdesk-posix = { path = "../slopdesk-posix" }
 # `src/project.rs` for the hung-mount reason.
 slopdesk-git = { path = "../slopdesk-git" }
 
+# The VT grammar behind the scrollback readouts: `plaintext::strip` for the text an agent's regex
+# matches against, `lines::logical_lines` for the split it wants that text in. The same scanner the
+# replay passes share, asked for the one pass that is NOT one of them.
+slopdesk-sanitize = { path = "../slopdesk-sanitize" }
+
 # `clock_gettime` for the two stamp scales, and only that. Both are safe wrappers, so no crate in
 # this dependency line hand-writes `unsafe` for them.
 nix = { version = "0.31", features = ["time"] }

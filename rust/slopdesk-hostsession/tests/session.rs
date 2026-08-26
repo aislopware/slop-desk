@@ -36,7 +36,10 @@ use nix::sys::socket::{ControlMessage, MsgFlags, sendmsg};
 use slopdesk_hostnet::link::ByteLink;
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::PtyProcess;
-use slopdesk_hostsession::{PaneSession, SessionConfig, SessionLog, SessionObserver};
+use slopdesk_hostsession::{
+    CloseTap, MetadataAnswer, MetadataPerformer, MetadataRequest, OutputTap, PaneSession, ResolveExecutor,
+    SessionConfig, SessionLog, SessionObserver,
+};
 use slopdesk_superclient::client::{ClientThreads, SupervisorClient, SupervisorObserver};
 use slopdesk_superwire::blockwire::BlockEvent;
 use slopdesk_superwire::protocol::{
@@ -499,6 +502,16 @@ impl Wired {
 
     /// A started session over a spawned pane, with superd's `subscribe` answered.
     fn session(&self, pane_id: &str) -> (Arc<PaneSession>, Arc<PtyProcess>, OwnedFd, Arc<Sink>) {
+        self.session_tuned(pane_id, |_config| {})
+    }
+
+    /// [`Self::session`] with the configuration handed to `tune` first, for the tests that need a
+    /// performer, an executor or a gate the default does not carry.
+    fn session_tuned(
+        &self,
+        pane_id: &str,
+        tune: impl FnOnce(&mut SessionConfig),
+    ) -> (Arc<PaneSession>, Arc<PtyProcess>, OwnedFd, Arc<Sink>) {
         let (pty, slave) = self.spawned(pane_id);
         let sink = Arc::new(Sink::default());
         let mut config = SessionConfig::new(as_log(&sink), as_observer(&sink));
@@ -507,6 +520,7 @@ impl Wired {
         // of settle per resize test is wall clock spent proving nothing.
         config.resize_debounce = Duration::from_millis(2);
         config.size_settle = Duration::from_millis(5);
+        tune(&mut config);
         let session = PaneSession::new(Arc::clone(&pty), config);
         let starting = Arc::clone(&session);
         self.answer_subscribe_while(|| starting.start());
@@ -1329,4 +1343,374 @@ fn a_second_teardown_is_harmless() {
     assert_eq!(session.live_thread_count(), 0);
     drop(slave);
     wired.shut_down();
+}
+
+// MARK: - The orchestrator's surface
+
+/// What an orchestrator watching a pane is promised: every output byte, and only THEN the close.
+///
+/// Invisible from either end alone, exactly like the exit gate this rides behind. The output tap
+/// fires on superd's reader thread and the close on the exit thread, so the two are ordered only
+/// because the exit thread waits out the EOF latch before it declares anything — take that gate
+/// away and a `wait --until` predicate loses the line it was waiting for to a close it had already
+/// acted on.
+#[test]
+fn an_orchestrator_hears_every_byte_before_it_hears_the_close() {
+    let wired = Wired::up();
+    let (session, _pty, slave, sink) = wired.session("pane-1");
+
+    let heard = Arc::new(Heard::default());
+    let (watching, ending) = (Arc::clone(&heard), Arc::clone(&heard));
+    let output: Arc<dyn OutputTap> = watching;
+    let close: Arc<dyn CloseTap> = ending;
+    session.add_output_tap(output);
+    session.add_close_tap(close);
+
+    wired.superd.output("pane-1", 0, b"first\n");
+    wired.superd.output("pane-1", 6, b"second\n");
+    wired.superd.announce_exit("pane-1", 0);
+    eventually("the observer to hear the exit", || !sink.exit_codes().is_empty());
+    eventually("the close tap to fire", || heard.closes() == 1);
+
+    assert_eq!(heard.log(), vec![
+        "chunk first\n".to_owned(),
+        "chunk second\n".to_owned(),
+        "closed".to_owned(),
+    ]);
+
+    wired.superd.answer_everything_while(|| session.shutdown());
+    assert_eq!(
+        heard.closes(),
+        1,
+        "the teardown's own call is the SAME end, not a second one"
+    );
+    drop(slave);
+    wired.shut_down();
+}
+
+/// A relinquish announces NOTHING to a close tap, because the pane it lets go is not over.
+///
+/// The counterpart to [`a_relinquish_signals_nothing_and_keeps_the_child`] one layer up:
+/// `docs/51`'s line between "this daemon is going away" and "this pane is over" has to hold for the
+/// orchestrator surface too. superd still holds the master and the next hostd adopts the pane back,
+/// so an agent told `{"event":"closed"}` here would report a finish that never happened. Nothing
+/// waits on the silence — hostd is exiting, and the `subscribe` pump ends on its own socket.
+#[test]
+fn a_relinquish_tells_no_orchestrator_the_pane_is_over() {
+    let wired = Wired::up();
+    let (session, _pty, slave, _sink) = wired.session("pane-1");
+
+    let heard = Arc::new(Heard::default());
+    let ending = Arc::clone(&heard);
+    let close: Arc<dyn CloseTap> = ending;
+    session.add_close_tap(close);
+
+    session.relinquish();
+    drop(wired.superd.next_request_for(verb::UNSUBSCRIBE));
+    wired.superd.no_request_within(Duration::from_millis(200));
+    assert_eq!(heard.closes(), 0, "a pane handed back is not a pane that ended");
+
+    drop(slave);
+    wired.shut_down();
+}
+
+/// A `shutdown` DOES announce it, and from the teardown rather than the exit thread.
+///
+/// The asymmetry's other half, and the reason the announcement cannot simply move to the exit
+/// thread: `shutdown` marks the session torn down before it signals the child, so the exit thread
+/// returns at its own `is_torn_down` gate having announced nothing. Take teardown's call away and a
+/// host-closed pane never tells its orchestrator anything.
+#[test]
+fn a_shutdown_announces_the_end_even_though_the_exit_thread_stands_down() {
+    let wired = Wired::up();
+    let (session, _pty, slave, _sink) = wired.session("pane-1");
+
+    let heard = Arc::new(Heard::default());
+    let ending = Arc::clone(&heard);
+    let close: Arc<dyn CloseTap> = ending;
+    session.add_close_tap(close);
+
+    wired.superd.answer_everything_while(|| session.shutdown());
+    assert_eq!(heard.closes(), 1, "the host closing a pane IS that pane's end");
+
+    drop(slave);
+    wired.shut_down();
+}
+
+/// A `subscribe` that arrives one instant after the pane died is ANSWERED rather than left waiting.
+///
+/// Swift's registry stored the observer into a dictionary nothing would read again, and the caller
+/// waited out its own timeout for an event that could no longer happen.
+#[test]
+fn a_close_tap_installed_after_the_end_is_told_at_once() {
+    let wired = Wired::up();
+    let (session, _pty, slave, sink) = wired.session("pane-1");
+
+    wired.superd.announce_exit("pane-1", 7);
+    eventually("the observer to hear the exit", || !sink.exit_codes().is_empty());
+
+    let heard = Arc::new(Heard::default());
+    let ending = Arc::clone(&heard);
+    let close: Arc<dyn CloseTap> = ending;
+    session.add_close_tap(close);
+    assert_eq!(
+        heard.closes(),
+        1,
+        "the latch answered the late subscriber synchronously"
+    );
+
+    wired.superd.answer_everything_while(|| session.shutdown());
+    drop(slave);
+    wired.shut_down();
+}
+
+/// The metadata verb answers the member that ASKED, on the control lane, with the request id it
+/// was given — and it answers off the control loop, on the pane's serial executor.
+#[test]
+fn a_metadata_request_is_answered_on_the_asking_members_control_lane() {
+    let wired = Wired::up();
+    let queue = Arc::new(Deferred::default());
+    let running = Arc::clone(&queue);
+    let (session, _pty, slave, _sink) = wired.session_tuned("pane-1", |config| {
+        config.resolve = running;
+        config.metadata = Arc::new(Answering);
+    });
+    let asker = wired.attach(&session);
+    let bystander = wired.attach(&session);
+
+    session.serve_metadata(asker.id, 77, 3, b"body".to_vec());
+    assert_eq!(
+        session.metadata_in_flight(),
+        1,
+        "the slot is taken while the work is queued"
+    );
+    assert!(
+        !asker.control().iter().any(is_metadata_response),
+        "nothing answered on the control loop — the work is still on the queue",
+    );
+
+    queue.run_all();
+    eventually("the answer to reach the asker", || {
+        asker.control().iter().any(is_metadata_response)
+    });
+
+    let answered = asker
+        .control()
+        .into_iter()
+        .filter_map(|message| {
+            match message {
+                WireMessage::MetadataResponse {
+                    request_id,
+                    status,
+                    payload,
+                } => Some((request_id, status, payload)),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(answered, vec![(77, 0, b"verb 3 over body".to_vec())]);
+    assert!(
+        !bystander.control().iter().any(is_metadata_response),
+        "a correlation key nobody else minted must not land in anybody else's registry",
+    );
+    eventually("the slot to come back", || session.metadata_in_flight() == 0);
+
+    wired.superd.answer_everything_while(|| session.shutdown());
+    drop(slave);
+    wired.shut_down();
+}
+
+/// Past the cap the request is REFUSED rather than queued, and a refusal is still an ANSWER: the
+/// unwindowed control channel means a flood would otherwise grow the queue without limit, and a
+/// silent drop would hang the very client that caused it.
+#[test]
+fn a_metadata_flood_is_refused_at_the_cap_and_every_refusal_still_answers() {
+    let wired = Wired::up();
+    let queue = Arc::new(Deferred::default());
+    let running = Arc::clone(&queue);
+    let (session, _pty, slave, _sink) = wired.session_tuned("pane-1", |config| {
+        config.resolve = running;
+        config.metadata = Arc::new(Answering);
+    });
+    let asker = wired.attach(&session);
+
+    let cap = usize::try_from(slopdesk_muxsession::metadata_admission::MAX_IN_FLIGHT).unwrap();
+    let flood = cap + 8;
+    for request_id in 0..flood {
+        session.serve_metadata(asker.id, u32::try_from(request_id).unwrap(), 3, Vec::new());
+    }
+
+    // The refusal is SENT rather than returned, so it crosses a real socket and is decoded back
+    // out of the link like every other message here — `eventually` waits for the transport, not for
+    // the decision, which was made synchronously on the calling thread.
+    eventually("every refusal to reach the asker", || {
+        asker.control().iter().filter(|m| is_metadata_response(m)).count() == flood - cap
+    });
+    let refused = asker
+        .control()
+        .into_iter()
+        .filter_map(|message| {
+            match message {
+                WireMessage::MetadataResponse {
+                    request_id, status, ..
+                } => Some((request_id, status)),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        refused.iter().all(|(_id, status)| *status == 2),
+        "a refusal wears the standard error status, not a shape of its own",
+    );
+    assert_eq!(
+        session.metadata_in_flight(),
+        u32::try_from(cap).unwrap(),
+        "a refusal takes no slot",
+    );
+
+    queue.run_all();
+    eventually("every admitted request to answer", || {
+        asker.control().iter().filter(|m| is_metadata_response(m)).count() == flood
+    });
+    eventually("every slot to come back", || session.metadata_in_flight() == 0);
+
+    wired.superd.answer_everything_while(|| session.shutdown());
+    drop(slave);
+    wired.shut_down();
+}
+
+/// The scrollback readouts compose from the ring, strip the escapes, and split on the hard
+/// newlines — the `read --unwrapped` verb's whole path.
+#[test]
+fn the_scrollback_readouts_strip_the_escapes_and_split_the_lines() {
+    let wired = Wired::up();
+    let (session, _pty, slave, _sink) = wired.session("pane-1");
+    let member = wired.attach(&session);
+
+    wired.superd.output("pane-1", 0, b"\x1b[31malpha\x1b[0m\nbeta\n");
+    eventually("the chunk to reach the ring", || !member.output().is_empty());
+
+    assert_eq!(session.scrollback_text(true), "alpha\nbeta\n");
+    assert_eq!(session.recent_lines(None), vec![
+        "alpha".to_owned(),
+        "beta".to_owned()
+    ]);
+    assert_eq!(session.recent_lines(Some(1)), vec!["beta".to_owned()]);
+    assert_eq!(
+        session.scrollback_raw(8 * 1024),
+        b"\x1b[31malpha\x1b[0m\nbeta\n".to_vec(),
+        "the raw readout is the grid rebuild's, and keeps every escape",
+    );
+
+    session.relinquish();
+    drop(slave);
+    wired.shut_down();
+}
+
+/// A pane with no segmenter answers the block verbs without asking superd at all.
+#[test]
+fn a_pane_without_blocks_answers_the_block_verbs_without_a_round_trip() {
+    let wired = Wired::up();
+    let (session, _pty, slave, _sink) = wired.session("pane-1");
+
+    // No `answer_everything_while` around either call, which IS the assertion: `block_control` and
+    // `block_output` park with no timeout, so a round trip here would hang this test rather than
+    // fail it.
+    assert!(session.blocks(16).is_none());
+    assert!(session.block_output(0).is_none());
+
+    session.relinquish();
+    drop(slave);
+    wired.shut_down();
+}
+
+// MARK: - The orchestrator's doubles
+
+/// One recorder for both tap kinds, so the ORDER between them is a single sequence rather than two
+/// clocks that have to be reconciled.
+#[derive(Debug, Default)]
+struct Heard {
+    log: Mutex<Vec<String>>,
+    closes: AtomicUsize,
+}
+
+impl Heard {
+    fn log(&self) -> Vec<String> {
+        self.log.lock().unwrap().clone()
+    }
+
+    fn closes(&self) -> usize {
+        self.closes.load(Ordering::Acquire)
+    }
+}
+
+impl OutputTap for Heard {
+    fn chunk(&self, payload: &[u8]) {
+        self.log
+            .lock()
+            .unwrap()
+            .push(format!("chunk {}", String::from_utf8_lossy(payload)));
+    }
+}
+
+impl CloseTap for Heard {
+    fn closed(&self) {
+        self.log.lock().unwrap().push("closed".to_owned());
+        self.closes.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// An executor that HOLDS its work until a test says to run it.
+///
+/// The production one is a serial queue; this is the same contract with the clock in the test's
+/// hand, which is what lets an assertion distinguish "answered off the control loop" from
+/// "answered so fast it looked like it".
+#[derive(Default)]
+struct Deferred {
+    pending: Mutex<Vec<Box<dyn FnOnce() + Send>>>,
+}
+
+impl std::fmt::Debug for Deferred {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Deferred")
+            .field("pending", &self.pending.lock().unwrap().len())
+            .finish()
+    }
+}
+
+impl Deferred {
+    fn run_all(&self) {
+        let taken = std::mem::take(&mut *self.pending.lock().unwrap());
+        for walk in taken {
+            walk();
+        }
+    }
+}
+
+impl ResolveExecutor for Deferred {
+    fn submit(&self, walk: Box<dyn FnOnce() + Send>) {
+        self.pending.lock().unwrap().push(walk);
+    }
+}
+
+/// A performer that echoes what it was asked, so the answer proves the verb and the body crossed.
+#[derive(Debug)]
+struct Answering;
+
+impl MetadataPerformer for Answering {
+    fn perform(&self, request: &MetadataRequest<'_>) -> MetadataAnswer {
+        MetadataAnswer::ok(
+            format!(
+                "verb {} over {}",
+                request.verb,
+                String::from_utf8_lossy(request.payload),
+            )
+            .into_bytes(),
+        )
+    }
+}
+
+const fn is_metadata_response(message: &WireMessage) -> bool {
+    matches!(*message, WireMessage::MetadataResponse { .. })
 }

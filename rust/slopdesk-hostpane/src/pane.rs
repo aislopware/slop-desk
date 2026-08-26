@@ -343,6 +343,27 @@ impl PtyProcess {
         self.identity().map(|identity| identity.pid)
     }
 
+    /// The master's descriptor NUMBER, for a probe that must run without this type's lock.
+    ///
+    /// The one door that lets the number out, and it exists for exactly one caller: the metadata
+    /// RPC, whose read verbs resolve the pane's foreground group from the master and whose work
+    /// then blocks on `git`/`lsof` for as long as those take. Holding the pane's lock across that
+    /// would stall every resize and keystroke behind a repository walk, so the number is
+    /// snapshotted instead — and a snapshot is a promise about an instant, not about the future.
+    ///
+    /// **Every other probe must use the methods above**, which do their syscall inside the hold.
+    /// The window here is real: a caller that races [`PtyProcess::release`] can probe a number the
+    /// kernel has already given to the next `openpty`. It is accepted only because the alternative
+    /// is worse for the pane, and it closes when the metadata builder itself is Rust and can take
+    /// the hold for the microsecond `tcgetpgrp` without taking it for the fork behind it.
+    #[must_use]
+    pub fn master_fd_snapshot(&self) -> Option<i32> {
+        let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        // Spelled through the qualified path rather than a closure: the file imports the trait
+        // anonymously (`AsRawFd as _`), so the bare method name has no type to hang off here.
+        held.master.as_ref().map(std::os::fd::AsRawFd::as_raw_fd)
+    }
+
     /// When superd forked this pane, in unix seconds. `0` for a pane that was never spawned or
     /// adopted, and for a superd too old to report it.
     #[must_use]
