@@ -26,6 +26,12 @@
 //! forked and held by superd so a hostd rebuild costs no Node boot. [`code`] — the workbench, and
 //! the four one-shot gates in front of its spawn.
 //!
+//! ## What D.3 landed
+//!
+//! [`bridge`] — the socket the workbench's extension dials back on, which is the only half of that
+//! channel that was not already Rust. Every decision on it is
+//! [`slopdesk_muxsession::bridge_router`]'s and always was.
+//!
 //! ## What it does not DELETE, and why
 //!
 //! Nothing. `docs/60` §5's carve-out is the reason and it has not changed: stages A–E cannot obey
@@ -33,6 +39,7 @@
 //! cutover at stage F. `HostSessionRegistry` and `DetachedSessionStore` stand until then, and F is
 //! what takes them.
 
+pub mod bridge;
 pub mod code;
 mod deadline;
 mod detached;

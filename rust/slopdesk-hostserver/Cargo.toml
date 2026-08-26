@@ -65,13 +65,26 @@ slopdesk-superwire = { path = "../slopdesk-superwire" }
 # settings file.
 slopdesk-wire = { path = "../slopdesk-wire" }
 
-# The fake superd `tests/serviceproc.rs` drives the service handle against: `serde_json` to build the
-# replies superd would send, `nix` for the `sendmsg` that carries a descriptor across by `SCM_RIGHTS`
-# — a spawn that answered no master would fail here as a missing descriptor rather than in
-# production.
+# One function, and it is the link detector's: the `:line:col` tail an open target may carry. The
+# bridge splits it with the SAME splitter the client's terminal uses, so a detected link and a
+# bridge open can never disagree about where the path ends.
+slopdesk-terminal = { path = "../slopdesk-terminal" }
+
+# The two socket options macOS has and `nix` does not wrap for a bare descriptor — close-on-exec on
+# everything the bridge accepts, and `SO_NOSIGPIPE`, without which one write to a workbench window
+# that has just closed ends the whole host.
+slopdesk-posix = { path = "../slopdesk-posix" }
+
+# `poll` for the accept loop's two-descriptor park and `pipe` for the byte that ends it — the shape
+# `slopdesk-superd`'s pump loop uses, and the reason no descriptor is ever closed out from under a
+# syscall here.
+nix = { version = "0.31", features = ["fs", "poll", "socket"] }
+
+# The fake superd `tests/serviceproc.rs` drives the service handle against builds the replies superd
+# would send with this. The `sendmsg` that carries a descriptor across by `SCM_RIGHTS` is `nix`'s,
+# which the bridge already needs above.
 [dev-dependencies]
 serde_json = "1"
-nix = { version = "0.31", features = ["socket"] }
 
 # In hostd, on the accept path and under the server's one lock.
 [profile.release]

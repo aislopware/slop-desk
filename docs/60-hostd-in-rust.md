@@ -619,8 +619,37 @@ is paused.
   the subscribe but not the release parks the terminating thread for ever. A test hangs rather than
   fails there, so the teardown goes through one helper that answers it.
 
-  **D.3 — the code bridge.** `CodeBridgeServer` (453): the accept loop, the fd table keyed by
-  project root, the per-connection read loop. Parsing, routing and typeability are already Rust.
+  **D.3 — the code bridge.** ✅ `CodeBridgeServer` (453) is `slopdesk-hostserver`'s `bridge`. There
+  was never an engine here either: the verb table, the routing rule, the typeability test and both
+  line builders are `slopdesk_muxsession::bridge_router`'s and were before the port started. What
+  was left, and all that was left, is the socket — the bind, the accept, the NDJSON split, the two
+  directions and the stop.
+
+  **The one departure, and it is how a `stop` ends the accept.** The Swift closed the listening
+  descriptor from the stopping thread while the accept thread was parked inside `accept(2)` on it.
+  Darwin wakes the sleeper, so it worked — but it is a close of a descriptor another thread is
+  inside, and between that close and the loop's next syscall any thread in the process can open
+  something that lands on the same number, after which the loop accepts on a stranger's descriptor.
+  Here the accept thread OWNS its listener and nobody else may touch it: it parks in `poll` on the
+  listener and a wake pipe, and `stop` writes one byte. The loop returns, the listener drops on the
+  way out, and no descriptor is ever closed out from under a syscall. That is superd's pump loop's
+  shape, for superd's reason. Per-connection reads need none of it — the table keeps a second handle
+  on each accepted socket and `shutdown(2)` acts on the socket OBJECT, which is what a duplicate is
+  for.
+
+  `SO_NOSIGPIPE` moved into `slopdesk-posix`'s `sock`, beside the buffer widener and for that
+  module's stated reason: a socket option macOS has and `nix` does not wrap for a bare descriptor.
+  It is not made redundant by the Rust runtime's `SIG_IGN`, which the `main` shim installs — a crate
+  LINKED INTO a foreign process never runs one, so in hostd-until-F and in every `.xcframework`
+  this repo ships, `SIGPIPE` still has its default disposition and one write to a workbench window
+  that has just closed would end the host.
+
+  The Swift's position was "compiled and code-reviewed only — never bound in a unit test", with the
+  pure halves tested underneath. `tests/bridge.rs` retires it: ten cases against a fake extension
+  host on a real socket. The load-bearing one is `a_stop_unlinks_only_the_socket_file_it_bound` —
+  every other case here fails loudly, and that one fails by deleting a DIFFERENT live host's socket
+  name, after which its workbench windows reconnect for five minutes to a name nobody holds and
+  nothing anywhere says why.
 
   **D.4 — the metadata performer, as a COMPOSITE.** `MetadataResponseBuilder` (389) becomes the
   `MetadataPerformer` C.2e injected — but it does not end the injection. Thirteen of the twenty-two
