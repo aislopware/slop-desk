@@ -1,0 +1,125 @@
+# `slopdesk-screenclient` — hostd's end of the screend socket.
+#
+# ## Why it exists
+# `docs/60-hostd-in-rust.md` stage C.2 says this out loud, and calls it C.0's shape a second time:
+# the MESSAGE set is `slopdesk-screenwire`'s already and shared with screend by construction, and
+# what was left in Swift was the CONNECTION. That was `Sources/SlopDeskScreen/ScreenClient.swift` —
+# the socket, the fd pool, the autostart with its backoff, and the retry-once rule. C.2c cannot
+# compose a snapshot without it and stage D's `AgentControlListener` needs the same client, so it is
+# written once here rather than twice later.
+#
+# ## What is here and what is not
+# HERE: connect, an idle-socket pool keyed on the address, one request and one reply, the autostart
+# that spawns a screend and waits for it to bind, and the ten verb methods that name what screend
+# will answer.
+#
+# NOT here: what a request LOOKS like, what a reply MEANS, or where the socket IS. All three are
+# `slopdesk-screenwire`'s — the framing, the two JSON payloads, and `socket_path`'s precedence rule.
+# A second spelling of any of them is the drift that crate's own header describes: this client's
+# Swift predecessor resolved the directory itself, through `NSTemporaryDirectory()`, and so dialled
+# a different path than the daemon bound whenever `$TMPDIR` pointed anywhere unusual.
+#
+# Also NOT here: the screen ENGINE. Linking `slopdesk-screend` would pull `regex`, `toml` and a
+# per-byte grid into hostd — the exact inversion the socket was drawn to prevent — which is why the
+# payload types moved to the wire crate rather than this crate reaching for them.
+#
+# ## Two dependencies, and the rule about which
+# `slopdesk-screenwire` is the byte layout, the payload types and the address rule, shared with
+# screend by construction.
+#
+# `nix` is here for two things std does not spell: `access(2)` with `X_OK`, which is the
+# executability question `RustServicePaths.locate` asks and NOT the same question as `mode & 0o111`
+# (`slopdesk-ffi/src/tool_path.rs` documents the both-directions drift those two produce); and the
+# `Errno` names for the two errnos this lane spells a lost socket with, so the fallback in a
+# `raw_os_error()` map is a name rather than a number. It is already in `slopdesk-superclient` for
+# the neighbouring lane.
+#
+# What it is NOT here for is `SO_NOSIGPIPE`, which the Swift original set by hand on every
+# descriptor: std sets it on every socket it creates on Darwin, so the whole class of bug is absent
+# (`slopdesk-androidd/src/net.rs` records the same disappearance).
+[package]
+name = "slopdesk-screenclient"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "hostd's client for the slopdesk-screend VT engine: connections, pooling, autostart and the ten verbs"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[workspace]
+
+[dependencies]
+nix = { version = "0.31", features = ["fs"] }
+slopdesk-screenwire = { path = "../slopdesk-screenwire" }
+
+# A daemon's profile: hostd is long-lived and every pane's detection tick goes through this crate.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block, copied rather than inherited — inheriting would mean being a workspace member,
+# which is what the profile forbids.
+[lints.rust]
+# `forbid`, not `deny`: every syscall this client needs has a safe wrapper in `nix` or in std, so
+# there is no obligation here for `CLAUDE.md`'s three unsafe crates to carry. `forbid` turns "we did
+# not need it" into something no downstream `allow` can undo.
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+multiple_crate_versions = "allow"
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids. Allowed in every workspace for that repo-wide reason,
+#   not because this crate does float math — it does none.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

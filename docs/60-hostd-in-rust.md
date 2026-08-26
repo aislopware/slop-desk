@@ -300,6 +300,34 @@ Nothing in stage C can be written before it exists in Rust, so the stage is comm
     is left in Swift is the connection. C.2c cannot compose a snapshot without it, and stage D's
     `AgentControlListener` needs the same client, so it is written once here rather than twice
     later.
+
+    Three modules, split by what each is allowed to know: `client` (the pool, the autostart, the ten
+    verbs), `transport` (one exchange and `ClientError`), `paths` (the address, the binary, the log).
+    `ScreenPaths` and the one function of `RustServicePaths` it called came with it, because a client
+    that cannot find its daemon is not a client — and `access(2)` with `X_OK` is kept as the
+    executability test rather than `mode & 0o111`, which is a different question
+    (`slopdesk-ffi/src/tool_path.rs`).
+
+    It needed ONE change to something else first, and that change is its own commit: screend's
+    `Snapshot`, `Verdict` and `State` derived `Serialize` and nothing else, which held for exactly as
+    long as the only decoder was Swift's `Decodable`. They moved to `slopdesk-screenwire::payload`,
+    the shape `slopdesk-superwire` already has — not into screend's crate for the client to link,
+    which would drag `regex`, `toml` and a per-byte grid into hostd and invert the dependency this
+    socket exists to create.
+
+    Three things the port does NOT copy. The Swift recycled the descriptor into the pool and then
+    closed it from the catch block when the reply did not decode, leaving a closed fd for the next
+    caller; ownership makes that unspellable, and the split it forces is the right one — a
+    REJECTION leaves the connection good (`Status::BadRequest`'s own contract) so the socket is
+    pooled, a MALFORMED reply is a lost frame boundary so it is dropped. And the hand-set
+    `SO_NOSIGPIPE` is gone: std sets it on every socket it creates on Darwin, the same disappearance
+    `slopdesk-androidd/src/net.rs` records. The third is `screend.log`, which the Swift TRUNCATED on
+    every spawn and which the port appends to: a crash loop is what that file is for, and truncating
+    erases the first attempt's reason two seconds later, leaving only the last one — the growth is
+    bounded by the spawn rate, which the backoff already limits and which is zero once a screend is
+    up. What the port ADDS is a reaper thread per spawn — Foundation's `Process` reaps,
+    `std::process::Child` does not, and a crash-looping screend would otherwise fill hostd's process
+    table.
   - **C.2c — the attach ladders.** `joinSubscriber`, `detach`, `rebindRelay`, `replayTail` and the
     snapshot compose over C.2b, plus the resize ladder and the two generation-checked timers
     (`docs/59` §6 left "Swift arms it", and §3 above says what that becomes when there is no Swift).

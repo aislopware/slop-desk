@@ -123,6 +123,26 @@ pub fn hello_payload(build_version: &str) -> Vec<u8> {
     payload
 }
 
+/// The crate version of the screend that answered a `hello`, parsed back out of the payload.
+///
+/// [`hello_payload`]'s inverse, and here for the reason the encoder is: a writer and a reader of
+/// the same three fields, one function apart, so a test can close the loop. It was
+/// `ScreenProtocol.buildVersion(fromHello:)` in Swift, where the encoder was already this crate's
+/// and only the parse was not.
+///
+/// `None` from a screend that predates the third field, and `None` when the banner does not lead —
+/// "unknown", never "current". screend is installed as a `LaunchAgent` by `make screend-install`
+/// and so outlives hostd's build, which is why the answer is worth asking for: after an upgrade the
+/// binary on disk and the process on the socket are routinely different code.
+#[must_use]
+pub fn build_version(hello: &str) -> Option<&str> {
+    let banner = core::str::from_utf8(HELLO_BANNER).ok()?;
+    if !hello.starts_with(banner) {
+        return None;
+    }
+    hello.split_ascii_whitespace().nth(2)
+}
+
 /// The largest request screend will read.
 ///
 /// A cold-reattach compose carries a whole retained ring; 64 MiB is far above the largest ring the
@@ -436,9 +456,28 @@ mod tests {
     use std::path::Path;
 
     use super::{
-        DecodeError, FLAG_RESET, MAX_FRAME, Request, Status, Verb, decode_detect_payload, decode_reply,
-        decode_request, encode_detect_payload, encode_reply, encode_request, reply_body_length, socket_path,
+        DecodeError, FLAG_RESET, MAX_FRAME, Request, Status, Verb, build_version, decode_detect_payload,
+        decode_reply, decode_request, encode_detect_payload, encode_reply, encode_request, hello_payload,
+        reply_body_length, socket_path,
     };
+
+    #[test]
+    fn a_hello_payload_names_the_build_that_wrote_it() {
+        let payload = hello_payload("0.42.1");
+        let text = core::str::from_utf8(&payload).expect("the banner is ASCII");
+        assert_eq!(text, "slopdesk-screend 1 0.42.1");
+        assert_eq!(build_version(text), Some("0.42.1"));
+    }
+
+    /// "Unknown", never "current". A screend older than the third field is exactly the case the
+    /// caller is asking about, so guessing at it would defeat the question.
+    #[test]
+    fn a_hello_without_a_third_field_or_with_the_wrong_banner_is_unknown() {
+        assert_eq!(build_version("slopdesk-screend 1"), None);
+        assert_eq!(build_version("slopdesk-screend 1 "), None);
+        assert_eq!(build_version("slopdesk-superd 1 0.42.1"), None);
+        assert_eq!(build_version(""), None);
+    }
 
     fn address(socket_override: Option<&str>, tmpdir: Option<&str>) -> std::path::PathBuf {
         socket_path(socket_override.map(OsStr::new), tmpdir.map(OsStr::new))
