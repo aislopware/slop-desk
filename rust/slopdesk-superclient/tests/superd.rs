@@ -20,7 +20,7 @@ use std::io::IoSlice;
 use std::os::fd::{AsRawFd as _, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -834,6 +834,44 @@ fn a_dropped_socket_wakes_every_waiter_and_is_announced_once() {
     );
     // And every verb afterwards fails rather than hanging.
     assert!(matches!(wired.client.list(), Err(ClientError::NotConnected)));
+    wired.shut_down();
+}
+
+/// The registry beside the owner's one notification: every object that asked hears the drop too,
+/// and one that forgot its token first hears nothing.
+///
+/// This is what a panel service waits on. superd holds the ONLY master for one of those, so superd
+/// dying kills the child — and the `exited` notice that would have said so travels the connection
+/// that just died.
+#[test]
+fn every_registered_observer_hears_the_drop_and_a_forgotten_one_does_not() {
+    let mut wired = Wired::up();
+    let watching = Arc::new(AtomicUsize::new(0));
+    let forgotten = Arc::new(AtomicUsize::new(0));
+
+    let heard = Arc::clone(&watching);
+    let _kept = wired.client.observe_disconnect(Arc::new(move || {
+        heard.fetch_add(1, Ordering::SeqCst);
+    }));
+    let missed = Arc::clone(&forgotten);
+    let token = wired.client.observe_disconnect(Arc::new(move || {
+        missed.fetch_add(1, Ordering::SeqCst);
+    }));
+    wired.client.forget_disconnect(token);
+
+    wired.superd.hang_up();
+    if let Some(threads) = wired.threads.take() {
+        threads.join();
+    }
+
+    assert_eq!(watching.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        forgotten.load(Ordering::SeqCst),
+        0,
+        "a handler forgotten before the drop is not one that heard it",
+    );
+    // Idempotent, and a miss is ordinary: the teardown took every handler with it.
+    wired.client.forget_disconnect(token);
     wired.shut_down();
 }
 

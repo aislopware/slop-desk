@@ -120,6 +120,12 @@ impl std::fmt::Display for ClientError {
 
 impl std::error::Error for ClientError {}
 
+/// Names one registered disconnect handler, for the caller to forget it by.
+///
+/// A number rather than a name because these are per-OBJECT and several are live at once: two panel
+/// services register the same shape of handler, and a name would make them one.
+pub type DisconnectToken = u64;
+
 /// Which child-facing socket a handed-over connection arrived on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListenerKind {
@@ -265,6 +271,8 @@ pub struct SupervisorClient {
         reason = "one boxed callback per pane; naming the type would not make the field clearer"
     )]
     exit_handlers: Mutex<HashMap<String, Arc<dyn Fn(i32) + Send + Sync>>>,
+    disconnect_handlers: Mutex<HashMap<DisconnectToken, Arc<dyn Fn() + Send + Sync>>>,
+    next_disconnect_token: AtomicU64,
     // NOTE: `Debug` is written out below rather than derived, because an exit handler is a bare
     // `Fn` and there is nothing to print about one.
     /// The writer's inbox. Taken at teardown, which is what ends the writer thread.
@@ -331,6 +339,8 @@ impl SupervisorClient {
             waiters: Mutex::new(HashMap::new()),
             sinks: Mutex::new(HashMap::new()),
             exit_handlers: Mutex::new(HashMap::new()),
+            disconnect_handlers: Mutex::new(HashMap::new()),
+            next_disconnect_token: AtomicU64::new(1),
             outbound: Mutex::new(Some(queue)),
             handshake: OnceLock::new(),
             live: AtomicBool::new(true),
@@ -421,6 +431,38 @@ impl SupervisorClient {
     pub fn forget_exit_handler(&self, pane_id: &str) {
         if let Ok(mut handlers) = self.exit_handlers.lock() {
             drop(handlers.remove(pane_id));
+        }
+    }
+
+    /// Registers a callback for the SOCKET dropping, and answers a token to forget it by.
+    ///
+    /// [`SupervisorObserver::disconnected`] is the owner's one notification and stays that; this is
+    /// the registry beside it, for the objects that are not the owner. A panel service is the case
+    /// it exists for: superd holds the ONLY master for one of those, so superd dying kills the
+    /// child, and nothing else would ever tell hostd — the `exited` notice travels the connection
+    /// that just died. A service that hears this marks itself ended, and its next round adopts the
+    /// survivor if superd was merely unreachable or spawns a fresh one if it really restarted.
+    ///
+    /// A TOKEN rather than a name, because these are per-object and several can be live at once —
+    /// a name would make two services with the same handler one handler.
+    ///
+    /// Register BEFORE the spawn, the way [`SupervisorClient::observe_exit`] is: the teardown
+    /// drains this map, so a handler filed after the socket has already dropped is filed
+    /// against a drop it missed and never fires. The registration is not a query — ask
+    /// [`SupervisorClient::is_connected`] if the answer matters at that moment.
+    pub fn observe_disconnect(&self, handler: Arc<dyn Fn() + Send + Sync>) -> DisconnectToken {
+        let token = self.next_disconnect_token.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut handlers) = self.disconnect_handlers.lock() {
+            drop(handlers.insert(token, handler));
+        }
+        token
+    }
+
+    /// Drops one registered disconnect handler. Idempotent, and a miss is ordinary: the teardown
+    /// takes every handler with it, so an object released afterwards forgets one that is gone.
+    pub fn forget_disconnect(&self, token: DisconnectToken) {
+        if let Ok(mut handlers) = self.disconnect_handlers.lock() {
+            drop(handlers.remove(&token));
         }
     }
 
@@ -1018,9 +1060,21 @@ impl SupervisorClient {
         if let Ok(mut handlers) = self.exit_handlers.lock() {
             handlers.clear();
         }
+        // Taken out under the lock and CALLED outside it. Every one of these is another object's
+        // "I have lost my child" latch, and one of them re-entering this client — a service asking
+        // whether it is still connected — under the handler lock would be a cycle the first
+        // disconnect finds.
+        let dropped: Vec<Arc<dyn Fn() + Send + Sync>> = self
+            .disconnect_handlers
+            .lock()
+            .map(|mut handlers| handlers.drain().map(|(_, handler)| handler).collect())
+            .unwrap_or_default();
         self.observer
             .log("supervisor: connection to superd lost — panes stay alive, control is gone");
         self.observer.disconnected();
+        for handler in dropped {
+            handler();
+        }
     }
 }
 
