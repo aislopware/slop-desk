@@ -87,6 +87,16 @@ pub const AGENT_PANE_ID_KEY: &str = "SLOPDESK_PANE_ID";
 /// The agent-control socket path, exported only into panes of a host that CLAIMED that listener.
 pub const AGENT_CONTROL_SOCKET_KEY: &str = "SLOPDESK_CONTROL_SOCKET";
 
+/// The self-orientation sentinel — `"1"` in a pane an ORCHESTRATOR spawned through the ctl socket.
+///
+/// Only there, which is the whole point: an agent that finds this set knows it was made by slopdesk
+/// rather than merely running inside it, so it can skip every discovery step. A user's own tab is
+/// not one of those panes and must not claim to be.
+pub const CTL_SENTINEL_KEY: &str = "SLOPDESK_CTL";
+
+/// Where `slopdesk-ctl` is, so a spawned agent drives its pane with zero `PATH` search.
+pub const CTL_BINARY_KEY: &str = "SLOPDESK_CTL_BIN";
+
 /// The optional exports a curated environment carries on top of the defaults, each absent unless
 /// the caller has one.
 #[derive(Debug, Clone, Copy, Default)]
@@ -97,6 +107,15 @@ pub struct Exports<'a> {
     pub pane_id: Option<&'a str>,
     /// `SLOPDESK_CONTROL_SOCKET` — the ctl socket, when hostd claimed the listener.
     pub control_socket_path: Option<&'a str>,
+    /// `SLOPDESK_CTL` — set to `"1"` for a pane an orchestrator SPAWNED, and only for those.
+    ///
+    /// A `bool` rather than another `Option<&str>` because the value is not the caller's to pick:
+    /// the sentinel means "slopdesk made this pane", and a second spelling of true is a second
+    /// thing for an agent's `if` to get wrong.
+    pub ctl_sentinel: bool,
+    /// `SLOPDESK_CTL_BIN` — where `slopdesk-ctl` is. Absent leaves the agent a `PATH` lookup, which
+    /// is a worse answer rather than a broken one.
+    pub ctl_binary_path: Option<&'a str>,
 }
 
 /// The curated child environment: the allowlist off `parent`, then the terminal defaults, then
@@ -146,10 +165,14 @@ pub fn curated(
         (AGENT_SOCKET_KEY, exports.agent_socket_path),
         (AGENT_PANE_ID_KEY, exports.pane_id),
         (AGENT_CONTROL_SOCKET_KEY, exports.control_socket_path),
+        (CTL_BINARY_KEY, exports.ctl_binary_path),
     ] {
         if let Some(value) = value {
             env.insert(key.to_owned(), value.to_owned());
         }
+    }
+    if exports.ctl_sentinel {
+        env.insert(CTL_SENTINEL_KEY.to_owned(), String::from("1"));
     }
 
     env
@@ -185,8 +208,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        AGENT_CONTROL_SOCKET_KEY, AGENT_PANE_ID_KEY, AGENT_SOCKET_KEY, Exports, FALLBACK_LANG, FALLBACK_PATH,
-        FALLBACK_SHELL, TERM_PROGRAM, curated, login_argv0, login_shell,
+        AGENT_CONTROL_SOCKET_KEY, AGENT_PANE_ID_KEY, AGENT_SOCKET_KEY, CTL_BINARY_KEY, CTL_SENTINEL_KEY,
+        Exports, FALLBACK_LANG, FALLBACK_PATH, FALLBACK_SHELL, TERM_PROGRAM, curated, login_argv0,
+        login_shell,
     };
 
     fn parent(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
@@ -292,11 +316,18 @@ mod tests {
         assert!(!bare.contains_key(AGENT_SOCKET_KEY));
         assert!(!bare.contains_key(AGENT_PANE_ID_KEY));
         assert!(!bare.contains_key(AGENT_CONTROL_SOCKET_KEY));
+        assert!(!bare.contains_key(CTL_BINARY_KEY));
+        assert!(
+            !bare.contains_key(CTL_SENTINEL_KEY),
+            "the sentinel says an ORCHESTRATOR made this pane, so absent is not `0`"
+        );
 
         let full = curated(&parent(&[]), "t", "v", Exports {
             agent_socket_path: Some("/tmp/hook.sock"),
             pane_id: Some("ABC"),
             control_socket_path: Some("/tmp/ctl.sock"),
+            ctl_sentinel: true,
+            ctl_binary_path: Some("/opt/slopdesk-ctl"),
         });
         assert_eq!(
             full.get(AGENT_SOCKET_KEY).map(String::as_str),
@@ -307,6 +338,11 @@ mod tests {
             full.get(AGENT_CONTROL_SOCKET_KEY).map(String::as_str),
             Some("/tmp/ctl.sock")
         );
+        assert_eq!(
+            full.get(CTL_BINARY_KEY).map(String::as_str),
+            Some("/opt/slopdesk-ctl")
+        );
+        assert_eq!(full.get(CTL_SENTINEL_KEY).map(String::as_str), Some("1"));
     }
 
     #[test]

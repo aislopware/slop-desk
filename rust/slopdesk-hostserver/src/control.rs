@@ -20,11 +20,16 @@
 //!
 //! ## Two doors, for the reason D.1 and D.4 have theirs
 //! [`ControlHost`] is the SERVER's surface — the pane list, the lookup, spawn, kill, and the
-//! cross-pane status fan-out — and [`ControlPane`] is one pane's. Neither is `slopdesk-hostsession`
-//! by name, so the suite can drive all eleven verbs without a PTY, a superd and six threads per
-//! entry, and can assert the thing that matters about a REFUSED verb: that it never reached the
-//! pane at all. [`ControlPane`] is a supertrait of [`crate::pane::Pane`], so one adapter serves
-//! both the registry D.1 holds and the control surface, and `id()` is not asked for twice.
+//! cross-pane status fan-out — and [`crate::pane::Pane`] is one pane's. Neither is
+//! `slopdesk-hostsession` by name, so the suite can drive all eleven verbs without a PTY, a superd
+//! and six threads per entry, and can assert the thing that matters about a REFUSED verb: that it
+//! never reached the pane at all.
+//!
+//! D.5 gave the pane half its own trait, `ControlPane`, sitting on top of the six-method one D.1
+//! carved. D.6 merged them, and [`crate::pane`] says why: the live host answers `list-panes` out of
+//! the registry and the store, so those tables have to hand back a pane a verb can ASK, and a
+//! coerced `dyn Pane` cannot be widened back. What the split protected is intact — those six
+//! methods are still the only ones the table and the store call.
 //!
 //! ## Validate-then-drop, and the trap that named it
 //! Every verb answers a malformed request with an error LINE and never with a panic. The Swift
@@ -47,9 +52,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 use slopdesk_agent::supervision;
-use slopdesk_hostsession::{BlockTap, BlockUpdate, CloseTap, OutputTap, TapToken};
-use slopdesk_screenwire::payload::Snapshot;
-use slopdesk_superwire::protocol::BlocksReply;
+use slopdesk_hostsession::{BlockTap, BlockUpdate, OutputTap, TapToken};
 
 use crate::pane::Pane;
 
@@ -139,7 +142,7 @@ pub trait ControlHost: Send + Sync + core::fmt::Debug {
     fn list_panes(&self) -> Vec<PaneRecord>;
 
     /// The pane `pane_id` names, or `None` when nothing does.
-    fn lookup_pane(&self, pane_id: &str) -> Option<Arc<dyn ControlPane>>;
+    fn lookup_pane(&self, pane_id: &str) -> Option<Arc<dyn Pane>>;
 
     /// Forks a standalone pane and answers its id.
     ///
@@ -169,93 +172,6 @@ pub trait ControlHost: Send + Sync + core::fmt::Debug {
 
     /// Retires a watcher [`ControlHost::add_status_tap`] handed back.
     fn remove_status_tap(&self, token: TapToken);
-}
-
-/// ONE pane's surface, as the eleven verbs need it.
-///
-/// Every method here is already `slopdesk_hostsession::PaneSession`'s under a different name; the
-/// trait is a NARROWING of that type, not a wish list, and the two gaps — the agent's self-report
-/// and the live `TIOCGWINSZ` read — are named where they land rather than worked around.
-pub trait ControlPane: Pane {
-    /// Injects bytes into the PTY. Fire-and-forget: a blocking `write(2)` on a stalled PTY must not
-    /// park the connection thread, which is serving other verbs.
-    fn write_raw(&self, bytes: &[u8]);
-
-    /// Applies a `TIOCSWINSZ`. The kernel delivers the `SIGWINCH` itself.
-    fn resize(&self, rows: u16, cols: u16);
-
-    /// The pane's LIVE grid, or `None` when the PTY is gone.
-    ///
-    /// The live size rather than the resolved one, and the difference is the point: a ctl `resize`
-    /// moves what the program sees without moving what the attached clients negotiated, and
-    /// `screen` must render what the program drew.
-    fn window_size(&self) -> Option<(u16, u16)>;
-
-    /// The canonical name of the program holding this pane's PTY foreground group, or `""` when
-    /// nothing holds it.
-    ///
-    /// CANONICAL rather than the raw basename, because the Claude Code native installer names its
-    /// executable by version — a raw basename would read `2.1.218`, which is not a program the
-    /// sensitive set can recognise either way.
-    fn foreground_name(&self) -> String;
-
-    /// The pane's supervision state and the label attached to it.
-    fn agent_status(&self) -> (String, Option<String>);
-
-    /// An agent self-declares its state. Authoritative — it beats the foreground-process floor.
-    fn report_agent_status(&self, state: &str, message: Option<&str>);
-
-    /// The scrollback as text, optionally ANSI-stripped.
-    fn scrollback_text(&self, ansi_strip: bool) -> String;
-
-    /// The pane's scrollback RENDERED into a grid — what `screen` answers with.
-    ///
-    /// Behind the door rather than called from the dispatcher, and that is a departure from the
-    /// Swift on purpose. Rendering means a round trip to screend, so a dispatcher that reached for
-    /// `slopdesk_screenclient::shared()` directly would make `screen` the one verb of eleven this
-    /// crate's suite could not drive — a global socket client is not something a test can hand in.
-    /// Swift had the same coupling and also could not test it; parity with a limitation is not a
-    /// reason to keep one. The live adapter is the round trip; a fake is a grid.
-    ///
-    /// # Errors
-    /// A human-readable reason, which is answered rather than faked: the raw bytes are one verb
-    /// away, and a synthesised grid would be a lie about what the pane shows. screend being down
-    /// and a render that timed out both land here.
-    fn render_screen(&self, rows: usize, cols: usize) -> Result<Snapshot, String>;
-
-    /// The scrollback as LOGICAL lines — joined chunks, ANSI-stripped, split on hard newlines — so
-    /// an agent's regex is robust to read-chunk boundaries. `limit` keeps the last N.
-    fn recent_lines(&self, limit: Option<usize>) -> Vec<String>;
-
-    /// The last `limit` closed command blocks plus the running one, or `None` when this pane has no
-    /// block tap. One round trip, because the recent blocks and the running one have to be read
-    /// together or they can disagree about which command is which.
-    fn blocks(&self, limit: usize) -> Option<BlocksReply>;
-
-    /// One block's retained output bytes, or `None` for an evicted or unknown index.
-    fn block_output(&self, index: u32) -> Option<Vec<u8>>;
-
-    /// Watches this pane's raw output.
-    fn add_output_tap(&self, tap: Arc<dyn OutputTap>) -> TapToken;
-    /// Retires a watcher [`ControlPane::add_output_tap`] handed back.
-    fn remove_output_tap(&self, token: TapToken);
-
-    /// Watches this pane's end.
-    ///
-    /// A LATE registration must be answered, not dropped: on a pane that has already closed, this
-    /// fires `tap` at once and registers nothing. That is a contract rather than an implementation
-    /// detail, and `slopdesk_hostsession::taps` states why — the check and the insertion have to be
-    /// ONE operation, because a caller doing `is_closed()` then `add_close_tap()` has the race
-    /// back. The Swift latched nothing here, and a `subscribe` that raced its pane's exit
-    /// waited out its own timeout for an event that could no longer happen.
-    fn add_close_tap(&self, tap: Arc<dyn CloseTap>) -> TapToken;
-    /// Retires a watcher [`ControlPane::add_close_tap`] handed back.
-    fn remove_close_tap(&self, token: TapToken);
-
-    /// Watches this pane's command blocks.
-    fn add_block_tap(&self, tap: Arc<dyn BlockTap>) -> TapToken;
-    /// Retires a watcher [`ControlPane::add_block_tap`] handed back.
-    fn remove_block_tap(&self, token: TapToken);
 }
 
 /// The resolved send-keys / sensitive-session permissions the dispatcher consults before a mutating
@@ -578,11 +494,7 @@ pub fn dispatch(
 }
 
 /// Names the pane a verb targets, or answers the refusal in its place.
-fn target(
-    id: &str,
-    params: &Map<String, Value>,
-    host: &dyn ControlHost,
-) -> Result<Arc<dyn ControlPane>, String> {
+fn target(id: &str, params: &Map<String, Value>, host: &dyn ControlHost) -> Result<Arc<dyn Pane>, String> {
     let Some(pane_id) = text(params, "paneId") else {
         return Err(failure(id, "missing params.paneId"));
     };

@@ -700,6 +700,14 @@ is paused.
   caller learns a pane exists. `ControlPane` is a supertrait of `Pane`, so ONE adapter serves both
   the registry D.1 holds and the control surface.
 
+  **D.6.1 merged those two traits into one, and the reason is worth keeping.** The supertrait
+  direction was the wrong way round for a LIVE host: the registry and the detached store hold
+  `Arc<dyn Pane>`, `list-panes` and `lookup` answer out of exactly those tables, and a trait object
+  cannot be widened back to its supertrait. Every alternative was worse than the merge — a second
+  parallel table indexed the same way, generic tables that infect the store's lock, or a downcast.
+  What the split protected is intact: those six lifecycle methods are still the only ones the table
+  and the store call, `pane.rs` says so, and the suite that drives the verbs still hands in a fake.
+
   **Two deliberate departures, each because parity with a limitation is not a reason to keep one.**
   `screen` renders BEHIND the pane door rather than reaching for `slopdesk_screenclient::shared()`
   from the dispatcher: a global socket client is not something a test can hand in, so the Swift
@@ -736,7 +744,40 @@ is paused.
   `WorkspaceChannelSession` (486) + `HostWorkspaceDocument` (312): the composition root, and the
   only part that is mostly its own. The listener is `slopdesk-hostnet`'s, the supervisor client is
   `slopdesk-superclient`'s, the panes are `slopdesk-hostsession`'s; what is left is the adoption
-  ladder, the join/reattach ladders, the workspace reconciler and the stop order.
+  ladder, the join/reattach ladders, the workspace reconciler and the stop order. It goes in five,
+  because the ladders share a table and landing them together would make one reviewable change out
+  of four independent ones.
+
+  **D.6.1 — the live `ControlHost`, and the fan-out behind it. ✅ landed.** `host.rs`: `list_panes`
+  over the three sources, `lookup_pane` over the two attached tables, `kill_pane` over all three
+  kill branches, `spawn_standalone`, and the cross-pane agent-status stream D.5 could only take a
+  trait for. The eleven verbs now run against the real registry and the real store, with ONE seam
+  left — `Spawner`, which is `posix_spawn` and six threads and nothing that decides anything.
+
+  That seam is the sub-stage's whole shape: every decision a spawn makes (the curated environment,
+  the executable, whether `argv[0]` carries a login shell's leading dash, whether the
+  shell-integration shim goes down, what order the pane is filed and routed and started in) is
+  asserted with no PTY in the process. Two more seams, both smaller and both for testability rather
+  than layering: `SessionIds`, because `SystemIds` reading `/dev/urandom` is the FIRST entropy
+  source anywhere in this tree — `slopdesk-ids` deliberately refuses to mint and every other
+  implementor is a pool Swift fills — and `Transcripts`, which is a named hole where the scrollback
+  transcript store will land rather than a port of one that does not exist yet.
+
+  Two things were found rather than transcribed. `PaneSession::completion_epoch()` read a counter
+  NOTHING in `slopdesk-hostsession` ever folded, so the finished-turn epoch was permanently zero;
+  the fix is `detect::fold`, one funnel every detector feed already passed through, which folds the
+  truth and publishes the transition in the same place. And the presence bit: the ctl vocabulary has
+  four tokens and a pane with no agent reads `idle` in exactly the way a resting agent does, so the
+  agent-GONE edge is invisible in the `state` string. `Pane::agent_present` is the separate
+  question, `AgentStatusEvent::agent_present` carries it, and the teardown fan is GATED on it —
+  without the gate every closed plain shell publishes a supervision event about nothing, and without
+  the fan a pane killed mid-turn holds the daemon's `IOPMAssertion` for the rest of the process's
+  life. Four of the thirty tests are about that class of leak; none of them would fail a test that
+  only asked whether the pane died.
+
+  **D.6.2** the channel ladders (`spawnMuxChannel`, `performJoin`, `performReattach`,
+  `spawnFreshShell`). **D.6.3** the adoption ladder. **D.6.4** the workspace document, reconciler and
+  channel session. **D.6.5** link-down, detach and the stop order.
 
   **What stage D does NOT take.** `HostEnvironment` (350) and `RepoStatusWatcher` (316) are stage E:
   the first reads Apple bundle and TCC state, the second is an FSEvents stream per repo toplevel.

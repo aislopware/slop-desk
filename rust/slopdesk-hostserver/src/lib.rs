@@ -57,6 +57,7 @@ pub mod control;
 pub mod ctlserve;
 mod deadline;
 mod detached;
+pub mod host;
 mod live;
 pub mod metadata;
 mod pane;
@@ -69,6 +70,7 @@ pub use detached::{
     Claim, DetachedStore, DetachedTeardown, EvictionObserver, IgnoreEvictions, InlineTeardown, Relinquished,
     TeardownExecutor,
 };
+pub use host::{Host, HostEnv, NoTranscripts, SessionIds, Spawner, Standalone, SystemIds, Transcripts};
 pub use live::LivePane;
 pub use pane::{Pane, same_pane};
 pub use serviceproc::{ServiceProcess, pane_id_for};

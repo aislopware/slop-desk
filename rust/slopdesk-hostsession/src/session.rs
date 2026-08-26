@@ -38,7 +38,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use slopdesk_agent::ClaudeStatus;
+use slopdesk_agent::{ClaudeHookEvent, ClaudeStatus};
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::{PaneOutputStream, PtyProcess};
 use slopdesk_muxsession::fanout::SubscriberId;
@@ -99,6 +99,38 @@ impl SessionObserver for SilentObserver {
     fn exited(&self, _code: i32) {}
 }
 
+/// What the pane tells its owner about the AGENT inside it.
+///
+/// Separate from [`SessionObserver`] because the two have different lifetimes and different
+/// audiences: the exit handler is swapped by every detach and rebind (it names whoever currently
+/// owns the pane's end), while this one is the SERVER's cross-pane supervision fan-out and is set
+/// once, at spawn, for the pane's whole life. Merging them would make a detach silently re-point
+/// the status stream at the detached store.
+///
+/// Called from whichever thread folded the transition — the foreground poll, the screen scan, the
+/// hook feed or the ctl `report` — and always OUTSIDE the folds lock, because the implementor's
+/// reaction is an NDJSON write to every subscriber and that must not serialise the next pane's
+/// transition.
+pub trait StatusObserver: Send + Sync + core::fmt::Debug {
+    /// This pane's agent status moved to `status`.
+    ///
+    /// `quiet` marks the transition as BOOKKEEPING — a `/compact` boundary, an Esc-cancelled
+    /// dialog, the screen watchdog correcting a hook block it outlasted. The status still moves
+    /// everywhere it shows; it simply must not count as a turn somebody finished. The count itself
+    /// is already folded before this is called, so an implementor never has to re-derive it — the
+    /// flag is here for the observers that mint an unread badge.
+    fn status_changed(&self, status: ClaudeStatus, quiet: bool);
+}
+
+/// A status observer that hears every transition and does nothing — the shape a pane with no server
+/// above it takes.
+#[derive(Debug, Clone, Copy)]
+pub struct IgnoreStatus;
+
+impl StatusObserver for IgnoreStatus {
+    fn status_changed(&self, _status: ClaudeStatus, _quiet: bool) {}
+}
+
 /// What a session needs that it cannot decide for itself.
 #[derive(Debug)]
 pub struct SessionConfig {
@@ -109,6 +141,8 @@ pub struct SessionConfig {
     pub log: Arc<dyn SessionLog>,
     /// Who hears about the exit.
     pub observer: Arc<dyn SessionObserver>,
+    /// Who hears about the AGENT — the cross-pane supervision fan-out. See [`StatusObserver`].
+    pub status: Arc<dyn StatusObserver>,
     /// Where in superd's ring the read loop starts.
     ///
     /// `0` for a fresh pane; a recorded cursor for a rebind; [`slopdesk_hostpane::FROM_NOW_ON`] for
@@ -155,6 +189,7 @@ impl SessionConfig {
             replay: ReplayBuffer::new(),
             log,
             observer,
+            status: Arc::new(IgnoreStatus),
             resume_from: 0,
             snapshot: None,
             opened_size_passive: false,
@@ -211,6 +246,7 @@ impl PaneSession {
             config.detect.done_to_idle,
             Arc::clone(&config.log),
             Arc::clone(&config.observer),
+            Arc::clone(&config.status),
         ));
         // Seed the resume cursor BEFORE anything can advance it. `record_offset` is monotone except
         // for the `FROM_NOW_ON` sentinel, which the first real offset replaces outright — so a pane
@@ -1216,6 +1252,16 @@ impl PaneSession {
         self.detect.fold_input(&self.shared, bytes);
     }
 
+    /// The shell's pid, or `-1` once superd has taken the record away.
+    ///
+    /// `-1` rather than an `Option` because that is what the readouts downstream of it already
+    /// spell — a pane list carries an integer per row, and a caller with no pid to show prints the
+    /// same sentinel the Swift did.
+    #[must_use]
+    pub fn pid(&self) -> i32 {
+        self.pty.pid().unwrap_or(-1)
+    }
+
     /// The last OSC-sniffed window title, empty until one arrives.
     #[must_use]
     pub fn title(&self) -> String {
@@ -1344,6 +1390,16 @@ impl PaneSession {
     /// than a silent success — but the floor is here, where a future caller cannot skip it.
     pub fn report_agent_status(&self, state: &str, message: Option<&str>) {
         Detect::fold_report(&self.shared, state, message);
+    }
+
+    /// Folds one hook event — the agent announcing its own edge through the installed relay.
+    ///
+    /// The most AUTHORITATIVE of the four feeds: `done` has no other source, so a pane that cannot
+    /// be reached this way reports a finished turn only when the screen watchdog eventually guesses
+    /// one. Through the same detector as everything else, for [`Self::report_agent_status`]'s
+    /// reason, and the decode is deliberately the CALLER's — see `Detect::fold_hook`.
+    pub fn fold_hook(&self, event: ClaudeHookEvent, kind_byte: u8, prompt: Option<&str>) {
+        Detect::fold_hook(&self.shared, event, kind_byte, prompt);
     }
 
     /// The pane's LIVE grid as the kernel holds it, or `None` when the PTY is gone.

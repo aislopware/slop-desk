@@ -9,21 +9,21 @@
 //!
 //! ## D.5 widened it, and the shape held
 //!
-//! The agent-control verbs need a pane too, and [`crate::control::ControlPane`] is what they need
-//! of it. Every method below is one call into [`PaneSession`] — `write_for_control`,
-//! `set_ctl_size`, `agent_status`, the three tap registries — because the narrowing was read off
-//! the type rather than wished for. Only [`ControlPane::render_screen`] does work here, and only
-//! the work a fake cannot: the round trip to screend.
+//! The agent-control verbs need a pane too, and D.5 read what they need off [`PaneSession`] rather
+//! than wishing for it: every method below is ONE call into the session — `write_for_control`,
+//! `set_ctl_size`, `agent_status`, the three tap registries. Only [`Pane::render_screen`] does work
+//! here, and only the work a fake cannot: the round trip to screend. D.6 merged the two traits
+//! (see [`crate::pane`]) and this file lost an `impl` block, nothing else.
 
 use std::sync::Arc;
 
+use slopdesk_agent::ClaudeStatus;
 use slopdesk_agent::supervision::SupervisionState;
 use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, PaneSession, TapToken};
 use slopdesk_muxsession::registry::{self, Slot, Uuid};
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
 
-use crate::control::ControlPane;
 use crate::pane::Pane;
 
 /// The most scrollback `screen` will hand screend for ONE reconstruction.
@@ -88,9 +88,7 @@ impl Pane for LivePane {
     fn relinquish(&self) {
         self.session.relinquish();
     }
-}
 
-impl ControlPane for LivePane {
     fn write_raw(&self, bytes: &[u8]) {
         self.session.write_for_control(bytes);
     }
@@ -110,6 +108,22 @@ impl ControlPane for LivePane {
         self.session.foreground_name()
     }
 
+    fn title(&self) -> String {
+        self.session.title()
+    }
+
+    fn cwd(&self) -> Option<String> {
+        self.session.cwd()
+    }
+
+    fn pid(&self) -> i32 {
+        self.session.pid()
+    }
+
+    fn last_exit_code(&self) -> Option<i32> {
+        self.session.last_exit_code()
+    }
+
     fn agent_status(&self) -> (String, Option<String>) {
         let (status, label) = self.session.agent_status();
         // The five-way host reading collapses onto the four-way ctl vocabulary here, through the
@@ -117,6 +131,12 @@ impl ControlPane for LivePane {
         // because an orchestrator asking "is this pane blocked" has no use for the difference and
         // a fifth token would be one every ctl client had to learn.
         (String::from(SupervisionState::from_status(status).name()), label)
+    }
+
+    fn agent_present(&self) -> bool {
+        // The RAW reading, before the collapse `agent_status` performs: presence is exactly "the
+        // detector has seen an agent", which is every status but `None`.
+        self.session.agent_status().0 != ClaudeStatus::None
     }
 
     fn report_agent_status(&self, state: &str, message: Option<&str>) {
@@ -130,7 +150,7 @@ impl ControlPane for LivePane {
     fn render_screen(&self, rows: usize, cols: usize) -> Result<Snapshot, String> {
         // The process-wide client, not one per pane: a screend connection is pooled and forty panes
         // asking is forty callers, not forty sockets. Reached HERE rather than from the dispatcher
-        // so the verb stays drivable by a fake — see [`ControlPane::render_screen`].
+        // so the verb stays drivable by a fake — see [`Pane::render_screen`].
         slopdesk_screenclient::shared()
             .snapshot(&self.session.scrollback_raw(SCREEN_REPLAY_CAP_BYTES), rows, cols)
             .map_err(|error| error.to_string())

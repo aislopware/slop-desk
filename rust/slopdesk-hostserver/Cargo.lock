@@ -324,6 +324,7 @@ dependencies = [
  "slopdesk-git",
  "slopdesk-hostpane",
  "slopdesk-hostsession",
+ "slopdesk-ids",
  "slopdesk-muxsession",
  "slopdesk-panecensus",
  "slopdesk-posix",

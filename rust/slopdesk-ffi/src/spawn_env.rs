@@ -122,6 +122,15 @@ pub unsafe extern "C" fn slopdesk_spawn_env(
         pane_id: unsafe { optional_text(pane_id, pane_id_len) },
         // SAFETY: as above.
         control_socket_path: unsafe { optional_text(control_socket, control_socket_len) },
+        // Neither crosses this door, and neither should. The sentinel says an ORCHESTRATOR made the
+        // pane, which is true of exactly one caller — `spawn_standalone` — and that caller is
+        // `slopdesk-hostserver`'s own, in Rust, where it fills these two in directly. The Swift that
+        // still calls this entry point is the MUX channel path, where a user opened the pane, so the
+        // honest answer here is "no orchestrator". Widening the ABI to carry two fields one side
+        // never sets would put a closed argument list back on the Swift side, which is the drift the
+        // whole-parent framing above exists to end.
+        ctl_sentinel: false,
+        ctl_binary_path: None,
     };
     let env = spawn_env::curated(&parent, term, version, exports);
     let mut blob: Vec<u8> = Vec::new();

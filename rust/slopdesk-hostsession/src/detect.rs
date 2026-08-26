@@ -17,6 +17,18 @@
 //!   and it has to be synchronous with the write or a `Ctrl-C` would be seen after the output it
 //!   interrupted.
 //!
+//! ## One funnel for a transition, and the two things that ride it
+//!
+//! Every fold below — poll, tick, scan, hook, input, report — goes through [`fold`], which does
+//! three things in ONE acquisition of the folds lock: it runs the fold, and if the emission carries
+//! a status, it counts the finished turn and reads the transition out. The count and the send then
+//! happen outside. Both riders exist because they were the Swift's and neither survives being done
+//! anywhere else: two feeds observing the same edge would double-bump a counter kept per feed, and
+//! a transition read after the lock dropped could be a LATER one. The count lands before the
+//! broadcast, which is a departure from `MuxChannelSession` (it folded after) — nothing couples the
+//! epoch to the type-27 frame, and folding first is what keeps the whole transition one
+//! acquisition.
+//!
 //! ## One lock for the detector, and it is the truths lock
 //!
 //! The detector is folded from FOUR contexts — the poll thread, the scan thread, the hook feed and
@@ -41,15 +53,17 @@
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
+use slopdesk_agent::attention::mints_finished_turn;
 use slopdesk_agent::{
-    AgentDetectionHold, AgentKind, AgentScreenDetection, Emission, Outcome, PaneScan, ScanInput, Verdict,
+    AgentDetectionHold, AgentKind, AgentScreenDetection, ClaudeHookEvent, ClaudeStatus, Emission, Outcome,
+    PaneScan, ScanInput, Verdict,
 };
 use slopdesk_hostpane::PtyProcess;
 use slopdesk_wire::message::WireMessage;
 
 use crate::clock;
 use crate::probe::Foreground;
-use crate::shared::Shared;
+use crate::shared::{Folds, Shared};
 
 /// The grid a scan assumes when the PTY will not answer its size.
 const FALLBACK_ROWS: u16 = 24;
@@ -279,10 +293,8 @@ impl Detect {
     pub(crate) fn sample_foreground(shared: &Shared, pty: &PtyProcess) {
         let now = clock::stamps().uptime;
         let name = Foreground::name(pty);
-        let emission = shared.with_folds(|folds| folds.detector.sample(&name, now));
-        publish(shared, &emission);
-        let ticked = shared.with_folds(|folds| folds.detector.tick(now));
-        publish(shared, &ticked);
+        fold(shared, |folds| folds.detector.sample(&name, now));
+        fold(shared, |folds| folds.detector.tick(now));
         // The echo edge rides this poll as a BACKSTOP — the primary driver is the probe right after
         // a client's own write, where `ECHO` flips fastest around a password prompt. A no-echo
         // prompt that appears with no keystroke before it has only this.
@@ -318,8 +330,7 @@ impl Detect {
             return;
         }
         let now = clock::stamps().uptime;
-        let emission = shared.with_folds(|folds| folds.detector.user_input(bytes, now));
-        publish(shared, &emission);
+        fold(shared, |folds| folds.detector.user_input(bytes, now));
     }
 
     /// An agent's own declaration of its state — the ctl `report` verb's fold.
@@ -334,8 +345,26 @@ impl Detect {
     /// emission and changes nothing, including the stickiness anchor.
     pub(crate) fn fold_report(shared: &Shared, state: &str, message: Option<&str>) {
         let now = clock::stamps().uptime;
-        let emission = shared.with_folds(|folds| folds.detector.report(state, message, now));
-        publish(shared, &emission);
+        fold(shared, |folds| folds.detector.report(state, message, now));
+    }
+
+    /// One hook event, already read off the record — the agent announcing its own edge.
+    ///
+    /// Ungated for [`Self::fold_report`]'s reason: a hook is the agent speaking for itself, and a
+    /// pane whose heuristic loops are off must still hear it. This is the FOURTH folding context
+    /// the module doc names, and until D.6 it was the one with no door — a Rust-served pane
+    /// heard the poll, the scan and the report, and was deaf to the feed that is `done`'s only
+    /// authority.
+    ///
+    /// Takes the DECODED event rather than the record's bytes, deliberately. The bytes→event
+    /// mapping is `slopdesk-hookevent`'s reader plus one match, and that match exists once, in
+    /// `slopdesk-ffi`; a second copy here so that this door could take bytes would be the two
+    /// implementations `CLAUDE.md` bans, and the drift it warns about is precisely how the two
+    /// Swift files this crate replaced came apart. The parse belongs to whoever owns the
+    /// SOCKET, which is the hook listener's stage.
+    pub(crate) fn fold_hook(shared: &Shared, event: ClaudeHookEvent, kind_byte: u8, prompt: Option<&str>) {
+        let now = clock::stamps().uptime;
+        fold(shared, |folds| folds.detector.hook(event, kind_byte, prompt, now));
     }
 
     // ---------------------------------------------------------------------------- the scan tick
@@ -414,8 +443,7 @@ impl Detect {
 
     /// Folds one published screen detection and sends what it emits.
     fn fold_screen(shared: &Shared, detection: AgentScreenDetection, now: f64) {
-        let emission = shared.with_folds(|folds| folds.detector.screen(detection, now));
-        publish(shared, &emission);
+        fold(shared, |folds| folds.detector.screen(detection, now));
     }
 
     // ---------------------------------------------------------------------------- the two loops
@@ -454,6 +482,34 @@ fn publish(shared: &Shared, emission: &Emission) {
         return;
     }
     shared.broadcast_control(&emitted(emission));
+}
+
+/// ONE fold, start to finish — see the module doc's funnel section.
+///
+/// `body` runs under the folds lock, and so does everything that has to agree with what it decided:
+/// the turn count, and the transition the status observer is owed. What happens OUTSIDE is the two
+/// sends, because both reach code this crate does not own — a member's queue and the server's
+/// cross-pane fan-out — and neither may run with a pane's detector held.
+fn fold(shared: &Shared, body: impl FnOnce(&mut Folds) -> Emission) {
+    let (emission, moved) = shared.with_folds(|folds| {
+        let emission = body(folds);
+        // `is_some()` rather than "the status differs from the last one we saw": the detector has
+        // already done the dedupe, and a second comparison here is how one machine comes to disagree
+        // with itself about whether an edge happened.
+        let moved = emission.status.as_ref().map(|_| {
+            let status = folds.detector.status();
+            let quiet = folds.detector.is_quiet();
+            let previous = ClaudeStatus::from_urgency(folds.truths.last_completion_status());
+            let mints = mints_finished_turn(previous, status);
+            let _epoch = folds.truths.fold_completion(status.urgency(), quiet, mints);
+            (status, quiet)
+        });
+        (emission, moved)
+    });
+    publish(shared, &emission);
+    if let Some((status, quiet)) = moved {
+        shared.status.status_changed(status, quiet);
+    }
 }
 
 /// One emission as the frames it spells, in the order the detector chose.

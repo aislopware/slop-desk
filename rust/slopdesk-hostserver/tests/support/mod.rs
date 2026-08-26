@@ -1,19 +1,94 @@
 //! A pane that is only its answers.
 //!
 //! Every question [`slopdesk_hostserver::Pane`] asks is a fact about a pane rather than an effect
-//! on one, and the two effects it has — the shutdown and the relinquish — are counted here instead
-//! of performed. That is the whole reason the trait exists: a real
-//! [`slopdesk_hostsession::PaneSession`] is a PTY, a superd socket and six threads, and a store
-//! suite that had to build one per entry would be testing the pane rather than the retention.
+//! on one, and the effects it has — the shutdown, the relinquish, the write, the resize — are
+//! counted here instead of performed. That is the whole reason the trait exists: a real
+//! [`slopdesk_hostsession::PaneSession`] is a PTY, a superd socket and six threads, and a suite
+//! that had to build one per entry would be testing the pane rather than the thing under test.
+//!
+//! ONE fake, shared by four suites. D.5 grew a second one — the store's `Ghost` answered the six
+//! lifecycle methods and the dispatcher's `Fake` answered the twenty verb ones — because the two
+//! traits were two. D.6 merged the traits, so the fakes merged with them, and the merge is worth
+//! more than the tidiness: the host suite drives a `kill` that has to reap a pane AND fan its final
+//! status, which is one object answering both halves.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use slopdesk_hostserver::service::ServiceHandle;
 use slopdesk_hostserver::{EvictionObserver, Pane, TeardownExecutor};
+use slopdesk_hostsession::{BlockTap, BlockUpdate, CloseTap, OutputTap, TapToken};
 use slopdesk_muxsession::registry::{self, Slot, Uuid};
+use slopdesk_screenwire::payload::Snapshot;
+use slopdesk_superwire::protocol::BlocksReply;
 
-/// A pane with no process behind it.
+/// One tap registry, standing in for the three [`slopdesk_hostsession::PaneSession`] keeps.
+///
+/// Generic over the tap because the three differ only in what they are called with, and writing the
+/// mint-insert-remove dance three times is how a suite comes to test two of them. The host's
+/// cross-pane status table is a fourth user, which is why this is `pub`.
+#[derive(Debug)]
+pub struct Registered<T: ?Sized> {
+    next: AtomicUsize,
+    live: Mutex<Vec<(u64, Arc<T>)>>,
+}
+
+impl<T: ?Sized> Default for Registered<T> {
+    fn default() -> Self {
+        Self {
+            next: AtomicUsize::new(1),
+            live: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl<T: ?Sized> Registered<T> {
+    /// Files `tap` and answers the token that retires it.
+    pub fn add(&self, tap: Arc<T>) -> TapToken {
+        let key = self.next.fetch_add(1, Ordering::SeqCst) as u64;
+        self.live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((key, tap));
+        TapToken::foreign(key)
+    }
+
+    /// The token for a tap that was fired instead of registered.
+    ///
+    /// Key 0, which [`Registered::add`] never mints — `next` starts at 1 for exactly this. Retiring
+    /// it is a no-op rather than an error, which is what a late subscriber's `remove` must be.
+    // No `unused_self` expectation: the lint spares an exported method by default, and this one is
+    // `pub` now that four suites share the registry. The receiver stays because it reads as the
+    // registry's own answer at the call site.
+    pub const fn absent(&self) -> TapToken {
+        TapToken::foreign(0)
+    }
+
+    /// Retires exactly the registration `token` names, so "the tap was retired" is an assertion
+    /// about the token the caller held rather than about how many are left.
+    pub fn remove(&self, token: TapToken) {
+        self.live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(key, _)| TapToken::foreign(*key) != token);
+    }
+
+    /// Visits every live tap, OUTSIDE the lock — a tap that registers another must not deadlock.
+    pub fn each(&self, mut visit: impl FnMut(&Arc<T>)) {
+        let taps = self.live.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        for (_, tap) in &taps {
+            visit(tap);
+        }
+    }
+
+    /// How many are live.
+    pub fn count(&self) -> usize {
+        self.live.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+}
+
+/// A pane with no process behind it: what it will answer, and what it was asked to do.
 #[derive(Debug)]
 pub struct Ghost {
     id: Uuid,
@@ -22,6 +97,30 @@ pub struct Ghost {
     members: AtomicUsize,
     shutdowns: AtomicUsize,
     relinquishes: AtomicUsize,
+    written: Mutex<Vec<u8>>,
+    resized: Mutex<Vec<(u16, u16)>>,
+    reported: Mutex<Vec<(String, Option<String>)>>,
+    window: Mutex<Option<(u16, u16)>>,
+    foreground: Mutex<String>,
+    status: Mutex<(String, Option<String>)>,
+    present: AtomicBool,
+    title: Mutex<String>,
+    cwd: Mutex<Option<String>>,
+    pid: Mutex<i32>,
+    last_exit_code: Mutex<Option<i32>>,
+    scrollback: Mutex<String>,
+    lines: Mutex<Vec<String>>,
+    screen: Mutex<Result<Snapshot, String>>,
+    blocks: Mutex<Option<BlocksReply>>,
+    outputs: Mutex<BTreeMap<u32, Vec<u8>>>,
+    output_taps: Registered<dyn OutputTap>,
+    close_taps: Registered<dyn CloseTap>,
+    block_taps: Registered<dyn BlockTap>,
+    /// Latched by [`Ghost::end`], read by [`Pane::add_close_tap`].
+    ///
+    /// A fake that just dropped a late registration would make the subscribe-races-exit case pass
+    /// by never testing it, so it carries the same latch `slopdesk_hostsession::taps` does.
+    ended: AtomicBool,
 }
 
 impl Ghost {
@@ -35,6 +134,26 @@ impl Ghost {
             members: AtomicUsize::new(0),
             shutdowns: AtomicUsize::new(0),
             relinquishes: AtomicUsize::new(0),
+            written: Mutex::new(Vec::new()),
+            resized: Mutex::new(Vec::new()),
+            reported: Mutex::new(Vec::new()),
+            window: Mutex::new(Some((30, 100))),
+            foreground: Mutex::new(String::from("zsh")),
+            status: Mutex::new((String::from("idle"), None)),
+            present: AtomicBool::new(false),
+            title: Mutex::new(String::new()),
+            cwd: Mutex::new(None),
+            pid: Mutex::new(4242),
+            last_exit_code: Mutex::new(None),
+            scrollback: Mutex::new(String::new()),
+            lines: Mutex::new(Vec::new()),
+            screen: Mutex::new(Err(String::from("no engine"))),
+            blocks: Mutex::new(None),
+            outputs: Mutex::new(BTreeMap::new()),
+            output_taps: Registered::default(),
+            close_taps: Registered::default(),
+            block_taps: Registered::default(),
+            ended: AtomicBool::new(false),
         })
     }
 
@@ -46,6 +165,8 @@ impl Ghost {
         bytes[0] = id;
         Self::new(bytes)
     }
+
+    // ------------------------------------------------------------------------------- the ledgers
 
     /// Says the shell has already exited.
     pub fn kill_child(&self) {
@@ -62,9 +183,143 @@ impl Ghost {
         self.shutdowns.load(Ordering::SeqCst)
     }
 
-    /// How many times the pane was let GO.
+    /// How many times it was let GO.
     pub fn relinquishes(&self) -> usize {
         self.relinquishes.load(Ordering::SeqCst)
+    }
+
+    /// Every byte injected into this pane, in order.
+    pub fn written(&self) -> Vec<u8> {
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Every grid this pane was asked to take, in order.
+    pub fn resized(&self) -> Vec<(u16, u16)> {
+        self.resized
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Every self-report folded into this pane, in order.
+    pub fn reported(&self) -> Vec<(String, Option<String>)> {
+        self.reported
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// How many close taps are live — the leak assertion.
+    pub fn close_taps(&self) -> usize {
+        self.close_taps.count()
+    }
+
+    /// How many output taps are live.
+    pub fn output_taps(&self) -> usize {
+        self.output_taps.count()
+    }
+
+    /// How many block taps are live.
+    pub fn block_taps(&self) -> usize {
+        self.block_taps.count()
+    }
+
+    // ------------------------------------------------------------------------------ the answers
+
+    fn set<T>(cell: &Mutex<T>, value: T) {
+        *cell.lock().unwrap_or_else(PoisonError::into_inner) = value;
+    }
+
+    /// Says the PTY reports this grid, or none at all.
+    pub fn set_window(&self, grid: Option<(u16, u16)>) {
+        Self::set(&self.window, grid);
+    }
+
+    /// Says this program holds the foreground group.
+    pub fn set_foreground(&self, name: &str) {
+        Self::set(&self.foreground, name.to_owned());
+    }
+
+    /// Says the pane stands at this supervision state and label.
+    pub fn set_status(&self, state: &str, message: Option<&str>) {
+        Self::set(&self.status, (state.to_owned(), message.map(str::to_owned)));
+    }
+
+    /// Says an agent is (or is not) present — the bit the four-token vocabulary cannot carry.
+    pub fn set_present(&self, present: bool) {
+        self.present.store(present, Ordering::SeqCst);
+    }
+
+    /// Says the pane's OSC title reads this.
+    pub fn set_title(&self, title: &str) {
+        Self::set(&self.title, title.to_owned());
+    }
+
+    /// Says the host has observed this working directory.
+    pub fn set_cwd(&self, cwd: Option<&str>) {
+        Self::set(&self.cwd, cwd.map(str::to_owned));
+    }
+
+    /// Says the shell has this pid.
+    pub fn set_pid(&self, pid: i32) {
+        Self::set(&self.pid, pid);
+    }
+
+    /// Says the last command finished with this `$?`.
+    pub fn set_last_exit_code(&self, code: Option<i32>) {
+        Self::set(&self.last_exit_code, code);
+    }
+
+    /// Says the scrollback reads this.
+    pub fn set_scrollback(&self, text: &str) {
+        Self::set(&self.scrollback, text.to_owned());
+    }
+
+    /// Says the scrollback splits into these logical lines.
+    pub fn set_lines(&self, lines: Vec<String>) {
+        Self::set(&self.lines, lines);
+    }
+
+    /// Says a render answers this — a grid, or the reason there is none.
+    pub fn set_screen(&self, screen: Result<Snapshot, String>) {
+        Self::set(&self.screen, screen);
+    }
+
+    /// Says the pane's block ring reads this, or that it has no tap.
+    pub fn set_blocks(&self, blocks: Option<BlocksReply>) {
+        Self::set(&self.blocks, blocks);
+    }
+
+    /// Says block `index` retained these bytes.
+    pub fn set_block_output(&self, index: u32, payload: Vec<u8>) {
+        drop(
+            self.outputs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(index, payload),
+        );
+    }
+
+    // -------------------------------------------------------------------------------- the edges
+
+    /// Fires every output tap, the way a read loop would.
+    pub fn emit(&self, payload: &[u8]) {
+        self.output_taps.each(|tap| tap.chunk(payload));
+    }
+
+    /// Fires every close tap, the way an exit thread would — and latches, so a LATER registration
+    /// is answered rather than parked on an event that can no longer happen.
+    pub fn end(&self) {
+        self.ended.store(true, Ordering::SeqCst);
+        self.close_taps.each(|tap| tap.closed());
+    }
+
+    /// Fires every block tap, the way the fold would.
+    pub fn publish(&self, update: &BlockUpdate) {
+        self.block_taps.each(|tap| tap.updated(update));
     }
 }
 
@@ -91,6 +346,130 @@ impl Pane for Ghost {
 
     fn relinquish(&self) {
         self.relinquishes.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn write_raw(&self, bytes: &[u8]) {
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend_from_slice(bytes);
+    }
+
+    fn resize(&self, rows: u16, cols: u16) {
+        self.resized
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((rows, cols));
+    }
+
+    fn window_size(&self) -> Option<(u16, u16)> {
+        *self.window.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn foreground_name(&self) -> String {
+        self.foreground
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn agent_status(&self) -> (String, Option<String>) {
+        self.status.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn agent_present(&self) -> bool {
+        self.present.load(Ordering::SeqCst)
+    }
+
+    fn title(&self) -> String {
+        self.title.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn cwd(&self) -> Option<String> {
+        self.cwd.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn pid(&self) -> i32 {
+        *self.pid.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn last_exit_code(&self) -> Option<i32> {
+        *self.last_exit_code.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn report_agent_status(&self, state: &str, message: Option<&str>) {
+        self.reported
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((state.to_owned(), message.map(str::to_owned)));
+    }
+
+    fn scrollback_text(&self, ansi_strip: bool) -> String {
+        let text = self
+            .scrollback
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if ansi_strip { text } else { format!("raw:{text}") }
+    }
+
+    fn render_screen(&self, rows: usize, cols: usize) -> Result<Snapshot, String> {
+        let asked = self.screen.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        asked.map(|mut snapshot| {
+            // The fake ECHOES the grid it was asked for, which is what makes the default-size and
+            // the override cases distinguishable at all: every other field is a fixture.
+            snapshot.rows = rows;
+            snapshot.cols = cols;
+            snapshot
+        })
+    }
+
+    fn recent_lines(&self, limit: Option<usize>) -> Vec<String> {
+        let lines = self.lines.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        limit.map_or_else(
+            || lines.clone(),
+            |keep| lines.iter().rev().take(keep).rev().cloned().collect(),
+        )
+    }
+
+    fn blocks(&self, _limit: usize) -> Option<BlocksReply> {
+        self.blocks.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    fn block_output(&self, index: u32) -> Option<Vec<u8>> {
+        self.outputs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&index)
+            .cloned()
+    }
+
+    fn add_output_tap(&self, tap: Arc<dyn OutputTap>) -> TapToken {
+        self.output_taps.add(tap)
+    }
+
+    fn remove_output_tap(&self, token: TapToken) {
+        self.output_taps.remove(token);
+    }
+
+    fn add_close_tap(&self, tap: Arc<dyn CloseTap>) -> TapToken {
+        if self.ended.load(Ordering::SeqCst) {
+            tap.closed();
+            return self.close_taps.absent();
+        }
+        self.close_taps.add(tap)
+    }
+
+    fn remove_close_tap(&self, token: TapToken) {
+        self.close_taps.remove(token);
+    }
+
+    fn add_block_tap(&self, tap: Arc<dyn BlockTap>) -> TapToken {
+        self.block_taps.add(tap)
+    }
+
+    fn remove_block_tap(&self, token: TapToken) {
+        self.block_taps.remove(token);
     }
 }
 

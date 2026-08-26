@@ -71,7 +71,7 @@ use slopdesk_wire::message::WireMessage;
 use slopdesk_wire::mux::flow::{MuxFlowControl, PausableQueueGate};
 use slopdesk_wire::replay::{ReplayBuffer, SnapshotSource};
 
-use crate::session::SessionObserver;
+use crate::session::{SessionObserver, StatusObserver};
 use crate::subscriber::Subscriber;
 
 /// Where a session writes the lines that used to go to hostd's log closure.
@@ -276,6 +276,9 @@ pub(crate) struct Shared {
     /// mutable under `taskLock` for exactly this; here it is a lock of its own, because the
     /// exit thread must never queue behind the teardown ladder to read it.
     observer: Mutex<Arc<dyn SessionObserver>>,
+    /// Who hears an agent-status transition. A plain field, not a `Mutex`: unlike the exit observer
+    /// above, this one is the SERVER's and is never swapped — see [`StatusObserver`].
+    pub(crate) status: Arc<dyn StatusObserver>,
     pub(crate) log: Arc<dyn SessionLog>,
 }
 
@@ -287,6 +290,7 @@ impl Shared {
         done_to_idle: f64,
         log: Arc<dyn SessionLog>,
         observer: Arc<dyn SessionObserver>,
+        status: Arc<dyn StatusObserver>,
     ) -> Self {
         Self {
             observer: Mutex::new(observer),
@@ -311,6 +315,7 @@ impl Shared {
             life: Lifecycle::new(),
             torn_down: AtomicBool::new(false),
             live_threads: AtomicUsize::new(0),
+            status,
             log,
         }
     }
@@ -1102,7 +1107,7 @@ mod tests {
     use slopdesk_wire::replay::ReplayBuffer;
 
     use super::{DiscardLog, Ready, Shared};
-    use crate::session::SilentObserver;
+    use crate::session::{IgnoreStatus, SilentObserver};
 
     /// A pane with a fresh ring and no client, which is all the drain's own ladder needs.
     fn shared() -> Shared {
@@ -1112,6 +1117,7 @@ mod tests {
             8.0,
             Arc::new(DiscardLog),
             Arc::new(SilentObserver),
+            Arc::new(IgnoreStatus),
         )
     }
 

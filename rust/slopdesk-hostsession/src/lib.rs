@@ -86,7 +86,9 @@ pub use detect::{DetectConfig, ScreenOracle, ScreenRequest};
 pub use metadata::{MetadataAnswer, MetadataPerformer, MetadataRequest, UnservedMetadata};
 pub use project::{IgnoreKeys, InlineResolve, KeyObserver, ResolveExecutor};
 pub use resize::{RESIZE_DEBOUNCE, SIZE_SETTLE};
-pub use session::{PaneSession, SessionConfig, SessionObserver, SilentObserver};
+pub use session::{
+    IgnoreStatus, PaneSession, SessionConfig, SessionObserver, SilentObserver, StatusObserver,
+};
 pub use shared::{DiscardLog, SessionLog};
 pub use snapshot::SnapshotPolicy;
 pub use taps::{BlockTap, BlockUpdate, CloseTap, OutputTap, TapToken};

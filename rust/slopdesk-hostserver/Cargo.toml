@@ -117,6 +117,10 @@ slopdesk-workspace = { path = "../slopdesk-workspace" }
 # that has just closed ends the whole host.
 slopdesk-posix = { path = "../slopdesk-posix" }
 
+# The one notation this crate cannot spell for itself: sixteen bytes as canonical UUID text, and
+# back. Every ctl verb names a pane by that text and the tables name it by the bytes.
+slopdesk-ids = { path = "../slopdesk-ids" }
+
 # `poll` for the accept loop's two-descriptor park and `pipe` for the byte that ends it — the shape
 # `slopdesk-superd`'s pump loop uses, and the reason no descriptor is ever closed out from under a
 # syscall here. `hostname` is `host info`'s one field the environment cannot answer: a feature of its
