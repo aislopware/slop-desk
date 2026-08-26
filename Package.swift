@@ -309,7 +309,18 @@ let package = Package(
         // @font-face data URIs — the webview's WebContent process cannot see a `CTFontManager`
         // process-scope registration — which is why the URLs are public API here and not just the
         // registration.
-        .target(name: "SlopDeskFontFaces", resources: [.copy("Resources/Fonts")]),
+        // ⚠️ IT NAMES `CSlopDeskFFI` FOR ONE TABLE, and the table is why. `isPrivateUse` classifies
+        // the codepoints this face exists to draw, and `rust/slopdesk-sanitize` classifies the SAME
+        // codepoints to strip them for an agent — one Unicode fact, two opposite uses. It was typed
+        // on both sides until 2026-08-26 and the copies disagreed about plane 16, so the ranges now
+        // cross once per process through `slopdesk_private_use_ranges` and the predicate stays local.
+        // The edge widens no graph: every target that links this one already links the archive.
+        .target(
+            name: "SlopDeskFontFaces",
+            dependencies: ["CSlopDeskFFI"],
+            resources: [.copy("Resources/Fonts")],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
         .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol"]),

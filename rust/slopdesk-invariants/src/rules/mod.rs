@@ -901,6 +901,11 @@ pub fn registry() -> Vec<Rule> {
             check: cross_twins::the_loop_shaped_crossings_are_whole_collection_doors,
         },
         Rule {
+            name: "one-private-use-table",
+            origin: "docs/00 'Core / shell split'",
+            check: cross_twins::one_private_use_table,
+        },
+        Rule {
             name: "settings-is-a-file",
             origin: "docs/58",
             check: settings_is_a_file::the_settings_gui_stays_deleted,

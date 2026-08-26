@@ -73,6 +73,35 @@ pub unsafe extern "C" fn slopdesk_plaintext_strip(
     unsafe { deliver(&plaintext::strip(borrow(bytes, len)), out, cap) }
 }
 
+/// The private-use ranges, as `[u32 low][u32 high]` pairs, big-endian.
+///
+/// The strip above DROPS these codepoints; the chrome SPLICES the bundled Nerd face over exactly
+/// them (`NerdSymbolFont`). Opposite operations over one set, which is why the set crosses instead
+/// of being typed on both sides — it was typed on both sides until 2026-08-26, and the two copies
+/// disagreed about plane 16 and about where plane 15 ends. `plaintext`'s module doc has the detail.
+///
+/// A TABLE crosses here where every other door in this file crosses an ANSWER, and that is the
+/// point: the classification is per-scalar over a title redrawn on every keystroke, so a door per
+/// scalar would be the wrong boundary at the wrong rate. The caller reads this once into a `static`
+/// and asks it locally forever after.
+///
+/// # Safety
+/// `out` must be null, or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point, and `(out, cap)` is the caller's"
+)]
+pub unsafe extern "C" fn slopdesk_private_use_ranges(out: *mut c_uchar, cap: usize) -> usize {
+    let mut answer = Vec::with_capacity(plaintext::private_use_ranges().len() * 8);
+    for &(low, high) in plaintext::private_use_ranges() {
+        answer.extend_from_slice(&low.to_be_bytes());
+        answer.extend_from_slice(&high.to_be_bytes());
+    }
+    // SAFETY: the caller's obligation, forwarded unchanged; `deliver` writes at most `cap`.
+    unsafe { deliver(&answer, out, cap) }
+}
+
 /// Plain text as LOGICAL lines — the `read --unwrapped` verb's answer.
 ///
 /// The lines are delivered JOINED by `\n`, with their count written to `line_count`, and the caller

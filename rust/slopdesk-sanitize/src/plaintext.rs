@@ -40,12 +40,40 @@ const C1_CSI: u8 = 0x9B;
 /// `OSC` as its 8-bit C1 byte.
 const C1_OSC: u8 = 0x9D;
 
-/// The private-use planes a Nerd Font or a Powerline theme draws its glyphs from.
+/// The private-use ranges a Nerd Font or a Powerline theme draws its glyphs from — the ONE
+/// spelling.
 ///
 /// They are valid UTF-8 and a byte scanner passes them through, but they are decoration: one
-/// visible glyph that makes an agent's reading of the output unclean. The BMP block and the
-/// supplementary planes both, because the popular icon fonts use each.
-const PRIVATE_USE: [(u32, u32); 2] = [(0xE000, 0xF8FF), (0xF_0000, 0xF_FFFF)];
+/// visible glyph that makes an agent's reading of the output unclean. So the sanitizer drops them,
+/// and the chrome — which has the opposite job, splicing the bundled face in over exactly these
+/// runs — reads the same table through [`private_use_ranges`] rather than typing it again.
+///
+/// ⚠️ IT WAS TYPED TWICE, AND THE TWO DISAGREED. `Sources/SlopDeskFontFaces/NerdSymbolFont.swift`
+/// carried the correct three ranges while this carried two, wrong at both ends:
+///
+/// * **Plane 16 was missing entirely** (`U+100000–U+10FFFD`, Supplementary Private Use Area-B). The
+///   material-design icon set lives up there, so a title carrying one reached an agent as a glyph
+///   the strip exists to remove — the exact failure, in the plane nobody checked.
+/// * **The plane-15 end ran two codepoints too far.** `U+FFFFE` and `U+FFFFF` are NONCHARACTERS,
+///   permanently reserved and never private use; a supplementary plane's private-use block stops at
+///   `…FFFD`. Stripping them is harmless in practice and wrong in principle, and the principle is
+///   what a second copy of a table gets wrong first.
+///
+/// Neither side was reachable from the other, so neither had a test that could have said so. This
+/// is the shape `CLAUDE.md`'s "one implementation, never two languages" names: not two behaviours
+/// that drifted, but one FACT about Unicode written down twice.
+const PRIVATE_USE: [(u32, u32); 3] = [(0xE000, 0xF8FF), (0xF_0000, 0xF_FFFD), (0x10_0000, 0x10_FFFD)];
+
+/// The private-use ranges, as inclusive `(low, high)` pairs.
+///
+/// Handed out rather than re-typed: the chrome's splice and this strip are opposite operations over
+/// the same set, and a set spelled on both sides of a door is the drift the door exists to remove.
+/// The caller reads this ONCE and keeps the table — the classification is per-scalar on a title
+/// redrawn every keystroke, which is not a rate anything should cross a boundary at.
+#[must_use]
+pub const fn private_use_ranges() -> &'static [(u32, u32)] {
+    &PRIVATE_USE
+}
 
 /// `bytes` with every escape sequence and private-use glyph removed.
 ///
@@ -398,5 +426,81 @@ mod tests {
         }
         fed.extend_from_slice(&strip(&carry));
         assert_eq!(fed, whole, "byte at a time renders what the whole buffer does");
+    }
+
+    /// Every BOUNDARY of the private-use table, from both sides.
+    ///
+    /// A range table is wrong at its ends or not at all, and both ends is exactly what the second
+    /// copy of this table got wrong — so the cases are the four edges of each range plus the
+    /// noncharacters that used to be swept in. Written as `char` LITERALS rather than as a loop
+    /// over `PRIVATE_USE`, because a loop over the table would be the table checking itself; the
+    /// compiler validates each escape, so there is no fallible conversion to unwrap either.
+    #[test]
+    fn the_private_use_table_is_right_at_every_edge() {
+        for character in [
+            '\u{E000}',
+            '\u{F8FF}', // the BMP block
+            '\u{F0000}',
+            '\u{FFFFD}', // plane 15
+            '\u{100000}',
+            '\u{10FFFD}', // plane 16 — the one the second copy was missing entirely
+        ] {
+            assert!(
+                super::private_use(character),
+                "U+{:04X} is private use and must strip",
+                u32::from(character),
+            );
+        }
+        // `U+DFFF`, the scalar directly below the BMP block, is a SURROGATE and not a `char` at
+        // all — unreachable through this scanner, since a surrogate cannot survive UTF-8 decoding.
+        // `U+D7FF` is the nearest codepoint below it that a stream can actually carry.
+        for character in [
+            '\u{D7FF}',
+            '\u{F900}', // below and above the BMP block
+            '\u{EFFFF}',
+            '\u{10000}', // below plane 15's start, and a plain supplementary char
+        ] {
+            assert!(
+                !super::private_use(character),
+                "U+{:04X} is outside every private-use range and must survive",
+                u32::from(character),
+            );
+        }
+        // ⚠️ NONCHARACTERS, not private use. `U+FFFFE`/`U+FFFFF` and `U+10FFFE`/`U+10FFFF` are
+        // permanently reserved; the old table's `…FFFF` upper bound swept the first pair in.
+        for character in ['\u{FFFFE}', '\u{FFFFF}', '\u{10FFFE}', '\u{10FFFF}'] {
+            assert!(
+                !super::private_use(character),
+                "U+{:04X} is a noncharacter, not private use",
+                u32::from(character),
+            );
+        }
+    }
+
+    /// The table is handed out, so a caller cannot be reading a different one.
+    #[test]
+    fn the_ranges_handed_out_are_the_ranges_used() {
+        let handed = super::private_use_ranges();
+        assert_eq!(handed.len(), 3, "the BMP block plus planes 15 and 16");
+        for &(low, high) in handed {
+            assert!(low <= high, "a range runs upward");
+            for scalar in [low, high] {
+                // Both halves in one claim: a bound that is not a `char` (a surrogate, or past
+                // `U+10FFFF`) fails here exactly as a bound the strip disagrees with would.
+                assert!(
+                    char::from_u32(scalar).is_some_and(super::private_use),
+                    "U+{scalar:04X} is a bound of a handed-out range, so the strip must agree",
+                );
+            }
+        }
+    }
+
+    /// The whole point of the fix, end to end: a plane-16 glyph in a stream now goes.
+    #[test]
+    fn a_plane_16_glyph_strips_like_every_other_private_use_one() {
+        let mut stream = b"repo ".to_vec();
+        stream.extend_from_slice('\u{100000}'.to_string().as_bytes());
+        stream.extend_from_slice(b" ok");
+        assert_eq!(strip(&stream), b"repo  ok");
     }
 }

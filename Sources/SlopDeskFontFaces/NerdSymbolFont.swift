@@ -11,6 +11,7 @@
 // the macOS app, the iOS app, and headless tests alike. The run splitter is pure so it is unit-pinned.
 
 import CoreText
+import CSlopDeskFFI
 import Foundation
 
 package enum NerdSymbolFont {
@@ -39,15 +40,51 @@ package enum NerdSymbolFont {
             || code == CTFontManagerError.duplicatedName.rawValue
     }()
 
-    /// Whether `scalar` sits in a Unicode PRIVATE-USE area — the space nerd fonts populate (the BMP PUA
-    /// `U+E000–U+F8FF` plus planes 15/16, where the material-design set lives).
-    package static func isPrivateUse(_ scalar: Unicode.Scalar) -> Bool {
-        switch scalar.value {
-        case 0xE000...0xF8FF,
-             0xF0000...0xFFFFD,
-             0x100000...0x10FFFD: true
-        default: false
+    /// The Unicode private-use ranges, read from `slopdesk_sanitize` ONCE per process.
+    ///
+    /// The sanitizer DROPS these codepoints so an agent reads clean text; this file SPLICES the
+    /// bundled face over exactly them so a human sees a glyph instead of a notdef box. Opposite
+    /// operations over one set — so the set is spelled once, on the far side, and crosses here as a
+    /// table rather than being typed again.
+    ///
+    /// ⚠️ IT WAS TYPED TWICE UNTIL 2026-08-26, and the two disagreed: the Rust copy was missing plane
+    /// 16 entirely (`U+100000–U+10FFFD`, where the material-design icon set lives) and ran two
+    /// codepoints past the end of plane 15 into a pair of noncharacters. Neither side could see the
+    /// other, so neither had a test that could say so. `rust/slopdesk-sanitize/src/plaintext.rs`
+    /// carries the detail.
+    ///
+    /// Read once and kept, never per scalar: this classifies every character of a title that is
+    /// redrawn on every keystroke, and `runs(of:)` below is measured in nanoseconds. A door per
+    /// scalar would be the right rule at the wrong rate.
+    private static let privateUseRanges: [ClosedRange<UInt32>] = {
+        let needed = Int(slopdesk_private_use_ranges(nil, 0))
+        guard needed > 0, needed % 8 == 0 else { return [] }
+        var blob = [UInt8](repeating: 0, count: needed)
+        let written = blob.withUnsafeMutableBufferPointer {
+            Int(slopdesk_private_use_ranges($0.baseAddress, $0.count))
         }
+        guard written == needed else { return [] }
+        return stride(from: 0, to: needed, by: 8).compactMap { offset in
+            let low = beUInt32(blob, at: offset)
+            let high = beUInt32(blob, at: offset + 4)
+            // A door that answered a descending pair would be a door with a bug; refusing the pair
+            // is what keeps that from becoming a trap inside `ClosedRange`.
+            return low <= high ? low...high : nil
+        }
+    }()
+
+    /// One big-endian `u32` out of the door's blob.
+    private static func beUInt32(_ bytes: [UInt8], at offset: Int) -> UInt32 {
+        (UInt32(bytes[offset]) << 24)
+            | (UInt32(bytes[offset + 1]) << 16)
+            | (UInt32(bytes[offset + 2]) << 8)
+            | UInt32(bytes[offset + 3])
+    }
+
+    /// Whether `scalar` sits in a Unicode PRIVATE-USE area — the space nerd fonts populate (the BMP
+    /// PUA `U+E000–U+F8FF` plus planes 15 and 16, where the material-design set lives).
+    package static func isPrivateUse(_ scalar: Unicode.Scalar) -> Bool {
+        privateUseRanges.contains { $0.contains(scalar.value) }
     }
 
     /// `string` with its private-use glyphs REMOVED — for system-drawn surfaces (the window titlebar)

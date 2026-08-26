@@ -75,6 +75,14 @@ size_t slopdesk_sanitize(const uint8_t *bytes, size_t len, bool distill, bool re
                          uint8_t *out, size_t cap);
 size_t slopdesk_plaintext_strip(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
 size_t slopdesk_plaintext_holdback(const uint8_t *bytes, size_t len);
+// The Unicode private-use ranges, as [u32 low][u32 high] pairs, big-endian, inclusive.
+//
+// A TABLE where every other door here answers a QUESTION, and deliberately: the strip above DROPS
+// these codepoints while the chrome SPLICES the bundled Nerd face over exactly them, so it is one
+// set used two ways. It was typed on both sides until 2026-08-26 and the copies disagreed about
+// plane 16, which is where the material-design icons live. Classification is per-scalar on a title
+// redrawn every keystroke, so the caller reads this ONCE into a static and asks it locally.
+size_t slopdesk_private_use_ranges(uint8_t *out, size_t cap);
 // Plain text as LOGICAL lines: the lines JOINED by '\n', their count written to
 // line_count, and at most `limit` of them counting from the end (0 is all). The
 // caller splits on the same byte — a logical line cannot contain one — and reads

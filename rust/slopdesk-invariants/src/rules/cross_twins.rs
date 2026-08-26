@@ -7,7 +7,7 @@
 //! a pair is not a whole function reappearing; it is one predicate, one cast or one line of index
 //! arithmetic written by hand beside a door that already answers it.
 
-use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::claim::{Claim, GATE_RULES, RUST, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -16,6 +16,7 @@ const PANE_SPEC: &str = "Sources/SlopDeskWorkspaceModel/Domain/PaneSpec.swift";
 const NEW_TAB: &str = "Sources/SlopDeskWorkspaceModel/Domain/Tree/NewTabPosition.swift";
 const PORT: &str = "Sources/SlopDeskTransport/PortValidation.swift";
 const REPLAY_BUFFER: &str = "Sources/SlopDeskTransport/ReplayBuffer.swift";
+const NERD_FONT: &str = "Sources/SlopDeskFontFaces/NerdSymbolFont.swift";
 
 /// The tree repair pass is Rust, and what regrows is one predicate
 ///
@@ -254,6 +255,74 @@ pub fn the_loop_shaped_crossings_are_whole_collection_doors(tree: &Tree) -> Repo
     check_all(tree, &claims)
 }
 
+/// The Unicode private-use table is spelled ONCE, and the copy that regrew got a whole plane wrong
+///
+/// `rust/slopdesk-sanitize` DROPS these codepoints so an agent reads clean text; `NerdSymbolFont`
+/// SPLICES the bundled face over exactly them so a person sees a glyph rather than a notdef box.
+/// One Unicode fact, two opposite uses — and it was typed on both sides until 2026-08-26, where it
+/// failed in the way a second copy of a range table always fails, at the ends:
+///
+/// * The Rust copy was missing **plane 16** outright (`U+100000–U+10FFFD`), which is where the
+///   material-design icon set lives. A title carrying one of those reached an agent as the glyph
+///   the strip exists to remove.
+/// * It ran two codepoints past the end of plane 15, into `U+FFFFE`/`U+FFFFF` — NONCHARACTERS,
+///   never private use.
+///
+/// Neither half could reach the other, so neither had a test that could have said so. That is the
+/// arrangement `four_cross_language_twins` above describes and the reason this rule is here rather
+/// than in `shared_constants`: what is shared is not a NUMBER, it is a TABLE, and it crosses whole
+/// through `slopdesk_private_use_ranges` at first use.
+///
+/// The ban is on the BOUNDS, not on the word "private use": a range table is wrong at its edges or
+/// not at all, so the edges are what may not be retyped. `View::Code` throughout, for
+/// `one_tree_repair_in_rust`'s reason — the face's own header quotes the range it names, and a gate
+/// that cannot tell the code from the post-mortem forbids writing the post-mortem.
+#[must_use]
+pub fn one_private_use_table(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: NERD_FONT,
+            message: "NerdSymbolFont.swift is gone — the splice's Swift half is a marshaller over \
+                      slopdesk_private_use_ranges, not nothing",
+        },
+        Claim::AtLeast {
+            path: NERD_FONT,
+            pattern: r"slopdesk_private_use_ranges",
+            minimum: 1,
+            message: "NerdSymbolFont.swift asks for the private-use table {found} times — it is \
+                      rust/slopdesk-sanitize's, and the two copies disagreed about plane 16 the last \
+                      time this file answered for itself",
+        },
+        // Anywhere in Swift, not just in the face: what regrows is one predicate written beside a
+        // door that already answers it, and the second writer is never the file that lost the rule.
+        Claim::NoneUnder {
+            roots: &["Sources"],
+            extensions: &["swift"],
+            pattern: r"0x10FFFD|0xF8FF|0xFFFFD",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} — a private-use range BOUND is typed in Swift. The table is \
+                      rust/slopdesk-sanitize's and crosses whole through slopdesk_private_use_ranges; \
+                      a second copy of it is how plane 16 went missing for a year",
+        },
+        // And the same ban the other way: exactly one Rust file may hold the table.
+        Claim::NoneUnder {
+            roots: &["rust"],
+            extensions: &["rs"],
+            pattern: r"0x10_FFFD|0xF_FFFD",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &["rust/slopdesk-sanitize/src/plaintext.rs", GATE_RULES],
+            message: "{files} — a private-use range bound is typed outside \
+                      rust/slopdesk-sanitize/src/plaintext.rs, which is the one place it lives",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -374,5 +443,60 @@ mod tests {
         loops(&fixture);
         fixture.append(super::REPLAY_BUFFER, "for index in 0..<count { read(index) }\n");
         assert!(!super::the_loop_shaped_crossings_are_whole_collection_doors(&fixture.tree()).is_clean());
+    }
+
+    /// Both directions, because the pair failed in both: the face must keep ASKING, and neither
+    /// language may retype a bound. A rule that only checked the Swift side would have passed
+    /// happily over the Rust copy that was actually wrong.
+    #[test]
+    fn a_retyped_private_use_bound_is_caught_in_either_language() {
+        let fixture = Fixture::new("one-private-use-table");
+        fixture.write(
+            super::NERD_FONT,
+            "let ranges = slopdesk_private_use_ranges(nil, 0)\n",
+        );
+        fixture.write(
+            "rust/slopdesk-sanitize/src/plaintext.rs",
+            "const PRIVATE_USE: [(u32, u32); 3] = [(0xE000, 0xF8FF), (0xF_0000, 0xF_FFFD), (0x10_0000, 0x10_FFFD)];\n",
+        );
+        assert!(
+            super::one_private_use_table(&fixture.tree()).is_clean(),
+            "the one place the table lives is exempt, and the face asks",
+        );
+
+        // The face stops asking — which is what "I will just inline it" looks like.
+        fixture.write(super::NERD_FONT, "func isPrivateUse() -> Bool { false }\n");
+        let report = super::one_private_use_table(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("asks for the private-use table 0 times")),
+            "{report:?}"
+        );
+
+        // A bound retyped in Swift, in a file that is not even the face.
+        fixture.write(
+            super::NERD_FONT,
+            "let ranges = slopdesk_private_use_ranges(nil, 0)\n",
+        );
+        fixture.write(
+            "Sources/SlopDeskSlate/SlateNativeText.swift",
+            "let pua = 0xE000...0xF8FF\n",
+        );
+        let report = super::one_private_use_table(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("SlateNativeText.swift")),
+            "{report:?}"
+        );
+
+        // And a second Rust copy, which is the half that was actually wrong.
+        fixture.write("Sources/SlopDeskSlate/SlateNativeText.swift", "let x = 1\n");
+        fixture.write(
+            "rust/slopdesk-rowscan/src/waituntil.rs",
+            "const MINE: u32 = 0x10_FFFD;\n",
+        );
+        let report = super::one_private_use_table(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("waituntil.rs")),
+            "{report:?}"
+        );
     }
 }
