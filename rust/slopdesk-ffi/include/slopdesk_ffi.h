@@ -9032,6 +9032,71 @@ uint8_t slopdesk_simulator_device_kind(const unsigned char *name,
                                        size_t name_len);
 
 // ---------------------------------------------------------------------------
+// Both panels' SECTIONED device list — `slopdesk_devicepanel::sections`.
+//
+// The running group first and NOT cut by family, the families after it in rank
+// order, the fact a whole group agrees on lifted into its heading, and the
+// identity a row animates on. It was one machine written twice — a runtime on
+// one panel, an Android version on the other — and each panel is drawn by two
+// renderers, so a drift there would have been two products rather than a bug.
+//
+// The answer names the caller's OWN rows by index; what crosses in words is
+// only what the caller does not hold. The layout is:
+//
+//     [u16 section count], then per section:
+//       [u8]                      1 for the running group
+//       [u32 length][UTF-8]       the heading
+//       [u8]                      1 when the group lifted a fact
+//       [u32 length][UTF-8]       that fact, empty when it lifted none
+//       [u16 member count], then per member:
+//         [u16]                   the row's index in the caller's array
+//         [u8]                    1 when the row still prints its own value
+//         [u32 length][UTF-8]     the row identity, `heading/key`
+//
+// EVERY PER-DEVICE ARRAY IS POSITIONAL. One of them a row short would file
+// every later device under its neighbour's family, so a length disagreement
+// answers 0 — the whole reading, not a shifted one.
+
+// The Android panel's sectioned list. `kinds` are SLOPDESK_ANDROID_KIND_*, one
+// per device; `attached` is 1 for a device adb has handed a transport id;
+// `api_levels` is ro.build.version.sdk, where anything <= 0 means the device
+// reported none; `keys` and `releases` name each device's stable key and its
+// release string in `blob`.
+size_t slopdesk_android_sections(const unsigned char *kinds, size_t kind_count,
+                                 const unsigned char *attached,
+                                 size_t attached_count,
+                                 const int64_t *api_levels, size_t api_count,
+                                 const unsigned char *blob, size_t blob_len,
+                                 const SlopDeskWsSpan *keys, size_t key_count,
+                                 const SlopDeskWsSpan *releases,
+                                 size_t release_count, unsigned char *out,
+                                 size_t cap);
+
+// The simulator panel's sectioned list. `kinds` are SLOPDESK_SIMULATOR_KIND_*,
+// `booted` is 1 for a running simulator, and `keys` and `runtimes` name each
+// device's udid and its runtime in `blob`. An EMPTY runtime is a value the row
+// still has and the heading still cannot lift — /simulators.json carries one,
+// and a lifted blank prints a heading ending in a dangling separator.
+size_t slopdesk_simulator_sections(const unsigned char *kinds,
+                                   size_t kind_count,
+                                   const unsigned char *booted,
+                                   size_t booted_count,
+                                   const unsigned char *blob, size_t blob_len,
+                                   const SlopDeskWsSpan *keys, size_t key_count,
+                                   const SlopDeskWsSpan *runtimes,
+                                   size_t runtime_count, unsigned char *out,
+                                   size_t cap);
+
+// What an Android device calls its platform version — `Android 15` from the
+// release string, `API 34` from the level when there is no release, and NO
+// BYTES when the device stated neither. The same spelling the grouping above
+// lifts, so a heading can never print a version the grouping did not compare.
+size_t slopdesk_android_version_label(const unsigned char *release,
+                                      size_t release_len, bool has_release,
+                                      int64_t api_level, bool has_api,
+                                      unsigned char *out, size_t cap);
+
+// ---------------------------------------------------------------------------
 // The superd control socket's framing — `slopdesk_superwire`.
 //
 //     <1 byte tag> <4 bytes big-endian length> <length bytes body>

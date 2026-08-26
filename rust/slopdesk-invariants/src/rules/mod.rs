@@ -1441,6 +1441,11 @@ pub fn registry() -> Vec<Rule> {
             check: device_law::one_device_panel_law,
         },
         Rule {
+            name: "device-list-sectioning",
+            origin: "docs/47-simulator-panel.md",
+            check: device_law::one_sectioning_for_both_panels,
+        },
+        Rule {
             name: "client-pasteboard-and-open",
             origin: "check-supervisor.sh (deleted)",
             check: device_law::one_pasteboard_and_one_open,

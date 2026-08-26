@@ -328,8 +328,10 @@ is up — with one running it is the same click as that card's own stop button u
 repeated down a scanned column is what made the list read as generated — but a heading over a **grid**
 does not stand above every row it names:
 
-- **The runtime is said once per group, in the heading's own cluster.** `section` computes the runtime
-  every member shares and hangs it on the **heading** as `SlateSectionHeader(caption:)` — immediately
+- **The runtime is said once per group, in the heading's own cluster.**
+  `slopdesk_devicepanel::sections` computes the runtime every member shares — the same fold the
+  Android panel lifts a platform version with — and the face hangs it on the **heading** as
+  `SlateSectionHeader(caption:)` — immediately
   after the title, one ink quieter, same engraved register. It is deliberately not the header's
   `accessory` slot: that slot is pinned to the far trailing edge where a *control* belongs, and at
   panel width a qualifier sent there becomes a lone readout marooned across an empty rule. A row
@@ -823,6 +825,7 @@ one control in the panel with no response to the pointer at all — share it.
 | `Simulator/SimulatorStreamConnection.swift` | the one socket (`NWConnection` + websocket) |
 | `Simulator/SimulatorChrome.swift` | pure decoder: `definition.json` — body geometry + button boxes |
 | `Simulator/SimulatorDeviceKind.swift` | face over `slopdesk_simulator_device_kind(s)`: the family, its glyph name and its heading |
+| `Simulator/SimulatorDeviceSections.swift` | face over `slopdesk_simulator_sections`: running first, families in rank order, the runtime a group lifts, the row identity. ONE fold with the Android panel's — see `Shared/DeviceSectionReading.swift` for the delivery both read |
 | `Simulator/SimulatorOrientation.swift` | the quarter-turn cycle + wire spelling + demo status bar, pure |
 | `Simulator/SimulatorControlClient.swift` | every HTTP route (`URLSession`) |
 | `Simulator/SimulatorChromeAssets.swift` | fetches the body + button art into `NSImage`s |

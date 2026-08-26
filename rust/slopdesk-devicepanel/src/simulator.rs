@@ -891,6 +891,13 @@ impl DeviceKind {
     }
 }
 
+/// The heading over the booted simulators.
+///
+/// RUNNING, not "Booted": `simctl`'s word for the state is the row's, and the heading is the
+/// reader's. The Android panel's [`crate::android::ATTACHED_TITLE`] says the other word because a
+/// cabled handset is not something this panel started.
+pub const RUNNING_TITLE: &str = "Running";
+
 /// Every kind in rank order — what the ONE table delivery iterates.
 pub const DEVICE_KINDS: [DeviceKind; 5] = [
     DeviceKind::Phone,

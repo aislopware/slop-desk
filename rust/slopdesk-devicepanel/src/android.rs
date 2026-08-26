@@ -696,6 +696,34 @@ pub fn summary(
     parts.join(" · ")
 }
 
+/// The heading over the devices `adb` has handed a transport id.
+///
+/// ATTACHED, not "Running": a device on the end of a cable is not something this panel started, and
+/// half the rows under it are physical handsets somebody plugged in. The simulator panel's
+/// [`crate::simulator::RUNNING_TITLE`] says the other word for the other reason.
+pub const ATTACHED_TITLE: &str = "Attached";
+
+/// What a device calls its platform version, or `None` when it has said nothing about one.
+///
+/// The release string is the one to print when there is one — `Android 15` is the version a person
+/// reads on the device itself — and the API level is the fallback, because a device that reported
+/// only `ro.build.version.sdk` has still told us more than nothing. An EMPTY release is not a
+/// release: `adb` answers a blank property rather than omitting it, and `Android ` with a dangling
+/// space is the panel printing a fact it does not have.
+///
+/// This is the label [`sections`](crate::sections) lifts into a heading, which is why it has one
+/// spelling: a header printing a version the grouping never compared is the drift the fold exists
+/// to make impossible.
+#[must_use]
+pub fn version_label(release: Option<&str>, api_level: Option<i64>) -> Option<String> {
+    if let Some(release) = release
+        && !release.is_empty()
+    {
+        return Some(format!("Android {release}"));
+    }
+    api_level.map(|level| format!("API {level}"))
+}
+
 /// The trailing text on a row that is not running: the platform version where the heading has not
 /// already said it, and the SCREEN otherwise. Empty for a row with neither.
 ///

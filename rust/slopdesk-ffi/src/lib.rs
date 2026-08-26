@@ -117,6 +117,7 @@ pub mod detach_retention;
 pub mod device_geometry;
 pub mod device_log;
 pub mod device_panel;
+pub mod device_sections;
 pub mod drop_action;
 pub mod drop_register;
 // macOS only: a `tcgetattr` on a PTY master hostd owns. A client is TOLD the answer over the wire

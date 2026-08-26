@@ -55,6 +55,14 @@
 //! speller by accident and now have one on purpose. They are two modules and not one for the
 //! reason each header states: the surfaces look alike and share not one byte of protocol.
 //!
+//! ## And how a flat list becomes a SECTIONED one
+//!
+//! [`sections`] is the seventh, and the clearest case of all: the running group first, the families
+//! in rank order, the fact a whole group agrees on lifted into its heading, and the identity a row
+//! animates on. Two Swift files held that machine twice with different nouns — a runtime on one
+//! side, an Android version on the other — and each panel is drawn by two renderers, so a drift
+//! there would not have been a bug, it would have been two products.
+//!
 //! ## And what the Android sidebar DECIDES
 //!
 //! [`android_sidebar`] is the sixth, and the only one so far that is one panel's alone: which row a
@@ -68,6 +76,7 @@ pub mod android_sidebar;
 pub mod geometry;
 pub mod panel_key;
 pub mod scroll;
+pub mod sections;
 pub mod sim_input;
 pub mod sim_routes;
 pub mod sim_stream;

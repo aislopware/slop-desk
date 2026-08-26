@@ -15,6 +15,14 @@ use crate::tree::Tree;
 const PANEL_ROOTS: &[&str] = &["Sources/SlopDeskPhoneUI", "Sources/SlopDeskDevicePanels"];
 const PANEL_SHARED: &str = "Sources/SlopDeskDevicePanels/Shared/";
 const GEOMETRY: &str = "Sources/SlopDeskDevicePanels/Shared/DevicePanelGeometry.swift";
+/// Every target that draws a device list: the shared panel code and the two renderers over it.
+const SECTION_ROOTS: &[&str] = &[
+    "Sources/SlopDeskDevicePanels",
+    "Sources/SlopDeskPhoneUI",
+    "Sources/SlopDeskMacUI",
+];
+const ANDROID_SECTIONS: &str = "Sources/SlopDeskDevicePanels/Android/AndroidDeviceSections.swift";
+const SIMULATOR_SECTIONS: &str = "Sources/SlopDeskDevicePanels/Simulator/SimulatorDeviceSections.swift";
 
 /// One device-panel law, two device protocols
 ///
@@ -283,6 +291,79 @@ pub fn the_small_rules_are_spelled_once(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// ONE SECTIONING for both device lists, and one spelling of the version it lifts.
+///
+/// The running group first and not cut by family, the families after it in rank order, the fact a
+/// whole group agrees on lifted into its heading, the row identity qualified by that heading: one
+/// machine, and it was written twice — `AndroidDeviceSections` lifting a platform version,
+/// `SimulatorDeviceSections` lifting a runtime, otherwise the same file with different nouns. Each
+/// panel is drawn by TWO renderers, so a drift there would not have been a bug in one list, it
+/// would have been four surfaces disagreeing about what a heading means.
+///
+/// `slopdesk_devicepanel::sections` holds it now, through one door per panel. The bans are on the
+/// four shapes the Swift had, because each is a rule that a re-derivation gets subtly wrong while
+/// looking perfectly reasonable:
+///
+/// * the family grouping — `Dictionary(grouping:)` then a sort by rank, which is where a stable
+///   partition quietly becomes an unstable one and the host's own ordering is lost;
+/// * the lifting — an ABSENT value must count as a disagreement, never as a shared one;
+/// * the version label — `Android 16` vs `API 36`, which the heading compares and the row prints,
+///   so two spellings mean a header stating a version the grouping never compared;
+/// * the row identity — `heading/key`, the value the reflow watches, which is what makes a boot
+///   animate as a move instead of a delete and an insert.
+#[must_use]
+pub fn one_sectioning_for_both_panels(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Doors {
+            path: ANDROID_SECTIONS,
+            entries: &["slopdesk_android_sections", "slopdesk_android_version_label"],
+            message: "Sources/SlopDeskDevicePanels/Android/AndroidDeviceSections.swift no longer calls \
+                      {entry} — the grouping and the version it lifts are slopdesk_devicepanel::sections",
+        },
+        Claim::Doors {
+            path: SIMULATOR_SECTIONS,
+            entries: &["slopdesk_simulator_sections"],
+            message: "Sources/SlopDeskDevicePanels/Simulator/SimulatorDeviceSections.swift no longer calls \
+                      {entry} — both panels section their list through one crate, or they are two products",
+        },
+        Claim::NoneUnder {
+            roots: SECTION_ROOTS,
+            extensions: SWIFT,
+            pattern: r"Dictionary\(grouping:|func shared(Runtime|Version)\(",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "a device list is grouped or has a fact lifted in {files} — the ordering, the family \
+                      cut and the shared-value rule are slopdesk_devicepanel::sections, which is the one \
+                      place an ABSENT value counts as a disagreement",
+        },
+        Claim::NoneUnder {
+            roots: SECTION_ROOTS,
+            extensions: SWIFT,
+            pattern: r#""Android " ?\+|"Android \\\(|"API \\\("#,
+            all: &[],
+            unless: &[],
+            view: View::Statements,
+            exempt: &[],
+            message: "an Android version label is spelled in {files} — the heading compares what the row \
+                      prints, so both read slopdesk_android_version_label",
+        },
+        Claim::NoneUnder {
+            roots: SECTION_ROOTS,
+            extensions: SWIFT,
+            pattern: r#""\\\(title\)/\\\("#,
+            all: &[],
+            unless: &[],
+            view: View::Statements,
+            exempt: &[],
+            message: "a row identity is assembled in {files} — it comes back from the sectioning door, \
+                      qualified by the heading the door itself chose",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -426,6 +507,90 @@ mod tests {
             "UIApplication.shared.open(url)\n",
         );
         assert!(!super::one_pasteboard_and_one_open(&fixture.tree()).is_clean());
+    }
+
+    /// The four ways one list starts sectioning itself differently from the other: it regroups, it
+    /// lifts a fact by its own rule, it respells the version a heading compares, or it assembles
+    /// the identity the reflow watches. All four looked perfectly reasonable in the Swift they
+    /// came out of, and none of them would fail a test written against the panel that still
+    /// agreed with itself.
+    #[test]
+    fn a_second_sectioning_of_a_device_list_is_caught() {
+        let fixture = Fixture::new("device-sections");
+        let android = "\
+slopdesk_android_sections(families, count, transports, count, levels, count, out, cap)
+slopdesk_android_version_label(bytes, len, release != nil, level, apiLevel != nil, out, cap)
+";
+        let simulator = "slopdesk_simulator_sections(families, count, running, count, out, cap)\n";
+        fixture
+            .write(super::ANDROID_SECTIONS, android)
+            .write(super::SIMULATOR_SECTIONS, simulator);
+        assert!(super::one_sectioning_for_both_panels(&fixture.tree()).is_clean());
+
+        // A door dropped: one panel went back to deciding its own groups.
+        fixture.write(
+            super::SIMULATOR_SECTIONS,
+            "// sections(for:) folds the list itself again\n",
+        );
+        let report = super::one_sectioning_for_both_panels(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk_simulator_sections")),
+            "{report:?}"
+        );
+
+        // The grouping and the lifting, back beside a view that then owns its own reading of them.
+        fixture.write(super::SIMULATOR_SECTIONS, simulator).write(
+            "Sources/SlopDeskPhoneUI/Panel/Simulator/SimulatorDeviceList.swift",
+            "let families = Dictionary(grouping: devices) { $0.kind }\n",
+        );
+        let report = super::one_sectioning_for_both_panels(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("grouped or has a fact lifted")),
+            "{report:?}"
+        );
+
+        // The version label respelled where a header prints it — the heading would then compare a
+        // string nothing else builds.
+        let fixture = Fixture::new("device-sections-label");
+        fixture
+            .write(super::ANDROID_SECTIONS, android)
+            .write(super::SIMULATOR_SECTIONS, simulator)
+            .write(
+                "Sources/SlopDeskDevicePanels/Android/AndroidDeviceHeader.swift",
+                "let caption = \"Android \" + release\n",
+            );
+        let report = super::one_sectioning_for_both_panels(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("version label is spelled")),
+            "{report:?}"
+        );
+
+        // And the row identity, assembled by a list that then animates on its own name for a row.
+        let fixture = Fixture::new("device-sections-identity");
+        fixture
+            .write(super::ANDROID_SECTIONS, android)
+            .write(super::SIMULATOR_SECTIONS, simulator)
+            .write(
+                "Sources/SlopDeskMacUI/Panel/Android/MacAndroidDeviceList.swift",
+                "let ids = devices.map { \"\\(title)/\\($0.key)\" }\n",
+            );
+        let report = super::one_sectioning_for_both_panels(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("row identity is assembled")),
+            "{report:?}"
+        );
     }
 
     #[test]

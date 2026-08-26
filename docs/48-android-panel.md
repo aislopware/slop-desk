@@ -343,6 +343,12 @@ dialog is waiting on the device's own screen, and the panel can do nothing while
 in two seconds — provided they are told. Everything with a serial goes in the **Attached** group,
 including that device, because burying it among the switched-off AVDs is where it would hide.
 
+The grouping itself is `slopdesk_devicepanel::sections`, shared with the simulator panel (docs/47):
+the running group first and not cut by family, the families after it in rank order, and the platform
+version lifted into a heading only where every member states the same one — an ABSENT version counts
+as a disagreement. `slopdesk_android_version_label` is the one spelling of `Android 16` / `API 36`,
+so a heading can never claim a version the grouping did not compare.
+
 ---
 
 ## `logcat`

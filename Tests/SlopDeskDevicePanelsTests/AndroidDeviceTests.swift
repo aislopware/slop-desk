@@ -215,7 +215,7 @@ final class AndroidDeviceListSectionTests: XCTestCase {
         var unauthorized = device("phone", serial: "R5CT")
         unauthorized.state = "unauthorized"
         let sections = AndroidDeviceSections.sections(for: [unauthorized, device("cold")])
-        XCTAssertEqual(sections.first?.title, AndroidDeviceSections.runningTitle)
+        XCTAssertEqual(sections.first?.title, "Attached")
         XCTAssertEqual(sections.first?.devices.map(\.key), ["phone"])
         XCTAssertTrue(sections.first?.isRunning == true)
     }
@@ -245,7 +245,9 @@ final class AndroidDeviceListSectionTests: XCTestCase {
     func testAnAbsentVersionIsNotLiftedAsIfItWereAFact() {
         // A heading reading `PHONE ·` would be the panel lifting the absence of a fact into the
         // place it prints facts.
-        XCTAssertNil(AndroidDeviceSections.sharedVersion(of: [device("a", release: nil)]))
+        XCTAssertNil(
+            AndroidDeviceSections.sections(for: [device("a", release: nil)]).first?.version,
+        )
     }
 
     func testARowIdentityIsQualifiedByItsSection() {
