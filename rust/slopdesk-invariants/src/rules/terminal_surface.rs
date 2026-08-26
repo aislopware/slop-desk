@@ -4,7 +4,6 @@
 
 use crate::claim::{Claim, Extract, SWIFT, View, check_all};
 use crate::report::Report;
-use crate::text;
 use crate::tree::Tree;
 
 const SWIFT_LINKS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalLinkDetector.swift";
@@ -13,6 +12,10 @@ const SWIFT_BLOCKS: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalBlock
 const RUST_BLOCKS: &str = "rust/slopdesk-terminal/src/blocks.rs";
 const SWIFT_SEARCH: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift";
 const SWIFT_SEARCH_ACTION: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchSurfaceAction.swift";
+const SWIFT_METRICS: &str = "Sources/SlopDeskTerminal/TerminalSurface.swift";
+const SWIFT_FIT: &str = "Sources/SlopDeskTerminal/TerminalGridFit.swift";
+const RUST_GEOMETRY: &str = "rust/slopdesk-terminal/src/geometry.rs";
+const RUST_LINK_HIT: &str = "rust/slopdesk-terminal/src/link_hit.rs";
 
 /// The input surface: which box to offer, and which bytes coming back are the PTY echoing what the
 /// compose box just typed.
@@ -61,85 +64,64 @@ pub fn input_surface(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
-/// ONE GRID GEOMETRY, spelled on both sides because one side cannot reach the other.
+/// ONE GRID GEOMETRY, and it is `slopdesk_terminal::geometry`.
 ///
-/// `TerminalCellMetrics.rect` turns a detector span into the rect the underline and the hint labels
-/// are DRAWN in; `slopdesk_terminal::link_hit::span_rect` turns the same span into the rect a point
-/// is measured against. They must agree exactly or a link underlines in one place and answers a
-/// click in another — a mismatch nobody reports as a bug, because both halves look right on their
-/// own.
+/// Two questions, one arithmetic. Where a detector span is DRAWN (the ⌘-hold underline, the hint
+/// labels) and where a point is MEASURED against it (`link_hit`) must agree exactly, or a link
+/// underlines in one place and answers a click in another — a mismatch nobody reports, because both
+/// halves look right on their own. Where a grid the client did not choose is LETTERBOXED is the
+/// same target's other geometry, held to the same rounding.
 ///
-/// This is a genuine cross-language pair (docs/55 §8) and it is NOT closed by a door. `rect` lives
-/// in the `SlopDeskTerminal` target, whose whole dependency list is `SlopDeskProtocol`; making it a
-/// face would put `CSlopDeskFFI` into a target that links nothing today, and widen the graph for
-/// two multiplies and two adds on the per-drawn-span path. So the pair stays, and this is what
-/// holds it: each side must spell all four expressions, and anyone editing one has to come here and
-/// edit the other. Whitespace-insensitive, because the two languages punctuate differently and
-/// neither formatter is ours to argue with.
+/// This rule used to hold the pair OPEN. `rect` lived in a target whose whole dependency list was
+/// `SlopDeskProtocol`, so docs/55 §8 recorded it as drift and pinned both spellings instead — each
+/// side had to spell all four expressions, and editing one meant coming here to edit the other. The
+/// letterbox beside it is what changed the arithmetic on that trade: one archive now buys a cluster
+/// rather than two multiplies, so the duplicate is gone and this pins what replaced it.
 ///
-/// Neither may reach for `fma`/`addingProduct`: CLAUDE.md keeps `a * b + c` separate so the two
-/// sides round identically, and a fused multiply-add on ONE of them is a half-cell disagreement on
-/// a wide grid that no test with small numbers in it can see.
+/// The FLOAT ban outlives the duplicate. `slopdesk_grid_*` is the only place the multiplies happen,
+/// but a face that re-derived a width to save a crossing would round its own way on a wide grid,
+/// and no test with small numbers in it would see the half-cell.
 #[must_use]
 pub fn grid_geometry(tree: &Tree) -> Report {
-    /// Each row is one expression, spelled the way each language punctuates it.
-    const SHAPES: [(&str, &str); 3] = [
-        ("originX+cellWidth*", "origin_x+metrics.cell_width*"),
-        ("originY+cellHeight*", "origin_y+metrics.cell_height*"),
-        (
-            "cellWidth*CGFloat(colEnd-colStart)",
-            "metrics.cell_width*(col_end-col_start)",
-        ),
+    let claims = [
+        Claim::Exists {
+            path: RUST_GEOMETRY,
+            message: "the one grid geometry both the drawn rect and the measured hit fold through",
+        },
+        Claim::Doors {
+            path: SWIFT_METRICS,
+            entries: &["slopdesk_grid_rect", "slopdesk_grid_clamped_rect"],
+            message: "TerminalCellMetrics no longer calls {entry} — the span rect is \
+                      slopdesk_terminal::geometry's",
+        },
+        Claim::Doors {
+            path: SWIFT_FIT,
+            entries: &[
+                "slopdesk_grid_fit",
+                "slopdesk_grid_placement",
+                "slopdesk_grid_is_letterboxed",
+            ],
+            message: "TerminalLetterbox no longer calls {entry} — the placement is \
+                      slopdesk_terminal::geometry's",
+        },
+        Claim::NoneOf {
+            paths: &[SWIFT_METRICS, SWIFT_FIT],
+            pattern: r"cellWidth \*|cellHeight \*|addingProduct",
+            view: View::Code,
+            message: "{files} multiplies a cell metric again instead of asking the door — a face that \
+                      re-derives a width rounds its own way, and a half-cell on a wide grid is what no test \
+                      with small numbers in it can see",
+        },
+        Claim::NoneOf {
+            paths: &[RUST_LINK_HIT],
+            pattern: r"mul_add|metrics\.cell_width \*|metrics\.origin_x \+",
+            view: View::Code,
+            message: "{files} spells the span arithmetic again instead of folding through `geometry` — the \
+                      cross-language pair this rule used to hold OPEN is closed, and a second spelling \
+                      anywhere reopens it",
+        },
     ];
-
-    let mut report = Report::new();
-    let (Some(swift), Some(rust)) = (
-        report.source(
-            tree,
-            "Sources/SlopDeskTerminal/TerminalSurface.swift",
-            "TerminalCellMetrics.rect lives there",
-        ),
-        report.source(
-            tree,
-            "rust/slopdesk-terminal/src/link_hit.rs",
-            "link_hit::span_rect lives there",
-        ),
-    ) else {
-        return report;
-    };
-
-    let squeeze = |text: &str| text.chars().filter(|c| !c.is_whitespace()).collect::<String>();
-    let swift_rect = squeeze(&text::range(&swift.text, r"func rect\(row:", r"^    \}"));
-    let rust_rect = squeeze(&text::range(&rust.text, r"fn span_rect\(", r"^\}"));
-
-    report.fail_if(
-        swift_rect.is_empty(),
-        "TerminalCellMetrics.rect is gone — its Rust twin still measures a hit",
-    );
-    report.fail_if(
-        rust_rect.is_empty(),
-        "link_hit::span_rect is gone — the drawn rect has nothing left to agree with",
-    );
-    for (swift_shape, rust_shape) in SHAPES {
-        report.fail_if(
-            !swift_rect.contains(swift_shape),
-            format!(
-                "TerminalCellMetrics.rect no longer spells '{swift_shape}' — link_hit::span_rect still does",
-            ),
-        );
-        report.fail_if(
-            !rust_rect.contains(rust_shape),
-            format!(
-                "link_hit::span_rect no longer spells '{rust_shape}' — TerminalCellMetrics.rect still does",
-            ),
-        );
-    }
-    report.fail_if(
-        text::matches(&swift_rect, "addingProduct|mul_add")
-            || text::matches(&rust_rect, "addingProduct|mul_add"),
-        "the grid geometry fused a multiply-add — the two sides must round the same way",
-    );
-    report
+    check_all(tree, &claims)
 }
 
 /// The LINK SCAN: paths, `path:line:col` diagnostics and URLs in the rows of the grid.
@@ -348,58 +330,95 @@ mod tests {
     use crate::tests::Fixture;
 
     /// The mismatch nobody reports as a bug: a link underlines in one place and answers a click in
-    /// another, because both halves look right on their own.
+    /// another, because both halves look right on their own. It is a door now, so what this seeds
+    /// is the RETURN of the arithmetic — on either side of it.
     #[test]
-    fn the_two_halves_of_the_grid_geometry_must_both_spell_it() {
-        let swift = "\
+    fn neither_half_of_the_grid_geometry_may_spell_it_again() {
+        let metrics = "\
 extension TerminalCellMetrics {
     func rect(row: Int, colStart: Int, colEnd: Int) -> CGRect {
-        let x = originX + cellWidth * CGFloat(colStart)
-        let y = originY + cellHeight * CGFloat(row)
-        let w = cellWidth * CGFloat(colEnd - colStart)
-        return CGRect(x: x, y: y, width: w, height: cellHeight)
+        Self.cgRect(slopdesk_grid_rect(cellWidth, cellHeight, originX, originY,
+                                       Int64(row), Int64(colStart), Int64(colEnd)))
+    }
+
+    func clampedRect(row: Int, colStart: Int, colEnd: Int) -> CGRect? {
+        let span = slopdesk_grid_clamped_rect(cellWidth, cellHeight, originX, originY,
+                                              Int64(cols), Int64(row), Int64(colStart), Int64(colEnd))
+        return span.present ? Self.cgRect(span) : nil
     }
 }
 ";
-        let rust = "\
-fn span_rect(metrics: &Metrics, row: usize, col_start: usize, col_end: usize) -> Rect {
-    let x = metrics.origin_x + metrics.cell_width * col_start as f64;
-    let y = metrics.origin_y + metrics.cell_height * row as f64;
-    let w = metrics.cell_width * (col_end - col_start) as f64;
-    Rect { x, y, w, h: metrics.cell_height }
+        let fit = "\
+extension TerminalLetterbox {
+    var isLetterboxed: Bool { slopdesk_grid_is_letterboxed(contentRect.origin.x, contentRect.origin.y) }
+    static func fit(cols: Int, rows: Int) -> Self? { unwrap(slopdesk_grid_fit(Int64(cols), Int64(rows))) }
+    static func placement(cols: Int, rows: Int) -> Placement? {
+        unwrap(slopdesk_grid_placement(Int64(cols), Int64(rows)))
+    }
+}
+";
+        let hit = "\
+fn span_rect(metrics: CellMetrics, span: LinkSpan) -> Rect {
+    geometry::rect(metrics, widen(span.row), widen(span.col_start), widen(span.col_end))
 }
 ";
         let fixture = Fixture::new("grid-geometry");
         fixture
-            .write("Sources/SlopDeskTerminal/TerminalSurface.swift", swift)
-            .write("rust/slopdesk-terminal/src/link_hit.rs", rust);
+            .write("rust/slopdesk-terminal/src/geometry.rs", "pub fn rect() {}\n")
+            .write("Sources/SlopDeskTerminal/TerminalSurface.swift", metrics)
+            .write("Sources/SlopDeskTerminal/TerminalGridFit.swift", fit)
+            .write("rust/slopdesk-terminal/src/link_hit.rs", hit);
         assert!(super::grid_geometry(&fixture.tree()).is_clean());
 
-        // The banned token is assembled rather than spelled: `no-fused-multiply-add` bans a fused
-        // multiply-add ANYWHERE in the tree, and a break-test that seeds one has to seed it without
-        // being one. Same reason the shell's own break-tests could only be prose.
-        let fused = format!(
-            "metrics.cell_width.{}(col_start as f64, metrics.origin_x)",
-            concat!("mul", "_add")
-        );
+        // The Swift half drifts first: a face that "saves a crossing" by deriving the width itself.
         fixture.write(
-            "rust/slopdesk-terminal/src/link_hit.rs",
-            &rust.replace("metrics.origin_x + metrics.cell_width * col_start as f64", &fused),
+            "Sources/SlopDeskTerminal/TerminalSurface.swift",
+            &metrics.replace(
+                "Self.cgRect(slopdesk_grid_rect(cellWidth",
+                "CGRect(x: originX, y: originY, width: cellWidth * CGFloat(colEnd - colStart), height: \
+                 cellHeight); _ = (slopdesk_grid_rect(cellWidth",
+            ),
         );
         let report = super::grid_geometry(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("fused a multiply-add")),
+                .any(|v| v.contains("multiplies a cell metric again")),
             "{report:?}"
         );
+
+        // Then the Rust half, with the fused multiply-add the whole ban exists for. The token is
+        // ASSEMBLED rather than spelled: `no-fused-multiply-add` bans one anywhere in the tree, so a
+        // break-test that seeds one has to seed it without being one.
+        fixture
+            .write("Sources/SlopDeskTerminal/TerminalSurface.swift", metrics)
+            .write(
+                "rust/slopdesk-terminal/src/link_hit.rs",
+                &hit.replace(
+                    "geometry::rect(metrics,",
+                    &format!(
+                        "metrics.cell_width.{}(1.0, metrics.origin_x); geometry::rect(metrics,",
+                        concat!("mul", "_add")
+                    ),
+                ),
+            );
+        let report = super::grid_geometry(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("origin_x+metrics.cell_width*")),
+                .any(|v| v.contains("spells the span arithmetic again")),
             "{report:?}"
+        );
+
+        // And the crate the whole rule folds through, gone.
+        fixture.remove("rust/slopdesk-terminal/src/geometry.rs");
+        assert!(
+            super::grid_geometry(&fixture.tree())
+                .violations()
+                .iter()
+                .any(|v| v.contains("both the drawn rect and the measured hit fold through")),
         );
     }
 

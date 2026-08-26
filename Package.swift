@@ -327,7 +327,16 @@ let package = Package(
 
         // TerminalSurface protocol + HeadlessTerminalSurface. The libghostty-backed GhosttySurface
         // lives in the GUI app target (WF-5) and conforms to the same protocol.
-        .target(name: "SlopDeskTerminal", dependencies: ["SlopDeskProtocol"]),
+        //
+        // CSlopDeskFFI: the GEOMETRY here — where a cell span draws, where a grid the client did not
+        // choose is letterboxed — is `slopdesk_terminal::geometry`. It was the one drift pair docs/55
+        // §8 left deliberately open, because `rect` alone did not justify linking an archive into a
+        // target whose whole dependency list was `SlopDeskProtocol`. The letterbox beside it did.
+        .target(
+            name: "SlopDeskTerminal",
+            dependencies: ["SlopDeskProtocol", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
+        ),
 
         // The leaf that owns a RAW DESCRIPTOR on the Swift side: local-terminal raw mode, termios
         // save/restore, TIOCGWINSZ/TIOCSWINSZ, and the `write(2)`-until-done loop six call sites

@@ -47,6 +47,20 @@ const PERFORMERS: &[&str] = &[
     "Sources/SlopDeskHost/HostAndroidPerformer.swift",
 ];
 
+/// The face that answers whether an arriving mux frame is admissible, and what a channel's ending
+/// tears down.
+const DOORMAN_FACE: &str = "Sources/SlopDeskTransport/Mux/MuxAdmission.swift";
+
+/// Every door that face must keep asking. Three, and a face that drops one has re-derived it.
+const DOORMAN_DOORS: &[&str] = &[
+    "slopdesk_mux_admit",
+    "slopdesk_mux_teardown_poisoned",
+    "slopdesk_mux_teardown_peer_close",
+];
+
+/// The connection that routes frames through those verdicts and owns nothing else about them.
+const MUX_CONNECTION: &str = "Sources/SlopDeskTransport/Mux/MuxNWConnection.swift";
+
 /// The face that answers a pane's own arc: the start claim, the detach/rebind guards, the resume
 /// cursor and the two exit latches.
 const LIFECYCLE_FACE: &str = "Sources/SlopDeskHost/PaneLifecycle.swift";
@@ -675,6 +689,56 @@ pub fn one_arc_one_ladder(tree: &Tree) -> Report {
     check_all(tree, &claims)
 }
 
+/// One frame, one doorman.
+///
+/// The four guards in front of the demux rule, and the two teardowns behind it, are
+/// `slopdesk_wire`'s `mux::admission`. What this pins is not that they moved but that they cannot
+/// grow back.
+///
+/// Each guard bounds something a correct peer never touches: a router table grown forever by
+/// over-cap opens, a phantom control-table entry nothing closes, one fresh PTY per open/close cycle
+/// on a single reused id. None of the four fails a build, and the PRECEDENCE between them is
+/// load-bearing — a cap checked after the table advances is a cap that stopped bounding the table
+/// it was written to bound. A hand-written `if role == .host, link == .data, case .channelOpen`
+/// beside the door is that precedence forking in two.
+///
+/// The teardown half is banned by the same shape: a channel that ends on one link has to reach the
+/// other, and a hand-rolled `localClose`/`remoteClose` in the connection is the branch that leaves
+/// a shell with no close trigger left.
+#[must_use]
+pub fn one_frame_one_doorman(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: DOORMAN_FACE,
+            message: "Sources/SlopDeskTransport/Mux/MuxAdmission.swift is gone — whether a frame is \
+                      admissible, and what a channel's ending tears down, are not MuxNWConnection's to \
+                      re-derive (docs/59 §5)",
+        },
+        Claim::Doors {
+            path: DOORMAN_FACE,
+            entries: DOORMAN_DOORS,
+            message: "Sources/SlopDeskTransport/Mux/MuxAdmission.swift no longer calls {entry} — a face \
+                      that drops a door is a guard growing back beside the one that owns it",
+        },
+        Claim::NoneOf {
+            paths: &[MUX_CONNECTION],
+            pattern: r"maxChannelsPerConnection",
+            view: View::Code,
+            message: "{files} reads the per-connection channel cap itself — the cap is one CLAUSE of a \
+                      four-guard precedence, and a copy of it here is the bound being re-checked at a point \
+                      in that order nobody chose (docs/59 §5)",
+        },
+        Claim::Doors {
+            path: MUX_CONNECTION,
+            entries: &["MuxDoorman.admit", "MuxDoorman.poisoned", "MuxDoorman.peerClose"],
+            message: "Sources/SlopDeskTransport/Mux/MuxNWConnection.swift no longer asks {entry} — a frame \
+                      routed past the doorman, or an ending torn down without its verdict, is the guard \
+                      this rule exists for written a second time",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -994,6 +1058,54 @@ mod tests {
         // A bare tree has no face at all.
         let bare = Fixture::new("one-arc-one-ladder-bare");
         assert!(!super::one_arc_one_ladder(&bare.tree()).is_clean());
+    }
+
+    /// A tree where the four guards and the two teardowns live on one side, and the connection
+    /// asks for all three verdicts.
+    fn write_one_frame_one_doorman(fixture: &Fixture) {
+        let mut face = String::new();
+        for door in super::DOORMAN_DOORS {
+            face.push_str(door);
+            face.push_str("()\n");
+        }
+        fixture.write(super::DOORMAN_FACE, &face).write(
+            super::MUX_CONNECTION,
+            "MuxDoorman.admit(role: role)\nMuxDoorman.poisoned(role: role)\nMuxDoorman.peerClose(role: \
+             role)\n",
+        );
+    }
+
+    #[test]
+    fn one_frame_one_doorman_keeps_the_precedence_on_one_side() {
+        let fixture = Fixture::new("one-frame-one-doorman");
+        write_one_frame_one_doorman(&fixture);
+        assert!(super::one_frame_one_doorman(&fixture.tree()).is_clean());
+
+        // The face stopped asking — a guard grew back beside the one that owns it.
+        fixture.write(super::DOORMAN_FACE, "slopdesk_mux_admit()\n");
+        assert!(!super::one_frame_one_doorman(&fixture.tree()).is_clean());
+
+        // A second copy of the cap: the bound re-checked at a point in the order nobody chose.
+        write_one_frame_one_doorman(&fixture);
+        fixture.append(
+            super::MUX_CONNECTION,
+            "dataChannels.count >= MuxFlowControl.maxChannelsPerConnection\n",
+        );
+        assert!(!super::one_frame_one_doorman(&fixture.tree()).is_clean());
+
+        // Each verdict the connection must keep asking for, dropped one at a time.
+        for kept in ["admit", "poisoned", "peerClose"] {
+            write_one_frame_one_doorman(&fixture);
+            fixture.write(super::MUX_CONNECTION, &format!("MuxDoorman.{kept}(role: role)\n"));
+            assert!(
+                !super::one_frame_one_doorman(&fixture.tree()).is_clean(),
+                "the doors claim passed with only {kept}",
+            );
+        }
+
+        // A bare tree has no face at all.
+        let bare = Fixture::new("one-frame-one-doorman-bare");
+        assert!(!super::one_frame_one_doorman(&bare.tree()).is_clean());
     }
 
     #[test]

@@ -30,7 +30,10 @@ import SlopDeskProtocol
 /// All mutable state (decoders, routers, dispatch tables) lives inside this `actor`.
 public actor MuxNWConnection {
     /// Whether this end allocates channel ids (client/odd) or only registers peer ids (host).
-    public enum Role: Sendable { case client, host }
+    ///
+    /// An alias rather than a second enum: ``MuxEnd`` is what the admission rule reads, and two
+    /// spellings of one end of one connection is how a guard comes to be written for one of them.
+    public typealias Role = MuxEnd
 
     /// Stable per-connection identity (the wire `connectionID` that paired the CONTROL+DATA
     /// sockets — see ``HostTransport/associateMux``). The host namespaces its per-channel sessions
@@ -263,7 +266,51 @@ public actor MuxNWConnection {
 
     // MARK: - Internals
 
-    private enum Link { case control, data }
+    /// An alias, for ``Role``'s reason: the admission and teardown rules are functions of a link,
+    /// and a link spelled twice is a rule that can be asked about the wrong one.
+    private typealias Link = MuxLink
+
+    /// Applies the bookkeeping half of a ``MuxTeardown`` — unregister what it names, advance each
+    /// table as it says — and hands back the sub-channels it removed.
+    ///
+    /// It does NOT finish them, and the split is deliberate: how a sub-channel is finished depends
+    /// on whether the peer named a reason for it, which is the caller's question, and every removal
+    /// and every table step here completes with no suspension in between. The `await`s follow, so
+    /// nothing can observe this connection half torn down.
+    private func unregister(
+        _ verdict: MuxTeardown,
+        channelID: UInt32,
+    ) -> (data: MuxSubChannel?, control: MuxSubChannel?) {
+        var data: MuxSubChannel?
+        var control: MuxSubChannel?
+        if verdict.dropData {
+            data = dataChannels.removeValue(forKey: channelID)
+            dataReceiveWindows.removeValue(forKey: channelID) // drop credit state
+        }
+        if verdict.dropControl { control = controlChannels.removeValue(forKey: channelID) }
+        advance(dataTable, by: verdict.dataTable, channelID: channelID)
+        advance(controlTable, by: verdict.controlTable, channelID: channelID)
+        return (data, control)
+    }
+
+    /// Fires — or buffers — the host's close hook, which reaps the PTY.
+    ///
+    /// Called AFTER the sub-channels are finished, and never on the client. If the handler is not
+    /// installed yet (a close racing ahead of `setHostCloseHandler`) the reap is BUFFERED rather
+    /// than dropped: dropping it leaks the PTY and its master fd.
+    private func reap(_ verdict: MuxTeardown, channelID: UInt32) {
+        guard verdict.reap else { return }
+        if let hostCloseHandler { hostCloseHandler(channelID) } else { pendingHostCloses.append(channelID) }
+    }
+
+    /// Steps one channel table as a verdict says to.
+    private func advance(_ table: ChannelTable, by step: MuxTableStep, channelID: UInt32) {
+        switch step {
+        case .hold: break // the router already applied this one, or nothing about this link ended.
+        case .localClose: table.localClose(channelID)
+        case .remoteClose: table.remoteClose(channelID)
+        }
+    }
 
     /// Builds the data + control sub-channels for `id`, each with a `muxSend` that wraps this
     /// channel's framed bytes in a `.channelData` envelope and writes them on the matching link.
@@ -358,45 +405,35 @@ public actor MuxNWConnection {
     /// Applies the pure ``MuxRoutingCore`` decision for one frame on one link. `async` so it can
     /// `await` per-channel delivery inline (preserving per-link frame order — see ``ingest``).
     private func route(_ frame: MuxFrame, on link: Link) async {
-        // Enforce the per-connection channel cap BEFORE the router records the new id in
-        // `dataTable.states`. Checking AFTER `MuxRoutingCore.route` advances the table would let a
-        // hostile peer spamming distinct over-cap `channelOpen` ids still grow the router table
-        // without bound (a cheap memory-DoS; the EXPENSIVE PTY/fork is already bounded). Refuse a NEW
-        // over-cap open here and RETURN without advancing the table or registering.
-        if role == .host, link == .data, case let .channelOpen(id, _, _, _, _) = frame,
-           dataChannels[id] == nil, dataChannels.count >= MuxFlowControl.maxChannelsPerConnection
-        {
-            // Pipelined: emitted from the receive loop — must never suspend it (same
-            // rationale as the windowAdjust grant below).
-            let refusal = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false, resumeFromSeq: 0))
-            dataLink.sendPipelined(refusal)
+        // The four guards in front of the router — over-cap, wrong link, wrong role, stale reopen —
+        // are `slopdesk_wire`'s `mux::admission`, and their PRECEDENCE is the reason they left. Each
+        // bounds something a correct peer never touches (a router table, a phantom control entry,
+        // one fresh PTY per open/close cycle on a single id) and none of them fails a build; a cap
+        // checked after the table advances is a cap that stopped bounding the table it was written
+        // to bound. See ``MuxDoorman``.
+        let id = frame.channelID
+        switch MuxDoorman.admit(
+            role: role,
+            link: link,
+            frame: frame.muxType,
+            registered: dataChannels[id] != nil,
+            liveChannels: dataChannels.count,
+            priorDataState: dataTable.state(of: id),
+        ) {
+        case .proceed:
+            break
+        case .refuse:
+            // Pipelined: emitted from the receive loop — must never suspend it (same rationale as
+            // the windowAdjust grant below). The refusal always rides the DATA link, which is the
+            // only link an open is initiated on and so the only one the initiator is listening for
+            // an ack on.
+            dataLink.sendPipelined(
+                MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false, resumeFromSeq: 0)),
+            )
             return
-        }
-        // A `channelOpen` is NEVER legitimate on the CONTROL link — the client always opens on the
-        // DATA link (`openChannel` → `dataLink.send`). The cap above is `link == .data`, so a hostile
-        // peer could otherwise spam channelOpen on the CONTROL link and grow `controlTable` without
-        // bound. Drop it before `MuxRoutingCore.route` (which would `open(id)` a phantom controlTable
-        // entry).
-        if link == .control, case .channelOpen = frame { return }
-        // The CLIENT never legitimately receives `channelOpen` either — the host is a pure responder
-        // (every open originates in the client's `openChannel`). Routing one would `open(id)` a
-        // phantom entry in the client's dataTable that is never closed and therefore never
-        // ring-evicted (the terminal ring only bounds half-closed/closed ids): unbounded state growth
-        // from a buggy/compromised host — the client-side mirror of the CONTROL-link drop above and of
-        // the host's over-cap refusal, which are both host/control-only.
-        if role == .client, case .channelOpen = frame { return }
-        // A `channelOpen` for an id that already reached a TERMINAL state on this connection is a
-        // stale/hostile REOPEN — ids are monotonic and never reused by a well-behaved client. The
-        // dispatch entry was removed at close, so the registration block's `dataChannels[id] == nil`
-        // gate alone would re-register the id and re-invoke `hostOpenHandler`: one fresh PTY fork per
-        // open→close cycle on a SINGLE reused id, unbounded — the live-channel cap never trips (count
-        // stays ~1 during churn) and the ChannelTable ring only bounds table MEMORY, not spawns.
-        // Refuse before the router.
-        if role == .host, link == .data, case let .channelOpen(id, _, _, _, _) = frame,
-           let priorState = dataTable.state(of: id), priorState == .closed || priorState == .halfClosed
-        {
-            let refusal = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false, resumeFromSeq: 0))
-            dataLink.sendPipelined(refusal)
+        case .drop:
+            // Nothing legitimate is waiting on an answer: an ack for either case would be an ack on
+            // a link or at a role that does not carry them.
             return
         }
 
@@ -487,35 +524,17 @@ public actor MuxNWConnection {
                 // (finish the control sibling, terminal-close both tables, fire the reap hook) so a
                 // poisoned channel never leaves a zombie shell behind.
                 if target.isFinished {
-                    if link == .control {
-                        controlChannels.removeValue(forKey: channelID)
-                        controlTable.localClose(channelID)
-                        if role == .host {
-                            // The pair anchors ONE terminal session — a poisoned CONTROL channel
-                            // must reap the DATA sibling + PTY exactly like a poisoned data
-                            // channel, or the shell outlives its only close trigger as a zombie
-                            // (the peer's side already finished; no further channelClose is coming).
-                            if let dataCh = dataChannels.removeValue(forKey: channelID) {
-                                await dataCh.finish()
-                            }
-                            dataReceiveWindows.removeValue(forKey: channelID)
-                            dataTable.localClose(channelID)
-                            if let hostCloseHandler { hostCloseHandler(channelID) }
-                            else { pendingHostCloses.append(channelID) }
-                        }
-                    } else {
-                        dataChannels.removeValue(forKey: channelID)
-                        dataReceiveWindows.removeValue(forKey: channelID)
-                        dataTable.localClose(channelID)
-                        if role == .host {
-                            if let controlCh = controlChannels.removeValue(forKey: channelID) {
-                                await controlCh.finish()
-                            }
-                            controlTable.localClose(channelID)
-                            if let hostCloseHandler { hostCloseHandler(channelID) }
-                            else { pendingHostCloses.append(channelID) }
-                        }
-                    }
+                    // The pair anchors ONE terminal session, so on the host a poisoned channel on
+                    // EITHER link reaps its sibling and the PTY behind it — the peer's side is
+                    // already finished, and no further channelClose is coming to do it.
+                    let verdict = MuxDoorman.poisoned(role: role, link: link)
+                    let dropped = unregister(verdict, channelID: channelID)
+                    // The arriving link's own sub-channel is the one that faulted: already finished,
+                    // and finishing it again is the redundant wake this leaves out on purpose. The
+                    // SIBLING has not heard anything yet.
+                    if link == .control { await dropped.data?.finish() }
+                    else { await dropped.control?.finish() }
+                    reap(verdict, channelID: channelID)
                     return
                 }
                 // Await INLINE (no Task) so this frame is fully delivered before the next frame on
@@ -532,44 +551,35 @@ public actor MuxNWConnection {
             }
         case let .lifecycle(channelID, newState):
             if newState == .closed || newState == .halfClosed {
-                // Peer closed this channel on this link — finish its inbound so the consumer ends.
+                // A peer close on the DATA link tears down the WHOLE channel, sibling included: a
+                // client that closes both links makes the sibling step a harmless no-op, and one
+                // that closes DATA only would otherwise leak a sub-channel plus an `.open`
+                // control-table entry the eviction ring — which walks terminal ids — never collects.
+                let verdict = MuxDoorman.peerClose(role: role, link: link)
+                let dropped = unregister(verdict, channelID: channelID)
+                let arriving = (link == .control) ? dropped.control : dropped.data
                 // Await inline so a close never overtakes an earlier deliver (dropping the tail).
-                let target = (link == .control) ? controlChannels.removeValue(forKey: channelID)
-                    : dataChannels.removeValue(forKey: channelID)
-                if link == .data { dataReceiveWindows.removeValue(forKey: channelID) } // drop credit state
+                //
                 // A `channelClose` FRAME is the peer closing this ONE channel, and the sub-channel
                 // records that with the peer's REASON (``MuxSubChannel/peerCloseReason``) so the
                 // consumer can tell it apart both from the link dying under it and from the other
                 // kind of close. Keyed on the frame, NOT on `newState`: a REFUSED `channelOpenAck`
                 // also resolves to `.closed` here, and a refusal is an answer about an open this
-                // side is still making — not a closed channel.
+                // side is still making — not a closed channel. The SIBLING is finished plainly: the
+                // peer named this link, and said nothing about the other one.
                 if case let .channelClose(_, reason) = frame {
-                    if let target { await target.finishClosedByPeer(reason: reason) }
-                } else if let target {
-                    await target.finish()
+                    await arriving?.finishClosedByPeer(reason: reason)
+                } else {
+                    await arriving?.finish()
                 }
-                // Drive host relay shutdown for a PEER channelClose. Without a per-channel
-                // reconnect/resume mechanism, a cleanly-closed channel's shell must NOT be kept alive —
-                // otherwise the PTY + master fd leak on every clean close. Keyed off the DATA link
-                // (symmetric to the DATA-link `hostOpenHandler` above) so it fires exactly ONCE per
-                // channel, AFTER this link's sub-channel is finished. Host wiring maps it to
-                // `removeMuxSession(channelID)` → `MuxChannelSession.shutdown()`. No-op on the client.
-                // If the handler is not installed YET (close raced ahead of `setHostCloseHandler`),
-                // BUFFER it so the shell is reaped once the handler attaches — never dropped (PTY +
-                // master fd leak).
-                if role == .host, link == .data {
-                    // Symmetric to the channelOpen mirror (registerChannels + `controlTable.open` at
-                    // open): a peer close on the DATA link tears down the WHOLE channel, so also drop the
-                    // CONTROL sub-channel and advance the control table to terminal. A well-behaved client
-                    // ALSO sends channelClose on the control link (closeChannel sends both) → harmless
-                    // no-op there — but a peer closing on DATA ONLY would otherwise leak controlChannels[id]
-                    // + a zombie `.open` controlTable[id] forever, unbounded sub-channel + router-table
-                    // growth the live-count cap never catches under open/close churn. The terminal
-                    // control-table entry is then bounded by ChannelTable's eviction ring.
-                    if let controlCh = controlChannels.removeValue(forKey: channelID) { await controlCh.finish() }
-                    controlTable.remoteClose(channelID)
-                    if let hostCloseHandler { hostCloseHandler(channelID) } else { pendingHostCloses.append(channelID) }
-                }
+                if link == .control { await dropped.data?.finish() }
+                else { await dropped.control?.finish() }
+                // Drive host relay shutdown for a PEER channelClose, AFTER the sub-channels are
+                // finished. Without a per-channel reconnect/resume mechanism a cleanly-closed
+                // channel's shell must NOT be kept alive — the PTY and its master fd would leak on
+                // every clean close. Host wiring maps it to `removeMuxSession(channelID)` →
+                // `MuxChannelSession.shutdown()`; no-op on the client, which has no PTY to reap.
+                reap(verdict, channelID: channelID)
             }
         case .dropUnknownChannel:
             break // stale / hostile frame — dropped, never a crash (router contract).

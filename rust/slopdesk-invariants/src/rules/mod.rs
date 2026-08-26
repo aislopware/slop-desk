@@ -1531,6 +1531,11 @@ pub fn registry() -> Vec<Rule> {
             check: hot_paths::one_arc_one_ladder,
         },
         Rule {
+            name: "one-frame-one-doorman",
+            origin: "docs/59 §5",
+            check: hot_paths::one_frame_one_doorman,
+        },
+        Rule {
             name: "one-metadata-verb-one-performer",
             origin: "docs/59 §5, step 8",
             check: hot_paths::one_metadata_verb_one_performer,

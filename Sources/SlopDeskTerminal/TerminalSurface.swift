@@ -1,4 +1,5 @@
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 
 /// The seam between the byte pipeline and a terminal renderer.
@@ -143,15 +144,14 @@ public struct TerminalCellMetrics: Sendable, Equatable {
     /// space. The SINGLE source of truth the underline + hint-label overlays both reuse, so the
     /// geometry can never drift between them.
     ///
-    /// Plain separate `*` then `+` (NEVER `addingProduct`/`fma`, per CLAUDE.md §2 — this is view
-    /// geometry, not the codec/controller cluster, but the habit is kept):
-    /// `x = originX + cellWidth*colStart`, `width = cellWidth*(colEnd − colStart)`. `colEnd` is
-    /// exclusive (matching ``TerminalLinkDetector``).
+    /// `colEnd` is exclusive (matching ``TerminalLinkDetector``). The arithmetic is
+    /// `slopdesk_terminal::geometry`, which is also what `link_hit`'s own span rect calls: the two
+    /// were the drift pair docs/55 §8 recorded and left open, and they are one implementation now.
     public func rect(row: Int, colStart: Int, colEnd: Int) -> CGRect {
-        let x = originX + cellWidth * CGFloat(colStart)
-        let y = originY + cellHeight * CGFloat(row)
-        let width = cellWidth * CGFloat(colEnd - colStart)
-        return CGRect(x: x, y: y, width: width, height: cellHeight)
+        Self.cgRect(slopdesk_grid_rect(
+            cellWidth, cellHeight, originX, originY,
+            Int64(row), Int64(colStart), Int64(colEnd),
+        ))
     }
 
     /// The ``rect(row:colStart:colEnd:)`` for a span CLAMPED to the visible grid, or `nil` when the span
@@ -163,10 +163,18 @@ public struct TerminalCellMetrics: Sendable, Equatable {
     /// skipped rather than painted in the void. A degenerate clamp (`colEnd <= colStart` after clamping)
     /// also returns `nil`.
     public func clampedRect(row: Int, colStart: Int, colEnd: Int) -> CGRect? {
-        guard cols > 0, colStart >= 0, colStart < cols else { return nil }
-        let clampedEnd = min(colEnd, cols)
-        guard clampedEnd > colStart else { return nil }
-        return rect(row: row, colStart: colStart, colEnd: clampedEnd)
+        let span = slopdesk_grid_clamped_rect(
+            cellWidth, cellHeight, originX, originY, Int64(cols),
+            Int64(row), Int64(colStart), Int64(colEnd),
+        )
+        return span.present ? Self.cgRect(span) : nil
+    }
+
+    /// A verdict, read back. `present` is checked by the CALLER before this runs — an absent rect
+    /// leaves its four coordinates untouched, and reading them anyway is the one mistake the
+    /// value-plus-flag shape exists to make visible rather than plausible.
+    private static func cgRect(_ verdict: SlopDeskGridRect) -> CGRect {
+        CGRect(x: verdict.x, y: verdict.y, width: verdict.width, height: verdict.height)
     }
 }
 

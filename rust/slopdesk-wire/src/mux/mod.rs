@@ -14,6 +14,12 @@
 //! module parses them. That is what lets one connection route pane channels and the workspace
 //! document without either knowing the other exists.
 //!
+//! ## The three questions about one frame
+//! [`admission`] answers whether the connection reasons about the frame at all, [`channels`]
+//! answers where it goes, and [`admission`] again answers what a channel's ENDING reaches — the two
+//! sub-channels a pane rides on and the two tables behind them. They are kept apart from the
+//! envelope and the decoder for the reason below: none of the three touches a byte of payload.
+//!
 //! ## What is here and what is not
 //! Everything in this module is a pure function of its inputs — no socket, no clock, no thread. The
 //! parts that need those (the router, the send gate, the relay) are the caller's, and they are why
@@ -25,6 +31,7 @@
 //! field-by-field in both directions. That corpus is generated from the Swift codec and predates
 //! this module.
 
+pub mod admission;
 pub mod channels;
 pub mod decoder;
 pub mod envelope;

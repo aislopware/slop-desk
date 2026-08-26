@@ -148,6 +148,7 @@ pub mod global_search;
 // macOS only: behind it is a vendored `libgit2`, and only hostd asks the question. See the module.
 #[cfg(target_os = "macos")]
 pub mod git_status;
+pub mod grid_geometry;
 pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
@@ -191,6 +192,7 @@ pub mod metadata_admission;
 pub mod metadata_wire;
 pub mod mint_rescue;
 pub mod mirror_fold;
+pub mod mux_admission;
 pub mod mux_channels;
 pub mod mux_client;
 pub mod mux_decoder;

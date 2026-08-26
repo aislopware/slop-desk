@@ -1,4 +1,5 @@
 import CoreGraphics
+import CSlopDeskFFI
 import Foundation
 import SlopDeskProtocol
 
@@ -8,8 +9,13 @@ import SlopDeskProtocol
 /// resolved grid is whatever the Macs on that pane settled on. The phone therefore has to place a
 /// grid that is almost never its own aspect — shrunk to fit, centred, with bars for the remainder.
 ///
-/// A pure value: the SwiftUI path it drives compiles only under the iOS triple (`check-ios.sh`),
-/// so the arithmetic lives here where it can be tested.
+/// The arithmetic is `slopdesk_terminal`'s `geometry`. It went there with
+/// ``TerminalCellMetrics/rect(row:colStart:colEnd:)``, and the two moved together for a reason
+/// neither could have carried alone: `rect` had a live Rust twin in `link_hit::span_rect` —
+/// recorded there as docs/55 §8's drift class and left open because facing two multiplies and two
+/// adds would have put `CSlopDeskFFI` into a target that linked nothing. The letterbox is the same
+/// target's other geometry, with the same bit-exactness discipline, so one dependency now buys a
+/// cluster and closes the drift pair on the way.
 public struct TerminalLetterbox: Sendable, Equatable {
     /// Where the grid draws, in the container's own coordinate space (points, top-left origin).
     public var contentRect: CGRect
@@ -24,8 +30,11 @@ public struct TerminalLetterbox: Sendable, Equatable {
 
     /// Whether any bar is drawn — i.e. the content does not fill the container in at least one axis.
     /// An exact fit reports `false` so a pane that is already right gains no hairline.
+    ///
+    /// Asked of the door rather than stored beside the rect: a cached answer is a second thing to
+    /// keep in step, and an exact fit that grew a hairline is what that drift would look like.
     public var isLetterboxed: Bool {
-        contentRect.origin.x > 0 || contentRect.origin.y > 0
+        slopdesk_grid_is_letterboxed(contentRect.origin.x, contentRect.origin.y)
     }
 
     /// Fits a `cols × rows` grid, drawn at `cellWidth × cellHeight` per cell, inside `container`.
@@ -33,10 +42,6 @@ public struct TerminalLetterbox: Sendable, Equatable {
     /// SHRINK-to-fit, never magnify: `scale` is capped at `1`, so a grid smaller than the container
     /// is centred at the renderer's natural cell metrics rather than blown up. Magnifying a glyph
     /// grid is blur, and the whole point of a coding tool is that the text is exact.
-    ///
-    /// Plain separate `*` then `+` and `CGFloat.minimum` over `<`-ternaries, per CLAUDE.md §2 — this
-    /// is view geometry rather than the codec cluster, but the habit is kept (and `.minimum` is
-    /// NaN-faithful, which a degenerate container makes reachable).
     ///
     /// - Returns: `nil` for any degenerate input — a zero grid, unknown cell metrics (a headless or
     ///   pre-layout surface), or a zero-area container. The caller renders as it always did rather
@@ -48,21 +53,29 @@ public struct TerminalLetterbox: Sendable, Equatable {
         cellHeight: CGFloat,
         in container: CGSize,
     ) -> Self? {
-        guard cols > 0, rows > 0,
-              cellWidth > 0, cellHeight > 0,
-              container.width > 0, container.height > 0 else { return nil }
-        let naturalWidth = cellWidth * CGFloat(cols)
-        let naturalHeight = cellHeight * CGFloat(rows)
-        let widthScale = container.width / naturalWidth
-        let heightScale = container.height / naturalHeight
-        let scale = CGFloat.minimum(CGFloat.minimum(widthScale, heightScale), 1)
-        let width = naturalWidth * scale
-        let height = naturalHeight * scale
-        let originX = (container.width - width) / 2
-        let originY = (container.height - height) / 2
-        return Self(
-            contentRect: CGRect(x: originX, y: originY, width: width, height: height),
-            scale: scale,
+        let box = slopdesk_grid_fit(
+            Int64(cols),
+            Int64(rows),
+            cellWidth,
+            cellHeight,
+            container.width,
+            container.height,
+        )
+        return box.present ? Self(box) : nil
+    }
+
+    /// A verdict, read back. The `present` flag is read FIRST and the coordinates only after it:
+    /// an absent placement leaves them untouched, and that is the one mistake the shape exists to
+    /// make visible rather than plausible.
+    private init(_ verdict: SlopDeskGridPlacement) {
+        self.init(
+            contentRect: CGRect(
+                x: verdict.content_x,
+                y: verdict.content_y,
+                width: verdict.content_width,
+                height: verdict.content_height,
+            ),
+            scale: verdict.scale,
         )
     }
 }
@@ -94,23 +107,26 @@ public extension TerminalLetterbox {
     /// each of those cases the caller draws the content at full bleed exactly as it always did. An
     /// absent letterbox, never a wrong one, which is the rule this whole decoration family keeps.
     ///
-    /// Plain separate `*` (never `addingProduct`/`fma`), per CLAUDE.md §2.
+    /// One door, not two: the fit and the natural size come back together because they are only
+    /// correct together, and deriving the second here would be the multiply this file no longer
+    /// spells.
     static func placement(
         grid: (cols: Int, rows: Int)?, cellSize: CGSize?, in container: CGSize,
     ) -> Placement? {
         guard let grid, let cellSize else { return nil }
-        guard let fit = fit(
-            cols: grid.cols,
-            rows: grid.rows,
-            cellWidth: cellSize.width,
-            cellHeight: cellSize.height,
-            in: container,
-        ) else { return nil }
-        let natural = CGSize(
-            width: cellSize.width * CGFloat(grid.cols),
-            height: cellSize.height * CGFloat(grid.rows),
+        let verdict = slopdesk_grid_placement(
+            Int64(grid.cols),
+            Int64(grid.rows),
+            cellSize.width,
+            cellSize.height,
+            container.width,
+            container.height,
         )
-        return Placement(fit: fit, natural: natural)
+        guard verdict.present else { return nil }
+        return Placement(
+            fit: TerminalLetterbox(verdict),
+            natural: CGSize(width: verdict.natural_width, height: verdict.natural_height),
+        )
     }
 }
 

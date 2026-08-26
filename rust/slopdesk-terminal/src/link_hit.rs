@@ -36,21 +36,17 @@
 //! row-major order carried into pass 2 so the two passes cannot answer differently about which of
 //! two equally-good spans is "the" one.
 //!
-//! ## The span rect is derived HERE, and that is a pair worth naming
+//! ## The span rect is [`crate::geometry`]'s, and that pair is CLOSED
 //!
-//! The Swift this replaces measured against `TerminalCellMetrics.rect(row:colStart:colEnd:)` — the
-//! same geometry the underline and hint-label overlays draw with — precisely so the grid arithmetic
-//! would not be written a third time. [`span_rect`] below is that arithmetic, in Rust, so the pair
-//! is now cross-language: `docs/55` §8's drift class, and it is recorded rather than hidden.
+//! This module used to carry its own `span_rect` — the same two multiplies and two adds
+//! `TerminalCellMetrics.rect(row:colStart:colEnd:)` spelled in Swift — and recorded the pair here
+//! as `docs/55` §8's drift class, deferred because facing `rect` would have put the shim into a
+//! target whose whole dependency list was `SlopDeskProtocol`.
 //!
-//! It is not ported with the rule because the drawing half cannot follow it. `TerminalCellMetrics`
-//! lives in the `SlopDeskTerminal` target, whose whole dependency list is `SlopDeskProtocol`;
-//! making its `rect` a face would put the shim into a target that links nothing today, for a
-//! function that is two multiplies and two adds on a path that runs per drawn span. What holds the
-//! two together meanwhile is that the slop cases in `TerminalLinkHitTestTests` and
-//! `TerminalTouchSelectionTests` are hand-computed from the rect's own numbers — an edge at x =
-//! 180, a probe 10 points off it — so an edge that moved on either side fails a named case rather
-//! than drifting quietly.
+//! That is settled. `SlopDeskTerminal` links `CSlopDeskFFI` now, `rect` is [`geometry::rect`] and
+//! the Swift is its face, and [`span_rect`] below calls the same function the underline and the
+//! hint labels draw with. One implementation, and the hit-test measures against exactly the
+//! rectangle the user can see.
 //!
 //! ## Bit-exact, deliberately
 //!
@@ -70,25 +66,15 @@
 //! out-of-range double, and a trap on this side of the boundary is an abort of the whole client,
 //! since the release profile that reaches C is `panic = "abort"`.
 
-use crate::link::DetectedLink;
-
-/// The live cell geometry a hit-test measures against, in POINTS.
+/// The live cell geometry a hit-test measures against — [`crate::geometry::CellMetrics`],
+/// re-exported so a caller that only imports this module keeps its old spelling.
 ///
-/// The four fields the rule reads out of the renderer's `TerminalCellMetrics` — the visible
-/// `cols`/`rows` are not among them, because a hit-test asks where a point IS and never whether the
-/// answer is on screen. Points, not pixels, and a top-left origin: the surface's own convention,
-/// the one `sendMousePos` already speaks.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CellMetrics {
-    /// Per-cell advance width. A fullwidth glyph occupies two cells, not one wide cell.
-    pub cell_width: f64,
-    /// Per-cell line height.
-    pub cell_height: f64,
-    /// The viewport's top-left X in the embedding view's coordinate space.
-    pub origin_x: f64,
-    /// The viewport's top-left Y in the embedding view's coordinate space.
-    pub origin_y: f64,
-}
+/// It used to be declared here. Measuring where a point IS and computing where a span DRAWS turned
+/// out to want the same four numbers, and two structs with identical fields would have been the
+/// same drift the pair below closed, one level up.
+pub use crate::geometry::CellMetrics;
+use crate::geometry::{self, Rect};
+use crate::link::DetectedLink;
 
 /// The 0-based grid cell under a point.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,8 +167,8 @@ pub fn link(
         let rect = span_rect(metrics, *span);
         // The clamp `CGFloat.maximum(CGFloat.maximum(near, far), 0)`, in its own order: a point
         // inside the span's extent on this axis is zero away from it, not negatively away.
-        let dx = f64::max(f64::max(rect.min_x - point_x, point_x - rect.max_x), 0.0);
-        let dy = f64::max(f64::max(rect.min_y - point_y, point_y - rect.max_y), 0.0);
+        let dx = f64::max(f64::max(rect.min_x() - point_x, point_x - rect.max_x()), 0.0);
+        let dy = f64::max(f64::max(rect.min_y() - point_y, point_y - rect.max_y()), 0.0);
         let within = dx <= slop && dy <= slop;
         if !within {
             continue;
@@ -196,50 +182,26 @@ pub fn link(
     best.map(|(index, ..)| index)
 }
 
-/// The four edges of a span's rect, in the caller's coordinate space.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct SpanRect {
-    /// Left edge.
-    min_x: f64,
-    /// Right edge, one cell past the last column of the span.
-    max_x: f64,
-    /// Top edge.
-    min_y: f64,
-    /// Bottom edge, one line height below the top.
-    max_y: f64,
-}
-
 /// Where a `(row, col_start..col_end)` span sits, in points.
 ///
-/// `x = origin_x + cell_width * col_start`, `width = cell_width * (col_end - col_start)` — the same
-/// two multiplies and two adds `TerminalCellMetrics.rect` spells, kept unfused (see the module docs
-/// for why that pair exists at all).
+/// [`geometry::rect`] is the arithmetic, and that is the point: the pair this module's header
+/// recorded as a cross-language duplicate is one implementation again, and the hit-test measures
+/// against exactly the rect the underline draws.
 ///
-/// The two subtractions are done in `f64` rather than on the column indices, which is what makes
-/// this total: `col_end - col_start` on `usize` would panic for a span whose end precedes its
-/// start, and a panic reached through the C boundary aborts the process. In `f64` such a span
-/// produces a negative width — exactly what Swift's `Int` subtraction handed `CGRect` — and the
-/// `min`/`max` below standardise it the way `CGRect.minX`/`maxX` do, so a hand-built degenerate
-/// span is a miss rather than a crash. The scan itself never emits one. The Y axis needs no such
-/// standardising: a row is exactly one cell high and the only caller has already required that
-/// height to be positive.
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "a column index past 2^53 cannot be reached: the scan caps a row at MAX_SCAN_COLUMNS cells, \
-              and a caller's own span is measured, not trusted"
-)]
-fn span_rect(metrics: CellMetrics, span: LinkSpan) -> SpanRect {
-    let col_start = span.col_start as f64;
-    let col_end = span.col_end as f64;
-    let near_x = metrics.origin_x + metrics.cell_width * col_start;
-    let far_x = near_x + metrics.cell_width * (col_end - col_start);
-    let top_y = metrics.origin_y + metrics.cell_height * (span.row as f64);
-    SpanRect {
-        min_x: f64::min(near_x, far_x),
-        max_x: f64::max(near_x, far_x),
-        min_y: top_y,
-        max_y: top_y + metrics.cell_height,
-    }
+/// The coordinates widen to `i64` saturating rather than converting fallibly. A span index past
+/// `i64::MAX` cannot be reached — the scan caps a row at `MAX_SCAN_COLUMNS` cells — and a
+/// saturated one is a miss, where an `expect` would be a panic reached through the C boundary,
+/// which aborts the process. `Rect` standardises its own edges the way `CGRect.minX`/`maxX` do, so
+/// a hand-built span whose end precedes its start is a miss rather than a crash; the scan never
+/// emits one.
+fn span_rect(metrics: CellMetrics, span: LinkSpan) -> Rect {
+    let widen = |index: usize| i64::try_from(index).unwrap_or(i64::MAX);
+    geometry::rect(
+        metrics,
+        widen(span.row),
+        widen(span.col_start),
+        widen(span.col_end),
+    )
 }
 
 /// `Int(_:)` of a cell ratio, narrowed to the non-negative answers this rule can use.

@@ -4659,6 +4659,60 @@ size_t slopdesk_ws_connection_alert(const unsigned char *codes, size_t count,
 size_t slopdesk_cheat_sheet_columns(const uint32_t *row_counts, size_t count, uint32_t columns,
                                     uint32_t *out, size_t cap);
 
+/* ---- grid geometry: where a cell span draws, and where a grid the client did not choose goes ----
+ * `slopdesk_terminal::geometry` owns both. They cross together because they moved together: the
+ * span rect had a live Rust twin in `link_hit::span_rect` and was left open as docs/55 §8 drift
+ * because facing two multiplies would have put this header into a target that linked nothing. The
+ * letterbox beside it made one dependency buy a cluster, and the pair closed on the way.
+ *
+ * Rows and columns cross as int64_t — Swift's `Int`. A span starting left of the viewport is a bug,
+ * but reading it unsigned would draw the decoration a screen away instead of off the near edge
+ * where it can be SEEN to be wrong.
+ *
+ * §4's value-plus-flag rather than a sentinel: a rect at the origin with no extent and a letterbox
+ * with no scale are both ordinary answers, so there is no number outside the range to spend on
+ * "no answer". Read `present` FIRST; the coordinates are untouched when it is false.             */
+
+typedef struct {
+  double x;
+  double y;
+  double width;               /* may be negative for a span whose end precedes its start */
+  double height;              /* always one cell */
+  bool   present;
+} SlopDeskGridRect;
+
+typedef struct {
+  double content_x;
+  double content_y;
+  double content_width;
+  double content_height;
+  double scale;               /* never above 1 — a magnified glyph grid is blur */
+  double natural_width;       /* 0 from slopdesk_grid_fit, which does not answer it */
+  double natural_height;
+  bool   present;
+} SlopDeskGridPlacement;
+
+/* Always present: an unclamped span has a rect whatever its numbers are.                        */
+SlopDeskGridRect slopdesk_grid_rect(double cell_width, double cell_height,
+                                    double origin_x, double origin_y,
+                                    int64_t row, int64_t col_start, int64_t col_end);
+/* Absent for no columns, a start at or past the last visible column, or a clamped end that does
+ * not follow its start — three refusals the caller treats as one.                               */
+SlopDeskGridRect slopdesk_grid_clamped_rect(double cell_width, double cell_height,
+                                            double origin_x, double origin_y, int64_t cols,
+                                            int64_t row, int64_t col_start, int64_t col_end);
+/* The fit PLUS the natural size the surface must be framed at — only correct together.          */
+SlopDeskGridPlacement slopdesk_grid_placement(int64_t cols, int64_t rows,
+                                              double cell_width, double cell_height,
+                                              double container_width, double container_height);
+/* The fit alone, for a caller that only wants the frame. `natural_*` come back 0.               */
+SlopDeskGridPlacement slopdesk_grid_fit(int64_t cols, int64_t rows,
+                                        double cell_width, double cell_height,
+                                        double container_width, double container_height);
+/* A QUESTION about a placement the caller already holds, not a field beside it: a stored answer
+ * is a second thing to keep in step, and an exact fit that grew a hairline is that drift.       */
+bool slopdesk_grid_is_letterboxed(double content_x, double content_y);
+
 /* ---- Hint Mode: every span in the viewport a two-letter label can pin to -----------------
  * The same handle-over-arena shape as the link scan above, because the answer is the same shape:
  * a variable list of records each carrying up to three strings. A LINK target carries the whole
@@ -7705,6 +7759,60 @@ typedef struct SlopDeskMuxRouting {
 
 SlopDeskMuxRouting slopdesk_channel_table_route(
     SlopDeskChannelTable *handle, unsigned char kind, unsigned int id, bool accepted);
+
+// ---- The DOOR the demux rule stands behind, and the two teardowns ----
+//
+// `slopdesk_mux_admit` runs BEFORE the route above and decides whether the frame
+// is one this connection reasons about at all. Four guards, in a precedence that
+// is load-bearing: an over-cap open refused AFTER the table advanced is a cap
+// that stopped bounding the table it was written to bound.
+//
+// `role` is 0 client / 1 host, `link` is 0 control / 1 data, `frame_type` is the
+// mux envelope's own type byte, `live_channels` is the DATA channels live right
+// now, and `prior_data_state` is the DATA table's state ordinal for the id —
+// SLOPDESK_CHANNEL_UNKNOWN for an id the table never heard of.
+//
+// A `frame_type` no kind claims ADMITS: the route above owns that drop, and a
+// second copy of the frame vocabulary here is how the two start to disagree.
+// A garbled `role` or `link` takes the STRICTER reading — host, control — so a
+// corrupted ordinal cannot buy a peer a shell.
+
+#define SLOPDESK_MUX_ADMISSION_PROCEED 0u
+#define SLOPDESK_MUX_ADMISSION_REFUSE_OVER_CAP 1u
+#define SLOPDESK_MUX_ADMISSION_REFUSE_REOPEN 2u
+#define SLOPDESK_MUX_ADMISSION_DROP_OPEN_ON_CONTROL 3u
+#define SLOPDESK_MUX_ADMISSION_DROP_OPEN_AT_INITIATOR 4u
+
+unsigned int slopdesk_mux_admit(
+    unsigned int role, unsigned int link, unsigned char frame_type, bool registered,
+    unsigned int live_channels, unsigned int prior_data_state);
+
+// What one channel's ENDING reaches. A pane is one session behind TWO
+// sub-channels, so an ending on one link has to reach the other or leave a
+// shell with no close trigger left.
+//
+// `data_table` and `control_table` are how each table advances: 0 hold, 1 local
+// close, 2 remote close. HOLD is not "nothing happened" — for a peer close it is
+// "the route above already did this one", which is the single place the two
+// teardowns differ.
+
+#define SLOPDESK_MUX_TABLE_HOLD 0u
+#define SLOPDESK_MUX_TABLE_LOCAL 1u
+#define SLOPDESK_MUX_TABLE_REMOTE 2u
+
+typedef struct SlopDeskMuxTeardown {
+  bool          drop_data;
+  bool          drop_control;
+  bool          reap;          /* never true on the client — it has no PTY */
+  unsigned char data_table;
+  unsigned char control_table;
+} SlopDeskMuxTeardown;
+
+// A sub-channel's own inner framing faulted while the rest of the mux is healthy.
+SlopDeskMuxTeardown slopdesk_mux_teardown_poisoned(unsigned int role, unsigned int link);
+
+// The peer closed this channel on this link.
+SlopDeskMuxTeardown slopdesk_mux_teardown_peer_close(unsigned int role, unsigned int link);
 
 // ---------------------------------------------------------------------------
 // The host metadata RPC's payloads (rust/slopdesk-ffi/src/metadata.rs).
