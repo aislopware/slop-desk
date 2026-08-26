@@ -8,12 +8,20 @@
 //!
 //! ## The ordering that is a contract
 //!
-//! **Every output tap sees the whole stream before any close tap fires.** An orchestrator that read
-//! `{"event":"closed"}` and then received two more output lines would have to buffer against a
-//! promise the host had already broken, so the close notice is gated on the read loop having
-//! reached EOF — the same gate the `.exit` message rides behind, and fired from the same thread,
-//! immediately before it. [`crate::session`]'s exit thread is where that sequencing lives; this
-//! module only guarantees that a close fires exactly ONCE.
+//! **Every output tap sees the whole stream before any close tap fires**, and the child is gone by
+//! then. An orchestrator that read `{"event":"closed"}` and then received two more output lines
+//! would have to buffer against a promise the host had already broken. Two paths reach the end and
+//! each satisfies the sentence differently, which is why the sequencing lives in
+//! [`crate::session`] rather than here.
+//!
+//! On the path where the CHILD ends first, the exit thread waits out the EOF latch — the same gate
+//! the `.exit` message rides behind — and fires from that thread immediately ahead of it. On the
+//! path where the HOST ends the pane, the teardown has already unsubscribed the stream at the top
+//! of its ladder, so every byte hostd will ever see has landed before anything else runs; the close
+//! then fires at the END of that ladder, after the latch is released and after the child is reaped,
+//! because an announcement before the signal would report an agent gone while its shell still ran.
+//! A `relinquish` reaches neither: the pane is handed back to superd alive, and saying nothing is
+//! the truthful answer. This module only guarantees that a close fires exactly ONCE.
 //!
 //! ## A late registration is answered, not dropped
 //!

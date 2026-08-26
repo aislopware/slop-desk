@@ -904,18 +904,6 @@ impl PaneSession {
         // immediate: a `thread::sleep` would hold the teardown for up to the scan interval — which
         // the ENGINE chooses, not this crate — on every pane the host is closing.
         self.detect.stop();
-        // Announced HERE, and only when the child goes with the pane. A `shutdown` marks the session
-        // torn down before the child is signalled, so the exit thread returns at its own
-        // `is_torn_down` gate without ever firing this — teardown is the only announcer on that path.
-        // A `relinquish` is the opposite case and must stay silent: the pane is not over, superd
-        // still holds the master, the shell never sees a `SIGHUP` and the next hostd adopts it back,
-        // so an orchestrator told `{"event":"closed"}` there would hear that its agent had finished
-        // while it was still running. Nothing is left waiting by the silence — hostd is exiting, and
-        // the `subscribe` pump ends on its own socket. Idempotent with the exit thread's call, so the
-        // pane that DOES exit still announces exactly one end.
-        if kill_child {
-            self.taps.notify_closed();
-        }
         // The roster, snapshotted BEFORE anything is closed. Every close below is what makes some
         // relay return, and a relay's last act is to retire its own member — so a roster read after
         // the closes would be missing exactly the members whose threads are still finishing, and
@@ -940,6 +928,22 @@ impl PaneSession {
 
         if kill_child {
             self.end_child();
+            // The close is announced HERE and nowhere earlier in this ladder, because this is the
+            // first point at which the trait's own sentence is true: the stream was unsubscribed at
+            // the top, so every byte hostd will ever see has already reached every output tap; the
+            // EOF latch was released a few lines up; and `end_child` has just reaped the child. An
+            // announcement before the signal would tell an orchestrator its agent was gone while the
+            // shell was still running, which is the same lie the relinquish path is silent to avoid.
+            //
+            // Which is why a `relinquish` says NOTHING. The pane is not over: superd still holds the
+            // master, the shell never sees a `SIGHUP`, and the next hostd adopts it back. Nothing
+            // waits on the silence either — hostd is exiting, so a `subscribe` pump ends on its own
+            // socket regardless.
+            //
+            // Idempotent with the exit thread's call, which is the announcer on the path where the
+            // CHILD ends first — there the exit thread runs its EOF gate and fires ahead of `.exit`,
+            // and reaches this ladder afterwards to find the latch already thrown.
+            self.taps.notify_closed();
         }
 
         // Quiesce the PTY WRITER before closing the master. Every input write is a blocking

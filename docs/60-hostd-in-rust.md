@@ -444,16 +444,21 @@ Nothing in stage C can be written before it exists in Rust, so the stage is comm
     (`serveMetadata` captures `pty.masterFD` before its `async`), and stage F closes it: with the
     builder in Rust, the hold can be taken for the microsecond `tcgetpgrp` and not for the fork.
 
-    **The close tap fires between the EOF gate and the exit message, and it LATCHES.** Every output
-    tap has seen the whole stream by then, which is the promise `subscribe` makes. One departure
-    from Swift, deliberate: a tap registered AFTER the end is fired at once rather than stored where
-    nothing will read it — Swift left that caller waiting out its own timeout for an event that
-    could no longer happen. The latch is what makes it safe: exactly one end per session, however
-    many paths reach it. **A `relinquish` is NOT one of those paths**, and the asymmetry is the whole
-    point of `docs/51`: `shutdown` marks the session torn down before the child is signalled, so the
-    exit thread returns at its own gate and `teardown` is the only announcer — while a relinquish
-    leaves the pane alive in superd for the next hostd to adopt, and an orchestrator told
-    `{"event":"closed"}` there would hear that its agent had finished while it was still running.
+    **The close tap fires once, behind every byte, and only when the child is actually gone.** Two
+    paths reach the end and each satisfies that differently. Child-first: the exit thread waits out
+    the EOF latch — the gate `.exit` already rides behind — and fires immediately ahead of it.
+    Host-first: `teardown` unsubscribes the stream at the top of its ladder, so every byte hostd will
+    ever see has landed before anything else runs, and the close fires at the END of the ladder,
+    after the latch is released and after `end_child` has reaped the child. Announcing it where the
+    ladder starts, as the first draft did, would tell an orchestrator its agent was gone while the
+    shell was still running. One departure from Swift, deliberate: a tap registered AFTER the end is
+    fired at once rather than stored where nothing will read it — Swift left that caller waiting out
+    its own timeout for an event that could no longer happen. The latch is what makes it safe:
+    exactly one end per session, however many paths reach it. **A `relinquish` is NOT one of those
+    paths**, and the asymmetry is the whole point of `docs/51`: it leaves the pane alive in superd
+    for the next hostd to adopt, so an orchestrator told `{"event":"closed"}` there would hear that
+    its agent had finished while it was still running. Nothing waits on the silence — hostd is
+    exiting, and the `subscribe` pump ends on its own socket.
 
     **`block_backfill` now takes the `blocksEnabled` gate** C.2d found it missing. Wire behaviour was
     already identical (superd errors, `.ok()?` answers `None`); the gate saves one blocking round
@@ -488,6 +493,67 @@ is paused.
 **Stage D — the server.** `HostServer` (3,134) + `HostSessionRegistry` + `HostLifecycleRules` +
 `DetachedSessionStore` + `SupervisedServiceLifecycle`/`Process` + `CodeServerManager` +
 `CodeBridgeServer` + `AgentControlListener` + `MetadataResponseBuilder` + the workspace channel.
+
+  **D.0 — the scoping, and its one finding: stage D has no engine left to write.** Every decision
+  these files reach for is already Rust, and the audit is worth writing down because the size of the
+  Swift says otherwise. The session table is `slopdesk-muxsession::registry::Registry` — twenty-five
+  `slopdesk_host_registry_*` entry points, and what `HostSessionRegistry` adds on top of them is
+  buffer marshalling that ceases to exist the moment the caller is Rust. Both port lifecycles' rules
+  and the log-line splitter are `slopdesk-sidecars::{service_lifecycle, line_assembler}`. Path
+  confinement, the code-bridge line grammar and its root routing are `slopdesk-ffi`'s
+  `path_confine`/`code_bridge_line` over their own crates. The metadata bodies are `slopdesk-probe`
+  and `slopdesk-git`. The pane is C.2's, and C.2e's tap/metadata/history surface is precisely what
+  `AgentControlListener` drives.
+
+  Two beliefs that scoped the stage wrongly at first, both checked and both false. **Nothing in
+  stage D spawns a process.** `SupervisedServiceProcess.spawnOrAdopt` asks superd for a pane and
+  closes the returned master at once — `SupervisorClient::spawn`/`adopt`/`subscribe`/`release`
+  already carry all of it, so no Rust child-process facility is needed and no new `unsafe` is in
+  question. And **the listener is not Apple.** `Sources/SlopDeskHost` imports `Network` nowhere;
+  `NWListener`/`NWConnection` are confined to four files in `Sources/SlopDeskTransport` (~871 lines)
+  which belong to stage G, and `slopdesk-hostnet::Listener::bind` with its pairing and handshake
+  timeouts is already the host side. Stage D therefore builds ONE crate that owns the composition,
+  and re-wires. That crate declares its own `[workspace]`, the way `slopdesk-hostsession`,
+  `-hostpane` and `-hostnet` do: `rust/Cargo.toml`'s members are the FORK-PER-EVENT programs and
+  nothing else, and a daemon's half wants a daemon's profile. The cost is the one every host crate
+  already pays — `cargo -p` from the root cannot reach it, so its gate is `cd rust/<crate>`, and
+  `make lint-reach` is what proves some target still runs it.
+
+  **D.1 — the registry and the detached store.** `HostSessionRegistry` (400) collapses onto the
+  `Registry` it already wraps. `DetachedSessionStore` (388) keeps `DetachStoreRules` and gains the
+  driving Swift held: the TTL timer, the exclusive claim hand-off, `drainAll`/`relinquishAll`.
+
+  **D.2 — the two service lifecycles.** `SupervisedServiceLifecycle` (433) +
+  `SupervisedServiceProcess` (289) + `CodeServerManager` (425). None of the three decides anything:
+  the announce parse, the probe step, the adopt verdict, the boot step and the CLI flags are all
+  `HostServiceRules`' already. What lands is the two mutex-guarded state machines and the
+  ring-replay adoption with its lossy-resume refusal — a survivor whose announce line has scrolled
+  out of superd's ring is treated as a FAILED adoption, because a live handle with no port leaves
+  the panel reporting `starting` for the rest of the daemon's life.
+
+  **D.3 — the code bridge.** `CodeBridgeServer` (453): the accept loop, the fd table keyed by
+  project root, the per-connection read loop. Parsing, routing and typeability are already Rust.
+
+  **D.4 — the metadata performer, as a COMPOSITE.** `MetadataResponseBuilder` (389) becomes the
+  `MetadataPerformer` C.2e injected — but it does not end the injection. Thirteen of the twenty-two
+  verbs are servable in Rust today; the nine that actuate on Finder, `~/.claude/settings.json`, the
+  pasteboard or the workbench child are Apple's and stay Swift under §5's carve-out until E and F.
+  So the Rust performer is built to serve what it can and DELEGATE the rest from the first commit,
+  and the delegate shrinks to nothing at F rather than the composite being rewritten.
+
+  **D.5 — the agent-control listener.** `AgentControlListener` (1,239) and its eleven verbs, onto
+  C.2e's taps, `serve_metadata` and the scrollback readouts — plus D.1's registry, since
+  `list-panes`, `spawn` and `kill` are the SERVER's surface and not a pane's. This is the sub-stage
+  that proves C.2e's shape was the right one, and the NDJSON pump comes with it.
+
+  **D.6 — the server itself.** `HostServer` (3,134) + `HostServer+Workspace` (274) +
+  `WorkspaceChannelSession` (486) + `HostWorkspaceDocument` (312): the composition root, and the
+  only part that is mostly its own. The listener is `slopdesk-hostnet`'s, the supervisor client is
+  `slopdesk-superclient`'s, the panes are `slopdesk-hostsession`'s; what is left is the adoption
+  ladder, the join/reattach ladders, the workspace reconciler and the stop order.
+
+  **What stage D does NOT take.** `HostEnvironment` (350) and `RepoStatusWatcher` (316) are stage E:
+  the first reads Apple bundle and TCC state, the second is an FSEvents stream per repo toplevel.
 
 **Stage E — the Apple residue.** `slopdesk-apple-pasteboard` (NSPasteboard), `NSWorkspace` into
 `slopdesk-apple-app`, `slopdesk-apple-fsevents` (FSEvents). `docs/57`'s bar, `objc2` only, a leak
