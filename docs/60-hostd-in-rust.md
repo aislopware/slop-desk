@@ -651,12 +651,34 @@ is paused.
   name, after which its workbench windows reconnect for five minutes to a name nobody holds and
   nothing anywhere says why.
 
-  **D.4 — the metadata performer, as a COMPOSITE.** `MetadataResponseBuilder` (389) becomes the
-  `MetadataPerformer` C.2e injected — but it does not end the injection. Thirteen of the twenty-two
-  verbs are servable in Rust today; the nine that actuate on Finder, `~/.claude/settings.json`, the
-  pasteboard or the workbench child are Apple's and stay Swift under §5's carve-out until E and F.
-  So the Rust performer is built to serve what it can and DELEGATE the rest from the first commit,
-  and the delegate shrinks to nothing at F rather than the composite being rewritten.
+  **D.4 — the metadata performer, as a COMPOSITE.** ✅ `MetadataResponseBuilder` (389) is
+  `slopdesk-hostserver`'s `metadata`. `metadata_admission::performer` already routes every verb off
+  the wire's own enum, so the split was read off the routing table rather than argued: TEN verbs land
+  on `Performer::Builder` — processes, ports, cwd, git status, git diff, the directory listing, the
+  two agent-session reads, host info and host vitals — and those are the reducer's. The other twelve
+  belong to six named performers and cross to an injected delegate untouched. Three of those twelve
+  are servable in Rust today and deliberately are not: `agentHookStatus`, `ensureSimulatorServer` and
+  `ensureAndroidBridge` belong to performers a live hostd injects separately, and answering them from
+  a second place would put two implementations over one `~/.claude/settings.json` and one sidecar
+  socket for as long as the carve-out lasts. So the Rust performer serves what the table gives it and
+  DELEGATES the rest from the first commit, and the delegate shrinks to nothing at F rather than the
+  composite being rewritten.
+
+  There was no engine here either: the confinement is `slopdesk-probe`'s `path_confine`, the encoders
+  are `slopdesk-wire`'s `codec`, the queries are `slopdesk-panecensus`, `slopdesk-git` and
+  `slopdesk-probe`. What the Swift added was the ORDER — decode the argument, confine the path, ask,
+  encode — and that is what moved, behind a `HostQuerying` door so the suite can assert the thing
+  that matters: that a REFUSED request never reached the query at all. That failure is silent, since
+  a listing from outside the pane's subtree looks like any other listing, so every confinement case
+  asserts the door's ledger is still empty.
+
+  The probe is LINKED, not forked. `HostProbe.swift` forks `slopdesk-probe` for four verbs because a
+  Swift process had no other way to reach Rust that was already written; this side calls `git::diff`,
+  `files::list_directory`, `files::list_sessions` and `files::read_session` in-process, at the SAME
+  level `main.rs` dispatches to. `read_session` is why the level matters — it confines the id against
+  the host's session roots a second time, and reaching one function lower would drop that silently.
+  The fork's one theoretical advantage, killing a wedged mount with the child, was never realised:
+  `waitUntilExit` has no timeout, so both shapes park the same executor on the same `stat`.
 
   **D.5 — the agent-control listener.** `AgentControlListener` (1,239) and its eleven verbs, onto
   C.2e's taps, `serve_metadata` and the scrollback readouts — plus D.1's registry, since

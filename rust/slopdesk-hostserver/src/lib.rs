@@ -32,6 +32,18 @@
 //! channel that was not already Rust. Every decision on it is
 //! [`slopdesk_muxsession::bridge_router`]'s and always was.
 //!
+//! ## What D.4 landed
+//!
+//! [`metadata`] — the pane's metadata reducer, as a COMPOSITE.
+//! [`slopdesk_muxsession::metadata_admission::performer`] already routes every verb off the wire's
+//! own enum, so the split was read off the routing table rather than argued: the TEN verbs that
+//! land on `Performer::Builder` are answered here, and the other twelve cross to an injected
+//! delegate untouched. There was no engine here either — the confinement is
+//! [`slopdesk_probe::path_confine`], the encoders are `slopdesk-wire`'s, the queries are
+//! `slopdesk-panecensus`', `slopdesk-git`'s and `slopdesk-probe`'s. What moved is the ORDER around
+//! them, behind a [`metadata::HostQuerying`] door so the suite can assert the thing that matters:
+//! that a REFUSED request never reached the query at all.
+//!
 //! ## What it does not DELETE, and why
 //!
 //! Nothing. `docs/60` §5's carve-out is the reason and it has not changed: stages A–E cannot obey
@@ -44,6 +56,7 @@ pub mod code;
 mod deadline;
 mod detached;
 mod live;
+pub mod metadata;
 mod pane;
 pub mod service;
 mod serviceproc;

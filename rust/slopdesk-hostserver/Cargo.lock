@@ -278,10 +278,13 @@ version = "0.1.0"
 dependencies = [
  "nix",
  "serde_json",
+ "slopdesk-git",
  "slopdesk-hostpane",
  "slopdesk-hostsession",
  "slopdesk-muxsession",
+ "slopdesk-panecensus",
  "slopdesk-posix",
+ "slopdesk-probe",
  "slopdesk-sidecars",
  "slopdesk-superclient",
  "slopdesk-superwire",
@@ -316,6 +319,16 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "slopdesk-ids",
+ "slopdesk-probe",
+ "slopdesk-wire",
+]
+
+[[package]]
+name = "slopdesk-panecensus"
+version = "0.1.0"
+dependencies = [
+ "slopdesk-agent",
+ "slopdesk-posix",
  "slopdesk-probe",
  "slopdesk-wire",
 ]

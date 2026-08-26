@@ -70,6 +70,20 @@ slopdesk-wire = { path = "../slopdesk-wire" }
 # bridge open can never disagree about where the path ends.
 slopdesk-terminal = { path = "../slopdesk-terminal" }
 
+# Four of the ten metadata verbs, and the confinement in front of three of them: `path_confine` is
+# what keeps a listing inside its pane's subtree, and `files`/`git` are the bodies `HostProbe.swift`
+# forks a process to reach. This side CALLS them, at the same level `slopdesk-probe`'s `main.rs`
+# dispatches to — one function lower would drop `read_session`'s second confinement silently.
+slopdesk-probe = { path = "../slopdesk-probe" }
+
+# The `processes` and `ports` verbs: the descendant walk off one shell pid, and the listening sockets
+# those descendants hold. Neither is a decision this crate makes; both are a census it asks for.
+slopdesk-panecensus = { path = "../slopdesk-panecensus" }
+
+# The `git status` verb's porcelain read. `git diff` is `slopdesk-probe`'s, because the diff a pane
+# asks for is confined against the pane's cwd first and the status is not.
+slopdesk-git = { path = "../slopdesk-git" }
+
 # The two socket options macOS has and `nix` does not wrap for a bare descriptor — close-on-exec on
 # everything the bridge accepts, and `SO_NOSIGPIPE`, without which one write to a workbench window
 # that has just closed ends the whole host.
@@ -77,8 +91,9 @@ slopdesk-posix = { path = "../slopdesk-posix" }
 
 # `poll` for the accept loop's two-descriptor park and `pipe` for the byte that ends it — the shape
 # `slopdesk-superd`'s pump loop uses, and the reason no descriptor is ever closed out from under a
-# syscall here.
-nix = { version = "0.31", features = ["fs", "poll", "socket"] }
+# syscall here. `hostname` is `host info`'s one field the environment cannot answer: a feature of its
+# own in `nix`, so the verb needs it named here rather than a bare `gethostname` call.
+nix = { version = "0.31", features = ["fs", "hostname", "poll", "socket"] }
 
 # The fake superd `tests/serviceproc.rs` drives the service handle against builds the replies superd
 # would send with this. The `sendmsg` that carries a descriptor across by `SCM_RIGHTS` is `nix`'s,
