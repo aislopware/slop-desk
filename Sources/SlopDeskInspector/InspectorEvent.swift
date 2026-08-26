@@ -74,18 +74,59 @@ public struct ToolCard: Sendable, Equatable, Codable {
     /// The `tool_use.id` — the pairing key.
     public var id: String
     public var name: String
-    /// The full tool input (rendered in the card).
-    public var input: JSONValue
     /// The tool output, once the result arrives.
     public var output: String?
     public var status: Status
 
-    public init(id: String, name: String, input: JSONValue, output: String? = nil, status: Status = .pending) {
+    /// The tool input, flattened for the card body.
+    ///
+    /// ## Why this is TEXT and not a tree
+    ///
+    /// It used to be a `JSONValue` — a tolerant JSON tree this target modelled itself — and the two
+    /// surfaces that render a card only ever asked it for two strings: this flattening and the
+    /// collapsed line below. Both of those were RULES, and the flattening in particular existed a
+    /// second time in `rust/slopdesk-inspectord`'s `json::display_string`, where it answered
+    /// DIFFERENTLY: every integer past `2^53` came out in scientific form here, because the tree's
+    /// decoder made every JSON number a `Double` before either flattening ran.
+    ///
+    /// So the rendering moved to `slopdesk-inspectord`'s `tool_render`, which is asked with the
+    /// event's RAW bytes — serde still knows an integer from a float, and the divergence is deleted
+    /// rather than pinned. What is left on this side is the answer, and the tree is gone.
+    ///
+    /// The event SCHEMA is still decoded here; see `rust/slopdesk-ffi/src/inspector.rs` for why that
+    /// is the two-ENDS shape and this is not.
+    public var inputDisplay: String
+    /// One line for a collapsed row: the tool's `command`, its `file_path`, or the first line of
+    /// ``inputDisplay`` — whichever the far side's rule picks for this tool's name.
+    public var inputSummary: String
+
+    public init(
+        id: String,
+        name: String,
+        inputDisplay: String = "",
+        inputSummary: String = "",
+        output: String? = nil,
+        status: Status = .pending,
+    ) {
         self.id = id
         self.name = name
-        self.input = input
+        self.inputDisplay = inputDisplay
+        self.inputSummary = inputSummary
         self.output = output
         self.status = status
+    }
+
+    /// The daemon's JSON carries `input` as a JSON VALUE and knows nothing of the two renderings,
+    /// which are produced beside the decode by ``InspectorCodec/event(_:)``. So both start empty
+    /// here rather than being required keys the wire has never sent.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        output = try container.decodeIfPresent(String.self, forKey: .output)
+        status = try container.decodeIfPresent(Status.self, forKey: .status) ?? .pending
+        inputDisplay = try container.decodeIfPresent(String.self, forKey: .inputDisplay) ?? ""
+        inputSummary = try container.decodeIfPresent(String.self, forKey: .inputSummary) ?? ""
     }
 }
 

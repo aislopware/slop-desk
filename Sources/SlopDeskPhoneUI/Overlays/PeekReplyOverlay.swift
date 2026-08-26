@@ -201,7 +201,7 @@ struct PeekReplyOverlay: View {
     private func pendingToolRow(_ card: ToolCard) -> some View {
         if pendingToolExpanded {
             ScrollView {
-                Text(card.input.displayString)
+                Text(card.inputDisplay)
                     .font(.callout.monospaced())
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
@@ -213,7 +213,7 @@ struct PeekReplyOverlay: View {
             .padding(.horizontal, Slate.Metric.space4)
             .padding(.bottom, Slate.Metric.space3)
         } else {
-            let line = PendingToolSummary.line(name: card.name, input: card.input)
+            let line = PendingToolSummary.line(card: card)
             Button {
                 pendingToolExpanded = true
             } label: {

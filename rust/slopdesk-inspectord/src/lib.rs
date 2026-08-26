@@ -35,6 +35,7 @@ pub mod replay;
 pub mod server;
 pub mod subagents;
 pub mod tailer;
+pub mod tool_render;
 pub mod wire;
 
 pub use event::InspectorEvent;

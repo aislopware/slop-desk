@@ -11,31 +11,30 @@
 //! iteration order is hash-seed-randomized per process, so the Swift original sorts and so must
 //! this), and whole floats rendered without a trailing `.0`.
 //!
-//! ## It is NOT the same function as `JSONValue.displayString`, and here is exactly where they part
+//! ## There WAS a second flattening, and this is why it is gone
 //!
-//! `Sources/SlopDeskInspector/JSONValue.swift` still holds a flattening of its own, and the two are
-//! LIVE at once in two processes: this one renders a tool RESULT's content, that one renders a
-//! pending tool's INPUT. They never see the same value, which is precisely why nothing has ever
-//! noticed that they answer differently.
+//! The client held one of its own — a `JSONValue.displayString` over a tolerant JSON tree it
+//! modelled itself — and the two were LIVE at once in two processes: this one rendered a tool
+//! RESULT's content, that one a pending tool's INPUT. They never saw the same value, which is
+//! precisely why nothing ever noticed that they answered differently.
 //!
-//! The cause is one line neither function contains. Swift's `JSONValue.init(from:)` decodes every
-//! JSON number as `Double`, while serde keeps the integer types apart — so the divergence is in the
-//! VALUE TYPE, not in the rendering, and the rendering below merely declines to throw away what it
-//! was given:
+//! The cause was one line neither function contained. That tree's decoder made every JSON number a
+//! `Double`, while serde keeps the integer types apart — so the divergence was in the VALUE TYPE,
+//! not in the rendering, and the rendering below merely declines to throw away what it was given:
 //!
-//! | JSON | this module | `JSONValue.displayString` |
+//! | JSON | this module | the deleted Swift flattening |
 //! | --- | --- | --- |
 //! | `10000000000000000` | `10000000000000000` | `1e+16` |
 //! | `9007199254740993` | `9007199254740993` | `9.007199254740992e+15` (lost at decode) |
 //! | `18446744073709551615` | `18446744073709551615` | `1.8446744073709552e+19` |
 //! | `{"é": …, "z": …}` | `é` first (raw UTF-8 order) | `z` first for a DECOMPOSED `é` |
 //!
-//! This module is the right one in every row, and the Swift half cannot be made to match without
-//! changing what a `JSONValue` number IS — which is a `Codable` type carrying a tool payload, so
-//! `docs/55` §7 step 6 applies and the obligation is a differential rather than a deletion. There
-//! is no door over this function today; the note is here so the next reader inherits the divergence
-//! instead of re-deriving it, and the tests below assert the left-hand column so it is pinned
-//! rather than merely described.
+//! The note used to end "the obligation is a differential rather than a deletion", because the
+//! Swift half could not be made to match without changing what its number type IS.
+//! [`crate::tool_render`] made that change from the other end: the client asks for a card's
+//! rendering with the input's RAW JSON, so serde sees the integer the transcript held and the tree
+//! is gone from that side altogether. The tests below still assert the left-hand column, which is
+//! now simply THE column.
 
 use serde_json::Value;
 

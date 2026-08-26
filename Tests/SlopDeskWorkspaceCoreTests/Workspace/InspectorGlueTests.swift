@@ -118,7 +118,8 @@ final class InspectorGlueTests: XCTestCase {
         ToolCard(
             id: id,
             name: name,
-            input: .object(["command": .string(command)]),
+            inputDisplay: "command: \(command)",
+            inputSummary: command,
             output: output,
             status: status,
         )
@@ -231,7 +232,14 @@ final class InspectorGlueTests: XCTestCase {
         try await source.send(.subagentUpdated(SubagentNode(id: "deadbeef", agentType: "Ariadne", status: .running)))
         try await source.send(.subagentToolCard(
             agentID: "deadbeef",
-            card: ToolCard(id: "sa1", name: "Grep", input: .object([:]), output: "hit", status: .completed),
+            card: ToolCard(
+                id: "sa1",
+                name: "Grep",
+                inputDisplay: "",
+                inputSummary: "",
+                output: "hit",
+                status: .completed,
+            ),
         ))
 
         await waitUntil({ vm.subagentCards["deadbeef"]?.count == 1 }, "subagent card never attached")

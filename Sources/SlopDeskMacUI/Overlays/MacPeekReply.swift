@@ -532,7 +532,7 @@ final class MacPeekPendingToolView: NSView {
         lineBottom?.isActive = !expanded
         scrollBottom?.isActive = expanded
         if expanded {
-            full.stringValue = card.input.displayString
+            full.stringValue = card.inputDisplay
             full.layoutSubtreeIfNeeded()
             scrollHeight?.constant = Swift.min(
                 full.fittingSize.height, PeekReplyMetrics.scrollMaxHeight,
@@ -540,7 +540,7 @@ final class MacPeekPendingToolView: NSView {
         } else {
             scrollHeight?.constant = 0
             line.attributedStringValue = Self.twoTone(
-                PendingToolSummary.line(name: card.name, input: card.input),
+                PendingToolSummary.line(card: card),
             )
         }
     }

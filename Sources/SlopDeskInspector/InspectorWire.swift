@@ -102,12 +102,91 @@ public enum InspectorCodec {
     }
 
     /// The event `json` describes, or the malformed-body error naming why it is not one.
+    ///
+    /// A tool card's two RENDERINGS are asked for beside the decode, with the same raw bytes, and
+    /// grafted onto the card the decode produced. They are not on the wire and never have been: the
+    /// daemon sends `input` as a JSON value, and turning it into the text a card shows is a rule —
+    /// one that lived in this target and a second time in `slopdesk-inspectord`, answering
+    /// differently for every integer this side's decoder had already flattened into a `Double`.
+    /// Asking with the RAW bytes is what makes the answer exact, so the graft happens HERE, before
+    /// the tree the decode built has a chance to be consulted.
     static func event(_ json: Data) throws -> InspectorWireMessage {
         do {
-            return try .event(JSONDecoder().decode(InspectorEvent.self, from: json))
+            let decoded = try JSONDecoder().decode(InspectorEvent.self, from: json)
+            return .event(rendered(decoded, json))
         } catch {
             throw CodecError.malformedBody("event JSON: \(error)")
         }
+    }
+
+    /// `event` with its tool card's renderings filled in, or unchanged when it carries no card.
+    private static func rendered(_ event: InspectorEvent, _ json: Data) -> InspectorEvent {
+        guard let fields = toolInputRender(json), fields.count == 2 else { return event }
+        switch event {
+        case var .toolCard(card):
+            card.inputDisplay = fields[0]
+            card.inputSummary = fields[1]
+            return .toolCard(card)
+        case let .subagentToolCard(agentID, original):
+            var card = original
+            card.inputDisplay = fields[0]
+            card.inputSummary = fields[1]
+            return .subagentToolCard(agentID: agentID, card: card)
+        default:
+            return event
+        }
+    }
+
+    /// The two rendered fields the crate answers for this event, or `nil` when it names no card.
+    private static func toolInputRender(_ json: Data) -> [String]? {
+        let blob: [UInt8]? = json.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> [UInt8]? in
+            let base = bytes.bindMemory(to: UInt8.self).baseAddress
+            let needed = slopdesk_inspector_tool_input_render(base, bytes.count, nil, 0)
+            guard needed > 0 else { return nil }
+            var buffer = [UInt8](repeating: 0, count: needed)
+            let written = buffer.withUnsafeMutableBufferPointer {
+                slopdesk_inspector_tool_input_render(base, bytes.count, $0.baseAddress, $0.count)
+            }
+            return written == needed ? buffer : nil
+        }
+        guard let blob else { return nil }
+        return splitFields(blob)
+    }
+
+    /// Packs texts into the doors' field framing: four big-endian bytes, then that many UTF-8 bytes.
+    ///
+    /// The inverse of ``splitFields(_:)``, and here beside it so this target spells the framing
+    /// once — the render door answers in it and the todo-scent door is asked in it.
+    static func packFields(_ texts: [String]) -> [UInt8] {
+        var blob: [UInt8] = []
+        for text in texts {
+            let bytes = Array(text.utf8)
+            let length = UInt32(truncatingIfNeeded: bytes.count)
+            blob.append(contentsOf: [
+                UInt8(truncatingIfNeeded: length >> 24),
+                UInt8(truncatingIfNeeded: length >> 16),
+                UInt8(truncatingIfNeeded: length >> 8),
+                UInt8(truncatingIfNeeded: length),
+            ])
+            blob.append(contentsOf: bytes)
+        }
+        return blob
+    }
+
+    /// Cuts the door's length-prefixed fields: four big-endian bytes, then that many UTF-8 bytes.
+    private static func splitFields(_ blob: [UInt8]) -> [String]? {
+        var fields: [String] = []
+        var cursor = 0
+        while cursor + 4 <= blob.count {
+            var length = 0
+            for offset in 0..<4 { length = length << 8 | Int(blob[cursor + offset]) }
+            cursor += 4
+            guard cursor + length <= blob.count else { return nil }
+            guard let text = String(bytes: blob[cursor..<cursor + length], encoding: .utf8) else { return nil }
+            fields.append(text)
+            cursor += length
+        }
+        return cursor == blob.count ? fields : nil
     }
 
     /// The error a non-OK verdict names.

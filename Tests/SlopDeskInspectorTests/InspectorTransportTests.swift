@@ -13,11 +13,17 @@ final class InspectorTransportTests: XCTestCase {
             .sessionStarted(SessionInfo(sessionID: "s1", model: "claude-opus-4-8", cwd: "/repo")),
             .message(MessageEvent(role: .user, text: "hello")),
             .thinking(ThinkingMarker(isPlaceholder: true, signature: "sig123")),
-            .toolCard(ToolCard(id: "t1", name: "Bash", input: .object(["command": .string("ls")]), status: .pending)),
             .toolCard(ToolCard(
                 id: "t1",
                 name: "Bash",
-                input: .object(["command": .string("ls")]),
+                inputDisplay: "command: ls",
+                inputSummary: "ls",
+                status: .pending,
+            )),
+            .toolCard(ToolCard(
+                id: "t1",
+                name: "Bash",
+                inputDisplay: "command: ls", inputSummary: "ls",
                 output: "files",
                 status: .completed,
             )),
@@ -33,7 +39,14 @@ final class InspectorTransportTests: XCTestCase {
             )),
             .subagentToolCard(
                 agentID: "deadbeef",
-                card: ToolCard(id: "sa1", name: "Grep", input: .object([:]), output: "hit", status: .completed),
+                card: ToolCard(
+                    id: "sa1",
+                    name: "Grep",
+                    inputDisplay: "",
+                    inputSummary: "",
+                    output: "hit",
+                    status: .completed,
+                ),
             ),
             .workflow(WorkflowMarker(state: .running)),
             .unknownLine(raw: #"{"type":"future"}"#),
@@ -134,7 +147,7 @@ final class InspectorTransportTests: XCTestCase {
         let messages: [InspectorWireMessage] = [
             .event(.message(MessageEvent(role: .user, text: "x"))),
             .keepAlive,
-            .event(.toolCard(ToolCard(id: "z", name: "Read", input: .object([:]), status: .pending))),
+            .event(.toolCard(ToolCard(id: "z", name: "Read", inputDisplay: "", inputSummary: "", status: .pending))),
         ]
         var blob = Data()
         for message in messages { try blob.append(frame(for: message)) }

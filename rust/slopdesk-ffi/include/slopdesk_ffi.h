@@ -8257,6 +8257,33 @@ size_t slopdesk_inspector_encode_subscribe(int64_t from_seq, unsigned char *out,
 uint32_t slopdesk_inspector_decode_payload(const unsigned char *payload, size_t payload_len,
                                            SlopDeskInspectorFrame *out);
 
+// What the tool card in an event's RAW JSON reads as: two length-prefixed fields — the
+// flattened input, then the one-line summary. 0 out for an event carrying no card, for a
+// body this door cannot parse, and for a null input; the caller has already accepted the
+// event by then, so a rendering it cannot produce is an absence, not a refusal.
+//
+// The RAW bytes cross on purpose. The client's own decode makes every JSON number a
+// Double, so an input handed over after it would have lost the integer this door prints
+// exactly — which is the whole reason the flattening stopped existing in two languages.
+size_t slopdesk_inspector_tool_input_render(const unsigned char *json, size_t len,
+                                            unsigned char *out, size_t cap);
+
+// A todo's status, as the scent door reads it.
+#define SLOPDESK_INSPECTOR_TODO_PENDING 0
+#define SLOPDESK_INSPECTOR_TODO_IN_PROGRESS 1
+#define SLOPDESK_INSPECTOR_TODO_COMPLETED 2
+
+// The "i/n · activeForm" line for a todo list; 0 out when nothing is in flight.
+//
+// `states` is one SLOPDESK_INSPECTOR_TODO_* byte per todo, in list order. `texts` carries
+// 2n length-prefixed fields in the same framing the render door answers in — the n
+// contents first, then the n active forms, an EMPTY field where the producer sent none.
+// A `texts` that does not cut into exactly 2 * states_len fields answers 0: both arrays
+// come from one list, so disagreeing about its length is the caller's defect.
+size_t slopdesk_inspector_todo_scent(const unsigned char *states, size_t states_len,
+                                     const unsigned char *texts, size_t texts_len,
+                                     unsigned char *out, size_t cap);
+
 SlopDeskInspectorDecoder *slopdesk_inspector_decoder_new(void);
 void slopdesk_inspector_decoder_free(SlopDeskInspectorDecoder *handle);
 void slopdesk_inspector_decoder_append(SlopDeskInspectorDecoder *handle,

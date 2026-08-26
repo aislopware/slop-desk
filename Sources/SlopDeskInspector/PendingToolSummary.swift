@@ -1,46 +1,64 @@
-/// The PURE, headless formatter shared across all THREE call sites that speak "what tool call is
-/// pending" / "which todo is in flight": Peek & Reply's pending-tool block (``line(name:input:)``), the
-/// Peek header's todo-scent caption suffix, and the working-row tooltip's scent line (both via
-/// ``scent(todos:)``). One formatter means the flattening can never diverge between the three surfaces —
-/// NOT a view (no SwiftUI import), so it is unit-tested standalone and compiles on every platform.
+import CSlopDeskFFI
+import Foundation
+
+/// The Swift FACE of `slopdesk-inspectord`'s `tool_render` — what a pending tool call reads as.
+///
+/// Shared by all THREE surfaces that ask "what is in flight": Peek & Reply's pending-tool block
+/// (``line(card:)``), the Peek header's todo-scent caption suffix, and the working-row tooltip's
+/// scent line (both via ``scent(todos:)``). NOT a view — no SwiftUI import — so it compiles on every
+/// platform and is unit-tested standalone.
+///
+/// ## What moved
+///
+/// Both rules did. The per-tool summary — `Bash` collapses to its `command`, the file-shaped tools
+/// to their `file_path`, everything else to the first line of the flattening — is the crate's, and
+/// its answer arrives on the card itself: ``InspectorCodec/event(_:)`` asks for it beside the
+/// decode, with the raw event bytes, which is what makes an integer past `2^53` render exactly. So
+/// ``line(card:)`` is a two-field lift and holds no rule at all.
+///
+/// The todo scent is the crate's too, and it still takes an argument, because the todo list is a
+/// value this side holds rather than something that arrived attached to a card.
 public enum PendingToolSummary {
-    /// One collapsed line for a pending ``ToolCard``: the tool's bare `name` (a LABEL — the call site
-    /// renders it `.secondary`) and a one-line summary of its `input` (the thing to actually read — the
-    /// call site renders it `.primary`). Kept as two separate strings rather than one joined line so the
-    /// caller can apply the two-tone styling without re-parsing.
-    ///
-    /// `Bash` summarizes to its `command` string (the exact command that will run); the file-shaped tools
-    /// (`Edit`/`Write`/`Read`/`NotebookEdit`) summarize to `file_path` (the approve/deny read, not a diff);
-    /// anything else — and a missing expected key on the above — falls back to the first line of
-    /// ``JSONValue/displayString`` so an unrecognised tool never renders blank.
-    public static func line(name: String, input: JSONValue) -> PendingToolLine {
-        let summary: String =
-            switch name {
-            case "Bash": input["command"]?.stringValue ?? input.displayString.firstLine
-            case "Edit",
-                 "Write",
-                 "Read",
-                 "NotebookEdit": input["file_path"]?.stringValue ?? input.displayString.firstLine
-            default: input.displayString.firstLine
-            }
-        return PendingToolLine(name: name, summary: summary)
+    /// One collapsed line for a pending ``ToolCard``: the tool's bare `name` (a LABEL — the call
+    /// site renders it `.secondary`) and the one-line summary of its input (the thing to actually
+    /// read — rendered `.primary`). Two strings rather than one joined line, so the caller applies
+    /// the two-tone styling without re-splitting.
+    public static func line(card: ToolCard) -> PendingToolLine {
+        PendingToolLine(name: card.name, summary: card.inputSummary)
     }
 
-    /// The "`i`/`n` · `activeForm`" todo-progress line: `i` = the 1-based position of the FIRST
-    /// `.inProgress` item, `n` = the total todo count, and the text is that item's imperative
-    /// `activeForm` (falling back to its plain `content` when absent). `nil` when no item is
-    /// `.inProgress` — the caller's `.live`-feed gate is separate; this only answers "is there one, and
-    /// what does it say".
+    /// The "`i`/`n` · `activeForm`" todo-progress line, or `nil` when nothing is in flight.
+    ///
+    /// The caller's `.live`-feed gate is separate; this only answers "is there one, and what does it
+    /// say".
     public static func scent(todos: [TodoItem]) -> String? {
-        guard let index = todos.firstIndex(where: { $0.status == .inProgress }) else { return nil }
-        let item = todos[index]
-        return "\(index + 1)/\(todos.count) · \(item.activeForm ?? item.content)"
+        let statuses = todos.map(\.status.ffiByte)
+        // An absent active form packs as an EMPTY field — the crate folds `""` back to absence, so
+        // the two say the same thing and the fallback to `content` answers both.
+        let blob = InspectorCodec.packFields(todos.map(\.content) + todos.map { $0.activeForm ?? "" })
+        return statuses.withUnsafeBufferPointer { states in
+            blob.withUnsafeBufferPointer { texts in
+                let needed = slopdesk_inspector_todo_scent(
+                    states.baseAddress, states.count, texts.baseAddress, texts.count, nil, 0,
+                )
+                guard needed > 0 else { return nil }
+                var out = [UInt8](repeating: 0, count: needed)
+                let written = out.withUnsafeMutableBufferPointer {
+                    slopdesk_inspector_todo_scent(
+                        states.baseAddress, states.count, texts.baseAddress, texts.count,
+                        $0.baseAddress, $0.count,
+                    )
+                }
+                guard written == needed else { return nil }
+                return String(bytes: out, encoding: .utf8)
+            }
+        }
     }
 }
 
-/// A pending tool card's collapsed one-line summary (``PendingToolSummary/line(name:input:)``): the tool
-/// NAME and the input SUMMARY, kept apart so the view can render them in two foreground weights without
-/// re-splitting a combined string.
+/// A pending tool card's collapsed one-line summary (``PendingToolSummary/line(card:)``): the tool
+/// NAME and the input SUMMARY, kept apart so the view can render them in two foreground weights
+/// without re-splitting a combined string.
 public struct PendingToolLine: Equatable, Sendable {
     public let name: String
     public let summary: String
@@ -51,11 +69,13 @@ public struct PendingToolLine: Equatable, Sendable {
     }
 }
 
-private extension String {
-    /// The first line of a possibly-multi-line string (a multi-key ``JSONValue/displayString`` flattening
-    /// joins with `"\n"`) — collapses the fallback summary to one line for the caller's `lineLimit(1)`.
-    var firstLine: String {
-        if let newline = firstIndex(of: "\n") { return String(self[..<newline]) }
-        return self
+extension TodoItem.Status {
+    /// The byte the crate names this status by.
+    var ffiByte: UInt8 {
+        switch self {
+        case .pending: UInt8(SLOPDESK_INSPECTOR_TODO_PENDING)
+        case .inProgress: UInt8(SLOPDESK_INSPECTOR_TODO_IN_PROGRESS)
+        case .completed: UInt8(SLOPDESK_INSPECTOR_TODO_COMPLETED)
+        }
     }
 }
