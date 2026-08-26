@@ -31,31 +31,13 @@ pub const MAX_TOTAL_MATCHERS: usize = 1024;
 pub const MAX_MATCHER_CHARS: usize = 512;
 
 /// The four-way state a rule resolves to (herdr `AgentState`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum State {
-    /// Agent finished, prompt visible, nothing happening.
-    Idle,
-    /// Actively processing.
-    Working,
-    /// Needs human input.
-    Blocked,
-    /// Plain shell / unrecognised — or a `skip_state_update` freeze rule.
-    Unknown,
-}
-
-impl State {
-    /// The wire spelling, which is also the TOML spelling.
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Working => "working",
-            Self::Blocked => "blocked",
-            Self::Unknown => "unknown",
-        }
-    }
-}
+///
+/// The wire crate's, because the state a rule resolves to is the state that CROSSES — a client
+/// reading a verdict needs the same four names, and its `lowercase` serde spelling is the TOML
+/// spelling too, so one derive serves the manifest this module parses and the reply screend
+/// answers with. Re-exported rather than imported at every use site: this module is where the
+/// schema is, and the schema still names it.
+pub use slopdesk_screenwire::State;
 
 /// Anything that makes a manifest unusable. One variant, because the caller's only choice is to
 /// reject the file — a partially-loaded rule ladder is a ladder with a rung missing.

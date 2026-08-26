@@ -65,79 +65,43 @@ impl Input {
 
 /// The engine's verdict, plus the two sync-frame facts hostd's timeout is keyed on.
 ///
-/// `camelCase` on the wire, like every other JSON payload this daemon answers with.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "four independent screen claims; a bitfield would need a second name for each"
-)]
-pub struct Verdict {
-    /// The four-way state.
-    pub state: State,
-    /// A FREEZE rule matched (transcript viewer, model picker): publish nothing, hold the previous
-    /// status.
-    pub skip_state_update: bool,
-    /// The screen literally shows an idle prompt box. This is the ONE screen claim strong enough
-    /// to clear an authoritative hook block, which is why the tear guards exist.
-    pub visible_idle: bool,
-    /// The screen literally shows a live blocker form.
-    pub visible_blocker: bool,
-    /// The screen literally shows a live spinner.
-    pub visible_working: bool,
-    /// The winning rule's id, or `null` on a fallback.
-    pub matched_rule_id: Option<String>,
-    /// herdr's fallback-reason constant when no rule matched a known agent.
-    pub fallback_reason: Option<String>,
-    /// TRUE when the fed bytes end inside an OPEN synchronized update — the grid is half a frame.
-    pub frame_open: bool,
-    /// Bumped every time a frame opens. hostd's over-long-frame deadline is keyed on this.
-    pub frame_generation: u64,
+/// [`slopdesk_screenwire`]'s, because it is a reply BODY: screend writes one, a client reads one,
+/// and a type with only half of that pair is how the two ends drift. [`Verdict::none`] came with
+/// it — a verdict that names nothing needs nothing. The two that DO name something the engine owns
+/// stayed here, as [`verdict_from_rule`] and [`known_agent_idle_fallback`].
+pub use slopdesk_screenwire::Verdict;
+
+/// The verdict a matching rule produces. The `visible_*` flags are honoured only when the
+/// state agrees — a `visible_idle` on a working rule claims nothing about an idle prompt.
+///
+/// A free function rather than `Verdict::from_rule`: [`Rule`] is the engine's, the engine is not
+/// linkable from a client, and an inherent `impl` on a foreign type is not expressible anyway.
+#[must_use]
+pub fn verdict_from_rule(rule: &Rule) -> Verdict {
+    let state = rule.state.unwrap_or(State::Unknown);
+    Verdict {
+        state,
+        skip_state_update: rule.skip_state_update,
+        visible_idle: rule.visible_idle && state == State::Idle,
+        visible_blocker: rule.visible_blocker && state == State::Blocked,
+        visible_working: rule.visible_working && state == State::Working,
+        matched_rule_id: Some(rule.id.clone()),
+        fallback_reason: None,
+        frame_open: false,
+        frame_generation: 0,
+    }
 }
 
-impl Verdict {
-    /// The verdict a matching rule produces. The `visible_*` flags are honoured only when the
-    /// state agrees — a `visible_idle` on a working rule claims nothing about an idle prompt.
-    #[must_use]
-    pub fn from_rule(rule: &Rule) -> Self {
-        let state = rule.state.unwrap_or(State::Unknown);
-        Self {
-            state,
-            skip_state_update: rule.skip_state_update,
-            visible_idle: rule.visible_idle && state == State::Idle,
-            visible_blocker: rule.visible_blocker && state == State::Blocked,
-            visible_working: rule.visible_working && state == State::Working,
-            matched_rule_id: Some(rule.id.clone()),
-            fallback_reason: None,
-            frame_open: false,
-            frame_generation: 0,
-        }
-    }
-
-    /// A KNOWN agent whose screen matched no rule: plain idle, no visible claim.
-    #[must_use]
-    pub fn known_agent_idle_fallback() -> Self {
-        Self {
-            state: State::Idle,
-            fallback_reason: Some(KNOWN_AGENT_IDLE_FALLBACK_REASON.to_owned()),
-            ..Self::none()
-        }
-    }
-
-    /// No agent in the foreground — the screen says nothing about anyone.
-    #[must_use]
-    pub const fn none() -> Self {
-        Self {
-            state: State::Unknown,
-            skip_state_update: false,
-            visible_idle: false,
-            visible_blocker: false,
-            visible_working: false,
-            matched_rule_id: None,
-            fallback_reason: None,
-            frame_open: false,
-            frame_generation: 0,
-        }
+/// A KNOWN agent whose screen matched no rule: plain idle, no visible claim.
+///
+/// Free for the same reason [`verdict_from_rule`] is — the reason string is herdr's constant, which
+/// is the rule ladder's vocabulary and not the wire's.
+#[must_use]
+pub fn known_agent_idle_fallback() -> Verdict {
+    Verdict {
+        state: State::Idle,
+        fallback_reason: Some(KNOWN_AGENT_IDLE_FALLBACK_REASON.to_owned()),
+        ..Verdict::none()
     }
 }
 
@@ -206,9 +170,7 @@ pub fn detect(agent: &str, input: &Input) -> Verdict {
     if agent.is_empty() {
         return Verdict::none();
     }
-    manifest_for(agent).map_or_else(Verdict::known_agent_idle_fallback, |manifest| {
-        manifest.evaluate(input)
-    })
+    manifest_for(agent).map_or_else(known_agent_idle_fallback, |manifest| manifest.evaluate(input))
 }
 
 /// herdr `explain_for_label` (the `agent explain --file` path): screen-only input, OSC empty.

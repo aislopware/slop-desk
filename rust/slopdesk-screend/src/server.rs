@@ -26,7 +26,7 @@ use crate::model::{MAX_COLS, MAX_ROWS, ScreenModel};
 use crate::overprint::collapse;
 use crate::protocol::{
     FLAG_AGENT_CHANGED, FLAG_REASSERT_INPUT_MODES, FLAG_REBUILD_REPLAY, FLAG_RESET, MAX_FRAME, Request,
-    Status, Verb, decode_detect_payload, decode_request, encode_reply, hello_payload,
+    Status, Verb, decode_detect_payload, decode_request, encode_body, encode_reply, hello_payload,
 };
 use crate::registry::Registry;
 use crate::render::{render, render_transcript};
@@ -324,7 +324,7 @@ fn serve_detect(request: &Request<'_>, registry: &Mutex<Registry>) -> (Status, V
     verdict.frame_open = pane.sync.is_frame_open();
     verdict.frame_generation = pane.sync.generation();
     drop(guard);
-    match serde_json::to_vec(&verdict) {
+    match encode_body(&verdict) {
         Ok(payload) => (Status::Ok, payload),
         Err(error) => (Status::Internal, error.to_string().into_bytes()),
     }
@@ -338,7 +338,7 @@ const fn geometry_is_sane(request: &Request<'_>) -> bool {
 }
 
 fn encode_snapshot(model: &ScreenModel) -> (Status, Vec<u8>) {
-    match serde_json::to_vec(&model.snapshot()) {
+    match encode_body(&model.snapshot()) {
         Ok(payload) => (Status::Ok, payload),
         Err(error) => (Status::Internal, error.to_string().into_bytes()),
     }

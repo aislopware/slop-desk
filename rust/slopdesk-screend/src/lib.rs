@@ -45,7 +45,9 @@ pub mod syncwatch;
 // this daemon AND by the app, rather than a socket verb the host had to dial to reach a pure
 // function. Re-exported so this crate's own callers and modules name them in one place.
 pub use cell::{Cell, CellStyle, CellText, SgrColor};
-pub use detect::{Input as DetectionInput, Verdict, detect, explain};
+pub use detect::{
+    Input as DetectionInput, Verdict, detect, explain, known_agent_idle_fallback, verdict_from_rule,
+};
 pub use manifest::{Manifest, State as AgentScreenState};
 pub use model::{ReplaySnapshot, ScreenModel, ScrollbackLine, Snapshot};
 pub use render::{render, render_transcript};

@@ -108,32 +108,9 @@ enum ParseState {
     },
 }
 
-/// The rendered-screen dump. `lines` has exactly `rows` entries, each with trailing whitespace
-/// trimmed (the cursor may sit past a line's trimmed end).
-#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Snapshot {
-    /// Grid height.
-    pub rows: usize,
-    /// Grid width.
-    pub cols: usize,
-    /// Cursor row (0-based).
-    pub cursor_row: usize,
-    /// Cursor column (0-based).
-    pub cursor_col: usize,
-    /// DECTCEM.
-    pub cursor_visible: bool,
-    /// Whether the alt screen is active.
-    pub alt_screen: bool,
-    /// One trimmed string per row.
-    pub lines: Vec<String>,
-}
-
-// There is deliberately no `detection_text()` here. herdr's detection text — trailing blank rows
-// dropped, `\n`-joined, one trailing newline — is DERIVED from `lines`, and the manifest engine
-// that consumes it lives in Swift (`SlopDeskAgentDetect`). Computing it on both sides of the socket
-// would be one rule written twice in two languages, free to drift; it is written once, in
-// `ScreenSnapshot.detectionText`.
+/// The rendered-screen dump, [`slopdesk_screenwire`]'s — it is a reply BODY, so both ends define
+/// it together and the round trip is a test. [`ScreenModel::snapshot`] is what fills one in.
+pub use slopdesk_screenwire::Snapshot;
 
 /// Everything the snapshot renderer needs to reproduce this model's visible state on a fresh
 /// terminal.

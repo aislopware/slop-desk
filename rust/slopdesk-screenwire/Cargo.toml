@@ -22,10 +22,21 @@
 # C ABI frame is undefined), and into screend, whose `panic = "unwind"` keeps one bad connection
 # from blanking every pane. Neither is expressible per-package.
 #
-# ## No dependencies, on purpose
-# A length prefix, four integers and a `split_at_checked` are std's whole job description here, and
-# every byte this decodes arrived over a socket. `slopdesk-dropd`'s frame layer says the same thing
-# for the same reason.
+# ## The FRAME layer has no dependencies, on purpose
+# A length prefix, four integers and a `split_at_checked` are std's whole job description for a
+# frame, and every byte this decodes arrived over a socket. `slopdesk-dropd`'s frame layer says the
+# same thing for the same reason.
+#
+# `serde` is here for the PAYLOAD layer, which is a different job: the two JSON bodies a reply
+# carries (`payload::Snapshot`, `payload::Verdict`) and the state alphabet they share. Those were
+# screend's, deriving `Serialize` and nothing else, which held for exactly as long as the only
+# decoder was Swift's `Decodable`. Hostd's client is Rust now and needs the other half — and it
+# cannot get it by linking screend, whose `regex` + `toml` + per-byte screen model are the ENGINE
+# this crate's existence keeps out of the app. So the shape is `slopdesk-superwire`'s, which is the
+# same crate for the same protocol shape and carries the same two dependencies: both ends' payload
+# types live with both ends' framing, and the round trip is a test rather than an agreement.
+#
+# `serde` is already in `slopdesk-ffi`'s closure, so this costs the linked artifact nothing new.
 [workspace]
 resolver = "3"
 
@@ -43,6 +54,8 @@ name = "slopdesk_screenwire"
 path = "src/lib.rs"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Linked into the app AND into a daemon whose whole job is a per-byte loop.
 [profile.release]
@@ -109,8 +122,9 @@ lossy_float_literal = "deny"
 try_err = "deny"
 
 # Disabled, with reasons:
-# - `multiple_crate_versions` (cargo): zero dependencies, so it can only ever fire on a
-#   toolchain artefact outside our control.
+# - `multiple_crate_versions` (cargo): `serde` and `serde_json` pull nothing but each other's
+#   `proc-macro2`/`syn` build graph, so this can only ever fire on a transitive duplicate outside
+#   our control.
 multiple_crate_versions = "allow"
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
 #   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".

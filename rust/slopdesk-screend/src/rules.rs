@@ -8,7 +8,7 @@
 
 use regex::Regex;
 
-use crate::detect::{Input, Verdict};
+use crate::detect::{Input, Verdict, known_agent_idle_fallback, verdict_from_rule};
 use crate::manifest::{Gate, Manifest, Rule, State};
 use crate::region::Region;
 
@@ -93,8 +93,8 @@ impl CompiledManifest {
             }
             winner = Some(compiled);
         }
-        winner.map_or_else(Verdict::known_agent_idle_fallback, |winner| {
-            Verdict::from_rule(&winner.rule)
+        winner.map_or_else(known_agent_idle_fallback, |winner| {
+            verdict_from_rule(&winner.rule)
         })
     }
 }
@@ -299,7 +299,7 @@ impl CompiledManifest {
         let Some(winner) = winner else {
             return fallback_explain(agent, Some(&self.manifest), evaluated);
         };
-        let verdict = Verdict::from_rule(&winner.rule);
+        let verdict = verdict_from_rule(&winner.rule);
         Explain {
             agent: Some(agent.to_owned()),
             state: verdict.state.label(),

@@ -26,9 +26,16 @@
 //! `len` counts every byte AFTER itself. Untrusted-input discipline applies as everywhere else in
 //! the tree: decode is validate-then-drop — a short, over-long or unrecognised frame yields an
 //! error the server answers with a status byte, never a panic.
+//!
+//! What a reply's `payload…` CONTAINS is [`payload`]'s: the two JSON bodies and the state alphabet
+//! they share, defined once for both ends the way the framing is.
+
+pub mod payload;
 
 use std::ffi::OsStr;
 use std::path::PathBuf;
+
+pub use payload::{Snapshot, State, Verdict, decode_snapshot, decode_verdict, encode_body};
 
 /// The variable that points both ends at a screend other than the login session's. The test fixture
 /// uses it to run a private daemon; nothing else should.
