@@ -21,15 +21,19 @@
 //!
 //! Stage C.2a was the pane→wire direction; C.2c added the ladders that change WHO is attached —
 //! [`PaneSession::join`] with its snapshot compose, [`PaneSession::detach`],
-//! [`PaneSession::rebind`] and the size fold with its three timers. What is left for C.2d is the
-//! CONTROL surface: the metadata verbs and their admission, the agent detector's three loops, the
-//! screen scanner, the echo probe's re-assert on join, and the project-key derivation. Every one of
-//! them lands over this same [`shared::Shared`], which is why the lock partition is the module
+//! [`PaneSession::rebind`] and the size fold with its three timers. C.2d added the DETECTION
+//! surface: the foreground poll, the screen scan, the echo probe, the cwd/project derivation, the
+//! full arrival re-assert and the readouts a supervision caller asks for. What is left is the
+//! metadata verbs with their bounded admission and the agent-control observer registries. Every one
+//! of them lands over this same [`shared::Shared`], which is why the lock partition is the module
 //! worth reading first.
 //!
-//! Two things C.2c leaves marked rather than done, both because they need a face C.2d brings: the
-//! join and rebind re-asserts stop at the block backfill (the echo truth and the activity burst are
-//! the detector's), and [`resize::Resize::apply`] does not yet mark the screen model dirty.
+//! Three of C.2d's decisions are worth knowing before reading it. The detector lives INSIDE the
+//! truths lock rather than beside it ([`shared::Folds`]), because every readout that pairs the two
+//! must see them agree. The screen scan's question is INJECTED ([`ScreenOracle`]), for the reason
+//! the snapshot renderer is: a session that linked the screend client would spawn a daemon the
+//! moment a test built one. And both detection loops park on a condvar rather than sleeping, so a
+//! teardown does not wait out an interval the engine chose.
 //!
 //! ## What it does not DELETE, and why
 //!
@@ -54,9 +58,12 @@
 )]
 
 mod clock;
+mod detect;
 mod drain;
 mod facts;
 mod ingest;
+mod probe;
+mod project;
 mod resize;
 mod session;
 mod shared;
@@ -64,6 +71,8 @@ mod snapshot;
 mod subscriber;
 mod timer;
 
+pub use detect::{DetectConfig, ScreenOracle, ScreenRequest};
+pub use project::{IgnoreKeys, InlineResolve, KeyObserver, ResolveExecutor};
 pub use resize::{RESIZE_DEBOUNCE, SIZE_SETTLE};
 pub use session::{PaneSession, SessionConfig, SessionObserver, SilentObserver};
 pub use shared::{DiscardLog, SessionLog};

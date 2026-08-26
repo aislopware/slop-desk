@@ -38,6 +38,7 @@ use slopdesk_muxsession::fanout::SubscriberId;
 use slopdesk_muxsession::resize_fold::Grid;
 use slopdesk_wire::message::WireMessage;
 
+use crate::detect::Detect;
 use crate::resize::Resize;
 use crate::shared::Shared;
 
@@ -250,6 +251,7 @@ pub(crate) fn run_input_relay(
     inbound: &Receiver<WireMessage>,
     shared: &Arc<Shared>,
     pty: &Arc<PtyProcess>,
+    detect: &Arc<Detect>,
 ) {
     while let Ok(message) = inbound.recv() {
         if let WireMessage::Input(ref bytes) = message {
@@ -266,9 +268,14 @@ pub(crate) fn run_input_relay(
                 }
                 shared.end_input_write();
             }
-            // Stage C.2d hangs the echo re-probe and the user-input agent fold here, after the
-            // write and before the grant: both are folds over what was just typed, and both were
-            // placed at this exact point in the Swift for the latency reason it records.
+            // Two folds over what was just typed, here rather than anywhere else for one reason: the
+            // termios `ECHO` bit flips fastest around a password prompt, and the instant after the
+            // keystroke that opened it is when the probe is right. The cancel edge has the same
+            // shape — a `Ctrl-C` observed after the output it interrupted is an agent reported busy
+            // through its own interruption. Both are cheap enough to sit on this path: one
+            // `tcgetattr`, and a fold that bails on its status check before reading a byte.
+            Detect::sample_echo(shared, pty);
+            detect.fold_input(shared, bytes);
         }
         // Consumed: grant the window back ON THE CHANNEL THE BYTES ARRIVED ON. Every sub-channel
         // owns its own accountant, and a sender parked on an exhausted window wakes only on a grant

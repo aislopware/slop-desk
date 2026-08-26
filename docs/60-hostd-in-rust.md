@@ -369,9 +369,63 @@ Nothing in stage C can be written before it exists in Rust, so the stage is comm
     never sequenced and dropping them would be both a silent transcript gap and a ≥64 KiB accounting
     residue that leaves the read loop paused for ever. `close_drain` therefore gained a `reopen` and
     a `kick`, since a detach's stop must be undoable where a teardown's never is.
-  - **C.2d — the control surface.** The metadata verbs and their admission, the block observers, the
-    agent-detection loops (the foreground poll, the screen scan and the echo probe), the project-key
-    derivation, and the readouts `HostServer` calls through.
+  - **C.2d — the detection surface.** The foreground poll, the screen scan and the echo probe, the
+    cwd/project derivation, the arrival re-assert both ladders end with, and the readouts a
+    supervision caller asks for. Three modules: `probe` (which OS read to reach for, and how long an
+    answer stays good), `detect` (the folds, the two loops and the injected screen oracle), `project`
+    (the type-33 latch and the type-34 walk behind it).
+
+    **It is a RE-WIRE, not a port, and that is the finding that sized the stage.** Every engine was
+    already Rust behind an FFI door: the detector, the alias table, the screen rule ladder and the
+    scan's timing are `slopdesk-agent`'s; the foreground and cwd probes are `slopdesk-posix`'s; the
+    ancestor walk is `slopdesk-git`'s; the metadata admission counter is `slopdesk-muxsession`'s and
+    the metadata probes are `slopdesk-panecensus`'s and `slopdesk-probe`'s. `PaneScreenScanner.swift`,
+    `ClaudePaneDetector.swift`, `ForegroundProcessProbes.swift`, `HostMetadataProbe.swift` and
+    `MetadataAdmission.swift` are faces over those, so what this stage writes is the DRIVING — when
+    to probe, what to hand each fold, where the answer goes — and nothing else.
+
+    **The detector moved INSIDE the truths lock, not beside it.** `Shared::folds` holds both, because
+    every readout that pairs them has to see them agree: `list-panes` reads a status beside its
+    label, the arrival ladder splices the detector's re-assert between the two halves of the truths'
+    one, and the type-25 notification gate is read in the SAME acquisition as the fold it gates. Two
+    locks would make each of those a window where one had moved and the other had not — which is why
+    `MuxChannelSession` kept `agentDetector` under `truthsLock` rather than next to it. The scan's
+    pending-byte buffer is its own small lock and must be: the READ LOOP appends to it, and the read
+    loop may not queue behind a fold that is talking to screend.
+
+    **The screen oracle is injected, for the reason the snapshot renderer is.** `ScreenOracle` is a
+    trait this crate never implements: `ScreenClient::new` AUTOSTARTS screend, so a session that
+    linked it would spawn a daemon the moment a test constructed one. hostd wires the screend-backed
+    implementation; a session handed `None` runs no scan loop at all, which is exactly what a pane
+    with the gate off should do. A failed exchange is `Outcome::Failed`, never a fallback verdict —
+    a detection read off a screen whose last fold was lost is how a dismissed dialog gets reported
+    as a live one.
+
+    **Both loops park on a condvar rather than sleeping.** Every Swift loop was a `Task.sleep` the
+    teardown cancelled, and a `thread::sleep` is not cancellable — so a teardown would wait out up to
+    one interval per pane, and the SCAN's interval is the engine's to choose, not this crate's. The
+    loops also survive a DETACH, deliberately: an agent working in a detached pane is the case the
+    supervision surface exists for. What the detach takes is the members, so an edge crossed while
+    away broadcasts to nobody, and the rebind's re-assert is what tells the returning client.
+
+    **The arrival ladder's order is load-bearing in two places.** Echo first, because its absence is a
+    security consequence rather than a cosmetic one — a `sudo` prompt spanning the arrival leaves the
+    client's automatic Secure Keyboard Entry disengaged, and the RE-ANCHOR is what forces the fresh
+    type-31 that a plain re-fold of an unchanged state would not. Title LAST, because the client
+    judges a title's freshness against the command-start stamp the head just republished, and a title
+    that arrived first loses that comparison for the rest of the session.
+  - **C.2e — the metadata and observer surface.** The metadata verbs over their serial queue and the
+    bounded-admission counter that is the ONLY bound on an unwindowed control channel, the three
+    agent-control observer registries (`outputObservers`/`closeObservers`/`blockObservers`, and the
+    ordering guarantee that every output observer fires before any close observer at EOF), and the
+    remaining `last-output`/`run --wait` block verbs.
+
+    One thing C.2d leaves for it, found while porting: the Swift gates `resendBlocksOnReattach` on
+    `blocksEnabled` before paying the round trip, and `block_backfill` has no such gate. The WIRE
+    behaviour is identical — with blocks off superd errors, `.ok()?` answers `None`, and no message
+    is sent — so the divergence is one wasted RPC per arrival on a blocks-disabled pane. The gate
+    belongs here rather than there: `blocksEnabled` is a spawn-time bit the Rust `PtyProcess` does
+    not carry yet, and this is where the rest of the `blocksEnabled`-gated surface lands.
 
   **Two hazards C.1 already paid for, carried up one layer.** The reference cycle is the first: a
   session that both held the pane and WAS its `PaneChunkSink` closes client → sink → `PtyProcess` →

@@ -54,6 +54,19 @@ slopdesk-wire = { path = "../slopdesk-wire" }
 slopdesk-superclient = { path = "../slopdesk-superclient" }
 slopdesk-superwire = { path = "../slopdesk-superwire" }
 
+# The agent detector, the alias table, the screen rule ladder and the scan's timing. A crate with
+# NO dependencies of its own, on purpose: every decision in it is pure, and the driving — when to
+# probe, what to hand each fold — is this crate's.
+slopdesk-agent = { path = "../slopdesk-agent" }
+
+# The `proc_pidinfo` family behind the foreground and cwd probes. Reached through `slopdesk-hostpane`
+# for anything that touches the master descriptor; directly only for the two reads that take a pid.
+slopdesk-posix = { path = "../slopdesk-posix" }
+
+# The By-Project ancestor walk. Handed to an executor rather than called on the read loop — see
+# `src/project.rs` for the hung-mount reason.
+slopdesk-git = { path = "../slopdesk-git" }
+
 # `clock_gettime` for the two stamp scales, and only that. Both are safe wrappers, so no crate in
 # this dependency line hand-writes `unsafe` for them.
 nix = { version = "0.31", features = ["time"] }

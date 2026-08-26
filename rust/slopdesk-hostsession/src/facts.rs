@@ -27,7 +27,7 @@
 //! former. Reading it against the latter is the one mistake this shape allows, which is why nothing
 //! outside this module ever sees both.
 
-use slopdesk_muxsession::truths::{Fact, Kind, Scalars};
+use slopdesk_muxsession::truths::{Fact, Kind, Reassert, Scalars, Truths};
 use slopdesk_superwire::blockwire::{BlockEvent, BlockMeta, SyntheticProgress};
 use slopdesk_superwire::sniffwire::{CommandStatus as SniffedStatus, SniffEvent};
 use slopdesk_wire::message::{CommandStatus, WireMessage};
@@ -213,6 +213,45 @@ pub(crate) fn block_message(meta: &BlockMeta) -> WireMessage {
     }
 }
 
+/// One re-assert entry as the message it spells, read out of the truths it names.
+///
+/// The DOWN half again, and for the same reason it is here rather than in `slopdesk-muxsession`:
+/// that crate answers WHICH truths a joiner is owed and in what order, and deliberately keeps
+/// almost no edge to the protocol. Turning each into a frame is marshalling, and marshalling lives
+/// with the wire.
+///
+/// `None` for an entry whose truth vanished between the ladder being built and this being called.
+/// The ladder and the read happen inside one acquisition of the fold lock in practice, so it is the
+/// unreachable arm — but a fabricated default here would publish a truth the pane does not hold,
+/// which is worse than sending one message fewer.
+pub(crate) fn reassert_message(truths: &Truths, entry: Reassert) -> Option<WireMessage> {
+    match entry {
+        // Only the RUNNING case, and deliberately: idle IS the client's reconnect reset state, and a
+        // synthetic idle would fabricate a `lastCommand` and a completion edge for a command that
+        // never finished.
+        Reassert::CommandRunning => {
+            truths
+                .command_running_since()
+                .map(|_| WireMessage::CommandStatus(CommandStatus::Running))
+        },
+        Reassert::Progress => {
+            truths
+                .progress()
+                .map(|(state, percent)| WireMessage::Progress { state, percent })
+        },
+        Reassert::Cwd => truths.cwd().map(|cwd| WireMessage::Cwd(String::from(cwd))),
+        Reassert::ProjectKey => {
+            truths
+                .project_key()
+                .map(|key| WireMessage::ProjectKey(String::from(key)))
+        },
+        Reassert::Title => {
+            let title = truths.title();
+            (!title.is_empty()).then(|| WireMessage::Title(String::from(title)))
+        },
+    }
+}
+
 /// One block row as the message it spells: the metadata's type-28, or the badge's progress.
 pub(crate) fn block_row_message(row: &BlockRow<'_>) -> Option<WireMessage> {
     row.meta
@@ -228,12 +267,12 @@ mod tests {
                   fold drop a fact and still read as a pass"
     )]
 
-    use slopdesk_muxsession::truths::Kind;
+    use slopdesk_muxsession::truths::{Fact, Kind, Stamps, Truths};
     use slopdesk_superwire::blockwire::{BlockEvent, BlockMeta, SyntheticProgress};
     use slopdesk_superwire::sniffwire::{CommandStatus as SniffedStatus, SniffEvent};
     use slopdesk_wire::message::{CommandStatus, WireMessage};
 
-    use super::{block_row_message, block_rows, sniffed_facts, sniffed_message};
+    use super::{block_row_message, block_rows, reassert_message, sniffed_facts, sniffed_message};
 
     /// A title's text is BORROWED out of the event, not copied on the way in. Pointer identity is
     /// the only way to state that, and it is the property the hot path is built on.
@@ -314,6 +353,47 @@ mod tests {
                 prompt_ordinal: 3,
             }),
         );
+    }
+
+    /// The arrival ladder is what a joining client is owed, and TITLE IS LAST — the client judges
+    /// a title's freshness against the command-start stamp the head just republished, so a title
+    /// that arrived first would lose that comparison for the rest of the session.
+    #[test]
+    fn the_arrival_ladder_ends_with_the_title() {
+        let mut truths = Truths::new();
+        let stamps = Stamps {
+            reference: 100.0,
+            uptime: 7.0,
+        };
+        truths.ingest_sniffed(
+            &[
+                Fact::bare(Kind::CommandRunning),
+                Fact::text(Kind::Title, "cargo test"),
+            ],
+            stamps,
+            false,
+        );
+        let ladder = truths
+            .reestablish_head()
+            .into_iter()
+            .chain(truths.reestablish_tail())
+            .filter_map(|entry| reassert_message(&truths, entry))
+            .collect::<Vec<_>>();
+        assert_eq!(ladder, vec![
+            WireMessage::CommandStatus(CommandStatus::Running),
+            WireMessage::Title(String::from("cargo test")),
+        ]);
+    }
+
+    /// An idle pane owes an arriving client NOTHING. Idle is the client's own reconnect reset
+    /// state, so a synthetic `.idle` would fabricate a `lastCommand` and a completion edge for
+    /// a command that never finished — and the empty ladder is what keeps an ordinary
+    /// reconnect's control stream byte-identical.
+    #[test]
+    fn an_idle_pane_owes_an_arriving_client_nothing() {
+        let truths = Truths::new();
+        assert!(truths.reestablish_head().is_empty());
+        assert!(truths.reestablish_tail().is_empty());
     }
 
     /// A synthetic badge is a PROGRESS fact, which is what makes it latch the same reattach truth

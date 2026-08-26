@@ -42,6 +42,7 @@ use std::time::Duration;
 use slopdesk_hostpane::{PtyProcess, WindowSize};
 use slopdesk_muxsession::resize_fold::{ArmDecision, Attachment, Grid, ResizeFold, SubscriberId};
 
+use crate::detect::Detect;
 use crate::timer::{Timer, Timers};
 
 /// The latest-wins window before a resolved grid reaches `TIOCSWINSZ`.
@@ -73,6 +74,9 @@ pub(crate) struct Resize {
     write: Mutex<()>,
     timers: Timers,
     pty: Arc<PtyProcess>,
+    /// The screen engine, held only to INVALIDATE its grid — see [`Resize::apply`]. Strongly, and
+    /// safely so: detection reaches the pane and the shared state, never back to the size fold.
+    detect: Arc<Detect>,
     debounce: Duration,
     settle: Duration,
 }
@@ -81,6 +85,7 @@ impl Resize {
     /// A fold for a pane whose opening subscriber votes (or does not), with no timer thread yet.
     pub(crate) fn new(
         pty: Arc<PtyProcess>,
+        detect: Arc<Detect>,
         opened_size_passive: bool,
         debounce: Duration,
         settle: Duration,
@@ -90,6 +95,7 @@ impl Resize {
             write: Mutex::new(()),
             timers: Timers::new(),
             pty,
+            detect,
             debounce,
             settle,
         })
@@ -200,9 +206,12 @@ impl Resize {
         // geometry they were emitted for. A width no client ever had would re-wrap every line.
         self.pty.set_window_size(wanted);
         drop(write);
-        // Stage C.2d hangs the screen model's dirty mark here: the resident grid is fixed-size, so a
-        // geometry change rebuilds it from the ring on the next scan. Nothing in this module has an
-        // edge to the scanner yet, and the nudge below is the half that is this module's.
+        // The resident screen model is a FIXED-SIZE grid, and a VT grid cannot be reflowed — so a
+        // geometry change does not adjust it, it invalidates it. Marking it here rather than in the
+        // scan loop is what makes the invalidation atomic with the ioctl that caused it: a scan that
+        // sampled the new size but folded bytes painted for the old one would run its rule ladder
+        // over a screen no program ever drew.
+        self.detect.mark_screen_dirty();
         self.schedule_nudge();
     }
 

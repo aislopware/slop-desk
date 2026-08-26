@@ -13,7 +13,7 @@
 //! | [`Shared::replay`] | `replayLock` | the ring: sequence, ack, retention |
 //! | [`Shared::members`] | `subscribersLock` | the roster and every NUMBER about a member |
 //! | [`Shared::sequencing`] | `fanoutLock` | whether a frame fans out, held across the sequence |
-//! | [`Shared::truths`] | `truthsLock` | the latched truths (seven Swift locks, already one) |
+//! | [`Shared::folds`] | `truthsLock` | the latched truths AND the agent detector (seven Swift locks, already one) |
 //! | [`Shared::input`] | `inputGateLock` + `inputQueue` | whether writes are still accepted, and how many are in flight |
 //!
 //! `life` is the eighth piece of state and the odd one out: it serializes ITSELF, and it is held
@@ -61,6 +61,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
+use slopdesk_agent::PaneDetector;
 use slopdesk_hostpane::PaneOutputStream;
 use slopdesk_muxsession::fanout::{Fanout, SubscriberId};
 use slopdesk_muxsession::lifecycle::Lifecycle;
@@ -213,6 +214,25 @@ pub(crate) struct Sequenced {
     pub(crate) targets: Vec<Arc<Subscriber>>,
 }
 
+/// The pane's two folds, under ONE lock.
+///
+/// They are together because every readout that pairs them has to see them agree: `list-panes`
+/// reads a status beside its label, the reattach ladder splices the detector's re-assert between
+/// the two halves of the truths' one, and a pane whose title was retired by a detected agent's exit
+/// reads both in the same breath. Two locks would make each of those a window where one had moved
+/// and the other had not — which is exactly the bug `MuxChannelSession` avoided by keeping
+/// `agentDetector` under `truthsLock` rather than beside it.
+///
+/// The detector is folded from FOUR contexts (the foreground poll, the screen scan, the hook feed
+/// and any input writer), so the lock is not a formality on either field.
+#[derive(Debug)]
+pub(crate) struct Folds {
+    /// What the shell said, latched.
+    pub(crate) truths: Truths,
+    /// Who is running in the pane, and what they are doing.
+    pub(crate) detector: PaneDetector,
+}
+
 /// Everything one pane's threads share.
 #[derive(Debug)]
 pub(crate) struct Shared {
@@ -225,7 +245,7 @@ pub(crate) struct Shared {
     /// Signalled when a member is handed the exit, so the exit ladder waits rather than polls.
     delivered: Condvar,
     sequencing: Mutex<Sequencing>,
-    truths: Mutex<Truths>,
+    folds: Mutex<Folds>,
     input: Mutex<InputGate>,
     /// Signalled when an input write finishes, so the teardown waits rather than polls.
     quiet: Condvar,
@@ -264,6 +284,7 @@ impl Shared {
     pub(crate) fn new(
         replay: ReplayBuffer,
         capacity: i64,
+        done_to_idle: f64,
         log: Arc<dyn SessionLog>,
         observer: Arc<dyn SessionObserver>,
     ) -> Self {
@@ -279,7 +300,10 @@ impl Shared {
             members: Mutex::new(Members::default()),
             delivered: Condvar::new(),
             sequencing: Mutex::new(Sequencing::default()),
-            truths: Mutex::new(Truths::new()),
+            folds: Mutex::new(Folds {
+                truths: Truths::new(),
+                detector: PaneDetector::new(done_to_idle),
+            }),
             input: Mutex::new(InputGate::default()),
             quiet: Condvar::new(),
             latched: Mutex::new(0),
@@ -317,8 +341,18 @@ impl Shared {
     /// them hold it across a broadcast, which is the re-entrancy the seven-locks collapse was meant
     /// to make impossible.
     pub(crate) fn with_truths<T>(&self, body: impl FnOnce(&mut Truths) -> T) -> T {
-        let mut truths = self.truths.lock().unwrap_or_else(PoisonError::into_inner);
-        body(&mut truths)
+        let mut folds = self.folds.lock().unwrap_or_else(PoisonError::into_inner);
+        body(&mut folds.truths)
+    }
+
+    /// Runs one closure under that same lock, with the detector too.
+    ///
+    /// The paired form, for the callers that must see the two agree — see [`Folds`]. Everything the
+    /// closure returns crosses as a VALUE: a send from inside would hold the fold lock across a
+    /// roster walk, which is the re-entrancy the seven-lock partition exists to make impossible.
+    pub(crate) fn with_folds<T>(&self, body: impl FnOnce(&mut Folds) -> T) -> T {
+        let mut folds = self.folds.lock().unwrap_or_else(PoisonError::into_inner);
+        body(&mut folds)
     }
 
     // ------------------------------------------------------------------- gate
@@ -1075,6 +1109,7 @@ mod tests {
         Shared::new(
             ReplayBuffer::new(),
             1 << 20,
+            8.0,
             Arc::new(DiscardLog),
             Arc::new(SilentObserver),
         )

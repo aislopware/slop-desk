@@ -32,7 +32,9 @@ use slopdesk_superwire::sniffwire::SniffEvent;
 use slopdesk_wire::message::WireMessage;
 
 use crate::clock;
+use crate::detect::Detect;
 use crate::facts::{block_row_message, block_rows, sniffed_facts, sniffed_message};
+use crate::project::Project;
 use crate::shared::Shared;
 
 /// The pane's half of the read loop.
@@ -42,31 +44,50 @@ pub(crate) struct Ingest {
     /// The pane, weakly — see the module note. A `None` upgrade means the session is already gone,
     /// on which there is nothing left to tell the sniffer.
     pane: Weak<PtyProcess>,
+    /// The screen engine's buffer and the detector behind it. Held STRONGLY: it reaches nothing
+    /// that reaches back, so it is safe here for the same reason [`Shared`] is.
+    detect: Arc<Detect>,
+    /// The cwd/project derivation, which needs the pane and so takes it as an argument.
+    project: Project,
 }
 
 impl Ingest {
     /// A sink for `shared`, reaching `pane` without keeping it alive.
-    pub(crate) const fn new(shared: Arc<Shared>, pane: Weak<PtyProcess>) -> Self {
-        Self { shared, pane }
+    pub(crate) const fn new(
+        shared: Arc<Shared>,
+        pane: Weak<PtyProcess>,
+        detect: Arc<Detect>,
+        project: Project,
+    ) -> Self {
+        Self {
+            shared,
+            pane,
+            detect,
+            project,
+        }
     }
 
     /// Folds one sniffed batch and answers what rides the FIFO with the chunk.
     ///
-    /// One acquisition of the truths lock covers the whole fold, including the type-25 gate read in
+    /// One acquisition of the fold lock covers the whole thing, including the type-25 gate read in
     /// the SAME acquisition: while a pane's agent announces its own edges through the hook feed,
-    /// its OSC notification duplicates the banner the client already raises, so one blocked prompt
-    /// raises ONE notification. Two handles never hold each other, so that verdict crosses as a
-    /// VALUE — and until stage C.2d wires the detector in, no pane suppresses.
+    /// its OSC notification duplicates the banner the client already raises, so one blocked
+    /// prompt raises ONE notification. That is the whole reason the detector lives under this
+    /// lock rather than beside it — a gate read a moment before or after the fold would answer
+    /// for a different agent's state. Two handles never hold each other, so the verdict crosses
+    /// as a VALUE.
     fn fold_sniffed(&self, sniffed: &[SniffEvent]) -> Fold {
         let stamps = clock::stamps();
-        self.shared.with_truths(|truths| {
+        self.shared.with_folds(|folds| {
+            let suppress = folds.detector.suppresses_child_notifications();
+            let truths = &mut folds.truths;
             // A title RETIREMENT folded on another thread since the last chunk (a detected agent
             // exited) also retires the sniffer's coalescing anchor — otherwise the NEXT agent's
             // opening title, very often byte-identical to the one just retired, would be deduped
             // away and the pane would stay untitled.
             let forget_title = truths.take_title_coalescing_reset();
             let facts = sniffed_facts(sniffed);
-            let verdicts = truths.ingest_sniffed(&facts, stamps, false);
+            let verdicts = truths.ingest_sniffed(&facts, stamps, suppress);
             let mut fifo = Vec::new();
             for verdict in verdicts {
                 let Some(fact) = facts.get(verdict.fact as usize) else {
@@ -79,7 +100,7 @@ impl Ingest {
                     // Type-33 is host-gated single-source: the raw OSC-7 cwd is WITHHELD, because
                     // pre-warm-up plugin noise would reach the client unfiltered and a
                     // probe-beaten stale value would arrive at drain time AFTER the probed truth.
-                    // Stage C.2d is what publishes the resolved key in its place.
+                    // [`crate::project`] is what publishes the gated value in its place.
                     Route::Withheld => {},
                     // Broadcast rides the FIFO here, and merging the arms is the honest spelling of
                     // why: nothing in a SNIFFED batch routes to broadcast today, and if a fold ever
@@ -142,14 +163,24 @@ impl PaneChunkSink for Ingest {
         self.shared.life.record_offset(ends_at);
 
         let fold = self.fold_sniffed(sniffed);
+        let pane = self.pane.upgrade();
         if fold.forget_title
-            && let Some(pane) = self.pane.upgrade()
+            && let Some(ref pane) = pane
         {
             pane.forget_title_coalescing();
         }
-        // Stage C.2d hangs three more taps at this exact point, each of which only OBSERVES the
-        // chunk: the project-key derivation, the agent-control output observers, and the screen
-        // scanner's append. The bytes below are forwarded unchanged either way.
+        // The two taps that only OBSERVE the chunk. Neither may change what is forwarded, and
+        // neither may block: the screen tap is a copy under a lock nothing else contends for at this
+        // instant, and the derivation's own expensive half is handed to an executor rather than run
+        // here. A pane with detection off pays a branch for both.
+        //
+        // The derivation reads the RAW batch rather than the fold's output, and it has to: the fold
+        // WITHHELDs the sniffed OSC-7 precisely so that the only cwd on the wire is the one this
+        // derivation publishes, so a cwd read back out of `fold.fifo` would always be absent.
+        self.detect.note_output(payload);
+        if let Some(ref pane) = pane {
+            self.project.derive(&self.shared, pane, sniffed);
+        }
         let broadcast = self.fold_blocks(blocks);
         if !broadcast.is_empty() {
             self.shared.broadcast_control(&broadcast);

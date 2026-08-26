@@ -38,6 +38,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use slopdesk_agent::ClaudeStatus;
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostpane::{PaneOutputStream, PtyProcess};
 use slopdesk_muxsession::fanout::SubscriberId;
@@ -47,14 +48,16 @@ use slopdesk_wire::message::WireMessage;
 use slopdesk_wire::mux::flow::MuxFlowControl;
 use slopdesk_wire::replay::ReplayBuffer;
 
+use crate::detect::{Detect, DetectConfig};
 use crate::ingest::Ingest;
+use crate::project::{IgnoreKeys, InlineResolve, KeyObserver, Project, ResolveExecutor};
 use crate::resize::{RESIZE_DEBOUNCE, Resize, SIZE_SETTLE};
 use crate::shared::{SessionLog, Shared};
 use crate::snapshot::SnapshotPolicy;
 use crate::subscriber::{
     Subscriber, run_control_relay, run_control_sender, run_data_sender, run_input_relay,
 };
-use crate::{drain, facts, snapshot};
+use crate::{detect, drain, facts, snapshot};
 
 /// How long the exit thread waits for the read loop to reach EOF before shipping `.exit`.
 ///
@@ -120,6 +123,12 @@ pub struct SessionConfig {
     pub resize_debounce: Duration,
     /// The longer window a contributor-set change arms.
     pub size_settle: Duration,
+    /// Which of the pane's two detection loops run, and where the screen scan asks its question.
+    pub detect: DetectConfig,
+    /// Where the project-key ancestor walk runs — see [`ResolveExecutor`].
+    pub resolve: Arc<dyn ResolveExecutor>,
+    /// Who hears about a new project key. hostd wires the repo-watch refcounts here.
+    pub project_keys: Arc<dyn KeyObserver>,
 }
 
 impl SessionConfig {
@@ -138,6 +147,9 @@ impl SessionConfig {
             opened_size_passive: false,
             resize_debounce: RESIZE_DEBOUNCE,
             size_settle: SIZE_SETTLE,
+            detect: DetectConfig::off(),
+            resolve: Arc::new(InlineResolve),
+            project_keys: Arc::new(IgnoreKeys),
         }
     }
 }
@@ -151,6 +163,10 @@ pub struct PaneSession {
     resize: Arc<Resize>,
     /// How a reattach or a join renders the screen a client opens on.
     snapshot: Option<Arc<dyn SnapshotPolicy>>,
+    /// The pane's detection: the probes, the screen buffer, and the wake the teardown pulls.
+    detect: Arc<Detect>,
+    /// The cwd latch and the project-key walk behind it.
+    project: Project,
     /// `taskLock`'s remaining job, and only that: the objects. Every LATCH that used to sit beside
     /// them is `Lifecycle`'s.
     stream: Mutex<Option<Arc<PaneOutputStream>>>,
@@ -171,6 +187,7 @@ impl PaneSession {
         let shared = Arc::new(Shared::new(
             config.replay,
             MuxFlowControl::host_queue_capacity_bytes(),
+            config.detect.done_to_idle,
             Arc::clone(&config.log),
             Arc::clone(&config.observer),
         ));
@@ -179,8 +196,12 @@ impl PaneSession {
         // told to skip its backlog stays skipped until a chunk actually arrives, and a rebind's
         // recorded cursor can only move forward from here.
         shared.life.record_offset(config.resume_from);
+        // Before the fold, because the fold INVALIDATES the screen grid on every applied geometry
+        // change and so has to be able to name it.
+        let detect = Arc::new(Detect::new(config.detect));
         let resize = Resize::new(
             Arc::clone(&pty),
+            Arc::clone(&detect),
             config.opened_size_passive,
             config.resize_debounce,
             config.size_settle,
@@ -190,6 +211,8 @@ impl PaneSession {
             pty,
             resize,
             snapshot: config.snapshot,
+            detect,
+            project: Project::new(config.resolve, config.project_keys),
             stream: Mutex::new(None),
             drain_thread: Mutex::new(None),
             threads: Mutex::new(Vec::new()),
@@ -299,8 +322,9 @@ impl PaneSession {
         let relay = Arc::clone(subscriber);
         let shared = Arc::clone(&self.shared);
         let pty = Arc::clone(&self.pty);
+        let detect = Arc::clone(&self.detect);
         self.launch_owned(subscriber, "slopdesk-input-relay", move || {
-            run_input_relay(&relay, &data_inbound, &shared, &pty);
+            run_input_relay(&relay, &data_inbound, &shared, &pty, &detect);
         });
 
         let relay = Arc::clone(subscriber);
@@ -364,7 +388,12 @@ impl PaneSession {
         // superd does the reading now: hostd's duplicate of the master is for writes, `TIOCSWINSZ`
         // and the two probes only. An unspawned pane's stream is EOF from the start, so nothing
         // below is conditional on a child existing.
-        let sink = Arc::new(Ingest::new(Arc::clone(&self.shared), Arc::downgrade(&self.pty)));
+        let sink = Arc::new(Ingest::new(
+            Arc::clone(&self.shared),
+            Arc::downgrade(&self.pty),
+            Arc::clone(&self.detect),
+            self.project.clone(),
+        ));
         let stream = Arc::new(self.pty.make_output_stream(self.shared.life.offset(), sink));
         // The gate's action, wired now that there is something to throttle. Weakly — see the
         // module note.
@@ -410,6 +439,34 @@ impl PaneSession {
             // would resume BOTH and the pane would send a duplicate `.exit` per reattach cycle.
             shared.observer().exited(code);
         });
+
+        self.start_detection();
+    }
+
+    /// Starts whichever detection loops this pane's gates asked for.
+    ///
+    /// Both survive a DETACH, deliberately: an agent working in a detached pane is exactly the case
+    /// the supervision surface exists for, and a poll that stopped at detach would report the pane
+    /// idle for the whole window. What the detach does take is the members, so an edge crossed
+    /// while away broadcasts to nobody — and the rebind's re-assert is what tells the returning
+    /// client what it missed.
+    fn start_detection(self: &Arc<Self>) {
+        if self.detect.polls() {
+            let shared = Arc::clone(&self.shared);
+            let pty = Arc::clone(&self.pty);
+            let detect = Arc::clone(&self.detect);
+            // The FIRST sample happens here rather than after the first interval: a pane that opens
+            // with an agent already running would otherwise report nothing for a whole poll period,
+            // which is the window a fresh split spends looking empty.
+            Detect::sample_foreground(&shared, &pty);
+            self.launch("slopdesk-pane-agent", move || detect.poll_loop(&shared, &pty));
+        }
+        if self.detect.scans() {
+            let shared = Arc::clone(&self.shared);
+            let pty = Arc::clone(&self.pty);
+            let detect = Arc::clone(&self.detect);
+            self.launch("slopdesk-pane-screen", move || detect.scan_loop(&shared, &pty));
+        }
     }
 
     /// Starts the pane's ONE drain thread, remembering the handle a detach will have to join.
@@ -501,9 +558,7 @@ impl PaneSession {
 
         // Join-scoped re-asserts, addressed to the new member only: the incumbents were told these
         // truths when they happened, and re-telling them would flood a client that is up to date.
-        // The echo truth and the activity burst are stage C.2d's; the blocks are here because they
-        // need nothing but the snapshot superd already holds.
-        self.resend_blocks_to(&member);
+        self.reassert_to(&member);
 
         self.start_relays(&member, data_inbound, control_inbound);
         self.shared.recompute_client_online();
@@ -621,7 +676,12 @@ impl PaneSession {
         // the `Weak` at the new stream. The Swift had to CARRY the outstanding count onto a fresh
         // gate because the gate's sink named the stream being stopped; ownership dissolves that.
         let resumed = resume_from.map(|offset| {
-            let sink = Arc::new(Ingest::new(Arc::clone(&self.shared), Arc::downgrade(&self.pty)));
+            let sink = Arc::new(Ingest::new(
+                Arc::clone(&self.shared),
+                Arc::downgrade(&self.pty),
+                Arc::clone(&self.detect),
+                self.project.clone(),
+            ));
             let stream = Arc::new(self.pty.make_output_stream(offset, sink));
             self.shared.install_throttle(&stream);
             *self.stream.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&stream));
@@ -637,10 +697,9 @@ impl PaneSession {
         // accounting — would sit undelivered until the pane happened to speak again.
         let _carried = self.shared.kick_drain();
 
-        // Re-establish the control-only truths on reattach. The block metadata rides the control
-        // channel and is not in the replayed byte stream, so a returning client rebuilds its
-        // Commands navigator from this. The echo truth and the activity burst are stage C.2d's.
-        self.resend_blocks_to(&member);
+        // Re-establish the control-only truths on reattach, for the same reason a join gets them:
+        // none of them is in the replayed byte stream, and the returning client reset its mirrors.
+        self.reassert_to(&member);
 
         self.start_relays(&member, data_inbound, control_inbound);
         // Somebody holds the pane again, so this reads TRUE and the offline gate clears. Ordered
@@ -805,6 +864,10 @@ impl PaneSession {
         // question moot by dropping every pending body and joining the thread that would run them.
         self.resize.clear_members();
         self.resize.stop();
+        // Both detection loops park on a condvar rather than sleeping, precisely so this is
+        // immediate: a `thread::sleep` would hold the teardown for up to the scan interval — which
+        // the ENGINE chooses, not this crate — on every pane the host is closing.
+        self.detect.stop();
         // The roster, snapshotted BEFORE anything is closed. Every close below is what makes some
         // relay return, and a relay's last act is to retire its own member — so a roster read after
         // the closes would be missing exactly the members whose threads are still finishing, and
@@ -1011,11 +1074,202 @@ impl PaneSession {
         member.enqueue_control(messages);
     }
 
+    /// Everything an ARRIVING member has yet to be told, in the one order that lands.
+    ///
+    /// Every fact here is control-only and edge-triggered: none of it is in the replayed output
+    /// bytes, and a client resets its mirrors on connect. So without this burst a `sleep 300`, a
+    /// working agent, an open OSC 9;4 spinner or — worst — a `sudo` password prompt that spans the
+    /// arrival leaves the client showing nothing, and in the last case leaves its automatic Secure
+    /// Keyboard Entry disengaged for the rest of the entry.
+    ///
+    /// The order is the ladder's, and two steps of it are load-bearing:
+    ///
+    /// 1. **Echo first**, because it is the one whose absence is a security consequence rather than
+    ///    a cosmetic one, and because it needs no lock the rest of the ladder holds.
+    /// 2. **The detector's re-assert splices BETWEEN the truths' two halves**, at the position the
+    ///    Swift ladder used: `reestablish_head` is the running/progress pair, then the agent's own
+    ///    status, then `reestablish_tail`, whose last entry is the title. Title last is the other
+    ///    load-bearing step — the client judges a title's freshness against the command-start stamp
+    ///    the head just republished, and a title that arrived first loses that comparison for the
+    ///    rest of the session.
+    ///
+    /// The blocks go last, being the only part that is a round trip rather than a latch read.
+    fn reassert_to(&self, member: &Arc<Subscriber>) {
+        if let Some(echo) = Detect::reassert_echo(&self.shared, &self.pty) {
+            member.enqueue_control(vec![echo]);
+        }
+        // ONE acquisition for the whole ladder: the two halves and the detector's splice have to
+        // describe the same instant, and a status paired with a title from either side of a fold is
+        // exactly the mismatch keeping the detector under this lock exists to prevent.
+        let messages = self.shared.with_folds(|folds| {
+            let mut ladder = Vec::new();
+            for entry in folds.truths.reestablish_head() {
+                ladder.extend(facts::reassert_message(&folds.truths, entry));
+            }
+            ladder.extend(detect::emitted(&folds.detector.reestablish_on_reattach()));
+            for entry in folds.truths.reestablish_tail() {
+                ladder.extend(facts::reassert_message(&folds.truths, entry));
+            }
+            ladder
+        });
+        if !messages.is_empty() {
+            member.enqueue_control(messages);
+        }
+        self.resend_blocks_to(member);
+    }
+
     /// The pane's held blocks as control messages, through the ONE constructor that keeps a re-sent
     /// block and a live one from disagreeing about a field.
     fn block_backfill(&self) -> Option<Vec<WireMessage>> {
         let blocks = self.pty.block_snapshot()?;
         Some(blocks.iter().map(facts::block_message).collect())
+    }
+}
+
+/// The pane as the agent-control surface sees it: what is true right now, and the two verbs that
+/// change it.
+///
+/// Every fact below is already published as an edge-triggered control message; these read the value
+/// that edge left behind, which is what lets a caller who was not listening at the instant of the
+/// edge still be told what is true. Each is ONE acquisition of the fold lock, and the ones that
+/// return a pair are a pair for that reason: two separate reads could interleave a transition and
+/// hand back a fresh status beside a stale label.
+impl PaneSession {
+    /// Injects bytes into the PTY on the control plane's behalf.
+    ///
+    /// Fire-and-forget, and it takes the SAME gate a client keystroke does — the teardown drains
+    /// one counter, and an injection that escaped it could land on a recycled fd. Injected keys
+    /// are the human's proxy (the supervision cockpit routes a dialog answer down this verb),
+    /// so they fold through the detector as an unblock edge exactly as a typed key does.
+    pub fn write_for_control(&self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        if self.shared.begin_input_write() {
+            if let Err(error) = self.pty.write(bytes) {
+                self.shared
+                    .log
+                    .line(&format!("pane control-plane write failed: {error}"));
+            }
+            self.shared.end_input_write();
+        }
+        self.detect.fold_input(&self.shared, bytes);
+    }
+
+    /// The last OSC-sniffed window title, empty until one arrives.
+    #[must_use]
+    pub fn title(&self) -> String {
+        self.shared.with_truths(|truths| String::from(truths.title()))
+    }
+
+    /// The title beside the uptime it was sniffed at — the `pane/titleFresh` verdict's first half.
+    #[must_use]
+    pub fn title_and_stamp(&self) -> (String, Option<f64>) {
+        self.shared
+            .with_truths(|truths| (String::from(truths.title()), truths.title_at()))
+    }
+
+    /// When the CURRENT command block opened, `None` at a prompt — the verdict's other half.
+    #[must_use]
+    pub fn command_running_since(&self) -> Option<f64> {
+        self.shared.with_truths(|truths| truths.command_running_since())
+    }
+
+    /// The host's own open command block: the pane's running command line, `None` at a prompt or
+    /// with block tracking off.
+    ///
+    /// The one fact of this group a client cannot reproduce. A client's running command comes from
+    /// its own materialized block model, so a client that has rendered zero bytes has none at all
+    /// and its sidebar row falls back to the raw command line — publishing the HOST's block is
+    /// what lets the host alone render that row.
+    #[must_use]
+    pub fn running_command(&self) -> Option<String> {
+        self.shared
+            .with_truths(|truths| truths.running_command().map(String::from))
+    }
+
+    /// The freshest host-observed cwd, `None` until one is derived.
+    #[must_use]
+    pub fn cwd(&self) -> Option<String> {
+        self.shared.with_truths(|truths| truths.cwd().map(String::from))
+    }
+
+    /// The freshest By-Project key — type 34's current value.
+    #[must_use]
+    pub fn project_key(&self) -> Option<String> {
+        self.shared
+            .with_truths(|truths| truths.project_key().map(String::from))
+    }
+
+    /// Whether this pane is currently sectioned under `repo_root`.
+    ///
+    /// The comparison stays inside this crate on purpose: it is a latch read, and a caller that
+    /// fetched the key to compare it itself would be doing the compare against a value that may
+    /// have moved. hostd's type-35 fan-in asks this question per pane and pushes only to the
+    /// matches.
+    #[must_use]
+    pub fn is_under_project(&self, repo_root: &str) -> bool {
+        self.shared
+            .with_truths(|truths| truths.project_key_matches(repo_root))
+    }
+
+    /// The freshest OSC 9;4 progress pair, `None` when cleared or never reported.
+    #[must_use]
+    pub fn progress(&self) -> Option<(u8, u8)> {
+        self.shared.with_truths(|truths| truths.progress())
+    }
+
+    /// The last completed command's exit code, `None` until the first code-carrying `D`.
+    #[must_use]
+    pub fn last_exit_code(&self) -> Option<i32> {
+        self.shared.with_truths(|truths| truths.last_exit())
+    }
+
+    /// The host-measured duration of the last completed command, `None` until the first `D`.
+    #[must_use]
+    pub fn last_duration_ms(&self) -> Option<u32> {
+        self.shared.with_truths(|truths| truths.last_duration())
+    }
+
+    /// How many `working → done` edges this pane has produced.
+    #[must_use]
+    pub fn completion_epoch(&self) -> u32 {
+        self.shared.with_truths(|truths| truths.completion_epoch())
+    }
+
+    /// The rolled-up agent status, and its human label, in ONE acquisition.
+    ///
+    /// A pane whose detector never saw an agent answers [`ClaudeStatus::None`] and no label.
+    #[must_use]
+    pub fn agent_status(&self) -> (ClaudeStatus, Option<String>) {
+        self.shared.with_folds(|folds| {
+            (
+                folds.detector.status(),
+                folds.detector.status_label().map(String::from),
+            )
+        })
+    }
+
+    /// The type-27 triple the status stream stands at, plus the agent's session intent — one
+    /// acquisition, for the same reason [`Self::agent_status`] is one.
+    #[must_use]
+    pub fn agent_published_state(&self) -> (u8, u8, Option<String>, Option<String>) {
+        self.shared.with_folds(|folds| {
+            let triple = folds.detector.last_emitted_status();
+            (
+                triple.map_or(0, |triple| triple.state),
+                triple.map_or(0, |triple| triple.kind),
+                folds.detector.status_label().map(String::from),
+                folds.detector.session_intent().map(String::from),
+            )
+        })
+    }
+
+    /// Seeds the pane's cwd and project truths from the SPAWN directory — see
+    /// [`Project::seed`](crate::project::Project::seed) for why this is ungated where the
+    /// derivation is not.
+    pub fn seed_project(&self, cwd: &str) {
+        self.project.seed(&self.shared, cwd);
     }
 }
 

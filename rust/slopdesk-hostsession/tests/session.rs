@@ -44,7 +44,7 @@ use slopdesk_superwire::protocol::{
     VERSION_MINOR, event, verb,
 };
 use slopdesk_superwire::sniffwire::SniffEvent;
-use slopdesk_wire::message::WireMessage;
+use slopdesk_wire::message::{CommandStatus, WireMessage};
 use slopdesk_wire::{FrameDecoder, MuxFrame, MuxFrameDecoder};
 
 /// Long enough that a loaded machine does not fail this suite, short enough that a real hang does.
@@ -690,6 +690,69 @@ fn queued_chunks_merge_into_one_frame_in_order() {
         .flat_map(|(_seq, bytes)| bytes)
         .collect::<Vec<_>>();
     assert_eq!(carried, b"aaabbbccc".to_vec());
+    session.relinquish();
+    drop(slave);
+    wired.shut_down();
+}
+
+/// A JOINER is told the truths it was not there for, and in the order that survives the client's
+/// own freshness test.
+///
+/// Every fact in the burst is control-only and edge-triggered: none of it is in the replayed output
+/// bytes, and a client resets its mirrors on connect. So the running command and the title the
+/// incumbent watched arrive have to be re-sent to the arriving member — and `Running` has to arrive
+/// BEFORE `Title`, because the client judges a title's freshness against the command-start stamp
+/// that first message republishes. A title that arrived first would lose that comparison and the
+/// pane would show its raw command line for the rest of the session.
+///
+/// The incumbent is checked too, and for the opposite property: a re-assert is addressed, so the
+/// client that was already up to date must not be told anything a second time.
+#[test]
+fn a_joiner_is_told_the_truths_it_missed_with_the_title_last() {
+    let wired = Wired::up();
+    let (session, _pty, slave, _sink) = wired.session("pane-1");
+    let incumbent = wired.attach(&session);
+
+    wired.superd.sniff("pane-1", &[
+        SniffEvent::Status(slopdesk_superwire::sniffwire::CommandStatus::Running),
+        SniffEvent::Title("cargo test".to_owned()),
+    ]);
+    wired.superd.output("pane-1", 0, b"x");
+    eventually("the incumbent to hear both edges live", || {
+        incumbent.control().len() >= 2
+    });
+    let incumbent_heard = incumbent.control().len();
+
+    let joiner = wired.join(&session);
+    eventually("the joiner to receive its arrival burst", || {
+        joiner
+            .control()
+            .iter()
+            .any(|message| matches!(*message, WireMessage::Title(_)))
+    });
+
+    let ladder = joiner
+        .control()
+        .into_iter()
+        .filter_map(|message| {
+            match message {
+                WireMessage::CommandStatus(CommandStatus::Running) => Some("running"),
+                WireMessage::Title(_) => Some("title"),
+                _ => None,
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ladder,
+        vec!["running", "title"],
+        "the burst re-asserts both, and the title is LAST",
+    );
+    assert_eq!(
+        incumbent.control().len(),
+        incumbent_heard,
+        "the incumbent was told these truths when they happened and is not told again",
+    );
+
     session.relinquish();
     drop(slave);
     wired.shut_down();

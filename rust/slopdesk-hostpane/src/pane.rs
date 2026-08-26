@@ -443,6 +443,62 @@ impl PtyProcess {
         }
     }
 
+    // MARK: The probes over the descriptor
+
+    // Four reads a pane's DETECTION needs, and they are methods here for one reason: the master is
+    // an `OwnedFd` behind this type's lock, and every caller that took the number out to probe it
+    // itself would be racing `close_master` for a descriptor the kernel is free to hand to the next
+    // `openpty`. So the fd never leaves the hold; what crosses is the answer.
+    //
+    // Each body is one call into `slopdesk-posix`, which owns the syscall and the rule behind it —
+    // `echo_enabled` in particular is NOT "is the `ECHO` bit clear", and that reasoning stays where
+    // the termios read is rather than being re-derived per caller.
+
+    /// Whether the line discipline would echo what a client types.
+    ///
+    /// `false` for a closed or unspawned master, which reads the same way an ordinary no-echo
+    /// prompt does — and is the safe direction: a client told the host is hiding input protects
+    /// the keystrokes it has not sent yet.
+    #[must_use]
+    pub fn echo_enabled(&self) -> bool {
+        let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        held.master
+            .as_ref()
+            .is_some_and(|master| slopdesk_posix::pty::echo_enabled(master.as_raw_fd()))
+    }
+
+    /// The PTY's foreground process group, or `None` when it has none.
+    ///
+    /// Having none is the ORDINARY state between one child exiting and the next starting, not a
+    /// failure — which is why it is an `Option` rather than an error.
+    #[must_use]
+    pub fn foreground_group(&self) -> Option<i32> {
+        let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let master = held.master.as_ref()?;
+        slopdesk_posix::pty::foreground_process_group(master.as_raw_fd())
+            .ok()
+            .filter(|group| *group > 0)
+    }
+
+    /// The foreground group leader's executable path — the CHEAP presence probe.
+    #[must_use]
+    pub fn foreground_executable(&self) -> Option<String> {
+        let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let master = held.master.as_ref()?;
+        slopdesk_posix::proc::foreground_executable(master.as_raw_fd())
+    }
+
+    /// The whole foreground job: the group id, and every member with its `comm` and its argv.
+    ///
+    /// The DEEP probe, and it enumerates a process group — so a caller reaches for it exactly when
+    /// [`Self::foreground_executable`] answered a generic runtime or shell, never per tick.
+    #[must_use]
+    pub fn foreground_job(&self) -> Option<(i32, Vec<slopdesk_posix::proc::ProcessSnapshot>)> {
+        let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let master = held.master.as_ref()?;
+        slopdesk_posix::proc::foreground_job(master.as_raw_fd())
+    }
+
     // MARK: The redraw jiggle
 
     /// Full-repaint resize dance, step 1: shrink the PTY by one ROW — one COLUMN for a single-row
