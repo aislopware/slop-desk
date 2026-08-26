@@ -43,6 +43,12 @@ slopdesk-muxsession = { path = "../slopdesk-muxsession" }
 # retention without a PTY, a superd and six threads per entry.
 slopdesk-hostsession = { path = "../slopdesk-hostsession" }
 
+# The transport a channel arrives on: the open event, the two sub-channels it carries, and the ack
+# that answers it. Reached DIRECTLY rather than through `slopdesk-hostsession` since D.6.2 — the open
+# ladder names the sub-channel pair before any pane holds it, which is the whole window the join
+# reservation and the claim exist to make indivisible. Nothing here decides anything about panes.
+slopdesk-hostnet = { path = "../slopdesk-hostnet" }
+
 # Every DECISION the two service lifecycles reach for — the announce parse, the probe step, the
 # adopt verdict, the workbench's four boot gates, the CLI flags — plus the line assembler a panel
 # backend's PTY output is cut into lines with. None of it was written for this crate; all of it was

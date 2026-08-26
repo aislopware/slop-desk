@@ -29,11 +29,34 @@
 
 use core::fmt;
 use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 
-use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, TapToken};
-use slopdesk_muxsession::registry::{Slot, Uuid};
+use slopdesk_hostnet::subchannel::SubChannel;
+use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, SessionObserver, TapToken};
+use slopdesk_muxsession::registry::{Slot, Subscriber, Uuid};
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
+use slopdesk_wire::WireMessage;
+
+/// One client's two sub-channels, and the two queues its frames arrive on.
+///
+/// Four values that are never apart: a member IS its channel pair, so handing them over one at a
+/// time is how a pane comes to hold a data lane from one client and a control lane from another.
+/// Passed BY VALUE for the same reason — the receiving halves are `mpsc::Receiver`s, which have
+/// exactly one owner, and moving them is what makes "who drains this" a compile-time question.
+///
+/// Not `Clone`, not `Sync`, and neither is an oversight.
+#[derive(Debug)]
+pub struct Wires {
+    /// The DATA lane: output, input, replay.
+    pub data: Arc<SubChannel>,
+    /// Frames the peer sent on the data lane.
+    pub data_inbound: Receiver<WireMessage>,
+    /// The CONTROL lane: resize, metadata, status.
+    pub control: Arc<SubChannel>,
+    /// Frames the peer sent on the control lane.
+    pub control_inbound: Receiver<WireMessage>,
+}
 
 /// One pane, as the composition sees it.
 ///
@@ -183,6 +206,78 @@ pub trait Pane: Send + Sync + fmt::Debug {
     fn add_block_tap(&self, tap: Arc<dyn BlockTap>) -> TapToken;
     /// Retires a watcher [`Pane::add_block_tap`] handed back.
     fn remove_block_tap(&self, token: TapToken);
+
+    // ----------------------------------------------------------------------------- the channels
+
+    /// Starts the pane's threads: the relay, the drain, the detectors.
+    ///
+    /// Separate from whatever built the pane, because the host has to FILE it in between — a pane
+    /// that produced its first output byte before the table knew about it has dropped its own
+    /// opening, and every ladder below spawns, files, then starts.
+    fn start(&self);
+
+    /// Seeds this pane's By-Project truth from the directory it actually landed in.
+    ///
+    /// Server-side and pre-shell, so the sidebar's sections are right from the first frame even for
+    /// a shell that emits no OSC-7 — the warm-up gate would otherwise hold the key hostage to a
+    /// prompt edge that never comes.
+    fn seed_project(&self, cwd: &str);
+
+    /// Reserves the member id a [`Pane::join`] will use, WITHOUT admitting a member.
+    ///
+    /// The reservation is what makes the async window of a join attributable. Composing a joiner's
+    /// screen is O(retained history) and then ships through that client's credit window; a link
+    /// drop anywhere in there has to retire THIS member, and a table key naming no subscriber
+    /// resolves to the pane's primary — so the incumbent would be retired instead.
+    fn reserve_subscriber(&self) -> Subscriber;
+
+    /// Admits a SECOND (third, …) client to a pane somebody is already watching.
+    ///
+    /// `None` when the pane emptied or the joining link died while the screen was being composed.
+    /// The caller owns the unwind — see [`Pane::remove_resize_contributor`].
+    fn join(&self, reserved: Subscriber, wires: Wires, size_passive: bool) -> Option<Subscriber>;
+
+    /// Swaps a DETACHED pane's transport for a returning client's, and restarts its relay.
+    ///
+    /// `exit` rides in rather than being assigned after, and that is the point: a shell exiting
+    /// between the rebind returning and a later assignment would fire the STALE detached-exit
+    /// handler. `false` refuses — finished channels, or a pane that is not detached.
+    fn rebind(&self, wires: Wires, exit: Arc<dyn SessionObserver>) -> bool;
+
+    /// Replays the buffered tail to a channel, skipping everything at or below `after`.
+    ///
+    /// `true` means the replay was a RENDERED snapshot rather than raw bytes, which is half of what
+    /// decides whether the repaint below is a nudge or a jiggle.
+    fn replay_tail(&self, after: i64, channel: &SubChannel) -> bool;
+
+    /// The highest sequence number this pane has ever issued — the clamp a resume verdict takes.
+    fn highest_assigned_seq(&self) -> i64;
+
+    /// Admits `subscriber` to the size fold at the passivity its connection resolved.
+    fn add_resize_contributor(&self, subscriber: Subscriber, size_passive: bool);
+
+    /// Drops `subscriber` from the size fold — a reservation that was never used.
+    fn remove_resize_contributor(&self, subscriber: Subscriber);
+
+    /// Parks the pane: the client goes, the shell stays, and `on_detached_exit` hears the child if
+    /// it dies while parked.
+    fn detach(&self, on_detached_exit: Arc<dyn SessionObserver>);
+
+    /// Whether the pane is parked right now.
+    fn is_detached(&self) -> bool;
+
+    /// Retires one member. `true` when the pane still has members afterwards.
+    fn remove_subscriber(&self, subscriber: Subscriber) -> bool;
+
+    /// Makes the foreground program repaint, after a reattach handed it a fresh surface.
+    ///
+    /// `jiggle` picks between the two, and the difference is not cosmetic. A plain `SIGWINCH` is
+    /// enough for a shell; a differential renderer IGNORES a same-size one for the rows it believes
+    /// are already painted, so a transform-collapsed replay leaves its status line blank for ever.
+    /// Only a REAL size change forces the re-layout, which is what the jiggle is — and the hold
+    /// between the two signals belongs to whoever implements this, because it has to be long enough
+    /// for the program's event loop to observe the intermediate size.
+    fn redraw(&self, jiggle: bool);
 }
 
 /// Two panes are the same pane when they are the same OBJECT, which is what the slot is for.

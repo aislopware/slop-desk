@@ -322,6 +322,7 @@ dependencies = [
  "serde_json",
  "slopdesk-agent",
  "slopdesk-git",
+ "slopdesk-hostnet",
  "slopdesk-hostpane",
  "slopdesk-hostsession",
  "slopdesk-ids",

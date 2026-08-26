@@ -208,6 +208,15 @@ mod suite {
                 .unwrap_or_else(PoisonError::into_inner)
                 .push((pane.id(), cwd.map(str::to_owned)));
         }
+
+        fn open(&self, _request: slopdesk_hostserver::Fresh<'_>) -> Result<Arc<dyn Pane>, SpawnRefused> {
+            // The CHANNEL ladders, which `tests/channel.rs` drives. This suite is the standalone
+            // half, and a fork it never asks for answering anything but a refusal would be a fake
+            // pretending to a reach it does not have.
+            Err(SpawnRefused(String::from(
+                "this suite drives the standalone ladder",
+            )))
+        }
     }
 
     /// Every transition the cross-pane stream published.

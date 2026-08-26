@@ -13,13 +13,16 @@
 //! status, which is one object answering both halves.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::io;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use slopdesk_hostnet::link::ByteLink;
+use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostserver::service::ServiceHandle;
-use slopdesk_hostserver::{EvictionObserver, Pane, TeardownExecutor};
-use slopdesk_hostsession::{BlockTap, BlockUpdate, CloseTap, OutputTap, TapToken};
-use slopdesk_muxsession::registry::{self, Slot, Uuid};
+use slopdesk_hostserver::{EvictionObserver, Pane, TeardownExecutor, Wires};
+use slopdesk_hostsession::{BlockTap, BlockUpdate, CloseTap, OutputTap, SessionObserver, TapToken};
+use slopdesk_muxsession::registry::{self, Slot, Subscriber, Uuid};
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
 
@@ -121,6 +124,32 @@ pub struct Ghost {
     /// A fake that just dropped a late registration would make the subscribe-races-exit case pass
     /// by never testing it, so it carries the same latch `slopdesk_hostsession::taps` does.
     ended: AtomicBool,
+    // ----------------------------------------------------------------------------- the channels
+    starts: AtomicUsize,
+    seeded: Mutex<Vec<String>>,
+    next_subscriber: AtomicU64,
+    /// Every `join` asked for, and the verdict this pane will give.
+    joins: Mutex<Vec<(Subscriber, bool)>>,
+    joinable: AtomicBool,
+    /// Every `rebind` asked for, and the verdict.
+    rebinds: AtomicUsize,
+    rebindable: AtomicBool,
+    /// Says the child dies DURING the rebind — the race the claim cannot see.
+    dies_on_rebind: AtomicBool,
+    /// The exit handler the last successful `rebind` installed, so a test can fire it.
+    exit: Mutex<Option<Arc<dyn SessionObserver>>>,
+    /// Every replay asked for, as `(after, was_a_snapshot)`.
+    replays: Mutex<Vec<i64>>,
+    composes: AtomicBool,
+    head: Mutex<i64>,
+    /// The size fold, as a ledger: every admit and every retire, in order.
+    contributors: Mutex<Vec<(Subscriber, bool)>>,
+    retired: Mutex<Vec<Subscriber>>,
+    detached: AtomicBool,
+    /// The handler the `detach` installed, so a test can say the parked child died.
+    parked_exit: Mutex<Option<Arc<dyn SessionObserver>>>,
+    /// Every repaint, as the verdict it was given.
+    redraws: Mutex<Vec<bool>>,
 }
 
 impl Ghost {
@@ -154,6 +183,24 @@ impl Ghost {
             close_taps: Registered::default(),
             block_taps: Registered::default(),
             ended: AtomicBool::new(false),
+            starts: AtomicUsize::new(0),
+            seeded: Mutex::new(Vec::new()),
+            // 1, so a reservation is never mistaken for the PRIMARY the registry spells `0`.
+            next_subscriber: AtomicU64::new(1),
+            joins: Mutex::new(Vec::new()),
+            joinable: AtomicBool::new(true),
+            rebinds: AtomicUsize::new(0),
+            rebindable: AtomicBool::new(true),
+            dies_on_rebind: AtomicBool::new(false),
+            exit: Mutex::new(None),
+            replays: Mutex::new(Vec::new()),
+            composes: AtomicBool::new(false),
+            head: Mutex::new(0),
+            contributors: Mutex::new(Vec::new()),
+            retired: Mutex::new(Vec::new()),
+            detached: AtomicBool::new(false),
+            parked_exit: Mutex::new(None),
+            redraws: Mutex::new(Vec::new()),
         })
     }
 
@@ -321,6 +368,109 @@ impl Ghost {
     pub fn publish(&self, update: &BlockUpdate) {
         self.block_taps.each(|tap| tap.updated(update));
     }
+
+    // ------------------------------------------------------------------------------ the channels
+
+    /// How many times the pane's threads were started.
+    pub fn starts(&self) -> usize {
+        self.starts.load(Ordering::SeqCst)
+    }
+
+    /// Every directory the pane's By-Project truth was seeded from, in order.
+    pub fn seeded(&self) -> Vec<String> {
+        self.seeded.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Every join asked of this pane: the id it was handed, and its passivity.
+    pub fn joins(&self) -> Vec<(Subscriber, bool)> {
+        self.joins.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Says a join will REFUSE — the pane emptied, or the joining link died mid-transfer.
+    pub fn refuse_joins(&self) {
+        self.joinable.store(false, Ordering::SeqCst);
+    }
+
+    /// How many rebinds were asked of this pane.
+    pub fn rebinds(&self) -> usize {
+        self.rebinds.load(Ordering::SeqCst)
+    }
+
+    /// Says a rebind will REFUSE — finished channels, or a pane that is not detached.
+    pub fn refuse_rebinds(&self) {
+        self.rebindable.store(false, Ordering::SeqCst);
+    }
+
+    /// Says the child dies DURING the rebind, which is then refused because of it.
+    ///
+    /// The claim ran BEFORE this and saw a live child, so this is the one way a reattach reaches
+    /// the recovery path holding a pane whose child is already gone.
+    pub fn die_during_rebind(&self) {
+        self.rebindable.store(false, Ordering::SeqCst);
+        self.dies_on_rebind.store(true, Ordering::SeqCst);
+    }
+
+    /// Fires the exit handler the last successful rebind installed, the way a reaper would.
+    pub fn exit_rebound(&self) {
+        let handler = self.exit.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if let Some(handler) = handler {
+            handler.exited(0);
+        }
+    }
+
+    /// Fires the exit handler the detach installed: the shell died while the pane was parked.
+    pub fn exit_parked(&self) {
+        let handler = self
+            .parked_exit
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(handler) = handler {
+            handler.exited(0);
+        }
+    }
+
+    /// Every replay asked of this pane, as the sequence number it was told to resume after.
+    pub fn replays(&self) -> Vec<i64> {
+        self.replays
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Says a replay COMPOSES a rendered snapshot rather than handing over raw bytes.
+    pub fn compose_snapshots(&self) {
+        self.composes.store(true, Ordering::SeqCst);
+    }
+
+    /// Says this pane has numbered frames up to `seq`.
+    pub fn set_head(&self, seq: i64) {
+        Self::set(&self.head, seq);
+    }
+
+    /// Every contributor admitted to the size fold, in order.
+    pub fn contributors(&self) -> Vec<(Subscriber, bool)> {
+        self.contributors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Every contributor retired from the size fold, in order — the join's unwind.
+    pub fn retired_contributors(&self) -> Vec<Subscriber> {
+        self.retired
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Every repaint this pane was asked for, as `true` for a jiggle and `false` for a nudge.
+    pub fn redraws(&self) -> Vec<bool> {
+        self.redraws
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
 }
 
 impl Pane for Ghost {
@@ -471,6 +621,95 @@ impl Pane for Ghost {
     fn remove_block_tap(&self, token: TapToken) {
         self.block_taps.remove(token);
     }
+
+    fn start(&self) {
+        self.starts.fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn seed_project(&self, cwd: &str) {
+        self.seeded
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(cwd.to_owned());
+    }
+
+    fn reserve_subscriber(&self) -> Subscriber {
+        self.next_subscriber.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn join(&self, reserved: Subscriber, wires: Wires, size_passive: bool) -> Option<Subscriber> {
+        // The wires are DROPPED rather than kept, and that is the fake being honest about what it
+        // is: a receiver has one owner, and a pane that parked them somewhere a test could read
+        // would be holding the sending half of a link nothing is draining.
+        drop(wires);
+        self.joins
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((reserved, size_passive));
+        self.joinable.load(Ordering::SeqCst).then_some(reserved)
+    }
+
+    fn rebind(&self, wires: Wires, exit: Arc<dyn SessionObserver>) -> bool {
+        drop(wires);
+        self.rebinds.fetch_add(1, Ordering::SeqCst);
+        if !self.rebindable.load(Ordering::SeqCst) {
+            if self.dies_on_rebind.load(Ordering::SeqCst) {
+                self.exited.store(true, Ordering::SeqCst);
+            }
+            return false;
+        }
+        // Installed only on SUCCESS, the way the real one threads it in under its own lock: a
+        // refused rebind must leave the previous handler in place.
+        Self::set(&self.exit, Some(exit));
+        self.detached.store(false, Ordering::SeqCst);
+        true
+    }
+
+    fn replay_tail(&self, after: i64, _channel: &SubChannel) -> bool {
+        self.replays
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(after);
+        self.composes.load(Ordering::SeqCst)
+    }
+
+    fn highest_assigned_seq(&self) -> i64 {
+        *self.head.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn add_resize_contributor(&self, subscriber: Subscriber, size_passive: bool) {
+        self.contributors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((subscriber, size_passive));
+    }
+
+    fn remove_resize_contributor(&self, subscriber: Subscriber) {
+        self.retired
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(subscriber);
+    }
+
+    fn detach(&self, on_detached_exit: Arc<dyn SessionObserver>) {
+        Self::set(&self.parked_exit, Some(on_detached_exit));
+        self.detached.store(true, Ordering::SeqCst);
+    }
+
+    fn is_detached(&self) -> bool {
+        self.detached.load(Ordering::SeqCst)
+    }
+
+    fn remove_subscriber(&self, _subscriber: Subscriber) -> bool {
+        self.members.load(Ordering::SeqCst) > 0
+    }
+
+    fn redraw(&self, jiggle: bool) {
+        self.redraws
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(jiggle);
+    }
 }
 
 /// The trait-object handle the table and the store take.
@@ -543,6 +782,45 @@ impl ServiceHandle for Backend {
 /// The trait-object handle a lifecycle takes, turbofished for the reason [`as_pane`] is.
 pub fn as_service(backend: &Arc<Backend>) -> Arc<dyn ServiceHandle> {
     Arc::<Backend>::clone(backend)
+}
+
+/// A link that swallows every byte and never answers.
+///
+/// Real sub-channels over a fake wire, rather than fake sub-channels: a `SubChannel` is where the
+/// credit window lives, and the ladders hand one to a pane without ever sending on it. What a suite
+/// needs is a `Wires` it can MOVE — the receivers have one owner each — and this is the cheapest
+/// honest way to get one.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Sink;
+
+impl ByteLink for Sink {
+    fn send(&self, _bytes: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn recv(&self, _buf: &mut [u8]) -> io::Result<usize> {
+        // A clean close, so nothing that reads this parks for ever waiting on a peer that is a
+        // struct with no fields.
+        Ok(0)
+    }
+
+    fn close(&self) {}
+}
+
+/// One client's two lanes over [`Sink`], for `channel`.
+#[must_use]
+pub fn wires(channel: u32) -> Wires {
+    let link: Arc<dyn ByteLink> = Arc::new(Sink);
+    let (control, control_inbound) = SubChannel::control(channel, Arc::clone(&link));
+    // Both halves ride the SAME sink, which is what a real connection does too: the data lane's
+    // credit grants are written on the control LINK, not on the control sub-channel.
+    let (data, data_inbound) = SubChannel::data(channel, Arc::clone(&link), link);
+    Wires {
+        data,
+        data_inbound,
+        control,
+        control_inbound,
+    }
 }
 
 /// An executor that runs each kill on the calling thread, so a test never has to wait for one.

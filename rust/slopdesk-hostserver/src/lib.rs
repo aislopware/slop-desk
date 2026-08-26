@@ -51,7 +51,16 @@
 //! cutover at stage F. `HostSessionRegistry` and `DetachedSessionStore` stand until then, and F is
 //! what takes them.
 
+//! ## What D.6 landed
+//!
+//! [`host`] — the eleven agent-control verbs answered out of the LIVE tables, and the cross-pane
+//! status fan-out that had no Rust at all before it. [`channel`] — the four ladders a `channelOpen`
+//! resolves to, the close that ends one, and the ONE critical section that makes the first four
+//! indivisible. Neither had an engine either: the precedence between the outcomes is
+//! [`slopdesk_muxsession::open_route`]'s and always was.
+
 pub mod bridge;
+pub mod channel;
 pub mod code;
 pub mod control;
 pub mod ctlserve;
@@ -65,13 +74,19 @@ pub mod service;
 mod serviceproc;
 mod sessions;
 
+pub use channel::{
+    Fresh, HookRoutes, HostObserver, NoHooks, NoWorkspace, Offload, Peer, Restored, Silent, Threads,
+    WorkspaceChannels,
+};
 pub use deadline::Deadlines;
 pub use detached::{
     Claim, DetachedStore, DetachedTeardown, EvictionObserver, IgnoreEvictions, InlineTeardown, Relinquished,
     TeardownExecutor,
 };
-pub use host::{Host, HostEnv, NoTranscripts, SessionIds, Spawner, Standalone, SystemIds, Transcripts};
+pub use host::{
+    Host, HostEnv, HostParts, NoTranscripts, SessionIds, Spawner, Standalone, SystemIds, Transcripts,
+};
 pub use live::LivePane;
-pub use pane::{Pane, same_pane};
+pub use pane::{Pane, Wires, same_pane};
 pub use serviceproc::{ServiceProcess, pane_id_for};
 pub use sessions::{Held, Sessions};

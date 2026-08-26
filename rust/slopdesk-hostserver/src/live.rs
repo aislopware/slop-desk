@@ -19,12 +19,13 @@ use std::sync::Arc;
 
 use slopdesk_agent::ClaudeStatus;
 use slopdesk_agent::supervision::SupervisionState;
-use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, PaneSession, TapToken};
-use slopdesk_muxsession::registry::{self, Slot, Uuid};
+use slopdesk_hostnet::subchannel::SubChannel;
+use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, PaneSession, SessionObserver, TapToken};
+use slopdesk_muxsession::registry::{self, Slot, Subscriber, Uuid};
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
 
-use crate::pane::Pane;
+use crate::pane::{Pane, Wires};
 
 /// The most scrollback `screen` will hand screend for ONE reconstruction.
 ///
@@ -190,5 +191,70 @@ impl Pane for LivePane {
 
     fn remove_block_tap(&self, token: TapToken) {
         self.session.remove_block_tap(token);
+    }
+
+    fn start(&self) {
+        self.session.start();
+    }
+
+    fn seed_project(&self, cwd: &str) {
+        self.session.seed_project(cwd);
+    }
+
+    fn reserve_subscriber(&self) -> Subscriber {
+        self.session.reserve_subscriber_id()
+    }
+
+    fn join(&self, reserved: Subscriber, wires: Wires, size_passive: bool) -> Option<Subscriber> {
+        self.session.join(
+            Some(reserved),
+            wires.data,
+            wires.data_inbound,
+            wires.control,
+            wires.control_inbound,
+            size_passive,
+        )
+    }
+
+    fn rebind(&self, wires: Wires, exit: Arc<dyn SessionObserver>) -> bool {
+        self.session.rebind(
+            wires.data,
+            wires.data_inbound,
+            wires.control,
+            wires.control_inbound,
+            exit,
+        )
+    }
+
+    fn replay_tail(&self, after: i64, channel: &SubChannel) -> bool {
+        self.session.replay_tail(after, channel)
+    }
+
+    fn highest_assigned_seq(&self) -> i64 {
+        self.session.highest_assigned_seq()
+    }
+
+    fn add_resize_contributor(&self, subscriber: Subscriber, size_passive: bool) {
+        self.session.add_resize_contributor(subscriber, size_passive);
+    }
+
+    fn remove_resize_contributor(&self, subscriber: Subscriber) {
+        self.session.remove_resize_contributor(subscriber);
+    }
+
+    fn detach(&self, on_detached_exit: Arc<dyn SessionObserver>) {
+        self.session.detach(on_detached_exit);
+    }
+
+    fn is_detached(&self) -> bool {
+        self.session.is_detached()
+    }
+
+    fn remove_subscriber(&self, subscriber: Subscriber) -> bool {
+        self.session.remove_subscriber(subscriber)
+    }
+
+    fn redraw(&self, jiggle: bool) {
+        self.session.redraw(jiggle);
     }
 }

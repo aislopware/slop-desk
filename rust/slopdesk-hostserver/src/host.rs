@@ -34,6 +34,7 @@
 //! reason a `kill` is more than a `shutdown`.
 
 use core::fmt;
+use core::time::Duration;
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -43,11 +44,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{Map, Value};
 use slopdesk_agent::ClaudeStatus;
 use slopdesk_agent::supervision::SupervisionState;
+use slopdesk_hostpane::resolve_cwd;
 use slopdesk_hostsession::{SessionObserver, StatusObserver, TapToken};
 use slopdesk_ids::{parse_uuid, uuid_text};
 use slopdesk_muxsession::registry::Uuid;
 use slopdesk_muxsession::spawn_env::{self, Exports};
 
+use crate::channel::{
+    Fresh, HookRoutes, HostObserver, NoHooks, NoWorkspace, Offload, Restored, Silent, Threads,
+    WorkspaceChannels,
+};
 use crate::control::{AgentStatusEvent, AgentStatusTap, ControlHost, PaneRecord, SpawnRefused};
 use crate::detached::{Claim, DetachedStore};
 use crate::pane::Pane;
@@ -102,6 +108,23 @@ impl SessionIds for SystemIds {
 pub trait Transcripts: Send + Sync + fmt::Debug {
     /// Forgets everything saved for `session`.
     fn delete(&self, session: Uuid);
+
+    /// Reads back a PRIOR life's transcript for `session`, or `None` when there is none.
+    ///
+    /// Called before the fork that will append to the same file — see
+    /// [`Host::spawn_fresh`](crate::Host::open_channel).
+    fn restore(&self, _session: Uuid) -> Option<Restored> {
+        None
+    }
+
+    /// Where a pane's stream is subscribed from IF the fork takes over a shell superd already
+    /// holds under this id.
+    ///
+    /// [`slopdesk_muxsession::open_route::survivor_resume`] over what superd stored and where its
+    /// ring head is. `0` means "from the beginning", which is right for every id with no history.
+    fn resume_point(&self, _session: Uuid) -> u64 {
+        0
+    }
 }
 
 /// A transcript store that keeps nothing, so has nothing to forget.
@@ -188,6 +211,72 @@ pub trait Spawner: Send + Sync + fmt::Debug {
     /// so the `cd` that would otherwise derive its By-Project key never happens, and a later
     /// reattach would file it under nothing.
     fn start(&self, pane: &Arc<dyn Pane>, cwd: Option<&str>);
+
+    /// Forks a fresh MUX shell and builds its session, wired to the client's two lanes.
+    ///
+    /// [`Spawner::spawn`]'s sibling and the same seam for the same reason. ONE call rather than
+    /// two, because unlike the standalone path the file happens after the whole build: the mux
+    /// pane's start, its project seed and its hook route are all the ladder's, and they run in an
+    /// order this trait must not be able to reorder.
+    ///
+    /// Taken by value: [`Fresh`] owns the two `Receiver`s, which have exactly one owner each.
+    ///
+    /// # Errors
+    /// [`SpawnRefused`] carries why no pane was made — a `cwd` that is not a directory, a superd
+    /// that would not fork, a shell that is not there.
+    fn open(&self, request: Fresh<'_>) -> Result<Arc<dyn Pane>, SpawnRefused>;
+}
+
+/// Everything a [`Host`] is made of, so growing it is not a widening call site.
+///
+/// Ten fields and counting — one per stage of `docs/60` D.6 — and a positional constructor for them
+/// would make every later stage a diff across four suites. [`HostParts::around`] fills the six the
+/// tables do not need with their inert defaults, which is exactly what a suite that is not testing
+/// them wants.
+#[derive(Debug)]
+pub struct HostParts {
+    /// What forks a pane.
+    pub spawner: Arc<dyn Spawner>,
+    /// The parked-pane store, when retention is on.
+    pub detached: Option<Arc<DetachedStore>>,
+    /// How long a parked pane is kept, or `None` for no expiry.
+    pub detach_ttl: Option<Duration>,
+    /// What every spawned pane's environment is built from.
+    pub env: HostEnv,
+    /// Whether superd segments panes into command blocks.
+    pub blocks_enabled: bool,
+    /// Where a fresh pane id comes from.
+    pub ids: Arc<dyn SessionIds>,
+    /// Where a killed pane's saved scrollback goes.
+    pub transcripts: Arc<dyn Transcripts>,
+    /// Where work that can block goes.
+    pub offload: Arc<dyn Offload>,
+    /// The workspace channel class — D.6.4's.
+    pub workspace: Arc<dyn WorkspaceChannels>,
+    /// The agent-hook listener's half of a hook route.
+    pub hooks: Arc<dyn HookRoutes>,
+    /// The three things a ladder tells the world outside the tables.
+    pub observer: Arc<dyn HostObserver>,
+}
+
+impl HostParts {
+    /// The parts around `spawner`, with everything the pane TABLES do not need left inert.
+    #[must_use]
+    pub fn around(spawner: Arc<dyn Spawner>) -> Self {
+        Self {
+            spawner,
+            detached: None,
+            detach_ttl: None,
+            env: HostEnv::default(),
+            blocks_enabled: false,
+            ids: Arc::new(SystemIds),
+            transcripts: Arc::new(NoTranscripts),
+            offload: Arc::new(Threads),
+            workspace: Arc::new(NoWorkspace),
+            hooks: Arc::new(NoHooks),
+            observer: Arc::new(Silent),
+        }
+    }
 }
 
 /// hostd's pane tables, as [`ControlHost`].
@@ -195,12 +284,23 @@ pub trait Spawner: Send + Sync + fmt::Debug {
 pub struct Host {
     sessions: Mutex<Sessions>,
     detached: Option<Arc<DetachedStore>>,
+    detach_ttl: Option<Duration>,
     spawner: Arc<dyn Spawner>,
     ids: Arc<dyn SessionIds>,
     transcripts: Arc<dyn Transcripts>,
+    offload: Arc<dyn Offload>,
+    workspace: Arc<dyn WorkspaceChannels>,
+    hooks: Arc<dyn HookRoutes>,
+    observer: Arc<dyn HostObserver>,
     env: HostEnv,
     blocks_enabled: bool,
     stopping: AtomicBool,
+    /// Whether a CONNECTION's size offers are passive — read at every attach, join and reattach.
+    ///
+    /// Per connection rather than per pane, because it is the client's own answer about its window:
+    /// a phone mirroring a Mac's pane must not clamp it to a phone's grid. A connection with no
+    /// entry is active, which is what a client that has not subscribed to a workspace yet is.
+    size_passive: Mutex<BTreeMap<Uuid, bool>>,
     /// The cross-pane subscribers, and the counter that names them.
     ///
     /// A `Vec` of pairs rather than a map: the table holds a handful of entries at most — one per
@@ -244,21 +344,125 @@ impl Host {
         ids: Arc<dyn SessionIds>,
         transcripts: Arc<dyn Transcripts>,
     ) -> Arc<Self> {
+        Self::assemble(HostParts {
+            detached,
+            env,
+            blocks_enabled,
+            ids,
+            transcripts,
+            ..HostParts::around(spawner)
+        })
+    }
+
+    /// A host over an empty registry, from every part named.
+    ///
+    /// `Arc::new_cyclic` because the observers this hands to [`Spawner`] have to be able to reach
+    /// back — an exit has to unfile its own pane, a status transition has to fan out, a rebind's
+    /// exit closure has to close its own channel — and a strong edge in that direction would keep
+    /// the host alive for as long as one pane does.
+    #[must_use]
+    pub fn assemble(parts: HostParts) -> Arc<Self> {
         Arc::new_cyclic(|me| {
             Self {
                 sessions: Mutex::new(Sessions::new()),
-                detached,
-                spawner,
-                ids,
-                transcripts,
-                env,
-                blocks_enabled,
+                detached: parts.detached,
+                detach_ttl: parts.detach_ttl,
+                spawner: parts.spawner,
+                ids: parts.ids,
+                transcripts: parts.transcripts,
+                offload: parts.offload,
+                workspace: parts.workspace,
+                hooks: parts.hooks,
+                observer: parts.observer,
+                env: parts.env,
+                blocks_enabled: parts.blocks_enabled,
                 stopping: AtomicBool::new(false),
+                size_passive: Mutex::new(BTreeMap::new()),
                 taps: Mutex::new(Vec::new()),
                 next_tap: AtomicU64::new(1),
                 me: me.clone(),
             }
         })
+    }
+
+    // ------------------------------------------------------------------------------ the parts
+
+    /// What forks a pane.
+    pub(crate) fn spawner(&self) -> &Arc<dyn Spawner> {
+        &self.spawner
+    }
+
+    /// Where a killed pane's saved scrollback goes.
+    pub(crate) fn transcripts(&self) -> &Arc<dyn Transcripts> {
+        &self.transcripts
+    }
+
+    /// Where work that can block goes.
+    pub(crate) fn offload(&self) -> &Arc<dyn Offload> {
+        &self.offload
+    }
+
+    /// The workspace channel class.
+    pub(crate) fn workspace(&self) -> &Arc<dyn WorkspaceChannels> {
+        &self.workspace
+    }
+
+    /// The agent-hook listener's half of a hook route.
+    pub(crate) fn hooks(&self) -> &Arc<dyn HookRoutes> {
+        &self.hooks
+    }
+
+    /// The three things a ladder tells the world outside the tables.
+    pub(crate) fn observer(&self) -> &Arc<dyn HostObserver> {
+        &self.observer
+    }
+
+    /// Whether superd segments panes into command blocks.
+    pub(crate) const fn blocks_enabled(&self) -> bool {
+        self.blocks_enabled
+    }
+
+    /// How long a parked pane is kept.
+    pub(crate) const fn detach_ttl(&self) -> Option<Duration> {
+        self.detach_ttl
+    }
+
+    /// A handle back to this host that keeps nothing alive — what every observer holds.
+    pub(crate) fn weak(&self) -> Weak<Self> {
+        self.me.clone()
+    }
+
+    /// Whether `connection`'s size offers are passive. Absent means active.
+    #[must_use]
+    pub fn size_passive(&self, connection: Uuid) -> bool {
+        self.size_passive
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&connection)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Records `connection`'s answer, which its workspace `subscribe` carries.
+    ///
+    /// A pane that opened BEFORE the subscribe took the default, so the subscribe re-resolves the
+    /// fold for every pane already on this connection — that half is the workspace channel's, and
+    /// it is D.6.4's.
+    pub fn set_size_passive(&self, connection: Uuid, passive: bool) {
+        let _prior = self
+            .size_passive
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(connection, passive);
+    }
+
+    /// Forgets a connection's answer, once the connection is gone.
+    pub fn forget_connection(&self, connection: Uuid) {
+        let _prior = self
+            .size_passive
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&connection);
     }
 
     /// The registry, for the composition around this one — the channel ladders are D.6's other half
@@ -428,6 +632,48 @@ impl Host {
             },
         }
     }
+
+    /// The environment and the directory ONE fresh mux shell resolves to.
+    ///
+    /// [`Host::resolve`]'s sibling, and the differences from it are all one difference: a mux pane
+    /// is opened by a USER, and a standalone pane by an ORCHESTRATOR. So there is no `cmd` to
+    /// branch on — always the login shell — and the ctl sentinel is NOT set, because the sentinel
+    /// says an orchestrator made this pane and that would be a lie to the agent that reads it.
+    ///
+    /// The cwd is resolved ONCE and quoted three times: `PWD`, the child's `chdir`, and the
+    /// By-Project seed. `PWD` must name where the child LANDS rather than what it asked for — a
+    /// shell that trusts an inherited `PWD` prints a prompt for a directory it is not in — and
+    /// `resolve_cwd` is what repairs an absent, stale or unusable request to `HOME`.
+    pub(crate) fn resolve_mux(&self, session: Uuid, requested: Option<&str>) -> MuxResolved {
+        let pane_id = uuid_text(session);
+        let mut env = spawn_env::curated(&self.env.parent, &self.env.term, &self.env.version, Exports {
+            agent_socket_path: self.env.agent_socket_path.as_deref(),
+            pane_id: Some(&pane_id),
+            control_socket_path: self.env.control_socket_path.as_deref(),
+            // See the doc above: an orchestrator did not make this pane.
+            ctl_sentinel: false,
+            ctl_binary_path: None,
+        });
+        let cwd = resolve_cwd(requested, env.get("HOME").map(String::as_str));
+        if let Some(ref cwd) = cwd {
+            drop(env.insert(String::from("PWD"), cwd.clone()));
+        }
+        MuxResolved {
+            executable: self.env.shell.clone(),
+            argv0: spawn_env::login_argv0(&self.env.shell),
+            env,
+            cwd,
+        }
+    }
+}
+
+/// [`Host::resolve_mux`]'s answer.
+#[derive(Debug)]
+pub(crate) struct MuxResolved {
+    pub(crate) executable: String,
+    pub(crate) argv0: String,
+    pub(crate) env: BTreeMap<String, String>,
+    pub(crate) cwd: Option<String>,
 }
 
 /// [`Host::resolve`]'s answer.
@@ -450,9 +696,9 @@ fn basename(path: &str) -> String {
 
 /// The exit handler one standalone pane is given: unfile it, in the host that made it.
 #[derive(Debug)]
-struct Retire {
-    host: Weak<Host>,
-    session: Uuid,
+pub(crate) struct Retire {
+    pub(crate) host: Weak<Host>,
+    pub(crate) session: Uuid,
 }
 
 impl SessionObserver for Retire {
@@ -468,7 +714,7 @@ impl SessionObserver for Retire {
 /// Holds the pane WEAKLY as well as the host. The pane owns the session that owns the detector that
 /// calls this, so a strong edge back would be a cycle that outlives both.
 #[derive(Debug)]
-struct Fan {
+pub(crate) struct Fan {
     host: Weak<Host>,
     pane: Mutex<Weak<dyn Pane>>,
 }
@@ -486,12 +732,20 @@ impl StatusObserver for Fan {
 }
 
 impl Fan {
+    /// A handler that does not know its pane yet. See [`Fan::aim`].
+    pub(crate) fn unaimed(host: Weak<Host>) -> Self {
+        Self {
+            host,
+            pane: Mutex::new(Weak::<crate::live::LivePane>::new()),
+        }
+    }
+
     /// Points this handler at the pane it describes.
     ///
     /// Late, because the pane cannot exist before the session it wraps and the session cannot be
     /// built without this handler. The window between the two is the spawn itself, during which no
     /// fold can run — the pane's threads start after [`Spawner::start`].
-    fn aim(&self, pane: &Arc<dyn Pane>) {
+    pub(crate) fn aim(&self, pane: &Arc<dyn Pane>) {
         *self.pane.lock().unwrap_or_else(PoisonError::into_inner) = Arc::downgrade(pane);
     }
 }
@@ -559,10 +813,7 @@ impl ControlHost for Host {
                 .insert(String::from(spawn_env::CTL_SENTINEL_KEY), String::from("1"));
         }
 
-        let fan = Arc::new(Fan {
-            host: self.me.clone(),
-            pane: Mutex::new(Weak::<crate::live::LivePane>::new()),
-        });
+        let fan = Arc::new(Fan::unaimed(self.me.clone()));
         // Coerced through a named binding rather than an `as` at the call site, which is the
         // `trivial_casts` this crate denies. `Arc::<Fan>::clone` pins the SOURCE type so the
         // coercion is left to the annotation — the same turbofish the suite's fakes need.

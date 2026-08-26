@@ -775,8 +775,49 @@ is paused.
   life. Four of the thirty tests are about that class of leak; none of them would fail a test that
   only asked whether the pane died.
 
-  **D.6.2** the channel ladders (`spawnMuxChannel`, `performJoin`, `performReattach`,
-  `spawnFreshShell`). **D.6.3** the adoption ladder. **D.6.4** the workspace document, reconciler and
+  **D.6.2 ✅ landed** — the channel ladders, as `rust/slopdesk-hostserver/src/channel.rs` plus 45
+  tests. `spawnMuxChannel`, `performJoin`, `performReattach`, `spawnFreshShell` and — for the reason
+  below — `removeMuxSession`. No engine here either: the precedence between the seven routes is
+  `slopdesk_muxsession::open_route`'s and always was, and so are the resume clamp, the restore gate
+  and the repaint verdict. What moved is the ORDER around them, and the ONE critical section that
+  makes the first four indivisible: the idempotency guard, the stopping gate, the
+  attached-elsewhere lookup, the JOIN's key-and-subscriber registration and the store's exclusive
+  claim under one acquisition of the registry lock, because a route decided under the lock and acted
+  on outside it is the TOCTOU the lock was taken to close.
+
+  `removeMuxSession` came with it rather than waiting for D.6.5, and the reason is a rule rather than
+  a preference: it is the exit route a fresh spawn WIRES, and a spawn whose exit closure pointed at
+  a hole would be a leak with a doc comment on it. D.6.5's link-down, detach and stop order are a
+  different ladder and still D.6.5's.
+
+  Four seams, each a thing that is not a decision: `Spawner::open` is the fork (so everything on this
+  side of it is assertable with no PTY in the process), `Peer` is the connection reduced to an ack
+  and an id, `HookRoutes` is the listener half of a hook route whose table half lands here, and
+  `HostObserver` is the two things a ladder tells the outside. A fifth, `Offload`, is not about
+  layering at all: `SubChannel::send` PARKS on a condvar until the peer grants credit, and the grants
+  arrive on the connection's own link threads — so an inline replay would not deadlock, but it would
+  stall every other open on that connection for as long as the replay takes. The join and the
+  reattach go through it; the fresh fork stays inline, because a fork is bounded work with no credit
+  window in it. The Swift split them the same way for the same reason.
+
+  Two holes, named rather than skipped. `WorkspaceChannels` is **D.6.4**'s, and its default DECLINES
+  — which is what this host does today for a class it does not serve. And `Transcripts` grew two
+  questions (`restore`, `resume_point`) rather than a client, because the journal store is still
+  Swift's.
+
+  One gap in `slopdesk-hostsession` was filled the way D.6.1 filled three: `PaneSession` had
+  `resize.add_contributor` only internally, so a reattach — which replaces the primary the detach
+  retired, under the same id — had no way to re-file the returning client in the size fold. A client
+  that contributed nothing is clamped by whoever else is watching, at a size its own window never
+  asked for, and the returning device may not be the one that left.
+
+  Five of the 45 tests are about something that LEAKS rather than something that breaks: a join that
+  refuses retiring its own reservation, a rebind that refuses re-parking rather than stranding a live
+  shell outside both the table and the store, a close taking every key that aliases one pane, a
+  parked pane's late exit standing down instead of releasing a route its successor re-registered, and
+  a stop racing a fork not filing into a table whose drain has already run.
+
+  **D.6.3** the adoption ladder. **D.6.4** the workspace document, reconciler and
   channel session. **D.6.5** link-down, detach and the stop order.
 
   **What stage D does NOT take.** `HostEnvironment` (350) and `RepoStatusWatcher` (316) are stage E:

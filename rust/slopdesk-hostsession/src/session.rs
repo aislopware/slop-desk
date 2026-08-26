@@ -899,6 +899,59 @@ impl PaneSession {
         self.resize.scheduled_nudges()
     }
 
+    /// Admits `subscriber` to the contributing set, at the passivity its CONNECTION resolved.
+    ///
+    /// [`Self::attach`] and [`Self::join`] each do this for the member they add, so the only caller
+    /// left is the one that adds no member: a REATTACH replaces the primary the detach retired,
+    /// under the same id, so nothing in [`Self::rebind`] would otherwise re-file it — and a
+    /// returning client that contributed nothing would be clamped by whoever else is watching,
+    /// at a size its own window never asked for. Passivity is re-resolved rather than
+    /// remembered because the returning device may not be the one that left: a Mac's pane
+    /// picked up on a phone.
+    pub fn add_resize_contributor(&self, subscriber: SubscriberId, size_passive: bool) {
+        self.resize.add_contributor(subscriber, size_passive);
+    }
+
+    /// Makes the foreground program repaint, after a reattach handed it a fresh surface.
+    ///
+    /// A returning client's terminal is empty of buffered output, so without this the pane stays
+    /// blank until the user presses a key. Which of the two signals it earns is the CALLER's
+    /// verdict — [`slopdesk_muxsession::open_route::redraw`] — because it turns on what the replay
+    /// was, and this pane does not know. What lives here is the HOLD, which is a fact about the
+    /// program rather than about the reattach: a differential renderer ignores a same-size
+    /// `SIGWINCH` for rows it believes are painted, so only a real size change forces the
+    /// re-layout, and the two edges have to be far enough apart for the app's event loop to observe
+    /// the intermediate size or the pair coalesces into "unchanged".
+    ///
+    /// BLOCKING for the length of that hold. Called off the caller's own delayed thread.
+    pub fn redraw(&self, jiggle: bool) {
+        /// Long enough for a full-screen program's event loop to see the intermediate size.
+        const JIGGLE_HOLD: Duration = Duration::from_millis(200);
+
+        let taken = if jiggle {
+            self.pty.begin_redraw_jiggle()
+        } else {
+            None
+        };
+        if let Some(token) = taken {
+            std::thread::sleep(JIGGLE_HOLD);
+            self.pty.end_redraw_jiggle(token);
+        } else {
+            self.pty.nudge_redraw();
+        }
+    }
+
+    /// Drops `subscriber` from the contributing set.
+    ///
+    /// The unwind half of a JOIN that reserved an id and then could not use it: the reservation is
+    /// visible to a workspace `subscribe` landing mid-join, which registers it as a contributor,
+    /// and a phantom would then clamp the pane for the rest of its life with no window behind
+    /// it. A pane whose set EMPTIES keeps its last size rather than snapping back to 80×24 —
+    /// `docs/45` §8.3.
+    pub fn remove_resize_contributor(&self, subscriber: SubscriberId) {
+        self.resize.remove_contributor(subscriber);
+    }
+
     /// Ends this pane: the teardown, WITH the child.
     pub fn shutdown(&self) {
         self.teardown(true);
