@@ -602,6 +602,62 @@ pub fn decode_agent_session_list(data: &[u8]) -> Result<Vec<AgentSessionInfo>> {
 }
 
 // ---------------------------------------------------------------------------------------------- //
+// AgentHookStatus — verb 13
+// ---------------------------------------------------------------------------------------------- //
+
+/// Where the host's slopdesk Claude Code hooks stand.
+///
+/// The two flags are NOT one fact. Installed alone does not mean the integration works: every
+/// installed hook opens by exiting when it finds no socket, so without a bound listener each one
+/// exits silently and nothing ever reaches a pane. The settings card has to be able to say
+/// installed-but-INACTIVE, with the restart instruction, rather than paint a green that means
+/// nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AgentHookStatus {
+    /// The slopdesk entries are present in the host's `~/.claude/settings.json`.
+    pub installed: bool,
+    /// The hostd hook listener socket is ACTUALLY bound, so hooks can flow.
+    pub listener_active: bool,
+}
+
+/// Encodes an agent-hook-status response payload: `[u8 installed][u8 listenerActive]`.
+#[must_use]
+pub fn encode_agent_hook_status(status: AgentHookStatus) -> Vec<u8> {
+    let mut out = ByteWriter::with_capacity(2);
+    encode_agent_hook_status_into(&mut out, status);
+    out.into_vec()
+}
+
+/// Writes an agent-hook-status payload into `out`. See [`encode_process_list_into`].
+pub fn encode_agent_hook_status_into(out: &mut ByteWriter<'_>, status: AgentHookStatus) {
+    out.put_u8(u8::from(status.installed));
+    out.put_u8(u8::from(status.listener_active));
+}
+
+/// Decodes an agent-hook-status response payload.
+///
+/// A flag is true for the byte `1` and for nothing else — NOT for "any non-zero". Both flags gate a
+/// green light on a settings card, and the honest reading of a byte this build did not write is
+/// that nothing has been established.
+///
+/// A MISSING second byte reads `listener_active == false`, which is the same rule applied to a
+/// shorter body: a reply that predates the flag says nothing about the listener, and the answer
+/// that says nothing must never be the green one. A longer body is tolerated (trailer ignored).
+///
+/// # Errors
+/// [`WireError::Truncated`] on an EMPTY body — a reply carrying no flags at all is not a status,
+/// and the caller shows "connect a session to manage hooks" rather than a false "not installed".
+pub fn decode_agent_hook_status(data: &[u8]) -> Result<AgentHookStatus> {
+    let mut reader = ByteReader::new(data);
+    let installed = reader.read_u8()?;
+    let listener_active = reader.read_u8().unwrap_or(0);
+    Ok(AgentHookStatus {
+        installed: installed == 1,
+        listener_active: listener_active == 1,
+    })
+}
+
+// ---------------------------------------------------------------------------------------------- //
 // Clipboard sync — verbs 15 and 16
 // ---------------------------------------------------------------------------------------------- //
 
@@ -1180,16 +1236,17 @@ mod tests {
     )]
 
     use super::{
-        AgentKind, AgentSessionInfo, CLIPBOARD_BASELINE_PROBE, ClipboardClip, ClipboardKind, CodeFontSpec,
-        CodeOpenDisposition, DISK_FREE_UNKNOWN, DirEntry, GitFileChange, GitStatusPayload, HostVitals,
-        MAX_CLIPBOARD_CONTENT_BYTES, MemoryPressure, PortInfo, PortProtocol, ProcessInfo, ServiceEndpoint,
-        ServiceState, WireError, decode_agent_session_list, decode_clipboard_read_request,
-        decode_clipboard_read_response, decode_clipboard_set, decode_code_font_spec,
-        decode_code_open_disposition, decode_dir_listing, decode_git_status, decode_host_vitals,
-        decode_port_list, decode_process_list, decode_service_endpoint, encode_agent_session_list,
-        encode_clipboard_read_request, encode_clipboard_read_response, encode_clipboard_set,
-        encode_code_font_spec, encode_code_open_disposition, encode_dir_listing, encode_git_status,
-        encode_host_vitals, encode_port_list, encode_process_list, encode_service_endpoint,
+        AgentHookStatus, AgentKind, AgentSessionInfo, CLIPBOARD_BASELINE_PROBE, ClipboardClip, ClipboardKind,
+        CodeFontSpec, CodeOpenDisposition, DISK_FREE_UNKNOWN, DirEntry, GitFileChange, GitStatusPayload,
+        HostVitals, MAX_CLIPBOARD_CONTENT_BYTES, MemoryPressure, PortInfo, PortProtocol, ProcessInfo,
+        ServiceEndpoint, ServiceState, WireError, decode_agent_hook_status, decode_agent_session_list,
+        decode_clipboard_read_request, decode_clipboard_read_response, decode_clipboard_set,
+        decode_code_font_spec, decode_code_open_disposition, decode_dir_listing, decode_git_status,
+        decode_host_vitals, decode_port_list, decode_process_list, decode_service_endpoint,
+        encode_agent_hook_status, encode_agent_session_list, encode_clipboard_read_request,
+        encode_clipboard_read_response, encode_clipboard_set, encode_code_font_spec,
+        encode_code_open_disposition, encode_dir_listing, encode_git_status, encode_host_vitals,
+        encode_port_list, encode_process_list, encode_service_endpoint,
     };
 
     #[test]
@@ -1516,6 +1573,49 @@ mod tests {
         assert_eq!(
             decode_code_open_disposition(&[9, 0xAA]).unwrap(),
             CodeOpenDisposition::Workbench
+        );
+    }
+
+    /// Only the byte `1` is a green light, on either flag. "Any non-zero" is the reflex that breaks
+    /// this: a byte this build did not write establishes nothing, and both flags gate a claim about
+    /// the user's own machine.
+    #[test]
+    fn only_the_byte_one_lights_a_hook_flag() {
+        for installed in [false, true] {
+            for listener_active in [false, true] {
+                let status = AgentHookStatus {
+                    installed,
+                    listener_active,
+                };
+                let encoded = encode_agent_hook_status(status);
+                assert_eq!(encoded.len(), 2);
+                assert_eq!(decode_agent_hook_status(&encoded).unwrap(), status);
+            }
+        }
+        assert_eq!(
+            decode_agent_hook_status(&[2, 2]).unwrap(),
+            AgentHookStatus::default(),
+            "a byte nobody here wrote is not a yes"
+        );
+    }
+
+    /// A reply that predates the listener flag reads INACTIVE, and one carrying no flags at all is
+    /// not a status. The two silences are different: the first is a fact, the second is an absence
+    /// the caller renders as "connect a session to manage hooks".
+    #[test]
+    fn a_short_hook_status_is_never_a_false_green() {
+        assert_eq!(decode_agent_hook_status(&[1]).unwrap(), AgentHookStatus {
+            installed: true,
+            listener_active: false,
+        });
+        assert_eq!(decode_agent_hook_status(&[]), Err(WireError::Truncated));
+        assert_eq!(
+            decode_agent_hook_status(&[1, 1, 0xAA]).unwrap(),
+            AgentHookStatus {
+                installed: true,
+                listener_active: true,
+            },
+            "a trailer a newer host added is ignored, not fatal"
         );
     }
 

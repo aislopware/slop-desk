@@ -323,7 +323,11 @@ let package = Package(
         ),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
-        .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol"]),
+        // CSlopDeskFFI: the DECISIONS here — which output seq is new, what may be acked, whether a
+        // transport may be adopted, how long the next retry waits — are `slopdesk_clientsession`.
+        // The actor keeps its transport, its four background tasks and its inbox; what came out is
+        // the table of cases underneath them, whose every failure is silent rather than visible.
+        .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol", "CSlopDeskFFI"]),
 
         // TerminalSurface protocol + HeadlessTerminalSurface. The libghostty-backed GhosttySurface
         // lives in the GUI app target (WF-5) and conforms to the same protocol.

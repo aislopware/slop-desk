@@ -185,9 +185,8 @@ public final class MetadataClient {
     /// a false green.
     public func agentHookStatus() async -> AgentHookStatusReport? {
         let (status, payload) = await request(.agentHookStatus)
-        guard status == .ok, let installedFlag = payload.first else { return nil }
-        let activeFlag = payload.dropFirst().first ?? 0
-        return AgentHookStatusReport(installed: installedFlag == 1, listenerActive: activeFlag == 1)
+        guard status == .ok else { return nil }
+        return try? MetadataCodec.decodeAgentHookStatus(payload)
     }
 
     /// The host's self-reported hostname (``MetadataVerb/hostInfo``; e.g. "mac-studio.local") — the
@@ -311,18 +310,10 @@ public final class MetadataClient {
     /// `installed` alone is NOT "the integration works": without
     /// `listenerActive` every installed hook no-ops (`[ -z "$sock" ] && exit 0`), so the card must
     /// render installed-but-inactive with the hostd-restart instruction.
-    public struct AgentHookStatusReport: Equatable, Sendable {
-        /// The slopdesk entries are present in the host's `~/.claude/settings.json`.
-        public var installed: Bool
-        /// The hostd hook listener socket is ACTUALLY bound — hooks can flow. The listener is
-        /// unconditional now, so `false` means the bind failed or the host predates it.
-        public var listenerActive: Bool
-
-        public init(installed: Bool, listenerActive: Bool) {
-            self.installed = installed
-            self.listenerActive = listenerActive
-        }
-    }
+    ///
+    /// The shape is the codec's, not this layer's: a second struct here would be a Swift copy of a
+    /// payload `slopdesk_wire` already spells, and the two would drift the day a third flag lands.
+    public typealias AgentHookStatusReport = MetadataCodec.AgentHookStatus
 
     /// Sends `verb` + `payload`, awaits the reply, and maps the raw status byte to ``MetadataStatus``
     /// (an unknown future byte clamps to ``MetadataStatus/error`` — forward-tolerant). The registry's

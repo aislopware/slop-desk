@@ -61,9 +61,13 @@ enum HostAgentActionPerformer {
     }
 
     /// The verb-13 response payload: `[installed][listenerActive]` (docs/20). PURE (no disk) so the
-    /// exact byte shape is unit-pinned without instantiating the disk-touching verbs.
+    /// exact byte shape is unit-pinned without instantiating the disk-touching verbs — and spelled
+    /// by the same codec the client decodes with, so the encoder and the decoder cannot disagree
+    /// about which byte means yes.
     static func statusFlags(installed: Bool, listenerActive: Bool) -> Data {
-        Data([installed ? 1 : 0, listenerActive ? 1 : 0])
+        MetadataCodec.encodeAgentHookStatus(
+            MetadataCodec.AgentHookStatus(installed: installed, listenerActive: listenerActive),
+        )
     }
 
     /// Installs the slopdesk Claude Code hooks (relay binary + `settings.json` merge) on the host.

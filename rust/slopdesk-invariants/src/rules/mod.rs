@@ -14,6 +14,7 @@ pub mod cli_config;
 pub mod cli_vocabulary;
 pub mod client_layers;
 pub mod client_memos;
+pub mod client_session;
 pub mod code_panel;
 pub mod command_surface;
 pub mod crate_defaults;
@@ -224,6 +225,11 @@ pub fn registry() -> Vec<Rule> {
             name: "grid-readout",
             origin: "docs/45 §8.3",
             check: terminal_surface::grid_readout,
+        },
+        Rule {
+            name: "pane-client-session",
+            origin: "docs/55 §4b",
+            check: client_session::client_session,
         },
         Rule {
             name: "link-scan",

@@ -7902,6 +7902,13 @@ typedef struct SlopDeskMetadataEndpoint {
   uint8_t state;
 } SlopDeskMetadataEndpoint;
 
+/* Two flags, never folded into one: an installed hook with no bound listener exits silently, so the
+ * card must be able to say installed-but-INACTIVE rather than paint a green that means nothing. */
+typedef struct SlopDeskMetadataHookStatus {
+  bool installed;
+  bool listener_active;
+} SlopDeskMetadataHookStatus;
+
 typedef struct SlopDeskMetadataFontSpec {
   uint64_t size_bits;
   uint64_t line_height_bits;
@@ -7999,6 +8006,16 @@ uint32_t slopdesk_metadata_decode_service_endpoint(const unsigned char *payload,
 
 size_t slopdesk_metadata_encode_service_endpoint(const SlopDeskMetadataEndpoint *endpoint,
                                                  unsigned char *out, size_t cap);
+
+/* Verb 13. A flag is true for the byte 1 and nothing else, and a MISSING second byte — a reply
+ * predating the listener flag — reads INACTIVE. An EMPTY body is not a status and decodes as an
+ * error, which is what lets the card say "connect a session" instead of a false "not installed". */
+uint32_t slopdesk_metadata_decode_agent_hook_status(const unsigned char *payload,
+                                                    size_t payload_len,
+                                                    SlopDeskMetadataHookStatus *out);
+
+size_t slopdesk_metadata_encode_agent_hook_status(bool installed, bool listener_active,
+                                                  unsigned char *out, size_t cap);
 
 uint32_t slopdesk_metadata_decode_code_open_disposition(const unsigned char *payload,
                                                         size_t payload_len, unsigned char *out);
@@ -12617,6 +12634,83 @@ uint8_t slopdesk_ws_grid_clamped_by(uint32_t resolved_cols, uint32_t resolved_ro
 size_t slopdesk_ws_grid_readout(uint32_t cols, uint32_t rows, uint8_t attribution,
                                 const unsigned char *label, size_t label_len, unsigned char *out,
                                 size_t capacity);
+
+/* ---- pane session: what a client decides about the stream the host is sending it ------------
+ *
+ * The driver keeps the transport, four background tasks, an output inbox and a multicast event hub;
+ * none of that is here. What is here is what it DECIDES — which seq is new, what may be acked,
+ * whether a connection may be opened or adopted, whether a stream end is a real drop, how long the
+ * next retry waits and when the retries stop.
+ *
+ * The machine crosses BY VALUE, IN PLACE: the driver holds one of these as a `var` and each entry
+ * point steps it where it already lives. No allocation crosses in either direction. The BYTES never
+ * come with it — `deliver` is handed a SEQ, and whether the chunk is fed, inboxed or dropped and
+ * credited stays with the side that already holds the `Data`.
+ */
+typedef struct {
+    int64_t       highest_fed;           // highest seq fed to the surface — the dedup bound
+    int64_t       highest_contiguous;    // what is acked, and what the next open presents
+    int64_t       presented_resume_seq;  // the lastReceivedSeq the running connection presented
+    unsigned char outcome;               // 0 undetermined · 1 a fresh shell · 2 the same shell
+    bool          ack_pending;           // an advance is waiting for the coalescing ticker
+} SlopDeskPaneSession;
+// The retry ladder, in NANOSECONDS: the near side's duration type carries attoseconds, and
+// milliseconds would silently round a schedule configured in fractions of one.
+typedef struct {
+    uint64_t initial_ns; // the wait before the first retry
+    uint64_t maximum_ns; // the ceiling every later wait saturates at
+    double   multiplier; // what each step multiplies by
+} SlopDeskPaneBackoff;
+
+// The marks a RESTORED pane starts from — both already at the seq it last rendered.
+SlopDeskPaneSession slopdesk_pane_session_seeded(int64_t last_seq);
+// Adopts a handshaken connection. `presented_resume_seq` must be read BEFORE this call: the reset it
+// may perform clears the mark it came from. `resume_from_seq` is the HOST's answer and the only
+// correct signal — the near side's "returning client" flag is true on EVERY reconnect. Answers 0
+// when the marks were kept, 1 when cleared; on 1 the caller zeroes the wire credit on anything still
+// in its inbox, because the new channel's peer never sent those bytes. The bytes themselves stay.
+uint8_t slopdesk_pane_session_adopt(SlopDeskPaneSession *session, int64_t presented_resume_seq,
+                                    int64_t resume_from_seq);
+// Folds one inbound output seq. 0 = DUPLICATE (drop the bytes, still credit them), 1 = new.
+uint8_t slopdesk_pane_session_deliver(SlopDeskPaneSession *session, int64_t seq);
+// What the ticker should ack, written to `seq` only when there is one. The pending flag clears
+// either way — a flush with nothing delivered has answered the tick.
+bool slopdesk_pane_session_ack(SlopDeskPaneSession *session, int64_t *seq);
+// Re-arms after a failed send, so the next live transport carries the ack.
+void slopdesk_pane_session_ack_failed(SlopDeskPaneSession *session);
+// The stream ended: drops the resume verdict and nothing else.
+void slopdesk_pane_session_stream_ended(SlopDeskPaneSession *session);
+
+// One pong, folded into the smoothed round trip. false = nothing to surface and the previous reading
+// stands, which happens only for an echo dated after the instant it arrived at.
+bool slopdesk_pane_session_rtt(uint64_t now_ms, uint64_t sent_at_ms, bool has_previous,
+                               double previous, double *smoothed);
+
+// Why a client refuses to open a channel: 0 it does not · 1 closed · 2 the child exited · 3 the host
+// closed this pane's channel. Each is terminal for the INSTANCE; an allowed recovery builds a new one.
+uint8_t slopdesk_pane_session_connect_refusal(bool closed, bool child_exited, bool host_closed);
+// What the error thrown for that code says. 0 back for a code that is not a refusal.
+size_t slopdesk_pane_session_refusal_reason(uint8_t code, unsigned char *out, size_t capacity);
+// Whether a freshly-handshaken transport may be ADOPTED. Adopting over a live one leaks two sockets,
+// its pumps and a registry refcount for the life of the process.
+bool slopdesk_pane_session_adopts(bool closed, bool paused, bool cancelled, bool superseded);
+// Whether a stream end is a real drop, or one of the three expected ends — a deliberate close, this
+// driver's own teardown, or the post-exit FIN.
+bool slopdesk_pane_session_announces_drop(bool closed, bool tearing_down, bool child_exited);
+// Whether a reconnect campaign may start, or take another turn. Asked again at the top of every
+// retry, because all four states can arrive DURING one.
+bool slopdesk_pane_session_campaign_runs(bool paused, bool closed, bool child_exited,
+                                         bool host_closed);
+
+// The shipped ladder: a quarter second, doubling to a two-second ceiling.
+SlopDeskPaneBackoff slopdesk_pane_backoff_default(void);
+uint64_t slopdesk_pane_backoff_next_after(SlopDeskPaneBackoff schedule, uint64_t current_ns);
+// The wait BEFORE the `attempt`-th retry, one-indexed — the closed form of that ladder.
+uint64_t slopdesk_pane_backoff_delay(SlopDeskPaneBackoff schedule, uint32_t attempt);
+// The give-up ceiling, and the gate that fires one attempt past it.
+uint32_t slopdesk_pane_backoff_max_attempts(void);
+uint32_t slopdesk_pane_backoff_direct_attempts(void);
+bool slopdesk_pane_backoff_exhausted(uint32_t attempt);
 
 /* ---------------------------------------------------------------------------- *
  * channel_run — which run of the workspace channel still speaks, and what it

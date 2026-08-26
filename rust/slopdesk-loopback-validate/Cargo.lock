@@ -1012,6 +1012,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-clientsession"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-codepanel"
 version = "0.1.0"
 dependencies = [
@@ -1057,6 +1061,7 @@ dependencies = [
  "slopdesk-apple-vt",
  "slopdesk-audio-out",
  "slopdesk-clientctl",
+ "slopdesk-clientsession",
  "slopdesk-codepanel",
  "slopdesk-devicelog",
  "slopdesk-devicepanel",

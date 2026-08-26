@@ -56,6 +56,10 @@ slopdesk-androidd = { path = "../slopdesk-androidd" }
 # direct edge puts the crate inside `slopdesk-gate ffi`'s content stamp (`docs/55` §3), and this is
 # a vocabulary whose whole point is that the two ends cannot drift.
 slopdesk-clientctl = { path = "../slopdesk-clientctl" }
+# The decision half of one pane's CLIENT session: the dedup high-water mark, the resume verdict, the
+# ack gate and the retry ladder. `slopdesk-muxsession` below is its opposite number on hostd; this is
+# the same carve from the other end of the wire.
+slopdesk-clientsession = { path = "../slopdesk-clientsession" }
 slopdesk-devicelog = { path = "../slopdesk-devicelog" }
 slopdesk-devicepanel = { path = "../slopdesk-devicepanel" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }

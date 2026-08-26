@@ -24,47 +24,18 @@ final class SlopDeskClientSmokeTests: XCTestCase {
         XCTAssertEqual(seq, 0)
     }
 
-    func testReconnectManagerDefaultBackoffCappedAtTwoSeconds() {
+    /// The WIRING, not the schedule: that a default-constructed manager reads its ladder from
+    /// `slopdesk_clientsession::backoff` rather than from a literal in this module. The curve itself
+    /// — the doubling, the cap, the closed form's agreement with the chained form — is pinned by
+    /// that crate's own tests; asserting it again here would be the second implementation the
+    /// one-implementation rule forbids.
+    func testReconnectManagerReadsItsBackoffFromTheSessionCrate() {
         let manager = ReconnectManager(client: makeUnconnectedClient())
-        XCTAssertEqual(manager.backoff.multiplier, 2.0)
-        XCTAssertEqual(manager.backoff.maximum, .seconds(2))
-    }
-
-    func testBackoffNextCapsAtMaximum() {
-        let backoff = ReconnectManager.Backoff(initial: .milliseconds(250), maximum: .seconds(2), multiplier: 2.0)
-        var d = backoff.initial
-        XCTAssertEqual(d, .milliseconds(250))
-        d = backoff.next(after: d) // 500ms
-        XCTAssertEqual(d, .milliseconds(500))
-        d = backoff.next(after: d) // 1s
-        XCTAssertEqual(d, .seconds(1))
-        d = backoff.next(after: d) // 2s (cap)
-        XCTAssertEqual(d, .seconds(2))
-        d = backoff.next(after: d) // stays 2s
-        XCTAssertEqual(d, .seconds(2))
-    }
-
-    /// The PURE retries→delay schedule (capped exponential backoff). Deterministic, no clock, no
-    /// client — a HostServer-free unit test of the reconnect backoff curve. Asserts the closed-form
-    /// `delay(forAttempt:)` produces the EXACT same capped sequence as chaining `next(after:)`, and
-    /// that it saturates (never exceeds) the maximum no matter how large the attempt count grows
-    /// (proving the auto-reconnect delay is bounded — it cannot run away).
-    func testBackoffDelayForAttemptIsCappedExponential() {
-        let backoff = ReconnectManager.Backoff(initial: .milliseconds(250), maximum: .seconds(2), multiplier: 2.0)
-        // 1-indexed: attempt 1 waits `initial`, doubling each attempt until it saturates at `maximum`.
-        XCTAssertEqual(backoff.delay(forAttempt: 1), .milliseconds(250))
-        XCTAssertEqual(backoff.delay(forAttempt: 2), .milliseconds(500))
-        XCTAssertEqual(backoff.delay(forAttempt: 3), .seconds(1))
-        XCTAssertEqual(backoff.delay(forAttempt: 4), .seconds(2)) // reaches the cap
-        XCTAssertEqual(backoff.delay(forAttempt: 5), .seconds(2)) // stays capped
-        XCTAssertEqual(backoff.delay(forAttempt: 30), .seconds(2)) // far past the cap — still bounded
-        // A non-positive / first attempt is exactly `initial` (defensive lower bound).
-        XCTAssertEqual(backoff.delay(forAttempt: 0), .milliseconds(250))
-        // Equivalence with the chained `next(after:)` form (same schedule, different encoding).
-        var chained = backoff.initial
-        for attempt in 1...8 {
-            XCTAssertEqual(backoff.delay(forAttempt: attempt), chained, "attempt \(attempt) closed-form == chained")
-            chained = backoff.next(after: chained)
-        }
+        XCTAssertEqual(manager.backoff.multiplier, ReconnectManager.Backoff.defaultMultiplier)
+        XCTAssertEqual(manager.backoff.initial, ReconnectManager.Backoff.defaultInitial)
+        XCTAssertEqual(manager.backoff.maximum, ReconnectManager.Backoff.defaultMaximum)
+        // A delay past the cap saturates rather than running away — the one property the pane
+        // depends on, read through the door instead of recomputed beside it.
+        XCTAssertEqual(manager.backoff.delay(forAttempt: 30), manager.backoff.maximum)
     }
 }

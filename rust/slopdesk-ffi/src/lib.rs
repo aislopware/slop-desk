@@ -273,6 +273,7 @@ pub mod scroll_resample;
 pub mod search_rank;
 pub mod send_pacing;
 pub mod service_lifecycle;
+pub mod session_marks;
 pub mod session_state;
 pub mod session_template_engine;
 pub mod sidebar_row;

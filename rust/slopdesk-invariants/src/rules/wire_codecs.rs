@@ -338,6 +338,8 @@ pub fn payload_channels(tree: &Tree) -> Report {
                 "slopdesk_metadata_decode_host_vitals",
                 "slopdesk_metadata_encode_service_endpoint",
                 "slopdesk_metadata_decode_service_endpoint",
+                "slopdesk_metadata_encode_agent_hook_status",
+                "slopdesk_metadata_decode_agent_hook_status",
                 "slopdesk_metadata_encode_code_open_disposition",
                 "slopdesk_metadata_decode_code_open_disposition",
                 "slopdesk_metadata_encode_code_font_spec",

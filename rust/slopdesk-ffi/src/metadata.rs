@@ -24,18 +24,18 @@ use core::ffi::c_uchar;
 use core::ops::Range;
 
 use slopdesk_wire::metadata::{
-    AGENT_SESSION_FIXED_BYTES, AgentSessionInfo, CLIPBOARD_BASELINE_PROBE, CodeFontSpec, CodeOpenDisposition,
-    DIR_ENTRY_FIXED_BYTES, DISK_FREE_UNKNOWN, DirEntry, GIT_FILE_FIXED_BYTES, GitFileChange,
-    GitStatusPayload, HostVitals, MAX_CLIPBOARD_CONTENT_BYTES, PORT_ENTRY_FIXED_BYTES,
-    PROCESS_ENTRY_FIXED_BYTES, PortInfo, ProcessInfo, ServiceEndpoint, decode_agent_session_list,
-    decode_clipboard_read_request, decode_clipboard_read_response_leaving_content,
+    AGENT_SESSION_FIXED_BYTES, AgentHookStatus, AgentSessionInfo, CLIPBOARD_BASELINE_PROBE, CodeFontSpec,
+    CodeOpenDisposition, DIR_ENTRY_FIXED_BYTES, DISK_FREE_UNKNOWN, DirEntry, GIT_FILE_FIXED_BYTES,
+    GitFileChange, GitStatusPayload, HostVitals, MAX_CLIPBOARD_CONTENT_BYTES, PORT_ENTRY_FIXED_BYTES,
+    PROCESS_ENTRY_FIXED_BYTES, PortInfo, ProcessInfo, ServiceEndpoint, decode_agent_hook_status,
+    decode_agent_session_list, decode_clipboard_read_request, decode_clipboard_read_response_leaving_content,
     decode_clipboard_set_leaving_content, decode_code_font_spec, decode_code_open_disposition,
     decode_dir_listing, decode_git_status, decode_host_vitals, decode_port_list, decode_process_list,
-    decode_service_endpoint, encode_agent_session_list_into, encode_clipboard_read_request_into,
-    encode_clipboard_read_response_into, encode_clipboard_set_into, encode_code_font_spec_into,
-    encode_code_open_disposition_into, encode_dir_listing_into, encode_git_status_into,
-    encode_host_vitals_into, encode_port_list_into, encode_process_list_into, encode_service_endpoint_into,
-    fold_status_codes,
+    decode_service_endpoint, encode_agent_hook_status_into, encode_agent_session_list_into,
+    encode_clipboard_read_request_into, encode_clipboard_read_response_into, encode_clipboard_set_into,
+    encode_code_font_spec_into, encode_code_open_disposition_into, encode_dir_listing_into,
+    encode_git_status_into, encode_host_vitals_into, encode_port_list_into, encode_process_list_into,
+    encode_service_endpoint_into, fold_status_codes,
 };
 
 use crate::wire_message::{WIRE_DECODE_AGAIN, WIRE_DECODE_OK, verdict};
@@ -172,6 +172,19 @@ pub struct SlopDeskMetadataEndpoint {
     pub port: u16,
     /// The lifecycle state, carried RAW.
     pub state: u8,
+}
+
+/// Where the host's slopdesk Claude Code hooks stand.
+///
+/// TWO flags, never folded into one: without a bound listener an installed hook exits silently, so
+/// the card must be able to say installed-but-INACTIVE instead of a green that means nothing.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SlopDeskMetadataHookStatus {
+    /// The slopdesk entries are present in the host's `~/.claude/settings.json`.
+    pub installed: bool,
+    /// The hostd hook listener socket is ACTUALLY bound, so hooks can flow.
+    pub listener_active: bool,
 }
 
 /// The client's terminal-font truth for the embedded workbench.
@@ -956,6 +969,64 @@ pub unsafe extern "C" fn slopdesk_metadata_encode_service_endpoint(
         };
         lend(out, cap, |writer| encode_service_endpoint_into(writer, &built))
     }
+}
+
+/// Decodes an agent-hook status into `out`.
+///
+/// The two flags are separate on purpose: installed alone is not "the integration works", and the
+/// card that reads this has to be able to say installed-but-INACTIVE rather than paint a green over
+/// hooks that exit silently. A flag is true for the byte `1` and nothing else, and a MISSING second
+/// byte — a reply predating the listener flag — reads inactive.
+///
+/// # Safety
+/// `payload` must describe live memory and `out` must be null or writable for one struct.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_metadata_decode_agent_hook_status(
+    payload: *const c_uchar,
+    payload_len: usize,
+    out: *mut SlopDeskMetadataHookStatus,
+) -> u32 {
+    // SAFETY: the caller's obligations are this function's.
+    unsafe {
+        let status = match decode_agent_hook_status(borrow(payload, payload_len)) {
+            Ok(status) => status,
+            Err(error) => return verdict(&error),
+        };
+        if !out.is_null() {
+            out.write(SlopDeskMetadataHookStatus {
+                installed: status.installed,
+                listener_active: status.listener_active,
+            });
+        }
+        WIRE_DECODE_OK
+    }
+}
+
+/// Encodes an agent-hook status — the verb-13 reply the host answers with.
+///
+/// # Safety
+/// `out` must be writable for `cap` bytes.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_metadata_encode_agent_hook_status(
+    installed: bool,
+    listener_active: bool,
+    out: *mut c_uchar,
+    cap: usize,
+) -> usize {
+    let status = AgentHookStatus {
+        installed,
+        listener_active,
+    };
+    // SAFETY: the caller's obligation is `lend`'s.
+    unsafe { lend(out, cap, |writer| encode_agent_hook_status_into(writer, status)) }
 }
 
 /// Decodes a code-open disposition into `out`.

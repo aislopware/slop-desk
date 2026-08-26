@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// Drives reconnection for a ``SlopDeskClient`` after the transport drops.
@@ -34,20 +35,48 @@ public final class ReconnectManager: Sendable {
         public var maximum: Duration
         public var multiplier: Double
 
+        /// The shipped schedule, stated once in `slopdesk_clientsession::backoff` and read here.
+        /// A literal `250ms`/`2s`/`2.0` in this file would be a second copy of a rule that already
+        /// has one — DECISIONS §reconnect lives on the Rust side now.
+        private static let shipped = slopdesk_pane_backoff_default()
+        public static let defaultInitial = Duration.nanoseconds(Self.shipped.initial_ns)
+        public static let defaultMaximum = Duration.nanoseconds(Self.shipped.maximum_ns)
+        public static let defaultMultiplier = Self.shipped.multiplier
+
         public init(
-            initial: Duration = .milliseconds(250),
-            maximum: Duration = .seconds(2),
-            multiplier: Double = 2.0,
+            initial: Duration = Self.defaultInitial,
+            maximum: Duration = Self.defaultMaximum,
+            multiplier: Double = Self.defaultMultiplier,
         ) {
             self.initial = initial
             self.maximum = maximum
             self.multiplier = multiplier
         }
 
+        /// The schedule as `slopdesk_clientsession::backoff` states it: nanoseconds, because a
+        /// `Duration` carries attoseconds and a millisecond unit would round a sub-millisecond
+        /// schedule away on the way across.
+        private var crossing: SlopDeskPaneBackoff {
+            SlopDeskPaneBackoff(
+                initial_ns: Self.nanoseconds(initial),
+                maximum_ns: Self.nanoseconds(maximum),
+                multiplier: multiplier,
+            )
+        }
+
+        private static func nanoseconds(_ duration: Duration) -> UInt64 {
+            let components = duration.components
+            guard components.seconds >= 0 else { return 0 }
+            let whole = UInt64(components.seconds).multipliedReportingOverflow(by: 1_000_000_000)
+            guard !whole.overflow else { return UInt64.max }
+            let fraction = UInt64(max(components.attoseconds, 0) / 1_000_000_000)
+            let total = whole.partialValue.addingReportingOverflow(fraction)
+            return total.overflow ? UInt64.max : total.partialValue
+        }
+
         /// The next delay after `current`, capped at ``maximum``.
         func next(after current: Duration) -> Duration {
-            let scaled = current * multiplier
-            return scaled > maximum ? maximum : scaled
+            .nanoseconds(slopdesk_pane_backoff_next_after(crossing, Self.nanoseconds(current)))
         }
 
         /// PURE retries→delay schedule (1-indexed): the backoff to wait BEFORE the `attempt`-th
@@ -61,16 +90,7 @@ public final class ReconnectManager: Sendable {
         /// at attempt 1" — which `ReconnectManager` already does (each new `.disconnected` after a live
         /// session opens a NEW `reconnectLoop` with `attempt = 0`, so the delay resets to `initial`).
         func delay(forAttempt attempt: Int) -> Duration {
-            guard attempt > 1 else { return initial }
-            // Saturate by stepping (avoids Double pow overflow on a large attempt and keeps the exact
-            // same capped sequence as `next(after:)`): stop multiplying once we reach `maximum`.
-            var d = initial
-            for _ in 1..<attempt {
-                let scaled = d * multiplier
-                d = scaled > maximum ? maximum : scaled
-                if d == maximum { break }
-            }
-            return d
+            .nanoseconds(slopdesk_pane_backoff_delay(crossing, UInt32(clamping: attempt)))
         }
     }
 
@@ -149,7 +169,7 @@ public final class ReconnectManager: Sendable {
                 let closed = await client.isClosed
                 let exited = await client.isExited
                 let hostClosed = await client.isHostClosed
-                if paused || closed || exited || hostClosed { continue }
+                guard slopdesk_pane_session_campaign_runs(paused, closed, exited, hostClosed) else { continue }
                 onLog?("reconnect: transport dropped (\(reason)) — retrying")
                 await Self.reconnectLoop(
                     client: client, host: host, port: port, backoff: backoff,
@@ -167,7 +187,7 @@ public final class ReconnectManager: Sendable {
     /// (upper) can read down but not vice-versa.
     /// With the default backoff (initial 250ms, max 2s, multiplier 2.0) this is roughly 35s of wall-clock:
     /// 250+500+1000+2000+… ≈ 35s for 20 attempts.
-    public static let maxReconnectAttempts = 20
+    public static let maxReconnectAttempts = Int(slopdesk_pane_backoff_max_attempts())
 
     /// One reconnect campaign: retry `connect` with exponential backoff until it succeeds, the
     /// task is cancelled, or the attempt cap (``maxReconnectAttempts``) is exhausted. On
@@ -205,13 +225,13 @@ public final class ReconnectManager: Sendable {
             let closed = await client.isClosed
             let exited = await client.isExited
             let hostClosed = await client.isHostClosed
-            if paused || closed || exited || hostClosed { return }
+            guard slopdesk_pane_session_campaign_runs(paused, closed, exited, hostClosed) else { return }
             attempt += 1
             // Cap: stop after maxReconnectAttempts so a permanently-gone host does not
             // keep the pane stuck in "reconnecting" forever. Surface a log line so
             // ConnectionViewModel.lastLog (shown in the chrome) escapes the loop, AND fire
             // `onGaveUp` so the UI flips to a terminal `.unreachable` state.
-            if attempt > maxReconnectAttempts {
+            if slopdesk_pane_backoff_exhausted(UInt32(clamping: attempt)) {
                 onLog?("reconnect: gave up after \(maxReconnectAttempts) attempt(s) — could not reach \(host):\(port)")
                 onGaveUp?()
                 return
@@ -243,7 +263,7 @@ public final class ReconnectManager: Sendable {
     public func reconnect(host: String, port: UInt16) async throws {
         var delay = backoff.initial
         var lastError: Error?
-        for attempt in 1...64 {
+        for attempt in 1...Int(slopdesk_pane_backoff_direct_attempts()) {
             if Task.isCancelled { throw CancellationError() }
             do {
                 try await client.connect(host: host, port: port)

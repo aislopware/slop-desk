@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskProtocol
 import SlopDeskTransport
@@ -164,6 +165,17 @@ public actor SlopDeskClient {
         /// The seq stream continued past the presented `lastReceivedSeq` — the host
         /// reattached the SAME live shell (PATH A) and resumes byte-exact.
         case resumedSession
+
+        /// The verdict `slopdesk_clientsession`'s probe answered, as a case. An unreadable byte is
+        /// `undetermined` — the reading that establishes nothing, which is the honest answer to a
+        /// byte nobody here can interpret.
+        init(code: UInt8) {
+            switch code {
+            case 1: self = .freshShell
+            case 2: self = .resumedSession
+            default: self = .undetermined
+            }
+        }
     }
 
     /// How often the coalesced ack ticker may flush a pending ack. Correctness does not
@@ -241,27 +253,24 @@ public actor SlopDeskClient {
     /// reconnects so the host recognizes us as a RETURNING_CLIENT.
     public private(set) var sessionID: UUID?
 
+    /// The four numbers this client keeps about the host's output stream, stepped by
+    /// `slopdesk_clientsession` (`docs/55` §4b — by value, in place, four integers and a flag).
+    ///
+    /// Every reconnect decision underneath this actor is a question about them: which seq is a
+    /// replay duplicate, what may be acked, what the next `channelOpen` presents, and whether the
+    /// host reattached the same shell or spawned a new one. The bytes never cross with them — the
+    /// inbox, the surface and the window credit are this side's.
+    private var session = SlopDeskPaneSession()
+
     /// Highest **contiguous** output seq delivered to the surface. This is what we ack
     /// and what we present as `hello.lastReceivedSeq` on reconnect.
-    public private(set) var highestContiguousSeq: Int64 = 0
-
-    /// Highest output seq actually fed to the surface (== ``highestContiguousSeq`` while
-    /// the stream is contiguous, which it always is here). Used as the dedup high-water
-    /// bound — any inbound `output` with `seq <= highestSeqFed` is a replay duplicate and
-    /// is dropped.
-    private var highestSeqFed: Int64 = 0
+    public var highestContiguousSeq: Int64 { session.highest_contiguous }
 
     /// Fresh-shell-vs-reattach verdict for the CURRENT connection (see ``SessionResumeOutcome``).
     /// Re-armed to `.undetermined` on every adopted `connect(...)` and on a stream end (so a
     /// stale verdict from a dead link can never gate the NEXT session's wipe), then resolved by
     /// ``deliverOutput(seq:bytes:wireBytes:)`` from the first `output` seq it sees.
-    public private(set) var sessionResumeOutcome: SessionResumeOutcome = .undetermined
-
-    /// The `lastReceivedSeq` this client presented in the most recently ADOPTED connect's
-    /// channelOpen preamble — the reference point ``sessionResumeOutcome`` is resolved against.
-    /// (Captured separately because `connect` resets ``highestContiguousSeq`` right after
-    /// presenting it — the mux transport reports no host-authoritative resume seq.)
-    private var presentedResumeSeq: Int64 = 0
+    public var sessionResumeOutcome: SessionResumeOutcome { SessionResumeOutcome(code: session.outcome) }
 
     // MARK: Internals
 
@@ -275,7 +284,6 @@ public actor SlopDeskClient {
     private var inboundTask: Task<Void, Never>?
     private var ackTask: Task<Void, Never>?
     private var pingTask: Task<Void, Never>?
-    private var ackPending = false
     private var closed = false
     private var paused = false
     /// Set when the remote child `.exit`s — TERMINAL for this client instance, like `closed`. The
@@ -368,8 +376,7 @@ public actor SlopDeskClient {
             AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         if let resumeSeed {
             sessionID = resumeSeed.sessionID
-            highestContiguousSeq = resumeSeed.lastSeq
-            highestSeqFed = resumeSeed.lastSeq
+            session = slopdesk_pane_session_seeded(resumeSeed.lastSeq)
         }
     }
 
@@ -403,8 +410,7 @@ public actor SlopDeskClient {
     /// already presented its own learned identity). Must only be called before the first connect.
     public func seedResumeIdentity(sessionID: UUID, seq: Int64) {
         self.sessionID = sessionID
-        highestContiguousSeq = seq
-        highestSeqFed = seq
+        session = slopdesk_pane_session_seeded(seq)
     }
 
     /// Provides the transport with a startup cwd for the next PTY spawn. A host-side reattach IGNORES it
@@ -427,15 +433,14 @@ public actor SlopDeskClient {
         port: UInt16,
         handshakeTimeout: Duration = .seconds(10),
     ) async throws {
-        guard !closed else { throw ClientError.invalidState("connect after close") }
-        guard !childExited else { throw ClientError.invalidState("connect after child exit") }
-        // The enforcement point for `hostCloseReason`, at the one call that actually opens a
-        // channel: the host closed this pane's channel, so no path may re-open it under the same
-        // client — whichever reason it gave. A re-dial that is ALLOWED (an explicit user reconnect,
-        // or the app-connection fan-out after an eviction) is unaffected: it builds a NEW client.
-        guard hostCloseReason == nil else {
-            throw ClientError.invalidState("connect after host closed the channel")
-        }
+        // The three terminal states, asked as one — including the enforcement point for
+        // `hostCloseReason`, at the one call that actually opens a channel: the host closed this
+        // pane's channel, so no path may re-open it under the same client, whichever reason it gave.
+        // A re-dial that is ALLOWED (an explicit user reconnect, or the app-connection fan-out after
+        // an eviction) is unaffected: it builds a NEW client. The sentence each arm throws is
+        // `slopdesk_clientsession`'s too, so the refusal and the words for it cannot drift apart.
+        let refusal = slopdesk_pane_session_connect_refusal(closed, childExited, hostCloseReason != nil)
+        if refusal != 0 { throw ClientError.invalidState(Self.refusalReason(refusal)) }
         self.host = host
         self.port = port
 
@@ -488,7 +493,9 @@ public actor SlopDeskClient {
         // the channel (refcount--), so nothing leaks. We RETURN rather than throw: a thrown error would
         // make ``ReconnectManager``'s loop RETRY and fight whichever connect legitimately won — returning
         // tells it "the client is handled, stop the campaign."
-        if closed || paused || Task.isCancelled || myGeneration != connectGeneration {
+        guard slopdesk_pane_session_adopts(
+            closed, paused, Task.isCancelled, myGeneration != connectGeneration,
+        ) else {
             await transport.close()
             return
         }
@@ -517,11 +524,12 @@ public actor SlopDeskClient {
         //     by ``seedResumeIdentity(sessionID:seq:)`` to match, so the dedup high-water is ALREADY
         //     correct — resetting would discard them and make `deliverOutput` re-deliver the replayed
         //     tail as new, duplicating output on the pane. Leave them.
-        if resumeFromSeq == 0 {
-            highestSeqFed = 0
-            highestContiguousSeq = 0
-            ackPending = false
-            // KEEP the un-consumed inbox bytes. `deliverOutput` advanced `highestContiguousSeq` at
+        //
+        // The step also ARMS the resume-outcome probe for this connection, against the `lastSeq`
+        // captured before the handshake — strictly before the pump below can deliver anything, and
+        // strictly before the marks it is read against could have been reset.
+        if slopdesk_pane_session_adopt(&session, lastSeq, resumeFromSeq) == 1 {
+            // KEEP the un-consumed inbox bytes. `deliverOutput` advanced the contiguous mark at
             // wire-ARRIVAL time, and this connect already presented it as `lastReceivedSeq` — so on a
             // genuine reattach the host will NEVER resend these bytes: the inbox copy is the only copy,
             // and a `removeAll()` here would make a silent, permanent scrollback gap at every reconnect
@@ -555,16 +563,12 @@ public actor SlopDeskClient {
         // deliberate close()/pause() landed during any of them, teardownTransport() already cancelled +
         // niled the pumps and closed this transport — re-creating the pumps here would leak a forever-
         // spinning ack ticker (its loop has no closed/transport guard). Bail before starting them.
-        if closed || paused || Task.isCancelled || myGeneration != connectGeneration {
+        guard slopdesk_pane_session_adopts(
+            closed, paused, Task.isCancelled, myGeneration != connectGeneration,
+        ) else {
             await transport.close()
             return
         }
-
-        // Arm the resume-outcome probe for THIS adopted connection, strictly BEFORE the pump can
-        // deliver its first output: `deliverOutput` resolves ``sessionResumeOutcome`` against the
-        // `lastReceivedSeq` we presented (captured pre-handshake — the marks above were reset since).
-        presentedResumeSeq = lastSeq
-        sessionResumeOutcome = .undetermined
 
         startInboundPump(transport)
         startAckTicker()
@@ -688,11 +692,12 @@ public actor SlopDeskClient {
     /// EWMA absorbs it (and the next samples correct it).
     private func recordPong(sentAtMS: UInt64) {
         let nowMS = DispatchTime.now().uptimeNanoseconds / 1_000_000
-        guard nowMS >= sentAtMS else { return }
-        let sample = Double(nowMS - sentAtMS)
-        let smoothed = smoothedRTTMS.map { $0 * 0.75 + sample * 0.25 } ?? sample
-        smoothedRTTMS = smoothed
-        eventBroadcaster.yield(.rtt(milliseconds: smoothed))
+        var reading = 0.0
+        guard slopdesk_pane_session_rtt(
+            nowMS, sentAtMS, smoothedRTTMS != nil, smoothedRTTMS ?? 0, &reading,
+        ) else { return }
+        smoothedRTTMS = reading
+        eventBroadcaster.yield(.rtt(milliseconds: reading))
     }
 
     /// The dedup + contiguous-tracking core. Drops any `output` already delivered
@@ -701,32 +706,15 @@ public actor SlopDeskClient {
     /// guarantees ascending in-order delivery (replay tail then live, `docs/20` §8.3), so
     /// in practice every accepted output advances the counter by exactly one.
     private func deliverOutput(seq: Int64, bytes: Data, wireBytes: Int) async {
-        // First output on the CURRENT connection resolves the fresh-shell-vs-reattach verdict
-        // (see ``SessionResumeOutcome``): a PATH-A reattach continues the retained seq stream
-        // strictly past the presented `lastReceivedSeq`; a fresh shell restarts at seq 1. The
-        // verdict is re-armed to `.undetermined` only by an adopted connect (before its pump
-        // starts) or a stream end (after its pump's last delivery), so an OLD connection's late
-        // delivery can never resolve the NEW connection's probe — the resolve is per-connection.
-        if sessionResumeOutcome == .undetermined {
-            sessionResumeOutcome =
-                (presentedResumeSeq > 0 && seq > presentedResumeSeq) ? .resumedSession : .freshShell
-        }
-        guard seq > highestSeqFed else {
+        // The fold — resolve the verdict, dedup, advance both marks, arm the ack — is
+        // `slopdesk_clientsession`'s. What stays here is the half it cannot do: the inbox, the
+        // surface and the window credit.
+        guard slopdesk_pane_session_deliver(&session, seq) == 1 else {
             // Duplicate (replayed) — drop, but still CREDIT it: the bytes crossed the wire
             // and were fully processed (by discarding); withholding the credit would leak
             // window capacity on every replay.
             await transport?.noteOutputConsumed(wireBytes: wireBytes)
             return
-        }
-        highestSeqFed = seq
-        // Contiguous advance: with in-order delivery this tracks highestSeqFed exactly.
-        if seq == highestContiguousSeq + 1 {
-            highestContiguousSeq = seq
-        } else if seq > highestContiguousSeq {
-            // Defensive: never regress; accept forward jumps as the new contiguous high
-            // (the transport does not produce gaps, but we must never ack less than we
-            // delivered, and never more than we have).
-            highestContiguousSeq = seq
         }
         // Append-then-yield: the pending wake (bufferingNewest(1)) always observes a
         // complete inbox, so no chunk can be stranded without a wake. The wire byte count
@@ -734,8 +722,6 @@ public actor SlopDeskClient {
         outputInbox.append((bytes: bytes, wireBytes: wireBytes))
         outputWakeContinuation.yield(())
         surfaceFeed?(bytes)
-        // Mark an ack as pending; the coalescing ticker sends it.
-        ackPending = true
     }
 
     /// - Parameter hostClose: why the transport reports this end as a per-channel `channelClose`
@@ -752,7 +738,7 @@ public actor SlopDeskClient {
         // `.resumedSession` read between the drop and the next connect would let the UI skip the
         // fresh-session wipe the NEXT session may need. Reset unconditionally (before the guards:
         // a deliberate close / self-inflicted teardown end invalidates the verdict just the same).
-        sessionResumeOutcome = .undetermined
+        slopdesk_pane_session_stream_ended(&session)
         // Surface a disconnect (unless we are closing on purpose, or we ourselves are
         // tearing the old transport down to reconnect — in which case this end is
         // self-inflicted and a real `.disconnected` would queue a redundant reconnect).
@@ -761,7 +747,7 @@ public actor SlopDeskClient {
         // told the UI the session is over; a `.disconnected` here would flip the pane to a
         // forever-"reconnecting" (and, before the ReconnectManager exit gate, launched a respawn
         // campaign against a client whose output nothing can consume).
-        guard !closed, !tearingDown, !childExited else { return }
+        guard slopdesk_pane_session_announces_drop(closed, tearingDown, childExited) else { return }
         let reason = if let error { String(describing: error) } else { "stream ended (FIN)" }
         eventBroadcaster.yield(.disconnected(reason: reason))
     }
@@ -807,16 +793,17 @@ public actor SlopDeskClient {
     }
 
     private func flushAckIfPending() async {
-        guard ackPending, let transport else { return }
-        let seq = highestContiguousSeq
-        ackPending = false
-        // Never ack 0 (nothing received) or a seq we have not delivered.
-        guard seq > 0 else { return }
+        // The transport is asked FIRST, so a tick with nowhere to send leaves the flag armed for the
+        // next live one. Past that the gate is `slopdesk_clientsession`'s: it clears the flag, and
+        // answers a seq only when there is one — never 0, and never one we have not delivered.
+        guard let transport else { return }
+        var seq: Int64 = 0
+        guard slopdesk_pane_session_ack(&session, &seq) else { return }
         do {
             try await transport.sendAck(seq: seq)
         } catch {
             // Send failed (channel dropped): re-arm so the next live transport acks it.
-            ackPending = true
+            slopdesk_pane_session_ack_failed(&session)
         }
     }
 
@@ -940,6 +927,27 @@ public actor SlopDeskClient {
     }
 
     // MARK: Teardown
+
+    /// What the error thrown for a `slopdesk_pane_session_connect_refusal` code says.
+    ///
+    /// The sentence lives on the far side beside the rule that produces it, so a refusal and the
+    /// words for it cannot drift. 64 bytes covers the longest of the three, and the retry covers a
+    /// sentence that outgrows it anyway — `docs/55` §4.
+    private static func refusalReason(_ code: UInt8) -> String {
+        var out = [UInt8](repeating: 0, count: 64)
+        var count = out.withUnsafeMutableBufferPointer { buffer in
+            slopdesk_pane_session_refusal_reason(code, buffer.baseAddress, buffer.count)
+        }
+        if count > out.count {
+            out = [UInt8](repeating: 0, count: count)
+            count = out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_pane_session_refusal_reason(code, buffer.baseAddress, buffer.count)
+            }
+        }
+        guard count > 0, count <= out.count else { return "connect refused" }
+        // swiftlint:disable:next optional_data_string_conversion
+        return String(decoding: out.prefix(count), as: UTF8.self)
+    }
 
     /// Tears down only the transport + its pumps (NOT the surfaced streams) so a
     /// reconnect can replace them. Cancels the inbound + ack tasks and closes the

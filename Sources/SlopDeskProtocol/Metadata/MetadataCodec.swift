@@ -393,6 +393,49 @@ public enum MetadataCodec {
         }
     }
 
+    // MARK: - Agent hook status  (agentHookStatus = 13)
+
+    /// What the host reports about its Claude Code hook wiring — the 2-byte
+    /// ``MetadataVerb/agentHookStatus`` response payload.
+    public struct AgentHookStatus: Equatable, Sendable {
+        /// The hook block is present in the host's `settings.json`.
+        public var installed: Bool
+        /// The host's relay listener is up, so an installed hook actually reaches this process.
+        public var listenerActive: Bool
+
+        public init(installed: Bool, listenerActive: Bool) {
+            self.installed = installed
+            self.listenerActive = listenerActive
+        }
+    }
+
+    /// Encodes a ``MetadataVerb/agentHookStatus`` response payload: `[UInt8 installed][UInt8 active]`.
+    public static func encodeAgentHookStatus(_ status: AgentHookStatus) -> Data {
+        sized { out, cap in
+            slopdesk_metadata_encode_agent_hook_status(status.installed, status.listenerActive, out, cap)
+        }
+    }
+
+    /// Decodes a ``MetadataVerb/agentHookStatus`` response payload. An empty body throws
+    /// ``SlopDeskError/truncated`` — a hook report with no bytes is a fault, not "nothing installed".
+    /// A one-byte body (a host that predates the listener flag) reads `listenerActive == false`,
+    /// which is the safe reading: an unproven listener never lights the green mark.
+    ///
+    /// Only the byte `1` is true, decided inside the door. A stray `2` from a future host is a byte
+    /// this build cannot vouch for, so it reads false rather than becoming an accidental green.
+    public static func decodeAgentHookStatus(_ data: Data) throws -> AgentHookStatus {
+        var flat = SlopDeskMetadataHookStatus()
+        try throwIfFaulted(
+            data.spanning { payload, length in
+                slopdesk_metadata_decode_agent_hook_status(
+                    payload?.assumingMemoryBound(to: UInt8.self), length, &flat,
+                )
+            },
+            "agentHookStatus",
+        )
+        return AgentHookStatus(installed: flat.installed, listenerActive: flat.listener_active)
+    }
+
     // MARK: - Clipboard sync  (setClipboard = 15 / readClipboard = 16)
 
     /// One synced clipboard clip: a raw kind byte (forward-tolerant carry, like ``PortInfo/proto``)
