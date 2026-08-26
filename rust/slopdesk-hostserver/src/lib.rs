@@ -1,0 +1,42 @@
+//! hostd's composition, in Rust: which pane a channel names, which parked pane a returning client
+//! may take, and what happens to both when the daemon stops.
+//!
+//! This is stage D of `docs/60-hostd-in-rust.md`, and the shape of it is the finding that scoped
+//! the stage: **stage D has no engine left to write.** Every decision the three thousand lines of
+//! `HostServer` and its neighbours reach for is already Rust somewhere else — the session table is
+//! [`slopdesk_muxsession::registry`], the retention rules are
+//! [`slopdesk_muxsession::detach_retention`], the service lifecycles and the log splitter are
+//! `slopdesk-sidecars`', the metadata bodies are `slopdesk-probe`'s and `slopdesk-git`'s, and one
+//! pane is `slopdesk-hostsession`'s. What is left is COMPOSITION, and composition is the one thing
+//! that cannot live inside any of the crates it composes.
+//!
+//! ## What D.1 landed
+//!
+//! [`sessions`] — the table, [`slopdesk_muxsession::registry::Registry`] plus the objects it names,
+//! with no lock of its own because the server's ladders need the two mutated together.
+//! [`detached`] — the parked-pane store, with a lock of its own because its exclusive hand-off is a
+//! removal and a timer cancellation in ONE critical section. [`deadline`] — the timer wheel that
+//! hand-off cancels against. [`pane`] and [`live`] — the six-method surface those two need of a
+//! pane, and the real one behind it.
+//!
+//! ## What it does not DELETE, and why
+//!
+//! Nothing. `docs/60` §5's carve-out is the reason and it has not changed: stages A–E cannot obey
+//! "one implementation, never two languages" literally, because hostd is a Swift process until the
+//! cutover at stage F. `HostSessionRegistry` and `DetachedSessionStore` stand until then, and F is
+//! what takes them.
+
+mod deadline;
+mod detached;
+mod live;
+mod pane;
+mod sessions;
+
+pub use deadline::Deadlines;
+pub use detached::{
+    Claim, DetachedStore, DetachedTeardown, EvictionObserver, IgnoreEvictions, InlineTeardown, Relinquished,
+    TeardownExecutor,
+};
+pub use live::LivePane;
+pub use pane::{Pane, same_pane};
+pub use sessions::{Held, Sessions};

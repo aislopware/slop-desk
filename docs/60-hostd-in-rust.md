@@ -519,9 +519,54 @@ is paused.
   already pays — `cargo -p` from the root cannot reach it, so its gate is `cd rust/<crate>`, and
   `make lint-reach` is what proves some target still runs it.
 
-  **D.1 — the registry and the detached store.** `HostSessionRegistry` (400) collapses onto the
-  `Registry` it already wraps. `DetachedSessionStore` (388) keeps `DetachStoreRules` and gains the
-  driving Swift held: the TTL timer, the exclusive claim hand-off, `drainAll`/`relinquishAll`.
+  **D.1 — the registry and the detached store.** ✅ `rust/slopdesk-hostserver`, five modules and
+  thirty-six tests. `HostSessionRegistry` (400) collapsed onto the `Registry` it already wraps and
+  came out at 338 with more doc in it than code, because most of what it was is buffer
+  marshalling that ceases to exist the moment
+  the caller can hold a `Vec<Key>`. `DetachedSessionStore` (388) kept both retention rules and gained
+  the driving Swift held: the TTL timer, the exclusive claim hand-off, `drainAll`/`relinquishAll`.
+
+  Four decisions in it are worth knowing before reading it.
+
+  **The two halves take opposite answers on locking, and the Swift was right about both.** `Sessions`
+  holds NO lock — it is a plain `&mut self` type, exactly as `HostSessionRegistry` was "deliberately
+  unlocked: `HostServer` calls every method with its `lock` held". That is load-bearing: the join and
+  reattach ladders mutate the registry AND the object maps and must be indivisible across both, so a
+  lock in there would make D.6 either nest two on every ladder or go back to the TOCTOU it took the
+  ladder to close. `DetachedStore` holds its OWN, because its exclusive hand-off is a removal and a
+  timer cancellation in one critical section and no caller can be trusted to hold that for it. The
+  nesting stays one-way — server → store, never back — and `is_child_exited` is still asked OUTSIDE
+  it, because the exit notification runs a teardown that comes back through `remove`.
+
+  **The TTL timer is NOT `slopdesk-hostsession`'s `Timers`**, and the reason is semantic rather than
+  convenience: a re-arm there REPLACES the deadline, which is the whole point at sixty arms a second
+  during a drag, and a re-park here must KEEP the original — the clock started when the client left,
+  and a mid-reattach link drop is not a fresh departure. What landed is one wheel: one thread for
+  every parked pane rather than the one-per-entry a `Task`-per-entry becomes once a `Task` is a
+  thread, lazily spawned so a store with no TTL configured — the default — never starts one, and
+  holding a `Weak` to the store so the queue cannot be the cycle that keeps it alive. It fires
+  NOTHING on stop, because a wheel that flushed its queue there would kill exactly the panes a
+  `relinquish_all` had just handed back to superd. And because the wheel is keyed by SESSION id
+  rather than by entry, a displacement's cancel and its successor's arm are ONE key: the cancel goes
+  first, or the successor is left holding a TTL that silently never fires. Swift could write those
+  two in either order — its timer hung off the `Entry` object — and this cannot.
+
+  **Every kill goes through an injected executor**, never the caller's thread. An overflow eviction
+  fires while the server may hold its lock, and a relinquish can block on input-quiet — so
+  `relinquish_all` lets N panes go in PARALLEL and answers a handle with a BOUNDED wait, since a pane
+  whose relinquish wedges must not hold the daemon open. The same bargain `ResolveExecutor` struck.
+
+  **The pane is a six-method trait, not `PaneSession` by name.** The table and the store touch a pane
+  in exactly six ways — two identities, whether its child exited, how many hold it, and the two ends
+  of its life — and everything else those two files do is bookkeeping ABOUT panes rather than to
+  them. Naming that surface is what lets the retention be tested as retention instead of as a PTY, a
+  superd and six threads per entry. `LivePane` is the real one, and it is where the session id and
+  the slot are pinned on, because `PaneSession` deliberately carries neither: a crate that named its
+  own position in a collection could not be tested apart from the collection.
+
+  One thing moved outside the new crate. `mint_slot` is now
+  `slopdesk-muxsession::registry::mint_slot` and the FFI door delegates to it, because stage D gives
+  hostd a SECOND minter into the same table and two counters would hand two live panes one number.
 
   **D.2 — the two service lifecycles.** `SupervisedServiceLifecycle` (433) +
   `SupervisedServiceProcess` (289) + `CodeServerManager` (425). None of the three decides anything:
@@ -530,6 +575,13 @@ is paused.
   ring-replay adoption with its lossy-resume refusal — a survivor whose announce line has scrolled
   out of superd's ring is treated as a FAILED adoption, because a live handle with no port leaves
   the panel reporting `starting` for the rest of the daemon's life.
+
+  One gap the scoping found, and it is the only thing in stage D that is not already Rust somewhere:
+  `SupervisorClient` has `observe_exit` but **no disconnect observer**. `SupervisedServiceProcess`
+  needs one — superd holds the ONLY master for a service, so superd dying kills the child, and hostd
+  would otherwise never hear it because the `exited` notice travels the connection that just died.
+  It is a registry of `Arc<dyn Fn()>` beside the exit one, fired where the client already notices its
+  socket has gone; D.2 adds it there rather than working around it here.
 
   **D.3 — the code bridge.** `CodeBridgeServer` (453): the accept loop, the fd table keyed by
   project root, the per-connection read loop. Parsing, routing and typeability are already Rust.

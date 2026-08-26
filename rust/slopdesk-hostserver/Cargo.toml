@@ -1,0 +1,116 @@
+# `slopdesk-hostserver` — hostd's composition root, in Rust.
+#
+# ## Why it is a crate of its own
+# `docs/60` stage D's finding is that this stage has NO engine left to write: every decision the
+# Swift under it reaches for is already Rust somewhere. What is left is composition — which pane a
+# channel names, which parked pane a returning client may take, which service is up, which verb goes
+# where — and composition is exactly the thing that cannot live in any of the crates it composes.
+# `slopdesk-muxsession` is verdicts with no IO; `slopdesk-hostsession` is ONE pane and knows nothing
+# about the table it sits in; `slopdesk-hostnet` decides nothing about panes at all. This crate is
+# the one that may hold all of them, so it is the one place the joins can live.
+#
+# ## Its own `[workspace]`, for the reason its three siblings have one
+# `rust/Cargo.toml`'s members are the FORK-PER-EVENT programs and nothing else, and they share a
+# startup-tuned `opt-level = "z"`. A daemon's half wants a daemon's profile. The cost is the one
+# every host crate already pays: `cargo -p` from the root cannot reach it, its gate is
+# `cd rust/slopdesk-hostserver && cargo test` behind `make hostserver-test`, and `make lint-reach` is
+# what proves some target still runs it.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-hostserver"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "hostd's composition: the session table, the detached store, and the services around them"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_hostserver"
+path = "src/lib.rs"
+
+[dependencies]
+# Every relation the table keeps — channel→pane, pane→session, session→hook sink, path→document id —
+# and the two detach-retention rules the store reads. `Registry` is the table; this crate is the
+# retention around it, which is the half a `u64` cannot carry.
+slopdesk-muxsession = { path = "../slopdesk-muxsession" }
+
+# The pane the table holds, behind [`crate::pane::Pane`] rather than by name: `slopdesk-hostsession`
+# is what a REAL hostd puts in the table, and the trait is what lets this crate's suite drive the
+# retention without a PTY, a superd and six threads per entry.
+slopdesk-hostsession = { path = "../slopdesk-hostsession" }
+
+# In hostd, on the accept path and under the server's one lock.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The maximal-strict set every sibling carries, copied rather than inherited for the same reason
+# they copy it: inheriting means membership, and membership means sharing a profile.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason: both want `f64::mul_add`, the fused multiply-add `CLAUDE.md` forbids —
+# FMA rounds once where the wire rounds twice, which moves the bit patterns the golden vectors pin.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
+# One version of `nix` reaches this graph through `slopdesk-hostsession` and one through
+# `slopdesk-posix` beneath it; they are the same version, and the lint prices the transitive graph
+# rather than this manifest.
+multiple_crate_versions = "allow"

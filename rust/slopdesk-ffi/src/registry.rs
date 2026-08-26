@@ -28,6 +28,7 @@
 
 use core::ffi::c_uchar;
 
+use slopdesk_muxsession::registry;
 use slopdesk_muxsession::registry::{Key, Member, NO_SLOT, Registry};
 
 use crate::borrow;
@@ -125,15 +126,17 @@ const unsafe fn deliver_all<T: Copy>(items: &[T], out: *mut T, capacity: usize) 
 /// Monotonic and never zero: zero is the "no such pane" answer every door returning a slot by value
 /// uses, so a live session can never collide with it. A wrap would need a daemon to mint one
 /// session per nanosecond for five centuries.
+///
+/// The counter itself is `slopdesk_muxsession::registry::mint_slot`, not one this door keeps,
+/// because hostd gains a SECOND minter as `docs/60`'s stage D lands and both mint into the same
+/// table.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
 pub extern "C" fn slopdesk_host_slot_mint() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
+    registry::mint_slot()
 }
 
 /// The subscriber id a pane's ORIGINAL channel rides.
@@ -143,7 +146,7 @@ pub extern "C" fn slopdesk_host_slot_mint() -> u64 {
     reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
 )]
 pub const extern "C" fn slopdesk_host_primary_subscriber() -> u64 {
-    slopdesk_muxsession::registry::PRIMARY_SUBSCRIBER
+    registry::PRIMARY_SUBSCRIBER
 }
 
 /// A fresh, empty registry.

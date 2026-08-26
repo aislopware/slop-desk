@@ -36,6 +36,22 @@ pub type Subscriber = u64;
 /// The answer for "no pane". A minted slot starts at one, so zero can never name a session.
 pub const NO_SLOT: Slot = 0;
 
+/// A fresh session identity, unique for the life of the process and never [`NO_SLOT`].
+///
+/// The counter lives HERE rather than beside either caller, because there are two of them and they
+/// mint into the same table: the C door hostd's Swift reaches through today, and
+/// `slopdesk-hostserver` once it is the one holding the registry. Two counters would hand two live
+/// panes the same number, and every identity guard in this module reads that number as `===`.
+///
+/// Monotonic and never zero: a wrap would need a daemon to mint one session per nanosecond for five
+/// centuries.
+#[must_use]
+pub fn mint_slot() -> Slot {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// The pane's ORIGINAL channel — the subscriber every un-joined member rides.
 ///
 /// Mirrors `MuxChannelSession.primarySubscriberID`. Recorded EXPLICITLY on every member: the map it
