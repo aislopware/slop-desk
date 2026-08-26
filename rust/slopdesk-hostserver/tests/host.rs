@@ -217,6 +217,13 @@ mod suite {
                 "this suite drives the standalone ladder",
             )))
         }
+
+        fn adopt(&self, _request: slopdesk_hostserver::Adopted<'_>) -> Result<Arc<dyn Pane>, SpawnRefused> {
+            // The ADOPTION ladder, which `tests/adopt.rs` drives. Refused for `open`'s reason.
+            Err(SpawnRefused(String::from(
+                "this suite drives the standalone ladder",
+            )))
+        }
     }
 
     /// Every transition the cross-pane stream published.

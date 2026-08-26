@@ -215,7 +215,7 @@ pub const fn restores_transcript(real_session_id: bool, last_received_seq: i64) 
 
 /// Where to pick up a pane whose shell predates this hostd — and whether that answer had to be
 /// guessed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct SurvivorResume {
     /// The stream offset to subscribe at. [`FROM_NOW_ON`] when the position is unknown.
     pub offset: u64,
@@ -274,6 +274,78 @@ pub const fn survivor_resume(stored_bytes: u64, head: Option<u64>) -> SurvivorRe
 #[must_use]
 pub fn ownership_allows_adoption(owner: &str, ours: &str) -> bool {
     owner.is_empty() || owner == ours
+}
+
+/// The prefix `SupervisedServiceProcess.paneID(for:)` builds.
+///
+/// MATCHED here rather than imported as a call, for the same reason hostd matched it: this side has
+/// only the id, and there is no service name to ask about. A panel backend's pane id is stable by
+/// design (`docs/51` §6.7) and is deliberately NOT a UUID, which is what makes the parse below a
+/// classifier rather than a validity check.
+pub const SERVICE_PANE_PREFIX: &str = "service:";
+
+/// What a supervised pane that outlived a hostd is, to the hostd that just started.
+///
+/// Four answers, one per bucket the start-up log names. Only the first ends in an adoption; the
+/// other three are shells this hostd leaves running, and the distinction between them is the whole
+/// value of the type — "not adopted" covers a panel backend that will be adopted in a minute, a
+/// stranger's pane that must never be, and one of our own that another live daemon is holding.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Survivor<'a> {
+    /// Ours, free, and named by a real session id: take the master back and park it.
+    Adopt([u8; 16]),
+    /// A panel backend, named by the service inside its id. Adopted elsewhere and later, on first
+    /// use — telling an operator to end one would be advice to kill the editor.
+    Service(&'a str),
+    /// Not this hostd's: a stranger's owner, or an id no hostd could have written.
+    Foreign,
+    /// Ours, but some hostd holds a duplicate of this master RIGHT NOW.
+    HeldElsewhere,
+}
+
+/// The four facts about a survivor that decide it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SurvivorFacts<'a> {
+    /// The pane's stable identity, as some hostd named it at spawn.
+    pub pane_id: &'a str,
+    /// Which hostd spawned it, or empty for a pane older than the field.
+    pub owner: &'a str,
+    /// Whether some hostd holds a duplicate of this pane's master right now.
+    pub attached: bool,
+    /// Whether THIS process is the one that let the pane go.
+    ///
+    /// The exception that makes a menu-bar host work. hostd deliberately never closes its link to
+    /// superd on `stop()` — a `release` still has to travel — so a pane this process relinquished
+    /// keeps reading `attached` for as long as the process lives. Without the note, the next
+    /// `start()` in the same process reads its own shells as another daemon's and leaves them
+    /// running for ever, reachable by no tab.
+    pub relinquished_here: bool,
+}
+
+/// Which bucket a surviving pane falls in.
+///
+/// The ORDER is the function. The id is classified before the owner is consulted, because a
+/// `service:` pane has no owner question to ask — it is not unadopted, it is adopted later. And
+/// ownership is consulted before attachment, because a stranger's pane is left alone whatever it
+/// says about attachment: the window in which it looks free is precisely that daemon restarting.
+///
+/// `ours` is this hostd's own [`owner`](SurvivorFacts::owner) string — a fact about the reader
+/// rather than about the record, which is why it does not live on the facts.
+#[must_use]
+pub fn survivor<'a>(facts: &SurvivorFacts<'a>, ours: &str) -> Survivor<'a> {
+    let Some(session) = slopdesk_ids::parse_uuid(facts.pane_id) else {
+        return facts
+            .pane_id
+            .strip_prefix(SERVICE_PANE_PREFIX)
+            .map_or(Survivor::Foreign, Survivor::Service);
+    };
+    if !ownership_allows_adoption(facts.owner, ours) {
+        return Survivor::Foreign;
+    }
+    if facts.attached && !facts.relinquished_here {
+        return Survivor::HeldElsewhere;
+    }
+    Survivor::Adopt(session)
 }
 
 #[cfg(test)]
@@ -487,5 +559,142 @@ mod tests {
             "hostd port=7777 state=default"
         ));
         assert!(ownership_allows_adoption("", "hostd port=7777 state=default"));
+    }
+
+    /// This hostd, as superd records it.
+    const OURS: &str = "hostd port=7777 state=default";
+
+    /// A free pane of ours, named by a real session id.
+    const fn survived() -> SurvivorFacts<'static> {
+        SurvivorFacts {
+            pane_id: "1B4E28BA-2FA1-11D2-883F-0016D3CCA427",
+            owner: OURS,
+            attached: false,
+            relinquished_here: false,
+        }
+    }
+
+    #[test]
+    fn a_free_pane_of_ours_is_taken_back_under_the_id_its_journal_is_filed_by() {
+        assert_eq!(
+            survivor(&survived(), OURS),
+            Survivor::Adopt(slopdesk_ids::parse_uuid(survived().pane_id).unwrap_or_default()),
+            "the id that comes back is the pane's OWN — a fresh one would file its journal, its hook route \
+             and its every future reattach under a conversation nobody has had"
+        );
+    }
+
+    #[test]
+    fn a_panel_backend_is_named_by_its_service_rather_than_counted_as_unadopted() {
+        assert_eq!(
+            survivor(
+                &SurvivorFacts {
+                    pane_id: "service:code-server",
+                    ..survived()
+                },
+                OURS
+            ),
+            Survivor::Service("code-server"),
+            "it is not unadopted — it is adopted elsewhere and later, on first use"
+        );
+    }
+
+    #[test]
+    fn a_panel_backend_is_classified_before_anyone_asks_who_owns_it() {
+        // A service pane spawned by a stranger, and one this process is holding. Neither question
+        // is asked: the id alone decides, which is what keeps the bucket stable across the
+        // ownership rules changing underneath it.
+        for facts in [
+            SurvivorFacts {
+                pane_id: "service:code-server",
+                owner: "hostd port=7778 state=default",
+                ..survived()
+            },
+            SurvivorFacts {
+                pane_id: "service:code-server",
+                attached: true,
+                ..survived()
+            },
+        ] {
+            assert_eq!(survivor(&facts, OURS), Survivor::Service("code-server"));
+        }
+    }
+
+    #[test]
+    fn an_id_no_hostd_could_have_written_is_left_running_rather_than_guessed_at() {
+        assert_eq!(
+            survivor(
+                &SurvivorFacts {
+                    pane_id: "not-a-uuid",
+                    ..survived()
+                },
+                OURS
+            ),
+            Survivor::Foreign
+        );
+    }
+
+    #[test]
+    fn a_strangers_pane_is_left_alone_whatever_it_says_about_attachment() {
+        for attached in [false, true] {
+            assert_eq!(
+                survivor(
+                    &SurvivorFacts {
+                        owner: "hostd port=7778 state=default",
+                        attached,
+                        ..survived()
+                    },
+                    OURS
+                ),
+                Survivor::Foreign,
+                "the window in which a stranger's pane looks free is that daemon restarting"
+            );
+        }
+    }
+
+    #[test]
+    fn an_attached_pane_is_held_unless_this_very_process_is_the_one_that_let_it_go() {
+        assert_eq!(
+            survivor(
+                &SurvivorFacts {
+                    attached: true,
+                    ..survived()
+                },
+                OURS
+            ),
+            Survivor::HeldElsewhere,
+            "taking it would put a second daemon's shell on this one's journal file"
+        );
+        assert!(
+            matches!(
+                survivor(
+                    &SurvivorFacts {
+                        attached: true,
+                        relinquished_here: true,
+                        ..survived()
+                    },
+                    OURS
+                ),
+                Survivor::Adopt(_)
+            ),
+            "hostd never closes its link on stop, so its own released panes still read attached"
+        );
+    }
+
+    #[test]
+    fn a_pane_with_no_owner_recorded_is_adopted_rather_than_stranded_on_the_upgrade() {
+        assert!(
+            matches!(
+                survivor(
+                    &SurvivorFacts {
+                        owner: "",
+                        ..survived()
+                    },
+                    OURS
+                ),
+                Survivor::Adopt(_)
+            ),
+            "refusing here would strand real shells on the one upgrade that most needs adopting"
+        );
     }
 }

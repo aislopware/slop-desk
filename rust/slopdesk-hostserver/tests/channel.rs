@@ -25,9 +25,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use slopdesk_hostnet::connection::ChannelOpen;
 use slopdesk_hostserver::control::SpawnRefused;
 use slopdesk_hostserver::{
-    DetachedStore, Fresh, HookRoutes, Host, HostEnv, HostObserver, HostParts, NoWorkspace, Offload, Pane,
-    Peer, Restored, Silent, Spawner, Standalone, Transcripts, WorkspaceChannels,
+    Adopted, DetachedStore, Fresh, HookRoutes, Host, HostEnv, HostObserver, HostParts, NoWorkspace, Offload,
+    Pane, Peer, Restored, Silent, Spawner, Standalone, Transcripts, WorkspaceChannels,
 };
+use slopdesk_muxsession::open_route::SurvivorResume;
 use slopdesk_muxsession::registry::{Key, PRIMARY_SUBSCRIBER, Uuid};
 use slopdesk_wire::message::NEW_SESSION_ID;
 use support::{Ghost, as_pane, wires};
@@ -233,8 +234,11 @@ mod suite {
                 .clone()
         }
 
-        fn resume_point(&self, _session: Uuid) -> u64 {
-            *self.takeover.lock().unwrap_or_else(PoisonError::into_inner)
+        fn position(&self, _session: Uuid) -> SurvivorResume {
+            SurvivorResume {
+                offset: *self.takeover.lock().unwrap_or_else(PoisonError::into_inner),
+                unpositioned: false,
+            }
         }
     }
 
@@ -301,6 +305,15 @@ mod suite {
         }
 
         fn start(&self, _pane: &Arc<dyn Pane>, _cwd: Option<&str>) {}
+
+        fn adopt(&self, _request: Adopted<'_>) -> Result<Arc<dyn Pane>, SpawnRefused> {
+            // The ADOPTION ladder, which `tests/adopt.rs` drives. Refused rather than faked, so a
+            // channel test that somehow reached it fails here rather than passing on a pane
+            // nothing in this suite ever asserted about.
+            Err(SpawnRefused(String::from(
+                "this suite drives the channel ladders",
+            )))
+        }
 
         fn open(&self, request: Fresh<'_>) -> Result<Arc<dyn Pane>, SpawnRefused> {
             // Cloned out of the guard and the guard dropped, rather than scrutinised in place: a

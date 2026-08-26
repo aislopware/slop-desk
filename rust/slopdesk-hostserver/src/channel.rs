@@ -696,7 +696,7 @@ impl Host {
             journal: real,
             restored,
             size_passive: passive,
-            resume_takeover: self.transcripts().resume_point(session),
+            resume_takeover: self.transcripts().position(session).offset,
             exit: Arc::new(CloseOnExit {
                 host: self.weak(),
                 key,
@@ -808,7 +808,7 @@ impl Host {
     ///
     /// With no store there is nowhere to park, so the pane is ended instead — a fallback rather
     /// than a policy, and the same one the Swift took.
-    fn park(self: &Arc<Self>, key: Key, pane: &Arc<dyn Pane>) {
+    pub(crate) fn park(self: &Arc<Self>, key: Key, pane: &Arc<dyn Pane>) {
         let Some(store) = self.detached() else {
             self.end_off_thread(pane);
             return;
@@ -825,7 +825,7 @@ impl Host {
     }
 
     /// Files this pane's hook route, both halves, under its ENV-BAKED id.
-    fn register_hook(&self, pane: &Arc<dyn Pane>) {
+    pub(crate) fn register_hook(&self, pane: &Arc<dyn Pane>) {
         let pane_id = uuid_text(pane.id());
         self.sessions().register_hook(pane, &pane_id);
         self.hooks().bind(&pane_id, pane);

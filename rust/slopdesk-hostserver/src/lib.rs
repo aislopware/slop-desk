@@ -59,6 +59,7 @@
 //! indivisible. Neither had an engine either: the precedence between the outcomes is
 //! [`slopdesk_muxsession::open_route`]'s and always was.
 
+pub mod adopt;
 pub mod bridge;
 pub mod channel;
 pub mod code;
@@ -74,6 +75,7 @@ pub mod service;
 mod serviceproc;
 mod sessions;
 
+pub use adopt::{Adopted, LetGo, NoSurvivors, Survivors, owner_identity};
 pub use channel::{
     Fresh, HookRoutes, HostObserver, NoHooks, NoWorkspace, Offload, Peer, Restored, Silent, Threads,
     WorkspaceChannels,

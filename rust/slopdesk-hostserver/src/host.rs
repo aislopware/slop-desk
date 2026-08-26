@@ -47,9 +47,11 @@ use slopdesk_agent::supervision::SupervisionState;
 use slopdesk_hostpane::resolve_cwd;
 use slopdesk_hostsession::{SessionObserver, StatusObserver, TapToken};
 use slopdesk_ids::{parse_uuid, uuid_text};
+use slopdesk_muxsession::open_route::SurvivorResume;
 use slopdesk_muxsession::registry::Uuid;
 use slopdesk_muxsession::spawn_env::{self, Exports};
 
+use crate::adopt::{Adopted, LetGo, NoSurvivors, Survivors};
 use crate::channel::{
     Fresh, HookRoutes, HostObserver, NoHooks, NoWorkspace, Offload, Restored, Silent, Threads,
     WorkspaceChannels,
@@ -117,13 +119,22 @@ pub trait Transcripts: Send + Sync + fmt::Debug {
         None
     }
 
-    /// Where a pane's stream is subscribed from IF the fork takes over a shell superd already
-    /// holds under this id.
+    /// Where a pane's stream is subscribed from when this hostd comes to hold a shell superd was
+    /// already running — and whether that answer had to be guessed.
     ///
     /// [`slopdesk_muxsession::open_route::survivor_resume`] over what superd stored and where its
-    /// ring head is. `0` means "from the beginning", which is right for every id with no history.
-    fn resume_point(&self, _session: Uuid) -> u64 {
-        0
+    /// ring head is. Offset `0` means "from the beginning", which is right for every id with no
+    /// history.
+    ///
+    /// ONE method for both facts because superd holds both, and the two callers want different
+    /// halves of the same answer: a fresh fork that discovers a duplicate takes the offset, and the
+    /// adoption ladder takes the offset AND the flag, because a transcript with bytes and no
+    /// position is the one case worth a log line.
+    fn position(&self, _session: Uuid) -> SurvivorResume {
+        SurvivorResume {
+            offset: 0,
+            unpositioned: false,
+        }
     }
 }
 
@@ -225,6 +236,20 @@ pub trait Spawner: Send + Sync + fmt::Debug {
     /// [`SpawnRefused`] carries why no pane was made — a `cwd` that is not a directory, a superd
     /// that would not fork, a shell that is not there.
     fn open(&self, request: Fresh<'_>) -> Result<Arc<dyn Pane>, SpawnRefused>;
+
+    /// Takes a surviving shell's master back from superd and rebuilds its session around it.
+    ///
+    /// The other way a hostd comes to hold a pane, and the only one that forks nothing. The pane's
+    /// SIZE is deliberately not re-asserted: the kernel's `winsize` on this master is the live
+    /// truth and survived the restart intact, while superd's record is only what the last hostd
+    /// told it — a pane whose client never resized still carries the spawn-time 24×80, and writing
+    /// that back would `SIGWINCH` a 200×50 agent into re-wrapping its whole frame at 80 columns.
+    ///
+    /// # Errors
+    /// [`SpawnRefused`] carries why the pane was not taken — a supervisor blip, an `adopt` that
+    /// raced the shell's exit, a session that would not build. A refusal must leave nothing behind:
+    /// the ladder files no pane and spends no note, so the next `start()` can try again.
+    fn adopt(&self, request: Adopted<'_>) -> Result<Arc<dyn Pane>, SpawnRefused>;
 }
 
 /// Everything a [`Host`] is made of, so growing it is not a widening call site.
@@ -257,6 +282,13 @@ pub struct HostParts {
     pub hooks: Arc<dyn HookRoutes>,
     /// The three things a ladder tells the world outside the tables.
     pub observer: Arc<dyn HostObserver>,
+    /// What superd is holding that outlived the last hostd.
+    pub survivors: Arc<dyn Survivors>,
+    /// The panes THIS PROCESS let go. Injected rather than owned: the point of the set is that it
+    /// outlives the host that wrote it. See [`crate::adopt`].
+    pub let_go: Arc<LetGo>,
+    /// How superd records which hostd spawned a pane — [`owner_identity`]'s output.
+    pub owner: String,
 }
 
 impl HostParts {
@@ -275,6 +307,9 @@ impl HostParts {
             workspace: Arc::new(NoWorkspace),
             hooks: Arc::new(NoHooks),
             observer: Arc::new(Silent),
+            survivors: Arc::new(NoSurvivors),
+            let_go: Arc::new(LetGo::new()),
+            owner: String::new(),
         }
     }
 }
@@ -292,6 +327,9 @@ pub struct Host {
     workspace: Arc<dyn WorkspaceChannels>,
     hooks: Arc<dyn HookRoutes>,
     observer: Arc<dyn HostObserver>,
+    survivors: Arc<dyn Survivors>,
+    let_go: Arc<LetGo>,
+    owner: String,
     env: HostEnv,
     blocks_enabled: bool,
     stopping: AtomicBool,
@@ -374,6 +412,9 @@ impl Host {
                 workspace: parts.workspace,
                 hooks: parts.hooks,
                 observer: parts.observer,
+                survivors: parts.survivors,
+                let_go: parts.let_go,
+                owner: parts.owner,
                 env: parts.env,
                 blocks_enabled: parts.blocks_enabled,
                 stopping: AtomicBool::new(false),
@@ -415,6 +456,27 @@ impl Host {
     /// The three things a ladder tells the world outside the tables.
     pub(crate) fn observer(&self) -> &Arc<dyn HostObserver> {
         &self.observer
+    }
+
+    /// What superd is holding that outlived the last hostd.
+    pub(crate) fn survivors(&self) -> &Arc<dyn Survivors> {
+        &self.survivors
+    }
+
+    /// The panes THIS PROCESS let go — the note the adoption ladder spends.
+    pub const fn let_go(&self) -> &Arc<LetGo> {
+        &self.let_go
+    }
+
+    /// How superd records that a pane is this hostd's.
+    #[must_use]
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// Sixteen fresh bytes, or `None` when the system would not supply them.
+    pub(crate) fn mint_id(&self) -> Option<Uuid> {
+        self.ids.mint()
     }
 
     /// Whether superd segments panes into command blocks.

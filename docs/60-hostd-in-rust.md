@@ -817,8 +817,40 @@ is paused.
   parked pane's late exit standing down instead of releasing a route its successor re-registered, and
   a stop racing a fork not filing into a table whose drain has already run.
 
-  **D.6.3** the adoption ladder. **D.6.4** the workspace document, reconciler and
-  channel session. **D.6.5** link-down, detach and the stop order.
+  **D.6.3 ✅ landed** — the adoption ladder, as `rust/slopdesk-hostserver/src/adopt.rs` plus 20
+  tests, over one new pure decision in `slopdesk_muxsession::open_route`. `adoptSurvivingPanes`,
+  `adoptSurvivingPane`, `reportUnclaimedPanes`, `resumePointForSurvivor`, `ownerIdentity` and the
+  three static note keepers around them.
+
+  The decision is `survivor`, and it is a table because the two ways to get it wrong are both
+  unrecoverable. Take a pane another live hostd is holding and two daemons share one master fd, one
+  journal file and one eviction timer — the second to arm a TTL `SIGHUP`s a pane somebody is typing
+  into. Refuse a pane that IS ours and the shell survives perfectly and reaches no tab ever again:
+  in no map, in no store, and read as a stranger's by every later `start()`. Four verdicts, not two,
+  because "not adopted" covers a panel backend that will be adopted in a minute, a stranger's pane
+  that must never be, and one of our own that another daemon is holding — three different futures,
+  and an operator deciding whether to `slopdesk-ctl` something needs to know which.
+
+  `LetGo` is the one piece of state, and it is injected through `HostParts` rather than owned by the
+  `Host` for the reason the Swift made it `static`: the point is that it OUTLIVES the host that
+  wrote it. hostd deliberately never disconnects from superd on stop — a `release` still has to
+  travel, and disconnecting there was tried and cut exactly that verb — so superd keeps reporting
+  this process's released panes as `attached` for as long as the process lives. An ordinary restart
+  hides the question behind `exit(0)`; the menu-bar host, which stops and starts in ONE process,
+  does not. The note is spent on SUCCESS and only on success: spending it on an attempt is what once
+  left a pane in no map, no store, note gone, with superd still calling it attached.
+
+  Two seams. `Survivors` is superd reduced to the two questions the ladder has — is the link up, and
+  what is running — narrow so that a ladder cannot reach `release`, `signal` or `subscribe`. And
+  `Spawner::adopt` is `Spawner::open`'s sibling for the other way a hostd comes to hold a pane, with
+  no client lanes in the request, because nobody has opened a channel on an adopted pane and nobody
+  may for hours. `Transcripts::resume_point` became `Transcripts::position`, answering both facts
+  superd holds in one call: a fresh fork that discovers a duplicate takes the offset, and this ladder
+  takes the offset AND whether it had to be guessed, which is the one case worth a log line.
+
+  **D.6.4** the workspace document, reconciler and channel session. **D.6.5** link-down, detach and
+  the stop order — including the `note_panes_let_go` at the TOP of it, which is written here because
+  it is the note's writer and called there because that is where the enumeration still exists.
 
   **What stage D does NOT take.** `HostEnvironment` (350) and `RepoStatusWatcher` (316) are stage E:
   the first reads Apple bundle and TCC state, the second is an FSEvents stream per repo toplevel.
