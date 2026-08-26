@@ -6,13 +6,21 @@
 // external edit; the client's own poll cadence backs off while these pushes stay fresh.
 
 import CoreServices
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 import SlopDeskProtocol
 
 /// All state is CONFINED to the serial `queue` — the FSEvents callbacks land there too
 /// (`FSEventStreamSetDispatchQueue`), so there is no lock: the public surface only ever dispatches.
 /// Blocking work (the `.git` stat gate, the git subprocess in `computeStatus`) runs on that queue,
 /// never a caller's thread — a pane's key-resolve path stays hang-safe even over a wedged mount.
+///
+/// What is left here is the FRAMEWORK half. Every decision — the owner refcounts, the debounce
+/// generation, the one-reading-in-flight guard and its single re-arm, the dirty guard — is
+/// `slopdesk_muxsession::repo_watch`, reached through the handle door in `slopdesk-ffi`. That
+/// handle's "no two overlapping calls" obligation is satisfied by the same confinement the paragraph
+/// above already describes: every call below is made from `queue`.
 final class RepoStatusWatcher: @unchecked Sendable {
     /// One live event source's teardown (production: stop + invalidate + release of the FSEvents
     /// stream). The seam type — tests hand back a no-op handle and fire events by hand.
@@ -46,23 +54,16 @@ final class RepoStatusWatcher: @unchecked Sendable {
         label: "slopdesk.host.repo-probe", qos: .utility, attributes: .concurrent,
     )
 
-    // Queue-confined state (never touched off `queue`).
-    private var ownerRepo: [ObjectIdentifier: String] = [:]
-    private var repoOwners: [String: Int] = [:]
-    private var sources: [String: SourceHandle] = [:]
-    private var lastPushed: [String: WireMessage.ProjectGitStatus] = [:]
-    private var pendingProbe: [String: UInt64] = [:]
-    private var probeGeneration: UInt64 = 0
-    /// Repos with a probe subprocess in flight on `probeQueue` — re-entry guard (an event burst
-    /// during a slow probe must not stack subprocesses).
-    private var probing: Set<String> = []
-    /// Repos whose events arrived WHILE a probe was in flight — the finished probe's output is
-    /// already possibly stale, so one follow-up probe re-arms when it completes.
-    private var rearmAfterProbe: Set<String> = []
-    private var stopped = false
+    /// The verdict fold — every map, set and counter this class used to hold. Freed in `deinit`,
+    /// which cannot run while work is queued: each `queue.async` below captures `self` strongly.
+    private let rules: OpaquePointer = slopdesk_repo_watch_new()
+
+    /// The only state left on this side: the live event streams, keyed by the repo they watch. The
+    /// fold names a repo; this table turns the name back into the handle to cancel.
+    private var handles: [String: SourceHandle] = [:]
 
     init(
-        debounce: TimeInterval = 0.75,
+        debounce: TimeInterval = slopdesk_repo_watch_debounce_seconds(),
         isRepoRoot: @escaping @Sendable (String) -> Bool = {
             FileManager.default.fileExists(atPath: $0 + "/.git")
         },
@@ -77,85 +78,126 @@ final class RepoStatusWatcher: @unchecked Sendable {
         self.makeEventSource = makeEventSource
     }
 
+    deinit { slopdesk_repo_watch_free(rules) }
+
+    /// The fold identifies an owner by an opaque integer — see the module doc on the Rust side.
+    private static func slot(_ owner: ObjectIdentifier) -> UInt64 {
+        UInt64(UInt(bitPattern: owner))
+    }
+
+    /// Reads back the answer a mutating door stashed.
+    ///
+    /// The three doors that change the fold return their answer's size rather than taking a buffer,
+    /// because the header's ask-then-grow protocol would run a mutator TWICE on a short guess — and
+    /// the second run of `shutdown` hands back nothing, which is how a stream would be left alive
+    /// with nobody watching it. `slopdesk_repo_watch_answer` is pure, so one exact-sized read is all
+    /// this needs; it is the same split `FramePacketizer` makes for the same reason.
+    private func drainAnswer(_ needed: Int) -> [UInt8] {
+        guard needed > 0 else { return [] }
+        var blob = [UInt8](repeating: 0, count: needed)
+        let written = blob.withUnsafeMutableBufferPointer {
+            slopdesk_repo_watch_answer(rules, $0.baseAddress, $0.count)
+        }
+        return written == needed ? blob : []
+    }
+
     /// A pane's By-Project key latched (spawn seed / cwd-change resolve): release the owner's prior
     /// repo (a `cd` out of a repo must not keep it watched forever) and retain the new one — the
     /// first owner of a repo creates its stream, and a NON-repo key (a plain-directory section)
     /// never creates anything.
     func noteProjectKey(_ key: String, owner: ObjectIdentifier) {
+        let slot = Self.slot(owner)
         queue.async { [self] in
-            guard !stopped, ownerRepo[owner] != key else { return }
-            releaseOnQueue(owner)
-            guard isRepoRoot(key) else { return }
-            ownerRepo[owner] = key
-            repoOwners[key, default: 0] += 1
-            guard repoOwners[key] == 1, sources[key] == nil else { return }
-            sources[key] = makeEventSource(key, queue) { [weak self] in
-                self?.scheduleProbeOnQueue(key)
+            // The `.git` test is a filesystem call, so it is asked only when the answer can matter —
+            // the fold re-asks the same question itself, so skipping it changes nothing but work.
+            let wants = ffiLend(key) { bytes in
+                slopdesk_repo_watch_wants_key(rules, slot, bytes.baseAddress, bytes.count)
             }
+            guard wants else { return }
+            let isRoot = isRepoRoot(key)
+            let needed = ffiLend(key) { bytes in
+                slopdesk_repo_watch_note_project_key(
+                    rules, slot, bytes.baseAddress, bytes.count, isRoot,
+                )
+            }
+            let effects = ffiRuns(drainAnswer(needed), count: 2)
+            guard effects.count == 2 else { return }
+            if !effects[0].isEmpty { handles.removeValue(forKey: effects[0])?.cancel() }
+            if !effects[1].isEmpty { startSourceOnQueue(effects[1]) }
         }
     }
 
     /// A pane ended (every teardown path funnels through `MuxChannelSession.shutdown()`): release
     /// its repo; the LAST owner leaving cancels the stream and forgets the repo's push memory.
     func dropOwner(_ owner: ObjectIdentifier) {
+        let slot = Self.slot(owner)
         queue.async { [self] in
-            releaseOnQueue(owner)
+            let cancelled = String(
+                decoding: drainAnswer(slopdesk_repo_watch_drop_owner(rules, slot)), as: UTF8.self,
+            )
+            if !cancelled.isEmpty { handles.removeValue(forKey: cancelled)?.cancel() }
         }
     }
 
     /// Daemon stop: cancel every stream and refuse all further work.
     func shutdown() {
         queue.async { [self] in
-            stopped = true
-            for handle in sources.values { handle.cancel() }
-            sources.removeAll()
-            ownerRepo.removeAll()
-            repoOwners.removeAll()
-            pendingProbe.removeAll()
-            lastPushed.removeAll()
+            let blob = drainAnswer(slopdesk_repo_watch_shutdown(rules))
+            // A run costs at least its four-byte prefix, so this is a sound upper bound on how many
+            // there can be, and `ffiRuns` stops on the first one that would read past the end.
+            for repo in ffiRuns(blob, count: blob.count / 4) {
+                handles.removeValue(forKey: repo)?.cancel()
+            }
+            handles.removeAll()
         }
     }
 
-    private func releaseOnQueue(_ owner: ObjectIdentifier) {
-        guard let repo = ownerRepo.removeValue(forKey: owner) else { return }
-        let remaining = (repoOwners[repo] ?? 1) - 1
-        if remaining > 0 {
-            repoOwners[repo] = remaining
-            return
+    /// Starts the event stream for a repo the fold just asked for one for.
+    ///
+    /// A stream the framework refuses to create leaves no handle, which is the honest state: the
+    /// fold counts the repo as watched and simply never hears from it, so every later verdict about
+    /// it is unreachable and the cancel it is eventually told to perform finds nothing.
+    private func startSourceOnQueue(_ repo: String) {
+        handles[repo] = makeEventSource(repo, queue) { [weak self] in
+            guard let self else { return }
+            // Re-dispatched rather than folded in place: the production callback already lands on
+            // `queue`, but the handle door forbids two overlapping calls and a seam that fires from
+            // a caller's own thread would otherwise make one.
+            queue.async { [weak self] in self?.sourceEventOnQueue(repo) }
         }
-        repoOwners[repo] = nil
-        sources.removeValue(forKey: repo)?.cancel()
-        lastPushed[repo] = nil
-        pendingProbe[repo] = nil
-        rearmAfterProbe.remove(repo) // an in-flight probe's completion sees `sources[repo] == nil` and drops
     }
 
     /// An FSEvents burst landed for `repo`: (re)arm the debounce — latest event wins, so a build's
     /// thousand events collapse to one probe `debounce` after the LAST of them.
-    private func scheduleProbeOnQueue(_ repo: String) {
-        guard !stopped, sources[repo] != nil else { return }
-        probeGeneration += 1
-        let generation = probeGeneration
-        pendingProbe[repo] = generation
+    private func sourceEventOnQueue(_ repo: String) {
+        var generation: UInt64 = 0
+        let armed = withUnsafeMutablePointer(to: &generation) { slot in
+            ffiLend(repo) { bytes in
+                slopdesk_repo_watch_source_event(rules, bytes.baseAddress, bytes.count, slot)
+            }
+        }
+        if armed { armDebounceOnQueue(repo, generation: generation) }
+    }
+
+    private func armDebounceOnQueue(_ repo: String, generation: UInt64) {
         queue.asyncAfter(deadline: .now() + debounce) { [weak self] in
             self?.probeOnQueue(repo, ifStill: generation)
         }
     }
 
     private func probeOnQueue(_ repo: String, ifStill generation: UInt64) {
-        guard !stopped, pendingProbe[repo] == generation, sources[repo] != nil else { return }
-        pendingProbe[repo] = nil
-        // Nobody attached → skip the subprocess entirely; the reconnect pull catches up later.
-        guard shouldProbe?() ?? true else { return }
-        // A probe already in flight: don't stack a second subprocess — remember to re-arm once it
-        // returns (its output may predate this event).
-        guard !probing.contains(repo) else {
-            rearmAfterProbe.insert(repo)
-            return
+        // The audience gate is read one step earlier than it used to be, because the fold decides
+        // the stale/gated/deferred order and wants the answer with the question. It is a boolean the
+        // server already holds; what it gates — the walk below — is unchanged.
+        let audience = shouldProbe?() ?? true
+        let verdict = ffiLend(repo) { bytes in
+            slopdesk_repo_watch_debounce_fired(
+                rules, bytes.baseAddress, bytes.count, generation, audience,
+            )
         }
-        probing.insert(repo)
-        // The subprocess runs OFF the control queue (see `probeQueue`) — a wedged mount must never
-        // freeze refcounting / other repos' event delivery / shutdown, the exact class of hang
+        guard verdict == UInt8(SLOPDESK_REPO_WATCH_PROBE) else { return }
+        // The read runs OFF the control queue (see `probeQueue`) — a wedged mount must never freeze
+        // refcounting / other repos' event delivery / shutdown, the exact class of hang
         // `MuxChannelSession.deriveProjectKey` dispatches away from its read loop for.
         probeQueue.async { [weak self] in
             guard let self else { return }
@@ -167,15 +209,24 @@ final class RepoStatusWatcher: @unchecked Sendable {
     }
 
     private func finishProbeOnQueue(_ repo: String, status: WireMessage.ProjectGitStatus?) {
-        probing.remove(repo)
-        let rearm = rearmAfterProbe.remove(repo) != nil
-        guard !stopped, sources[repo] != nil else { return }
-        // Dirty-guard: porcelain-identical output (object-db churn, a no-op save) pushes nothing.
-        if let status, lastPushed[repo] != status {
-            lastPushed[repo] = status
-            push?(status)
+        let verdict = ffiLend(repo) { repoBytes in
+            ffiLend(status?.repoRoot ?? "") { rootBytes in
+                ffiLend(status?.branch ?? "") { branchBytes in
+                    slopdesk_repo_watch_probe_finished(
+                        rules,
+                        repoBytes.baseAddress, repoBytes.count,
+                        status != nil,
+                        rootBytes.baseAddress, rootBytes.count,
+                        branchBytes.baseAddress, branchBytes.count,
+                        status?.ahead ?? 0, status?.behind ?? 0, status?.stashCount ?? 0,
+                        status?.staged ?? 0, status?.modified ?? 0, status?.untracked ?? 0,
+                        status?.conflicted ?? 0, status?.changedCount ?? 0,
+                    )
+                }
+            }
         }
-        if rearm { scheduleProbeOnQueue(repo) }
+        if verdict.push, let status { push?(status) }
+        if verdict.has_rearm { armDebounceOnQueue(repo, generation: verdict.rearm) }
     }
 
     // MARK: - Production closures (the seam defaults)

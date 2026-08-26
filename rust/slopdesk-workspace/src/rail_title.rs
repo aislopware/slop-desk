@@ -508,6 +508,74 @@ pub fn live_row_title(inputs: LiveRowTitle<'_>, blocks: &[CommandTitleBlock<'_>]
         .to_owned()
 }
 
+/// What a TAB is called when nothing has named it, and what the jump notice says about where it
+/// sits.
+///
+/// A tab has the same problem a pane does one level up — an explicit title, a live one, a spec one,
+/// and nothing — so the chain lives beside the pane's rather than in the surface that draws the
+/// notice chip. The chip is the one place a user reads it, but the control backend and Open Quickly
+/// resolve the same tab and must not call it something else.
+pub const FALLBACK_TAB_TITLE: &str = "Tab";
+
+/// The mark between the two halves of a breadcrumb: U+25B8 BLACK RIGHT-POINTING SMALL TRIANGLE,
+/// with a space on each side.
+///
+/// Written as an escape rather than as the glyph so a copy of this file through an editor that
+/// normalises punctuation cannot quietly substitute U+25B6, U+2023 or an ASCII `>` — three marks
+/// that look alike at row size and none of which is this one. The test below pins the bytes.
+pub const BREADCRUMB_SEPARATOR: &str = " \u{25B8} ";
+
+/// A tab's display title: an explicit rename, else the active pane's live title, else its spec
+/// title, else [`FALLBACK_TAB_TITLE`].
+///
+/// `spec_title` is `None` when the resolved pane has NO SPEC AT ALL, which is not the same fact as
+/// a spec whose title is blank — the same distinction [`RowTitle::spec_title`] draws, and it
+/// changes the answer: with no spec the live title is not consulted either, because a live title
+/// belongs to a pane this tab cannot prove it owns. `live_title` needs no such flag: an absent live
+/// title and an empty one both fall through to the spec title, so collapsing them cannot be
+/// observed.
+///
+/// WHICH pane is resolved stays with the caller — the active leaf, else the first in pre-order —
+/// because that is a lookup over a live tree rather than a rule about names.
+///
+/// Borrows rather than allocates: every answer is a slice of an input or a `&'static str`.
+#[must_use]
+pub const fn tab_display_title<'a>(
+    tab_title: &'a str,
+    spec_title: Option<&'a str>,
+    live_title: Option<&'a str>,
+) -> &'a str {
+    if !tab_title.is_empty() {
+        return tab_title;
+    }
+    let Some(spec_title) = spec_title else {
+        return FALLBACK_TAB_TITLE;
+    };
+    if let Some(live) = live_title
+        && !live.is_empty()
+    {
+        return live;
+    }
+    if !spec_title.is_empty() {
+        return spec_title;
+    }
+    FALLBACK_TAB_TITLE
+}
+
+/// The jump notice's breadcrumb: `"<session> ▸ <tab>"`, or the tab alone.
+///
+/// The session half is dropped on `include_session == false` — a workspace with one session names
+/// it in every breadcrumb and says nothing — and on an EMPTY session name, which is a session that
+/// has not been named yet rather than one called nothing. A caller that asked for the session and
+/// has no name gets the tab-only form rather than a line that opens with a stray separator.
+#[must_use]
+pub fn breadcrumb_text(session_name: &str, tab_title: &str, include_session: bool) -> String {
+    if !include_session || session_name.is_empty() {
+        return tab_title.to_owned();
+    }
+    format!("{session_name}{BREADCRUMB_SEPARATOR}{tab_title}")
+}
+
 /// Whether a character is a frame of an agent's activity spinner: any braille cell, or one of the
 /// asterisk family claude cycles through.
 const fn is_activity_glyph(glyph: char) -> bool {
@@ -856,5 +924,76 @@ mod tests {
             Some("/w/app/sub".to_owned()),
             "only a terminal's line two is relative to its section"
         );
+    }
+
+    /// The four rungs, in the order `JumpBreadcrumbTests.testTabDisplayTitlePrecedence` pinned them
+    /// in Swift: an explicit rename, the live OSC title, the spec title, the placeholder.
+    #[test]
+    fn a_tabs_title_takes_the_first_rung_that_says_something() {
+        assert_eq!(
+            tab_display_title("renamed", Some("spec-title"), Some("osc-title")),
+            "renamed",
+            "an explicit tab title always wins"
+        );
+        assert_eq!(
+            tab_display_title("", Some("spec-title"), Some("osc-title")),
+            "osc-title",
+            "an untitled tab derives from the active pane's live title"
+        );
+        assert_eq!(
+            tab_display_title("", Some("spec-title"), None),
+            "spec-title",
+            "no live title yet ⇒ the spec title"
+        );
+        assert_eq!(
+            tab_display_title("", None, None),
+            FALLBACK_TAB_TITLE,
+            "nothing known ⇒ the placeholder — the notice must still name something"
+        );
+    }
+
+    /// An empty live title is not a live title. It is what a shell that has asserted nothing yet
+    /// leaves behind, and reading it would title the tab with a blank.
+    #[test]
+    fn an_empty_live_title_falls_through_exactly_as_an_absent_one_does() {
+        assert_eq!(tab_display_title("", Some("spec"), Some("")), "spec");
+        assert_eq!(tab_display_title("", Some("spec"), None), "spec");
+        assert_eq!(tab_display_title("", Some(""), Some("")), FALLBACK_TAB_TITLE);
+    }
+
+    /// The rung the presence flag buys: with no spec the live title is not consulted at all, so the
+    /// two inputs that differ only in whether a spec EXISTS answer differently.
+    #[test]
+    fn a_tab_whose_pane_has_no_spec_never_borrows_a_live_title() {
+        assert_eq!(tab_display_title("", None, Some("osc-title")), FALLBACK_TAB_TITLE);
+        assert_eq!(tab_display_title("", Some(""), Some("osc-title")), "osc-title");
+    }
+
+    /// The separator is ONE character and it is U+25B8 — not U+25B6, not U+2023, not `>`. Pinned as
+    /// bytes because the three lookalikes are indistinguishable in a diff at row size.
+    #[test]
+    fn the_separator_is_the_small_triangle_with_a_space_on_each_side() {
+        assert_eq!(BREADCRUMB_SEPARATOR.as_bytes(), &[0x20, 0xE2, 0x96, 0xB8, 0x20]);
+        assert_eq!(BREADCRUMB_SEPARATOR.chars().count(), 3);
+    }
+
+    /// `JumpBreadcrumbTests.testBreadcrumbTextSessionQualification`, carried over whole.
+    #[test]
+    fn the_session_half_is_dropped_unless_it_is_both_wanted_and_known() {
+        assert_eq!(breadcrumb_text("Local", "build", false), "build");
+        assert_eq!(breadcrumb_text("Local", "build", true), "Local ▸ build");
+        assert_eq!(
+            breadcrumb_text("", "build", true),
+            "build",
+            "an empty session name degrades to the tab-only form, never a dangling separator"
+        );
+    }
+
+    /// A caller that resolved its tab title first cannot reach this, and one that did not gets an
+    /// empty line rather than a lone separator.
+    #[test]
+    fn an_unqualified_breadcrumb_over_an_empty_tab_title_is_empty() {
+        assert_eq!(breadcrumb_text("", "", true), "");
+        assert_eq!(breadcrumb_text("Local", "", true), "Local ▸ ");
     }
 }

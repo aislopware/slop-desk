@@ -18,7 +18,8 @@
 // (NULL, 0) as the output is the supported way to ask for the length before allocating.
 //
 // THE HANDLE CONVENTION (SlopDeskReplay, SlopDeskVideoPacketizer, SlopDeskVideoReassembler,
-//                        SlopDeskHostVitalsSampler, SlopDeskPreventSleep, SlopDeskDisplayWake)
+//                        SlopDeskHostVitalsSampler, SlopDeskPreventSleep, SlopDeskDisplayWake,
+//                        SlopDeskLineAssembler, SlopDeskRepoWatch, SlopDeskKeyRepeat)
 //   Three things cannot cross per call: memory too big to copy, a counter two sides would then
 //   have to agree about who advanced, and a SYSTEM RESOURCE that has to be let go of exactly once.
 //   A replay buffer is the first — up to 256 MiB of retained PTY output, appended per PTY chunk;
@@ -1624,6 +1625,120 @@ double slopdesk_ws_divider_weight_delta(SlopDeskWsDivider handle, double pixel_i
 // is ABSENT rather than wrong. Both numbers cross, so no caller rounds the complement itself.
 bool   slopdesk_ws_divider_percents(SlopDeskWsDivider handle, uint32_t *leading, uint32_t *trailing);
 
+// ---- What a split tab draws once zoom has had its say ------------------------------------------
+//
+// The partition is already `slopdesk_ws_frames` / `slopdesk_ws_dividers`. What crosses here is the
+// layer above: whether a zoom is IN EFFECT, and what the frame looks like while one is. A zoom
+// naming a pane that has since been closed is IGNORED — honouring it collapses the tab onto a pane
+// that does not exist.
+
+// One placed pane, and whether the zoom is hiding it. The hidden ones are the point: a pane the
+// renderer stops emitting is a pane the view unmounts, and unmounting one dismantles the terminal
+// surface or video stream behind it. So EVERY pane of the tab comes back on every layout and this
+// flag is what the view draws at `opacity 0` instead.
+typedef struct {
+    SlopDeskWsFrame frame;
+    bool            hidden;  // mounted and laid out at its UN-zoomed rect, not drawn
+} SlopDeskWsRenderLeaf;
+
+// Whether the tab is zoomed: `zoomed` is named AND is a leaf of this tree.
+bool   slopdesk_ws_zoom_is_active(const SlopDeskWsTreeNode *nodes, size_t count,
+                                  bool has_zoom, SlopDeskWsUuid zoomed);
+// Every pane of the tab, zoom applied: the zoomed leaf at full bounds and its siblings at their
+// solved rects flagged `hidden`, or the plain tiled solve when no zoom is in effect.
+size_t slopdesk_ws_render_leaves(const SlopDeskWsTreeNode *nodes, size_t count,
+                                 SlopDeskWsRect rect, double min_width, double min_height,
+                                 bool has_zoom, SlopDeskWsUuid zoomed,
+                                 SlopDeskWsRenderLeaf *out, size_t cap);
+// The seams — none at all while a zoom is active. The gate lives HERE rather than at the call site,
+// because a renderer deciding it for itself would be a second copy of the zoom verdict sitting
+// where nobody would look when the first copy changed.
+size_t slopdesk_ws_render_dividers(const SlopDeskWsTreeNode *nodes, size_t count,
+                                   SlopDeskWsRect rect, double thickness,
+                                   bool has_zoom, SlopDeskWsUuid zoomed,
+                                   SlopDeskWsDivider *out, size_t cap);
+
+// ---- The GUI pane's clipboard affordances ------------------------------------------------------
+//
+// The MASK and the LIMITS cross; the CLIP never does. A row carries the full text so it can be
+// typed and a masked label so it can be drawn — the ring is the caller's OWN clipboard history, so
+// sending the clips back would hand somebody their own secrets for nothing. The caller zips the
+// labels against the prefix it asked about.
+//
+// A row is `[flag byte][label UTF-8]` inside one length-prefixed run, so the verdict and the label
+// are ONE classification: two doors could disagree and draw a masked row that pasted as ordinary
+// text.
+
+// Max characters of a non-secret preview before it is ellipsized.
+size_t slopdesk_ws_paste_preview_limit(void);
+// How many recent clips the ring submenu lists.
+size_t slopdesk_ws_paste_row_limit(void);
+// One clip's preview: `[u32 BE length][flag byte][label UTF-8]`. Never 0 — the flag byte is always
+// there, so a length of 1 is an EMPTY label (a whitespace-only clip) rather than an absent answer.
+size_t slopdesk_ws_paste_preview(const uint8_t *bytes, size_t len, uint8_t *out, size_t cap);
+// Every row of the submenu, in ring order. `ring` is `count` length-prefixed clips
+// (`[u32 BE length][UTF-8]` each); the answer is `min(count, limit)` runs of the same
+// `[u32 BE length][flag byte][label]` shape.
+size_t slopdesk_ws_paste_rows(const uint8_t *ring, size_t ring_len, size_t count, size_t limit,
+                              uint8_t *out, size_t cap);
+// Whether "Paste as Keystrokes" is enabled. A BOOL, not the content: on iOS, reading the clipboard
+// from a renderer raises the modal "Allow Paste?" alert, so enablement must be answerable without
+// it.
+bool   slopdesk_ws_paste_can_paste(bool can_paste_keystrokes, bool clipboard_has_text);
+// Whether a clip already in hand is worth typing: present, and not only whitespace. A null pair and
+// an empty one both answer false — an absent clipboard and an empty one are the same nothing to
+// this question.
+bool   slopdesk_ws_paste_is_pastable(const uint8_t *bytes, size_t len);
+
+// ---- The key-repeat cadence (SlopDeskKeyRepeat) ------------------------------------------------
+//
+// A held key's CADENCE is a state machine — which key is latched, which generation of timer is
+// live, initial wait vs. repeat wait — and it outlives every individual call, which is why this is
+// the handle convention. The `DispatchSourceTimer` stays Swift; only the DECISION crosses.
+//
+// SECOND declared exception to "no two calls on one handle may overlap", after
+// SlopDeskCursorSampler: the main thread presses and releases while a timer queue asks what an
+// elapsed generation should do, BY DESIGN. This handle carries its own lock for exactly that.
+// Exactly one _free per _new; a NULL handle is inert on every door.
+//
+// The KEY crosses as opaque bytes the caller chooses — for a generic Swift key that is its
+// `hashValue`, the one encoding that follows the type's OWN `==`.
+typedef struct SlopDeskKeyRepeat SlopDeskKeyRepeat;
+
+// The standard wait before the first repeat, and the standard wait between repeats, in ms.
+uint32_t slopdesk_key_repeat_default_initial_delay_ms(void);
+uint32_t slopdesk_key_repeat_default_repeat_interval_ms(void);
+
+// A repeater with nothing held, at this cadence. Never null.
+SlopDeskKeyRepeat *slopdesk_key_repeat_new(uint32_t initial_delay_ms,
+                                           uint32_t repeat_interval_ms);
+void slopdesk_key_repeat_free(SlopDeskKeyRepeat *handle);
+
+// A key went down. `true` = cancel any armed timer, emit the key ONCE now, and arm a one-shot
+// `after_ms` from now quoting `generation`. `false` = this key is already held and the press is a
+// hardware auto-repeat; do nothing, the cadence is already running.
+bool slopdesk_key_repeat_down(const SlopDeskKeyRepeat *handle,
+                              const uint8_t *identity, size_t len,
+                              uint64_t *generation, uint32_t *after_ms);
+// A key went up. `true` = it was the held one; cancel the timer. `false` = a stale release (another
+// key took the latch), which must NOT stop the live repeat.
+bool slopdesk_key_repeat_up(const SlopDeskKeyRepeat *handle, const uint8_t *identity, size_t len);
+// Drop whatever is held. `true` if something was.
+bool slopdesk_key_repeat_stop(const SlopDeskKeyRepeat *handle);
+
+// A timer armed under `generation` just elapsed. `stage` is 0 for the initial one-shot, 1 for a
+// repeat tick:
+#define SLOPDESK_KEY_REPEAT_STALE                0  /* the latch moved; emit nothing              */
+#define SLOPDESK_KEY_REPEAT_FIRE                 1  /* emit once; the repeating timer keeps going */
+#define SLOPDESK_KEY_REPEAT_FIRE_AND_ARM         2  /* emit once and start it at `*every_ms`      */
+uint8_t slopdesk_key_repeat_elapsed(const SlopDeskKeyRepeat *handle, uint8_t stage,
+                                    uint64_t generation, uint32_t *every_ms);
+// Whether `generation` is still the live one — asked before ADOPTING a handle that was armed while
+// a release could have landed.
+bool slopdesk_key_repeat_is_current(const SlopDeskKeyRepeat *handle, uint64_t generation);
+// Whether any key is currently held (the repeat is running).
+bool slopdesk_key_repeat_is_held(const SlopDeskKeyRepeat *handle);
+
 // MARK: The split tree's own operations
 //
 // Each of these ANSWERS a tree, written as the same pre-order walk they read. A count of SIZE_MAX
@@ -2003,6 +2118,70 @@ bool slopdesk_ws_pane_kind_can_receive_text(uint8_t kind);
 // folded retired name becomes), so `size_t` has no room for a refusal. Bytes that are not valid UTF-8
 // refuse too; a discriminator is one of a closed set of ASCII names.
 int32_t slopdesk_ws_pane_kind_from_raw(const uint8_t *raw, size_t len);
+// One pane kind's presentation row — what the kind is CALLED, the SF Symbol name that draws it, its
+// single-key mnemonic, and whether it is a video pane. All four in ONE delivery rather than four
+// doors: a surface that read the title from one call and the symbol from another could draw a row
+// for two different kinds if the kind byte changed between them.
+//
+//   [u8 is_video]
+//   3 × [u32 BE length][UTF-8 bytes]   -- title, SF Symbol name, mnemonic
+//
+// The mnemonic rides as TEXT, not as a byte: every one of them is ASCII today, and a `uint8_t` would
+// make the first non-ASCII mnemonic a silent truncation rather than a wider field. `is_video` is the
+// KIND's own answer read through the table, which is the duplication the Swift value type this
+// replaces admitted to in the word "mirrors".
+//
+// TOTAL over the vocabulary: an unknown byte draws the terminal row, so 0 is unreachable — every row
+// names something.
+size_t slopdesk_ws_pane_kind_option(uint8_t kind, uint8_t *out, size_t cap);
+
+// Whether a pane's TITLE is still describing what is running in it. A title stamped before the
+// command that is running now is stale — it names the last command, and a rail that prints it says
+// the wrong thing for as long as the current one runs. A pane that is not live keeps its last title
+// either way: there is nothing newer to be stale against.
+//
+// Both timestamps carry a presence FLAG rather than a sentinel, §4b's rule, and here the sentinel has
+// three separate ways to be wrong: 0.0 is a real instant (the epoch), a negative is a real instant on
+// a stepped clock, and a NaN compares false against everything, so "no stamp" would silently read as
+// "fresh". The flag says absent once and says it in the type.
+bool slopdesk_ws_pane_title_fresh(bool has_title_stamp, double title_stamped_at,
+                                  bool has_command_stamp, double command_started_at,
+                                  uint8_t liveness);
+
+// MARK: Where a jump LANDED
+//
+// A teleport focus — the ⌘⇧U attention walk, a palette or Open Quickly row, a Global Search hit, a
+// notification click — can swap the whole viewport to a different tab, or a different session, in
+// one frame with no cue of where you landed. These two decide the notice chip's text. What did NOT
+// cross is the lookup: which pane in the tab to ask, and what the mirror says its live title is. A
+// live tree and a closure are not rules and do not cross a C boundary.
+
+// What a tab is CALLED: an explicit rename wins; else the resolved pane's live shell title; else its
+// spec title; else the "Tab" placeholder. Never empty — the chip must name something — so 0 cannot
+// happen.
+//
+// The two optional titles cross under DIFFERENT conventions, and swapping them changes the answer.
+// `has_spec` is a real presence flag, because "this pane has no spec" and "this pane's spec title is
+// blank" are different facts here: with no spec the live title is not consulted at all. `live_title`
+// has no flag, because an absent live title and an empty one take the same rung — a flag there would
+// be a bit the caller could set two ways for one meaning.
+size_t slopdesk_ws_tab_display_title(const uint8_t *tab_title, size_t tab_title_len,
+                                     bool has_spec,
+                                     const uint8_t *spec_title, size_t spec_title_len,
+                                     const uint8_t *live_title, size_t live_title_len,
+                                     uint8_t *out, size_t cap);
+
+// The breadcrumb line itself: "<session> \xE2\x96\xB8 <tab>" when the workspace has several sessions
+// and the session name is worth printing, else the tab title alone. An empty session name degrades
+// to the tab-only form rather than printing a leading separator.
+//
+// 0 means the line is EMPTY, which exactly one input reaches: an unqualified breadcrumb over a tab
+// whose title is empty. A caller that resolved the title through `slopdesk_ws_tab_display_title`
+// first cannot get there.
+size_t slopdesk_ws_jump_breadcrumb(const uint8_t *session_name, size_t session_name_len,
+                                   const uint8_t *tab_title, size_t tab_title_len,
+                                   bool include_session, uint8_t *out, size_t cap);
+
 
 // The title a re-seeded pane takes, and the name a fresh workspace's first session takes. §4-shaped
 // and asked for rather than transcribed: a caller comparing against its own copy passes on a
@@ -2058,6 +2237,46 @@ size_t slopdesk_ws_template_repair(const uint8_t *layout, size_t len, uint8_t *o
 // with nothing in any log.
 size_t slopdesk_ws_built_in_templates(uint8_t *out, size_t cap);
 size_t slopdesk_ws_built_in_launch_presets(uint8_t *out, size_t cap);
+// A template EXPANDED into a session, and a live tab CAPTURED back into one. The layout goes in and
+// the capture comes back as the `node` stream above — but neither direction can round-trip through
+// it alone: `node` has nowhere to put a minted identity, an equal share, or the order the panes must
+// be launched in, and nowhere to say that a live leaf has no spec at all. So each direction has its
+// own stream, and both are written down here once:
+//
+//   weight    := u8 is_fixed, then u64 BE of the double's raw bit pattern
+//   expanded  := 0x00 uuid:pane u8:kind text:title opt-text:cwd opt-text:command
+//              | 0x01 uuid:split u8:axis u32:child_count (weight expanded) × child_count
+//   captured  := 0x00 u8:has_spec [u8:kind text:title when has_spec]
+//              | 0x01 u8:axis u32:child_count captured × child_count
+//
+// The share crosses as the BIT PATTERN, never as a decimal anyone re-parses: two sibling panes must
+// be equal to the last bit or the seam drifts a pixel per restore. The launch order is the stream's
+// own DFS — the caller reads the panes out in the order it must start them, and the first one is the
+// active pane, so nobody re-derives either.
+//
+// The refusal rule is the section's: a stream that cannot be consumed EXACTLY answers 0.
+
+// The identity pool one expansion will spend, for a layout of that shape. Sized here rather than at
+// the call site: a pool one short REPEATS an identity rather than failing, and two panes born with
+// one id surfaces days later as a pane that will not close. 0 is the stream refusal — ask again with
+// a layout this build can read.
+size_t slopdesk_ws_template_minted_ids(const uint8_t *layout, size_t len);
+
+// The template's layout, expanded into a split tree with fresh identities and equal shares. The
+// crate holds no entropy, so the identities are the caller's: bring at least
+// `slopdesk_ws_template_minted_ids` of them, in any order. A pool that runs dry repeats its last
+// entry rather than trapping — which is precisely the outcome the sizing door exists to prevent.
+size_t slopdesk_ws_template_expand(const uint8_t *layout, size_t len,
+                                   const SlopDeskWsUuid *minted, size_t minted_count,
+                                   uint8_t *out, size_t cap);
+
+// The inverse: a live tab, flattened back into a layout worth saving. Answers the `node` stream
+// above, so the result is a template's layout directly. `has_tab` is false for "there is no tab to
+// capture", which still answers a layout — the one-terminal default — because a template with no
+// layout is not a thing the store can hold.
+size_t slopdesk_ws_template_capture(const uint8_t *tab, size_t len, bool has_tab,
+                                    uint8_t *out, size_t cap);
+
 
 
 // MARK: The workspace state FILE
@@ -6315,6 +6534,65 @@ size_t   slopdesk_send_pace_plan(SlopDeskSendJob job, SlopDeskPacedChunk *out, s
 bool     slopdesk_send_may_inline(SlopDeskSendJob job, bool closed, size_t queued, bool transmitting);
 
 /* ---------------------------------------------------------------------------- *
+ * The video host's whole `SLOPDESK_*` OPERATING POINT — every default, every clamp, and the
+ * precedence between the pacing keys, resolved once per process.
+ *
+ * TWO calls, because only the middle step is the caller's business. `_gate_keys` hands over the
+ * NAMES, `\0`-separated with no trailing separator; the caller resolves each through its own
+ * overlay-aware lookup (env then settings — `docs/58`, a lookup rule and not a gate rule); then
+ * `_host_gates` takes the resolved texts back as a blob list, IN KEY ORDER, and answers the lot.
+ *
+ * An unset key is an ABSENT blob, not an empty one, and the difference is load-bearing: two of
+ * these gates test PRESENCE (`SLOPDESK_VIDEO_DEBUG`, `SLOPDESK_INPUT_TRACE`), so `=0` turns them
+ * ON, and a third is overridden by the mere presence of a sibling whose value never parses.
+ *
+ * The three scalars are the inputs no key carries — the injector's resampler state, which the
+ * scroll coalescer's default follows, and the keepalive window the silence pause is clamped into.
+ * Answers false and writes nothing on a blob that is not a blob list or an entry that is not UTF-8.
+ * ---------------------------------------------------------------------------- */
+
+typedef struct {
+  bool debug_stderr;
+  bool interleave_transmit;
+  bool pace_send;
+  bool pacing_adaptive;
+  bool send_lane_enabled;
+  bool backpressure_enabled;
+  bool scroll_coalesce_enabled;
+  bool fps_governor_enabled;
+  bool in_place_resize_enabled;
+  bool kf_dup;
+  bool small_dup;
+  bool nack_enabled;
+  bool recovery_idr_v2;
+  bool telemetry_enabled;
+  bool abr_enabled;
+  bool adaptive_fec_enabled;
+  bool full_range;
+  bool ltr_enabled;
+  bool input_trace;
+  bool dialog_expand_enabled;
+  bool fec_disabled;
+  uint64_t pace_gap_nanos;
+  double pace_rate_multiplier;
+  int64_t kf_pace_floor_bps;
+  int64_t delta_pace_floor_bps;
+  int64_t backpressure_depth;
+  double scroll_inject_interval;
+  double kf_dup_loss_threshold;
+  int64_t small_dup_max_bytes;
+  int64_t retransmit_ring_frames;
+  int64_t retransmit_ring_max_bytes;
+  double recovery_dedup_window;
+  double client_silence_pause_seconds;
+} SlopDeskVideoHostGates;
+
+size_t slopdesk_video_host_gate_keys(uint8_t *out, size_t cap);
+bool   slopdesk_video_host_gates(const uint8_t *values, size_t len,
+                                 bool scroll_resampler_active, double keepalive_interval,
+                                 double idle_timeout, SlopDeskVideoHostGates *out);
+
+/* ---------------------------------------------------------------------------- *
  * The CLIENT's pointer and gesture policies. Every rule here belongs to a view that is never
  * instantiated in a test — no Metal, no VT — so each one is asked here instead.
  *
@@ -7240,6 +7518,68 @@ size_t slopdesk_channel_table_state_count(SlopDeskChannelTable *handle);
 
 size_t slopdesk_channel_table_live(SlopDeskChannelTable *handle, unsigned int *out, size_t cap);
 
+// ---- Which mux half-link just arrived, and what that costs the parked one ----
+//
+// `slopdesk_muxsession::pairing`. A client dials the host TWICE — a CONTROL socket and a
+// DATA socket — and the two become ONE shared connection only once both have shown the same
+// connectionID in their preamble. Whichever lands first is parked in a map keyed by that id,
+// and everything here is about what the SECOND arrival means.
+//
+// No socket crosses, because none needs to. The listener says which side arrived and which
+// side it already holds; what comes back is the two acts it owes. Closing is the near side's,
+// because the file descriptor is.
+//
+// `closes_displaced_same_side` cannot be inferred at the call site from "was there an entry":
+// an entry on the OPPOSITE side is the ordinary completion and must NOT be closed, while a
+// SECOND socket for a side ALREADY parked displaces a live fd the reaper only ever reaches
+// through the CURRENT map entry — so overwriting it leaks one per duplicate AND restamps
+// createdAt, deferring the very deadline that would have bounded the leak.
+typedef struct SlopDeskMuxPairing {
+  bool paired;                      /* both sides present — build the shared connection */
+  bool closes_displaced_same_side;  /* the caller must close() the half it is displacing */
+} SlopDeskMuxPairing;
+
+SlopDeskMuxPairing slopdesk_mux_pairing_decide(bool existing_has_control,
+                                               bool existing_has_data,
+                                               bool is_control);
+
+// The reaper's half of the same map. Both spans are whole nanoseconds — a ContinuousClock
+// instant is a monotonic token rather than a number, but the DIFFERENCE of two is. STRICTLY
+// greater: an entry sitting exactly on its deadline is NOT expired, so the injected zero
+// timeout the tests use to force expiry without a wall-clock sleep still needs some elapsed
+// time to fire, and a `>=` here would reap every half-pair the instant it was parked.
+bool slopdesk_mux_pending_expired(uint64_t elapsed_nanos, uint64_t timeout_nanos);
+
+// ---- Which pane a hook record belongs to ----
+//
+// `slopdesk_muxsession::hook_record`. The installed Claude Code hook POSTs a `pane=<id>`
+// header line followed by the raw hook JSON; this says where each half is.
+//
+// The answer is POSITIONS, so the record is never copied. A hook body carries the tool
+// input — a large `Write` puts hundreds of kilobytes through here, twice per tool call — and
+// the near side is already holding those bytes in the Data it read off the socket.
+// Delivering the JSON back through (out, cap) would copy the whole of it to hand the caller
+// something it never let go of. The pane id comes back as a range too, so the trim happened
+// on the far side and the near side does not respell Foundation's whitespace set.
+//
+// FOUR shapes name no pane, and they do NOT agree about the body. No newline at all, and a
+// first line that is not `pane=`, keep the WHOLE record as JSON. An EMPTY id and a NON-UTF-8
+// id keep only the remainder after the newline — feeding `pane=` to the JSON parser would
+// blame the agent's body for the header's fault. `has_pane` is false for all four, so
+// `json_offset` is the only thing that tells them apart.
+typedef struct SlopDeskHookRecordSplit {
+  size_t pane_offset;  /* read only when has_pane */
+  size_t pane_len;     /* read only when has_pane */
+  size_t json_offset;  /* 0 when the whole record is the body */
+  size_t json_len;     /* 0 is a record that carried a header and nothing else */
+  bool   has_pane;
+} SlopDeskHookRecordSplit;
+
+// `record` is what the drain handed over: the relay's framing with its single trailing
+// newline already stripped. NULL is an empty record rather than a trap. The offsets index
+// `record` ITSELF, so a caller holding a SLICE must add that slice's own start index.
+SlopDeskHookRecordSplit slopdesk_hook_record_split(const uint8_t *record, size_t len);
+
 // ---- The DEMUX RULE itself, not just the table it reads ----
 //
 // One frame in, one verdict out, with the table advanced exactly as the frame
@@ -7632,6 +7972,102 @@ uint32_t slopdesk_workspace_decode_roster(const unsigned char *payload, size_t p
 // client that silently stops counting toward the PTY size fold.
 // An unknown index answers -1.
 int64_t slopdesk_workspace_constant(uint32_t index);
+// ---------------------------------------------------------------------------
+// ONE workspace subscriber's document-sync ladder — docs/59 step 10, docs/45's
+// diff-against-the-ACKED-base rule. Verdicts, never the document: the tree stays
+// in hostd, filed under the SLOT this door mints, and only epochs, state
+// numbers and one snapshot-or-diff bit cross.
+//
+// Serialized by WorkspaceChannelSession's own `lock`. One _free per _new; a NULL
+// or freed handle is inert (holds every offer, frees nothing, refuses presence);
+// no two calls may overlap.
+//
+// Every call that can drop a retained state answers WHICH SLOTS stopped being
+// reachable, into a caller-lent uint32_t array. Lend index 1 of
+// slopdesk_workspace_sync_constant of them — the widest any single call can be —
+// and the write always fits. A NULL array still answers the count, which strands
+// the payloads it named.
+//
+// _plan and _commit are two calls because the caller computes the diff and
+// awaits the channel write between them, and an NSLock cannot be held across a
+// suspension. An empty diff and a dead link are then the same thing: no commit,
+// so nothing moved.
+// ---------------------------------------------------------------------------
+
+typedef struct SlopDeskWorkspaceSyncLadder SlopDeskWorkspaceSyncLadder;
+
+typedef struct {
+    // The baseStateNum a diff declares; 0 for a snapshot.
+    int64_t base_state_num;
+    // Where the state the diff is computed FROM lives; the no-slot sentinel
+    // (constant index 2) for a snapshot.
+    uint32_t base_slot;
+    // How many entries of `released` were written.
+    uint32_t released_count;
+    // false is HOLD: a frame is in flight, nothing changed, and the offer must
+    // stay PENDING so it coalesces with whatever arrives next.
+    bool send;
+    // Send a `reset` (kind 4) FIRST — the epoch changed.
+    bool reset_first;
+    // Send a snapshot (kind 0) rather than a diff (kind 1).
+    bool snapshot;
+} SlopDeskWorkspaceSyncPlan;
+
+// `flags` is the subscribe's own byte — the connection's standing claims.
+SlopDeskWorkspaceSyncLadder *slopdesk_workspace_sync_new(uint8_t flags);
+
+void slopdesk_workspace_sync_free(SlopDeskWorkspaceSyncLadder *handle);
+
+// Highest ack wins: out-of-order and duplicate acks can only move the base
+// forward, which is both correct and the cheapest coalescing there is.
+void slopdesk_workspace_sync_note_ack(SlopDeskWorkspaceSyncLadder *handle, int64_t state_num);
+
+// Applies the highest ack seen since the last call; answers how many slots that
+// freed. An ack naming a state no longer retained latches a SNAPSHOT rather than
+// guessing a base — a diff against the wrong base applies cleanly and corrupts
+// silently, forever.
+uint32_t slopdesk_workspace_sync_apply_ack(SlopDeskWorkspaceSyncLadder *handle, uint32_t *released);
+
+// A repeat `subscribe` IS the resync verb. The client's claim is honoured only
+// when the epoch matches AND that exact state is still retained; reconnect, a
+// missed frame and a four-hour absence all land on the one snapshot path.
+uint32_t slopdesk_workspace_sync_resubscribe(SlopDeskWorkspaceSyncLadder *handle,
+                                             SlopDeskWsUuid known_epoch, int64_t known_state_num,
+                                             uint8_t flags, uint32_t *released);
+
+// What to do with the freshest document offer, which the caller must NOT have
+// consumed — see the HOLD note above.
+void slopdesk_workspace_sync_plan(SlopDeskWorkspaceSyncLadder *handle, SlopDeskWsUuid epoch,
+                                  SlopDeskWorkspaceSyncPlan *out, uint32_t *released);
+
+// Records that the planned frame WENT OUT, and answers the slot its state is
+// filed under. Call only after a successful send.
+uint32_t slopdesk_workspace_sync_commit(SlopDeskWorkspaceSyncLadder *handle, int64_t state_num,
+                                        uint32_t *released, uint32_t *released_count);
+
+// The epoch to stamp on a frame that does not depend on one — presence and
+// intent results. All-zero before any document has shipped, which is the honest
+// sentinel rather than a fabricated id.
+void slopdesk_workspace_sync_loose_epoch(SlopDeskWorkspaceSyncLadder *handle, SlopDeskWsUuid *out);
+
+// false when the update is REFUSED because its clock is not strictly newer.
+bool slopdesk_workspace_sync_note_presence(SlopDeskWorkspaceSyncLadder *handle,
+                                           const SlopDeskWorkspacePresence *record);
+
+// This subscriber as the host describes it to everyone else. A silent subscriber
+// views NOTHING — every id all-zero, every count 0. The presence update's
+// CONTRIBUTES-SIZE claim wins over the subscribe's; FOLLOWS-FOCUS is always the
+// subscribe's.
+void slopdesk_workspace_sync_roster(SlopDeskWorkspaceSyncLadder *handle,
+                                    SlopDeskWorkspacePresence *out);
+
+// The stateNum of the frame in flight; false when the client is caught up.
+bool slopdesk_workspace_sync_outstanding(SlopDeskWorkspaceSyncLadder *handle, int64_t *out);
+
+// 0 the retention window's DEPTH, 1 how many slots to lend a releasing call,
+// 2 the slot that names no payload. An unknown index answers -1.
+int64_t slopdesk_workspace_sync_constant(uint32_t index);
+
 
 
 // ---------------------------------------------------------------------------
@@ -10617,6 +11053,49 @@ size_t slopdesk_host_announced_version(const uint8_t *port_marker, size_t port_m
                                        const uint8_t *version_marker, size_t version_marker_len,
                                        const uint8_t *line, size_t line_len,
                                        uint8_t *out, size_t cap);
+// ---- A service's PTY stream, back into lines ----
+//
+// `slopdesk_sidecars::line_assembler`. THE HANDLE CONVENTION, because the type IS the
+// memory: it holds the residue of a line that has not finished arriving, across as many
+// reads as that takes, and passing that residue over and back per chunk would copy it twice
+// on every wake of a daemon whose whole job is to be quiet.
+//
+// The rule in full, because each edge is a BEHAVIOUR and not a preference:
+//   * exactly ONE trailing `\r` comes off, never a run of them. A service's announce line is
+//     parsed by a marker search plus a digit run, and a carriage return would ride into the
+//     port on any parser that took the rest of the line.
+//   * a line that is not UTF-8 is DROPPED, not repaired — and its neighbours are not.
+//   * past 64 KiB the pending residue is DROPPED: not truncated, not split. The check is
+//     STRICTLY greater and runs AFTER the complete lines are taken out, so a residue of
+//     exactly the cap survives to be completed, and a chunk carrying megabytes of complete
+//     lines is never penalised for its total. A service that emits 64 KiB with no break is
+//     not one whose port we are going to find.
+//
+// LINES COME OUT ONE AT A TIME, filled into the handle's slot by _append and read by index.
+// An adopt replays a service's whole retained ring through one call — the announce line is
+// the first thing the child ever said — and the caller has to land each line in its own
+// String for its sink regardless, so flattening would add a whole extra copy of the ring to
+// save crossings the count already saved.
+typedef struct SlopDeskLineAssembler SlopDeskLineAssembler;
+
+// Lifecycle. Returns NULL only if allocation failed; NULL is inert everywhere else.
+SlopDeskLineAssembler *slopdesk_line_assembler_new(void);
+void slopdesk_line_assembler_free(SlopDeskLineAssembler *handle);
+
+// Folds one chunk in and returns how many complete lines it produced. Zero is the ordinary
+// answer while a line is still arriving; it is ALSO what the cap answers when it has just
+// dropped a runaway's residue, and the two are deliberately not told apart. A NULL chunk is
+// an empty one and does not lose the residue already pending.
+size_t slopdesk_line_assembler_append(SlopDeskLineAssembler *handle,
+                                      const uint8_t *chunk, size_t len);
+
+// One line out of the slot by index, under §4's convention. An index past the slot's end and
+// a line that is genuinely EMPTY (which a bare `\r\n` produces, and which the caller must
+// still report) both answer 0 — the COUNT the caller already holds is what tells them apart,
+// so nothing here needs a second signal for it.
+size_t slopdesk_line_assembler_line(SlopDeskLineAssembler *handle, size_t index,
+                                    uint8_t *out, size_t cap);
+
 
 // What the near side knows about a live child before an ensure round. `port` and `ready`
 // are read only when `has_record`; `since_probe_nanos` only when `has_probe_stamp`, because
@@ -10771,6 +11250,49 @@ SlopDeskHostDetachInsert slopdesk_host_detach_insert(const double *stamps, size_
 // bound is arithmetic rather than a guess. Ties keep the caller's own order, which is what
 // makes the listing stable — Swift's dictionary iteration made it arbitrary.
 size_t slopdesk_host_detach_order(const double *stamps, size_t len, uint32_t *out, size_t cap);
+// The TIMER choice, as the byte both doors below answer in. Asserted against
+// `detach_retention::TtlChoice` by a `const` block inside the door, so this transcription
+// cannot drift silently.
+#define SLOPDESK_TTL_ARM 0u
+#define SLOPDESK_TTL_CANCEL 1u
+#define SLOPDESK_TTL_LEAVE_ALONE 2u
+
+// What one attempt to take an entry OUT of the store concluded — the other half of the same
+// lock. `present` is NOT "is this id in the store": that would be a lookup whose answer is
+// stale before it is read. It is the RESULT of the removal the near side has ALREADY
+// performed under its lock, which is the only place the race can be resolved. So the door is
+// asked after the fact, and its answer is what the caller now OWES.
+//
+// `child_exited` is the near side's `isChildExited()`, which reads an ALREADY-REAPED exit
+// code — hostd is not the child's parent, superd is, and it pushes the code over — so an
+// unspawned pane answers false. It cannot be asked from here: there is no process on this
+// side of the boundary, only the answer about one.
+//
+// `won` false means somebody else already took it and this caller must stand down. Releasing
+// the journal writer and the hook-sink key now would cut them out from under a same-UUID
+// successor that is already using both.
+typedef struct SlopDeskHostDetachTake {
+  bool    won;              /* THIS call removed it, so THIS call owns the teardown */
+  uint8_t ttl;              /* SLOPDESK_TTL_* */
+  bool    reap_dead_child;  /* the shell had exited: shut the parked session down, and report
+                               this APART from "not found" — the winner assumed a teardown the
+                               session's own exit closure stood down from, so it still owes
+                               the final agent-status `.none` (the prevent-sleep balance is
+                               strict) and the hook-sink drop, before the fresh spawn */
+} SlopDeskHostDetachTake;
+
+// The caller that removes an entry BECAUSE the shell exited passes `child_exited` false —
+// its onExit has already fired, so there is nothing left to discover and nothing to reap.
+SlopDeskHostDetachTake slopdesk_host_detach_take(bool present, bool child_exited);
+
+// The timer choice for an entry going IN, given `slopdesk_host_detach_insert`'s `idempotent`
+// and whether a TTL is configured at all. Only a FRESH insert with a configured TTL arms
+// one: a second timer beside an idempotent re-park's already-armed one evicts by id, and the
+// id belongs to a LIVE entry by the time either fires. An absent TTL —
+// SLOPDESK_DETACH_TTL_SECS unset or 0 — is the default and the tmux/zellij semantics; the
+// resource bound in that mode is the opt-in session cap, never a clock.
+uint8_t slopdesk_host_detach_ttl_on_insert(bool idempotent, bool has_ttl);
+
 
 // ---- The HEVC decoder ---------------------------------------------------------------
 //
@@ -10925,6 +11447,145 @@ size_t  slopdesk_code_bridge_cd_line(const uint8_t *directory, size_t len,
 // key sends. Same convention as the agent-control `run` verb, deliberately.
 size_t  slopdesk_code_bridge_keystrokes(const uint8_t *text, size_t len,
                                         uint8_t *out, size_t cap);
+
+// ---- The LINE the embedded editor speaks -------------------------------------------------------
+//
+// The other half of the bridge above: that one picks a PANE, this one reads and writes the socket's
+// own NDJSON. Every entry point here is validate-then-DROP — a line that is not exactly what the
+// grammar says gets no answer at all, because the alternative is typing an attacker-shaped string at
+// a live shell prompt. The socket, the accept loop, the read threads and the (st_dev, st_ino) rebind
+// guard stay in Swift: descriptors and threads, neither of which decides anything.
+//
+// The two caps are the rules module's so there is one of each; the read loop that enforces the line
+// cap is Swift's, because Swift is the one holding the buffer.
+size_t slopdesk_code_bridge_max_line_bytes(void);
+size_t slopdesk_code_bridge_max_run_text_bytes(void);
+
+// Which workbench WINDOW owns a file: the deepest containing folder wins, and a tie breaks on the
+// LOWER descriptor so two windows on the same folder always send the file to the same one instead of
+// wherever iteration order happened to land. The window list crosses as records into one text blob,
+// exactly like the pane list above. A negative answer means nothing owns it — which is safe, because
+// refusing to route falls back to the CLI, which opens the file anyway:
+#define SLOPDESK_CODE_BRIDGE_NO_WINDOW           (-1)
+
+typedef struct {
+    int32_t fd;             /* the connection — both the answer and the tie-break key */
+    size_t  root_offset;    /* where this window's workspace folder begins in the blob */
+    size_t  root_len;       /* how many bytes of the blob it occupies */
+} SlopDeskBridgeWindowRecord;
+
+int32_t slopdesk_code_bridge_route(const SlopDeskBridgeWindowRecord *windows, size_t count,
+                                   const uint8_t *blob, size_t blob_len,
+                                   const uint8_t *target, size_t target_len);
+
+// The `open` line, newline included, for a target already split into its path and its `:line[:col]`
+// suffix. The split is slopdesk-terminal's rule and stays there, so this never has to know what a
+// detected link's tail looks like; an empty suffix is simply no suffix.
+size_t slopdesk_code_bridge_open_line(const uint8_t *path, size_t path_len,
+                                      const uint8_t *suffix, size_t suffix_len,
+                                      uint8_t *out, size_t cap);
+
+// The result line for a finished `run`, newline included. `has_pane` / `has_message` are §4b presence
+// flags: the extension tells an ABSENT field from an empty one, and an empty `pane` would have it
+// announce a pane with no name.
+size_t slopdesk_code_bridge_result_line(const uint8_t *id, size_t id_len, bool ok,
+                                        const uint8_t *pane, size_t pane_len, bool has_pane,
+                                        const uint8_t *message, size_t message_len, bool has_message,
+                                        uint8_t *out, size_t cap);
+
+// Whether text may be typed at a live shell prompt: non-empty, within the run cap, and free of C0
+// controls other than tab and newline. An embedded ESC is a KEYBINDING to the line editor rather than
+// text, and a NUL ends the write, so everything after it becomes a command of its own.
+bool slopdesk_code_bridge_typeable(const uint8_t *text, size_t len);
+
+// One inbound line, believed or dropped. The answer is the VERB byte followed by that verb's
+// length-prefixed runs; 0 is a dropped line and writes nothing at all. The run count is a property of
+// the verb, so a short delivery is a marshalling bug rather than a shorter message:
+#define SLOPDESK_CODE_BRIDGE_INBOUND_NOTHING     0
+#define SLOPDESK_CODE_BRIDGE_INBOUND_HELLO       1  /* 1 run:  root                              */
+#define SLOPDESK_CODE_BRIDGE_INBOUND_RUN         2  /* 4 runs: id, root, cwd (EMPTY = none), text */
+size_t slopdesk_code_bridge_inbound(const uint8_t *line, size_t len, uint8_t *out, size_t cap);
+
+// ---- When a repo's git line is worth re-reading (SlopDeskRepoWatch) -----------------------------
+//
+// One handle per watcher, the convention at the top of this file: exactly one _free per _new, and NO
+// TWO CALLS ON ONE HANDLE MAY OVERLAP. That last one is free rather than a burden here — every call
+// is made from the watcher's own serial queue, which is what let the Swift original hold this state
+// without a lock too.
+//
+// What crosses is a verdict per edge: which stream to start or cancel, which armed debounce is still
+// the live one, whether a reading may start at all, and whether the reading that returned is news.
+// FSEvents, the two dispatch queues, the clock the debounce is measured on and the filesystem walk
+// all stay in Swift.
+//
+// THE THREE MUTATORS DO NOT TAKE (out, cap). §1's length protocol — ask small, grow, ask again — is
+// sound only for a PURE answer, and these three CHANGE the fold. So each returns the size of its
+// answer and holds it, and slopdesk_repo_watch_answer delivers it as often as asked; it is the
+// packetizer's shape, for the same reason. A door that acted twice would cancel a stream it had
+// already cancelled, or skip creating one it had already created.
+typedef struct SlopDeskRepoWatch SlopDeskRepoWatch;
+
+double slopdesk_repo_watch_debounce_seconds(void);
+SlopDeskRepoWatch *slopdesk_repo_watch_new(void);
+void slopdesk_repo_watch_free(SlopDeskRepoWatch *handle);
+
+// Whether note_project_key would do anything — the caller's cue to run the `.git` test, which is a
+// stat it would otherwise pay on every prompt edge. The fold re-asks the same question itself, so a
+// caller that skips this one behaves identically and only works harder.
+bool slopdesk_repo_watch_wants_key(const SlopDeskRepoWatch *handle, uint64_t owner,
+                                   const uint8_t *key, size_t key_len);
+
+// An owner latched a By-Project key. TWO runs out: the repo whose stream to cancel, then the repo to
+// start one for — each EMPTY when there is none, since a repo path never is. `is_repo_root` is the
+// caller's filesystem answer; a plain-directory section still releases the prior repo and retains
+// nothing.
+size_t slopdesk_repo_watch_note_project_key(SlopDeskRepoWatch *handle, uint64_t owner,
+                                            const uint8_t *key, size_t key_len, bool is_repo_root);
+
+// An owner ended: the repo whose stream to cancel, or 0 when this was not its last owner.
+size_t slopdesk_repo_watch_drop_owner(SlopDeskRepoWatch *handle, uint64_t owner);
+
+// The daemon stopped: one run per stream to cancel, and nothing is armed or pushed again afterwards.
+// The run count is not carried — a run costs at least its four-byte prefix, so len / 4 bounds the walk.
+size_t slopdesk_repo_watch_shutdown(SlopDeskRepoWatch *handle);
+
+// The answer the last mutator stashed. Pure — it neither changes the fold nor consumes the answer —
+// so this one IS safe to ask twice, which is what makes the split work.
+size_t slopdesk_repo_watch_answer(const SlopDeskRepoWatch *handle, uint8_t *out, size_t cap);
+
+// An event burst landed: (re)arm the debounce, latest edge wins. Writes the generation the caller
+// hands back when its timer expires; false — writing nothing — when the repo is not watched.
+bool slopdesk_repo_watch_source_event(SlopDeskRepoWatch *handle,
+                                      const uint8_t *repo, size_t repo_len, uint64_t *generation);
+
+// The debounce armed at `generation` expired. `has_audience` is "is any client attached", read one
+// step earlier than the reading it gates — a boolean the caller already holds, weighed against a
+// filesystem walk it may not have to make at all:
+#define SLOPDESK_REPO_WATCH_STALE                0  /* a newer edge won, the repo was released, or stopped */
+#define SLOPDESK_REPO_WATCH_NO_AUDIENCE          1  /* nobody to tell — the reconnect pull catches up      */
+#define SLOPDESK_REPO_WATCH_DEFERRED             2  /* one is in flight; ONE follow-up is now armed        */
+#define SLOPDESK_REPO_WATCH_PROBE                3  /* read the status now                                 */
+uint8_t slopdesk_repo_watch_debounce_fired(SlopDeskRepoWatch *handle,
+                                           const uint8_t *repo, size_t repo_len,
+                                           uint64_t generation, bool has_audience);
+
+typedef struct {
+    bool     push;          /* the dirty guard: an identical reading wakes nobody      */
+    bool     has_rearm;     /* whether a follow-up debounce is owed                    */
+    uint64_t rearm;         /* the generation that follow-up must carry back           */
+} SlopDeskRepoWatchFinish;
+
+// A reading returned. `has_status == false` means the path is not a repository any more, which is not
+// news to push. The ten fields cross FLAT because the caller already holds each as its own stored
+// property, and the comparison is ProjectGitStatus's own derived equality — a fingerprint would be a
+// second definition of "the same status", and it would fail silently when two readings really agree.
+SlopDeskRepoWatchFinish slopdesk_repo_watch_probe_finished(
+        SlopDeskRepoWatch *handle, const uint8_t *repo, size_t repo_len, bool has_status,
+        const uint8_t *repo_root, size_t repo_root_len,
+        const uint8_t *branch, size_t branch_len,
+        int32_t ahead, int32_t behind, int32_t stash_count,
+        uint32_t staged, uint32_t modified, uint32_t untracked,
+        uint32_t conflicted, uint32_t changed_count);
 
 size_t slopdesk_code_panel_text(uint8_t kind, uint8_t *out, size_t cap);
 
@@ -12159,6 +12820,15 @@ size_t slopdesk_ws_gui_activation_key(int64_t pane_hash, int64_t promotion_gener
 // build cannot name reads as still-sending, because the other two claim the transfer SETTLED.
 size_t  slopdesk_ws_gui_upload_glyph(uint8_t phase, uint8_t *out, size_t cap);
 uint8_t slopdesk_ws_gui_upload_tint(uint8_t phase);
+// A `double` that lands on the Swift BIT: the fraction is ONE division of two `u64`s widened to
+// `f64` — no accumulation, no `fma`, no reassociation — so IEEE-754 gives both languages the
+// identical bit pattern for the identical pair. A zero total answers 0.0 rather than a NaN the bar
+// would render as a blank.
+double  slopdesk_ws_gui_upload_fraction(uint8_t phase_code,
+                                        uint64_t sent_bytes, uint64_t total_bytes);
+// Whether the upload has SETTLED — completed or failed — the cue its row's dismissal is scheduled
+// on. Failure settles as surely as success does.
+bool    slopdesk_ws_gui_upload_is_settled(uint8_t phase_code);
 
 // ---- What a live video pane admits --------------------------------------------------------------
 //

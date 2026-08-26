@@ -2,19 +2,26 @@ import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the fixes from the session self-review: F3 the OSC notification rate limiter, and the
-/// title redaction that reaches every title surface.
+/// Pins the fixes from the session self-review: F3 the OSC notification rate limiter, and the one
+/// title-redaction rule the tree has.
 @MainActor
 final class ReviewFixTests: XCTestCase {
-    // MARK: - Titles are redacted everywhere
+    // MARK: - The title-redaction rule
 
-    /// displayTitle (now used by the carousel tab + top bar, not just the pill/sidebar) masks secrets,
-    /// so a secret in the OSC/window title never leaks into ANY title surface.
-    func testDisplayTitleRedactsSecretsAcrossEveryTitleSurface() {
+    /// ``PanePresentation/displayTitle(_:spec:)`` masks a secret in the OSC/window title.
+    ///
+    /// ⚠️ The name this test used to carry — "across every title surface" — was FALSE, and the
+    /// assertions below are the only reason the rule still exists at all. The live rail / tab-strip /
+    /// switcher titles do NOT go through `displayTitle`: they read
+    /// `WorkspaceStore.liveProgramTitle(for:)` (the raw OSC title off the workspace mirror) and
+    /// compose it through `slopdesk_ws_tab_display_title`, and nothing on that path redacts. See
+    /// `PanePresentation.swift`'s header. This pins the RULE, not its reach; repointing it at the
+    /// live path is a change that has to make the live path redact first.
+    func testDisplayTitleRedactsSecrets() {
         let spec = PaneSpec(kind: .terminal, title: "PASSWORD=hunter2secretvalue")
         let shown = PanePresentation.displayTitle(nil, spec: spec)
         XCTAssertTrue(shown.contains(SecretRedactor.mask), "the title is redacted")
-        XCTAssertFalse(shown.contains("hunter2secretvalue"), "the raw secret never reaches a title surface")
+        XCTAssertFalse(shown.contains("hunter2secretvalue"), "the raw secret never survives the rule")
     }
 
     // MARK: - F3: notification rate limiter (pure)

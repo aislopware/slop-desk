@@ -51,7 +51,7 @@ pub fn the_seeded_names_are_the_crates(tree: &Tree) -> Report {
         "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Desktop.swift",
         "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift",
         "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift",
-        "Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift",
+        "Sources/SlopDeskWorkspaceModel/Domain/SessionTemplateEngine.swift",
     ];
     /// The three names, each as the quoted literal a regrowth would spell.
     const SEEDED: &[&str] = &[r#""Terminal""#, r#""Desktop""#, r#""Local""#];
@@ -228,7 +228,7 @@ mod tests {
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Desktop.swift",
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift",
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift",
-            "Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift",
+            "Sources/SlopDeskWorkspaceModel/Domain/SessionTemplateEngine.swift",
         ] {
             fixture.write(path, "let title = TreeWorkspaceDefaults.paneTitle\n");
         }
@@ -271,7 +271,7 @@ mod tests {
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Desktop.swift",
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift",
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Templates.swift",
-            "Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift",
+            "Sources/SlopDeskWorkspaceModel/Domain/SessionTemplateEngine.swift",
         ] {
             fixture.write(path, "let title = TreeWorkspaceDefaults.paneTitle\n");
         }

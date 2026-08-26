@@ -146,7 +146,7 @@ public struct SplitDividerHandle: Equatable, Sendable {
         self.trailingWeight = trailingWeight
     }
 
-    init(ffi: SlopDeskWsDivider) {
+    package init(ffi: SlopDeskWsDivider) {
         self.init(
             splitID: SplitNodeID(ffi: ffi.split),
             childIndex: Int(ffi.child_index),

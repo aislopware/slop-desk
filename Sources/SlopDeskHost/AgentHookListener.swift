@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Darwin
 import Foundation
 import SlopDeskAgentDetect
@@ -23,8 +24,8 @@ import SlopDeskProtocol
 /// it was constructed by nothing outside its own test file. Two machines per pane is the bug the
 /// fused detector exists to prevent, so what is left here is the routing:
 ///
-/// - ``AgentHookRecord`` — the PURE record framing (`pane=<id>` header + raw hook JSON), split out
-///   so the routing is unit-testable without a socket.
+/// - ``AgentHookRecord`` — the record framing (`pane=<id>` header + raw hook JSON), whose grammar is
+///   `rust/slopdesk-muxsession`'s `hook_record` and whose crossing copies nothing.
 ///
 /// - ``AgentHookListener`` — the per-host coordinator. It does NOT bind anything: superd owns the
 ///   `AF_UNIX` listener, because that address is baked into every agent's environment and must
@@ -39,30 +40,38 @@ import SlopDeskProtocol
 ///   plus `4 quiet` — for a status change the client must display but not announce. See
 ///   `SlopDeskAgentDetect.AgentStatusKind`.
 /// - `label` = the Stop `last_assistant_message` / Notification `message`, clamped on the wire.
-/// W10 — the PURE record framing the installed hook POSTs (a `pane=<id>` header line + the raw
-/// hook JSON). Split here so the routing is unit-testable without a socket; the socket shim
-/// only moves bytes. Validate-then-drop: a record with no `pane=` header yields a `nil` pane id
-/// (the JSON is still returned, but the router has no pane to deliver it to → dropped).
+/// W10 — the record framing the installed hook POSTs (a `pane=<id>` header line + the raw hook
+/// JSON), as `slopdesk_muxsession::hook_record` reads it.
+///
+/// The grammar is that module's, beside the four shapes that name no pane and the reason two of
+/// them keep their first line as body while the other two do not. What is here is the crossing, and
+/// it copies nothing: the answer comes back as OFFSETS into the record hostd already holds, because
+/// a hook body carries the tool input and a large `Write` puts hundreds of kilobytes through this
+/// call, twice per tool call.
+///
+/// Validate-then-drop: a record with no pane id yields `nil`, and the router drops it.
 public enum AgentHookRecord {
-    /// Splits a received record into `(paneID, jsonBytes)`. The first line, if it begins with
-    /// `pane=`, supplies the pane id (empty → `nil`); the remainder is the hook JSON. Without a
-    /// `pane=` header the whole record is treated as the JSON (paneID `nil`).
+    /// Splits a received record into `(paneID, jsonBytes)`.
     public static func split(_ record: Data) -> (paneID: String?, json: Data) {
-        // Find the first newline.
-        guard let nl = record.firstIndex(of: 0x0A) else {
-            return (nil, record) // single line — no header
+        let found = record.withUnsafeBytes { raw in
+            slopdesk_hook_record_split(raw.bindMemory(to: UInt8.self).baseAddress, raw.count)
         }
-        let firstLine = record[record.startIndex..<nl]
-        let prefix = Data("pane=".utf8)
-        guard firstLine.starts(with: prefix) else {
-            return (nil, record) // first line is not our header — whole record is JSON
-        }
-        let idBytes = firstLine.dropFirst(prefix.count)
-        let id = String(bytes: idBytes, encoding: .utf8).map {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        let json = Data(record[record.index(after: nl)...])
-        return (id?.isEmpty == true ? nil : id, json)
+        // The offsets are relative to the record's own bytes, and a `Data` slice does not have to
+        // start at zero — a record carved out of a larger read would silently pick up someone
+        // else's bytes without this.
+        let base = record.startIndex
+        // The bytes came back through the door, which already read them as UTF-8 to trim them —
+        // there is no second chance for this to fail, and no absent case a failable init would
+        // model. An id that was NOT decodable answered `has_pane == false` on the far side.
+        // swiftlint:disable:next optional_data_string_conversion
+        let paneID = found.has_pane
+            ? String(
+                decoding: record[(base + found.pane_offset)..<(base + found.pane_offset + found.pane_len)],
+                as: UTF8.self,
+            )
+            : nil
+        let json = record[(base + found.json_offset)..<(base + found.json_offset + found.json_len)]
+        return (paneID, Data(json))
     }
 }
 

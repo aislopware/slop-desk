@@ -72,14 +72,17 @@ slopdesk-terminal = { path = "../slopdesk-terminal" }
 # linear-time guarantee, where ICU's backtracking has no such bound on a line an adversary chose.
 regex = "1"
 
-# UAX-29 grapheme clusters, for `src/keystroke_replay.rs` and NOTHING else. Swift iterates a
+# UAX-29 grapheme clusters, for `src/keystroke_replay.rs` and `src/paste_menu.rs` and NOTHING else.
+# Both are about the SAME clipboard and the same reason. Swift iterates a
 # `String` as `Character`s — extended grapheme CLUSTERS — and the port must, because the caller
 # feeds it a clipboard and the sink is a `sudo` password field. `chars()` would walk SCALARS, so a
 # decomposed "é" (`e` + U+0301) would type a bare `e` and drop the accent as unmappable, turning a
 # password into a DIFFERENT password that the user watches be accepted. The rule the table encodes
 # is "a cluster maps only when it is one ASCII byte", and deciding where one cluster ends is the
 # standard's job, not a byte loop's — hand-rolling the break table is the second implementation of
-# a spec, with a silent-corruption failure mode.
+# a spec, with a silent-corruption failure mode. `paste_menu` counts and CUTS the same clipboard for
+# the menu row that previews it: a scalar count overstates a masked secret's length, and a scalar
+# cut lands inside a cluster and renders as a stray combining mark instead of an ellipsis.
 unicode-segmentation = "1"
 
 # The layout ops run on every drag frame with a live terminal reflow behind them.

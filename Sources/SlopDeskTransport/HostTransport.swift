@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import Network
 
@@ -257,7 +258,9 @@ public actor HostTransport {
     /// a synthesized `now` so the behaviour is verified WITHOUT any wall-clock sleep.
     /// `internal` (not `public`) — it is a test/seam hook, not part of the daemon API.
     func reapExpiredPending(now: ContinuousClock.Instant) {
-        for (id, entry) in pendingMux.filter({ now - $0.value.createdAt > pendingDataTimeout }) {
+        for (id, entry) in pendingMux.filter({
+            MuxPairing.pendingExpired(elapsed: $0.value.createdAt.duration(to: now), timeout: pendingDataTimeout)
+        }) {
             pendingMux[id] = nil
             if let control = entry.control { Task { await control.close() } }
             if let data = entry.data { Task { await data.close() } }
@@ -366,9 +369,17 @@ public actor HostTransport {
             return
         }
         let existing = pendingMux[connectionID]
+        // ONE reading of the arrival, used by both arms. Deciding "both sides are here" from the
+        // two optionals below and the DISPLACEMENT from the rule would be the same question asked
+        // twice in two languages — and the arm that gets it wrong leaks a live fd.
+        let decision = MuxPairing.decide(
+            existingHasControl: existing?.control != nil,
+            existingHasData: existing?.data != nil,
+            isControl: isControl,
+        )
         let control = isControl ? link : existing?.control
         let data = isControl ? existing?.data : link
-        if let control, let data {
+        if decision.paired, let control, let data {
             pendingMux[connectionID] = nil
             // Carry the wire `connectionID` onto the shared connection so the mux relay owner can
             // namespace its per-channel sessions by (connectionID, channelID) — see
@@ -397,16 +408,11 @@ public actor HostTransport {
             // DATA peer arrives) must NOT silently overwrite the parked half-pair: the displaced
             // NWMuxByteLink owns a live NWConnection/fd the reaper only sees via the CURRENT map entry,
             // so it would leak its fd — and a peer re-sending the same side repeatedly leaks one per
-            // duplicate AND restamps createdAt, pushing the reaper deadline out. The pure, unit-tested
-            // ``MuxPairing`` decides whether this re-park displaces a same-side half; if so close it,
-            // and preserve the original createdAt so the reaper deadline cannot be deferred.
+            // duplicate AND restamps createdAt, pushing the reaper deadline out. ``MuxPairing`` above
+            // decided whether this re-park displaces a same-side half; if so close it, and preserve
+            // the original createdAt so the reaper deadline cannot be deferred.
             // On the genuine first arrival (existing == nil) nothing is displaced and createdAt is now.
-            let decision = MuxPairing.decide(
-                existingHasControl: existing?.control != nil,
-                existingHasData: existing?.data != nil,
-                isControl: isControl,
-            )
-            if decision.closesDisplacedSameSide, let replaced = isControl ? existing?.control : existing?.data {
+            if decision.closes_displaced_same_side, let replaced = isControl ? existing?.control : existing?.data {
                 Task { await replaced.close() }
             }
             pendingMux[connectionID] = PendingMuxLink(
@@ -416,30 +422,40 @@ public actor HostTransport {
     }
 }
 
-/// The pure pairing decision for a just-arrived mux half-link, given the currently-parked half (if
-/// any) and which side arrived. Extracted so the duplicate-same-side fd-leak guard is
-/// unit-testable without a real `NWConnection`: the two physical mux sockets (CONTROL + DATA) sharing
-/// one connectionID pair into one ``MuxNWConnection``; the first to arrive parks, the second completes
-/// the pair. A SECOND socket for a side that is ALREADY parked (two CONTROLs, or two DATAs, before the
-/// opposite peer shows) must NOT silently overwrite the parked half — the displaced link owns a live
-/// fd the reaper only sees via the current map entry, so it must be closed.
+/// What the listener does about a just-arrived mux half-link, and when it gives up on one that is
+/// still waiting, as `slopdesk_muxsession::pairing` answers both.
+///
+/// Nothing about the socket crosses, because nothing needs to: the listener says which side arrived
+/// and which side it already holds, and gets back the two acts it owes — build the pair, and close
+/// the socket it is about to drop. Closing is this side's, because the file descriptor is.
 enum MuxPairing {
-    struct Decision: Equatable {
-        /// Both sides are now present — build the shared connection.
-        var paired: Bool
-        /// A re-park is displacing an already-parked SAME-SIDE half that must be `close()`d.
-        var closesDisplacedSameSide: Bool
+    /// The pairing rule for one arriving half-link, against the half already parked under its id.
+    static func decide(
+        existingHasControl: Bool, existingHasData: Bool, isControl: Bool,
+    ) -> SlopDeskMuxPairing {
+        slopdesk_mux_pairing_decide(existingHasControl, existingHasData, isControl)
     }
 
-    static func decide(existingHasControl: Bool, existingHasData: Bool, isControl: Bool) -> Decision {
-        let controlPresent = isControl ? true : existingHasControl
-        let dataPresent = isControl ? existingHasData : true
-        if controlPresent, dataPresent {
-            return Decision(paired: true, closesDisplacedSameSide: false)
-        }
-        // Re-park: the half on the arriving side displaces whatever was already parked on that side.
-        let displacedPresent = isControl ? existingHasControl : existingHasData
-        return Decision(paired: false, closesDisplacedSameSide: displacedPresent)
+    /// Whether a half-paired entry has waited past the listener's bound.
+    ///
+    /// The `ContinuousClock` instants themselves are monotonic tokens rather than numbers; their
+    /// DIFFERENCE is a number, so that is what crosses. A clock that appears to run backwards
+    /// saturates to zero elapsed, which is never expired — the entry waits for the next tick rather
+    /// than being reaped the instant it was parked.
+    static func pendingExpired(elapsed: Duration, timeout: Duration) -> Bool {
+        slopdesk_mux_pending_expired(nanoseconds(elapsed), nanoseconds(timeout))
+    }
+
+    /// A `Duration` as whole nanoseconds, which is the only unit that crosses. A negative span —
+    /// which only a clock reading backwards produces — is zero, not a wrapped enormous one.
+    private static func nanoseconds(_ duration: Duration) -> UInt64 {
+        let parts = duration.components
+        guard parts.seconds >= 0 else { return 0 }
+        let whole = UInt64(clamping: parts.seconds).multipliedReportingOverflow(by: 1_000_000_000)
+        guard !whole.overflow else { return .max }
+        let fraction = UInt64(clamping: max(0, parts.attoseconds / 1_000_000_000))
+        let total = whole.partialValue.addingReportingOverflow(fraction)
+        return total.overflow ? .max : total.partialValue
     }
 }
 

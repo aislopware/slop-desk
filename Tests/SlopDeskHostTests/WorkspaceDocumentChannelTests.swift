@@ -501,6 +501,34 @@ final class WorkspaceDocumentChannelTests: XCTestCase {
         session.close()
     }
 
+    /// The retained documents are the host's own memory, and the ladder that decides which of them
+    /// are still worth keeping lives on the other side of the FFI boundary. A slot it released and
+    /// this side never deleted is a whole workspace leaked per frame, per subscriber, forever — and
+    /// no assertion about the wire would ever see it.
+    func testRetainedDocumentsNeverOutgrowTheWindow() async {
+        let channel = RecordingChannel()
+        let session = makeSession(channel)
+        session.start()
+        let epoch = UUID()
+        var state = HostWorkspaceState()
+        // Ack a state number that was never sent every round: it clears the frame in flight without
+        // pruning anything, which is the ONLY way the window grows past one entry.
+        for step in 1...(WorkspaceChannelSession.retainedSentStates * 3) {
+            state.merge(paneLiveness: PaneLiveness(paneID: paneA, liveTitle: "v\(step)"))
+            session.deliver(epoch: epoch, stateNum: Int64(step), state: state)
+            await expect { channel.events.count >= step }
+            session.note(ack: -1)
+            await expect { session.outstandingForTesting == nil }
+            XCTAssertLessThanOrEqual(
+                session.retainedStateCountForTesting,
+                WorkspaceChannelSession.retainedSentStates + 1,
+                "the window plus the base is everything a subscriber may hold",
+            )
+        }
+        session.close()
+        XCTAssertEqual(session.retainedStateCountForTesting, 0)
+    }
+
     // MARK: Presence
 
     func testPresenceNeverTouchesTheStateNumbers() async throws {

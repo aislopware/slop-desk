@@ -35,10 +35,29 @@ import SlopDeskVideoProtocol
 public actor SlopDeskVideoHostSession {
     private let log = Logger(subsystem: "slopdesk.video.host", category: "SlopDeskVideoHostSession")
 
+    /// The whole `SLOPDESK_*` operating point, resolved ONCE through `rust/slopdesk-video`'s
+    /// `host_gates` — every default, every clamp and the precedence between the pacing keys.
+    ///
+    /// Each flag below is now a NAME for one of its fields. What each flag MEANS, and the
+    /// measurement that chose its default, stays here beside the code that acts on it; what the
+    /// default IS, and what an out-of-range value does, is a rule, and rules do not get written
+    /// down twice. The three arguments are the inputs no environment key carries — the injector's
+    /// resampler state (the scroll coalescer's default follows it, as it always did) and the
+    /// keepalive window the silence pause is clamped into.
+    ///
+    /// Forced by the first flag anything reads, which is the same launch instant the thirty-three
+    /// separate `static let`s used to force themselves at — and, unlike them, through
+    /// ``EnvConfig/string(_:)``, so the settings overlay can reach these keys at all.
+    private static let gates = HostGateTable.resolve(
+        scrollResamplerActive: InputInjector.scrollResamplerActive,
+        keepaliveInterval: KeepaliveTiming.keepaliveInterval,
+        idleTimeout: KeepaliveTiming.idleTimeout,
+    )
+
     /// Opt-in stderr diagnostics (`SLOPDESK_VIDEO_DEBUG=1`). OSLog `.info`/`.debug` aren't persisted,
     /// so a headless verify (`slopdesk-guigate video`) can't read the capture/encode flow from
     /// `log show`; when enabled, lifecycle beats mirror to stderr to pinpoint pipeline stalls. No-op in production.
-    private static let debugStderr = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
+    private static let debugStderr = gates.debug_stderr
     /// Burst-resilient transmission interleaving (anti-flicker). DEFAULT ON; `SLOPDESK_INTERLEAVE=0`
     /// reverts to plain consecutive send order. Interleaving is a pure send-order permutation (header /
     /// `fragIndex` untouched, reassembler reorder-tolerant) → NO wire change, so it cannot white-screen
@@ -46,7 +65,7 @@ public actor SlopDeskVideoHostSession {
     /// →REAL HW decode) reports 120/120 clean at no-loss AND full FEC recovery of the 2- and 3-adjacent
     /// datagram bursts that plain order drops entirely (0/120). The pure reorder law (`rust/slopdesk-video`'s `interleaver`, + tests)
     /// and the harness scenarios are the regression proof.
-    private static let interleaveTransmit = ProcessInfo.processInfo.environment["SLOPDESK_INTERLEAVE"] != "0"
+    private static let interleaveTransmit = gates.interleave_transmit
     /// SEND PACING (anti-flicker; reorder-free, no wire change). A large frame (a ~115 KB heartbeat IDR
     /// ≈ 97 datagrams, or a big scroll delta) sent as ONE instant burst overflows the client UDP receive
     /// buffer / WireGuard tunnel → consecutive packet loss → the single-loss XOR FEC cannot recover → a
@@ -62,17 +81,13 @@ public actor SlopDeskVideoHostSession {
     /// (``paceRateMultiplier``): bursts capped at k× the sustained rate while the heaviest frame still
     /// drains in ~10ms (≲ a frame interval). Frames ≤ ``paceChunkFragments`` datagrams still send in one
     /// shot (input latency unaffected).
-    private static let paceSend = ProcessInfo.processInfo.environment["SLOPDESK_PACE"] != "0"
+    private static let paceSend = gates.pace_send
     /// Frames with at most this many datagrams send in one shot (no pacing) — covers static-window
     /// P-frames and small deltas. Above it, send in chunks of this size with ``paceGapNanos`` between.
     private static let paceChunkFragments = 8
     /// Gap between paced chunks. 0.5 ms × (97/8 ≈ 12 chunks) ≈ 6 ms to drain a heartbeat IDR — well
     /// under the 16 ms frame interval, so the consumer never falls behind. Override µs via `SLOPDESK_PACE_US`.
-    private static let paceGapNanos: UInt64 = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_PACE_US"], let v = UInt64(s), v >= 1,
-           v <= 10000 { return v * 1000 }
-        return 500_000
-    }()
+    private static let paceGapNanos = gates.pace_gap_nanos
 
     /// RATE-PROPORTIONAL pacing. The fixed `paceGapNanos` (0.5ms) drains an 8-fragment (~9600-byte) chunk
     /// ~13× FASTER than a 12Mbps link absorbs → a big frame blasts ~146Mbps → self-inflicted burst loss
@@ -81,10 +96,7 @@ public actor SlopDeskVideoHostSession {
     /// computed so a chunk drains at ≈ the LIVE ABR target (`lastActuatedBitrate`): gap = chunkBytes×8 /
     /// targetBps. slopdesk's equivalent of Parsec's window-AIMD-paced send — never puts more bytes/sec on
     /// the wire than the link drains. An explicit `SLOPDESK_PACE_US` pins a static gap (A/B).
-    private static let pacingAdaptive: Bool = {
-        if ProcessInfo.processInfo.environment["SLOPDESK_PACE_US"] != nil { return false } // explicit static pin wins
-        return ProcessInfo.processInfo.environment["SLOPDESK_PACE_ADAPTIVE"] != "0"
-    }()
+    private static let pacingAdaptive = gates.pacing_adaptive
 
     /// Link-rate fallback when the ABR target is not yet known (ABR off / pre-warmup).
     private static let pacingFallbackBps = 12_000_000
@@ -93,12 +105,7 @@ public actor SlopDeskVideoHostSession {
     /// 16.7ms frame interval, i.e. the measured "lag grows while you scroll" harm. k=2.5 keeps
     /// the instantaneous burst at 2.5× the sustained rate (gentle on Wi-Fi airtime/WireGuard
     /// queues) while a 133KB worst-case frame drains in ~10ms.
-    private static let paceRateMultiplier: Double = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_PACE_RATE_X"], let v = Double(s), v.isFinite {
-            return min(10, max(1, v))
-        }
-        return 2.5
-    }()
+    private static let paceRateMultiplier = gates.pace_rate_multiplier
 
     /// Clamp the adaptive gap: never faster than 0.2ms (a high ABR target would otherwise ≈0 it), never
     /// slower than 40ms/chunk (a collapsed-to-floor ABR must not serialize a frame into a multi-second stall).
@@ -108,18 +115,13 @@ public actor SlopDeskVideoHostSession {
     /// the encoder-output pump: pacing frame N inline delays frames N+1..k → measured send gaps
     /// 28–179ms on the real path (the visible stutter). DEFAULT ON; `SLOPDESK_SEND_LANE=0` selects the
     /// inline `sendPaced` path.
-    private static let sendLaneEnabled = ProcessInfo.processInfo.environment["SLOPDESK_SEND_LANE"] != "0"
+    private static let sendLaneEnabled = gates.send_lane_enabled
     /// Pace KEYFRAMES at no less than this rate. A recovery IDR paced at a post-backoff ABR rate
     /// (collapsed to the floor) serializes over 100s of ms — and IDR delivery time IS recovery time.
     /// Measured (iperf3): the path carries 30Mbps with the same ~1% weather loss as 5Mbps, so draining
     /// an IDR at ≥12Mbps costs nothing in loss while cutting the freeze tail.
     /// `SLOPDESK_KF_PACE_FLOOR_BPS` overrides (clamp 1–100 Mbps).
-    private static let kfPaceFloorBps: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_KF_PACE_FLOOR_BPS"], let v = Int(s) {
-            return min(100_000_000, max(1_000_000, v))
-        }
-        return 12_000_000
-    }()
+    private static let kfPaceFloorBps = Int(gates.kf_pace_floor_bps)
 
     /// DELTA send-pace FLOOR. DEFAULT **12 Mbps** (`SLOPDESK_DELTA_PACE_FLOOR_BPS` overrides; an
     /// explicit `0`/negative disables ⇒ `max(ABR, 0) == ABR`, the raw-ABR pacing). A non-keyframe
@@ -133,12 +135,7 @@ public actor SlopDeskVideoHostSession {
     /// FLOORS the pace rate, never UN-paces, and reintroduces no ABR sawtooth. Inert whenever ABR ≥ floor
     /// (an active scene already paces fast). The keyframe floor (same 12M, always-on on this exact path)
     /// is the existence proof the floor is burst-safe. Clamp 1–100 Mbps, mirroring ``kfPaceFloorBps``.
-    private static let deltaPaceFloorBps: Int = {
-        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_DELTA_PACE_FLOOR_BPS"],
-              let v = Int(s) else { return 12_000_000 } // unset ⇒ default floor (HW-validated 07-21)
-        guard v > 0 else { return 0 } // explicit 0/negative ⇒ OFF: max(ABR, 0) == ABR ⇒ raw-ABR pacing
-        return min(100_000_000, max(1_000_000, v))
-    }()
+    private static let deltaPaceFloorBps = Int(gates.delta_pace_floor_bps)
 
     /// CONGESTION BACKPRESSURE. The paced ``VideoSendLane`` is an unbounded FIFO: under a sustained
     /// scroll burst the encoder outruns the drain, the queue grows without bound, and latency bloats to
@@ -151,14 +148,8 @@ public actor SlopDeskVideoHostSession {
     /// intervals. A frame with a forced obligation (keyframe / crisp / compact / LTR-refresh) ALWAYS
     /// passes — recovery/sharpness anchors, never droppable. DEFAULT ON; `SLOPDESK_BACKPRESSURE=0`
     /// disables. `SLOPDESK_BACKPRESSURE_DEPTH` overrides (clamp 1…30).
-    private static let backpressureEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_BACKPRESSURE"] != "0"
-    private static let backpressureDepth: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_BACKPRESSURE_DEPTH"], let v = Int(s) {
-            return min(30, max(1, v))
-        }
-        return 3
-    }()
+    private static let backpressureEnabled = gates.backpressure_enabled
+    private static let backpressureDepth = Int(gates.backpressure_depth)
 
     /// SCROLL COALESCING. A fast trackpad scroll + its OS momentum coast is a ~200/s event flood.
     /// Injecting each delta as its own synchronous `CGEvent.post` (i.e. treating `.scroll` as a
@@ -172,10 +163,7 @@ public actor SlopDeskVideoHostSession {
     /// HW-measured), ON when the resampler is explicitly disabled (the gate then resumes its
     /// anti-flood job on the direct-post path). Explicit `SLOPDESK_SCROLL_COALESCE=1`/`0` overrides
     /// either way (A/B).
-    private static let scrollCoalesceEnabled: Bool = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_COALESCE"] { return s != "0" }
-        return !InputInjector.scrollResamplerActive
-    }()
+    private static let scrollCoalesceEnabled = gates.scroll_coalesce_enabled
 
     /// Minimum wall-clock interval between injected (summed) scroll events when coalescing is on.
     /// The inbound datagrams are drained one-at-a-time (interleaved with recovery acks), so a pure
@@ -189,11 +177,7 @@ public actor SlopDeskVideoHostSession {
     /// windowed fps 33-51; 8ms ⇒ 70 gaps, fps 55-59 ≈ Parsec's 58.8-60 on the same host. 120/s
     /// summed posts stay well under the ~200/s per-delta flood that stalls the WindowServer.
     /// `SLOPDESK_SCROLL_INJECT_MS` overrides (clamp 4…50).
-    private static let scrollInjectInterval: Double = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_INJECT_MS"], let v = Double(s),
-           v >= 4, v <= 50 { return v / 1000.0 }
-        return 0.008
-    }()
+    private static let scrollInjectInterval = gates.scroll_inject_interval
 
     // Which scroll phases accumulate is `slopdesk-video`'s `is_coalescable_scroll_phase`, inside the
     // fold ``ScrollCoalescePlanner`` is the face of — only the high-frequency continuous phases do,
@@ -228,14 +212,14 @@ public actor SlopDeskVideoHostSession {
     /// metric"), and the established pattern (ABR/LTR/kfDup) is env-gated OFF → HW feel-test → flip the
     /// default. When OFF the host is byte-identical: no gate, no streamCadence message, no self-heal
     /// rebase. `SLOPDESK_FPS_GOVERNOR=1` enables; tunables `SLOPDESK_FPS_GOV_*`.
-    private static let fpsGovernorEnabled = ProcessInfo.processInfo.environment["SLOPDESK_FPS_GOVERNOR"] == "1"
+    private static let fpsGovernorEnabled = gates.fps_governor_enabled
     /// In-place SCStream resize (default ON): reconfigure the live stream via `updateConfiguration` on
     /// a window resize instead of restarting it (~120ms SCK spin-up = the resize freeze). HW-validated:
     /// 6 back-to-back pane resizes ALL took the in-place path with NO SCStream restart (capture-gap
     /// stayed ~36ms, never the ~120ms spin-up), 0 errors, loss 0. Display-anchored modes only (the live
     /// default); union/`.window`/any failure fall back to the byte-identical restart path, so correctness
     /// never regresses. `SLOPDESK_INPLACE_RESIZE=0` forces the restart path.
-    private static let inPlaceResizeEnabled = ProcessInfo.processInfo.environment["SLOPDESK_INPLACE_RESIZE"] != "0"
+    private static let inPlaceResizeEnabled = gates.in_place_resize_enabled
 
     /// PURE (unit-tested): inter-chunk pacing gap (ns) so `chunkFragments × datagramSize` bytes drain at
     /// `targetBps × rateMultiplier`, clamped to `[floorNanos, ceilNanos]`. `targetBps <= 0` ⇒ `fallbackBps`.
@@ -279,7 +263,7 @@ public actor SlopDeskVideoHostSession {
     /// lost (weather loss ~1% ⇒ ~1e-4 per fragment), and the ``VideoSendLane`` keeps the duplicate's
     /// time-separation out of the encoder pump. Byte cost is keyframes only, throttled ≤1 dup per 250ms,
     /// on a path measured to carry 30Mbps at the same loss as 5Mbps. `SLOPDESK_KF_DUP=0` disables.
-    private static let kfDup = ProcessInfo.processInfo.environment["SLOPDESK_KF_DUP"] != "0"
+    private static let kfDup = gates.kf_dup
     /// Throttle so a recovery-IDR burst is not byte-amplified: duplicate at most one keyframe per interval.
     private static let kfDupMinInterval: TimeInterval = 0.25
     /// kfDup engages only when the loss EWMA (`networkEstimate.lossRate`) is at/above this. On a clean
@@ -288,12 +272,7 @@ public actor SlopDeskVideoHostSession {
     /// loss, so they stay protected. 0.5% mirrors the adaptive-FEC ladder's lowest escalation boundary.
     /// A UNIVERSAL signal: works whether the adaptive-FEC/-m gates are on or off (the adaptive-m tier is
     /// default-OFF, so a tier-only gate would leave the default config always-dupping). `SLOPDESK_KF_DUP_LOSS`.
-    private static let kfDupLossThreshold: Double = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_KF_DUP_LOSS"], let v = Double(s), v >= 0 {
-            return v
-        }
-        return 0.005
-    }()
+    private static let kfDupLossThreshold = gates.kf_dup_loss_threshold
 
     /// How long ``gateRecoveryIDR`` keeps kfDup armed after a recovery-keyframe request (fast-attack
     /// window, uptime seconds). Comfortably covers the recovery IDR's next-capture encode + paced send
@@ -323,12 +302,11 @@ public actor SlopDeskVideoHostSession {
     /// Gated on the link being CURRENTLY lossy (an elevated adaptive-`m` FEC tier, i.e. not the
     /// relaxed CLEAN level) so an idle/static stream — every frame a tiny byte-identical delta — is
     /// NOT doubled. Requires adaptive-m (the live WAN config); inert otherwise.
-    private static let smallDup = ProcessInfo.processInfo.environment["SLOPDESK_SMALL_DUP"] == "1"
+    private static let smallDup = gates.small_dup
     /// A frame qualifies as "small" for ``smallDup`` when its encoded byte length is at most this
     /// (a keystroke delta is ~100–500 B / ~1 MTU; a scroll frame is KB–tens-of-KB and relies on FEC,
     /// not duplication). Default ~1 MTU-and-a-bit so only genuine 1-fragment deltas qualify.
-    private static let smallDupMaxBytes: Int =
-        ProcessInfo.processInfo.environment["SLOPDESK_SMALL_DUP_MAX_BYTES"].flatMap(Int.init) ?? 1400
+    private static let smallDupMaxBytes = Int(gates.small_dup_max_bytes)
     /// NACK / selective-ARQ retransmit. DEFAULT OFF (`SLOPDESK_NACK=1`; deploy host +
     /// client together). When on, the host keeps a bounded ring of recently-sent frame datagrams so a
     /// client NACK (``RecoveryDatagramRouter/Decision/retransmitFragments(frameID:fragIndices:)``) is
@@ -337,14 +315,12 @@ public actor SlopDeskVideoHostSession {
     /// gate (its reassembler holds a FEC-unrecoverable frame for the retransmit grace + NACKs the
     /// missing fragments). A ring miss (frame aged out) is a no-op; the LTR-refresh path is the
     /// fallback.
-    private static let nackEnabled = ProcessInfo.processInfo.environment["SLOPDESK_NACK"] == "1"
+    private static let nackEnabled = gates.nack_enabled
     /// Retransmit ring depth in FRAMES (~`/60`s at 60fps): the loss-detect + NACK + retransmit round
     /// trip is a few frames, so a generous history covers it. Bounded jointly by bytes below.
-    private static let retransmitRingFrames =
-        ProcessInfo.processInfo.environment["SLOPDESK_NACK_RING_FRAMES"].flatMap(Int.init) ?? 96
+    private static let retransmitRingFrames = Int(gates.retransmit_ring_frames)
     /// Retransmit ring byte ceiling (an IDR is large; cap total history so the ring can't bloat).
-    private static let retransmitRingMaxBytes =
-        ProcessInfo.processInfo.environment["SLOPDESK_NACK_RING_BYTES"].flatMap(Int.init) ?? (8 << 20)
+    private static let retransmitRingMaxBytes = Int(gates.retransmit_ring_max_bytes)
 
     /// The NACK retransmit ring (see ``RetransmitRing``) — `nil` (no memory) unless ``nackEnabled``.
     private var retransmitRing: RetransmitRing? = SlopDeskVideoHostSession.nackEnabled
@@ -362,7 +338,7 @@ public actor SlopDeskVideoHostSession {
     /// narrower-or-provably-correct vs the sent-keyed gate except the grace window (40-250 ms ≪ 500 ms),
     /// the sustained IDR rate cap is identical (2/s), and the wire fields ship unconditionally anyway —
     /// one env flips back exactly.
-    private static let recoveryIDRV2 = ProcessInfo.processInfo.environment["SLOPDESK_RECOVERY_IDR_V2"] != "0"
+    private static let recoveryIDRV2 = gates.recovery_idr_v2
     /// Tunables for the V2 policy: `SLOPDESK_IDR_TOKENS` (bucket capacity, clamp 1...4),
     /// `SLOPDESK_IDR_REFILL_MS` (ms per token, clamp 100...5000 — default 500 = the sent-keyed spacing),
     /// `SLOPDESK_IDR_GRACE_MS` (pins floor=ceil for A/B, clamp 0...1000; unset = adaptive
@@ -390,7 +366,7 @@ public actor SlopDeskVideoHostSession {
     /// 0 timestamp → the client observes 0 → reports `latestHostSendTs = 0` → the RTT fold is skipped
     /// (computeRTTMillis returns nil) and the path stays open-loop. The 4-byte wire field is present
     /// either way (fixed header layout).
-    private static let telemetryEnabled = ProcessInfo.processInfo.environment["SLOPDESK_NETSTATS"] != "0"
+    private static let telemetryEnabled = gates.telemetry_enabled
     /// ADAPTIVE BITRATE. DEFAULT **ON**; `SLOPDESK_ABR=0` reverts to open-loop. When ON the host
     /// folds each client NetworkStats report (already done for telemetry) into a
     /// ``LiveCongestionController`` and actuates the resulting target via ``VideoEncoder/setLiveBitrate(_:)``.
@@ -400,7 +376,7 @@ public actor SlopDeskVideoHostSession {
     /// Default-ON rationale: the controller is weather-proof (it holds the rate on uncorroborated loss and
     /// backs off only on queue evidence or sustained collapse), so the closed loop is pure upside — on a
     /// clean LAN/loopback it sits inert at the ceiling.
-    private static let abrEnabled = ProcessInfo.processInfo.environment["SLOPDESK_ABR"] != "0"
+    private static let abrEnabled = gates.abr_enabled
     /// ADAPTIVE FEC. DEFAULT **ON**; `SLOPDESK_ADAPTIVE_FEC=0` pins the static always-g5 tier. When
     /// ON the host picks a per-frame XOR-parity group size (``AdaptiveFECPolicy``) from the folded loss
     /// EWMA and signals it in each fragment's flags so the client splits data/parity identically. When OFF
@@ -413,7 +389,7 @@ public actor SlopDeskVideoHostSession {
     /// + kfDup. FEC LADDER FLOOR: relaxation FLOORS at g10 (tier 2, ~10% overhead) — walking all the way
     /// to OFF is measurably harmful (18 OFF-tier visits on a 0.1-0.6%-baseline path produced 102
     /// unrecovered losses / 65 decode-fails in 169s). `SLOPDESK_FEC_ALLOW_OFF=1` re-allows the walk to OFF.
-    private static let adaptiveFECEnabled = ProcessInfo.processInfo.environment["SLOPDESK_ADAPTIVE_FEC"] != "0"
+    private static let adaptiveFECEnabled = gates.adaptive_fec_enabled
     /// ADAPTIVE-`m` ladder gate (`SLOPDESK_ADAPTIVE_FEC_M=1`, default OFF; requires a multi-loss
     /// codec `SLOPDESK_FEC_M>=2`). When on, the host steps the per-frame parity multiplicity `m`
     /// by loss (tiers 5/6/7 → m 2/3/5) instead of the group-size tier — lower overhead on a clean
@@ -429,7 +405,7 @@ public actor SlopDeskVideoHostSession {
     /// decoder + Metal shader. When OFF all four stay video-range. Read once (env static, like the flags
     /// above). NOTE: this is a HOST flag only — the client follows the stream, so there is NO matching
     /// client env to keep in sync (the desync footgun is unreachable).
-    private static let fullRange = ProcessInfo.processInfo.environment["SLOPDESK_FULL_RANGE"] == "1"
+    private static let fullRange = gates.full_range
     /// LONG-TERM-REFERENCE RECOVERY. DEFAULT **ON** (`SLOPDESK_LTR=0` disables); HW probe on this
     /// host reports VERDICT=supported. When ON: the encoder sets EnableLTR + reads the per-frame ack
     /// token, LTR frames carry the `isLTR` wire bit, the client acks decoded LTR frames, and a
@@ -443,11 +419,11 @@ public actor SlopDeskVideoHostSession {
     /// recovery happens many times a minute and its COST is what the user feels. With LTR off every
     /// recovery is a full IDR + client decoder rebuild; with LTR on it is a cheap ForceLTRRefresh P-frame
     /// against an acked token, no decoder flush — Parsec-class next-frame self-healing recovery.
-    private static let ltrEnabled = ProcessInfo.processInfo.environment["SLOPDESK_LTR"] != "0"
+    private static let ltrEnabled = gates.ltr_enabled
     /// Full per-event injection trace (`SLOPDESK_INPUT_TRACE=1`): logs EVERY injected input event
     /// with a monotonic sequence number (NOT sampled), so a loopback run can read the exact
     /// injected ORDER — the ground truth for input-ordering bugs. No-op in production.
-    private static let inputTrace = ProcessInfo.processInfo.environment["SLOPDESK_INPUT_TRACE"] != nil
+    private static let inputTrace = gates.input_trace
     private var encodedFrameCount = 0
     /// Uptime seconds of the last keyframe whose datagrams were duplicate-sent (the kfDup throttle).
     private var lastKeyframeDupTime: TimeInterval = 0
@@ -502,11 +478,7 @@ public actor SlopDeskVideoHostSession {
     /// spacing (lossy escalation floor, 60 ms; at the resolved defaults 25 ms < 60 ms with room to
     /// spare, pinned by the coupling test). Internal (not private) so the coupling test can assert
     /// against the RESOLVED constants.
-    static let recoveryDedupWindow: TimeInterval = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_RECOVERY_DEDUP_MS"],
-           let v = Double(s), v >= 0, v <= 200 { return v / 1000.0 }
-        return 0.025
-    }()
+    static let recoveryDedupWindow: TimeInterval = gates.recovery_dedup_window
 
     /// ADAPTIVE BITRATE controller (only seeded when `SLOPDESK_ABR=1`). A pure value type re-seeded
     /// at every encoder build so a resize re-anchors it to the new resolution's ceiling. `nil` ⇒ ABR
@@ -683,7 +655,7 @@ public actor SlopDeskVideoHostSession {
     /// quick menu open→close must not rebuild the encoder twice). Cancelled by a fresh expand.
     private var pendingContractTask: Task<Void, Never>?
     /// Feature gate: default ON when display-anchored (VD-parked); `SLOPDESK_DIALOG_EXPAND=0` disables.
-    static let dialogExpandEnabled = ProcessInfo.processInfo.environment["SLOPDESK_DIALOG_EXPAND"] != "0"
+    static let dialogExpandEnabled = gates.dialog_expand_enabled
 
     /// Ordered + COALESCING inbound pump — input ORDER and input LATENCY in one structure.
     /// The transport delivers datagrams in strict arrival order on its serial receive queue; it
@@ -806,7 +778,7 @@ public actor SlopDeskVideoHostSession {
         // frame (+1 pacing chunk ≈ +1.5ms lane serialization, sent AFTER the data) on EVERY frame
         // to save the occasional loss-recovery round-trip. The client reads the FEC tier per
         // fragment, so a parity-less stream is wire-compatible with an unchanged client.
-        let fecDisabled = ProcessInfo.processInfo.environment["SLOPDESK_FEC"] == "0"
+        let fecDisabled = Self.gates.fec_disabled
         packetizeLane = PacketizeLane(fec: fecDisabled ? nil : fec)
     }
 
@@ -835,7 +807,7 @@ public actor SlopDeskVideoHostSession {
         governedFps = max(1, fps)
         stateMachine = VideoSessionStateMachine(fullRange: Self.fullRange)
         // Same SLOPDESK_FEC=0 A/B gate as the window init (see the comment there).
-        let fecDisabled = ProcessInfo.processInfo.environment["SLOPDESK_FEC"] == "0"
+        let fecDisabled = Self.gates.fec_disabled
         packetizeLane = PacketizeLane(fec: fecDisabled ? nil : fec)
     }
 
@@ -1702,11 +1674,7 @@ public actor SlopDeskVideoHostSession {
     /// identical — the capturer is never told to pause). When set it is clamped to
     /// `[keepaliveInterval, idleTimeout)` = [5, 30): shorter than one keepalive interval would trip on
     /// a normal keepalive-only gap; ≥ the reaper is pointless (it already tore the session down).
-    static let clientSilencePauseSeconds: Double = {
-        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_PAUSE_SILENT_SEC"],
-              let v = Double(s), v > 0 else { return 0 } // unset/≤0 ⇒ OFF
-        return min(KeepaliveTiming.idleTimeout - 0.001, max(KeepaliveTiming.keepaliveInterval, v))
-    }()
+    static let clientSilencePauseSeconds = gates.client_silence_pause_seconds
 
     /// PURE: whether video should PAUSE for client silence. Disabled (`thresholdSeconds <= 0`) or an
     /// unproven client (never sent feedback) ⇒ never pause — mirrors the idle-reaper's

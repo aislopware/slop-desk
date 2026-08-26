@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 /// TTL-bounded store for detached (client-disconnected) ``MuxChannelSession`` instances.
@@ -127,12 +128,20 @@ final class DetachedSessionStore: @unchecked Sendable {
             overflowVictim = store.removeValue(forKey: entries[victim].session.sessionID)
         }
 
-        let ttlTask: Task<Void, Never>? = ttl.map { ttl in
+        // Whether there is to be a timer is the rule's; the `Task` that runs one is not. Arming
+        // beside an entry that already carries an armed timer is the failure the idempotent arm
+        // exists to prevent — both evict by ID, so the first to fire kills whatever entry holds
+        // that id by then — and an ABSENT ttl is the default (tmux/zellij semantics) rather than a
+        // configuration that went missing.
+        let armsTTL = DetachStoreRules.ttlOnInsert(
+            idempotent: verdict.isIdempotent, hasTTL: ttl != nil,
+        ) == UInt8(SLOPDESK_TTL_ARM)
+        let ttlTask: Task<Void, Never>? = armsTTL ? ttl.map { ttl in
             Task { [weak self] in
                 do { try await Task.sleep(for: ttl) } catch { return }
                 self?.evict(id)
             }
-        }
+        } : nil
 
         store[id] = Entry(session: session, key: key, detachedAt: Date(), ttlTask: ttlTask)
         lock.unlock()
@@ -185,18 +194,24 @@ final class DetachedSessionStore: @unchecked Sendable {
 
     func claim(_ sessionID: UUID) -> ClaimOutcome {
         lock.lock()
-        guard let entry = store.removeValue(forKey: sessionID) else {
-            lock.unlock()
-            return .notFound
-        }
-        entry.ttlTask?.cancel()
+        let entry = store.removeValue(forKey: sessionID)
+        // The removal and this cancellation are ONE critical section, and that is what closes the
+        // reattach-vs-TTL race: an armed eviction that outlives the section can still find the
+        // entry and kill the PTY out from under the in-flight rebind. The rule below answers
+        // `.cancel` for exactly this; it is spelled here because WHERE it happens is the point.
+        entry?.ttlTask?.cancel()
         lock.unlock()
 
-        if entry.session.isChildExited() {
-            entry.session.shutdownDetached()
-            return .reapedDeadChild(entry.session)
-        }
-        return .claimed(entry.session)
+        // Asked outside the lock, deliberately. `isChildExited()` reads the PTY's own exit lock,
+        // and the notification that sets it runs a teardown that comes back through `remove(_:)` —
+        // taking that lock under this one would put the two in a cycle.
+        let verdict = DetachStoreRules.take(
+            present: entry != nil, childExited: entry?.session.isChildExited() ?? false,
+        )
+        guard let entry, verdict.won else { return .notFound }
+        guard verdict.reapDeadChild else { return .claimed(entry.session) }
+        entry.session.shutdownDetached()
+        return .reapedDeadChild(entry.session)
     }
 
     // MARK: Contains
@@ -249,8 +264,12 @@ final class DetachedSessionStore: @unchecked Sendable {
         lock.lock()
         let entry = store.removeValue(forKey: sessionID)
         lock.unlock()
-        entry?.ttlTask?.cancel()
-        return entry != nil
+        // `childExited: false` is a statement, not a shrug: the shell's own exit is WHY this is
+        // being called, its `onExit` has already fired, so there is nothing left to discover about
+        // the child and nothing left to reap.
+        let verdict = DetachStoreRules.take(present: entry != nil, childExited: false)
+        if verdict.ttl == UInt8(SLOPDESK_TTL_CANCEL) { entry?.ttlTask?.cancel() }
+        return verdict.won
     }
 
     // MARK: Evict (TTL / overflow)
@@ -262,8 +281,12 @@ final class DetachedSessionStore: @unchecked Sendable {
         lock.lock()
         let entry = store.removeValue(forKey: sessionID)
         lock.unlock()
-        guard let entry else { return }
-        entry.ttlTask?.cancel()
+        // The same take, read for the same latch: an eviction that lost to a reattach removed
+        // nothing and must kill nothing. `childExited` is not asked because the answer changes
+        // nothing here — this path kills either way, and a dead child's kill is idempotent.
+        let verdict = DetachStoreRules.take(present: entry != nil, childExited: false)
+        guard let entry, verdict.won else { return }
+        if verdict.ttl == UInt8(SLOPDESK_TTL_CANCEL) { entry.ttlTask?.cancel() }
         entry.session.shutdownDetached()
         onEvicted?(entry.session)
     }
@@ -319,5 +342,47 @@ final class DetachedSessionStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return store.count
+    }
+}
+
+// MARK: - DetachStoreRules (the other half of the store's lock)
+
+/// What the store owes after it has taken an entry out, and whether an insert arms a timer, as
+/// `slopdesk_muxsession::detach_retention` answers both. The insert VERDICT itself is
+/// ``DetachRetentionRules``, one door over; these are the questions asked at the other end of a
+/// parked session's life.
+///
+/// Nothing about a session crosses here either. What crosses is a fact this side established under
+/// its own lock — did the removal find anything — plus the one question only this side can ask, and
+/// what comes back is what this side now OWES.
+enum DetachStoreRules {
+    /// What one attempt to take an entry out of the store concluded.
+    struct TakeVerdict {
+        /// THIS call removed the entry, so this call owns the teardown. `false` means somebody
+        /// already took it and this caller must stand down: releasing the journal writer and the
+        /// hook-sink key now would cut them out from under a same-UUID successor using both.
+        var won: Bool
+        /// What to do about the entry's timer, as one of the `SLOPDESK_TTL_*` bytes.
+        var ttl: UInt8
+        /// The shell had already exited. Reported apart from "not found" because the winner has
+        /// assumed a teardown the session's own `onDetachedExit` closure stood down from, and still
+        /// owes the final agent-status `.none` and the hook-sink drop before the fresh spawn.
+        var reapDeadChild: Bool
+    }
+
+    /// The take rule, for every caller that removes an entry by id.
+    ///
+    /// `present` is the RESULT of a removal already performed under the lock, never a lookup — a
+    /// lookup's answer is stale before it is read, and the race can only be resolved where the
+    /// removal happens. `childExited` is ``MuxChannelSession/isChildExited()``, which is a
+    /// already-reaped exit code rather than a `waitpid`: an unspawned pane answers `false`.
+    static func take(present: Bool, childExited: Bool) -> TakeVerdict {
+        let answer = slopdesk_host_detach_take(present, childExited)
+        return TakeVerdict(won: answer.won, ttl: answer.ttl, reapDeadChild: answer.reap_dead_child)
+    }
+
+    /// The timer choice for an entry going IN, as one of the `SLOPDESK_TTL_*` bytes.
+    static func ttlOnInsert(idempotent: Bool, hasTTL: Bool) -> UInt8 {
+        slopdesk_host_detach_ttl_on_insert(idempotent, hasTTL)
     }
 }

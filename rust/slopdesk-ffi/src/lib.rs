@@ -90,6 +90,7 @@ pub mod client_session;
 pub mod client_view;
 pub mod close_confirm;
 pub mod code_bridge;
+pub mod code_bridge_line;
 pub mod code_panel;
 pub mod code_surface;
 pub mod command_navigator;
@@ -115,6 +116,7 @@ pub mod decode_admission;
 // every slice. Its macOS-only twin below is the asymmetry, not this. See the module.
 pub mod decoder;
 pub mod detach_retention;
+pub mod detach_take;
 pub mod device_geometry;
 pub mod device_log;
 pub mod device_panel;
@@ -149,6 +151,8 @@ pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
 pub mod hint_scan;
+pub mod hook_record;
+pub mod host_gates;
 pub mod host_policy;
 pub mod host_state;
 // macOS only: Mach host statistics, `sysctl` and a `statfs` about the machine hostd runs on. A
@@ -168,11 +172,14 @@ pub mod input_event;
 pub mod input_routing;
 pub mod inspector;
 pub mod inspector_store;
+pub mod jump_breadcrumb;
 pub mod jump_to;
 pub mod key_capture;
 pub mod key_naming;
+pub mod key_repeat;
 pub mod keybind;
 pub mod keystroke_replay;
+pub mod line_assembler;
 pub mod link_action;
 pub mod link_detect;
 pub mod link_hit;
@@ -190,6 +197,7 @@ pub mod mux_envelope;
 pub mod mux_flow;
 pub mod mux_header;
 pub mod mux_host;
+pub mod mux_pairing;
 pub mod mux_resize;
 // macOS only: the swipe-nav history gate's accessibility read — one browser's Back/Forward
 // availability, cached per pid across beats. See the module.
@@ -204,6 +212,7 @@ pub mod outline;
 pub mod pacer_depth;
 pub mod palette_card;
 pub mod palette_rows;
+pub mod pane_chooser;
 pub mod pane_drop;
 pub mod pane_empty;
 pub mod pane_facts;
@@ -213,6 +222,7 @@ pub mod pane_lifecycle;
 pub mod pane_outbox;
 pub mod pane_session;
 pub mod pane_switcher;
+pub mod pane_title_freshness;
 pub mod pane_truths;
 // macOS only: Darwin `proc_*` over every live pid, plus an `lsof` spawn. Only hostd asks, and only
 // about a PTY it holds. See the module.
@@ -221,6 +231,7 @@ pub mod pane_probe;
 pub mod panel_key;
 pub mod panel_scroll;
 pub mod panel_tabs;
+pub mod paste_menu;
 pub mod paste_safety;
 pub mod path_confine;
 pub mod peek_reply;
@@ -248,6 +259,7 @@ pub mod recovery;
 pub mod registry;
 pub mod remote_window;
 pub mod replay;
+pub mod repo_watch;
 pub mod responsive;
 pub mod sanitize;
 pub mod screen;
@@ -258,12 +270,14 @@ pub mod search_rank;
 pub mod send_pacing;
 pub mod service_lifecycle;
 pub mod session_state;
+pub mod session_template_engine;
 pub mod sidebar_row;
 pub mod sidecars;
 pub mod simulator_input;
 pub mod simulator_presentation;
 pub mod simulator_routes;
 pub mod simulator_wire;
+pub mod split_zoom;
 // macOS only: the environment a hostd pane's login shell is spawned into. There is no `posix_spawn`
 // and no login shell in an iOS slice. See the module.
 #[cfg(target_os = "macos")]
@@ -286,6 +300,7 @@ pub mod supervisor_protocol;
 pub mod surface_gesture;
 pub mod swipe_nav_config;
 pub mod swipe_recognizer;
+pub mod sync_ladder;
 pub mod terminal_config;
 pub mod terminal_controls;
 pub mod terminal_mode;
@@ -296,6 +311,7 @@ pub mod terminfo;
 pub mod toast;
 pub mod tool_path;
 pub mod trendline;
+pub mod upload_progress;
 // macOS only, with `tool_path`: the walk that produces the vendored prefix that search order's
 // second rung consumes. A phone has no checkout. See the module.
 #[cfg(target_os = "macos")]

@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 
 // MARK: - Field vocabulary
@@ -147,13 +148,19 @@ public enum PaneLivenessState: UInt8, Sendable, CaseIterable {
 
 // MARK: - titleFresh
 
-/// The `pane/titleFresh` decision (docs/45 §4.4), as a pure function of two host-owned timestamps.
+/// The `pane/titleFresh` decision (docs/45 §4.4), as a face over
+/// `slopdesk_wire::document::fields::title_is_fresh`.
 ///
-/// It lives here — not in the host target — because it IS the fix for the reported bug and deserves a
-/// test that runs without a PTY. The host owns both inputs (the OSC-title stamp and the command
-/// segmenter's open-block start), so the host ships the verdict rather than the two stamps; the
-/// client-side comparison it replaces (`programTitle(for:)`) failed permanently whenever one of its
-/// two in-memory stamp dictionaries was empty, which is every cold client start.
+/// The rule has two callers in two different targets — the host, which computes it off a live
+/// `MuxChannelSession`, and the client's workspace mirror, which reads it back off the document — and
+/// the crate's own document decoder is a third. Three readers of one comparison whose entire job is that
+/// the two ends AGREE is exactly the pair `docs/55` §8 warns about, so the four rules are written down
+/// once, on the far side, and this is the crossing.
+///
+/// Both stamps cross as a value plus a PRESENCE FLAG rather than as a sentinel `Double`: `0` is the
+/// epoch, a negative is a clock that stepped backwards and NaN compares false against everything, so
+/// every candidate sentinel is a value the host can legitimately produce. The door's module carries the
+/// argument in full.
 public enum PaneTitleFreshness {
     /// - Parameters:
     ///   - titleStampedAt: when the current `liveTitle` was sniffed; `nil` when no title has arrived.
@@ -164,19 +171,10 @@ public enum PaneTitleFreshness {
         commandStartedAt: TimeInterval?,
         liveness: PaneLivenessState,
     ) -> Bool {
-        // Rule 4 — a dead pane's restored title describes a process that no longer exists. Without
-        // this the host would apply rule 1 to it (no open block → trust) and render a ghost title
-        // forever, unrecoverably: restored scrollback is appended with `control: []` and bypasses
-        // `HostOutputSniffer`, so a replayed OSC escape can never regenerate the type-21 push.
-        guard liveness != .dead else { return false }
-        // No title at all is not a freshness question.
-        guard let titleStampedAt else { return false }
-        // Rule 1 — no open command block: TRUST. Hookless shells (Starship without OSC 133) never
-        // open a block, and must not lose their titles for it. This is the half of the bug that a
-        // reattach re-assert alone does not fix.
-        guard let commandStartedAt else { return true }
-        // Rules 2 and 3 — a title stamped at or after the current command started describes THAT
-        // command; one stamped before it describes whatever ran previously.
-        return titleStampedAt >= commandStartedAt
+        slopdesk_ws_pane_title_fresh(
+            titleStampedAt != nil, titleStampedAt ?? 0,
+            commandStartedAt != nil, commandStartedAt ?? 0,
+            liveness.rawValue,
+        )
     }
 }

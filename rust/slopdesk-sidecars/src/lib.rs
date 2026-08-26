@@ -35,9 +35,16 @@
 //! waits for the child to ANNOUNCE it back — plus the four gates the embedded workbench adds in
 //! front of its own spawn. The `Process`, the socket and the task that owns a child's lifetime stay
 //! with the caller; what is here is every decision they consult.
+//!
+//! [`line_assembler`] is the one thing here that REMEMBERS, and it is here because it is the reason
+//! a panel backend may be held on a PTY at all: superd's single spawn primitive hands the caller a
+//! tty stream, and the announce line those lifecycles parse a port out of is the first line of it.
+//! It holds bytes rather than a decision, so it is the exception the sentence above declares — but
+//! it still holds no descriptor, no process and no task, which is the part that matters.
 
 #![forbid(unsafe_code)]
 
+pub mod line_assembler;
 pub mod manifest;
 pub mod service_lifecycle;
 

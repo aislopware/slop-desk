@@ -26,11 +26,11 @@ extension SlopDeskWsUuid {
 }
 
 extension SlopDeskWsRect {
-    init(_ rect: CGRect) {
+    package init(_ rect: CGRect) {
         self.init(x: rect.origin.x, y: rect.origin.y, width: rect.size.width, height: rect.size.height)
     }
 
-    var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
+    package var rect: CGRect { CGRect(x: x, y: y, width: width, height: height) }
 }
 
 extension SlopDeskWsPoint {
@@ -42,8 +42,8 @@ extension SlopDeskWsPoint {
 }
 
 extension PaneID {
-    var ffi: SlopDeskWsUuid { SlopDeskWsUuid(raw) }
-    init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
+    package var ffi: SlopDeskWsUuid { SlopDeskWsUuid(raw) }
+    package init(ffi: SlopDeskWsUuid) { self.init(raw: ffi.uuid) }
 }
 
 extension TabID {
@@ -422,10 +422,10 @@ package var wsMaxSearchResults: Int { slopdesk_ws_max_search_results() }
 /// parse plus an allocation per frame is the regression `CLAUDE.md` says vetoes a port. One array,
 /// one pass. ``decode(_:)`` is the exact inverse of ``walk(_:)`` — the existing tree tests compare
 /// whole `SplitNode` values, so a lossy leg fails loudly rather than quietly rounding a divider.
-enum WsTree {
+package enum WsTree {
     /// The tree flattened, each node carrying the share it holds WITHIN ITS PARENT — a `SplitNode`
     /// does not know its own share, its parent's ``WeightedChild`` slot does. The root's is ignored.
-    static func walk(_ root: SplitNode) -> [SlopDeskWsTreeNode] {
+    package static func walk(_ root: SplitNode) -> [SlopDeskWsTreeNode] {
         var nodes: [SlopDeskWsTreeNode] = []
         append(root, weight: .flex(1), to: &nodes)
         return nodes

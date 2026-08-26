@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Foundation
 import SlopDeskSupervisor
 
@@ -231,30 +232,58 @@ final class SupervisedServiceProcess: HostServiceProcessHandle, @unchecked Senda
     }
 }
 
-/// Accumulates stream chunks and yields complete lines, with the PTY's `\r` removed.
+/// Accumulates stream chunks and yields complete lines, as `slopdesk_sidecars::line_assembler`
+/// does it.
 ///
-/// The `\r` is the only thing a terminal adds that matters here: a service's announce line is
-/// parsed by a marker search plus a digit run, and a trailing carriage return would ride into the
-/// port on any parser that took the rest of the line.
+/// The rule — one trailing `\r` off and no more, an over-cap residue dropped rather than truncated
+/// or split, an undecodable line skipped — is that module's, with what each edge costs written down
+/// beside it. What is left here is the OWNERSHIP: the handle's lifetime, and the lock that keeps two
+/// calls on it from overlapping.
+///
+/// ## Why a handle rather than the pure crossing everything else here uses
+/// This type IS the memory. It holds the residue of a line that has not finished arriving, across as
+/// many reads as that takes, and passing that residue over and back per chunk would copy it twice on
+/// every wake of a daemon whose whole job is to be quiet.
+///
+/// ## The lock is not decoration any more
+/// The handle's mutator takes `&mut` on the far side, so two overlapping calls are aliasing UB
+/// rather than a lost line. The stream callback that drives this is not the only thread in the
+/// process.
 final class LineAssembler: @unchecked Sendable {
     private let lock = NSLock()
-    private var buffer = Data()
-    /// Past this, a line with no newline in it is discarded rather than grown forever. A service
-    /// that emits a megabyte without a break is not one whose port we are going to find.
-    static let maximumLineBytes = 64 * 1024
+    private let handle: OpaquePointer
+
+    init() {
+        // Rust returns null only if the allocation failed, and it aborts on allocation failure
+        // before it could — so this is unreachable rather than unhandled.
+        guard let handle = slopdesk_line_assembler_new() else {
+            preconditionFailure("slopdesk_line_assembler_new returned null")
+        }
+        self.handle = handle
+    }
+
+    /// Balances the one `new`. Nothing else frees it, and by definition nothing can call in
+    /// afterwards — the object that held the only reference is gone.
+    deinit { slopdesk_line_assembler_free(handle) }
 
     func append(_ chunk: Data) -> [String] {
         lock.lock()
         defer { lock.unlock() }
-        buffer.append(chunk)
-        var complete: [String] = []
-        while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {
-            var lineBytes = buffer[buffer.startIndex..<newline]
-            buffer.removeSubrange(buffer.startIndex...newline)
-            if lineBytes.last == UInt8(ascii: "\r") { lineBytes = lineBytes.dropLast() }
-            if let line = String(bytes: lineBytes, encoding: .utf8) { complete.append(line) }
+        let count = chunk.withUnsafeBytes { raw in
+            slopdesk_line_assembler_append(handle, raw.bindMemory(to: UInt8.self).baseAddress, raw.count)
         }
-        if buffer.count > Self.maximumLineBytes { buffer.removeAll(keepingCapacity: false) }
-        return complete
+        // One crossing per line. Each has to land in its own `String` for the sink regardless, so
+        // flattening them would add a whole extra copy of an adopt's replayed ring to save
+        // crossings the count already saved.
+        return (0..<count).map { index in
+            let needed = slopdesk_line_assembler_line(handle, index, nil, 0)
+            guard needed > 0 else { return "" } // an empty line is still a line
+            var room = [UInt8](repeating: 0, count: needed)
+            let written = room.withUnsafeMutableBufferPointer { out in
+                slopdesk_line_assembler_line(handle, index, out.baseAddress, out.count)
+            }
+            // swiftlint:disable:next optional_data_string_conversion
+            return String(decoding: room.prefix(min(written, needed)), as: UTF8.self)
+        }
     }
 }

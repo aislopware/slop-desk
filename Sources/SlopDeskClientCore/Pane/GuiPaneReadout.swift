@@ -165,18 +165,6 @@ private extension RemoteGUIDisplay {
     }
 }
 
-/// The byte an upload phase crosses as — this enum's own declaration order, mirrored by the far
-/// side's `UploadPhase`.
-private extension FileUploadProgress.Phase {
-    var ffiByte: UInt8 {
-        switch self {
-        case .sending: 0
-        case .completed: 1
-        case .failed: 2
-        }
-    }
-}
-
 // MARK: - The readout
 
 /// What a video (PATH 2) pane's chrome says, and when it is up at all.

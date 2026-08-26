@@ -34,6 +34,15 @@ path = "src/lib.rs"
 slopdesk-ids = { path = "../slopdesk-ids" }
 slopdesk-probe = { path = "../slopdesk-probe" }
 
+# The editor bridge's LINE protocol, and nothing else. `bridge_router` reads and writes the NDJSON
+# `rust/slopdesk-codeseed/resources/bridge/extension.js` speaks, and that is a socket dialect rather
+# than a persistence file — so it wants the compact writer `slopdesk-ids::json` deliberately does not
+# have. That module is pinned byte-for-byte to Foundation's `.prettyPrinted` spelling because two
+# files on every user's disk are written in it, and a newline-delimited protocol cannot use a writer
+# whose output contains newlines. The crate is already in this lock file, resolved through
+# `slopdesk-probe` above, so the edge costs no new dependency — only the honesty of naming it.
+serde_json = "1"
+
 # `open_route` reads no frame, but it does read one frame FIELD: the `channel_class` byte of a
 # `ChannelOpen`. Which bytes this build routes is `MuxChannelClass`'s, and a copy of it here would
 # be the fourth — the one that decides whether a peer's unknown class gets declined or gets a login

@@ -33,7 +33,7 @@
 //! step 6 asks for a differential rather than a deletion. `SessionTemplateRepairDifferentialTests`
 //! drives both sides over every degenerate layout and asserts they converge.
 //!
-//! The EXPANSION itself is not here and is not meant to be. A preset's plan — the pane titles, the
+//! A PRESET's expansion is not here and is not meant to be. A preset's plan — the pane titles, the
 //! inherited spawn cwd, the split axis — is `LaunchPresetEngine.plan` on the Swift side, because it
 //! is three field copies around one rule and that rule is [`keystrokes`], which already crosses. A
 //! door for the expansion would marshal a whole preset to compare two spellings of an assignment.
@@ -41,6 +41,24 @@
 //! A Rust `plan` DID sit here until 2026-08-22, called by nothing but its own tests, and the note
 //! below the built-in tables records why an unreached port is worse than an unported one rather
 //! than better.
+//!
+//! A TEMPLATE's expansion is a different size of thing and it IS here — [`expand`] and its inverse
+//! [`capture`], as of this change. A template becomes a whole tab: a tree of ids that did not exist
+//! a moment ago, equal shares on every seam, a launch ORDER the caller then walks to type each
+//! pane's command, and a first-leaf-is-active rule. None of that is an assignment, all of it is a
+//! decision two builds could make differently, and the round trip — expand a captured layout,
+//! capture the expansion — is a property no field copy has. Both are reached:
+//! `SessionTemplateEngine` is a face over them with nothing left in it.
+//!
+//! ## Where the identities come from
+//!
+//! [`expand`] mints through an [`IdSource`] rather than reaching for entropy, exactly as
+//! [`crate::persist::decode_file`] does. This crate has no randomness in it and should not grow
+//! any: the caller that owns the process owns its identities, and a test that wants a repeatable
+//! expansion supplies a counter. [`minted_ids_for_template`] is how a caller learns how many to
+//! bring, for the same reason [`crate::persist::minted_ids_for`] exists — a pool one short does not
+//! fail, it REPEATS an id, and two panes born with one id surface days later as a pane that will
+//! not close.
 //!
 //! ## A path is not shell input
 //!
@@ -51,9 +69,9 @@
 //! quotes, not tokens. Only the COMMAND field, which is shell input by intent, goes through the
 //! parser.
 
-use slopdesk_ids::identity::{LaunchPresetId, SessionTemplateId};
+use slopdesk_ids::identity::{IdSource, LaunchPresetId, PaneId, SessionTemplateId};
 use slopdesk_tree::session::PaneKind;
-use slopdesk_tree::split_tree::{MAX_DEPTH, SplitAxis};
+use slopdesk_tree::split_tree::{MAX_DEPTH, SplitAxis, SplitNode, SplitWeight, WeightedChild};
 
 use crate::send_keys;
 
@@ -418,6 +436,189 @@ pub fn built_in_session_templates() -> Vec<SessionTemplate> {
     ]
 }
 
+// MARK: - Expansion: a template becomes a live tab
+
+/// One leaf of an expanded template: the identity it was just minted with, and what to do in it.
+///
+/// The two travel together because the caller needs both at once — it seeds a spec under the id and
+/// types the pane's command into the same pane once its PTY is live — and because separating them
+/// would put the two lists in the caller's hands to keep in step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpandedPane {
+    /// The freshly minted pane identity.
+    pub id: PaneId,
+    /// The template's intent for it: kind, title, working directory, startup command.
+    pub pane: TemplatePane,
+}
+
+/// A template, expanded into the tab it describes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Expansion {
+    /// The split tree, with a fresh identity on every leaf and every seam.
+    pub root: SplitNode,
+    /// Its leaves in DEPTH-FIRST order, which is the order the caller opens and types into them.
+    ///
+    /// Never empty: a layout is either a pane or a split over children, and a split with no
+    /// children cannot survive [`TemplateNode::repaired`], which every persisted layout goes
+    /// through. An unrepaired childless split expands to an empty tree here rather than to an
+    /// invented pane — inventing one would be a repair this function made up, at the one place a
+    /// caller cannot tell the difference.
+    pub launches: Vec<ExpandedPane>,
+}
+
+impl Expansion {
+    /// The pane that takes focus: the FIRST leaf in depth-first order.
+    ///
+    /// Reading order, and it is the same leaf whichever surface asks — which is the point of it
+    /// being here rather than at each caller, where "the first leaf" and "the first launch" are two
+    /// spellings that agree until someone reorders one of them.
+    #[must_use]
+    pub fn active_pane(&self) -> Option<PaneId> {
+        self.launches.first().map(|launch| launch.id)
+    }
+}
+
+/// How many identities [`expand`] spends on `layout`: one per leaf, one per seam.
+///
+/// Asked rather than transcribed, for [`crate::persist::minted_ids_for`]'s reason — a pool one
+/// short does not fail, it repeats an identity, and a repeated pane id is a pane that will not
+/// close.
+#[must_use]
+pub fn minted_ids_for_template(layout: &TemplateNode) -> usize {
+    match layout {
+        TemplateNode::Pane(_) => 1,
+        TemplateNode::Split { children, .. } => {
+            1 + children.iter().map(minted_ids_for_template).sum::<usize>()
+        },
+    }
+}
+
+/// A template layout as a live split tree: fresh ids, EQUAL shares, leaves in launch order.
+///
+/// Three decisions, none of them a field copy:
+///
+/// * **Every seam is `Flex(1)`.** A template describes structure, not divider positions — pinning
+///   the exact geometry into it would make every restore fight whatever the person had since
+///   dragged. Equal shares are what the layout solver then normalises.
+/// * **Depth-first is the launch order.** It is also reading order, so the first pane to come up is
+///   the top-left one, and the caller's "open, then type" loop matches what the user watches
+///   happen.
+/// * **The first leaf is active.** See [`Expansion::active_pane`].
+///
+/// The caller's `layout` is used as given. A persisted one has already been through
+/// [`TemplateNode::repaired`], which is where the depth cap and the degenerate shapes are handled;
+/// re-repairing here would silently accept a layout the decoder was supposed to have refused.
+pub fn expand(layout: &TemplateNode, mint: &mut impl IdSource) -> Expansion {
+    let mut launches = Vec::with_capacity(layout.pane_count());
+    let root = expanded_node(layout, mint, &mut launches);
+    Expansion { root, launches }
+}
+
+/// One node of [`expand`]'s walk, appending each leaf to `launches` as it is reached.
+fn expanded_node(
+    node: &TemplateNode,
+    mint: &mut impl IdSource,
+    launches: &mut Vec<ExpandedPane>,
+) -> SplitNode {
+    match node {
+        TemplateNode::Pane(pane) => {
+            let id = mint.pane();
+            launches.push(ExpandedPane {
+                id,
+                pane: pane.clone(),
+            });
+            SplitNode::Leaf(id)
+        },
+        TemplateNode::Split { axis, children } => {
+            // The seam's identity is taken BEFORE its children's, so the pool is spent in the same
+            // order whatever the tree looks like — a walk that took it after would hand two
+            // differently-shaped layouts different ids for the same node.
+            let id = mint.split();
+            let children = children
+                .iter()
+                .map(|child| WeightedChild::new(SplitWeight::Flex(1.0), expanded_node(child, mint, launches)))
+                .collect();
+            SplitNode::Split {
+                id,
+                axis: *axis,
+                children,
+            }
+        },
+    }
+}
+
+// MARK: - Capture: a live tab becomes a template
+
+/// What one leaf of a live tab says about itself when a template is captured from it.
+///
+/// Only the two facts a [`slopdesk_tree::session::PaneSpec`] holds. A working directory and a
+/// running command are the PTY's, not the tree's, so they cannot be read back off a running session
+/// at all — which is why a captured template's panes carry neither.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedPane {
+    /// The leaf's kind.
+    pub kind: PaneKind,
+    /// The leaf's title, exactly as its spec spells it — including blank.
+    pub title: String,
+}
+
+/// A live tab's geometry as [`capture`] reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CapturedNode {
+    /// One leaf, and what the session's side table says about it.
+    ///
+    /// `None` means the side table has NO spec for that leaf, which is a different fact from a spec
+    /// whose title is blank: the first is a document that has lost track of one of its own panes
+    /// and is repaired, the second is a pane the user never named and is captured verbatim.
+    Pane(Option<CapturedPane>),
+    /// A partition among children, in visual order.
+    Split {
+        /// Which way it partitions.
+        axis: SplitAxis,
+        /// Its children, in visual order.
+        children: Vec<Self>,
+    },
+}
+
+/// A live tab's geometry as a reusable template: same shape, same order, specs turned back into
+/// launch intents.
+///
+/// `tab` is `None` when the session has NO active tab, which captures a single default terminal
+/// pane. That is the same validate-then-repair the missing-spec case takes, one level up: a
+/// template must expand to at least one pane, so a session with nothing to capture yields the
+/// smallest layout that is still a layout rather than an empty one that would fail on the way back
+/// in.
+#[must_use]
+pub fn capture(tab: Option<&CapturedNode>) -> TemplateNode {
+    let Some(tab) = tab else {
+        return TemplateNode::Pane(TemplatePane::new(FALLBACK_PANE_TITLE));
+    };
+    captured_node(tab)
+}
+
+/// One node of [`capture`]'s walk.
+fn captured_node(node: &CapturedNode) -> TemplateNode {
+    match node {
+        CapturedNode::Pane(spec) => {
+            let pane = spec.as_ref().map_or_else(
+                || TemplatePane::new(FALLBACK_PANE_TITLE),
+                |spec| {
+                    TemplatePane {
+                        kind: spec.kind,
+                        title: spec.title.clone(),
+                        cwd: None,
+                        command: None,
+                    }
+                },
+            );
+            TemplateNode::Pane(pane)
+        },
+        CapturedNode::Split { axis, children } => {
+            TemplateNode::split(*axis, children.iter().map(captured_node).collect())
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -427,12 +628,113 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use slopdesk_tree::split_tree::{MAX_DEPTH, SplitAxis};
+    use slopdesk_ids::identity::{IdSource, PaneId, SessionId, SplitNodeId, TabId};
+    use slopdesk_tree::session::PaneKind;
+    use slopdesk_tree::split_tree::{MAX_DEPTH, SplitAxis, SplitNode, SplitWeight};
 
     use super::{
-        FALLBACK_PANE_TITLE, TemplateNode, TemplatePane, built_in_launch_presets, built_in_session_templates,
-        keystrokes,
+        CapturedNode, CapturedPane, ExpandedPane, FALLBACK_PANE_TITLE, TemplateNode, TemplatePane,
+        built_in_launch_presets, built_in_session_templates, capture, expand, keystrokes,
+        minted_ids_for_template,
     };
+
+    /// A repeatable identity pool: the nth id ever taken is `n`, whatever it is for.
+    ///
+    /// One counter across all four kinds rather than four, because that is what the FFI pool is —
+    /// a caller hands over a flat list and the walk spends it in order — and a test with four
+    /// counters would agree with an implementation that spent them in the wrong order.
+    #[derive(Default)]
+    struct Counter(u8);
+
+    impl Counter {
+        fn take(&mut self) -> [u8; 16] {
+            self.0 = self.0.wrapping_add(1);
+            [self.0; 16]
+        }
+    }
+
+    impl IdSource for Counter {
+        fn pane(&mut self) -> PaneId {
+            PaneId::from_bytes(self.take())
+        }
+
+        fn tab(&mut self) -> TabId {
+            TabId::from_bytes(self.take())
+        }
+
+        fn session(&mut self) -> SessionId {
+            SessionId::from_bytes(self.take())
+        }
+
+        fn split(&mut self) -> SplitNodeId {
+            SplitNodeId::from_bytes(self.take())
+        }
+    }
+
+    /// A shape fingerprint that ignores identity — axes, nesting and leaf count only.
+    ///
+    /// The same fingerprint `SessionTemplateEngineTests` used in Swift, and the reason the
+    /// round-trip property can be stated at all: expansion mints ids, so two expansions of one
+    /// layout are never equal and their SHAPES always are.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Shape {
+        Leaf,
+        Split(SplitAxis, Vec<Self>),
+    }
+
+    fn tree_shape(node: &SplitNode) -> Shape {
+        match node {
+            SplitNode::Leaf(_) => Shape::Leaf,
+            SplitNode::Split { axis, children, .. } => {
+                Shape::Split(*axis, children.iter().map(|c| tree_shape(&c.node)).collect())
+            },
+        }
+    }
+
+    fn layout_shape(node: &TemplateNode) -> Shape {
+        match node {
+            TemplateNode::Pane(_) => Shape::Leaf,
+            TemplateNode::Split { axis, children } => {
+                Shape::Split(*axis, children.iter().map(layout_shape).collect())
+            },
+        }
+    }
+
+    /// A whole expansion read back as the tab a caller would capture from it.
+    fn as_captured(node: &SplitNode, specs: &[(PaneId, CapturedPane)]) -> CapturedNode {
+        match node {
+            SplitNode::Leaf(id) => {
+                CapturedNode::Pane(
+                    specs
+                        .iter()
+                        .find(|(key, _)| key == id)
+                        .map(|(_, spec)| spec.clone()),
+                )
+            },
+            SplitNode::Split { axis, children, .. } => {
+                CapturedNode::Split {
+                    axis: *axis,
+                    children: children
+                        .iter()
+                        .map(|child| as_captured(&child.node, specs))
+                        .collect(),
+                }
+            },
+        }
+    }
+
+    /// The specs a caller seeds from an expansion — the side table `makeSession` builds.
+    fn seeded(launches: &[ExpandedPane]) -> Vec<(PaneId, CapturedPane)> {
+        launches
+            .iter()
+            .map(|launch| {
+                (launch.id, CapturedPane {
+                    kind: launch.pane.kind,
+                    title: launch.pane.title.clone(),
+                })
+            })
+            .collect()
+    }
 
     #[test]
     fn an_empty_command_and_no_directory_sends_nothing() {
@@ -575,5 +877,224 @@ mod tests {
         for template in &templates {
             assert_eq!(template.layout.repaired(), template.layout);
         }
+    }
+
+    // MARK: Expansion
+
+    /// `SessionTemplateEngineTests.testMakeSessionBuildsSplitTreeAndSeedsSpecs`, carried over: the
+    /// tree, the DFS launch list, the equal shares and the active leaf, in one expansion.
+    #[test]
+    fn a_two_pane_template_expands_to_a_split_with_equal_shares() {
+        let layout = TemplateNode::split(SplitAxis::Horizontal, vec![
+            TemplateNode::Pane(TemplatePane::new("Editor")),
+            TemplateNode::Pane(TemplatePane::new("Terminal")),
+        ]);
+        let expansion = expand(&layout, &mut Counter::default());
+
+        assert_eq!(expansion.root.leaf_count(), 2);
+        assert_eq!(
+            expansion
+                .launches
+                .iter()
+                .map(|launch| launch.pane.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Editor", "Terminal"],
+            "the launch list is the leaves in depth-first order"
+        );
+        assert_eq!(
+            expansion.active_pane(),
+            expansion.root.all_pane_ids().first().copied(),
+            "the active pane is the first leaf in reading order"
+        );
+        let SplitNode::Split { children, .. } = &expansion.root else {
+            panic!("a two-pane layout expands to a split");
+        };
+        assert_eq!(
+            children.iter().map(|child| child.weight).collect::<Vec<_>>(),
+            [SplitWeight::Flex(1.0), SplitWeight::Flex(1.0)],
+            "a template describes structure, so every seam starts even"
+        );
+    }
+
+    /// `SessionTemplateEngineTests.testMakeSessionNestedLayoutPreservesSpecsKindsAndCount`, over
+    /// the same shipped template it named.
+    #[test]
+    fn a_nested_template_keeps_every_leafs_kind_title_and_command() {
+        let templates = built_in_session_templates();
+        let Some(template) = templates.get(1) else {
+            panic!("the shipped table has at least two rows");
+        };
+        let expansion = expand(&template.layout, &mut Counter::default());
+
+        assert_eq!(expansion.root.leaf_count(), expansion.launches.len());
+        assert!(
+            expansion
+                .launches
+                .iter()
+                .all(|launch| launch.pane.kind == PaneKind::Terminal)
+        );
+        let titles: BTreeSet<&str> = expansion
+            .launches
+            .iter()
+            .map(|launch| launch.pane.title.as_str())
+            .collect();
+        assert_eq!(titles, BTreeSet::from(["Editor", "Server", "Git"]));
+        assert_eq!(
+            expansion
+                .launches
+                .iter()
+                .find(|launch| launch.pane.title == "Git")
+                .and_then(|launch| launch.pane.command.as_deref()),
+            Some("git status"),
+            "a leaf's command rides the launch list, which is what the caller types"
+        );
+    }
+
+    /// A repeated id is a pane that will not close, so the walk must spend the pool once per node.
+    #[test]
+    fn every_identity_an_expansion_spends_is_its_own() {
+        for template in &built_in_session_templates() {
+            let expansion = expand(&template.layout, &mut Counter::default());
+            let panes: BTreeSet<PaneId> = expansion.root.all_pane_ids().into_iter().collect();
+            assert_eq!(
+                panes.len(),
+                expansion.root.leaf_count(),
+                "{} — two leaves share an id",
+                template.name
+            );
+        }
+    }
+
+    /// The pool the caller has to bring, against the pool the expansion actually spends.
+    #[test]
+    fn the_declared_pool_is_the_pool_the_walk_spends() {
+        let nested = TemplateNode::split(SplitAxis::Horizontal, vec![
+            TemplateNode::Pane(TemplatePane::new("A")),
+            TemplateNode::split(SplitAxis::Vertical, vec![
+                TemplateNode::Pane(TemplatePane::new("B")),
+                TemplateNode::Pane(TemplatePane::new("C")),
+            ]),
+        ]);
+        assert_eq!(minted_ids_for_template(&nested), 5, "three leaves and two seams");
+        assert_eq!(
+            minted_ids_for_template(&TemplateNode::Pane(TemplatePane::new("Solo"))),
+            1
+        );
+
+        let mut mint = Counter::default();
+        let expansion = expand(&nested, &mut mint);
+        assert_eq!(
+            usize::from(mint.0),
+            minted_ids_for_template(&nested),
+            "the walk took exactly what it declared — one short repeats an id, one over is harmless"
+        );
+        assert_eq!(expansion.launches.len(), 3);
+    }
+
+    // MARK: Capture
+
+    /// `SessionTemplateEngineTests.testCaptureTemplateWalksActiveTabAndDropsCwdCommand`.
+    #[test]
+    fn a_capture_keeps_the_shape_and_drops_what_the_tree_never_held() {
+        let layout = TemplateNode::split(SplitAxis::Vertical, vec![
+            TemplateNode::Pane(TemplatePane {
+                kind: PaneKind::Terminal,
+                title: "A".to_owned(),
+                cwd: Some("/w".to_owned()),
+                command: Some("should-not-survive".to_owned()),
+            }),
+            TemplateNode::Pane(TemplatePane::new("B")),
+        ]);
+        let expansion = expand(&layout, &mut Counter::default());
+        let captured = capture(Some(&as_captured(&expansion.root, &seeded(&expansion.launches))));
+
+        let TemplateNode::Split { axis, children } = &captured else {
+            panic!("a split tab captures as a split layout");
+        };
+        assert_eq!(*axis, SplitAxis::Vertical);
+        assert_eq!(children.len(), 2);
+        for child in children {
+            let TemplateNode::Pane(pane) = child else {
+                panic!("both children are leaves");
+            };
+            assert_eq!(
+                (pane.cwd.as_deref(), pane.command.as_deref()),
+                (None, None),
+                "a working directory and a command live in the PTY, not in the tree"
+            );
+        }
+    }
+
+    /// `SessionTemplateEngineTests.testRoundTripPreservesTreeShape`, as the property it was written
+    /// as: expand, capture, expand again — the axes, the nesting and the leaf count survive.
+    #[test]
+    fn expanding_a_captured_expansion_lands_on_the_same_shape() {
+        for template in &built_in_session_templates() {
+            let first = expand(&template.layout, &mut Counter::default());
+            let original = tree_shape(&first.root);
+            let captured = capture(Some(&as_captured(&first.root, &seeded(&first.launches))));
+            let rebuilt = expand(&captured, &mut Counter::default());
+
+            assert_eq!(
+                layout_shape(&captured),
+                original,
+                "{} — the captured layout is the tab's own shape",
+                template.name
+            );
+            assert_eq!(
+                tree_shape(&rebuilt.root),
+                original,
+                "{} — and it expands back into it",
+                template.name
+            );
+        }
+    }
+
+    /// `SessionTemplateEngineTests.testCaptureSingleLeafSession`.
+    #[test]
+    fn a_single_leaf_tab_captures_as_a_single_pane() {
+        let captured = capture(Some(&CapturedNode::Pane(Some(CapturedPane {
+            kind: PaneKind::Terminal,
+            title: "Solo".to_owned(),
+        }))));
+        assert_eq!(
+            captured,
+            TemplateNode::Pane(TemplatePane::new("Solo")),
+            "no split to describe, so the layout is the leaf"
+        );
+    }
+
+    /// The two absences, which are different absences and both repair rather than trap.
+    #[test]
+    fn a_missing_spec_and_a_missing_tab_both_capture_a_default_terminal() {
+        assert_eq!(
+            capture(Some(&CapturedNode::Pane(None))),
+            TemplateNode::Pane(TemplatePane::new(FALLBACK_PANE_TITLE)),
+            "a leaf the side table has lost is captured as an unnamed terminal"
+        );
+        assert_eq!(
+            capture(None),
+            TemplateNode::Pane(TemplatePane::new(FALLBACK_PANE_TITLE)),
+            "a session with no active tab still captures a layout, never an empty one"
+        );
+    }
+
+    /// A blank title is a pane the user never named, and it is captured verbatim — the case the
+    /// presence flag exists to keep apart from the one above.
+    #[test]
+    fn a_blank_spec_title_is_captured_rather_than_repaired() {
+        assert_eq!(
+            capture(Some(&CapturedNode::Pane(Some(CapturedPane {
+                kind: PaneKind::Desktop,
+                title: String::new(),
+            })))),
+            TemplateNode::Pane(TemplatePane {
+                kind: PaneKind::Desktop,
+                title: String::new(),
+                cwd: None,
+                command: None,
+            }),
+            "a spec that exists is captured as it is, blank title and all"
+        );
     }
 }

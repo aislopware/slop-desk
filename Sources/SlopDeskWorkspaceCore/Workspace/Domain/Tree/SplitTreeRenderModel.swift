@@ -1,31 +1,30 @@
+// SplitTreeRenderModel — the face over `slopdesk_workspace::split_zoom`, which decides what a split
+// tab actually draws once zoom has had its say.
+//
+// The partition itself was already the crate's (`SplitLayoutSolver` → `split_layout`). What crossed
+// here is the layer above it: whether a zoom is IN EFFECT, and what the frame looks like while one
+// is. Both were the kind of rule that reads as obvious in a renderer and is not:
+//
+//   • A zoom naming a pane that has since been closed must be IGNORED. Honouring it collapses the
+//     tab onto a pane that does not exist — an empty window with no way out.
+//   • The siblings of a zoomed pane are still SOLVED, and still emitted, flagged hidden at their
+//     un-zoomed rects. A pane the model stops emitting is a pane the view unmounts, and unmounting
+//     one dismantles the libghostty surface or the video stream behind it; un-zoom would then
+//     repaint from the lossy replay ring. Zoom is a visibility change, never a teardown.
+//   • A zoomed tab draws NO seams. That gate lives behind `slopdesk_ws_render_dividers` rather than
+//     at the call site, because a renderer that decided it for itself would be a second copy of the
+//     zoom verdict, sitting where nobody would look for it when the first copy changed.
+//
+// The value types stay here — `Layout` / `PlacedLeaf` / `CompositorLeaf` are what the SwiftUI
+// compositor diffs, and `MacSplitCanvasView`, `SplitContainer`, `PaneDivider` and the drop geometry
+// all key on them. The tree crosses as its PRE-ORDER walk, the same one the solver already takes:
+// this runs on every layout pass, and a parse plus an allocation per frame is the regression
+// `CLAUDE.md` says vetoes a port.
+
 import CoreGraphics
+import CSlopDeskFFI
 import SlopDeskWorkspaceModel
 
-// MARK: - SplitTreeRenderModel (the pure render seam for the IDE split view)
-
-/// The **pure** placement model the `SplitTreeView` renders from (docs/42 §"First-test": the
-/// "which pane → which rect, zoom → full rect, dividers between adjacent children" headless seam).
-/// Given a ``Tab`` (or a ``SplitNode`` + its zoom state) and a bounding `CGRect`, it produces:
-///
-/// - **`leaves`** — every visible ``PaneID`` paired with its placed `CGRect` (the leaf rects come from
-///   ``SplitLayoutSolver`` so the render and ``FocusResolver`` agree exactly), and
-/// - **`dividers`** — a thin draggable handle rect between every pair of adjacent siblings of every
-///   split, tagged with the owning `splitID`, the LEADING child index, and the split `axis` (so a
-///   horizontal split yields a vertical divider the user drags left/right, and vice-versa).
-///
-/// Both halves are the crate's (`rust/slopdesk-workspace`'s `split_layout`) and cross as ONE walk of
-/// the tree: the tiles and the seams come out of the same partition, which is what keeps a handle on
-/// the edge it drags rather than a pixel off it.
-///
-/// ### Zoom
-/// When the tab names a `zoomedPane` that is a live leaf, the model collapses to that ONE leaf filling
-/// the whole bound and **no dividers** (WezTerm `TabInner.zoomed` — render-only; the tree is untouched).
-/// The other leaves are NOT in `leaves` — but they ARE still emitted, as ``Layout/hiddenLeaves`` at their
-/// un-zoomed rects, so ``Layout/compositorLeaves`` always carries EVERY pane of the tab and the view keeps
-/// the siblings MOUNTED at `opacity 0` (the proven no-teardown trick — unmounting them dismantles the
-/// libghostty surface / video stream and un-zoom repaints from the lossy replay ring).
-///
-/// Free of SwiftUI. Headless-unit-tested by `SplitTreeRenderModelTests`.
 public enum SplitTreeRenderModel {
     /// A placed leaf: a ``PaneID`` and the rect it occupies (already solver-clamped to `minLeaf`).
     public struct PlacedLeaf: Equatable, Sendable {
@@ -117,7 +116,12 @@ public enum SplitTreeRenderModel {
     }
 
     /// The layout for a bare `root` + optional `zoomedPane` solved into `bounds`. Total: a finite bound
-    /// yields finite rects for exactly the visible leaves.
+    /// yields finite rects for exactly the visible leaves, and a walk the crate cannot rebuild yields
+    /// ``Layout/empty`` rather than a partial frame.
+    ///
+    /// TWO crossings, not one: the leaves and the seams come out of the same partition on the far
+    /// side, and splitting them keeps each answer a flat array of one `@frozen` C type — a single
+    /// door would have needed a tagged union and a second cursor walk to read it back.
     public static func layout(
         root: SplitNode,
         zoomedPane: PaneID?,
@@ -125,36 +129,73 @@ public enum SplitTreeRenderModel {
         minLeaf: CGSize = SplitLayoutSolver.defaultMinLeaf,
         dividerThickness: CGFloat = Self.dividerThickness,
     ) -> Layout {
-        // Zoom: a single VISIBLE leaf fills the whole bound, no dividers. Only honor a zoom that names a
-        // leaf that actually exists in the tree (a stale zoom id falls through to the normal tiled layout).
-        // The siblings are NOT dropped: they ride `hiddenLeaves` at their un-zoomed solver rects so the
-        // view keeps them mounted (opacity 0, no reflow) — a zoom is a visibility/geometry change, never a
-        // teardown (the surfaces + streams survive, un-zoom needs no lossy ring-replay).
-        if isZoomActive(root: root, zoomedPane: zoomedPane), let zoomed = zoomedPane {
-            let solved = SplitLayoutSolver.solve(root, in: bounds, minLeaf: minLeaf)
-            let hidden = root.allPaneIDs().filter { $0 != zoomed }.compactMap { id in
-                solved[id].map { CompositorLeaf(leaf: PlacedLeaf(id: id, rect: $0), isHidden: true) }
+        var walk = WsTree.walk(root)
+        let rect = SlopDeskWsRect(bounds)
+        let zoom = zoomedPane
+        return walk.withUnsafeMutableBufferPointer { nodes -> Layout in
+            let placed = delivered(count: max(8, nodes.count), SlopDeskWsRenderLeaf()) { out, cap in
+                slopdesk_ws_render_leaves(
+                    nodes.baseAddress, nodes.count, rect,
+                    minLeaf.width, minLeaf.height,
+                    zoom != nil, zoom?.ffi ?? SlopDeskWsUuid(),
+                    out, cap,
+                )
             }
-            return Layout(leaves: [PlacedLeaf(id: zoomed, rect: bounds)], dividers: [], hiddenLeaves: hidden)
+            let seams = delivered(count: max(4, nodes.count), SlopDeskWsDivider()) { out, cap in
+                slopdesk_ws_render_dividers(
+                    nodes.baseAddress, nodes.count, rect, dividerThickness,
+                    zoom != nil, zoom?.ffi ?? SlopDeskWsUuid(),
+                    out, cap,
+                )
+            }
+            // ONE array crossed, carrying every pane of the tab; the split into visible / hidden is
+            // the flag the far side already set, not a second verdict taken here.
+            var visible: [PlacedLeaf] = []
+            var hidden: [CompositorLeaf] = []
+            for item in placed {
+                let leaf = PlacedLeaf(id: PaneID(ffi: item.frame.id), rect: item.frame.rect.rect)
+                if item.hidden {
+                    hidden.append(CompositorLeaf(leaf: leaf, isHidden: true))
+                } else {
+                    visible.append(leaf)
+                }
+            }
+            return Layout(
+                leaves: visible,
+                dividers: seams.map(SplitDividerHandle.init(ffi:)),
+                hiddenLeaves: hidden,
+            )
         }
-
-        // Leaves come from the SOLVER so the render and FocusResolver agree exactly. Ordered by the tree's
-        // deterministic pre-order DFS so the mount order is stable.
-        let solved = SplitLayoutSolver.solve(root, in: bounds, minLeaf: minLeaf)
-        let placed = root.allPaneIDs().compactMap { id in
-            solved[id].map { PlacedLeaf(id: id, rect: $0) }
-        }
-        return Layout(
-            leaves: placed,
-            dividers: SplitLayoutSolver.dividers(root, in: bounds, thickness: dividerThickness),
-        )
     }
 
     /// Whether a zoom is in effect: `zoomedPane` is non-nil AND names a leaf that actually lives in `root`
     /// (a stale zoom id is ignored → normal tiled layout). The SINGLE source of truth for "is the tab
-    /// zoomed".
+    /// zoomed" — asked of the crate, so it is the same answer the layout above laid the frame out
+    /// against rather than a second reading of the same tree.
     static func isZoomActive(root: SplitNode, zoomedPane: PaneID?) -> Bool {
-        guard let zoomed = zoomedPane else { return false }
-        return root.contains(zoomed)
+        var walk = WsTree.walk(root)
+        return walk.withUnsafeMutableBufferPointer { nodes in
+            slopdesk_ws_zoom_is_active(
+                nodes.baseAddress, nodes.count,
+                zoomedPane != nil, zoomedPane?.ffi ?? SlopDeskWsUuid(),
+            )
+        }
+    }
+
+    /// Reads a `(out, cap) -> needed` array answer with the retry docs/55 §4 describes: guess once,
+    /// and ask again at the size the door reported if the guess was short.
+    private static func delivered<T>(
+        count: Int,
+        _ empty: T,
+        _ door: (UnsafeMutablePointer<T>?, Int) -> Int,
+    ) -> [T] {
+        var out = [T](repeating: empty, count: count)
+        var needed = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+        if needed > out.count {
+            out = [T](repeating: empty, count: needed)
+            needed = out.withUnsafeMutableBufferPointer { door($0.baseAddress, $0.count) }
+        }
+        guard needed <= out.count else { return [] }
+        return Array(out[0..<needed])
     }
 }

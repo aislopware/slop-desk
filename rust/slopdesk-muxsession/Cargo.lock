@@ -95,6 +95,7 @@ version = "0.1.0"
 name = "slopdesk-muxsession"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "slopdesk-ids",
  "slopdesk-probe",
  "slopdesk-wire",

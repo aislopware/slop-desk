@@ -1,4 +1,6 @@
+import CSlopDeskFFI
 import Foundation
+import SlopDeskArena
 import SlopDeskTTY
 
 /// The host end of the embedded editor's command channel — see
@@ -77,12 +79,13 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
 
     /// Max bytes per line the extension may send (validate-then-drop beyond it). The largest
     /// inbound message is a `run` carrying an editor selection, capped far below this by
-    /// ``maxRunTextBytes``.
-    static let maxLineBytes = 64 * 1024
+    /// ``maxRunTextBytes``. The number is `slopdesk-muxsession`'s — this side only enforces it,
+    /// because this side is the one holding the buffer.
+    static let maxLineBytes = slopdesk_code_bridge_max_line_bytes()
 
     /// Max bytes of command text a single `run` may carry. An editor selection is the source, and
     /// a selection large enough to exceed this was not meant to be typed at a shell prompt.
-    static let maxRunTextBytes = 8 * 1024
+    static let maxRunTextBytes = slopdesk_code_bridge_max_run_text_bytes()
 
     private let lock = NSLock()
     private var listenFD: Int32 = -1
@@ -205,15 +208,41 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
     /// better home for a file inside it). `nil` when no open folder contains the path — the caller
     /// falls back to the CLI rather than dropping a file into an unrelated project's window.
     /// Ties break on the lower fd, so the routing is deterministic for a given connection set.
+    ///
+    /// The rule, its tie-break and its argument are `slopdesk_muxsession::bridge_router::route`'s;
+    /// this is the marshalling. The window list crosses as records into one text blob, the same
+    /// shape ``CodeBridgeTerminalRouter`` hands the pane list across in and for the same reason.
     static func route(target: String, among candidates: [(fd: Int32, root: String)]) -> Int32? {
-        let owning = candidates.filter { contains(root: $0.root, path: target) }
-        guard var best = owning.first else { return nil }
-        for candidate in owning.dropFirst() {
-            let deeper = candidate.root.count > best.root.count
-            let tie = candidate.root.count == best.root.count && candidate.fd < best.fd
-            if deeper || tie { best = candidate }
+        var blob: [UInt8] = []
+        var records: [SlopDeskBridgeWindowRecord] = []
+        records.reserveCapacity(candidates.count)
+        for candidate in candidates {
+            let root = span(of: candidate.root, into: &blob)
+            records.append(
+                SlopDeskBridgeWindowRecord(
+                    fd: candidate.fd, root_offset: root.offset, root_len: root.length,
+                ),
+            )
         }
-        return best.fd
+        let chosen = records.withUnsafeBufferPointer { table in
+            blob.withUnsafeBufferPointer { text in
+                ffiLend(target) { path in
+                    slopdesk_code_bridge_route(
+                        table.baseAddress, table.count,
+                        text.baseAddress, text.count,
+                        path.baseAddress, path.count,
+                    )
+                }
+            }
+        }
+        return chosen == SLOPDESK_CODE_BRIDGE_NO_WINDOW ? nil : chosen
+    }
+
+    /// Appends `value`'s UTF-8 to `blob` and answers where it landed.
+    private static func span(of value: String, into blob: inout [UInt8]) -> (offset: Int, length: Int) {
+        let offset = blob.count
+        blob.append(contentsOf: value.utf8)
+        return (offset, blob.count - offset)
     }
 
     /// Whether `path` lives at or under `root` — the host's ONE containment rule, which is
@@ -238,18 +267,25 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
     }
 
     /// The `open` line for `target` (`path[:line[:col]]`), or `nil` when the path will not encode.
-    /// JSON is built through `JSONSerialization` — host paths carry quotes and backslashes, and a
-    /// hand-rolled string would hand the extension a line it silently drops.
+    ///
+    /// The suffix is split off HERE, through ``HostCodeServerPerformer/splitLineColSuffix(_:)``,
+    /// because that rule belongs to `slopdesk-terminal` — the same splitter the client's own link
+    /// detector uses. What crosses is the path and the suffix already apart, so the line builder
+    /// never has to know what a detected link's tail looks like.
     static func openCommand(target: String) -> String? {
         let (path, suffix) = HostCodeServerPerformer.splitLineColSuffix(target)
-        var message: [String: Any] = ["t": "open", "path": path]
-        let numbers = suffix.split(separator: ":").compactMap { Int($0) }
-        if let line = numbers.first { message["line"] = line }
-        if numbers.count > 1 { message["col"] = numbers[1] }
-        guard let encoded = try? JSONSerialization.data(withJSONObject: message),
-              let line = String(data: encoded, encoding: .utf8)
-        else { return nil }
-        return line + "\n"
+        let line = ffiLend(path) { pathBytes in
+            ffiLend(suffix) { suffixBytes in
+                ffiAnswerText(capacity: pathBytes.count + 64) { out, cap in
+                    slopdesk_code_bridge_open_line(
+                        pathBytes.baseAddress, pathBytes.count,
+                        suffixBytes.baseAddress, suffixBytes.count,
+                        out, cap,
+                    )
+                }
+            }
+        }
+        return line.isEmpty ? nil : line
     }
 
     // MARK: Accept loop
@@ -310,38 +346,37 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
         case run(id: String, request: CodeBridgeRunRequest)
     }
 
+    /// The verb table is `slopdesk_muxsession::bridge_router::inbound`'s, including the `/`-prefix
+    /// requirement, the id bound and the `cd` line the host builds rather than the editor. A
+    /// believed line comes back as its verb byte followed by that verb's length-prefixed runs; a
+    /// dropped one comes back empty, which is the same silence this used to answer with `nil`.
     static func inbound(in line: Data) -> Inbound? {
-        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-              let verb = object["t"] as? String
-        else { return nil }
+        let blob = line.withUnsafeBytes { raw -> [UInt8] in
+            let base = raw.bindMemory(to: UInt8.self).baseAddress
+            return ffiAnswerBytes(capacity: raw.count + 32) { out, cap in
+                slopdesk_code_bridge_inbound(base, raw.count, out, cap)
+            }
+        }
+        guard let verb = blob.first else { return nil }
+        // The run COUNT is a property of the verb, so a short delivery is a marshalling bug rather
+        // than a shorter message — hence the exact-count guards below rather than optional reads.
         switch verb {
-        case "hello":
-            guard let root = object["root"] as? String, root.hasPrefix("/") else { return nil }
-            return .hello(root: root)
-        case "run":
-            return runInbound(object)
-        case "cd":
-            // The editor names a directory; the host builds the command line, so the shell
-            // quoting has ONE tested home rather than a second copy written in JavaScript.
-            guard let path = object["path"] as? String, path.hasPrefix("/") else { return nil }
-            return runInbound(object, text: CodeBridgeTerminalRouter.changeDirectoryCommandLine(path))
+        case UInt8(SLOPDESK_CODE_BRIDGE_INBOUND_HELLO):
+            let runs = ffiRuns(Array(blob.dropFirst()), count: 1)
+            guard runs.count == 1 else { return nil }
+            return .hello(root: runs[0])
+        case UInt8(SLOPDESK_CODE_BRIDGE_INBOUND_RUN):
+            let runs = ffiRuns(Array(blob.dropFirst()), count: 4)
+            guard runs.count == 4 else { return nil }
+            return .run(
+                id: runs[0],
+                request: CodeBridgeRunRequest(
+                    root: runs[1], directory: runs[2].isEmpty ? nil : runs[2], text: runs[3],
+                ),
+            )
         default:
             return nil
         }
-    }
-
-    /// The shared `run`/`cd` shape: correlation id, project root, optional acting directory, and
-    /// the text (carried by a `run`, built by the host for a `cd`).
-    private static func runInbound(_ object: [String: Any], text built: String? = nil) -> Inbound? {
-        guard let id = object["id"] as? String, !id.isEmpty, id.utf8.count <= 64,
-              let root = object["root"] as? String, root.hasPrefix("/"),
-              let text = built ?? object["text"] as? String,
-              isTypeable(text)
-        else { return nil }
-        let directory = (object["cwd"] as? String).flatMap { $0.hasPrefix("/") ? $0 : nil }
-        return .run(
-            id: id, request: CodeBridgeRunRequest(root: root, directory: directory, text: text),
-        )
     }
 
     /// Whether `text` may be typed at a live shell prompt. Non-empty, within
@@ -350,21 +385,33 @@ final class CodeBridgeServer: CodeBridgeRouting, @unchecked Sendable {
     /// (`vi` mode makes that vivid), and NUL truncates. A selection carrying one is refused
     /// rather than reinterpreted.
     static func isTypeable(_ text: String) -> Bool {
-        guard !text.isEmpty, text.utf8.count <= maxRunTextBytes else { return false }
-        return !text.unicodeScalars.contains { scalar in
-            (scalar.value < 0x20 && scalar != "\n" && scalar != "\t") || scalar.value == 0x7F
+        ffiLend(text) { bytes in
+            slopdesk_code_bridge_typeable(bytes.baseAddress, bytes.count)
         }
     }
 
     /// The result line for a finished `run`, or `nil` when it will not encode.
+    ///
+    /// `paneTitle` and `message` cross with a presence flag rather than as an empty string: the
+    /// extension tells an absent field from an empty one, and an empty `pane` would have it
+    /// announce a pane with no name.
     static func resultLine(id: String, outcome: CodeBridgeRunOutcome) -> String? {
-        var message: [String: Any] = ["t": "result", "id": id, "ok": outcome.ok]
-        if let paneTitle = outcome.paneTitle { message["pane"] = paneTitle }
-        if let text = outcome.message { message["message"] = text }
-        guard let encoded = try? JSONSerialization.data(withJSONObject: message),
-              let line = String(data: encoded, encoding: .utf8)
-        else { return nil }
-        return line + "\n"
+        let line = ffiLend(id) { idBytes in
+            ffiLend(outcome.paneTitle ?? "") { paneBytes in
+                ffiLend(outcome.message ?? "") { messageBytes in
+                    ffiAnswerText(capacity: 256) { out, cap in
+                        slopdesk_code_bridge_result_line(
+                            idBytes.baseAddress, idBytes.count,
+                            outcome.ok,
+                            paneBytes.baseAddress, paneBytes.count, outcome.paneTitle != nil,
+                            messageBytes.baseAddress, messageBytes.count, outcome.message != nil,
+                            out, cap,
+                        )
+                    }
+                }
+            }
+        }
+        return line.isEmpty ? nil : line
     }
 
     /// Runs one request through the installed runner and answers the window that asked. No runner

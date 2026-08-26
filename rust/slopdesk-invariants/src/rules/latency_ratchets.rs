@@ -293,7 +293,7 @@ pub fn the_scan_and_the_mirror_derive_once(tree: &Tree) -> Report {
     /// The loopback document, which resolves the mirror per intent.
     const LOOPBACK: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Sync/LoopbackWorkspaceDocument.swift";
     /// Where a session template becomes launch bytes.
-    const TEMPLATES: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift";
+    const TEMPLATES: &str = "Sources/SlopDeskWorkspaceModel/Domain/SessionTemplateEngine.swift";
     /// The row scan itself.
     const ROWFIND: &str = "rust/slopdesk-rowscan/src/find.rs";
 
@@ -472,7 +472,7 @@ mod tests {
                 "let resolved = box.resolved\napply(projectKey: { resolved.key(for: $0) })\n",
             )
             .write(
-                "Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift",
+                "Sources/SlopDeskWorkspaceModel/Domain/SessionTemplateEngine.swift",
                 "func launchBytes() { templates_keystrokes(cwd, command) }\n",
             )
             .write(
@@ -523,7 +523,7 @@ mod tests {
         // And the second author of the emptiness rule.
         sweep(&fixture);
         fixture.write(
-            "Sources/SlopDeskWorkspaceCore/Workspace/Domain/SessionTemplateEngine.swift",
+            "Sources/SlopDeskWorkspaceModel/Domain/SessionTemplateEngine.swift",
             "guard !cwd.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }\n",
         );
         assert!(!super::the_scan_and_the_mirror_derive_once(&fixture.tree()).is_clean());

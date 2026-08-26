@@ -170,41 +170,13 @@ final class MuxBugFixRegressionTests: XCTestCase {
     }
 
     // MARK: - duplicate same-side mux preamble closes the displaced half (fd-leak guard)
-
-    /// The pure pairing decision behind `HostTransport.associateMux`: a CONTROL+DATA pair completes, but
-    /// a SECOND same-side half (two CONTROLs / two DATAs before the opposite peer arrives) is a re-park
-    /// that DISPLACES the already-parked half — which must be closed so its NWConnection/fd does not leak.
-    func testMuxPairingClosesDisplacedSameSideHalf() {
-        // First arrival of either side: parks, nothing displaced.
-        XCTAssertEqual(
-            MuxPairing.decide(existingHasControl: false, existingHasData: false, isControl: true),
-            .init(paired: false, closesDisplacedSameSide: false),
-        )
-        XCTAssertEqual(
-            MuxPairing.decide(existingHasControl: false, existingHasData: false, isControl: false),
-            .init(paired: false, closesDisplacedSameSide: false),
-        )
-
-        // Opposite side arrives → pair completes, nothing displaced.
-        XCTAssertEqual(
-            MuxPairing.decide(existingHasControl: true, existingHasData: false, isControl: false),
-            .init(paired: true, closesDisplacedSameSide: false),
-        )
-        XCTAssertEqual(
-            MuxPairing.decide(existingHasControl: false, existingHasData: true, isControl: true),
-            .init(paired: true, closesDisplacedSameSide: false),
-        )
-
-        // SAME side arrives again (duplicate) → re-park AND close the displaced half (the leak guard).
-        XCTAssertEqual(
-            MuxPairing.decide(existingHasControl: true, existingHasData: false, isControl: true),
-            .init(paired: false, closesDisplacedSameSide: true),
-        )
-        XCTAssertEqual(
-            MuxPairing.decide(existingHasControl: false, existingHasData: true, isControl: false),
-            .init(paired: false, closesDisplacedSameSide: true),
-        )
-    }
+    //
+    // The pairing decision behind `HostTransport.associateMux` is
+    // `rust/slopdesk-muxsession/src/pairing.rs`, and its whole eight-state space is enumerated
+    // there — one row per state, each saying which arrival the row IS, because the two that pair
+    // and the two that displace differ only in which bool is set. A second enumeration here would
+    // be the cross-language mirror the tree forbids, so what this file still owns about the guard
+    // is the behaviour above and below it: the sockets, the map and the churn.
 
     // MARK: - a reused channel id after close is refused, never respawned
 

@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import SlopDeskWorkspaceModel
 
 // MARK: - PaneKind presentation metadata (single source of truth)
@@ -5,13 +6,9 @@ import SlopDeskWorkspaceModel
 /// The presentation metadata for a single ``PaneKind``: everything the UI needs to *name*, *icon*,
 /// and *offer* a kind without re-deriving it per call site.
 ///
-/// This is the single source of truth that ends the duplicated kind→title / kind→SF-symbol switches:
-/// `WorkspaceStore.defaultTitle(for:)` and `NavigatorColumn` (title + symbol) both read these values,
-/// so adding a ``PaneKind`` case or changing a title touches ONE place.
-///
-/// Pure value type — no SwiftUI/AppKit. The `symbol` is an **SF Symbol name string** (e.g.
-/// `"apple.terminal"`) so this file stays import-free; the ClientUI layer wraps it in a type-safe
-/// `SFSymbol` at the use site.
+/// A pure value type filled from `slopdesk_workspace::pane_chooser` — no SwiftUI/AppKit. The `symbol`
+/// is an **SF Symbol name string** (e.g. `"apple.terminal"`) so this file stays import-free; the ClientUI
+/// layer wraps it in a type-safe `SFSymbol` at the use site.
 ///
 /// The in-pane kind CHOOSER itself is retired (every new-pane gesture mints a terminal directly;
 /// non-terminal kinds have their own explicit shortcuts), but this metadata registry remains the one
@@ -19,14 +16,16 @@ import SlopDeskWorkspaceModel
 public struct PaneChooserOption: Sendable, Equatable {
     /// The pane kind this option mints.
     public let kind: PaneKind
-    /// Default display title for a freshly-created pane of this kind (the EXACT historical string).
+    /// Default display title for a freshly-created pane of this kind.
     public let title: String
     /// SF Symbol *name* (raw string, e.g. `"display"`). Wrapped in a type-safe symbol by the UI layer.
     public let symbol: String
     /// Single-key mnemonic for the (future) chooser — lower-cased; unique across options.
     public let mnemonic: Character
     /// A video (PATH 2) pane that rides the shared UDP flow and counts against the live-video cap.
-    /// Mirrors ``PaneKind/isVideo`` (kept here so the option is self-describing for chooser rows).
+    ///
+    /// It is no longer a value anyone types: the crate fills it from the kind's own `is_video`, so the
+    /// "mirrors ``PaneKind/isVideo``" this field used to carry as a comment is now the implementation.
     public let isVideo: Bool
 
     public init(
@@ -44,31 +43,44 @@ public struct PaneChooserOption: Sendable, Equatable {
     }
 }
 
-/// The registry that maps a ``PaneKind`` to its presentation metadata. Exhaustive over every
-/// ``PaneKind`` case — the `switch` is the compile-time guarantee that a new kind cannot be added
-/// without giving it a title/symbol/mnemonic here.
+/// The registry that maps a ``PaneKind`` to its presentation metadata, as a face over
+/// `slopdesk_workspace::pane_chooser`.
+///
+/// The TABLE moved: it was three `switch`es across two targets before it was one, and it is now one on
+/// the other side of the boundary, where the exhaustive `match` is what makes a new kind a compile
+/// error rather than a blank row. What is left here is the crossing — a kind byte out, four fields
+/// back.
 public enum PaneChooserRegistry {
-    /// The presentation metadata for `kind`. Total over ``PaneKind`` (no optional, no fallback): a
-    /// new case forces a compile error here, which is the whole point of centralizing.
+    /// The presentation metadata for `kind`. Total over ``PaneKind`` (no optional, no fallback): the
+    /// crate's table is exhaustive and folds an unknown byte to the terminal row, so every kind names
+    /// something.
     public static func option(for kind: PaneKind) -> PaneChooserOption {
-        switch kind {
-        case .terminal:
-            PaneChooserOption(
-                kind: .terminal,
-                title: "Terminal",
-                symbol: "apple.terminal",
-                mnemonic: "t",
-                isVideo: false,
-            )
-        case .desktop:
-            PaneChooserOption(
-                kind: .desktop,
-                title: "Desktop",
-                symbol: "display",
-                mnemonic: "d",
-                isVideo: true,
-            )
+        let blob = wsAnswerBytes { out, cap in
+            slopdesk_ws_pane_kind_option(WorkspacePaneKindTag.byte(for: kind), out, cap)
         }
+        var cursor = blob.startIndex
+        let isVideo = blob.first == 1
+        cursor += 1
+        let fields = (0 ..< 3).map { _ -> String in
+            guard cursor + 4 <= blob.endIndex else { return "" }
+            let length = Int(
+                UInt32(blob[cursor]) << 24 | UInt32(blob[cursor + 1]) << 16
+                    | UInt32(blob[cursor + 2]) << 8 | UInt32(blob[cursor + 3]),
+            )
+            cursor += 4
+            guard cursor + length <= blob.endIndex else { return "" }
+            defer { cursor += length }
+            return String(decoding: blob[cursor ..< cursor + length], as: UTF8.self)
+        }
+        return PaneChooserOption(
+            kind: kind,
+            title: fields[0],
+            symbol: fields[1],
+            // A mnemonic is one character; an empty run would be a delivery this side could not cut,
+            // which the crate's own test says cannot happen.
+            mnemonic: fields[2].first ?? " ",
+            isVideo: isVideo,
+        )
     }
 }
 

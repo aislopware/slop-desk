@@ -1703,9 +1703,10 @@ mod tests {
     /// wakes the waiter registered under its id.
     #[test]
     fn an_unknown_status_or_event_opens_rather_than_answering_null() {
-        let head = with_reply(r#"{"id":3,"status":"deferred","event":"teleported"}"#, |handle| {
-            unsafe { slopdesk_supervisor_reply_head(handle) }
-        });
+        let head = with_reply(
+            r#"{"id":3,"status":"deferred","event":"teleported"}"#,
+            |handle| unsafe { slopdesk_supervisor_reply_head(handle) },
+        );
         assert_eq!(head.status, SLOPDESK_SUPERVISOR_STATUS_UNRECOGNISED);
         assert_eq!(head.event, SLOPDESK_SUPERVISOR_EVENT_UNKNOWN);
         // And bytes that are not this protocol at all DO answer null.

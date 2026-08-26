@@ -115,7 +115,7 @@ fn put_optional_text(out: &mut ByteWriter<'_>, text: Option<&str>) {
 /// is one the crate produced — a `repaired()` answer, bounded by `split_tree::MAX_DEPTH`, or a
 /// shipped table three levels deep — while everything the reader is handed came from the other
 /// side of a C boundary.
-fn put_node(out: &mut ByteWriter<'_>, node: &TemplateNode) {
+pub(crate) fn put_node(out: &mut ByteWriter<'_>, node: &TemplateNode) {
     match *node {
         TemplateNode::Pane(ref pane) => {
             out.put_u8(TAG_PANE);
@@ -281,7 +281,7 @@ fn read_node(reader: &mut ByteReader<'_>) -> Option<TemplateNode> {
 }
 
 /// One whole layout, or `None` for a stream this reader could not consume exactly.
-fn decode_layout(bytes: &[u8]) -> Option<TemplateNode> {
+pub(crate) fn decode_layout(bytes: &[u8]) -> Option<TemplateNode> {
     let mut reader = ByteReader::new(bytes);
     let node = read_node(&mut reader)?;
     // A trailing byte is refused rather than ignored. Two encoders that disagree about a field's

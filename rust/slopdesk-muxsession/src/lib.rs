@@ -52,15 +52,24 @@
 //! the one that tears down, whether a returning client may rebind at all, where its subscription
 //! re-opens, and the two latches the exit task waits on before it may yield `.exit` and fire
 //! `onExit`. The tasks and the stream stay in hostd; what crosses is a guard and a cursor.
+//!
+//! [`repo_watch`] is the eleventh, and the only one whose input is the FILESYSTEM rather than a
+//! client: which repositories anyone is still looking at, which of an edge burst's arming is the
+//! live one, and whether a reading that came back is news. A dropped re-arm here is silent — the
+//! git line simply stops updating for that repo — so the re-entry rule is the module, and the
+//! `FSEvents` streams, the two queues and the clock stay in hostd.
 
 pub mod bridge_router;
 pub mod detach_retention;
 pub mod fanout;
+pub mod hook_record;
 pub mod lifecycle;
 pub mod metadata_admission;
 pub mod open_route;
 pub mod outbox;
+pub mod pairing;
 pub mod registry;
+pub mod repo_watch;
 pub mod resize_fold;
 pub mod spawn_env;
 pub mod truths;

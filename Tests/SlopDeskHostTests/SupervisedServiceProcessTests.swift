@@ -3,51 +3,12 @@ import SlopDeskSupervisor
 import XCTest
 @testable import SlopDeskHost
 
-/// ``LineAssembler`` — the whole reason a panel backend may be held on a PTY.
-///
-/// superd's one spawn primitive is `openpty` + `fork` + `execve` and it stays that way (a second,
-/// pipe-flavoured pre-exec window next to the disassembly-pinned one is not worth a carriage
-/// return). What a tty adds to a service's announce line is `\r`, and a port parser that took the
-/// rest of the line would carry it into the number. So this type is the load-bearing part of the
-/// argument, and it is pure — no daemon, no process, no skip.
-final class LineAssemblerTests: XCTestCase {
-    func testCompleteLinesComeOutWholeAndInOrder() {
-        let assembler = LineAssembler()
-        XCTAssertEqual(assembler.append(Data("first\nsecond\n".utf8)), ["first", "second"])
-    }
-
-    func testTheCarriageReturnAPTYAddsIsRemoved() {
-        let assembler = LineAssembler()
-        XCTAssertEqual(
-            assembler.append(Data("HTTP server listening on port 41234\r\n".utf8)),
-            ["HTTP server listening on port 41234"],
-            "a trailing \\r rides into the port on any parser that takes the rest of the line",
-        )
-    }
-
-    func testAPartialLineWaitsForItsNewlineAcrossChunks() {
-        let assembler = LineAssembler()
-        XCTAssertEqual(assembler.append(Data("listening on por".utf8)), [])
-        XCTAssertEqual(assembler.append(Data("t 41234\r\n".utf8)), ["listening on port 41234"])
-    }
-
-    func testAnEmptyLineIsStillALine() {
-        let assembler = LineAssembler()
-        XCTAssertEqual(assembler.append(Data("\r\na\n".utf8)), ["", "a"])
-    }
-
-    /// A service that emits a megabyte with no break is not one whose port we are going to find,
-    /// and growing the buffer for it forever is how a long-running panel leaks.
-    func testARunawayLineIsDiscardedRatherThanGrownForever() {
-        let assembler = LineAssembler()
-        let flood = Data(repeating: UInt8(ascii: "x"), count: LineAssembler.maximumLineBytes + 1)
-        XCTAssertEqual(assembler.append(flood), [])
-        XCTAssertEqual(
-            assembler.append(Data("after the flood\n".utf8)), ["after the flood"],
-            "the cap drops the runaway, and the next real line must still arrive",
-        )
-    }
-}
+// ``LineAssembler`` — the whole reason a panel backend may be held on a PTY — is
+// `rust/slopdesk-sidecars`' `line_assembler` now, and the five cases that used to be asserted here
+// are asserted there, beside four more the Swift never reached: what an over-cap drop does to the
+// tail that follows it, that a residue of exactly the cap survives, that a multi-byte character
+// split across a chunk boundary is not read as two broken halves, and that an undecodable line is
+// dropped without taking its neighbours. What is left in this file is the process.
 
 /// **A panel backend must outlive the hostd that started it.**
 ///

@@ -1,5 +1,6 @@
 //! What a video (PATH 2) pane SAYS: five telemetry rows, three number formatters, a stall caption,
-//! a placeholder, two choice labels, one unit conversion and the marks an upload wears.
+//! a placeholder, two choice labels, one unit conversion, and the marks and the bar an upload
+//! wears.
 //!
 //! All of it lived in `GuiPaneReadout`, a Swift enum one floor under two renderers — an `AppKit`
 //! canvas and a `SwiftUI` one. Nothing in it names a view type, and the rule the repo runs on says
@@ -22,6 +23,17 @@
 //! token. Only the branch descends, which is the part that could ever be wrong. An SF Symbol name
 //! is the opposite case — it is data, not drawing — so [`upload_glyph`] hands the name over and the
 //! renderer spells `Image(systemName:)`.
+//!
+//! ## THE UPLOAD BAR IS THE ONE PLACE A `f64` MUST LAND ON THE SWIFT BIT
+//!
+//! [`upload_fraction`] is the only arithmetic here whose answer used to be computed in Swift and is
+//! now computed here, so `CLAUDE.md`'s bit-exactness rule bites on it directly. It is kept in the
+//! shape Swift evaluated: two `u64`→`f64` conversions, ONE division of those two values with
+//! nothing folded into it, and `f64::min` as the ceiling. No reciprocal multiply and no
+//! `mul_add` — a fused multiply-add rounds once where the original rounded twice, which is exactly
+//! the divergence the crate's `suboptimal_flops` opt-out exists to prevent. The zero-total branch
+//! runs BEFORE the division, so no operand of the `min` can be `NaN` and Rust's and Swift's `min`
+//! cannot reach the one input they disagree about. The function's own doc spells each step out.
 //!
 //! ## THE CLOCK STAYS OUTSIDE
 //!
@@ -419,12 +431,63 @@ pub const fn upload_tint(phase: UploadPhase) -> UploadTint {
     }
 }
 
+/// Whether an upload has SETTLED — the cue the coordinator schedules its row's dismissal on.
+///
+/// Failure settles as surely as success does. A row that lingered because the transfer ended badly
+/// would be the one row on the overlay that never goes away.
+#[must_use]
+pub const fn upload_is_settled(phase: UploadPhase) -> bool {
+    !matches!(phase, UploadPhase::Sending)
+}
+
+/// How full an upload's progress bar is drawn, in `0..=1`.
+///
+/// The three answers, and none of them is arithmetic:
+///
+/// * **Completed reads FULL, whatever the counters say.** A transfer whose size was never reported
+///   — a stream, a zero-byte file — would otherwise finish at an empty bar. The phase is the
+///   authority on being done; the byte counts are only how far along it got.
+/// * **A total of zero reads EMPTY while sending.** There is no fraction of an unknown size, and
+///   the alternative is a division by zero. An indeterminate bar is the renderer's business.
+/// * **Otherwise `sent / total`, ceilinged at 1.** A host that over-reports — a retransmit counted
+///   twice — must not push the bar past its track.
+///
+/// ## Why this is bit-identical to the Swift it replaces
+///
+/// `CLAUDE.md` requires it, so the expression is kept in exactly the shape Swift evaluated:
+///
+/// * The two `u64`→`f64` conversions are IEEE-754 "convert to nearest, ties to even" in both
+///   languages, so a count past 2^53 rounds to the same `f64` on both sides rather than to two
+///   neighbours.
+/// * ONE division, of those two converted values, with nothing folded into it — no reciprocal
+///   multiply, no fused multiply-add. `a / b` rounds once and that is the only rounding here.
+/// * The ceiling is `f64::min`, which is Swift's `min` for these operands: `total > 0` is checked
+///   first, so neither side of the comparison can be `NaN` and the two functions' only documented
+///   disagreement — what they do with a `NaN` argument — is unreachable.
+#[must_use]
+pub fn upload_fraction(phase: UploadPhase, sent_bytes: u64, total_bytes: u64) -> f64 {
+    if matches!(phase, UploadPhase::Completed) {
+        return 1.0;
+    }
+    if total_bytes == 0 {
+        return 0.0;
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "the Swift this replaces converted the same two counts the same way, and a byte count past \
+                  2^53 rounds identically on both sides"
+    )]
+    let ratio = sent_bytes as f64 / total_bytes as f64;
+    ratio.min(1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         ABSENT, Display, Telemetry, UploadPhase, UploadTint, activation_key, bps_from_mbps, fps_choice_label,
         has_latched_mode, mbps_choice_label, mbps_from_bps, mbps_label, ms_label, per_sec_label,
-        placeholder_label, stall_caption, stat_rows, upload_glyph, upload_tint,
+        placeholder_label, stall_caption, stat_rows, upload_fraction, upload_glyph, upload_is_settled,
+        upload_tint,
     };
 
     /// The exact sample the deleted Swift suite measured, printing the exact five rows it pinned.
@@ -743,6 +806,39 @@ mod tests {
         assert_eq!(UploadPhase::from_code(9), UploadPhase::Sending);
         assert_eq!(upload_tint(UploadPhase::from_code(9)), UploadTint::Icon);
         assert_eq!(upload_glyph(UploadPhase::from_code(9)), "arrow.up.circle");
+    }
+
+    /// Ported from `RemoteWindowUploadTests`' three `fraction` cases and the `isSettled` half of
+    /// them. Every branch, plus the two the Swift suite did not reach.
+    #[test]
+    fn the_bar_reads_full_when_done_empty_when_unmeasured_and_never_past_its_track() {
+        // In flight, measured: the ratio.
+        assert!((upload_fraction(UploadPhase::Sending, 25, 100) - 0.25).abs() < f64::EPSILON);
+        assert!((upload_fraction(UploadPhase::Sending, 0, 100) - 0.0).abs() < f64::EPSILON);
+        // Done with no size ever reported still reads FULL — the phase is the authority.
+        assert!((upload_fraction(UploadPhase::Completed, 0, 0) - 1.0).abs() < f64::EPSILON);
+        assert!((upload_fraction(UploadPhase::Completed, 3, 100) - 1.0).abs() < f64::EPSILON);
+        // In flight with no size reads EMPTY rather than dividing by zero.
+        assert!((upload_fraction(UploadPhase::Sending, 10, 0) - 0.0).abs() < f64::EPSILON);
+        // A FAILED upload keeps its measured position: it settled, it did not complete.
+        assert!((upload_fraction(UploadPhase::Failed, 40, 100) - 0.4).abs() < f64::EPSILON);
+        assert!((upload_fraction(UploadPhase::Failed, 0, 0) - 0.0).abs() < f64::EPSILON);
+        // An over-reporting host cannot push the bar past its track.
+        assert!((upload_fraction(UploadPhase::Sending, 300, 100) - 1.0).abs() < f64::EPSILON);
+        assert!((upload_fraction(UploadPhase::Sending, u64::MAX, 1) - 1.0).abs() < f64::EPSILON);
+    }
+
+    /// Failure settles as surely as success — the row that lingered on a failed transfer would be
+    /// the one that never left the overlay.
+    #[test]
+    fn both_endings_settle_and_only_sending_does_not() {
+        assert!(!upload_is_settled(UploadPhase::Sending));
+        assert!(upload_is_settled(UploadPhase::Completed));
+        assert!(upload_is_settled(UploadPhase::Failed));
+        assert!(
+            !upload_is_settled(UploadPhase::from_code(9)),
+            "an unnamed phase has not settled, for the same reason it draws the sending glyph",
+        );
     }
 
     /// Every glyph is a distinct mark. Two phases wearing one symbol would make the tone the only

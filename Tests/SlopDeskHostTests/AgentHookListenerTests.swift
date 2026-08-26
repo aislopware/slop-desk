@@ -27,29 +27,16 @@ final class AgentHookListenerTests: XCTestCase {
     // pinned in that crate, beside the parser that decides them, rather than against a second
     // reading here.
 
-    // MARK: record framing split (pane= header + JSON) — the pure routing piece
+    // MARK: record framing split (pane= header + JSON) — not here any more
 
-    func testRecordSplitParsesPaneHeaderAndJSON() {
-        let record = Data("pane=conn-1:3\n{\"hook_event_name\":\"Stop\"}".utf8)
-        let (paneID, body) = AgentHookRecord.split(record)
-        XCTAssertEqual(paneID, "conn-1:3")
-        XCTAssertEqual(body, Data("{\"hook_event_name\":\"Stop\"}".utf8))
-    }
+    //
+    // The grammar is `rust/slopdesk-muxsession`'s `hook_record`, beside the writer's own vectors in
+    // `rust/slopdesk-hook`: the four shapes that name no pane, which two of them keep their first
+    // line as body, and the whitespace set the id is trimmed with. Asserting any of that a second
+    // time here would be the cross-language mirror fixture the tree forbids. What this file keeps
+    // is the ROUTE — that a framed record reaches the fold that actually runs.
 
-    func testRecordSplitEmptyPaneHeaderIsNil() {
-        let record = Data("pane=\n{\"hook_event_name\":\"Stop\"}".utf8)
-        let (paneID, _) = AgentHookRecord.split(record)
-        XCTAssertNil(paneID, "an empty pane id routes nowhere (dropped)")
-    }
-
-    func testRecordSplitWithoutHeaderTreatsWholeAsJSON() {
-        let record = Data("{\"hook_event_name\":\"Stop\"}".utf8)
-        let (paneID, body) = AgentHookRecord.split(record)
-        XCTAssertNil(paneID, "no pane header → no pane id")
-        XCTAssertEqual(body, record, "the whole record is the JSON")
-    }
-
-    /// End-to-end over the pure pieces: split a real framed record, then feed the JSON to the
+    /// End-to-end over the routing: split a real framed record, then feed the JSON to the
     /// detector the live sink feeds → the right type-27. (No socket is touched — hang-safety.)
     func testSplitThenFoldProducesStatus() {
         let record = Data("pane=p1\n{\"hook_event_name\":\"UserPromptSubmit\"}".utf8)

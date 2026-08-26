@@ -75,11 +75,11 @@ pub struct CRect {
 }
 
 impl CRect {
-    const fn resolve(self) -> Rect {
+    pub(crate) const fn resolve(self) -> Rect {
         Rect::xywh(self.x, self.y, self.width, self.height)
     }
 
-    const fn of(rect: Rect) -> Self {
+    pub(crate) const fn of(rect: Rect) -> Self {
         Self {
             x: rect.origin.x,
             y: rect.origin.y,
@@ -1362,7 +1362,7 @@ fn decode_tree(nodes: &[TreeNode], cursor: &mut usize) -> Option<SplitNode> {
     unsafe_code,
     reason = "this IS the boundary: a C array pointer becoming a slice"
 )]
-unsafe fn borrow_tree(nodes: *const TreeNode, count: usize) -> Option<SplitNode> {
+pub(crate) unsafe fn borrow_tree(nodes: *const TreeNode, count: usize) -> Option<SplitNode> {
     // SAFETY: the caller's obligation, restated above; `borrow_array` states its own.
     let walk = unsafe { borrow_array(nodes, count) };
     let mut cursor = 0;
@@ -1481,7 +1481,7 @@ pub struct DividerHandle {
 }
 
 impl DividerHandle {
-    const fn of(divider: &split_layout::Divider) -> Self {
+    pub(crate) const fn of(divider: &split_layout::Divider) -> Self {
         Self {
             split: Uuid {
                 bytes: divider.split.bytes(),
@@ -3219,13 +3219,13 @@ pub unsafe extern "C" fn slopdesk_ws_encode_video_target(
 /// A pool that runs dry repeats its last entry rather than panicking. The caller's obligation is
 /// [`slopdesk_ws_normalize_minted_ids`], and repeating is what this boundary owes a caller who got
 /// their own arithmetic wrong: a refusal they can see in the tree, not a process that is gone.
-struct MintedPool<'a> {
-    ids: &'a [Uuid],
-    next: usize,
+pub(crate) struct MintedPool<'a> {
+    pub(crate) ids: &'a [Uuid],
+    pub(crate) next: usize,
 }
 
 impl MintedPool<'_> {
-    fn take(&mut self) -> [u8; 16] {
+    pub(crate) fn take(&mut self) -> [u8; 16] {
         let picked = self.ids.get(self.next).or_else(|| self.ids.last());
         self.next += 1;
         picked.map_or([0; 16], |id| id.bytes)
