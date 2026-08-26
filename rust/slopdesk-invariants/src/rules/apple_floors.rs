@@ -13,6 +13,7 @@
 
 use crate::claim::{Claim, SWIFT, View, check_all};
 use crate::report::Report;
+use crate::text::matches_line;
 use crate::tree::Tree;
 
 /// The generated header both slices compile against.
@@ -314,6 +315,88 @@ pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
     report
 }
 
+/// The three frameworks stage E moved, and the ONE directory each is allowed to be named in.
+///
+/// A pair per framework: the Rust file that wraps it, and the token no Rust outside
+/// `rust/slopdesk-apple-*` may spell. The token is the framework's own entry point rather than a
+/// crate name, because what this pins is not "the wrapper is depended on" — a Cargo edge already
+/// says that — but "the CALL happens in one place".
+const STAGE_E_FLOORS: &[(&str, &str)] = &[
+    ("rust/slopdesk-apple-fsevents/src/watch.rs", r"FSEventStream[A-Z]"),
+    (
+        "rust/slopdesk-apple-pasteboard/src/board.rs",
+        r"NSPasteboard(Type)?::|NSPasteboard\b",
+    ),
+    ("rust/slopdesk-apple-app/src/lib.rs", r"NSWorkspace::"),
+];
+
+/// The host reaches `FSEvents`, the pasteboard and Launch Services from ONE crate each
+///
+/// `docs/60` §7 says stage E adds a row here per new crate, the way `slopdesk-apple-power` did. It
+/// is a different SHAPE from the three rules above and deliberately so: those pin that the Swift
+/// stopped doing the work, and under `docs/60` §5's carve-out no Swift is deleted before stage F —
+/// hostd is a Swift process until the cutover, and `RepoStatusWatcher`, `HostClipboardPerformer`
+/// and `HostPathActionPerformer` are still running. Asserting they had stopped would be false.
+///
+/// What IS true today, and is the property the family exists for, is that the RUST side has one
+/// home per framework. `docs/57` §2 gives a crate one framework area; the failure that rule guards
+/// against is a second Rust file reaching the same API directly, which is how the four-way
+/// `CGWindowList` decode drift above happened in the first place. So the ban runs over `rust/`,
+/// exempts the `slopdesk-apple-*` family itself, and fires on a call outside it.
+///
+/// The reads are [`View::Code`] for the reason the file header gives: `crate::clipsync` and
+/// `crate::pathaction` argue in PROSE about `NSPasteboard`'s permission model and `NSWorkspace`'s
+/// snapshot freeze, and a gate that could not tell a call from a sentence about one would push
+/// those arguments out of the files that need them.
+///
+/// BREAK-TEST: added `let board = NSPasteboard::generalPasteboard();` to
+/// `rust/slopdesk-hostserver/src/clipsync.rs` ⇒ FAIL "reaches `NSPasteboard` directly". Separately
+/// deleted `rust/slopdesk-apple-fsevents/src/watch.rs` ⇒ FAIL "has no Rust behind it". Both
+/// restored from /tmp; PASS.
+#[must_use]
+pub fn each_apple_area_has_one_rust_home(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    for (home, _call) in STAGE_E_FLOORS {
+        report.fail_if(
+            !tree.has(home),
+            format!(
+                "{home} is gone — a framework stage E moved has no Rust behind it (docs/60 stage E, docs/57 \
+                 §2)",
+            ),
+        );
+    }
+
+    let mut read_any = false;
+    for (path, file) in tree.under("rust") {
+        let Some(text) = path.to_str() else { continue };
+        // The family itself is the home, and THIS crate is a gate: every rule table below names
+        // these tokens as PATTERNS, in code rather than in prose, so a ban that read them would be
+        // the one file it can never let pass.
+        if path.extension().and_then(std::ffi::OsStr::to_str) != Some("rs")
+            || text.starts_with("rust/slopdesk-apple-")
+            || text.starts_with("rust/slopdesk-invariants/")
+        {
+            continue;
+        }
+        read_any = true;
+        for (home, call) in STAGE_E_FLOORS {
+            report.fail_if(
+                matches_line(file.code(), call),
+                format!(
+                    "{text} reaches /{call}/ directly — every Apple framework area has ONE Rust home and \
+                     this one's is {home}; a second caller is how the four-way CGWindowList decode drift \
+                     happened (docs/57 §2, docs/60 stage E)",
+                ),
+            );
+        }
+    }
+    report.fail_if(
+        !read_any,
+        "no Rust outside the slopdesk-apple-* family was read — this ban would pass for the wrong reason",
+    );
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use crate::tests::Fixture;
@@ -481,5 +564,90 @@ mod tests {
             "enum CaptureRegionMath { static func union(_ a: CGRect, _ b: CGRect) -> CGRect { a } }\n",
         );
         assert!(!super::the_host_decides_no_capture_region(&fixture.tree()).is_clean());
+    }
+
+    /// The three homes stage E landed, plus one ordinary Rust file for the ban to read.
+    fn homes(fixture: &Fixture) {
+        for (home, _call) in super::STAGE_E_FLOORS {
+            fixture.write(home, "pub fn f() {}\n");
+        }
+        fixture.write("rust/slopdesk-hostserver/src/clipsync.rs", "pub fn f() {}\n");
+    }
+
+    #[test]
+    fn one_rust_home_per_area_is_green_when_only_the_family_calls_the_frameworks() {
+        let fixture = Fixture::new("apple-floors-stage-e-green");
+        homes(&fixture);
+        assert!(
+            super::each_apple_area_has_one_rust_home(&fixture.tree())
+                .violations()
+                .is_empty(),
+        );
+    }
+
+    #[test]
+    fn a_second_caller_of_the_pasteboard_outside_the_family_is_red() {
+        let fixture = Fixture::new("apple-floors-stage-e-second-caller");
+        homes(&fixture);
+        fixture.append(
+            "rust/slopdesk-hostserver/src/clipsync.rs",
+            "fn peek() { let _ = NSPasteboard::generalPasteboard(); }\n",
+        );
+        let report = super::each_apple_area_has_one_rust_home(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("clipsync.rs")),
+            "{:?}",
+            report.violations(),
+        );
+    }
+
+    #[test]
+    fn a_second_caller_of_fsevents_or_the_workspace_is_red_too() {
+        for (name, line) in [
+            ("fsevents", "fn w() { FSEventStreamCreate(); }\n"),
+            ("workspace", "fn w() { NSWorkspace::sharedWorkspace(); }\n"),
+        ] {
+            let fixture = Fixture::new(&format!("apple-floors-stage-e-{name}"));
+            homes(&fixture);
+            fixture.append("rust/slopdesk-hostserver/src/clipsync.rs", line);
+            assert!(
+                !super::each_apple_area_has_one_rust_home(&fixture.tree())
+                    .violations()
+                    .is_empty(),
+                "a second {name} caller has to be red",
+            );
+        }
+    }
+
+    #[test]
+    fn a_framework_name_in_prose_outside_the_family_stays_green() {
+        let fixture = Fixture::new("apple-floors-stage-e-prose");
+        homes(&fixture);
+        fixture.append(
+            "rust/slopdesk-hostserver/src/clipsync.rs",
+            "//! `NSPasteboard` declares several types per clip, and `NSWorkspace` freezes.\n",
+        );
+        assert!(
+            super::each_apple_area_has_one_rust_home(&fixture.tree())
+                .violations()
+                .is_empty(),
+            "the ban reads code — the argument for the design has to survive in the file",
+        );
+    }
+
+    #[test]
+    fn a_deleted_home_is_red() {
+        let fixture = Fixture::new("apple-floors-stage-e-deleted");
+        homes(&fixture);
+        fixture.remove("rust/slopdesk-apple-fsevents/src/watch.rs");
+        let report = super::each_apple_area_has_one_rust_home(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no Rust behind it")),
+            "{:?}",
+            report.violations(),
+        );
     }
 }

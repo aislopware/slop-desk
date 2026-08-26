@@ -1,0 +1,137 @@
+# `slopdesk-apple-pasteboard` — `NSPasteboard`, the board itself.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# One thing: reading and writing ONE macOS pasteboard. The change counter, what types the current
+# owner DECLARED, the bytes behind a type, and a validate-then-clear write. Nothing about clipboard
+# SYNC: which flavour is preferred, how big a clip may be, whether a concealed clip may leave the
+# machine, and whether an arriving read is the client's own push echoing back are all
+# `slopdesk_hostserver::clipsync`, which is `forbid(unsafe_code)` and testable against a fake board.
+#
+# ## `NSBitmapImageRep` is inside the framework area, and here is the argument
+# §2 gives a crate ONE framework area, and a transcode looks at first like a second. It is not: the
+# pasteboard's own contract is that an image clip is DECLARED under several types and a reader picks
+# one, so "the TIFF flavour, as PNG" is a question about this board and no other subject. Apple
+# ships the answer on `NSBitmapImageRep` and nowhere else. Splitting it into a second crate would
+# split one board operation across two, and the fold that consumes it would then have to know which
+# half to ask — which is exactly the decision §2 keeps out of wrapper crates.
+#
+# ## The `unsafe` in this crate
+# ONE block. Every `NSPasteboard` method this crate calls is generated SAFE, and so is
+# `NSBitmapImageRep::initWithData` and `TIFFRepresentation`. Only `representationUsingType:properties:`
+# is generated `unsafe`, because its properties dictionary is untyped in the header — and this crate
+# hands it an EMPTY dictionary, which is the one argument that cannot be of the wrong type. There is
+# no `from_raw`, no transmute and no raw-pointer arithmetic, so the two Core Foundation admissions §2
+# grants this family are unspent here.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-pasteboard"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "NSPasteboard access for slopdesk — the board's counter, its declared types and its bytes"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_pasteboard"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+#
+# `default-features = false` plus four `NSPasteboard`-area features: the default feature set of
+# `objc2-app-kit` is the WHOLE of AppKit — every view, every control, every window — which would
+# widen the framework area §2 says a crate may cover to "the UI toolkit".
+[target.'cfg(target_os = "macos")'.dependencies]
+# `Retained` is `objc2`'s, and every AppKit constructor answers one, so the shim's own crate is a
+# direct edge rather than a re-export ridden in on. Same exact pin as `slopdesk-apple-sck`'s.
+objc2 = { version = "=0.6.3", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSPasteboard",
+  "NSBitmapImageRep",
+  # `NSBitmapImageRep`'s superclass, without which the binding is absent rather than reduced.
+  "NSImageRep",
+] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSString",
+  "NSData",
+  "NSArray",
+  # `NSArray::iter` is gated on this; without it the declared-type list can only be indexed.
+  "NSEnumerator",
+  "NSDictionary",
+] }
+
+# Mirrors `slopdesk-video`'s: this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` because
+# every site sits under its own self-expiring `#[expect(unsafe_code, reason = …)]`, so an exemption
+# that stops being needed fails the build. `unsafe_op_in_unsafe_fn` is `deny` on top, per §3.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

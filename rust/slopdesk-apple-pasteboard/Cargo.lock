@@ -19,16 +19,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "libc"
-version = "0.2.189"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
-
-[[package]]
 name = "objc2"
-version = "0.6.4"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a12a8ed07aefc768292f076dc3ac8c48f3781c8f2d5851dd3d98950e8c5a89f"
+checksum = "b7c2599ce0ec54857b29ce62166b0ed9b4f6f1a70ccc9a71165b6154caca8c05"
 dependencies = [
  "objc2-encode",
 ]
@@ -40,7 +34,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags",
- "libc",
  "objc2",
  "objc2-foundation",
 ]
@@ -74,9 +67,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopdesk-apple-app"
+name = "slopdesk-apple-pasteboard"
 version = "0.1.0"
 dependencies = [
+ "objc2",
  "objc2-app-kit",
  "objc2-foundation",
 ]

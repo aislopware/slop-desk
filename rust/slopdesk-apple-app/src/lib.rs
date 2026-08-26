@@ -26,10 +26,27 @@
 //! answers `None`, which every caller reads as "not eligible", so the failure is CLOSED — chip
 //! dark, no chord — rather than frozen on whatever was frontmost when the daemon started.
 
+//! ## `NSWorkspace` IS here, for the two verbs that are not a snapshot
+//! The paragraph above bars `frontmostApplication` and stands. What arrived with `docs/60` stage E
+//! is the other half of the class: `openURL:` and `activateFileViewerSelectingURLs:` are EFFECTS,
+//! not observations, so the freeze that makes the frontmost read useless cannot apply — there is
+//! nothing cached to go stale, and a call either reached Launch Services or did not.
+//!
+//! They are in THIS crate rather than a sixth one because §2's unit is a framework AREA and the
+//! area is "the running application": which app owns a pid, whether it is hidden, raising one, and
+//! handing a file to whichever app claims it. A `slopdesk-apple-workspace` holding two calls would
+//! split that area in half and give the metadata performer two doors to pick between.
+//!
+//! WHICH path may be opened is not here. The tilde expansion, the absolute-path requirement and the
+//! existence check are `slopdesk_hostserver::pathaction`, which forbids `unsafe` and is the half a
+//! test can hold; these two functions take a path that has already passed all three.
+
 #![cfg_attr(not(target_os = "macos"), allow(unused_crate_dependencies))]
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication, NSWorkspace};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSArray, NSString, NSURL};
 
 /// The bundle identifier of the process with this pid.
 ///
@@ -77,12 +94,60 @@ pub fn activate(pid: i32) -> bool {
         .is_some_and(|app| app.activateWithOptions(NSApplicationActivationOptions::empty()))
 }
 
+/// Hands `path` to whichever application Launch Services says owns it — the host half of a ⌘click.
+///
+/// `false` when Launch Services declined: no app claims the type, the app is damaged, the file
+/// vanished between the caller's check and this call. A REQUEST, never a guarantee, exactly like
+/// [`activate`] one function up.
+///
+/// The path arrives ABSOLUTE and already known to exist — `slopdesk_hostserver::pathaction` owns
+/// the tilde expansion, the absolute-path refusal and the existence check, and is where a test can
+/// assert on all three. Nothing is re-derived here: `NSURL::fileURLWithPath` is handed the string
+/// it was given.
+#[cfg(target_os = "macos")]
+#[must_use]
+pub fn open_path(path: &str) -> bool {
+    // Generated SAFE, all three calls. `openURL:` is an EFFECT and not a snapshot, so the freeze
+    // the module note bars `frontmostApplication` for cannot apply to it.
+    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+    NSWorkspace::sharedWorkspace().openURL(&url)
+}
+
+/// Opens the host's Finder with `path` SELECTED — the reveal verb.
+///
+/// Void, because the framework's own call is: there is no "the Finder declined" to report. The
+/// caller's success condition is the existence check it already performed, which is why
+/// `slopdesk_hostserver::pathaction` answers `ok` on the strength of that and not of this.
+///
+/// Takes one path rather than a slice deliberately. `activateFileViewerSelectingURLs:` accepts
+/// many, and no verb in this repository reveals more than one — a slice here would be a shape the
+/// wire cannot produce and a second code path nothing exercises.
+#[cfg(target_os = "macos")]
+pub fn reveal_path(path: &str) {
+    // Generated SAFE, all four calls — see [`open_path`] on why an effect is not the snapshot the
+    // module note bars.
+    let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+    let selection = NSArray::from_retained_slice(&[url]);
+    NSWorkspace::sharedWorkspace().activateFileViewerSelectingURLs(&selection);
+}
+
 /// The non-macOS shapes, so a caller compiles everywhere and links the doors only where they exist.
 #[cfg(not(target_os = "macos"))]
 #[must_use]
 pub const fn bundle_id(_pid: i32) -> Option<String> {
     None
 }
+
+/// The non-macOS twin of [`open_path`]. There is no Launch Services to decline, so it declines.
+#[cfg(not(target_os = "macos"))]
+#[must_use]
+pub const fn open_path(_path: &str) -> bool {
+    false
+}
+
+/// The non-macOS twin of [`reveal_path`]. There is no Finder to raise, so nothing is raised.
+#[cfg(not(target_os = "macos"))]
+pub const fn reveal_path(_path: &str) {}
 
 /// The non-macOS twin of [`is_hidden`].
 #[cfg(not(target_os = "macos"))]
@@ -135,6 +200,19 @@ mod tests {
     fn activating_a_pid_that_names_no_application_is_refused() {
         assert!(!activate(i32::MAX));
         assert!(!activate(-1));
+    }
+
+    /// A path Launch Services cannot open is refused rather than silently "succeeding".
+    ///
+    /// The ONE assertion this crate makes about `open_path`, and deliberately so: the success arm
+    /// launches an application, which needs a window server and a Launch Services session and would
+    /// leave a running app behind on whatever machine ran the suite. That is the same hang-safety
+    /// line `HostPathActionPerformer` draws in its own header, and the half a test CAN hold —
+    /// tilde expansion, the absolute-path refusal, the existence check — is
+    /// `slopdesk_hostserver::pathaction`'s, where it is asserted against a fake opener.
+    #[test]
+    fn a_path_that_cannot_be_opened_is_refused() {
+        assert!(!super::open_path("/nonexistent/slopdesk/never-was"));
     }
 
     /// Called repeatedly, it must keep answering — this is the property `NSWorkspace` does NOT have

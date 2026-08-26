@@ -1018,6 +1018,11 @@ pub fn registry() -> Vec<Rule> {
             check: apple_floors::the_host_decodes_no_window_record,
         },
         Rule {
+            name: "one-rust-home-per-apple-area",
+            origin: "docs/60 stage E",
+            check: apple_floors::each_apple_area_has_one_rust_home,
+        },
+        Rule {
             name: "host-decides-no-region",
             origin: "docs/56 increment 86",
             check: apple_floors::the_host_decides_no_capture_region,

@@ -1,0 +1,137 @@
+# `slopdesk-apple-fsevents` — the File System Events **stream**, and nothing else.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# One thing: a recursive FSEvents stream rooted at one directory, delivering "something under here
+# changed" onto a dispatch queue, and torn down in the one order the framework requires
+# (stop → invalidate → release). WHICH directories are watched, how long a burst is debounced, and
+# whether a change is worth telling anyone about are not here — they are
+# `slopdesk_muxsession::repo_watch`, which is `forbid(unsafe_code)` and has been since before this
+# crate existed.
+#
+# The stream deliberately carries NO event detail. `repo_watch`'s whole rule set keys on the WATCH
+# path and re-reads the repository; the flags, the ids and the path list an FSEvents callback is
+# handed are read by nobody, so decoding them here would be a decode this repository never consults
+# — and, per §2, a decode is exactly the kind of decision a wrapper crate may not make.
+#
+# ## The `unsafe` in this crate, and the raw-pointer deref that is NOT in it
+# `objc2-core-services` generates the six FSEvents entry points as `unsafe extern "C-unwind"`, so
+# every call is one `unsafe` block naming the framework rule it satisfies. There is no `from_raw`,
+# no transmute and no `CFRetained` admission spent: `FSEventStreamRef` is a raw handle the framework
+# hands back and takes away again, not a Core Foundation object `objc2` models.
+#
+# What §2 bars — a hand-written raw-pointer dereference — is avoided by NOT using the callback's
+# `info` context at all. The Swift this replaces round-tripped an `Unmanaged<EventBox>` through that
+# `void *`, which in Rust is a `Box::into_raw` on one side and a deref on the other, the classic
+# place a teardown race turns into a use-after-free. Instead the context is passed NULL and the
+# callback identifies its stream by the `FSEventStreamRef` the framework already hands it, looked up
+# in a process-wide table under a mutex. A lookup that misses — the one race, a callback already in
+# flight when `Drop` removes the row — answers `None` and does nothing, where the pointer version
+# would have read freed memory.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-fsevents"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "FSEvents directory watching for slopdesk — one stream, one dispatch queue, one teardown order"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_fsevents"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+#
+# `default-features = false` plus the ONE framework area is the §2 rule spelled in the manifest:
+# `objc2-core-services` also generates Apple Events, Launch Services, Spotlight and the Keychain's
+# identity API, and none of those are this crate's to reach.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-services = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "FSEvents",
+  # `FSEventStreamSetDispatchQueue` is gated on this: without it the generated surface offers only
+  # the DEPRECATED run-loop scheduling, which a daemon that pumps no run loop cannot use.
+  "dispatch2",
+] }
+objc2-core-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "CFBase",
+  "CFString",
+  "CFArray",
+] }
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std"] }
+
+# Mirrors `slopdesk-video`'s: this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` because
+# every site sits under its own self-expiring `#[expect(unsafe_code, reason = …)]`, so an exemption
+# that stops being needed fails the build. `unsafe_op_in_unsafe_fn` is `deny` on top, per §3.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

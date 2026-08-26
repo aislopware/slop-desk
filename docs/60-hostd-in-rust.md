@@ -987,6 +987,69 @@ The `notify` crate would also work and is better maintained, but it is not `objc
 to live outside `slopdesk-apple-*`; that trade is not worth taking for one watcher when the bindings
 exist.
 
+**Stage E ✅ landed** — three framework crates and the two folds over them:
+`rust/slopdesk-apple-fsevents` (4 tests), `rust/slopdesk-apple-pasteboard` (10),
+`slopdesk_apple_app::{open_path, reveal_path}` (1 more), and
+`rust/slopdesk-hostserver/src/{clipsync,pathaction}.rs` plus 35 tests. `§7`'s row is
+`one-rust-home-per-apple-area` in `rules/apple_floors.rs`.
+
+**The FSEvents callback carries NO context pointer, and that is the whole design.**
+`RepoStatusWatcher.fsEventsSource` round-trips an `Unmanaged<EventBox>` through
+`FSEventStreamContext.info` with a manual `release` callback and a hand-balanced `box.release()` on
+the create-failure arm. In Rust that is `Box::into_raw` plus a raw-pointer dereference in the
+callback — exactly what `docs/57` §2 bars this family from writing. So the context is NULL and the
+callback keys off the `FSEventStreamRef` ADDRESS in a process-wide `Mutex<HashMap<usize, Listener>>`,
+typed `usize` so "this is never dereferenced" is a promise the compiler keeps rather than a comment.
+The one race the pointer version has, a callback already dispatched when `Drop` runs, resolves here
+to a `None` that does nothing; there it is a use-after-free. **The Get-rule admission the paragraph
+above predicted is therefore never spent** — the borrowed `FSEventStreamRef` is a map KEY, not a
+retained object, and it is not a CF object anyway: it carries its own
+`FSEventStreamRetain`/`Release` pair rather than `CFRetain`. The row is removed AFTER
+stop → invalidate → release, in that order, and the leak test asserts the listener's
+`Arc::strong_count` goes 2 → 1 on drop.
+
+**One test had to be rewritten around a framework fact rather than around the wrapper.** The
+obvious create-failure test — `FSEventStreamCreate` with an empty path — does not fail: the
+framework validates no path and hands back a stream that simply never reports. `docs/57` §2 does not
+let a wrapper invent a refusal the framework declines to make, so the test became
+`a_watch_the_framework_will_never_report_on_is_still_balanced`: an inert watch is still balanced on
+drop, which is the claim that was actually worth pinning.
+
+**`NSBitmapImageRep` is inside the pasteboard's area, and `NSWorkspace`'s two verbs are inside the
+app's.** Neither is a new crate, and both are `docs/57` §2's unit — a framework AREA — read
+straight. The board's own contract is that an image clip is declared under several types and a
+reader picks one, so "the TIFF flavour, as PNG" is a question about THIS board; splitting it would
+force the fold above to decide which half to ask, which is the decision §2 keeps out of wrapper
+crates. And the module note that bars `frontmostApplication` bars it because it is a per-process
+SNAPSHOT that freezes in a daemon — `openURL:` and `activateFileViewerSelectingURLs:` are EFFECTS
+with nothing cached to go stale, so the bar does not reach them.
+
+**Neither fold is WIRED into `metadata`'s routing, on purpose.** The pasteboard and the Finder are
+host-GLOBAL, and §5's carve-out means the Swift hostd is still running: a second performer over
+either would be two implementations of one machine's clipboard for as long as both processes live.
+`HostMetadata`'s own module doc already makes this argument for the three verbs it could serve
+today. Stage F retires that hostd and injects these.
+
+**Two spellings of the same UTI, closed before they could drift.** `clipsync` must build with no
+`AppKit`, so it types `"org.nspasteboard.ConcealedType"` and `"public.file-url"` itself.
+`Flavour::uti()` exists purely so the fold's suite can assert both against what the framework
+actually declares — the `docs/55` §6 `process::basename` shape, where two implementations disagreed
+for a month.
+
+**One deliberate behaviour difference from the Swift, and one bug the port found.** `~user` is not
+expanded: it needs a `getpwnam`, no verb in this repository can produce such a path, and it is
+refused rather than resolved — the closed answer. The bug is the EMPTY-home arm: `format!("{}/{rest}",
+"")` is `/rest`, which is ABSOLUTE, so a daemon launched without `HOME` would have silently reread
+`~/Documents` as the root's `Documents`. The Rust refuses every tilde against an empty home.
+
+**The hole this stage names rather than fills.** `HostEnvironment` (350) and the Rust CALLER that
+drives `slopdesk-apple-fsevents` off `slopdesk_muxsession::repo_watch` are still stage E's, and they
+are the half that is open: the framework crates landed, and one of the two folds over them did not.
+Neither is a framework port — `HostEnvironment` is `SLOPDESK_*` gate resolution and an `EnvConfig`
+overlay with four `Bundle`/TCC reads at its edge, and the watcher fold is a map of toplevel to
+`Watch` driving rules that already exist in `slopdesk_muxsession::repo_watch`. They are named here
+so the next increment finds a list rather than a surprise, exactly as D.6.5 named its two.
+
 **Stage F — the cutover.** `Sources/slopdesk-hostd/main.swift` (382) becomes
 `rust/slopdesk-hostd`; `make host-restart` and `slopdesk-hostlaunch` retarget; `Sources/SlopDeskHost`
 and the host half of `Sources/SlopDeskTransport` are DELETED, with their tests ported to the crates

@@ -243,14 +243,34 @@ accessor it needs, so the ownership question was answered by the binding rather 
 | `slopdesk-apple-cgdisplay` | CG display services | every `CGDisplayBounds`/`CGGet*DisplayList` site | **landed** (increment 85) |
 | `slopdesk-apple-ax` | `AXUIElement` | the raise chain, `WindowPlacement`, `WindowGeometryWatcher`'s resize, `WindowFeedAXSupport`'s probe, `HostNavHistory` | **landed** (increments 90-91) — costs the §2 admission |
 | `slopdesk-apple-cursor` | `NSCursor` + the offscreen `NSBitmapImageRep` render | `CursorSampler`'s two AppKit reads | **landed** (increment 89) — costs **two** `unsafe` blocks |
-| `slopdesk-apple-app` | `NSRunningApplication` reads | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate | **landed** (increment 87) — costs **zero** `unsafe` |
+| `slopdesk-apple-app` | `NSRunningApplication` reads, and `NSWorkspace`'s two EFFECT verbs | `HostFrontmostApp`'s last line, `WindowFeedGlue`'s per-pid state, `InputInjector`'s activate, `HostPathActionPerformer`'s open/reveal | **landed** (increment 87; `NSWorkspace` in stage E) — costs **zero** `unsafe` |
 | `slopdesk-apple-vt` | VideoToolbox + CoreMedia | `VideoEncoder` **(done)**, `VideoDecoder` **(done)** | **landed** (increments 92, 93) — costs both §2 admissions, the shim's third convention, and the family's only iOS edge |
 | `slopdesk-apple-sck` | ScreenCaptureKit | `WindowCapturer`'s stream **(done)** | **landed** (increment 94) — costs **neither** §2 admission |
 | `slopdesk-apple-audio` | AudioToolbox | `AudioStreamEncoder`/`Decoder` | **done** — the §2 exemption above; `AudioPlaybackEngine` went to `slopdesk-audio-out` (cpal) instead |
 | `slopdesk-apple-power` | `IOKit.pwr_mgt` | `PreventSleepAssertion`, `PreventSleepPolicy`, `HostDisplayWake`'s seams | **landed** — costs **one** `unsafe` block; the deferral was a mis-read feature list, see §1 |
 
+| `slopdesk-apple-pasteboard` | `NSPasteboard` (+ the `NSBitmapImageRep` transcode) | `SystemPasteboard`, `PasteboardClip`'s `AppKit` arm | **landed** (stage E) — costs **one** `unsafe` block, and **neither** §2 admission |
+| `slopdesk-apple-fsevents` | `FSEvents` | `RepoStatusWatcher`'s stream | **landed** (stage E) — costs **zero** `unsafe` blocks and **neither** admission; see the no-context-pointer note below |
+
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s
 one-implementation rule does not soften because the other language is a framework.
+
+**The two stage-E rows are the ONE exception, and it is `docs/60` §5's, not a new one.** hostd is a
+Swift process until stage F's cutover, so `SystemPasteboard` and `RepoStatusWatcher` are still
+RUNNING beside their crates; deleting them would take the host down. What holds the line meanwhile
+is `one-rust-home-per-apple-area` in `rules/apple_floors.rs` — the Rust side has exactly one caller
+per framework area, so the drift this family exists to prevent cannot start on the Rust side while
+the Swift waits to be deleted. Stage F deletes both.
+
+**`slopdesk-apple-fsevents` spends no admission because it passes no context pointer.** The Swift
+round-trips an `Unmanaged<EventBox>` through `FSEventStreamContext.info`, which in Rust is
+`Box::into_raw` plus a raw-pointer dereference in the callback — §2's ban, squarely. The crate
+instead passes a NULL context and keys the callback off the `FSEventStreamRef` ADDRESS, held as a
+`usize` in a process-wide map, so "never dereferenced" is a promise the type system keeps. The
+borrowed `FSEventStreamRef` §5 of `docs/60` predicted would cost a `CFRetained::retain` is therefore
+never retained at all: it is a map key. `FSEventStreamRef` is not a CF object in the first place —
+it has its own `FSEventStreamRetain`/`Release` pair, not `CFRetain` — so the Get-rule admission was
+never the right instrument for it.
 
 ### Six corrections this ledger earned by being wrong
 

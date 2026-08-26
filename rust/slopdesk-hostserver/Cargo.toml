@@ -133,6 +133,11 @@ slopdesk-ids = { path = "../slopdesk-ids" }
 # own in `nix`, so the verb needs it named here rather than a bare `gethostname` call.
 nix = { version = "0.31", features = ["fs", "hostname", "poll", "socket"] }
 
+# The Finder and Launch Services half of the two side-effecting PATH verbs. Not target-gated: the
+# crate carries its own non-macOS shapes, so `crate::pathaction::Finder` compiles everywhere and
+# simply declines where there is no Launch Services to ask.
+slopdesk-apple-app = { path = "../slopdesk-apple-app" }
+
 # The agent-control protocol IS JSON — one object per line, in and out. `serde_json`'s default map
 # is a `BTreeMap`, so its keys come out sorted: byte for byte what `JSONSerialization`'s
 # `sortedKeys` produced, which is what makes a Rust-served line and a Swift-served one the same line
@@ -140,6 +145,12 @@ nix = { version = "0.31", features = ["fs", "hostname", "poll", "socket"] }
 # encodes every answer with it, and `tests/serviceproc.rs`'s fake superd — which was what first
 # needed it, to build the replies superd would send — reads it from here now.
 serde_json = "1"
+
+# The macOS pasteboard behind `crate::clipsync::GeneralBoard`. TARGET-GATED, unlike the crate above,
+# because `NSPasteboard` has no cross-platform twin and the crate offers no stub: the FOLD in
+# `clipsync` builds everywhere and is tested against a fake, and only the door is macOS-only.
+[target.'cfg(target_os = "macos")'.dependencies]
+slopdesk-apple-pasteboard = { path = "../slopdesk-apple-pasteboard" }
 
 # In hostd, on the accept path and under the server's one lock.
 [profile.release]

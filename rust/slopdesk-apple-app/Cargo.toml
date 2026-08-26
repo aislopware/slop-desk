@@ -48,6 +48,9 @@ path = "src/lib.rs"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
   "std",
   "NSRunningApplication",
+  # The two EFFECT verbs stage E moved here — see the module note on why an effect is not the
+  # snapshot `frontmostApplication` is barred for.
+  "NSWorkspace",
   # `runningApplicationWithProcessIdentifier:` is gated on this: the binding takes a `libc::pid_t`,
   # so without the feature the generated function is simply absent rather than taking an `i32`.
   "libc",
@@ -55,6 +58,10 @@ objc2-app-kit = { version = "=0.3.2", default-features = false, features = [
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
   "std",
   "NSString",
+  # `NSURL` is what `openURL:` and `activateFileViewerSelectingURLs:` take, and the second takes an
+  # `NSArray` of them.
+  "NSURL",
+  "NSArray",
 ] }
 
 # Mirrors the other two read crates': this is linked into the same archive.
