@@ -9,14 +9,17 @@
 # the floor is a framework nobody needed rather than a framework nobody can replace.
 #
 # ## What is here and what is not
-# HERE: the association preamble, the TCP parameters, the accept loop, and the map of half-paired
-# links — the part that owns live file descriptors.
-# NOT here, and deliberately: the pairing RULE. `slopdesk-muxsession::pairing` already decides what
-# an arriving half means and whether a parked one has expired, with its whole state space written
-# out as a test table (`docs/59` step 6). This crate applies that verdict to real sockets and closes
-# what it is told to close; it does not re-derive it. Also not here: anything that reads a mux
-# FRAME — the decoder, the channel table, admission and flow control are `slopdesk-wire::mux`'s.
-# This crate hands up a pair of byte links and has no opinion about what rides them.
+# HERE: the association preamble, the TCP parameters, the accept loop, the map of half-paired links,
+# and — since stage B — the two threads that read mux frames off a paired connection and demultiplex
+# them into per-channel streams. Everything in that list owns a file descriptor or a thread.
+# NOT here, and deliberately: every RULE any of it applies. `slopdesk-muxsession::pairing` decides
+# what an arriving half means and whether a parked one has expired, with its whole state space
+# written out as a test table (`docs/59` step 6). `slopdesk-wire::mux` decides whether a frame is
+# admitted, where it routes, what a channel's ending reaches, and every flow-control number. This
+# crate applies those verdicts to real sockets and closes what it is told to close; it re-derives
+# none of them. Also not here: anything about a PANE — no PTY, no session, no detach policy. The
+# connection reports that a channel opened, that the peer closed one, or that a link died; what any
+# of that MEANS for a shell belongs to the stages above.
 #
 # ## Three dependencies, and the rule about which
 # `socket2` is rust-lang's own crate and it is here for exactly one reason: `TcpKeepalive` spells

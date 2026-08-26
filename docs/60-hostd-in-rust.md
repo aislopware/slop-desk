@@ -155,9 +155,11 @@ writing this still goes to `slopdesk-wire`/`slopdesk-muxsession`, the way `pairi
 ordering problem: the receive loops start before their owner has wired itself up, so every early
 event needs a replay queue to land in. Stage A already solved this shape — `Listener::serve` hands
 back the receiver BEFORE any thread runs — and this stage repeats it: the connection yields
-`MuxEvent::{ChannelOpen, ChannelClosed, LinkDown}` on a channel the owner holds from construction,
-and `detachShellsOnLinkDrop` becomes a constructor parameter rather than a mutable flag. The race
+`MuxEvent::{Opened, Closed, LinkDown}` on a channel the owner holds from construction. The race
 class dissolves instead of porting, and so does the handler retain-cycle that `close()` nils out.
+`detachShellsOnLinkDrop` does not become a constructor parameter either, which was this document's
+first guess: it is a decision ABOUT PANES, and the connection has none. `LinkDown` reports which
+channel ids were live and the owner — stage D — decides whether that detaches a shell or kills it.
 
 Two properties of the Swift carry over verbatim, because they are correctness rather than
 scaffolding: decode → route → deliver stays INLINE on the link's own thread, so per-channel wire
@@ -168,6 +170,18 @@ On zero-copy: one copy out of the link's receive buffer into the per-channel rea
 floor once a channel is consumed on another thread. Reuse one receive buffer per link and stop
 there — `docs/59` §7's zero-allocations-per-chunk budget is a constraint on the FFI crossing, and
 it does not bite until stage C.
+
+Its gate is twelve tests in `rust/slopdesk-hostnet/tests/mux.rs`, each driving the whole stack over
+a real pair of loopback sockets: open → ack → input; a frame split across two writes; the two lanes
+never crossed; a grant riding CONTROL; a peer close reporting its reason and finishing both
+sub-channels; a dropped link reporting the live ids and then going silent; an open on CONTROL
+dropped unanswered; a duplicate open minting no second pane; a reopen of a closed id refused WITH an
+answer; two channels not crossing; the owner's own `close()` staying silent; and a spurious
+`channelOpenAck` not retiring a live channel. The earlier plan promised "a loopback test driving the
+shipping Swift client" here, and that is not what this is — but every frame in the suite is built
+and parsed by `slopdesk_wire::mux`, which is the golden-pinned codec the Swift client encodes
+against, so client compatibility is covered at the frame level rather than by linking the client.
+The end-to-end-with-the-real-client gate is stage F's, where the Swift is deleted.
 
 **Stage C — the pane.** `PTYProcess` (753) + `PaneOutputStream` (402) + `MuxChannelSession` (4,108)
 → the ladders over `slopdesk-muxsession`'s existing `outbox`/`fanout`/`truths`/`lifecycle`. This is
