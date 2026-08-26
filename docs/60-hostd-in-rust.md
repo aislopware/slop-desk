@@ -958,15 +958,41 @@ is paused.
   which only ever opens class 0 or 2, and defaulting a device the host cannot name to passive would
   leave it unable to size its own pane.
 
-  **The hole this stage names rather than fills.** `Panes::capture` and `Panes::roster` — the
-  reconciler's live inventory — are NOT here. `reap` and `resolve_size_passivity` are the two the
-  ending ladders own and both are implemented; the other two need the per-pane truth reducer
-  (`PaneTruths.swift`, 515 lines: title freshness, the open command block, the agent state), which
-  is its own port and not a link-down/detach/stop decision. Nor is the laggard-EVICTION wiring:
+  **The hole this stage names rather than fills — ✅ CLOSED, and the reason it looked bigger than it
+  was.** `Panes::capture` and `Panes::roster` — the reconciler's live inventory — were not landed
+  with D.6.5. `reap` and `resolve_size_passivity` are the two the ending ladders own and both were
+  implemented; the other two were held back for what this section called "the per-pane truth
+  reducer (`PaneTruths.swift`, 515 lines)".
+
+  That reading was **wrong, and worth recording as wrong**: `PaneTruths.swift` is not a reducer. The
+  reducer is `slopdesk_muxsession::truths` and has been Rust since before stage D — 1141 lines of
+  it, holding every latch the capture reads. The 515 Swift lines are the FFI face over it: a
+  `FactTable` that interns a batch into `(rows, arena)`, the two-call buffer convention over each
+  `slopdesk_pane_truths_*` door, and the marshalling back into `WireMessage`. There was nothing
+  there to port, and a line count over `Sources/SlopDeskHost` cannot tell a FOLD from a FACE — which
+  is the one thing a "what is still portable" audit has to check by reading, and the reason this
+  section names both files rather than a number. Stage F deletes `PaneTruths.swift` with the rest of
+  `Sources/SlopDeskHost`.
+
+  So what actually landed is COMPOSITION, in three pieces. `slopdesk-hostserver/src/capture.rs` —
+  one pane's latches as the two records, and only the four decisions that have to be made the same
+  way by the host and by the client's mirror (the two titles `None`/`Some("")` tell apart, the
+  freshness verdict through `slopdesk_wire::document::fields::title_is_fresh` so both ends ask ONE
+  function, the suppressed all-zero agent row, and `liveness` riding in because it is the server's
+  fact). `slopdesk-hostserver/src/panes.rs` — `impl Panes for Host` over the three disjoint
+  inventories, with the roster's member → connection → client-instance join. And two accessors that
+  did not exist: `PaneSession::latches` (`slopdesk-hostsession`), which reads every latch a capture
+  needs in ONE acquisition of the folds lock rather than one per field, and
+  `PaneDetector::foreground_name`
+  (`slopdesk-agent`), which hands back the poll's LATCH — the Swift capture read the watcher's latch
+  for a reason, and `PaneSession::foreground_name` is a `tcgetpgrp`+`proc_pidpath` pair the sweep
+  would otherwise pay per pane per tick. 12 tests in `tests/panes.rs`, 12 more in `capture.rs`.
+
+  Still open here, and the only thing that is: the laggard-EVICTION wiring.
   `Host::evict_subscriber` is the server half and it is complete, but the signal that a member is
   parked on an exhausted credit window has no Rust producer yet — `slopdesk-hostsession` has the
   eviction rule and no callback for it, and adding one is a change to that crate rather than to this
-  ladder. Both are named here so stage F finds a list rather than a surprise.
+  ladder. It is named here so stage F finds it rather than discovers it.
 
   **What stage D does NOT take.** `HostEnvironment` (350) and `RepoStatusWatcher` (316) are stage E:
   the first reads Apple bundle and TCC state, the second is an FSEvents stream per repo toplevel.

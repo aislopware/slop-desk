@@ -277,6 +277,11 @@ impl WorkspaceChannels for WorkspaceService {
         self.document.kick_reconcile();
     }
 
+    fn client_instance(&self, connection: RawUuid) -> Option<RawUuid> {
+        self.subscriber(connection)
+            .map(|subscriber| subscriber.client_instance_id())
+    }
+
     fn drop_connection(&self, connection: RawUuid) {
         self.drop_subscriber(connection);
     }

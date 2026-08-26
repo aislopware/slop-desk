@@ -91,6 +91,7 @@
 
 pub mod adopt;
 pub mod bridge;
+pub mod capture;
 pub mod channel;
 pub mod clipsync;
 pub mod code;
@@ -104,6 +105,7 @@ pub mod lifecycle;
 mod live;
 pub mod metadata;
 mod pane;
+mod panes;
 pub mod pathaction;
 pub mod repowatch;
 pub mod service;

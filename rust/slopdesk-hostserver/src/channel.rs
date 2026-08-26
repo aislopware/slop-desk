@@ -174,6 +174,14 @@ pub trait WorkspaceChannels: Send + Sync + fmt::Debug {
     /// close into a delete instead of a wait.
     fn fact_changed(&self);
 
+    /// Which CLIENT is behind a connection, as the instance id it subscribed under.
+    ///
+    /// The roster's one join: panes and the workspace channel share a connection, so a pane's
+    /// member can be named by a human-readable device through the connection it rides. `None` is a
+    /// legitimate answer rather than a failure — `slopdesk-client` opens no workspace channel at
+    /// all, and a connection that has not subscribed yet has no instance id to give.
+    fn client_instance(&self, connection: Uuid) -> Option<Uuid>;
+
     /// Retires the subscriber this connection carried.
     ///
     /// A workspace subscriber lives and dies with its LINK: presence is connection-scoped, so the
@@ -203,6 +211,11 @@ impl WorkspaceChannels for NoWorkspace {
     }
 
     fn fact_changed(&self) {}
+
+    fn client_instance(&self, _connection: Uuid) -> Option<Uuid> {
+        None
+    }
+
     fn drop_connection(&self, _connection: Uuid) {}
     fn shutdown(&self) {}
 }

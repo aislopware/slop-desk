@@ -51,6 +51,7 @@ use slopdesk_wire::replay::ReplayBuffer;
 
 use crate::detect::{Detect, DetectConfig};
 use crate::ingest::Ingest;
+use crate::latches::PaneLatches;
 use crate::metadata::{Asked, Metadata, MetadataPerformer, UnservedMetadata};
 use crate::project::{IgnoreKeys, InlineResolve, KeyObserver, Project, ResolveExecutor};
 use crate::resize::{RESIZE_DEBOUNCE, Resize, SIZE_SETTLE};
@@ -1421,6 +1422,47 @@ impl PaneSession {
                 folds.detector.status_label().map(String::from),
                 folds.detector.session_intent().map(String::from),
             )
+        })
+    }
+
+    /// Every latch a workspace CAPTURE reads, in ONE acquisition of the folds lock.
+    ///
+    /// Grouped rather than left as a run of accessors because of who asks: the document's
+    /// reconciler captures EVERY pane on every tick, and a call per field would take the same lock
+    /// once per field — each gap a chance to interleave with the read loop that writes them, and a
+    /// record whose title came from before a command edge and whose running-command came from after
+    /// it. One acquisition makes a capture a consistent view of one pane rather than a view per
+    /// field.
+    ///
+    /// Nothing here parses, probes or derives: every field is a value the pane already latched, so
+    /// a capture is one lock and a handful of clones. [`Self::foreground_name`] is deliberately NOT
+    /// among them — that one is a `tcgetpgrp`+`proc_pidpath` pair, and the poll's own latch is what
+    /// [`PaneLatches::foreground`] carries instead.
+    ///
+    /// The GRID is left out for the opposite reason: it is behind the PTY's lock rather than the
+    /// folds', and taking a second lock inside the first is the nesting this crate does not do.
+    /// [`Self::window_size`] answers it beside this call.
+    #[must_use]
+    pub fn latches(&self) -> PaneLatches {
+        self.shared.with_folds(|folds| {
+            let triple = folds.detector.last_emitted_status();
+            PaneLatches {
+                title: String::from(folds.truths.title()),
+                title_at: folds.truths.title_at(),
+                command_started_at: folds.truths.command_running_since(),
+                running_command: folds.truths.running_command().map(String::from),
+                cwd: folds.truths.cwd().map(String::from),
+                project_key: folds.truths.project_key().map(String::from),
+                progress: folds.truths.progress(),
+                last_exit_code: folds.truths.last_exit(),
+                last_duration_ms: folds.truths.last_duration(),
+                completion_epoch: folds.truths.completion_epoch(),
+                agent_state: triple.map_or(0, |triple| triple.state),
+                agent_kind: triple.map_or(0, |triple| triple.kind),
+                agent_label: folds.detector.status_label().map(String::from),
+                agent_intent: folds.detector.session_intent().map(String::from),
+                foreground: folds.detector.foreground_name().map(String::from),
+            }
         })
     }
 

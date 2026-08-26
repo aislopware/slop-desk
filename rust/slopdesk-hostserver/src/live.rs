@@ -20,8 +20,11 @@ use std::sync::Arc;
 use slopdesk_agent::ClaudeStatus;
 use slopdesk_agent::supervision::SupervisionState;
 use slopdesk_hostnet::subchannel::SubChannel;
-use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, PaneSession, SessionObserver, TapToken};
+use slopdesk_hostsession::{
+    BlockTap, CloseTap, OutputTap, PaneLatches, PaneSession, SessionObserver, TapToken,
+};
 use slopdesk_muxsession::registry::{self, Slot, Subscriber, Uuid};
+use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
 
@@ -123,6 +126,14 @@ impl Pane for LivePane {
 
     fn last_exit_code(&self) -> Option<i32> {
         self.session.last_exit_code()
+    }
+
+    fn latches(&self) -> PaneLatches {
+        self.session.latches()
+    }
+
+    fn attachments(&self) -> ((u16, u16), Vec<Attachment>) {
+        (self.session.resolved_grid(), self.session.size_contributions())
     }
 
     fn agent_status(&self) -> (String, Option<String>) {

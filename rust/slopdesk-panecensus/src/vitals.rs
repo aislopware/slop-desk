@@ -486,14 +486,18 @@ mod tests {
             sampler.sample("/", 0).is_none(),
             "the first poll banks a baseline"
         );
-        // NOT "and the second poll answers". `now_nanos` is the caller's clock and the tick
-        // counters are the machine's; two calls a microsecond apart advance no ticks however far
-        // the argument jumps, so a real second poll here lands on the stopped-clock branch. What
-        // that branch does is pinned by `a_stopped_clock_keeps_the_baseline_and_repeats_the_last_answer`
-        // over injected snapshots, which is where a rule about time belongs.
-        assert!(
-            sampler.sample("/", 2 * MIN_WINDOW_NANOS).is_none(),
-            "no ticks have passed, so there is still nothing to publish"
-        );
+        // NOT "and the second poll answers", and NOT "and it stays silent" either. `now_nanos` is
+        // the caller's clock and the tick counters are the MACHINE's, so which branch a real second
+        // poll lands on is decided by whether this host happened to burn a tick between the two
+        // calls — silent on an idle machine, an answer under a loaded `--workspace` run. Asserting
+        // either one turns machine load into a test failure, which is what this assertion used to
+        // do. What is genuinely true of the live path is that it never publishes a reading outside
+        // the range, and both branches are pinned exactly by
+        // `a_stopped_clock_keeps_the_baseline_and_repeats_the_last_answer` and its neighbours over
+        // INJECTED snapshots — which is where a rule about time belongs.
+        if let Some(vitals) = sampler.sample("/", 2 * MIN_WINDOW_NANOS) {
+            assert!(vitals.cpu_percent <= 100);
+            assert!(vitals.memory_percent <= 100);
+        }
     }
 }

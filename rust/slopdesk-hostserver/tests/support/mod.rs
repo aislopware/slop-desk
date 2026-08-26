@@ -21,8 +21,11 @@ use slopdesk_hostnet::link::ByteLink;
 use slopdesk_hostnet::subchannel::SubChannel;
 use slopdesk_hostserver::service::ServiceHandle;
 use slopdesk_hostserver::{EvictionObserver, Pane, TeardownExecutor, Wires};
-use slopdesk_hostsession::{BlockTap, BlockUpdate, CloseTap, OutputTap, SessionObserver, TapToken};
+use slopdesk_hostsession::{
+    BlockTap, BlockUpdate, CloseTap, OutputTap, PaneLatches, SessionObserver, TapToken,
+};
 use slopdesk_muxsession::registry::{self, Slot, Subscriber, Uuid};
+use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
 
@@ -158,6 +161,10 @@ pub struct Ghost {
     parked_exit: Mutex<Option<Arc<dyn SessionObserver>>>,
     /// Every repaint, as the verdict it was given.
     redraws: Mutex<Vec<bool>>,
+    /// What a capture reads off this pane.
+    latches: Mutex<PaneLatches>,
+    /// The grid the fold resolved, and who is holding it there.
+    attachments: Mutex<((u16, u16), Vec<Attachment>)>,
 }
 
 impl Ghost {
@@ -211,6 +218,8 @@ impl Ghost {
             detached: AtomicBool::new(false),
             parked_exit: Mutex::new(None),
             redraws: Mutex::new(Vec::new()),
+            latches: Mutex::new(PaneLatches::default()),
+            attachments: Mutex::new(((100, 30), Vec::new())),
         })
     }
 
@@ -495,6 +504,16 @@ impl Ghost {
             .clone()
     }
 
+    /// Says what a capture will read off this pane.
+    pub fn set_latches(&self, latches: PaneLatches) {
+        *self.latches.lock().unwrap_or_else(PoisonError::into_inner) = latches;
+    }
+
+    /// Says what the size fold resolved for this pane, and who is holding it there.
+    pub fn set_attachments(&self, resolved: (u16, u16), attachments: Vec<Attachment>) {
+        *self.attachments.lock().unwrap_or_else(PoisonError::into_inner) = (resolved, attachments);
+    }
+
     /// Every repaint this pane was asked for, as `true` for a jiggle and `false` for a nudge.
     pub fn redraws(&self) -> Vec<bool> {
         self.redraws
@@ -551,6 +570,20 @@ impl Pane for Ghost {
 
     fn foreground_name(&self) -> String {
         self.foreground
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn latches(&self) -> PaneLatches {
+        self.latches
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn attachments(&self) -> ((u16, u16), Vec<Attachment>) {
+        self.attachments
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()

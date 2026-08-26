@@ -32,8 +32,9 @@ use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 
 use slopdesk_hostnet::subchannel::SubChannel;
-use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, SessionObserver, TapToken};
+use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, PaneLatches, SessionObserver, TapToken};
 use slopdesk_muxsession::registry::{Slot, Subscriber, Uuid};
+use slopdesk_muxsession::resize_fold::Attachment;
 use slopdesk_screenwire::payload::Snapshot;
 use slopdesk_superwire::protocol::BlocksReply;
 use slopdesk_wire::WireMessage;
@@ -125,6 +126,27 @@ pub trait Pane: Send + Sync + fmt::Debug {
     /// executable by version — a raw basename would read `2.1.218`, which is not a program the
     /// sensitive set can recognise either way.
     fn foreground_name(&self) -> String;
+
+    /// Every latch a workspace CAPTURE reads, in ONE acquisition.
+    ///
+    /// Grouped rather than added as a method per field, and the reason is not brevity:
+    /// [`crate::workspace::Panes::capture`] runs for EVERY pane on every reconciler tick, so a call
+    /// per field would take the pane's fold lock once per field and leave a window between each
+    /// pair for a command edge to land in — a record whose title was read before that edge and
+    /// whose running command was read after it describes a pane that never existed.
+    ///
+    /// The GRID is not among them and is asked through [`Pane::window_size`] beside this call: it
+    /// lives behind the PTY's lock rather than the folds', and the two are not nested.
+    fn latches(&self) -> PaneLatches;
+
+    /// The grid the size fold RESOLVED across this pane's attached clients, and who is holding it
+    /// there.
+    ///
+    /// The resolved grid rather than [`Pane::window_size`]'s live one, and the roster wants this
+    /// one: it is what the clients NEGOTIATED, so a client that is not driving the size can
+    /// letterbox against it instead of guessing. A pane nobody is watching keeps its last resolved
+    /// grid and answers no attachments — which is what says nobody is watching.
+    fn attachments(&self) -> ((u16, u16), Vec<Attachment>);
 
     /// The pane's supervision state and the label attached to it.
     fn agent_status(&self) -> (String, Option<String>);

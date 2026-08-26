@@ -71,6 +71,7 @@ mod drain;
 mod facts;
 mod history;
 mod ingest;
+mod latches;
 mod metadata;
 mod probe;
 mod project;
@@ -83,6 +84,7 @@ mod taps;
 mod timer;
 
 pub use detect::{DetectConfig, ScreenOracle, ScreenRequest};
+pub use latches::PaneLatches;
 pub use metadata::{MetadataAnswer, MetadataPerformer, MetadataRequest, UnservedMetadata};
 pub use project::{IgnoreKeys, InlineResolve, KeyObserver, ResolveExecutor};
 pub use resize::{RESIZE_DEBOUNCE, SIZE_SETTLE};

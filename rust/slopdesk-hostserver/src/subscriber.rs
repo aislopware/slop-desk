@@ -145,6 +145,16 @@ impl WorkspaceSubscriber {
         self.id
     }
 
+    /// Which CLIENT this subscriber speaks for — the instance id it subscribed under, and the one
+    /// a pane's attachment is named by in the roster.
+    ///
+    /// Read off the mutable half rather than latched at construction: a re-subscribe carries the
+    /// id again, and a client that reconnected under a new instance must be named by the new one.
+    #[must_use]
+    pub fn client_instance_id(&self) -> RawUuid {
+        self.lock().client_instance_id
+    }
+
     /// Starts the single pump thread, which drains until the subscriber closes.
     ///
     /// Separate from [`Self::new`] so the document can register the subscriber before the first

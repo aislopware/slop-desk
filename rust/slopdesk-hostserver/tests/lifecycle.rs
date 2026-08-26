@@ -192,6 +192,11 @@ mod suite {
             self.kicks.fetch_add(1, Ordering::SeqCst);
         }
 
+        /// This document keeps no subscriber table, so no attachment can be named through it.
+        fn client_instance(&self, _connection: Uuid) -> Option<Uuid> {
+            None
+        }
+
         fn drop_connection(&self, connection: Uuid) {
             self.dropped
                 .lock()

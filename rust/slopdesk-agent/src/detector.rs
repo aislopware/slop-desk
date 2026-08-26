@@ -242,6 +242,22 @@ impl PaneDetector {
         self.session_intent.as_deref()
     }
 
+    /// The canonical name of whatever held the terminal at the last [`Detector::sample`], `None`
+    /// before the first one.
+    ///
+    /// The LATCH rather than a fresh reading, and the difference is what makes it worth exposing:
+    /// resolving the name costs a `tcgetpgrp` and a `proc_pidpath`, and a caller that wants it for
+    /// every pane at once — the workspace document's capture does, on every reconciler tick — would
+    /// otherwise pay a syscall pair per pane for an answer this poll already took.
+    ///
+    /// An empty sample stays empty here: "nothing is in the foreground" is a fact about the pane,
+    /// the state between one child exiting and the next starting, and collapsing it into `None`
+    /// would make it indistinguishable from "never sampled".
+    #[must_use]
+    pub fn foreground_name(&self) -> Option<&str> {
+        self.last_emitted_name.as_deref()
+    }
+
     // MARK: Inputs — all fold through the ONE machine
 
     /// Fold one foreground-process sample at `now`.

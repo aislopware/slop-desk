@@ -195,6 +195,12 @@ mod suite {
             self.kicks.fetch_add(1, Ordering::SeqCst);
         }
 
+        /// Nobody subscribed here, so no attachment can be named — the honest answer for a door
+        /// that serves opens and keeps no subscriber table.
+        fn client_instance(&self, _connection: Uuid) -> Option<Uuid> {
+            None
+        }
+
         fn drop_connection(&self, _connection: Uuid) {}
         fn shutdown(&self) {}
     }
