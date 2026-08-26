@@ -76,12 +76,17 @@
 //! third is [`repowatch`], `RepoStatusWatcher`'s machinery: the live-watch table, the debounce and
 //! the thread a reading runs on, over `slopdesk-apple-fsevents`.
 //!
-//! NONE of the three is reached by anything shipping, and that is §5's carve-out rather than an
+//! [`gates`] is the fourth piece and not a fold at all: the seven `SLOPDESK_*` gates
+//! `HostEnvironment` reads about hostd itself, as ONE table with the polarity declared per row
+//! instead of seven hand-written comparisons, plus the two `TERM` names hostd advertises.
+//!
+//! NONE of the four is reached by anything shipping, and that is §5's carve-out rather than an
 //! omission. `HostMetadata`'s own module doc argues it for the three verbs it could already serve:
 //! the pasteboard and the Finder are host-GLOBAL, so a second performer over them would be two
 //! implementations of one machine's clipboard for as long as the Swift hostd runs. [`repowatch`] is
 //! a lifecycle rather than a route, so it has nothing to be wired into at all — hostd starts one,
-//! or it does not. Stage F retires that hostd and starts all three; until then they are linked by
+//! or it does not, and [`gates`] is what it starts them FROM. Stage F retires that hostd and
+//! reaches all four; until then they are linked by
 //! nothing shipping, exactly as §5 says.
 
 pub mod adopt;
@@ -93,6 +98,7 @@ pub mod control;
 pub mod ctlserve;
 mod deadline;
 mod detached;
+pub mod gates;
 pub mod host;
 pub mod lifecycle;
 mod live;

@@ -1076,12 +1076,32 @@ one has no routing to be wired INTO — it is a lifecycle, so stage F starts it 
 Swift one today. Until then it is linked by nothing shipping, and
 `one-rust-home-per-apple-area` is what holds the line meanwhile.
 
-**The hole this stage names rather than fills.** `HostEnvironment` (350) is still stage E's open
-half, and it is not a framework port at all: `SLOPDESK_*` gate resolution, an `EnvConfig` overlay,
-and two FFI faces (`spawn_env`, `terminfo`) whose rules are already Rust. What has to move is the
-GATE TABLE — six keys, each with a default-ON or default-OFF truth table typed in Swift — which is
-the shape `slopdesk-invariants` already ratchets and the reason it is worth its own increment
-rather than a footnote to this one.
+**The gate table ✅ landed too, and it closes `HostEnvironment`.** `rust/slopdesk-hostserver/src/gates.rs`
+plus 7 tests. This was never a framework port: `HostEnvironment` (350) is `SLOPDESK_*` gate
+resolution, an `EnvConfig` overlay, and four FFI faces (`spawn_env`, `terminfo`, the two login-shell
+answers) whose rules were already Rust. What was still TYPED in Swift was seven gates and two `TERM`
+names, and the gates were the part that could go wrong quietly: each was a `static func` beside its
+own key hand-writing one of the project's two polarity idioms, and the wrong idiom on
+`SLOPDESK_IPC_ALLOW_SEND_KEYS` ships key injection into a live PTY ENABLED to every user who never
+set it. As a table the polarity is one declared field per row, and one test prints the whole shipped
+answer.
+
+Three things stayed put, each for a reason that does not change by moving language. The build
+version is passed INTO `spawn_env` rather than minted behind it, because `make release` rewrites
+every site the marketing version is typed and a copy inside an unscanned crate is a version that
+silently stops being bumped. The five keys hostd EXPORTS into a spawned pane were already
+`slopdesk_muxsession::spawn_env`'s constants, so the Swift ones are duplicates stage F deletes rather
+than anything to port. And `EnvConfig` itself is the CLIENT's overlay too — the env → settings
+precedence over ~192 flags — so the lookup stays the caller's here exactly as
+`slopdesk_video::host_gates` has it, and a gate that read `std::env::var` directly would quietly
+stop honouring a setting. The two `TERM` names are the one thing that moved rather than stayed:
+`spawn_env` resolves what it is handed and knows neither of them, which makes the choice hostd's,
+and hostd is what this crate composes. So for as long as the carve-out runs, the seven keys and the
+two names ARE typed twice — `shared_constants` cannot see either pair, since it reads numbers and
+these are strings — and what closes that is stage F deleting `Sources/SlopDeskHost` outright, not a
+ratchet.
+
+With that, stage E has no open half left. What remains before the cutover is stage F's own work.
 
 **Stage F — the cutover.** `Sources/slopdesk-hostd/main.swift` (382) becomes
 `rust/slopdesk-hostd`; `make host-restart` and `slopdesk-hostlaunch` retarget; `Sources/SlopDeskHost`
