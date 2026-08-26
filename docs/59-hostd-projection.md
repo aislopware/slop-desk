@@ -332,8 +332,8 @@ drain, a reap and a roster walk the same order on every run; the dictionaries ha
 What did NOT cross: the objects. `muxSessions` is `[UInt64: MuxChannelSession]` inside the face, and
 `muxConnections` / `workspaceChannels` stay in `HostServer` as they were — a set of ids duplicating
 a dictionary's own key set is not a relation, it is the retention itself, and porting it would have
-been the second copy this step exists to remove. `MuxNWConnection` is Network.framework and stays by
-§6.
+been the second copy this step exists to remove. `MuxNWConnection` stays out of this step because it
+is the CLIENTS' codec too — not, as §6 first claimed, because it is Network.framework; it is not.
 
 **Step 8 — metadata admission. LANDED.** *(~110 removed from the session, ~60 face added)* A pane
 answers every host-metadata verb over the SAME unwindowed control sub-channel, so two questions had
@@ -387,7 +387,7 @@ A seam is deletable only when the tests calling it are fully redundant with a Ru
 that way the set is empty today, so nothing is deleted here and the totals below no longer count it.
 The projection's own rule applies to its own plan: a step that cannot name the coverage it retires is
 a line-count target, not a refactor. What shrinks these two files is steps 1–8 and the work past
-step 8 (`MuxNWConnection`, §6) — never their test surface.
+step 8 (`docs/60-hostd-in-rust.md`) — never their test surface.
 
 **Totals.** ~4,350 Swift lines deleted against ~800 lines of new face, from 7,886.
 `MuxChannelSession.swift` ≈ 4,665 → ~1,650; `HostServer.swift` ≈ 3,221 → ~1,250 — both including the
@@ -410,9 +410,15 @@ unsafe crate. Every step deletes the Swift it replaces and adds a ratchet (§8).
 - **The Apple-framework performers** — `HostClipboardPerformer` (NSPasteboard),
   `HostPathActionPerformer` (NSWorkspace), `RepoStatusWatcher` (FSEvents). `PreventSleepDriver` shows
   the pattern when they DO move: behind `slopdesk-apple-power`, `objc2` only.
-- **`Sources/SlopDeskTransport/Mux/MuxNWConnection.swift`** (837 lines of Network.framework), for as long as
-  hostd is a Swift process. The single largest thing between step 7 and the horizon — and the thing
-  inspectord/dropd/androidd prove is replaceable.
+- ~~**`Sources/SlopDeskTransport/Mux/MuxNWConnection.swift`** (837 lines of Network.framework), for as
+  long as hostd is a Swift process.~~ **WRONG, corrected — see `docs/60-hostd-in-rust.md` §1.** That
+  file imports `Foundation` and `SlopDeskProtocol`; it has no `import Network` at all, it is generic
+  over `any MuxByteLink`, and its tests already drive it through an in-memory link. Network.framework
+  is FOUR other files totalling 863 lines (`HostTransport`, `NWMuxByteLink`, `NWConnection+Async`,
+  `TransportParameters`), and what they ask the framework for is `noDelay`, keepalive 10/5/3 and
+  `tls: nil` — plain TCP. So this was never a floor; it is `rust/slopdesk-hostnet`, on `std::net` plus
+  `socket2`, with no `objc2` and `forbid(unsafe_code)`. `MuxNWConnection` itself does outlive this
+  document, but as the CLIENTS' codec, not as hostd's framework debt.
 - **The `Task`s and the timeouts.** Every ladder step answers WHAT to do and WHEN to arm a timer under
   which generation; Swift arms it.
 - **`golden/golden_vectors.json`.**

@@ -17,6 +17,7 @@ guessing one.
 | Rust that Swift calls in-process | `docs/55-ffi-boundary.md` — the ABI, the artifact, the stale gate |
 | an Apple framework from Rust | `docs/57-apple-frameworks-in-rust.md` — the `objc2` family and its bar |
 | `MuxChannelSession` or `HostServer` | `docs/59-hostd-projection.md` — the six handles, in the one order that lands |
+| hostd's socket, or any Swift you think must stay | `docs/60-hostd-in-rust.md` — the stages, and the one §6 floor that was not one |
 | client UI | `DESIGN.md` |
 | release, signing, brew | `docs/49-release-pipeline.md` |
 | why something was scoped out | `docs/DECISIONS.md` |
