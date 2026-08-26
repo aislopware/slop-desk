@@ -1,0 +1,135 @@
+# `slopdesk-superclient` — hostd's end of the superd control socket.
+#
+# ## Why it exists
+# `docs/60-hostd-in-rust.md` stage C cannot start without it. Every pane verb hostd has — spawn,
+# adopt, signal, resize, subscribe, pause, release — goes through this socket, and hostd's end of it
+# was 2,657 lines of Swift under `Sources/SlopDeskSupervisor`. superd is already Rust; so is the
+# whole message set (`slopdesk-superwire`). What was left in Swift was the CONNECTION: the socket,
+# the reply-waiter table, the serial write queue, the reader thread and the `SCM_RIGHTS` arithmetic.
+# That is what is here.
+#
+# ## What is here and what is not
+# HERE: the framing hostd READS (a tag byte carrying a descriptor, then a length, then a body), the
+# framing hostd WRITES (the same, never with a descriptor — hostd sends none), and the client that
+# runs them: connect, `hello`, one id per request, a thread that demultiplexes replies from
+# notifications from pane output.
+#
+# NOT here: what a request LOOKS like or what a reply MEANS. That is `slopdesk-superwire`, which
+# both ends already share — a second spelling of it is the skew that `superwire`'s own header
+# describes as passing both suites while producing a `nil`. Also not here: anything about a PANE.
+# This crate hands a caller the bytes superd read and the descriptor superd sent; what a pane does
+# with either belongs to the stage above.
+#
+# ## Why the syscalls are not shared with superd
+# `slopdesk-superwire`'s manifest states the split and the reason: the LAYOUT is shared, the
+# syscalls are not, "because the two lanes genuinely differ — superd sends a descriptor it owns
+# through `nix`, and hostd receives one". This crate is that receiving lane, and it is smaller for
+# it: there is no `ControlMessage::ScmRights` anywhere in it, because hostd has no fd to give away.
+# Keeping `nix` out of `slopdesk-superwire` is also what keeps it out of `slopdesk-ffi`, and so out
+# of the iOS binary that links the framing for the settings door.
+#
+# ## Three dependencies, and the rule about which
+# `slopdesk-superwire` is the message set and the byte layout, shared with superd by construction.
+#
+# `slopdesk-posix` is here for `fdpass::recv_tagged`, which is the one operation in the whole client
+# that cannot be written in safe Rust: the proof that a descriptor `recvmsg` just installed is
+# unowned exists only in the instruction after the syscall returns. `CLAUDE.md` puts that obligation
+# in `slopdesk-posix` and nowhere else, which is why `forbid(unsafe_code)` below is true rather than
+# aspirational.
+#
+# `nix` is here for `write`, `read` and `shutdown` with an errno this crate can match on. It is
+# already in superd for the same three.
+[package]
+name = "slopdesk-superclient"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "hostd's client for the slopdesk-superd control socket: framing, verbs and the reader thread"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[workspace]
+
+[dependencies]
+nix = { version = "0.31", features = ["socket", "uio"] }
+slopdesk-posix = { path = "../slopdesk-posix" }
+slopdesk-superwire = { path = "../slopdesk-superwire" }
+
+# The integration suite drives a FAKE superd, which means writing superd's side of the wire: its
+# `sendmsg` with `SCM_RIGHTS`, and `Request`/`Reply` bodies as JSON. Neither belongs in the crate
+# itself — hostd sends no descriptor and decodes replies through `slopdesk-superwire` — so both are
+# dev-only.
+[dev-dependencies]
+serde_json = "1"
+
+# A daemon's profile: hostd is long-lived and this crate sits on every pane's output path.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block, copied rather than inherited — inheriting would mean being a workspace member,
+# which is what the profile forbids.
+[lints.rust]
+# `forbid`, not `deny`: the one unsafe operation this client needs is the `SCM_RIGHTS` adoption, and
+# that lives in `slopdesk-posix` by `CLAUDE.md`'s rule. `forbid` turns "we did not need it here"
+# into something no downstream `allow` can undo.
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+multiple_crate_versions = "allow"
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids. Allowed in every workspace for that repo-wide reason,
+#   not because this crate does float math — it does none.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

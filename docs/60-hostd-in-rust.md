@@ -188,6 +188,39 @@ The end-to-end-with-the-real-client gate is stage F's, where the Swift is delete
 the largest single stage and the one `docs/59` §7's A/B harness exists for: 20,000 32-KiB chunks
 through `ingestPTYChunk` on both sides before it is committed.
 
+**A fourth file this plan did not count: `Sources/SlopDeskSupervisor` (2,657).** The line counts
+above were taken over `Sources/SlopDeskHost` alone, and every one of `PTYProcess`'s verbs — spawn,
+adopt, signal, resize, release — and the whole of `PaneOutputStream` go through `SupervisorClient`.
+Nothing in stage C can be written before it exists in Rust, so the stage is committed in three:
+
+- **C.0 — `slopdesk-superclient`.** hostd's end of the control socket: the framing a descriptor
+  rides on, the connection, the reply-waiter table, the reader thread and the writer behind it.
+  Small, because the MESSAGE set is already `slopdesk-superwire`'s and shared with superd by
+  construction — what was left in Swift was the connection. Two Swift mechanisms do not port.
+  `unawaited` — a set of ids whose replies must be discarded — existed because the Swift parked
+  arriving REPLIES in a map; registering the WAITER instead leaves the set nothing to hold. And the
+  `connection === link` identity check guarding the disconnect path existed because that client
+  reconnected in place; a client here is one connection for its life, and reconnecting means
+  building another with the same observer.
+
+  The gate is thirteen tests against a fake superd on a real `AF_UNIX` socket, over eleven unit tests
+  of the framing and the connection, every frame built by
+  `slopdesk-superwire` and every descriptor crossing by `SCM_RIGHTS`. One of them is load-bearing on
+  its own: a pause fired from INSIDE a pane sink must not wait on the socket the reader is draining,
+  or superd blocked writing output into hostd's full receive buffer and hostd blocked writing a
+  pause into superd's wedge both sides for ever. That is why the writer is its own thread.
+- **C.1 — the pane's descriptor and its stream.** `PTYProcess` + `PaneOutputStream`.
+- **C.2 — the session.** `MuxChannelSession`'s ladders, with the A/B harness above as the gate.
+
+**And one shape from stage C.0 that must NOT be repeated upward.** Pane output is delivered
+SYNCHRONOUSLY, on the reader's own thread, with the payload borrowed out of the frame that carried
+it — not through a channel, the way stage B's mux events are. Stage B could use a channel because
+flow-control credit bounds it. Nothing bounds a subscription queue: a per-pane channel anywhere on
+this path is precisely the unbounded buffer the `pause` verb exists to prevent, and it would turn
+the never-drop invariant into a memory leak. The chain that must stay intact is hostd stops reading
+→ superd's writes block → superd stops reading the master → the kernel PTY buffer fills → the shell
+is paused.
+
 **Stage D — the server.** `HostServer` (3,134) + `HostSessionRegistry` + `HostLifecycleRules` +
 `DetachedSessionStore` + `SupervisedServiceLifecycle`/`Process` + `CodeServerManager` +
 `CodeBridgeServer` + `AgentControlListener` + `MetadataResponseBuilder` + the workspace channel.
