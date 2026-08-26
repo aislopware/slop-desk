@@ -262,6 +262,67 @@ Nothing in stage C can be written before it exists in Rust, so the stage is comm
   thread. None of them may be called from inside a pane sink. A session that tears down on EOF has
   to hand the teardown to another thread first, and stage C.2 is where that lands.
 - **C.2 — the session.** `MuxChannelSession`'s ladders, with the A/B harness above as the gate.
+  New crate `rust/slopdesk-hostsession`, and the placement is decided the same way stage B's was:
+  the session owns descriptors, threads and timers, so it is not `slopdesk-muxsession` (verdicts
+  with no IO — threading it would change what that crate is), not `slopdesk-hostpane` (one pane's
+  descriptor, and nothing above it), and not `slopdesk-hostnet` (the transport under it). It sits on
+  all three.
+
+  **Almost none of the 4,108 lines is a decision, and that is the stage's real shape.** Every policy
+  the file consults is Rust already, behind an FFI door: the outbox merge, the fanout roster, the
+  truths fold, the lifecycle latches and the resize fold are `slopdesk-muxsession`'s; the replay ring
+  and the three-source pause gate are `slopdesk_wire::{replay, mux::flow}`'s; the agent detector and
+  the screen-rule engine are `slopdesk-agent`'s; the foreground and echo probes are
+  `slopdesk-posix`'s; the project key is `slopdesk-project-key`'s. What ports is the SHELL — the
+  output drain, the four relays per subscriber, the attach ladders and the timers that arm them.
+  New Rust here is plumbing; the Swift it makes redundant is mostly marshalling.
+
+  **It deletes nothing, and §5 is why.** Eleven of those faces — `PaneOutbox`, `PaneFanout`,
+  `PaneTruths`, `PaneLifecycle`, `PaneResizeFold`, `PausableQueueGate`, `ReplayBuffer`,
+  `ClaudePaneDetector`, `PaneScreenScanner`, `PTYEcho`, `TerminalReplaySnapshot` — are marshallers
+  that a Rust session calls straight past. Six of them have no consumer outside
+  `MuxChannelSession.swift`; the rest are also read by `HostServer`, `AgentControlListener` or the
+  CLIENTS. Either way they stand until stage F throws the process switch, because until it is thrown
+  the Swift hostd must keep running. Counting them as this stage's deletions would be the same
+  bookkeeping error §5 exists to name.
+
+  It lands in FOUR commits. One commit for a 4,108-line file is a commit nobody can review and a
+  bisect nobody can use, and the campaign's own rule is that a finished piece is committed when it
+  is finished:
+
+  - **C.2a — the drain.** The pane→wire direction: the chunk sink, the outbox append, the drain
+    thread, `sequenceAndFanOut` over the replay ring and the fanout roster, the exit ladder, the
+    pause gate, and the teardown that the EOF path hands off. Enough of an attach to have an
+    end-to-end test — the primary subscriber, its input relay and its two senders — and no more.
+  - **C.2b — screend's client.** `Sources/SlopDeskScreen/ScreenClient.swift` (412) →
+    `rust/slopdesk-screenclient`. This is C.0's shape a second time and it was not in the plan: the
+    MESSAGE set is `slopdesk-screenwire`'s already and shared with screend by construction, and what
+    is left in Swift is the connection. C.2c cannot compose a snapshot without it, and stage D's
+    `AgentControlListener` needs the same client, so it is written once here rather than twice
+    later.
+  - **C.2c — the attach ladders.** `joinSubscriber`, `detach`, `rebindRelay`, `replayTail` and the
+    snapshot compose over C.2b, plus the resize ladder and the two generation-checked timers
+    (`docs/59` §6 left "Swift arms it", and §3 above says what that becomes when there is no Swift).
+  - **C.2d — the control surface.** The metadata verbs and their admission, the block observers, the
+    agent-detection loops (the foreground poll, the screen scan and the echo probe), the project-key
+    derivation, and the readouts `HostServer` calls through.
+
+  **Two hazards C.1 already paid for, carried up one layer.** The reference cycle is the first: a
+  session that both held the pane and WAS its `PaneChunkSink` closes client → sink → `PtyProcess` →
+  client, which is precisely the cycle C.1 split `StreamState` out to avoid. The ingest half — the
+  truths fold, the outbox, the gate, the screen-scan buffer — is its own type with no path back to
+  `SupervisorClient`, and the session holds the stream whose `Drop` unsubscribes. The second is the
+  contract C.1 handed up: `hangup`, `terminate`, `force_terminate` and `release` may not be called
+  from inside a sink, so the sink's `ended` only LATCHES eof and the teardown runs on the thread
+  already parked in `PtyProcess::wait_for_exit` — the one whose condvar the exit notice wakes.
+  Pausing from inside the sink stays legal, and C.0's writer thread is why.
+
+  **A third hazard is new here, because Rust has no `Task.cancel`.** Every Swift relay was a `Task`
+  the teardown cancelled; a thread has to be able to RETURN. A relay ends when its channel's
+  receiver ends, a sender ends on a close sentinel in its queue, and both must hold for a
+  subscriber that is retired mid-rebind — otherwise the leak is one thread per rebind, which no test
+  that attaches once can see. The single-subscriber fast path stays inline on the drain thread, as
+  it is in the Swift, so the common pane costs no sender thread at all.
 
 **And one shape from stage C.0 that must NOT be repeated upward.** Pane output is delivered
 SYNCHRONOUSLY, on the reader's own thread, with the payload borrowed out of the frame that carried

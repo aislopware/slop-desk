@@ -1,0 +1,139 @@
+# `slopdesk-hostsession` — one pane's session inside hostd.
+#
+# ## Why it is a crate of its own
+# `MuxChannelSession` is the place a shell's bytes meet a client's sockets, and the three crates it
+# would otherwise have to live in each refuse it for a reason worth keeping. `slopdesk-muxsession`
+# is verdicts with NO IO — threading it would change what that crate is. `slopdesk-hostpane` is one
+# pane's descriptor and knows nothing above it. `slopdesk-hostnet` owns the transport underneath and
+# `docs/60` §4 says out loud that it decides nothing about panes. This crate is the one that does:
+# it holds all three and owns the threads, the queues and the timers between them.
+#
+# ## What it deliberately does not decide
+# Every POLICY it consults is already Rust, and it calls each one rather than restating it: the
+# outbox merge, the fanout roster, the truths fold and the lifecycle latches are
+# `slopdesk-muxsession`'s; the replay ring and the three-source pause gate are `slopdesk-wire`'s.
+# `docs/60` §4's C.2 entry is the ledger — the new code here is plumbing, and the Swift it makes
+# redundant is mostly marshalling.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-hostsession"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "One hostd pane session: the drain, the relays and the ladders between a PTY and a mux channel"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_hostsession"
+path = "src/lib.rs"
+
+[dependencies]
+# The pane below: the descriptor superd handed over, the verbs that steer the child, and the
+# subscription its output arrives on. `docs/60` stage C.1.
+slopdesk-hostpane = { path = "../slopdesk-hostpane" }
+
+# The transport above: one logical channel, its two credit windows, and the park that waits on the
+# send one. `docs/60` stage B.
+slopdesk-hostnet = { path = "../slopdesk-hostnet" }
+
+# Every verdict this session takes about its own state. Six of `docs/59`'s handles live here and
+# this crate is the first caller that reaches them without an FFI door in between.
+slopdesk-muxsession = { path = "../slopdesk-muxsession" }
+
+# The protocol: the messages, the replay ring, the flow-control numbers and the OSC-9 progress
+# grammar. `slopdesk-muxsession` deliberately keeps almost no edge to it, which is exactly why the
+# marshalling those verdicts need lands HERE and not there.
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+# What superd says about a pane out of band — the sniffed OSC batch and the command-block tap — as
+# it arrives through the C.1 sink.
+slopdesk-superclient = { path = "../slopdesk-superclient" }
+slopdesk-superwire = { path = "../slopdesk-superwire" }
+
+# `clock_gettime` for the two stamp scales, and only that. Both are safe wrappers, so no crate in
+# this dependency line hand-writes `unsafe` for them.
+nix = { version = "0.31", features = ["time"] }
+
+[dev-dependencies]
+# The end-to-end suite speaks superd's own protocol rather than a stand-in for it: `serde_json` to
+# build the replies it answers with, and `nix`'s `term` and `socket` for the real `openpty` and the
+# `SCM_RIGHTS` handover the client is waiting for. A fake that skipped either would pin a shape
+# instead of a wire.
+serde_json = "1"
+nix = { version = "0.31", features = ["time", "term", "socket"] }
+
+# In hostd, on the read-loop delivery thread of every attached pane.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The maximal-strict set every sibling carries, copied rather than inherited for the same reason
+# they copy it: inheriting means membership, and membership means sharing a profile.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason: both want `f64::mul_add`, the fused multiply-add `CLAUDE.md` forbids —
+# FMA rounds once where the wire rounds twice, which moves the bit patterns the golden vectors pin.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
+# One version of `nix` reaches this graph through `slopdesk-hostpane` and one through
+# `slopdesk-posix`; they are the same version, and the lint prices the transitive graph rather than
+# this manifest.
+multiple_crate_versions = "allow"
