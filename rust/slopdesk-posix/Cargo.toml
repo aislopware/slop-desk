@@ -42,10 +42,15 @@ path = "src/lib.rs"
 
 [features]
 # `TIOCSWINSZ` is not superd's to issue (`docs/51` §6.9): hostd knows the client's pixel geometry
-# and a second writer on one terminal is a lost update, not a duplicate. superd's own tests still
-# have to stand in for hostd's ioctl, so the setter exists — behind a feature superd enables ONLY
-# in `[dev-dependencies]`. A release build of the daemon therefore does not compile the function at
-# all, which turns a documented rule into a link error.
+# and a second writer on one terminal is a lost update, not a duplicate. The feature is how that is
+# enforced rather than asked for, and exactly two crates turn it on:
+#
+# - `slopdesk-hostpane` (non-dev) — hostd's half of a pane, which IS the one writer the rule names.
+# - `slopdesk-superd` (`[dev-dependencies]` only) — its tests stand in for hostd's ioctl to check
+#   that the `resize` verb records a truthful size. A release build of the daemon therefore does not
+#   compile the function at all, which turns a documented rule into a link error.
+#
+# Anything else enabling it non-dev is a second writer on one terminal, which is the bug.
 winsize-set = []
 
 [dependencies]

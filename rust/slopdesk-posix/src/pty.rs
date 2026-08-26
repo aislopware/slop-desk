@@ -481,10 +481,12 @@ pub fn window_size(terminal: RawFd) -> Result<libc::winsize, Errno> {
 /// update, not a duplicate. superd's `resize` verb only RECORDS the numbers hostd reports, and
 /// `openpty` is given the initial size, so its spawn path needs no ioctl either.
 ///
-/// What is left is superd's own tests, which have to stand in for hostd's ioctl to check that the
-/// recording is truthful. They get it by enabling `winsize-set` in `[dev-dependencies]` only — so
-/// `cargo build --release` of the daemon does not compile this function, and a production caller
-/// is a build failure rather than a review comment.
+/// Two crates enable `winsize-set`, and which kind of dependency they enable it on IS the rule.
+/// `slopdesk-hostpane` is hostd's half of a pane — the one writer — so it enables it as an ordinary
+/// dependency. superd enables it in `[dev-dependencies]` only, because its tests have to stand in
+/// for hostd's ioctl to check that the recording is truthful: `cargo build --release` of the daemon
+/// then does not compile this function at all, and a production caller inside superd is a link
+/// failure rather than a review comment.
 ///
 /// # Errors
 /// The `TIOCSWINSZ` errno.

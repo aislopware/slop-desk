@@ -1,0 +1,135 @@
+# `slopdesk-hostpane` — one pane, as hostd holds it.
+#
+# ## Why it exists
+# `docs/60-hostd-in-rust.md` stage C.1. `PTYProcess` (753 lines) and `PaneOutputStream` (402) are
+# hostd's whole relationship with a shell: the master descriptor superd handed over, the verbs that
+# steer the child, and the subscription that carries its output back. Above them sits
+# `MuxChannelSession` (stage C.2); below them sits `slopdesk-superclient` (stage C.0). This crate is
+# the middle, and it is the last thing the session needs before it can be written in Rust.
+#
+# ## What is here
+# `PtyProcess` — spawn-or-take-over, adopt, the four ioctls on hostd's own duplicate of the master
+# (`TIOCGWINSZ`, `TIOCSWINSZ`, the redraw jiggle, `tcgetpgrp` + `SIGWINCH`), the signal ladder, and
+# one-shot exit plumbing.
+#
+# `PaneOutputStream` — a subscription to superd's read of that master, delivering each chunk
+# straight on to a sink with no ring buffer on this side, plus the pause the bounded-queue gate
+# asserts through it.
+#
+# `resolve_cwd` — the host-side validation of a requested working directory, pure and separately
+# tested, because the child's `chdir` runs pre-`execve` where nothing can fall back.
+#
+# ## What is NOT here
+# No transport, no framing, no queue policy: what a chunk BECOMES is the session's, and the session
+# is stage C.2. No `read` on the master, ever — superd owns that, and a second reader steals bytes
+# rather than observing them. And no forking: superd is the only process in this repository that
+# forks a pane.
+#
+# ## Two dependencies
+# `slopdesk-superclient` is the socket every verb here travels; `nix` is the four ioctls, the two
+# signals and the one `access(2)`. `slopdesk-posix` comes in through the first, and the `winsize-set`
+# feature is enabled here on purpose — see below.
+[package]
+name = "slopdesk-hostpane"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "hostd's half of one pane: the PTY master it was handed, its verbs, and its output stream"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[workspace]
+
+[dependencies]
+# `winsize-set` is enabled HERE, for real, and this is the one non-dev crate that may. `TIOCSWINSZ`
+# on the pane's terminal belongs to hostd and to hostd alone (`docs/51` §6.9, `docs/60` §6): hostd is
+# the side that knows the client's pixel geometry, and a second writer on one terminal is a lost
+# update rather than a duplicate. This crate IS that side. superd still enables the feature only in
+# its `[dev-dependencies]`, where the setter stands in for hostd's ioctl so superd's own recording
+# can be checked against a real one.
+slopdesk-posix = { path = "../slopdesk-posix", features = ["winsize-set"] }
+slopdesk-superclient = { path = "../slopdesk-superclient" }
+slopdesk-superwire = { path = "../slopdesk-superwire" }
+
+# `signal` for the `SIGWINCH` nudge, `fs` for the `access(X_OK)` that decides whether a requested cwd
+# is one the child could actually `chdir` into, `term` for the `openpty` the ioctl tests need a real
+# terminal from.
+nix = { version = "0.31", features = ["fs", "signal", "term"] }
+
+# For `libc::winsize` alone — the shape `slopdesk-posix`'s two winsize calls take and return. It is
+# not in this crate's public API: callers see [`WindowSize`], whose four fields are named rather than
+# prefixed, and the conversion is the only place the C struct appears.
+libc = "0.2"
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block, copied rather than inherited — inheriting would mean being a workspace member,
+# which is what the profile forbids.
+[lints.rust]
+# Every ioctl this crate needs already has a wrapper in `slopdesk-posix`, which is where
+# `CLAUDE.md` puts that obligation. Nothing here dereferences a pointer, so `forbid` is a fact.
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+multiple_crate_versions = "allow"
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason:
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused multiply-add `CLAUDE.md` forbids. Allowed in every workspace for that repo-wide reason,
+#   not because this crate does float math — it does none.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

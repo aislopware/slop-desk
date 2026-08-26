@@ -68,10 +68,15 @@ serde_json = "1"
 # and nowhere else.
 [dev-dependencies]
 slopdesk-wire = { path = "../slopdesk-wire" }
-# `winsize-set` here and NOWHERE else. superd may not issue `TIOCSWINSZ` (`docs/51` §6.9) — hostd
-# owns it — but superd's tests must stand in for hostd to check that the resize verb records a
-# truthful size. Enabling the feature on the dev-dependency alone means `cargo build --release`
-# does not compile the setter at all, so the rule is a link error rather than a review comment.
+# `winsize-set` on superd's DEV dependency and nowhere else in superd. superd may not issue
+# `TIOCSWINSZ` (`docs/51` §6.9) — hostd owns it — but superd's tests must stand in for hostd to
+# check that the resize verb records a truthful size. Enabling the feature here alone means
+# `cargo build --release` does not compile the setter into the daemon at all, so the rule is a link
+# error rather than a review comment.
+#
+# The one crate that enables it for REAL is `slopdesk-hostpane`, which is hostd's half of a pane and
+# therefore the one writer the rule names. Two enablers, and the split between them is the rule
+# itself: dev-only where the ioctl is a stand-in, non-dev where it is the job.
 slopdesk-posix = { path = "../slopdesk-posix", features = ["winsize-set"] }
 
 # A long-lived daemon, not a hot path — optimise for the debugger being useful when something goes

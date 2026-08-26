@@ -209,7 +209,58 @@ Nothing in stage C can be written before it exists in Rust, so the stage is comm
   its own: a pause fired from INSIDE a pane sink must not wait on the socket the reader is draining,
   or superd blocked writing output into hostd's full receive buffer and hostd blocked writing a
   pause into superd's wedge both sides for ever. That is why the writer is its own thread.
-- **C.1 — the pane's descriptor and its stream.** `PTYProcess` + `PaneOutputStream`.
+- **C.1 — the pane's descriptor and its stream.** `PTYProcess` + `PaneOutputStream` →
+  `slopdesk-hostpane`. Three things settled here that the plan had left implicit:
+
+  **`winsize-set` gains a second enabler, and the split between the two IS the rule.** The feature
+  existed so that superd could not compile `TIOCSWINSZ` into a release build; superd enabled it in
+  `[dev-dependencies]` only, and the comment said "here and NOWHERE else". A Rust hostd is the one
+  writer that rule names, so `slopdesk-hostpane` enables it as an ordinary dependency and superd's
+  dev-only enabling stands unchanged. Non-dev where the ioctl is the job, dev-only where it is a
+  stand-in for hostd's. §6's floor — one writer, still hostd's — is unchanged by this; what changed
+  is which language that writer is written in.
+
+  **The sink is split from the stream, to close a reference cycle Swift closed with `[weak self]`.**
+  `SupervisorClient` holds every subscribed sink in an `Arc`, and it holds every exit handler in
+  one. A `PaneOutputStream` that both held the client and WAS the sink would be a cycle for every
+  stream nobody stopped, and an exit closure capturing the pane would be the same cycle through the
+  handler table. So the reader-thread half is its own type with no client reference, the exit
+  plumbing is its own object with no pane reference, and `Drop` on the stream unsubscribes. Rust has
+  no `weak self` to reach for here, which makes the split the design rather than a patch on it.
+
+  **Three Swift shapes collapse rather than port.** The 5 ms poll loop in
+  `waitUntilExitedDrainingMaster` becomes one `Condvar::wait_timeout` woken by the notice itself.
+  The `exitLock`-across-the-ioctl comment becomes a borrow-checker fact, because the descriptor and
+  the identity live under one lock and the fd cannot be named outside its guard. And
+  `waitUntilExitedDrainingMaster`'s alias for `waitUntilExited` goes, because there is no Swift
+  caller left to keep the name for.
+
+  Its gate is twenty-one tests in `rust/slopdesk-hostpane/tests/pane.rs` against a fake superd on a
+  real `AF_UNIX` socket with a real `openpty` behind it — so the four ioctls are checked against a
+  terminal the kernel made, not a mock — over nine unit tests of the cwd resolution. Each pinned
+  Swift comment is one of them: an exit announced BEFORE the spawn reply is still heard, which is
+  the reason the handler is registered first; a refused spawn taking over an unattached survivor;
+  a survivor another daemon is attached to being left alone, with the exit route it registered taken
+  back out; a lost supervisor declaring the child hung up at `128 + SIGHUP`, once, so a session
+  cannot wait for a notice nobody is coming to send; the window size round-tripping through
+  `TIOCSWINSZ`/`TIOCGWINSZ` with superd told afterwards; the jiggle shrinking by a row and restoring,
+  and yielding to a resize that landed during the hold; keystrokes reaching the slave, with `ICRNL`
+  proving it is a terminal; a closed master being idempotent and releasing nothing; the three-rung
+  signal ladder routing through superd; and a release retiring the pane and its exit route together —
+  which is what makes release the LAST rung, because the client drops the sink and the handler before
+  the verb goes out, so a `wait_for_exit` after one never returns.
+
+  The stream half is the other nine: a stream with no pane ending at once and sending nothing; sniff
+  and block events arriving with the chunk they were found in, and an empty chunk carrying only
+  events still being delivered; a gap logged without dropping the chunk; a backlog that already
+  ended declaring the end AFTER its last byte; an end learned two ways told once; a lossy resume
+  readable the moment `start` returns; a pause before `start` reaching superd and `stop` lifting it;
+  a dropped stream unsubscribing; and a resubscribe restating the pause on the new connection.
+
+  One contract this stage hands upward rather than solving: `hangup`, `terminate`, `force_terminate`
+  and `release` park for superd's reply, and that reply can only arrive on the client's reader
+  thread. None of them may be called from inside a pane sink. A session that tears down on EOF has
+  to hand the teardown to another thread first, and stage C.2 is where that lands.
 - **C.2 — the session.** `MuxChannelSession`'s ladders, with the A/B harness above as the gate.
 
 **And one shape from stage C.0 that must NOT be repeated upward.** Pane output is delivered
