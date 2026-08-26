@@ -53,6 +53,23 @@ use slopdesk_wire::message::WireMessage;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TapToken(u64);
 
+impl TapToken {
+    /// A token minted by a registry that is NOT this crate's.
+    ///
+    /// The three registries are also a SHAPE: `slopdesk-hostserver`'s control surface names them on
+    /// a trait so its suite can drive the eleven agent-control verbs without a PTY, a superd and
+    /// six threads per pane, and an implementor of that shape has to be able to hand a token back.
+    ///
+    /// This does not reopen what the type is closed against. The collision the opacity prevents is
+    /// two control CONNECTIONS choosing the same key and silently retiring each other's taps, and a
+    /// connection never reaches this — `key` is the registry's own counter, and a registry that
+    /// mints its own keys cannot collide with itself.
+    #[must_use]
+    pub const fn foreign(key: u64) -> Self {
+        Self(key)
+    }
+}
+
 /// A watcher of this pane's raw output, called on the READ LOOP.
 ///
 /// Called with the payload BORROWED out of the frame that carried it: a tap that needs to keep the

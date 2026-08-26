@@ -32,6 +32,17 @@ pub const MAX_CARRY_BYTES: usize = 128;
 /// Scalars of already-stripped text re-included ahead of each new chunk's match window.
 pub const OVERLAP_WINDOW: usize = 4096;
 
+/// How much stripped output one `wait --until` retains, when its caller has no reason to differ.
+///
+/// STORAGE only — the match runs over a fixed window ([`OVERLAP_WINDOW`]), so this bounds memory
+/// rather than work. [`Scanner::new`] still takes the budget as an argument, because a scan over a
+/// test fixture wants a cap it can overflow in three chunks; this is what the agent-control `wait`
+/// verb passes, and it lives here rather than at that call site because there is a SECOND caller
+/// while the `docs/60` carve-out lasts — the Swift listener reads it through
+/// `slopdesk_ws_ctl_wait_buffer_cap`, and two ends of one law disagreeing about how much a wait may
+/// hold is exactly what `shared-number-asked-or-ratcheted` exists to prevent.
+pub const WAIT_BUFFER_CAP: usize = 4 * 1024 * 1024;
+
 /// One live `wait --until` scan over one pane's output.
 #[derive(Debug)]
 pub struct Scanner {

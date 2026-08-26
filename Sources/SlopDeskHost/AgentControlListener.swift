@@ -58,7 +58,12 @@ public final class AgentControlListener: @unchecked Sendable {
 /// Unit-tested with a fake host — no real socket, no real PTY.
 public struct AgentControlHandler: Sendable {
     /// Max bytes accumulated in the `wait` regex buffer before the oldest half is trimmed.
-    static let waitBufferCap = 4 * 1024 * 1024
+    ///
+    /// How much stripped output one `wait --until` retains, read from `slopdesk-rowscan` rather
+    /// than typed: the scan itself is Rust's and takes this as an argument, so a second spelling
+    /// here would let a Rust-served wait and a Swift-served one hold different amounts of the same
+    /// pane while both exist. See `slopdesk_ws_ctl_wait_buffer_cap`.
+    static let waitBufferCap = Int(slopdesk_ws_ctl_wait_buffer_cap())
 
     // MARK: E14/K13 IPC guards
 

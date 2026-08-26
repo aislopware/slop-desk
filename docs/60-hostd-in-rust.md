@@ -680,10 +680,57 @@ is paused.
   The fork's one theoretical advantage, killing a wedged mount with the child, was never realised:
   `waitUntilExit` has no timeout, so both shapes park the same executor on the same `stat`.
 
-  **D.5 — the agent-control listener.** `AgentControlListener` (1,239) and its eleven verbs, onto
-  C.2e's taps, `serve_metadata` and the scrollback readouts — plus D.1's registry, since
-  `list-panes`, `spawn` and `kill` are the SERVER's surface and not a pane's. This is the sub-stage
-  that proves C.2e's shape was the right one, and the NDJSON pump comes with it.
+  **D.5 — the agent-control listener. ✅ landed.** `AgentControlListener` (1,239) and its eleven
+  verbs, onto C.2e's taps and the scrollback readouts — plus D.1's registry, since `list-panes`,
+  `spawn` and `kill` are the SERVER's surface and not a pane's. This is the sub-stage that proves
+  C.2e's shape was the right one, and it did: `control.rs` is the verbs with no socket in them, and
+  `ctlserve.rs` is the NDJSON pump, because the two answer different questions and only the first is
+  drivable without a descriptor.
+
+  There was no engine here either. The `wait --until` scan is `slopdesk-rowscan`'s, the supervision
+  vocabulary is `slopdesk-agent`'s, the sensitive-name set the K13 guard consults is the detector's,
+  the tmux key table is `slopdesk-workspace`'s, and both sanitiser passes are `slopdesk-sanitize`'s.
+  The Swift reached three of those through the FFI and one — the prompt-EOL excision — through a
+  round trip to `slopdesk-screend`, because a Swift process had no cheaper way to call Rust it had
+  already written. They are function calls now, and that sidecar hop is gone.
+
+  Two doors, for D.1's and D.4's reason: `ControlHost` is the server's five-method surface and
+  `ControlPane` is one pane's, so the suite drives all eleven verbs with no PTY and can assert the
+  guard order's actual contract — that a refused verb never looked its pane up, a lookup being how a
+  caller learns a pane exists. `ControlPane` is a supertrait of `Pane`, so ONE adapter serves both
+  the registry D.1 holds and the control surface.
+
+  **Two deliberate departures, each because parity with a limitation is not a reason to keep one.**
+  `screen` renders BEHIND the pane door rather than reaching for `slopdesk_screenclient::shared()`
+  from the dispatcher: a global socket client is not something a test can hand in, so the Swift
+  could not drive that verb and neither could a transcription of it. And the `subscribe` pump is ONE
+  thread parked in `poll(2)` over the connection plus a self-pipe, where the Swift ran a SECOND
+  thread blocked in `read(2)` purely to notice a disconnect and reaped it by having the first thread
+  `close(2)` the descriptor the second was inside — D.3's accept-loop reasoning, applied again. A
+  third, smaller one: a `subscribe` whose `paneId` is present but not a string is refused rather
+  than falling through to the cross-pane stream, because the caller meant one pane and named it
+  wrongly, and answering with every pane's status is a silent substitution.
+
+  One contract was written DOWN rather than inherited. `ControlPane::add_close_tap` states that a
+  registration arriving after the pane has already closed fires at once and registers nothing —
+  `slopdesk_hostsession::taps` latches that, and the trait says so because an implementor outside
+  that crate can otherwise miss it while every other test still passes. The suite carries the case
+  the latch exists for: `subscribe` on a pane that ended but has not been swept from the registry
+  yet, which under the Swift waited out its own timeout for an event that had already happened.
+
+  Three gaps in `slopdesk-hostsession` were filled where they land rather than worked around:
+  `report_agent_status` folds an agent's self-report through the SAME detector the foreground poll
+  drives, `window_size` is the live `TIOCGWINSZ` that `screen` defaults to (as distinct from the
+  negotiated grid the size fold resolves), and `foreground_name` is the canonical probe the
+  sensitive gate reads. `TapToken::foreign` is a fourth, and smaller: the three tap registries are
+  also a SHAPE, and an implementor of that shape outside the crate has to be able to hand a token
+  back.
+
+  What D.5 does NOT take is the live `ControlHost`. `list_panes`, `spawn_standalone`, `kill_pane`
+  and the cross-pane status fan-out are `HostServer`'s adoption and observer tables, which is D.6 by
+  name; the trait is what D.6 implements. `ControlLine.swift` also stays, and not by the carve-out:
+  it is SHARED with the client's own control lane, which survives the cutover at F. Stage G takes
+  it.
 
   **D.6 — the server itself.** `HostServer` (3,134) + `HostServer+Workspace` (274) +
   `WorkspaceChannelSession` (486) + `HostWorkspaceDocument` (312): the composition root, and the

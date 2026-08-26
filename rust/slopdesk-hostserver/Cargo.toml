@@ -84,6 +84,34 @@ slopdesk-panecensus = { path = "../slopdesk-panecensus" }
 # asks for is confined against the pane's cwd first and the status is not.
 slopdesk-git = { path = "../slopdesk-git" }
 
+# The sensitive-name set the mutating-verb gate consults, the canonical name it consults it with,
+# and the supervision vocabulary `report` validates against. All three were already the detector's;
+# none of them is a decision this crate makes.
+slopdesk-agent = { path = "../slopdesk-agent" }
+
+# The `wait --until` scan, one PTY chunk at a time. The bounds it carries — a raw carry for a split
+# escape, a fixed overlap window, a linear match — are the reason the scan may run on the read-loop
+# thread at all, and they were written for that thread.
+slopdesk-rowscan = { path = "../slopdesk-rowscan" }
+
+# The ANSI pass every text-shaped answer runs, and the prompt-EOL pass a block's output runs first.
+slopdesk-sanitize = { path = "../slopdesk-sanitize" }
+
+# The `screen` verb's ONE round trip: screend parses the pane's replay into a fresh grid and
+# answers what it shows. Reached from `live.rs` rather than from the dispatcher, so the verb stays
+# drivable by a fake — the departure `ControlPane::render_screen` documents.
+slopdesk-screenclient = { path = "../slopdesk-screenclient" }
+
+# The grid `screen` answers with — screend renders it, this is the payload shape. The round trip
+# itself is behind `ControlPane::render_screen`, so this crate names the type and not the socket.
+slopdesk-screenwire = { path = "../slopdesk-screenwire" }
+
+# The per-line cap the ctl socket refuses past, and the trimmed span it refuses on. Read from the
+# rules rather than typed: the CLIENT's control socket keeps the same cap and reads the same number,
+# so the two ends of one socket cannot disagree about which line was too long. Also the tmux key
+# vocabulary `write --keys` translates through.
+slopdesk-workspace = { path = "../slopdesk-workspace" }
+
 # The two socket options macOS has and `nix` does not wrap for a bare descriptor — close-on-exec on
 # everything the bridge accepts, and `SO_NOSIGPIPE`, without which one write to a workbench window
 # that has just closed ends the whole host.
@@ -95,10 +123,12 @@ slopdesk-posix = { path = "../slopdesk-posix" }
 # own in `nix`, so the verb needs it named here rather than a bare `gethostname` call.
 nix = { version = "0.31", features = ["fs", "hostname", "poll", "socket"] }
 
-# The fake superd `tests/serviceproc.rs` drives the service handle against builds the replies superd
-# would send with this. The `sendmsg` that carries a descriptor across by `SCM_RIGHTS` is `nix`'s,
-# which the bridge already needs above.
-[dev-dependencies]
+# The agent-control protocol IS JSON — one object per line, in and out. `serde_json`'s default map
+# is a `BTreeMap`, so its keys come out sorted: byte for byte what `JSONSerialization`'s
+# `sortedKeys` produced, which is what makes a Rust-served line and a Swift-served one the same line
+# for as long as both exist. A `[dependencies]` entry rather than a dev one since D.5: the ctl socket
+# encodes every answer with it, and `tests/serviceproc.rs`'s fake superd — which was what first
+# needed it, to build the replies superd would send — reads it from here now.
 serde_json = "1"
 
 # In hostd, on the accept path and under the server's one lock.

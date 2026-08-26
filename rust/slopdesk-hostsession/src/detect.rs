@@ -322,6 +322,22 @@ impl Detect {
         publish(shared, &emission);
     }
 
+    /// An agent's own declaration of its state — the ctl `report` verb's fold.
+    ///
+    /// Ungated, unlike [`Self::fold_input`], and that is the difference between the two: a
+    /// keystroke is a HEURISTIC edge and is worth nothing on a pane whose detection is off, while a
+    /// report is the agent speaking for itself. [`PaneSession::agent_status`] reads the same fold
+    /// either way, so gating this would make a `report` on an undetected pane silently do nothing
+    /// while still answering success.
+    ///
+    /// The state token is validated INSIDE the detector — an unrecognised one folds to an empty
+    /// emission and changes nothing, including the stickiness anchor.
+    pub(crate) fn fold_report(shared: &Shared, state: &str, message: Option<&str>) {
+        let now = clock::stamps().uptime;
+        let emission = shared.with_folds(|folds| folds.detector.report(state, message, now));
+        publish(shared, &emission);
+    }
+
     // ---------------------------------------------------------------------------- the scan tick
 
     /// One screen scan, start to finish. Answers how long until the next one.

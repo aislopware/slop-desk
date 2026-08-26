@@ -1331,6 +1331,44 @@ impl PaneSession {
     pub fn seed_project(&self, cwd: &str) {
         self.project.seed(&self.shared, cwd);
     }
+
+    /// Folds an agent's SELF-REPORT of its state, with an optional human label.
+    ///
+    /// Authoritative — it beats the foreground-process floor — because an agent inside the pane
+    /// knows what it is doing and a `ps`-shaped guess does not. Through the SAME detector the
+    /// foreground poll and the hook relay drive, so the precedence and dedupe rules apply
+    /// unchanged; a second machine here is how one pane comes to hold two disagreeing states.
+    ///
+    /// Validate-then-drop, and the validation is the detector's: an unrecognised `state` folds to
+    /// nothing. The ctl verb in front of this rejects one first, so a caller sees an error rather
+    /// than a silent success — but the floor is here, where a future caller cannot skip it.
+    pub fn report_agent_status(&self, state: &str, message: Option<&str>) {
+        Detect::fold_report(&self.shared, state, message);
+    }
+
+    /// The pane's LIVE grid as the kernel holds it, or `None` when the PTY is gone.
+    ///
+    /// The live size rather than [`Self::resolved_grid`], and the two genuinely differ: the
+    /// resolved grid is what the size fold NEGOTIATED across the attached clients, while this is
+    /// what `TIOCGWINSZ` says the program is drawing into right now. A ctl `resize` moves the
+    /// second without moving the first, so a reader that wants to render the pane's screen must ask
+    /// this one.
+    #[must_use]
+    pub fn window_size(&self) -> Option<(u16, u16)> {
+        self.pty.window_size().map(|size| (size.rows, size.cols))
+    }
+
+    /// The canonical name of whatever holds the pane's terminal, or an EMPTY string when nothing
+    /// does.
+    ///
+    /// CANONICAL rather than the raw basename: the Claude Code native installer names its
+    /// executable by version, so a raw basename reads `2.1.218` — not a program any caller can
+    /// recognise. The same probe the detector's own foreground poll uses, uncached, because a
+    /// caller asking this is asking about NOW.
+    #[must_use]
+    pub fn foreground_name(&self) -> String {
+        crate::probe::Foreground::name(&self.pty)
+    }
 }
 
 /// The pane as an ORCHESTRATOR sees it: what it has said, what it is running, and the three ways to

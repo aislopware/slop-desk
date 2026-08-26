@@ -13623,6 +13623,12 @@ uint64_t slopdesk_android_sidebar_measure(uint32_t index);
 // keep this cap — the client's and the host's — and a third transcription of `64 * 1024` is how the
 // two ends of one socket end up disagreeing about which line was too long.
 size_t slopdesk_ws_ctl_max_request_bytes(void);
+// How much stripped output one `wait --until` retains before its oldest half is trimmed. STORAGE
+// only — the match runs over a fixed window — so this bounds memory rather than work. A door for
+// the same reason as the cap above: the scan is `slopdesk-rowscan`'s and takes this as an argument,
+// so a Rust-served wait and a Swift-served one transcribing `4 * 1024 * 1024` would hold different
+// amounts of the same pane while both exist.
+size_t slopdesk_ws_ctl_wait_buffer_cap(void);
 // THE LINE CROSSES ONCE, AS A SPAN. The answer is OFFSETS into the caller's own line rather than a
 // copy of the request inside it — `docs/55` §4c's shape, and the reason a 64 KiB request costs one
 // length comparison here rather than an allocation. The near side slices its own bytes at the

@@ -40,6 +40,23 @@ pub const extern "C" fn slopdesk_ws_ctl_max_request_bytes() -> usize {
     control_request::MAX_REQUEST_BYTES
 }
 
+/// How much stripped output one `wait --until` retains — `slopdesk_rowscan::waituntil`'s own
+/// budget.
+///
+/// A door for the same reason the cap above has one, at a different scale: the scan itself is
+/// Rust's and takes this as an argument, so the number belongs beside the scanner. The Swift
+/// listener is the second caller and stays one until the `docs/60` cutover retires it; a
+/// transcription here would let a Rust-served wait and a Swift-served one hold different amounts of
+/// the same pane.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_ws_ctl_wait_buffer_cap() -> usize {
+    slopdesk_rowscan::waituntil::WAIT_BUFFER_CAP
+}
+
 /// What one raw request line is — `0` blank, `1` too large, `2` worth parsing — writing the BYTE
 /// span of the trimmed request to `start` and `end`.
 ///

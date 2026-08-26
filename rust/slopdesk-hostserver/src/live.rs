@@ -6,13 +6,33 @@
 //! that named its own position in a collection could not be tested apart from the collection, and
 //! `docs/60` stage C.2 spent its whole scoping keeping that line. So the identities are pinned on
 //! HERE, at the join, which is the first place both halves are in scope.
+//!
+//! ## D.5 widened it, and the shape held
+//!
+//! The agent-control verbs need a pane too, and [`crate::control::ControlPane`] is what they need
+//! of it. Every method below is one call into [`PaneSession`] — `write_for_control`,
+//! `set_ctl_size`, `agent_status`, the three tap registries — because the narrowing was read off
+//! the type rather than wished for. Only [`ControlPane::render_screen`] does work here, and only
+//! the work a fake cannot: the round trip to screend.
 
 use std::sync::Arc;
 
-use slopdesk_hostsession::PaneSession;
+use slopdesk_agent::supervision::SupervisionState;
+use slopdesk_hostsession::{BlockTap, CloseTap, OutputTap, PaneSession, TapToken};
 use slopdesk_muxsession::registry::{self, Slot, Uuid};
+use slopdesk_screenwire::payload::Snapshot;
+use slopdesk_superwire::protocol::BlocksReply;
 
+use crate::control::ControlPane;
 use crate::pane::Pane;
+
+/// The most scrollback `screen` will hand screend for ONE reconstruction.
+///
+/// A ring holding more than this contributes only its NEWEST whole messages, which is safe for the
+/// thing this feeds: a full-screen program repaints, so a truncated prefix converges after one
+/// redraw cycle. The same property the ring's own truncation already relies on, and the same eight
+/// megabytes the Swift passed.
+const SCREEN_REPLAY_CAP_BYTES: usize = 8 * 1024 * 1024;
 
 /// A live pane in hostd: the session, the conversation it serves, and its object identity.
 #[derive(Debug)]
@@ -67,5 +87,88 @@ impl Pane for LivePane {
 
     fn relinquish(&self) {
         self.session.relinquish();
+    }
+}
+
+impl ControlPane for LivePane {
+    fn write_raw(&self, bytes: &[u8]) {
+        self.session.write_for_control(bytes);
+    }
+
+    fn resize(&self, rows: u16, cols: u16) {
+        // `(cols, rows)` — the session's size vocabulary is width-first, the control verb's is
+        // height-first, and the swap is here rather than at either end because this is the only
+        // place both spellings are in scope.
+        self.session.set_ctl_size(cols, rows);
+    }
+
+    fn window_size(&self) -> Option<(u16, u16)> {
+        self.session.window_size()
+    }
+
+    fn foreground_name(&self) -> String {
+        self.session.foreground_name()
+    }
+
+    fn agent_status(&self) -> (String, Option<String>) {
+        let (status, label) = self.session.agent_status();
+        // The five-way host reading collapses onto the four-way ctl vocabulary here, through the
+        // one conversion `slopdesk-agent` owns: `None` and `Idle` are both `idle` on the wire,
+        // because an orchestrator asking "is this pane blocked" has no use for the difference and
+        // a fifth token would be one every ctl client had to learn.
+        (String::from(SupervisionState::from_status(status).name()), label)
+    }
+
+    fn report_agent_status(&self, state: &str, message: Option<&str>) {
+        self.session.report_agent_status(state, message);
+    }
+
+    fn scrollback_text(&self, ansi_strip: bool) -> String {
+        self.session.scrollback_text(ansi_strip)
+    }
+
+    fn render_screen(&self, rows: usize, cols: usize) -> Result<Snapshot, String> {
+        // The process-wide client, not one per pane: a screend connection is pooled and forty panes
+        // asking is forty callers, not forty sockets. Reached HERE rather than from the dispatcher
+        // so the verb stays drivable by a fake — see [`ControlPane::render_screen`].
+        slopdesk_screenclient::shared()
+            .snapshot(&self.session.scrollback_raw(SCREEN_REPLAY_CAP_BYTES), rows, cols)
+            .map_err(|error| error.to_string())
+    }
+
+    fn recent_lines(&self, limit: Option<usize>) -> Vec<String> {
+        self.session.recent_lines(limit)
+    }
+
+    fn blocks(&self, limit: usize) -> Option<BlocksReply> {
+        self.session.blocks(limit)
+    }
+
+    fn block_output(&self, index: u32) -> Option<Vec<u8>> {
+        self.session.block_output(index)
+    }
+
+    fn add_output_tap(&self, tap: Arc<dyn OutputTap>) -> TapToken {
+        self.session.add_output_tap(tap)
+    }
+
+    fn remove_output_tap(&self, token: TapToken) {
+        self.session.remove_output_tap(token);
+    }
+
+    fn add_close_tap(&self, tap: Arc<dyn CloseTap>) -> TapToken {
+        self.session.add_close_tap(tap)
+    }
+
+    fn remove_close_tap(&self, token: TapToken) {
+        self.session.remove_close_tap(token);
+    }
+
+    fn add_block_tap(&self, tap: Arc<dyn BlockTap>) -> TapToken {
+        self.session.add_block_tap(tap)
+    }
+
+    fn remove_block_tap(&self, token: TapToken) {
+        self.session.remove_block_tap(token);
     }
 }

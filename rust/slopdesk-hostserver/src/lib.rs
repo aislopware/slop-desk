@@ -53,6 +53,8 @@
 
 pub mod bridge;
 pub mod code;
+pub mod control;
+pub mod ctlserve;
 mod deadline;
 mod detached;
 mod live;
