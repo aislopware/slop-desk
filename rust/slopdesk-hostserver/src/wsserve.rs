@@ -27,8 +27,8 @@ use slopdesk_ids::uuid_text;
 use slopdesk_wire::document::codec;
 use slopdesk_wire::message::{RawUuid, WireMessage};
 use slopdesk_wire::workspace::{
-    WorkspaceIntent, WorkspaceIntentResult, WorkspaceIntentStatus, WorkspacePresenceUpdate,
-    WorkspaceRequestVerb, WorkspaceSubscribe,
+    WorkspaceClientKind, WorkspaceIntent, WorkspaceIntentResult, WorkspaceIntentStatus,
+    WorkspacePresenceUpdate, WorkspaceRequestVerb, WorkspaceSubscribe,
 };
 
 use crate::channel::{HostObserver, Offload, Peer, WorkspaceChannels};
@@ -162,7 +162,9 @@ impl WorkspaceService {
     /// A `subscribe`, which is both the FIRST one and the resync verb.
     fn apply_subscribe(&self, connection: RawUuid, request: WorkspaceSubscribe, sink: &Arc<dyn EventSink>) {
         if let Some(existing) = self.subscriber(connection) {
-            // A repeat subscribe IS the resync verb.
+            // A repeat subscribe IS the resync verb — and it may carry a different kind than the
+            // first one did, so the fold is re-settled here too.
+            self.resolve_size_passivity(connection, request.client_kind);
             self.document.note_resubscribe(existing.id(), request);
             return;
         }
@@ -188,9 +190,7 @@ impl WorkspaceService {
         // predicate depends on it. Panes opened on this connection before the subscribe landed were
         // resolved against a workspace channel that did not exist yet — settle them now, before the
         // document broadcasts a roster that would describe the old verdict.
-        if let Some(panes) = self.document.panes() {
-            panes.resolve_size_passivity(connection);
-        }
+        self.resolve_size_passivity(connection, request.client_kind);
         self.document.add_subscriber(&subscriber);
         // First subscribe: publish what is true RIGHT NOW rather than waiting up to a tick for the
         // reconciler. A client that has just connected is precisely the one with nothing.
@@ -207,6 +207,19 @@ impl WorkspaceService {
             .remove(&connection);
         if let Some(subscriber) = gone {
             self.document.remove_subscriber(subscriber.id());
+        }
+    }
+
+    /// Tells the server whether this connection's panes vote in their size fold.
+    ///
+    /// **An unknown kind CONTRIBUTES.** That is the shipped `slopdesk-client` CLI, which only ever
+    /// opens class 0 or 2 — defaulting a device the host cannot name to passive would leave it
+    /// unable to size its own pane. Only the kind the host can positively identify as a phone is
+    /// denied the vote, because a phone must never crush a Mac.
+    fn resolve_size_passivity(&self, connection: RawUuid, client_kind: u8) {
+        let passive = WorkspaceClientKind::from_byte(client_kind) == Some(WorkspaceClientKind::Ios);
+        if let Some(panes) = self.document.panes() {
+            panes.resolve_size_passivity(connection, passive);
         }
     }
 
@@ -262,5 +275,22 @@ impl WorkspaceChannels for WorkspaceService {
 
     fn fact_changed(&self) {
         self.document.kick_reconcile();
+    }
+
+    fn drop_connection(&self, connection: RawUuid) {
+        self.drop_subscriber(connection);
+    }
+
+    fn shutdown(&self) {
+        // The debounce first: a write still sitting in it when the process exits loses the last
+        // thing the user did, and nothing below makes it land any sooner.
+        self.document.flush_store();
+        self.document.shutdown();
+        // The document's own teardown already closed every subscriber; this clears the MAP, so a
+        // Start→Stop→Start cycle does not refuse the returning client's channel as a duplicate.
+        self.subscribed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 }

@@ -62,7 +62,8 @@
 //! [`workspace`], [`subscriber`] and [`wsserve`] — the document every client mirrors, one
 //! subscriber's send path over `slopdesk_workspace::sync_ladder`, and the channel that carries it.
 //! The engine was already Rust there too; what moved is the version rule, the coalescing, and the
-//! retention that makes a leaked document impossible rather than unlikely.
+//! retention that makes a leaked document impossible rather than unlikely. [`lifecycle`] — the four
+//! ways a pane, a link and the daemon end, and the ORDER the last of them runs in.
 
 pub mod adopt;
 pub mod bridge;
@@ -73,6 +74,7 @@ pub mod ctlserve;
 mod deadline;
 mod detached;
 pub mod host;
+pub mod lifecycle;
 mod live;
 pub mod metadata;
 mod pane;

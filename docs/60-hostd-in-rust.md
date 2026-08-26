@@ -898,9 +898,75 @@ is paused.
   only on a topology change, never on a reconciler tick: liveness does not survive a restart, so
   offering it would rewrite the same filtered bytes every tick for a host nobody is using.
 
-  **D.6.5** link-down, detach and the stop order — including the `note_panes_let_go` at the TOP of
-  it, which is written in D.6.3 because it is the note's writer and called there because that is
-  where the enumeration still exists.
+  **D.6.5 ✅ landed** — link-down, detach and the stop order, as
+  `rust/slopdesk-hostserver/src/lifecycle.rs` plus 24 tests, and it closes stage D's last ladder.
+  `handleLinkDown`, `leavePaneChannel`, `reapPanesRemovedFromTopology`, `wireSubscriberEviction`,
+  `reresolveSizePassivity`, `detachMuxSession` and `stop()` with its four drains.
+
+  **The finding that shaped the module is that there are FOUR endings, not one.** A client leaving a
+  shared pane, a link dropping, the topology deleting a pane, and the daemon stopping: the same four
+  objects — a pane, a key, a link, a note — come out in a different state depending on which door
+  they left by, and every test in the suite is about a DIFFERENCE between two of them rather than
+  about a value. Two of those doors were once the same code path, and separating them is the whole
+  product change `docs/51` is about: "this daemon is going away" is not "these panes are over".
+
+  **Refcounted, except in the one place it must not be.** Under a fan-out one pane is named by N
+  keys, so a peer's `channelClose` goes through `Pane::remove_subscriber` and reaps only on the
+  `true` it returns — reaping there would take down another client's running agent, the over-reap
+  `docs/45` §8.6 rules out. `Host::leave_channel` is therefore the door a close verb must use, and
+  D.6.2's `close_channel` is the UNREFCOUNTED one behind it, kept for the child-exit route where a
+  dead shell really does end the pane for everyone. The topology reap is blind on purpose, and that
+  is the same section's other half: `closePane` is a layout fact, not a socket event, and a shell
+  left alive there is the ORPHAN. Both halves are load-bearing, which is why they are two functions
+  rather than one with a flag.
+
+  **The stop's order is the module's real content, and two of its nine steps are silent when wrong.**
+  The note goes FIRST — `mark_stopping`, then `note_panes_let_go` — because the note is an
+  enumeration of the live tables and a drained table enumerates to nothing; the writer is D.6.3's,
+  and this is the call site the forward reference promised. And the relinquish is parallel AND
+  JOINED: `stop` does not return until the last pane is done, because hostd's duplicate of every
+  master must be closed before the process calls `exit(0)` or a half-torn-down pane's last bytes
+  never reach its journal. `Offload` has no handle to join, so the wait is an `mpsc` counted to N
+  against one deadline for the whole set — with a disconnect (the offload refused a thread) and a
+  timeout both ENDING it, because a stop that cannot finish is worse than a stop that finished
+  without one pane's last bytes. One test uses a real `Threads` pool and a pane that stalls its
+  teardown, because a join is the one claim an inline offload makes true by construction.
+
+  **One Swift branch did not survive, and `slopdesk-hostnet` predicted which one.** The Swift
+  link-down runs its detach loop only `if detachEnabled`, so a host with retention off drops the
+  link and leaves its panes in the live map — the branch hostnet's own module doc names when it says
+  policy is the owner's and "that also removes the branch in the Swift where the detach path must
+  remember NOT to run the kill loop." Here the loop always runs and `Host::park` is what differs: no
+  store means nowhere to park, so the pane is ENDED. Same two outcomes, one path, and no arrangement
+  of flags that leaves a shell in a table nobody will drain.
+
+  Three seams grew, all of them small. `Peer` gained `close_channel(channel, reason)` and `close()` —
+  it was "an ack and an id", and it is now "an ack, an id, and the two ways a ladder ends something";
+  the reason is `slopdesk_wire`'s existing `MuxCloseReason`, because `Retired` and
+  `SubscriberEvicted` are already on the golden wire and they mean different things to a client
+  (a re-open is a SPAWN, versus a reattach). `WorkspaceChannels` gained `drop_connection` — a
+  subscriber lives and dies with its LINK, since presence is connection-scoped — and `shutdown`,
+  which is the stop's workspace half in its own order. And `Host` grew the connection table itself:
+  an eviction and a topology reap have to close a channel on a link they were not called from, and
+  the stop has to close every link that is still open INCLUDING the ones carrying no channel, which
+  is the half that makes it a fix for the `EMFILE` drift rather than for the visible part of it.
+
+  One thing moved rather than being added: `resolve_size_passivity` now carries the VERDICT instead
+  of looking it up. The device kind arrives on the subscribe and the fold lives in the server, so
+  passing it keeps one fact in one place rather than asking two halves to agree about which channel
+  a connection has. An unknown kind still CONTRIBUTES — that is the shipped `slopdesk-client` CLI,
+  which only ever opens class 0 or 2, and defaulting a device the host cannot name to passive would
+  leave it unable to size its own pane.
+
+  **The hole this stage names rather than fills.** `Panes::capture` and `Panes::roster` — the
+  reconciler's live inventory — are NOT here. `reap` and `resolve_size_passivity` are the two the
+  ending ladders own and both are implemented; the other two need the per-pane truth reducer
+  (`PaneTruths.swift`, 515 lines: title freshness, the open command block, the agent state), which
+  is its own port and not a link-down/detach/stop decision. Nor is the laggard-EVICTION wiring:
+  `Host::evict_subscriber` is the server half and it is complete, but the signal that a member is
+  parked on an exhausted credit window has no Rust producer yet — `slopdesk-hostsession` has the
+  eviction rule and no callback for it, and adding one is a change to that crate rather than to this
+  ladder. Both are named here so stage F finds a list rather than a surprise.
 
   **What stage D does NOT take.** `HostEnvironment` (350) and `RepoStatusWatcher` (316) are stage E:
   the first reads Apple bundle and TCC state, the second is an FSEvents stream per repo toplevel.

@@ -142,6 +142,14 @@ pub struct Ghost {
     replays: Mutex<Vec<i64>>,
     composes: AtomicBool,
     head: Mutex<i64>,
+    /// Every member that LEFT, in order — the refcounted-leave ledger.
+    departed: Mutex<Vec<Subscriber>>,
+    /// How long a teardown of this pane takes, in milliseconds.
+    ///
+    /// Zero for every suite but one. A relinquish that returns instantly cannot tell a stop that
+    /// JOINS from a stop that merely started N threads and got lucky, so the one test making that
+    /// claim buys itself a window nothing else needs.
+    stall_ms: AtomicU64,
     /// The size fold, as a ledger: every admit and every retire, in order.
     contributors: Mutex<Vec<(Subscriber, bool)>>,
     retired: Mutex<Vec<Subscriber>>,
@@ -196,6 +204,8 @@ impl Ghost {
             replays: Mutex::new(Vec::new()),
             composes: AtomicBool::new(false),
             head: Mutex::new(0),
+            departed: Mutex::new(Vec::new()),
+            stall_ms: AtomicU64::new(0),
             contributors: Mutex::new(Vec::new()),
             retired: Mutex::new(Vec::new()),
             detached: AtomicBool::new(false),
@@ -228,6 +238,27 @@ impl Ghost {
     /// How many times the pane was ENDED.
     pub fn shutdowns(&self) -> usize {
         self.shutdowns.load(Ordering::SeqCst)
+    }
+
+    /// Spends this pane's configured teardown time. Zero by default, so it is free.
+    fn stall(&self) {
+        let millis = self.stall_ms.load(Ordering::SeqCst);
+        if millis > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(millis));
+        }
+    }
+
+    /// Says a teardown of this pane takes `millis` to finish.
+    pub fn stalls_for(&self, millis: u64) {
+        self.stall_ms.store(millis, Ordering::SeqCst);
+    }
+
+    /// Every member that LEFT this pane, in order.
+    pub fn departed(&self) -> Vec<Subscriber> {
+        self.departed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// How many times it was let GO.
@@ -491,10 +522,12 @@ impl Pane for Ghost {
     }
 
     fn shutdown(&self) {
+        self.stall();
         self.shutdowns.fetch_add(1, Ordering::SeqCst);
     }
 
     fn relinquish(&self) {
+        self.stall();
         self.relinquishes.fetch_add(1, Ordering::SeqCst);
     }
 
@@ -700,8 +733,21 @@ impl Pane for Ghost {
         self.detached.load(Ordering::SeqCst)
     }
 
-    fn remove_subscriber(&self, _subscriber: Subscriber) -> bool {
-        self.members.load(Ordering::SeqCst) > 0
+    fn remove_subscriber(&self, subscriber: Subscriber) -> bool {
+        self.departed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(subscriber);
+        // The real one recomputes from the SET and answers "is it now EMPTY", which is the whole
+        // difference between a refcounted leave and a reap. So does this: a member leaves, and only
+        // the last one out says so. An already-empty pane answers `true` — a departure from a pane
+        // nobody holds is still a departure that ends it.
+        let left = self.members.fetch_sub(1, Ordering::SeqCst);
+        if left == 0 {
+            self.members.store(0, Ordering::SeqCst);
+            return true;
+        }
+        left == 1
     }
 
     fn redraw(&self, jiggle: bool) {

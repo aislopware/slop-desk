@@ -53,7 +53,7 @@ use slopdesk_muxsession::spawn_env::{self, Exports};
 
 use crate::adopt::{Adopted, LetGo, NoSurvivors, Survivors};
 use crate::channel::{
-    Fresh, HookRoutes, HostObserver, NoHooks, NoWorkspace, Offload, Restored, Silent, Threads,
+    Fresh, HookRoutes, HostObserver, NoHooks, NoWorkspace, Offload, Peer, Restored, Silent, Threads,
     WorkspaceChannels,
 };
 use crate::control::{AgentStatusEvent, AgentStatusTap, ControlHost, PaneRecord, SpawnRefused};
@@ -339,6 +339,14 @@ pub struct Host {
     /// a phone mirroring a Mac's pane must not clamp it to a phone's grid. A connection with no
     /// entry is active, which is what a client that has not subscribed to a workspace yet is.
     size_passive: Mutex<BTreeMap<Uuid, bool>>,
+    /// Every accepted connection, by id.
+    ///
+    /// The one strong reference to a link that this crate holds, and it is held for three reasons a
+    /// per-open capture could not serve: an eviction and a topology reap have to close a channel on
+    /// a connection they were not called from, and the stop has to close every link that is still
+    /// open — including the ones carrying no channel at all, which is what makes it a fix for the
+    /// `EMFILE` drift rather than for the visible half of it.
+    peers: Mutex<BTreeMap<Uuid, Arc<dyn Peer>>>,
     /// The cross-pane subscribers, and the counter that names them.
     ///
     /// A `Vec` of pairs rather than a map: the table holds a handful of entries at most — one per
@@ -419,6 +427,7 @@ impl Host {
                 blocks_enabled: parts.blocks_enabled,
                 stopping: AtomicBool::new(false),
                 size_passive: Mutex::new(BTreeMap::new()),
+                peers: Mutex::new(BTreeMap::new()),
                 taps: Mutex::new(Vec::new()),
                 next_tap: AtomicU64::new(1),
                 me: me.clone(),
@@ -518,13 +527,50 @@ impl Host {
             .insert(connection, passive);
     }
 
-    /// Forgets a connection's answer, once the connection is gone.
-    pub fn forget_connection(&self, connection: Uuid) {
+    /// Forgets everything keyed by a connection, once the connection is gone: its size answer and
+    /// the link itself. Returns the link, when this call is the one that took it.
+    ///
+    /// Both halves in one method rather than two, because leaving either behind is a leak that
+    /// nothing else would notice — a size verdict for a dead client is read by the next pane a
+    /// same-id connection opens, and an abandoned link is a socket pair and two receive loops.
+    pub fn forget_connection(&self, connection: Uuid) -> Option<Arc<dyn Peer>> {
         let _prior = self
             .size_passive
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&connection);
+        self.peers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&connection)
+    }
+
+    /// Files an accepted connection, so a ladder that was not called from it can still reach it.
+    ///
+    /// Idempotent by key: a second open on the same link replaces the entry with an equal one.
+    pub fn note_peer(&self, peer: &Arc<dyn Peer>) {
+        let _prior = self
+            .peers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(peer.connection(), Arc::clone(peer));
+    }
+
+    /// The link behind `connection`, when it is still open.
+    #[must_use]
+    pub fn peer(&self, connection: Uuid) -> Option<Arc<dyn Peer>> {
+        self.peers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&connection)
+            .map(Arc::clone)
+    }
+
+    /// Removes and returns every filed connection — the stop's last step.
+    #[must_use]
+    pub fn drain_peers(&self) -> Vec<Arc<dyn Peer>> {
+        let mut peers = self.peers.lock().unwrap_or_else(PoisonError::into_inner);
+        core::mem::take(&mut *peers).into_values().collect()
     }
 
     /// The registry, for the composition around this one — the channel ladders are D.6's other half
@@ -540,7 +586,12 @@ impl Host {
     }
 
     /// Refuses every further spawn. Idempotent, and there is no way back — a host stops once.
-    pub fn stop(&self) {
+    ///
+    /// The FIRST line of [`Host::stop`](crate::Host::stop) and callable on its own, because a
+    /// `channelOpen` racing the shutdown has to be refused before the drain rather than after it:
+    /// the accepted connections' receive loops keep running past the listener cancel, and a spawn
+    /// minted after the drain would outlive the daemon.
+    pub fn mark_stopping(&self) {
         self.stopping.store(true, Ordering::SeqCst);
     }
 

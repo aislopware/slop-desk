@@ -732,7 +732,7 @@ mod suite {
     #[test]
     fn a_stopping_host_refuses_a_spawn_without_forking() {
         let (host, fork, _gone) = host();
-        host.stop();
+        host.mark_stopping();
 
         let refusal = host.spawn_standalone(None, None, None, 24, 80).unwrap_err();
 

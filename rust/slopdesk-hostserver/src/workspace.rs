@@ -79,6 +79,12 @@ pub trait WorkspaceStore: Send + Sync + fmt::Debug {
 
     /// Offers the freshest document to be written. Coalescing on the store's side.
     fn schedule_save(&self, state: &HostWorkspaceState);
+
+    /// Writes whatever the debounce is still holding, and returns once it is on disk.
+    ///
+    /// The one call that is allowed to BLOCK, because it is only ever reached from the stop: a
+    /// debounce that outlives the process loses the last thing the user did.
+    fn flush(&self);
 }
 
 /// A host that keeps no workspace on disk — every start mints a fresh default.
@@ -99,6 +105,8 @@ impl WorkspaceStore for NoStore {
     }
 
     fn schedule_save(&self, _state: &HostWorkspaceState) {}
+
+    fn flush(&self) {}
 }
 
 /// The pane inventory the document is derived FROM and reaps INTO.
@@ -132,7 +140,11 @@ pub trait Panes: Send + Sync + fmt::Debug {
     /// The subscribe is where a connection's DEVICE KIND becomes known, and the fold's predicate
     /// depends on it. Panes opened on this connection before the subscribe landed were resolved
     /// against a workspace channel that did not exist yet.
-    fn resolve_size_passivity(&self, connection: RawUuid);
+    ///
+    /// The VERDICT rides the call rather than being looked up: the kind arrives on the subscribe
+    /// and the server holds the fold, so passing it keeps one fact in one place instead of asking
+    /// two halves to agree about which channel a connection has.
+    fn resolve_size_passivity(&self, connection: RawUuid, passive: bool);
 }
 
 /// A document with no server behind it: no panes to capture, none to reap.
@@ -150,7 +162,7 @@ impl Panes for NoPanes {
 
     fn reap(&self, _gone: &BTreeSet<RawUuid>) {}
 
-    fn resolve_size_passivity(&self, _connection: RawUuid) {}
+    fn resolve_size_passivity(&self, _connection: RawUuid, _passive: bool) {}
 }
 
 /// [`IdSource`] over the crate's ONE entropy seam.
@@ -614,6 +626,18 @@ impl WorkspaceDocument {
         };
         for subscriber in &subscribers {
             subscriber.deliver_roster(roster.clone());
+        }
+    }
+
+    /// Pushes whatever the store's debounce is still holding to disk, and waits for it.
+    ///
+    /// Separate from [`Self::shutdown`] and called BEFORE it, because the order matters: the flush
+    /// is about the layout on disk and the shutdown is about the clients watching it, and a
+    /// subscriber closed first cannot make the write any faster.
+    pub fn flush_store(&self) {
+        let store = self.lock().store.clone();
+        if let Some(store) = store {
+            store.flush();
         }
     }
 

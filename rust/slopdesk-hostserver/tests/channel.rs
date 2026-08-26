@@ -31,6 +31,7 @@ use slopdesk_hostserver::{
 use slopdesk_muxsession::open_route::SurvivorResume;
 use slopdesk_muxsession::registry::{Key, PRIMARY_SUBSCRIBER, Uuid};
 use slopdesk_wire::message::NEW_SESSION_ID;
+use slopdesk_wire::mux::envelope::MuxCloseReason;
 use support::{Ghost, as_pane, wires};
 
 #[expect(
@@ -76,6 +77,11 @@ mod suite {
                 .unwrap_or_else(PoisonError::into_inner)
                 .push((channel, accepted, resume_from));
         }
+
+        // This suite is the OPEN ladder, which never sends either close verb. `tests/lifecycle.rs`
+        // is where they are the subject, and its own link records them.
+        fn close_channel(&self, _channel: u32, _reason: MuxCloseReason) {}
+        fn close(&self) {}
     }
 
     fn as_peer(wire: &Arc<Wire>) -> Arc<dyn Peer> {
@@ -188,6 +194,9 @@ mod suite {
         fn fact_changed(&self) {
             self.kicks.fetch_add(1, Ordering::SeqCst);
         }
+
+        fn drop_connection(&self, _connection: Uuid) {}
+        fn shutdown(&self) {}
     }
 
     /// What one transcript store answered, and what it was asked to forget.
@@ -662,7 +671,7 @@ mod suite {
         let bench = bench();
         let wire = Wire::on(1);
         let host = Arc::clone(&bench.host);
-        bench.fork.during(move || host.stop());
+        bench.fork.during(move || host.mark_stopping());
         bench.host.open_channel(open(2, session(1)), &as_peer(&wire));
 
         assert_eq!(wire.acks(), vec![(2, false, 0)]);
@@ -682,7 +691,7 @@ mod suite {
     fn a_stopping_host_refuses_an_open_without_forking() {
         let bench = bench();
         let wire = Wire::on(1);
-        bench.host.stop();
+        bench.host.mark_stopping();
         bench.host.open_channel(open(2, session(1)), &as_peer(&wire));
         assert_eq!(wire.acks(), vec![(2, false, 0)]);
         assert!(
@@ -1150,7 +1159,7 @@ mod suite {
         let pane = Ghost::new(id);
         let key = Key::new(Wire::on(1).connection(), 1);
         hold(&bench.host, key, &pane);
-        bench.host.stop();
+        bench.host.mark_stopping();
 
         bench.host.close_channel(key);
         assert!(bench.journal.deletes().is_empty());

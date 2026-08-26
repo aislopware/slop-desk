@@ -24,8 +24,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use slopdesk_hostserver::{
-    EventSink, HostObserver, NoPanes, NoStore, Offload, Panes, SessionIds, Threads, WorkspaceDocument,
-    WorkspaceService, WorkspaceStore, WorkspaceSubscriber,
+    EventSink, HostObserver, NoPanes, NoStore, Offload, Panes, SessionIds, Threads, WorkspaceChannels,
+    WorkspaceDocument, WorkspaceService, WorkspaceStore, WorkspaceSubscriber,
 };
 use slopdesk_ids::identity::{PaneId, SessionId, TabId};
 use slopdesk_tree::session::{PaneKind, PaneSpec, Session};
@@ -36,8 +36,8 @@ use slopdesk_wire::document::{
 };
 use slopdesk_wire::message::{RawUuid, WireMessage};
 use slopdesk_wire::workspace::{
-    WorkspaceEventKind, WorkspaceIntent, WorkspaceIntentStatus, WorkspacePresenceUpdate, WorkspaceRosterPane,
-    WorkspaceSubscribe,
+    WorkspaceClientKind, WorkspaceEventKind, WorkspaceIntent, WorkspaceIntentStatus, WorkspacePresenceUpdate,
+    WorkspaceRosterPane, WorkspaceSubscribe,
 };
 
 const EPOCH: RawUuid = [0xE1; 16];
@@ -190,6 +190,17 @@ struct Inventory {
     roster: Mutex<Vec<WorkspaceRosterPane>>,
     reaped: Mutex<Vec<RawUuid>>,
     resolved: Mutex<Vec<RawUuid>>,
+    passive: Mutex<Vec<bool>>,
+}
+
+impl Inventory {
+    /// Every size verdict this server was handed, in order.
+    fn verdicts(&self) -> Vec<bool> {
+        self.passive
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
 }
 
 impl Panes for Inventory {
@@ -211,7 +222,11 @@ impl Panes for Inventory {
             .extend(gone.iter().copied());
     }
 
-    fn resolve_size_passivity(&self, connection: RawUuid) {
+    fn resolve_size_passivity(&self, connection: RawUuid, passive: bool) {
+        self.passive
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(passive);
         self.resolved
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -224,6 +239,7 @@ impl Panes for Inventory {
 struct Disk {
     stored: Option<HostWorkspaceState>,
     saves: Mutex<Vec<HostWorkspaceState>>,
+    flushes: Mutex<usize>,
 }
 
 impl Disk {
@@ -231,11 +247,17 @@ impl Disk {
         Arc::new(Self {
             stored: state,
             saves: Mutex::new(Vec::new()),
+            flushes: Mutex::new(0),
         })
     }
 
     fn saves(&self) -> usize {
         self.saves.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
+    /// How many times the debounce was told to land what it was holding.
+    fn flushes(&self) -> usize {
+        *self.flushes.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
@@ -253,6 +275,10 @@ impl WorkspaceStore for Disk {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(state.clone());
+    }
+
+    fn flush(&self) {
+        *self.flushes.lock().unwrap_or_else(PoisonError::into_inner) += 1;
     }
 }
 
@@ -953,6 +979,90 @@ impl Bench {
     fn send(&self, connection: RawUuid, verb: slopdesk_wire::workspace::WorkspaceRequestVerb, body: &[u8]) {
         self.service.handle(connection, verb.as_byte(), body, &self.sink);
     }
+}
+
+#[test]
+fn a_phone_is_denied_the_size_vote_and_every_other_device_keeps_it() {
+    let bench = bench();
+    let mut phone = subscribe(EPOCH, 0);
+    phone.client_kind = WorkspaceClientKind::Ios.as_byte();
+
+    bench.subscribe(CONNECTION);
+    let other = [0x0C_u8; 16];
+    bench.send(
+        other,
+        slopdesk_wire::workspace::WorkspaceRequestVerb::Subscribe,
+        &phone.encode(),
+    );
+
+    assert_eq!(
+        bench.inventory.verdicts().as_slice(),
+        [false, true],
+        "a phone must never crush a Mac, and a device the host cannot name still sizes its own pane",
+    );
+}
+
+#[test]
+fn a_device_the_host_does_not_recognise_still_gets_to_size_its_own_pane() {
+    let bench = bench();
+    let mut unknown = subscribe(EPOCH, 0);
+    unknown.client_kind = 0xEE;
+
+    bench.send(
+        CONNECTION,
+        slopdesk_wire::workspace::WorkspaceRequestVerb::Subscribe,
+        &unknown.encode(),
+    );
+
+    assert_eq!(
+        bench.inventory.verdicts().as_slice(),
+        [false],
+        "defaulting an unnamed device to passive would leave the shipped CLI unable to resize",
+    );
+}
+
+#[test]
+fn the_stop_lands_the_debounce_before_it_closes_the_clients_watching_it() {
+    let disk = Disk::holding(Some(seeded()));
+    let document = Arc::new(WorkspaceDocument::new(EPOCH, Arc::new(Counting::default())));
+    document.install_from(&stored(&disk));
+    let log = Arc::new(Log::default());
+    let wire = Arc::new(Wire::default());
+    let service = WorkspaceService::new(
+        Arc::clone(&document),
+        Arc::new(Deferred),
+        watching(&log),
+        Arc::new(Counting::default()),
+    );
+    service.handle(
+        CONNECTION,
+        slopdesk_wire::workspace::WorkspaceRequestVerb::Subscribe.as_byte(),
+        &subscribe(EPOCH, 0).encode(),
+        &sink(&wire),
+    );
+    assert_eq!(document.subscriber_count(), 1);
+
+    service.shutdown();
+
+    assert_eq!(
+        disk.flushes(),
+        1,
+        "a debounce that outlives the process loses the last edit"
+    );
+    assert_eq!(document.subscriber_count(), 0);
+    // The MAP is cleared too, not just the document's list: otherwise a Start→Stop→Start cycle
+    // refuses the returning client's channel as a duplicate.
+    service.handle(
+        CONNECTION,
+        slopdesk_wire::workspace::WorkspaceRequestVerb::Subscribe.as_byte(),
+        &subscribe(EPOCH, 0).encode(),
+        &sink(&wire),
+    );
+    assert_eq!(
+        document.subscriber_count(),
+        1,
+        "the returning client is a first subscribe, not a duplicate",
+    );
 }
 
 #[test]

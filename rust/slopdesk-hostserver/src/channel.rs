@@ -50,9 +50,12 @@
 //!   DECLINES, which is what this host does today for a class it does not serve.
 //! - The transcript store is still Swift's, so [`Transcripts`](crate::Transcripts) grows two more
 //!   questions rather than a client.
-//! - The ADOPTION ladder is **D.6.3** and the link-down/stop order is **D.6.5**. This file owns the
-//!   close ([`Host::close_channel`]) because that is the exit route a fresh spawn WIRES, and a
-//!   spawn whose exit closure pointed at a hole would be a leak with a doc comment on it.
+//! - The ADOPTION ladder is **D.6.3** and the link-down/stop order is **D.6.5**
+//!   ([`crate::lifecycle`]). This file owns the close ([`Host::close_channel`]) because that is the
+//!   exit route a fresh spawn WIRES, and a spawn whose exit closure pointed at a hole would be a
+//!   leak with a doc comment on it. It is the UNREFCOUNTED door: a peer's `channelClose` must go
+//!   through [`Host::leave_channel`] instead, or a fan-out close takes another client's agent with
+//!   it.
 
 use core::fmt;
 use core::time::Duration;
@@ -67,6 +70,7 @@ use slopdesk_muxsession::open_route::{
 };
 use slopdesk_muxsession::registry::{Key, PRIMARY_SUBSCRIBER, Subscriber, Uuid};
 use slopdesk_wire::message::NEW_SESSION_ID;
+use slopdesk_wire::mux::envelope::MuxCloseReason;
 
 use crate::detached::Claim;
 use crate::host::{Fan, Host};
@@ -82,10 +86,10 @@ const REDRAW_DELAY: Duration = Duration::from_millis(200);
 
 /// The connection a channel arrived on, as the four ladders see it.
 ///
-/// Two questions, which is all any of them asks: which connection this is, and "answer the open".
-/// Narrow on purpose — a ladder that could reach the whole
-/// [`slopdesk_hostnet::connection::MuxConnection`] could send frames out of band, and the frames a
-/// pane emits are the pane's.
+/// Four questions, which is all any of them asks: which connection this is, "answer the open", and
+/// the two ways a ladder ENDS something — one channel, or the whole link. Narrow on purpose — a
+/// ladder that could reach the whole [`slopdesk_hostnet::connection::MuxConnection`] could send
+/// frames out of band, and the frames a pane emits are the pane's.
 pub trait Peer: Send + Sync + fmt::Debug {
     /// The connection id. Half of every table key, and the key the size-passivity table is under.
     fn connection(&self) -> Uuid;
@@ -93,6 +97,20 @@ pub trait Peer: Send + Sync + fmt::Debug {
     /// Answers the open. `resume_from` is read only when `accepted`, and a refusal supersedes an
     /// acceptance already sent — the client's router marks the channel dead and reconnects.
     fn ack(&self, channel: u32, accepted: bool, resume_from: i64);
+
+    /// Closes ONE channel on this connection, telling the peer why.
+    ///
+    /// The reason is load-bearing rather than diagnostic: `Retired` says the session id is about to
+    /// stop existing, so a re-open is a SPAWN, and `SubscriberEvicted` says the pane is still there
+    /// and a re-open is a reattach. See [`MuxCloseReason`].
+    fn close_channel(&self, channel: u32, reason: MuxCloseReason);
+
+    /// Tears the whole connection down — its receive loops, its sockets, its handler cycle.
+    ///
+    /// Reached only from the stop. A link that drops on its own is already gone; this is the one
+    /// that has to be told, and skipping it leaks a connection per Start→Stop cycle on the
+    /// long-lived menu-bar host, which accumulates toward `EMFILE`.
+    fn close(&self);
 }
 
 /// Where work that can BLOCK goes.
@@ -155,6 +173,20 @@ pub trait WorkspaceChannels: Send + Sync + fmt::Debug {
     /// row is still on screen: the reconciler reaps by "not captured", so this kick is what turns a
     /// close into a delete instead of a wait.
     fn fact_changed(&self);
+
+    /// Retires the subscriber this connection carried.
+    ///
+    /// A workspace subscriber lives and dies with its LINK: presence is connection-scoped, so the
+    /// connection going away IS the expiry. Dropping it here also fans the departure to everyone
+    /// else, because a roster that merely stops arriving is indistinguishable from a stalled host.
+    fn drop_connection(&self, connection: Uuid);
+
+    /// The stop's workspace half, in its own order: flush the store, end the document, clear the
+    /// subscriber map.
+    ///
+    /// The map is cleared LAST and separately from the document's own teardown, so a
+    /// Start→Stop→Start cycle does not refuse the returning client's channel as a duplicate.
+    fn shutdown(&self);
 }
 
 /// A host that serves no workspace channels — every open of that class is declined.
@@ -171,6 +203,8 @@ impl WorkspaceChannels for NoWorkspace {
     }
 
     fn fact_changed(&self) {}
+    fn drop_connection(&self, _connection: Uuid) {}
+    fn shutdown(&self) {}
 }
 
 /// The agent-hook listener's half of a hook route.
@@ -306,6 +340,10 @@ impl Host {
     /// See the module doc for why the decision and the two mutations it implies are ONE critical
     /// section, and why two of the five outcomes leave it before they do their work.
     pub fn open_channel(self: &Arc<Self>, open: Box<ChannelOpen>, peer: &Arc<dyn Peer>) {
+        // File the link before deciding anything about the channel. The accept path files it too;
+        // this is the second half of the belt, and it is what makes an eviction or a topology reap
+        // able to close a channel on a connection it was not called from.
+        self.note_peer(peer);
         let key = Key::new(peer.connection(), open.channel_id);
         let channel = open.channel_id;
         let decided = self.route_open(&open, key);
@@ -853,7 +891,7 @@ impl Host {
     }
 
     /// Publishes how many connections hold at least one pane.
-    fn emit_connection_count(&self) {
+    pub(crate) fn emit_connection_count(&self) {
         let count = self.sessions().connection_count();
         self.observer().connection_count(count);
     }
