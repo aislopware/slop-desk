@@ -7433,7 +7433,10 @@ bool slopdesk_video_reassembler_next_dropped_frame(SlopDeskVideoReassembler *han
  * substring of the datagram. Encode answers bytes NEEDED under §4 — the COMPLETE frame, four-byte
  * length prefix included — and 0 for a message_type no arm claims.
  *
- * slopdesk_wire_constant: 0 the wire version, 1 a session id's bytes, 2 the frame payload ceiling.
+ * slopdesk_wire_constant: 0 the wire version, 1 a session id's bytes, 2 the frame payload ceiling,
+ * 3/4/5 the PATH-1 TCP keepalive ladder — idle seconds, probe interval seconds, retry count. That
+ * ladder is vended rather than written down on the Swift side because the listener and the dialler
+ * are two programs, and a keepalive set on one end only is a half-open link neither end reports.
  * ---------------------------------------------------------------------------- */
 
 #define SLOPDESK_WIRE_DECODE_OK 0u

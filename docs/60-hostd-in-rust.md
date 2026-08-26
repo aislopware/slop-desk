@@ -94,14 +94,80 @@ as its gate. No stage leaves the tree unable to run.
 
 **Stage A — the socket.** New crate `rust/slopdesk-hostnet`: `TcpListener` + `socket2` parameters +
 CONTROL/DATA pairing by `connectionID`, and a `ByteLink` trait matching `MuxByteLink`'s contract so
-the in-memory test double ports with it. Deliverable: a Rust process that accepts a real Swift
-client's two sockets and reads mux frames off them through `slopdesk-wire::mux`. Gate: a loopback
-test driving the shipping Swift client against it.
+the in-memory test double ports with it. Deliverable: a listener that accepts two real sockets
+naming one `connectionID` and hands up the pair of byte links they became.
 
-**Stage B — the mux connection.** `MuxNWConnection` (847) + `MuxSubChannel` (426) +
-`ConnectionRegistry` (316) + `MuxRouter`/`MuxRoutingCore`/`MuxAdmission` (287) + `ReplayBuffer` (441)
-→ `slopdesk-muxsession::connection`. The routing verdicts are already there; this is the receive
-loops, the per-channel dispatch tables and the flow-control accounting around them.
+Its gate is preamble-level pairing on real file descriptors — nine loopback tests dialling with
+`std::net::TcpStream`, covering both arrival orders, two clients not cross-pairing, a mute socket,
+an unknown tag, the reaper, a same-side repark, and `stop` both closing what it parked and releasing
+the port. Reading a mux FRAME is not stage A's gate and could not be: there is nothing above the
+links yet to read one. That deliverable belongs to stage B, and this paragraph used to promise it
+here — the correction is worth leaving visible, because a plan that claims a gate it did not run is
+the same failure as code that claims a test it does not have.
+
+Two things stage A settled that are worth writing down, because both are the SECOND implementation
+biting before it was born:
+
+- **The keepalive ladder moved to `slopdesk_wire::transport`, not to the new crate.** Writing
+  `KEEPALIVE_IDLE_SECONDS = 10` in `slopdesk-hostnet` made `shared-number-asked-or-ratcheted` fire
+  against `TransportParameters.swift`'s `keepaliveIdleSeconds = 10`, correctly: the listener and the
+  dialler are two programs, and a ladder configured on one end only is a half-open connection that
+  neither end reports. The three numbers now live once, under a `TCP_` prefix that keeps them clear
+  of the video path's application-level UDP keepalive, and are vended at `slopdesk_wire_constant`
+  indices 3/4/5. Swift asks. `slopdesk-ffi` gains no dependency on `slopdesk-hostnet` — dragging
+  `socket2` into the `.xcframework` to export three integers would be the wrong trade. This also
+  emptied `HOMONYMS`, which had been excusing that exact pair.
+- **The listener binds dual-stack and `stop` really unbinds.** `NWListener` answers both families;
+  an IPv4-only `TcpListener` would silently refuse a v6 mesh dial, which only shows up on somebody
+  else's network. And `accept()` has no cancel lever, so `stop` sets a flag and then dials its own
+  loopback port to wake the thread — otherwise `make host-restart` re-binds seconds later and gets
+  `EADDRINUSE`. `stop_releases_the_port_it_was_listening_on` is the test that pins it.
+
+**Stage B — the mux connection.** `MuxNWConnection`'s HOST role (of 847) + `MuxSubChannel` (426) +
+`MuxRoutingCore`/`MuxAdmission`'s payload-attachment half (234) → `slopdesk-hostnet::connection`.
+The routing and admission VERDICTS are already Rust (`slopdesk_wire::mux`'s `channels`, `admission`,
+`flow`, `decoder`, `envelope`); what ports here is the receive loops, the per-channel dispatch
+tables and the suspension around the flow accounting.
+
+Three scope corrections, each made by asking who imports the file rather than by reading it:
+
+- **`ConnectionRegistry` (316) is not in this stage.** It is the CLIENT's refcounted connection
+  pool — `Sources/SlopDeskHost` and `Sources/slopdesk-hostd` reference it zero times. So does
+  `MuxNWConnection`'s whole initiator surface: `openChannel`, `awaitOpenAck` and its waiter table,
+  `pin`/`unpin`, and `isDead`-for-the-pool. Porting them now would be a second implementation with
+  nothing linked to it until stage G. They go with the client, in stage G.
+- **`ReplayBuffer` (441) is not a port at all.** Stage 30 already deleted the Swift implementation;
+  what is left is an FFI HANDLE over `slopdesk_wire::replay::ReplayBuffer`. Its only real consumer
+  is `MuxChannelSession`, so the handle dies with that file at stage C and the Rust it points at is
+  simply called directly. Counting its 441 lines as work to be done would have budgeted a stage for
+  a file that is already the thing it would have been ported into.
+- **`MuxRouter` (53) is already gone from this list**: the name in `Sources/SlopDeskVideoHost` is
+  `VideoMuxRouter`, a different type on the video path. Substring greps put it here; a consumer
+  grep takes it out.
+
+**Placement is `slopdesk-hostnet`, not `slopdesk-muxsession`.** This stage owns file descriptors,
+threads and the `ByteLink` trait, and `slopdesk-muxsession`'s charter is verdicts with no IO —
+threading it would change what that crate is. Anything genuinely new and pure that surfaces while
+writing this still goes to `slopdesk-wire`/`slopdesk-muxsession`, the way `pairing` did.
+
+**The handler-install pattern does not port.** `pendingHostOpens`, `pendingHostCloses`, the
+`linkDownFired` one-shot and `setHostOpenHandler`-after-`start()` are four patches for one Swift
+ordering problem: the receive loops start before their owner has wired itself up, so every early
+event needs a replay queue to land in. Stage A already solved this shape — `Listener::serve` hands
+back the receiver BEFORE any thread runs — and this stage repeats it: the connection yields
+`MuxEvent::{ChannelOpen, ChannelClosed, LinkDown}` on a channel the owner holds from construction,
+and `detachShellsOnLinkDrop` becomes a constructor parameter rather than a mutable flag. The race
+class dissolves instead of porting, and so does the handler retain-cycle that `close()` nils out.
+
+Two properties of the Swift carry over verbatim, because they are correctness rather than
+scaffolding: decode → route → deliver stays INLINE on the link's own thread, so per-channel wire
+order is the thread's order and needs no sequencing; and a window grant rides CONTROL, never DATA,
+so a grant can never queue behind the full window it is meant to open.
+
+On zero-copy: one copy out of the link's receive buffer into the per-channel reassembly is the
+floor once a channel is consumed on another thread. Reuse one receive buffer per link and stop
+there — `docs/59` §7's zero-allocations-per-chunk budget is a constraint on the FFI crossing, and
+it does not bite until stage C.
 
 **Stage C — the pane.** `PTYProcess` (753) + `PaneOutputStream` (402) + `MuxChannelSession` (4,108)
 → the ladders over `slopdesk-muxsession`'s existing `outbox`/`fanout`/`truths`/`lifecycle`. This is
@@ -139,14 +205,24 @@ those behind `CSlopDeskFFI` is a linked-library port under `CLAUDE.md`'s lifetim
 one, and it is what finally deletes the second copy of the codec.
 
 **What stage F does NOT delete, said plainly.** The consumer grep is unambiguous:
-`MuxNWConnection`, `MuxSubChannel`, `ConnectionRegistry` and `ReplayBuffer` are imported by
-`SlopDeskClient`, `ClientComposition`, `WorkspaceStore`, `WorkspaceChannelClient` and
-`VideoConnectionRegistry` — the CLIENT, on both platforms. So stage B does not move that code, it
-adds a second implementation of it, and the second copy lives until stage G. Stage F deletes
+`MuxNWConnection`, `MuxSubChannel` and `ConnectionRegistry` are imported by `SlopDeskClient`,
+`ClientComposition`, `WorkspaceStore` and `WorkspaceChannelClient` — the CLIENT, on both platforms.
+So stage B does not move that code, it adds a second implementation of the HOST half and leaves the
+Swift standing; the second copy lives until stage G, and the client-only half
+(`ConnectionRegistry`, `openChannel`, the openAck waiters) is never written twice at all. Stage F
+deletes
 `Sources/SlopDeskHost` and the host-only half of `SlopDeskTransport` (`HostTransport`,
 `NWMuxByteLink`, `NWConnection+Async`, `TransportParameters`); it leaves the mux connection standing
 for the clients. Anyone reading "the host port deletes the transport" should read this paragraph
 instead.
+
+The same grep corrects the parenthetical above it. Of the four Network.framework files, only
+`HostTransport.swift` is host-only. `NWConnection+Async` and `TransportParameters` are imported by
+`MessageChannel`, `CodeSidebarProxy`, `AndroidBridgeSocket` and `SimulatorStreamConnection`, and
+`NWMuxByteLink` is by definition the DIALLER'S half — the listener never builds one. So stage F
+deletes `HostTransport.swift` and nothing else in `SlopDeskTransport`; the other three go with the
+client transport at stage G. That is also why the keepalive door is not throwaway scaffolding: the
+Swift that asks through it outlives the Swift host by a whole campaign.
 
 ## 5. The carve-out, said out loud
 

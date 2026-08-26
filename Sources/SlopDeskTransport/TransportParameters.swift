@@ -1,3 +1,4 @@
+import CSlopDeskFFI
 import Network
 
 /// Canonical `NWParameters` for every SlopDesk PATH 1 socket.
@@ -29,14 +30,21 @@ import Network
 ///   inert through the tunnel.
 public enum TransportParameters {
     /// TCP keepalive idle time (seconds) before the first probe.
-    static let keepaliveIdleSeconds = 10
-    /// Interval (seconds) between keepalive probes. NOT the video path's
-    /// `KEEPALIVE_INTERVAL_SECONDS`, which happens to be 5 as well: that one is an application
-    /// datagram the client sends over UDP to hold a NAT mapping open, this one is a kernel TCP
-    /// probe. Same number, two unrelated laws — do not fold them into one door.
-    static let keepaliveIntervalSeconds = 5
+    ///
+    /// Asked for, not written down. The listener that must agree with these three numbers is
+    /// `slopdesk-hostnet`, a separate program, and a ladder configured on one end only leaves a
+    /// half-open connection that neither end reports. `slopdesk_wire::transport` declares them
+    /// once and both ends spend them.
+    ///
+    /// Still NOT the video path's `KEEPALIVE_INTERVAL_SECONDS`, which happens to be 5 as well:
+    /// that one is an application datagram the client sends over UDP to hold a NAT mapping open,
+    /// this one is a kernel TCP probe. Same number, two unrelated laws — hence the `TCP_` prefix
+    /// on the wire side, and no shared door between them.
+    static let keepaliveIdleSeconds = slopdesk_wire_constant(3)
+    /// Interval (seconds) between keepalive probes.
+    static let keepaliveIntervalSeconds = slopdesk_wire_constant(4)
     /// Number of unanswered keepalive probes before the connection is declared dead.
-    static let keepaliveCount = 3
+    static let keepaliveCount = slopdesk_wire_constant(5)
 
     /// Builds the canonical TCP parameters used by both listener and client.
     ///

@@ -34,7 +34,8 @@ use std::ffi::c_uchar;
 
 use slopdesk_wire::{
     CommandStatus, MAX_FRAME_PAYLOAD_LENGTH, PROTOCOL_VERSION, ProjectGitStatus, SESSION_ID_BYTE_COUNT,
-    WireError, WireMessage,
+    TCP_KEEPALIVE_IDLE_SECONDS, TCP_KEEPALIVE_INTERVAL_SECONDS, TCP_KEEPALIVE_RETRY_COUNT, WireError,
+    WireMessage,
 };
 
 use crate::{arena_text, borrow, deliver, saturating_u32};
@@ -637,17 +638,32 @@ pub unsafe extern "C" fn slopdesk_wire_message_byte_count(
 /// Vends the numbers both ends would otherwise spell twice.
 ///
 /// `0` the wire version this build speaks · `1` the bytes a session id occupies · `2` the frame
-/// payload ceiling. Any other index answers 0.
+/// payload ceiling · `3`/`4`/`5` the TCP keepalive ladder every PATH-1 socket is configured with,
+/// as idle seconds, probe interval seconds and retry count. Any other index answers 0.
+///
+/// The ladder is here rather than in the Swift that sets the sockopts because the LISTENER and the
+/// DIALLER are two programs — `slopdesk-hostnet` on one side, `NWProtocolTCP.Options` on the other
+/// — and a keepalive configured on one end only is a half-open connection neither end reports.
+///
+/// The two seconds counts are declared `u64` because that is what `Duration::from_secs` takes, and
+/// they arrive here as `usize` because that is what C's `size_t` is. Widening one to the other is
+/// lossless on every target this ships to and lossy in the type system, so the narrowing is spelled
+/// as a `try_from` that falls back to the same `0` an unknown index answers with — an
+/// unrepresentable value and an unknown index are the same thing to the caller, and the test below
+/// pins all three so the fallback can never be reached silently.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,
     reason = "an exported C entry point is unsafe by definition in edition 2024"
 )]
-pub const extern "C" fn slopdesk_wire_constant(index: u32) -> usize {
+pub extern "C" fn slopdesk_wire_constant(index: u32) -> usize {
     match index {
         0 => PROTOCOL_VERSION as usize,
         1 => SESSION_ID_BYTE_COUNT,
         2 => MAX_FRAME_PAYLOAD_LENGTH,
+        3 => usize::try_from(TCP_KEEPALIVE_IDLE_SECONDS).unwrap_or(0),
+        4 => usize::try_from(TCP_KEEPALIVE_INTERVAL_SECONDS).unwrap_or(0),
+        5 => TCP_KEEPALIVE_RETRY_COUNT as usize,
         _ => 0,
     }
 }
@@ -967,6 +983,9 @@ mod tests {
         assert_eq!(slopdesk_wire_constant(0), 1);
         assert_eq!(slopdesk_wire_constant(1), 16);
         assert_eq!(slopdesk_wire_constant(2), 16 * 1024 * 1024);
+        assert_eq!(slopdesk_wire_constant(3), 10);
+        assert_eq!(slopdesk_wire_constant(4), 5);
+        assert_eq!(slopdesk_wire_constant(5), 3);
         assert_eq!(slopdesk_wire_constant(99), 0);
     }
 }

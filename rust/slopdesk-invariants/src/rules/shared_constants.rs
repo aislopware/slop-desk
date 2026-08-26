@@ -82,12 +82,14 @@ const fn same(mine: f64, yours: f64) -> bool {
 /// that entry: it named a homonym across three unrelated stores and quietly covered a FOURTH pair
 /// that was the real thing, the two halves of the comparison that decides whether a saved workspace
 /// loads. It has a door now (`slopdesk_ws_schema_version`) and the entry is gone.
-const HOMONYMS: [(&str, &str, &str); 1] = [(
-    "Sources/SlopDeskTransport/TransportParameters.swift",
-    "keepaliveIntervalSeconds",
-    "a kernel TCP keepalive probe interval on PATH 1, against the video path's application-level UDP \
-     keepalive that holds a NAT mapping open. Both happen to be 5 s.",
-)];
+/// Empty, and it earned that. The one entry was `TransportParameters.swift`'s
+/// `keepaliveIntervalSeconds` against the video path's `KEEPALIVE_INTERVAL_SECONDS` — a kernel TCP
+/// probe interval against an application UDP datagram that holds a NAT mapping open, both 5 s. The
+/// collision was real, but the exemption was load-bearing for the wrong reason: it kept a number
+/// SPELLED in Swift that the host's listener also spells, which is the thing this file exists to
+/// refuse. Now `slopdesk_wire::transport` declares the ladder under a `TCP_` prefix, the door vends
+/// it at indices 3/4/5, Swift asks — and there is no collision left to excuse.
+const HOMONYMS: [(&str, &str, &str); 0] = [];
 
 /// Swift `OptionSet`s whose members share a name with a WIRE flag set without sharing its law.
 ///

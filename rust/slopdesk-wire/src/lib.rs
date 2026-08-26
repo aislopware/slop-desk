@@ -42,6 +42,7 @@ pub mod metadata;
 pub mod mux;
 pub mod osc;
 pub mod replay;
+pub mod transport;
 pub mod workspace;
 
 pub use bytes::{ByteReader, ByteWriter};
@@ -62,6 +63,10 @@ pub use mux::{
 };
 pub use osc::{ProgressState, ProgressUpdate, WATCH_NOTIFICATION_MARKER, is_watch_notification};
 pub use replay::{DrainState, ReplayBuffer, RingFoldSource, ScrollbackDistiller, SnapshotSource};
+pub use transport::{
+    TCP_KEEPALIVE_IDLE_SECONDS, TCP_KEEPALIVE_INTERVAL_SECONDS, TCP_KEEPALIVE_RETRY_COUNT,
+    dead_peer_detection_ceiling,
+};
 pub use workspace::{
     ROSTER_ATTACHMENT_BYTES, ROSTER_CLIENT_MIN_BYTES, ROSTER_PANE_MIN_BYTES, WorkspaceClientKind,
     WorkspaceEventKind, WorkspaceIntent, WorkspaceIntentResult, WorkspaceIntentStatus,
