@@ -377,10 +377,20 @@ final class ClientControlDispatcherTests: XCTestCase {
     func testViewParsesEveryPlacementToken() {
         // Each placement token routes to the matching `Placement` (revert-to-confirm-fail: dropping the
         // placement parse would collapse every case to the default `.newTab`).
-        for placement in ClientControlProtocol.Placement.allCases {
+        //
+        // The tokens are spelled here rather than read off the enum, and deliberately: the enum's raw
+        // value is the token's POSITION now, so a test that built the request out of it would be
+        // asserting the parse against itself. What a `slopdesk` on the other side of a `brew upgrade`
+        // actually writes is this list of words, which makes these six literals a WIRE pin.
+        let tokens: [(String, ClientControlProtocol.Placement)] = [
+            ("new-tab", .newTab), ("new-window", .newWindow), ("left", .left),
+            ("right", .right), ("top", .top), ("bottom", .bottom),
+        ]
+        XCTAssertEqual(tokens.count, ClientControlProtocol.Placement.allCases.count)
+        for (token, placement) in tokens {
             backend.recordedOpenPlacement = nil
-            let obj = run(ClientControlProtocol.Method.view, ["target": "/f", "placement": placement.rawValue])
-            XCTAssertTrue(isOK(obj), "placement \(placement.rawValue) should dispatch")
+            let obj = run(ClientControlProtocol.Method.view, ["target": "/f", "placement": token])
+            XCTAssertTrue(isOK(obj), "placement \(token) should dispatch")
             XCTAssertEqual(backend.recordedOpenPlacement, placement)
         }
     }

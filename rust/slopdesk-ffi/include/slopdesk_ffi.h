@@ -12517,10 +12517,9 @@ uint64_t slopdesk_android_sidebar_measure(uint32_t index);
 
 // ---- The client control socket's validate-then-drop rules ---------------------------------------
 //
-// `slopdesk_workspace::control_request`. The method names and the placement / font-scope / badge
-// tokens deliberately do NOT cross: `slopdesk-cli` writes them and `slopdesk-invariants` holds that
-// spelling against the Swift protocol the far end dispatches through, so a third copy behind this
-// door would be a vocabulary no gate reads.
+// `slopdesk_workspace::control_request` — the socket's JUDGEMENTS. Its VOCABULARY is the block
+// after this one; both wear the `slopdesk_ws_ctl_` prefix because a caller reads them as one
+// socket, and they come from two crates because a line cap and a token list are different subjects.
 
 // The cap one request line is refused past. A door for a single number, because TWO Swift servers
 // keep this cap — the client's and the host's — and a third transcription of `64 * 1024` is how the
@@ -12550,6 +12549,33 @@ unsigned char slopdesk_ws_ctl_send_keys_refusal(SlopDeskWsSendKeys facts);
 // NEEDED; a short or null `out` is written nothing and told the length.
 size_t slopdesk_ws_ctl_refusal_message(unsigned char code, const unsigned char *detail,
                                        size_t detail_len, unsigned char *out, size_t cap);
+
+// ---- The client control socket's VOCABULARY ------------------------------------------------------
+//
+// `slopdesk_clientctl`. The words themselves — what `slopdesk` writes onto the socket and what
+// `ClientControlDispatcher` reads back off it. They used to be a Swift spelling held against a Rust
+// one by a `slopdesk-invariants` rule, because the module lived inside the CLI's own library and
+// nothing linkable owned it; the crate exists so both ends read the one table.
+//
+// METHODS cross as WORDS, because the far side dispatches a `switch` on the string a foreign process
+// wrote. TOKENS cross as INDICES, because the far side turns each into a case of its own enum and
+// only ever switches on that — the token is parsed once, here, and the position IS the `rawValue`.
+// An unknown token answers -1, which is `nil` on the far side and a refusal after that.
+
+// Every method the socket dispatches, in declaration order, as ONE delivery: [u16 count], then per
+// method [u32 length][UTF-8]. A fixed table, read once into a Swift `static let`.
+size_t slopdesk_ws_ctl_methods(unsigned char *out, size_t cap);
+// The badge a settable `--kind` token names, as its index in the `TabBadge` ladder, or -1. The four
+// badges a foreground process derives — the two command tiers and the two privilege markers — answer
+// -1 even for their own canonical spelling: a request may not claim a tab is running `sudo`.
+int8_t slopdesk_ws_ctl_badge_for_token(const unsigned char *token, size_t token_len);
+// The canonical token for a badge index — the reverse, and TOTAL over the ladder, because a tab can
+// be LISTED wearing a badge no request may set. A byte past the ladder writes nothing and reports 0.
+size_t slopdesk_ws_ctl_badge_token(uint8_t badge, unsigned char *out, size_t cap);
+// Where a `view`/`edit` shim opens, as the position of the token in the placement vocabulary, or -1.
+int8_t slopdesk_ws_ctl_placement_for_token(const unsigned char *token, size_t token_len);
+// Which font surface `font list --scope` names, as a position in the scope vocabulary, or -1.
+int8_t slopdesk_ws_ctl_font_scope_for_token(const unsigned char *token, size_t token_len);
 
 // ---- The inspector CLIENT's store fold ----------------------------------------------------------
 //

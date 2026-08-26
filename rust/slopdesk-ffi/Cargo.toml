@@ -51,6 +51,11 @@ path = "src/lib.rs"
 [dependencies]
 slopdesk-agent = { path = "../slopdesk-agent" }
 slopdesk-androidd = { path = "../slopdesk-androidd" }
+# The client control socket's vocabulary — the method names and the three token sets the app's own
+# `ClientControlDispatcher` reads. A DIRECT edge, not a re-export through `slopdesk-cli`: only a
+# direct edge puts the crate inside `slopdesk-gate ffi`'s content stamp (`docs/55` §3), and this is
+# a vocabulary whose whole point is that the two ends cannot drift.
+slopdesk-clientctl = { path = "../slopdesk-clientctl" }
 slopdesk-devicelog = { path = "../slopdesk-devicelog" }
 slopdesk-devicepanel = { path = "../slopdesk-devicepanel" }
 slopdesk-dropd = { path = "../slopdesk-dropd" }

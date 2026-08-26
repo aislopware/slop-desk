@@ -162,10 +162,19 @@ dependencies = [
  "serde_json",
  "slopdesk-agent",
  "slopdesk-apple-text",
+ "slopdesk-clientctl",
  "slopdesk-hostlaunch",
  "slopdesk-settings",
  "slopdesk-sidecars",
  "slopdesk-wire",
+]
+
+[[package]]
+name = "slopdesk-clientctl"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "slopdesk-agent",
 ]
 
 [[package]]

@@ -17061,3 +17061,44 @@ was deleted rather than kept as a second proof of the same thing.
   (`0x05`) do not, and `commandRunningSince` is fed only by those. `blockSnapshot()` still rebuilds
   the navigator for CLOSED blocks; what is missing is the type-23 `.running` re-assert for a command
   still executing, until its next edge.
+
+## The client control socket has one vocabulary, and it is a crate (2026-08-26)
+
+`Sources/SlopDeskWorkspaceCore/Control/ClientControlProtocol.swift` was 264 lines and it was the
+SECOND spelling of `rust/slopdesk-cli/src/clientctl.rs`: fourteen method literals, a
+`token → TabBadgeKind` map, two `String`-raw-valued enums, an NDJSON codec and one `*Params` builder
+per verb. No compiler crossed that boundary, so `slopdesk-invariants`' "the client control socket has
+one vocabulary" held the two files together by extracting regexes from each and comparing the sets —
+a gate written because the two ends ship on different clocks (the app from a `.app`, the CLI from
+`brew upgrade`), so a rename moves both in one commit, passes both suites green, and then meets the
+peer the user launched this morning.
+
+**~130 of those lines had no Swift caller at all.** Every `*Params` builder, `encodeRequestLine` and
+`decodeResponseLine` were only ever run by the CLI; `Sources/` reaches exactly seven members of the
+enum. The mirror was not merely duplicated, it was mostly dead.
+
+**The vocabulary is `rust/slopdesk-clientctl` now** — its own crate, taken as a DIRECT path edge by
+both `slopdesk-cli` (which re-exports it as `clientctl`, so no call site moved) and `slopdesk-ffi`
+(so it lands inside `slopdesk-gate ffi`'s content stamp). Not `slopdesk-wire`, which was tried and
+reverted: that crate's zero-third-party-dependency rule is about a codec parsing hostile PTY bytes,
+and this module is `serde_json` end to end.
+
+**Two crossing shapes, and the reason for each.** METHODS cross as WORDS — one delivery,
+`[u16 count]` then `[u32 length][UTF-8]`, read once into a `static let` — because the far side
+dispatches a `switch` on the string a foreign process wrote, so the string IS the thing. TOKENS
+cross as INDICES, because the far side turns each into a case of its own enum and only ever switches
+on that: `Placement` and `FontScope` are `UInt8`-raw-valued now, their raw value is the token's
+position in the crate's vocabulary, and an unknown token answers `-1` → `nil` → the refusal that was
+already there. A token is parsed exactly once, in Rust.
+
+**The badge table absorbed the map rather than sitting beside it.** `SETTABLE_BADGE_TOKENS` is
+`&[(&str, TabBadge)]`, so `settable_badge_tokens()` (the usage line) and `badge_for_token` (the
+parser) read one table and cannot offer a token the other refuses. `token_for_badge` is the total
+reverse, because a tab can be LISTED wearing a badge no request may set — `caffeinate`, `sudo` and
+the two command tiers are spellable and unsettable, which the doors reproduce exactly.
+
+**The gate shrank to what a compiler still cannot see.** It no longer compares two spellings; it
+bans a literal reappearing in the face or the dispatcher, requires the face to name all five doors,
+and checks the one thing an index-answering door cannot check for itself — that each `UInt8` enum
+declares as many cases as the crate's vocabulary has entries. A placement added in Rust and not in
+Swift would otherwise parse to a `rawValue` no case answers: silently unreachable rather than wrong.

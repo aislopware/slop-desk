@@ -20,10 +20,18 @@
 //!
 //! The far end is `ClientControlDispatcher`, which is Swift because it dispatches against the
 //! `@Observable` workspace store. It reads its method names and its three token vocabularies out
-//! of THIS module — `slopdesk-invariants`' "the client control socket has one vocabulary" holds
-//! the two spellings together, since no compiler crosses that boundary.
+//! of THIS module, through `slopdesk-ffi` — there is no second spelling to hold together any more.
+//! The gate that used to compare one file's regexes against the other's now only BANS a literal
+//! reappearing on the Swift side, which is a much smaller thing to be right about.
+//!
+//! ## Every vocabulary here is a TABLE, not a list beside a map
+//! The badge tokens are pairs — `(token, TabBadge)` — because the far side needs the mapping and
+//! not merely the spellings, and a flat list of tokens next to a `match` that maps them would be
+//! the same drift one language over. `settable_badge_tokens` and [`badge_for_token`] both read the
+//! one table, so a token cannot be offered by the usage line and rejected by the parser.
 
 use serde_json::{Map, Value};
+use slopdesk_agent::badge::TabBadge;
 
 /// A JSON object, in the one spelling this crate uses.
 pub type Params = Map<String, Value>;
@@ -83,19 +91,20 @@ pub const METHODS: &[&str] = &[
 // Token vocabularies
 // ---------------------------------------------------------------------------------------------
 
-/// The badge tokens `tab badge --kind <token>` accepts.
+/// The badge tokens `tab badge --kind <token>` accepts, each with the badge it names.
 ///
-/// `unread` has no distinct badge kind of its own — the far side maps it to `finished`, which is
-/// literally the "unread output" marker. The privilege badges (`caffeinate`/`sudo`) and the two
-/// command badges are foreground-process derived, so they are absent here: they can be LISTED but
-/// never set.
-pub const SETTABLE_BADGE_TOKENS: &[&str] = &[
-    "running",
-    "completed",
-    "finished",
-    "unread",
-    "error",
-    "awaiting-input",
+/// `unread` has no distinct badge of its own — it maps to [`TabBadge::Finished`], which is
+/// literally the "unread output" marker, so the table is MANY-TO-ONE and the reverse of `Finished`
+/// is the canonical `finished`. The privilege badges (`caffeinate`/`sudo`) and the two command
+/// badges are foreground-process derived, so they are absent here: [`token_for_badge`] spells them
+/// because a tab can be LISTED wearing one, but no request may set one.
+pub const SETTABLE_BADGE_TOKENS: &[(&str, TabBadge)] = &[
+    ("running", TabBadge::Running),
+    ("completed", TabBadge::Completed),
+    ("finished", TabBadge::Finished),
+    ("unread", TabBadge::Finished),
+    ("error", TabBadge::Error),
+    ("awaiting-input", TabBadge::AwaitingInput),
 ];
 
 /// Where a `view`/`edit` shim opens. The first entry is the default.
@@ -108,9 +117,58 @@ pub const DEFAULT_PLACEMENT: &str = "new-tab";
 pub const FONT_SCOPES: &[&str] = &["system", "user"];
 
 /// The `--kind` values, joined the way the usage error lists them.
+///
+/// Derived from the one table rather than typed, so the usage line cannot offer a token the parser
+/// below refuses.
 #[must_use]
 pub fn settable_badge_tokens() -> String {
-    SETTABLE_BADGE_TOKENS.join("|")
+    SETTABLE_BADGE_TOKENS
+        .iter()
+        .map(|(token, _)| *token)
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+/// The badge a settable token names, or `None` for a token no request may set.
+///
+/// Validate-then-drop: an unknown token — and a LISTABLE-only one like `caffeinate` — both answer
+/// `None`, which the dispatcher turns into an error response rather than a trap.
+#[must_use]
+pub fn badge_for_token(token: &str) -> Option<TabBadge> {
+    SETTABLE_BADGE_TOKENS
+        .iter()
+        .find(|(spelling, _)| *spelling == token)
+        .map(|(_, badge)| *badge)
+}
+
+/// The canonical token for a resolved badge — what LISTING a tab's current badge prints.
+///
+/// TOTAL over the ladder, which is why it is a `match` rather than a reverse lookup in the table
+/// above: four badges are not settable and so appear in no row, and a listing that answered
+/// nothing for a tab wearing one would be a hole rather than a refusal.
+#[must_use]
+pub const fn token_for_badge(badge: TabBadge) -> &'static str {
+    match badge {
+        TabBadge::Running => "running",
+        TabBadge::CommandRunning => "command-running",
+        TabBadge::CommandBusy => "command-busy",
+        TabBadge::Completed => "completed",
+        TabBadge::Finished => "finished",
+        TabBadge::Error => "error",
+        TabBadge::AwaitingInput => "awaiting-input",
+        TabBadge::Caffeinate => "caffeinate",
+        TabBadge::Sudo => "sudo",
+    }
+}
+
+/// The index of a token in a closed vocabulary, or `None` when the vocabulary does not carry it.
+///
+/// The shape both [`PLACEMENTS`] and [`FONT_SCOPES`] are read through at the boundary: an INDEX
+/// crosses to Swift as one byte, and the far side's enum is that byte's `rawValue`. Nothing about
+/// the spelling crosses, which is the point — the token is parsed exactly once, here.
+#[must_use]
+pub fn index_of(vocabulary: &[&str], token: &str) -> Option<usize> {
+    vocabulary.iter().position(|spelling| *spelling == token)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -300,13 +358,15 @@ mod tests {
         reason = "a panic in a test is the failure report, not a runtime fault"
     )]
 
+    use slopdesk_agent::badge::TabBadge;
+
     use super::{
         AGENT_STATUS, DEFAULT_PLACEMENT, EDIT, FONT_LIST, FONT_SCOPES, IGNORE, JUMP, KEYBIND_LIST, LEARN,
         METHODS, PANE_CAPTURE, PANE_SEND_KEYS, PANES, PLACEMENTS, SETTABLE_BADGE_TOKENS, TAB_BADGE, TABS,
-        VIEW, WINDOWS, agent_status_params, decode_response_line, edit_params, encode_request_line,
-        font_list_params, ignore_params, jump_params, keybind_list_params, learn_params, pane_capture_params,
-        pane_send_keys_params, panes_params, settable_badge_tokens, tab_badge_params, tabs_params,
-        view_params, windows_params,
+        VIEW, WINDOWS, agent_status_params, badge_for_token, decode_response_line, edit_params,
+        encode_request_line, font_list_params, ignore_params, index_of, jump_params, keybind_list_params,
+        learn_params, pane_capture_params, pane_send_keys_params, panes_params, settable_badge_tokens,
+        tab_badge_params, tabs_params, token_for_badge, view_params, windows_params,
     };
 
     fn keys(items: &[&str]) -> Vec<String> {
@@ -452,5 +512,64 @@ mod tests {
         // and the count comparison in the golden would still pass.
         let unique: std::collections::BTreeSet<&&str> = METHODS.iter().collect();
         assert_eq!(unique.len(), METHODS.len());
+    }
+
+    /// Every settable token parses, and to the badge the table names. `unread` is the many-to-one
+    /// row — it answers `Finished` and `Finished`'s canonical token is `finished`, not it.
+    #[test]
+    fn a_settable_token_parses_to_the_badge_the_table_names() {
+        let parsed: Vec<Option<TabBadge>> = SETTABLE_BADGE_TOKENS
+            .iter()
+            .map(|(token, _)| badge_for_token(token))
+            .collect();
+        let declared: Vec<Option<TabBadge>> = SETTABLE_BADGE_TOKENS
+            .iter()
+            .map(|(_, badge)| Some(*badge))
+            .collect();
+        assert_eq!(parsed, declared);
+        assert_eq!(badge_for_token("unread"), Some(TabBadge::Finished));
+        assert_eq!(token_for_badge(TabBadge::Finished), "finished");
+    }
+
+    /// A token no request may set answers `None` — including the four LISTABLE badges, which have a
+    /// canonical spelling and still may not be asked for.
+    #[test]
+    fn an_unsettable_or_unknown_token_is_dropped_rather_than_guessed() {
+        let unsettable = [
+            TabBadge::CommandRunning,
+            TabBadge::CommandBusy,
+            TabBadge::Caffeinate,
+            TabBadge::Sudo,
+        ];
+        let refused: Vec<Option<TabBadge>> = unsettable
+            .iter()
+            .map(|badge| badge_for_token(token_for_badge(*badge)))
+            .collect();
+        assert_eq!(refused, vec![None; unsettable.len()]);
+        assert_eq!(badge_for_token("purple"), None);
+        assert_eq!(badge_for_token(""), None);
+    }
+
+    /// The reverse map is TOTAL, and no two badges share a spelling — otherwise a listing would
+    /// name a badge the tab is not wearing.
+    #[test]
+    fn every_badge_has_its_own_canonical_token() {
+        let tokens: std::collections::BTreeSet<&str> = TabBadge::ALL
+            .iter()
+            .map(|badge| token_for_badge(*badge))
+            .collect();
+        assert_eq!(tokens.len(), TabBadge::ALL.len());
+        assert!(tokens.iter().all(|token| !token.is_empty()));
+    }
+
+    /// The index a closed vocabulary crosses the FFI boundary as.
+    #[test]
+    fn a_vocabulary_token_resolves_to_its_position_and_nothing_else_does() {
+        assert_eq!(index_of(PLACEMENTS, DEFAULT_PLACEMENT), Some(0));
+        assert_eq!(index_of(PLACEMENTS, "bottom"), Some(5));
+        assert_eq!(index_of(PLACEMENTS, "centre"), None);
+        assert_eq!(index_of(FONT_SCOPES, "system"), Some(0));
+        assert_eq!(index_of(FONT_SCOPES, "user"), Some(1));
+        assert_eq!(index_of(FONT_SCOPES, "cloud"), None);
     }
 }

@@ -1,0 +1,66 @@
+# `slopdesk-clientctl` — the CLIENT control socket: its methods, its tokens and its NDJSON framing.
+#
+# ## Why it is its own crate
+# TWO programs speak this socket and neither may hold its own copy of the vocabulary. `slopdesk`
+# writes the requests; the app's `ClientControlDispatcher` reads them — and that dispatcher is
+# Swift, so it reaches this vocabulary through `slopdesk-ffi` rather than through a compiler. While
+# the module lived inside `slopdesk-cli` the app could not link it at all, and the two spellings were
+# held together by a `slopdesk-invariants` rule comparing one file's regexes against the other's.
+# That rule is the shape "one implementation, never two languages" exists to delete.
+#
+# It is NOT in `slopdesk-wire`, which was tried and reverted: that crate's header states a
+# zero-third-party-dependency rule for a codec that parses hostile bytes off a PTY, and this module
+# is built on `serde_json`. It is not in `slopdesk-cli` any more for the reason above, and not in
+# `slopdesk-workspace` because that crate takes no JSON and this is a JSON protocol end to end.
+#
+# ## Two dependencies, both of them vocabularies
+# `serde_json` is the protocol itself — an object per request, an object per response, `BTreeMap`
+# key order so a golden line is stable. `slopdesk-agent` carries the badge ladder the `tab-badge`
+# verb names: the token map answers a `TabBadge`, so the CLI and the app agree on WHICH badge a
+# token means rather than only on the token's spelling.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-clientctl"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The slopdesk client control socket: method names, token vocabularies and NDJSON framing"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_clientctl"
+path = "src/lib.rs"
+
+[dependencies]
+# The badge ladder `tab badge --kind` names. Taking the type is what stops the token map being a
+# second opinion about which badge `unread` is.
+slopdesk-agent = { path = "../slopdesk-agent" }
+# The protocol. Its object is a `BTreeMap`, which is why a request line's keys come out sorted and a
+# golden line stays stable across builds.
+serde_json = "1"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+variant_size_differences = "deny"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+indexing_slicing = "deny"
+cast_possible_truncation = "deny"
+expect_used = "deny"
+unwrap_used = "deny"
+if_then_some_else_none = "deny"
+option_if_let_else = "deny"
+missing_const_for_fn = "deny"
+doc_markdown = "deny"
+# - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
+#   fused form CLAUDE.md's bit-exact-floats rule forbids. Nothing here does arithmetic at all, and
+#   the opt-out is carried anyway so the day something does, the lint cannot argue the tree into a
+#   contraction the Swift side would not reproduce.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

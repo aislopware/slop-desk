@@ -48,6 +48,10 @@ serde_json = "1"
 # * `slopdesk-hostlaunch` — the Application Support container's env override, so the sidecars record
 #   and the host's launch record cannot name two different containers.
 slopdesk-agent = { path = "../slopdesk-agent" }
+# The client control socket's own vocabulary, re-exported as `clientctl`. It left this crate when
+# the APP needed it too: the far end is Swift and reaches it through `slopdesk-ffi`, which cannot
+# link a module of this binary's library.
+slopdesk-clientctl = { path = "../slopdesk-clientctl" }
 slopdesk-hostlaunch = { path = "../slopdesk-hostlaunch" }
 slopdesk-settings = { path = "../slopdesk-settings" }
 slopdesk-sidecars = { path = "../slopdesk-sidecars" }

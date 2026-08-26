@@ -1667,7 +1667,7 @@ pub fn registry() -> Vec<Rule> {
         },
         Rule {
             name: "client-control-vocabulary",
-            origin: "rust/slopdesk-cli/src/clientctl.rs, docs/55 §8",
+            origin: "rust/slopdesk-clientctl/src/lib.rs, docs/55 §8",
             check: cli_vocabulary::the_client_control_socket_has_one_vocabulary,
         },
         Rule {

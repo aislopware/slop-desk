@@ -1004,6 +1004,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-clientctl"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "slopdesk-agent",
+]
+
+[[package]]
 name = "slopdesk-codepanel"
 version = "0.1.0"
 dependencies = [
@@ -1048,6 +1056,7 @@ dependencies = [
  "slopdesk-apple-sck",
  "slopdesk-apple-vt",
  "slopdesk-audio-out",
+ "slopdesk-clientctl",
  "slopdesk-codepanel",
  "slopdesk-devicelog",
  "slopdesk-devicepanel",

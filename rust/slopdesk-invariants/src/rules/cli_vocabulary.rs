@@ -56,8 +56,10 @@ use crate::tree::Tree;
 const SWIFT_CONTROL_PROTOCOL: &str = "Sources/SlopDeskWorkspaceCore/Control/ClientControlProtocol.swift";
 /// The `switch` that consumes those method strings.
 const SWIFT_CONTROL_DISPATCHER: &str = "Sources/SlopDeskWorkspaceCore/Control/ClientControlDispatcher.swift";
-/// The near end: the request builders and the three token vocabularies.
-const RUST_CLIENTCTL: &str = "rust/slopdesk-cli/src/clientctl.rs";
+/// The ONE spelling: the method names, the three token vocabularies and the NDJSON framing.
+const RUST_CLIENTCTL: &str = "rust/slopdesk-clientctl/src/lib.rs";
+/// The doors the Swift face reads that vocabulary through.
+const RUST_CLIENTCTL_DOORS: &str = "rust/slopdesk-ffi/src/client_ctl.rs";
 /// The process: argv in, dispatch, exit code out.
 const RUST_CLI_SHELL: &str = "rust/slopdesk-cli/src/shell.rs";
 
@@ -132,93 +134,87 @@ pub fn the_cli_help_has_one_author(tree: &Tree) -> Report {
 
 /// The client control socket has one vocabulary
 ///
-/// THE LAST CROSS-LANGUAGE VOCABULARY THE CLI HAS. Everything else the `slopdesk` process knows is
-/// its own crate's now; this one cannot be, because the far end dispatches against the
-/// `@Observable` workspace store, which is `SwiftUI`'s and stays Swift.
+/// IT USED TO HAVE TWO. A module inside `slopdesk-cli` held the method names and the three token
+/// vocabularies; `ClientControlProtocol.swift` held a second spelling of every one of them; and
+/// this rule compared one file's regexes against the other's, because no compiler crossed the
+/// boundary and no `.xcframework` could link a module of the CLI's own library.
 ///
-/// The two ends ship on different clocks and that is the whole reason this is a gate rather than a
-/// test: the app is long-running and installed from a `.app`, the CLI arrives by `brew upgrade` and
-/// is typed seconds later. A renamed method moves both ends in one commit, passes both suites
-/// green, and then meets a peer that is still the version the user launched this morning.
+/// The module is `slopdesk-clientctl` now — its own crate, taken as a DIRECT edge by both
+/// `slopdesk-cli` and `slopdesk-ffi` — and the Swift file is a face over `slopdesk_ws_ctl_*`. So
+/// the question this rule asks changed shape: not "do the two spellings agree" but "is there still
+/// only one spelling".
 ///
-/// Three vocabularies, because all three are parsed by string on the far side and each fails the
-/// same silent way — an unknown token becomes an error response, never a compile failure:
-/// * the METHOD names, which is the `switch` itself;
-/// * the PLACEMENT tokens `view`/`edit` take;
-/// * the FONT SCOPE tokens `font list` takes.
+/// The clock argument that made this a gate rather than a test is unchanged and is now carried by
+/// the crate's own golden instead: the app is long-running and installed from a `.app`, the CLI
+/// arrives by `brew upgrade` and is typed seconds later, so a renamed method must be a WIRE change.
+/// What is left here is the part no suite can fail on — a literal reappearing in Swift.
 ///
-/// The badge tokens are deliberately NOT compared as a set. Swift's map is `token → TabBadgeKind`
-/// and carries `unread ↦ finished`, a many-to-one row Rust's flat list cannot express; what is
-/// checked is that every token Rust offers is one Swift maps, which is the direction a user feels.
+/// Four claims:
+/// * the crate still declares the one table of each vocabulary, so the doors have something to
+///   read;
+/// * the doors exist, and the face names all five of them;
+/// * no method name or token is spelled as a literal anywhere in the face or the dispatcher;
+/// * the two `UInt8` enums declare exactly as many cases as the crate's vocabulary has entries —
+///   the BYTE contract, the same shape `TabBadgeKind.ffiByte` carries, and the one thing a door
+///   answering an index cannot check for itself.
 #[must_use]
 pub fn the_client_control_socket_has_one_vocabulary(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let Some(rust) = report.source(tree, RUST_CLIENTCTL, "the CLI's end of the socket lives there") else {
+    let Some(rust) = report.source(tree, RUST_CLIENTCTL, "the socket's one vocabulary lives there") else {
         return report;
     };
-    let Some(swift) = report.source(tree, SWIFT_CONTROL_PROTOCOL, "the far end's spellings live there")
-    else {
+    let Some(swift) = report.source(tree, SWIFT_CONTROL_PROTOCOL, "the face lives there") else {
         return report;
     };
 
-    // Rust spells each method as a `pub const NAME: &str = "…";` and then COLLECTS them into
-    // `METHODS`, so the set is read through that array rather than off every `&str` const in the
-    // file — `DEFAULT_PLACEMENT` is a `&str` const too, and grepping the shape would file it as a
-    // method the app has never heard of. Reading `METHODS` also catches the other half: a method
-    // constant defined, spelled right, and left out of the array the far end is held against.
-    let rust_methods = method_constants(&rust.text);
-    let swift_methods = method_block(&swift.text)
-        .map(|block| text::capture_set(&block, r#"^ *public static let [a-zA-Z]+ = "([a-z][a-z-]*)"$"#))
-        .unwrap_or_default();
-    compare(&mut report, "method", &rust_methods, &swift_methods, METHOD_FLOOR);
-
-    let rust_placements = list_tokens(&rust.text, "PLACEMENTS");
-    let swift_placements = raw_values(&swift.text, "Placement");
-    compare(
-        &mut report,
-        "placement token",
-        &rust_placements,
-        &swift_placements,
-        PLACEMENT_FLOOR,
-    );
-
-    let rust_scopes = list_tokens(&rust.text, "FONT_SCOPES");
-    let swift_scopes = raw_values(&swift.text, "FontScope");
-    compare(&mut report, "font-scope token", &rust_scopes, &swift_scopes, 2);
-
-    // One direction only, for the reason in the doc comment above.
-    let rust_badges = list_tokens(&rust.text, "SETTABLE_BADGE_TOKENS");
-    let swift_badges = text::capture_set(&swift.text, r#"^ *"([a-z][a-z-]*)": \.[a-zA-Z]+,$"#);
-    if rust_badges.len() < 5 || swift_badges.len() < 5 {
-        report.fail(format!(
-            "{RUST_CLIENTCTL}/{SWIFT_CONTROL_PROTOCOL}: the badge-token extraction read {} and {} — the \
-             comparison below would pass by having nothing to compare",
-            rust_badges.len(),
-            swift_badges.len()
-        ));
-    } else {
-        let unmapped: Vec<&String> = rust_badges.difference(&swift_badges).collect();
+    // The crate still holds the tables. Read through `METHODS` rather than off every `&str` const —
+    // `DEFAULT_PLACEMENT` is a `&str` const too, and grepping the shape would file it as a method.
+    let methods = method_constants(&rust.text);
+    let placements = list_tokens(&rust.text, "PLACEMENTS");
+    let scopes = list_tokens(&rust.text, "FONT_SCOPES");
+    let badges = badge_table(&rust.text);
+    for (what, read, floor) in [
+        ("method", methods.len(), METHOD_FLOOR),
+        ("placement token", placements.len(), PLACEMENT_FLOOR),
+        ("font-scope token", scopes.len(), 2),
+        ("settable badge token", badges.len(), BADGE_FLOOR),
+    ] {
         report.fail_if(
-            !unmapped.is_empty(),
+            read < floor,
             format!(
-                "`tab badge --kind` offers tokens ClientControlProtocol maps to no TabBadgeKind: \
-                 {unmapped:?} — the CLI would accept them and the app would answer 'unknown'"
+                "{RUST_CLIENTCTL}: the {what} extraction read {read} (floor {floor}) — the vocabulary has \
+                 been reshaped or emptied, and every claim below is comparing against nothing"
             ),
         );
     }
 
-    // The `switch` is where a method name is actually consumed, and it reads the constants rather
-    // than respelling them. A `case "windows":` there is a literal the gate above cannot see.
-    if let Some(dispatcher) = report.source(tree, SWIFT_CONTROL_DISPATCHER, "the switch lives there") {
-        let respelled = text::capture_set(dispatcher.code(), r#"^ *case "([a-z][a-z-]*)":"#);
+    // Each door exists and the face names it. A face that stopped calling one would have gone back
+    // to holding the answer itself, which is the whole regression.
+    let doors = report.source(tree, RUST_CLIENTCTL_DOORS, "the face's doors live there");
+    for door in DOORS {
         report.fail_if(
-            !respelled.is_empty(),
+            !doors.is_some_and(|source| source.text.contains(door)),
+            format!("{RUST_CLIENTCTL_DOORS} no longer exports {door} — the face has nothing to read"),
+        );
+        report.fail_if(
+            !swift.text.contains(door),
             format!(
-                "{SWIFT_CONTROL_DISPATCHER} switches on method LITERALS ({respelled:?}) — it must switch on \
-                 ClientControlProtocol.Method, which is what {RUST_CLIENTCTL} is held against"
+                "{SWIFT_CONTROL_PROTOCOL} no longer calls {door} — a vocabulary it does not ask for is one \
+                 it is spelling itself"
             ),
         );
     }
+
+    // No literal, in either Swift file. This is the ban that replaces the whole two-way comparison:
+    // there is nothing left to hold together as long as nobody writes the words down again.
+    literal_ban(tree, &mut report, SWIFT_CONTROL_PROTOCOL);
+    literal_ban(tree, &mut report, SWIFT_CONTROL_DISPATCHER);
+
+    // The byte contract. A token crosses as its POSITION, so a vocabulary that grows in Rust while
+    // the Swift enum does not makes the new token parse to a `rawValue` no case answers — silently
+    // unreachable rather than wrong, and still a change nobody meant to make.
+    byte_contract(&mut report, &swift.text, "Placement", placements.len());
+    byte_contract(&mut report, &swift.text, "FontScope", scopes.len());
     report
 }
 
@@ -226,34 +222,72 @@ pub fn the_client_control_socket_has_one_vocabulary(tree: &Tree) -> Report {
 const METHOD_FLOOR: usize = 10;
 /// `new-tab`, `new-window` and the four split sides.
 const PLACEMENT_FLOOR: usize = 6;
+/// The five settable badges plus `unread`, the many-to-one row.
+const BADGE_FLOOR: usize = 5;
 
-/// Both sides of one vocabulary, or a named failure when either read too little to be believed.
-fn compare(report: &mut Report, what: &str, rust: &BTreeSet<String>, swift: &BTreeSet<String>, floor: usize) {
-    if rust.len() < floor || swift.len() < floor {
+/// The five doors the face reads the vocabulary through.
+const DOORS: [&str; 5] = [
+    "slopdesk_ws_ctl_methods",
+    "slopdesk_ws_ctl_badge_for_token",
+    "slopdesk_ws_ctl_badge_token",
+    "slopdesk_ws_ctl_placement_for_token",
+    "slopdesk_ws_ctl_font_scope_for_token",
+];
+
+/// The words that may not be typed in Swift again.
+///
+/// A method name and a placement token look alike — a lowercase hyphenated word in quotes — so the
+/// ban is one pattern over the CODE of both files. It is deliberately narrow: `docs/` prose and the
+/// doc comments above each `static let` may name whatever they describe, since a comment is not
+/// something the dispatcher reads.
+fn literal_ban(tree: &Tree, report: &mut Report, path: &str) {
+    let Some(source) = report.source(tree, path, "one half of the face lives there") else {
+        return;
+    };
+    let respelled = text::capture_set(
+        source.code(),
+        r#"(?:case |= )"(windows|tabs|panes|tab-badge|jump|learn|ignore|view|edit|font-list|keybind-list|pane-capture|pane-send-keys|agent-status|new-tab|new-window|awaiting-input|command-running|command-busy|caffeinate)""#,
+    );
+    report.fail_if(
+        !respelled.is_empty(),
+        format!(
+            "{path} spells control-socket words as LITERALS ({respelled:?}) — they belong to \
+             {RUST_CLIENTCTL} and reach Swift only through {RUST_CLIENTCTL_DOORS}"
+        ),
+    );
+}
+
+/// One `UInt8`-raw-valued enum declares exactly as many cases as its vocabulary has entries.
+fn byte_contract(report: &mut Report, protocol: &str, name: &str, expected: usize) {
+    let Some(body) = text::capture_first(
+        protocol,
+        &format!(
+            r"(?s)public enum {}: UInt8[^\n]*\{{(.*?)\n    \}}",
+            regex::escape(name)
+        ),
+    ) else {
         report.fail(format!(
-            "the {what} extraction read {} from {RUST_CLIENTCTL} and {} from {SWIFT_CONTROL_PROTOCOL} \
-             (floor {floor}) — a comparison against an empty set passes in silence",
-            rust.len(),
-            swift.len()
+            "{SWIFT_CONTROL_PROTOCOL}: no `public enum {name}: UInt8` — the token index a door answers has \
+             no case to land on"
         ));
         return;
-    }
-    if rust == swift {
-        return;
-    }
-    let cli_only: Vec<&String> = rust.difference(swift).collect();
-    let app_only: Vec<&String> = swift.difference(rust).collect();
-    report.fail(format!(
-        "the {what}s disagree across the client control socket — the CLI sends and the app does not know: \
-         {cli_only:?}; the app answers and no CLI verb reaches: {app_only:?}"
-    ));
+    };
+    let cases = text::capture_set(&body, r"^ *case [a-zA-Z]+ = ([0-9]+)$");
+    report.fail_if(
+        cases.len() != expected,
+        format!(
+            "{SWIFT_CONTROL_PROTOCOL}: `{name}` declares {} cases and {RUST_CLIENTCTL} carries {expected} \
+             tokens — a token crosses as its POSITION, so the extra one parses to a rawValue no case answers",
+            cases.len()
+        ),
+    );
 }
 
 /// Every method `METHODS` collects, resolved through the constants that name them.
 ///
 /// A name in the array with no `pub const` behind it would not compile, so the resolution cannot
 /// silently drop one — but a constant left OUT of the array is exactly the drift this reads for,
-/// and it comes out as a method Swift knows and no CLI verb reaches.
+/// and it comes out as a method the crate's own golden covers and no door delivers.
 fn method_constants(clientctl: &str) -> BTreeSet<String> {
     let mut spellings = BTreeMap::new();
     for line in clientctl.lines() {
@@ -272,20 +306,6 @@ fn method_constants(clientctl: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// The body of Swift's `enum Method`, up to its closing `all` set.
-fn method_block(protocol: &str) -> Option<String> {
-    let mut lines = protocol
-        .lines()
-        .skip_while(|line| !line.contains("public enum Method {"));
-    lines.next()?;
-    Some(
-        lines
-            .take_while(|line| !line.contains("public static let all"))
-            .collect::<Vec<_>>()
-            .join("\n"),
-    )
-}
-
 /// The string literals of one `pub const NAME: &[&str] = &[…];` in Rust.
 fn list_tokens(source: &str, name: &str) -> BTreeSet<String> {
     let body = text::capture_first(
@@ -296,29 +316,19 @@ fn list_tokens(source: &str, name: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// A Swift `String`-raw-valued enum's tokens: the explicit `= "…"` ones and the implicit ones,
-/// which Swift spells as the case name itself.
-fn raw_values(protocol: &str, name: &str) -> BTreeSet<String> {
+/// The tokens of the badge TABLE — `&[(&str, TabBadge)]`, pairs rather than a flat list.
+///
+/// Read as its own shape rather than through [`list_tokens`] precisely because it is a table: a
+/// reformat back into a bare `&[&str]` beside a `match` would be the mapping spelled twice in one
+/// language, which is the same drift the port removed across two.
+fn badge_table(source: &str) -> BTreeSet<String> {
     let Some(body) = text::capture_first(
-        protocol,
-        &format!(
-            r"(?s)public enum {}: String[^\n]*\{{(.*?)\n    \}}",
-            regex::escape(name)
-        ),
+        source,
+        r"(?s)pub const SETTABLE_BADGE_TOKENS: &\[\(&str, TabBadge\)\] = &\[(.*?)\n\];",
     ) else {
         return BTreeSet::new();
     };
-    let explicit = text::cached(r#"^ *case [a-zA-Z]+ = "([a-z][a-z-]*)"$"#);
-    let implicit = text::cached(r"^ *case ([a-z][a-zA-Z]*)$");
-    body.lines()
-        .filter_map(|line| {
-            explicit
-                .captures(line)
-                .or_else(|| implicit.captures(line))
-                .and_then(|caps| caps.get(1))
-                .map(|matched| matched.as_str().to_owned())
-        })
-        .collect()
+    text::capture_set(&body, r#"^ *\("([a-z][a-z-]*)", TabBadge::[A-Za-z]+\),$"#)
 }
 
 /// The `ui-shell` docs describe the CLI the crate actually ships
@@ -1034,8 +1044,8 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
     // The client control socket
     // ------------------------------------------------------------------------------------- //
 
-    /// The near end, in the shape `clientctl.rs` actually has: one `pub const` per method, then
-    /// three `&[&str]` token lists.
+    /// The one vocabulary, in the shape `slopdesk-clientctl`'s `lib.rs` actually has: one `pub
+    /// const` per method, a `&[(&str, TabBadge)]` TABLE, and two `&[&str]` token lists.
     const CLIENTCTL: &str = r#"
 pub const WINDOWS: &str = "windows";
 pub const TABS: &str = "tabs";
@@ -1066,13 +1076,13 @@ pub const METHODS: &[&str] = &[
 /// A `&str` const that is NOT a method — the shape the extraction must not mistake for one.
 pub const DEFAULT_PLACEMENT: &str = "new-tab";
 
-pub const SETTABLE_BADGE_TOKENS: &[&str] = &[
-    "running",
-    "completed",
-    "finished",
-    "unread",
-    "error",
-    "awaiting-input",
+pub const SETTABLE_BADGE_TOKENS: &[(&str, TabBadge)] = &[
+    ("running", TabBadge::Running),
+    ("completed", TabBadge::Completed),
+    ("finished", TabBadge::Finished),
+    ("unread", TabBadge::Finished),
+    ("error", TabBadge::Error),
+    ("awaiting-input", TabBadge::AwaitingInput),
 ];
 
 pub const PLACEMENTS: &[&str] = &["new-tab", "new-window", "left", "right", "top", "bottom"];
@@ -1080,51 +1090,57 @@ pub const PLACEMENTS: &[&str] = &["new-tab", "new-window", "left", "right", "top
 pub const FONT_SCOPES: &[&str] = &["system", "user"];
 "#;
 
-    /// The far end, in the shape `ClientControlProtocol.swift` has: a `Method` enum of static
-    /// lets closed by `all`, a badge map, and two `String`-raw-valued enums — one with explicit
-    /// raw values and four implicit ones, which is the case `raw_values` exists for.
-    const PROTOCOL: &str = r#"
+    /// The doors the face reads it through.
+    const DOORS: &str = r#"
+pub unsafe extern "C" fn slopdesk_ws_ctl_methods(out: *mut c_uchar, cap: usize) -> usize {}
+pub unsafe extern "C" fn slopdesk_ws_ctl_badge_for_token(t: *const c_uchar, n: usize) -> i8 {}
+pub unsafe extern "C" fn slopdesk_ws_ctl_badge_token(b: u8, out: *mut c_uchar, cap: usize) -> usize {}
+pub unsafe extern "C" fn slopdesk_ws_ctl_placement_for_token(t: *const c_uchar, n: usize) -> i8 {}
+pub unsafe extern "C" fn slopdesk_ws_ctl_font_scope_for_token(t: *const c_uchar, n: usize) -> i8 {}
+"#;
+
+    /// The FACE, in the shape `ClientControlProtocol.swift` has: methods read off one delivery,
+    /// three token parsers that are door calls, and two `UInt8` enums whose raw values ARE the
+    /// crate's positions.
+    const PROTOCOL: &str = r"
 public enum ClientControlProtocol {
     public enum Method {
-        public static let windows = "windows"
-        public static let tabs = "tabs"
-        public static let panes = "panes"
-        public static let tabBadge = "tab-badge"
-        public static let jump = "jump"
-        public static let learn = "learn"
-        public static let ignore = "ignore"
-        public static let view = "view"
-        public static let edit = "edit"
-        public static let fontList = "font-list"
-        public static let keybindList = "keybind-list"
-
-        public static let all: Set<String> = [windows, tabs]
+        public static let all: [String] = { slopdesk_ws_ctl_methods(nil, 0) }()
+        public static let windows = at(0)
+        public static let keybindList = at(10)
     }
 
-    public static let settableBadgeTokens: [String: TabBadgeKind] = [
-        "running": .running,
-        "completed": .completed,
-        "finished": .finished,
-        "unread": .finished,
-        "error": .error,
-        "awaiting-input": .awaitingInput,
-    ]
-
-    public enum Placement: String, Sendable, Equatable, CaseIterable {
-        case newTab = "new-tab"
-        case newWindow = "new-window"
-        case left
-        case right
-        case top
-        case bottom
+    public static func tabBadgeKind(forToken token: String) -> TabBadgeKind? {
+        TabBadgeKind(ffiByte: slopdesk_ws_ctl_badge_for_token(bytes, len))
     }
 
-    public enum FontScope: String, Sendable, Equatable, CaseIterable {
-        case system
-        case user
+    public static func badgeToken(for kind: TabBadgeKind) -> String {
+        slopdesk_ws_ctl_badge_token(kind.ffiByte, buffer.baseAddress, buffer.count)
+    }
+
+    public enum Placement: UInt8, Sendable, Equatable, CaseIterable {
+        case newTab = 0
+        case newWindow = 1
+        case left = 2
+        case right = 3
+        case top = 4
+        case bottom = 5
+    }
+
+    public static func placement(forToken token: String) -> Placement? {
+        Placement(rawValue: UInt8(slopdesk_ws_ctl_placement_for_token(bytes, len)))
+    }
+
+    public enum FontScope: UInt8, Sendable, Equatable, CaseIterable {
+        case system = 0
+        case user = 1
+    }
+
+    public static func fontScope(forToken token: String) -> FontScope? {
+        FontScope(rawValue: UInt8(slopdesk_ws_ctl_font_scope_for_token(bytes, len)))
     }
 }
-"#;
+";
 
     const DISPATCHER: &str = r#"
 switch method {
@@ -1136,47 +1152,86 @@ default: Self.error(id: id, message: "unknown method: \(method)")
     fn socket(fixture: &Fixture) {
         fixture
             .write(super::RUST_CLIENTCTL, CLIENTCTL)
+            .write(super::RUST_CLIENTCTL_DOORS, DOORS)
             .write(super::SWIFT_CONTROL_PROTOCOL, PROTOCOL)
             .write(super::SWIFT_CONTROL_DISPATCHER, DISPATCHER);
     }
 
     #[test]
-    fn the_two_ends_of_the_socket_are_held_together() {
+    fn the_socket_has_exactly_one_spelling_of_its_words() {
         let fixture = Fixture::new("clientctl-agree");
         socket(&fixture);
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
         assert!(report.is_clean(), "{:?}", report.violations());
 
-        // A method renamed on ONE side — the drift that ships green and meets last morning's app.
+        // The regression the port removed: a method name typed back into the face.
         fixture.write(
             super::SWIFT_CONTROL_PROTOCOL,
-            &PROTOCOL.replace(r#"keybindList = "keybind-list""#, r#"keybindList = "keybinds""#),
-        );
-        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
-        assert!(
-            report.violations().iter().any(|v| v.contains("methods disagree")),
-            "{:?}",
-            report.violations()
-        );
-
-        // A method constant defined, spelled right, and never collected into `METHODS` — so the
-        // far end dispatches a verb the near end can no longer send.
-        socket(&fixture);
-        fixture.write(
-            super::RUST_CLIENTCTL,
-            &CLIENTCTL.replace("    KEYBIND_LIST,\n", ""),
+            &PROTOCOL.replace(
+                "public static let windows = at(0)",
+                r#"public static let windows = "windows""#,
+            ),
         );
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("no CLI verb reaches") && v.contains("keybind-list")),
+                .any(|v| v.contains("LITERALS") && v.contains("windows")),
             "{:?}",
             report.violations()
         );
 
-        // A placement the CLI offers and the app cannot parse.
+        // The same regression in the `switch`, which is where a method name is consumed.
+        socket(&fixture);
+        fixture.write(
+            super::SWIFT_CONTROL_DISPATCHER,
+            &DISPATCHER.replace("case ClientControlProtocol.Method.windows:", r#"case "windows":"#),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("LITERALS")),
+            "{:?}",
+            report.violations()
+        );
+
+        // A face that stopped asking — a parser that answers out of Swift again.
+        socket(&fixture);
+        fixture.write(
+            super::SWIFT_CONTROL_PROTOCOL,
+            &PROTOCOL.replace(
+                "slopdesk_ws_ctl_font_scope_for_token",
+                "FontScope(rawValue: token)",
+            ),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no longer calls slopdesk_ws_ctl_font_scope_for_token")),
+            "{:?}",
+            report.violations()
+        );
+
+        // A door deleted out from under the face.
+        socket(&fixture);
+        fixture.write(
+            super::RUST_CLIENTCTL_DOORS,
+            &DOORS.replace("slopdesk_ws_ctl_badge_token", "removed_door"),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no longer exports slopdesk_ws_ctl_badge_token")),
+            "{:?}",
+            report.violations()
+        );
+
+        // THE BYTE CONTRACT: a placement added in Rust and not in Swift parses to a rawValue no
+        // case answers, which is a token silently unreachable rather than a token spelled wrong.
         socket(&fixture);
         fixture.write(
             super::RUST_CLIENTCTL,
@@ -1187,50 +1242,54 @@ default: Self.error(id: id, message: "unknown method: \(method)")
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("placement tokens disagree") && v.contains("centre")),
+                .any(|v| v.contains("`Placement` declares 6 cases") && v.contains("carries 7")),
             "{:?}",
             report.violations()
         );
 
-        // A badge token with no TabBadgeKind behind it — the one-directional half.
+        // The badge TABLE flattened back into a list beside a map — the mapping spelled twice, in
+        // one language this time.
         socket(&fixture);
         fixture.write(
             super::RUST_CLIENTCTL,
-            &CLIENTCTL.replace(r#"    "error","#, "    \"error\",\n    \"stalled\","),
+            &CLIENTCTL.replace("&[(&str, TabBadge)]", "&[&str]"),
         );
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("stalled")),
-            "{:?}",
-            report.violations()
-        );
-
-        // The switch respelling a method as a literal, which the set comparison cannot see.
-        socket(&fixture);
-        fixture.write(
-            super::SWIFT_CONTROL_DISPATCHER,
-            &DISPATCHER.replace("case ClientControlProtocol.Method.windows:", r#"case "windows":"#),
-        );
-        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
-        assert!(
-            report.violations().iter().any(|v| v.contains("method LITERALS")),
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("settable badge token extraction read 0")),
             "{:?}",
             report.violations()
         );
     }
 
-    /// A reformat that empties either extraction must be RED, not a silent pass.
+    /// A reformat that empties an extraction must be RED, not a silent pass.
     #[test]
-    fn an_unreadable_vocabulary_on_either_side_fails_closed() {
+    fn an_unreadable_vocabulary_fails_closed() {
         let fixture = Fixture::new("clientctl-stale");
         socket(&fixture);
-        fixture.write(
-            super::SWIFT_CONTROL_PROTOCOL,
-            &PROTOCOL.replace("public static let", "static let"),
-        );
+        fixture.write(super::RUST_CLIENTCTL, &CLIENTCTL.replace("pub const", "const"));
         let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("floor 10")),
+            "{:?}",
+            report.violations()
+        );
+
+        // The far side's enum renamed or restyled: the index a door answers has nowhere to land.
+        socket(&fixture);
+        fixture.write(
+            super::SWIFT_CONTROL_PROTOCOL,
+            &PROTOCOL.replace("public enum Placement: UInt8", "public enum Placement: String"),
+        );
+        let report = super::the_client_control_socket_has_one_vocabulary(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no `public enum Placement: UInt8`")),
             "{:?}",
             report.violations()
         );

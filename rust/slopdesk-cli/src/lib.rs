@@ -13,8 +13,10 @@
 //! - [`completions`] — the five shells' completion scripts, from the runnable half of that table.
 //! - [`formatting`] — the list/inspect tables and their JSON form.
 //! - [`version`] — the `version` banner's shape (the NUMBER is the package's, and is passed in).
-//! - [`clientctl`] — the client control protocol: the method names, the parameter builders and the
-//!   NDJSON framing, pinned byte-for-byte against the app's own dispatcher.
+//! - [`clientctl`] — re-exported from `slopdesk-clientctl`: the client control protocol's method
+//!   names, its token vocabularies, its parameter builders and its NDJSON framing. It is a crate
+//!   rather than a module here because the app links it too, through `slopdesk-ffi` — see that
+//!   crate's header for why it is neither `slopdesk-wire`'s nor this one's.
 //! - [`shell`] — the process: the environment, the sinks, the failure, and one arm per verb.
 //!
 //! ## What is deliberately elsewhere
@@ -36,7 +38,6 @@
 #![forbid(unsafe_code)]
 
 pub mod args;
-pub mod clientctl;
 pub mod completions;
 pub mod formatting;
 pub mod shell;
@@ -47,4 +48,10 @@ pub use args::{GlobalFlag, Invocation, OutputFormat, ParseError};
 pub use completions::Shell;
 pub use formatting::Row;
 pub use shell::{Control, Ctx, Environment, Failure, Io, Run, run};
+/// The client control protocol, under the name every call site in [`shell`] already spells.
+///
+/// A re-export rather than a module: the app's dispatcher reads the same vocabulary through
+/// `slopdesk-ffi`, and a module inside this binary's library is not something an `.xcframework` can
+/// link. Nothing about the call sites changed when it moved.
+pub use slopdesk_clientctl as clientctl;
 pub use vocabulary::{Availability, Subcommand};

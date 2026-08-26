@@ -82,6 +82,7 @@ pub mod channel_run;
 pub mod cheat_sheet;
 pub mod chip_notice;
 pub mod chrome;
+pub mod client_ctl;
 pub mod client_gestures;
 pub mod client_input;
 pub mod client_jitter;
