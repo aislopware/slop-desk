@@ -1016,24 +1016,3 @@ pub extern "C" fn slopdesk_video_encoder_const_qp() -> i32 {
         .const_qp
         .unwrap_or(0)
 }
-
-/// One `[1, 51]` quantiser knob from its raw text, clamped; 0 when it is absent or not a number.
-///
-/// # Safety
-/// `(raw, len)` must be null-with-zero-length, or `len` readable bytes for the duration of the
-/// call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[must_use]
-pub unsafe extern "C" fn slopdesk_video_encoder_qp_knob(
-    raw: *const c_uchar,
-    len: usize,
-    fallback: i32,
-) -> i32 {
-    // SAFETY: the caller's obligation, above — the same one every door in this crate asks for.
-    let bytes = unsafe { crate::borrow(raw, len) };
-    slopdesk_video::encoder_config::qp_knob(core::str::from_utf8(bytes).ok(), fallback).unwrap_or(0)
-}

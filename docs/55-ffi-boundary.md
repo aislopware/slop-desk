@@ -1407,10 +1407,13 @@ in neither the brief nor the sweep's own reading of the file. The gate ran again
 failed where it was expected to pass, and the failure was correct. A ratchet that fires on the tree
 it was written for is usually a bug in the ratchet; occasionally it is the rest of the defect.
 
-Then a FIFTH, one file over: `SLOPDESK_AQP_MAX` in `WindowCapturer`, same range, same reject. It is
-why `VideoEncoder.envQP` is not `private` — there is no version of "one rule" where the fifth caller
+Then a FIFTH, one file over: `SLOPDESK_AQP_MAX` in `WindowCapturer`, same range, same reject. It was
+why `VideoEncoder.envQP` was not `private` — there is no version of "one rule" where the fifth caller
 gets its own copy for living in another file, and a helper's access level is a weaker constraint
-than that.
+than that. The capture-gate port later moved the fifth knob into `slopdesk-video`'s `capture_gates`,
+where it calls the SAME `qp_knob` the other four do; `envQP` and the
+`slopdesk_video_encoder_qp_knob` door it fronted went with it, because a public face whose only
+reason to exist was one cross-file caller has no reason to exist once that caller is a `use`.
 
 **What was not folded then is folded now, and both premises of the paragraph that scoped it out were
 wrong.** It said `EnvConfig`'s generic `guard let v = Int(s), v >= lo, v <= hi else { return def }`

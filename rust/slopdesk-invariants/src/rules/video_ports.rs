@@ -187,11 +187,15 @@ pub fn the_scroll_phases_are_one_table(tree: &Tree) -> Report {
 /// knob is still OFF, and text that is not a number at all still leaves it OFF rather than
 /// inventing an operating point.
 ///
-/// ALL FIVE [1, 51] knobs in this target are named: MAX, CONST, CRISP and COMPACT in the encoder,
-/// and `AQP_MAX` in the capturer. The fourth is here because this very gate found it — it was not
-/// in the brief, it sat ten lines from the other three, and it had the same hand-rolled reject. The
-/// FIFTH was found the same way, one file over, and is the reason `envQP` is not `private`: there
-/// is no version of "one rule" where the fifth caller gets its own copy for living in another file.
+/// ALL FIVE [1, 51] knobs are named: MAX, CONST, CRISP and COMPACT alongside the encoder's own
+/// configuration, and `AQP_MAX` in the capture operating point. The fourth is here because this
+/// very gate found it — it was not in the brief, it sat ten lines from the other three, and it had
+/// the same hand-rolled reject. The FIFTH was found the same way, one file over.
+///
+/// All five now resolve inside `rust/slopdesk-video` through the SAME `qp_knob`, so the claims name
+/// the two modules that call it rather than the Swift that used to. `VideoEncoder.envQP` — the
+/// public face the capturer once borrowed across the file boundary — went with the port: the fifth
+/// caller lives in the same crate as the other four, so nothing is left to borrow it.
 ///
 /// ## And the message-shaped control face stays a WRAPPER
 /// After the datagram fix its only callers are the state-machine tests, which is the shape the
@@ -200,19 +204,23 @@ pub fn the_scroll_phases_are_one_table(tree: &Tree) -> Report {
 /// into a second transition that only the tests would exercise.
 #[must_use]
 pub fn a_quantiser_knob_clamps_rather_than_rejects(tree: &Tree) -> Report {
-    /// The capturer, which holds the fifth knob of the same shape.
+    /// The capturer, which held the fifth knob of the same shape before it was ported.
     const WINDOW_CAPTURER: &str = "Sources/SlopDeskVideoHost/WindowCapturer.swift";
+    /// Where the encoder's four knobs are resolved.
+    const ENCODER_CONFIG: &str = "rust/slopdesk-video/src/encoder_config.rs";
+    /// Where the capture operating point resolves the fifth.
+    const CAPTURE_GATES: &str = "rust/slopdesk-video/src/capture_gates.rs";
 
     check_all(tree, &[
-        // The door the face asks changed with the encoder port — `slopdesk_video_encoder_qp_knob`
-        // is the encoder's own knob entry, and it routes to the same `clamped_int_from_env` the
-        // general door does, one crate closer to the rules that read the answer.
+        // `qp_knob` is the one entry all five go through, and it routes to the same
+        // `clamped_int_from_env` the general door does — one crate closer to the rules that read
+        // the answer than the Swift faces that used to ask.
         Claim::Matches {
-            path: VIDEO_ENCODER,
-            pattern: r"slopdesk_video_encoder_qp_knob\(",
+            path: ENCODER_CONFIG,
+            pattern: r"qp_knob\(",
             view: View::Code,
-            message: "the encoder parses its quantiser knobs itself again — the parse and the clamp are the \
-                      door's",
+            message: "the encoder resolves its quantiser knobs some other way — the parse and the clamp are \
+                      qp_knob's",
         },
         // Matched on the `environment[…]` read followed by a bare `Int(` parse, which is the
         // shape all five had and none of them has now.
@@ -224,11 +232,11 @@ pub fn a_quantiser_knob_clamps_rather_than_rejects(tree: &Tree) -> Report {
                       answer the caller can act on",
         },
         Claim::Matches {
-            path: WINDOW_CAPTURER,
-            pattern: r"VideoEncoder\.envQP\(",
+            path: CAPTURE_GATES,
+            pattern: r"qp_knob\(",
             view: View::Code,
-            message: "the capturer stopped asking VideoEncoder.envQP for SLOPDESK_AQP_MAX — the fifth knob \
-                      of the same shape",
+            message: "the capture operating point stopped resolving SLOPDESK_AQP_MAX through qp_knob — the \
+                      fifth knob of the same shape",
         },
         Claim::Matches {
             path: SESSION_LOGIC,
@@ -488,12 +496,24 @@ mod tests {
         let fixture = Fixture::new("video-knobs");
         fixture
             .write(
+                "rust/slopdesk-video/src/encoder_config.rs",
+                "let ceiling = qp_knob(text(\"SLOPDESK_MAX_QP\").as_deref(), DEFAULT_MAX_QP);\n",
+            )
+            .write(
+                "rust/slopdesk-video/src/capture_gates.rs",
+                "let aqp = qp_knob(at(\"SLOPDESK_AQP_MAX\"), context.max_allowed_frame_qp);\n",
+            )
+            // The two Swift faces still exist and still hold quantiser prose; what they may not hold
+            // is a hand-rolled parse. A NoneOf claim has nothing to say about a path that is not
+            // there, so the green half writes them rather than leaving the claim unexercised.
+            .write(
                 super::VIDEO_ENCODER,
-                "let ceiling = slopdesk_video_encoder_qp_knob(\"SLOPDESK_MAX_QP\")\n",
+                "public static var maxAllowedFrameQP: Int { Int(slopdesk_video_encoder_max_allowed_frame_qp()) \
+                 }\n",
             )
             .write(
                 "Sources/SlopDeskVideoHost/WindowCapturer.swift",
-                "let aqp = VideoEncoder.envQP(\"SLOPDESK_AQP_MAX\")\n",
+                "private static var adaptiveQPMax: Int { Int(gates.adaptive_qp_max) }\n",
             )
             .write(
                 super::SESSION_LOGIC,
@@ -506,8 +526,7 @@ mod tests {
         // and getting the coarsest, with nothing said.
         fixture.write(
             super::VIDEO_ENCODER,
-            "let ceiling = slopdesk_video_encoder_qp_knob(\"SLOPDESK_MAX_QP\")\nif let s = \
-             environment[\"SLOPDESK_MAX_QP\"], let v = Int(s), v >= 1 { return v }\n",
+            "if let s = environment[\"SLOPDESK_MAX_QP\"], let v = Int(s), v >= 1 { return v }\n",
         );
         assert!(!super::a_quantiser_knob_clamps_rather_than_rejects(&fixture.tree()).is_clean());
     }

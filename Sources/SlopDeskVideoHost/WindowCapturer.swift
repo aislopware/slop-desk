@@ -42,7 +42,21 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// crisp IDR the instant motion pauses; and a late-joining / decode-failed client requests an IDR
     /// itself. Suppressing it therefore costs no resilience on a low-loss link.
     /// `SLOPDESK_MOTION_HEARTBEAT=1` restores the periodic motion IDR (for a genuinely lossy WAN).
-    static let motionHeartbeatEnabled = ProcessInfo.processInfo.environment["SLOPDESK_MOTION_HEARTBEAT"] == "1"
+    static var motionHeartbeatEnabled: Bool { gates.motion_heartbeat }
+
+    /// The whole `SLOPDESK_*` operating point of this file, resolved ONCE through
+    /// ``CaptureGateTable`` — every default, every clamp and all three conjunctions are
+    /// `slopdesk_video::capture_gates`'.
+    ///
+    /// Each gate below is a one-line read of a field. The prose stays because the prose is the
+    /// hardware measurement that chose the value, which no table can hold; what left is the parsing,
+    /// which was twenty-eight hand-written copies of four idioms. Twenty-five of them read
+    /// `ProcessInfo` directly and so were unreachable from `video-prefs.json` — they go through
+    /// ``EnvConfig`` now, which is the only way a setting can reach them at all (`docs/58`).
+    private static let gates = CaptureGateTable.resolve(
+        maxAllowedFrameQP: Int32(clamping: VideoEncoder.maxAllowedFrameQP),
+        encodeEWMAAlpha: EncodeLoadPacer.alpha,
+    )
 
     /// APP-AUDIO master gate (`SLOPDESK_AUDIO`, default ON; `=0` masters the feature off). Gates the
     /// capture audio-tap CONFIGURATION (the sample rate in the start description, which is what
@@ -51,7 +65,7 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// deliberately never touches the stream config — an `updateConfiguration` mid-stream costs a
     /// visible capture hitch — so OFF just drops `.audio` buffers at the delegate
     /// (``setAudioForwardingEnabled(_:)``).
-    static let audioCaptureEnabled = ProcessInfo.processInfo.environment["SLOPDESK_AUDIO"] != "0"
+    static var audioCaptureEnabled: Bool { gates.audio_capture }
 
     /// Called for each captured frame with its NV12 `CVPixelBuffer`, whether the encoder should
     /// force a keyframe (heartbeat or first frame), and whether this frame should be a CRISP
@@ -87,7 +101,7 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// (``VideoEncoder/encodeLiveCrispKeyframe``). Default on; `SLOPDESK_CRISP=0` A/Bs it back to a
     /// plain (live-QP) heartbeat IDR with no encoder rebuild. Read once (static-screen behaviour
     /// only; HW-verified path, not unit-tested).
-    private static let crispWhenStatic = ProcessInfo.processInfo.environment["SLOPDESK_CRISP"] != "0"
+    private static var crispWhenStatic: Bool { gates.crisp_when_static }
 
     /// STATIC-FRAME SUPPRESSION (default OFF). When enabled, each `.complete` frame's locked NV12
     /// planes are hashed (the native ``FrameHasher/hashNV12(y:yStride:width:height:cbcr:cbcrStride:)``
@@ -96,8 +110,7 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// static content — this catches the residual byte-identical `.complete` re-deliveries). OFF ⇒ no
     /// hash, no behaviour change. Needs a real GUI + TCC session to exercise (the SCStream path hangs
     /// headlessly); only the pure decider + hash kernel are unit-tested. `SLOPDESK_STATIC_SUPPRESS=1`.
-    private static let staticSuppressEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_STATIC_SUPPRESS"] == "1"
+    private static var staticSuppressEnabled: Bool { gates.static_suppress }
 
     /// EVENT-DRIVEN CRISP RE-ANCHOR (default OFF). When enabled, each
     /// `.complete` frame's NV12 planes are hashed (NEON) and `stillCrispThreshold` consecutive byte-
@@ -108,32 +121,22 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// latency must not pay unmeasured hot-path work — flip ON only after a HW A/B confirms the hash cost
     /// is negligible. `SLOPDESK_STILL_CRISP=1` enables; `SLOPDESK_STILL_CRISP_FRAMES` overrides the
     /// threshold (default 2, clamp 1…30).
-    private static let stillCrispEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_STILL_CRISP"] == "1"
-    private static let stillCrispThreshold: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_STILL_CRISP_FRAMES"], let v = Int(s) {
-            return min(30, max(1, v))
-        }
-        return 2
-    }()
+    private static var stillCrispEnabled: Bool { gates.still_crisp }
+    private static var stillCrispThreshold: Int { Int(gates.still_crisp_threshold) }
 
     /// SCROLL REPROJECTION (default OFF). When enabled, each `.complete` frame's content scroll vs the
     /// PREVIOUS frame is MEASURED (NEON per-row hash + the pure shift estimator) and the offset is sent
     /// to the client, which warps the last frame by it between codec frames so editor scroll looks local
     /// (``ScrollReprojector``). DEFAULT OFF ⇒ no measurement, byte-identical. `SLOPDESK_SCROLL_REPROJECT=1`
     /// (set on BOTH host + client). Confidence-gated so typing / non-scroll motion never reprojects.
-    private static let scrollReprojectEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_REPROJECT"] == "1"
+    private static var scrollReprojectEnabled: Bool { gates.scroll_reproject }
 
     /// SCROLL-SHIFT QUANTIZE (default 3). Right-shifts each luma byte by this many bits before the
     /// per-row hash, so real capture noise (resample / dither / ±LSB) cannot break the EXACT row match
     /// the estimator relies on. Without it `measureScrollOffset` returns 0 on every frame of real
     /// content; 3 tolerates ±3 of per-pixel noise. `0` demands an exact byte-for-byte row match.
     /// Clamped to 0...7. `SLOPDESK_SCROLL_QUANTIZE`.
-    private static let scrollQuantizeShift: UInt8 = {
-        let v = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_QUANTIZE"].flatMap(Int.init) ?? 3
-        return UInt8(max(0, min(7, v)))
-    }()
+    private static var scrollQuantizeShift: UInt8 { gates.scroll_quantize_shift }
 
     /// ADAPTIVE-QP (default OFF). When enabled, each `.complete` frame's CHANGE magnitude vs the
     /// previous frame (NEON per-row hash → changed-row fraction) drives the live frame's
@@ -145,14 +148,8 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// `SLOPDESK_AQP_BLO_MILLI`/`_BHI_MILLI` (change-fraction band ×1000, default 20/300).
     /// Resolved through `EnvConfig` so a GUI setting can drive it; `boolDefaultOff` preserves the
     /// default-OFF (`== "1"`) idiom, and an EMPTY overlay reads exactly like a bare `ProcessInfo` lookup.
-    private static let adaptiveQPEnabled =
-        EnvConfig.boolDefaultOff("SLOPDESK_ADAPTIVE_QP")
-    private static let adaptiveQPSharp: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_AQP_SHARP"], let v = Int(s) {
-            return min(51, max(1, v))
-        }
-        return 22
-    }()
+    private static var adaptiveQPEnabled: Bool { gates.adaptive_qp }
+    private static var adaptiveQPSharp: Int { Int(gates.adaptive_qp_sharp) }
 
     /// The motion-end QP ceiling the adaptive law ramps UP to on a burst (the sharp end is
     /// ``adaptiveQPSharp``). Defaults to the static drop-avoidance ceiling
@@ -161,15 +158,13 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// shrinking it ~80 KB → ~15-25 KB. Under const-QP (motion-keyed band) this is the upper end of the
     /// `[floor, AQP_MAX]` range a scroll frame may coarsen into.
     ///
-    /// The fifth `[1, 51]` knob of the shape ``VideoEncoder/envQP(_:default:)`` owns, and it had the
-    /// same hand-rolled reject its four siblings had: `SLOPDESK_AQP_MAX=0` asked for the sharpest
+    /// The fifth `[1, 51]` knob of the shape `qp_knob` owns (`rust/slopdesk-video`, `capture_gates`),
+    /// and it had the same hand-rolled reject its four siblings had: `SLOPDESK_AQP_MAX=0` asked for the sharpest
     /// motion cap there is and silently got the coarsest. It CLAMPS now, like the other four and
     /// like every other quantiser knob in the tree. Absent, empty and non-numeric are unchanged —
     /// they answer ``VideoEncoder/maxAllowedFrameQP``, which is what the door's own default returns
     /// for text that is not a number.
-    private static let adaptiveQPMax: Int =
-        VideoEncoder.envQP("SLOPDESK_AQP_MAX", default: VideoEncoder.maxAllowedFrameQP)
-            ?? VideoEncoder.maxAllowedFrameQP
+    private static var adaptiveQPMax: Int { Int(gates.adaptive_qp_max) }
 
     /// How fast the smoothed QP eases UP toward a coarser target on motion onset: the per-frame step is
     /// `(rawQP - smoothed) / N`. `N == 1` (default) ⇒ INSTANT — the QP jumps to the motion target on
@@ -178,12 +173,7 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// Re-sharpen on STOP is separate (see `adaptiveQPDownStep`). A larger `N`
     /// (`SLOPDESK_AQP_UP_RAMP=2/3`) trades responsiveness for less QP shimmer if the coarsen-snap
     /// ever looks abrupt. Clamped ≥ 1.
-    private static let adaptiveQPUpRamp: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_AQP_UP_RAMP"], let v = Int(s), v >= 1 {
-            return v
-        }
-        return 1
-    }()
+    private static var adaptiveQPUpRamp: Int { Int(gates.adaptive_qp_up_ramp) }
 
     /// How fast the smoothed QP eases DOWN toward the sharp floor when motion STOPS: at most this many
     /// QP per frame. A straight snap-to-floor (40→24 in one frame) re-encodes the whole settled
@@ -191,26 +181,11 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// spreads that re-sharpen over a handful of small frames (no hitch) while still reaching full
     /// sharpness within ~60-80 ms (imperceptible). `SLOPDESK_AQP_DOWN_STEP` overrides; `≥ 51` (or a
     /// huge value) makes the snap-down instant again. Clamped ≥ 1.
-    private static let adaptiveQPDownStep: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_AQP_DOWN_STEP"], let v = Int(s), v >= 1 {
-            return v
-        }
-        return 4
-    }()
+    private static var adaptiveQPDownStep: Int { Int(gates.adaptive_qp_down_step) }
 
-    private static let adaptiveQPBLoMilli: UInt32 = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_AQP_BLO_MILLI"], let v = UInt32(s) {
-            return min(1000, v)
-        }
-        return 20
-    }()
+    private static var adaptiveQPBLoMilli: UInt32 { gates.adaptive_qp_band_lo_milli }
 
-    private static let adaptiveQPBHiMilli: UInt32 = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_AQP_BHI_MILLI"], let v = UInt32(s) {
-            return min(1000, v)
-        }
-        return 300
-    }()
+    private static var adaptiveQPBHiMilli: UInt32 { gates.adaptive_qp_band_hi_milli }
 
     /// TRUE IDLE-SKIP (default OFF). Parsec sends ZERO packets when the screen is static; on our
     /// VD/`displayIncluding` capture path SCK sometimes re-delivers byte-identical `.complete` frames it
@@ -225,23 +200,24 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// `SLOPDESK_ADAPTIVE_QP=1` too. OFF ⇒ `idleSkip` always false ⇒ no behaviour change.
     /// `SLOPDESK_IDLE_SKIP=1`. Resolved through `EnvConfig` so a GUI setting can drive it; `boolDefaultOff`
     /// preserves the default-OFF (`== "1"`) idiom, and an empty overlay reads like a bare `ProcessInfo` lookup.
-    private static let idleSkipEnabled =
-        EnvConfig.boolDefaultOff("SLOPDESK_IDLE_SKIP")
+    private static var idleSkipEnabled: Bool { gates.idle_skip }
 
-    /// Pure eligibility for an idle-skip: a REAL measurement (`measured`) with zero changed rows.
-    /// The `measured` guard rejects the FFI's degenerate-frame fallback (which also reports change 0
-    /// but on an unmeasurable frame) so a genuinely-unknown frame is never mistaken for idle.
-    static func idleSkipEligible(measured: Bool, changeMilli: UInt32) -> Bool {
-        measured && changeMilli == 0
-    }
-
-    /// Whether the capture callback needs the shared full-NV12 hash this frame — the union of all
-    /// three hash-consuming gates (kept as its own function, not inlined at the call site, so the
-    /// branch doesn't add to the already-large capture callback's cyclomatic complexity).
-    private static func needsFrameHash(measured: Bool, changeMilli: UInt32) -> Bool {
-        stillCrispEnabled || staticSuppressEnabled
-            || (idleSkipEnabled && idleSkipEligible(measured: measured, changeMilli: changeMilli))
-    }
+    /// The resolved table at a STABLE address, so the four per-frame doors can borrow it rather
+    /// than take it by value.
+    ///
+    /// Allocated once for the process's life and deliberately never freed: the alternative is
+    /// `withUnsafePointer`, which copies a twenty-eight-field aggregate onto the stack for every
+    /// question the capture callback asks — and it asks at 60 Hz.
+    ///
+    /// `nonisolated(unsafe)` because a pointer is not `Sendable` and this one is written exactly
+    /// once, before the first frame, and only ever read afterwards — which is the same discipline
+    /// every other resolved-once table in this file keeps, spelled out because the type cannot say
+    /// it for itself.
+    private nonisolated(unsafe) static let gatesRef: UnsafePointer<SlopDeskVideoCaptureGates> = {
+        let box = UnsafeMutablePointer<SlopDeskVideoCaptureGates>.allocate(capacity: 1)
+        box.initialize(to: gates)
+        return UnsafePointer(box)
+    }()
 
     /// SCROLL-FPS CAP (default OFF, `SLOPDESK_SCROLL_FPS`=N): during sustained FAST scroll (changed-row
     /// fraction ≥ `scrollMotionThresholdMilli`) encode only ~N of the 60 captured fps (even Bresenham
@@ -250,23 +226,15 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// REQUIRES the change measurement (`SLOPDESK_ADAPTIVE_QP=1` or idle-skip). Only ordinary live
     /// frames decimate; a pending forced/recovery/heartbeat always passes. Slow scroll / caret (low
     /// `changeMilli`) NEVER triggers (no slow-scroll regression). No rebuild ⇒ no hitch. `0` ⇒ disabled.
-    static let scrollFps: Int = {
-        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_FPS"], let v = Int(s), v > 0
-        else { return 0 }
-        return v
-    }()
+    static var scrollFps: Int { Int(gates.scroll_fps) }
 
     /// Changed-row fraction (milli, 0–1000) at/above which a frame counts as FAST scroll for the
     /// scroll-fps cap. Default 120 (≈12% of rows changed) — well above caret/typing, around real scroll.
-    static let scrollMotionThresholdMilli: UInt32 = {
-        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_MOTION_MILLI"], let v = UInt32(s)
-        else { return 120 }
-        return v
-    }()
+    static var scrollMotionThresholdMilli: UInt32 { gates.scroll_motion_threshold_milli }
 
     /// Consecutive fast-scroll frames required before decimation engages (debounce — a single flick
     /// frame is never dropped).
-    static let scrollMotionSustainFrames = 2
+    static var scrollMotionSustainFrames: Int { Int(gates.scroll_motion_sustain_frames) }
 
     /// ENCODE DECOUPLING (DEFAULT ON; `SLOPDESK_ENCODE_OFFQUEUE=0` reverts to inline encode). The VT
     /// encode otherwise runs SYNCHRONOUSLY in the SCStream sample handler, so during heavy scroll a
@@ -281,34 +249,22 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// dropped ~44% (113→64 events/scroll) and the client held a steadier ~60fps present cadence
     /// (pacer-hold windows n≈111–121 vs a ragged 46–108 inline). `SLOPDESK_ENCODE_QUEUE_MAX` overrides
     /// the pending bound (clamp 1…12).
-    static let encodeOffQueueEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_OFFQUEUE"] != "0"
+    static var encodeOffQueueEnabled: Bool { gates.encode_off_queue }
     /// ENCODE-LOAD PACER (DEFAULT ON; `SLOPDESK_ENCODE_PACER=0` reverts to the ragged backlog drop).
     /// Requires the decoupled encode queue (it paces THAT queue's over-run). Measures encode
     /// wall-time and, when the HW encoder cannot sustain the base-fps budget on a CLEAN link (where
     /// the network ``FPSGovernor`` never engages), steps the effective fps down a clean divisor so the
     /// ``EncodeCadenceGate`` decimates metronome-regularly instead of dropping deltas raggedly — the
     /// compute-axis twin of the governor. See ``EncodeLoadPacer``.
-    static let encodePacerEnabled =
-        encodeOffQueueEnabled && ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_PACER"] != "0"
+    static var encodePacerEnabled: Bool { gates.encode_pacer }
     /// DIAGNOSTIC: force a compact recovery IDR every Nth live frame, so the loss-driven recovery-IDR
     /// storm reproduces deterministically on localhost (no real loss needed).
     /// `SLOPDESK_FORCE_COMPACT_EVERY=N`; 0/unset = off.
-    static let forceCompactEvery: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_FORCE_COMPACT_EVERY"], let v = Int(s), v > 0 {
-            return v
-        }
-        return 0
-    }()
+    static var forceCompactEvery: Int { Int(gates.force_compact_every) }
 
     private var forceCompactCounter = 0
 
-    static let maxEncodePending: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_QUEUE_MAX"], let v = Int(s) {
-            return min(12, max(1, v))
-        }
-        return 3
-    }()
+    static var maxEncodePending: Int { Int(gates.max_encode_pending) }
 
     /// FRESHEST-WINS backlog (default OFF; `SLOPDESK_ENCODE_FRESHEST=1`). When the decoupled encode
     /// backlog is full, evict the OLDEST still-pending delta and encode the NEWEST instead of
@@ -318,33 +274,15 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// north star. Requires the decoupled encode queue. Unset ⇒ the historical drop-newest path runs
     /// byte-identical. A/B lever for the one ragged-cadence source the audit confirmed in code
     /// (``handOffToEncoder`` backlog drop) — HW-verify with client-side framewatch before defaulting.
-    static let freshestWins =
-        encodeOffQueueEnabled && ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_FRESHEST"] == "1"
+    static var freshestWins: Bool { gates.freshest_wins }
 
-    /// PURE decision for the decoupled encode backlog when a captured frame arrives (unit-tested).
-    /// `pendingForced` = the forced-flag of each frame already queued (oldest first); `incomingForced`
-    /// = whether the arriving frame is a forced keyframe/crisp/compact/LTR (recovery/sharpness anchor,
-    /// never dropped). Default (`freshest == false`) = ``dropIncoming`` when full = the historical
-    /// drop-newest policy. `freshest == true` = FRESHEST-WINS = ``evictOldestUnforced`` so the newest
-    /// delta is admitted and the stalest pending one is coalesced out. A forced incoming, or a backlog
-    /// that is somehow ALL forced, always ``enqueue``s (never drop a recovery anchor nor the fresh delta).
-    enum BacklogDecision: Equatable {
-        case enqueue // append the incoming frame + schedule a drain
-        case dropIncoming // backlog full, drop the incoming (newest) delta — historical default
-        case evictOldestUnforced(Int) // freshest-wins: remove pending[idx], append incoming, no new drain
-    }
-
-    static func backlogDecision(
-        pendingForced: [Bool],
-        incomingForced: Bool,
-        max: Int,
-        freshest: Bool,
-    ) -> BacklogDecision {
-        if incomingForced || pendingForced.count < max { return .enqueue }
-        guard freshest else { return .dropIncoming }
-        if let idx = pendingForced.firstIndex(where: { !$0 }) { return .evictOldestUnforced(idx) }
-        return .enqueue // backlog is all forced frames — keep the fresh delta rather than drop it
-    }
+    // What the gate above decides, it decides in Rust: `slopdesk_video_capture_backlog_decision`
+    // takes the forced-flag of each queued frame (oldest first) and the arriving frame's, and
+    // answers one of `SLOPDESK_CAPTURE_BACKLOG_{ENQUEUE,DROP_INCOMING,EVICT_OLDEST}`. Default
+    // (`freshestWins == false`) drops the INCOMING frame when full — the historical drop-newest
+    // policy; freshest-wins evicts the stalest unforced pending one so the newest delta is admitted
+    // and the stale one coalesces out. A forced incoming, or a backlog that is somehow ALL forced,
+    // always enqueues: never drop a recovery anchor, never drop the fresh delta.
 
     /// SELF-HEAL cadence (Parsec-style ack-anchored healing — HW-validated in
     /// `slopdesk-loopback-validate --ack-ref` arms L/M/N/O): every `selfHealEvery`-th LIVE delta is
@@ -361,18 +299,13 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// the cadence into a surprise-IDR-every-K stream. `SLOPDESK_SELF_HEAL` overrides K (frames,
     /// clamp 2…120); `0` disables. Requires `SLOPDESK_LTR` (the session never arms eligibility
     /// otherwise — acks don't flow when LTR is off).
-    static let selfHealEvery: Int = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_SELF_HEAL"], let v = Int(s) {
-            if v == 0 { return 0 }
-            return min(120, max(2, v))
-        }
-        // K=30, not a tight 6: self-heal protects in-MOTION frames, which a coding tool deliberately
-        // lets blur/drop and re-sharpen — so heal far less often (~+1.6% stream bytes at K=30 vs
-        // +8.2% at K=6). The static-window crisp re-anchor (~300ms, StaticIDRDecider) covers the
-        // "stop and read" case faster anyway; a lost motion frame waits at most K frames (~1s @30fps)
-        // for the next refresh, which is acceptable while moving.
-        return 30
-    }()
+    ///
+    /// K defaults to 30, not to a tight 6: self-heal protects in-MOTION frames, which a coding tool
+    /// deliberately lets blur/drop and re-sharpen — so heal far less often (~+1.6% stream bytes at
+    /// K=30 vs +8.2% at K=6). The static-window crisp re-anchor (~300ms, ``StaticIDRDecider``)
+    /// covers the "stop and read" case faster anyway; a lost motion frame waits at most K frames
+    /// (~1s @30fps) for the next refresh, which is acceptable while moving.
+    static var selfHealEvery: Int { Int(gates.self_heal_every) }
 
     /// CLEAN-LINK SELF-HEAL LOSS-GATE. DEFAULT **OFF** (`SLOPDESK_SELF_HEAL_LOSS_GATE=1` enables). When
     /// on, the every-Kth self-heal ``VideoEncoder/encodeLiveLTRRefresh(pixelBuffer:presentationTime:)`` is
@@ -384,10 +317,10 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// consulted ⇒ byte-identical (always heal at K, exactly as today). Mirrors the shipped kfDup
     /// clean-link loss-gate — the same universal loss-EWMA signal, gating the other
     /// periodic-overhead-on-a-clean-link mechanism.
-    static let selfHealLossGate = ProcessInfo.processInfo.environment["SLOPDESK_SELF_HEAL_LOSS_GATE"] == "1"
+    static var selfHealLossGate: Bool { gates.self_heal_loss_gate }
     /// The loss EWMA at/above which self-heal stays armed under ``selfHealLossGate`` — 0.5%, mirroring the
     /// session's `kfDupLossThreshold` (the adaptive-FEC ladder's lowest escalation boundary).
-    static let selfHealLossGateThreshold = 0.005
+    static var selfHealLossGateThreshold: Double { gates.self_heal_loss_gate_threshold }
 
     /// PURE (unit-tested): should this live delta become a self-heal LTR refresh? Base cadence: the counter
     /// has reached K, healing is enabled (`healEvery > 0`), and client acks are flowing (`eligible`). The
@@ -395,18 +328,6 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// threshold`; with the gate off the loss terms are ignored ⇒ the decision is exactly the pre-gate one.
     /// The caller keeps advancing the counter while suppressed, so re-arming on the first lossy frame is
     /// immediate (this returns true the moment `lossRate >= threshold` with the counter already past K).
-    static func shouldSelfHeal(
-        framesSinceAnchor: Int,
-        healEvery: Int,
-        eligible: Bool,
-        lossGated: Bool,
-        lossRate: Double,
-        threshold: Double,
-    ) -> Bool {
-        guard healEvery > 0, framesSinceAnchor >= healEvery, eligible else { return false }
-        if lossGated, lossRate < threshold { return false } // clean link — skip the refresh doublet
-        return true
-    }
 
     private let log = Logger(subsystem: "slopdesk.video.host", category: "WindowCapturer")
     private let frameQueue = DispatchQueue(label: "slopdesk.video.capture", qos: .userInteractive)
@@ -589,7 +510,9 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// then the flag-gated pacer fold + DEBUG prints exactly as before.
     private func noteEncodeWall(milliseconds ms: Double, pacerAnchor: Bool) {
         pacerLock.lock()
-        encodeMsEWMAShared = Self.foldEncodeEWMA(current: encodeMsEWMAShared, sampleMs: ms)
+        encodeMsEWMAShared = slopdesk_video_capture_fold_encode_ewma(
+            encodeMsEWMAShared, ms, EncodeLoadPacer.alpha,
+        )
         pacerLock.unlock()
         // ENCODE-LOAD PACER: the struct is confined to THIS serial queue; only its output fps
         // crosses to the frameQueue (published under `pacerLock`).
@@ -611,13 +534,6 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
         }
     }
 
-    /// PURE EWMA fold for the encode-wall sample (the stats-HUD axis): the first sample seeds the
-    /// average whole (no zero-drag warmup), later samples fold at ``EncodeLoadPacer/alpha``.
-    static func foldEncodeEWMA(current: Double, sampleMs: Double) -> Double {
-        guard current > 0 else { return sampleMs }
-        return current * (1 - EncodeLoadPacer.alpha) + sampleMs * EncodeLoadPacer.alpha
-    }
-
     /// The current encode-wall EWMA in milliseconds (`0` = nothing encoded yet). Lock-guarded,
     /// callable from any thread — the session actor's `hostStats` sender reads it.
     public func encodeMillisEWMA() -> Double {
@@ -635,25 +551,28 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
         var schedule = false
         var evicted = false
         encodePendingLock.lock()
-        switch Self.backlogDecision(
-            pendingForced: pendingEncodes.map(\.forced),
-            incomingForced: entry.forced,
-            max: Self.maxEncodePending,
-            freshest: true,
-        ) {
-        case .enqueue:
-            pendingEncodes.append(entry)
-            schedule = true
-        case let .evictOldestUnforced(idx):
+        var evictIndex = 0
+        let forcedFlags = pendingEncodes.map { $0.forced ? UInt8(1) : UInt8(0) }
+        let verdict = forcedFlags.withUnsafeBufferPointer { flags in
+            slopdesk_video_capture_backlog_decision(
+                Self.gatesRef, flags.baseAddress, flags.count, entry.forced, &evictIndex,
+            )
+        }
+        switch verdict {
+        case UInt8(SLOPDESK_CAPTURE_BACKLOG_EVICT_OLDEST):
             // Coalesce out the stalest pending delta, admit the newest — DO NOT schedule a new drain:
             // an already-scheduled block consumes the newest (blocks-in-flight == count invariant).
-            pendingEncodes.remove(at: idx)
+            pendingEncodes.remove(at: evictIndex)
             pendingEncodes.append(entry)
             encodeBacklogDropped += 1
             evicted = true
-        case .dropIncoming:
-            // Unreachable with freshest == true (kept for switch exhaustiveness); honor the counter.
+        case UInt8(SLOPDESK_CAPTURE_BACKLOG_DROP_INCOMING):
+            // Unreachable on this path — it runs only under `freshestWins` — but the counter is the
+            // one thing a drop still owes, so honour it rather than silently losing the frame.
             encodeBacklogDropped += 1
+        default:
+            pendingEncodes.append(entry)
+            schedule = true
         }
         encodePendingLock.unlock()
         if Self.dbgGapEnabled, evicted, encodeBacklogDropped.isMultiple(of: 15) {
@@ -700,11 +619,7 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// (the forced-frame invariant). `SLOPDESK_RECOVERY_IDR_V2=0` falls back to the 500 ms sent-keyed
     /// spacing. An EXPLICIT `SLOPDESK_MIN_IDR_MS` always wins — even with V2 on (a valid
     /// belt-and-suspenders double-gating A/B configuration).
-    private static let minRecoveryIDRInterval: TimeInterval = {
-        if let s = ProcessInfo.processInfo.environment["SLOPDESK_MIN_IDR_MS"], let v = Double(s), v >= 0,
-           v <= 5000 { return v / 1000.0 }
-        return ProcessInfo.processInfo.environment["SLOPDESK_RECOVERY_IDR_V2"] != "0" ? 0 : 0.5
-    }()
+    private static var minRecoveryIDRInterval: TimeInterval { gates.min_recovery_idr_interval }
 
     /// Latched when the client requests a forced IDR (loss recovery, doc 17 §3.6). The
     /// next delivered frame forces a keyframe and clears it. Guarded because the
@@ -824,7 +739,7 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// blurrier one over ~3 frames (avoids QP shimmer on borderline activity). frameQueue-owned.
     private var adaptiveQPSmoothed: Int?
     /// Capture-gap diagnostics (`SLOPDESK_VIDEO_DEBUG`): last DELIVERED-frame time, frameQueue-owned.
-    static let dbgGapEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
+    static var dbgGapEnabled: Bool { gates.debug_gaps }
     private var lastDeliveredAt: Double = 0
     /// Highest PTS handed to the encoder by EITHER path, in the 90 kHz synthetic timescale,
     /// so a synthetic IDR is strictly monotonic and a later real frame never reverses it.
@@ -1574,9 +1489,10 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
         // and the frame is obviously non-idle); still-crisp/static-suppress compute unconditionally
         // when enabled. The SAME hash value then feeds every decider below — deterministic, so reusing
         // it changes nothing about their individual verdicts.
-        let frameHash: UInt64? = Self.needsFrameHash(measured: measured, changeMilli: changeMilli)
-            ? Self.hashFrame(pixelBuffer)
-            : nil
+        let frameHash: UInt64? =
+            slopdesk_video_capture_needs_frame_hash(Self.gatesRef, measured, changeMilli)
+                ? Self.hashFrame(pixelBuffer)
+                : nil
 
         // TRUE IDLE-SKIP decision (default OFF): drop a frame ONLY when it is byte-identical to the
         // previous one by the FULL NV12 hash (luma+chroma, `hashFrame`) — so a chroma-only change (a
@@ -1586,8 +1502,7 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
         // must NOT re-anchor `staticIDRDecider` below — leaving the quiet-window clock stale is what lets
         // the ~300ms crisp refresh fire on a static window (the anti-freeze invariant STATIC_SUPPRESS breaks).
         var idleSkip = false
-        if Self.idleSkipEnabled,
-           Self.idleSkipEligible(measured: measured, changeMilli: changeMilli),
+        if slopdesk_video_capture_skips_idle_frame(Self.gatesRef, measured, changeMilli),
            let fullHash = frameHash,
            fullHash != FrameHash.SENTINEL
         {
@@ -1825,13 +1740,9 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
         // skipped, not reset) so the first lossy frame re-arms healing immediately (see `selfHealLossGate`).
         if healEvery > 0, !forceKeyframe, !ltrRefresh {
             framesSinceAnchor += 1
-            if Self.shouldSelfHeal(
-                framesSinceAnchor: framesSinceAnchor,
-                healEvery: healEvery,
-                eligible: selfHealIsEligible(),
-                lossGated: Self.selfHealLossGate,
-                lossRate: currentSelfHealLossRate(),
-                threshold: Self.selfHealLossGateThreshold,
+            if slopdesk_video_capture_should_self_heal(
+                Self.gatesRef, Int32(clamping: framesSinceAnchor), selfHealIsEligible(),
+                currentSelfHealLossRate(),
             ) {
                 ltrRefresh = true
             }

@@ -72,6 +72,7 @@ pub mod blocks;
 // point it at. See the module.
 #[cfg(target_os = "macos")]
 pub mod capture;
+pub mod capture_gates;
 pub mod capture_region;
 // macOS only, both: behind them is the `WindowServer`, which no iOS slice has. See each module.
 #[cfg(target_os = "macos")]

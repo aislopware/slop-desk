@@ -50,19 +50,6 @@ public final class VideoEncoder: @unchecked Sendable {
         return seed >= 1 ? Int(seed) : nil
     }
 
-    /// One `[1, 51]` quantiser knob, CLAMPED, or nil when it is absent or is not a number.
-    ///
-    /// Clamped rather than rejected: `0` asks for the sharpest ceiling the encoder has, and
-    /// rejecting it to a default yields 51, the coarsest — the request inverted with nothing said.
-    public static func envQP(_ name: String, default fallback: Int) -> Int? {
-        guard let raw = ProcessInfo.processInfo.environment[name] else { return nil }
-        var bytes = Array(raw.utf8)
-        let answer = bytes.withUnsafeMutableBufferPointer { buffer in
-            slopdesk_video_encoder_qp_knob(buffer.baseAddress, buffer.count, Int32(clamping: fallback))
-        }
-        return answer >= 1 ? Int(answer) : nil
-    }
-
     /// One finished frame: the AVCC bytes, whether a decoder may start here, which refresh produced
     /// it, the long-term-reference token it carries, and whether it was anchored on an acknowledged
     /// reference rather than on an intra frame.

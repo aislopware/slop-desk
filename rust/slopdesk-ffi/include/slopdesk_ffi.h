@@ -6603,6 +6603,87 @@ bool   slopdesk_video_host_gates(const uint8_t *values, size_t len,
                                  double idle_timeout, SlopDeskVideoHostGates *out);
 
 /* ---------------------------------------------------------------------------- *
+ * The CAPTURE path's operating point, and the five decisions it feeds — WindowCapturer.swift.
+ *
+ * The same two-step shape as the host table above, and for one extra reason. Twenty-five of the
+ * Swift statics this replaces read ProcessInfo DIRECTLY rather than through EnvConfig, so the
+ * settings overlay (docs/58 — there is NO settings GUI) never reached them: they were knobs only an
+ * exported shell variable could move. Resolving the family through one door fixes that for all
+ * twenty-eight at once, and the caller can only resolve what the key list names.
+ *
+ * FOUR OF THE DECISIONS TAKE THE TABLE BY POINTER, not by value. They are on the per-frame path —
+ * needs_frame_hash runs once per captured frame at 60 Hz — and a thirty-field aggregate copied per
+ * frame is the one thing this port could plausibly make slower than the Swift it replaces. Each
+ * answers INERTLY for a null table (no hash, no skip, no heal, enqueue), which is what a capturer
+ * that has not resolved its gates should do.
+ * ---------------------------------------------------------------------------- */
+
+#define SLOPDESK_CAPTURE_BACKLOG_ENQUEUE       0  /* append + schedule a drain                    */
+#define SLOPDESK_CAPTURE_BACKLOG_DROP_INCOMING 1  /* full: drop the newest delta — historical     */
+#define SLOPDESK_CAPTURE_BACKLOG_EVICT_OLDEST  2  /* freshest-wins: evict *evict_index, then push */
+
+typedef struct {
+  bool     motion_heartbeat;         // periodic motion IDR. Default OFF
+  bool     audio_capture;            // configure the capture audio tap. Default ON
+  bool     crisp_when_static;        // static-IDR timer re-encodes near-lossless. Default ON
+  bool     static_suppress;          // drop a pixel-identical re-delivery. Default OFF
+  bool     still_crisp;              // crisp re-anchor off identical frames. Default OFF
+  bool     scroll_reproject;         // measure scroll and send the offset. Default OFF
+  bool     adaptive_qp;              // per-frame QP ceiling from measured change. Default OFF
+  bool     idle_skip;                // drop a truly-idle frame. Default OFF; NEEDS adaptive_qp
+  bool     encode_off_queue;         // encode on its own serial queue. Default ON
+  bool     encode_pacer;             // step fps down on encode over-run. Default ON; NEEDS the queue
+  bool     freshest_wins;            // evict the oldest pending delta. Default OFF; NEEDS the queue
+  bool     self_heal_loss_gate;      // suppress the heal on a clean link. Default OFF
+  bool     debug_gaps;               // capture-gap diagnostics. PRESENCE, so =0 ENABLES it
+  uint32_t still_crisp_threshold;    // identical frames the re-anchor needs. Default 2, clamp 1…30
+  uint8_t  scroll_quantize_shift;    // luma right-shift before the row hash. Default 3, clamp 0…7
+  int32_t  adaptive_qp_sharp;        // the sharp ceiling. Default 22, clamp 1…51
+  int32_t  adaptive_qp_max;          // the coarse ceiling. Defaults to the caller's own
+  int32_t  adaptive_qp_up_ramp;      // frames to ease UP. Default 1 (instant), floor 1
+  int32_t  adaptive_qp_down_step;    // most QP per frame easing DOWN. Default 4, floor 1
+  uint32_t adaptive_qp_band_lo_milli;// changed-row band low end. Default 20, ≤ 1000
+  uint32_t adaptive_qp_band_hi_milli;// changed-row band high end. Default 300, ≤ 1000
+  int32_t  scroll_fps;               // fps cap during sustained fast scroll. 0 disables
+  uint32_t scroll_motion_threshold_milli; // changed-row fraction that IS fast scroll. Default 120
+  uint32_t scroll_motion_sustain_frames;  // the cap's debounce — the crate's own constant
+  int32_t  max_encode_pending;       // pending encodes admitted. Default 3, clamp 1…12
+  int32_t  force_compact_every;      // DIAGNOSTIC compact IDR every Nth frame. 0 disables
+  int32_t  self_heal_every;          // deltas between LTR refreshes. Default 30; 0 off; else 2…120
+  double   min_recovery_idr_interval;// SECONDS between sent recovery IDRs. 0 disables the gate
+  double   self_heal_loss_gate_threshold; // the crate's own constant, not a gate
+} SlopDeskVideoCaptureGates;
+
+size_t slopdesk_video_capture_gate_keys(uint8_t *out, size_t cap);
+// `values` is a blob list of the key texts in key order, ABSENT for a key the environment does not
+// set — which is not an empty one, and the presence gate is why. The two scalars are the inputs no
+// key carries: the encoder's own static QP ceiling (the adaptive cap's default) and the pacer's
+// EWMA weight. `false` writes nothing and means the caller built the list wrong.
+bool   slopdesk_video_capture_gates(const uint8_t *values, size_t len, int32_t max_allowed_frame_qp,
+                                    double encode_ewma_alpha, SlopDeskVideoCaptureGates *out);
+// The union of the three gates that consume the shared full-NV12 hash. Idle-skip wants it only for
+// a frame it might actually skip, which is why the change measurement is a parameter.
+bool   slopdesk_video_capture_needs_frame_hash(const SlopDeskVideoCaptureGates *gates, bool measured,
+                                               uint32_t change_milli);
+// Whether this frame may be dropped as idle. `measured` rejects the degenerate-frame fallback, which
+// also reports change 0 but on an UNMEASURABLE frame — a genuinely-unknown frame is never idle.
+bool   slopdesk_video_capture_skips_idle_frame(const SlopDeskVideoCaptureGates *gates, bool measured,
+                                               uint32_t change_milli);
+// Whether this live delta becomes a self-heal LTR refresh. The caller keeps advancing its counter
+// while the loss gate suppresses, which is what makes re-arming on the first lossy frame immediate.
+bool   slopdesk_video_capture_should_self_heal(const SlopDeskVideoCaptureGates *gates,
+                                               int32_t frames_since_anchor, bool eligible,
+                                               double loss_rate);
+// `pending_forced` is one byte per already-queued frame, oldest first, non-zero for a forced one.
+// `evict_index` is written ONLY for SLOPDESK_CAPTURE_BACKLOG_EVICT_OLDEST.
+uint8_t slopdesk_video_capture_backlog_decision(const SlopDeskVideoCaptureGates *gates,
+                                                const uint8_t *pending_forced, size_t pending_len,
+                                                bool incoming_forced, size_t *evict_index);
+// The encode-wall EWMA fold: the first sample seeds the average WHOLE — a zero-drag warm-up would
+// report a first frame as far faster than it was and let the pacer conclude it had headroom.
+double slopdesk_video_capture_fold_encode_ewma(double current, double sample_millis, double alpha);
+
+/* ---------------------------------------------------------------------------- *
  * The CLIENT's pointer and gesture policies. Every rule here belongs to a view that is never
  * instantiated in a test — no Metal, no VT — so each one is asked here instead.
  *
@@ -10759,10 +10840,6 @@ int32_t slopdesk_video_encoder_max_allowed_frame_qp(void);
 // rather than reading the variable: a knob whose text is not a number leaves it off, and
 // only this door knows that.
 int32_t slopdesk_video_encoder_const_qp(void);
-
-// One [1, 51] quantiser knob from its raw text, CLAMPED — 0 asks for the sharpest ceiling
-// and must not silently invert into the coarsest. 0 out when absent or not a number.
-int32_t slopdesk_video_encoder_qp_knob(const uint8_t *raw, size_t len, int32_t fallback);
 
 // ---- The capture stream -------------------------------------------------------------
 //
