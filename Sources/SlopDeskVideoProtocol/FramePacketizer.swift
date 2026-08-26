@@ -278,6 +278,18 @@ public final class VideoPacketizer: @unchecked Sendable {
     ///
     /// The whole frame crosses once and the whole answer comes back once — the datagrams are born
     /// in Rust already stamped, so nothing here builds a payload copy per fragment on the way.
+    ///
+    /// ## One write, no copies
+    ///
+    /// The answer lands in ONE allocation that the door fills, and the datagrams handed back are
+    /// slices of it (``FECBlobList/decodeAll(sharing:)``) — the buffer is retained by the slices and
+    /// freed with the last of them. The obvious spellings both pay a second full pass over the
+    /// frame: `[UInt8](unsafeUninitializedCapacity:)` followed by a per-datagram `Data` copies every
+    /// byte again and allocates once per fragment (~350 for a 400 KB IDR, at 60 fps), and
+    /// `Data(count:)` memsets the whole buffer before the door overwrites it. `bytesNoCopy` over a
+    /// raw allocation does neither, and the deallocator is the exact partner of the `allocate` above
+    /// it — the one obligation this shape carries, discharged on both the failure and the success
+    /// path.
     public func packetizeRaw(
         frame: Data,
         keyframe: Bool,
@@ -304,13 +316,22 @@ public final class VideoPacketizer: @unchecked Sendable {
             )
         }
         guard needed > 0 else { return [] }
-        var written = 0
-        let answer = [UInt8](unsafeUninitializedCapacity: needed) { buffer, count in
-            written = slopdesk_video_packetizer_answer(handle, buffer.baseAddress, buffer.count)
-            count = Swift.min(written, buffer.count)
+        let storage = UnsafeMutableRawPointer.allocate(
+            byteCount: needed, alignment: MemoryLayout<UInt8>.alignment,
+        )
+        let written = slopdesk_video_packetizer_answer(
+            handle, storage.assumingMemoryBound(to: UInt8.self), needed,
+        )
+        guard written == needed else {
+            storage.deallocate()
+            return []
         }
-        guard written == needed else { return [] }
-        return FECBlobList.decodeAll(answer) ?? []
+        let answer = Data(
+            bytesNoCopy: storage, count: needed, deallocator: .custom { pointer, _ in
+                pointer.deallocate()
+            },
+        )
+        return FECBlobList.decodeAll(sharing: answer) ?? []
     }
 
     /// The `flags` bitfield ``slopdesk_video_packetizer_raw`` takes — the booleans of

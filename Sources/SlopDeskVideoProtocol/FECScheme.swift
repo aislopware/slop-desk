@@ -224,20 +224,32 @@ enum FECBlobList {
         return reader.isEmpty ? blobs : nil
     }
 
-    /// Reads back a list in which every blob is PRESENT — the send path, where nothing was lost.
+    /// Reads back a list in which every blob is PRESENT — the send path, where nothing was lost, as
+    /// SLICES of `blob` rather than as fresh copies of its bytes.
     ///
     /// Separate from ``decode(_:)`` rather than a `compactMap` over it because the two differ in what
     /// an absence means: there it is a fragment the wire dropped, here it could only be a marshalling
     /// bug, so the whole list is refused rather than silently one datagram short of a frame.
-    static func decodeAll(_ bytes: [UInt8]) -> [Data]? {
-        var reader = bytes[...]
+    ///
+    /// This is the only reader on the live 60 fps path, and what it reads is a whole frame's worth of
+    /// finished datagrams — for a 400 KB IDR the copying form spends 400 KB of `memcpy` and ~350
+    /// allocations to hand back bytes that are already sitting in one contiguous buffer, are read
+    /// once by the socket, and are freed together. A `Data` slice shares that buffer and retains it,
+    /// so the frame is written once (by the door) and never moved again.
+    ///
+    /// The slices are NOT rebased, unlike ``FrameFragment/decode(_:)``'s payload: rebasing is the
+    /// copy this exists to remove, and every consumer downstream — the scheduler, the paced lane,
+    /// `VideoDatagramTransport.send`, the retransmit ring — reads a datagram through `count`,
+    /// `withUnsafeBytes` or a whole-value copy, none of which index from a fixed zero.
+    static func decodeAll(sharing blob: Data) -> [Data]? {
+        var reader = blob[...]
         guard let count = takeBE(&reader) else { return nil }
         var blobs: [Data] = []
         blobs.reserveCapacity(min(Int(count), reader.count / 4))
         for _ in 0..<count {
             guard let length = takeBE(&reader), length != absent,
                   reader.count >= Int(length) else { return nil }
-            blobs.append(Data(reader.prefix(Int(length))))
+            blobs.append(reader.prefix(Int(length)))
             reader = reader.dropFirst(Int(length))
         }
         return reader.isEmpty ? blobs : nil
@@ -282,7 +294,12 @@ enum FECBlobList {
         return at + 4
     }
 
-    private static func takeBE(_ reader: inout ArraySlice<UInt8>) -> UInt32? {
+    /// Reads a big-endian `u32` off the front of `reader`, over any byte collection that slices into
+    /// itself — `ArraySlice<UInt8>` for the copied readers, `Data` for the shared one. One reader,
+    /// because a second spelling of a four-byte length is a second place the framing can be wrong.
+    private static func takeBE<Bytes: Collection>(_ reader: inout Bytes) -> UInt32?
+        where Bytes.Element == UInt8, Bytes.SubSequence == Bytes
+    {
         guard reader.count >= 4 else { return nil }
         var value: UInt32 = 0
         for _ in 0..<4 {

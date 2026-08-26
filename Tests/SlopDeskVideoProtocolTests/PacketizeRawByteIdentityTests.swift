@@ -43,4 +43,27 @@ final class PacketizeRawByteIdentityTests: XCTestCase {
     func testRawIsByteIdenticalNoFEC() { assertIdentical(fec: nil) }
 
     func testRawIsByteIdenticalRSm1() { assertIdentical(fec: RustReedSolomonFEC()) } // m=1, the live LAN default
+
+    /// Pins the OTHER half of the send path: one frame is one buffer, and its datagrams are SLICES
+    /// of it rather than fresh copies.
+    ///
+    /// The bytes are identical either way — the test above says so — which is exactly why this needs
+    /// its own claim: reintroducing a `Data(...)` per datagram would leave the wire untouched, the
+    /// suite green, and a 400 KB `memcpy` plus ~350 allocations back on the 60 fps path. What a
+    /// slice cannot hide is WHERE it was cut, so the offsets are the pin: the first datagram starts
+    /// after the list's `u32` count and its own `u32` length, and each later one starts exactly four
+    /// bytes (its length prefix) past the end of the one before.
+    func testOneFrameIsOneBufferTheDatagramsShare() {
+        let packetizer = VideoPacketizer(fec: RustReedSolomonFEC())
+        let frame = Data((0..<9000).map { UInt8(($0 &* 37 &+ 11) & 0xFF) })
+        let datagrams = packetizer.packetizeRaw(frame: frame, keyframe: true, interleave: true)
+        XCTAssertGreaterThan(datagrams.count, 1, "a 9 KB frame is many datagrams")
+        XCTAssertEqual(datagrams.first?.startIndex, 8, "the count and the first length precede it")
+        for (index, datagram) in datagrams.enumerated().dropFirst() {
+            XCTAssertEqual(
+                datagram.startIndex, datagrams[index - 1].endIndex + 4,
+                "datagram \(index) is cut from the same buffer as the one before it",
+            )
+        }
+    }
 }
