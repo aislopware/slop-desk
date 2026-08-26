@@ -4,9 +4,11 @@
 
 ## 1. What it is
 
-> **Philosophy: commit to one good choice per problem.** One renderer (libghostty), one structured view (the read-only inspector), one native-Swift core that owns the wire. Where there is a real choice the design picks it and proves it, rather than shipping fallbacks.
+> **Philosophy: commit to one good choice per problem.** One renderer (libghostty), one structured view (the read-only inspector), one Rust core that owns the wire. Where there is a real choice the design picks it and proves it, rather than shipping fallbacks. And one IMPLEMENTATION per rule: a thing written in both languages is a bug, not a safety net — see `CLAUDE.md`.
 
-A remote-coding app for Apple platforms (macOS host, macOS + iOS/iPadOS client), native Swift/SwiftUI; build floor macOS 26 / iOS 26, developed on Apple Silicon. Use-case: daily coding — running a shell and Claude Code on a remote machine and driving it from another device. Not game-streaming.
+A remote-coding app for Apple platforms (macOS host, macOS + iOS/iPadOS client); build floor macOS 26 / iOS 26, developed on Apple Silicon. Use-case: daily coding — running a shell and Claude Code on a remote machine and driving it from another device. Not game-streaming.
+
+**Rust is the default language and Swift is the UI.** Every rule, every codec and every effect on the system is Rust; what stays in Swift is SwiftUI and AppKit, and the two client shells are split along that line — `SlopDeskMacUI` (AppKit) and `SlopDeskPhoneUI` (SwiftUI) over a shared, draws-nothing `SlopDeskClientCore` ([56](56-client-ui-split.md)). The iOS app differs in LAYOUT only; every feature is present on both halves, and `rust/slopdesk-invariants` is what holds that rather than an audit.
 
 The client is a coding workspace: **Session → Tab → n-ary split panes**. A pane is either a **terminal** (host PTY → TCP → libghostty) or a **GUI window** (ScreenCaptureKit → HEVC → UDP). Both are first-class; transport is chosen per pane. (Docs 01–11 = GUI video design depth; free-floating canvas design is historical — [30](30-infinite-canvas.md).)
 
@@ -39,7 +41,13 @@ The canvas holds panes; each streams over the transport its content needs (termi
 - **Read-only inspector** (the differentiator) — a companion for content awkward to read in scrollback (subagent transcripts, tool I/O, todos, workflow). Data = tailing the Claude Code JSONL transcript → events over a second connection, which the client dials DIRECTLY: the tail, the fold and the replay window belong to `slopdesk-inspectord`, not hostd, so a session's history outlives a host restart ([54]). Read-only, so it avoids every cost of driving the agent. ([16])
 
 ### Core / shell split
-**Rust** owns the wire: codecs, FEC + reassembly, realtime controllers, coordinate mapping, terminal/PTY protocol (channel mux + flow control) live in `rust/slopdesk-wire` and `rust/slopdesk-video`, linked in-process through `CSlopDeskFFI` (`docs/55`). Frozen by `golden/golden_vectors.json`. Both crates are `forbid(unsafe_code)`; the FEC's GF(2⁸) NEON kernel is isolated in `rust/slopdesk-gfsimd`, one of the three crates allowed to write `unsafe`. Platform shell is Swift/SwiftUI — ScreenCaptureKit, VideoToolbox, Metal, input, PTY, UI. The only C left under `Sources/` is `CSlopDeskVirtualDisplay`, and it declares private CoreGraphics headers rather than implementing anything.
+**Rust owns the wire and the machine.** Codecs, FEC + reassembly, realtime controllers, coordinate mapping and the terminal/PTY protocol (channel mux + flow control) live in `rust/slopdesk-wire` and `rust/slopdesk-video`, linked in-process through `CSlopDeskFFI` ([55](55-ffi-boundary.md)) and frozen by `golden/golden_vectors.json`. Beside them sit ~50 more crates holding the rules the UI used to decide for itself — the workspace document, the palette, the settings catalogue, agent detection, one hostd pane session's decisions ([59](59-hostd-projection.md)).
+
+**The system calls are Rust's too**, which is the part this section used to get wrong: capture is `slopdesk-apple-sck`, encode and decode are `slopdesk-apple-vt`, input injection is `slopdesk-apple-cgevent`, the display list is `slopdesk-apple-cgdisplay`, the accessibility tree is `slopdesk-apple-ax`, and the PTY is `slopdesk-superd` over `slopdesk-posix`. What is genuinely left to Swift is Metal/CAMetalLayer rendering, Network.framework, and the two view layers.
+
+`unsafe` is admitted in TWO families and nowhere else: the three hand-written crates (`slopdesk-posix`, `slopdesk-ffi`, `slopdesk-gfsimd`) and the `slopdesk-apple-*` family, which may reach a framework only through `objc2` ([57](57-apple-frameworks-in-rust.md)). Every other crate is `forbid(unsafe_code)`, which no downstream `allow` can lift. `CLAUDE.md` states the bar for each; `rust/slopdesk-invariants` enforces it.
+
+Scripting is Rust as well — there is no shell or Python left in the repo's own tooling; the gates, the release pipeline and the operator tools are binaries in `rust/slopdesk-devtools` and `rust/slopdesk-invariants`. The only C under `Sources/` is `CSlopDeskVirtualDisplay`, and it declares private CoreGraphics headers rather than implementing anything.
 
 ## 3. Major decisions (summary — details in [DECISIONS.md](DECISIONS.md))
 

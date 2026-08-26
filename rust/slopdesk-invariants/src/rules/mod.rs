@@ -596,6 +596,11 @@ pub fn registry() -> Vec<Rule> {
             check: client_layers::presentation_logic_draws_nothing_both,
         },
         Rule {
+            name: "domain-view-seams",
+            origin: "docs/00 'Core / shell split'",
+            check: client_layers::domain_layers_hold_only_named_view_seams,
+        },
+        Rule {
             name: "code-panel-font-pair",
             origin: "check-supervisor.sh (deleted)",
             check: code_panel::font_pair_agrees_across_the_seam,
