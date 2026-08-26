@@ -229,7 +229,11 @@ fn until(budget: Duration, mut condition: impl FnMut() -> bool) -> bool {
 /// # Errors
 /// When the build fails, the daemon will not stop, the port stays held, there is no record to
 /// reproduce, or nothing is listening afterwards.
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the shape IS the restart sequence, and splitting it would scatter an order that has to be \
+              read in order"
+)]
 pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
     let path = record_path().ok_or_else(|| {
         "no home directory, so there is no container a launch record could be in".to_owned()

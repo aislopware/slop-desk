@@ -18,6 +18,12 @@
 //! 2026 is a FLAG, not a counter — the spec does not define nesting and terminals treat the last
 //! `h`/`l` as the state. `ESC c` (RIS) closes any open frame.
 
+// `params[1..]` behind a check that a first parameter was parsed.
+#![expect(
+    clippy::indexing_slicing,
+    reason = "the first parameter is known present before the cut"
+)]
+
 /// Bound on one CSI's collected parameter bytes, so a hostile stream cannot grow this.
 const MAX_PARAM_BYTES: usize = 64;
 

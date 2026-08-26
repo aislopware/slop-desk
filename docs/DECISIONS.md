@@ -17102,3 +17102,42 @@ bans a literal reappearing in the face or the dispatcher, requires the face to n
 and checks the one thing an index-answering door cannot check for itself — that each `UInt8` enum
 declares as many cases as the crate's vocabulary has entries. A placement added in Rust and not in
 Swift would otherwise parse to a `rawValue` no case answers: silently unreachable rather than wrong.
+
+## A lint opt-out lives where its reason is true, and no wider (2026-08-26)
+
+Sixteen crates disabled a code-level clippy lint in their manifest. Each carried a written reason,
+and the reasons were good — a daemon whose stderr IS its log, a VT scanner whose `bytes[i]` is
+bounded by the `while` head above it, `pub(crate)` items in a private module where
+`redundant_pub_crate` and rustc's denied `unreachable_pub` demand opposite things. **What was wrong
+was the SCOPE.** `lint = "allow"` in a `[lints]` table is a claim about every file in the crate,
+including the ones nobody has written yet, and none of those reasons was that wide.
+
+Measuring each one — flip the entry to `deny`, run clippy, collect the sites — showed how far the
+claims had already drifted from the code:
+
+- **Two fired nowhere at all.** `slopdesk-instruments` disabled `significant_drop_tightening` and
+  `too_many_lines`, both with a paragraph explaining why. Neither lint had a site.
+- **`slopdesk-sanitize` disabled `indexing_slicing` for "a terminal grid… clamped by
+  `clamp_row`/`clamp_col`".** That crate has no grid. Every one of its 121 sites is a byte cursor in
+  a VT scanner. The sentence was true of `slopdesk-screend`, which it had been copied from.
+- **`slopdesk-audio-out` named three of the four modules its exemption covered**, and
+  `slopdesk-apple-audio` named a module the lint does not fire in.
+
+So the manifests state the DENY and the code states the exemption: `#![expect(…, reason = "…")]` at
+the top of the module that earns it, or `#[expect(…)]` on the item. Thirty-eight sites, each with the
+reason that is true of THAT file — which meant writing nine different reasons where sanitize had one,
+and discovering that four of screend's ten were test-only, where a panic is the failure report and
+the crate's existing `mod tests` expect block already said so.
+
+**`expect`, never `allow`, and that is the half that pays for itself.** `expect` errors once the lint
+stops firing; `allow` goes quiet, which is how the two dead ones survived. Converting the tree's four
+hand-written `#[allow]`s turned up a fifth immediately: `release::pack::run` had shrunk under
+`too_many_lines` at some point and nothing could have said so.
+
+**Three lints stay in the manifests, because no code site could carry them.** `suboptimal_flops` and
+`imprecise_flops` are REQUIRED there by the `flops-opt-out` rule — the whole point is that a workspace
+carries them before its first float lands, so a lint teaching the opposite of the bit-exact-floats
+invariant never gets to teach it. `multiple_crate_versions` fires on a resolved dependency graph and
+has no line anyone wrote.
+
+`scoped-opt-outs` ratchets both halves.

@@ -39,6 +39,10 @@
 //! records the last PTY geometry the pane applied, because a transcript parses correctly only at
 //! the width it was emitted for and that number has to survive the process that knew it.
 
+// stderr IS superd's log — see `server.rs`. A transcript that cannot be written is a silent loss of
+// scrollback otherwise.
+#![expect(clippy::print_stderr, reason = "stderr is superd's log; launchd captures it")]
+
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;

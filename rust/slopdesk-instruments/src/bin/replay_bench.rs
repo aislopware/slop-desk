@@ -26,6 +26,15 @@
 //! slopdesk-replay-bench [mib…]     # default sizes 4, 16, 64
 //! ```
 
+// A candidate count or a byte count becomes an `f64` to be divided into a rate. The counts here are
+// millions of comparisons and tens of megabytes, `f64` is exact to 2^53, so the loss the lint names
+// cannot occur — and a `try_from` ladder around arithmetic with no failure mode would only make the
+// number harder to read. Scoped to the two benches that print rates.
+#![expect(
+    clippy::cast_precision_loss,
+    reason = "counts far below 2^53 divided into a rate"
+)]
+
 use std::io::{Read as _, Write as _};
 use std::os::unix::net::UnixStream;
 use std::process::ExitCode;

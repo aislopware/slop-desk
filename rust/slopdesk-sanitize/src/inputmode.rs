@@ -42,6 +42,12 @@
 //! pushes and pops in replayed history overwhelmingly balance out per TUI run, and a live TUI's net
 //! entries are re-asserted onto whichever screen the replay ends on — the one that TUI is on.
 
+// A VT scanner is a byte cursor, and `bytes[i]` is bounded by the `while` head that let control
+// reach it — `i < n` is the check, tested once per step rather than re-asked at every read. The
+// `get(i)` rewrite would replace one panic that cannot fire with a silent `None` arm that swallows
+// a real off-by-one, so the opt-out is per scanner file and stops at its edge.
+#![expect(clippy::indexing_slicing, reason = "the loop head bounds every cursor read")]
+
 use std::collections::BTreeMap;
 
 use crate::vtscan::{Csi, ESC, Terminators, parse_csi, string_introducer, string_sequence_end};

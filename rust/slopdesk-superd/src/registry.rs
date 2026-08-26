@@ -23,6 +23,10 @@
 //! [`crate::ring::OutputRing`], and hostd subscribes to that stream instead of reading the fd. The
 //! pane keeps working while nobody is home, and the returning hostd resumes from a byte offset.
 
+// stderr IS superd's log — see `server.rs`. What gets narrated here is the one rule this module
+// exists to hold: which event closed a master fd.
+#![expect(clippy::print_stderr, reason = "stderr is superd's log; launchd captures it")]
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::fd::{AsRawFd as _, OwnedFd};
 use std::sync::{Arc, Mutex};

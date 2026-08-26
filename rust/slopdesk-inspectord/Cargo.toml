@@ -102,10 +102,10 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-# Disabled, with reasons:
-# - `print_stderr`: stderr IS inspectord's log, exactly as it is superd's, screend's, dropd's and
-#   androidd's — superd holds it on a PTY and hostd reads the announce line off it.
-print_stderr = "allow"
+# stderr IS inspectord's log, exactly as it is superd's, screend's, dropd's and androidd's — but
+# that is true of the listener threads, not of the crate, so the exemption is an `#![expect]` in
+# `src/server.rs` and this stays denied. The event store and the frame codec stay printless.
+print_stderr = "deny"
 
 # Disabled, with a reason:
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the

@@ -10,6 +10,14 @@
 //! binary because the ladder does. (It replaced a whole Swift executable target, which existed only
 //! because the ladder used to be in Swift.)
 
+// stderr IS screend's log, and the entry point is where the announce line and every startup failure
+// are written — the whole reason hostd can read this daemon at all. See the crate's manifest, which
+// denies the lint so this stays one of a named few files rather than a blanket.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is screend's log; the entry point announces on it"
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

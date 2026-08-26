@@ -427,6 +427,7 @@ struct Budget {
 mod tests {
     #![expect(
         clippy::expect_used,
+        clippy::indexing_slicing,
         reason = "a panic in a test is the failure report, not a fault"
     )]
 

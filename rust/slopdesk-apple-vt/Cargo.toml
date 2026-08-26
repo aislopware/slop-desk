@@ -184,10 +184,8 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-# `keys` is a private module whose items are `pub(crate)` because they are the crate's internal
-# vocabulary, not its API. The lint wants them bare `pub`, which would make the module's privacy the
-# only thing holding them in — `slopdesk-apple-ax` disables it for the identical shape.
-redundant_pub_crate = "allow"
+# `redundant_pub_crate` stays DENIED here: the two modules it fires in, `keys` and `owned`, carry the
+# conflict with the denied `unreachable_pub` and the `#![expect]` that resolves it, at the site.
 
 # Disabled, with a reason — the same two every workspace disables, for the same two reasons.
 multiple_crate_versions = "allow"

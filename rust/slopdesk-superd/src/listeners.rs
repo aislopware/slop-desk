@@ -27,6 +27,10 @@
 //! the path is advertised into a child's environment at all. Advertising an address is a promise to
 //! be listening at it; superd makes that promise only while someone can keep it.
 
+// stderr IS superd's log — see `server.rs`. A bind that fails here is a socket hostd will never be
+// able to serve, and this line is the only place that says so.
+#![expect(clippy::print_stderr, reason = "stderr is superd's log; launchd captures it")]
+
 use std::os::fd::{AsFd as _, AsRawFd as _};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::{Arc, Mutex};

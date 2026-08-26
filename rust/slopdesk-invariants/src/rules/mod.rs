@@ -366,6 +366,11 @@ pub fn registry() -> Vec<Rule> {
             check: crate_policy::flops_opt_out,
         },
         Rule {
+            name: "scoped-opt-outs",
+            origin: "rust/*/Cargo.toml, docs/DECISIONS.md",
+            check: crate_policy::scoped_opt_outs,
+        },
+        Rule {
             name: "one-home-per-operation",
             origin: "docs/51 §6.15, docs/55",
             check: rust_boundaries::one_home_per_operation,

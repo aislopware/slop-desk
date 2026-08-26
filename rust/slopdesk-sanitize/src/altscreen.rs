@@ -32,6 +32,12 @@
 //! order, and normalises the mixed-param `DECSET`s it tracks) and before the sync-frame pass. The
 //! un-acked live tail is NEVER touched (byte-exact resume).
 
+// A VT scanner is a byte cursor, and `bytes[i]` is bounded by the `while` head that let control
+// reach it — `i < n` is the check, tested once per step rather than re-asked at every read. The
+// `get(i)` rewrite would replace one panic that cannot fire with a silent `None` arm that swallows
+// a real off-by-one, so the opt-out is per scanner file and stops at its edge.
+#![expect(clippy::indexing_slicing, reason = "the loop head bounds every cursor read")]
+
 use crate::vtscan::{
     Csi, ESC, PrivateMarker, Terminators, param_fields, parse_csi, string_introducer, string_sequence_end,
 };

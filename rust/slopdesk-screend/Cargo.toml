@@ -117,15 +117,18 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# Both of these were crate-wide allows, and both were wider than the fact behind them. They are
+# denied here now and exempted file by file, each `#![expect]` carrying the reason that is true of
+# THAT file:
+# - `indexing_slicing`: a terminal grid IS an indexed structure and its coordinates are clamped on
+#   the way in — true of `model` and `render`, and of nothing else. The other exemptions are narrower
+#   still (a slice cut at an offset just scanned out of the same buffer) and four are test-only,
+#   where a panic is the failure report.
+# - `print_stderr`: stderr IS screend's log, exactly as it is superd's — launchd/hostd captures it.
+#   True of `server` and one line of `detect`; the model, the renderer and the rules stay printless.
+indexing_slicing = "deny"
+print_stderr = "deny"
 # Disabled, with reasons:
-# - `indexing_slicing`: a terminal grid IS an indexed structure, and every coordinate reaching it
-#   has already been clamped by `clamp_row`/`clamp_col` or a `min` against `cols`. Rewriting ~200
-#   grid touches as `get_mut(..)` + `else { return }` would replace one panic that cannot fire
-#   with a hundred silent no-ops that hide the bug if it ever could. The clamps are the check.
-indexing_slicing = "allow"
-# - `print_stderr`: stderr IS screend's log, exactly as it is superd's — launchd/hostd captures it,
-#   and routing it through a logging crate would add a dependency to say the same words.
-print_stderr = "allow"
 # - `multiple_crate_versions` (cargo): a duplicate deep in serde's tree is not ours to resolve.
 multiple_crate_versions = "allow"
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the

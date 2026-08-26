@@ -11,6 +11,11 @@
 //! model is the WireGuard mesh, not app-layer auth — but because the version check is the only
 //! thing standing between an old superd and a new hostd's assumptions (`docs/51` §3).
 
+// stderr IS superd's log — launchd captures it to `StandardErrorPath`, and that file is the only
+// record of why a pane died. Routing it through a logging crate would add a dependency to say the
+// same words. Scoped per file, so the four modules that legitimately narrate are the four that may.
+#![expect(clippy::print_stderr, reason = "stderr is superd's log; launchd captures it")]
+
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::os::fd::{AsFd, AsRawFd as _, BorrowedFd, OwnedFd};

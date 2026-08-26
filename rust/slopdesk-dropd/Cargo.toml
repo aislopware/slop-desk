@@ -99,11 +99,10 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-# Disabled, with reasons:
-# - `print_stderr`: stderr IS dropd's log, exactly as it is superd's and screend's — superd holds it
-#   on a PTY and hostd reads the announce line off it, so routing it through a logging crate would
-#   add a dependency to say the same words.
-print_stderr = "allow"
+# stderr IS dropd's log, exactly as it is superd's and screend's — but that is true of the connection
+# threads, not of the crate, so the exemption is an `#![expect]` in `src/server.rs` and this stays
+# denied. The sink and the framing have no business printing.
+print_stderr = "deny"
 
 # Disabled, with a reason:
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the

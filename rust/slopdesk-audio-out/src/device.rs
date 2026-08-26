@@ -16,6 +16,16 @@
 //! start tries again. A coding session must never fail over its audio accessory, and the pane has
 //! no way to render an audio error that would help anyone.
 
+// A lint CONFLICT rather than a preference: this is a private module whose items are `pub(crate)`
+// because they are the crate's internal vocabulary and no part of its API, so `pub(crate)` is the
+// only accurate visibility — and this nursery lint asks for `pub` while rustc's `unreachable_pub`,
+// denied by the manifest, refuses exactly that. Clippy's own documentation records the conflict;
+// the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 

@@ -320,7 +320,7 @@ impl Soak {
 /// anything — a host that never binds, a pane that never comes up. A property that FAILS is not an
 /// error: it is counted, printed, and reported in the exit status, so one failing property does not
 /// hide the other three.
-#[allow(
+#[expect(
     clippy::too_many_lines,
     reason = "the shape IS the four properties, in the order they run"
 )]

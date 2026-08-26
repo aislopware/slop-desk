@@ -21,6 +21,16 @@
 //! Starting mid-stream is expected (the ring truncates oldest-first) — full-screen apps repaint, so
 //! the grid converges to truth after one redraw cycle regardless of the entry point.
 
+// A terminal grid IS an indexed structure: every coordinate reaching a `cells[r][c]` here has
+// already been clamped against `rows`/`cols` on the way in. Rewriting the grid touches as
+// `get_mut(..)` + `else { return }` would replace one panic that cannot fire with silent no-ops
+// that hide the bug if it ever could — the clamp is the check. Per file, so a module that does no
+// grid work does not inherit the exemption.
+#![expect(
+    clippy::indexing_slicing,
+    reason = "grid coordinates are clamped before they get here"
+)]
+
 use crate::cell::{Cell, CellStyle, CellText, SgrColor};
 use crate::width::{dec_graphic, scalar_width};
 

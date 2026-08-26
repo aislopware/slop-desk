@@ -21,6 +21,15 @@
 //! processes read it. This one exists only because of `cpal`'s no-conversion contract, has exactly
 //! one caller, and would be a cross-crate edge that says nothing. It is unit-tested either way.
 
+// A lint CONFLICT rather than a preference: this is a private module whose items are `pub(crate)`
+// because they are the crate's internal vocabulary and no part of its API, so `pub(crate)` is the
+// only accurate visibility — and this nursery lint asks for `pub` while rustc's `unreachable_pub`,
+// denied by the manifest, refuses exactly that. Clippy's own documentation records the conflict;
+// the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
 // A resampler is arithmetic between two integer counts and a ratio, so it converts between
 // `usize`, `f64` and `f32` constantly. Every one of them is bounded by an audio rate or a buffer
 // length — both far inside an `f64` mantissa and, after the loop guard, inside a `usize` — so the

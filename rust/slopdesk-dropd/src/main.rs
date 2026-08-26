@@ -10,6 +10,14 @@
 //!
 //! `--port 0` binds an OS-chosen port and announces the real one, which is what the tests use.
 
+// stderr IS dropd's log, and the entry point is where the announce line and every startup failure
+// are written — the whole reason hostd can read this daemon at all. See the crate's manifest, which
+// denies the lint so this stays one of a named few files rather than a blanket.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is dropd's log; the entry point announces on it"
+)]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

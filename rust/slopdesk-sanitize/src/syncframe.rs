@@ -36,6 +36,12 @@
 //! frame re-anchors itself (sync-frame TUIs draw each frame self-contained), and the stream-final
 //! input modes are re-asserted by [`crate::inputmode`]'s net-state pass.
 
+// A VT scanner is a byte cursor, and `bytes[i]` is bounded by the `while` head that let control
+// reach it — `i < n` is the check, tested once per step rather than re-asked at every read. The
+// `get(i)` rewrite would replace one panic that cannot fire with a silent `None` arm that swallows
+// a real off-by-one, so the opt-out is per scanner file and stops at its edge.
+#![expect(clippy::indexing_slicing, reason = "the loop head bounds every cursor read")]
+
 use std::ops::Range;
 
 use crate::altscreen::is_alt_mode;

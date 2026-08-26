@@ -360,6 +360,102 @@ pub fn flops_opt_out(tree: &Tree) -> Report {
     report
 }
 
+/// The only three lints a MANIFEST may disable, and why no fourth can be.
+///
+/// Each of these is a fact about the whole crate that no code site could carry:
+/// [`flops_opt_out`] REQUIRES the first two in every workspace, and `multiple_crate_versions` is a
+/// dependency-GRAPH lint that fires on a resolved tree rather than on a line anyone wrote.
+const WORKSPACE_WIDE: [&str; 3] = ["suboptimal_flops", "imprecise_flops", "multiple_crate_versions"];
+
+/// An opt-out lives where the reason is TRUE, and no wider.
+///
+/// A `lint = "allow"` in a manifest is a statement about every file in the crate, including the
+/// ones nobody has written yet — and the reason written beside it is almost never that wide. The
+/// tree had sixteen of them when this rule landed. Two were DEAD, firing nowhere at all;
+/// `slopdesk-sanitize` disabled `indexing_slicing` for a clamped terminal grid it does not contain;
+/// `slopdesk-audio-out` named three of the four modules its exemption actually covered, and
+/// `slopdesk-apple-audio` named a module the lint never fired in. Every one of those reads, for
+/// years, like a checked claim.
+///
+/// So the manifests state the DENY and the code states the exemption: `#![expect(…, reason = "…")]`
+/// at the top of the one module that earns it, or `#[expect(…)]` on the one item. The scope is then
+/// as wide as the argument and no wider, and a reader who wants to know what an opt-out covers
+/// reads the file it covers.
+///
+/// ## Why `expect` and not `allow` at the site either
+/// `expect` EXPIRES: rustc errors when the lint it names stops firing. `allow` goes quiet instead,
+/// which is how the two dead ones survived. Converting the four hand-written `#[allow]`s in this
+/// tree found a fifth immediately — `release::pack::run` had shrunk under `too_many_lines` and
+/// nobody could have known.
+#[must_use]
+pub fn scoped_opt_outs(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let mut blanket = Vec::new();
+    let mut seen = 0usize;
+    for manifest in manifests(tree) {
+        let Some(source) = tree.get(&manifest) else {
+            continue;
+        };
+        seen += 1;
+        for line in source.text.lines() {
+            let Some(lint) = line.strip_suffix(r#" = "allow""#) else {
+                continue;
+            };
+            // Anchored: a `#`-commented copy of a level is prose about the policy, not the policy.
+            if lint.starts_with(' ') || lint.starts_with('#') || WORKSPACE_WIDE.contains(&lint) {
+                continue;
+            }
+            blanket.push(format!("{manifest} ({lint})"));
+        }
+    }
+    report.fail_if(
+        seen == 0,
+        "no Rust manifest was found — this gate reads nothing and would pass".to_owned(),
+    );
+    report.fail_if(
+        !blanket.is_empty(),
+        format!(
+            "a manifest disables a code-level lint for a whole crate ({}) — an opt-out belongs at the site \
+             as #![expect(…, reason = \"…\")] on the module that earns it, so it cannot cover a file nobody \
+             has written yet; the only three a manifest may state are {}",
+            blanket.join(", "),
+            WORKSPACE_WIDE.join(", "),
+        ),
+    );
+
+    let mut silent = Vec::new();
+    let mut read_any = false;
+    for (path, file) in tree.under("rust") {
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        read_any = true;
+        // Anchored at the line's first non-space, because an attribute IS the first thing on its
+        // line. A `"#[allow(…)]"` inside a quoted string is a fixture — this rule's own break-test
+        // writes one — and a gate that could not tell the two apart would force the test that
+        // proves it works out of the crate to keep the crate green.
+        if file.code().lines().any(|line| {
+            line.trim_start().starts_with("#[allow(") || line.trim_start().starts_with("#![allow(")
+        }) {
+            silent.push(path.to_string_lossy().into_owned());
+        }
+    }
+    report.fail_if(
+        !read_any,
+        "no Rust source was found — the #[allow] ban below reads nothing and would pass".to_owned(),
+    );
+    silent.sort();
+    report.fail_if(
+        !silent.is_empty(),
+        format!(
+            "a Rust source writes #[allow] where #[expect] would do ({}) — expect ERRORS once the lint \
+             stops firing, which is the only thing that ever deletes a stale opt-out",
+            silent.join(", "),
+        ),
+    );
+    report
+}
+
 /// Whether a manifest STATES something, at the start of a line — the shell's `grep -q '^…'`.
 ///
 /// Anchored, because a `#`-commented copy of a lint level is prose about the policy and not the
@@ -732,6 +828,96 @@ mod tests {
             report.violations().iter().any(|v| v.contains("reads nothing")),
             "{report:?}"
         );
+    }
+
+    /// The shape this rule exists to refuse: a lint disabled for a whole crate because ONE module
+    /// earns it. The allow reads like a checked claim and covers every file the crate will ever
+    /// have.
+    #[test]
+    fn a_crate_wide_code_lint_opt_out_is_caught() {
+        let fixture = opt_out_fixture("opt-out-blanket");
+        assert!(super::scoped_opt_outs(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-new/Cargo.toml",
+            "[workspace]\n[lints.clippy]\nindexing_slicing = \"allow\"\n",
+        );
+        let report = super::scoped_opt_outs(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("indexing_slicing")),
+            "{report:?}"
+        );
+    }
+
+    /// The three the manifests may keep. Two are REQUIRED by `flops_opt_out`, and the third has no
+    /// code site to attach to — a rule that failed on them would be unsatisfiable.
+    #[test]
+    fn the_three_workspace_wide_lints_stay_in_the_manifest() {
+        let fixture = opt_out_fixture("opt-out-carve-outs");
+        fixture.write(
+            "rust/slopdesk-new/Cargo.toml",
+            "[workspace]\n[lints.clippy]\nsuboptimal_flops = \"allow\"\nimprecise_flops = \
+             \"allow\"\nmultiple_crate_versions = \"allow\"\n",
+        );
+        assert!(super::scoped_opt_outs(&fixture.tree()).is_clean());
+    }
+
+    /// `allow` at the site is the same failure wearing a smaller hat: it goes quiet instead of
+    /// expiring, which is how a dead opt-out survives a rewrite of the code it covered.
+    #[test]
+    fn an_allow_at_the_site_is_caught_where_an_expect_would_do() {
+        let fixture = opt_out_fixture("opt-out-silent");
+        fixture.write(
+            "rust/slopdesk-new/src/lib.rs",
+            "#[allow(clippy::too_many_lines)]\npub fn f() {}\n",
+        );
+        let report = super::scoped_opt_outs(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("#[expect] would do")),
+            "{report:?}"
+        );
+    }
+
+    /// A commented-out level is prose ABOUT the policy. The rule reads TOML, where a setting at
+    /// column 0 is the setting — and the manifests here explain their denies in comments that quote
+    /// the old allow.
+    #[test]
+    fn a_commented_allow_is_prose_and_not_the_policy() {
+        let fixture = opt_out_fixture("opt-out-prose");
+        fixture.write(
+            "rust/slopdesk-new/Cargo.toml",
+            "[workspace]\n[lints.clippy]\n# it used to say indexing_slicing = \"allow\" \
+             here\nindexing_slicing = \"deny\"\n",
+        );
+        assert!(super::scoped_opt_outs(&fixture.tree()).is_clean());
+    }
+
+    /// A tree with no Rust source must FAIL rather than report that nothing writes `#[allow]`.
+    #[test]
+    fn an_opt_out_gate_that_reads_nothing_says_so() {
+        let fixture = Fixture::new("opt-out-empty");
+        fixture.write("Sources/A.swift", "let x = 1\n");
+        let report = super::scoped_opt_outs(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("reads nothing")),
+            "{report:?}"
+        );
+    }
+
+    /// A tree the opt-out rule is silent on: one manifest carrying only the three workspace-wide
+    /// lints, and one source with no `#[allow]` in it.
+    fn opt_out_fixture(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fixture
+            .write(
+                "rust/slopdesk-wire/Cargo.toml",
+                "[workspace]\n[lints.clippy]\nsuboptimal_flops = \"allow\"\nimprecise_flops = \"allow\"\n",
+            )
+            .write("rust/slopdesk-wire/src/lib.rs", "pub fn f() {}\n");
+        fixture
     }
 
     /// A compliant tree: the root, one exempt hand-written crate, one apple crate and one ordinary

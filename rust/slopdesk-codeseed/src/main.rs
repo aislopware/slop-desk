@@ -30,6 +30,10 @@ use std::process::ExitCode;
 use serde_json::{Value, json};
 use slopdesk_codeseed::{extensions, launch, paths, settings};
 
+// stdout IS this program's return value: hostd reads one JSON object off it per invocation, so
+// the lint would be firing on the interface itself. Three functions write that stream and they
+// are the three carrying this — a fourth `println!` anywhere else is a bug, not an answer.
+#[expect(clippy::print_stdout, reason = "stdout is this program's answer to hostd")]
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let Some(subcommand) = arguments.first() else {
@@ -120,6 +124,10 @@ fn sync_font(arguments: &[String], environment: &paths::Environment) -> Option<V
 /// anyone restarts, it is a seeder whose output outlives every run. A profile seeded by an older
 /// codeseed keeps that theme and that bridge until something reseeds it, so "which codeseed wrote
 /// this profile" is a question with real consequences, and these three numbers are its answer.
+#[expect(
+    clippy::print_stdout,
+    reason = "the banner is this program's answer to `--version`"
+)]
 fn print_version() -> ExitCode {
     println!(
         "slopdesk-codeseed {} (theme {}, bridge {})",
@@ -132,6 +140,10 @@ fn print_version() -> ExitCode {
 
 /// The usage text, on stdout with the rest of this program's output — a caller that mis-invoked it
 /// is reading the same stream either way, and `print_stderr` is denied here for that reason.
+#[expect(
+    clippy::print_stdout,
+    reason = "usage shares the one stream this program answers on"
+)]
 fn usage() -> ExitCode {
     println!(
         "usage: slopdesk-codeseed <seed|launch-args|child-env|missing-extensions|paths|sync-font --family F \

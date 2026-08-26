@@ -27,6 +27,12 @@
 //! ([`Terminators::lenient`]). `holdback_start` is the one place an unterminated body is still
 //! undecidable — that is exactly what it reports.
 
+// A VT scanner is a byte cursor, and `bytes[i]` is bounded by the `while` head that let control
+// reach it — `i < n` is the check, tested once per step rather than re-asked at every read. The
+// `get(i)` rewrite would replace one panic that cannot fire with a silent `None` arm that swallows
+// a real off-by-one, so the opt-out is per scanner file and stops at its edge.
+#![expect(clippy::indexing_slicing, reason = "the loop head bounds every cursor read")]
+
 use crate::vtscan::{ESC, Terminators, parse_csi, string_sequence_end};
 
 /// `CSI` as its 8-bit C1 byte, which only a true 8-bit stream carries.

@@ -57,6 +57,14 @@
 //! [`scalar_width`](crate::width::scalar_width), and a display-width table that exists in two
 //! languages is the cross-language mirror this tree forbids.
 
+// Every index here is into a vector this module owns and just measured — `revisions[last]` where
+// `last` came from its own `len`, `keep[index]` where the two were built in one pass and are the
+// same length by construction. The bound is the construction, not a check anyone can skip.
+#![expect(
+    clippy::indexing_slicing,
+    reason = "indexes vectors this module built and measured"
+)]
+
 use crate::width::scalar_width;
 
 const ESC: u8 = 0x1B;

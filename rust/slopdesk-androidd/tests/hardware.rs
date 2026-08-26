@@ -14,6 +14,9 @@
 //! would be indistinguishable from a gate that ran and proved nothing, which is the failure mode
 //! the printed reason exists to prevent.
 
+// A skipped hardware test says so on stderr — that line is the only way a run without
+// `SLOPDESK_ANDROID_HW=1` can tell you it proved nothing. Scoped to this gate's file.
+#![expect(clippy::print_stderr, reason = "the skip notice is this gate's only report")]
 #![expect(
     clippy::expect_used,
     reason = "a panic in a test is the failure report, not a runtime fault"

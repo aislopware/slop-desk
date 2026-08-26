@@ -22,6 +22,12 @@
 //! still await the answer (byte-exact resume). Stored bytes stay raw, so an improvement here
 //! retroactively benefits existing journals.
 
+// A VT scanner is a byte cursor, and `bytes[i]` is bounded by the `while` head that let control
+// reach it — `i < n` is the check, tested once per step rather than re-asked at every read. The
+// `get(i)` rewrite would replace one panic that cannot fire with a silent `None` arm that swallows
+// a real off-by-one, so the opt-out is per scanner file and stops at its edge.
+#![expect(clippy::indexing_slicing, reason = "the loop head bounds every cursor read")]
+
 use crate::vtscan::{Csi, ESC, Terminators, parse_csi, string_sequence_end};
 
 /// Window-op report requests (`CSI Ps t` with these leading params) — the terminal replies with

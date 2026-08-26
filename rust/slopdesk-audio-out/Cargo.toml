@@ -113,10 +113,10 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-# `device`, `pump` and `resample` are private modules whose items are `pub(crate)` because they are
-# the crate's internal vocabulary, not its API — the same shape `slopdesk-apple-vt` and
-# `slopdesk-apple-sck` disable this for.
-redundant_pub_crate = "allow"
+# `redundant_pub_crate` stays DENIED here: the four modules it fires in — `device`, `handoff`, `pump`,
+# `resample` — each carry the conflict with the denied `unreachable_pub` and the `#![expect]` that
+# resolves it, at the site. The old crate-wide allow listed three of the four, which is what a
+# manifest-level exemption always drifts into.
 
 # Disabled, with a reason — the same two every workspace disables, for the same two reasons.
 multiple_crate_versions = "allow"

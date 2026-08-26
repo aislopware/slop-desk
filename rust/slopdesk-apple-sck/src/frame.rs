@@ -12,6 +12,16 @@
 //! family is not allowed to write. Copying the key's text into a `CFString` once, when the tap is
 //! built, costs one allocation for the life of a stream and needs no such claim.
 
+// A lint CONFLICT rather than a preference: this is a private module whose items are `pub(crate)`
+// because they are the crate's internal vocabulary and no part of its API, so `pub(crate)` is the
+// only accurate visibility — and this nursery lint asks for `pub` while rustc's `unreachable_pub`,
+// denied by the manifest, refuses exactly that. Clippy's own documentation records the conflict;
+// the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use objc2_core_foundation::{CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType};
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_screen_capture_kit::{SCFrameStatus, SCStreamFrameInfoStatus};

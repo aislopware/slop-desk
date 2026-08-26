@@ -101,10 +101,10 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-# Disabled, with reasons:
-# - `print_stderr`: stderr IS androidd's log, exactly as it is superd's, screend's and dropd's —
-#   superd holds it on a PTY and hostd reads the announce line off it.
-print_stderr = "allow"
+# stderr IS androidd's log, exactly as it is superd's, screend's and dropd's — but that is true of
+# the accept loop, not of the crate, so the exemption is an `#![expect]` in `src/server.rs` and this
+# stays denied. An allow here would also cover the file nobody has written yet.
+print_stderr = "deny"
 
 # Disabled, with a reason:
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the

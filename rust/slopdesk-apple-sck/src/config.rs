@@ -24,6 +24,16 @@
 //! did not exist would be an unrecognised selector, which is a crash rather than a silent
 //! misconfiguration — so the guard would be protecting a build that cannot happen.
 
+// A lint CONFLICT rather than a preference: this is a private module whose items are `pub(crate)`
+// because they are the crate's internal vocabulary and no part of its API, so `pub(crate)` is the
+// only accurate visibility — and this nursery lint asks for `pub` while rustc's `unreachable_pub`,
+// denied by the manifest, refuses exactly that. Clippy's own documentation records the conflict;
+// the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use objc2::rc::Retained;
 use objc2_core_graphics::kCGColorSpaceSRGB;
 use objc2_core_media::CMTime;

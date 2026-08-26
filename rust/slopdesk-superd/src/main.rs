@@ -20,6 +20,14 @@
 //! honest limit of this design: superd's own death still takes the panes, and the only mitigation
 //! is that superd is small enough to rarely need changing (`docs/51` §4).
 
+// stderr IS superd's log, and the entry point is where the announce line and every startup failure
+// are written — the whole reason hostd can read this daemon at all. See the crate's manifest, which
+// denies the lint so this stays one of a named few files rather than a blanket.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is superd's log; the entry point announces on it"
+)]
+
 use std::io;
 use std::os::fd::AsFd as _;
 use std::os::unix::fs::OpenOptionsExt as _;

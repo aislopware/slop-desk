@@ -92,11 +92,14 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
+# stdout IS this program's return value — hostd reads one JSON object off it per invocation, so the
+# lint would fire on the interface itself. Exactly three functions write that stream and each carries
+# its own `#[expect]`, so this stays denied: a fourth `println!` in this crate is a bug, not an
+# answer, and a crate-wide allow could not tell the two apart.
+print_stdout = "deny"
+
 # Disabled, with reasons:
-# - `print_stdout`: stdout IS this program's return value. Every subcommand answers hostd with one
-#   JSON object on it, so the lint would fire on the interface itself.
 # - `multiple_crate_versions` (cargo): one dependency, so it can only fire on a toolchain artefact.
-print_stdout = "allow"
 multiple_crate_versions = "allow"
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
 #   fused multiply-add `CLAUDE.md` forbids — "keep `a * b + c` separate (never `addingProduct`/`fma`)".

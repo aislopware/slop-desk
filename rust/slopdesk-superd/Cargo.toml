@@ -143,11 +143,12 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-# Disabled, with reasons:
-# - DEVIATION 1: `print_stderr`. stderr IS superd's log — launchd captures it to
-#   `StandardErrorPath` and that file is the only record of why a pane died. Routing it through a
-#   logging crate would add a dependency to say the same words.
-print_stderr = "allow"
+# DEVIATION 1: `print_stderr`. stderr IS superd's log — launchd captures it to `StandardErrorPath`
+# and that file is the only record of why a pane died. Routing it through a logging crate would add
+# a dependency to say the same words. The deviation is FOUR files, not the crate, so each carries
+# its own `#![expect]` — `server`, `listeners`, `registry`, `journal` — and this stays denied so a
+# fifth has to be a decision.
+print_stderr = "deny"
 # - `multiple_crate_versions` (cargo): unlike the hook, superd has real dependencies, and a
 #   duplicate deep in nix's or serde's tree is not ours to resolve.
 multiple_crate_versions = "allow"

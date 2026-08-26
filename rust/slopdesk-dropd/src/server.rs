@@ -10,6 +10,14 @@
 //! carry — a stream whose frame boundaries are in doubt cannot be resynchronised onto attacker
 //! bytes anyway.
 
+// stderr IS dropd's log, exactly as it is superd's — the connection threads have no other way to
+// record why an upload was refused. Scoped to the accept loop rather than the crate so the sink
+// and the framing stay printless.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is dropd's log for the connection threads"
+)]
+
 use std::io::{BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};

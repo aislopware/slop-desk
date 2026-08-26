@@ -18,6 +18,16 @@
 //! real answer — a shareable-content query is milliseconds and a capture start about a tenth of a
 //! second — so reaching it means the framework is wedged, not slow.
 
+// A lint CONFLICT rather than a preference: this is a private module whose items are `pub(crate)`
+// because they are the crate's internal vocabulary and no part of its API, so `pub(crate)` is the
+// only accurate visibility — and this nursery lint asks for `pub` while rustc's `unreachable_pub`,
+// denied by the manifest, refuses exactly that. Clippy's own documentation records the conflict;
+// the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 

@@ -140,9 +140,7 @@ multiple_crate_versions = "allow"
 suboptimal_flops = "allow"
 imprecise_flops = "allow"
 
-# One more, and it is a lint CONFLICT rather than a preference. `attribute` is a private module whose
-# helpers are used across the crate and exported from none of it, so `pub(crate)` is the only
-# accurate visibility — and this nursery lint asks for `pub` on it while rustc's `unreachable_pub`,
-# denied above, refuses exactly that. Clippy's own documentation records the conflict. The stricter
-# of the two is kept.
-redundant_pub_crate = "allow"
+# `redundant_pub_crate` is a lint CONFLICT rather than a preference, and it used to be disabled here
+# for the whole crate. It is left denied now: the one module it fires in, `attribute`, carries the
+# conflict and the `#![expect]` that resolves it, so a module that starts leaking `pub(crate)` for
+# some other reason still has to answer for it.

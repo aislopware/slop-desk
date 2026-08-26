@@ -12,6 +12,16 @@
 //! backlog builds. Filling the ring to the brim instead would convert a sheddable backlog into
 //! permanent latency, and stale audio is worse than a click.
 
+// A lint CONFLICT rather than a preference: this is a private module whose items are `pub(crate)`
+// because they are the crate's internal vocabulary and no part of its API, so `pub(crate)` is the
+// only accurate visibility — and this nursery lint asks for `pub` while rustc's `unreachable_pub`,
+// denied by the manifest, refuses exactly that. Clippy's own documentation records the conflict;
+// the stricter of the two wins, one module at a time.
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "conflicts with the denied `unreachable_pub`"
+)]
+
 use slopdesk_video::audio_jitter::{
     AudioJitterBuffer, consumer_starved, ring_target_samples, shed_to_depth_bound,
 };

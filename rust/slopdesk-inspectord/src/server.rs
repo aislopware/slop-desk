@@ -21,6 +21,14 @@
 //! signal, nothing. That is the whole premise of the inspector and it is enforced here by there
 //! being nothing else in the match.
 
+// stderr IS inspectord's log: the listener's threads report a dropped subscriber or a malformed
+// frame there and nowhere else. Scoped to the listener so the event store and the frame codec
+// cannot start printing.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is inspectord's log for the listener threads"
+)]
+
 use std::io::{ErrorKind, Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::Arc;

@@ -77,7 +77,7 @@ impl CellStyle {
 /// character that later collected combining marks, and `Empty` is the CONTINUATION half of a wide
 /// pair (which renders as nothing — the lead paints both columns).
 #[derive(Clone, PartialEq, Eq, Debug)]
-#[allow(
+#[expect(
     variant_size_differences,
     reason = "the wide variant IS the point: a Box<str> keeps the composed case out of line, so the enum is \
               16 bytes and a whole grid stays one flat allocation per row"

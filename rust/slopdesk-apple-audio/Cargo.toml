@@ -146,10 +146,10 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-# `asbd` and `sample` are private modules whose items are `pub(crate)` because they are the crate's
-# internal vocabulary, not its API — the shape `slopdesk-apple-vt` and `slopdesk-apple-sck` disable
-# this for.
-redundant_pub_crate = "allow"
+# `redundant_pub_crate` stays DENIED here: the two modules it fires in, `asbd` and `converter`, carry
+# the conflict with the denied `unreachable_pub` and the `#![expect]` that resolves it, at the site.
+# The old crate-wide allow named `sample`, a module the lint does not fire in at all — which is the
+# whole argument for keeping the exemption where it can be checked.
 
 # Disabled, with a reason — the same two every workspace disables, for the same two reasons.
 multiple_crate_versions = "allow"

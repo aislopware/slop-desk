@@ -21,6 +21,17 @@
 //! clock** — which is why [`Verdict`] reports [`Verdict::frame_open`] and
 //! [`Verdict::frame_generation`] as FACTS and lets hostd decide how long it will wait on them.
 
+// `lines[..=last]` where `last` is an index this function just found IN `lines`.
+#![expect(
+    clippy::indexing_slicing,
+    reason = "`last` is an index into the slice being cut"
+)]
+// stderr IS screend's log — see `server.rs`. One line here, for a manifest this tier could not load.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is screend's log; launchd/hostd captures it"
+)]
+
 use std::collections::HashMap;
 use std::sync::LazyLock;
 

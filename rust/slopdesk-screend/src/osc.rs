@@ -9,6 +9,9 @@
 //!
 //! Nothing here affects rendering: the title is evidence about the agent, not screen state.
 
+// `payload[1..]` behind a check that the payload is non-empty.
+#![expect(clippy::indexing_slicing, reason = "the emptiness check precedes the cut")]
+
 /// Bound on one OSC body (herdr `MAX_BODY_BYTES`).
 const MAX_BODY_BYTES: usize = 4096;
 /// Retained-string cap in `char`s (herdr `AGENT_OSC_MAX_CHARS`).

@@ -274,7 +274,6 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 ///
 /// # Errors
 /// At the first step that cannot be completed, with the reason a reader can act on.
-#[allow(clippy::too_many_lines)]
 pub fn run(root: &Path, settings: &Settings) -> Result<(), String> {
     let layout = Layout::new(root, &settings.version);
     preflight(&layout, settings)?;

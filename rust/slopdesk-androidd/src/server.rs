@@ -27,6 +27,15 @@
 //! every mirror with it. Now the client dials this binary directly and hostd is not in the byte
 //! path at all.
 
+// stderr IS androidd's log — superd holds this process on a PTY and hostd reads the announce line
+// straight off it, so a diagnostic written here is the only way this daemon can be heard. The
+// opt-out is on the accept loop alone: a pure module that reaches for `eprintln!` still has to
+// argue for itself.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is androidd's log; hostd reads it off the PTY"
+)]
+
 use std::collections::HashMap;
 use std::io::Read as _;
 use std::net::{TcpListener, TcpStream};

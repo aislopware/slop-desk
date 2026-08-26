@@ -6,6 +6,14 @@
 //! (the registry's invariants are per-pane; a half-fed model self-heals on the next repaint,
 //! exactly as an evicted one does).
 
+// stderr IS screend's log, exactly as it is superd's — launchd/hostd captures it, and routing it
+// through a logging crate would add a dependency to say the same words. Scoped to the request loop
+// and to `detect.rs`; the model, the renderer and the rules stay printless.
+#![expect(
+    clippy::print_stderr,
+    reason = "stderr is screend's log; launchd/hostd captures it"
+)]
+
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -355,6 +363,7 @@ pub fn default_socket_path() -> PathBuf {
 mod tests {
     #![expect(
         clippy::expect_used,
+        clippy::indexing_slicing,
         reason = "a panic in a test is the failure report, not a fault"
     )]
 

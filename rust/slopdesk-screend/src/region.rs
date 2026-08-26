@@ -5,6 +5,13 @@
 //! reimplement `str::lines()` byte-exactly (Swift's grapheme-based `split` never splits `\r\n`)
 //! and re-derive Rust's `trim()` from `whitespacesAndNewlines`. Here those are the language.
 
+// The line slices here are cut at offsets this module derived from the same `lines` it is slicing
+// — a prompt index found by scanning it, a `top + 1` that scanning already proved is in range.
+#![expect(
+    clippy::indexing_slicing,
+    reason = "the slice bounds come from scanning the same lines"
+)]
+
 use crate::detect::Input;
 
 /// Which slice of the screen (or which OSC field) a rule reads.

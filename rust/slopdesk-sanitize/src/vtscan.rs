@@ -10,6 +10,12 @@
 //! Nothing here interprets a sequence. It answers only "where does this end", which is what makes
 //! it safe to share between a pass that DROPS queries and one that COUNTS alt-screen segments.
 
+// A VT scanner is a byte cursor, and `bytes[i]` is bounded by the `while` head that let control
+// reach it — `i < n` is the check, tested once per step rather than re-asked at every read. The
+// `get(i)` rewrite would replace one panic that cannot fire with a silent `None` arm that swallows
+// a real off-by-one, so the opt-out is per scanner file and stops at its edge.
+#![expect(clippy::indexing_slicing, reason = "the loop head bounds every cursor read")]
+
 /// The escape introducer.
 pub const ESC: u8 = 0x1B;
 /// `BEL`, which terminates an `OSC` (but not a `DCS`/`SOS`/`PM`/`APC`).

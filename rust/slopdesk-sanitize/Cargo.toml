@@ -104,12 +104,13 @@ if_then_some_else_none = "deny"
 lossy_float_literal = "deny"
 try_err = "deny"
 
-# Disabled, with reasons:
-# - `indexing_slicing`: a terminal grid IS an indexed structure, and every coordinate reaching it
-#   has already been clamped by `clamp_row`/`clamp_col` or a `min` against `cols`. Rewriting ~200
-#   grid touches as `get_mut(..)` + `else { return }` would replace one panic that cannot fire
-#   with a hundred silent no-ops that hide the bug if it ever could. The clamps are the check.
-indexing_slicing = "allow"
+# `indexing_slicing` was a crate-wide allow whose stated reason — a clamped terminal grid — described
+# a structure this crate does not contain. It is denied here now and exempted file by file, with the
+# reason each file can actually make: eight VT scanners where `bytes[i]` is bounded by the `while`
+# head that let control reach it, and `overprint`, which indexes vectors it built and measured
+# itself. The `get(i)` rewrite would trade one panic that cannot fire for a `None` arm that swallows
+# a real off-by-one, so the exemption is kept — just not one inch wider than the files that earn it.
+indexing_slicing = "deny"
 
 # Disabled, with a reason:
 # - `suboptimal_flops` / `imprecise_flops` (nursery): both want `f64::mul_add`, which is exactly the
