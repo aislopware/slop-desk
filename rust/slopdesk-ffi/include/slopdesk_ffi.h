@@ -6412,6 +6412,74 @@ bool slopdesk_window_should_restore(double current_x, double current_y,
                                     double original_x, double original_y,
                                     const double *displays, size_t display_count);
 
+/* ---- What a HiDPI virtual display IS, before WindowServer is asked for one ---------------
+ * The arithmetic half of `VirtualDisplay.swift`: everything the descriptor is filled with, and
+ * nothing that talks to the window server. Every answer here fails SILENTLY when it drifts —
+ * `applySettings:` returns YES for an over-budget framebuffer and leaves `displayID` at 0, a
+ * millimetre size off by a rounding step brings the display up SOFT rather than failing, a display
+ * placed over a real one makes WindowServer reflow the user's actual monitor arrangement, and a
+ * refresh mode that is not advertised is simply never granted.
+ *
+ * The geometry carries the FLOORED point grid and scale back beside the derived pixels on purpose:
+ * the mode is built from the points and `settings.hiDPI` from the scale, so a near-side `max(1, …)`
+ * would be a second answer to the same question rather than a defensive check. */
+typedef struct {
+  int32_t point_width;           /* the logical grid, floored at 1 — what a mode is built from */
+  int32_t point_height;
+  int32_t scale;                 /* the backing scale, floored at 1; >= 2 sets settings.hiDPI */
+  int32_t max_horizontal_pixels; /* the chip budget it was judged against, floored at 1 */
+  int32_t pixel_width;           /* the backing framebuffer, points x scale */
+  int32_t pixel_height;
+  bool exceeds_pixel_limit;      /* over budget: do NOT create the display, fall back to 1x */
+} SlopDeskVirtualDisplayGeometry;
+
+typedef struct {
+  double width;   /* millimetres */
+  double height;
+} SlopDeskVirtualDisplaySize;
+
+typedef struct {
+  double x;
+  double y;
+} SlopDeskVirtualDisplayOrigin;
+
+SlopDeskVirtualDisplayGeometry slopdesk_vd_geometry(int32_t point_width, int32_t point_height,
+                                                    int32_t scale, int32_t max_horizontal_pixels);
+
+/* The physical size to advertise for a target density. `target_ppi` is floored at 1.0 by an ORDERED
+ * comparison, so a NaN takes the floor rather than propagating; the division and the multiplication
+ * stay separate and left-to-right, because `virtualDisplayGeometry` pins both as bit patterns. */
+SlopDeskVirtualDisplaySize slopdesk_vd_size_in_millimeters(int32_t point_width, int32_t point_height,
+                                                           int32_t scale,
+                                                           int32_t max_horizontal_pixels,
+                                                           double target_ppi);
+double slopdesk_vd_default_target_ppi(void);
+
+/* Flush RIGHT of every display in `displays`, at y = 0 — the placement that can never overlap a
+ * real display. `displays` is 4 * display_count doubles: x, y, width, height per display.
+ *
+ * Pass each rect's RAW stored fields (`origin.x`, `size.width`), NOT `CGRect.width` — the far side
+ * standardises, and pre-abs'ing an extent while keeping the raw origin would move the right edge.
+ * The fold updates only on a strict `<`, so a tie keeps the FIRST display; an empty or NULL list
+ * answers the origin. */
+SlopDeskVirtualDisplayOrigin slopdesk_vd_origin_to_right(const double *displays,
+                                                         size_t display_count);
+
+/* The chip's horizontal framebuffer budget, from `machdep.cpu.brand_string`. Pro/Max/Ultra is
+ * tested BEFORE the bare "apple m" prefix, so "Apple M1 Max" is the wide budget. An unknown or
+ * absent brand answers the PERMISSIVE one — an over-budget create still fails safe through the
+ * `displayID == 0` guard, where an over-strict limit refuses a display that would have worked. */
+int32_t slopdesk_vd_chip_pixel_limit(const uint8_t *brand, size_t brand_len);
+
+/* The refresh modes to advertise for a capture source feeding an `fps` encode, descending: the
+ * 60 + 30 baseline, the capped 2:1 oversample that keeps the capture from beating against the
+ * commit, and the window's own rate when it exceeds 60.
+ *
+ * Writes into `out` only when `capacity` holds the WHOLE answer, and always returns how many rates
+ * the rule produced. A return above `capacity` means nothing was written — the order is part of the
+ * answer, so a truncated read is a wrong one; re-call with a buffer of the returned size. */
+size_t slopdesk_vd_refresh_rates(int32_t fps, double *out, size_t capacity);
+
 /* ---- What content size a window OPENS at, and where it lands ----------------------------
  * The sibling of the placement above, for the client's own window rather than a remoted one.
  * Numbers in, numbers out — the only pointer is the saved descriptor's text.

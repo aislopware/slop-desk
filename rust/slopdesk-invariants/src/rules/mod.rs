@@ -70,6 +70,7 @@ pub mod video_host;
 pub mod video_ports;
 pub mod video_seams;
 pub mod video_wire;
+pub mod virtual_display;
 pub mod window_placement;
 pub mod wire_codecs;
 pub mod workspace_document;
@@ -510,6 +511,11 @@ pub fn registry() -> Vec<Rule> {
             name: "host-session-machine",
             origin: "check-supervisor.sh (deleted)",
             check: video_seams::host_session_machine_crosses_by,
+        },
+        Rule {
+            name: "virtual-display",
+            origin: "docs/55 §4b",
+            check: virtual_display::virtual_display,
         },
         Rule {
             name: "parked-window",

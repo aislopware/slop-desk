@@ -10,18 +10,23 @@ import XCTest
 /// ## Why this suite exists
 ///
 /// All four are listed as frozen in `golden-check.sh` — kept in the corpus, not regenerated,
-/// "XCTest-pinned". **Nothing read them.** `VirtualDisplayGeometryTests` names three of the keys, but
-/// only as `// MARK:` headings above assertions written by hand; the corpus file is never opened
-/// there. `slopdesk-corevectors/main.swift` says the logic "lives solely in the Rust core
+/// "XCTest-pinned". **Nothing read them.** The hand-written suite beside the code named three of the
+/// keys, but only as `// MARK:` headings above assertions written by hand; the corpus file was never
+/// opened there. `slopdesk-corevectors/main.swift` said the logic "lives solely in the Rust core
 /// (`slopdesk_core::virtual_display_geometry`, reached via the C ABI)" and that `golden_parity`
-/// validates it — there is no such crate and no such test. Twenty-nine cases were pinned by a
+/// validated it — there was no such crate and no such test. Twenty-nine cases were pinned by a
 /// comment.
 ///
 /// What they pin that hand-written assertions do not: the millimetre conversion is compared by BIT
 /// PATTERN, so the `/ ppi * 25.4` operand order (never an FMA, never a reassociation) is fixed, and
-/// so is the `max(1, targetPPI)` ternary that must send NaN to 1.0 rather than propagate it. Those
-/// are the properties a port has to preserve, which is why these are worth reviving rather than
-/// dropping.
+/// so is the PPI floor that must send NaN to 1.0 rather than propagate it. Those are the properties
+/// a port has to preserve, which is why these were worth reviving rather than dropping.
+///
+/// The comment is true now, of a different crate: the arithmetic IS a Rust core —
+/// `slopdesk_video::virtual_display`, reached through `slopdesk-ffi` — and these vectors are
+/// replayed from BOTH sides. This suite drives the Swift face, so the marshalling is covered;
+/// `every_pinned_virtual_display_geometry_reports_what_swift_reported` and its three siblings in
+/// `rust/slopdesk-video/tests/golden_vectors.rs` drive the rule itself.
 ///
 /// The corpus is READ here, never written.
 final class VirtualDisplayGoldenVectorTests: XCTestCase {

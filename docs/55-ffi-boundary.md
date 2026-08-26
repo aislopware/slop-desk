@@ -1497,6 +1497,43 @@ keeps the sentinel and gets a ratchet on the guard instead. **The asymmetry is d
 door can pick the refusal that needs no knowledge of the crossing, it should, and where it cannot,
 the guard is the thing that gets pinned.**
 
+### The pair where one half never existed: `VirtualDisplayGeometry` and "Matches the core"
+
+Every other row in this section is two implementations that disagree. This one is one
+implementation and a *claim* about a second, and it is the cheapest drift in the catalogue to
+produce because it costs nothing to write.
+
+`VirtualDisplayGeometry` and `VirtualDisplayPlanner` each carried the comment **"Matches the core"**
+above their arithmetic, and `slopdesk-corevectors` said the same rules "live solely in the Rust core
+(`slopdesk_core::virtual_display_geometry`, reached via the C ABI)" and that a `golden_parity` test
+validated them. There was no such crate, no such door and no such test — and four keys of
+`golden/golden_vectors.json` (`virtualDisplayGeometry`, `vdOriginToRight`, `vdChipPixelLimit`,
+`vdRefreshRates`, twenty-nine cases) were listed as FROZEN *because* of that claim. Nothing opened
+the corpus. `6281fae2` then changed the refresh ladder on purpose, updated the hand-written suite
+beside the code, and left the frozen vectors recording the superseded law for a year.
+
+**The failure is not that the comment was wrong. It is that a comment was load-bearing.** A frozen
+vector is a promise that something else checks it; the freeze was granted on a sentence, and a
+sentence has no build step. So the shape to watch for is not a stale pair — it is a pair *asserted*
+where a check would fit: "matches X", "validated by Y", "kept in sync with Z". Each of those is a
+`Claim::Doors` or a `Claim::Exists` that somebody wrote in prose instead.
+
+It is a real pair now — `slopdesk_video::virtual_display` behind six doors — and it is checked
+three ways rather than described one: `lint-invariants`' `virtual-display` rule asserts the core
+exists, that the Swift face calls every door, and that none of the numbers (`25.4`, `6144`, `7680`,
+the density default, the mode ceiling, `max(1,`) is respelled beside the door that vends it; the
+corpus is replayed from BOTH sides, `VirtualDisplayGoldenVectorTests` through the face and
+`every_pinned_virtual_display_geometry_reports_what_swift_reported` and its three siblings through
+the rule; and the stale `vdRefreshRates` set is now PINNED as a disagreement on both sides, so
+refreshing the corpus and drifting a second time each fail loudly.
+
+One detail generalises past this row. The crossing hands back the FLOORED `point_width`,
+`point_height` and `scale` beside the derived pixels, because the near side builds a
+`CGVirtualDisplayMode` from the points and `settings.hiDPI` from the scale. Had it returned only the
+derived values, Swift would have kept its own `max(1, …)` — a floor spelled in two languages, which
+is this section's own subject and the one instance a rule about literals *cannot* see, because both
+copies would have been correct on every input anyone tested.
+
 ### The argument that let two of these live for a year: "a name, not a policy"
 
 Both rendezvous addresses carried the same note above the copy, and it was a good argument: a client

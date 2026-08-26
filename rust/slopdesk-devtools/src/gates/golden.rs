@@ -23,8 +23,10 @@
 //! superseded law since `6281fae2` changed it.
 //!
 //! So [`readers`] checks the claim. A reader must OPEN the corpus, not merely say the key's name:
-//! `VirtualDisplayGeometryTests` named three of these in `// MARK:` headings above hand-written
-//! assertions, which is exactly the shape that looks like coverage and is not.
+//! the hand-written virtual-display suite named three of these in `// MARK:` headings above
+//! assertions written by hand, which is exactly the shape that looks like coverage and is not. That
+//! suite is gone — the arithmetic is `slopdesk_video::virtual_display`'s, and the four keys are
+//! replayed from both sides, through the Swift face and through the rule.
 //!
 //! ## Updating the corpus
 //! Regenerate with NO `SLOPDESK_*` env set and merge surgically — never `>` over

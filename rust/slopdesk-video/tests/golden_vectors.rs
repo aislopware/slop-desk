@@ -69,7 +69,7 @@ use slopdesk_video::{
     CursorShapeMessage, CursorUpdate, FrameFragment, InputEvent, InputModifiers, MouseButton,
     MuxFrameFragmentHeader, NetworkStatsReport, RecoveryMessage, ReedSolomonFec, SwipeNavStatusMessage,
     VideoProtocolError, WindowGeometryMessage, adaptive_fec, capture_region, coordinate_mapping, input_event,
-    mux_header, nal_unit, window_placement, ycbcr,
+    mux_header, nal_unit, virtual_display, window_placement, ycbcr,
 };
 
 /// The pinned corpus, read at compile time so a missing or renamed file is a build failure rather
@@ -370,6 +370,180 @@ fn every_pinned_placement_puts_the_window_where_swift_put_it() {
             "{name}: needsResize"
         );
     }
+}
+
+#[test]
+fn every_pinned_virtual_display_geometry_reports_what_swift_reported() {
+    // `virtualDisplayGeometry` was frozen behind a note claiming a `slopdesk_core` crate validated
+    // it. There was no such crate, and the millimetre size is the answer a port gets wrong while
+    // still comparing equal to three decimal places: a reassociated `/ ppi * 25.4`, an FMA, or a
+    // `max(1, ppi)` that propagates a NaN instead of taking the floor. Hence bit patterns.
+    let root = corpus();
+    let vectors = group_of(&root, "virtualDisplayGeometry");
+    assert_eq!(
+        vectors.len(),
+        10,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for (index, vector) in vectors.iter().enumerate() {
+        let int = |field: &str| {
+            i32::try_from(vector[field].as_i64().expect("an integer")).expect("a framebuffer extent")
+        };
+        // The RAW inputs, floors included: several vectors carry a zero or negative point size
+        // precisely to pin what a degenerate request means.
+        let geometry = virtual_display::Geometry::new(
+            int("pointWidth"),
+            int("pointHeight"),
+            int("scale"),
+            int("maxHorizontalPixels"),
+        );
+        assert_eq!(
+            geometry.pixel_width(),
+            int("pixelWidth"),
+            "case {index}: pixelWidth"
+        );
+        assert_eq!(
+            geometry.pixel_height(),
+            int("pixelHeight"),
+            "case {index}: pixelHeight"
+        );
+        assert_eq!(
+            geometry.exceeds_pixel_limit(),
+            vector["exceedsPixelLimit"].as_bool().expect("a flag"),
+            "case {index}: exceedsPixelLimit"
+        );
+        let ppi = f64::from_bits(vector["ppiBits"].as_u64().expect("a bit pattern"));
+        let (width, height) = geometry.size_in_millimeters(ppi);
+        assert_eq!(
+            width.to_bits(),
+            vector["mmWidthBits"].as_u64().expect("a bit pattern"),
+            "case {index}: mm width"
+        );
+        assert_eq!(
+            height.to_bits(),
+            vector["mmHeightBits"].as_u64().expect("a bit pattern"),
+            "case {index}: mm height"
+        );
+    }
+}
+
+#[test]
+fn every_pinned_virtual_display_origin_clears_what_swift_cleared() {
+    let root = corpus();
+    let vectors = group_of(&root, "vdOriginToRight");
+    assert_eq!(
+        vectors.len(),
+        6,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let name = vector["name"].as_str().expect("a name");
+        // The corpus stores each display as the generator built the `CGRect`: a RAW origin and a
+        // RAW extent, which is what `CGRect.maxX` standardises on the way out. So the rects cross
+        // verbatim and the standardisation stays on the side that owns the fold.
+        let displays: Vec<VideoRect> = vector["displays"]
+            .as_array()
+            .expect("a display list")
+            .iter()
+            .map(|display| {
+                let bits = |field: &str| f64::from_bits(display[field].as_u64().expect("a bit pattern"));
+                VideoRect::xywh(bits("xBits"), bits("yBits"), bits("wBits"), bits("hBits"))
+            })
+            .collect();
+        let origin = virtual_display::origin_to_right(&displays);
+        assert_eq!(
+            origin.x.to_bits(),
+            vector["outXBits"].as_u64().expect("a bit pattern"),
+            "{name}: x"
+        );
+        assert_eq!(
+            origin.y.to_bits(),
+            vector["outYBits"].as_u64().expect("a bit pattern"),
+            "{name}: y"
+        );
+    }
+}
+
+#[test]
+fn every_pinned_chip_budget_is_the_one_swift_read() {
+    let root = corpus();
+    let vectors = group_of(&root, "vdChipPixelLimit");
+    assert_eq!(
+        vectors.len(),
+        8,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let brand = vector["cpuBrand"].as_str().expect("a brand");
+        assert_eq!(
+            i64::from(virtual_display::chip_pixel_limit(brand)),
+            vector["limit"].as_i64().expect("a limit"),
+            "{}",
+            if brand.is_empty() { "<empty brand>" } else { brand }
+        );
+    }
+}
+
+/// The one virtual-display key that DRIFTED, and the reason an unread pin is worse than none.
+///
+/// `6281fae2` deliberately changed this rule — `refresh_rates(60)` went from `[60, 30]` to
+/// `[120, 60, 30]` so the capture can oversample 2:1 instead of beating against the encode rate. It
+/// updated the suite beside the code and left the corpus alone, correctly in the sense that nothing
+/// read it and disastrously in the sense that the vectors have recorded a superseded law since.
+///
+/// Refreshing a FROZEN vector is the owner's call, not a test's (`CLAUDE.md` forbids regenerating
+/// over the corpus), so the disagreement is PINNED rather than hidden: `KNOWN_STALE` is the exact
+/// set of fps whose vectors predate that commit, and every other case is asserted for real. Both
+/// directions fail — refreshing the corpus makes `KNOWN_STALE` wrong and says so, and a NEW drift
+/// on 30 or 120 fails as a plain mismatch. `VirtualDisplayGoldenVectorTests` pins the same set
+/// through the Swift face, so the two sides cannot drift apart quietly either.
+#[test]
+fn every_pinned_refresh_ladder_is_the_one_swift_advertised() {
+    /// Each lacks the capped `min(120, 2 × fps)` oversample mode `6281fae2` added.
+    const KNOWN_STALE: [i64; 3] = [60, 90, 144];
+
+    let root = corpus();
+    let vectors = group_of(&root, "vdRefreshRates");
+    assert_eq!(
+        vectors.len(),
+        5,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    let mut stale = Vec::new();
+    for vector in &vectors {
+        let fps = vector["fps"].as_i64().expect("an fps");
+        let pinned: Vec<u64> = vector["ratesBits"]
+            .as_array()
+            .expect("a rate list")
+            .iter()
+            .map(|bits| bits.as_u64().expect("a bit pattern"))
+            .collect();
+        let produced: Vec<u64> = virtual_display::refresh_rates(i32::try_from(fps).expect("an fps"))
+            .iter()
+            .map(|rate| rate.to_bits())
+            .collect();
+        if KNOWN_STALE.contains(&fps) {
+            if produced != pinned {
+                stale.push(fps);
+            }
+        } else {
+            assert_eq!(
+                produced, pinned,
+                "fps {fps} — the ORDER is part of the answer (descending, deduped)"
+            );
+        }
+    }
+    stale.sort_unstable();
+    assert_eq!(
+        stale, KNOWN_STALE,
+        "the set of stale vdRefreshRates vectors moved. If the corpus was refreshed (the owner's call this \
+         is still waiting on), delete KNOWN_STALE and this assertion. If it was not, the rule changed and a \
+         vector nobody was reading has drifted a second time."
+    );
 }
 
 #[test]

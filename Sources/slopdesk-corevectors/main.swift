@@ -1370,10 +1370,14 @@ root["muxEnvelopes"] = [
 // neither existed, and while the note stood the 23 cases were pinned by nothing at all.)
 
 // NOTE: virtualDisplayGeometry / vdOriginToRight / vdChipPixelLimit / vdRefreshRates vectors are
-// FROZEN in golden_vectors.json, for the same reason as the capture keys above.
-// `VirtualDisplayGoldenVectorTests` replays them through the live `VirtualDisplayGeometry` /
-// `VirtualDisplayPlanner` — and found `vdRefreshRates` STALE: 6281fae2 added the 2x-oversample
-// mode and, with no reader, the corpus kept recording the superseded law.
+// FROZEN in golden_vectors.json, for the same reason as the capture keys above. They are now
+// replayed TWICE, like the placement keys below: `VirtualDisplayGoldenVectorTests` through the Swift
+// face, and `every_pinned_virtual_display_geometry_reports_what_swift_reported` and its three
+// siblings in `rust/slopdesk-video/tests/golden_vectors.rs` through `virtual_display`, which is
+// where the arithmetic lives. (The claim about a `slopdesk_core::virtual_display_geometry` crate is
+// gone with the note that made it; the replay above found `vdRefreshRates` STALE while it stood —
+// 6281fae2 added the 2x-oversample mode and, with no reader, the corpus kept recording the
+// superseded law. Both sides pin that disagreement explicitly rather than skipping it.)
 
 // NOTE: windowPlacement / windowFits vectors are FROZEN in golden_vectors.json, for the same
 // reason as the two notes above. They are now replayed TWICE: `WindowPlacementGoldenVectorTests`

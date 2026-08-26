@@ -330,6 +330,7 @@ pub mod video_packetize;
 pub mod video_policy;
 pub mod video_reassemble;
 pub mod vimotion;
+pub mod virtual_display;
 pub mod wait_scan;
 pub mod watch;
 pub mod window_feed;

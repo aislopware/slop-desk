@@ -142,6 +142,11 @@
 //!   window's absence from a sweep proves. LINKED, through `slopdesk-ffi`'s `ax`, which drives it
 //!   alongside `slopdesk-apple-ax`. Every arm here was previously unreachable by any test: the
 //!   Swift it came from needed an Accessibility grant to run a line of it.
+//! - [`virtual_display`] — what a `HiDPI` virtual display IS before `WindowServer` is asked for
+//!   one: the framebuffer a chip can drive, the millimetres that decide the reported density, the
+//!   origin past every real display, and the refresh modes a capture needs advertised. LINKED,
+//!   through `slopdesk-ffi`'s `virtual_display`. The Swift it came from claimed in a comment to
+//!   match a core that did not exist, and four keys of the golden corpus were pinned by that claim.
 //!
 //! ## Invariants
 //!
@@ -244,6 +249,7 @@ pub mod swipe_peel;
 pub mod swipe_recognizer;
 pub mod trendline;
 pub mod video_control;
+pub mod virtual_display;
 pub mod window_feed;
 pub mod window_feed_host;
 pub mod window_geometry;
