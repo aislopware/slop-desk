@@ -855,11 +855,12 @@ impl PaneSession {
         self.resize.is_settling()
     }
 
-    /// Whether a delayed redraw nudge is armed. A regression seam: the nudge itself is a `SIGWINCH`
-    /// to somebody else's process group, which nothing this side of the kernel can observe.
+    /// How many delayed redraw nudges this pane has scheduled, ever. A regression seam: the nudge
+    /// itself is a `SIGWINCH` to somebody else's process group, which nothing this side of the
+    /// kernel can observe.
     #[must_use]
-    pub fn has_armed_redraw_nudge(&self) -> bool {
-        self.resize.has_armed_nudge()
+    pub fn scheduled_redraw_nudges(&self) -> u64 {
+        self.resize.scheduled_nudges()
     }
 
     /// Ends this pane: the teardown, WITH the child.

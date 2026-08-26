@@ -1183,10 +1183,12 @@ fn a_clients_offer_resizes_the_terminal_and_arms_one_nudge() {
             .is_some_and(|size| size.cols == 100 && size.rows == 40)
     });
     assert_eq!(session.resolved_grid(), (100, 40));
-    assert!(
-        session.has_armed_redraw_nudge(),
-        "a size change schedules exactly one delayed SIGWINCH",
-    );
+    // Waited for rather than read once: the arm happens just AFTER the ioctl the wait above keyed
+    // on, and the nudge is 90 ms wide, so a snapshot of "is one pending" is a race in both
+    // directions. The count is monotonic, so this settles on one and stays there.
+    eventually("the redraw nudge to be scheduled", || {
+        session.scheduled_redraw_nudges() == 1
+    });
 
     session.relinquish();
     drop(slave);

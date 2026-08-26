@@ -255,10 +255,10 @@ impl Resize {
             .is_settling()
     }
 
-    /// Whether a delayed redraw nudge is armed. A regression seam: the nudge itself is a `SIGWINCH`
-    /// to somebody else's process group, which a test cannot observe.
-    pub(crate) fn has_armed_nudge(&self) -> bool {
-        self.timers.is_armed(Timer::Nudge)
+    /// How many delayed redraw nudges this pane has scheduled, ever. A regression seam: the nudge
+    /// itself is a `SIGWINCH` to somebody else's process group, which a test cannot observe.
+    pub(crate) fn scheduled_nudges(&self) -> u64 {
+        self.timers.armed(Timer::Nudge)
     }
 
     /// Drops every member, for a pane being torn down: nobody holds a dead pane at a size.

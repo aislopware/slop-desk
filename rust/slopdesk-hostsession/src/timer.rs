@@ -66,6 +66,8 @@ impl core::fmt::Debug for Pending {
 #[derive(Debug, Default)]
 struct Table {
     slots: BTreeMap<Timer, Pending>,
+    /// How many times each kind has been armed, ever. Monotonic on purpose — see [`Timers::armed`].
+    armings: BTreeMap<Timer, u64>,
     stopped: bool,
 }
 
@@ -107,13 +109,18 @@ impl Timers {
                 at: Instant::now() + delay,
                 body,
             });
+            *table.armings.entry(kind).or_default() += 1;
         }
         self.state.changed.notify_all();
         self.ensure_running();
     }
 
-    /// Whether `kind` has an action waiting. A test seam: the nudge is a `SIGWINCH` to somebody
-    /// else's process group, which nothing this side of the kernel can observe.
+    /// Whether `kind` has an action waiting RIGHT NOW.
+    ///
+    /// `cfg(test)` because it is only sound for a caller that controls the delay, and the only
+    /// such caller is the suite below. A 90 ms nudge observed from another thread can fire between
+    /// the arm and the read, which is why anything holding a real one asks [`Timers::armed`].
+    #[cfg(test)]
     pub(crate) fn is_armed(&self, kind: Timer) -> bool {
         self.state
             .table
@@ -121,6 +128,25 @@ impl Timers {
             .unwrap_or_else(PoisonError::into_inner)
             .slots
             .contains_key(&kind)
+    }
+
+    /// How many times `kind` has been armed, ever. A test seam: the nudge is a `SIGWINCH` to
+    /// somebody else's process group, which nothing this side of the kernel can observe.
+    ///
+    /// A COUNT rather than "is one pending", because the assertion those tests want to make is
+    /// "a size change schedules exactly one" — which a snapshot of the slot cannot answer either
+    /// way. It reads false once the timer fires, so on a loaded machine the same correct behaviour
+    /// passes or fails by how fast the reader got there; and it reads true for a drag that armed
+    /// sixty, which is the regression the seam exists to catch. Monotonic answers both.
+    pub(crate) fn armed(&self, kind: Timer) -> u64 {
+        self.state
+            .table
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .armings
+            .get(&kind)
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Drops every pending action, ends the thread and JOINS it.
@@ -292,16 +318,41 @@ mod tests {
         timers.stop();
     }
 
-    /// The readout the resize suite asks "is a redraw nudge pending" with: armed while waiting,
-    /// disarmed once the body has been taken.
+    /// The right-now readout: armed while waiting, gone once the body has been taken.
+    ///
+    /// A second wide rather than the nudge's own 90 ms, because the first assertion is a SNAPSHOT
+    /// — a delay short enough to elapse while a loaded machine gets around to scheduling this
+    /// thread would fail a timer that behaved perfectly. That fragility is the whole reason
+    /// anything reading from another thread asks [`Timers::armed`] instead.
     #[test]
     fn a_slot_reads_as_armed_until_it_fires() {
         let timers = Timers::new();
         let (sender, signals) = channel();
-        timers.arm(Timer::Nudge, Duration::from_millis(30), signal(&sender, "nudge"));
+        timers.arm(Timer::Nudge, Duration::from_secs(1), signal(&sender, "nudge"));
         assert!(timers.is_armed(Timer::Nudge));
-        assert_eq!(fired(Duration::from_secs(2), &signals), Some("nudge"));
+        assert_eq!(fired(Duration::from_secs(5), &signals), Some("nudge"));
         assert!(!timers.is_armed(Timer::Nudge));
+        timers.stop();
+    }
+
+    /// The readout the resize suite asks "how many nudges did that schedule" with. Monotonic: a
+    /// cancel-replace counts twice and a fired timer keeps its count, which is exactly what makes
+    /// it readable from a thread that does not own the delay.
+    #[test]
+    fn every_arm_is_counted_including_the_one_it_replaced() {
+        let timers = Timers::new();
+        let (sender, signals) = channel();
+        assert_eq!(timers.armed(Timer::Nudge), 0);
+        timers.arm(Timer::Nudge, Duration::from_secs(30), signal(&sender, "replaced"));
+        timers.arm(Timer::Nudge, Duration::from_millis(5), signal(&sender, "nudge"));
+        assert_eq!(timers.armed(Timer::Nudge), 2);
+        assert_eq!(fired(Duration::from_secs(2), &signals), Some("nudge"));
+        assert_eq!(timers.armed(Timer::Nudge), 2, "firing does not decrement");
+        assert_eq!(
+            timers.armed(Timer::Settle),
+            0,
+            "one kind's arms are not another's"
+        );
         timers.stop();
     }
 
