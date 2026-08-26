@@ -1,6 +1,4 @@
 import CoreGraphics
-import Foundation
-import SlopDeskProtocol
 import SlopDeskTerminal
 import XCTest
 
@@ -45,47 +43,5 @@ final class TerminalLetterboxOnIOSTests: XCTestCase {
         XCTAssertEqual(fit.scale, 1, "shrink-to-fit, never magnify")
         XCTAssertEqual(fit.contentRect.width, cell.width * 20, accuracy: 0.001)
         XCTAssertEqual(fit.contentRect.height, cell.height * 5, accuracy: 0.001)
-    }
-
-    /// The caption the bars carry: which client is holding this pane at a size the phone did not pick.
-    /// Without it the pane is the wrong size for no stated reason and the min-fold reads as a bug.
-    func testTheReadoutNamesTheMacThatClampedTheGrid() {
-        let mac = UUID()
-        let phone = UUID()
-        let pane = WorkspaceRosterPane(
-            paneID: UUID(),
-            resolvedCols: 120,
-            resolvedRows: 40,
-            attachments: [
-                .init(clientInstanceID: mac, contributes: true, cols: 120, rows: 40),
-                .init(clientInstanceID: phone, contributes: false, cols: 44, rows: 46),
-            ],
-        )
-        XCTAssertEqual(
-            TerminalGridReadout.text(
-                for: pane, labels: [mac: "MacBook Pro"], selfClientInstanceID: phone,
-            ),
-            "120×40 · sized by MacBook Pro",
-        )
-    }
-
-    /// …and a phone that IS the one sizing the pane is told the grid alone. A client that chose the
-    /// size needs no explanation of it.
-    func testAPhoneThatChoseTheGridIsNotToldWhoChoseIt() {
-        let phone = UUID()
-        let pane = WorkspaceRosterPane(
-            paneID: UUID(),
-            resolvedCols: 44,
-            resolvedRows: 46,
-            attachments: [
-                // A pane no VOTER holds is sized by its size-passive members, and the roster says so
-                // (docs/45 §8.3 rule 3) — this is the lone-phone shape.
-                .init(clientInstanceID: phone, contributes: true, cols: 44, rows: 46),
-            ],
-        )
-        XCTAssertEqual(
-            TerminalGridReadout.text(for: pane, labels: [:], selfClientInstanceID: phone),
-            "44×46",
-        )
     }
 }

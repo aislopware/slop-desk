@@ -149,6 +149,7 @@ pub mod global_search;
 #[cfg(target_os = "macos")]
 pub mod git_status;
 pub mod grid_geometry;
+pub mod grid_readout;
 pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;

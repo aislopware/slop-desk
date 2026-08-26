@@ -334,7 +334,7 @@ let package = Package(
         // target whose whole dependency list was `SlopDeskProtocol`. The letterbox beside it did.
         .target(
             name: "SlopDeskTerminal",
-            dependencies: ["SlopDeskProtocol", "CSlopDeskFFI"],
+            dependencies: ["CSlopDeskFFI"],
             linkerSettings: ffiCLibraries,
         ),
 

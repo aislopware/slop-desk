@@ -12585,6 +12585,39 @@ size_t slopdesk_ws_mirror_holders(const uint32_t *attachments, size_t attachment
                                   const SlopDeskWsPresenceClient *clients, size_t clients_len,
                                   bool has_own, uint32_t own, ptrdiff_t *out, size_t capacity);
 
+/* ---- grid readout: what a pane says about a grid it did not choose (docs/45 §8.3 rule 7) ----
+ *
+ * The roster's THIRD join, and the only one that ends in a sentence. The join itself crosses the
+ * way the two above do — tokens in, a POSITION out, no UUID and no roster of labels — and the
+ * printing is a second door that takes exactly ONE label, the one the join already picked. Folding
+ * them together would mean crossing every client's label to print one of them.
+ */
+// One attachment's standing offer, as the join sees it. The size is what the client ASKED for, not
+// what the host resolved: only a CONTRIBUTING offer can be the reason the grid came out where it did.
+typedef struct {
+    uint32_t token;       // the dense token the caller minted for this attachment's client
+    uint32_t cols;        // the columns this attachment stands for
+    uint32_t rows;        // the rows this attachment stands for
+    bool     contributes; // the attachment votes in the pane's `min` fold at all
+} SlopDeskWsGridOffer;
+// Who the resolved grid is attributed to: 0 the host has published none · 1 the grid alone · 2 the
+// client at the position written to `position` · 3 a client nothing names. `position` is written for
+// 2 ALONE, so a caller reading it on any other code reads whatever it left there. The clamping
+// contributor is the FIRST contributing offer whose standing size equals the resolved grid — the
+// roster's own order decides, so tied clients do not flicker on every presence frame. This client's
+// own clamp answers 1: a client that chose the grid needs no explanation of it.
+uint8_t slopdesk_ws_grid_clamped_by(uint32_t resolved_cols, uint32_t resolved_rows,
+                                    const SlopDeskWsGridOffer *offers, size_t offers_len,
+                                    const SlopDeskWsPresenceClient *clients, size_t clients_len,
+                                    bool has_own, uint32_t own, uint32_t *position);
+// The sentence — `120×40 · sized by MacBook Pro`. `attribution` is the code above and `label` is
+// read for 2 alone; an empty label under 2 prints the unnamed word rather than trailing off. Returns
+// 0 only when the host has resolved no grid, which cannot collide with a real answer because a
+// published grid always prints at least `1×1`.
+size_t slopdesk_ws_grid_readout(uint32_t cols, uint32_t rows, uint8_t attribution,
+                                const unsigned char *label, size_t label_len, unsigned char *out,
+                                size_t capacity);
+
 /* ---------------------------------------------------------------------------- *
  * channel_run — which run of the workspace channel still speaks, and what it
  * still owns.

@@ -306,4 +306,88 @@ public enum MirrorFold {
             clients.indices.contains(position) ? position : nil
         }
     }
+
+    // MARK: The roster's third join, and the one sentence it ends in
+
+    /// One attachment's standing offer, as the grid readout's join reads it.
+    ///
+    /// The size is what the client ASKED for, not what the host resolved. Only a CONTRIBUTING offer
+    /// can be the reason the grid came out where it did.
+    public struct GridOffer: Equatable, Sendable {
+        /// The dense token minted for the attachment's client instance id.
+        public var token: UInt32
+        /// Whether the attachment votes in the pane's `min` fold at all.
+        public var contributes: Bool
+        /// The columns the attachment stands for.
+        public var cols: UInt32
+        /// The rows the attachment stands for.
+        public var rows: UInt32
+
+        public init(token: UInt32, contributes: Bool, cols: UInt32, rows: UInt32) {
+            self.token = token
+            self.contributes = contributes
+            self.cols = cols
+            self.rows = rows
+        }
+    }
+
+    /// docs/45 §8.3 rule 7's readout for a pane — `120×40 · sized by MacBook Pro` — or `nil` when
+    /// the host has resolved no grid for it and there is nothing honest to say.
+    ///
+    /// This is what makes the size policy debuggable on hardware: a phone is size-passive host-side,
+    /// so the resolved grid is whatever the Macs on the pane folded to, and without a readout the
+    /// user sees a pane that is the wrong size for no stated reason.
+    ///
+    /// TWO calls, with the caller's own lookup between them. The join answers a POSITION, this side
+    /// reads `labels` at it, and the sentence is printed from that ONE label — so no roster of
+    /// labels crosses to print one of them. Every literal in the answer is the far side's, including
+    /// the word for a contributor nothing can name.
+    ///
+    /// `labels` is parallel to `clients`; a position it does not reach reads as unnamed, which is
+    /// the same answer an empty label gets.
+    public static func gridReadout(
+        cols: UInt32,
+        rows: UInt32,
+        offers: [GridOffer],
+        clients: [PresenceClient],
+        labels: [String],
+        own: UInt32?,
+    ) -> String? {
+        let lentOffers = offers.map { offer in
+            SlopDeskWsGridOffer(
+                token: offer.token, cols: offer.cols, rows: offer.rows, contributes: offer.contributes,
+            )
+        }
+        let lentClients = clients.map { seat in
+            SlopDeskWsPresenceClient(token: seat.token, labelled: seat.labelled, viewing: seat.viewing)
+        }
+        var position = UInt32.max
+        let code = lentOffers.withUnsafeBufferPointer { standing in
+            lentClients.withUnsafeBufferPointer { seats in
+                slopdesk_ws_grid_clamped_by(
+                    cols, rows,
+                    standing.baseAddress, standing.count,
+                    seats.baseAddress, seats.count,
+                    own != nil, own ?? 0, &position,
+                )
+            }
+        }
+        let named = code == 2 && labels.indices.contains(Int(position)) ? labels[Int(position)] : ""
+        let label = Array(named.utf8)
+        // The answer is two ten-digit numbers, a two-byte multiplication sign, a thirteen-byte
+        // joiner, and the longer of the label or the fourteen-byte word that stands in for it. 64
+        // covers everything but the label, so the bound is arithmetic rather than a guess.
+        var out = [UInt8](repeating: 0, count: 64 + max(label.count, 16))
+        let count = label.withUnsafeBufferPointer { text in
+            out.withUnsafeMutableBufferPointer { buffer in
+                slopdesk_ws_grid_readout(
+                    cols, rows, code, text.baseAddress, text.count,
+                    buffer.baseAddress, buffer.count,
+                )
+            }
+        }
+        guard count > 0, count <= out.count else { return nil }
+        // swiftlint:disable:next optional_data_string_conversion
+        return String(decoding: out.prefix(count), as: UTF8.self)
+    }
 }

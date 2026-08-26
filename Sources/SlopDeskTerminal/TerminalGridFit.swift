@@ -1,7 +1,6 @@
 import CoreGraphics
 import CSlopDeskFFI
 import Foundation
-import SlopDeskProtocol
 
 /// Where a grid the client did NOT choose goes inside the space it has (docs/45 §8.3).
 ///
@@ -127,39 +126,5 @@ public extension TerminalLetterbox {
             fit: TerminalLetterbox(verdict),
             natural: CGSize(width: verdict.natural_width, height: verdict.natural_height),
         )
-    }
-}
-
-/// What the pane says about a grid it did not choose — docs/45 §8.3 rule 7's readout, verbatim:
-/// `120×40 · sized by MacBook Pro`.
-///
-/// This is what makes the size policy debuggable on hardware. Without it a user on a phone sees a
-/// pane that is the wrong size for no stated reason, and the min-fold looks like a bug rather than
-/// a rule.
-public enum TerminalGridReadout {
-    /// What an attachment with no roster label is called — `slopdesk-client` opens no workspace
-    /// channel, so the host publishes its attachment with the all-zero id and nothing can name it.
-    public static let unlabelledContributor = "another client"
-
-    /// The readout for `pane`, or `nil` when the host has not resolved a grid for it (0×0) and
-    /// there is nothing honest to say.
-    ///
-    /// The clamping contributor is the first CONTRIBUTING attachment whose standing offer equals the
-    /// resolved grid — the roster's own order decides, so the answer does not flicker between tied
-    /// clients on every presence frame. `selfClientInstanceID` is omitted from the attribution: a
-    /// client that chose the grid needs no explanation of it.
-    public static func text(
-        for pane: WorkspaceRosterPane,
-        labels: [UUID: String],
-        selfClientInstanceID: UUID?,
-    ) -> String? {
-        guard pane.resolvedCols > 0, pane.resolvedRows > 0 else { return nil }
-        let grid = "\(pane.resolvedCols)×\(pane.resolvedRows)"
-        let clamping = pane.attachments.first {
-            $0.contributes && $0.cols == pane.resolvedCols && $0.rows == pane.resolvedRows
-        }
-        guard let clamping, clamping.clientInstanceID != selfClientInstanceID else { return grid }
-        let label = labels[clamping.clientInstanceID] ?? unlabelledContributor
-        return grid + " · sized by " + label
     }
 }

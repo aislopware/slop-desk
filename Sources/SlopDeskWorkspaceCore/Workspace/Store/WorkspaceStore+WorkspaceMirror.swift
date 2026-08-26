@@ -435,14 +435,29 @@ extension WorkspaceStore {
         guard let roster = workspaceMirror.roster else { return nil }
         let objectID = documentPaneID(id)
         guard let record = roster.panes.first(where: { $0.paneID == objectID }) else { return nil }
-        var labels: [UUID: String] = [:]
-        for client in roster.clients where !client.label.isEmpty {
-            labels[client.clientInstanceID] = client.label
+        var tokens = RosterTokens()
+        let clients = roster.clients.map { client in
+            MirrorFold.PresenceClient(
+                token: tokens.token(for: client.clientInstanceID),
+                labelled: !client.label.isEmpty,
+                viewing: false,
+            )
         }
-        return TerminalGridReadout.text(
-            for: record,
-            labels: labels,
-            selfClientInstanceID: workspaceChannel?.clientInstanceID,
+        let offers = record.attachments.map { attachment in
+            MirrorFold.GridOffer(
+                token: tokens.token(for: attachment.clientInstanceID),
+                contributes: attachment.contributes,
+                cols: UInt32(attachment.cols),
+                rows: UInt32(attachment.rows),
+            )
+        }
+        return MirrorFold.gridReadout(
+            cols: UInt32(record.resolvedCols),
+            rows: UInt32(record.resolvedRows),
+            offers: offers,
+            clients: clients,
+            labels: roster.clients.map(\.label),
+            own: workspaceChannel.map { tokens.token(for: $0.clientInstanceID) },
         )
     }
 

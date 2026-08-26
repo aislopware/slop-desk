@@ -138,6 +138,7 @@ pub mod find_bar;
 pub mod frecency;
 pub mod git_line;
 pub mod global_search;
+pub mod grid_readout;
 pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;

@@ -16,6 +16,8 @@ const SWIFT_METRICS: &str = "Sources/SlopDeskTerminal/TerminalSurface.swift";
 const SWIFT_FIT: &str = "Sources/SlopDeskTerminal/TerminalGridFit.swift";
 const RUST_GEOMETRY: &str = "rust/slopdesk-terminal/src/geometry.rs";
 const RUST_LINK_HIT: &str = "rust/slopdesk-terminal/src/link_hit.rs";
+const SWIFT_FOLDS: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/StoreFolds.swift";
+const RUST_READOUT: &str = "rust/slopdesk-workspace/src/grid_readout.rs";
 
 /// The input surface: which box to offer, and which bytes coming back are the PTY echoing what the
 /// compose box just typed.
@@ -119,6 +121,58 @@ pub fn grid_geometry(tree: &Tree) -> Report {
             message: "{files} spells the span arithmetic again instead of folding through `geometry` — the \
                       cross-language pair this rule used to hold OPEN is closed, and a second spelling \
                       anywhere reopens it",
+        },
+    ];
+    check_all(tree, &claims)
+}
+
+/// What the pane SAYS about that grid, and the one place it may be said.
+///
+/// docs/45 §8.3 rule 7's readout — `120×40 · sized by MacBook Pro` — is the roster's THIRD join,
+/// and it lives in `slopdesk_workspace::grid_readout` beside the two joins whose shape it borrows:
+/// a client crosses as a dense token, the answer is a POSITION, and only the ONE label the join
+/// picked is ever printed through.
+///
+/// The Swift original sat in `SlopDeskTerminal` next to the letterbox because both were about a
+/// grid the client did not choose. That was the wrong seam: the letterbox is GEOMETRY and the
+/// readout is a ROSTER join, and keeping them together meant a terminal target holding a workspace
+/// payload type just to read four fields off it. Splitting them dropped `SlopDeskProtocol` out of
+/// that target's dependency list entirely.
+///
+/// The ban is on the JOINER, middot and all, and on nothing around it. Every neighbouring token is
+/// legitimately somebody else's: "sized by" is ordinary prose across the video host, "another
+/// client" is `WorkspaceStore`'s live `unlabelledHolder` for the holders list beside this one, and
+/// `\(w)×\(h)` is how half the app prints a size. `· sized by` is the readout and only the readout,
+/// which is what makes it the one token worth pinning.
+///
+/// `Tests` is deliberately NOT scanned, for the reason `search_surface` states: the suite asserts
+/// the finished readout AS A STRING on purpose, and a test that compared it to a Rust constant
+/// would pass on the day the sentence changed.
+#[must_use]
+pub fn grid_readout(tree: &Tree) -> Report {
+    let claims = [
+        Claim::Exists {
+            path: RUST_READOUT,
+            message: "the roster's third join — which client clamped this pane, and the sentence that says \
+                      so",
+        },
+        Claim::Doors {
+            path: SWIFT_FOLDS,
+            entries: &["slopdesk_ws_grid_clamped_by", "slopdesk_ws_grid_readout"],
+            message: "MirrorFold no longer calls {entry} — who clamped a pane's grid, and what the pane \
+                      says about it, are slopdesk_workspace::grid_readout's",
+        },
+        Claim::NoneUnder {
+            roots: &["Sources", "Apps"],
+            extensions: SWIFT,
+            pattern: r"· sized by|TerminalGridReadout",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "the grid readout is spelled again in {files} — the sentence and the join behind it \
+                      are Rust's, and a Swift half-sentence is how the readout drifted from docs/45 §8.3 \
+                      rule 7 the first time",
         },
     ];
     check_all(tree, &claims)
@@ -419,6 +473,67 @@ fn span_rect(metrics: CellMetrics, span: LinkSpan) -> Rect {
                 .violations()
                 .iter()
                 .any(|v| v.contains("both the drawn rect and the measured hit fold through")),
+        );
+    }
+
+    /// The readout drifted from its rule once already, by being a Swift sentence assembled beside
+    /// the roster instead of a verdict read off it. What this seeds is that return — the door
+    /// dropped, and the sentence spelled again in Swift.
+    #[test]
+    fn the_grid_readout_may_not_be_spelled_in_swift_again() {
+        let folds = "\
+extension MirrorFold {
+    static func gridReadout(cols: UInt32, rows: UInt32, own: UInt32?) -> String? {
+        let code = slopdesk_ws_grid_clamped_by(cols, rows, standing, seats, own != nil, own ?? 0, &at)
+        return read { out, cap in slopdesk_ws_grid_readout(cols, rows, code, text, out, cap) }
+    }
+}
+";
+        let fixture = Fixture::new("grid-readout");
+        fixture
+            .write(super::RUST_READOUT, "pub fn clamped_by() {}\n")
+            .write(super::SWIFT_FOLDS, folds);
+        assert!(super::grid_readout(&fixture.tree()).is_clean());
+
+        // The sentence, back in Swift beside the join that was supposed to answer it.
+        fixture.write(
+            "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+WorkspaceMirror.swift",
+            "return grid + \" · sized by \" + label\n",
+        );
+        let report = super::grid_readout(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("grid readout is spelled again")),
+            "{report:?}"
+        );
+
+        // …and the door dropped, which is the same drift one step earlier.
+        fixture
+            .remove("Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+WorkspaceMirror.swift")
+            .write(
+                super::SWIFT_FOLDS,
+                &folds.replace("slopdesk_ws_grid_clamped_by(", "firstClamping("),
+            );
+        let report = super::grid_readout(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk_ws_grid_clamped_by")),
+            "{report:?}"
+        );
+
+        // And the crate the whole rule folds through, gone.
+        fixture
+            .write(super::SWIFT_FOLDS, folds)
+            .remove(super::RUST_READOUT);
+        assert!(
+            super::grid_readout(&fixture.tree())
+                .violations()
+                .iter()
+                .any(|v| v.contains("the roster's third join")),
         );
     }
 

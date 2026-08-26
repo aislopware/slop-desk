@@ -221,6 +221,11 @@ pub fn registry() -> Vec<Rule> {
             check: terminal_surface::grid_geometry,
         },
         Rule {
+            name: "grid-readout",
+            origin: "docs/45 §8.3",
+            check: terminal_surface::grid_readout,
+        },
+        Rule {
             name: "link-scan",
             origin: "docs/55 §4b",
             check: terminal_surface::link_scan,
