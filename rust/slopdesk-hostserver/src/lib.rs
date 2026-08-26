@@ -67,19 +67,22 @@
 
 //! ## What stage E landed here
 //!
-//! Two of the six named metadata performers `docs/60` §4 left as Swift, as FOLDS with a door each:
-//! [`pathaction`] — the tilde expansion, the absolute-path refusal and the existence check in front
-//! of ⌘click's open and reveal — and [`clipsync`] — the image-before-text preference, the codec's
-//! cap, the file-copy refusal and the echo guard in front of the two clipboard verbs. The Apple
-//! halves are `slopdesk-apple-app`'s two new `NSWorkspace` verbs and the new
-//! `slopdesk-apple-pasteboard`; both doors here are three lines over them.
+//! Three FOLDS, each with a door it does not itself implement. Two are of the six named metadata
+//! performers `docs/60` §4 left as Swift: [`pathaction`] — the tilde expansion, the absolute-path
+//! refusal and the existence check in front of ⌘click's open and reveal — and [`clipsync`] — the
+//! image-before-text preference, the codec's cap, the file-copy refusal and the echo guard in front
+//! of the two clipboard verbs. The Apple halves are `slopdesk-apple-app`'s two new `NSWorkspace`
+//! verbs and the new `slopdesk-apple-pasteboard`; both doors here are three lines over them. The
+//! third is [`repowatch`], `RepoStatusWatcher`'s machinery: the live-watch table, the debounce and
+//! the thread a reading runs on, over `slopdesk-apple-fsevents`.
 //!
-//! Neither is WIRED into [`metadata`]'s routing, and that is §5's carve-out rather than an
+//! NONE of the three is reached by anything shipping, and that is §5's carve-out rather than an
 //! omission. `HostMetadata`'s own module doc argues it for the three verbs it could already serve:
 //! the pasteboard and the Finder are host-GLOBAL, so a second performer over them would be two
-//! implementations of one machine's clipboard for as long as the Swift hostd runs. Stage F retires
-//! that hostd and injects these; until then they are linked by nothing shipping, exactly as §5
-//! says.
+//! implementations of one machine's clipboard for as long as the Swift hostd runs. [`repowatch`] is
+//! a lifecycle rather than a route, so it has nothing to be wired into at all — hostd starts one,
+//! or it does not. Stage F retires that hostd and starts all three; until then they are linked by
+//! nothing shipping, exactly as §5 says.
 
 pub mod adopt;
 pub mod bridge;
@@ -96,6 +99,7 @@ mod live;
 pub mod metadata;
 mod pane;
 pub mod pathaction;
+pub mod repowatch;
 pub mod service;
 mod serviceproc;
 mod sessions;

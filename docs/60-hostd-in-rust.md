@@ -988,9 +988,9 @@ to live outside `slopdesk-apple-*`; that trade is not worth taking for one watch
 exist.
 
 **Stage E ✅ landed** — three framework crates and the two folds over them:
-`rust/slopdesk-apple-fsevents` (4 tests), `rust/slopdesk-apple-pasteboard` (10),
+`rust/slopdesk-apple-fsevents` (4 tests), `rust/slopdesk-apple-pasteboard` (12),
 `slopdesk_apple_app::{open_path, reveal_path}` (1 more), and
-`rust/slopdesk-hostserver/src/{clipsync,pathaction}.rs` plus 35 tests. `§7`'s row is
+`rust/slopdesk-hostserver/src/{clipsync,pathaction}.rs` plus 36 tests. `§7`'s row is
 `one-rust-home-per-apple-area` in `rules/apple_floors.rs`.
 
 **The FSEvents callback carries NO context pointer, and that is the whole design.**
@@ -1042,13 +1042,46 @@ refused rather than resolved — the closed answer. The bug is the EMPTY-home ar
 "")` is `/rest`, which is ABSOLUTE, so a daemon launched without `HOME` would have silently reread
 `~/Documents` as the root's `Documents`. The Rust refuses every tilde against an empty home.
 
-**The hole this stage names rather than fills.** `HostEnvironment` (350) and the Rust CALLER that
-drives `slopdesk-apple-fsevents` off `slopdesk_muxsession::repo_watch` are still stage E's, and they
-are the half that is open: the framework crates landed, and one of the two folds over them did not.
-Neither is a framework port — `HostEnvironment` is `SLOPDESK_*` gate resolution and an `EnvConfig`
-overlay with four `Bundle`/TCC reads at its edge, and the watcher fold is a map of toplevel to
-`Watch` driving rules that already exist in `slopdesk_muxsession::repo_watch`. They are named here
-so the next increment finds a list rather than a surprise, exactly as D.6.5 named its two.
+**The watcher fold ✅ landed too** — `rust/slopdesk-hostserver/src/repowatch.rs` plus 15 tests, the
+caller `slopdesk-apple-fsevents` was written for. `RepoStatusWatcher` (316) is a face over
+`slopdesk_muxsession::repo_watch` already, so what moved is the machinery AROUND the fold: the table
+of live watches, the debounce, and the thread the reading runs on.
+
+**The serial queue is gone, and two locks replace it in ONE order.** The Swift confines every field
+to `slopdesk.host.repo-watch` and pays for it with a second concurrent queue, because a reading is a
+walk over someone's worktree and a wedged mount must not freeze refcounting, another repo's event
+delivery, or the stop. Here `rules` is the fold and `handles` is the live-watch table, taken in that
+order and NEITHER held while a door is called — which is load-bearing rather than tidy: dropping a
+`slopdesk_apple_fsevents::Watch` takes that crate's own registry lock from inside `Drop`, so a watch
+firing while it is being dropped would otherwise wait on a lock this side holds. The reading is
+`Offload`'s, which D.6.2 already built, so the second queue is not replaced by anything.
+
+**The stop empties the live table WHOLESALE, and that is the one place the two tables disagree.**
+The fold's list is what it believes is watched; the table is what actually is. A repo whose watch
+the framework refused is in the first and not the second — the Swift's own `startSourceOnQueue`
+comment says so — so a stop that cancelled key-by-key off the fold's list would leave that row
+behind forever. Two tests pin the pair: a refused watch leaves both tables agreeing that nothing is
+live, and a stop takes a row the fold does not know about.
+
+**The debounce is a queue this suite drains by hand, which is what made the ORDER testable.** The
+Swift's seams could hand in a fake event source and a fake probe, but never say WHEN a timer fired
+relative to a reading returning — the serial queue decided that. So the suite asks the questions
+that were previously unreachable: a thousand bursts arm a thousand timers and cost ONE walk, a repo
+released before its debounce fires is an ordinary answer, and a dropped watcher lets a pending timer
+resolve to nothing because the callbacks hold `Weak` rather than `Arc`.
+
+**Nothing constructs a `RepoWatcher` yet, and that is §5's carve-out too.** `RepoStatusWatcher` keeps
+serving the running hostd, exactly as the two performer folds above do; the difference is that this
+one has no routing to be wired INTO — it is a lifecycle, so stage F starts it where hostd starts the
+Swift one today. Until then it is linked by nothing shipping, and
+`one-rust-home-per-apple-area` is what holds the line meanwhile.
+
+**The hole this stage names rather than fills.** `HostEnvironment` (350) is still stage E's open
+half, and it is not a framework port at all: `SLOPDESK_*` gate resolution, an `EnvConfig` overlay,
+and two FFI faces (`spawn_env`, `terminfo`) whose rules are already Rust. What has to move is the
+GATE TABLE — six keys, each with a default-ON or default-OFF truth table typed in Swift — which is
+the shape `slopdesk-invariants` already ratchets and the reason it is worth its own increment
+rather than a footnote to this one.
 
 **Stage F — the cutover.** `Sources/slopdesk-hostd/main.swift` (382) becomes
 `rust/slopdesk-hostd`; `make host-restart` and `slopdesk-hostlaunch` retarget; `Sources/SlopDeskHost`

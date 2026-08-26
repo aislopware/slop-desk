@@ -152,6 +152,16 @@ serde_json = "1"
 [target.'cfg(target_os = "macos")'.dependencies]
 slopdesk-apple-pasteboard = { path = "../slopdesk-apple-pasteboard" }
 
+# The FSEvents stream behind `crate::repowatch::FsEvents`. Target-gated for the same reason as the
+# pasteboard: the crate wraps a macOS framework and offers no non-macOS shape, because a watcher with
+# nothing to watch is not a fallback, it is a lie the fold would then have to carry.
+slopdesk-apple-fsevents = { path = "../slopdesk-apple-fsevents" }
+
+# The delivery queue `FSEventStreamSetDispatchQueue` takes, and the only reason this crate names
+# `dispatch2` at all: the framework hands its callbacks to a `dispatch_queue_t` and nothing else, so
+# the queue is hostd's to own rather than the wrapper's.
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std"] }
+
 # In hostd, on the accept path and under the server's one lock.
 [profile.release]
 opt-level = 3
