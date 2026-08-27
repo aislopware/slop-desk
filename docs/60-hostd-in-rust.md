@@ -1251,17 +1251,27 @@ implementation, and each needs the composition to exist before it can be filled.
 | prevent-sleep | `hostd::sleep::KeepAwake`, and it is NOT the Swift's shape. `SleepAssertion` holds a `CFString` and is therefore neither `Send` nor `Sync`, and a `slopdesk-apple-*` crate may not `unsafe impl` its way out of that — an `unsafe impl Send` is a claim about RUST, not about a framework. So the fold and the assertion are CONFINED to one owner thread fed by a FIFO channel: the update and the apply are not merely adjacent, they are unreachable from anywhere the order could be broken. |
 | `SLOPDESK_DETACH_MAX_SESSIONS` | `DetachedStore::capped`. A non-positive or unparsable value is NOT a cap of zero — it is the absence of one, which is what keeps a typo from silently killing every parked pane but the newest. |
 
-**What F.3 leaves owed — the parity ledger the cutover is still gated on.** Nothing on this list drops
+**F.4 — the twelve delegated metadata verbs. ✅ LANDED.** One batch, because the twelve share one
+question — *who runs this verb* — and the Swift answered it six times.
+
+| Wired | What it took |
+| --- | --- |
+| the routing table | `hostserver::route::Performers`, six seats, one `match` on `MetadataRequest::performer`. `MuxChannelSession.serveMetadata` asked six shims in a fixed order and took the first non-`nil`, so every shim carried its OWN copy of "is this my verb" and a `default:` arm reasoning about verbs it did not own — six opinions about one table, with nothing checking they agreed, while `metadata_admission::performer` was already the single answer and was consulted by nobody on this path. It is `HostMetadata`'s delegate, which is the carve-out that seam was built for. |
+| verbs 9–10, 15–16 | `pathaction::PathActions` over `Finder` and `clipsync::Clipboard` over `GeneralBoard`, both stage-E work that only needed a seat. That is the last row of "the two unwired stage-E pieces". |
+| verbs 11–13 | `hostserver::agentaction::AgentActions` over `hostd::services::ClaudeHooks`. The listener flag is a CLOSURE read at perform time, not a `bool` captured at composition: the listener claim happens after the table is built, so a frozen flag would report `false` to every client for the daemon's life. `main`'s launch-time install now goes through the same door as verb 11. |
+| verbs 21–22 | ONE type. `hostserver::ensure::EnsuredService` over a `Profile`, because the two Swift managers plus their two shims — four files, ~330 lines — differed in exactly five values: the binary, the argv, the port parser, whether a version rides the same line, and what a spawn that THREW reports. A third ensure verb is now a fifth constant and no new lifecycle. |
+| verbs 18–20 | `hostserver::codeaction::CodeActions` over the stage-E `CodeServerManager`, and with it the code-server prewarm, which `main` now calls after the bind. Verb 19's path validation is `pathaction::absolute_host_path` — the Swift had that rule twice and the two copies had already drifted on `~user`. |
+| the ten `CodeServerSeams` | `hostd::services`. `CodeSeed.swift` forked `slopdesk-codeseed` six ways and parsed a JSON object off its stdout because Swift could not link it; hostd links it, so the six questions are six function calls. `AndroidServiceManager.announceMarker` was a string literal kept equal to `androidd`'s `server.rs` by a lint rule; the profile now names `slopdesk_androidd::server::ANNOUNCE_PREFIX` itself. `HostServiceProcess.locate` re-implemented a search order `toolchain::locate_tool` already owned — including a disagreement about what makes a candidate executable that no test could see. |
+
+**What F.4 leaves owed — the parity ledger the cutover is still gated on.** Nothing on this list drops
 off silently; each is a real behaviour the Swift hostd has and the Rust one does not yet.
 
 | Owed | Where it goes |
 | --- | --- |
-| the twelve delegated metadata verbs | Finder, `~/.claude/settings.json`, the pasteboard, the workbench child, the simulator server, the Android bridge. `HostMetadata` already ROUTES all twelve; each needs a named performer. `metadata.rs`' own header argues why serving three of them from the reducer would be worse than waiting. |
-| inspectord / dropd assembly | `AnnouncedPortService` and `ProbedPortService` are done; `main.rs` does not stand either up, so `--inspector` and the drop port are inert. Deliberately batched WITH the metadata verbs rather than before them: the served port is read by a metadata answer, so standing the daemons up first would light two sidecars nothing can ask about. |
-| code-server prewarm | `code::CodeServer::prewarm` exists but is reached through verb 18, which is one of the twelve delegated. |
+| inspectord / dropd assembly | `AnnouncedPortService` and `ProbedPortService` are done; `main.rs` does not stand either up, so `--inspector` and the drop port are inert. NOT batched with the metadata verbs after all — the check that claim rested on does not survive: no metadata verb names either daemon, and neither `FileDropServiceManager` nor `InspectorServiceManager` has any Rust yet. They are a real port, not an assembly, and they are their own batch. |
 | the sidecar version audit | `SidecarVersionAuditor.swift` + `SidecarVersionAudit.swift`. The policy is already `slopdesk-sidecars`'. |
 | the host DISPLAY NAME | The workspace label. Swift read `Host.current().localizedName` — the name a Mac calls itself in Sharing preferences — and fell back to the POSIX hostname; `DiskWorkspace` reads the POSIX hostname only. The computed name is `SCDynamicStoreCopyComputedName`, a SystemConfiguration call, and so wants a `slopdesk-apple-*` crate that does not exist yet. It is the Swift's OWN fallback rather than an invention, and it is a label — which is why it is a row here and not a blocker. |
-| the two unwired stage-E pieces | `pathaction` and `clipsync`. `repowatch` and `gates` are wired as of F.3. |
+| the workbench's terminal runner | `CodeBridgeServer::set_terminal_runner` is never called, so the editor's `run`/`cd` requests are refused rather than landing in a pane. The bridge's SOCKET is wired as of F.4; what is missing is the arm that reaches back into a session, which needs the composition's pane tables. |
 
 **Stage G (separate campaign, not scoped here) — the client transport.** `Sources/SlopDeskProtocol`
 and `MuxNWConnection` survive stage F because the macOS/iOS clients still speak through them. Moving

@@ -45,18 +45,28 @@ use slopdesk_hostd::observer::Stderr;
 use slopdesk_hostd::repowatch::{Fanout, HostRepoWatcher, Keys};
 use slopdesk_hostd::screen::{ScreendOracle, ScreendSnapshot};
 use slopdesk_hostd::serve::Listening;
+use slopdesk_hostd::services::{self, ClaudeHooks, Vendored};
 use slopdesk_hostd::sleep::KeepAwake;
 use slopdesk_hostd::spawn::{PaneSpawner, Recipe};
 use slopdesk_hostd::supervisor::DaemonObserver;
 use slopdesk_hostd::survivors::Supervised;
 use slopdesk_hostd::transcripts::DiskTranscripts;
 use slopdesk_hostd::workspacestore::DiskWorkspace;
+use slopdesk_hostserver::agentaction::AgentActions;
+use slopdesk_hostserver::bridge::CodeBridgeServer;
 use slopdesk_hostserver::channel::{HookRoutes, HostObserver, Offload, Threads, WorkspaceChannels};
+use slopdesk_hostserver::clipsync::{Clipboard, GeneralBoard};
+use slopdesk_hostserver::code::{CodeBridge, CodeServerManager};
+use slopdesk_hostserver::codeaction::CodeActions;
 use slopdesk_hostserver::control::{AgentStatusTap, ControlHost, IpcGuards};
 use slopdesk_hostserver::ctlserve::ControlConnections;
+use slopdesk_hostserver::ensure::EnsuredService;
 use slopdesk_hostserver::gates::{self, HostAgentGates};
 use slopdesk_hostserver::metadata::{HostMetadata, HostQueries, HostQuerying};
+use slopdesk_hostserver::pathaction::{Finder, PathActions};
 use slopdesk_hostserver::repowatch::{FsEvents, GitRepos};
+use slopdesk_hostserver::route::Performers;
+use slopdesk_hostserver::service::ProbedPortService;
 use slopdesk_hostserver::workspace::{NoStore, WorkspaceDocument};
 use slopdesk_hostserver::wsserve::WorkspaceService;
 use slopdesk_hostserver::{
@@ -314,10 +324,9 @@ fn main() {
         std::process::exit(2);
     };
 
-    // (5) Idempotent, every launch, and never fatal: a `settings.json` this daemon cannot write is
-    // the user's file, and refusing to serve terminals over it would trade the product for one
-    // feature.
-    install_hooks(&log);
+    // (5) Idempotent, every launch. The SAME door verb 11 actuates, so "install the hooks" has one
+    // implementation whether this daemon decided it at launch or a client asked for it.
+    ClaudeHooks::new(&log).install_if_absent();
 
     let gates = resolve_gates(&overlay);
 
@@ -338,10 +347,12 @@ fn main() {
 
     let queries: Arc<dyn HostQuerying> = Arc::new(HostQueries::from_environment());
     // Twelve of the twenty-two metadata verbs are claimed by named performers that actuate on
-    // host-global state — the Finder, the pasteboard, the workbench child. Those are Swift until the
-    // stage-F cutover retires it (`docs/60` §5), and `unaccompanied` is the honest shape until then:
-    // each answers `unsupportedVerb` at once rather than waiting out a registry timeout.
-    let metadata: Arc<dyn MetadataPerformer> = Arc::new(HostMetadata::unaccompanied(queries));
+    // host-GLOBAL state — the Finder, the pasteboard, the workbench child, one set of simulated
+    // devices. One instance of each per daemon, therefore, and `HostMetadata` hands anything that is
+    // not its own read verb to the table below.
+    let panels = build_panels(&hooks, &supervisor, &log);
+    let metadata: Arc<dyn MetadataPerformer> =
+        Arc::new(HostMetadata::new(queries, Arc::clone(&panels.performers)));
 
     let (host, daemon_parts) = compose(&Composition {
         gates: &gates,
@@ -412,9 +423,15 @@ fn main() {
         start_journal_sweep(Arc::clone(disk));
     }
 
+    // AFTER the bind, and never before it: the seed, the one-shot extension install and a Node cold
+    // start together take longer than a client is willing to wait, and this daemon's job is to be
+    // accepting connections. A host with no `code-server` is a silent no-op — `unavailable` is the
+    // verb's answer, not a boot failure.
+    panels.code.prewarm();
+
     // The one blocking call in the process. Everything above it runs on a thread of its own.
     wait_for_shutdown(signals, &log);
-    shut_down(&listening, &hooks, &host, &supervisor, &stopping);
+    shut_down(&listening, &hooks, &host, &supervisor, &stopping, &panels);
     client_threads.join();
 }
 
@@ -438,12 +455,24 @@ fn shut_down(
     host: &Arc<Host>,
     supervisor: &SupervisorClient,
     stopping: &Stopping,
+    panels: &Panels,
 ) {
     if let Some(path) = slopdesk_hostlaunch::record::path() {
         slopdesk_hostlaunch::record::remove(&path);
     }
     listening.stop();
     hooks.stop();
+    // The three panel children are RELINQUISHED, never terminated: superd keeps them, so the next
+    // hostd adopts a warm workbench, a live simulator panel and every device mirror still in flight.
+    // Terminating here is what `docs/51` exists to end — it would put a Node boot in front of the
+    // editor after every host edit.
+    panels.code.relinquish();
+    panels.simulator.relinquish();
+    panels.android.relinquish();
+    // The workbench command socket is the exception, because it is hostd's own listener rather than
+    // one of superd's children. It unbinds with the rest of this daemon's addresses; the surviving
+    // extension host reconnects to the same pid-free path within one of its five-second ticks.
+    panels.bridge.stop();
     // Before the panes: cancelling a watch takes `slopdesk-apple-fsevents`' own registry lock from
     // inside `Drop`, and a reading that fired against a pane already being torn down would be work
     // nobody can use.
@@ -459,6 +488,81 @@ fn shut_down(
 struct Stopping {
     store: Arc<dyn WorkspaceStore>,
     watcher: Arc<HostRepoWatcher>,
+}
+
+/// The three host-global panel backends, the workbench's command socket, and the routing table over
+/// them.
+///
+/// Held together because the STOP has to reach each one and the routing table does not expose them:
+/// a `dyn MetadataPerformer` can answer a verb and nothing else, while a shutdown must relinquish
+/// three children and unbind one listener.
+struct Panels {
+    /// What [`HostMetadata`] hands every verb that is not one of its own reads.
+    performers: Arc<dyn MetadataPerformer>,
+    /// The workbench, for the boot-time prewarm and the stop.
+    code: Arc<CodeServerManager>,
+    /// The simulator server, for the stop.
+    simulator: Arc<EnsuredService>,
+    /// The Android bridge, for the stop.
+    android: Arc<EnsuredService>,
+    /// The workbench's command socket. hostd's own listener, not superd's — see [`shut_down`].
+    bridge: Arc<CodeBridgeServer>,
+}
+
+/// Builds the six host-global doors and the table that routes to them.
+///
+/// Every one is constructed unconditionally, including on a machine that has none of the three
+/// binaries: a locator answering `None` is what makes a panel report `unavailable`, which is the
+/// verb's ANSWER. Refusing to build the door would instead answer `unsupportedVerb`, which tells
+/// the client this HOST does not speak the verb — a different and false statement.
+fn build_panels(hooks: &Arc<HookTable>, supervisor: &Arc<SupervisorClient>, log: &Arc<Stderr>) -> Panels {
+    let vendored = Vendored::from_current_exe();
+    let bridge = CodeBridgeServer::new(Some({
+        let notes = Arc::clone(log);
+        Arc::new(move |line: &str| notes.say(line))
+    }));
+    let code = Arc::new(CodeServerManager::new(
+        services::code_seams(&vendored, &bridge, supervisor, log),
+        ProbedPortService::DEFAULT_PROBE_INTERVAL,
+        CodeServerManager::DEFAULT_OPEN_RETRY_DELAY,
+    ));
+    let simulator = Arc::new(EnsuredService::new(
+        services::simulator_profile(&vendored, supervisor, log),
+        services::loopback_probe(),
+        ProbedPortService::DEFAULT_PROBE_INTERVAL,
+    ));
+    let android = Arc::new(EnsuredService::new(
+        services::android_profile(&vendored, supervisor, log),
+        services::loopback_probe(),
+        ProbedPortService::DEFAULT_PROBE_INTERVAL,
+    ));
+    let performers: Arc<dyn MetadataPerformer> = Arc::new(Performers {
+        path: Arc::new(PathActions::from_environment(Finder)),
+        agent: Arc::new(AgentActions::new(ClaudeHooks::new(log), {
+            // Read at PERFORM time, not captured now: the listener claim is made AFTER this table is
+            // built, and it can fail later besides. A flag frozen here would report `false` to every
+            // client for the daemon's whole life.
+            let table = Arc::clone(hooks);
+            Arc::new(move || table.is_listening())
+        })),
+        clipboard: Arc::new(Clipboard::new(GeneralBoard)),
+        code: Arc::new(CodeActions::from_environment(Arc::clone(&code), Finder)),
+        simulator: {
+            let door: Arc<EnsuredService> = Arc::clone(&simulator);
+            door
+        },
+        android: {
+            let door: Arc<EnsuredService> = Arc::clone(&android);
+            door
+        },
+    });
+    Panels {
+        performers,
+        code,
+        simulator,
+        android,
+        bridge,
+    }
 }
 
 /// Dials superd, or ends the process saying where it looked.
@@ -557,7 +661,7 @@ fn integration_oneshot(argv: &[String], program: &str) -> Option<i32> {
     match subcommand {
         "install" => {
             let hook = slopdesk_hook::install::hook_path(&environment, &home);
-            let Some(relay) = staged_relay() else {
+            let Some(relay) = services::staged_relay() else {
                 log.say(&format!(
                     "no {} beside {program} — run `make build`",
                     slopdesk_hook::install::RELAY_NAME
@@ -596,36 +700,6 @@ fn integration_oneshot(argv: &[String], program: &str) -> Option<i32> {
             Some(2)
         },
     }
-}
-
-/// Installs the hooks unless they already are.
-///
-/// `is_installed` first, so a host whose hooks are there does no work and writes nothing. The merge
-/// touches only entries carrying our own marker, which is what makes re-running it every launch the
-/// same file it already wrote.
-fn install_hooks(log: &Stderr) {
-    let environment = slopdesk_hook::install::process_environment();
-    let home = slopdesk_hook::install::home_in(&environment);
-    let settings = slopdesk_hook::install::settings_path(&environment, &home);
-    if slopdesk_hook::install::is_installed(&settings) {
-        return;
-    }
-    let Some(relay) = staged_relay() else { return };
-    let hook = slopdesk_hook::install::hook_path(&environment, &home);
-    match slopdesk_hook::install::install(&settings, &hook, &relay) {
-        Ok(written) => log.say(&format!("installed the Claude Code hooks → {written}")),
-        Err(why) => log.say(&format!("could not install the Claude Code hooks: {why}")),
-    }
-}
-
-/// The relay binary beside this one, or `None` on a host built without `make hook`.
-///
-/// Beside THIS executable rather than on `PATH`: the two ship together, and a relay found somewhere
-/// else is a different build's.
-fn staged_relay() -> Option<std::path::PathBuf> {
-    let here = std::env::current_exe().ok()?;
-    let candidate = here.parent()?.join(slopdesk_hook::install::RELAY_NAME);
-    candidate.is_file().then_some(candidate)
 }
 
 /// The sibling `slopdesk-ctl`, or `None` when it is not there.

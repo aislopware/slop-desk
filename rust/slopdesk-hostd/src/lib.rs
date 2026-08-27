@@ -40,6 +40,7 @@ pub mod repowatch;
 pub mod resolve;
 pub mod screen;
 pub mod serve;
+pub mod services;
 pub mod sleep;
 pub mod spawn;
 pub mod supervisor;

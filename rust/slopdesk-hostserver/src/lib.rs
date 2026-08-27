@@ -90,15 +90,18 @@
 //! nothing shipping, exactly as §5 says.
 
 pub mod adopt;
+pub mod agentaction;
 pub mod bridge;
 pub mod capture;
 pub mod channel;
 pub mod clipsync;
 pub mod code;
+pub mod codeaction;
 pub mod control;
 pub mod ctlserve;
 mod deadline;
 mod detached;
+pub mod ensure;
 pub mod gates;
 pub mod host;
 pub mod lifecycle;
@@ -108,6 +111,7 @@ mod pane;
 mod panes;
 pub mod pathaction;
 pub mod repowatch;
+pub mod route;
 pub mod service;
 mod serviceproc;
 mod sessions;

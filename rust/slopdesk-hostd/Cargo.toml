@@ -125,6 +125,21 @@ slopdesk-ids = { path = "../slopdesk-ids" }
 # the merge, and this crate can simply link it.
 slopdesk-hook = { path = "../slopdesk-hook" }
 
+# The code panel's workbench PROFILE — settings, both extensions, the child's argv and environment.
+# A LIBRARY call, not the six forks of `slopdesk-codeseed` the Swift made and parsed JSON back from:
+# the binary still exists for anyone who wants the answers on a command line, and hostd links the
+# same functions it prints.
+slopdesk-codeseed = { path = "../slopdesk-codeseed" }
+
+# The bridge daemon's own announce marker and version prefix, so nothing here re-spells them, plus
+# the ONE binary search order this repository has (`toolchain::locate_tool`) and the bounded
+# loopback connect every readiness probe is. `slopdesk-ffi` already links it for the first of those.
+slopdesk-androidd = { path = "../slopdesk-androidd" }
+
+# The lifecycle vocabulary the ensure verbs fold in: the `ServiceState` byte, and the two announce
+# parsers whose difference is which colon wins.
+slopdesk-sidecars = { path = "../slopdesk-sidecars" }
+
 # The signal set the daemon parks on, and `sigwait` for the thread that parks. `DispatchSourceSignal`
 # was the Swift's answer to the same question; a dedicated thread is this one's, and it is the shape
 # `slopdesk-superd` already uses.

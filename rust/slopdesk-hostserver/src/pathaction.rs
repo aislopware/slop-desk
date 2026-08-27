@@ -85,7 +85,7 @@ impl<D: OpensPaths> PathActions<D> {
 
     /// The verb's answer. See the module doc for what is validated and what deliberately is not.
     fn answer(&self, verb: MetadataVerb, argument: &str) -> MetadataStatus {
-        let Some(path) = self.resolve(argument) else {
+        let Some(path) = absolute_host_path(argument, &self.home) else {
             return MetadataStatus::Error;
         };
         if !std::fs::exists(&path).unwrap_or(false) {
@@ -110,56 +110,62 @@ impl<D: OpensPaths> PathActions<D> {
             _ => MetadataStatus::Error,
         }
     }
+}
 
-    /// An argument as an absolute, standardised host path, or `None` when it is neither.
-    ///
-    /// Three steps, in the Swift's order: expand a leading `~`, require the result to be absolute,
-    /// then normalise `.` and `..` away. The normalisation is LEXICAL and deliberately does not
-    /// resolve symlinks — the existence check that follows resolves them anyway, and a resolve here
-    /// would turn a path a person can read in a log into one they cannot.
-    fn resolve(&self, argument: &str) -> Option<String> {
-        let expanded = self.expand_tilde(argument)?;
-        if !expanded.starts_with('/') {
-            return None;
-        }
-        let mut normalised = PathBuf::new();
-        for part in PathBuf::from(&expanded).components() {
-            match part {
-                Component::CurDir => {},
-                Component::ParentDir => {
-                    // A `..` above the root is the root, which is what `standardizingPath` answers
-                    // and what every filesystem resolves it to.
-                    let _above_root = normalised.pop();
-                },
-                other => normalised.push(other),
-            }
-        }
-        Some(normalised.to_string_lossy().into_owned())
+/// An argument as an absolute, standardised host path, or `None` when it is neither.
+///
+/// Three steps, in the Swift's order: expand a leading `~` against `home`, require the result to be
+/// absolute, then normalise `.` and `..` away. The normalisation is LEXICAL and deliberately does
+/// not resolve symlinks — the existence check that follows resolves them anyway, and a resolve here
+/// would turn a path a person can read in a log into one they cannot.
+///
+/// Free rather than a method, and public, because [`crate::codeaction`] validates verb 19's target
+/// with exactly this rule. The Swift had it twice — `HostPathActionPerformer.resolve` and
+/// `HostCodeServerPerformer.openResponse`'s inline `expandingTildeInPath.standardizingPath` — and
+/// the two had already drifted on `~user`, which one expanded and the other did not.
+#[must_use]
+pub fn absolute_host_path(argument: &str, home: &str) -> Option<String> {
+    let expanded = expand_tilde(argument, home)?;
+    if !expanded.starts_with('/') {
+        return None;
     }
+    let mut normalised = PathBuf::new();
+    for part in PathBuf::from(&expanded).components() {
+        match part {
+            Component::CurDir => {},
+            Component::ParentDir => {
+                // A `..` above the root is the root, which is what `standardizingPath` answers and
+                // what every filesystem resolves it to.
+                let _above_root = normalised.pop();
+            },
+            other => normalised.push(other),
+        }
+    }
+    Some(normalised.to_string_lossy().into_owned())
+}
 
-    /// `~` and `~/…` against this performer's home; everything else verbatim. `None` when the
-    /// argument needs a home and this performer has none.
-    ///
-    /// The EMPTY-home arm is not a formality. `format!("{}/{rest}", "")` is `/rest` — absolute,
-    /// and therefore a path the rest of `resolve` would happily accept — so a daemon launched
-    /// without `HOME` would silently reinterpret `~/Documents` as the ROOT's `Documents`. Refusing
-    /// is the only closed answer.
-    ///
-    /// `~user` is NOT expanded, and the difference from `NSString.expandingTildeInPath` is
-    /// deliberate: resolving another user's home means a `getpwnam`, and a host path naming a
-    /// second user's home is not something any verb in this repository can produce. `~user` is
-    /// refused here rather than resolved, which is the closed answer.
-    fn expand_tilde(&self, argument: &str) -> Option<String> {
-        let Some(rest) = argument.strip_prefix('~') else {
-            return Some(argument.to_owned());
-        };
-        if self.home.is_empty() {
-            return None;
-        }
-        match rest {
-            "" => Some(self.home.clone()),
-            _ => rest.strip_prefix('/').map(|tail| format!("{}/{tail}", self.home)),
-        }
+/// `~` and `~/…` against `home`; everything else verbatim. `None` when the argument needs a home
+/// and the caller has none.
+///
+/// The EMPTY-home arm is not a formality. `format!("{}/{rest}", "")` is `/rest` — absolute, and
+/// therefore a path the rest of [`absolute_host_path`] would happily accept — so a daemon launched
+/// without `HOME` would silently reinterpret `~/Documents` as the ROOT's `Documents`. Refusing is
+/// the only closed answer.
+///
+/// `~user` is NOT expanded, and the difference from `NSString.expandingTildeInPath` is deliberate:
+/// resolving another user's home means a `getpwnam`, and a host path naming a second user's home is
+/// not something any verb in this repository can produce. `~user` is refused here rather than
+/// resolved, which is the closed answer.
+fn expand_tilde(argument: &str, home: &str) -> Option<String> {
+    let Some(rest) = argument.strip_prefix('~') else {
+        return Some(argument.to_owned());
+    };
+    if home.is_empty() {
+        return None;
+    }
+    match rest {
+        "" => Some(home.to_owned()),
+        _ => rest.strip_prefix('/').map(|tail| format!("{home}/{tail}")),
     }
 }
 

@@ -360,6 +360,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-androidd"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "slopdesk-apple-app"
 version = "0.1.0"
 dependencies = [
@@ -391,6 +399,13 @@ version = "0.1.0"
 dependencies = [
  "objc2-core-foundation",
  "objc2-io-kit",
+]
+
+[[package]]
+name = "slopdesk-codeseed"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -428,7 +443,9 @@ dependencies = [
  "serde",
  "serde_json",
  "slopdesk-agent",
+ "slopdesk-androidd",
  "slopdesk-apple-power",
+ "slopdesk-codeseed",
  "slopdesk-hook",
  "slopdesk-hookevent",
  "slopdesk-hostlaunch",
@@ -442,6 +459,7 @@ dependencies = [
  "slopdesk-sanitize",
  "slopdesk-screenclient",
  "slopdesk-screenwire",
+ "slopdesk-sidecars",
  "slopdesk-superclient",
  "slopdesk-superwire",
  "slopdesk-tree",
