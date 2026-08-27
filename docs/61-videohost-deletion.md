@@ -30,6 +30,8 @@ Swift, by design: no FFI door was added for any of it, so there is no bridge to 
 | 9 | the devtools GUI's video page | `rust/slopdesk-devtools/src/gui/mod.rs`, `gui/video.rs` | check whether they name the Swift target or only the daemon's socket |
 | 10 | `EnvBridge.loadDefaultSidecarIntoEnvConfig` | Swift client side | the daemon's `setenv` fold. `crate::env::Overlay` replaced it; the Swift call site dies with the launch path |
 | 11 | `docs/00` and `docs/01` | prose | the "genuinely left to Swift: Network.framework" line is no longer true of this path |
+| 12 | the four `slopdesk-videohostd` names in `STRANDED_RUST_MODULES` | `rust/slopdesk-invariants/src/rules/repo_invariants.rs` | `encode`, `feed`, `mux_registry` and `windowgeometry` are registered DEBT, not exemptions. The session port is what reaches them, so all four leave the list in this commit — removing a name is the last step of finishing the port, never a step of its own |
+| 13 | the `drag-cadence-ratchet` rule | `rust/slopdesk-invariants/src/rules/window_placement.rs` | it pins `WindowGeometryWatcher.swift`'s poll cadence to `windowgeometry.rs`'s. Its Swift subject dies here, so it is re-aimed or dropped WITH its break-test, the same way row 8 treats `apple_floors` |
 
 ## §2 The one architectural debt the port deliberately took on
 
@@ -68,9 +70,15 @@ deletes the Swift finds it without reading this file first.
 ## §3 What the Rust daemon still owes before the commit can be written
 
 Ported: the argv grammar, the settings overlay, `--list`, the UDP mux and its lane registry, the
-encoder's lifetime and its four encode paths.
+encoder's lifetime and its four encode paths, and the whole WINDOW FEED — the census
+(`windowsource`), the budgeted accessibility probe (`windowprobe`), the four placement sequences
+(`windowplace`), the drag/union poll cadence (`windowgeometry`) and the feed loop over them
+(`feed`).
 
 Not yet: the session itself, `VideoSessionLogic`, `LiveCongestionController`, `FPSGovernor`,
-`VideoSendLane`, `VirtualDisplay` and its recovery policy, `CursorSampler`, the window-parking
-ledger/manager/sidecar, `HostPrivacyBlank`, `OffScreenWindowMintRescue`, `AudioStreamEncoder`,
-`LTRController`, and the `--vd-sck-probe` one-shot.
+`VideoSendLane`, `VirtualDisplay` and its recovery policy, `CursorSampler`, `HostPrivacyBlank`,
+`OffScreenWindowMintRescue`, `AudioStreamEncoder`, `LTRController`, and the `--vd-sck-probe`
+one-shot. The capture half — an `SCStream` the daemon owns — is the reason `encode`, `feed`,
+`mux_registry` and `windowgeometry` are registered in `STRANDED_RUST_MODULES` rather than composed
+in `main.rs`: wiring them today builds a daemon that binds its sockets and serves no frames, which
+no gate can tell from an idle one.

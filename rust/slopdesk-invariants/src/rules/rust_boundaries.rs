@@ -66,7 +66,16 @@ pub fn one_home_per_operation(tree: &Tree) -> Report {
             // banning that would ban CALLING C rather than EXPORTING it, which is not this rule.
             // An `#[unsafe(no_mangle)] pub extern` in the same file is still caught: it is a
             // different line, and this excuse names the alias form alone.
-            unless: &[r"type \w+ = unsafe extern"],
+            // A PRIVATE handler points the same way, and further: the kernel calls it, nothing
+            // else can. `sigaction(2)` takes a C function pointer, so `restore_on_signals` in
+            // `slopdesk-posix` has no other way to spell its restore-then-reraise — and without
+            // `pub` the item is not reachable across a crate boundary, without `no_mangle` its
+            // symbol is mangled and no C caller can name it. So it is not a door by construction,
+            // and moving it to `slopdesk-ffi` would put the handler in a different crate from the
+            // termios state it restores, which is the pointer-bug-becomes-terminal-bug shape this
+            // rule exists to prevent, inverted. The excuse names the bare form ALONE: a `pub` or a
+            // `no_mangle` on the same line is a different line and is still caught.
+            unless: &[r"type \w+ = unsafe extern", r"^extern \x22C\x22 fn "],
             view: View::CodeBeforeTests,
             exempt: &["rust/slopdesk-ffi/"],
             message: "a C entry point is outside rust/slopdesk-ffi ({files}) — the ABI is a crate, not an \
@@ -718,6 +727,31 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("rust/slopdesk-superd/src/pty.rs")),
+            "{report:?}"
+        );
+    }
+
+    /// The excuse is the BARE form, and only it: a private handler the kernel calls back is not a
+    /// door, but the same line wearing `pub` is.
+    #[test]
+    fn a_private_signal_handler_is_excused_and_an_exported_one_is_not() {
+        let fixture = Fixture::new("signal-handler");
+        fixture.write(
+            "rust/slopdesk-posix/src/rawmode.rs",
+            "extern \"C\" fn restore_and_reraise(signal: libc::c_int) {}\n",
+        );
+        assert!(super::one_home_per_operation(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-posix/src/rawmode.rs",
+            "pub extern \"C\" fn restore_and_reraise(signal: libc::c_int) {}\n",
+        );
+        let report = super::one_home_per_operation(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("rust/slopdesk-posix/src/rawmode.rs")),
             "{report:?}"
         );
     }

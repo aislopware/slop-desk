@@ -17212,3 +17212,39 @@ introduced to end. *`just --shell /bin/echo`* as a plan printer — `--shell` ov
 evaluation too, so the variable comes back holding its own command text. *just's `[parallel]`
 attribute* for `lint` and `quick` — it does not order the output, which is the whole reason those
 two fan into logs rather than into a terminal.
+
+## The video daemon's four modules are registered debt, not a wired daemon (2026-08-27)
+
+The Rust `slopdesk-videohostd` now holds the encoder session, the window feed, the mux registry and
+the geometry poller. `no-stranded-rust-module` found all four written, tested and reached by
+nothing, which is exactly the failure that rule exists for — `e6b1ce9b` is the precedent, where four
+`slopdesk-workspace` modules landed with 47 tests, no caller, and the Swift still running.
+
+**They are registered in `STRANDED_RUST_MODULES` rather than wired.** `docs/61` §3 says the capture
+half is unported: there is no `SCStream` in this crate yet, so a `main.rs` that opened the encoder
+and started the feed would compose a daemon that runs, binds its sockets and serves no frames. That
+is worse than the debt, because a gate cannot tell a daemon that produces nothing from a daemon that
+is merely idle, and the four names would leave the list having bought no guarantee. The list is
+DEBT, which is what its own doc comment says it is: green while it shrinks, and every name leaves in
+the commit that lands `docs/61` §1's cascade, whose rows 12 and 13 are these two debts — the
+composition and the deletion are one
+change, because until it lands `Sources/SlopDeskVideoHost` is the only implementation and the
+one-implementation rule is satisfied, not broken.
+
+**The two poll constants got a ratchet instead, and that asymmetry is the point.**
+`shared-number-asked-or-ratcheted` caught `dragPollHz`/`DRAG_POLL_HZ` and
+`unionPollDivider`/`UNION_POLL_DIVIDER` spelled once per language. Neither of its usual answers
+fits mid-port: a `CSlopDeskFFI` door would build an ABI into a file scheduled for deletion, and
+deleting the Swift first leaves zero implementations. So the pair is ratcheted by value —
+`drag-cadence-ratchet` in `rules::window_placement`, which compares the two literals as sets and
+registers both names in the sweep's own corpus. A stranded module has nothing to disagree with; two
+live constants do, and the window where both exist is precisely when they can drift. The rule is
+deleted by the same commit that deletes the Swift.
+
+**Rejected.** *A `HOMONYMS` entry* — the two numbers describe the SAME law, which is the one thing
+that list is not for. *A token `main.rs` composition* to silence the stranded rule — a fake wiring
+reads as a finished port to every future reader and to every gate. *Deleting
+`slopdesk_video_capture_should_self_heal` from the header and keeping the Rust door* — a door whose
+last Swift caller died in `08d33f2e` is the second way to ask what
+`CaptureGates::should_self_heal` already answers, so both halves went; the daemon calls the values
+form, and re-adding the door costs one declaration.

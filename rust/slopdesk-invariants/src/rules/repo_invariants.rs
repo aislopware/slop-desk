@@ -485,7 +485,22 @@ pub fn the_formula_installs_every_binary_the_release_ships(tree: &Tree) -> Repor
 ///
 /// `ConnectionTarget.swift` is a four-field `Codable` value 20 files hold and `SwiftUI` diffs — a
 /// vocabulary by `docs/55` §6, so the Rust twin is the copy that should go, not the Swift.
-const STRANDED_RUST_MODULES: [&str; 1] = ["slopdesk-workspace::connection"];
+///
+/// The four `slopdesk-videohostd` names are the SAME debt with a known end date, and they are here
+/// rather than wired because wiring them would be the worse lie. `docs/61` §3 says the capture half
+/// is not ported yet: with no `SCStream` there are no frames, so a `main.rs` that opened the
+/// encoder and started the feed would compose a daemon that runs and serves nothing.
+/// `Sources/SlopDeskVideoHost` is what still runs, and `docs/61` §1 is the eleven-row cascade that
+/// deletes it. All four names leave this list in that one commit — the composition and the deletion
+/// are the same change, because until it lands the Swift is the only implementation and the rule
+/// this gate serves is satisfied, not broken.
+const STRANDED_RUST_MODULES: [&str; 5] = [
+    "slopdesk-workspace::connection",
+    "slopdesk-videohostd::encode",
+    "slopdesk-videohostd::feed",
+    "slopdesk-videohostd::mux_registry",
+    "slopdesk-videohostd::windowgeometry",
+];
 
 /// A crate module nothing reaches is a port that stopped one step short of finishing.
 ///

@@ -4,9 +4,43 @@
 //! Ported from the deleted `check-supervisor.sh`. Every one of these is arithmetic over a screen
 //! the test machine does not have, which is exactly why a second copy survives a green suite.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, Extract, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
+
+/// The Swift poller, and the Rust one that will replace it once `docs/61`'s cascade lands.
+const GEOMETRY_SWIFT: &str = "Sources/SlopDeskVideoHost/WindowGeometryWatcher.swift";
+/// The Rust poller. Registered as stranded in `repo_invariants` for the same reason as this rule.
+const GEOMETRY_RUST: &str = "rust/slopdesk-videohostd/src/windowgeometry.rs";
+
+/// The drag cadence and the union divider agree, until one of the two pollers is deleted
+///
+/// Both numbers are spelled twice, once per language, which `shared-number-asked-or-ratcheted`
+/// finds and is right to find. Neither of its two ordinary answers fits while the port is in
+/// flight. A `CSlopDeskFFI` door would be built into a file `docs/61` §1 schedules for deletion —
+/// paying an ABI to serve a caller with weeks to live. And the DELETION cannot come first:
+/// `docs/61` §3 says the capture half is unported, so `Sources/SlopDeskVideoHost` is what actually
+/// runs and removing it would leave zero implementations rather than one.
+///
+/// So the pair is ratcheted by VALUE, which is the third answer that rule's own message names. This
+/// gate is what keeps the interval honest in the window where two copies exist: change 30 Hz on one
+/// side and the sets stop being equal. It also registers both names in the sweep's corpus, which is
+/// how the finding above is suppressed — by a gate that compares them, not by a list that excuses
+/// them.
+///
+/// The numbers cross as their INTEGER text on both sides, which is why the Rust pattern eats the
+/// `.0`: `30` and `30.0` are the same cadence and a set comparison over raw literals would call
+/// them a drift. Deleting this rule is a step in the same commit that deletes the Swift.
+#[must_use]
+pub fn the_drag_cadence_is_ratcheted_across_the_port(tree: &Tree) -> Report {
+    check_all(tree, &[Claim::SameSet {
+        label: "the drag poll cadence and the union divider",
+        swift: Extract::code(GEOMETRY_SWIFT, r"dragPollHz: Double = ([0-9]+)")
+            .also(&[r"unionPollDivider = ([0-9]+)"]),
+        rust: Extract::code(GEOMETRY_RUST, r"DRAG_POLL_HZ: f64 = ([0-9]+)\.0")
+            .also(&[r"UNION_POLL_DIVIDER: u32 = ([0-9]+)"]),
+    }])
+}
 
 /// The park math is Rust, and Swift keeps only what CoreGraphics defines
 ///
@@ -338,5 +372,42 @@ mod tests {
             "held.insert\n",
         );
         assert!(!super::ledger_accumulator_cross_by_value(&fixture.tree()).is_clean());
+    }
+
+    fn write_drag_cadence(fixture: &Fixture, swift_hz: &str, rust_hz: &str) {
+        fixture
+            .write(
+                super::GEOMETRY_SWIFT,
+                &format!(
+                    "public static let dragPollHz: Double = {swift_hz}\nprivate static let unionPollDivider \
+                     = 5\n"
+                ),
+            )
+            .write(
+                super::GEOMETRY_RUST,
+                &format!(
+                    "pub const DRAG_POLL_HZ: f64 = {rust_hz}.0;\npub const UNION_POLL_DIVIDER: u32 = 5;\n"
+                ),
+            );
+    }
+
+    /// `30` and `30.0` are the same cadence; `30` and `60` are the drift this exists to catch.
+    #[test]
+    fn the_drag_cadence_agrees_across_the_port_or_it_is_red() {
+        let fixture = Fixture::new("drag-cadence-ratchet");
+        write_drag_cadence(&fixture, "30", "30");
+        assert!(super::the_drag_cadence_is_ratcheted_across_the_port(&fixture.tree()).is_clean());
+
+        // One side is retuned and the other is not — the window this rule exists for.
+        write_drag_cadence(&fixture, "60", "30");
+        assert!(!super::the_drag_cadence_is_ratcheted_across_the_port(&fixture.tree()).is_clean());
+
+        // And the divider, which the same claim carries through `also`.
+        write_drag_cadence(&fixture, "30", "30");
+        fixture.write(
+            super::GEOMETRY_RUST,
+            "pub const DRAG_POLL_HZ: f64 = 30.0;\npub const UNION_POLL_DIVIDER: u32 = 7;\n",
+        );
+        assert!(!super::the_drag_cadence_is_ratcheted_across_the_port(&fixture.tree()).is_clean());
     }
 }

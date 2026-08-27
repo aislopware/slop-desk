@@ -543,6 +543,11 @@ pub fn registry() -> Vec<Rule> {
             check: window_placement::ledger_accumulator_cross_by_value,
         },
         Rule {
+            name: "drag-cadence-ratchet",
+            origin: "docs/61 §1, §3",
+            check: window_placement::the_drag_cadence_is_ratcheted_across_the_port,
+        },
+        Rule {
             name: "keybind-grammar",
             origin: "check-supervisor.sh (deleted)",
             check: terminal_config::one_keybind_grammar_no_callback,
