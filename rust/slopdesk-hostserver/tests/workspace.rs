@@ -1310,3 +1310,205 @@ fn a_shutdown_closes_every_subscriber_so_no_pump_outlives_the_daemon() {
     assert_eq!(bench.document.subscriber_count(), 0);
     assert!(held.is_closed());
 }
+
+// ---------------------------------------------------------------------------------------------
+// The cross-language versioning pin
+// ---------------------------------------------------------------------------------------------
+
+/// The committed corpus, read at compile time so a missing or renamed file is a BUILD failure
+/// rather than a test that quietly passes with no vectors.
+const GOLDEN: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../golden/golden_vectors.json"
+));
+
+/// The vector group this file replays. Emitted by `Sources/slopdesk-corevectors`, from the SWIFT
+/// half of the same ladder — `LoopbackWorkspaceDocument`.
+const VECTOR: &str = "workspaceDocumentVersioning";
+
+fn field<'a>(record: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    record
+        .get(name)
+        .unwrap_or_else(|| panic!("golden_vectors.json: {VECTOR} carries no {name:?}"))
+}
+
+fn text<'a>(record: &'a serde_json::Value, name: &str) -> &'a str {
+    field(record, name).as_str().expect("a string")
+}
+
+fn number(record: &serde_json::Value, name: &str) -> i64 {
+    field(record, name).as_i64().expect("an integer")
+}
+
+fn flag(record: &serde_json::Value, name: &str) -> bool {
+    field(record, name).as_bool().expect("a boolean")
+}
+
+fn byte(record: &serde_json::Value, name: &str) -> u8 {
+    u8::try_from(number(record, name)).expect("a byte")
+}
+
+fn from_hex(hex: &str) -> Vec<u8> {
+    assert!(
+        hex.len().is_multiple_of(2),
+        "a hex string has an even length: {hex:?}"
+    );
+    hex.as_bytes()
+        .chunks(2)
+        .map(|pair| {
+            let digits = core::str::from_utf8(pair).expect("hex is ASCII");
+            u8::from_str_radix(digits, 16).expect("hex digits")
+        })
+        .collect()
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    use core::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ignored = write!(out, "{byte:02x}");
+    }
+    out
+}
+
+/// The fixture the corpus was generated over, built HERE rather than decoded from the corpus.
+///
+/// Two single-pane tabs in one session: enough shape that a focus change, a tab reorder and a
+/// per-tab flag each have somewhere to land. Built independently on both sides deliberately —
+/// `installSnapshot` is then also a pin that the two languages encode the SAME topology to the same
+/// bytes, which a fixture decoded out of the corpus could not be.
+fn pinned_workspace() -> WorkspaceTopology {
+    let session = SessionId::from_bytes([0x51; 16]);
+    let one = PaneId::from_bytes([0x11; 16]);
+    let two = PaneId::from_bytes([0x12; 16]);
+    let mut first = slopdesk_tree::session::Tab::new(
+        TabId::from_bytes([0x71; 16]),
+        slopdesk_tree::split_tree::SplitNode::Leaf(one),
+    );
+    first.title = String::from("one");
+    let mut second = slopdesk_tree::session::Tab::new(
+        TabId::from_bytes([0x72; 16]),
+        slopdesk_tree::split_tree::SplitNode::Leaf(two),
+    );
+    second.title = String::from("two");
+    let mut specs = std::collections::BTreeMap::new();
+    specs.insert(one, PaneSpec::new(PaneKind::Terminal, "zsh"));
+    specs.insert(two, PaneSpec::new(PaneKind::Terminal, "zsh"));
+    let mut topology = WorkspaceTopology::new(TreeWorkspace::new(
+        vec![Session {
+            id: session,
+            name: String::from("slop-desk"),
+            tabs: vec![first, second],
+            active_tab_index: 0,
+            specs,
+            detached: Vec::new(),
+        }],
+        Some(session),
+    ));
+    topology.host_display_name = String::from("mac-studio");
+    topology
+}
+
+/// The document's CURRENT `state_num`, read the only way a caller outside this crate can: a fresh
+/// subscriber is owed a snapshot, and the snapshot declares the number.
+///
+/// A throwaway subscriber per reading rather than one long-lived one, deliberately. The
+/// subscriber's own ladder is depth-1 — it HOLDS an offer while a frame is unacked and diffs
+/// against the ACKED base — so a long-lived reader would be measuring the coalescer instead of the
+/// document. One that has just arrived has no history to coalesce against.
+fn version_of(document: &Arc<WorkspaceDocument>) -> i64 {
+    let wire = Arc::new(Wire::default());
+    let log = Arc::new(Log::default());
+    let probe = subscriber(&wire, &log, [0x9F; 16]);
+    document.add_subscriber(&probe);
+    assert!(probe.drain(), "a fresh subscriber's first drain always ships");
+    let seen = wire.last_document();
+    document.remove_subscriber(probe.id());
+    let (kind, base, new) = seen.expect("a fresh subscriber is offered the document");
+    assert_eq!(kind, WorkspaceEventKind::Snapshot.as_byte());
+    assert_eq!(base, 0, "a snapshot is self-contained and declares no base");
+    new
+}
+
+/// `docs/60` D.6.4 — this document's versioning is the SWIFT loopback's, step for step.
+///
+/// The decision is one implementation already: `WorkspaceIntentApplier` marshals straight into
+/// `slopdesk_wire::document::apply`, which is what `apply_intent` below calls. What was written
+/// TWICE is the ~30 lines of versioning around it, and the two halves reach the same numbers by
+/// opposite routes — this document opens at 1 and `install` does not bump; the loopback opens at 0
+/// and `install` bumps to 1. `LoopbackWorkspaceDocumentTests` used to pin that equivalence against
+/// a Swift host; `docs/60` F.9 deleted the Swift host, so it is pinned here, through the corpus.
+///
+/// What is compared is the LADDER and the state bytes, never the frames: a subscriber's frames are
+/// diffed against its own acked base and coalesced depth-1, which is a per-subscriber concern the
+/// loopback has no counterpart for. The diff below is computed from the two consecutive documents
+/// directly, exactly as the generator computes it.
+///
+/// Ids come from [`Barren`], which mints nothing: every op in the pinned script is one of the
+/// `document::apply` dispatches that takes no `IdSource` at all, and a source that cannot mint is
+/// how that stays true rather than being asserted once and drifting.
+#[test]
+fn the_versioning_ladder_this_document_climbs_is_the_one_the_swift_loopback_climbs() {
+    let corpus: serde_json::Value = serde_json::from_str(GOLDEN).expect("the corpus is JSON");
+    let pinned = field(&corpus, VECTOR);
+    let document = Arc::new(WorkspaceDocument::new(EPOCH, Arc::new(Barren)));
+
+    // Before the install: no topology at all, which is the one state where every mutation is a
+    // silent no-op and has to be told apart from a refusal on the merits.
+    let opening = field(pinned, "opening");
+    let (status, gone) = document.apply_intent(byte(opening, "op"), &from_hex(text(opening, "argsHex")));
+    assert_eq!(status.as_byte(), byte(opening, "status"));
+    assert_eq!(document.is_pristine(), flag(opening, "pristine"));
+    assert!(gone.is_empty());
+    assert!(!flag(opening, "published"));
+    assert_eq!(
+        *document.snapshot(),
+        HostWorkspaceState::new(),
+        "an intent served against a document with no workspace changes nothing",
+    );
+
+    let mut state = HostWorkspaceState::new();
+    slopdesk_wire::document::write_topology(&mut state, &pinned_workspace());
+    document.install(state, true, None);
+    assert_eq!(
+        to_hex(&codec::encode_snapshot(&document.snapshot())),
+        text(pinned, "installSnapshot"),
+        "the two languages build the same fixture, or nothing below means anything",
+    );
+    assert_eq!(document.is_pristine(), flag(pinned, "installPristine"));
+    assert_eq!(
+        version_of(&document),
+        number(pinned, "installStateNum"),
+        "the ladder both documents share starts at the install, and it starts at 1",
+    );
+
+    let mut version = number(pinned, "installStateNum");
+    for step in field(pinned, "steps").as_array().expect("an array of steps") {
+        let name = text(step, "name");
+        let before = document.snapshot();
+        let (status, _gone) = document.apply_intent(byte(step, "op"), &from_hex(text(step, "argsHex")));
+        let after = document.snapshot();
+        let now = version_of(&document);
+
+        assert_eq!(status.as_byte(), byte(step, "status"), "{name}: verdict");
+        assert_eq!(document.is_pristine(), flag(step, "pristine"), "{name}: pristine");
+        assert_eq!(now, number(step, "stateNum"), "{name}: version after");
+        assert_eq!(
+            now != version,
+            flag(step, "published"),
+            "{name}: a version moves if and ONLY if the value moved",
+        );
+        assert_eq!(
+            to_hex(&codec::encode_diff(&after.diff_from(&before))),
+            text(step, "diffHex"),
+            "{name}: the bytes this step would carry",
+        );
+        version = now;
+    }
+
+    assert_eq!(
+        to_hex(&codec::encode_snapshot(&document.snapshot())),
+        text(pinned, "snapshot"),
+        "the whole script lands on one document, byte for byte",
+    );
+}

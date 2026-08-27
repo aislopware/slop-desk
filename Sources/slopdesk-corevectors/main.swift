@@ -3,6 +3,10 @@ import Foundation
 import SlopDeskProtocol // WireMessage, MuxEnvelopeCodec (terminal/PTY path)
 import SlopDeskVideoClient // TrendlineEstimator, OwdLateDetector, PacerDepthPolicy
 import SlopDeskVideoProtocol
+// LoopbackWorkspaceDocument + WorkspaceMirrorBox — the SWIFT half of the versioning ladder
+// `workspaceDocumentVersioning` pins against `rust/slopdesk-hostserver`'s. Headless: the target
+// holds no view framework, so naming it here does not drag the client UI into the generator.
+import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel // WorkspaceStateCodec (the host workspace document, docs/45)
 
 // slopdesk-corevectors — emits a deterministic JSON corpus of golden vectors through the
@@ -1601,6 +1605,178 @@ root["workspaceWireMessages"] = [
     wsWireRecord("eventUnknownKind", .workspaceEvent(
         kind: 250, epoch: wsEpoch, baseStateNum: 0, newStateNum: 0, payload: Data(),
     )),
+]
+
+// MARK: workspaceDocumentVersioning (docs/60 §D.6.4 — the ~30 lines around the shared decision)
+
+// The one cross-language pin the golden corpus exists to carry HERE rather than in a suite: the
+// DECISION is one implementation already (`WorkspaceIntentApplier` marshals into
+// `slopdesk_wire::document::apply`, docs/55), but the VERSIONING around it is written twice —
+// `LoopbackWorkspaceDocument` on this side, `rust/slopdesk-hostserver`'s `WorkspaceDocument` on the
+// host's. The two reach the same numbers by opposite routes, and that equivalence is what nothing
+// checked after `docs/60` F.9 deleted the Swift host:
+//
+//   - Swift opens at `stateNum = 0` and `install` BUMPS to 1, publishing a kind-0 snapshot;
+//   - Rust opens at `state_num = 1` and `install` does NOT bump, because `add_subscriber` is what
+//     publishes and a bump there would make the first snapshot claim to be the second.
+//
+// So the ladder these vectors pin starts AT the install, where both documents are at 1. The
+// pre-install number is the one value the two spell differently, by design, and no subscriber can
+// observe it — nothing is published at it on either side — so `opening` below pins the VERDICT of
+// an intent served against a document with no topology, and deliberately not a number.
+//
+// What is pinned per step: the op byte, its args, the verdict, the version AFTER it, whether the
+// document is still pristine, whether the step PUBLISHED at all, and the diff those two consecutive
+// states produce. NOT the frames — the host's go out through `subscriber.rs`, which diffs against
+// each subscriber's ACKED base and coalesces; that is a per-subscriber concern the loopback has no
+// counterpart for, so diffing it would compare the wrong thing.
+//
+// ⚠️ The script may name NO op that mints host-side. `document::apply` takes an `IdSource` seam for
+// the ops that need a fresh id, and this side has no such parameter: `WorkspaceIntentApplier` hands
+// the crate a pool of `UUID()`s, which is random per run. Every op below is one of the fourteen
+// `apply` dispatches that take no `ids` at all — adoptWorkspace, rename{Pane,Tab,Session},
+// reorderTabs, focusTab, setZoom, setSyncInput — so every id in play is either already in the
+// fixture or refused. `split`, `close*`, `move`, `spawn*`, `detach`, `new/closeSession`, `break`
+// and `dock` all mint and would make this corpus unreproducible; a client-proposed `newPane:` does
+// NOT make `split` safe, because the node that comes to hold the two leaves is minted host-side
+// either way.
+
+let wdvSession = SessionID(raw: wsUUID(0x51))
+let wdvTabOne = TabID(raw: wsUUID(0x71))
+let wdvTabTwo = TabID(raw: wsUUID(0x72))
+let wdvGhostTab = TabID(raw: wsUUID(0x7F))
+let wdvPaneOne = PaneID(raw: wsUUID(0x11))
+let wdvPaneTwo = PaneID(raw: wsUUID(0x12))
+
+// Two single-pane tabs in one session — enough shape that a focus change, a swap and a per-tab flag
+// each have somewhere to land, and small enough that the whole snapshot is readable in the corpus.
+// The fixture is built independently on both sides, so `installSnapshot` also pins that the two
+// languages encode the SAME topology to the same bytes before any intent runs.
+let wdvSeed = WorkspaceTopology(
+    tree: TreeWorkspace(
+        sessions: [Session(
+            id: wdvSession,
+            name: "slop-desk",
+            tabs: [
+                Tab(id: wdvTabOne, title: "one", root: .leaf(wdvPaneOne), activePane: wdvPaneOne),
+                Tab(id: wdvTabTwo, title: "two", root: .leaf(wdvPaneTwo), activePane: wdvPaneTwo),
+            ],
+            specs: [
+                wdvPaneOne: PaneSpec(kind: .terminal, title: "zsh"),
+                wdvPaneTwo: PaneSpec(kind: .terminal, title: "zsh"),
+            ],
+        )],
+        activeSessionID: wdvSession,
+    ),
+    hostDisplayName: "mac-studio",
+)
+
+let wdvBox = WorkspaceMirrorBox()
+let wdvDocument = LoopbackWorkspaceDocument(box: wdvBox, epoch: wsEpoch)
+
+/// One step of the script, served through the REAL document so the versioning under test is the
+/// shipped one and not a transcription of it.
+///
+/// `@MainActor` because a `func` in top-level code is nonisolated even though the statements around
+/// it are not, and the document is a main-actor class.
+@MainActor
+func wdvStep(_ name: String, _ op: UInt8, _ args: Data) -> [String: Any] {
+    let before = wdvDocument.snapshot
+    let versionBefore = wdvDocument.stateNum
+    let status = wdvDocument.serve(WorkspaceIntent(intentID: wsUUID(0x9E), op: op, args: args))
+    let after = wdvDocument.snapshot
+    return [
+        "name": name,
+        "op": Int(op),
+        "argsHex": wsHex(args),
+        "status": Int(status.rawValue),
+        "stateNum": Int(wdvDocument.stateNum),
+        "pristine": wdvDocument.isPristine,
+        // A version moves if and ONLY if the value moved — so the corpus carries both facts and a
+        // build where they come apart diverges rather than agreeing on a coincidence.
+        "published": wdvDocument.stateNum != versionBefore,
+        "diffHex": wsHex(WorkspaceStateCodec.encodeDiff(after.diff(from: before))),
+    ]
+}
+
+// Served BEFORE the install: no topology at all, which is the one state where every mutation is a
+// silent no-op and has to be told apart from a refusal on the merits.
+let wdvOpening: [String: Any] = {
+    let args = WorkspaceIntentArgs.encode(id: wdvTabOne.raw, name: "build")
+    let versionBefore = wdvDocument.stateNum
+    let status = wdvDocument.serve(WorkspaceIntent(
+        intentID: wsUUID(0x9E),
+        op: WorkspaceIntentOp.renameTab.rawValue,
+        args: args,
+    ))
+    return [
+        "op": Int(WorkspaceIntentOp.renameTab.rawValue),
+        "argsHex": wsHex(args),
+        "status": Int(status.rawValue),
+        "pristine": wdvDocument.isPristine,
+        // OBSERVED, not asserted: a pre-install serve that ever started publishing would emit
+        // `true` here and fail the pin, where a hard-coded `false` would hide it for ever.
+        "published": wdvDocument.stateNum != versionBefore,
+    ]
+}()
+
+var wdvInstallState = HostWorkspaceState()
+wdvInstallState.write(topology: wdvSeed)
+wdvDocument.install(wdvInstallState, pristine: true)
+
+// Read off the DOCUMENT the instant the install lands, not off the value handed to it: the three
+// facts pinned here are the install's EFFECT, and a literal `1`/`true`/`wdvInstallState` would go on
+// agreeing with the corpus long after the effect stopped matching.
+let wdvInstallStateNum = Int(wdvDocument.stateNum)
+let wdvInstallPristine = wdvDocument.isPristine
+let wdvInstallSnapshot = wsHex(WorkspaceStateCodec.encodeSnapshot(wdvDocument.snapshot))
+
+let wdvSteps: [[String: Any]] = [
+    // Two accepted mutations in a row, so the base/new pair the next diff is computed against is
+    // never the install's.
+    wdvStep("renameTab", WorkspaceIntentOp.renameTab.rawValue,
+            WorkspaceIntentArgs.encode(id: wdvTabOne.raw, name: "build")),
+    wdvStep("renamePane", WorkspaceIntentOp.renamePane.rawValue,
+            WorkspaceIntentArgs.encode(id: wdvPaneOne.raw, name: "editor")),
+    // ACCEPTED and changed nothing: it must consume no version and still clear pristine, because
+    // `adoptWorkspace` is the one op that may not run twice and renaming a tab to its own name is
+    // still taking ownership of this workspace.
+    wdvStep("renameTabToItsOwnName", WorkspaceIntentOp.renameTab.rawValue,
+            WorkspaceIntentArgs.encode(id: wdvTabOne.raw, name: "build")),
+    // An op byte no build knows. Refused by name rather than guessed at, and it costs no version.
+    wdvStep("unknownOp", 0xFE, Data()),
+    // A topology EXISTS now, so this not-found is the refusal-on-the-merits half of `opening`.
+    wdvStep("renameGhostTab", WorkspaceIntentOp.renameTab.rawValue,
+            WorkspaceIntentArgs.encode(id: wdvGhostTab.raw, name: "ghost")),
+    // The bootstrap, arriving after the first accepted intent already ended pristine. `stale` is
+    // decided BEFORE the payload is parsed, which is why empty args are enough to pin it.
+    wdvStep("adoptAfterOwnership", WorkspaceIntentOp.adoptWorkspace.rawValue, Data()),
+    // Four accepted mutations in a row, each touching a different half of the topology — the tab
+    // MRU, the tab order, a `session/*` cell and a `tab/zoomedPane` — so a versioning bug that only
+    // shows on one shape of write has somewhere to show.
+    wdvStep("focusOtherTab", WorkspaceIntentOp.focusTab.rawValue,
+            WorkspaceIntentArgs.encode(tab: wdvTabTwo)),
+    wdvStep("reorderTabs", WorkspaceIntentOp.reorderTabs.rawValue,
+            WorkspaceIntentArgs.encode(session: wdvSession, tabOrder: [wdvTabTwo, wdvTabOne])),
+    wdvStep("renameSession", WorkspaceIntentOp.renameSession.rawValue,
+            WorkspaceIntentArgs.encode(id: wdvSession.raw, name: "notes")),
+    wdvStep("zoomPane", WorkspaceIntentOp.setZoom.rawValue,
+            WorkspaceIntentArgs.encode(id: wdvPaneTwo.raw, flag: true)),
+    wdvStep("armSyncInput", WorkspaceIntentOp.setSyncInput.rawValue,
+            WorkspaceIntentArgs.encode(id: wdvTabOne.raw, flag: true)),
+    // The no-op again, this time mid-ladder rather than against the freshly installed state: an
+    // idempotent set is what makes a duplicated intent free.
+    wdvStep("armSyncInputAgain", WorkspaceIntentOp.setSyncInput.rawValue,
+            WorkspaceIntentArgs.encode(id: wdvTabOne.raw, flag: true)),
+]
+
+root["workspaceDocumentVersioning"] = [
+    "opening": wdvOpening,
+    "installStateNum": wdvInstallStateNum,
+    "installPristine": wdvInstallPristine,
+    "installSnapshot": wdvInstallSnapshot,
+    "steps": wdvSteps,
+    "snapshot": wsHex(WorkspaceStateCodec.encodeSnapshot(wdvDocument.snapshot)),
 ]
 
 // MARK: emit

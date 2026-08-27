@@ -98,7 +98,6 @@ let package = Package(
         .library(name: "SlopDeskTransport", targets: ["SlopDeskTransport"]),
         .library(name: "SlopDeskClient", targets: ["SlopDeskClient"]),
         .library(name: "SlopDeskTerminal", targets: ["SlopDeskTerminal"]),
-        .library(name: "SlopDeskTTY", targets: ["SlopDeskTTY"]),
         .library(name: "SlopDeskInspector", targets: ["SlopDeskInspector"]),
         .library(name: "SlopDeskClaudeCode", targets: ["SlopDeskClaudeCode"]),
         .library(name: "SlopDeskAgentDetect", targets: ["SlopDeskAgentDetect"]),
@@ -304,13 +303,6 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // The leaf that owns a RAW DESCRIPTOR on the Swift side: local-terminal raw mode, termios
-        // save/restore, TIOCGWINSZ/TIOCSWINSZ, and the `write(2)`-until-done loop six call sites
-        // each used to spell (`FileDescriptorWrite`). A library so the save/restore + SIGWINCH
-        // mapping logic is unit-testable (the executable target is not importable). Zero
-        // dependencies, so naming it never widens a graph.
-        .target(name: "SlopDeskTTY"),
-
         // Read-only structured inspector (WF-6). Tails Claude Code's JSONL transcript (+ subagent
         // files + hooks) on the host, models typed `InspectorEvent`s, streams them over a SECOND
         // length-prefixed channel (NWConnection #2) to a SwiftUI client. INDEPENDENT of the terminal
@@ -487,7 +479,6 @@ let package = Package(
                 "SlopDeskClient",
                 // The client control server answers over a mux channel and writes with `write(2)`.
                 "SlopDeskTransport",
-                "SlopDeskTTY",
                 // The pane's drop destination drives `FileTransferClient`.
                 "SlopDeskFileTransfer",
                 // Settings options name video-path knobs.
@@ -580,8 +571,6 @@ let package = Package(
                 "SlopDeskDevicePanels",
                 // docs/56: the presentation logic this target now only DRAWS.
                 "SlopDeskClientCore",
-                // The one `write(2)`-until-done loop, for the control server's replies.
-                "SlopDeskTTY",
                 // The `ShellQuoting` face — one door for every place that types a path into a live
                 // shell. Transitive via WorkspaceCore, but a direct `import` needs it declared here
                 // (same rationale as Protocol/Inspector/Transport below).
@@ -804,7 +793,12 @@ let package = Package(
         // Interactive remote terminal client. Sources under Sources/slopdesk-client.
         .executableTarget(
             name: "slopdesk-client",
-            dependencies: ["SlopDeskClient", "SlopDeskTransport", "SlopDeskTerminal", "SlopDeskTTY"],
+            // `CSlopDeskFFI` because the local terminal's raw mode, its window size and the
+            // `write(2)`-until-done loop are `rust/slopdesk-posix`'s now — `main.swift` calls
+            // `slopdesk_tty_*`/`slopdesk_fd_write_all` directly, so the shim has to be linked here
+            // rather than reached transitively.
+            dependencies: ["SlopDeskClient", "SlopDeskTransport", "SlopDeskTerminal", "CSlopDeskFFI"],
+            linkerSettings: ffiCLibraries,
         ),
 
         // GUI video path (PATH 2) host daemon: enumerate shareable windows, bind the UDP
@@ -858,6 +852,13 @@ let package = Package(
             dependencies: [
                 "SlopDeskProtocol",
                 "SlopDeskWorkspaceModel",
+                // `LoopbackWorkspaceDocument` — the Swift half of the versioning ladder
+                // `workspaceDocumentVersioning` pins against `rust/slopdesk-hostserver`'s document.
+                // The vector runs the REAL class rather than a transcription of its ~30 lines,
+                // which is the only way the pin can catch this side drifting. No cycle (this is a
+                // leaf executable) and no GUI: the target holds the workspace DOMAIN and links no
+                // view framework.
+                "SlopDeskWorkspaceCore",
                 "SlopDeskVideoProtocol",
                 "SlopDeskVideoClient",
             ],
@@ -907,7 +908,6 @@ let package = Package(
                 "SlopDeskClient",
                 "SlopDeskTransport",
                 "SlopDeskTerminal",
-                "SlopDeskTTY",
             ],
         ),
         // Fixture-based tests for the inspector: JSONL parsing, tool-card pairing,
