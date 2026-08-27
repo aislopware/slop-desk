@@ -960,12 +960,12 @@ public actor SlopDeskVideoHostSession {
             case .control:
                 let run = inputRun
                 inputRun = []
-                await injectCoalesced(run)
+                injectCoalesced(run)
                 await handleControl(data)
             case .recovery:
                 let run = inputRun
                 inputRun = []
-                await injectCoalesced(run)
+                injectCoalesced(run)
                 await handleRecovery(data)
             case .video,
                  .geometry,
@@ -975,7 +975,7 @@ public actor SlopDeskVideoHostSession {
                 break
             }
         }
-        await injectCoalesced(inputRun)
+        injectCoalesced(inputRun)
         // i2h (debug-only): stamp the inject time of the latest key/button-down so `onEncodedFrame` logs the
         // inject→encoded segment of input-to-photon. Same `hostRelativeMillis` clock as sendTs/RTT.
         if Self.debugStderr, sawKeyOrButtonDown { lastInputRxMs = hostRelativeMillis() }
@@ -1031,7 +1031,7 @@ public actor SlopDeskVideoHostSession {
     /// `injectCoalesced` re-arms if the residual is still held (fired before the gate elapsed).
     private func scrollIdleFlushFired() async {
         scrollIdleFlushTask = nil
-        await injectCoalesced([])
+        injectCoalesced([])
     }
 
     private func handleControl(_ data: Data) async {
