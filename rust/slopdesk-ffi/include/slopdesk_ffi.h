@@ -239,7 +239,7 @@ size_t  slopdesk_replay_seqs_copy(SlopDeskReplay *handle, int64_t *out, size_t c
 //
 // The Swift side keeps AgentKind and ClaudeStatus as native enums, because a SwiftUI switch needs
 // one and marshalling would buy nothing. They carry no rules. The discriminants below are therefore
-// a CONTRACT between the two languages, pinned by `make lint-invariants`: a Swift enum that reorders
+// a CONTRACT between the two languages, pinned by `just lint-invariants`: a Swift enum that reorders
 // its cases fails the gate rather than quietly reporting `working` for `blocked`.
 //
 // Those two are ALL that is left of the vocabulary. `AgentScreenState`, `AgentScreenDetection` and
@@ -1159,7 +1159,7 @@ size_t slopdesk_config_env_key(uint8_t *out, size_t cap);
 // on only one side is the failure that would put the hole back.
 //
 // An id no row declares is SHOWN. A typo must not delete a row without a word;
-// `make lint-invariants` is what makes an undeclared id impossible.
+// `just lint-invariants` is what makes an undeclared id impossible.
 bool slopdesk_palette_row_shown(const uint8_t *id, size_t len, bool mac);
 size_t slopdesk_palette_row_count(void);
 size_t slopdesk_palette_row_id(size_t index, uint8_t *out, size_t cap);
@@ -1823,7 +1823,7 @@ size_t slopdesk_ws_reconcile_panes(const SlopDeskWsEntry *entries, size_t count,
 // an encoded snapshot read with `slopdesk_ws_decode_snapshot`. One shape cannot make that trip: a
 // session with NO usable tab is dropped by the document ingest on both sides, rightly, since a host
 // push naming one describes nothing — so the caller repairs that single case before encoding, and
-// `make lint-invariants` pins it to stay that one case.
+// `just lint-invariants` pins it to stay that one case.
 
 // The identity pool one repair can spend over a workspace of that shape. Sized here rather than at
 // the call site: a pool one short REPEATS an identity rather than failing, and two tabs born with
@@ -5971,11 +5971,8 @@ bool   slopdesk_video_capture_needs_frame_hash(const SlopDeskVideoCaptureGates *
 // also reports change 0 but on an UNMEASURABLE frame — a genuinely-unknown frame is never idle.
 bool   slopdesk_video_capture_skips_idle_frame(const SlopDeskVideoCaptureGates *gates, bool measured,
                                                uint32_t change_milli);
-// Whether this live delta becomes a self-heal LTR refresh. The caller keeps advancing its counter
-// while the loss gate suppresses, which is what makes re-arming on the first lossy frame immediate.
-bool   slopdesk_video_capture_should_self_heal(const SlopDeskVideoCaptureGates *gates,
-                                               int32_t frames_since_anchor, bool eligible,
-                                               double loss_rate);
+// The self-heal cadence has NO door: `08d33f2e` took the capture path's last Swift caller, and the
+// Rust daemon asks `slopdesk_video::capture_gates::CaptureGates::should_self_heal` in values form.
 // `pending_forced` is one byte per already-queued frame, oldest first, non-zero for a forced one.
 // `evict_index` is written ONLY for SLOPDESK_CAPTURE_BACKLOG_EVICT_OLDEST.
 uint8_t slopdesk_video_capture_backlog_decision(const SlopDeskVideoCaptureGates *gates,

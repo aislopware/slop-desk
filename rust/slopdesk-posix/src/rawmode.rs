@@ -1,6 +1,6 @@
 //! A LOCAL terminal's line discipline, and putting it back on every exit path.
 //!
-//! Ported whole from the deleted `Sources/SlopDeskTTY/TerminalRawMode.swift`, whose contract this
+//! Ported whole from the deleted `SlopDeskTTY.TerminalRawMode`, whose contract this
 //! module inherits: **the user's terminal must never be left in raw mode.** A process that dies
 //! holding `cfmakeraw` attributes leaves a shell with no echo and no line editing, and the person
 //! at the keyboard has no way to type the command that would fix it.

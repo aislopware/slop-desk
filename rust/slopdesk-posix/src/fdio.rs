@@ -1,6 +1,6 @@
 //! Moving EVERY byte over a bare descriptor, and saying which of the three ways it ended.
 //!
-//! Ported from the deleted `Sources/SlopDeskTTY/FileDescriptorIO.swift`, which was itself the
+//! Ported from the deleted `SlopDeskTTY.FileDescriptorIO`, which was itself the
 //! collapse of thirteen hand-written copies of these two loops. Each copy folded in the same two
 //! facts, and each was a chance to get one of them wrong:
 //!

@@ -1,4 +1,4 @@
-//! The capture path's `SLOPDESK_*` operating point and its five decisions, in C —
+//! The capture path's `SLOPDESK_*` operating point and its four decisions, in C —
 //! `Sources/SlopDeskVideoHost/WindowCapturer.swift`.
 //!
 //! The same two-step shape [`crate::host_gates`] has, for the same reason:
@@ -8,17 +8,20 @@
 //! once. The texts cross as a [`blob_list`], absent entries and all, because an unset key is not an
 //! empty one and `SLOPDESK_VIDEO_DEBUG` is a PRESENCE gate that reads the two oppositely.
 //!
-//! ## The five decisions cross too, and three of them read the table
+//! ## The four decisions cross too, and three of them read the table
 //!
-//! A gate table whose consumers each re-implement the rule it feeds is half a port. Four of these
+//! A gate table whose consumers each re-implement the rule it feeds is half a port. Three of these
 //! doors therefore take the resolved [`SlopDeskVideoCaptureGates`] by pointer and answer the
 //! question directly, so the capture callback asks rather than branches. They are on the per-frame
 //! path — [`slopdesk_video_capture_needs_frame_hash`] runs once per captured frame at 60 Hz — which
 //! is why they take the table by pointer instead of by value: a thirty-field aggregate copied per
 //! frame would be the one thing this port could plausibly make slower than the Swift it replaces.
 //!
-//! [`slopdesk_video_capture_fold_encode_ewma`] is the fifth, and the only one that reads no gate at
-//! all: it is three scalars in and one out.
+//! [`slopdesk_video_capture_fold_encode_ewma`] is the fourth, and the only one that reads no gate
+//! at all: it is three scalars in and one out.
+//!
+//! There were FIVE. The self-heal cadence lost its last Swift caller in `08d33f2e` and its door
+//! went with it — see the note where it stood.
 
 use core::ffi::c_uchar;
 
@@ -376,29 +379,11 @@ pub const unsafe extern "C" fn slopdesk_video_capture_skips_idle_frame(
     raw.idle_skip && slopdesk_video::capture_gates::idle_skip_eligible(measured, change_milli)
 }
 
-/// Whether this live delta should become a self-heal LTR refresh.
-///
-/// `false` for a null table: no heal is the answer that changes no bytes on the wire.
-///
-/// # Safety
-/// `gates` must be null or point to one live [`SlopDeskVideoCaptureGates`] for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_video_capture_should_self_heal(
-    gates: *const SlopDeskVideoCaptureGates,
-    frames_since_anchor: i32,
-    eligible: bool,
-    loss_rate: f64,
-) -> bool {
-    // SAFETY: the caller's obligation, restated above.
-    let Some(raw) = (unsafe { gates.as_ref() }) else {
-        return false;
-    };
-    returning(raw).should_self_heal(frames_since_anchor, eligible, loss_rate)
-}
+// The self-heal cadence has NO door. `slopdesk_video_capture_should_self_heal` was one until the
+// capture path's last Swift caller went in `08d33f2e`, and a door nobody opens is the second way to
+// ask something `slopdesk_video::capture_gates::CaptureGates::should_self_heal` already answers —
+// which is what `ffi-doors-are-opened` bans. The Rust daemon calls the values form directly, so
+// re-adding the door would cost one declaration and buy nothing.
 
 /// What the decoupled encode backlog does with an arriving frame.
 ///
@@ -664,8 +649,8 @@ mod tests {
         slopdesk_video_capture_gates, slopdesk_video_capture_heartbeat_due,
         slopdesk_video_capture_monotonic_pts, slopdesk_video_capture_needs_frame_hash,
         slopdesk_video_capture_resolve_encode, slopdesk_video_capture_scroll_decimation,
-        slopdesk_video_capture_should_self_heal, slopdesk_video_capture_skips_idle_frame,
-        slopdesk_video_capture_smooth_adaptive_qp, slopdesk_video_capture_synthetic_pts,
+        slopdesk_video_capture_skips_idle_frame, slopdesk_video_capture_smooth_adaptive_qp,
+        slopdesk_video_capture_synthetic_pts,
     };
 
     /// The encoder's shipped static ceiling, as the caller passes it.
@@ -740,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn the_four_table_doors_answer_inertly_for_a_null_table() {
+    fn the_three_table_doors_answer_inertly_for_a_null_table() {
         // SAFETY: null is the one pointer these doors are asked to answer for.
         unsafe {
             assert!(!slopdesk_video_capture_needs_frame_hash(
@@ -752,12 +737,6 @@ mod tests {
                 core::ptr::null(),
                 true,
                 0
-            ));
-            assert!(!slopdesk_video_capture_should_self_heal(
-                core::ptr::null(),
-                999,
-                true,
-                1.0
             ));
             assert_eq!(
                 slopdesk_video_capture_backlog_decision(
@@ -807,32 +786,6 @@ mod tests {
                 &raw const plain,
                 true,
                 0
-            ));
-        }
-    }
-
-    #[test]
-    fn the_self_heal_cadence_crosses() {
-        let plain = gates(&[]);
-        // SAFETY: the record is a live local for the call.
-        unsafe {
-            assert!(!slopdesk_video_capture_should_self_heal(
-                &raw const plain,
-                29,
-                true,
-                0.0
-            ));
-            assert!(slopdesk_video_capture_should_self_heal(
-                &raw const plain,
-                30,
-                true,
-                0.0
-            ));
-            assert!(!slopdesk_video_capture_should_self_heal(
-                &raw const plain,
-                30,
-                false,
-                0.0
             ));
         }
     }

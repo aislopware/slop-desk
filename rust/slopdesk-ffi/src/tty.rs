@@ -26,8 +26,8 @@
 //! the tests and for a caller that one day has a reason.
 //!
 //! ## What this replaced
-//! `Sources/SlopDeskTTY/TerminalRawMode.swift` (264 lines) and `FileDescriptorIO.swift` (108), and
-//! with them the last Swift that spoke `termios` about the machine it runs on.
+//! The deleted `SlopDeskTTY.TerminalRawMode` (264 lines) and `SlopDeskTTY.FileDescriptorIO` (108),
+//! and with them the last Swift that spoke `termios` about the machine it runs on.
 
 use core::ffi::c_uchar;
 
