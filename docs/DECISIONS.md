@@ -14650,7 +14650,18 @@ required" argument on an invariant named after a target that no longer exists. `
 offered `CSlopDeskSIMD` as one of the two live examples of a linked port; it is now `CSlopDeskFFI`.
 The invariant that actually holds today is narrower and worth stating that way: nothing under
 `Sources/` *implements* anything in C. The one C target left there, `CSlopDeskVirtualDisplay`,
-declares private CoreGraphics headers and has no `.c` file at all.
+declared private CoreGraphics headers and had no `.c` file at all.
+
+**2026-08-27 — that target is gone too, and the narrower invariant has become the wide one: there is
+no C under `Sources/`.** What removed it was not a rewrite but a correction: the four
+`CGVirtualDisplay*` types are Objective-C CLASSES in the PUBLIC CoreGraphics framework, and only the
+HEADERS were private. `rust/slopdesk-apple-cgvirtualdisplay` therefore reaches them by name through
+the Objective-C runtime, which collapses the `weak_import` linkage attribute and the
+`NSClassFromString` availability gate into one lookup, and the whole area now arrives through
+`CSlopDeskFFI` with everything else. The port also found a bug the shim had carried for its whole
+life: `applySettings:` takes `unsigned int` width and height, not `NSUInteger` as the class dump
+claimed, so the shim had been passing 64 bits into a 32-bit parameter. `objc2` verifies method
+encodings and refused to compile it.
 
 `Package.swift`'s own tombstone was wrong in the other direction — it said the codec moved to
 `rust/slopdesk-video`, "which is `forbid(unsafe_code)` and holds parity **without a hand-written

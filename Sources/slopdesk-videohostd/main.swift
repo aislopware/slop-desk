@@ -219,10 +219,10 @@ func resolvePaneCapture(
     vdPointSize: VideoSize,
     recreate: VDRecreateContext?,
 ) async -> (captureScale: Double, sizeOverride: VideoSize?, resizeLimit: VideoSize?) {
-    var (liveVDID, liveVDScale): (CGDirectDisplayID, Int) = await MainActor.run {
-        guard let vd = holder.currentVirtualDisplay() else { return (CGDirectDisplayID(0), 1) }
-        return (vd.displayID, vd.scale)
-    }
+    // No main-actor hop: both reads are atomics on the Rust side, answerable while another pane's
+    // blocking `create` is still inside WindowServer — which is exactly what this call site wants.
+    var (liveVDID, liveVDScale): (CGDirectDisplayID, Int) =
+        holder.currentVirtualDisplay().map { ($0.displayID, $0.scale) } ?? (CGDirectDisplayID(0), 1)
     // The VD is DEAD (WindowServer terminated it — displayID cleared by the termination
     // handler, so no park can target it). Lazily re-create it on this park request — single-flight
     // + cooldown via the gate; a losing/throttled mint just captures 1× and a later hello retries.
@@ -235,10 +235,9 @@ func resolvePaneCapture(
             }
         }
         recreate.gate.end()
-        (liveVDID, liveVDScale) = await MainActor.run {
-            guard let vd = holder.currentVirtualDisplay() else { return (CGDirectDisplayID(0), 1) }
-            return (vd.displayID, vd.scale)
-        }
+        (liveVDID, liveVDScale) =
+            holder.currentVirtualDisplay().map { ($0.displayID, $0.scale) }
+                ?? (CGDirectDisplayID(0), 1)
     }
     guard liveVDID != 0, let movePid = processID,
           let achieved = await parkingManager.park(
@@ -501,7 +500,7 @@ final class Holder: @unchecked Sendable {
     private let lock = NSLock()
     private var registry: VideoMuxSessionRegistry?
     private var mux: NWVideoMuxDatagramTransport?
-    private var virtualDisplay: VirtualDisplay? // held for daemon lifetime (ARC owns the CGVirtualDisplay)
+    private var virtualDisplay: VirtualDisplay? // held for daemon lifetime (ARC owns the Rust handle)
     private var parkingManager: WindowParkingManager? // restores parked windows on close/shutdown/VD-death
     func setMux(_ r: VideoMuxSessionRegistry, _ m: NWVideoMuxDatagramTransport) { lock.lock()
         registry = r
@@ -624,13 +623,12 @@ func performGracefulShutdown(_ signalName: String) {
         }
         // Restore every parked window to its original display/size BEFORE the VD is destroyed (the
         // original display must still exist). Then tear the VD down AFTER all SCStreams stopped
-        // (FB17797423: never release the VD while a stream targets it). ARC dealloc unregisters it.
+        // (FB17797423: never release the VD while a stream targets it). `destroy` hops to the main
+        // thread itself — the unregistering IPC is `-dealloc`'s, not this call site's.
         if let pm = holder.currentParkingManager() {
             await pm.restoreAll()
         }
-        if let vd = holder.currentVirtualDisplay() {
-            await MainActor.run { vd.destroy() }
-        }
+        holder.currentVirtualDisplay()?.destroy()
         guard shutdownExitArbiter.claim() else { return } // watchdog already force-exiting
         exit(0)
     }
@@ -730,7 +728,10 @@ func bringUpVirtualDisplay(
     let parkingSidecarURL = WindowParkingSnapshot.defaultSidecarURL()
     await MainActor.run { runParkedWindowLaunchHygiene(at: parkingSidecarURL) }
 
-    let virtualDisplay = await MainActor.run { VirtualDisplay() }
+    // No hop: the handle is not main-actor bound, and `create` below MUST NOT run on the main actor
+    // — it blocks for seconds and hops to main itself. The `WindowParkingManager` hops that follow
+    // are AppKit's, and stay.
+    let virtualDisplay = VirtualDisplay()
     holder.setVirtualDisplay(virtualDisplay)
     let parkingManager = await MainActor.run { WindowParkingManager() }
     holder.setParkingManager(parkingManager)
@@ -765,10 +766,11 @@ func bringUpVirtualDisplay(
     // fast-user-switch). `handleTermination` already cleared `displayID` by the time this fires,
     // so concurrent mints fail SOFT to 1× (no re-park onto the dead VD); the drain then
     // disconnects the affected sessions + restores their windows.
-    await MainActor.run {
-        virtualDisplay.onTerminated = {
-            Task { await handleVirtualDisplayTermination(holder: holder, parkingManager: parkingManager) }
-        }
+    // A METHOD, not a property: the trampoline box behind the C context pointer has a lifetime, and
+    // the handle is the one that owns it. Delivered on the framework's own queue, so the work goes
+    // straight into a `Task` rather than assuming any actor.
+    virtualDisplay.setOnTerminated {
+        Task { await handleVirtualDisplayTermination(holder: holder, parkingManager: parkingManager) }
     }
     log(
         "virtual display ONLINE id=\(id) (\(args.vdPointWidth)x\(args.vdPointHeight)pt @2× → \(geo.pixelWidth)x\(geo.pixelHeight)px, chip-limit \(chipLimit)px) — windows will be moved onto it for sharp capture",
@@ -845,7 +847,9 @@ func mintDisplaySession(
 /// so the VD-only path only works if SCK lists the VD. Creates an EXTRA VD (no promote, no
 /// dongle-disable → a live session is untouched), lists every SCK display + marks the VD and the main,
 /// then destroys it. Run: `slopdesk-videohostd --vd-sck-probe` (needs the daemon's Screen-Recording TCC).
-@MainActor
+///
+/// NOT `@MainActor`: `create` blocks inside `applySettings:` for seconds while hopping to the main
+/// thread itself, so the main actor is the one actor this probe must not be pinned to.
 func runVDSCKProbe() async {
     let vd = VirtualDisplay()
     let geo = VirtualDisplayGeometry(pointWidth: 1920, pointHeight: 1080, scale: 1)

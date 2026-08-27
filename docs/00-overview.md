@@ -47,7 +47,7 @@ The canvas holds panes; each streams over the transport its content needs (termi
 
 `unsafe` is admitted in TWO families and nowhere else: the three hand-written crates (`slopdesk-posix`, `slopdesk-ffi`, `slopdesk-gfsimd`) and the `slopdesk-apple-*` family, which may reach a framework only through `objc2` ([57](57-apple-frameworks-in-rust.md)). Every other crate is `forbid(unsafe_code)`, which no downstream `allow` can lift. `CLAUDE.md` states the bar for each; `rust/slopdesk-invariants` enforces it.
 
-Scripting is Rust as well — there is no shell or Python left in the repo's own tooling; the gates, the release pipeline and the operator tools are binaries in `rust/slopdesk-devtools` and `rust/slopdesk-invariants`. The only C under `Sources/` is `CSlopDeskVirtualDisplay`, and it declares private CoreGraphics headers rather than implementing anything.
+Scripting is Rust as well — there is no shell or Python left in the repo's own tooling; the gates, the release pipeline and the operator tools are binaries in `rust/slopdesk-devtools` and `rust/slopdesk-invariants`. There is no C under `Sources/` at all: the last target, `CSlopDeskVirtualDisplay`, declared private CoreGraphics headers, and it went when `rust/slopdesk-apple-cgvirtualdisplay` started reaching those classes by name through the Objective-C runtime instead.
 
 ## 3. Major decisions (summary — details in [DECISIONS.md](DECISIONS.md))
 

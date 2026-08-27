@@ -33,6 +33,12 @@ const MACOS_EDGES: (&str, &str) = (
 );
 /// The orchestrator that used to build events.
 const INJECTOR: &str = "Sources/SlopDeskVideoHost/InputInjector.swift";
+/// Every extension a private Objective-C class could be named in under `Sources`.
+///
+/// Wider than [`SWIFT`] on purpose: the shape this bans is not "Swift calls the class" but "the
+/// clang-module shim comes back", and a shim is an `.h` that declares the interface plus a `.m`
+/// that forces the link. Banning only `.swift` would leave the two files that made it reachable.
+const SOURCES: &[&str] = &["swift", "m", "h"];
 
 /// The host synthesises no event of its own
 ///
@@ -179,10 +185,7 @@ pub fn the_host_decodes_no_window_record(tree: &Tree) -> Report {
                 all: &[],
                 unless: &[],
                 view: View::Code,
-                exempt: &[
-                    "Sources/slopdesk-videohostd/WindowFeedGlue.swift",
-                    "Sources/SlopDeskVideoHost/VirtualDisplay.swift",
-                ],
+                exempt: &["Sources/slopdesk-videohostd/WindowFeedGlue.swift"],
                 message: "these decode a window record themselves: {files} — the CGWindowList and \
                           display-list reads are slopdesk-apple-cgwindow's and \
                           slopdesk-apple-cgdisplay's, and a second decode is where 'a missing field \
@@ -335,6 +338,25 @@ const AREA_FLOORS: &[(&str, &str)] = &[
     ),
     ("rust/slopdesk-apple-app/src/lib.rs", r"NSWorkspace::"),
     ("rust/slopdesk-apple-machine/src/lib.rs", r"NSHost\b"),
+    (
+        "rust/slopdesk-apple-cgvirtualdisplay/src/classes.rs",
+        r"CGVirtualDisplay(Descriptor|Settings|Mode)?\b",
+    ),
+];
+
+/// The clang-module shim that used to make the private classes reachable.
+///
+/// TWO files rather than one because a shim is a pair: the header that class-dumped the four
+/// interfaces, and the `.m` that forced them to link. Naming both is what makes "the shim is gone"
+/// checkable — the header alone could come back under a different name, and the `.m` alone links
+/// nothing, so either one restored is the target coming back.
+///
+/// `VirtualDisplay.swift` is NOT here, and that is the difference between this port and a deletion:
+/// the file still exists and still owns the handle's lifetime and the trampoline. What left it is
+/// the private classes, which the ban below is about.
+const DELETED_VIRTUAL_DISPLAY_SHIM: &[&str] = &[
+    "Sources/CSlopDeskVirtualDisplay/include/CGVirtualDisplayPrivate.h",
+    "Sources/CSlopDeskVirtualDisplay/shim.m",
 ];
 
 /// The host reaches `FSEvents`, the pasteboard, Launch Services and `NSHost` from ONE crate each
@@ -356,12 +378,32 @@ const AREA_FLOORS: &[(&str, &str)] = &[
 /// snapshot freeze, and a gate that could not tell a call from a sentence about one would push
 /// those arguments out of the files that need them.
 ///
+/// The `CGVirtualDisplay` row is the one that carries a SWIFT side too, and for a reason the others
+/// do not have. Those four frameworks are reached from Swift processes that still exist, so their
+/// Swift was never deleted — but the four private `CGVirtualDisplay*` classes were not linked at
+/// all: they were reached through a clang-module shim, a class-dumped header plus a `.m` that
+/// forced the link. `objc2::runtime::AnyClass::get` answers an `Option`, which is the existence
+/// GATE and the lookup in one call, so the shim had nothing left to do and the whole target went.
+/// That makes two claims checkable here that the other rows cannot make: the shim's two files are
+/// GONE, and no source under `Sources` names one of the four classes.
+///
+/// That deletion also fixed a live bug, which is the argument for keeping it deleted rather than
+/// dormant: the class-dumped header declared `CGVirtualDisplayMode`'s width and height
+/// `NSUInteger`, and the running class's own method signature says `unsigned int`. The shim passed
+/// 64 bits into a 32-bit parameter in silence for as long as it existed; `objc2` verifies the
+/// encoding on every send and refused on the first try.
+///
 /// BREAK-TEST: added `let board = NSPasteboard::generalPasteboard();` to
 /// `rust/slopdesk-hostserver/src/clipsync.rs` ⇒ FAIL "reaches `NSPasteboard` directly". Separately
 /// added `NSHost::currentHost()` to `rust/slopdesk-hostd/src/workspacestore.rs` ⇒ FAIL, naming
 /// `slopdesk-apple-machine` as the home. Separately deleted
-/// `rust/slopdesk-apple-fsevents/src/watch.rs` ⇒ FAIL "has no Rust behind it". All restored from
-/// /tmp; PASS.
+/// `rust/slopdesk-apple-fsevents/src/watch.rs` ⇒ FAIL "has no Rust behind it". Separately added
+/// `let cls: AnyClass = CGVirtualDisplayDescriptor;` to `rust/slopdesk-ffi/src/virtual_display.rs`
+/// ⇒ FAIL, naming the cgvirtualdisplay crate as the home. Separately restored a one-line
+/// `Sources/CSlopDeskVirtualDisplay/shim.m` ⇒ FAIL "the private-class shim is back". Separately
+/// added `let d = CGVirtualDisplayDescriptor()` to
+/// `Sources/SlopDeskVideoHost/VirtualDisplay.swift` ⇒ FAIL "names a private
+/// `CGVirtualDisplay` class". All six restored from /tmp; PASS.
 #[must_use]
 pub fn each_apple_area_has_one_rust_home(tree: &Tree) -> Report {
     let mut report = Report::new();
@@ -374,6 +416,27 @@ pub fn each_apple_area_has_one_rust_home(tree: &Tree) -> Report {
             ),
         );
     }
+    for gone in DELETED_VIRTUAL_DISPLAY_SHIM {
+        report.absorb(check_all(tree, &[Claim::Absent {
+            path: gone,
+            message: "the private-class shim is back — the four CGVirtualDisplay* classes are reached by \
+                      runtime lookup from rust/slopdesk-apple-cgvirtualdisplay, which needs no class-dumped \
+                      header and no .m to force the link; the header it replaced also had the wrong integer \
+                      width on CGVirtualDisplayMode (docs/57 §2, docs/60 §7)",
+        }]));
+    }
+    report.absorb(check_all(tree, &[Claim::NoneUnder {
+        roots: &["Sources"],
+        extensions: SOURCES,
+        pattern: r"CGVirtualDisplay(Descriptor|Settings|Mode)?\b",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "these name a private CGVirtualDisplay class: {files} — the classes are resolved once, by \
+                  name, in rust/slopdesk-apple-cgvirtualdisplay/src/classes.rs, and a Swift or Objective-C \
+                  spelling of one is the class-dumped shim coming back (docs/57 §2, docs/60 §7)",
+    }]));
 
     let mut read_any = false;
     for (path, file) in tree.under("rust") {

@@ -482,6 +482,20 @@ So Rust owns the object and Swift holds an opaque token:
   lock would stall input on a hung app. What makes it an exception rather than a hole: `_free` JOINS
   both threads rather than cancelling them, so the handle cannot outlive a pump that still holds its
   state, and the scroll pump is stopped first because it can still ask the raise one for a raise.
+
+  The third is `SlopDeskVirtualDisplay`, and it is the exception for a reason the other two are not:
+  the second caller is not one the owner chose. CoreGraphics delivers the display's terminate
+  callback on a serial queue of its own, which the caller neither owns nor can serialise against, so
+  a lock on the Swift side would not describe the concurrency that already exists. Every door but
+  `_free` therefore takes `&`, and the registration sits behind a lock the callback path takes too.
+
+  What makes it an exception rather than a hole is where the barrier is. `_free` executes the
+  registration DROP synchronously on that same delivery queue, so it cannot return while a handler
+  is still inside the caller's function pointer — and it does so on BOTH teardown paths, because a
+  callback can be armed before the first `create` and a lazy re-create will abandon it. Clearing or
+  replacing the callback is deliberately NOT a barrier: only `_free` is, which is why the Swift face
+  keeps every trampoline context box alive until `_free` has returned rather than releasing the
+  previous one on each `set`. A handle whose barrier is anywhere but `_free` is not this exception.
 - Answers still come back through `(out, cap) -> needed`. **Nothing is allocated on one side and
   freed on the other**, so §4's "no free function" survives intact.
 

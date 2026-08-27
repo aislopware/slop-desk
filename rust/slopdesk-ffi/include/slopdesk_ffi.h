@@ -31,10 +31,12 @@
 //     * exactly one _free per _new; NULL is inert everywhere.
 //     * NO TWO CALLS ON ONE HANDLE MAY OVERLAP — the mutators take &mut, so a concurrent call is
 //       aliasing UB. The Swift owner serialises under the lock it already held.
-//       TWO EXCEPTIONS, each declared in its own doors rather than assumed: SlopDeskCursorSampler
+//       THREE EXCEPTIONS, each declared in its own doors rather than assumed: SlopDeskCursorSampler
 //       holds its state behind locks because two threads calling it is that handle's design (the
-//       pointer must keep flowing while the main thread is blocked), and SlopDeskKeyRepeat does the
-//       same because the main thread presses and releases while a timer queue asks what is due.
+//       pointer must keep flowing while the main thread is blocked), SlopDeskKeyRepeat does the
+//       same because the main thread presses and releases while a timer queue asks what is due,
+//       and SlopDeskVirtualDisplay does because the framework delivers its terminate callback on a
+//       serial queue of its own that the caller does not own and cannot serialise against.
 //       Nothing else may be assumed to be shareable; a handle without that note is not.
 //     * answers still come back through (out, cap) -> needed. Nothing is allocated on one side and
 //       freed on the other.
@@ -9602,6 +9604,51 @@ void   slopdesk_audio_encoder_reset(SlopDeskAudioEncoder *handle);
 size_t slopdesk_audio_encoder_push_sample_buffer(SlopDeskAudioEncoder *handle,
                                                  const void *sample_buffer,
                                                  SlopDeskAudioPayloadFn sink, void *context);
+
+// ---- The HiDPI virtual display ------------------------------------------------------
+//
+// The four private `CGVirtualDisplay*` classes, reached by NAME through the Objective-C
+// runtime — they are Objective-C classes in the PUBLIC CoreGraphics framework, so the
+// availability probe and the class lookup are ONE operation and there is no linkage
+// attribute to keep. `Sources/CSlopDeskVirtualDisplay` was the shim that used to declare
+// them; it is deleted, and there is now no C under `Sources/` at all.
+//
+// The geometry laws these drive — `slopdesk_vd_geometry` and its neighbours — are pure and
+// cross-platform, so they stay OUTSIDE this block, above.
+//
+// `_create` returns 0 on any failure, including a machine where the classes are absent.
+// Every door but `_free` takes `const`: the interior is locked, and the framework delivers
+// the terminate callback on its own serial queue. `_FREE IS THE ONE CALL THAT MAY NOT
+// OVERLAP ANYTHING` — it is a BARRIER, executing the registration drop synchronously on
+// that delivery queue, so it cannot return while a handler is still inside the caller's
+// function pointer. Clearing or replacing the callback is NOT a barrier, so the owner must
+// keep every context box alive until `_free` has returned.
+typedef struct SlopDeskVirtualDisplay SlopDeskVirtualDisplay;
+typedef void (*SlopDeskVirtualDisplayTerminatedFn)(void *context);
+
+// Whether this machine's CoreGraphics actually publishes the four classes. Answered by the
+// runtime lookup itself, so a false here is the same fact `_create` would return 0 for.
+uint32_t slopdesk_virtual_display_private_classes_available(void);
+SlopDeskVirtualDisplay *slopdesk_virtual_display_new(void);
+void slopdesk_virtual_display_free(SlopDeskVirtualDisplay *handle);
+
+// Points and scale, not pixels: the caller asks for the layout it wants and the scale it
+// wants it backed at. `max_horizontal_pixels` is the chip's own limit
+// (`slopdesk_vd_chip_pixel_limit`), and `name` is `(ptr, len)` UTF-8 as everywhere else.
+uint32_t slopdesk_virtual_display_create(const SlopDeskVirtualDisplay *handle,
+                                         uint32_t point_width, uint32_t point_height,
+                                         uint32_t scale, uint32_t max_horizontal_pixels,
+                                         uint32_t fps,
+                                         const uint8_t *name, size_t name_len);
+uint32_t slopdesk_virtual_display_id(const SlopDeskVirtualDisplay *handle);
+uint32_t slopdesk_virtual_display_scale(const SlopDeskVirtualDisplay *handle);
+
+// A NULL callback disarms. The context is opaque and never freed here — see the barrier
+// note above for the one moment at which the caller may release it.
+void slopdesk_virtual_display_set_terminated(const SlopDeskVirtualDisplay *handle,
+                                             SlopDeskVirtualDisplayTerminatedFn callback,
+                                             void *context);
+void slopdesk_virtual_display_destroy(const SlopDeskVirtualDisplay *handle);
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END

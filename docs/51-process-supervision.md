@@ -69,9 +69,11 @@ assumed from the man pages.
 zero-config agent-detection signal (`PTYForegroundProbe.foregroundName(masterFD:)`). A
 non-parent can `kill()` the child; only the forking process can `waitpid()` it. The `CMSG_*` macros
 are invisible to Swift, but their arithmetic is stable and hand-rollable, so **no C shim is
-required** and the invariant stands that nothing under `Sources/` implements anything in C — the
-one C target left there, `CSlopDeskVirtualDisplay`, declares private CoreGraphics headers and has no
-`.c` file at all.
+required** and the invariant stands that nothing under `Sources/` implements anything in C. It is now
+stronger than that: there is no C target under `Sources/` at all. The last one,
+`CSlopDeskVirtualDisplay`, only ever declared private CoreGraphics headers, and it went when
+`rust/slopdesk-apple-cgvirtualdisplay` started reaching those classes by name through the
+Objective-C runtime.
 
 **2.2 — The pane survives its fd-holder's death iff someone else still holds the fd.** This is the
 whole design in one sentence. If superd closes its master copy after handing off, hostd's exit drops

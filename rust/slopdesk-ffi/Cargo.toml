@@ -126,6 +126,13 @@ slopdesk-git = { path = "../slopdesk-git" }
 # only route a macOS-only crate may take into this graph.
 slopdesk-apple-cgevent = { path = "../slopdesk-apple-cgevent" }
 slopdesk-apple-cgdisplay = { path = "../slopdesk-apple-cgdisplay" }
+# The virtual display's other half — the four private `CGVirtualDisplay*` classes, reached through
+# `objc2`'s runtime lookup. Gated with the rest of the family, and for the plainest reason in it:
+# there is no `WindowServer` on iOS to register a display with. The GEOMETRY doors in
+# `virtual_display.rs` are NOT gated — they are arithmetic, they are golden-pinned, and both slices
+# already declare them — so only the handle half of that module sits inside the header's
+# `MACOS-ONLY` region.
+slopdesk-apple-cgvirtualdisplay = { path = "../slopdesk-apple-cgvirtualdisplay" }
 # The capture doors' other half — `ScreenCaptureKit`, called through `objc2`. Gated with the rest of
 # the family, and for the strongest reason in it: `ScreenCaptureKit` does not exist on iOS at all,
 # so an ungated edge would fail to link rather than merely cost bytes. Capture is the HOST's.

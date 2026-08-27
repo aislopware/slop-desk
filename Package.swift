@@ -687,17 +687,14 @@ let package = Package(
         // AND VTCompressionSession HW encode HANG without a window-server + Screen-Recording TCC
         // session, absent in a headless test/CI run (docs/research/spikes/vtbench/RESULTS.md). The
         // encoder/capture configs match the MEASURED spike configs exactly.
-        // Private CoreGraphics `CGVirtualDisplay*` headers (clang module). Lets the host create a
-        // HiDPI 2× virtual display so a remoted window renders at real Retina backing (sharp text)
-        // instead of point-resolution upscale. macOS-only (CoreGraphics); see the header for the
-        // run-loop / main-thread / retain contract. The classes link from the PUBLIC CoreGraphics
-        // framework — only the headers are private (no dlopen, no entitlement).
-        .target(
-            name: "CSlopDeskVirtualDisplay",
-            path: "Sources/CSlopDeskVirtualDisplay",
-            publicHeadersPath: "include",
-        ),
-
+        //
+        // The private `CGVirtualDisplay*` classes used to need a clang-module shim target here, to
+        // declare four `@interface`s and `weak_import` them. They do not any more: they are
+        // Objective-C CLASSES in the PUBLIC CoreGraphics framework, so
+        // `rust/slopdesk-apple-cgvirtualdisplay` reaches them by NAME through the Objective-C
+        // runtime — which makes the linkage attribute and the `NSClassFromString` gate one lookup —
+        // and the whole area arrives through `CSlopDeskFFI` with everything else. Nothing links
+        // them, so there is no `linkerSettings` row to keep either.
         .target(
             name: "SlopDeskVideoHost",
             // CSlopDeskFFI: the host's admission laws — the constant-QP AIMD and the recovery-IDR
@@ -707,7 +704,7 @@ let package = Package(
             // SlopDeskArena: the snapshot builder fills a text arena for `window_feed_pack`
             // (docs/55 §4c) and interns through the one implementation of that convention.
             dependencies: [
-                "SlopDeskVideoProtocol", "CSlopDeskVirtualDisplay", "CSlopDeskFFI", "SlopDeskArena",
+                "SlopDeskVideoProtocol", "CSlopDeskFFI", "SlopDeskArena",
             ],
             // macOS-only: SCStream + VTCompressionSession + AX/CGEvent are macOS APIs.
             // (SlopDeskVideoProtocol stays cross-platform; only this host layer is gated.)
