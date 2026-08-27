@@ -1552,6 +1552,43 @@ which is what makes one writer safe for a default-ON and a default-OFF key alike
 and `SLOPDESK_QP_DECOUPLE` are both default-ON reads whose sidecar writer emits `"1"` for true — so
 the writer never relies on absence to mean ON, and the round trip survives a polarity it cannot see.
 
+### The injector goes first, and it is assembly rather than translation
+
+`InputInjector.swift` is 735 lines and holds almost no rule of its own. Every DECISION in it already
+has a Rust owner: `InputButtonBalance` and `should_raise` in `input_routing`, `ScrollResampler` in
+`scroll_resample`, the flick recogniser in `swipe_recognizer`, the allowlist and thresholds in
+`swipe_nav_config`, the point map in `coordinate_mapping`, the gate table in `injector_gates`. The
+four verbs it posts through are already doors over `slopdesk-apple-cgevent`
+(`slopdesk_inject_{pointer,scroll,key,text}`), the raise chain is already
+`slopdesk_ax_raiser_{new,raise,free}`, and `activate`/`bundle_id` are already `slopdesk-apple-app`.
+**The cluster needs no new Apple crate and no new `unsafe`.** What is left in the Swift is two
+`DispatchQueue`s, one `DispatchSourceTimer`, three `NSLock`s its own comments call "harmless
+insurance", and the tag stamping — which is to say the file survives on owning concurrency primitives,
+and that is `coupled-swift-is-an-architecture-bug` stated in its purest form.
+
+Three things decide the shape, and getting any of them wrong costs a whole increment.
+
+**It ships with its door, or it strands.** The injector's only caller is `SlopDeskVideoHostSession`,
+which stays Swift until the LATER cluster. A Rust injector without an FFI door repeats `daemon_gates`
+one increment later and after far more work. So the deliverable is *Rust injector + door + Swift file
+deleted*, and `no-stranded-rust-module` grants the exemption on the `no_mangle` — the same way
+`ax.rs` earns it. The Swift call surface is five sites, which is what makes this tractable at all.
+
+**The injector does not live in the shim crate.** `slopdesk-ffi` may hand-write `unsafe`, which is
+exactly why a thread-owning stateful object does not belong in it: the shim stays thin over a
+composition crate the way `slopdesk-hostpane` and `slopdesk-hostsession` already are. So
+`rust/slopdesk-hostinput` — `forbid(unsafe_code)`, depending on `slopdesk-video` for every rule and on
+the `slopdesk-apple-*` crates for every effect — owns the injector, and `slopdesk-ffi/src/injector.rs`
+is a handle and six entry points over it.
+
+**The threads are the only new design.** Swift got two serial queues and a timer for free. The Rust
+shape is a scroll thread whose channel receive TIMES OUT at the drain interval, so ingest and periodic
+drain are one loop and no timer API is needed, plus a raise thread that owns the throttle and the
+`hasRaisedOnce` flag — both of which were queue-confined in Swift and so need no lock here either.
+Two of the three `NSLock`s die with them. The third does not: `balanceSnapshot` is read by the session
+at teardown and threaded into the replacement injector, so the held-button state is genuinely shared
+and stays a `Mutex`. Saying which lock survives, and why, is the part a transliteration gets wrong.
+
 **Stage G (separate campaign, not scoped here) — the client transport.** `Sources/SlopDeskProtocol`
 and `MuxNWConnection` survive stage F because the macOS/iOS clients still speak through them. Moving
 those behind `CSlopDeskFFI` is a linked-library port under `CLAUDE.md`'s lifetime rule, not a socket
