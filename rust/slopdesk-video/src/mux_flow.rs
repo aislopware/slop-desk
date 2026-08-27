@@ -270,6 +270,38 @@ pub fn warrants_bye(channel: VideoChannel, payload: &[u8]) -> bool {
     }
 }
 
+/// Whether a datagram is the control-channel KEEPALIVE, which is the only proof the idle reaper
+/// accepts that a lane speaks keepalive at all.
+///
+/// ## Why this is worth a decider rather than a byte test
+///
+/// The near side used to answer it by indexing the type byte and comparing it to `6`. That number
+/// is spelled nowhere the wire owns, and it is one table over from [`VideoChannel::Audio`], whose
+/// raw value is ALSO `6` — so a hand-written `== 6` beside a `channel == Control` test is a
+/// transposition away from reading a channel tag as a message type and never failing loudly.
+///
+/// What it decides is load-bearing out of proportion to its size: the reaper's `saw_keepalive` is
+/// STICKY and gates reap eligibility entirely, so a lane this predicate never says yes about can
+/// never be torn down, and a lane it says yes about wrongly is torn down under a client that is
+/// still watching.
+///
+/// ## This is behaviour-PRESERVING, deliberately
+///
+/// The decode is not stricter than the byte peek was. `decode`'s keepalive arm consumes the type
+/// byte and nothing else, and it does not refuse a trailing remainder, so `[6][junk]` answers yes
+/// through either reading — exactly as [`warrants_bye`] already answers yes for those same bytes.
+/// Whether a zero-body control message should refuse a trailing remainder at all is the control
+/// GRAMMAR's decision, and it belongs in `video_control.rs`, where changing it would move this
+/// predicate and `warrants_bye` together instead of splitting them.
+#[must_use]
+pub fn payload_is_keepalive(channel: VideoChannel, payload: &[u8]) -> bool {
+    matches!(channel, VideoChannel::Control)
+        && matches!(
+            VideoControlMessage::decode(payload),
+            Ok(VideoControlMessage::Keepalive)
+        )
+}
+
 /// Bounds how often an unbound-lane bye is actually SENT.
 ///
 /// At most one per interval per lane, over at most `capacity` tracked lanes. A wedged client emits
@@ -400,7 +432,7 @@ mod tests {
 
     use super::{
         ConnectionStateKind, MuxFlowTable, RECEIVE_BASE_BACKOFF, RECEIVE_MAX_BACKOFF, UnboundByeRateLimiter,
-        receive_backoff, send_path_viability, should_rearm, warrants_bye,
+        payload_is_keepalive, receive_backoff, send_path_viability, should_rearm, warrants_bye,
     };
     use crate::recovery_routing::VideoChannel;
     use crate::video_control::VideoControlMessage;
@@ -568,6 +600,41 @@ mod tests {
         );
         assert!(!warrants_bye(VideoChannel::Cursor, b"anything"));
         assert!(!warrants_bye(VideoChannel::Control, b"\xff"));
+    }
+
+    /// The reaper's sticky proof: only a control keepalive latches it, and a keepalive-shaped
+    /// payload on another channel must not — `Audio`'s raw value is `6` too, which is exactly the
+    /// confusion a hand-written type-byte comparison invites.
+    #[test]
+    fn only_a_control_keepalive_proves_a_lane_speaks_keepalive() {
+        let keepalive = VideoControlMessage::Keepalive.encode();
+        assert!(payload_is_keepalive(VideoChannel::Control, &keepalive));
+        assert!(
+            !payload_is_keepalive(VideoChannel::Audio, &keepalive),
+            "the same bytes on another channel are not a liveness proof",
+        );
+        assert!(!payload_is_keepalive(
+            VideoChannel::Control,
+            &VideoControlMessage::FocusWindow.encode()
+        ));
+        assert!(
+            !payload_is_keepalive(VideoChannel::Control, b""),
+            "an empty payload names no message at all",
+        );
+    }
+
+    /// The two readings of the SAME type byte must stay equally strict. `decode`'s keepalive arm
+    /// consumes the type byte and does not refuse a trailing remainder, so a garbage-suffixed
+    /// keepalive is a keepalive to both — and if the control grammar ever tightens that, this
+    /// fails rather than letting the reap proof and the bye reply drift apart.
+    #[test]
+    fn a_trailing_junk_keepalive_reads_the_same_way_to_both_predicates() {
+        let suffixed = [VideoControlMessage::Keepalive.message_type(), 0xFF];
+        assert_eq!(
+            payload_is_keepalive(VideoChannel::Control, &suffixed),
+            warrants_bye(VideoChannel::Control, &suffixed),
+        );
+        assert!(payload_is_keepalive(VideoChannel::Control, &suffixed));
     }
 
     #[test]

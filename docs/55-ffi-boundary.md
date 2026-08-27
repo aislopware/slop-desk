@@ -1217,6 +1217,9 @@ the same defect this section is about, one register up.)
 | the device panels' row predicate, spelled **six** times | — | `localizedCaseInsensitiveContains` over "does any field of this row hold what was typed", in `AndroidPresentation` twice and once in each of the four simulator views — only ONE of the six was ever reached by a test, which is this class in its purest form: the copy a test holds is not the copy the other shell runs — **ported 2026-08-22** onto the door the keybindings editor already had |
 | `StaticIDRDecider.shouldReencode` vs `recovery_routing::StaticIdrDecider::should_reencode` | — | the quiet window, the recovery override and the synthetic-only heartbeat, written twice, with the Swift copy the one on the host's per-timer-tick path — **ported 2026-08-22**; the four anchors are the whole state, so they cross as scalars and the Rust half stopped being unreachable |
 | `AgentBadgeGates.allOn` / `CommandBadgeGates.allOn` vs `badge::Gates::ALL_ON` | — | one all-on baseline asserted independently by two Swift structs and never consulted by the ungated ladder, so no input could reach both — **ported 2026-08-22** |
+| `VideoMuxSessionRegistry.decide` vs `mux_routing::dispatch_decision` | — | the mint-vs-deliver-vs-drop table and the hello switch that opens it, written twice, with the Swift copy the one on the daemon's per-datagram path and the Rust one an UNREACHED PORT reached by nothing but its own tests; `helloDisplay` is the arm a hand-mirrored copy of that switch has already been caught missing once, and missing it costs a whole pane kind its session with both suites green — **ported 2026-08-27**; the lane id is pure echo and the two bookkeeping reads are the near side's, so the decision crosses as two booleans and a payload and the Rust half stopped being unreachable |
+| `RecoveryDatagramRouter.route` vs `recovery_routing::route_recovery` | — | the recovery lane's own six-way tag read a second time, beside the mux router that already asks its verdict through a door — **ported 2026-08-27** |
+| the mux transport's keepalive peek vs `mux_flow::payload_is_keepalive` | — | not a second implementation of the rule so much as a second spelling of the wire: `rest[rest.startIndex + 1] == 6`, the control grammar's type byte indexed by hand one token away from a `channel == .control` test, and `VideoChannel.audio`'s raw value is ALSO `6`. It feeds the idle reaper's STICKY `saw_keepalive`, which gates reap eligibility outright, so a transposition decides in silence whether a lane can ever be torn down — **ported 2026-08-27**, behaviour-preserving: `decode`'s keepalive arm consumes the type byte and does not refuse a trailing remainder, so `[6][junk]` reads as a keepalive either way, exactly as it already warrants a bye |
 | `AudioJitterBuffer.pull(frameCount:)` vs `audio_jitter::pull_frames` | — | was **UNREACHED PORT — the Rust half has no caller**, and the drift is moot now: the near side that would have called it is gone. `rust/slopdesk-audio-out` drives the stage, and Swift asks for a PLAYER — **ported 2026-08-23** |
 | `VideoClientSessionLogic.route(channel:data:mediaFlowing:)` vs `client_session::route_datagram` | — | **UNREACHED PORT — the Rust half has no caller.** The six-way table and the drop-vs-ignore split, written twice |
 | `SimulatorScreenLayout`'s hand-rolled clamp vs `slopdesk_panel_clamped_device_point` | Rust | a drag off the right edge of a 200-point frame reported `x = 200` into a surface whose columns are `0..<200`, so the host scaled it off the far side of the framebuffer; the Android lane had gone through the door since the door existed and the simulator lane spelled it TWICE — **ported 2026-08-22**, confirmed by probe before anything was touched: `(9999, 9999)` answered `(200.0, 400.0)` by hand and `(199, 399)` by the rule |
@@ -1282,13 +1285,15 @@ its Swift counterpart takes a directory in order to write. All four were deleted
 **"Do not port this" and "keep an unreachable copy of it" are different instructions**, and the
 second is never what the first meant.
 
-### The two unreached ports left open, and the hazard one of them is already carrying
+### The one unreached port left open, and the hazard the other one carried until it closed
 
-Two rows above are marked UNREACHED PORT rather than ported. Both are left that way deliberately —
-neither is on a path where the cost has been measured — but an unreached port is a debt, not a
-resting state, so what the next person needs is written here rather than rediscovered.
+ONE row above is still marked UNREACHED PORT rather than ported: `route_datagram`. It is left that
+way deliberately — it is not on a path where the cost has been measured — but an unreached port is a
+debt, not a resting state, so what the next person needs is written here rather than rediscovered.
+The `pull_frames` paragraph below is kept because the hazard it records is the reason the debt is a
+debt, not because that row is still open; it closed on 2026-08-23 and the row says so.
 
-⚠️ **`pull_frames` has already drifted, and the drift is an overflow.** Swift allocates
+⚠️ **`pull_frames` had already drifted, and the drift was an overflow.** Swift allocates
 `max(0, frameCount) * channels`; Rust takes `frame_count: usize` and writes `vec![0.0; frame_count *
 self.channels]`. A negative frame count is a benign empty array on one side and, converted at a
 boundary that does not exist yet, a wrapped `usize` on the other — an allocation the machine cannot

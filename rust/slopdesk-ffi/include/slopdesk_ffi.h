@@ -2332,6 +2332,63 @@ size_t slopdesk_recovery_encode(const SlopDeskRecoveryMessage *message, const ui
 
 uint32_t slopdesk_recovery_decode(const uint8_t *bytes, size_t len, SlopDeskRecoveryMessage *out,
                                   uint16_t *frags, size_t frags_cap);
+
+/* ----------------------------------------------------------------------------
+ * ROUTING one raw recovery datagram: the guard, the decode and the arm, once.
+ *
+ * The guard ORDER is the rule and not an implementation detail — a session that
+ * is not streaming ignores the datagram BEFORE any decode, so a hostile packet
+ * is never parsed on a session that is not even up. An undecodable one drops.
+ *
+ * The verdict is flat because a C enum with a payload is not a thing: only the
+ * fields the returned code names carry meaning and the rest are zero. `shape_id`
+ * is widened from the wire's uint16_t so the record is sixteen words with no
+ * interior padding for this header to have to transcribe, and the bool lands
+ * LAST for the same reason.
+ *
+ * The frontier arrives on the wire carrying a no-frame-decoded sentinel and
+ * leaves here as a value plus a flag, so the near side never learns the sentinel.
+ *
+ * Fragment indices land in `frags` on the retransmit arm, and `frag_count` says
+ * how many the request names WHETHER OR NOT they fit — an over-cap request
+ * leaves the buffer untouched, still answers arm 7, and still reports the count,
+ * which is this header's retry at the width of an index. It never travels: the
+ * codec caps a NACK at `slopdesk_recovery_constant(1)`. A NULL `frags` still
+ * routes and still counts.
+ * ---------------------------------------------------------------------------- */
+
+#define SLOPDESK_RECOVERY_ROUTE_IGNORE_NOT_STREAMING 0u
+#define SLOPDESK_RECOVERY_ROUTE_DROP 1u
+#define SLOPDESK_RECOVERY_ROUTE_FORCE_KEYFRAME 2u
+#define SLOPDESK_RECOVERY_ROUTE_REFRESH_LTR 3u
+#define SLOPDESK_RECOVERY_ROUTE_ACK 4u
+#define SLOPDESK_RECOVERY_ROUTE_RESHIP_CURSOR_SHAPE 5u
+#define SLOPDESK_RECOVERY_ROUTE_NETWORK_STATS 6u
+#define SLOPDESK_RECOVERY_ROUTE_RETRANSMIT_FRAGMENTS 7u
+
+typedef struct {
+  uint32_t frontier;
+  uint32_t stream_seq;
+  uint32_t shape_id;
+  uint32_t frame_id;
+  uint32_t frag_count;
+  uint32_t frames_received;
+  uint32_t fec_recovered;
+  uint32_t unrecovered;
+  uint32_t latest_host_send_ts;
+  uint32_t client_hold_ms;
+  uint32_t owd_jitter_micros;
+  uint32_t owd_trend_milli;
+  uint32_t owd_trend_flags;
+  uint32_t pacer_late_frames;
+  uint32_t pacer_present_gaps;
+  uint32_t pacer_depth;
+  bool has_frontier;
+} SlopDeskRecoveryDecision;
+
+uint32_t slopdesk_recovery_route(const uint8_t *bytes, size_t len, bool media_flowing,
+                                 SlopDeskRecoveryDecision *out, uint16_t *frags,
+                                 size_t frags_cap);
 double slopdesk_recovery_escalation_floor_seconds(const uint8_t *raw, size_t len);
 bool slopdesk_recovery_should_escalate_to_idr(double idr_timeout_rtt_multiple,
                                               double lossy_idr_timeout_rtt_multiple,
@@ -3166,6 +3223,29 @@ uint32_t slopdesk_mux_router_route(SlopDeskMuxRouter *handle, uint32_t channel_i
                                    size_t bytes_count);
 uint32_t slopdesk_mux_bootstrap_action(uint32_t decision, uint8_t channel, bool payload_is_hello,
                                        bool payload_is_list_request);
+
+// What one inbound datagram on one lane is for, decided BEFORE any session lookup.
+//
+// `channel` is the mux envelope's channel byte, `lane_is_live` whether the registry
+// already holds a session for the lane, `mint_in_flight` whether a mint for that
+// same lane is already under way — the guard that stops a hello burst minting twice.
+//
+// The lane id does NOT cross: it is pure echo, and the caller re-attaches it near-side
+// exactly as `slopdesk_mux_router_route` documents. A NULL payload is an empty one.
+#define SLOPDESK_MUX_DISPATCH_DELIVER 0u
+#define SLOPDESK_MUX_DISPATCH_MINT 1u
+#define SLOPDESK_MUX_DISPATCH_DROP_UNBOUND 2u
+
+uint32_t slopdesk_mux_dispatch_decision(uint8_t channel, const uint8_t *payload,
+                                        size_t payload_len, bool lane_is_live,
+                                        bool mint_in_flight);
+
+// Whether this payload on this channel is a keepalive — the peek the bye limiter's
+// `warrants_bye` already made, lent so the near side stops re-spelling the control
+// grammar as a byte offset. A zero-body control message tolerates a trailing
+// remainder, and both predicates read it the same way on purpose.
+bool slopdesk_mux_payload_is_keepalive(uint8_t channel, const uint8_t *payload,
+                                       size_t payload_len);
 
 SlopDeskMuxFlowTable *slopdesk_mux_flows_new(double idle_timeout);
 void slopdesk_mux_flows_free(SlopDeskMuxFlowTable *handle);

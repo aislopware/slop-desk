@@ -13,13 +13,16 @@ use crate::tree::Tree;
 const SWIFT_MUX_ROUTER: &str = "Sources/SlopDeskVideoHost/Mux/VideoMuxRouter.swift";
 const SWIFT_MUX_FLOWS: &str = "Sources/SlopDeskVideoHost/Mux/MuxFlowTable.swift";
 const SWIFT_MUX_BYE: &str = "Sources/SlopDeskVideoHost/Mux/UnboundLaneByePolicy.swift";
+const SWIFT_MUX_REGISTRY: &str = "Sources/SlopDeskVideoHost/Mux/VideoMuxSessionRegistry.swift";
+const SWIFT_MUX_TRANSPORT: &str = "Sources/SlopDeskVideoHost/Mux/NWVideoMuxDatagramTransport.swift";
 
-/// The HOST MUX's three deciders — `mux_routing` and `mux_flow`.
+/// The HOST MUX's five deciders — `mux_routing` and `mux_flow`.
 ///
-/// Two handles and a question: the router's lane sets and the flow table's stamps are large and
-/// read one verdict at a time, and the bye policy asks about one payload. What makes the port
-/// matter is that all three guard the same failure — a datagram from a session that no longer
-/// exists reaching one that does.
+/// Two handles and three questions: the router's lane sets and the flow table's stamps are large
+/// and read one verdict at a time, and the bye policy, the registry's dispatch and the reaper's
+/// keepalive proof each ask about one payload. What makes the port matter is that all five guard
+/// the same failure — a datagram from a session that no longer exists reaching one that does, or a
+/// session that still exists being torn down under a client that is watching it.
 ///
 /// The router's prune is named because it is the subtle half: ids are monotonic, so the cap must
 /// drop the ids far BELOW the wrap-aware high-water mark — a second copy that pruned by insertion
@@ -33,7 +36,22 @@ const SWIFT_MUX_BYE: &str = "Sources/SlopDeskVideoHost/Mux/UnboundLaneByePolicy.
 /// The bye policy's control decode is named because a second reader of that grammar is how a
 /// session-LESS discovery request starts earning a bye — which would tell a client with no session
 /// that its session ended.
+///
+/// The registry's hello switch is named because that switch IS the mint rule: a Swift copy of it
+/// that missed one bootstrapping message would leave a whole pane kind unable to open a session,
+/// with both suites green — `helloDisplay` is the message it would miss, and it has been missed
+/// from a hand-mirrored copy of this exact switch before.
+///
+/// The transport's keepalive test is named because the type byte it used to compare against, `6`,
+/// is also `VideoChannel::Audio`'s raw value, one table away from the `channel == .control` test it
+/// sat beside. It feeds the reaper's STICKY liveness proof, so getting it wrong decides whether a
+/// lane can ever be reaped at all — silently, in either direction.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the whole mux seam in one list is the property this rule exists to have — a face split off \
+              into its own function is a face nobody reads beside the others"
+)]
 pub fn host_mux(tree: &Tree) -> Report {
     let claims = [
         Claim::Doors {
@@ -106,6 +124,34 @@ pub fn host_mux(tree: &Tree) -> Report {
             view: View::Code,
             message: "Sources/SlopDeskVideoHost/Mux/UnboundLaneByePolicy.swift decodes control or spells \
                       the limiter map again — those live in mux_flow.rs",
+        },
+        Claim::Doors {
+            path: SWIFT_MUX_REGISTRY,
+            entries: &["slopdesk_mux_dispatch_decision"],
+            message: "Sources/SlopDeskVideoHost/Mux/VideoMuxSessionRegistry.swift no longer calls {entry} — \
+                      the mint-vs-deliver-vs-drop rule is rust/slopdesk-video's (docs/55 §4)",
+        },
+        Claim::Lacks {
+            path: SWIFT_MUX_REGISTRY,
+            pattern: r"case \.hello\b|\.helloDisplay",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/Mux/VideoMuxSessionRegistry.swift spells the hello switch \
+                      again — which messages mint lives in mux_routing.rs, reached through docs/55 §4's \
+                      dispatch door",
+        },
+        Claim::Doors {
+            path: SWIFT_MUX_TRANSPORT,
+            entries: &["slopdesk_mux_payload_is_keepalive"],
+            message: "Sources/SlopDeskVideoHost/Mux/NWVideoMuxDatagramTransport.swift no longer calls \
+                      {entry} — the reaper's keepalive proof is rust/slopdesk-video's (docs/55 §4)",
+        },
+        Claim::Lacks {
+            path: SWIFT_MUX_TRANSPORT,
+            pattern: r"startIndex \+ 1\] ==|case \.keepalive",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/Mux/NWVideoMuxDatagramTransport.swift reads the control \
+                      type byte by offset again — that byte is mux_flow.rs's, and 6 is also \
+                      VideoChannel.audio's raw value",
         },
     ];
     check_all(tree, &claims)
@@ -421,11 +467,7 @@ mod tests {
     /// reaching one that does. A Swift lane set is the second answer that lets it happen.
     #[test]
     fn a_swift_lane_set_growing_back_is_caught() {
-        let fixture = Fixture::new("mux-lane-set");
-        fixture
-            .write(super::SWIFT_MUX_ROUTER, ROUTER_DOORS)
-            .write(super::SWIFT_MUX_FLOWS, FLOWS_DOORS)
-            .write(super::SWIFT_MUX_BYE, BYE_DOORS);
+        let fixture = seeded("mux-lane-set");
         assert!(super::host_mux(&fixture.tree()).is_clean());
 
         fixture.write(
@@ -437,6 +479,70 @@ mod tests {
             report.violations().iter().any(|v| v.contains("lane sets")),
             "{report:?}"
         );
+    }
+
+    /// `helloDisplay` is the arm a hand-mirrored copy of this switch has already dropped once. A
+    /// Swift respelling would leave the full-desktop pane unable to open a session, both suites
+    /// green, because no input reaches both copies.
+    #[test]
+    fn a_swift_hello_switch_growing_back_is_caught() {
+        let fixture = seeded("mux-hello-switch");
+        fixture.write(
+            super::SWIFT_MUX_REGISTRY,
+            &format!("{REGISTRY_DOORS}case .hello, .helloDisplay: return .mint(channelID: id)\n"),
+        );
+        let report = super::host_mux(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("hello switch")),
+            "{report:?}"
+        );
+    }
+
+    /// The reaper's keepalive proof is sticky and gates reap eligibility outright, and the byte it
+    /// used to be read from — `6` — is also `VideoChannel.audio`'s raw value.
+    #[test]
+    fn a_swift_keepalive_byte_peek_growing_back_is_caught() {
+        let fixture = seeded("mux-keepalive-peek");
+        fixture.write(
+            super::SWIFT_MUX_TRANSPORT,
+            &format!("{TRANSPORT_DOORS}let isKA = rest[rest.startIndex + 1] == 6\n"),
+        );
+        let report = super::host_mux(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("type byte by offset")),
+            "{report:?}"
+        );
+    }
+
+    /// A door that stopped being called is the other half of the ratchet: the near side has grown a
+    /// second implementation somewhere, and this is the only place that can say so.
+    #[test]
+    fn a_dispatch_door_falling_out_of_the_registry_is_caught() {
+        let fixture = seeded("mux-dispatch-door");
+        fixture.write(super::SWIFT_MUX_REGISTRY, "// the door call is gone\n");
+        let report = super::host_mux(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk_mux_dispatch_decision")),
+            "{report:?}"
+        );
+    }
+
+    /// Every mux face, spelled the way a clean tree spells it.
+    fn seeded(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fixture
+            .write(super::SWIFT_MUX_ROUTER, ROUTER_DOORS)
+            .write(super::SWIFT_MUX_FLOWS, FLOWS_DOORS)
+            .write(super::SWIFT_MUX_BYE, BYE_DOORS)
+            .write(super::SWIFT_MUX_REGISTRY, REGISTRY_DOORS)
+            .write(super::SWIFT_MUX_TRANSPORT, TRANSPORT_DOORS);
+        fixture
     }
 
     /// A multi-file ban must not be satisfied by a file that stripped to nothing — that is the
@@ -498,5 +604,11 @@ slopdesk_mux_warrants_bye(x)
 slopdesk_mux_bye_limiter_new(x)
 slopdesk_mux_bye_limiter_free(x)
 slopdesk_mux_bye_limiter_admit(x)
+";
+    const REGISTRY_DOORS: &str = "\
+slopdesk_mux_dispatch_decision(x)
+";
+    const TRANSPORT_DOORS: &str = "\
+slopdesk_mux_payload_is_keepalive(x)
 ";
 }

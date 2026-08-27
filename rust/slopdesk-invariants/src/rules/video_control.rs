@@ -18,12 +18,13 @@ const SWIFT_FPS: &str = "Sources/SlopDeskVideoHost/FPSGovernor.swift";
 const SWIFT_DEPTH: &str = "Sources/SlopDeskVideoClient/PacerDepthPolicy.swift";
 const SWIFT_OWD: &str = "Sources/SlopDeskVideoClient/OwdLateDetector.swift";
 
-/// The host's two ADMISSION LAWS — `rust/slopdesk-video`'s `qp_control` and `recovery_idr`.
+/// The host's two ADMISSION LAWS — `rust/slopdesk-video`'s `qp_control` and `recovery_idr` — and
+/// the ROUTING law that feeds them.
 ///
-/// They take opposite conventions on purpose and the far side is what picks: the quantiser
-/// controller is a Swift struct copied by value, so it crosses as a pure fold with no handle to
-/// alias; the recovery policy is a `final class` holding one token bucket, so it crosses as a
-/// handle.
+/// The two admissions take opposite conventions on purpose and the far side is what picks: the
+/// quantiser controller is a Swift struct copied by value, so it crosses as a pure fold with no
+/// handle to alias; the recovery policy is a `final class` holding one token bucket, so it crosses
+/// as a handle.
 ///
 /// A handle that is allocated and never freed is the one failure a green test suite cannot see, so
 /// the `deinit` is pinned too.
@@ -32,6 +33,15 @@ const SWIFT_OWD: &str = "Sources/SlopDeskVideoClient/OwdLateDetector.swift";
 /// sharpen per interval and one per report; the keyframe ring and the bucket are the recovery law.
 /// Scoped to the video host, because a token bucket is a SHAPE rather than a law — the notification
 /// rate limiter in `SlopDeskWorkspaceCore` is its own, and is not what these entries pin.
+///
+/// The third entry is `recovery_routing`'s `route_recovery`, which decides what an arriving
+/// recovery datagram MEANS before either admission ever sees it. Its arm table is the boring half;
+/// the two halves that drift silently are the guard ORDER — not-streaming refuses before any decode
+/// — and the wire's no-frame-decoded SENTINEL, which must become an absent frontier on the far side
+/// and never cross as its number. So the door is pinned, and so is the absence of the sentinel's
+/// name: a `lastDecoded == noFrameDecodedSentinel` in the Swift face is the second speller of that
+/// mapping, and it would agree with the door on every frontier except the one that says the client
+/// has decoded nothing at all — a client at its most frozen.
 #[must_use]
 pub fn admission(tree: &Tree) -> Report {
     let claims = [
@@ -60,6 +70,20 @@ pub fn admission(tree: &Tree) -> Report {
             needle: "deinit { slopdesk_idr_policy_free",
             message: "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift allocates a policy without freeing \
                       it in deinit — one new, one free",
+        },
+        Claim::Doors {
+            path: SWIFT_ESTIMATE,
+            entries: &["slopdesk_recovery_route"],
+            message: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift no longer calls {entry} — the \
+                      recovery-datagram routing is rust/slopdesk-video's",
+        },
+        Claim::Lacks {
+            path: SWIFT_ESTIMATE,
+            pattern: r"noFrameDecodedSentinel",
+            view: View::Code,
+            message: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift compares against the \
+                      no-frame-decoded sentinel again — the frontier crosses as a value plus has_frontier, \
+                      and that mapping is route_recovery's",
         },
         Claim::NoneUnder {
             roots: &["Sources/SlopDeskVideoHost", "Tests/SlopDeskVideoHostTests"],
@@ -290,6 +314,7 @@ mod tests {
         let fixture = Fixture::new("idr-deinit");
         fixture
             .write("Sources/SlopDeskVideoHost/QPController.swift", QP_DOORS)
+            .write("Sources/SlopDeskVideoHost/VideoSessionLogic.swift", ROUTE_DOORS)
             .write(
                 "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift",
                 &format!("{IDR_DOORS}deinit {{ slopdesk_idr_policy_free(handle) }}\n"),
@@ -314,6 +339,7 @@ mod tests {
         let fixture = Fixture::new("token-bucket-scope");
         fixture
             .write("Sources/SlopDeskVideoHost/QPController.swift", QP_DOORS)
+            .write("Sources/SlopDeskVideoHost/VideoSessionLogic.swift", ROUTE_DOORS)
             .write(
                 "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift",
                 &format!("{IDR_DOORS}deinit {{ slopdesk_idr_policy_free(handle) }}\n"),
@@ -334,6 +360,50 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("token bucket is back")),
+            "{report:?}"
+        );
+    }
+
+    /// The sentinel→absent mapping is HALF the routing rule, and the half a Swift face is most
+    /// likely to grow back: the door already answers the frontier, so a `== noFrameDecodedSentinel`
+    /// beside it looks like a harmless normalisation. It is a second speller that agrees on every
+    /// frontier except "nothing decoded yet" — a client at its most frozen. Losing the door
+    /// entirely is the other direction, and the same rule has to catch both.
+    #[test]
+    fn the_sentinel_comparison_and_a_lost_route_door_are_both_caught() {
+        let fixture = Fixture::new("recovery-route");
+        fixture
+            .write("Sources/SlopDeskVideoHost/QPController.swift", QP_DOORS)
+            .write(
+                "Sources/SlopDeskVideoHost/RecoveryIDRPolicy.swift",
+                &format!("{IDR_DOORS}deinit {{ slopdesk_idr_policy_free(handle) }}\n"),
+            )
+            .write("Sources/SlopDeskVideoHost/VideoSessionLogic.swift", ROUTE_DOORS);
+        assert!(super::admission(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
+            &format!("{ROUTE_DOORS}let f = raw == RecoveryMessage.noFrameDecodedSentinel ? nil : raw\n"),
+        );
+        let report = super::admission(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no-frame-decoded sentinel")),
+            "{report:?}"
+        );
+
+        fixture.write(
+            "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
+            "let d = RecoveryMessage.decode(datagram)\n",
+        );
+        let report = super::admission(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("slopdesk_recovery_route")),
             "{report:?}"
         );
     }
@@ -400,6 +470,7 @@ slopdesk_abr_decide(x)
 slopdesk_abr_effective_slack(x)
 slopdesk_abr_is_material_change(x)
 ";
+    const ROUTE_DOORS: &str = "slopdesk_recovery_route(x)\n";
     const ESTIMATE_DOORS: &str =
         "slopdesk_net_estimate_new(x)\nslopdesk_net_estimate_rtt_millis(x)\nslopdesk_net_estimate_fold(x)\n";
     const FPS_DOORS: &str = "\

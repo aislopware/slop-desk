@@ -1,4 +1,5 @@
 #if os(macOS)
+import CSlopDeskFFI
 import Foundation
 import Network
 import OSLog
@@ -346,10 +347,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
             case .route:
                 flows.stampMediaReply(channelID: channelID, flow: conn)
                 // Stamp liveness for the ADMITTED lane only (inline, no actor hop, under the route lock).
-                // Keepalive peek: a keepalive is a control datagram whose type byte == 6; `rest` is
-                // [tag][type][...], so the type byte is at startIndex+1. Symmetric with the single-pin
-                // transport's stamp.
-                let isKA = channel == .control && rest.count >= 2 && rest[rest.startIndex + 1] == 6
+                let isKA = Self.payloadIsKeepalive(channel: channel, payload: payload)
                 idleReaper.noteInbound(id: channelID, now: now, isKeepalive: isKA)
                 return .deliver
             case .rejectUnadmitted,
@@ -457,6 +455,30 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
              .windowPreviewRequest,
              .listDisplays: return true
         default: return false
+        }
+    }
+
+    /// One-shot peek: is this control-channel payload the zero-body `keepalive` — the ONLY proof
+    /// the per-lane idle reaper accepts that a client speaks keepalive at all? That proof is STICKY
+    /// (`idle_reap.rs`: once latched it never clears) and it gates reap eligibility outright, so a
+    /// lane this answers "no" about for its whole life can never be torn down, and a lane it answers
+    /// "yes" about wrongly is torn down under a client that is still watching.
+    ///
+    /// It used to be a byte test — `rest[rest.startIndex + 1] == 6` — and the `6` is the thing worth
+    /// removing: it is the control grammar's type byte, spelled where the grammar is not, one table
+    /// over from `VideoChannel.audio`, whose raw value is ALSO 6. A transposition between the two
+    /// reads a channel tag as a message type and fails silently in the reaper.
+    ///
+    /// The door is behaviour-PRESERVING and deliberately so: `mux_flow.rs`'s decode is no stricter
+    /// than the byte test was, because the keepalive arm consumes the type byte and does not refuse
+    /// a trailing remainder — `[6][junk]` is a keepalive to both readings, exactly as it already
+    /// warrants a bye. Whether a zero-body control message should refuse a remainder is the
+    /// grammar's decision, and changing it there moves this predicate and the bye rule together.
+    /// Internal (not private) so the routing tests can exercise THIS predicate rather than a
+    /// hand-mirrored copy of it, the way they already do for the two peeks above.
+    static func payloadIsKeepalive(channel: VideoChannel, payload: Data) -> Bool {
+        payload.withUnsafeBytes { bytes in
+            slopdesk_mux_payload_is_keepalive(channel.rawValue, bytes.baseAddress, bytes.count)
         }
     }
 

@@ -1,4 +1,5 @@
 #if os(macOS)
+import CSlopDeskFFI
 import Foundation
 import SlopDeskVideoProtocol
 
@@ -78,6 +79,18 @@ public actor VideoMuxSessionRegistry {
         case mint(channelID: UInt32)
         /// An unknown `channelID` whose first datagram is NOT a hello — cannot bind; drop (benign).
         case dropUnbound(channelID: UInt32)
+
+        /// The verdict a door code names, for the lane that was asked about. An unrecognised code
+        /// reads as the unbound drop — it binds nothing and mints nothing, which is the safe
+        /// reading of a code this side never emitted (`mux_host.rs` states the same rule for the
+        /// router's verdicts).
+        static func of(_ code: UInt32, channelID: UInt32) -> Self {
+            switch code {
+            case SLOPDESK_MUX_DISPATCH_DELIVER: .deliver(channelID: channelID)
+            case SLOPDESK_MUX_DISPATCH_MINT: .mint(channelID: channelID)
+            default: .dropUnbound(channelID: channelID)
+            }
+        }
     }
 
     /// The shared sink table the lane transports register into synchronously inside `session.start()`.
@@ -123,21 +136,27 @@ public actor VideoMuxSessionRegistry {
         self.mintSession = mintSession
     }
 
-    /// The PURE dispatch decision for one demultiplexed datagram (no GUI, no socket). A live lane
-    /// (sink already present) delivers; a never-seen channelID mints iff its first datagram is a
-    /// `hello` (window session) or a `helloDisplay` (full-desktop session); otherwise drop. `decide`
-    /// is the headless-testable core of `dispatch`.
+    /// The PURE dispatch decision for one demultiplexed datagram (no GUI, no socket), reached
+    /// through the `mux_host` door over `mux_routing`'s `dispatch_decision`.
+    ///
+    /// Which lanes are live and which are mid-mint is the only part of the question this side can
+    /// answer — the sink table is registered synchronously inside `session.start()`, and `minting`
+    /// is this actor's own mark — so those two reads happen here and cross as booleans. Everything
+    /// after them (which control messages bootstrap a session, and that nothing on another channel
+    /// ever does) is the wire's rule and stays where the wire lives; a second reading of that
+    /// grammar here is exactly how `helloDisplay` once got left out of a hand-mirrored copy.
+    ///
+    /// `channelID` does NOT cross: it is pure echo, so the door answers a code and the lane is
+    /// re-attached on this side.
     public func decide(channelID: UInt32, channel: VideoChannel, data: Data) -> DispatchDecision {
-        if sinkTable.contains(channelID) { return .deliver(channelID: channelID) }
-        if minting.contains(channelID) { return .deliver(channelID: channelID) } // mint already in flight
-        if channel == .control, let msg = try? VideoControlMessage.decode(data) {
-            switch msg {
-            case .hello,
-                 .helloDisplay: return .mint(channelID: channelID)
-            default: break
-            }
+        let laneIsLive = sinkTable.contains(channelID)
+        let mintInFlight = minting.contains(channelID)
+        let code = data.withUnsafeBytes { bytes in
+            slopdesk_mux_dispatch_decision(
+                channel.rawValue, bytes.baseAddress, bytes.count, laneIsLive, mintInFlight,
+            )
         }
-        return .dropUnbound(channelID: channelID)
+        return DispatchDecision.of(code, channelID: channelID)
     }
 
     // MARK: - Live dispatch (called by the daemon from the shared transport's onReceive)

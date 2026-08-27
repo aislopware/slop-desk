@@ -3,14 +3,18 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE dispatch-decision + bookkeeping for the daemon's per-channel session registry (Stage S3).
+/// The registry's own state, ordering and effects — everything `mux_routing`'s decision table is not.
 ///
 /// The session MINTING itself (SCShareableContent + ``SlopDeskVideoHostSession`` + capture/encode) is
-/// GUI-only and HANGS headlessly, so it is NEVER exercised here — only the registry's PURE concern:
-/// "first datagram for a new channelID + is it a hello? → mint; an existing lane → deliver; an
-/// unbound non-hello → drop" (``VideoMuxSessionRegistry/decide(channelID:channel:data:)``), plus the
-/// sink-table register/retire bookkeeping that makes the §2 asymmetry (two panes, two windows, one
-/// flow) work. The mint factory injected here is never invoked by `decide`.
+/// GUI-only and HANGS headlessly, so it is NEVER exercised here.
+///
+/// What is deliberately NOT restated here is the DECISION TABLE — which control messages mint, which
+/// channels can, what a hello retransmit does. That is `mux_routing.rs`'s, it is tested there, and a
+/// second copy of it in Swift would be the cross-language mirror fixture docs/55 §8 catalogues: a
+/// table that agrees on the day it is written and then holds two implementations together with
+/// nothing but the week they were written in. What Swift still owns, and what is tested here, is the
+/// sink-table + `minting` bookkeeping the decision is asked ABOUT, the mint-failure ordering, and
+/// that those two reads actually reach the door.
 final class VideoMuxSessionRegistryTests: XCTestCase {
     /// A registry whose mint factory FAILS the test if ever called from a `decide`-only path.
     private func makeRegistry(_ table: VideoMuxSinkTable = VideoMuxSinkTable()) -> VideoMuxSessionRegistry {
@@ -29,55 +33,23 @@ final class VideoMuxSessionRegistryTests: XCTestCase {
         ).encode()
     }
 
-    func testFirstHelloForNewChannelDecidesMint() async {
-        let registry = makeRegistry()
-        let decision = await registry.decide(channelID: 5, channel: .control, data: hello(windowID: 42))
-        XCTAssertEqual(decision, .mint(channelID: 5))
-    }
-
-    func testFirstHelloDisplayForNewChannelDecidesMint() async {
-        // The full-desktop pane's `helloDisplay` bootstraps a mint exactly like a window `hello`.
-        let registry = makeRegistry()
-        let helloDisplay = VideoControlMessage.helloDisplay(
-            protocolVersion: SlopDeskVideoProtocol.version,
-            requestedDisplayID: 0,
-            viewport: VideoSize(width: 100, height: 100),
-        ).encode()
-        let decision = await registry.decide(channelID: 6, channel: .control, data: helloDisplay)
-        XCTAssertEqual(decision, .mint(channelID: 6))
-    }
-
-    func testNonHelloForUnknownChannelDecidesDrop() async {
-        // A video/input/recovery datagram for a never-seen lane cannot be bound to a session — drop
-        // (benign, never fatal, never disturbs siblings).
-        let registry = makeRegistry()
-        let bye = VideoControlMessage.bye.encode()
-        let dropControl = await registry.decide(channelID: 8, channel: .control, data: bye)
-        let dropVideo = await registry.decide(channelID: 8, channel: .video, data: Data([0x01, 0x02]))
-        XCTAssertEqual(dropControl, .dropUnbound(channelID: 8))
-        XCTAssertEqual(dropVideo, .dropUnbound(channelID: 8))
-    }
-
-    func testExistingLaneDecidesDeliver() async {
-        // Once a lane's sink is registered (what session.start does on mint), every datagram for it
-        // — hello, video, input — decides DELIVER, never re-mints.
+    func testRegisteredSinkCrossesAsALiveLane() async {
+        // The one thing `decide` still decides: the sink table and the `minting` mark are Swift's,
+        // and they must reach the door as `laneIsLive` / `mintInFlight`. A registered sink makes the
+        // SAME bytes that would otherwise mint answer DELIVER instead — so if the read were dropped
+        // on the floor, a registered lane would re-mint on every hello retransmit. The mint/drop
+        // table itself belongs to `mux_routing.rs` and is asserted there.
         let table = VideoMuxSinkTable()
         let registry = makeRegistry(table)
+        let bootstrap = hello(windowID: 1)
+        let beforeRegister = await registry.decide(channelID: 11, channel: .control, data: bootstrap)
+        XCTAssertEqual(beforeRegister, .mint(channelID: 11), "no sink yet — the door is asked to mint")
         table.register(11) { _, _ in }
-        let deliverVideo = await registry.decide(channelID: 11, channel: .video, data: Data([0xAA]))
-        let deliverHello = await registry.decide(channelID: 11, channel: .control, data: hello(windowID: 1))
-        XCTAssertEqual(deliverVideo, .deliver(channelID: 11))
-        XCTAssertEqual(deliverHello, .deliver(channelID: 11))
-    }
-
-    func testTwoChannelsDifferentWindowsBothMintIndependently() async {
-        // The §2 asymmetry: two panes on the same host watch DIFFERENT windows → two hellos with
-        // different requestedWindowIDs → each is an independent MINT decision on its own channelID.
-        let registry = makeRegistry()
-        let d1 = await registry.decide(channelID: 1, channel: .control, data: hello(windowID: 100))
-        let d2 = await registry.decide(channelID: 2, channel: .control, data: hello(windowID: 200))
-        XCTAssertEqual(d1, .mint(channelID: 1))
-        XCTAssertEqual(d2, .mint(channelID: 2))
+        let afterRegister = await registry.decide(channelID: 11, channel: .control, data: bootstrap)
+        XCTAssertEqual(afterRegister, .deliver(channelID: 11), "the registered sink crossed as a live lane")
+        // A sibling lane with no sink is untouched by 11's registration.
+        let sibling = await registry.decide(channelID: 12, channel: .video, data: Data([0xAA]))
+        XCTAssertEqual(sibling, .dropUnbound(channelID: 12))
     }
 
     func testRetireClearsLaneBookkeepingForReconnect() async {

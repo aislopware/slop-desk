@@ -17,6 +17,15 @@
 //! again. The indices land in the caller's buffer during the one decode, and `frag_count` says how
 //! many are real. A NULL buffer still parses and still counts.
 //!
+//! ## Why the ROUTING answer is its own shape and not the flat message
+//! The host does not want a message, it wants a verdict, and the two differ in exactly one field
+//! that matters: the wire carries a decode frontier with a no-frame-decoded SENTINEL in it, and the
+//! policy wants an `Option`. Answering with [`SlopDeskRecoveryMessage`] would hand the raw sentinel
+//! over and leave the near side writing `raw == sentinel ? nil : raw` — which is half the routing
+//! rule, respelled in the caller's language. `docs/55` §4 is explicit that an `Option` crosses as a
+//! value plus a flag, never as a sentinel, so [`SlopDeskRecoveryDecision`] carries `frontier`
+//! beside `has_frontier` and the sentinel never leaves this side.
+//!
 //! ## Why the loss window crosses as a plain array
 //! Its state is a ring of timestamps, and a ring of timestamps is DATA. So the caller keeps the
 //! array and this side keeps the law: `note` answers the ring that pruning and the capacity drop
@@ -31,7 +40,7 @@ use slopdesk_video::recovery::{
     self, LtrEscalationTracker, NetworkStatsReport, RecoveryMessage, RecoveryPolicy,
     RecoveryRequestRedundancy, is_observing_loss, note_in_place,
 };
-use slopdesk_video::recovery_routing::StaticIdrDecider;
+use slopdesk_video::recovery_routing::{RecoveryDecision, StaticIdrDecider, route_recovery};
 
 use crate::{borrow, deliver};
 
@@ -281,6 +290,207 @@ pub unsafe extern "C" fn slopdesk_recovery_decode(
         unsafe { out.write(flat) };
     }
     DECODE_OK
+}
+
+/// The session is not streaming, so the datagram was ignored BEFORE any decode.
+pub const ROUTE_IGNORE_NOT_STREAMING: u32 = 0;
+/// The datagram did not decode. A corrupt single packet must never crash the receiver.
+pub const ROUTE_DROP: u32 = 1;
+/// Force a real keyframe on the next captured frame — the guaranteed-recovery escalation.
+pub const ROUTE_FORCE_KEYFRAME: u32 = 2;
+/// The client asked for a long-term-reference refresh; the caller decides refresh-versus-keyframe.
+pub const ROUTE_REFRESH_LTR: u32 = 3;
+/// A durable-receipt acknowledgement: the retransmit and reference window may advance.
+pub const ROUTE_ACK: u32 = 4;
+/// Re-ship the cursor shape bitmap the client's cache is missing.
+pub const ROUTE_RESHIP_CURSOR_SHAPE: u32 = 5;
+/// A periodic client network report, for the caller's estimate to fold.
+pub const ROUTE_NETWORK_STATS: u32 = 6;
+/// Selective retransmit: re-enqueue the named fragments of one frame.
+pub const ROUTE_RETRANSMIT_FRAGMENTS: u32 = 7;
+
+/// One routing verdict, flat: every field any arm could want, under a code that names which.
+///
+/// Only the fields the returned code names carry meaning; the rest are zero. That is
+/// [`SlopDeskRecoveryMessage`]'s bargain one step further along — a verdict flattens, because a C
+/// enum with a payload is not a thing (`docs/55` §4b).
+///
+/// The one field that is NOT the message's is the frontier. It arrives on the wire with a
+/// no-frame-decoded sentinel in it and leaves here as a value plus a flag, so the near side never
+/// has to know what the sentinel is.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SlopDeskRecoveryDecision {
+    /// Force-keyframe and refresh-LTR: the client's decode frontier, meaningful only while
+    /// `has_frontier`.
+    pub frontier: u32,
+    /// Ack: the acknowledged sequence, or the acknowledged LTR frame id.
+    pub stream_seq: u32,
+    /// Re-ship: the shape the client's cache is missing. Widened from the wire's `u16` so the
+    /// record is sixteen words with no interior padding for a hand-written header to transcribe.
+    pub shape_id: u32,
+    /// Retransmit: the frame missing fragments.
+    pub frame_id: u32,
+    /// Retransmit: how many fragment indices the request names, whether or not they fit `frags`.
+    pub frag_count: u32,
+    /// Network stats: complete frames received in the window.
+    pub frames_received: u32,
+    /// Network stats: of those, how many completed through FEC.
+    pub fec_recovered: u32,
+    /// Network stats: frames declared unrecoverably lost.
+    pub unrecovered: u32,
+    /// Network stats: the newest host send stamp the client observed.
+    pub latest_host_send_ts: u32,
+    /// Network stats: client-local ms since it observed that stamp.
+    pub client_hold_ms: u32,
+    /// Network stats: inter-arrival jitter in microseconds.
+    pub owd_jitter_micros: u32,
+    /// Network stats: the delay-gradient trend, ×1000, as an `i32` bit pattern.
+    pub owd_trend_milli: u32,
+    /// Network stats: the delay-gradient detector's state and sample count.
+    pub owd_trend_flags: u32,
+    /// Network stats: presents that ended a dense-flow late gap.
+    pub pacer_late_frames: u32,
+    /// Network stats: late-gap episodes opened.
+    pub pacer_present_gaps: u32,
+    /// Network stats: the client pacer's live presentation depth.
+    pub pacer_depth: u32,
+    /// Whether the client has decoded anything at all — the wire sentinel, read as the `Option` it
+    /// stands for.
+    pub has_frontier: bool,
+}
+
+impl SlopDeskRecoveryDecision {
+    /// The frontier written as the value-plus-flag pair it crosses as.
+    fn with_frontier(frontier: Option<u32>) -> Self {
+        Self {
+            frontier: frontier.unwrap_or(0),
+            has_frontier: frontier.is_some(),
+            ..Self::default()
+        }
+    }
+
+    /// One network report written into the verdict, field for field.
+    fn with_stats(report: &NetworkStatsReport) -> Self {
+        Self {
+            frames_received: report.frames_received,
+            fec_recovered: report.fec_recovered,
+            unrecovered: report.unrecovered,
+            latest_host_send_ts: report.latest_host_send_ts,
+            client_hold_ms: report.client_hold_ms,
+            owd_jitter_micros: report.owd_jitter_micros,
+            owd_trend_milli: report.owd_trend_milli,
+            owd_trend_flags: report.owd_trend_flags,
+            pacer_late_frames: report.pacer_late_frames,
+            pacer_present_gaps: report.pacer_present_gaps,
+            pacer_depth: report.pacer_depth,
+            ..Self::default()
+        }
+    }
+}
+
+/// Decides what to do with one raw recovery datagram, answering one of the `ROUTE_*` codes above
+/// and filling `out` with the fields that code names.
+///
+/// This is [`slopdesk_video::recovery_routing::route_recovery`] and nothing else: a session that is
+/// not streaming ignores the datagram BEFORE any decode, an undecodable one drops, and the six
+/// message arms map to their own actions. The guard order is the rule, not an implementation
+/// detail — a decode attempted first would let a hostile datagram be parsed on a session that is
+/// not even streaming.
+///
+/// The malformed REASON does not cross, for [`slopdesk_recovery_decode`]'s reason: nothing branches
+/// on it, and the datagram is being dropped either way. A caller that wants the taxonomy has that
+/// door.
+///
+/// Fragment indices land in `frags` on the retransmit arm, and `out.frag_count` says how many the
+/// request names WHETHER OR NOT they fit. A `frag_count` over `frags_cap` leaves the buffer
+/// untouched and still reports the count, so the caller calls again with a bigger one — §4's retry,
+/// at the width of an index. It is never travelled in practice: the codec caps a NACK at
+/// [`slopdesk_video::recovery::MAX_NACK_FRAGMENTS`], so a buffer that size can never be too small.
+/// A NULL `frags` still routes and still counts.
+///
+/// # Safety
+/// `bytes` must be null or point to `len` readable bytes; `out` must be null or point to one
+/// writable, aligned [`SlopDeskRecoveryDecision`]; `frags` must be null or point to `frags_cap`
+/// writable `u16`s. All for the whole call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_recovery_route(
+    bytes: *const c_uchar,
+    len: usize,
+    media_flowing: bool,
+    out: *mut SlopDeskRecoveryDecision,
+    frags: *mut u16,
+    frags_cap: usize,
+) -> u32 {
+    // SAFETY: the caller's obligation, discharged by Swift's `withUnsafeBytes`.
+    let datagram = unsafe { borrow(bytes, len) };
+    let decision = route_recovery(datagram, media_flowing);
+    let (code, flat) = match &decision {
+        RecoveryDecision::IgnoreNotStreaming => {
+            (ROUTE_IGNORE_NOT_STREAMING, SlopDeskRecoveryDecision::default())
+        },
+        RecoveryDecision::Drop => (ROUTE_DROP, SlopDeskRecoveryDecision::default()),
+        RecoveryDecision::ForceKeyframe {
+            last_decoded_frame_id,
+        } => {
+            (
+                ROUTE_FORCE_KEYFRAME,
+                SlopDeskRecoveryDecision::with_frontier(*last_decoded_frame_id),
+            )
+        },
+        RecoveryDecision::RefreshLtr {
+            last_decoded_frame_id,
+        } => {
+            (
+                ROUTE_REFRESH_LTR,
+                SlopDeskRecoveryDecision::with_frontier(*last_decoded_frame_id),
+            )
+        },
+        RecoveryDecision::Ack { stream_seq } => {
+            (ROUTE_ACK, SlopDeskRecoveryDecision {
+                stream_seq: *stream_seq,
+                ..SlopDeskRecoveryDecision::default()
+            })
+        },
+        RecoveryDecision::ReshipCursorShape { shape_id } => {
+            (ROUTE_RESHIP_CURSOR_SHAPE, SlopDeskRecoveryDecision {
+                shape_id: u32::from(*shape_id),
+                ..SlopDeskRecoveryDecision::default()
+            })
+        },
+        RecoveryDecision::NetworkStats(report) => {
+            (ROUTE_NETWORK_STATS, SlopDeskRecoveryDecision::with_stats(report))
+        },
+        RecoveryDecision::RetransmitFragments {
+            frame_id,
+            frag_indices,
+        } => {
+            (ROUTE_RETRANSMIT_FRAGMENTS, SlopDeskRecoveryDecision {
+                frame_id: *frame_id,
+                frag_count: u32::try_from(frag_indices.len()).unwrap_or(u32::MAX),
+                ..SlopDeskRecoveryDecision::default()
+            })
+        },
+    };
+    if let RecoveryDecision::RetransmitFragments { frag_indices, .. } = &decision
+        && !frags.is_null()
+        && frag_indices.len() <= frags_cap
+    {
+        for (slot, index) in frag_indices.iter().enumerate() {
+            // SAFETY: `slot` is below `frag_indices.len()`, which the check above put at or under
+            // `frags_cap` — the caller's promise of writable `u16`s.
+            unsafe { frags.add(slot).write(*index) };
+        }
+    }
+    if !out.is_null() {
+        // SAFETY: non-null and, by the caller's obligation, one writable, aligned decision.
+        unsafe { out.write(flat) };
+    }
+    code
 }
 
 /// One of the recovery vocabulary's integer constants, by index — so neither end writes a number
@@ -833,6 +1043,171 @@ mod tests {
         };
         assert_eq!(needed, 0);
         assert_eq!(out, [0u8; 32], "a refusal writes nothing at all");
+    }
+
+    fn route(bytes: &[u8], media_flowing: bool) -> (u32, SlopDeskRecoveryDecision, Vec<u16>) {
+        let mut flat = SlopDeskRecoveryDecision::default();
+        let mut frags = [0u16; recovery::MAX_NACK_FRAGMENTS];
+        let code = unsafe {
+            slopdesk_recovery_route(
+                bytes.as_ptr(),
+                bytes.len(),
+                media_flowing,
+                &raw mut flat,
+                frags.as_mut_ptr(),
+                frags.len(),
+            )
+        };
+        let count = usize::try_from(flat.frag_count).unwrap_or(0);
+        (code, flat, frags[..count.min(frags.len())].to_vec())
+    }
+
+    /// The guard order IS the rule: a datagram that could not decode still answers IGNORE, not
+    /// DROP, when nothing is streaming — a decode attempted first would parse hostile bytes on a
+    /// session that has no stream to recover.
+    #[test]
+    fn a_datagram_is_ignored_before_it_is_decoded_when_nothing_is_streaming() {
+        assert_eq!(route(&[0xFF], false).0, ROUTE_IGNORE_NOT_STREAMING);
+        assert_eq!(route(&[0xFF], true).0, ROUTE_DROP);
+    }
+
+    /// The sentinel is the half of the routing rule that must not cross. Both frontier-carrying
+    /// arms answer `has_frontier == false` for it, so the near side never compares against a magic
+    /// number of its own.
+    #[test]
+    fn the_wire_sentinel_crosses_as_an_absent_frontier_and_never_as_its_number() {
+        for (message, expected) in [
+            (
+                RecoveryMessage::RequestIdr {
+                    last_decoded_frame_id: recovery::NO_FRAME_DECODED_SENTINEL,
+                },
+                ROUTE_FORCE_KEYFRAME,
+            ),
+            (
+                RecoveryMessage::RequestLtrRefresh {
+                    from_frame_id: 1,
+                    to_frame_id: 4,
+                    last_decoded_frame_id: recovery::NO_FRAME_DECODED_SENTINEL,
+                },
+                ROUTE_REFRESH_LTR,
+            ),
+        ] {
+            let (code, flat, _) = route(&message.encode(), true);
+            assert_eq!(code, expected);
+            assert!(!flat.has_frontier, "the sentinel is an ABSENT frontier");
+            assert_ne!(
+                flat.frontier,
+                recovery::NO_FRAME_DECODED_SENTINEL,
+                "and its number must not be what crossed",
+            );
+        }
+        let (code, flat, _) = route(
+            &RecoveryMessage::RequestIdr {
+                last_decoded_frame_id: 900,
+            }
+            .encode(),
+            true,
+        );
+        assert_eq!(code, ROUTE_FORCE_KEYFRAME);
+        assert!(flat.has_frontier);
+        assert_eq!(flat.frontier, 900);
+    }
+
+    /// Every field of a report reaches the verdict. A record that dropped one would still route,
+    /// still compile and simply lose a number the estimate folds.
+    #[test]
+    fn a_network_report_crosses_the_verdict_field_for_field() {
+        let stats = NetworkStatsReport {
+            frames_received: 600,
+            fec_recovered: 12,
+            unrecovered: 3,
+            latest_host_send_ts: 1_234_567,
+            client_hold_ms: 7,
+            owd_jitter_micros: 850,
+            owd_trend_milli: (-987_i32).cast_unsigned(),
+            owd_trend_flags: (42 << 8) | 1,
+            pacer_late_frames: 4,
+            pacer_present_gaps: 6,
+            pacer_depth: 2,
+        };
+        let (code, flat, _) = route(&RecoveryMessage::NetworkStats(stats).encode(), true);
+        assert_eq!(code, ROUTE_NETWORK_STATS);
+        assert_eq!(flat, SlopDeskRecoveryDecision::with_stats(&stats));
+        assert_eq!(flat.frames_received, 600);
+        assert_eq!(flat.fec_recovered, 12);
+        assert_eq!(flat.unrecovered, 3);
+        assert_eq!(flat.latest_host_send_ts, 1_234_567);
+        assert_eq!(flat.client_hold_ms, 7);
+        assert_eq!(flat.owd_jitter_micros, 850);
+        assert_eq!(flat.owd_trend_milli, (-987_i32).cast_unsigned());
+        assert_eq!(flat.owd_trend_flags, (42 << 8) | 1);
+        assert_eq!(flat.pacer_late_frames, 4);
+        assert_eq!(flat.pacer_present_gaps, 6);
+        assert_eq!(flat.pacer_depth, 2);
+    }
+
+    /// The three remaining arms each name their own field, and none of them borrows another's.
+    #[test]
+    fn the_scalar_arms_each_answer_in_their_own_field() {
+        let (code, flat, _) = route(&RecoveryMessage::Ack { stream_seq: 77 }.encode(), true);
+        assert_eq!((code, flat.stream_seq), (ROUTE_ACK, 77));
+
+        let (code, flat, _) = route(
+            &RecoveryMessage::RequestCursorShape { shape_id: 12 }.encode(),
+            true,
+        );
+        assert_eq!((code, flat.shape_id), (ROUTE_RESHIP_CURSOR_SHAPE, 12));
+
+        let (code, flat, frags) = route(
+            &RecoveryMessage::RequestFragments {
+                frame_id: 500,
+                frag_indices: vec![1, 3, 4],
+            }
+            .encode(),
+            true,
+        );
+        assert_eq!(code, ROUTE_RETRANSMIT_FRAGMENTS);
+        assert_eq!((flat.frame_id, flat.frag_count), (500, 3));
+        assert_eq!(frags, vec![1, 3, 4]);
+    }
+
+    /// A buffer too small is told how many indices there are and given none of them — §4's retry,
+    /// so a caller that asks again sees an untouched buffer rather than a partial request.
+    #[test]
+    fn a_short_index_buffer_is_left_untouched_and_still_counted() {
+        let wire = RecoveryMessage::RequestFragments {
+            frame_id: 8,
+            frag_indices: vec![2, 5, 9],
+        }
+        .encode();
+        let mut flat = SlopDeskRecoveryDecision::default();
+        let mut tiny = [0u16; 2];
+        let code = unsafe {
+            slopdesk_recovery_route(
+                wire.as_ptr(),
+                wire.len(),
+                true,
+                &raw mut flat,
+                tiny.as_mut_ptr(),
+                tiny.len(),
+            )
+        };
+        assert_eq!(code, ROUTE_RETRANSMIT_FRAGMENTS);
+        assert_eq!(flat.frag_count, 3, "the count crosses whether or not it fits");
+        assert_eq!(tiny, [0u16; 2], "and nothing at all was written");
+
+        // A NULL buffer still routes and still counts, exactly as the decode door's does.
+        let code = unsafe {
+            slopdesk_recovery_route(
+                wire.as_ptr(),
+                wire.len(),
+                true,
+                &raw mut flat,
+                core::ptr::null_mut(),
+                0,
+            )
+        };
+        assert_eq!((code, flat.frag_count), (ROUTE_RETRANSMIT_FRAGMENTS, 3));
     }
 
     #[test]

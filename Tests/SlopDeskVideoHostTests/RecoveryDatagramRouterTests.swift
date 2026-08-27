@@ -1,100 +1,24 @@
+import CSlopDeskFFI
 import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE recovery-routing decision logic + the never-run wire-collision regression.
-/// Decides forceKeyframe/ack/drop/ignore for a client→host `RecoveryMessage` WITHOUT
-/// an encoder/capturer. No socket, no VideoToolbox.
+/// What ``RecoveryDatagramRouter`` still owns after the routing law moved to
+/// `rust/slopdesk-video`'s `route_recovery`: the MARSHALLING of the flat verdict, and the never-run
+/// wire-collision regression that spans two routers. The arm table itself is pinned by
+/// `recovery_routing.rs`'s own tests and is deliberately NOT restated here — a Swift mirror of it
+/// would be the second implementation this port deleted.
+/// No socket, no VideoToolbox.
 final class RecoveryDatagramRouterTests: XCTestCase {
     private let router = RecoveryDatagramRouter()
 
-    func testIgnoresWhenNotStreaming() {
-        let datagram = RecoveryMessage.requestIDR(lastDecodedFrameID: 5).encode()
-        XCTAssertEqual(router.route(datagram: datagram, mediaFlowing: false), .ignoreNotStreaming)
-    }
-
-    /// Component 2: `.forceKeyframe` carries the request's decode frontier for the actor's
-    /// delivery-keyed RecoveryIDRPolicy.
-    func testRequestIDRForcesKeyframeCarryingLastDecoded() {
-        let decision = router.route(
-            datagram: RecoveryMessage.requestIDR(lastDecodedFrameID: 41).encode(),
-            mediaFlowing: true,
-        )
-        XCTAssertEqual(decision, .forceKeyframe(lastDecodedFrameID: 41))
-    }
-
-    /// The wire sentinel ("nothing decoded yet") maps to a clean `nil` for the actor's policy.
-    func testRequestIDRSentinelMapsToNil() {
-        let decision = router.route(
-            datagram: RecoveryMessage.requestIDR(lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel).encode(),
-            mediaFlowing: true,
-        )
-        XCTAssertEqual(decision, .forceKeyframe(lastDecodedFrameID: nil))
-    }
-
-    /// requestLTRRefresh routes to `.refreshLTR` (the actor decides LTR-refresh-vs-IDR from
-    /// runtime acked-token state), DISTINCT from requestIDR's `.forceKeyframe` (the guaranteed IDR).
-    /// Component 2: it carries the decode frontier too (consumed only by the `.idr` fallback).
-    func testRequestLTRRefreshRoutesToRefreshLTR() {
-        let message = RecoveryMessage.requestLTRRefresh(fromFrameID: 10, toFrameID: 12, lastDecodedFrameID: 9)
-        XCTAssertEqual(router.route(datagram: message.encode(), mediaFlowing: true), .refreshLTR(lastDecodedFrameID: 9))
-    }
-
-    func testRequestLTRRefreshSentinelMapsToNil() {
-        let message = RecoveryMessage.requestLTRRefresh(
-            fromFrameID: 0, toFrameID: 0, lastDecodedFrameID: RecoveryMessage.noFrameDecodedSentinel,
-        )
-        XCTAssertEqual(
-            router.route(datagram: message.encode(), mediaFlowing: true),
-            .refreshLTR(lastDecodedFrameID: nil),
-        )
-    }
-
-    /// requestIDR MUST stay a real forced keyframe — the guaranteed-recovery escalation must never
-    /// degrade to an LTR refresh.
-    func testRequestIDRStaysForceKeyframe() {
-        guard case .forceKeyframe = router.route(
-            datagram: RecoveryMessage.requestIDR(lastDecodedFrameID: 0).encode(),
-            mediaFlowing: true,
-        ) else {
-            XCTFail("expected forceKeyframe")
-            return
-        }
-    }
-
-    func testAckSurfacesStreamSeq() {
-        let decision = router.route(datagram: RecoveryMessage.ack(streamSeq: 0xCAFE_BABE).encode(), mediaFlowing: true)
-        XCTAssertEqual(decision, .ack(streamSeq: 0xCAFE_BABE))
-    }
-
-    /// FIX B: a `requestCursorShape` on the recovery channel routes to a re-ship of that shape,
-    /// NOT a forced keyframe — the cursor self-heal must not trigger an expensive IDR.
-    func testRequestCursorShapeReships() {
-        let decision = router.route(
-            datagram: RecoveryMessage.requestCursorShape(shapeID: 7).encode(),
-            mediaFlowing: true,
-        )
-        XCTAssertEqual(decision, .reshipCursorShape(shapeID: 7))
-    }
-
-    func testRequestCursorShapeIgnoredWhenNotStreaming() {
-        let datagram = RecoveryMessage.requestCursorShape(shapeID: 1).encode()
-        XCTAssertEqual(router.route(datagram: datagram, mediaFlowing: false), .ignoreNotStreaming)
-    }
-
-    func testDropsUndecodableDatagram() {
-        let garbage = Data([0x7F, 0x00]) // unknown recovery type 0x7F
-        guard case .drop = router.route(datagram: garbage, mediaFlowing: true) else {
-            XCTFail("expected drop")
-            return
-        }
-    }
-
-    /// The network-feedback channel: a NetworkStats report routes to `.networkStats` carrying the
-    /// decoded report verbatim — including component 3's trend fields (a negative modified-trend
-    /// bit-pattern + packed state/deltas flags survive the wire round-trip untouched) and
-    /// component 4's pacer presentation-health fields (late/gaps counters + the depth gauge).
-    func testNetworkStatsRoutes() {
+    /// The stats report is the one arm whose payload is ELEVEN fields, so it is the one arm where a
+    /// crossing can lose a number in silence: a transposed or dropped field still routes, still
+    /// compiles, and simply feeds the host's estimate a value the client never sent. Both halves of
+    /// that crossing are read here — the flat record the door fills, and the report this side
+    /// rebuilds from it — including component 3's trend fields (a NEGATIVE modified-trend bit
+    /// pattern + packed state/deltas flags) and component 4's pacer presentation-health fields.
+    func testNetworkStatsReportSurvivesTheCrossingFieldForField() {
         let report = NetworkStatsReport(
             framesReceived: 600,
             fecRecovered: 12,
@@ -108,48 +32,41 @@ final class RecoveryDatagramRouterTests: XCTestCase {
             pacerPresentGaps: 6,
             pacerDepth: 2,
         )
-        let decision = router.route(datagram: RecoveryMessage.networkStats(report).encode(), mediaFlowing: true)
-        XCTAssertEqual(decision, .networkStats(report))
-        guard case let .networkStats(rx) = decision else { XCTFail("expected networkStats")
+        let datagram = RecoveryMessage.networkStats(report).encode()
+
+        // The door's own record, read raw: every field the report carries has a slot, and the slot
+        // holds what was sent.
+        var answer = SlopDeskRecoveryDecision()
+        let code = datagram.withUnsafeBytes { bytes in
+            slopdesk_recovery_route(bytes.baseAddress, bytes.count, true, &answer, nil, 0)
+        }
+        XCTAssertEqual(code, UInt32(SLOPDESK_RECOVERY_ROUTE_NETWORK_STATS))
+        XCTAssertEqual(answer.frames_received, 600)
+        XCTAssertEqual(answer.fec_recovered, 12)
+        XCTAssertEqual(answer.unrecovered, 3)
+        XCTAssertEqual(answer.latest_host_send_ts, 1_234_567)
+        XCTAssertEqual(answer.client_hold_ms, 7)
+        XCTAssertEqual(answer.owd_jitter_micros, 850)
+        XCTAssertEqual(answer.owd_trend_milli, UInt32(bitPattern: -987))
+        XCTAssertEqual(answer.owd_trend_flags, (42 << 8) | 1)
+        XCTAssertEqual(answer.pacer_late_frames, 4)
+        XCTAssertEqual(answer.pacer_present_gaps, 6)
+        XCTAssertEqual(answer.pacer_depth, 2)
+
+        // And the eleven assignments that rebuild the report from that record: a transposition
+        // there is invisible to the door and to `recovery_routing.rs` alike, so it is read back
+        // through the derived accessors the actor actually consumes.
+        guard case let .networkStats(rx) = router.route(datagram: datagram, mediaFlowing: true) else {
+            XCTFail("expected networkStats")
             return
         }
+        XCTAssertEqual(rx, report)
         XCTAssertEqual(rx.owdTrendStateRaw, 1)
         XCTAssertEqual(rx.owdTrendDeltas, 42)
         XCTAssertEqual(rx.owdTrendModifiedMilliSigned, -987)
         XCTAssertEqual(rx.pacerLateFrames, 4)
         XCTAssertEqual(rx.pacerPresentGaps, 6)
         XCTAssertEqual(rx.pacerDepth, 2)
-    }
-
-    func testNetworkStatsIgnoredWhenNotStreaming() {
-        let report = NetworkStatsReport(
-            framesReceived: 1,
-            fecRecovered: 0,
-            unrecovered: 0,
-            latestHostSendTs: 1,
-            clientHoldMs: 0,
-            owdJitterMicros: 0,
-        )
-        XCTAssertEqual(
-            router.route(datagram: RecoveryMessage.networkStats(report).encode(), mediaFlowing: false),
-            .ignoreNotStreaming,
-        )
-    }
-
-    /// A truncated NetworkStats body (short of the 11×UInt32 payload) DROPS — never crashes the host.
-    func testTruncatedNetworkStatsDrops() {
-        let full = RecoveryMessage.networkStats(NetworkStatsReport(
-            framesReceived: 1,
-            fecRecovered: 2,
-            unrecovered: 3,
-            latestHostSendTs: 4,
-            clientHoldMs: 5,
-            owdJitterMicros: 6,
-        )).encode()
-        guard case .drop = router.route(datagram: full.prefix(10), mediaFlowing: true) else {
-            XCTFail("expected a truncated stats body to drop")
-            return
-        }
     }
 
     // MARK: Never-run wire-collision regression

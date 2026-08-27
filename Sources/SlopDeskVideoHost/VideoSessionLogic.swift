@@ -592,12 +592,18 @@ public struct ScrollCoalescePlanner: Sendable {
     }
 }
 
-/// Routes a datagram received on the DEDICATED recovery channel (client→host loss
-/// recovery, doc 17 §3.6). Pure decision logic: decode the ``RecoveryMessage`` and
-/// decide the host action. Kept separate from ``InputDatagramRouter`` because recovery
-/// and input share neither a channel nor a wire grammar — `RecoveryMessage`'s leading
-/// type bytes (1/2/3) overlap `InputEvent`'s, which is exactly why they must NOT share
-/// the `.input` channel. Testable without an encoder/capturer.
+/// The FACE of `rust/slopdesk-video`'s `route_recovery` — the DEDICATED recovery channel's
+/// client→host loss recovery (doc 17 §3.6), decided once, on the far side.
+///
+/// It is a door rather than a `switch` because the rule is not the arm table, it is the two things
+/// around it: the not-streaming guard runs BEFORE any decode (so hostile bytes are never parsed on a
+/// session with no stream to recover), and the wire's decode frontier arrives with a sentinel in it
+/// that must become a clean `nil`. A second speller of either is a second routing law that agrees on
+/// every easy datagram — the arms — and diverges exactly where a client is already frozen.
+///
+/// Kept separate from ``InputDatagramRouter`` because recovery and input share neither a channel nor
+/// a wire grammar — `RecoveryMessage`'s leading type bytes (1/2/3) overlap `InputEvent`'s, which is
+/// exactly why they must NOT share the `.input` channel. Testable without an encoder/capturer.
 public struct RecoveryDatagramRouter: Sendable {
     public init() {}
 
@@ -642,47 +648,68 @@ public struct RecoveryDatagramRouter: Sendable {
         case ignoreNotStreaming
     }
 
-    /// Decides what to do with one raw recovery datagram.
+    /// Decides what to do with one raw recovery datagram — one crossing, then the vocabulary above.
     ///
-    /// A non-streaming session ignores the datagram before any decode; an undecodable datagram
-    /// drops (a corrupt single packet must never crash the receiver — same contract as the
-    /// reassembler); otherwise the decoded ``RecoveryMessage`` maps to its ``Decision``. The
-    /// guaranteed-recovery escalation (`requestIDR`) is ALWAYS a real `forceKeyframe` and can never
-    /// degrade to an LTR refresh; the wire sentinel (``RecoveryMessage/noFrameDecodedSentinel``)
-    /// maps to a clean `nil` decode frontier. Recovery rides its OWN channel — its leading type
-    /// bytes (1/2/3) alias ``InputEvent``, so this must never be fed the input grammar.
+    /// Every branch is `rust/slopdesk-video`'s `route_recovery`: the not-streaming guard BEFORE any
+    /// decode, the undecodable drop, and the six-way arm table. Two of them are why this is a door
+    /// rather than a Swift `switch`. The guaranteed-recovery escalation (`requestIDR`) must ALWAYS
+    /// be a real `forceKeyframe` and may never degrade to an LTR refresh; and the wire's
+    /// no-frame-decoded sentinel must become a clean `nil` frontier — which is why the answer
+    /// carries `has_frontier` beside `frontier` and this side never spells the sentinel at all
+    /// (`docs/55` §4: an `Option` crosses as a value plus a flag).
+    ///
+    /// Recovery rides its OWN channel — its leading type bytes (1/2/3) alias ``InputEvent``, so this
+    /// must never be fed the input grammar.
     public func route(datagram: Data, mediaFlowing: Bool) -> Decision {
-        guard mediaFlowing else { return .ignoreNotStreaming }
-        let message: RecoveryMessage
-        do {
-            message = try RecoveryMessage.decode(datagram)
-        } catch {
-            return .drop(reason: "undecodable recovery datagram")
+        withUnsafeTemporaryAllocation(
+            of: UInt16.self, capacity: RecoveryMessage.maxNackFragments,
+        ) { indices in
+            var answer = SlopDeskRecoveryDecision()
+            let code = datagram.withUnsafeBytes { bytes in
+                slopdesk_recovery_route(
+                    bytes.baseAddress, bytes.count, mediaFlowing, &answer,
+                    indices.baseAddress, indices.count,
+                )
+            }
+            return decision(code, answer, indices)
         }
-        switch message {
-        case let .requestIDR(lastDecoded):
-            // The guaranteed-recovery escalation: ALWAYS a real IDR (a keyframe unconditionally
-            // re-anchors a client that lost frames). Never an LTR refresh. The wire sentinel
-            // ("nothing decoded yet") maps to nil here so the actor's policy gets a clean Optional.
-            return .forceKeyframe(lastDecodedFrameID:
-                lastDecoded == RecoveryMessage.noFrameDecodedSentinel ? nil : lastDecoded)
-        case let .requestLTRRefresh(_, _, lastDecoded):
-            // Defer the LTR-refresh-vs-IDR choice to the actor (it owns the runtime acked-token
-            // state + the SLOPDESK_LTR gate). With LTR off the actor folds this to a real IDR.
-            // Same sentinel→nil mapping as `.requestIDR`.
-            return .refreshLTR(lastDecodedFrameID:
-                lastDecoded == RecoveryMessage.noFrameDecodedSentinel ? nil : lastDecoded)
-        case let .ack(streamSeq):
-            return .ack(streamSeq: streamSeq)
-        case let .requestCursorShape(shapeID):
-            return .reshipCursorShape(shapeID: shapeID)
-        case let .networkStats(report):
-            return .networkStats(report)
-        case let .requestFragments(frameID, fragIndices):
-            // NACK / selective ARQ: the client is missing specific DATA fragments of `frameID`. The
-            // actor looks each up by `(frameID, fragIndex)` in its send-history ring and re-enqueues
-            // the originals; a ring miss is a no-op. NOT a forced keyframe — cheaper than a recovery-IDR.
-            return .retransmitFragments(frameID: frameID, fragIndices: fragIndices)
+    }
+
+    /// The flat verdict read as the case it names. Every field is the door's; the only thing minted
+    /// here is the drop REASON, which is diagnostic and deliberately does not cross.
+    private func decision(
+        _ code: UInt32, _ answer: SlopDeskRecoveryDecision,
+        _ indices: UnsafeMutableBufferPointer<UInt16>,
+    ) -> Decision {
+        let frontier = answer.has_frontier ? answer.frontier : nil
+        switch code {
+        case UInt32(SLOPDESK_RECOVERY_ROUTE_IGNORE_NOT_STREAMING): return .ignoreNotStreaming
+        case UInt32(SLOPDESK_RECOVERY_ROUTE_FORCE_KEYFRAME): return .forceKeyframe(lastDecodedFrameID: frontier)
+        case UInt32(SLOPDESK_RECOVERY_ROUTE_REFRESH_LTR): return .refreshLTR(lastDecodedFrameID: frontier)
+        case UInt32(SLOPDESK_RECOVERY_ROUTE_ACK): return .ack(streamSeq: answer.stream_seq)
+        case UInt32(SLOPDESK_RECOVERY_ROUTE_RESHIP_CURSOR_SHAPE):
+            return .reshipCursorShape(shapeID: UInt16(truncatingIfNeeded: answer.shape_id))
+        case UInt32(SLOPDESK_RECOVERY_ROUTE_NETWORK_STATS):
+            return .networkStats(NetworkStatsReport(
+                framesReceived: answer.frames_received, fecRecovered: answer.fec_recovered,
+                unrecovered: answer.unrecovered, latestHostSendTs: answer.latest_host_send_ts,
+                clientHoldMs: answer.client_hold_ms, owdJitterMicros: answer.owd_jitter_micros,
+                owdTrendMilli: answer.owd_trend_milli, owdTrendFlags: answer.owd_trend_flags,
+                pacerLateFrames: answer.pacer_late_frames, pacerPresentGaps: answer.pacer_present_gaps,
+                pacerDepth: answer.pacer_depth,
+            ))
+        case UInt32(SLOPDESK_RECOVERY_ROUTE_RETRANSMIT_FRAGMENTS):
+            // The codec caps a NACK at `maxNackFragments`, which is exactly what was lent, so the
+            // count can never exceed it and the door's retry is never travelled.
+            let count = Swift.min(Int(answer.frag_count), indices.count)
+            return .retransmitFragments(
+                frameID: answer.frame_id,
+                fragIndices: Array(UnsafeBufferPointer(start: indices.baseAddress, count: count)),
+            )
+        default:
+            // `SLOPDESK_RECOVERY_ROUTE_DROP`, and any code this side does not know — a verdict it
+            // cannot read must fail closed, never inject an action nobody asked for.
+            return .drop(reason: "undecodable recovery datagram")
         }
     }
 }

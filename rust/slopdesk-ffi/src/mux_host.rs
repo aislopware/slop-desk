@@ -25,8 +25,10 @@
 
 use std::ffi::c_void;
 
-use slopdesk_video::mux_flow::{MuxFlowTable, UnboundByeRateLimiter, warrants_bye};
-use slopdesk_video::mux_routing::{BootstrapAction, MuxDecision, VideoMuxRouter, bootstrap_action};
+use slopdesk_video::mux_flow::{MuxFlowTable, UnboundByeRateLimiter, payload_is_keepalive, warrants_bye};
+use slopdesk_video::mux_routing::{
+    BootstrapAction, DispatchDecision, MuxDecision, VideoMuxRouter, bootstrap_action, dispatch_decision,
+};
 use slopdesk_video::recovery_routing::VideoChannel;
 
 use crate::borrow;
@@ -46,6 +48,13 @@ pub const SLOPDESK_MUX_DROP_EMPTY: u32 = 4;
 pub const SLOPDESK_MUX_BOOTSTRAP_DELIVER: u32 = 0;
 /// Drop it without touching any flow bookkeeping.
 pub const SLOPDESK_MUX_DROP_NO_STAMP: u32 = 1;
+
+/// A live lane exists — deliver the datagram to its session sink.
+pub const SLOPDESK_MUX_DISPATCH_DELIVER: u32 = 0;
+/// A never-seen lane carrying a hello — mint a session for it, then deliver.
+pub const SLOPDESK_MUX_DISPATCH_MINT: u32 = 1;
+/// An unknown lane whose first datagram is not a hello. It cannot be bound, so it drops.
+pub const SLOPDESK_MUX_DISPATCH_DROP_UNBOUND: u32 = 2;
 
 /// The per-datagram lane router.
 #[derive(Debug)]
@@ -289,6 +298,41 @@ pub const extern "C" fn slopdesk_mux_bootstrap_action(
     ) {
         BootstrapAction::BootstrapDeliver => SLOPDESK_MUX_BOOTSTRAP_DELIVER,
         BootstrapAction::DropNoStamp => SLOPDESK_MUX_DROP_NO_STAMP,
+    }
+}
+
+/// What the daemon's session registry should do with one demultiplexed datagram, as a code.
+///
+/// The lane it concerns is the caller's own — it is pure echo on both sides, exactly as
+/// [`slopdesk_mux_router_route`] documents — so no channel id crosses in either direction and the
+/// answer is one scalar.
+///
+/// Whether a lane is live and whether its mint is already in flight are the CALLER's bookkeeping:
+/// the sink table registers synchronously inside a session's start, and only the near side can see
+/// that. They arrive as two booleans so this stays a decision over what was observed, the shape
+/// [`slopdesk_mux_bootstrap_action`] already takes.
+///
+/// # Safety
+/// `payload` must be null, or point to `payload_len` bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_mux_dispatch_decision(
+    channel: u8,
+    payload: *const u8,
+    payload_len: usize,
+    lane_is_live: bool,
+    mint_in_flight: bool,
+) -> u32 {
+    // SAFETY: the caller's obligation above is this function's, restated on `borrow`.
+    let payload = unsafe { borrow(payload, payload_len) };
+    // The lane id is the caller's echo, so this side names it zero and never reads it back.
+    match dispatch_decision(0, channel_of(channel), payload, lane_is_live, mint_in_flight) {
+        DispatchDecision::Deliver { .. } => SLOPDESK_MUX_DISPATCH_DELIVER,
+        DispatchDecision::Mint { .. } => SLOPDESK_MUX_DISPATCH_MINT,
+        DispatchDecision::DropUnbound { .. } => SLOPDESK_MUX_DISPATCH_DROP_UNBOUND,
     }
 }
 
@@ -616,6 +660,29 @@ pub unsafe extern "C" fn slopdesk_mux_warrants_bye(
     warrants_bye(channel_of(channel), unsafe { borrow(payload, payload_len) })
 }
 
+/// Whether a datagram is the control-channel keepalive the idle reaper takes as its sticky proof.
+///
+/// A door rather than a byte test on the near side: the type byte the peek compared against is not
+/// the near side's to spell, and `6` is also [`VideoChannel::Audio`]'s raw value — one table over
+/// from the channel test it sits beside. What it gates is reap eligibility outright, so the reading
+/// belongs with the grammar that defines it.
+///
+/// # Safety
+/// `payload` must be null, or point to `payload_len` bytes live for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "an exported C entry point is unsafe by definition in edition 2024"
+)]
+pub unsafe extern "C" fn slopdesk_mux_payload_is_keepalive(
+    channel: u8,
+    payload: *const u8,
+    payload_len: usize,
+) -> bool {
+    // SAFETY: the caller's obligation above is this function's, restated on `borrow`.
+    payload_is_keepalive(channel_of(channel), unsafe { borrow(payload, payload_len) })
+}
+
 /// A bye limiter that has sent nothing.
 #[unsafe(no_mangle)]
 #[expect(
@@ -712,16 +779,36 @@ const unsafe fn put(found: Option<u64>, out: *mut u64) -> bool {
     reason = "calling the C ABI the way Swift does is the thing under test"
 )]
 mod tests {
+    use slopdesk_video::geometry::VideoSize;
+    use slopdesk_video::video_control::VideoControlMessage;
+
     use super::{
-        SLOPDESK_MUX_BOOTSTRAP_DELIVER, SLOPDESK_MUX_DROP_EMPTY, SLOPDESK_MUX_DROP_NO_STAMP,
+        SLOPDESK_MUX_BOOTSTRAP_DELIVER, SLOPDESK_MUX_DISPATCH_DELIVER, SLOPDESK_MUX_DISPATCH_DROP_UNBOUND,
+        SLOPDESK_MUX_DISPATCH_MINT, SLOPDESK_MUX_DROP_EMPTY, SLOPDESK_MUX_DROP_NO_STAMP,
         SLOPDESK_MUX_DROP_RETIRED, SLOPDESK_MUX_REJECT_UNADMITTED, SLOPDESK_MUX_ROUTE,
         slopdesk_mux_bootstrap_action, slopdesk_mux_bye_limiter_admit, slopdesk_mux_bye_limiter_free,
-        slopdesk_mux_bye_limiter_new, slopdesk_mux_flows_accept, slopdesk_mux_flows_free,
-        slopdesk_mux_flows_media_reply, slopdesk_mux_flows_new, slopdesk_mux_flows_reap,
-        slopdesk_mux_flows_remove_all, slopdesk_mux_flows_stamp_media_reply, slopdesk_mux_router_admit,
-        slopdesk_mux_router_free, slopdesk_mux_router_new, slopdesk_mux_router_retire,
-        slopdesk_mux_router_route, slopdesk_mux_warrants_bye,
+        slopdesk_mux_bye_limiter_new, slopdesk_mux_dispatch_decision, slopdesk_mux_flows_accept,
+        slopdesk_mux_flows_free, slopdesk_mux_flows_media_reply, slopdesk_mux_flows_new,
+        slopdesk_mux_flows_reap, slopdesk_mux_flows_remove_all, slopdesk_mux_flows_stamp_media_reply,
+        slopdesk_mux_payload_is_keepalive, slopdesk_mux_router_admit, slopdesk_mux_router_free,
+        slopdesk_mux_router_new, slopdesk_mux_router_retire, slopdesk_mux_router_route,
+        slopdesk_mux_warrants_bye,
     };
+
+    /// The control channel's wire tag, as the near side hands it over.
+    const CONTROL: u8 = 0;
+
+    fn hello_bytes() -> Vec<u8> {
+        VideoControlMessage::Hello {
+            protocol_version: 1,
+            requested_window_id: 42,
+            viewport: VideoSize {
+                width: 1280.0,
+                height: 800.0,
+            },
+        }
+        .encode()
+    }
 
     #[test]
     fn a_lane_routes_while_admitted_and_drops_as_a_stale_generation_after() {
@@ -761,6 +848,64 @@ mod tests {
             slopdesk_mux_bootstrap_action(SLOPDESK_MUX_ROUTE, 0, true, false),
             SLOPDESK_MUX_DROP_NO_STAMP
         );
+    }
+
+    #[test]
+    fn a_new_lane_mints_on_its_first_hello_and_a_live_one_only_ever_delivers() {
+        let hello = hello_bytes();
+        let keepalive = VideoControlMessage::Keepalive.encode();
+        unsafe {
+            assert_eq!(
+                slopdesk_mux_dispatch_decision(CONTROL, hello.as_ptr(), hello.len(), false, false),
+                SLOPDESK_MUX_DISPATCH_MINT
+            );
+            assert_eq!(
+                slopdesk_mux_dispatch_decision(CONTROL, hello.as_ptr(), hello.len(), true, false),
+                SLOPDESK_MUX_DISPATCH_DELIVER
+            );
+            assert_eq!(
+                slopdesk_mux_dispatch_decision(CONTROL, hello.as_ptr(), hello.len(), false, true),
+                SLOPDESK_MUX_DISPATCH_DELIVER,
+                "a hello retransmit must not mint a second session"
+            );
+            assert_eq!(
+                slopdesk_mux_dispatch_decision(CONTROL, keepalive.as_ptr(), keepalive.len(), false, false),
+                SLOPDESK_MUX_DISPATCH_DROP_UNBOUND
+            );
+            assert_eq!(
+                slopdesk_mux_dispatch_decision(4, hello.as_ptr(), hello.len(), false, false),
+                SLOPDESK_MUX_DISPATCH_DROP_UNBOUND,
+                "hello-shaped bytes on the input channel bind nothing"
+            );
+            assert_eq!(
+                slopdesk_mux_dispatch_decision(CONTROL, std::ptr::null(), 0, false, false),
+                SLOPDESK_MUX_DISPATCH_DROP_UNBOUND,
+                "a null payload is the empty one, which names no message"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_control_keepalive_crosses_as_the_reapers_liveness_proof() {
+        let keepalive = VideoControlMessage::Keepalive.encode();
+        let focus = VideoControlMessage::FocusWindow.encode();
+        unsafe {
+            assert!(slopdesk_mux_payload_is_keepalive(
+                CONTROL,
+                keepalive.as_ptr(),
+                keepalive.len()
+            ));
+            assert!(
+                !slopdesk_mux_payload_is_keepalive(6, keepalive.as_ptr(), keepalive.len()),
+                "tag 6 is the AUDIO channel — the same bytes there are no liveness proof"
+            );
+            assert!(!slopdesk_mux_payload_is_keepalive(
+                CONTROL,
+                focus.as_ptr(),
+                focus.len()
+            ));
+            assert!(!slopdesk_mux_payload_is_keepalive(CONTROL, std::ptr::null(), 0));
+        }
     }
 
     /// A predicate that admits nothing, in the shape the reap asks for.
