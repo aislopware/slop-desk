@@ -38,6 +38,7 @@
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use super::{home, log_dir, say};
 use crate::proc;
@@ -110,8 +111,13 @@ pub const SCREEND: Agent = Agent {
 /// the other. So on a machine with this agent installed, a `host-restart` is a coin flip between
 /// the daemon just built and whatever was installed last, and the loser exiting 0 makes the wrong
 /// winner SILENT: the replay sees a live listener and reports success. `install hostd` is therefore
-/// for a machine that has NO hostd, not a second way to run one beside the build tree. Booting the
-/// job out before a replay is the real fix, and it belongs in `ops/hostd.rs` rather than here.
+/// for a machine that has NO hostd, not a second way to run one beside the build tree.
+///
+/// So `ops::hostd` boots this job out before it replays, through [`bootout`] — unconditionally,
+/// because "is an agent installed" is not something a developer should have to remember
+/// mid-restart, and the answer on a build-tree machine is a cheap `launchctl print` that says no.
+/// The convergence above is still what makes the SIGTERM safe; the bootout is what makes the winner
+/// the daemon that was just built.
 ///
 /// `EveryLivePane` even though hostd holds no PTY: superd does, and every one of them is wired to
 /// this process's fan-out. A restart costs the developer exactly what `make host-restart` costs,
@@ -285,6 +291,50 @@ fn confirm_restart(agent: &Agent, force: bool) -> Result<(), String> {
     } else {
         Err("aborted".to_owned())
     }
+}
+
+/// Whether launchd currently holds a job by this name in this user's domain.
+///
+/// `launchctl print` rather than a `list` grep: `list` prints a label that merely LOOKS loaded for
+/// a job in the middle of being torn down, and `print` is the call that answers about one job.
+fn loaded(job: &str) -> bool {
+    proc::ask("/bin/launchctl", &["print", job], Path::new("/")).is_some()
+}
+
+/// Boot the agent's job out of this user's launchd domain, and WAIT for launchd to let go.
+///
+/// The mechanism half of the fix [`HOSTD`]'s own doc names and declines to make here: this knows
+/// what "unloaded" costs, [`super::hostd`] knows when a replay has to be the only bidder for the
+/// port. `Ok(false)` is the ordinary case on a build-tree machine — no agent installed, nothing to
+/// boot out — and is deliberately not an error, so the caller can ask unconditionally.
+///
+/// The wait is the point. `bootout` returns as soon as launchd has ACCEPTED the request, not when
+/// the job's process has finished exiting, so returning here on the exit code alone would hand the
+/// caller a domain that still owns the socket it is about to bind.
+///
+/// # Errors
+/// When the domain cannot be named, or the job is still loaded after `budget`.
+pub fn bootout(agent: &Agent, budget: Duration) -> Result<bool, String> {
+    let domain = domain()?;
+    let job = format!("{domain}/{}", agent.label);
+    if !loaded(&job) {
+        return Ok(false);
+    }
+    // `ask`, not `run`: a job that exits between the probe above and this call boots itself out,
+    // and launchd's non-zero for "no such process" is that race, not a failure.
+    let _ = proc::ask("/bin/launchctl", &["bootout", &job], Path::new("/"));
+
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        if !loaded(&job) {
+            return Ok(true);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "{job} is still loaded {}s after bootout — launchd did not let go, so a replay would race it",
+        budget.as_secs()
+    ))
 }
 
 /// Unload the agent and take its plist away, leaving the installed binary in place.

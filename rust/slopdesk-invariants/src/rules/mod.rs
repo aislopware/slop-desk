@@ -1223,6 +1223,11 @@ pub fn registry() -> Vec<Rule> {
             check: repo_invariants::a_guarded_keepalive_supervises_a_daemon_that_exits_zero,
         },
         Rule {
+            name: "restart-boots-out-first",
+            origin: "docs/51 §9",
+            check: repo_invariants::the_replay_boots_the_agent_out_first,
+        },
+        Rule {
             name: "green-tree-marker",
             origin: "docs/DECISIONS.md 2026-08-16",
             check: frozen_pairs::the_green_tree_marker_means_one_thing,

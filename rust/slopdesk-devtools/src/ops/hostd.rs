@@ -22,6 +22,9 @@
 //! restart. Reading is now the writer's own type, and the fields cannot come apart.
 //!
 //! ## The order, which is the thing that must not change
+//! The launchd job is booted out BEFORE the stop, because `com.slopdesk.hostd` keeps itself alive
+//! and would otherwise relaunch the installed binary into a race with the replayed one — a race
+//! whose loser exits 0, so losing it is silent (`ops::launchd`'s `HOSTD`).
 //! Everything is read from the record UP FRONT, because hostd DELETES it on an orderly shutdown
 //! (an absent file means "no hostd", which is worth telling apart from "one died badly"). The
 //! build comes BEFORE the stop, because a build that fails must leave the running daemon alone
@@ -51,7 +54,7 @@ use std::time::{Duration, Instant};
 
 use slopdesk_hostlaunch::record::{self, LaunchRecord};
 
-use super::{log_dir, say};
+use super::{launchd, log_dir, say};
 use crate::proc;
 
 /// What the caller asked for.
@@ -345,6 +348,23 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
 
     let mut stopped_at = None;
     if plan.stop {
+        // BEFORE the SIGTERM, and unconditionally. `com.slopdesk.hostd` carries
+        // `KeepAlive: SuccessfulExit=false` (`ops::launchd`'s `HOSTD`), so a signalled daemon under
+        // that agent is relaunched within seconds — from `~/Library/Application Support`, which is
+        // whatever `install hostd` last copied there, not what was just built. That relaunch RACES
+        // the replay below for the port, and the loser exits 0, which is what makes the wrong winner
+        // SILENT: the listener check passes, this reports success, and the daemon on the port is
+        // last week's. Booting the job out is what makes the replay the only bidder.
+        if launchd::bootout(&launchd::HOSTD, Duration::from_secs(20))? {
+            say(
+                "host-restart",
+                &format!(
+                    "booted {} out of launchd — the replay owns the port now; `slopdesk-ops install hostd` \
+                     puts the agent back",
+                    launchd::HOSTD.label
+                ),
+            );
+        }
         if let (true, Some(found)) = (alive, record.as_ref()) {
             stopped_at = Some(Instant::now());
             say("host-restart", &format!("SIGTERM → pid {}", found.pid));

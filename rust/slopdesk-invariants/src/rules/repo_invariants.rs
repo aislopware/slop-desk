@@ -28,6 +28,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::claim::{Claim, View, check_all};
 use crate::report::Report;
 use crate::text;
 use crate::tree::{Source, Tree};
@@ -975,8 +976,11 @@ const DELIBERATE_SUCCESS: [&str; 3] = ["ExitCode::SUCCESS", "AddrInUse", "exit(0
 /// `SuccessfulExit: false` says "restart this job unless it exited 0", which is only ever the right
 /// shape when losing a race is SPELLED as an exit 0. superd does it for its lock file ("exiting
 /// rather than stealing its socket") and hostd for `AddrInUse` (`docs/60` F.9) — and for hostd it
-/// is load-bearing twice, because `make host-restart` SIGTERMs a job launchd will relaunch, and
-/// that relaunch races the replayed one for the port. The loser must be allowed to stay dead.
+/// is load-bearing twice, because a SIGTERM to a job launchd is still holding races the replayed
+/// one for the port. `ops::hostd` boots the job out first so that race is not entered at all
+/// ([`the_replay_boots_the_agent_out_first`]) — but the exit 0 stays load-bearing under it, for
+/// every other way two hostds can meet: a Homebrew agent, a second checkout, a developer's own
+/// second window. The loser must be allowed to stay dead.
 ///
 /// Discovered from the agent list rather than a second list of daemons: the day somebody adds a
 /// fourth `Agent` with the guarded `KeepAlive`, it is asked for the exit path whether or not
@@ -1030,6 +1034,40 @@ pub fn a_guarded_keepalive_supervises_a_daemon_that_exits_zero(tree: &Tree) -> R
     report
 }
 
+/// The replay boots the launchd job out BEFORE it signals anything
+///
+/// `make host-restart` promises to replay the recorded launch EXACTLY. On a machine with
+/// `slopdesk-ops install hostd` run once, the promise is breakable in a way nothing reports: the
+/// agent's `KeepAlive` relaunches the daemon the signal just killed, from
+/// `~/Library/Application Support/SlopDesk/bin/` — a copy taken whenever `install` last ran — and
+/// that relaunch races the replayed binary for the port. The loser exits 0 (see
+/// [`a_guarded_keepalive_supervises_a_daemon_that_exits_zero`]), which is what converges the race
+/// and also what makes the wrong winner SILENT: the listener check finds a listener, the restart
+/// reports success, and the developer is now testing whatever was installed last against the diff
+/// they just wrote.
+///
+/// So the bootout is not a tidy-up, it is the step that makes the replay the only bidder, and it is
+/// only that step if it comes FIRST. Booting out after the signal has already lost the race. No
+/// type holds the order — both calls are `launchctl`/`kill` through the same helper and either
+/// order compiles, runs and prints the same lines on the machine that has no agent installed, which
+/// is every CI machine and most developer ones. That is exactly the shape this crate exists for.
+#[must_use]
+pub fn the_replay_boots_the_agent_out_first(tree: &Tree) -> Report {
+    /// The module that owns the restart sequence.
+    const RESTART: &str = "rust/slopdesk-devtools/src/ops/hostd.rs";
+
+    check_all(tree, &[Claim::Before {
+        path: RESTART,
+        first: r"launchd::bootout\(",
+        second: r#""-TERM""#,
+        view: View::Code,
+        message: "rust/slopdesk-devtools/src/ops/hostd.rs signals the recorded pid before it boots \
+                  com.slopdesk.hostd out of launchd — the agent relaunches the installed binary into a race \
+                  with the replay, and the loser exits 0, so `make host-restart` reports success over \
+                  whichever hostd won",
+    }])
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1038,9 +1076,53 @@ mod tests {
         live_docs_cite_files_that_exist, no_app_layer_crypto, no_fused_multiply_add,
         no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
         pkill_never_reaches_the_developers_host, scripting_is_rust, source_comments_cite_files_that_exist,
-        the_formula_installs_every_binary_the_release_ships,
+        the_formula_installs_every_binary_the_release_ships, the_replay_boots_the_agent_out_first,
     };
     use crate::tests::Fixture;
+
+    /// Where the restart sequence lives, restated so the fixtures below cannot drift from the rule.
+    const RESTART: &str = "rust/slopdesk-devtools/src/ops/hostd.rs";
+
+    /// A restart body, in the two orders, with the rest of the sequence around them so the fixture
+    /// fails for the ORDER rather than for being too small to match.
+    fn restart(bootout_first: bool) -> String {
+        let boot = "        launchd::bootout(&launchd::HOSTD, Duration::from_secs(20))?;\n";
+        let term = "        proc::ask(\"/bin/kill\", &[\"-TERM\", &pid], Path::new(\"/\"));\n";
+        let (first, second) = if bootout_first { (boot, term) } else { (term, boot) };
+        format!("pub fn run() {{\n    if plan.stop {{\n{first}{second}    }}\n}}\n")
+    }
+
+    /// The whole point: booting out AFTER the signal has already lost the race the bootout exists
+    /// to prevent, and every machine without the agent installed passes either way.
+    #[test]
+    fn signalling_before_the_bootout_is_red() {
+        let fixture = Fixture::new("restart-order-reversed");
+        fixture.write(RESTART, &restart(false));
+        assert!(
+            !the_replay_boots_the_agent_out_first(&fixture.tree()).is_clean(),
+            "a SIGTERM under a live agent is the relaunch race, whatever runs afterwards"
+        );
+    }
+
+    /// The order that ships.
+    #[test]
+    fn booting_out_before_the_signal_is_green() {
+        let fixture = Fixture::new("restart-order-shipped");
+        fixture.write(RESTART, &restart(true));
+        assert!(the_replay_boots_the_agent_out_first(&fixture.tree()).is_clean());
+    }
+
+    /// A restart that stopped booting out at all is the same failure as doing it late, and
+    /// `Claim::Before` says so rather than passing over an unmatched pattern.
+    #[test]
+    fn a_restart_that_never_boots_out_is_red() {
+        let fixture = Fixture::new("restart-order-absent");
+        fixture.write(
+            RESTART,
+            "pub fn run() {\n    proc::ask(\"/bin/kill\", &[\"-TERM\", &pid], Path::new(\"/\"));\n}\n",
+        );
+        assert!(!the_replay_boots_the_agent_out_first(&fixture.tree()).is_clean());
+    }
 
     /// A backtick, held apart from the fixtures that need one.
     ///
