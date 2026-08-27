@@ -1,0 +1,138 @@
+# `slopdesk-videohostd` — the GUI video path (PATH 2) host daemon, in Rust.
+#
+# ## Why a crate rather than a target inside `slopdesk-video`
+# `slopdesk-video` is the RULES: ninety modules of pure decisions, `forbid(unsafe_code)`, and a test
+# suite that needs no window server. It is linked from both ends of the wire — the host that
+# encodes and the client that decodes — and the moment a daemon lives inside it, the temptation is
+# to reach for a socket or a `SCStream` from inside a rule. This crate is the one that is allowed to
+# have effects: it opens the two UDP sockets, starts the capture, drives the encoder, parks a window
+# on the virtual display, and injects what comes back. Every verdict it takes it ASKS for.
+#
+# ## The shape it is replacing
+# `Sources/SlopDeskVideoHost` (47 files, ~7100 code lines) plus `Sources/slopdesk-videohostd`
+# (~1800). Both were already faces: 33 of the 47 files import `CSlopDeskFFI` and the decisions they
+# reach through it are the modules of `slopdesk-video` listed below. What was genuinely Swift was
+# the THREADING — the actor, the dispatch queues, the `NWConnection` — and that is what this crate
+# writes natively instead of reaching for through a door. A Rust daemon calling
+# `slopdesk-apple-sck` and `slopdesk-apple-vt` directly needs no FFI door at all, so this port
+# DELETES header surface rather than adding it.
+#
+# ## Its own `[workspace]`, for the reason its siblings have one
+# `rust/Cargo.toml`'s members are the FORK-PER-EVENT programs and share a startup-tuned
+# `opt-level = "z"`. A daemon on the frame budget wants a daemon's profile. The cost is the one
+# every host crate pays: `cargo -p` from the root cannot reach it, and its gate is
+# `cd rust/slopdesk-videohostd && cargo test`.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-videohostd"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "the SlopDesk GUI-video host daemon: capture, encode, packetize, serve, inject"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_videohostd"
+path = "src/lib.rs"
+
+# The daemon itself: an ORDER over the library above, and nothing else.
+[[bin]]
+name = "slopdesk-videohostd"
+path = "src/main.rs"
+
+[dependencies]
+# Every decision this daemon takes about a frame, a packet or a window. Ninety modules already
+# holding the whole rule set — the packetizer, the FEC, the mux header and routing, the congestion
+# controller, the QP ladder, the LTR machine, the FPS governor, the capture gates, the geometry.
+# This crate adds no rule of its own; where it looks like one, it belongs there instead.
+slopdesk-video = { path = "../slopdesk-video" }
+
+# Where the launch record — and therefore `video-prefs.json` beside it — lives. Asked rather than
+# spelled: the Application Support path is already one implementation, and hostd folds the SAME file
+# from the SAME directory.
+slopdesk-hostlaunch = { path = "../slopdesk-hostlaunch" }
+
+# The ONE spelling of "a number as a user would have typed it". `EnvBridge.formatDouble` crossed the
+# FFI boundary to reach this exact function; a Rust daemon links it instead.
+slopdesk-terminal = { path = "../slopdesk-terminal" }
+
+# The settings sidecar this daemon folds at launch. `serde` reads it; nothing here writes one.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+
+# The daemon's own profile — every byte a client sees crosses this process, on the frame budget.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The maximal-strict set every sibling carries, copied rather than inherited for the same reason
+# they copy it: inheriting means membership, and membership means sharing a profile.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason: both want `f64::mul_add`, the fused multiply-add `CLAUDE.md` forbids —
+# FMA rounds once where the wire rounds twice, which moves the bit patterns the golden vectors pin.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
+# The transitive graph under this crate is the whole video family at once, and the lint prices that
+# graph rather than this manifest — the same allow every sibling carries for the same reason.
+multiple_crate_versions = "allow"
