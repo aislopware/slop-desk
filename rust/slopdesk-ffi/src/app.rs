@@ -4,6 +4,10 @@
 //! decision. WHICH pid to ask about is [`crate::cgwindow::slopdesk_cgwindow_frontmost_pid`]'s
 //! answer, and what a bundle id MEANS — is this app swipe-nav eligible — is `slopdesk-video`'s.
 //!
+//! There is no `activate` door, and there was one until the injector moved: bringing an app forward
+//! has exactly one caller, [`crate::injector`], and it is now in this process rather than across
+//! the boundary — so it calls the crate directly and nothing has to be kept in step in a header.
+//!
 //! ## What this replaced
 //! The one remaining `import AppKit` on the host's frontmost path. `HostFrontmostApp.bundleID()`
 //! held a `NSRunningApplication(processIdentifier:)` beside an FFI call that already answered the
@@ -55,31 +59,13 @@ pub extern "C" fn slopdesk_app_is_hidden(pid: i32) -> bool {
     slopdesk_apple_app::is_hidden(pid)
 }
 
-/// Brings the app with this pid to the front.
-///
-/// `false` when the pid names no application or the framework declined — a request, never a
-/// guarantee, which every caller already treats as best-effort because the click that follows lands
-/// on whatever is frontmost either way.
-///
-/// No activation OPTIONS cross, and there is no door that takes them: the injector raises and
-/// focuses one window through the accessibility API first, and `ActivateAllWindows` would undo
-/// that.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub extern "C" fn slopdesk_app_activate(pid: i32) -> bool {
-    slopdesk_apple_app::activate(pid)
-}
-
 #[cfg(test)]
 #[expect(
     unsafe_code,
     reason = "calling the C ABI the way Swift does is the thing under test"
 )]
 mod tests {
-    use super::{slopdesk_app_activate, slopdesk_app_bundle_id, slopdesk_app_is_hidden};
+    use super::{slopdesk_app_bundle_id, slopdesk_app_is_hidden};
 
     /// A pid that cannot name an application answers nothing rather than an empty string a caller
     /// would go on to compare against an allowlist.
@@ -99,14 +85,6 @@ mod tests {
     fn a_pid_that_names_nothing_is_neither_bundled_nor_hidden() {
         assert!(!slopdesk_app_is_hidden(i32::MAX));
         assert!(!slopdesk_app_is_hidden(-1));
-    }
-
-    /// Activation of a pid that names nothing is refused. A `true` would claim a raise that never
-    /// happened, and the injector's next click would be reported as having landed on that app.
-    #[test]
-    fn activating_a_pid_that_names_nothing_is_refused() {
-        assert!(!slopdesk_app_activate(i32::MAX));
-        assert!(!slopdesk_app_activate(-1));
     }
 
     /// A null buffer is answered with the size to lend, not written through — the two-call shape

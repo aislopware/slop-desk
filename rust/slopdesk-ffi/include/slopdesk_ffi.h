@@ -5117,58 +5117,6 @@ SlopDeskScrollHint     slopdesk_scroll_hint_measured(int32_t shift, uint32_t con
 SlopDeskScrollVelocity slopdesk_scroll_hint_velocity(SlopDeskScrollHint hint, double content_fps);
 SlopDeskScrollBand     slopdesk_scroll_hint_band(SlopDeskScrollHint hint);
 
-/* The scroll RESAMPLING law, one per pane on the host's injector queue. Six scalars, so it crosses
- * BY VALUE the way the reprojector above does — the near side is a Swift struct held inline. An
- * ingest answers a FIXED PAIR because the law's branches bound it at two: a marker, and at most one
- * residual flush in front of an ending marker. A list would need an allocation and a length rule
- * where a proved constant does. */
-
-#define SLOPDESK_SCROLL_MAX_INGEST 2u
-
-typedef struct {
-  double  dx;              /* whole pixels — the resampler keeps the fraction */
-  double  dy;
-  uint8_t scroll_phase;    /* CGScrollPhase: 1 Began, 2 Changed, 4 Ended, 8 Cancelled, 0 none */
-  uint8_t momentum_phase;  /* CGMomentumScrollPhase: 1 Began, 2 Continue, 3 End, 0 none */
-  bool    continuous;
-} SlopDeskScrollSubEvent;
-
-typedef struct {
-  double spread;           /* each drain emits about residual / spread */
-  double lag_cap;          /* the per-axis lag cap, in pixels */
-  double residual_x;       /* un-emitted, sub-pixel fraction and all */
-  double residual_y;
-  bool   coasting;         /* the latest continuous samples are an inertial coast */
-  bool   continuous_flag;
-} SlopDeskScrollResampler;
-
-typedef struct {
-  SlopDeskScrollResampler resampler;
-  SlopDeskScrollSubEvent  events[SLOPDESK_SCROLL_MAX_INGEST];
-  size_t                  count;  /* only the first `count` are events */
-} SlopDeskScrollIngest;
-
-typedef struct {
-  SlopDeskScrollResampler resampler;
-  SlopDeskScrollSubEvent  event;   /* meaningful only when `emitted` */
-  bool                    emitted;
-} SlopDeskScrollDrain;
-
-typedef struct {
-  double spread;
-  double lag_cap;
-} SlopDeskScrollResamplerDefaults;
-
-SlopDeskScrollResamplerDefaults slopdesk_scroll_resampler_defaults(void);
-SlopDeskScrollResampler slopdesk_scroll_resampler_new(double spread, double lag_cap);
-SlopDeskScrollIngest    slopdesk_scroll_resampler_ingest(SlopDeskScrollResampler resampler,
-                                                         double dx, double dy,
-                                                         uint8_t scroll_phase, uint8_t momentum_phase,
-                                                         bool continuous);
-SlopDeskScrollDrain     slopdesk_scroll_resampler_drain(SlopDeskScrollResampler resampler);
-bool                    slopdesk_scroll_resampler_is_idle(SlopDeskScrollResampler resampler);
-SlopDeskScrollResampler slopdesk_scroll_resampler_reset(SlopDeskScrollResampler resampler);
-
 /* The SWIPE-NAV recogniser: which two-finger gesture becomes a history navigation. Sixteen scalars
  * and flags, by value — the host's injector and the client's peel planner each hold one, and both
  * must reach the SAME verdict over the same event stream, which is the whole argument for the law
@@ -5381,9 +5329,7 @@ size_t slopdesk_input_coalesce_plan(const SlopDeskInputEvent *events, size_t cou
  *
  * An event no arm answers to reads as raise: erring that way costs latency, while erring the other
  * way posts a click into a window that was never focused.
- *
- * slopdesk_input_should_raise takes the frontmost pid as a value plus a presence flag — an unknown
- * frontmost is the uncertainty the policy errs toward raising on, never a sentinel pid.
+
  * ---------------------------------------------------------------------------- */
 
 #define SLOPDESK_INPUT_RAISE_FIRST 1u
@@ -5392,8 +5338,6 @@ size_t slopdesk_input_coalesce_plan(const SlopDeskInputEvent *events, size_t cou
 #define SLOPDESK_INPUT_RAISE_LATCH_EXEMPT 8u
 
 uint32_t slopdesk_input_raise_flags(SlopDeskInputEvent event, bool needs_raise);
-bool     slopdesk_input_should_raise(bool has_frontmost, int32_t frontmost_pid, int32_t target_pid,
-                                     bool first_interaction);
 
 /* ---------------------------------------------------------------------------- *
  * The BUTTON AND MODIFIER LEDGER. The ordered consumer keeps one interaction's down, drag and up in
@@ -8866,8 +8810,9 @@ bool slopdesk_pointer_mouse_visible(int32_t raw);
 // hostd asks — a client on either platform RECEIVES the git status as a metadata
 // reply and never computes it — so compiling that library into the phone slices
 // would cost every phone build and every phone archive for a door nothing on the
-// phone can reach. Behind the four `slopdesk_inject_*` doors is CoreGraphics event
-// synthesis, and behind the `slopdesk_cgwindow_*` / `slopdesk_cgdisplay_*` ones is
+// phone can reach. Behind the `slopdesk_injector_*` doors is CoreGraphics event
+// synthesis and the accessibility tree, and behind the `slopdesk_cgwindow_*` /
+// `slopdesk_cgdisplay_*` ones is
 // the WindowServer's read side; iOS has neither at all, so an ungated declaration
 // there would not merely cost bytes — it would fail to link.
 //
@@ -8876,68 +8821,75 @@ bool slopdesk_pointer_mouse_visible(int32_t raw);
 
 // ---- Remote input injection ------------------------------------------------------
 //
-// `rust/slopdesk-apple-cgevent` builds and posts the events; `slopdesk-video`'s
-// `input_routing` decides what should be posted. These doors hold neither half —
-// every field below is a value the caller already decided.
+// ONE handle for one session's injected input: the raise chain, the scroll resampler,
+// the swipe-back translation, and every event that reaches the window server. What was
+// `InputInjector.swift` — 735 lines that owned no rule, only two DispatchQueues, a
+// DispatchSourceTimer and three NSLocks. The rules were already Rust and the effects
+// were already doors; this is what was left, and eight doors went away with the file.
 //
-// They take a struct BY VALUE rather than the `(ptr, len)` this header uses
-// everywhere else, and the reason is the hot path: a remote pointer stream is about
-// 150 hover moves a second, each of which would otherwise be a serialise on one side
-// and a parse on the other for eleven scalars that already have a C layout. The
-// return is not a byte count — it is whether CoreGraphics built the event at all.
+// THREADING: this and the cursor sampler are the two handles in this header that more
+// than one thread may call. The session injects and raises, the geometry watcher updates
+// the bounds, teardown reads the balance, and the handle's OWN two threads call back
+// into it. It carries its own locks, so no caller needs one.
 
-// Which pointer event a SlopDeskInjectPointer is. An unrecognised code is a hover:
-// a garbled kind must never become a different GESTURE.
-#define SLOPDESK_INJECT_MOVE 0
-#define SLOPDESK_INJECT_DOWN 1
-#define SLOPDESK_INJECT_UP 2
-#define SLOPDESK_INJECT_DRAG 3
+typedef struct SlopDeskInjector SlopDeskInjector;
 
-// Which button it names. An unrecognised code is the primary button.
-#define SLOPDESK_INJECT_BUTTON_LEFT 0
-#define SLOPDESK_INJECT_BUTTON_RIGHT 1
-#define SLOPDESK_INJECT_BUTTON_OTHER 2
+// The environment keys this handle reads, NUL-joined, in the order slopdesk_injector_new
+// expects their values. TWO gate families and one name in neither, as one list because
+// the caller resolves them all through the same overlay-aware lookup (EnvConfig.string,
+// docs/58) in the same breath. SLOPDESK_INPUT_TRACE is deliberately NOT here: the
+// session's own gate table already resolves it, and it crosses as the bool below.
+size_t slopdesk_injector_gate_keys(uint8_t *out, size_t cap);
 
-typedef struct {
-  double x;           // absolute CG point, top-left origin
-  double y;           // its Y, same space
-  uint32_t tag;       // the self-inject stamp the cursor/geometry watchers filter on
-  int32_t to_pid;     // 0 posts at the HID tap (production); non-zero delivers to that pid
-  uint8_t kind;       // SLOPDESK_INJECT_*
-  uint8_t button;     // SLOPDESK_INJECT_BUTTON_*
-  uint8_t click_count; // the originating click's count; raised to 1 on the way out
-  uint8_t modifiers;  // the wire's InputModifiers bits
-  bool warp;          // warp the cursor before posting
-  bool tablet;        // post the one-round-trip tablet-point move instead. Hover only.
-} SlopDeskInjectPointer;
+// The resampler's output rate, or 0 for the direct-post path. Needed BEFORE any injector
+// exists — the scroll coalescer's default follows it, because the resampler already caps
+// the post rate and stacking the summing gate under it double-quantizes the stream. An
+// unreadable list answers the default rather than off.
+int64_t slopdesk_injector_resample_hz(const uint8_t *values, size_t len);
 
-typedef struct {
-  double dx;              // horizontal delta in points, pre-gain
-  double dy;              // vertical delta in points, pre-gain
-  double gain;            // applied before the delta is narrowed
-  uint32_t tag;           // as above
-  int32_t to_pid;         // as above
-  uint8_t scroll_phase;   // the CoreGraphics code, forwarded verbatim; 0 is absent
-  uint8_t momentum_phase; // likewise, and mutually exclusive with scroll_phase
-  bool continuous;        // whether the source gesture was precise, not a wheel notch
-  bool phased;            // whether the two phase fields are replayed at all
-} SlopDeskInjectScroll;
+// Builds one session's injector and starts whichever threads it needs. Never null.
+//
+// `pid` is 0 for a DISPLAY-scoped session (the full-desktop pane), which raises nothing:
+// whole-desktop input goes to whatever is frontmost, exactly like a local user's.
+//
+// `held` SEEDS the balance and is what a stale injector's slopdesk_injector_balance
+// answered — the same record the per-event fold already crosses as (docs/55 §4b). A
+// transparent reconnect rebuilds the injector while the user may still be PHYSICALLY
+// holding a drag or Command; seeding empty would classify the eventual release as an
+// orphan, suppress it, and strand the host mid-drag.
+SlopDeskInjector *slopdesk_injector_new(const uint8_t *values, size_t len, bool input_trace,
+                                        int32_t pid, uint32_t window_id, SlopDeskVideoRect bounds,
+                                        SlopDeskInputBalance held);
 
-// Each answers false when CoreGraphics refused to build the event.
-bool slopdesk_inject_pointer(SlopDeskInjectPointer spec);
-bool slopdesk_inject_scroll(SlopDeskInjectScroll spec);
+// Stops both threads and releases the handle. Null is inert. This JOINS rather than
+// cancels: a pump still holding the shared state when the box went away would be reading
+// freed memory, so the wait is the safety property. Bounded — the only thing either
+// thread blocks on is the channel this closes.
+void slopdesk_injector_free(SlopDeskInjector *handle);
 
-// A key edge. Posted at the HID tap and deliberately NOT stamped: a host IME dedupes
-// its own two taps through that same field, and a stamped keystroke defeats the dedup
-// and composes twice. Safe to leave untagged — the self-inject filter serves the
-// cursor and geometry watchers, and a keystroke moves neither.
-bool slopdesk_inject_key(uint16_t key_code, bool down, uint8_t modifiers);
+// Re-points the coordinate mapping at the window's current frame, as the geometry watcher
+// sees it move.
+void slopdesk_injector_update_bounds(SlopDeskInjector *handle, SlopDeskVideoRect bounds);
 
-// Unicode text, layout-independently. The string rides the key-DOWN edge only —
-// attaching it to both inserts twice — and both edges post with EMPTY flags so an
-// insertion cannot inherit a modifier latched on the shared HID source. false means
-// the bytes were not UTF-8, or CoreGraphics refused.
-bool slopdesk_inject_text(const uint8_t *text, size_t len);
+// Requests the raise chain for the first event of an interaction, and returns IMMEDIATELY.
+// The chain is 6-10 synchronous AX round-trips against a backgrounded target — measured at
+// 1-7 seconds — which is why it never runs on the caller's thread; on the main actor it
+// starved the main-only cursor-shape refresh for whole seconds. A display-scoped session
+// has nothing to raise and this is a no-op.
+void slopdesk_injector_raise(SlopDeskInjector *handle);
+
+// Posts one remote input event. `text` carries the text arm's bytes and is ignored by
+// every other arm — the split SlopDeskInputEvent already uses, because a string has no
+// home in a flat record and the caller is holding the datagram it came out of. false
+// means the record described no event this build answers to.
+bool slopdesk_injector_inject(SlopDeskInjector *handle, SlopDeskInputEvent event,
+                              const uint8_t *text, size_t text_len);
+
+// The held-button/held-modifier ledger, as a snapshot. The session reads this off the
+// STALE injector at teardown and threads it into the replacement's seed. A record rather
+// than a handle, per docs/55 §4b: the balance is twelve bits, and a handle for it would be
+// an allocation to leak.
+bool slopdesk_injector_balance(const SlopDeskInjector *handle, SlopDeskInputBalance *out);
 
 // ---- The WindowServer's read side ------------------------------------------------
 //
@@ -9003,12 +8955,6 @@ size_t slopdesk_app_bundle_id(int32_t pid, uint8_t *out, size_t cap);
 // naming no application answers false — the window feed reads hidden as a reason to
 // SUPPRESS a row, and a window belonging to nothing is not a window a person hid.
 bool slopdesk_app_is_hidden(int32_t pid);
-
-// Brings that app to the front — a REQUEST, never a guarantee, and false when the pid
-// names no application. No activation options cross and there is no door that takes
-// them: the injector raises and focuses ONE window through AX first, and
-// ActivateAllWindows would undo exactly that.
-bool slopdesk_app_activate(int32_t pid);
 
 // ---- Keeping the Mac's SCREEN awake ---------------------------------------------------
 //
@@ -9109,23 +9055,6 @@ int32_t slopdesk_ax_deminiaturize(uint32_t window_id, int32_t pid);
 bool slopdesk_ax_resize_window(uint32_t window_id, int32_t pid, double width, double height,
                                const SlopDeskVideoRect *displays, size_t display_count,
                                double *out_width, double *out_height);
-
-// One window's raise target, resolved AT MOST ONCE. A handle rather than a function
-// because the resolution is what costs: listing an app's windows and asking each one for
-// its id is O(windows) synchronous round-trips, and the raise runs on the first event of
-// every interaction.
-typedef struct SlopDeskAxRaiser SlopDeskAxRaiser;
-
-SlopDeskAxRaiser *slopdesk_ax_raiser_new(int32_t pid, uint32_t window_id);
-void slopdesk_ax_raiser_free(SlopDeskAxRaiser *handle);
-
-// Raises and focuses the window; answers whether there was a target to raise. Does NOT
-// bring the application forward — ordering that against this is the caller's.
-//
-// `bounds` is the window's current frame, used only as the fallback when the private id
-// symbol answers for NO candidate at all (a locked screen). Passed per call rather than
-// held because the geometry watcher already tracks it and a second copy would go stale.
-bool slopdesk_ax_raiser_raise(SlopDeskAxRaiser *handle, SlopDeskVideoRect bounds);
 
 // The budgeted minimized probe (docs/45 Phase 5): which off-screen windows are minimized
 // rather than on another Space, and which have any AX evidence of being real windows at

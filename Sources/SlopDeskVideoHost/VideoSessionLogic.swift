@@ -377,28 +377,6 @@ public struct InputDatagramRouter: Sendable {
     }
 }
 
-/// Pure policy for the host's activate-then-control window raise. The injector's
-/// `raiseTargetWindow()` runs ~6–10 SYNCHRONOUS cross-process Accessibility IPC calls (each capped
-/// at the 0.25 s messaging timeout) that the input consumer AWAITS before the click is posted, so
-/// paying the full chain on EVERY click of an already-frontmost window is the dominant felt input
-/// latency. This decides, from a CHEAP non-AX frontmost-app read, whether the full AX raise is
-/// actually needed. Pure ⇒ headlessly testable without AX/TCC.
-public enum InputInjectorRaisePolicy {
-    /// Whether to run the full AX raise chain. Skips it ONLY when the target app is ALREADY frontmost
-    /// AND this is not the first interaction (the first interaction always raises, to set
-    /// `kAXMainWindow`/`kAXFocusedWindow` so keystrokes land on the right window even when the app is
-    /// already frontmost). Errs toward raising on any uncertainty — a `nil` frontmost read or a
-    /// different frontmost app — so activate-then-control correctness is never weakened.
-    ///
-    /// An absent frontmost crosses as a presence flag, not a sentinel pid: a pid the policy has to
-    /// recognise as "none" is a pid it could also match against a target by accident.
-    public static func shouldRaise(frontmostPID: pid_t?, targetPID: pid_t, firstInteraction: Bool) -> Bool {
-        slopdesk_input_should_raise(
-            frontmostPID != nil, frontmostPID ?? 0, targetPID, firstInteraction,
-        )
-    }
-}
-
 /// The FACE of `slopdesk-video`'s button and modifier ledger — twelve bits, carried by value.
 ///
 /// The ordered inbound consumer keeps a single interaction's down→drag→up in order, but cannot
@@ -434,6 +412,16 @@ public struct InputButtonBalance: Sendable, Equatable {
     }
 
     public init() {}
+
+    /// Seeds the ledger from the record the far side keeps it in — what an injector's
+    /// `balanceSnapshot` answered, on its way into the replacement injector's `init(balance:)`.
+    public init(_ state: SlopDeskInputBalance) {
+        self.state = state
+    }
+
+    /// The ledger as it crosses: twelve bits, by value. There is no handle for it and there should
+    /// not be — a handle these owners COPIED would be two ledgers by the second copy (`docs/55` §4b).
+    public var wire: SlopDeskInputBalance { state }
 
     /// What to do before injecting `event`.
     public struct Plan: Equatable, Sendable {

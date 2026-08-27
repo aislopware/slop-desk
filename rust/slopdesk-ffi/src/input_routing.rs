@@ -20,7 +20,7 @@ use slopdesk_video::geometry::VideoPoint;
 use slopdesk_video::input_event::{InputEvent, MouseButton, ScrollEvent};
 use slopdesk_video::input_routing::{
     InputButtonBalance, ScrollAccumulator, ScrollCoalescePlanner, always_raises, latch_exempt_from_raise,
-    raise_first, rearm_raise_after, should_raise,
+    raise_first, rearm_raise_after,
 };
 
 use crate::input_event::{SlopDeskInputEvent, flatten, rebuild};
@@ -66,25 +66,6 @@ pub extern "C" fn slopdesk_input_raise_flags(event: SlopDeskInputEvent, needs_ra
         flags |= INPUT_RAISE_LATCH_EXEMPT;
     }
     flags
-}
-
-/// Whether to run the full accessibility raise chain at all, from a CHEAP frontmost-app read.
-///
-/// An absent frontmost crosses as `has_frontmost == false` rather than a sentinel pid, and reads as
-/// RAISE — an unknown frontmost is exactly the uncertainty this errs toward raising on.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub const extern "C" fn slopdesk_input_should_raise(
-    has_frontmost: bool,
-    frontmost_pid: i32,
-    target_pid: i32,
-    first_interaction: bool,
-) -> bool {
-    let frontmost = if has_frontmost { Some(frontmost_pid) } else { None };
-    should_raise(frontmost, target_pid, first_interaction)
 }
 
 /// The button and modifier ledger, as the twelve bits it really is.
@@ -361,8 +342,8 @@ mod tests {
     use super::{
         INPUT_RAISE_ALWAYS, INPUT_RAISE_FIRST, INPUT_RAISE_LATCH_EXEMPT, INPUT_RAISE_REARM,
         SlopDeskInputBalance, SlopDeskPlannedEvent, SlopDeskScrollPlanner, slopdesk_input_balance_plan,
-        slopdesk_input_raise_flags, slopdesk_input_should_raise, slopdesk_scroll_planner_clear,
-        slopdesk_scroll_planner_new, slopdesk_scroll_planner_plan,
+        slopdesk_input_raise_flags, slopdesk_scroll_planner_clear, slopdesk_scroll_planner_new,
+        slopdesk_scroll_planner_plan,
     };
     use crate::input_event::SlopDeskInputEvent;
 
@@ -444,24 +425,6 @@ mod tests {
         assert_eq!(
             flags(9, false),
             INPUT_RAISE_FIRST | INPUT_RAISE_ALWAYS | INPUT_RAISE_REARM
-        );
-    }
-
-    /// The chain is skipped ONLY for a settled, already-frontmost app.
-    #[test]
-    fn the_raise_chain_is_skipped_only_for_a_settled_already_frontmost_app() {
-        assert!(!slopdesk_input_should_raise(true, 42, 42, false));
-        assert!(
-            slopdesk_input_should_raise(true, 42, 42, true),
-            "the first one always raises"
-        );
-        assert!(
-            slopdesk_input_should_raise(true, 7, 42, false),
-            "another app is frontmost"
-        );
-        assert!(
-            slopdesk_input_should_raise(false, 0, 42, false),
-            "an unknown frontmost reads as raise, not as a match on a sentinel pid",
         );
     }
 

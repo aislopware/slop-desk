@@ -461,7 +461,7 @@ So Rust owns the object and Swift holds an opaque token:
   already held for the value type it replaced — including for calls that look read-only, because
   the producers below write the handle's slots.
 
-  **One handle is written for the opposite, and it says so in its own doors:**
+  **Two handles are written for the opposite, and each says so in its own doors.** The first is
   `SlopDeskCursorSampler`. Its doors take `&`, not `&mut`, and its state sits behind two mutexes,
   because two threads calling it is the DESIGN rather than a caller's mistake — the 120 Hz cursor
   position sample runs off the main thread precisely so a main-thread window raise cannot freeze the
@@ -472,6 +472,16 @@ So Rust owns the object and Swift holds an opaque token:
   hot one, the PNG render happens with neither held, and nothing else may be assumed shareable. A
   handle without that note in its own header block is not one — the rule stays the default and this
   is a documented, tested departure from it, with a test that runs both paths concurrently.
+
+  The second is `SlopDeskInjector` (`docs/60`), and it goes one step further: it does not merely
+  TOLERATE two callers, it OWNS two threads. Every one of its doors takes `&`; the raise chain and
+  the scroll resampler each run on a thread the handle started, reached by channel send, and the
+  three pieces of state more than one of them reads sit behind a mutex each. The reason is the same
+  shape as the sampler's — an accessibility raise can block for as long as the target app takes to
+  answer, and the injection path is a 250 Hz posting loop, so serialising them under one caller's
+  lock would stall input on a hung app. What makes it an exception rather than a hole: `_free` JOINS
+  both threads rather than cancelling them, so the handle cannot outlive a pump that still holds its
+  state, and the scroll pump is stopped first because it can still ask the raise one for a raise.
 - Answers still come back through `(out, cap) -> needed`. **Nothing is allocated on one side and
   freed on the other**, so §4's "no free function" survives intact.
 

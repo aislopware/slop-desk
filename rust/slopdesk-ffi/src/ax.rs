@@ -340,14 +340,19 @@ pub unsafe extern "C" fn slopdesk_ax_resize_window(
 // Raising one window, repeatedly
 // ---------------------------------------------------------------------------------- //
 
-/// One window's raise target, resolved at most once.
+/// One window's raise target, resolved at most once — the injector's raise thread owns exactly one.
 ///
-/// A handle rather than a function because the resolution is what costs: listing an app's windows
-/// and asking each one for its id is O(windows) synchronous round-trips, and the raise runs on
-/// every first event of every interaction. The Swift this replaces cached the element for exactly
-/// this reason; a stateless door would have thrown that away and called it a simplification.
+/// A type rather than a function because the resolution is what costs: listing an app's windows and
+/// asking each one for its id is O(windows) synchronous round-trips, and the raise runs on every
+/// first event of every interaction. The Swift this replaces cached the element for exactly this
+/// reason; a stateless call would have thrown that away and called it a simplification.
+///
+/// Not a handle, and not `Sync`: an `AXUIElement` is a Core Foundation object with no thread-safety
+/// contract to lean on, so instead of wrapping the cache in a lock this type is CONFINED to the one
+/// thread that raises. [`crate::injector`] spawns that thread and builds this inside it, which is
+/// why nothing here crosses the boundary and there is no door to free.
 #[derive(Debug)]
-pub struct SlopDeskAxRaiser {
+pub(crate) struct RaiseTarget {
     /// The process whose window is raised.
     pid: i32,
     /// The window, by the id the rest of the host knows it by.
@@ -355,101 +360,41 @@ pub struct SlopDeskAxRaiser {
     /// The resolved pair, once. A stale element is harmless — every accessibility call on one
     /// answers an error rather than faulting — so it is never invalidated, only replaced when the
     /// resolution failed and is retried.
-    resolved: Mutex<Option<(App, Window)>>,
+    resolved: Option<(App, Window)>,
 }
 
-/// Views a raiser handle as a shared reference.
-///
-/// # Safety
-/// `handle` must be null or a live pointer from [`slopdesk_ax_raiser_new`].
-#[expect(
-    unsafe_code,
-    reason = "the shim's whole job is turning a caller's pointer into a reference"
-)]
-const unsafe fn raiser<'a>(handle: *const SlopDeskAxRaiser) -> Option<&'a SlopDeskAxRaiser> {
-    if handle.is_null() {
-        return None;
+impl RaiseTarget {
+    /// The raise target for one window of one process. Resolves nothing yet.
+    pub(crate) const fn new(pid: i32, window_id: u32) -> Self {
+        Self {
+            pid,
+            window_id,
+            resolved: None,
+        }
     }
-    // SAFETY: the caller's obligation, above.
-    Some(unsafe { &*handle })
-}
 
-/// Builds a raiser for one window of one process. Never null.
-///
-/// # Safety
-/// The answer must be passed to [`slopdesk_ax_raiser_free`] exactly once.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-#[must_use]
-pub extern "C" fn slopdesk_ax_raiser_new(pid: i32, window_id: u32) -> *mut SlopDeskAxRaiser {
-    Box::into_raw(Box::new(SlopDeskAxRaiser {
-        pid,
-        window_id,
-        resolved: Mutex::new(None),
-    }))
-}
-
-/// Releases a raiser. Null is inert.
-///
-/// # Safety
-/// `handle` must be null or a pointer from [`slopdesk_ax_raiser_new`] that has not already been
-/// freed, and no call on it may be in flight.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_ax_raiser_free(handle: *mut SlopDeskAxRaiser) {
-    if handle.is_null() {
-        return;
+    /// Raises and focuses the window; answers whether it had a target to raise.
+    ///
+    /// `bounds` is the window's current frame, used only as the fallback when the private id symbol
+    /// answers for no candidate at all — a locked screen. It is passed per call rather than held
+    /// because the geometry watcher already tracks it and a second copy would go stale.
+    ///
+    /// This does NOT bring the application forward. Ordering the raise against an activation is the
+    /// caller's, and it stays there.
+    pub(crate) fn raise(&mut self, bounds: Rect) -> bool {
+        if self.pid <= 0 {
+            return false;
+        }
+        if self.resolved.is_none() {
+            self.resolved = resolve(self.pid, self.window_id, bounds, RAISE_TIMEOUT);
+        }
+        let Some((app, window)) = self.resolved.as_ref() else {
+            return false;
+        };
+        let _ = window.raise();
+        app.focus(window);
+        true
     }
-    // SAFETY: non-null and, by the caller's obligation, a live box from `new` with nothing in
-    // flight — so reclaiming it here is the single matching free.
-    drop(unsafe { Box::from_raw(handle) });
-}
-
-/// Raises and focuses the window; answers whether it had a target to raise.
-///
-/// `bounds` is the window's current frame, used only as the fallback when the private id symbol
-/// answers for no candidate at all — a locked screen. It is passed per call rather than held
-/// because the geometry watcher already tracks it and a second copy would go stale.
-///
-/// This does NOT bring the application forward. Ordering the raise against an activation is the
-/// caller's, and it stays there.
-///
-/// # Safety
-/// `handle` must be null or live.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_ax_raiser_raise(
-    handle: *mut SlopDeskAxRaiser,
-    bounds: SlopDeskVideoRect,
-) -> bool {
-    // SAFETY: the caller's obligation, above.
-    let Some(state) = (unsafe { raiser(handle) }) else {
-        return false;
-    };
-    if state.pid <= 0 {
-        return false;
-    }
-    let Ok(mut resolved) = state.resolved.lock() else {
-        return false;
-    };
-    if resolved.is_none() {
-        *resolved = resolve(state.pid, state.window_id, bounds.of(), RAISE_TIMEOUT);
-    }
-    let Some((app, window)) = resolved.as_ref() else {
-        return false;
-    };
-    let _ = window.raise();
-    app.focus(window);
-    true
 }
 
 // ---------------------------------------------------------------------------------- //
@@ -641,10 +586,9 @@ mod tests {
     use slopdesk_video::geometry::VideoRect;
 
     use super::{
-        SLOPDESK_AX_DEMINIATURIZE_FAILED, SlopDeskAxOffScreen, SlopDeskAxPark, SlopDeskAxVerdict,
-        slopdesk_ax_deminiaturize, slopdesk_ax_is_trusted, slopdesk_ax_park_window,
-        slopdesk_ax_probe_classify, slopdesk_ax_probe_free, slopdesk_ax_probe_new, slopdesk_ax_raiser_free,
-        slopdesk_ax_raiser_new, slopdesk_ax_raiser_raise, slopdesk_ax_resize_window,
+        RaiseTarget, SLOPDESK_AX_DEMINIATURIZE_FAILED, SlopDeskAxOffScreen, SlopDeskAxPark,
+        SlopDeskAxVerdict, slopdesk_ax_deminiaturize, slopdesk_ax_is_trusted, slopdesk_ax_park_window,
+        slopdesk_ax_probe_classify, slopdesk_ax_probe_free, slopdesk_ax_probe_new, slopdesk_ax_resize_window,
         slopdesk_ax_restore_window,
     };
     use crate::video_policy::SlopDeskVideoRect;
@@ -658,7 +602,6 @@ mod tests {
     fn every_door_refuses_rather_than_faults() {
         let rect = SlopDeskVideoRect::from(VideoRect::xywh(0.0, 0.0, 100.0, 100.0));
         unsafe {
-            assert!(!slopdesk_ax_raiser_raise(std::ptr::null_mut(), rect));
             assert_eq!(
                 slopdesk_ax_probe_classify(
                     std::ptr::null_mut(),
@@ -710,24 +653,20 @@ mod tests {
         assert_eq!(record.original.x.to_bits(), 7.0_f64.to_bits());
     }
 
-    /// A raiser for a process that is not there is built, used and freed without faulting — the
-    /// resolution simply never succeeds, and the door reports it every time rather than caching a
-    /// failure as if it were an answer.
+    /// A raise target for a process that is not there answers no, every time, without faulting and
+    /// without caching the failure as if it were an answer. Two hundred and fifty-six attempts
+    /// because the cache is the whole point of the type: one that memoised `None` would answer no
+    /// for a different reason after the first call, and this suite could not tell the two apart.
     #[test]
-    #[expect(unsafe_code, reason = "calling C entry points is what this module is")]
-    fn a_raiser_for_a_process_that_is_gone_keeps_answering_no() {
-        let handle = slopdesk_ax_raiser_new(i32::MAX, 42);
-        assert!(!handle.is_null());
-        // SAFETY: `handle` is live for the whole block and freed exactly once at the end.
-        unsafe {
-            for _ in 0..256 {
-                assert!(!slopdesk_ax_raiser_raise(
-                    handle,
-                    SlopDeskVideoRect::from(VideoRect::xywh(0.0, 0.0, 1.0, 1.0))
-                ));
-            }
-            slopdesk_ax_raiser_free(handle);
+    fn a_raise_target_for_a_process_that_is_gone_keeps_answering_no() {
+        let mut target = RaiseTarget::new(i32::MAX, 42);
+        for _ in 0..256 {
+            assert!(!target.raise(VideoRect::xywh(0.0, 0.0, 1.0, 1.0)));
         }
+        assert!(
+            !RaiseTarget::new(0, 0).raise(VideoRect::xywh(0.0, 0.0, 1.0, 1.0)),
+            "a display-scoped session has no window to raise and never resolves one",
+        );
     }
 
     /// The classify door reports the count it NEEDS, writes nothing into a short buffer, and

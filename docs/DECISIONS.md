@@ -12750,6 +12750,14 @@ The three `FramePacerReprojectionTests` were left exactly as they were and pass 
 
 ## The scroll resampling folds by value (2026-08-15)
 
+⤵️ **SUPERSEDED (2026-08-27) in its CROSSING only — every law below still holds.** The injector moved
+whole into `rust/slopdesk-ffi/src/injector.rs` (docs/60), which put the resampler on the same thread
+that posts. So there is no crossing left to make by value: `ScrollResampler.swift` and the six
+`slopdesk_scroll_resampler_*` doors it was a face over are deleted, and `check-supervisor`'s door list
+for that path became a stay-deleted ban. The 14 Swift resampler tests went with them — `scroll_resample.rs`'s
+own suite is the one that runs now. The fixed-pair ingest, the flush-before-End ordering and the
+carried truncation are unchanged; they are simply no longer reachable from Swift.
+
 `ScrollResampler` was the injector's Swift half of `rust/slopdesk-video`'s `scroll_resample` — same
 spread, same lag cap, same flush-before-the-End rule, same carried sub-pixel fraction. It is now a
 face over that module through `rust/slopdesk-ffi/src/scroll_resample.rs`, and the type stays a Swift

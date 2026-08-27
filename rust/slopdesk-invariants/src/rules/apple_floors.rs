@@ -37,9 +37,11 @@ const INJECTOR: &str = "Sources/SlopDeskVideoHost/InputInjector.swift";
 /// The host synthesises no event of its own
 ///
 /// Every injected `CGEvent` is built and posted by `rust/slopdesk-apple-cgevent`, the first crate
-/// of the `objc2` family. `InputInjector` still ORCHESTRATES — it owns the bounds, the balance, the
-/// resampler, the raise chain — but it no longer builds an event, sets a field on one, warps a
-/// cursor or posts anything.
+/// of the `objc2` family, and the orchestration above it — the bounds, the balance, the resampler,
+/// the raise chain — is `rust/slopdesk-ffi/src/injector.rs` since `docs/60`. `InputInjector.swift`
+/// is what is left over: an ARC owner for the handle. It builds no event, sets no field on one,
+/// warps no cursor and posts nothing, and the ban below is what keeps it that way, because an ARC
+/// owner is exactly the file somebody would reach for to add "just one" direct post to.
 ///
 /// The line matters because the two languages fail differently here. Swift's `Int32(_:)` TRAPS on a
 /// value off the wire; Rust's clamp saturates. Swift's `CGEvent` construction is nine call sites
@@ -55,7 +57,7 @@ const INJECTOR: &str = "Sources/SlopDeskVideoHost/InputInjector.swift";
 ///
 /// BREAK-TEST: restored `CGEvent(mouseEventSource:` in `InputInjector` ⇒ FAIL "builds a `CGEvent`
 /// itself". Separately restored `static func clampToInt32` there ⇒ FAIL "keeps its own narrowing".
-/// Separately deleted the Rust crate ⇒ FAIL "has no Rust behind it". Separately moved the inject
+/// Separately deleted the Rust crate ⇒ FAIL "has no Rust behind it". Separately moved the injector
 /// declarations out of the MACOS-ONLY region ⇒ FAIL "declares a CoreGraphics door outside the
 /// macOS-only region". Separately ungated the Cargo edge ⇒ FAIL "is not target-gated". All five
 /// restored from /tmp; PASS.
@@ -68,7 +70,7 @@ pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
                       (docs/57 §5, docs/56 increment 84)",
         },
         Claim::Exists {
-            path: "rust/slopdesk-ffi/src/inject.rs",
+            path: "rust/slopdesk-ffi/src/injector.rs",
             message: "InputInjector has no door behind it — the host synthesises no event of its own \
                       (docs/57 §5, docs/56 increment 84)",
         },
@@ -92,7 +94,7 @@ pub fn the_host_synthesises_no_event(tree: &Tree) -> Report {
             path: HEADER,
             start: MACOS_REGION.0,
             end: MACOS_REGION.1,
-            pattern: r"slopdesk_inject_pointer\(",
+            pattern: r"slopdesk_injector_inject\(",
             view: View::Raw,
             message: "slopdesk_ffi.h declares a CoreGraphics door outside the macOS-only region — iOS has \
                       no CGEvent at all, so an ungated declaration is not a wasted byte, it is a link \
@@ -412,7 +414,7 @@ mod tests {
     fn floors(fixture: &Fixture, header: &str, injector: &str) {
         for path in [
             "rust/slopdesk-apple-cgevent/src/inject.rs",
-            "rust/slopdesk-ffi/src/inject.rs",
+            "rust/slopdesk-ffi/src/injector.rs",
             "rust/slopdesk-apple-cgwindow/src/list.rs",
             "rust/slopdesk-apple-cgdisplay/src/displays.rs",
             "rust/slopdesk-ffi/src/cgwindow.rs",
@@ -448,7 +450,7 @@ mod tests {
     /// Every door, in the place it belongs.
     fn placed() -> String {
         header(
-            "void slopdesk_inject_pointer(int32_t x, int32_t y);\nint32_t \
+            "void slopdesk_injector_inject(void *h, int32_t x);\nint32_t \
              slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, size_t \
              cap);",
             "bool slopdesk_capture_union_region(const double *a, double *out);\nbool \
@@ -464,7 +466,7 @@ mod tests {
             &fixture,
             &placed(),
             "// The suppression interval is why this used to call CGEvent(mouseEventSource:).\nlet plan = \
-             slopdesk_inject_pointer(x, y)\n",
+             slopdesk_injector_inject(h, x)\n",
         );
         // The prose still names the call, and must — the measurements that decided the tablet path
         // live there. A gate that read comments would force them out of the file.
@@ -494,18 +496,18 @@ mod tests {
         let ungated = header(
             "int32_t slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, \
              size_t cap);",
-            "void slopdesk_inject_pointer(int32_t x, int32_t y);\nbool slopdesk_capture_union_region(const \
+            "void slopdesk_injector_inject(void *h, int32_t x);\nbool slopdesk_capture_union_region(const \
              double *a, double *out);\nbool slopdesk_capture_region_decision(const double *a, double \
              *out);\nbool slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
         );
-        floors(&fixture, &ungated, "let plan = slopdesk_inject_pointer(x, y)\n");
+        floors(&fixture, &ungated, "let plan = slopdesk_injector_inject(h, x)\n");
         assert!(!super::the_host_synthesises_no_event(&fixture.tree()).is_clean());
     }
 
     #[test]
     fn a_second_window_decode_is_red() {
         let fixture = Fixture::new("apple-window");
-        floors(&fixture, &placed(), "let plan = slopdesk_inject_pointer(x, y)\n");
+        floors(&fixture, &placed(), "let plan = slopdesk_injector_inject(h, x)\n");
         fixture.write(
             "Sources/slopdesk-videohostd/WindowFeedGlue.swift",
             "// The feed needs three AppKit reads per pid that no door can answer.\nlet info = \
@@ -532,7 +534,7 @@ mod tests {
         // Its own fixture: the daemon's snapshot never updates, so the read answers the launching
         // app for the process's whole life.
         let fixture = Fixture::new("apple-frontmost");
-        floors(&fixture, &placed(), "let plan = slopdesk_inject_pointer(x, y)\n");
+        floors(&fixture, &placed(), "let plan = slopdesk_injector_inject(h, x)\n");
         fixture.write(
             "Sources/slopdesk-videohostd/WindowFeedGlue.swift",
             "let app = NSWorkspace.shared.frontmostApplication\n",
@@ -543,20 +545,20 @@ mod tests {
     #[test]
     fn a_gated_portable_decider_is_red() {
         let fixture = Fixture::new("apple-region-portable");
-        floors(&fixture, &placed(), "let plan = slopdesk_inject_pointer(x, y)\n");
+        floors(&fixture, &placed(), "let plan = slopdesk_injector_inject(h, x)\n");
         assert!(super::the_host_decides_no_capture_region(&fixture.tree()).is_clean());
 
         // Gating a pure decider costs the iOS slices a door for nothing, and hides that it is pure.
         floors(
             &fixture,
             &header(
-                "void slopdesk_inject_pointer(int32_t x, int32_t y);\nint32_t \
+                "void slopdesk_injector_inject(void *h, int32_t x);\nint32_t \
                  slopdesk_cgwindow_frontmost_pid(void);\nsize_t slopdesk_cgdisplay_list(uint32_t *out, \
                  size_t cap);\nbool slopdesk_capture_union_region(const double *a, double *out);",
                 "bool slopdesk_capture_region_decision(const double *a, double *out);\nbool \
                  slopdesk_window_display_for_frame(const double *a, uint32_t *out);",
             ),
-            "let plan = slopdesk_inject_pointer(x, y)\n",
+            "let plan = slopdesk_injector_inject(h, x)\n",
         );
         assert!(!super::the_host_decides_no_capture_region(&fixture.tree()).is_clean());
     }
@@ -565,7 +567,7 @@ mod tests {
     fn a_swift_capture_decider_is_red() {
         // Its own fixture: a second copy of a predicate that drifts one ulp under a green suite.
         let fixture = Fixture::new("apple-region-swift");
-        floors(&fixture, &placed(), "let plan = slopdesk_inject_pointer(x, y)\n");
+        floors(&fixture, &placed(), "let plan = slopdesk_injector_inject(h, x)\n");
         fixture.write(
             "Sources/SlopDeskVideoHost/WindowGeometryWatcher.swift",
             "enum CaptureRegionMath { static func union(_ a: CGRect, _ b: CGRect) -> CGRect { a } }\n",

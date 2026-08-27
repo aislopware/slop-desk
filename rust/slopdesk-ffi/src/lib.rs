@@ -143,9 +143,11 @@ pub mod hint_scan;
 pub mod host_gates;
 pub mod host_policy;
 pub mod host_state;
-// macOS only: behind it is CoreGraphics event synthesis, which no iOS slice has. See the module.
+// macOS only: behind it is CoreGraphics event synthesis and the accessibility tree, neither of
+// which an iOS slice has. The SECOND handle in this crate that more than one thread may call, and
+// the only one that owns threads of its own. See the module.
 #[cfg(target_os = "macos")]
-pub mod inject;
+pub mod injector;
 pub mod input_box;
 pub mod input_event;
 pub mod input_routing;
@@ -223,7 +225,6 @@ pub mod replay;
 pub mod responsive;
 pub mod sanitize;
 pub mod scroll_reproject;
-pub mod scroll_resample;
 pub mod search_rank;
 pub mod send_pacing;
 pub mod session_marks;

@@ -376,10 +376,13 @@ pub fn present_queue(tree: &Tree) -> Report {
 /// GEOMETRIC ease-out with a snap, not a call into libm: a Swift `exp` here would be a second law
 /// that disagrees in the last bits and never snaps to rest.
 ///
-/// What may never come back on the resampler's side is the drain arithmetic: the whole-pixel
-/// truncation that CARRIES its fraction is what makes the integer outputs sum to the float input.
-/// The phase numbers are CoreGraphics', but which of them ends a gesture is this law's, and a
-/// second copy of that answer is how a `Changed` lands after an `Ended`.
+/// The resampler's side is a plain BAN now rather than a door list, because its Swift face is gone:
+/// the law runs inside the injector handle, on the pump thread that posts, and it is reached
+/// through no door at all. What the ban protects is the drain arithmetic — the whole-pixel
+/// truncation that CARRIES its fraction is what makes the integer outputs sum to the float input —
+/// and the answer to which phase ends a gesture, a second copy of which is how a `Changed` lands
+/// after an `Ended`. A file back at that path could only be a second caller, since there is nothing
+/// left to call.
 #[must_use]
 pub fn scroll_laws(tree: &Tree) -> Report {
     const SWIFT_REPROJECT: &str = "Sources/SlopDeskVideoProtocol/ScrollReprojector.swift";
@@ -406,25 +409,11 @@ pub fn scroll_laws(tree: &Tree) -> Report {
             message: "Sources/SlopDeskVideoProtocol/ScrollReprojector.swift spells a band, a time constant \
                       or the ease-out again — those live in scroll_reproject.rs",
         },
-        Claim::Doors {
+        Claim::Absent {
             path: SWIFT_RESAMPLE,
-            entries: &[
-                "slopdesk_scroll_resampler_defaults",
-                "slopdesk_scroll_resampler_new",
-                "slopdesk_scroll_resampler_ingest",
-                "slopdesk_scroll_resampler_drain",
-                "slopdesk_scroll_resampler_is_idle",
-                "slopdesk_scroll_resampler_reset",
-            ],
-            message: "Sources/SlopDeskVideoProtocol/ScrollResampler.swift no longer calls {entry} — the \
-                      resampling law is rust/slopdesk-video's",
-        },
-        Claim::Lacks {
-            path: SWIFT_RESAMPLE,
-            pattern: r"func drainAxis|func flushResidual|rounded\(\.towardZero\)|scrollChanged|momentumContinue|= 48\.0|= 4096\.0",
-            view: View::Code,
-            message: "Sources/SlopDeskVideoProtocol/ScrollResampler.swift spells the drain, the flush or a \
-                      knob again — those live in scroll_resample.rs",
+            message: "Sources/SlopDeskVideoProtocol/ScrollResampler.swift is back — the resampler runs \
+                      INSIDE the injector handle now (rust/slopdesk-ffi/src/injector.rs), on the thread \
+                      that posts, so a Swift face for it would be a second caller of one law",
         },
     ];
     check_all(tree, &claims)
@@ -865,5 +854,45 @@ slopdesk_video_pool_release(x)
 slopdesk_mux_should_rearm(x)
 slopdesk_mux_receive_backoff(x)
 slopdesk_mux_send_path_viability(x)
+";
+
+    /// The resampler's Swift face was not ported — it was DELETED, into the thread that posts. A
+    /// file back at that path cannot be a face over a door, because the doors went with it; it can
+    /// only be a second copy of the drain, which is the exact drift this rule exists to catch.
+    #[test]
+    fn the_resamplers_swift_face_coming_back_is_caught() {
+        let fixture = Fixture::new("scroll-resampler-return");
+        write_scroll_laws(&fixture);
+        assert!(super::scroll_laws(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "Sources/SlopDeskVideoProtocol/ScrollResampler.swift",
+            "public struct ScrollResampler {}\n",
+        );
+        let report = super::scroll_laws(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("ScrollResampler.swift is back")),
+            "{report:?}"
+        );
+    }
+
+    /// The reprojector's face, which DID stay — the half of the rule the ban above sits beside.
+    fn write_scroll_laws(fixture: &Fixture) {
+        fixture.write(
+            "Sources/SlopDeskVideoProtocol/ScrollReprojector.swift",
+            REPROJECTOR_DOORS,
+        );
+    }
+
+    const REPROJECTOR_DOORS: &str = "\
+slopdesk_scroll_reprojector_defaults()
+slopdesk_scroll_reprojector_new(a, b)
+slopdesk_scroll_reprojector_note_velocity(r, v)
+slopdesk_scroll_reprojector_advance(r, t)
+slopdesk_scroll_reprojector_note_real_frame(r)
+slopdesk_scroll_reprojector_reset(r)
 ";
 }

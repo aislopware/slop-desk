@@ -15,7 +15,9 @@ import XCTest
 ///
 /// HANG-SAFETY: only `InputInjector.init` + the balance seam are exercised — `inject(_:)` /
 /// `raiseTargetWindow()` are NEVER called, so no CGEvent is posted, no AX chain runs, and no
-/// SCStream/VT/Metal is touched (init just allocates a CGEventSource, harmless headless).
+/// SCStream/VT/Metal is touched. Every injector here is DISPLAY-scoped (`pid: 0`), so the handle
+/// starts no raise thread at all; the resampler thread it does start idles on its channel and is
+/// joined by `deinit`, which is the leak assertion this suite gets for free.
 final class InputBalanceReconnectCarryTests: XCTestCase {
     private let n = VideoPoint(x: 0.5, y: 0.5)
     private let bounds = VideoRect(x: 0, y: 0, width: 800, height: 600)

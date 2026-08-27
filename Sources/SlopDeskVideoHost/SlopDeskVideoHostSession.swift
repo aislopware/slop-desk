@@ -1162,12 +1162,15 @@ public actor SlopDeskVideoHostSession {
         // per click coalesce to one.
         if raiseFirst {
             inputNeedsRaise = false
-            let injectorRef = injector
             if Self.inputTrace {
                 FileHandle.standardError
-                    .write(Data("slopdesk-videohostd[inject]: raiseFirst dispatched async (event=\(event))\n".utf8))
+                    .write(Data("slopdesk-videohostd[inject]: raiseFirst queued (event=\(event))\n".utf8))
             }
-            Task { @MainActor in injectorRef.raiseTargetWindow() }
+            // Called straight, no `Task` and no main hop: the request is a channel send to the
+            // handle's own raise thread and returns in nanoseconds. The hop this replaces existed
+            // only to get OFF this thread, which the far side now does for itself — and a hop that
+            // was not needed was a second thing that could reorder against the post below.
+            injector.raiseTargetWindow()
         }
         dbgInject(event)
         injector.inject(event)
@@ -3438,7 +3441,8 @@ public actor SlopDeskVideoHostSession {
     /// which thresholds the host operates on (doc 05 §8). A WINDOW session's eligibility is its
     /// own target app AND that app being frontmost (``SwipeNavHostConfig/eligibleWindowTarget``):
     /// the chord posts at the HID tap — it lands in the OS key-focus holder — so the fire path
-    /// gates on live focus (``InputInjector/fireSwipeNav`` suppresses + raises on a mismatch),
+    /// gates on live focus (`fire_swipe_nav` in `rust/slopdesk-ffi/src/injector.rs` suppresses
+    /// + raises on a mismatch),
     /// and the chip must mirror that gate or it promises fires the host swallows. A DISPLAY
     /// session follows the frontmost app, exactly mirroring the fire-time check. `history` is
     /// the kicker's AX Back/Forward read of the frontmost app (nil = unknown ⇒ client fails

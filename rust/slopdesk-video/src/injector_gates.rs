@@ -51,6 +51,15 @@ pub const KEYS: [&str; 6] = [
     "SLOPDESK_SCROLL_RESAMPLE_HZ",
 ];
 
+/// The swipe-nav trace key — a name that belongs to no table's `KEYS`, and is read by two.
+///
+/// Not in [`KEYS`], because [`InjectorGates::from_env`] does not read its value ALONE: the field is
+/// this key's presence OR the session-wide trace from [`InjectorGateContext`]. Not in
+/// [`crate::swipe_nav_config::KEYS`] either, because that table's operating point does not read it
+/// at all — a trace switch changes nothing about which app is navigable. So it is spelled once,
+/// here, and the caller resolves it alongside both families rather than inventing the string.
+pub const SWIPE_NAV_TRACE_KEY: &str = "SLOPDESK_SWIPE_NAV_TRACE";
+
 /// The resolved injector operating point.
 // The same opt-out the other gate tables take, for the same reason: a gate family is mostly
 // switches, that is its shape in the docs and in the operator's head, and folding pairs into
@@ -103,8 +112,8 @@ impl InjectorGates {
     /// resolved value from [`InjectorGateContext`].
     ///
     /// `swipe_nav_trace` is not in [`KEYS`] because it is not this table's only input: it is
-    /// `SLOPDESK_SWIPE_NAV_TRACE`'s presence OR the context's trace, and the key itself is resolved
-    /// alongside the rest of its family by [`crate::swipe_nav_config::KEYS`].
+    /// [`SWIPE_NAV_TRACE_KEY`]'s presence OR the context's trace, which is why that name stands on
+    /// its own rather than in either family's list.
     #[must_use]
     pub fn from_env(
         values: &[Option<&str>; KEYS.len()],

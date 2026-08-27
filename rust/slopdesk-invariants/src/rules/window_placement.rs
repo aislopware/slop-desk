@@ -109,14 +109,20 @@ pub fn one_discovery_one_resend_schedule(tree: &Tree) -> Report {
 /// input consumer awaits before the click is posted — and the four predicates that decide it
 /// (always, re-arm, latch-exempt, and the raise itself) were four Swift functions mirroring four
 /// Rust ones nothing reached. They are one reading of one event now: `slopdesk_input_raise_flags`
-/// answers all four as bits, so they cannot disagree about which arm they were shown, and the
-/// frontmost-app policy crosses with a presence flag rather than a sentinel pid.
+/// answers all four as bits, so they cannot disagree about which arm they were shown.
+///
+/// The FRONTMOST-app half of the decision is no longer read here at all. It went inside the
+/// injector handle with the rest of the injector (`docs/60`), onto the raise thread that acts on
+/// it, where it is taken against the frontmost pid the same thread just sampled — so there is no
+/// window between asking and acting for the answer to go stale in, and
+/// `slopdesk_input_should_raise` has no caller left to be a door for. What Swift still reads is
+/// which EVENT wants a raise, and that stays one call.
 #[must_use]
 pub fn raise_rule_read_once_off(tree: &Tree) -> Report {
     let claims = [
         Claim::Mentions {
             path: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-            names: &["slopdesk_input_raise_flags", "slopdesk_input_should_raise"],
+            names: &["slopdesk_input_raise_flags"],
             message: "Sources/SlopDeskVideoHost/VideoSessionLogic.swift no longer takes its raise decision \
                       from {entry}",
         },
@@ -275,7 +281,7 @@ mod tests {
         fixture
             .write(
                 "Sources/SlopDeskVideoHost/VideoSessionLogic.swift",
-                "slopdesk_input_raise_flags\nslopdesk_input_should_raise\nkept so the ban has a haystack\n",
+                "slopdesk_input_raise_flags\nkept so the ban has a haystack\n",
             )
             .write(
                 "rust/slopdesk-video/src/input_routing.rs",

@@ -1552,15 +1552,15 @@ which is what makes one writer safe for a default-ON and a default-OFF key alike
 and `SLOPDESK_QP_DECOUPLE` are both default-ON reads whose sidecar writer emits `"1"` for true — so
 the writer never relies on absence to mean ON, and the round trip survives a polarity it cannot see.
 
-### The injector goes first, and it is assembly rather than translation
+### The injector went first, and it was assembly rather than translation — DONE
 
 `InputInjector.swift` is 735 lines and holds almost no rule of its own. Every DECISION in it already
 has a Rust owner: `InputButtonBalance` and `should_raise` in `input_routing`, `ScrollResampler` in
 `scroll_resample`, the flick recogniser in `swipe_recognizer`, the allowlist and thresholds in
 `swipe_nav_config`, the point map in `coordinate_mapping`, the gate table in `injector_gates`. The
-four verbs it posts through are already doors over `slopdesk-apple-cgevent`
-(`slopdesk_inject_{pointer,scroll,key,text}`), the raise chain is already
-`slopdesk_ax_raiser_{new,raise,free}`, and `activate`/`bundle_id` are already `slopdesk-apple-app`.
+four verbs it posted through were already doors over `slopdesk-apple-cgevent`
+(`slopdesk_inject_{pointer,scroll,key,text}`), the raise chain was already
+`slopdesk_ax_raiser_{new,raise,free}`, and `activate`/`bundle_id` were already `slopdesk-apple-app`.
 **The cluster needs no new Apple crate and no new `unsafe`.** What is left in the Swift is two
 `DispatchQueue`s, one `DispatchSourceTimer`, three `NSLock`s its own comments call "harmless
 insurance", and the tag stamping — which is to say the file survives on owning concurrency primitives,
@@ -1568,26 +1568,60 @@ and that is `coupled-swift-is-an-architecture-bug` stated in its purest form.
 
 Three things decide the shape, and getting any of them wrong costs a whole increment.
 
-**It ships with its door, or it strands.** The injector's only caller is `SlopDeskVideoHostSession`,
-which stays Swift until the LATER cluster. A Rust injector without an FFI door repeats `daemon_gates`
-one increment later and after far more work. So the deliverable is *Rust injector + door + Swift file
-deleted*, and `no-stranded-rust-module` grants the exemption on the `no_mangle` — the same way
-`ax.rs` earns it. The Swift call surface is five sites, which is what makes this tractable at all.
+**It shipped with its door, or it would have stranded.** The injector's only caller is
+`SlopDeskVideoHostSession`, which stays Swift until the LATER cluster. A Rust injector without an FFI
+door would have repeated `daemon_gates` one increment later and after far more work. So the
+deliverable was *Rust injector + door + the Swift rule deleted*, and `no-stranded-rust-module` grants
+the exemption on the `no_mangle` — the same way `ax.rs` earns it. The Swift call surface was five
+sites, which is what made this tractable at all.
 
-**The injector does not live in the shim crate.** `slopdesk-ffi` may hand-write `unsafe`, which is
-exactly why a thread-owning stateful object does not belong in it: the shim stays thin over a
-composition crate the way `slopdesk-hostpane` and `slopdesk-hostsession` already are. So
-`rust/slopdesk-hostinput` — `forbid(unsafe_code)`, depending on `slopdesk-video` for every rule and on
-the `slopdesk-apple-*` crates for every effect — owns the injector, and `slopdesk-ffi/src/injector.rs`
-is a handle and six entry points over it.
+**The injector DOES live in the shim crate, and an earlier draft of this section said the opposite.**
+That draft argued a thread-owning stateful object belongs in a composition crate under the shim, the
+way `slopdesk-hostpane` and `slopdesk-hostsession` sit under hostd. The repo had already answered:
+`slopdesk-ffi/src/cursor_sampler.rs` is a stateful, lock-carrying, two-thread handle in the shim whose
+own header argues why ("three crates meet here"), and `ax.rs` makes the same argument for the raise
+chain. The pattern the draft matched is real but belongs to a different layer — those composition
+crates serve the Rust DAEMON, not a Swift door. A `rust/slopdesk-hostinput` whose only consumer is the
+shim would be the extra layer this repo has declined twice, and it buys no isolation: safe code inside
+`slopdesk-ffi` is still fully checked, because `unsafe` there is a per-site `#[expect]` and not a
+crate-wide licence. So `slopdesk-ffi/src/injector.rs` owns the injector outright, beside `ax.rs`, and
+it documents its own exemption from the header's one-thread-per-handle convention exactly as
+`cursor_sampler.rs` does.
 
-**The threads are the only new design.** Swift got two serial queues and a timer for free. The Rust
-shape is a scroll thread whose channel receive TIMES OUT at the drain interval, so ingest and periodic
-drain are one loop and no timer API is needed, plus a raise thread that owns the throttle and the
-`hasRaisedOnce` flag — both of which were queue-confined in Swift and so need no lock here either.
-Two of the three `NSLock`s die with them. The third does not: `balanceSnapshot` is read by the session
-at teardown and threaded into the replacement injector, so the held-button state is genuinely shared
-and stays a `Mutex`. Saying which lock survives, and why, is the part a transliteration gets wrong.
+**Fifteen doors went away for eight, and one Swift file shrank to its ARC obligation.** Deleted with
+the rule: `slopdesk_inject_{pointer,scroll,key,text}`, `slopdesk_ax_raiser_{new,raise,free}`,
+`slopdesk_app_activate`, and — with `InputInjectorRaisePolicy`, whose last caller was the injector —
+`slopdesk_input_should_raise`. Deleted with their only caller: the six
+`slopdesk_scroll_resampler_{defaults,new,ingest,drain,is_idle,reset}` and the whole of
+`slopdesk-ffi/src/scroll_resample.rs`, because the resampler now runs on the thread that posts and a
+by-value crossing for it has nobody left to cross to; `ScrollResampler.swift`'s door list in
+`video_client.rs` became a stay-deleted ban, with the break-test that seeds its return. Added:
+`slopdesk_injector_{gate_keys,resample_hz,new,free,update_bounds,raise,inject,balance}`. `InputInjector.swift` is not gone, and pretending it would be was the one thing
+worth being honest about: what remains is ~110 lines that own the handle so ARC — not a raw pointer the
+session hands to a `Task` — decides when it is freed, plus the marshalling for the text arm. It holds
+no rule, no default and no thread. It goes when the session does.
+
+**The threads were the only new design, and the lock count is what it predicted.** Swift got two
+serial queues and a timer for free. The Rust shape is a scroll thread whose channel receive TIMES OUT
+at the drain interval, so ingest and periodic drain are one loop and no timer API is needed, plus a
+raise thread that owns the throttle, the resolved `AXUIElement` and the `hasRaisedOnce` flag — all
+three queue-confined in Swift and all three plain locals here. The accessibility element is the one
+that had to be confined rather than merely could be: it is a Core Foundation object with no
+thread-safety contract, so `SlopDeskAxRaiser`'s `Mutex` dissolved into `RaiseTarget`, a `pub(crate)`
+type that never crosses a thread boundary at all.
+
+Three locks survive, not one, and the count is the honest part. `balance` is genuinely shared — the
+session reads it at teardown to seed the replacement injector, and the scroll thread reads it to
+decide whether the swipe chord may ride a ⌘ the user is physically holding. `bounds` is written by the
+geometry watcher and read by both threads. `swipe` is the recogniser, fed from the inject path, and
+its lock is the same insurance the Swift called harmless. What made the two queues disappear was
+confinement; what keeps these is that more than one thread really does read them.
+
+**The teardown is a join, and that is a safety property rather than a courtesy.** Both pumps hold an
+`Arc` of the shared state; `slopdesk_injector_free` drops the senders, which is what ends each loop,
+and then waits. A cancel-and-run-on would leave a thread reading a box the caller had already freed.
+The wait is bounded because the only thing either thread ever blocks on is the channel that call
+closes.
 
 **Stage G (separate campaign, not scoped here) — the client transport.** `Sources/SlopDeskProtocol`
 and `MuxNWConnection` survive stage F because the macOS/iOS clients still speak through them. Moving
