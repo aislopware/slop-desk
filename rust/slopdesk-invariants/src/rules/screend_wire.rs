@@ -10,7 +10,10 @@ use crate::claim::{Claim, Extract, SWIFT, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-const SWIFT_SCREEN: &str = "Sources/SlopDeskScreen/ScreenProtocol.swift";
+/// hostd's end of the screend wire, Rust since `docs/60` Batch B deleted `ScreenProtocol.swift`.
+const CLIENT: &str = "rust/slopdesk-screenclient/src/client.rs";
+/// The framing half of that end — where a ceiling is asked for, or spelled.
+const TRANSPORT: &str = "rust/slopdesk-screenclient/src/transport.rs";
 const RUST_SCREEN: &str = "rust/slopdesk-screenwire/src/lib.rs";
 const RUST_SCREEN_SERVER: &str = "rust/slopdesk-screend/src/server.rs";
 
@@ -47,42 +50,46 @@ pub fn hello_and_status(tree: &Tree) -> Report {
                       rust/slopdesk-screend/src/server.rs",
         },
         Claim::Names {
-            path: SWIFT_SCREEN,
-            needle: "func buildVersion(fromHello",
-            message: "Sources/SlopDeskScreen/ScreenProtocol.swift no longer parses screend's build version \
-                      out of hello (docs/49)",
+            path: CLIENT,
+            needle: "slopdesk_screenwire::build_version(&hello)",
+            message: "rust/slopdesk-screenclient/src/client.rs no longer parses screend's build version out \
+                      of hello (docs/49)",
         },
-        Claim::SameValue {
-            label: "the screend status alphabet",
-            swift: Extract::code(SWIFT_SCREEN, r"^ *case [A-Za-z]+ = ([0-9]+)$")
-                .within(r"^public enum ScreenStatus", r"^\}"),
-            rust: Extract::code(RUST_SCREEN, r"^ *[A-Z][A-Za-z]* = ([0-9]+),$")
-                .within(r"^pub enum Status", r"^\}"),
+        // Was a SameValue against `ScreenProtocol.swift`'s `ScreenStatus`. There is one spelling
+        // now, so the ratchet is structural instead of comparative: the client REACHES screenwire's
+        // alphabet, and a redeclared one would be the second copy coming back under a new name.
+        Claim::Names {
+            path: "rust/slopdesk-screenclient/src/lib.rs",
+            needle: "pub use slopdesk_screenwire::{Snapshot, State, Status, Verdict}",
+            message: "rust/slopdesk-screenclient/src/lib.rs stopped re-exporting screenwire's status \
+                      alphabet — a second one would decode a verdict as the wrong state",
         },
     ]);
 
-    // The banner is a VALUE on one side and a byte-string literal on the other, so the comparison is
-    // "does Rust answer with exactly what Swift says" rather than two extractions meeting in the
-    // middle. Read from Swift first, because Swift is the side that documents it.
-    let (Some(swift), Some(rust)) = (
-        report.source(tree, SWIFT_SCREEN, "screend's banner is declared there"),
-        report.source(tree, RUST_SCREEN, "screend's banner is answered there"),
-    ) else {
+    // ONE-SIDED since `docs/60` Batch B. The banner used to be a VALUE in `ScreenProtocol.swift`
+    // compared against screenwire's byte-string, and Swift was read FIRST because Swift was the side
+    // that documented it. Screenwire is that side now, so what is left to ratchet is that it still
+    // declares one, and that the client has not grown a literal copy to compare against — which is
+    // exactly how the pair started.
+    let Some(rust) = report.source(tree, RUST_SCREEN, "screend's banner is answered there") else {
         return report;
     };
-    match crate::text::capture_first(swift.code(), r#"helloBanner = "(.*)"$"#) {
+    match crate::text::capture_first(rust.code(), r#"HELLO_BANNER: &\[u8\] = b"(.*)";$"#) {
         None => {
             report.fail(format!(
-                "{SWIFT_SCREEN} no longer declares helloBanner — this gate reads nothing and would pass",
+                "{RUST_SCREEN} no longer declares HELLO_BANNER — this gate reads nothing and would pass",
             ));
         },
         Some(banner) => {
-            report.fail_if(
-                !rust
-                    .text
-                    .contains(&format!("HELLO_BANNER: &[u8] = b\"{banner}\"")),
-                format!("screend hello banner '{banner}' is not what {RUST_SCREEN} answers"),
-            );
+            if let Some(client) = report.source(tree, CLIENT, "hostd's end reads the banner there") {
+                report.fail_if(
+                    crate::text::before(client.code(), r"#\[cfg\(test\)\]").contains(&banner),
+                    format!(
+                        "hostd's end spells the screend hello banner '{banner}' itself — it is \
+                         {RUST_SCREEN}'s HELLO_BANNER, and a second copy is what this gate was written for",
+                    ),
+                );
+            }
         },
     }
     report
@@ -97,11 +104,10 @@ pub fn hello_and_status(tree: &Tree) -> Report {
 ///
 /// The CEILING used to be a `same`-compare of two expressions, on the argument that screend is a
 /// separately-shipped BINARY so no door reaches it. That was true of the DAEMON and never true of
-/// hostd's end: the client half is linked Swift calling `rust/slopdesk-screenwire` through
-/// `CSlopDeskFFI` already. So the ceiling became a door too, and what is ratcheted changed shape
-/// with it — not "do the two numbers agree" but "is there still only one". The Rust side is pinned
-/// by a cargo test in `rust/slopdesk-ffi/src/screen.rs`, which compares the door's ANSWER to
-/// `MAX_FRAME` rather than a `sed` of its source line. What is left for a ratchet is the Swift
+/// hostd's end, which links `slopdesk-screenwire` directly. So what is ratcheted changed shape —
+/// not "do the two numbers agree" but "is there still only one". The daemon's side is pinned by a
+/// cargo test in `slopdesk-screenwire` itself, which compares the value it hands out against
+/// `MAX_FRAME` rather than a `sed` of its source line. What is left for a ratchet is the CLIENT
 /// side: that it keeps asking, and that the literal has not come back.
 ///
 /// Which way this would drift decides how it fails: a client ceiling above screend's makes screend
@@ -114,59 +120,41 @@ pub fn hello_and_status(tree: &Tree) -> Report {
 /// constant discusses the ratchet that used to read it.
 #[must_use]
 pub fn reset_flags_and_ceiling(tree: &Tree) -> Report {
-    let mut report = check_all(tree, &[
-        Claim::Matches {
-            path: SWIFT_SCREEN,
-            pattern: r"slopdesk_screen_constant\(",
-            view: View::Code,
-            message: "Sources/SlopDeskScreen/ScreenProtocol.swift stopped asking the door for the frame \
-                      ceiling — a second spelling of 64 MiB is how the two ends drift apart",
-        },
-        Claim::Lacks {
-            path: SWIFT_SCREEN,
-            pattern: r"= *[0-9]+ *\* *1024 *\* *1024",
-            view: View::Code,
-            message: "Sources/SlopDeskScreen/ScreenProtocol.swift spells the screend frame ceiling as a \
-                      literal again — it is slopdesk_screen_constant(0), and screend's copy is pinned by a \
-                      cargo test",
-        },
-    ]);
+    let mut report = check_all(tree, &[Claim::Lacks {
+        path: TRANSPORT,
+        pattern: r"= *[0-9]+ *\* *1024 *\* *1024",
+        view: View::Code,
+        message: "rust/slopdesk-screenclient/src/transport.rs spells the screend frame ceiling as a literal \
+                  again — it is slopdesk_screenwire::MAX_FRAME, and screend reads the same one",
+    }]);
 
-    // The two sides spell a flag's NAME differently on purpose — `flagAgentChanged` against
-    // `FLAG_AGENT_CHANGED` — so both are lower-cased with the separators dropped before comparison,
-    // and what is left is the pair (name, bit).
-    let (Some(swift), Some(rust)) = (
-        report.source(tree, SWIFT_SCREEN, "screend's reset flags are declared there"),
-        report.source(tree, RUST_SCREEN, "screend's reset flags are declared there"),
-    ) else {
+    // Was a SET COMPARISON of two spellings — `flagAgentChanged` against `FLAG_AGENT_CHANGED`. The
+    // Swift half went with `ScreenProtocol.swift`, and the client IMPORTS screenwire's constants
+    // rather than mirroring them, which is a stronger property than the two agreeing: there is
+    // nothing left to disagree. What a ratchet still has to catch is the mirror growing back, so it
+    // reads the import and bans a local redeclaration.
+    let Some(client) = report.source(tree, CLIENT, "screend's reset flags are reached there") else {
         return report;
     };
-    let normalise = |pairs: Vec<(String, String)>| -> std::collections::BTreeSet<String> {
-        pairs
-            .into_iter()
-            .map(|(name, bit)| {
-                let name: String = name
-                    .chars()
-                    .filter(|c| *c != '_')
-                    .flat_map(char::to_lowercase)
-                    .collect();
-                format!("{name} {}", bit.to_lowercase())
-            })
-            .collect()
-    };
-    let swift_flags = normalise(crate::text::capture_pairs(
-        swift.code(),
-        r"^ *public static let flag([A-Za-z]*): UInt8 = (0x[0-9a-fA-F]*)$",
-    ));
-    let rust_flags = normalise(crate::text::capture_pairs(
-        rust.code(),
-        r"^pub const FLAG_([A-Z_]*): u8 = (0x[0-9a-fA-F]*);$",
-    ));
+    let code = crate::text::before(client.code(), r"#\[cfg\(test\)\]");
+    for flag in [
+        "FLAG_RESET",
+        "FLAG_REBUILD_REPLAY",
+        "FLAG_AGENT_CHANGED",
+        "FLAG_REASSERT_INPUT_MODES",
+    ] {
+        report.fail_if(
+            !code.contains(flag),
+            format!("{CLIENT} stopped reaching {flag} — screend honours a bit hostd never sets"),
+        );
+    }
     report.fail_if(
-        swift_flags.is_empty(),
-        format!("{SWIFT_SCREEN} names no reset flags — this gate reads nothing and would pass"),
+        crate::text::matches(&code, r"(?m)^ *(pub )?const FLAG_[A-Z_]*: u8"),
+        format!(
+            "{CLIENT} declares a screend reset flag of its own — that mirror is what slopdesk-screenwire \
+             owns, and two copies drift silently",
+        ),
     );
-    report.same_set("screend reset flags", &swift_flags, &rust_flags);
     report
 }
 
@@ -305,29 +293,41 @@ pub fn deleted_screen_swift(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
-    /// A bit claimed on one side and not the other does not fail to parse — a rebuild-replay flag
-    /// read as agent-changed rebuilds nothing and reports an agent that did not change.
+    /// A flag hostd stops reaching is a bit screend honours and hostd never sets — the reply
+    /// rebuilds nothing and reports an agent that did not change.
     #[test]
-    fn a_reset_flag_added_on_one_side_only_is_caught() {
+    fn a_reset_flag_the_client_stops_reaching_is_caught() {
         let fixture = flag_fixture("screend-flags");
         assert!(super::reset_flags_and_ceiling(&fixture.tree()).is_clean());
 
-        fixture.write(
-            super::RUST_SCREEN,
-            &format!("{RUST_FLAGS}pub const FLAG_FIFTH: u8 = 0x08;\n"),
-        );
+        fixture.write(super::CLIENT, &CLIENT_FLAGS.replace("FLAG_AGENT_CHANGED", ""));
         let report = super::reset_flags_and_ceiling(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("reset flags")),
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("stopped reaching FLAG_AGENT_CHANGED")),
             "{report:?}"
         );
     }
 
-    /// The two sides spell the same flag differently on purpose, and that must not read as a drift.
+    /// The mirror growing back. Both sides being Rust does not make a second `const FLAG_*: u8`
+    /// safe — it makes it invisible, since nothing forces the two bytes to agree.
     #[test]
-    fn the_two_naming_conventions_cancel() {
+    fn the_client_redeclaring_a_flag_is_caught() {
         let fixture = flag_fixture("screend-naming");
-        assert!(super::reset_flags_and_ceiling(&fixture.tree()).is_clean());
+        fixture.write(
+            super::CLIENT,
+            &format!("{CLIENT_FLAGS}pub const FLAG_AGENT_CHANGED: u8 = 0x04;\n"),
+        );
+        let report = super::reset_flags_and_ceiling(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("declares a screend reset flag of its own")),
+            "{report:?}"
+        );
     }
 
     /// The ceiling used to be a literal, and the only shape anyone regrows is the megabyte
@@ -335,10 +335,7 @@ mod tests {
     #[test]
     fn the_frame_ceiling_returning_as_a_literal_is_caught() {
         let fixture = flag_fixture("screend-ceiling");
-        fixture.write(
-            super::SWIFT_SCREEN,
-            &format!("{SWIFT_FLAGS}static let maximumFrameBytes = 64 * 1024 * 1024\n"),
-        );
+        fixture.write(super::TRANSPORT, "const MAX_FRAME: usize = 64 * 1024 * 1024;\n");
         let report = super::reset_flags_and_ceiling(&fixture.tree());
         assert!(
             report
@@ -347,11 +344,44 @@ mod tests {
                 .any(|v| v.contains("as a literal again")),
             "{report:?}"
         );
+    }
+
+    /// The banner is the PROTOCOL identity, and the pair started as one literal copied into the
+    /// reader. A second copy is exactly what this half was written for.
+    #[test]
+    fn the_client_respelling_the_hello_banner_is_caught() {
+        let fixture = hello_fixture("screend-banner");
+        assert!(super::hello_and_status(&fixture.tree()).is_clean());
+
+        fixture.write(
+            super::CLIENT,
+            &format!("{CLIENT_HELLO}let want = b\"SLOPDESK-SCREEND\";\n"),
+        );
+        let report = super::hello_and_status(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("stopped asking the door")),
+                .any(|v| v.contains("spells the screend hello banner")),
+            "{report:?}"
+        );
+    }
+
+    /// A gate that reads nothing passes. The banner leaving screenwire has to fail HERE rather
+    /// than quietly retire the comparison above it.
+    #[test]
+    fn the_banner_leaving_screenwire_fails_rather_than_passing_vacuously() {
+        let fixture = hello_fixture("screend-banner-gone");
+        fixture.write(
+            super::RUST_SCREEN,
+            &RUST_HELLO.replace("pub const HELLO_BANNER: &[u8] = b\"SLOPDESK-SCREEND\";\n", ""),
+        );
+        let report = super::hello_and_status(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no longer declares HELLO_BANNER")),
             "{report:?}"
         );
     }
@@ -401,23 +431,49 @@ mod tests {
         );
     }
 
-    const SWIFT_FLAGS: &str = "\
-    public static let flagAgentChanged: UInt8 = 0x01
-    public static let flagRebuildReplay: UInt8 = 0x02
+    /// hostd's end REACHING the four bits rather than owning them — the shape the live client has
+    /// since `ScreenProtocol.swift` went, and the one the bans below are written against.
+    const CLIENT_FLAGS: &str = "\
+use slopdesk_screenwire::{FLAG_RESET, FLAG_REBUILD_REPLAY, FLAG_AGENT_CHANGED, FLAG_REASSERT_INPUT_MODES};
 ";
-    /// The door the ceiling is asked for through, kept separate so the ceiling break-test can drop
-    /// it and the literal at once — which is the single edit that regrows the second spelling.
-    const SWIFT_DOOR: &str = "    let cap = slopdesk_screen_constant(0)\n";
+    /// The transport half, which must ask for the ceiling rather than spell it.
+    const TRANSPORT_ASKS: &str = "let cap = slopdesk_screenwire::MAX_FRAME;\n";
     const RUST_FLAGS: &str = "\
-pub const FLAG_AGENT_CHANGED: u8 = 0x01;
+pub const FLAG_RESET: u8 = 0x01;
 pub const FLAG_REBUILD_REPLAY: u8 = 0x02;
+pub const FLAG_AGENT_CHANGED: u8 = 0x04;
+pub const FLAG_REASSERT_INPUT_MODES: u8 = 0x08;
+";
+    const RUST_HELLO: &str = "\
+pub const HELLO_BANNER: &[u8] = b\"SLOPDESK-SCREEND\";
+pub fn hello_payload(version: &str) -> Vec<u8> { version.into() }
+";
+    const CLIENT_HELLO: &str = "\
+let version = slopdesk_screenwire::build_version(&hello);
 ";
 
     fn flag_fixture(name: &str) -> Fixture {
         let fixture = Fixture::new(name);
         fixture
-            .write(super::SWIFT_SCREEN, &format!("{SWIFT_FLAGS}{SWIFT_DOOR}"))
+            .write(super::CLIENT, CLIENT_FLAGS)
+            .write(super::TRANSPORT, TRANSPORT_ASKS)
             .write(super::RUST_SCREEN, RUST_FLAGS);
+        fixture
+    }
+
+    fn hello_fixture(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fixture
+            .write(super::RUST_SCREEN, RUST_HELLO)
+            .write(
+                super::RUST_SCREEN_SERVER,
+                "let payload = hello_payload(env!(\"CARGO_PKG_VERSION\"));\n",
+            )
+            .write(super::CLIENT, CLIENT_HELLO)
+            .write(
+                "rust/slopdesk-screenclient/src/lib.rs",
+                "pub use slopdesk_screenwire::{Snapshot, State, Status, Verdict};\n",
+            );
         fixture
     }
 }

@@ -1,10 +1,10 @@
 //! hostd's end of the superd control socket: the verbs, the reader thread, and the writer behind
 //! it.
 //!
-//! The port of `Sources/SlopDeskSupervisor/SupervisorClient.swift`. Requests are synchronous on the
-//! caller's thread, because every caller is on a path that used to call `openpty` + `fork` inline
-//! and blocked for exactly as long. Notifications and every pane's output arrive on one reader
-//! thread, and the per-pane sink runs ON it, synchronously.
+//! The port of hostd's Swift superd client, deleted in `docs/60` Batch B. Requests are synchronous
+//! on the caller's thread, because every caller is on a path that used to call `openpty` + `fork`
+//! inline and blocked for exactly as long. Notifications and every pane's output arrive on one
+//! reader thread, and the per-pane sink runs ON it, synchronously.
 //!
 //! ## The synchronous sink is the backpressure gate
 //!

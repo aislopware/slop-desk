@@ -12,7 +12,8 @@ use crate::report::Report;
 use crate::tree::Tree;
 
 const SWIFT_DEVICE_LOG: &str = "Sources/SlopDeskDevicePanels/Shared/DeviceLogLine.swift";
-const SWIFT_FRAME: &str = "Sources/SlopDeskSupervisor/SupervisorFrame.swift";
+/// hostd's end of superd's framing, Rust since `docs/60` Batch B deleted `SupervisorFrame.swift`.
+const HOST_FRAME: &str = "rust/slopdesk-superclient/src/frame.rs";
 
 /// And ONE grammar per device console, neither of them in Swift
 ///
@@ -114,24 +115,23 @@ pub fn one_grammar_per_device_console(tree: &Tree) -> Report {
 pub fn one_spelling_of_the_superd_frame(tree: &Tree) -> Report {
     let claims = [
         Claim::Lacks {
-            path: SWIFT_FRAME,
-            pattern: r"tagPlain: UInt8 = |tagOutput: UInt8 = |maximumBodyBytes = [0-9]|Int\(header\[0\]\)|<< 24|nameLength = Int",
+            path: HOST_FRAME,
+            pattern: r"const TAG_PLAIN|const TAG_OUTPUT|const MAX_BODY|<< *24|fn parse_output|fn parse_pane_json",
             view: View::Code,
-            message: "SupervisorFrame.swift spells the superd frame layout in Swift again — \
+            message: "rust/slopdesk-superclient/src/frame.rs spells the superd frame layout itself again — \
                       slopdesk-superwire owns it",
         },
         Claim::Mentions {
-            path: SWIFT_FRAME,
-            names: &[
-                "slopdesk_supervisor_tag",
-                "slopdesk_supervisor_is_known_tag",
-                "slopdesk_supervisor_header",
-                "slopdesk_supervisor_body_length",
-                "slopdesk_supervisor_parse_output",
-                "slopdesk_supervisor_parse_pane_json",
-                "slopdesk_supervisor_max_body",
-            ],
-            message: "SupervisorFrame.swift no longer asks {entry} — the framing is one implementation",
+            path: HOST_FRAME,
+            names: &["slopdesk_superwire::body_length", "slopdesk_superwire::"],
+            message: "rust/slopdesk-superclient/src/frame.rs no longer asks {entry} — the framing is one \
+                      implementation",
+        },
+        Claim::Names {
+            path: "rust/slopdesk-superclient/Cargo.toml",
+            needle: "\nslopdesk-superwire = ",
+            message: "rust/slopdesk-superclient dropped slopdesk-superwire — the frame layout would be \
+                      spelled twice again",
         },
         Claim::Names {
             path: "rust/slopdesk-superd/Cargo.toml",
@@ -146,20 +146,15 @@ pub fn one_spelling_of_the_superd_frame(tree: &Tree) -> Report {
             message: "superd/src/frame.rs re-declares the frame layout inside superd — it belongs to \
                       slopdesk-superwire",
         },
+        // The SCM_RIGHTS half stayed per side through the port, and for the same reason it always
+        // did: the descriptor has to land in the READING process, so neither end can borrow the
+        // other's `recvmsg`. Both ends are Rust now, which makes the temptation to share it real
+        // rather than theoretical — this is where that gets argued.
         Claim::Mentions {
-            path: SWIFT_FRAME,
-            names: &[
-                "FileDescriptorPassing.receive",
-                "FileDescriptorWrite.all",
-                "FileDescriptorRead.exactly",
-            ],
-            message: "SupervisorFrame.swift lost {entry} — the SCM_RIGHTS lane stays on this side on purpose",
-        },
-        Claim::Names {
-            path: SWIFT_FRAME,
-            needle: "Swift.min(Int(offset), body.count)",
-            message: "SupervisorFrame.swift: a span from the door is sliced unclamped — that is a trap, not \
-                      a bad frame",
+            path: HOST_FRAME,
+            names: &["recvmsg", "ScmRights"],
+            message: "rust/slopdesk-superclient/src/frame.rs lost {entry} — the SCM_RIGHTS lane stays on \
+                      this side on purpose",
         },
     ];
     check_all(tree, &claims)
@@ -350,11 +345,10 @@ pub fn one_write_loop_and_one_read_exactly(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &[
-                "Sources/SlopDeskTTY/",
-                "Sources/SlopDeskSupervisor/SupervisorFrame.swift",
-                "Sources/SlopDeskScreen/ScreenClient.swift",
-            ],
+            // Down to ONE since `docs/60` Batch B: the two host-side readers were deleted with
+            // `Sources/SlopDeskSupervisor` and `Sources/SlopDeskScreen`, and their Rust replacements
+            // read through `std::io::Read::read_exact`, which is the loop, not a copy of it.
+            exempt: &["Sources/SlopDeskTTY/"],
             message: "a third readExactly grew back ({files}) — FileDescriptorRead.exactly is the loop",
         },
     ];
@@ -407,23 +401,24 @@ mod tests {
     /// re-wraps landed mid-escape — turning `\n` into a literal backslash and an `n`. The fixture
     /// still passed, one separator short of what it claimed to seed, which is the shape of an
     /// assertion that has quietly stopped asserting.
-    const FRAME_SEAM: [&str; 11] = [
-        "slopdesk_supervisor_tag",
-        "slopdesk_supervisor_is_known_tag",
-        "slopdesk_supervisor_header",
-        "slopdesk_supervisor_body_length",
-        "slopdesk_supervisor_parse_output",
-        "slopdesk_supervisor_parse_pane_json",
-        "slopdesk_supervisor_max_body",
-        "FileDescriptorPassing.receive",
-        "FileDescriptorWrite.all",
-        "FileDescriptorRead.exactly",
-        "Swift.min(Int(offset), body.count)",
+    ///
+    /// It used to seed the seven `slopdesk_supervisor_*` DOORS and their four Swift call helpers.
+    /// hostd's end is `slopdesk-superclient` now and calls superwire directly, so the seam it must
+    /// spell is the `use` rather than the door — and the two `recvmsg` names, which stay per side.
+    const FRAME_SEAM: [&str; 4] = [
+        "slopdesk_superwire::body_length",
+        "slopdesk_superwire::Header",
+        "recvmsg",
+        "ScmRights",
     ];
 
     fn frame(fixture: &Fixture) {
         fixture
-            .write(super::SWIFT_FRAME, &format!("{}\n", FRAME_SEAM.join("\n")))
+            .write(super::HOST_FRAME, &format!("{}\n", FRAME_SEAM.join("\n")))
+            .write(
+                "rust/slopdesk-superclient/Cargo.toml",
+                "\nslopdesk-superwire = { path = \"../slopdesk-superwire\" }\n",
+            )
             .write(
                 "rust/slopdesk-superd/Cargo.toml",
                 "\nslopdesk-superwire = { path = \"..\" }\n",
@@ -444,14 +439,15 @@ mod tests {
         fixture.append("rust/slopdesk-superd/src/frame.rs", "const TAG_PLAIN: u8 = 1;\n");
         assert!(!super::one_spelling_of_the_superd_frame(&fixture.tree()).is_clean());
 
-        // Or in Swift.
+        // Or on hostd's end — the drift that used to be cross-language and is now same-language,
+        // which is the same silence with none of the visual warning.
         frame(&fixture);
-        fixture.append(super::SWIFT_FRAME, "let tagPlain: UInt8 = 1\n");
+        fixture.append(super::HOST_FRAME, "const TAG_PLAIN: u8 = 1;\n");
         assert!(!super::one_spelling_of_the_superd_frame(&fixture.tree()).is_clean());
 
         // The SCM_RIGHTS lane is kept on purpose — losing it is a regression too.
         frame(&fixture);
-        fixture.write(super::SWIFT_FRAME, "slopdesk_supervisor_tag\n");
+        fixture.write(super::HOST_FRAME, "slopdesk_superwire::body_length\n");
         assert!(!super::one_spelling_of_the_superd_frame(&fixture.tree()).is_clean());
     }
 
@@ -585,11 +581,10 @@ mod tests {
                     "Sources/SlopDeskTTY/FileDescriptorWrite.swift",
                     "Darwin.write(fd, p, n)\n",
                 )
-                .write(
-                    "Sources/SlopDeskSupervisor/SupervisorFrame.swift",
-                    "func readExactly(\n",
-                )
-                .write("Sources/SlopDeskScreen/ScreenClient.swift", "func readExactly(\n");
+                // ONE reader since `docs/60` Batch B took the other two with their targets. The
+                // exemption narrowed with them, so the fixture has to as well — seeding the deleted
+                // pair here would have made the ban look wider than it is.
+                .write("Sources/SlopDeskTTY/FileDescriptorRead.swift", "func readExactly(\n");
         };
         seed(&fixture);
         assert!(super::one_write_loop_and_one_read_exactly(&fixture.tree()).is_clean());
@@ -600,7 +595,7 @@ mod tests {
         );
         assert!(!super::one_write_loop_and_one_read_exactly(&fixture.tree()).is_clean());
 
-        // The two named readers keep theirs; a third does not.
+        // The one named reader keeps its own; a second does not.
         seed(&fixture);
         fixture.write("Sources/SlopDeskHost/Other.swift", "func readExactly(_ n: Int)\n");
         assert!(!super::one_write_loop_and_one_read_exactly(&fixture.tree()).is_clean());

@@ -1,6 +1,6 @@
 //! One connected control socket: the descriptor, the write lock, and the hang-up.
 //!
-//! The port of `Sources/SlopDeskSupervisor/SupervisorConnection.swift`, minus the parts that were
+//! The port of hostd's Swift superd connection, minus the parts that were
 //! only there because Swift could not see C macros.
 //!
 //! ## Why `close` shuts down rather than closes

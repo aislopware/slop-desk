@@ -159,13 +159,15 @@ const VOCABULARIES: [(&str, &str, &[(&str, &str)]); 1] = [(
 /// makes it invisible to the "does some other gate mention this name" test below. The label must
 /// still be there: an escape hatch pointing at a gate someone deleted is a suppression, not a
 /// ratchet.
-const DERIVED_RATCHETS: [(&str, &str, &str); 1] = [(
-    "Sources/SlopDeskScreen/ScreenProtocol.swift",
-    "rust/slopdesk-screenwire/src/lib.rs",
-    // `reset_flags_and_ceiling` normalises both spellings (`flagAgentChanged` /
-    // `FLAG_AGENT_CHANGED`) and compares them as a SET, so it names no constant here either.
-    r#"report.same_set("screend reset flags""#,
-)];
+/// EMPTY since `docs/60` Batch B, and empty on purpose rather than deleted.
+///
+/// The one entry was `ScreenProtocol.swift` against `slopdesk-screenwire`, whose reset flags
+/// `reset_flags_and_ceiling` compared as a normalised SET. That gate no longer compares anything:
+/// the Swift half is gone and `slopdesk-screenclient` IMPORTS the flags, so the pin became "there
+/// is one copy" instead of "the two agree". The array stays because the ESCAPE HATCH is the point —
+/// a derived gate names no constant, so without a row here it is invisible to the sweep below, and
+/// the next one to be written needs somewhere to say so.
+const DERIVED_RATCHETS: [(&str, &str, &str); 0] = [];
 
 // ------------------------------------------------------------------------------------------- //
 // The patterns. Composed through macros because `concat!` takes literals, not consts.

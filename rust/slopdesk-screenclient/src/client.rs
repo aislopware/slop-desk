@@ -1,6 +1,6 @@
 //! The client itself: the address, the pool, the autostart and the ten verbs.
 //!
-//! The port of `Sources/SlopDeskScreen/ScreenClient.swift`.
+//! The port of hostd's Swift screend client, deleted in `docs/60` Batch B.
 //!
 //! ## Why the engine is not in this process
 //! Parsing a terminal stream into an attributed grid is the hottest byte path hostd has: a cold

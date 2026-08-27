@@ -1,6 +1,6 @@
 //! Where THIS tree's own daemons are — the one search order the five of them share.
 //!
-//! The port of the half of `Sources/SlopDeskSupervisor/RustServicePaths.swift` that every sidecar
+//! The port of the half of hostd's Swift service-path resolution that every sidecar
 //! manager called, and the answer to the note
 //! `slopdesk_screenclient::paths` left behind: *"there is one caller today, and lifting it into a
 //! shared crate before a second one exists would be guessing at the shape that second caller

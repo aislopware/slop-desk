@@ -1,7 +1,7 @@
 //! Where `slopdesk-screend` listens, where its binary is, and where its log goes.
 //!
-//! The port of `Sources/SlopDeskScreen/ScreenPaths.swift` plus the one function of
-//! `Sources/SlopDeskSupervisor/RustServicePaths.swift` that file called.
+//! The port of hostd's Swift screend path resolution plus the one service-path function it
+//! called. Both were deleted in `docs/60` Batch B.
 //!
 //! ## The address is not decided here
 //! [`request_socket`] resolves two environment variables and hands them to

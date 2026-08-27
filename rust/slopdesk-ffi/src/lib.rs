@@ -222,8 +222,6 @@ pub mod remote_window;
 pub mod replay;
 pub mod responsive;
 pub mod sanitize;
-pub mod screen;
-pub mod screen_paths;
 pub mod scroll_reproject;
 pub mod scroll_resample;
 pub mod search_rank;
@@ -244,13 +242,11 @@ pub mod store_rollup;
 pub mod store_seed;
 pub mod store_shape;
 pub mod store_video_slots;
-pub mod supervisor_batch;
-pub mod supervisor_frame;
-pub mod supervisor_paths;
-// Ungated, exactly as the two above are: this is JSON and a version pair, with no macOS API behind
-// it. `slopdesk-gate ffi` asserts a symbol present on one slice and absent on the others only where
-// a `cfg` claims a platform, and nothing here claims one.
-pub mod supervisor_protocol;
+// The four `supervisor_*` modules were deleted with `Sources/SlopDeskSupervisor` in `docs/60`
+// Batch B. They were 3124 lines and 29 doors whose ONLY caller was the Swift daemon hostd stopped
+// being: hostd talks to superd through `slopdesk-superclient` now, in-process, with no C boundary
+// in the middle. A door nothing calls is not free — it is a second spelling of the protocol that
+// compiles, tests green, and drifts.
 pub mod surface_gesture;
 pub mod swipe_nav_config;
 pub mod swipe_recognizer;

@@ -6,21 +6,26 @@
 //! violation, so a rename cannot leave a ban reading an empty haystack.
 
 /// hostd's side of superd's rendezvous.
-pub const SWIFT_PATHS: &str = "Sources/SlopDeskSupervisor/SupervisorPaths.swift";
+///
+/// Rust since `docs/60` Batch B deleted `Sources/SlopDeskSupervisor`. The rule these bans encode
+/// did NOT become vacuous when the second language went away — it became invisible, which is worse.
+/// Each hop below is still a place a value can be dropped with no compiler saying anything, because
+/// the crates are separate and the wire is `serde`: a field left unset is a valid request.
+pub const RUST_HOSTD_MAIN: &str = "rust/slopdesk-hostd/src/main.rs";
 /// hostd's vocabulary for superd — plain values, with no wire spelling in them.
-pub const SWIFT_SUPERVISOR_MESSAGES: &str = "Sources/SlopDeskSupervisor/SupervisorMessages.swift";
-/// The doors those values cross, and the only place hostd touches the protocol at all.
-pub const SWIFT_SUPERVISOR_DOORS: &str = "Sources/SlopDeskSupervisor/SupervisorDoors.swift";
+pub const RUST_HOST_STANDALONE: &str = "rust/slopdesk-hostserver/src/host.rs";
+/// The doors those values cross on their way to the encoder.
+pub const RUST_HOSTD_SPAWN: &str = "rust/slopdesk-hostd/src/spawn.rs";
+/// hostd's superd client — where a hello reply is read, and a length prefix parsed once.
+pub const RUST_SUPERCLIENT: &str = "rust/slopdesk-superclient/src/client.rs";
 
 /// superd's own path resolution.
 pub const RUST_PATHS: &str = "rust/slopdesk-superd/src/paths.rs";
 /// The shared control-socket rule, reached by both ends.
 pub const RUST_SUPERWIRE: &str = "rust/slopdesk-superwire/src/lib.rs";
-/// The ONE spelling of superd's request/reply vocabulary — superd links it, and so does the FFI
-/// hostd reaches it through. There is no second copy to compare it against any more.
+/// The ONE spelling of superd's request/reply vocabulary — superd links it, and so does
+/// `slopdesk-superclient`, which hostd reaches it through. There is no second copy any more.
 pub const RUST_PROTOCOL: &str = "rust/slopdesk-superwire/src/protocol.rs";
-/// The doors hostd calls that vocabulary through — `slopdesk-ffi`'s supervisor half.
-pub const RUST_FFI_SUPERVISOR: &str = "rust/slopdesk-ffi/src/supervisor_protocol.rs";
 /// superd's connection loop, which answers `hello`.
 pub const RUST_SUPERD_SERVER: &str = "rust/slopdesk-superd/src/server.rs";
 /// superd's child-facing listeners — the sockets a `listen` claims.

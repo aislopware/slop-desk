@@ -119,52 +119,47 @@ pub fn the_audio_row_is_rusts(tree: &Tree) -> Report {
 /// read it.
 #[must_use]
 pub fn a_length_prefix_is_parsed_once(tree: &Tree) -> Report {
-    /// The screen lane's client.
-    const SCREEN_CLIENT: &str = "Sources/SlopDeskScreen/ScreenClient.swift";
+    /// The screen lane's transport — where the reply prefix is read off the socket.
+    const SCREEN_TRANSPORT: &str = "rust/slopdesk-screenclient/src/transport.rs";
     /// The supervisor lane's frame reader.
-    const SUPERVISOR_FRAME: &str = "Sources/SlopDeskSupervisor/SupervisorFrame.swift";
-    /// The screen door itself.
-    const SCREEN_FFI: &str = "rust/slopdesk-ffi/src/screen.rs";
+    const SUPERVISOR_FRAME: &str = "rust/slopdesk-superclient/src/frame.rs";
 
     check_all(tree, &[
         Claim::Matches {
-            path: SCREEN_CLIENT,
-            pattern: r"slopdesk_screen_body_length\(",
+            path: SCREEN_TRANSPORT,
+            pattern: r"reply_body_length\(prefix\)",
             view: View::Code,
-            message: "the screen client stopped asking the door for the reply length — that prefix is \
+            message: "the screen client stopped asking screenwire for the reply length — that prefix is \
                       untrusted and screenwire owns its layout",
-        },
-        // The hand-rolled decode: a byte-shift ladder, or `bigEndian`/`UInt32` reassembly off
-        // the header.
-        Claim::Lacks {
-            path: SCREEN_CLIENT,
-            pattern: r"<< *24|<< *16|bigEndian|UInt32\(header",
-            view: View::Code,
-            message: "the screen client shifts a length prefix together by hand again — an untrusted length \
-                      decides an allocation, and screenwire owns that layout",
-        },
-        // `>= 0` is the spelling that works; `!= .max` is the spelling that compiles, reads
-        // correctly, and does nothing.
-        Claim::NoneOf {
-            paths: &[SUPERVISOR_FRAME, SCREEN_CLIENT],
-            pattern: r"(!=|==) *\.max",
-            view: View::Code,
-            message: "a door's size_t answer is compared against .max again — size_t reaches Swift as the \
-                      SIGNED Int, so an all-ones refusal arrives as -1 and that guard never fires",
         },
         Claim::Matches {
             path: SUPERVISOR_FRAME,
-            pattern: "count >= 0",
+            pattern: r"slopdesk_superwire::body_length\(header\)",
             view: View::Code,
-            message: "the supervisor frame stopped guarding its body length with >= 0 — the door's refusal \
-                      arrives as a negative Int, not as .max",
+            message: "the supervisor frame stopped asking superwire for the body length — that prefix is \
+                      untrusted and superwire owns its layout",
         },
-        Claim::Lacks {
-            path: SCREEN_FFI,
-            pattern: "usize::MAX",
+        // The hand-rolled decode: a byte-shift ladder, or a `from_be_bytes` off the raw header.
+        Claim::NoneOf {
+            paths: &[SCREEN_TRANSPORT, SUPERVISOR_FRAME],
+            // Bound to an ASSIGNMENT on purpose. `frame.rs` reassembles the header once more inside
+            // `FrameError::BodyTooLarge(...)` — to say in the error how long the refused body claimed
+            // to be — and that read decides nothing. What the ban is for is a length that goes on to
+            // size an allocation, which has to be bound first.
+            pattern: r"(let|=) *\w* *=? *(u32|u64)::from_be_bytes|<< *24|<< *16",
             view: View::Code,
-            message: "the screen door refuses with usize::MAX again — that sentinel reaches Swift as -1; \
-                      this door refuses with 0",
+            message: "{files} shifts a length prefix together by hand again — an untrusted length decides \
+                      an allocation, and the wire crate owns that layout",
+        },
+        // Both lanes take the refusal as an `Option`, which is the whole reason the Swift-era
+        // `size_t`/`.max` trap cannot come back: there is no sentinel to compare wrongly. What CAN
+        // come back is unwrapping it.
+        Claim::NoneOf {
+            paths: &[SCREEN_TRANSPORT, SUPERVISOR_FRAME],
+            pattern: r"body_length\([^)]*\)\s*\.\s*(unwrap|expect)",
+            view: View::Code,
+            message: "{files} unwraps the wire crate's length refusal — a header the peer controls would \
+                      panic the reader instead of being refused",
         },
     ])
 }
@@ -290,51 +285,51 @@ mod tests {
         assert!(!super::the_audio_row_is_rusts(&fixture.tree()).is_clean());
     }
 
-    /// Both lanes reading their length through a door, each with the guard that works.
+    /// Both lanes asking their wire crate for the length, each taking the refusal as an `Option`.
+    const SCREEN_TRANSPORT: &str = "rust/slopdesk-screenclient/src/transport.rs";
+    const SUPERVISOR_FRAME: &str = "rust/slopdesk-superclient/src/frame.rs";
+
     fn prefixes(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskScreen/ScreenClient.swift",
-                "let count = slopdesk_screen_body_length(header)\nguard count > 0 else { return nil }\n",
+                SCREEN_TRANSPORT,
+                "let Some(count) = reply_body_length(prefix) else { return Ok(None) };\n",
             )
             .write(
-                "Sources/SlopDeskSupervisor/SupervisorFrame.swift",
-                "let count = slopdesk_supervisor_body_length(header)\nguard count >= 0 else { return nil }\n",
-            )
-            .write(
-                "rust/slopdesk-ffi/src/screen.rs",
-                "pub extern fn slopdesk_screen_body_length(header: *const u8) -> usize { 0 }\n",
+                SUPERVISOR_FRAME,
+                "let Some(count) = slopdesk_superwire::body_length(header) else { return Ok(None) };\n",
             );
     }
 
+    /// The Swift-era half of this rule was a `size_t` sentinel a signed `Int` swallowed, and it
+    /// died with its language: an `Option` has no value to compare wrongly. What replaced it is the
+    /// one way the refusal can still be thrown away — and the hand-shift, which never depended on
+    /// the language at all.
     #[test]
     fn a_sentinel_a_signed_int_swallows_is_red() {
         let fixture = Fixture::new("held-prefixes");
         prefixes(&fixture);
         assert!(super::a_length_prefix_is_parsed_once(&fixture.tree()).is_clean());
 
-        // The guard that compiles, reads correctly, and never fires.
+        // The refusal taken and dropped — a header the peer controls panics the reader.
         fixture.write(
-            "Sources/SlopDeskSupervisor/SupervisorFrame.swift",
-            "let count = slopdesk_supervisor_body_length(header)\nguard count != .max else { return nil }\n",
+            SUPERVISOR_FRAME,
+            "let count = slopdesk_superwire::body_length(header).unwrap();\n",
         );
         assert!(!super::a_length_prefix_is_parsed_once(&fixture.tree()).is_clean());
 
         // The hand-shifted prefix, deciding an allocation off four untrusted bytes.
         prefixes(&fixture);
         fixture.write(
-            "Sources/SlopDeskScreen/ScreenClient.swift",
-            "let count = slopdesk_screen_body_length(header)\nlet n = Int(header[0]) << 24 | \
-             Int(header[1])\nguard count > 0 else { return nil }\n",
+            SCREEN_TRANSPORT,
+            "let Some(count) = reply_body_length(prefix) else { return Ok(None) };\nlet n = \
+             u32::from_be_bytes(prefix);\n",
         );
         assert!(!super::a_length_prefix_is_parsed_once(&fixture.tree()).is_clean());
 
-        // And the sentinel that reaches Swift as -1.
+        // And the door stopped being asked at all.
         prefixes(&fixture);
-        fixture.write(
-            "rust/slopdesk-ffi/src/screen.rs",
-            "pub extern fn slopdesk_screen_body_length(h: *const u8) -> usize { usize::MAX }\n",
-        );
+        fixture.write(SCREEN_TRANSPORT, "let count = prefix.len();\n");
         assert!(!super::a_length_prefix_is_parsed_once(&fixture.tree()).is_clean());
     }
 

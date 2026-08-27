@@ -42,7 +42,13 @@ const DOCC_EXTERNAL: [&str; 3] = ["SwiftUICore", "CGDisplayGammaTable", "CGEvent
 /// four `slopdesk-ffi` doors that reached them. Repointing those names at the crates that replaced
 /// them would make the document lie about what it is describing: the whole point of a projection
 /// record is which Swift file each handle was cut out of.
-const PATH_TOMBSTONES: [&str; 13] = [
+/// The third block is `docs/60` Batch B's, and it is the same argument one step further out. Those
+/// two targets were hostd's ENDS of the superd and screend wires, and the documents that name them
+/// are recording which end each rule used to live on. `docs/51` and `docs/52` describe a protocol
+/// by walking both sides of it; repointing hostd's side at `slopdesk-superclient` where the
+/// sentence says "and Swift resolved it through `NSTemporaryDirectory()`" would make the doc claim
+/// a Rust crate did something it never did.
+const PATH_TOMBSTONES: [&str; 24] = [
     "Sources/SlopDeskHost/PTYReadLoop.swift",
     "Sources/SlopDeskHost/HostEnvironment.swift",
     "Sources/SlopDeskHost/HostServer.swift",
@@ -56,6 +62,17 @@ const PATH_TOMBSTONES: [&str; 13] = [
     "rust/slopdesk-ffi/src/pane_fanout.rs",
     "rust/slopdesk-ffi/src/pane_outbox.rs",
     "rust/slopdesk-ffi/src/pane_truths.rs",
+    "Sources/SlopDeskSupervisor/SupervisorPaths.swift",
+    "Sources/SlopDeskSupervisor/SupervisorMessages.swift",
+    "Sources/SlopDeskSupervisor/SupervisorDoors.swift",
+    "Sources/SlopDeskSupervisor/SupervisorFrame.swift",
+    "Sources/SlopDeskSupervisor/SupervisorClient.swift",
+    "Sources/SlopDeskSupervisor/SupervisorConnection.swift",
+    "Sources/SlopDeskSupervisor/RustServicePaths.swift",
+    "Sources/SlopDeskSupervisor/FileDescriptorPassing.swift",
+    "Sources/SlopDeskScreen/ScreenClient.swift",
+    "Sources/SlopDeskScreen/ScreenPaths.swift",
+    "Sources/SlopDeskScreen/ScreenProtocol.swift",
 ];
 
 /// The docs that are read-first regardless of the table — the entry points and the design law.

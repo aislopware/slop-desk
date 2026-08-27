@@ -6,7 +6,7 @@
 //!
 //! The LAYOUT is [`slopdesk_superwire`]'s — which tag, how long, and what the packed bodies mean.
 //! Only the syscalls are here, and only hostd's: the port of
-//! `Sources/SlopDeskSupervisor/SupervisorFrame.swift` and `FileDescriptorPassing.swift`, both of
+//! hostd's Swift frame reader and its descriptor-passing half, both of
 //! which the same change deletes.
 //!
 //! ## Why the tag byte exists

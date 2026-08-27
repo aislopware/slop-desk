@@ -5,7 +5,7 @@
 //! ```
 //!
 //! The LAYOUT is `slopdesk_superwire` — which tag, how long, and what the packed bodies mean. It
-//! was written out twice, here and in `Sources/SlopDeskSupervisor/SupervisorFrame.swift`, each
+//! was written out twice, here and in hostd's Swift frame reader, each
 //! module's own doc describing the other as a mirror. What is left in this file is superd's SEND
 //! side: `sendmsg` with `SCM_RIGHTS`, the write-until-gone loop, and the read-exactly loop. The
 //! reading end keeps its own, because the two lanes genuinely differ — this one hands away a

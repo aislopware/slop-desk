@@ -24,22 +24,23 @@ use crate::tree::Tree;
 #[must_use]
 pub fn one_encoder_for_screend_frame(tree: &Tree) -> Report {
     let claims = [
+        // Re-keyed in `docs/60` Batch B: `ScreenProtocol.swift` was deleted with the rest of
+        // `Sources/SlopDeskScreen`, and hostd's end of this wire is `slopdesk-screenclient` now. The
+        // ban survives the language change because the failure did: a client that lays the frame out
+        // itself is a second implementation of a layout screend already owns, and the two agree
+        // until the day they do not.
         Claim::NoneOf {
-            paths: &["Sources/SlopDeskScreen/ScreenProtocol.swift"],
-            pattern: r"func appendBigEndian|truncatingIfNeeded: value|UInt16\(clamping: paneBytes",
+            paths: &["rust/slopdesk-screenclient/src/client.rs"],
+            pattern: r"to_be_bytes\(\)|from_be_bytes|as u16\s*\)?\s*\.to_be",
             view: View::Code,
-            message: "{files} lays out the screend frame in Swift again — slopdesk-screenwire owns every \
+            message: "{files} lays out the screend frame by hand again — slopdesk-screenwire owns every \
                       layout",
         },
         Claim::Mentions {
-            path: "Sources/SlopDeskScreen/ScreenProtocol.swift",
-            names: &[
-                "slopdesk_screen_encode_request",
-                "slopdesk_screen_encode_detect_payload",
-                "slopdesk_screen_reply_status",
-            ],
-            message: "Sources/SlopDeskScreen/ScreenProtocol.swift no longer asks {entry} — the screend wire \
-                      is one implementation",
+            path: "rust/slopdesk-screenclient/src/client.rs",
+            names: &["encode_request", "encode_detect_payload", "decode_reply"],
+            message: "rust/slopdesk-screenclient/src/client.rs no longer asks {entry} — the screend wire is \
+                      one implementation",
         },
         Claim::Mentions {
             path: "rust/slopdesk-screenwire/src/lib.rs",
@@ -269,12 +270,15 @@ pub fn one_virtual_finger_for_both_panels(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
+    /// hostd's end asking screenwire for every layout — the `slopdesk-screenclient` shape since
+    /// `docs/60` Batch B deleted `ScreenProtocol.swift`.
+    const SCREEN_CLIENT: &str = "rust/slopdesk-screenclient/src/client.rs";
+
     fn write_one_encoder_for_screend_frame(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskScreen/ScreenProtocol.swift",
-                "slopdesk_screen_encode_request\nslopdesk_screen_encode_detect_payload\\
-                 nslopdesk_screen_reply_status\nkept so the ban has a haystack\n",
+                SCREEN_CLIENT,
+                "encode_request\nencode_detect_payload\ndecode_reply\nkept so the ban has a haystack\n",
             )
             .write(
                 "rust/slopdesk-screenwire/src/lib.rs",
@@ -289,16 +293,13 @@ mod tests {
         write_one_encoder_for_screend_frame(&fixture);
         assert!(super::one_encoder_for_screend_frame(&fixture.tree()).is_clean());
 
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write("Sources/SlopDeskScreen/ScreenProtocol.swift", "");
+        // The caller stopped asking — an implementation grew back where the call used to be.
+        fixture.write(SCREEN_CLIENT, "");
         assert!(!super::one_encoder_for_screend_frame(&fixture.tree()).is_clean());
 
         // And the law it was banned from respelling, respelled.
         write_one_encoder_for_screend_frame(&fixture);
-        fixture.append(
-            "Sources/SlopDeskScreen/ScreenProtocol.swift",
-            "func appendBigEndian\n",
-        );
+        fixture.append(SCREEN_CLIENT, "let n = len.to_be_bytes();\n");
         assert!(!super::one_encoder_for_screend_frame(&fixture.tree()).is_clean());
     }
 

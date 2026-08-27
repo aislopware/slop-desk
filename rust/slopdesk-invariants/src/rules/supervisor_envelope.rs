@@ -10,8 +10,8 @@
 //! reported as "no daemon is running", which is also the healthy answer when no daemon is running.
 
 use crate::paths::{
-    RUST_CTL_LIB, RUST_FFI_SUPERVISOR, RUST_LISTENERS, RUST_PATHS, RUST_PROTOCOL, RUST_SHELLINT,
-    RUST_SPAWN_ENV, RUST_SUPERD_SERVER, RUST_SUPERWIRE, SWIFT_PATHS, SWIFT_SUPERVISOR_DOORS,
+    RUST_CTL_LIB, RUST_HOSTD_MAIN, RUST_LISTENERS, RUST_PATHS, RUST_PROTOCOL, RUST_SHELLINT, RUST_SPAWN_ENV,
+    RUST_SUPERCLIENT, RUST_SUPERD_SERVER, RUST_SUPERWIRE,
 };
 use crate::report::Report;
 use crate::text;
@@ -86,47 +86,55 @@ pub fn rendezvous_address(tree: &Tree) -> Report {
         );
     }
 
-    if let Some(swift_paths) = report.source(tree, SWIFT_PATHS, "hostd's rendezvous lives there (docs/51 §1)")
-    {
+    // hostd's own end, Rust since `docs/60` Batch B deleted `SupervisorPaths.swift`. Same four
+    // bans, because the failure they guard never depended on the language: superd BINDS one address
+    // and hostd DIALS one, the two are resolved by separate code, and a disagreement is not an
+    // error anywhere — the daemon simply looks absent.
+    if let Some(hostd) = report.source(
+        tree,
+        RUST_HOSTD_MAIN,
+        "hostd's rendezvous lives there (docs/51 §1)",
+    ) {
         report.fail_if(
-            !swift_paths.text.contains("slopdesk_supervisor_control_socket"),
+            !hostd.text.contains("slopdesk_superwire::control_socket_path"),
             format!(
-                "{SWIFT_PATHS} no longer resolves through the door — hostd would dial an address superd did \
-                 not bind (docs/51 §1)",
+                "{RUST_HOSTD_MAIN} no longer resolves through the shared rule — hostd would dial an address \
+                 superd did not bind (docs/51 §1)",
             ),
         );
-        // Comments stripped: the prose above the resolution NAMES `NSTemporaryDirectory()` and the
-        // socket on purpose, to record which two things drifted and why they are gone.
-        let code = swift_paths.code();
+        // Comments stripped: the prose in this crate NAMES the socket on purpose, to record which
+        // two things drifted and why they are gone.
+        let code = hostd.code();
         // An empty haystack passes the ban below at once, so it is named rather than assumed: a
         // file that became all comment, or a stripper that started eating code, would read as the
         // healthiest result.
         report.fail_if(
             code.trim().is_empty(),
             format!(
-                "{SWIFT_PATHS} stripped to nothing — the ban below reads an empty haystack and passes \
+                "{RUST_HOSTD_MAIN} stripped to nothing — the ban below reads an empty haystack and passes \
                  (docs/51 §1)",
             ),
         );
         report.fail_if(
-            text::matches(code, r"NSTemporaryDirectory|slopdesk-superd\.sock"),
+            text::matches(code, r"slopdesk-superd\.sock"),
             format!(
-                "{SWIFT_PATHS} builds the control address itself again — that resolution is \
+                "{RUST_HOSTD_MAIN} builds the control address itself again — that resolution is \
                  slopdesk_superwire's (docs/51 §1)",
             ),
         );
         report.fail_if(
-            text::matches(code, "(getpid|processIdentifier)"),
+            text::matches(code, r"getpid|process::id"),
             "a pid reached hostd's rendezvous address — see docs/51 §1",
         );
         // Both override keys still reach the door, though: the lookup is hostd's, only the RULE
-        // crossed.
+        // crossed. `control_socket_path` takes them as ARGUMENTS, so a key hostd stops reading is a
+        // rung superd honours and hostd never asks for.
         for key in ["\"SLOPDESK_SUPERD_SOCKET\"", "\"SLOPDESK_SUPERD_DIR\""] {
             report.fail_if(
-                !swift_paths.text.contains(key),
+                !hostd.text.contains(key),
                 format!(
-                    "{SWIFT_PATHS} stopped reading {key} — a rung superd honours would go unspoken, and the \
-                     daemon would just look absent",
+                    "{RUST_HOSTD_MAIN} stopped reading {key} — a rung superd honours would go unspoken, and \
+                     the daemon would just look absent",
                 ),
             );
         }
@@ -277,15 +285,14 @@ pub fn superd_private_paths(tree: &Tree) -> Report {
 #[must_use]
 pub fn protocol_version(tree: &Tree) -> Report {
     let mut report = Report::new();
-    let (Some(rust), Some(server), Some(ffi), Some(doors)) = (
+    // Three sources, not four: the FFI door that used to sit between superd's reply and hostd's
+    // reading of it went with `Sources/SlopDeskSupervisor` in `docs/60` Batch B. hostd reads the
+    // reply directly off `slopdesk-superclient`'s decode now, so the hop it projected through no
+    // longer exists to drift.
+    let (Some(rust), Some(server), Some(client)) = (
         report.source(tree, RUST_PROTOCOL, "the protocol's numbers live there"),
         report.source(tree, RUST_SUPERD_SERVER, "superd's hello reply is built there"),
-        report.source(
-            tree,
-            RUST_FFI_SUPERVISOR,
-            "hostd's door onto the hello reply is there",
-        ),
-        report.source(tree, SWIFT_SUPERVISOR_DOORS, "hostd reads the hello reply there"),
+        report.source(tree, RUST_SUPERCLIENT, "hostd reads the hello reply there"),
     ) else {
         return report;
     };
@@ -315,12 +322,15 @@ pub fn protocol_version(tree: &Tree) -> Report {
         ),
     );
     report.fail_if(
-        !ffi.text.contains("pub has_build_version: bool"),
-        format!("{RUST_FFI_SUPERVISOR} no longer projects buildVersion — hostd cannot see it (docs/49)"),
+        !client.text.contains("build_version: hello.build_version"),
+        format!("{RUST_SUPERCLIENT}'s handshake no longer carries buildVersion forward (docs/49)"),
     );
     report.fail_if(
-        !doors.text.contains("SLOPDESK_SUPERVISOR_TEXT_BUILD_VERSION"),
-        format!("{SWIFT_SUPERVISOR_DOORS}'s HelloReply no longer reads buildVersion (docs/49)"),
+        !client.text.contains("pub build_version: Option<String>"),
+        format!(
+            "{RUST_SUPERCLIENT}'s Handshake no longer spells buildVersion — hostd cannot tell a stale \
+             superd from a current one (docs/49)"
+        ),
     );
     report
 }
@@ -388,7 +398,7 @@ pub fn listener_kinds(tree: &Tree) -> Report {
     let (Some(rust), Some(listeners), Some(ffi)) = (
         report.source(tree, RUST_PROTOCOL, "the listener kinds live there"),
         report.source(tree, RUST_LISTENERS, "superd binds its listeners there"),
-        report.source(tree, RUST_FFI_SUPERVISOR, "hostd's door onto them is there"),
+        report.source(tree, RUST_SUPERCLIENT, "hostd's mapping onto them is there"),
     ) else {
         return report;
     };
@@ -412,8 +422,8 @@ pub fn listener_kinds(tree: &Tree) -> Report {
         report.fail_if(
             !ffi.text.contains(&format!("listener_kind::{kind}")),
             format!(
-                "listener_kind::{kind} has no door in {RUST_FFI_SUPERVISOR} — hostd's ListenerKind cannot \
-                 name it, so a connection accepted on it is dropped (docs/51 §3b)"
+                "listener_kind::{kind} has no case in {RUST_SUPERCLIENT} — hostd's ListenerKind cannot name \
+                 it, so a connection accepted on it is dropped (docs/51 §3b)"
             ),
         );
     }
@@ -577,10 +587,17 @@ hook: bind_one(&paths.hook, listener_kind::HOOK),
 agent: bind_one(&paths.agent, listener_kind::AGENT),
 ";
 
-    const FFI_SUPERVISOR_OK: &str = r"
-pub has_build_version: bool,
-kinds.push(protocol::listener_kind::HOOK.to_owned());
-kinds.push(protocol::listener_kind::AGENT.to_owned());
+    /// hostd's end of the hello reply and of the kind vocabulary, in one file.
+    ///
+    /// It was `slopdesk-ffi`'s supervisor-protocol module — the door that sat between superd's
+    /// reply and hostd's reading of it — and that hop went with `Sources/SlopDeskSupervisor` in
+    /// `docs/60` Batch B. `slopdesk-superclient` decodes the reply directly now, so the fixture
+    /// seeds THAT: one fewer hop, the same two properties.
+    const SUPERCLIENT_OK: &str = r"
+pub build_version: Option<String>,
+build_version: hello.build_version,
+ListenerKind::Hook => protocol::listener_kind::HOOK,
+ListenerKind::Agent => protocol::listener_kind::AGENT,
 ";
 
     fn protocol_fixture(name: &str) -> Fixture {
@@ -589,11 +606,7 @@ kinds.push(protocol::listener_kind::AGENT.to_owned());
             .write("rust/slopdesk-superwire/src/protocol.rs", PROTOCOL_RUST_OK)
             .write("rust/slopdesk-superd/src/server.rs", SERVER_OK)
             .write("rust/slopdesk-superd/src/listeners.rs", LISTENERS_OK)
-            .write("rust/slopdesk-ffi/src/supervisor_protocol.rs", FFI_SUPERVISOR_OK)
-            .write(
-                "Sources/SlopDeskSupervisor/SupervisorDoors.swift",
-                "let v = text(SLOPDESK_SUPERVISOR_TEXT_BUILD_VERSION)\n",
-            );
+            .write(super::RUST_SUPERCLIENT, SUPERCLIENT_OK);
         fixture
     }
 
@@ -622,21 +635,21 @@ kinds.push(protocol::listener_kind::AGENT.to_owned());
         );
     }
 
-    /// The hop the port added: superd still answers with its build, but the door stopped carrying
-    /// it, so hostd's audit reads "unknown" forever with nothing failing.
+    /// superd still answers with its build, but hostd's handshake stopped carrying it forward, so
+    /// hostd's audit reads "unknown" forever with nothing failing.
     #[test]
     fn a_build_version_dropped_at_the_door_is_caught() {
         let fixture = protocol_fixture("build-version-door");
         fixture.write(
-            "rust/slopdesk-ffi/src/supervisor_protocol.rs",
-            &FFI_SUPERVISOR_OK.replace("pub has_build_version: bool,", ""),
+            super::RUST_SUPERCLIENT,
+            &SUPERCLIENT_OK.replace("build_version: hello.build_version,", ""),
         );
         let report = super::protocol_version(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("no longer projects")),
+                .any(|v| v.contains("no longer carries buildVersion forward")),
             "{report:?}"
         );
     }
@@ -681,41 +694,44 @@ kinds.push(protocol::listener_kind::AGENT.to_owned());
         );
     }
 
-    /// The other half of the same kind: bound by superd, but with no door, so hostd's typed
-    /// `ListenerKind` has no case for it and a connection accepted on it is dropped.
+    /// The other half of the same kind: bound by superd, but with no case on hostd's end, so
+    /// hostd's typed `ListenerKind` cannot name it and a connection accepted on it is dropped.
     #[test]
     fn a_listener_kind_with_no_door_is_caught() {
         let fixture = protocol_fixture("kind-no-door");
         fixture.write(
-            "rust/slopdesk-ffi/src/supervisor_protocol.rs",
-            &FFI_SUPERVISOR_OK.replace("kinds.push(protocol::listener_kind::AGENT.to_owned());", ""),
+            super::RUST_SUPERCLIENT,
+            &SUPERCLIENT_OK.replace("ListenerKind::Agent => protocol::listener_kind::AGENT,", ""),
         );
         let report = super::listener_kinds(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("has no door")),
+            report.violations().iter().any(|v| v.contains("has no case in")),
             "{report:?}"
         );
     }
 
-    const PATHS_SWIFT_OK: &str = r#"
-// NSTemporaryDirectory() and slopdesk-superd.sock are named HERE on purpose, in prose.
-enum SupervisorPaths {
-    static var controlSocket: String {
-        if let override = env["SLOPDESK_SUPERD_SOCKET"] { return override }
-        if let dir = env["SLOPDESK_SUPERD_DIR"] { _ = dir }
-        return slopdesk_supervisor_control_socket()
-    }
+    /// hostd's end of the rendezvous, Rust since `docs/60` Batch B deleted `SupervisorPaths.swift`.
+    ///
+    /// The prose line is the whole reason `rendezvous_address` reads this file comment-stripped,
+    /// and it stayed in the fixture when the language changed: the crate's real comments name
+    /// `slopdesk-superd.sock` to record what the resolution picks, so a raw-text ban would fail on
+    /// its own documentation.
+    const HOSTD_MAIN_OK: &str = r#"
+// slopdesk-superd.sock and the temp dir are named HERE on purpose, in prose.
+fn control_socket() -> PathBuf {
+    slopdesk_superwire::control_socket_path(
+        std::env::var_os("SLOPDESK_SUPERD_SOCKET"),
+        std::env::var_os("SLOPDESK_SUPERD_DIR"),
+    )
 }
 "#;
 
     fn rendezvous_fixture(name: &str) -> Fixture {
         let fixture = superwire_fixture(name);
-        fixture
-            .write("Sources/SlopDeskSupervisor/SupervisorPaths.swift", PATHS_SWIFT_OK)
-            .write(
-                "rust/slopdesk-superd/src/paths.rs",
-                "pub fn control() -> PathBuf { slopdesk_superwire::control_socket_path() }\n",
-            );
+        fixture.write(super::RUST_HOSTD_MAIN, HOSTD_MAIN_OK).write(
+            "rust/slopdesk-superd/src/paths.rs",
+            "pub fn control() -> PathBuf { slopdesk_superwire::control_socket_path() }\n",
+        );
         fixture
     }
 
@@ -732,10 +748,11 @@ enum SupervisorPaths {
     fn hostd_building_the_control_address_itself_is_caught() {
         let fixture = rendezvous_fixture("rendezvous-rederive");
         fixture.write(
-            "Sources/SlopDeskSupervisor/SupervisorPaths.swift",
-            &PATHS_SWIFT_OK.replace(
-                "return slopdesk_supervisor_control_socket()",
-                "return NSTemporaryDirectory() + \"x\"; _ = slopdesk_supervisor_control_socket",
+            super::RUST_HOSTD_MAIN,
+            &HOSTD_MAIN_OK.replace(
+                "    slopdesk_superwire::control_socket_path(",
+                "    let _ = temp_dir().join(\"slopdesk-superd.sock\");\n    \
+                 slopdesk_superwire::control_socket_path(",
             ),
         );
         let report = super::rendezvous_address(&fixture.tree());

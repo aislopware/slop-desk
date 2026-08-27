@@ -1382,9 +1382,62 @@ bans, wearing a Rust hat.
 | the SECOND wave of dead doors, which only the iOS triple could see | Deleting the doors left ten `#[cfg(target_os = "macos")]` attributes ORPHANED in `rust/slopdesk-ffi/src/lib.rs` — each had sat above a `pub mod` line that went, so each then gated the NEXT module. Nine ungated doors became macOS-only, every Rust test still passed, and `make ffi` reported success from its content STAMP. `make ffi --always-make` on the `aarch64-apple-ios` triple is what caught it. The stamp is only as good as the last run that actually compiled; `--force` it whenever the stamp itself is in doubt. |
 | the vocabulary that had no view left | `AgentScreenDetection.swift` and `AgentDetectionHold.swift`, with `slopdesk_agent_hold_constant`, the whole pane-scan/detector shape family, `SlopDeskPreventSleep` and the pausable-gate marshalling. The test is not "does Swift still compile without it" — it did — but WHO READS IT: a view `switch`es on an agent's KIND and its STATUS, never on a screen verdict, a tuning interval, a working-pane set or a backpressure gate. Those four were the HOST's, and their doors existed only because the host was Swift. `agent_detection`'s FACES list went 3 → 2 and gained two `Claim::Absent`s, on `AgentJobIdentifier.swift`'s precedent. |
 
-**What F.9 accepts.** `SlopDeskSupervisor` and `SlopDeskScreen` are still Swift, and they move
-together because the second links the first. So does the video host. None of them is a host; they are
-the next batch, not a floor.
+**What F.9 accepted, and what Batch B did with it.** `SlopDeskSupervisor` and `SlopDeskScreen` were
+still Swift, and they moved together because the second linked the first. So does the video host.
+None of them is a host; they were the next batch, not a floor.
+
+**Batch B — the last two host-side Swift targets, and the FFI half that existed only for them.
+✅ LANDED.** The finding that decided the shape: after F.9, *nothing imported either target*. Not the
+client, not the apps, not a test outside their own two suites — only `Package.swift` still named
+them. They compiled, they tested green, and they were hostd's ends of the superd and screend wires
+for a hostd that had stopped being Swift. That is precisely the shape `CLAUDE.md`'s
+one-implementation rule describes: not a fallback anyone chose, but a second spelling nobody
+noticed had been orphaned.
+
+| deleted | lines | why it could go |
+| --- | --- | --- |
+| `Sources/SlopDeskSupervisor` (8 files) + its suite | 2570 | hostd dials superd through `slopdesk-superclient`, in-process |
+| `Sources/SlopDeskScreen` (3 files) + its suite | 804 | hostd dials screend through `slopdesk-screenclient`, in-process |
+| `slopdesk-ffi`'s `supervisor_{protocol,batch,frame,paths}.rs` | 3124 | 29 doors, zero callers left |
+| `slopdesk-ffi`'s `screen.rs`, `screen_paths.rs` | 535 | 9 doors, zero callers left |
+| `slopdesk_ffi.h`'s two declaration regions | 495 | the header is hand-maintained; `slopdesk-gate ffi` catches the drift either way |
+
+**What Batch B had to think about, and it was not the deletion.** Five invariant rules pinned those
+Swift files as one side of a cross-language contract — `spawn_request_flags_cross`,
+`rendezvous_address`, `one_spelling_of_the_superd_frame`, `a_length_prefix_is_parsed_once`,
+`one_encoder_for_screend_frame`, plus `screend`'s address and verb gates. The tempting reading is
+that deleting the Swift retires them. It does not, and the distinction is the whole point:
+
+- Where the hop still EXISTS in Rust, the rule was **re-keyed, not retired**. `spawn_request_flags_cross`
+  still walks four hops — `Standalone`'s field, hostd filling it from the resolved spawn,
+  `PaneSpawner` encoding it, superwire's wire field — because `slopdesk-hostserver`,
+  `slopdesk-hostd` and `slopdesk-superwire` are separate crates joined by a `serde` payload whose
+  every field has a falsy default. A same-language drift is exactly as silent as the cross-language
+  one was; it just no longer LOOKS like drift.
+- Where the second copy is GONE, the rule became **structural instead of comparative**. The screend
+  status alphabet and the reset flags were `SameValue`/`same_set` pairs; `slopdesk-screenclient`
+  *imports* screenwire's constants rather than mirroring them, which is stronger than the two
+  agreeing — there is nothing left to disagree. What a ratchet still owes is to catch the mirror
+  growing back, so those became "the client reaches it, and declares none of its own".
+- One ban genuinely died with its language: the `size_t`/`.max` trap in
+  `a_length_prefix_is_parsed_once`. Swift's `ClangImporter` maps `size_t` onto the SIGNED `Int`, so
+  an all-ones refusal arrived as `-1` and a `== .max` guard never fired. Both lanes take the refusal
+  as an `Option` now, so there is no sentinel to compare wrongly. What replaced it is the ban that
+  still bites: unwrapping that `Option`.
+
+**Every re-keyed rule needed its BREAK-TEST re-seeded, and that half is where the work was.** A rule
+and its break-test are one artifact: `CLAUDE.md` requires each rule to carry a test that seeds the
+drift and asserts the rule fires. Fourteen of those tests still wrote Swift fixtures — a
+`SupervisorMessages.swift` with two flag fields, a `ScreenProtocol.swift` with a verb enum, a
+`SupervisorPaths.swift` resolving the control socket. Every one of them compiled and every one had
+stopped asserting anything, because the rules above them no longer read those paths. The fixtures had
+to be re-seeded with the SAME failure spelled in Rust: hostd's flags dropped between
+`slopdesk-hostserver` and `slopdesk-hostd`, a `body_length` `Option` unwrapped in
+`slopdesk-superclient`, a second `const FLAG_*: u8` in `slopdesk-screenclient`. Two tests could not
+be re-seeded and were replaced rather than ported — `a_verb_renumbered_on_one_side_is_caught` had no
+second side left, so what it became is `the_verb_enum_moving_out_from_under_the_gate_is_caught`: the
+gate reading an empty haystack and passing forever is now the failure it proves. That is the shape to
+expect for every later batch, and it is the reason a deletion is never just a deletion here.
 
 It also accepts ONE lost pin, named rather than quietly dropped.
 `LoopbackWorkspaceDocumentTests.testTheLoopbackAndTheHostDocumentAgreeByteForByte` ran a fixed intent

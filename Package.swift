@@ -95,7 +95,6 @@ let package = Package(
         // thing that ever needed the doors vended on their own was the menu-bar app that supervised
         // it. The host is driven from the CLI now, so no Xcode target imports a Rust door directly.
         .library(name: "SlopDeskProtocol", targets: ["SlopDeskProtocol"]),
-        .library(name: "SlopDeskScreen", targets: ["SlopDeskScreen"]),
         .library(name: "SlopDeskTransport", targets: ["SlopDeskTransport"]),
         .library(name: "SlopDeskClient", targets: ["SlopDeskClient"]),
         .library(name: "SlopDeskTerminal", targets: ["SlopDeskTerminal"]),
@@ -228,9 +227,9 @@ let package = Package(
         // workspace document, inspector server, agent fold, the sidecar seams — into the seven
         // `rust/slopdesk-host*` crates, and stage F.9 deleted the Swift, per `CLAUDE.md`'s
         // one-implementation rule. What survives here is the CLIENT half of each seam and nothing
-        // else: `SlopDeskScreen` is the client end of the screend wire, `SlopDeskPasteboard` the
-        // clip conversion the sync engine reads, `SlopDeskWorkspaceModel` the value model the
-        // client mirrors the host document into.
+        // else: `SlopDeskPasteboard` is the clip conversion the sync engine reads,
+        // `SlopDeskWorkspaceModel` the value model the client mirrors the host document into.
+        // Batch B took the last two host-side targets with it — see the NOTE further down.
 
         // The workspace VALUE MODEL — the Session→Tab→split tree, `PaneSpec`, the pure
         // `WorkspaceTreeOps`, the canvas value types, and (from docs/45) the host workspace-document
@@ -781,37 +780,14 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // The `slopdesk-superd` <-> `slopdesk-hostd` contract: SCM_RIGHTS fd passing, the frame, the
-        // message set, and the pane registry. A Darwin + Foundation LEAF with zero package
-        // dependencies — it has to be, since BOTH the daemon that outlives everything and the host
-        // that restarts constantly link it (docs/51).
-        //
-        // ⚠️ This is the ONE protocol here that must tolerate VERSION SKEW. The three wire paths are
-        // golden-pinned at version 1 with no negotiation because both ends ship together; superd is a
-        // LaunchAgent that outlives hostd's BUILD, so this one negotiates. Append-only, version in
-        // `hello`, unknown verbs answered `unsupported` — and NONE of that is spelled in this target
-        // any more: the message set is `slopdesk_superwire::protocol`, reached through
-        // `slopdesk-ffi`'s `slopdesk_supervisor_*` doors. What is left here is the SOCKET.
-        .target(
-            name: "SlopDeskSupervisor",
-            // SlopDeskArena: the ask-with-a-guess delivery, the length-prefixed run framing and the
-            // `(offset, length)` arena reads every one of those doors answers in.
-            dependencies: ["SlopDeskTTY", "CSlopDeskFFI", "SlopDeskArena"],
-            linkerSettings: ffiCLibraries,
-        ),
-
-        // hostd's END of the `slopdesk-screend` protocol: the request encoder, the reply
-        // decoder, and a pooled synchronous client. The VT parser, the renderer and the
-        // overprint collapser it addresses live ONCE, in `rust/slopdesk-screend` — this target
-        // deliberately contains no screen logic at all. Depends on SlopDeskSupervisor for the
-        // single `AF_UNIX` connect + `sockaddr_un` validation (one implementation, not two).
-        // CSlopDeskFFI: the screend wire's layouts are `rust/slopdesk-screenwire`, which screend
-        // itself decodes with — so hostd's end of the frame is a marshaller, not a second copy.
-        .target(
-            name: "SlopDeskScreen",
-            dependencies: ["SlopDeskSupervisor", "SlopDeskTTY", "CSlopDeskFFI"],
-            linkerSettings: ffiCLibraries,
-        ),
+        // NOTE: `SlopDeskSupervisor` and `SlopDeskScreen` are GONE from this graph, with the four
+        // `slopdesk_supervisor_*` FFI modules that existed only to serve them (`docs/60` Batch B).
+        // They were hostd's ends of the superd and screend wires, and hostd is `rust/slopdesk-hostd`
+        // now: it dials superd through `slopdesk-superclient` and screend through
+        // `slopdesk-screenclient`, in-process, with no C boundary in between. Nothing in this package
+        // had imported either target since stage F.9 — they compiled, tested green, and were a second
+        // spelling of two protocols whose only real spelling is `slopdesk-superwire` and
+        // `slopdesk-screenwire`. That is the drift `CLAUDE.md`'s one-implementation rule names.
 
         // MARK: Executables
 
@@ -1110,7 +1086,5 @@ let package = Package(
         // genuinely crossing a process-style boundary and still working) is exercised for real,
         // including against a live `openpty` master. Also pins the version-skew rules: an unknown
         // verb must DECODE and be answerable, and unknown fields must not fail a decode.
-        .testTarget(name: "SlopDeskSupervisorTests", dependencies: ["SlopDeskSupervisor"]),
-        .testTarget(name: "SlopDeskScreenTests", dependencies: ["SlopDeskScreen"]),
     ],
 )

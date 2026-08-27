@@ -31,7 +31,7 @@ const SIDECARS: [&str; 5] = [
 /// A cross-language mirror fixture is banned (`CLAUDE.md`, one implementation), so the only way to
 /// assert that hostd and a sidecar agree at run time is to run both — which is why these cannot
 /// live in the fast suite and why they are named rather than pattern-matched.
-const SWIFT_SUITES: [&str; 13] = [
+const SWIFT_SUITES: [&str; 12] = [
     "SupervisedPaneSurvivalTests",
     "SupervisedServiceProcessTests",
     "PTYProcessTests",
@@ -39,7 +39,6 @@ const SWIFT_SUITES: [&str; 13] = [
     "SupervisorProtocolTests",
     "AgentSupervisionIntegrationTests",
     "PaneOutputStreamTests",
-    "SlopDeskScreenTests",
     "PaneScreenScanner",
     "DropdE2ETests",
     "FileDropServiceManagerTests",
