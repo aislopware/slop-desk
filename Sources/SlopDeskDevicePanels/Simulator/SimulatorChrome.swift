@@ -128,7 +128,7 @@ package struct SimulatorChrome: Equatable, Sendable {
     }
 }
 
-extension DevicePanelBlob {
+package extension DevicePanelBlob {
     /// One `[8 bytes big-endian]` `Double` bit pattern, or `0` past the end.
     ///
     /// The number half of ``DevicePanelBlob``'s framing, and it lives beside the two faces that read
@@ -140,7 +140,7 @@ extension DevicePanelBlob {
     /// Past the end reads `0`, which is ``DevicePanelBlob``'s own short-delivery discipline: a
     /// layout disagreement loses fields rather than shifting every later one into its neighbour's
     /// slot.
-    package mutating func number() -> Double {
+    mutating func number() -> Double {
         var bits: UInt64 = 0
         for _ in 0..<8 { bits = bits << 8 | UInt64(byte()) }
         return Double(bitPattern: bits)

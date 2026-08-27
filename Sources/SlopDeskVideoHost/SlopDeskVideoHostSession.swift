@@ -1029,7 +1029,7 @@ public actor SlopDeskVideoHostSession {
 
     /// Timer body: an empty-run plan is exactly the trailing-flush path — the gate decides, and
     /// `injectCoalesced` re-arms if the residual is still held (fired before the gate elapsed).
-    private func scrollIdleFlushFired() async {
+    private func scrollIdleFlushFired() {
         scrollIdleFlushTask = nil
         injectCoalesced([])
     }

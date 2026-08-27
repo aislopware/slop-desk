@@ -98,6 +98,7 @@ public final class VirtualDisplay: @unchecked Sendable {
     ///
     /// ⚠️ Delivered on the framework's own queue, NOT the main actor, and it must not call
     /// ``destroy()``.
+    @preconcurrency
     public func setOnTerminated(_ handler: (@Sendable () -> Void)?) {
         guard let handler else {
             slopdesk_virtual_display_set_terminated(handle, nil, nil)
