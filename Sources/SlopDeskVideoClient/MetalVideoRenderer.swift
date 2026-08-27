@@ -104,8 +104,12 @@ public final class MetalVideoRenderer {
     /// `0` = pure RCAS (clamp to local neighbourhood, ringing-free but gentle). `1` = clamp only to
     /// [0,1] (classic unsharp — crisper, allows controlled halos). In between blends the two: a live
     /// "how aggressive" dial on top of `SLOPDESK_SHARPEN`'s strength.
+    ///
+    /// Resolved through ``EnvConfig`` like its `SLOPDESK_SHARPEN` sibling above, not off `ProcessInfo`
+    /// directly: the direct read is answered by the real environment ALONE, so the `[env]` table in
+    /// `config.toml` folds this key into the overlay and the dial is then read past.
     static let sharpenPunch: Float = {
-        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_SHARPEN_PUNCH"], let v = Float(s)
+        guard let s = EnvConfig.string("SLOPDESK_SHARPEN_PUNCH"), let v = Float(s)
         else { return 1 }
         return min(1, max(0, v))
     }()
@@ -114,8 +118,10 @@ public final class MetalVideoRenderer {
     /// on dark bg) softens more — thin strokes anti-alias to mid-grey at 1×. Scales the luma sharpen by
     /// `1 + dark·(1 − localMean)`, so a dark neighbourhood gets up to `(1+dark)×` the boost while bright
     /// areas are untouched. Live-tunable; 0 = uniform.
+    ///
+    /// Through ``EnvConfig`` for the same reason as ``sharpenPunch``.
     static let sharpenDark: Float = {
-        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_SHARPEN_DARK"], let v = Float(s), v > 0
+        guard let s = EnvConfig.string("SLOPDESK_SHARPEN_DARK"), let v = Float(s), v > 0
         else { return 0 }
         return min(4, v)
     }()
@@ -143,8 +149,11 @@ public final class MetalVideoRenderer {
         // refresh latency) for a tearing-sensitive panel or an A/B.
         // macOS-only: `displaySyncEnabled` does not exist on iOS — must stay `#if os(macOS)`-gated or
         // the iOS app build breaks.
+        // Resolved through `EnvConfig` (real env FIRST, then the settings overlay) rather than off
+        // `ProcessInfo` — the comparison is the same `== "1"` default-OFF idiom either way, so the
+        // only thing that moves is that a `config.toml` `[env]` line now reaches it.
         #if os(macOS)
-        if ProcessInfo.processInfo.environment["SLOPDESK_VSYNC"] != "1" {
+        if EnvConfig.string("SLOPDESK_VSYNC") != "1" {
             metalLayer.displaySyncEnabled = false
         }
         #endif
@@ -177,6 +186,7 @@ public final class MetalVideoRenderer {
     /// two returns early on a frame this renderer cannot draw, so the gap between the counters IS the
     /// present-path failure. `slopdesk-guigate video` asserts on the marker this one prints.
     private var presentDiagCount = 0
+    /// Direct `ProcessInfo` by decision — the `SLOPDESK_VIDEO_DEBUG` developer gate, see ``FramePacer``.
     private static let renderDiag = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
 
     public func render(_ pixelBuffer: CVPixelBuffer) {

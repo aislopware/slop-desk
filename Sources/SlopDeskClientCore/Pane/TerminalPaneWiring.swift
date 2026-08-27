@@ -44,6 +44,7 @@
 
 import Foundation
 import Observation
+import SlopDeskVideoProtocol // `EnvConfig` — the env → settings-overlay resolver the autotype seam reads through
 import SlopDeskWorkspaceCore
 import SlopDeskWorkspaceModel
 
@@ -200,12 +201,16 @@ package final class TerminalPaneWiring {
 
     /// Hand this pane to the `SLOPDESK_AUTOTYPE` OUT-path proof seam (``AutotypeSeam``), which owns the
     /// once-per-launch latch. Unset in normal use, so a production launch is unaffected.
+    ///
+    /// Resolved through ``EnvConfig`` (real env FIRST, then the settings overlay) rather than off
+    /// `ProcessInfo` directly. Same `Optional<String>`, same latch, same unset-means-off default —
+    /// what the direct read skipped is the overlay tier `config.toml`'s `[env]` table writes into.
     package static func runAutotypeIfRequested(live: LivePaneSession?) async {
         guard let live else { return }
         let connected = if case .connected = live.connection?.status { true } else { false }
         let model = live.terminalModel
         await AutotypeSeam.run(
-            command: ProcessInfo.processInfo.environment["SLOPDESK_AUTOTYPE"],
+            command: EnvConfig.string("SLOPDESK_AUTOTYPE"),
             isTarget: live.isAutotypeTarget,
             isConnected: connected,
             send: model.map { model in { model.sendInput($0) } },

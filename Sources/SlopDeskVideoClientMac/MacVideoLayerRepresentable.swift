@@ -15,6 +15,11 @@ import SwiftUI
 /// Env-gated (`SLOPDESK_VIDEO_DEBUG`) stderr diagnostics for the remote-GUI VIEW layer (scroll routing +
 /// isActive delivery) — the BUG-2 ground-truth probe: logging both distinguishes a stale/sticky
 /// `isActive` value from a downstream scroll-routing problem.
+///
+/// Direct `ProcessInfo` by decision — the `SLOPDESK_VIDEO_DEBUG` developer gate, see
+/// ``SlopDeskVideoClient/FramePacer``. It has no `config.toml` row and is driven through the real
+/// environment by `slopdesk-guigate video`, so it is the one `unless` on `slopdesk-invariants`'
+/// tree-wide ban on reading the process environment past ``EnvConfig``'s settings overlay.
 func videoViewDbg(_ message: @autoclosure () -> String) {
     guard ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil else { return }
     FileHandle.standardError.write(Data("SlopDesk[video.client.view]: \(message())\n".utf8))

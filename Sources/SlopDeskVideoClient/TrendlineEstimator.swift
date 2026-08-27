@@ -61,6 +61,13 @@ public struct TrendlineEstimator: Sendable, Equatable {
     /// lives behind the door, so the whole environment is handed over one pair at a time; the two
     /// knobs are independent, so its arbitrary order cannot change the answer. Out-of-band is
     /// REJECTED rather than clamped: these reshape the detector's geometry.
+    ///
+    /// This is a WALK, not a key read, which is why it stays on `ProcessInfo` and is a named
+    /// exemption in `slopdesk-invariants`' direct-read ban: the knob NAMES are the door's, so the
+    /// whole map has to cross, and ``EnvConfig`` publishes a per-KEY resolver and no merged map.
+    /// Re-spelling `env → overlay` here would be a second copy of the one precedence rule that type
+    /// owns. The cost, recorded rather than hidden: `SLOPDESK_TREND_*` is env-only, so a
+    /// `config.toml` `[env]` line does not reach it.
     static let config: SlopDeskTrendlineConfig = {
         var config = slopdesk_trendline_config_default()
         for (key, value) in ProcessInfo.processInfo.environment {

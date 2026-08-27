@@ -60,6 +60,12 @@ public final class FramePacer: @unchecked Sendable {
     /// Depth-change observability (env `SLOPDESK_VIDEO_DEBUG`): one stderr line per liveDepth
     /// transition, so an HW A/B can verify the buffer floats down to 1 on a clean link (or see
     /// what jitter is pinning it higher).
+    ///
+    /// A DIRECT `ProcessInfo` read by decision, and the one `unless` on `slopdesk-invariants`'
+    /// tree-wide direct-read ban: this is a developer gate, not a setting. It has no `config.toml`
+    /// row, `slopdesk-guigate video` drives it through the real environment, and it is spelled the
+    /// same way in the host half (`CursorSampler`, `slopdesk-videohostd`). Routing only the client
+    /// half through the overlay would light half the family off one `[env]` line.
     private static let dbgEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     private let renderCallback: RenderCallback
     private let lock = NSLock()

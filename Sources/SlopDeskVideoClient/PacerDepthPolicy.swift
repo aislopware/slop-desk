@@ -31,6 +31,7 @@
 // dense-flow gate all read TIMES rather than counts (`docs/55-ffi-boundary.md` §4b).
 
 import CSlopDeskFFI
+import Foundation
 
 /// One windowed drain of the pacer's presentation-health counters, carried client→host on the
 /// NetworkStats recovery message (Phase-0 telemetry: log-only host-side).
@@ -150,6 +151,24 @@ public struct PacerDepthPolicy: Sendable, Equatable {
                 config.state = apply(config.state, key, value)
             }
             return config
+        }
+
+        /// The live-process reading of ``fromEnvironment(_:)``, and the ONE place this target walks
+        /// the process environment for the depth knobs.
+        ///
+        /// It lives here rather than at the pipeline's construction site because this is a WALK, not
+        /// a key read: the knob names are the door's, so the whole map has to cross, and there is no
+        /// merged env-plus-overlay map to hand over — ``EnvConfig`` publishes a per-KEY resolver and
+        /// nothing else, and re-spelling `env → overlay` here would be a second copy of the one
+        /// precedence rule that type exists to own. So the walk stays a `ProcessInfo` read and is
+        /// named in `slopdesk-invariants`' direct-read ban as an exemption. Keeping it in THIS file
+        /// is what makes that exemption cheap: the ban's exemptions are per-PATH, and the pipeline
+        /// that used to hold the walk also holds seven per-key knobs that must stay covered.
+        ///
+        /// The `SLOPDESK_DEPTH_*` knobs are therefore env-only by construction — a `config.toml`
+        /// `[env]` line does not reach them. That is a known cost of the walk, not an oversight.
+        public static func fromProcessEnvironment() -> Self {
+            fromEnvironment(ProcessInfo.processInfo.environment)
         }
 
         /// One environment pair through the door.

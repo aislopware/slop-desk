@@ -99,13 +99,13 @@ package final class VideoWindowPipeline {
     private var reprojectionContentFps: Double = 30.0
     /// Resolved once: whether the reprojection feature is enabled (env read at first access). Default
     /// OFF, so the identity-skip / re-show path stands and the present bytes are unchanged.
-    private static let reprojectEnabled = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_REPROJECT"] == "1"
+    private static let reprojectEnabled = EnvConfig.string("SLOPDESK_SCROLL_REPROJECT") == "1"
     /// CHROME-REGION MASK (default ON when reprojection is on; A/B via `SLOPDESK_REPROJECT_CHROME_MASK=0`):
     /// warp only the host-measured moving-content band so the static chrome (toolbars/tabs/status bar)
     /// does not slide. `0` ⇒ whole-frame warp, which drags the chrome along — the artifact the mask exists
     /// to kill.
     private static let chromeMaskEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_REPROJECT_CHROME_MASK"] != "0"
+        EnvConfig.string("SLOPDESK_REPROJECT_CHROME_MASK") != "0"
 
     /// INBOUND cursor-overlay coalescing. One `Task { @MainActor in compositor.apply }` per packet
     /// would freeze the overlay: when a click flips workspace focus, the synchronous SwiftUI re-render
@@ -200,6 +200,9 @@ package final class VideoWindowPipeline {
     /// in ``SlopDeskVideoClientSession``: if RX gaps stay SMALL on click-back while these spike, the
     /// freeze is a main-actor BLOCK (the click→focus SwiftUI re-render holding the main thread), which
     /// the coalescer cannot shorten — not a host/network stall.
+    ///
+    /// Direct `ProcessInfo` by decision — the `SLOPDESK_VIDEO_DEBUG` developer gate, see
+    /// ``FramePacer``. Every OTHER knob in this file goes through ``EnvConfig``.
     private static let dbgGapEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     private var dbgLastCursorApply: Double = 0
     private var dbgLastRender: Double = 0
@@ -278,24 +281,32 @@ package final class VideoWindowPipeline {
         // (`SLOPDESK_JITTER_DEPTH` = priming/slack frames ≈ added latency; `SLOPDESK_JITTER_MAX` = hard
         // cap before dropping the oldest). Defaults 2 / 5 absorb the idle→scroll size-jump backlog at
         // ~33 ms latency.
-        let env = ProcessInfo.processInfo.environment
+        // Every knob below resolves through `EnvConfig` — real env FIRST, then the settings overlay,
+        // then the compile-time default. This block USED to bind `ProcessInfo.processInfo.environment`
+        // once and subscript it seven times, which is the same bug as a direct read and harder to see:
+        // `config.toml`'s `[env]` table folds a raw `SLOPDESK_*` name into the overlay, so every knob
+        // here was written, persisted, shown as active, and then read past. The parses and clamps are
+        // untouched, so with an empty overlay the resolved values are byte-identical to before.
         // Depth 1 is the latency floor and the HW-validated near-Parsec state: present-on-arrival
         // (default ON) is depth-1-only, so any extra frame is pure standing latency (depth 2 ≈ 33 ms at
         // 60fps). `SLOPDESK_JITTER_DEPTH=2` restores the slack frame for a jittery-link A/B.
-        let jitterDepth = env["SLOPDESK_JITTER_DEPTH"].flatMap(Int.init).map { min(8, max(1, $0)) } ?? 1
-        let jitterMax = env["SLOPDESK_JITTER_MAX"].flatMap(Int.init).map { min(16, max(1, $0)) } ?? 5
+        let jitterDepth = EnvConfig.string("SLOPDESK_JITTER_DEPTH")
+            .flatMap(Int.init).map { min(8, max(1, $0)) } ?? 1
+        let jitterMax = EnvConfig.string("SLOPDESK_JITTER_MAX")
+            .flatMap(Int.init).map { min(16, max(1, $0)) } ?? 5
         // Adaptive pacer depth: a network-late driven 1↔2 depth boost (PacerDepthPolicy — pay latency
         // only AFTER observed network lates, refund after a clean dwell). DEFAULT OFF (depth pinned at
         // 1): under present-on-arrival it would re-add a latency frame on owd spikes, which is exactly
         // the latency this path exists to avoid. `SLOPDESK_ADAPTIVE_DEPTH=1` enables the boost for a
         // jittery-link A/B. TELEMETRY is NOT gated by this — the policy's late/gap counters always run.
-        let adaptiveDepth = env["SLOPDESK_ADAPTIVE_DEPTH"].map { $0 == "1" || $0.lowercased() == "true" } ?? false
-        let depthPolicyConfig = PacerDepthPolicy.Config.fromEnvironment(env)
+        let adaptiveDepth = EnvConfig.string("SLOPDESK_ADAPTIVE_DEPTH")
+            .map { $0 == "1" || $0.lowercased() == "true" } ?? false
+        let depthPolicyConfig = PacerDepthPolicy.Config.fromProcessEnvironment()
         // Adaptive jitter buffer (default OFF ⇒ fixed depth). When on, the pacer self-measures
         // decoded-frame arrival jitter and floats the depth between 1 and jitterMax: it shrinks toward
         // the latency floor on a clean LAN and re-inflates on a real spike/underrun.
         // v2 SUPERSEDES v1 (one writer of the live depth) — both set ⇒ v1 is forced off.
-        let adaptiveV1Requested = env["SLOPDESK_ADAPTIVE_JITTER"]
+        let adaptiveV1Requested = EnvConfig.string("SLOPDESK_ADAPTIVE_JITTER")
             .map { $0 == "1" || $0.lowercased() == "true" } ?? false
         let adaptive = adaptiveV1Requested && !adaptiveDepth
         if adaptiveV1Requested, adaptiveDepth, Self.dbgGapEnabled {
@@ -310,7 +321,7 @@ package final class VideoWindowPipeline {
         // Present-on-arrival for a starved display (FramePacer header; select-text/typing feedback
         // latency). Default ON — it only fires where holding for the next vsync is strictly worse;
         // `SLOPDESK_PRESENT_ON_ARRIVAL=0` gives the pure vsync-paced pacer for A/B.
-        let presentOnArrival = env["SLOPDESK_PRESENT_ON_ARRIVAL"]
+        let presentOnArrival = EnvConfig.string("SLOPDESK_PRESENT_ON_ARRIVAL")
             .map { !($0 == "0" || $0.lowercased() == "false") } ?? true
         // DISPLAY-NATIVE TICK: resolve the tick rate from the view's ACTUAL screen (floored at the
         // content fps). Hard-locking the link to the host content fps (60) makes a decoded frame sit up
@@ -324,7 +335,7 @@ package final class VideoWindowPipeline {
         let displayMaxHz = view.window?.windowScene?.screen.maximumFramesPerSecond ?? 0
         #endif
         let tickRate = FramePacer.resolveTickRate(
-            envOverride: env["SLOPDESK_TICK_HZ"],
+            envOverride: EnvConfig.string("SLOPDESK_TICK_HZ"),
             displayMaxHz: displayMaxHz,
             floor: maxFrameRate,
         )
@@ -353,17 +364,20 @@ package final class VideoWindowPipeline {
         // `SLOPDESK_ADAPTIVE_PLAYOUT=0` disables it; floor/ceil/k/base are env-tunable.
         let fixedPlayoutOverride = EnvConfig.string("SLOPDESK_PLAYOUT_MS") != nil
         let playoutMs = EnvConfig.string("SLOPDESK_PLAYOUT_MS").flatMap(Double.init) ?? 10.0
-        let adaptivePlayout = env["SLOPDESK_ADAPTIVE_PLAYOUT"]
+        let adaptivePlayout = EnvConfig.string("SLOPDESK_ADAPTIVE_PLAYOUT")
             .map { !($0 == "0" || $0.lowercased() == "false") } ?? true
-        let playoutK = env["SLOPDESK_PLAYOUT_K"].flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultK
-        let playoutBaseMs = env["SLOPDESK_PLAYOUT_BASE_MS"].flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultBaseMs
-        let playoutFloorMs = env["SLOPDESK_PLAYOUT_FLOOR_MS"].flatMap(Double.init) ?? AdaptivePlayoutPolicy
-            .defaultFloorMs
-        let playoutCeilMs = env["SLOPDESK_PLAYOUT_CEIL_MS"].flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultCeilMs
+        let playoutK = EnvConfig.string("SLOPDESK_PLAYOUT_K")
+            .flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultK
+        let playoutBaseMs = EnvConfig.string("SLOPDESK_PLAYOUT_BASE_MS")
+            .flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultBaseMs
+        let playoutFloorMs = EnvConfig.string("SLOPDESK_PLAYOUT_FLOOR_MS")
+            .flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultFloorMs
+        let playoutCeilMs = EnvConfig.string("SLOPDESK_PLAYOUT_CEIL_MS")
+            .flatMap(Double.init) ?? AdaptivePlayoutPolicy.defaultCeilMs
         // Cold-start content fps (coding-tool default 30, matching the host); the host's `streamCadence`
         // control message rebases this live via `setContentFps`, so a host/client default mismatch only
         // affects the brief pre-announce window. SLOPDESK_CONTENT_FPS overrides.
-        let contentFps = env["SLOPDESK_CONTENT_FPS"].flatMap(Double.init) ?? 30.0
+        let contentFps = EnvConfig.string("SLOPDESK_CONTENT_FPS").flatMap(Double.init) ?? 30.0
         // SCROLL-HINT REPROJECTION (default OFF): build the offset law for this pane and the main-actor
         // closure that applies its offset to the renderer (+ optionally re-presents). When the gate is
         // off `reprojector`/`applyReprojection` stay nil ⇒ the pacer skips every reproject path ⇒ the
@@ -371,9 +385,10 @@ package final class VideoWindowPipeline {
         let reprojector: ScrollReprojector?
         let applyReprojection: ((SIMD2<Float>) -> Void)?
         if Self.reprojectEnabled {
-            let maxBand = env["SLOPDESK_SCROLL_REPROJECT_BAND"].flatMap(Double.init) ?? 0.125
-            let decaySeconds = env["SLOPDESK_SCROLL_REPROJECT_DECAY_MS"].flatMap(Double.init)
-                .map { $0 / 1000.0 } ?? 0.12
+            let maxBand = EnvConfig.string("SLOPDESK_SCROLL_REPROJECT_BAND")
+                .flatMap(Double.init) ?? 0.125
+            let decaySeconds = EnvConfig.string("SLOPDESK_SCROLL_REPROJECT_DECAY_MS")
+                .flatMap(Double.init).map { $0 / 1000.0 } ?? 0.12
             let r = ScrollReprojector(maxBand: maxBand, decaySeconds: decaySeconds)
             reprojector = r
             self.reprojector = r
@@ -1095,9 +1110,15 @@ package final class VideoWindowPipeline {
     /// 1/120s (~8.3ms), deliberately decoupled from the video frame cap. The host re-coalesces whatever
     /// arrives, so a tighter interval is safe. A/B via `SLOPDESK_INPUT_HZ` (Hz) or
     /// `SLOPDESK_INPUT_INTERVAL_MS` (ms); HZ takes precedence if both set. Clamped to avoid wire spam.
+    ///
+    /// Both knobs resolve through ``EnvConfig`` (real env FIRST, then the settings overlay), so a
+    /// `config.toml` `[env]` line reaches them; the pure half below is unchanged and still takes the
+    /// two raw strings, so the precedence-and-clamp rule stays `client_input`'s alone.
     static func resolveMotionInterval() -> TimeInterval {
-        let env = ProcessInfo.processInfo.environment
-        return resolveMotionInterval(hz: env["SLOPDESK_INPUT_HZ"], ms: env["SLOPDESK_INPUT_INTERVAL_MS"])
+        resolveMotionInterval(
+            hz: EnvConfig.string("SLOPDESK_INPUT_HZ"),
+            ms: EnvConfig.string("SLOPDESK_INPUT_INTERVAL_MS"),
+        )
     }
 
     /// PURE (nonisolated so it is unit-testable headlessly): map the two env strings to a sane

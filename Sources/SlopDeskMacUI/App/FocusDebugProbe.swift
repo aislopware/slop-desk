@@ -7,6 +7,11 @@ import AppKit
 /// the keyboard?" questions that no state flag can answer after the fact: the mover is AppKit,
 /// WebKit, or SwiftUI internals, and the interesting event is over by the time anything
 /// observable has changed. This is the tap that answers them at the moment it happens.
+///
+/// The `env:` parameter is an INJECTION SEAM — a default argument a test replaces — not a knob read,
+/// and the flag behind it is a developer gate with no `config.toml` row. Both are why this file is a
+/// named exemption in `slopdesk-invariants`' ban on reading the process environment past
+/// ``EnvConfig``'s settings overlay rather than a site that ban would have anything to say about.
 @MainActor
 enum FocusDebugProbe {
     private static var installed = false

@@ -14,6 +14,7 @@
 
 import AppKit
 import SlopDeskClientCore
+import SlopDeskVideoProtocol // `EnvConfig` — the env → settings-overlay resolver the quit gate reads through
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -52,10 +53,13 @@ final class SlopDeskAppTerminationDelegate: NSObject, NSApplicationDelegate {
         // window reads as a CRASH; rcmd/XKey event-tap leaks are prime suspects). With any
         // tab open, an interactive quit asks first. Apple-Event quits (osascript, logout/shutdown)
         // skip the dialog — blocking automation or logout is worse than a stray quit.
+        // The knob resolves through `EnvConfig` (real env FIRST, then the settings overlay), not off
+        // `ProcessInfo` directly: the policy's own truth table is untouched, but a `SLOPDESK_QUIT_CONFIRM`
+        // written into `config.toml`'s `[env]` table used to land in the overlay and then be read past.
         if QuitConfirmPolicy.requiresConfirmation(
             hasOpenTabs: store.tree.sessions.contains { !$0.tabs.isEmpty },
             isAppleEventQuit: NSAppleEventManager.shared().currentAppleEvent != nil,
-            envValue: ProcessInfo.processInfo.environment["SLOPDESK_QUIT_CONFIRM"],
+            envValue: EnvConfig.string("SLOPDESK_QUIT_CONFIRM"),
         ), !Self.confirmQuit() {
             return .terminateCancel
         }

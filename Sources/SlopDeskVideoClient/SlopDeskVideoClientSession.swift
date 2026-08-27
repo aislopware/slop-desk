@@ -83,6 +83,9 @@ public actor SlopDeskVideoClientSession {
     /// Opt-in stderr diagnostics (`SLOPDESK_VIDEO_DEBUG=1`), client counterpart to the host's — so
     /// `slopdesk-guigate video` sees datagram arrival / reassembly / decode (OSLog `.info` isn't
     /// persisted; a white client window is otherwise opaque). No-op in production.
+    ///
+    /// Direct `ProcessInfo` by decision — the `SLOPDESK_VIDEO_DEBUG` developer gate, see
+    /// ``FramePacer``. Every OTHER knob on this actor goes through ``EnvConfig``.
     private static let debugStderr = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     /// Redundancy for the critical RELEASE edge: a dropped `mouseUp` over plain UDP strands the target
     /// app mid-selection, so we send the up back-to-back. Idempotent on the host: button-balance posts
@@ -321,7 +324,16 @@ public actor SlopDeskVideoClientSession {
     /// dominates once frames are dense). Only edge: during a recovery episode the drop-until-anchor
     /// gate reopens one decode-round-trip late (≤1 extra dropped frame + 1 redundant IDR,
     /// self-correcting) — negligible on a non-lossy link. Client analog of the host's encode-offqueue.
-    private static let decodeOffQueue = ProcessInfo.processInfo.environment["SLOPDESK_DECODE_OFFQUEUE"] != "0"
+    ///
+    /// This knob and every other `SLOPDESK_*` tunable on this actor resolve through ``EnvConfig``
+    /// (real env FIRST, then the settings overlay, then the compile-time default) rather than off
+    /// `ProcessInfo` directly. The polarity idiom is untouched — `!= "0"` stays `!= "0"` — because
+    /// with an EMPTY overlay ``EnvConfig/string(_:)`` IS `ProcessInfo.processInfo.environment[key]`.
+    /// What the direct read cost is the overlay tier: `config.toml`'s `[env]` table folds a raw
+    /// `SLOPDESK_*` name into it, so a knob set there was written, persisted, shown as active, and
+    /// then read past. Nothing catches that by testing, because an empty overlay makes the two
+    /// spellings byte-identical — the same way it hid in six governor knobs and in `SLOPDESK_BPP`.
+    private static let decodeOffQueue = EnvConfig.string("SLOPDESK_DECODE_OFFQUEUE") != "0"
     /// Serial queue owning the off-queue VT decode (incl. its keyframe reconfigure + `invalidateSession`),
     /// so the decoder stays single-threaded. `.userInteractive` to match the latency-critical path.
     private let decodeQueue = DispatchQueue(label: "slopdesk.client.decode", qos: .userInteractive)
@@ -483,7 +495,7 @@ public actor SlopDeskVideoClientSession {
     /// decorrelate burst loss; the host's `RecoveryRequestDeduper` collapses them to one action
     /// (spread ≤ half its 25 ms window at every legal copies count).
     private static let recoveryRedundancy: RecoveryRequestRedundancy = {
-        let n = ProcessInfo.processInfo.environment["SLOPDESK_RECOVERY_REDUNDANCY"].flatMap(Int.init) ?? 3
+        let n = EnvConfig.string("SLOPDESK_RECOVERY_REDUNDANCY").flatMap(Int.init) ?? 3
         return RecoveryRequestRedundancy(copies: n)
     }()
 
@@ -492,7 +504,7 @@ public actor SlopDeskVideoClientSession {
     /// `SLOPDESK_ESCALATION_FLOOR_MS`; the floor must not go as low as 30 ms — that escalates
     /// before an LTR refresh can physically land). Off ⇒ `observingLoss` is forced false and
     /// escalation runs the plain 2·RTT clock.
-    private static let fastEscalationEnabled = ProcessInfo.processInfo.environment["SLOPDESK_FAST_ESCALATION"] != "0"
+    private static let fastEscalationEnabled = EnvConfig.string("SLOPDESK_FAST_ESCALATION") != "0"
     /// The wrap-aware highest successfully-DECODED frameID. Carried (as ``DecodeFrontier/wireValue``)
     /// on every `requestIDR` / `requestLTRRefresh` so the host's delivery-keyed recovery-IDR cooldown
     /// can distinguish a delivered keyframe from a casualty.
@@ -547,36 +559,36 @@ public actor SlopDeskVideoClientSession {
     /// DEFAULT ON; `SLOPDESK_NETSTATS=0` disables: the client sends no NetworkStats reports and the
     /// RTT loop runs open-loop. The 4-byte header field is still parsed either way (the host writes
     /// 0 when disabled).
-    private static let telemetryEnabled = ProcessInfo.processInfo.environment["SLOPDESK_NETSTATS"] != "0"
+    private static let telemetryEnabled = EnvConfig.string("SLOPDESK_NETSTATS") != "0"
     /// NACK / selective-ARQ retransmit. DEFAULT OFF (`SLOPDESK_NACK=1`; deploy host +
     /// client together — adds wire recovery type 6). When on, the reassembler HOLDS a FEC-unrecoverable
     /// frame for ``nackGraceFrames`` frame-ids and NACKs its missing fragments; the host re-sends them
     /// from its ring (cheaper than an IDR, and within the playout buffer → no stutter). The
     /// Dropped→LTR-refresh path is still the fallback once the grace expires.
-    private static let nackEnabled = ProcessInfo.processInfo.environment["SLOPDESK_NACK"] == "1"
+    private static let nackEnabled = EnvConfig.string("SLOPDESK_NACK") == "1"
     /// Frame-ids past the loss frontier a FEC-unrecoverable frame is HELD for a NACK retransmit — must
     /// comfortably exceed the RTT in frame-units (~8 ≈ 130ms at 60fps ≫ a ~21ms WAN RTT, inside the
     /// ~80ms playout buffer).
     private static let nackGraceFrames: Int32 =
-        ProcessInfo.processInfo.environment["SLOPDESK_NACK_GRACE"].flatMap { Int32($0) } ?? 8
+        EnvConfig.string("SLOPDESK_NACK_GRACE").flatMap { Int32($0) } ?? 8
     /// Only NACK a SMALL loss (≤ this many fragments) — a keystroke / tiny frame is cheap and
     /// stutter-free to re-send. A BIGGER loss (e.g. a scroll frame) skips to the Drop → LTR-refresh
     /// skip-to-current fallback instead, which is smoother + cheaper than re-sending a stale frame
     /// into a burst (HW-tuned: big retransmits add congestion exactly during a burst).
     private static let nackMaxFrags: Int =
-        ProcessInfo.processInfo.environment["SLOPDESK_NACK_MAX_FRAGS"].flatMap(Int.init) ?? 8
+        EnvConfig.string("SLOPDESK_NACK_MAX_FRAGS").flatMap(Int.init) ?? 8
     /// Delay-gradient detector: DEFAULT ON; `SLOPDESK_TREND=0` disables. The client computes a
     /// libwebrtc-style trendline over per-FRAME one-way-delay variation and ships the detector
     /// output in the NetworkStats report. PURE TELEMETRY: the host's gradient cut path is its own
     /// default-OFF gate (`SLOPDESK_ABR_GRAD`), so with this on the host merely logs trend fields.
-    private static let trendEnabled = ProcessInfo.processInfo.environment["SLOPDESK_TREND"] != "0"
+    private static let trendEnabled = EnvConfig.string("SLOPDESK_TREND") != "0"
     /// WINDOW-FOLLOWS-PANE (host-follow resize), DEFAULT-OFF. On, a pane resize emits a
     /// `resizeRequest` so the host AX-resizes its real window to match — but with in-place (no-VD)
     /// capture the user wants the remote window to KEEP its own size; the pane just fits/letterboxes
     /// the fixed stream (and edge-pans when zoomed). Only `SLOPDESK_GUI_WINDOW_FOLLOWS_PANE=1` opts
     /// into the host-follow behaviour.
     private static let windowFollowsPane =
-        ProcessInfo.processInfo.environment["SLOPDESK_GUI_WINDOW_FOLLOWS_PANE"] == "1"
+        EnvConfig.string("SLOPDESK_GUI_WINDOW_FOLLOWS_PANE") == "1"
     /// The newest `hostSendTsMillis` OBSERVED on a video fragment (0 = none / telemetry off). An
     /// OPAQUE token the client echoes back; never compared against the client clock.
     private var latestHostSendTs: UInt32 = 0

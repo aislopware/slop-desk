@@ -36,7 +36,8 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
 
     private let lock = NSLock()
     /// Stutter-ladder stage 3 (SLOPDESK_VIDEO_DEBUG): last VIDEO-datagram socket-arrival time.
-    /// Owned by the serial receive queue — no lock needed.
+    /// Owned by the serial receive queue — no lock needed. Direct `ProcessInfo` by decision — the
+    /// `SLOPDESK_VIDEO_DEBUG` developer gate, see ``FramePacer``.
     static let dbgGapEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     private var dbgLastVideoRxAt: Double = 0
     private var mediaConn: NWConnection?

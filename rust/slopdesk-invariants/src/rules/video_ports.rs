@@ -323,6 +323,55 @@ pub fn the_settings_sheet_shows_the_encoders_defaults(tree: &Tree) -> Report {
 /// never read. `EnvConfig.string` is the only legal reader here: real env FIRST, then the settings
 /// overlay, then the compile-time default.
 ///
+/// ## The direct read is banned TREE-WIDE, and the single-file version is why
+/// That ban used to name ONE file. It has since let the same bug ship twice more —
+/// `LiveBitratePolicy`'s `SLOPDESK_BPP`, and eighteen client knobs across `MetalVideoRenderer`,
+/// `SlopDeskVideoClientSession`, `VideoWindowPipeline`, `TerminalPaneWiring` and `AppSupport` — for
+/// the reason a one-file ban always does: it says nothing at all about the file the next knob is
+/// written in. So the scope is now every `.swift` file under `Sources` and `Tests`, and
+/// `FPSGovernor`'s own `Lacks` is folded into it rather than kept beside it, because the tree-wide
+/// claim already covers that path and a second spelling of one law is what this whole rule is
+/// about.
+///
+/// The bug is INVISIBLE to every test, which is what makes it a gate's job: with an EMPTY overlay
+/// `EnvConfig.string(k)` IS `ProcessInfo.processInfo.environment[k]`, so the two spellings are
+/// byte-identical everywhere a test can look. The difference only appears in a shipped app, where
+/// `config.toml`'s `[env]` table folds a raw `SLOPDESK_*` name into the overlay — and a direct read
+/// is answered by the real environment alone, so the knob is written, persisted, shown as active,
+/// and read past.
+///
+/// `View::Code` is load-bearing here and was CHECKED rather than assumed: `FPSGovernor`,
+/// `LiveCongestionController`, `QPController`, `AdaptiveFECPolicy`, `CaptureGateTable` and
+/// `EnvConfig` itself all name the banned spelling in DOC COMMENTS — including the paragraph above
+/// — and every one of those mentions is a whole-line `///`, which `Source::code` drops. A rule
+/// whose own explanation matched its corpus has bitten this crate before.
+///
+/// ### The one `unless`, and why it is a key rather than a file
+/// `SLOPDESK_VIDEO_DEBUG` is a developer gate, not a setting: it has no `config.toml` row,
+/// `slopdesk-guigate video` drives it through the real environment, and it is read the same way in
+/// eight places spanning the client AND the host. Routing half of them through the overlay would
+/// make one `[env]` line light the client and leave the host dark, which is worse than env-only.
+/// It is excused by NAME rather than by path because the files holding it — the client session, the
+/// window pipeline, the Metal renderer — are the three that hold the most tunables, and a path
+/// exemption would un-cover all of them. That is precisely the hole the single-file ban was.
+///
+/// ### What the exemptions are, and what they are not
+/// Every entry is one of two shapes, and neither can hide a knob the way a per-key read can. A WALK
+/// hands the door the whole environment because the knob NAMES live behind it
+/// (`TrendlineEstimator`, `PacerDepthPolicy`, the FEC and recovery policies); `EnvConfig` publishes
+/// a per-KEY resolver and no merged map, and re-spelling `env → overlay` at a walk site would be a
+/// second copy of the one precedence rule that type owns — so those knob families are env-only,
+/// recorded rather than fixed. A SEAM is a default argument a test replaces (`EnvBridge`,
+/// `AppSupportContainer`, `WindowParkingSidecar`, `WorkspaceStore+Bootstrap`, `FocusDebugProbe`).
+/// `EnvConfig` itself is exempt because it is THE reader. The `Tests` entries are harness reads — a
+/// child process's environment, a snapshot output directory, or a guard that must consult the REAL
+/// environment to skip when one is set, which is the opposite of reading a knob past the overlay.
+///
+/// The walk exemptions cost one relocation: `VideoWindowPipeline` used to bind the environment once
+/// and subscript it seven times, so exempting it would have un-covered seven live tunables. The
+/// walk moved to `PacerDepthPolicy.Config.fromProcessEnvironment()` — the file that consumes it,
+/// whose only environment contact it is — and the pipeline is fully covered.
+///
 /// The ban is on the PARSE-THEN-COMPARE shape all three copies had, `Int(s), v >= lo`, rather than
 /// on a door's absence — a file can keep calling the door and grow a second private parse beside
 /// it, which is how the third copy appeared in the first place. And the generic pair stays deleted
@@ -337,14 +386,61 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
     /// The overlay reader, which held the generic pair.
     const ENV_CONFIG: &str = "Sources/SlopDeskVideoProtocol/Settings/EnvConfig.swift";
 
+    /// Every path allowed to reach `ProcessInfo.processInfo.environment`, each because somebody
+    /// decided so. A WALK hands the whole map to a door that owns the knob names; a SEAM is a
+    /// default argument a test replaces. Neither can hide a per-key knob read behind it, which is
+    /// the thing the ban is for.
+    const DIRECT_ENV_READERS: &[&str] = &[
+        // THE reader — env → overlay → default is this one function, and it has to ask.
+        ENV_CONFIG,
+        // SEAM: the focus tap's `env:` default argument, plus a developer-only flag with no row.
+        "Sources/SlopDeskMacUI/App/FocusDebugProbe.swift",
+        // WALK: the `SLOPDESK_DEPTH_*` names are `pacer_depth`'s, so the whole map crosses. Held
+        // here, beside its consumer, so `VideoWindowPipeline`'s seven knobs stay covered.
+        "Sources/SlopDeskVideoClient/PacerDepthPolicy.swift",
+        // WALK: same shape for `SLOPDESK_TREND_*`, whose names are `trendline`'s.
+        "Sources/SlopDeskVideoClient/TrendlineEstimator.swift",
+        // SEAM: `environment:` default argument on the parking sidecar's resolver.
+        "Sources/SlopDeskVideoHost/WindowParkingSidecar.swift",
+        // WALK: both statics hand the whole map to a PURE function that is unit-tested on it.
+        "Sources/SlopDeskVideoProtocol/AdaptiveFECPolicy.swift",
+        // WALK: same shape for the escalation floor.
+        "Sources/SlopDeskVideoProtocol/RecoverySignaling.swift",
+        // SEAM: `environment:` default argument on the Application-Support resolver.
+        "Sources/SlopDeskVideoProtocol/Settings/AppSupportContainer.swift",
+        // SEAM + WALK: the sidecar path's default argument, and the gap-fill that must compare the
+        // REAL environment against the overlay it is filling.
+        "Sources/SlopDeskVideoProtocol/Settings/EnvBridge.swift",
+        // The automation gate that suppresses auto-reconnect; no `config.toml` row.
+        "Sources/SlopDeskWorkspaceCore/Connection/AppConnection.swift",
+        // The debug-trace gate reader itself — the key is a VARIABLE, so there is no knob to reach.
+        "Sources/SlopDeskWorkspaceCore/Support/DebugTrace.swift",
+        // Two developer probes (`SLOPDESK_GLITCH_CARET`, `SLOPDESK_ECHO_PROBE`). The widest
+        // exemption here: this is a large file, so a real tunable added to it would go uncovered.
+        "Sources/SlopDeskWorkspaceCore/Terminal/TerminalViewModel.swift",
+        // The `UserDefaults` suite override a test run sets; not a setting the app offers.
+        "Sources/SlopDeskWorkspaceCore/Workspace/Store/SettingsKey.swift",
+        // SEAM: `environment:` default argument on the store's bootstrap.
+        "Sources/SlopDeskWorkspaceCore/Workspace/Store/WorkspaceStore+Bootstrap.swift",
+        // A CHILD process's environment, built to be handed to a spawn. The suite pins it to
+        // exactly one occurrence with a counting test of its own.
+        "Tests/SlopDeskClientTests/SubprocessE2ETests.swift",
+        // Harness: which `slopdesk-dropd` binary the E2E spawns.
+        "Tests/SlopDeskFileTransferTests/DropdE2ETests.swift",
+        // Harness: where the two snapshot renderers write their PNGs.
+        "Tests/SlopDeskMacUITests/MacChromeSnapshotRender.swift",
+        "Tests/SlopDeskMacUITests/MacRailStatusRollupRender.swift",
+        // Guards that must consult the REAL environment to SKIP when a knob is set outside the
+        // overlay — the opposite of reading one past it.
+        "Tests/SlopDeskVideoClientTests/SharpenResolutionTests.swift",
+        "Tests/SlopDeskVideoHostTests/RecoveryIDRPolicyTests.swift",
+        "Tests/SlopDeskVideoProtocolTests/SettingsReachConsumerTests.swift",
+        // The behaviour-preservation proof: it has to spell the legacy expression to compare
+        // `EnvConfig.string` against it.
+        "Tests/SlopDeskVideoProtocolTests/EnvConfigTests.swift",
+    ];
+
     let mut claims = vec![
-        Claim::Lacks {
-            path: FPS_GOVERNOR,
-            pattern: r"ProcessInfo\.processInfo\.environment",
-            view: View::Code,
-            message: "the governor reads the process environment directly again — that bypasses the \
-                      settings overlay, which is how a governor tunable set in Settings came to do nothing",
-        },
         Claim::NoneOf {
             paths: &[ABR_CONTROLLER, FPS_GOVERNOR, ENV_CONFIG],
             pattern: r"(Int|Double)\([a-zA-Z_]+\), *[a-zA-Z_]+ *(>=|<=|>|<) ",
@@ -353,13 +449,28 @@ pub fn the_reject_reading_of_an_env_knob_is_rusts(tree: &Tree) -> Report {
                       slopdesk_abr_validated_int/_double and the clamp rule is slopdesk_qp_clamped_int",
         },
         // The corpus is the whole Swift tree; if it ever reads as fewer than 200 files the walk has
-        // gone stale and the ban below is passing on nothing.
+        // gone stale and the two bans below are passing on nothing.
         Claim::Populated {
             roots: &["Sources", "Tests"],
             extensions: SWIFT,
             minimum: 200,
-            message: "the tree-wide Swift corpus read as {found} files — the EnvConfig ban is passing \
+            message: "the tree-wide Swift corpus read as {found} files — the EnvConfig bans are passing \
                       vacuously",
+        },
+        // The direct read, tree-wide. `View::Code` drops the `///` lines that name this spelling,
+        // including the ones in this rule's own subjects; the single `unless` excuses ONE key rather
+        // than any file, so the three files holding the most tunables stay covered.
+        Claim::NoneUnder {
+            roots: &["Sources", "Tests"],
+            extensions: SWIFT,
+            pattern: r"ProcessInfo\.processInfo\.environment",
+            all: &[],
+            unless: &[r#"environment\["SLOPDESK_VIDEO_DEBUG"\]"#],
+            view: View::Code,
+            exempt: DIRECT_ENV_READERS,
+            message: "{files} reads the process environment directly — that is answered by the real env \
+                      ALONE, so a knob written into config.toml's [env] table lands in EnvConfig's overlay \
+                      and is then read past; resolve it through EnvConfig.string",
         },
         Claim::NoneUnder {
             roots: &["Sources", "Tests"],
@@ -590,6 +701,61 @@ mod tests {
             "Sources/SlopDeskVideoHost/Governor.swift",
             "let n = EnvConfig.int(\"SLOPDESK_ABR_LOSS\", 1, 100)\n",
         );
+        assert!(!super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+    }
+
+    #[test]
+    fn a_knob_read_past_the_settings_overlay_is_red() {
+        let fixture = Fixture::new("video-direct-env");
+        reject(&fixture);
+        assert!(super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+
+        // The whole point of widening the ban: a knob in a file NOBODY thought to name. The
+        // single-file version said nothing about `LiveBitratePolicy`, so `SLOPDESK_BPP` shipped
+        // deaf — written by the sheet, persisted, shown as active, and never read.
+        fixture.write(
+            "Sources/SlopDeskVideoClient/NewKnob.swift",
+            "static let on = ProcessInfo.processInfo.environment[\"SLOPDESK_NEW\"] == \"1\"\n",
+        );
+        assert!(!super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+
+        // The SAME line under an exempted path is not a finding — the exemption IS the decision,
+        // and `EnvConfig` is the one reader that has to ask the environment.
+        fixture.remove("Sources/SlopDeskVideoClient/NewKnob.swift");
+        fixture.append(
+            "Sources/SlopDeskVideoProtocol/Settings/EnvConfig.swift",
+            "if let v = ProcessInfo.processInfo.environment[\"SLOPDESK_NEW\"] { return v }\n",
+        );
+        assert!(super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+
+        // The developer gate stays env-only by decision, in a file that is NOT exempt…
+        reject(&fixture);
+        fixture.write(
+            "Sources/SlopDeskVideoClient/FramePacer.swift",
+            "static let dbg = ProcessInfo.processInfo.environment[\"SLOPDESK_VIDEO_DEBUG\"] != nil\n",
+        );
+        assert!(super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+
+        // …and the excuse is that ONE key rather than that file, which is the difference between
+        // this `unless` and the path exemption it replaced: a tunable beside it is still a finding.
+        fixture.append(
+            "Sources/SlopDeskVideoClient/FramePacer.swift",
+            "static let nack = ProcessInfo.processInfo.environment[\"SLOPDESK_NACK\"] == \"1\"\n",
+        );
+        assert!(!super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+    }
+
+    #[test]
+    fn a_drained_swift_corpus_is_red() {
+        let fixture = Fixture::new("video-corpus-floor");
+        reject(&fixture);
+        assert!(super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
+
+        // Every named file is still there and still says the right thing, so the only claim left to
+        // fail is the floor — which is what stops a stale walk turning both bans into a silent pass.
+        for index in 0..200 {
+            fixture.remove(&format!("Sources/Filler/Filler{index}.swift"));
+        }
         assert!(!super::the_reject_reading_of_an_env_knob_is_rusts(&fixture.tree()).is_clean());
     }
 }
