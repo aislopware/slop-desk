@@ -120,12 +120,17 @@ repos:
         pass_filenames: false
 
       - id: cargo-test
-        name: cargo test (every workspace)
+        name: cargo test (wire contracts)
         # The relay's framing is a WIRE contract with AgentHookRecord.split on the host; the
-        # byte-for-byte tests are the pin, so they gate the commit like golden-check does — and so do
-        # the other sixteen crates' suites, which `cd rust && cargo test --workspace` never ran while
-        # this hook fired on any `rust/**.{rs,toml}` change. ~16 s warm for all seventeen.
-        entry: make test-rust
+        # byte-for-byte tests are the pin, so they gate the commit like golden-check does. Only THOSE
+        # four suites run here. The full sixty-workspace sweep was measured at 50 s per commit — 46 s
+        # of it `slopdesk-ffi`, whose tests block on real Apple frameworks (a single trivial door test
+        # in that crate reproduces at 15 s, consistent with per-framework TCC/WindowServer round-trips
+        # paid by the ~40 crates it links). `make test` on pre-push already lists EVERY per-crate cargo
+        # target — `ffi-test` included — so that sweep was duplicated work on the commit path, not
+        # coverage this hook was buying. `make test-rust` stays a target; `lint-reach` still requires
+        # each crate be reachable from one. ~3 s warm.
+        entry: make hook-test wire-test superwire-test hookevent-test
         language: system
         files: '^rust/.*\.(rs|toml)$'
         pass_filenames: false
