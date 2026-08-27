@@ -310,11 +310,24 @@ impl SlopDeskVideoEncoder {
     /// Answers the framework's `OSStatus` on failure — there is nothing partial to hand back,
     /// because a half-configured session encodes at a latency nobody chose and reports no fault.
     ///
+    /// `env` is where every knob but `qp_decouple` is read from, and it is a PARAMETER rather than
+    /// `std::env` because the two callers resolve it differently. Swift folds
+    /// `video-prefs.json` into the process environment with `setenv` before it ever reaches this
+    /// crate, so the C door below passes `std::env::var` and nothing changes for it. A Rust daemon
+    /// cannot: `std::env::set_var` is `unsafe` and every crate outside the three named in
+    /// `CLAUDE.md` forbids `unsafe`, so it hands over a closure that reads the real environment
+    /// FIRST and falls back to its own overlay — which is `docs/58`'s precedence by construction
+    /// rather than by a rule someone has to remember.
+    ///
     /// # Errors
     /// The framework's status, when the session could not be created or a latency-critical
     /// property was rejected.
-    pub fn create(spec: EncoderSpec, sink: Option<Arc<dyn EncodedFrameSink>>) -> Result<Self, i32> {
-        let config = Config::resolve(&|key| std::env::var(key).ok(), Some(spec.qp_decouple));
+    pub fn create(
+        spec: EncoderSpec,
+        env: &dyn Fn(&str) -> Option<String>,
+        sink: Option<Arc<dyn EncodedFrameSink>>,
+    ) -> Result<Self, i32> {
+        let config = Config::resolve(env, Some(spec.qp_decouple));
         let state = EncoderState::new(
             config,
             spec.bitrate,
@@ -673,6 +686,9 @@ pub unsafe extern "C" fn slopdesk_video_encoder_new(
             ltr_enabled,
             qp_decouple,
         },
+        // Swift folded its overlay into the process environment before launch, so the real
+        // environment IS the resolved one on this side of the boundary.
+        &|key| std::env::var(key).ok(),
         Some(sink),
     ) {
         Ok(encoder) => {

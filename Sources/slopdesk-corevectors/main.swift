@@ -3,6 +3,7 @@ import Foundation
 import SlopDeskProtocol // WireMessage, MuxEnvelopeCodec (terminal/PTY path)
 import SlopDeskVideoClient // TrendlineEstimator, OwdLateDetector, PacerDepthPolicy
 import SlopDeskVideoProtocol
+
 // LoopbackWorkspaceDocument + WorkspaceMirrorBox — the SWIFT half of the versioning ladder
 // `workspaceDocumentVersioning` pins against `rust/slopdesk-hostserver`'s. Headless: the target
 // holds no view framework, so naming it here does not drag the client UI into the generator.
@@ -1734,40 +1735,70 @@ let wdvInstallSnapshot = wsHex(WorkspaceStateCodec.encodeSnapshot(wdvDocument.sn
 let wdvSteps: [[String: Any]] = [
     // Two accepted mutations in a row, so the base/new pair the next diff is computed against is
     // never the install's.
-    wdvStep("renameTab", WorkspaceIntentOp.renameTab.rawValue,
-            WorkspaceIntentArgs.encode(id: wdvTabOne.raw, name: "build")),
-    wdvStep("renamePane", WorkspaceIntentOp.renamePane.rawValue,
-            WorkspaceIntentArgs.encode(id: wdvPaneOne.raw, name: "editor")),
+    wdvStep(
+        "renameTab",
+        WorkspaceIntentOp.renameTab.rawValue,
+        WorkspaceIntentArgs.encode(id: wdvTabOne.raw, name: "build"),
+    ),
+    wdvStep(
+        "renamePane",
+        WorkspaceIntentOp.renamePane.rawValue,
+        WorkspaceIntentArgs.encode(id: wdvPaneOne.raw, name: "editor"),
+    ),
     // ACCEPTED and changed nothing: it must consume no version and still clear pristine, because
     // `adoptWorkspace` is the one op that may not run twice and renaming a tab to its own name is
     // still taking ownership of this workspace.
-    wdvStep("renameTabToItsOwnName", WorkspaceIntentOp.renameTab.rawValue,
-            WorkspaceIntentArgs.encode(id: wdvTabOne.raw, name: "build")),
+    wdvStep(
+        "renameTabToItsOwnName",
+        WorkspaceIntentOp.renameTab.rawValue,
+        WorkspaceIntentArgs.encode(id: wdvTabOne.raw, name: "build"),
+    ),
     // An op byte no build knows. Refused by name rather than guessed at, and it costs no version.
     wdvStep("unknownOp", 0xFE, Data()),
     // A topology EXISTS now, so this not-found is the refusal-on-the-merits half of `opening`.
-    wdvStep("renameGhostTab", WorkspaceIntentOp.renameTab.rawValue,
-            WorkspaceIntentArgs.encode(id: wdvGhostTab.raw, name: "ghost")),
+    wdvStep(
+        "renameGhostTab",
+        WorkspaceIntentOp.renameTab.rawValue,
+        WorkspaceIntentArgs.encode(id: wdvGhostTab.raw, name: "ghost"),
+    ),
     // The bootstrap, arriving after the first accepted intent already ended pristine. `stale` is
     // decided BEFORE the payload is parsed, which is why empty args are enough to pin it.
     wdvStep("adoptAfterOwnership", WorkspaceIntentOp.adoptWorkspace.rawValue, Data()),
     // Four accepted mutations in a row, each touching a different half of the topology — the tab
     // MRU, the tab order, a `session/*` cell and a `tab/zoomedPane` — so a versioning bug that only
     // shows on one shape of write has somewhere to show.
-    wdvStep("focusOtherTab", WorkspaceIntentOp.focusTab.rawValue,
-            WorkspaceIntentArgs.encode(tab: wdvTabTwo)),
-    wdvStep("reorderTabs", WorkspaceIntentOp.reorderTabs.rawValue,
-            WorkspaceIntentArgs.encode(session: wdvSession, tabOrder: [wdvTabTwo, wdvTabOne])),
-    wdvStep("renameSession", WorkspaceIntentOp.renameSession.rawValue,
-            WorkspaceIntentArgs.encode(id: wdvSession.raw, name: "notes")),
-    wdvStep("zoomPane", WorkspaceIntentOp.setZoom.rawValue,
-            WorkspaceIntentArgs.encode(id: wdvPaneTwo.raw, flag: true)),
-    wdvStep("armSyncInput", WorkspaceIntentOp.setSyncInput.rawValue,
-            WorkspaceIntentArgs.encode(id: wdvTabOne.raw, flag: true)),
+    wdvStep(
+        "focusOtherTab",
+        WorkspaceIntentOp.focusTab.rawValue,
+        WorkspaceIntentArgs.encode(tab: wdvTabTwo),
+    ),
+    wdvStep(
+        "reorderTabs",
+        WorkspaceIntentOp.reorderTabs.rawValue,
+        WorkspaceIntentArgs.encode(session: wdvSession, tabOrder: [wdvTabTwo, wdvTabOne]),
+    ),
+    wdvStep(
+        "renameSession",
+        WorkspaceIntentOp.renameSession.rawValue,
+        WorkspaceIntentArgs.encode(id: wdvSession.raw, name: "notes"),
+    ),
+    wdvStep(
+        "zoomPane",
+        WorkspaceIntentOp.setZoom.rawValue,
+        WorkspaceIntentArgs.encode(id: wdvPaneTwo.raw, flag: true),
+    ),
+    wdvStep(
+        "armSyncInput",
+        WorkspaceIntentOp.setSyncInput.rawValue,
+        WorkspaceIntentArgs.encode(id: wdvTabOne.raw, flag: true),
+    ),
     // The no-op again, this time mid-ladder rather than against the freshly installed state: an
     // idempotent set is what makes a duplicated intent free.
-    wdvStep("armSyncInputAgain", WorkspaceIntentOp.setSyncInput.rawValue,
-            WorkspaceIntentArgs.encode(id: wdvTabOne.raw, flag: true)),
+    wdvStep(
+        "armSyncInputAgain",
+        WorkspaceIntentOp.setSyncInput.rawValue,
+        WorkspaceIntentArgs.encode(id: wdvTabOne.raw, flag: true),
+    ),
 ]
 
 root["workspaceDocumentVersioning"] = [

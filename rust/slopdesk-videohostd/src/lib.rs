@@ -34,8 +34,20 @@
 //! | [`args`] | the argv grammar and the one environment knob that overrides it |
 //! | [`env`] | `video-prefs.json` → the launch-time overlay every gate resolves through |
 //! | [`list`] | `--list`: what this host will share, in an order a person can read |
+//! | [`mux_transport`] | the two UDP sockets, the three threads, and the one mux lock |
+//! | [`mux_peers`] | which peer a flow id names — all `NWListener` ever contributed |
+//! | [`mux_sink`] | the lane → session sink table a mint registers into, synchronously |
+//! | [`mux_lane`] | one lane of the shared flow, seen as a whole transport by its session |
+//! | [`mux_registry`] | one shared flow into N sessions: mint on the first hello, per lane |
+//! | [`encode`] | the HEVC session's lifetime, and the four ways a frame reaches it |
 
 pub mod args;
+pub mod encode;
 pub mod env;
 pub mod list;
+pub mod mux_lane;
+pub mod mux_peers;
+pub mod mux_registry;
+pub mod mux_sink;
+pub mod mux_transport;
 pub mod shareable;

@@ -68,6 +68,19 @@ serde_json = "1"
 # the whole enumeration — the two lookups by id were all the capture path ever asked for.
 slopdesk-apple-sck = { path = "../slopdesk-apple-sck" }
 
+# The VideoToolbox compression session, its timestamps and its pixel buffers, as safe Rust.
+slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
+
+# The ENCODER DRIVER, and the one edge in this manifest that names the Swift shim. It is here
+# because that is where the driver's single `unsafe` obligation is legal: HEVC parameter sets have
+# no copy-out variant in the SDK, so `slopdesk-apple-vt` answers them as `(ptr, len)` values and the
+# one `slice::from_raw_parts` that lays them down in front of a slice is made in `slopdesk-ffi`,
+# whose entire remit `docs/57` §2 states is that question. Lifting the driver into a crate of its
+# own would make a FOURTH hand-written-`unsafe` crate, which `CLAUDE.md` admits only for a MEASURED
+# perf conflict. This crate takes only the values-form face; the `extern "C"` doors beside it have
+# no caller here. When the Swift half is deleted, the driver moves and this edge goes with it.
+slopdesk-ffi = { path = "../slopdesk-ffi" }
+
 [dev-dependencies]
 
 # The daemon's own profile — every byte a client sees crosses this process, on the frame budget.
