@@ -87,6 +87,9 @@ impl Encoder {
                 ltr_enabled,
                 qp_decouple: false,
             },
+            // The harness IS run from a shell with the knobs exported — that is how an operator
+            // sweeps an operating point — so the process environment is exactly the reader it wants.
+            &|key| std::env::var(key).ok(),
             Some(sink),
         )?;
         Ok(Self { inner, collector })

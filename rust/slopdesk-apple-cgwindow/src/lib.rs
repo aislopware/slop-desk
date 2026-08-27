@@ -35,4 +35,6 @@
 mod list;
 
 #[cfg(target_os = "macos")]
-pub use list::{WindowRecord, bounds_of, frontmost_pid, windows_in_front_of, windows_of_pid};
+pub use list::{
+    CensusRecord, WindowRecord, bounds_of, census, frontmost_pid, windows_in_front_of, windows_of_pid,
+};

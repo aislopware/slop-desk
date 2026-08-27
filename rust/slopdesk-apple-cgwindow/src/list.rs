@@ -1,9 +1,10 @@
 //! The one decode of a `CGWindowListCopyWindowInfo` answer, and the three reads built on it.
 
-use objc2_core_foundation::{CFArray, CFDictionary, CFNumber, CFRetained, CFString, CFType, Type};
+use objc2_core_foundation::{CFArray, CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType, Type};
 use objc2_core_graphics::{
     CGWindowID, CGWindowListCopyWindowInfo, CGWindowListOption, kCGNullWindowID, kCGWindowAlpha,
-    kCGWindowBounds, kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
+    kCGWindowBounds, kCGWindowIsOnscreen, kCGWindowLayer, kCGWindowName, kCGWindowNumber, kCGWindowOwnerName,
+    kCGWindowOwnerPID,
 };
 use slopdesk_video::geometry::VideoRect;
 use slopdesk_video::window_list::{FrontmostCandidate, elected_owner_pid};
@@ -28,6 +29,31 @@ pub struct WindowRecord {
 /// the shape both a window record and its bounds sub-record have.
 type Info = CFDictionary<CFString, CFType>;
 
+/// One window from the WHOLE-desktop census, with the three fields only that census asks for.
+///
+/// The three are `Option`/`false`-by-absence rather than part of [`WindowRecord`]'s all-or-nothing
+/// decode, and that is the difference between the two reads rather than an inconsistency. Identity
+/// and geometry are what the framework always answers, so a record missing one of them is
+/// malformed; a window with no title, or one whose title this process may not see, is a perfectly
+/// ordinary window. Folding those into the drop rule would empty the feed on a machine without the
+/// Screen Recording grant. Which DEFAULT each absence means is the caller's — this crate reports
+/// only that the framework did not say.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CensusRecord {
+    /// Identity, level and geometry — the same all-or-nothing decode every other read here uses.
+    pub window: WindowRecord,
+    /// `kCGWindowOwnerName`: the owning application's name, as the window server knows it.
+    pub owner_name: Option<String>,
+    /// `kCGWindowName`: the window's title. Behind the **Screen Recording** grant — without it the
+    /// key is absent for every window on the desktop, which is a `None` here and not a failure.
+    /// Routinely absent WITH the grant too: plenty of windows simply have no title.
+    pub title: Option<String>,
+    /// `kCGWindowIsOnscreen`: whether the window server is currently drawing it. The key is present
+    /// only for windows that are, so its absence IS the `false` — the framework's own encoding,
+    /// kept rather than turned into an `Option` nobody could act on differently.
+    pub is_on_screen: bool,
+}
+
 /// The `kCGWindow*` key constants, read once per call rather than once per field.
 struct Keys {
     number: &'static CFString,
@@ -35,9 +61,12 @@ struct Keys {
     bounds: &'static CFString,
     alpha: &'static CFString,
     owner_pid: &'static CFString,
+    owner_name: &'static CFString,
+    name: &'static CFString,
+    is_on_screen: &'static CFString,
 }
 
-/// Reads the five `kCGWindow*` constants this crate needs.
+/// Reads the eight `kCGWindow*` constants this crate needs.
 fn keys() -> Keys {
     // SAFETY: framework rule. These are `extern` statics that CoreGraphics initialises when its
     // image loads, which is before any code that could call this has run — the CoreGraphics symbols
@@ -55,6 +84,9 @@ fn keys() -> Keys {
             bounds: kCGWindowBounds,
             alpha: kCGWindowAlpha,
             owner_pid: kCGWindowOwnerPID,
+            owner_name: kCGWindowOwnerName,
+            name: kCGWindowName,
+            is_on_screen: kCGWindowIsOnscreen,
         }
     }
 }
@@ -90,6 +122,22 @@ fn int(info: &Info, key: &CFString) -> Option<i64> {
 /// The double stored at `key`.
 fn float(info: &Info, key: &CFString) -> Option<f64> {
     number(info, key)?.as_f64()
+}
+
+/// The string stored at `key`, or `None` when the field is absent or is not a string.
+///
+/// A `String` rather than a borrow: the `CFString` is released with the dictionary the census
+/// iterates, and every caller keeps the value past that.
+fn text(info: &Info, key: &CFString) -> Option<String> {
+    Some(info.get(key)?.downcast::<CFString>().ok()?.to_string())
+}
+
+/// The boolean stored at `key`. An absent key is `false`, which is the framework's own encoding for
+/// `kCGWindowIsOnscreen` — it is written only for windows that are.
+fn flag(info: &Info, key: &CFString) -> bool {
+    info.get(key)
+        .and_then(|value| value.downcast::<CFBoolean>().ok())
+        .is_some_and(|value| value.value())
 }
 
 /// The `CGRect` dictionary representation stored at `key`. Its four keys are the literals
@@ -203,6 +251,46 @@ pub fn windows_of_pid(owner_pid: i32) -> Vec<WindowRecord> {
         .collect()
 }
 
+/// EVERY window the server knows about, on screen or not, desktop elements excluded.
+///
+/// The window FEED's read, and the only one here that is not a lookup. `OptionAll` rather than
+/// `OptionOnScreenOnly` because a minimized window and a window on another Space are both things
+/// the feed lists — the client's window rail shows them greyed — and neither is on screen. The
+/// order is the framework's: on-screen windows come front-to-back, and the rest in an order the
+/// documentation does not promise. Callers that need a z-ordered prefix partition on
+/// [`CensusRecord::is_on_screen`] rather than sorting, because a sort would destroy the one
+/// ordering that IS promised.
+///
+/// `ExcludeDesktopElements` for [`windows_of_pid`]'s reason: the wallpaper and the desktop backstop
+/// are windows, and they are nobody's app.
+///
+/// TCC, unlike every other read in this module: `kCGWindowName` is behind **Screen Recording**, so
+/// without that grant every record's title is `None` and the rest is unaffected. The census is
+/// measured at about 2.5 ms for a busy desktop, which is what makes a 1 Hz differ over it free.
+#[must_use]
+pub fn census() -> Vec<CensusRecord> {
+    let keys = keys();
+    let Some(list) = query(
+        CGWindowListOption::OptionAll | CGWindowListOption::ExcludeDesktopElements,
+        kCGNullWindowID,
+    ) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|info| census_record(&info, &keys))
+        .collect()
+}
+
+/// One census row: the hard half all-or-nothing, the three soft fields as the framework left them.
+fn census_record(info: &Info, keys: &Keys) -> Option<CensusRecord> {
+    Some(CensusRecord {
+        window: decode(info, keys)?,
+        owner_name: text(info, keys.owner_name),
+        title: text(info, keys.name),
+        is_on_screen: flag(info, keys.is_on_screen),
+    })
+}
+
 /// Every on-screen window strictly IN FRONT of `window_id`, front-to-back.
 ///
 /// `CGWindowListCopyWindowInfo` orders on-screen windows front-to-back, so the answer is the prefix
@@ -236,7 +324,7 @@ pub fn windows_in_front_of(window_id: u32) -> Vec<WindowRecord> {
 #[cfg(test)]
 #[expect(clippy::expect_used, reason = "a panic in a test is the failure report")]
 mod tests {
-    use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString, CFType};
+    use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
     use slopdesk_video::geometry::VideoRect;
 
     use super::{Info, Keys, decode, keys, rect};
@@ -288,6 +376,124 @@ mod tests {
         assert_eq!(keys.bounds.to_string(), "kCGWindowBounds");
         assert_eq!(keys.alpha.to_string(), "kCGWindowAlpha");
         assert_eq!(keys.owner_pid.to_string(), "kCGWindowOwnerPID");
+        assert_eq!(keys.owner_name.to_string(), "kCGWindowOwnerName");
+        assert_eq!(keys.name.to_string(), "kCGWindowName");
+        assert_eq!(keys.is_on_screen.to_string(), "kCGWindowIsOnscreen");
+    }
+
+    /// A whole census row, hard half and soft half both present.
+    fn census_dict(
+        keys: &Keys,
+        owner: &CFString,
+        title: &CFString,
+        on_screen: &CFBoolean,
+    ) -> CFRetained<Info> {
+        let bounds = bounds_dict(10.0, 20.5, 300.0, 400.25);
+        let id = CFNumber::new_i64(5);
+        let pid = CFNumber::new_i64(50);
+        let layer = CFNumber::new_i64(0);
+        dict(&[
+            (keys.number, id.as_ref()),
+            (keys.owner_pid, pid.as_ref()),
+            (keys.layer, layer.as_ref()),
+            (keys.bounds, bounds.as_ref()),
+            (keys.owner_name, owner.as_ref()),
+            (keys.name, title.as_ref()),
+            (keys.is_on_screen, on_screen.as_ref()),
+        ])
+    }
+
+    /// The census's soft fields are read when the framework wrote them.
+    #[test]
+    fn a_census_record_reads_the_three_fields_the_lookup_reads_never_ask_for() {
+        let keys = keys();
+        let owner = CFString::from_str("Finder");
+        let title = CFString::from_str("Downloads");
+        let on_screen = CFBoolean::new(true);
+        let row = census_dict(&keys, &owner, &title, on_screen);
+        let record = super::census_record(&row, &keys).expect("a complete census row");
+        assert_eq!(record.owner_name.as_deref(), Some("Finder"));
+        assert_eq!(record.title.as_deref(), Some("Downloads"));
+        assert!(record.is_on_screen);
+        assert_eq!(record.window.window_id, 5);
+    }
+
+    /// The rule this census exists to NOT inherit: the three soft fields are absent constantly — an
+    /// untitled window, a machine without the Screen Recording grant, an off-screen window — and
+    /// none of those absences may drop the record the way a missing id does. A census that folded
+    /// them into the drop rule would answer `[]` on an ungranted machine, which is a feed that
+    /// shows nothing rather than a feed without titles.
+    #[test]
+    fn a_census_record_survives_every_soft_field_being_absent() {
+        let keys = keys();
+        let record =
+            super::census_record(&window_dict(&keys, 7, 70, 0), &keys).expect("the hard half is complete");
+        assert_eq!(record.owner_name, None);
+        assert_eq!(record.title, None);
+        assert!(
+            !record.is_on_screen,
+            "an absent kCGWindowIsOnscreen IS the false — the framework writes the key only when it is true"
+        );
+    }
+
+    /// The hard half still drops all-or-nothing inside a census row: the soft fields do not rescue
+    /// a record whose identity is malformed.
+    #[test]
+    fn a_census_row_missing_its_identity_is_dropped_soft_fields_and_all() {
+        let keys = keys();
+        let owner = CFString::from_str("Finder");
+        let on_screen = CFBoolean::new(true);
+        let idless = dict(&[
+            (keys.owner_name, owner.as_ref()),
+            (keys.is_on_screen, on_screen.as_ref()),
+        ]);
+        assert!(super::census_record(&idless, &keys).is_none());
+    }
+
+    /// A soft field of the wrong CF type is an absent one, never a panic — the same `downcast` rule
+    /// the hard half uses, applied where the default is a value rather than a drop.
+    #[test]
+    fn a_soft_field_of_the_wrong_type_reads_as_absent() {
+        let keys = keys();
+        let number = CFNumber::new_i64(3);
+        let malformed = dict(&[
+            (keys.owner_name, number.as_ref()),
+            (keys.name, number.as_ref()),
+            (keys.is_on_screen, number.as_ref()),
+        ]);
+        assert_eq!(super::text(&malformed, keys.owner_name), None);
+        assert_eq!(super::text(&malformed, keys.name), None);
+        assert!(!super::flag(&malformed, keys.is_on_screen));
+    }
+
+    /// The census's own leak test, on §3's terms: the three soft reads each borrow from the
+    /// dictionary and copy out, so ten thousand of them must leave the record's retain count where
+    /// it started — a `to_string` that kept its `CFString` would show as a count climbing by twenty
+    /// thousand.
+    #[test]
+    fn ten_thousand_census_rows_leave_the_record_owned_exactly_as_it_was() {
+        let keys = keys();
+        let owner = CFString::from_str("Finder");
+        let title = CFString::from_str("Downloads");
+        let on_screen = CFBoolean::new(true);
+        let record = census_dict(&keys, &owner, &title, on_screen);
+        let before = record.retain_count();
+        for _ in 0..10_000 {
+            assert!(super::census_record(&record, &keys).is_some());
+        }
+        assert_eq!(record.retain_count(), before);
+    }
+
+    /// The whole-desktop read answers the LIVE window server, so what a unit test can pin is the
+    /// contract rather than a count: every row it answers has a complete hard half, and no row is
+    /// ever built from a dictionary that lacked one.
+    #[test]
+    fn every_row_the_census_answers_has_a_complete_hard_half() {
+        for row in super::census() {
+            assert!(row.window.window_id > 0, "a row with no id must never be built");
+            assert!(row.window.bounds.size.width.is_finite());
+            assert!(row.window.bounds.size.height.is_finite());
+        }
     }
 
     /// A complete record decodes to exactly what went in, bounds included.

@@ -30,11 +30,10 @@ use objc2_core_foundation::{CFArray, CFBoolean, CFNumber, CFRetained, CFString, 
 ///
 /// # Safety
 /// `AXUIElementCopyAttributeValue` takes a pointer to a caller-owned slot and, on success, stores a
-/// `CFTypeRef` in it under the **Copy rule** — the caller owns a reference and must release it.
-/// `CFRetained::from_raw` is that release, moved into the type system, and it is applied to exactly
-/// the pointer the framework just stored and only after the call reported success. The slot is a
-/// live local of the declared type for the whole call; on any non-success the framework leaves it
-/// untouched, and the null it was initialised to is checked before anything is claimed from it.
+/// `CFTypeRef` in it under the **Copy rule** — the caller owns a reference and must release it. The
+/// slot is a live local of the declared type for the whole call; on any non-success the framework
+/// leaves it untouched, and the null it was initialised to is what [`crate::own::claimed`] answers
+/// `None` for. Taking the retain itself is [`crate::own`]'s one site, not a second one here.
 #[expect(
     unsafe_code,
     reason = "the AX attribute read is a Copy-rule out-parameter; docs/57 §2 admits this shape"
@@ -47,9 +46,9 @@ pub(crate) fn copy(element: &AXUIElement, attribute: &str) -> Option<CFRetained<
     if status != AXError::Success {
         return None;
     }
-    let value = NonNull::new(slot.cast_mut())?;
-    // SAFETY: framework rule, above — the Copy rule made this reference ours to release.
-    Some(unsafe { CFRetained::from_raw(value) })
+    // SAFETY: `AXUIElementCopyAttributeValue` carries `Copy` in its name and has just reported
+    // success, so the slot holds a +1 `CFType` reference nobody else has claimed.
+    unsafe { crate::own::claimed(slot.cast_mut()) }
 }
 
 /// Writes `value` to `attribute` on `element`; answers whether the framework accepted it.

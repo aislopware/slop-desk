@@ -40,10 +40,16 @@
 //! | [`mux_lane`] | one lane of the shared flow, seen as a whole transport by its session |
 //! | [`mux_registry`] | one shared flow into N sessions: mint on the first hello, per lane |
 //! | [`encode`] | the HEVC session's lifetime, and the four ways a frame reaches it |
+//! | [`windowsource`] | the desktop census → one streamable-window row per window, in z-order |
+//! | [`windowprobe`] | the budgeted accessibility sweep that tells a minimized window from a ghost |
+//! | [`feed`] | the window feed: the TTL cache, the subscriber roster, and the differ's tick |
+//! | [`windowplace`] | park, restore, un-minimize, resize — four orders that are load-bearing |
+//! | [`windowgeometry`] | the 30 Hz drag poll, and the every-fifth DIALOG-EXPAND region sample |
 
 pub mod args;
 pub mod encode;
 pub mod env;
+pub mod feed;
 pub mod list;
 pub mod mux_lane;
 pub mod mux_peers;
@@ -51,3 +57,7 @@ pub mod mux_registry;
 pub mod mux_sink;
 pub mod mux_transport;
 pub mod shareable;
+pub mod windowgeometry;
+pub mod windowplace;
+pub mod windowprobe;
+pub mod windowsource;

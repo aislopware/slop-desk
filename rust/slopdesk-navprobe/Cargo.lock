@@ -650,6 +650,7 @@ checksum = "74b7c5390f477482f001bc354d6571a70db7e4f8d5288e860c45521fbce11394"
 dependencies = [
  "block2",
  "dispatch2",
+ "libc",
  "objc2",
  "objc2-core-foundation",
  "objc2-core-graphics",
@@ -941,6 +942,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-apple-cgvirtualdisplay"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "dispatch2",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation",
+ "slopdesk-apple-cgdisplay",
+ "slopdesk-video",
+]
+
+[[package]]
 name = "slopdesk-apple-cgwindow"
 version = "0.1.0"
 dependencies = [
@@ -1054,6 +1069,7 @@ dependencies = [
  "slopdesk-apple-ax",
  "slopdesk-apple-cgdisplay",
  "slopdesk-apple-cgevent",
+ "slopdesk-apple-cgvirtualdisplay",
  "slopdesk-apple-cgwindow",
  "slopdesk-apple-cursor",
  "slopdesk-apple-power",

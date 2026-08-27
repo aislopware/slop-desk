@@ -69,6 +69,10 @@ objc2-core-foundation = { version = "=0.3.2", default-features = false, features
   "CFNumber",
   # `CGPoint`/`CGSize` — how `AXPosition`/`AXSize` are carried.
   "CFCGTypes",
+  # The observer's own thread: its source, the loop it is added to, and the default mode.
+  "CFRunLoop",
+  # `CFRunLoopRunInMode` takes a `CFTimeInterval`, and the binding is gated on this.
+  "CFDate",
 ] }
 slopdesk-posix = { path = "../slopdesk-posix" }
 

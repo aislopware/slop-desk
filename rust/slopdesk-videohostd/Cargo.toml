@@ -81,6 +81,16 @@ slopdesk-apple-vt = { path = "../slopdesk-apple-vt" }
 # no caller here. When the Swift half is deleted, the driver moves and this edge goes with it.
 slopdesk-ffi = { path = "../slopdesk-ffi" }
 
+# The window feed's four framework edges. The census (`cgwindow`) is the feed's spine; the display
+# list (`cgdisplay`) turns a frame into an ordinal; the app reads (`app`) answer a bundle id and a
+# hidden flag per pid; the accessibility tree (`ax`) is the only thing on macOS that can tell a
+# minimized window from a ghost the server still lists. All four are `objc2`-only wrappers — this
+# crate stays `forbid(unsafe_code)`.
+slopdesk-apple-cgwindow = { path = "../slopdesk-apple-cgwindow" }
+slopdesk-apple-cgdisplay = { path = "../slopdesk-apple-cgdisplay" }
+slopdesk-apple-app = { path = "../slopdesk-apple-app" }
+slopdesk-apple-ax = { path = "../slopdesk-apple-ax" }
+
 [dev-dependencies]
 
 # The daemon's own profile — every byte a client sees crosses this process, on the frame budget.

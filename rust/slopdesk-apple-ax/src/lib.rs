@@ -17,9 +17,14 @@
 //! and is deliberately NOT cached: the grant can be given or revoked while the process runs, and a
 //! daemon that cached a `false` at launch would stay dead after the person granted it.
 //!
-//! ## `AXObserver` is not here
-//! An observer with a `CFRunLoop` behind it is a subscription, not an effect on the system, and
-//! §1's test for what belongs in this family is the latter.
+//! ## `AXObserver` IS here, and the note that said otherwise was a state, not a bar
+//! This crate used to say an observer with a `CFRunLoop` behind it is a subscription rather than an
+//! effect, and therefore not this family's. `slopdesk-apple-fsevents` settled it the other way: a
+//! run-loop-backed subscription over an Apple framework belongs here, in the shape §2 permits — a
+//! process-wide registry keyed by the handle's ADDRESS, a NULL context, and a callback that follows
+//! no pointer. [`observer`] is that shape for `ApplicationServices`, and it is still an observation
+//! turned into a value: the callback carries no argument, because which window changed is the
+//! caller's to work out.
 
 #![cfg_attr(not(target_os = "macos"), allow(unused_crate_dependencies))]
 
@@ -28,10 +33,16 @@ mod attribute;
 #[cfg(target_os = "macos")]
 mod nav;
 #[cfg(target_os = "macos")]
+pub mod observer;
+#[cfg(target_os = "macos")]
+mod own;
+#[cfg(target_os = "macos")]
 mod window;
 
 #[cfg(target_os = "macos")]
 pub use nav::{Element, Step, walk};
+#[cfg(target_os = "macos")]
+pub use observer::Observer;
 #[cfg(target_os = "macos")]
 pub use window::{App, Frame, Window};
 
