@@ -7,11 +7,18 @@
 // LTR-P ack masquerading as keyframe delivery, the wrap-aware comparisons, and the load-bearing
 // branch order the whole policy IS. All Rust's, in a crate that forbids `unsafe`.
 //
+// The `SLOPDESK_IDR_*` tuning went with it. It used to be a Swift struct whose seven fields were
+// seeded from the door and whose three environment overrides — the parse, the clamps and the
+// millis→rate inversion — were hand-written at the session's one `ProcessInfo` read. Those are
+// rules, so they are `recovery_idr`'s too now, reached through `slopdesk_idr_config_from_env`.
+//
 // ## What stays, and why it has to
 //
-// ``Config``, because its numbers are resolved from `SLOPDESK_IDR_*` by the session, and ``Verdict``,
-// because a Swift `switch` needs cases rather than a `UInt32`. The mapping between the two verdict
-// spellings is the only thing this file decides, and the door's constants name every arm of it.
+// ``Verdict``, because a Swift `switch` needs cases rather than a `UInt32`, and the LOOKUP behind
+// ``tunedConfig()`` — the env → settings-overlay precedence of `docs/58` is a property of this
+// process, not of the law, so this side resolves the texts and the door decides what they mean.
+// The mapping between the two verdict spellings is the only thing this file decides, and the
+// door's constants name every arm of it.
 //
 // ## Why this crosses as a handle and the quantiser does not
 //
@@ -20,6 +27,8 @@
 // models — one allocation, one owner, mutated in place.
 
 import CSlopDeskFFI
+import Foundation
+import SlopDeskVideoProtocol
 
 /// DELIVERY-KEYED recovery-IDR admission policy — the single authority on whether a client recovery
 /// request may force a real IDR, replacing the capturer's sent-keyed F1 cooldown
@@ -55,51 +64,6 @@ import CSlopDeskFFI
 /// touches it on the session actor (and the tests / loopback-validate from one thread), so no two
 /// threads race the state behind the handle.
 public final class RecoveryIDRPolicy: @unchecked Sendable {
-    /// The tuning, seeded from the door's own defaults, then overridden Swift-side from
-    /// `SLOPDESK_IDR_*` by the session and handed back to the door once.
-    ///
-    /// Every field starts as `slopdesk_idr_config_default()`'s answer rather than as a literal.
-    /// These seven numbers were tuned together and each is load-bearing against a failure the host
-    /// has already had, so the reasoning belongs beside the law in `recovery_idr.rs` and the digits
-    /// belong there ONLY. A second spelling here would agree today and stop agreeing the moment
-    /// either side is retuned — silently, because the two would still compile and still pass.
-    public struct Config: Sendable, Equatable {
-        /// In-flight grace is this fraction of the smoothed RTT, clamped to [floor, ceil]. A
-        /// crossing request arrives ≤ RTT/2 + jitter after the keyframe send, so the fraction is
-        /// what buys the jitter margin the measured path needs.
-        public var graceFraction: Double
-        /// Covers the rtt-unknown bootstrap (smoothedRTT = 0 before the first netstats fold).
-        public var graceFloorSeconds: Double
-        /// The kfDup spacing: beyond it the second copy has also long been sent, so further
-        /// suppression only adds freeze.
-        public var graceCeilSeconds: Double
-        /// Burst allowance: exactly one ordinary grant + one casualty-bypass grant back-to-back.
-        /// Recovery IDRs are compact and kfDup-doubled, so the burst stays bounded in wire copies;
-        /// one more would re-open the F1 storm.
-        public var bucketCapacity: Double
-        /// The sustained refill — it preserves the old F1 spacing ceiling exactly.
-        public var refillTokensPerSecond: Double
-        /// A granted-but-unserviced latch suppresses duplicates until this expires. Sized above the
-        /// worst legitimate latch-service path — a freshly-quiet window waits out the
-        /// StaticIDRDecider quiet window plus a timer tick plus margin — so it prevents both
-        /// premature double-grants and a permanent wedge if capture dies.
-        public var grantPendingTimeout: Double
-        /// Keyframes are rare (recovery + static-crisp + first-frame; motion heartbeat default
-        /// OFF), so the ring covers every one plausibly in flight within an ack round-trip.
-        public var keyframeRingCapacity: Int
-
-        public init() {
-            let defaults = slopdesk_idr_config_default()
-            graceFraction = defaults.grace_fraction
-            graceFloorSeconds = defaults.grace_floor_seconds
-            graceCeilSeconds = defaults.grace_ceil_seconds
-            bucketCapacity = defaults.bucket_capacity
-            refillTokensPerSecond = defaults.refill_tokens_per_second
-            grantPendingTimeout = defaults.grant_pending_timeout
-            keyframeRingCapacity = Int(defaults.keyframe_ring_capacity)
-        }
-    }
-
     /// The admission answer, as a `switch` can read it. Each case is one of the door's
     /// `SLOPDESK_IDR_VERDICT_*` constants and nothing more.
     public enum Verdict: Equatable, Sendable {
@@ -115,24 +79,59 @@ public final class RecoveryIDRPolicy: @unchecked Sendable {
         case suppressRateLimited
     }
 
-    public let config: Config
     /// The bucket, the keyframe ring and the latch, all of it Rust's.
     private let policy: OpaquePointer
 
-    public init(config: Config = Config()) {
-        self.config = config
-        policy = slopdesk_idr_policy_new(
-            SlopDeskIdrConfig(
-                grace_fraction: config.graceFraction,
-                grace_floor_seconds: config.graceFloorSeconds,
-                grace_ceil_seconds: config.graceCeilSeconds,
-                bucket_capacity: config.bucketCapacity,
-                refill_tokens_per_second: config.refillTokensPerSecond,
-                grant_pending_timeout: config.grantPendingTimeout,
-                keyframe_ring_capacity: config.keyframeRingCapacity,
-            ),
-        )
+    /// A policy at the tuned defaults unless the caller hands over an operating point — which the
+    /// host does, from ``tunedConfig()``. The default argument is the DOOR's answer rather than a
+    /// struct assembled here, so the seven numbers are never re-typed on this side.
+    public init(config: SlopDeskIdrConfig = slopdesk_idr_config_default()) {
+        policy = slopdesk_idr_policy_new(config)
     }
+
+    /// The host's operating point: the tuned defaults with `SLOPDESK_IDR_*` applied.
+    ///
+    /// This side resolves the three TEXTS and nothing else. What each one means — the parse, the
+    /// clamp, the millis→rate inversion, and the fact that the grace key pins floor and ceiling
+    /// together — is `slopdesk_video::recovery_idr`'s, beside the law those numbers tune. The names
+    /// come back from the same door that reads them, so a key cannot be mistyped here: a mistyped
+    /// key is the invisible failure, because the knob simply stops working and every test still
+    /// passes.
+    ///
+    /// The lookup stays Swift's because ``EnvConfig/string(_:)`` is the env → settings-overlay
+    /// precedence of `docs/58` — a property of this process, which the host folds `video-prefs.json`
+    /// into at launch. It is also a strict gain on what it replaces: the session read
+    /// `ProcessInfo.processInfo.environment` directly, so a GUI setting could never have reached
+    /// these three at all.
+    public static func tunedConfig() -> SlopDeskIdrConfig {
+        precondition(gateKeys.count == 3, "the recovery-IDR door takes one value per key")
+        let resolved = gateKeys.map { key in EnvConfig.string(key).map { Array($0.utf8) } ?? [] }
+        // An unset key lends a NULL base (an empty `Array`'s base address is nil), which is how the
+        // door spells absent — and an empty value folds to the same answer there on purpose.
+        return resolved[0].withUnsafeBufferPointer { tokens in
+            resolved[1].withUnsafeBufferPointer { refill in
+                resolved[2].withUnsafeBufferPointer { grace in
+                    slopdesk_idr_config_from_env(
+                        tokens.baseAddress, tokens.count, refill.baseAddress, refill.count,
+                        grace.baseAddress, grace.count,
+                    )
+                }
+            }
+        }
+    }
+
+    /// The environment key names, in the order the door takes their values. Read once, from the
+    /// list the law itself keeps.
+    private static let gateKeys: [String] = {
+        let needed = Int(slopdesk_idr_gate_keys(nil, 0))
+        guard needed > 0 else { return [] }
+        var blob = [UInt8](repeating: 0, count: needed)
+        let written = blob.withUnsafeMutableBufferPointer {
+            Int(slopdesk_idr_gate_keys($0.baseAddress, $0.count))
+        }
+        guard written == needed, let text = String(bytes: blob, encoding: .utf8) else { return [] }
+        return text.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
+    }()
 
     deinit { slopdesk_idr_policy_free(policy) }
 

@@ -4281,6 +4281,24 @@ typedef struct {
 SlopDeskQpConfig  slopdesk_qp_config_default(void);
 SlopDeskIdrConfig slopdesk_idr_config_default(void);
 
+/* The three operator knobs that tune the defaults above, and the CLAMPS that make a typo
+ * survivable, both on this side.
+ *
+ * The key NAMES cross too, NUL-separated in the order the parse expects, so the host never
+ * spells `SLOPDESK_IDR_TOKENS` — it asks for the list, looks each one up through its settings
+ * overlay (a raw ProcessInfo read would be invisible to a Settings write, docs/58), and lends
+ * the texts back in the same slots. One pair per key rather than a blob list, so a key added
+ * on the Rust side cannot silently travel as a shorter list.
+ *
+ * A text that will not parse leaves ONLY its own field at the default — one bad knob is one
+ * bad knob, never a reset of the other two. An empty (NULL, 0) pair is an unset knob. */
+size_t slopdesk_idr_gate_keys(uint8_t *out, size_t cap);
+SlopDeskIdrConfig slopdesk_idr_config_from_env(const uint8_t *tokens, size_t tokens_len,
+                                               const uint8_t *refill_millis,
+                                               size_t refill_millis_len,
+                                               const uint8_t *grace_millis,
+                                               size_t grace_millis_len);
+
 SlopDeskQpController slopdesk_qp_new(SlopDeskQpConfig config, int32_t seed_q);
 SlopDeskQpController slopdesk_qp_decide(SlopDeskQpController controller, bool congested);
 int32_t slopdesk_qp_clamped_int(const uint8_t *raw, size_t raw_len, bool has_raw,

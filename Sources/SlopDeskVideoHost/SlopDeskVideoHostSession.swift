@@ -339,26 +339,13 @@ public actor SlopDeskVideoHostSession {
     /// the sustained IDR rate cap is identical (2/s), and the wire fields ship unconditionally anyway —
     /// one env flips back exactly.
     private static let recoveryIDRV2 = gates.recovery_idr_v2
-    /// Tunables for the V2 policy: `SLOPDESK_IDR_TOKENS` (bucket capacity, clamp 1...4),
-    /// `SLOPDESK_IDR_REFILL_MS` (ms per token, clamp 100...5000 — default 500 = the sent-keyed spacing),
-    /// `SLOPDESK_IDR_GRACE_MS` (pins floor=ceil for A/B, clamp 0...1000; unset = adaptive
-    /// clamp(0.75×smoothedRTT, 40, 250) ms).
-    private static let recoveryIDRConfig: RecoveryIDRPolicy.Config = {
-        var config = RecoveryIDRPolicy.Config()
-        let env = ProcessInfo.processInfo.environment
-        if let s = env["SLOPDESK_IDR_TOKENS"], let v = Double(s), v.isFinite {
-            config.bucketCapacity = min(4, max(1, v))
-        }
-        if let s = env["SLOPDESK_IDR_REFILL_MS"], let v = Double(s), v.isFinite {
-            config.refillTokensPerSecond = 1000.0 / min(5000, max(100, v))
-        }
-        if let s = env["SLOPDESK_IDR_GRACE_MS"], let v = Double(s), v.isFinite {
-            let pinned = min(1000, max(0, v)) / 1000.0
-            config.graceFloorSeconds = pinned
-            config.graceCeilSeconds = pinned
-        }
-        return config
-    }()
+    /// Tunables for the V2 policy — the knob NAMES, their clamps and their defaults are
+    /// `rust/slopdesk-ffi/src/recovery_idr.rs`'s, beside the law they tune, and this side only
+    /// looks each name up and lends the text back. It WAS sixteen lines of clamp here, which made
+    /// it the host's last raw `ProcessInfo` read: a Settings write folded into the overlay and was
+    /// then read past, invisible to any test because an empty overlay makes the two spellings
+    /// byte-identical (docs/58).
+    private static let recoveryIDRConfig = RecoveryIDRPolicy.tunedConfig()
 
     /// NETWORK-FEEDBACK TELEMETRY. DEFAULT ON; disable with `SLOPDESK_NETSTATS=0`. When ON, every
     /// outgoing video fragment is stamped with the host-relative send time and the host folds the

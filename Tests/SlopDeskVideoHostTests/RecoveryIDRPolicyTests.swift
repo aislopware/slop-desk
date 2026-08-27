@@ -1,3 +1,6 @@
+import CSlopDeskFFI
+import Foundation
+import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoHost
 
@@ -6,6 +9,42 @@ import XCTest
 /// clamp and the grant-pending timeout are exercised headlessly (the capturer gate this
 /// replaces had ZERO test coverage — it was SCK-bound).
 final class RecoveryIDRPolicyTests: XCTestCase {
+    override func tearDown() {
+        EnvConfig.overlay = [:]
+        super.tearDown()
+    }
+
+    /// Each `SLOPDESK_IDR_*` knob reaches ITS OWN field through ``RecoveryIDRPolicy/tunedConfig()``.
+    ///
+    /// What the values MEAN — the clamps, the millis→rate inversion, the grace key pinning floor and
+    /// ceiling together — belongs to `slopdesk_video::recovery_idr` and is pinned there. What this
+    /// proves is the half that is Swift's and only Swift's: the overlay lookup honours the operator's
+    /// key names, and each resolved text is lent in the slot its own key names. A pair swapped
+    /// between two slots still compiles and still parses, so nothing but an end-to-end read catches
+    /// it — and the symptom would be a knob that silently retunes a different one.
+    func testTunedConfigLendsEachKeyInItsOwnSlot() throws {
+        let keys = ["SLOPDESK_IDR_TOKENS", "SLOPDESK_IDR_REFILL_MS", "SLOPDESK_IDR_GRACE_MS"]
+        try XCTSkipIf(
+            keys.contains { ProcessInfo.processInfo.environment[$0] != nil },
+            "a real env var would win over the overlay (decision #16)",
+        )
+        EnvConfig.overlay = [:]
+        XCTAssertEqual(
+            RecoveryIDRPolicy.tunedConfig().bucket_capacity,
+            slopdesk_idr_config_default().bucket_capacity, accuracy: 1e-9,
+            "an empty overlay resolves nothing, so the door's own defaults stand",
+        )
+        EnvConfig.overlay = [keys[0]: "1", keys[1]: "250", keys[2]: "500"]
+        let tuned = RecoveryIDRPolicy.tunedConfig()
+        XCTAssertEqual(tuned.bucket_capacity, 1.0, accuracy: 1e-9, "the burst allowance took TOKENS")
+        XCTAssertEqual(
+            tuned.refill_tokens_per_second, 4.0, accuracy: 1e-9,
+            "the refill took REFILL_MS as a spacing, inverted",
+        )
+        XCTAssertEqual(tuned.grace_floor_seconds, 0.5, accuracy: 1e-9, "the grace floor took GRACE_MS")
+        XCTAssertEqual(tuned.grace_ceil_seconds, 0.5, accuracy: 1e-9, "and GRACE_MS pins the ceiling with it")
+    }
+
     /// A fresh policy (no keyframe ever sent) grants immediately and spends a token.
     func testGrantWhenNoRecentKeyframe() {
         let policy = RecoveryIDRPolicy()

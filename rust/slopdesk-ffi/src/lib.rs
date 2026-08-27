@@ -220,6 +220,7 @@ pub mod rail_list;
 pub mod rail_structure;
 pub mod rate_control;
 pub mod recovery;
+pub mod recovery_idr;
 pub mod remote_window;
 pub mod replay;
 pub mod responsive;
