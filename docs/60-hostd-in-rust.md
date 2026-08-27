@@ -1450,6 +1450,35 @@ CROSS-LANGUAGE one. The tree already has the mechanism: that script and its snap
 gate, like every other two-ended wire fact. Until that group exists the loopback's versioning is
 pinned only by its own tests, and this paragraph is the record of what that costs.
 
+**Batch C opens on the corpus, not on the deletion, and that ordering was not obvious.**
+`Sources/SlopDeskVideoHost` is 44 files, and 22 of them import nothing but `CSlopDeskFFI` and
+`Foundation` — faces over `slopdesk-video` law that hostd, now Rust, reaches directly. The obvious
+move is to delete all 22 first. It is illegal, and the thing that makes it illegal is
+`Sources/slopdesk-corevectors`, which is KEEP (it pins the Swift MARSHALLING, so rewriting it in
+Rust would diff Rust against Rust) and which `import`s `SlopDeskVideoHost`. Delete the faces and the
+generator stops compiling; and the golden gate fails on membership drift BY DESIGN, because a key
+that stops being emitted must never slide quietly into the un-diffed bucket.
+
+Seven emitted keys reached a `SlopDeskVideoHost` symbol — `networkEstimateFold`, `fpsGovernorEwma`,
+`sizeNegotiationClamp`, `sizeNegotiationEpoch`, `staticIdrDrive`, `systemDialogClassify`,
+`systemDialogDetect`. Six were already this crate's law behind a door, so a Rust replay gets the
+same bytes. The seventh had no twin at all and was ported (`slopdesk_video::system_dialog`).
+
+**None of the seven was replayed by any suite** — not one Rust `tests/` file, not one Swift one.
+They were held up entirely by regenerating them from the implementation that produced them, which
+pins nothing: exactly the shape the golden gate's own module docs call out as "looks like coverage
+and is not". So the increment is: port the one, write the replay for all seven, move them to
+`FROZEN_KEYS`, then drop the emissions. The corpus keeps the bytes and a suite now proves they are
+still the answer.
+
+The port caught a defect the line count hides. `CGRect.width` answers the STANDARDIZED extent — a
+rect built with a negative size describes the same region walked the other way, and `width` reports
+it POSITIVE. A transliterated port reads the raw component, fails the size floor, and silently drops
+a real password prompt. The corpus had pinned that case all along as `negativeSizeStandardizes`; the
+replay is what surfaced it. Two more in the same three lines: rounding is ties-AWAY-from-zero, and
+the floor compares the ROUNDED integer, not the float. **A vector nothing reads does not stay
+true** — and a rule ported without its vectors does not stay right.
+
 **Stage G (separate campaign, not scoped here) — the client transport.** `Sources/SlopDeskProtocol`
 and `MuxNWConnection` survive stage F because the macOS/iOS clients still speak through them. Moving
 those behind `CSlopDeskFFI` is a linked-library port under `CLAUDE.md`'s lifetime rule, not a socket

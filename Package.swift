@@ -844,20 +844,24 @@ let package = Package(
         // Parsec windows alike). GUI+TCC-gated at runtime; no video file is written.
         .executableTarget(name: "slopdesk-framewatch"),
 
-        // Golden-vector dumper: emits the golden reference corpus — a deterministic JSON corpus from
-        // the SlopDeskVideoProtocol codecs + the pure realtime controllers (public API only) that the
-        // Rust `slopdesk-core` crate asserts byte-/bit-identical against in its `golden_parity` test.
-        // Pure value types only — constructs NO SCStream / encoder, so it touches no GUI/TCC:
-        // `swift run slopdesk-corevectors > rust/slopdesk-core/tests/vectors/golden_vectors.json`.
-        // IMPORTANT: run with no `SLOPDESK_*` env set so the controllers resolve their default
-        // tunables (the Rust core pins those defaults as compile-time consts).
+        // Golden-vector dumper: regenerates the EMITTED half of `golden/golden_vectors.json` from the
+        // `SlopDeskVideoProtocol` codecs and the pure controllers, so `slopdesk-gate golden` can diff
+        // the live codecs against the committed bytes. Pure value types only — it constructs NO
+        // SCStream and no encoder, so it touches neither GUI nor TCC.
+        //
+        // ⚠️ NEVER `>` OVER THE CORPUS. It also holds the FROZEN keys this target does not emit, and a
+        // redirect drops every one of them — which `slopdesk-gate golden` then fails on by design.
+        // Regenerate to a scratch file and merge the emitted keys in.
+        //
+        // ⚠️ Run with NO `SLOPDESK_*` env set, so the controllers resolve their default tunables. The
+        // Rust crates pin those same defaults as compile-time consts, and an env-shifted run silently
+        // records a corpus that no default build reproduces.
         .executableTarget(
             name: "slopdesk-corevectors",
             dependencies: [
                 "SlopDeskProtocol",
                 "SlopDeskWorkspaceModel",
                 "SlopDeskVideoProtocol",
-                "SlopDeskVideoHost",
                 "SlopDeskVideoClient",
             ],
         ),

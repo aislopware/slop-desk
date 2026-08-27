@@ -247,6 +247,7 @@ pub mod swipe_nav;
 pub mod swipe_nav_config;
 pub mod swipe_peel;
 pub mod swipe_recognizer;
+pub mod system_dialog;
 pub mod trendline;
 pub mod video_control;
 pub mod virtual_display;

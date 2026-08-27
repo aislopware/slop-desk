@@ -59,7 +59,10 @@
 use core::fmt::Write as _;
 
 use serde_json::Value;
+use slopdesk_video::fps_governor::{FpsGovernor, FpsGovernorConfig};
 use slopdesk_video::geometry::{VideoPoint, VideoRect, VideoSize};
+use slopdesk_video::network_estimate::NetworkEstimate;
+use slopdesk_video::recovery_routing::StaticIdrDecider;
 use slopdesk_video::video_control::{
     DisplaySummary, HostWindowFlags, HostWindowRecord, MaskRect, SystemDialogSummary, VideoControlMessage,
     WindowSummary,
@@ -69,7 +72,7 @@ use slopdesk_video::{
     CursorShapeMessage, CursorUpdate, FrameFragment, InputEvent, InputModifiers, MouseButton,
     MuxFrameFragmentHeader, NetworkStatsReport, RecoveryMessage, ReedSolomonFec, SwipeNavStatusMessage,
     VideoProtocolError, WindowGeometryMessage, adaptive_fec, capture_region, coordinate_mapping, input_event,
-    mux_header, nal_unit, virtual_display, window_placement, ycbcr,
+    mux_header, nal_unit, session_state, system_dialog, virtual_display, window_placement, ycbcr,
 };
 
 /// The pinned corpus, read at compile time so a missing or renamed file is a build failure rather
@@ -1447,4 +1450,308 @@ fn every_pinned_recovery_message_matches_in_both_directions() {
         };
         assert_eq!(decoded, expected, "{label}: the decoded value drifted");
     }
+}
+
+// MARK: The seven keys that used to be pinned only by the round trip
+//
+// These are the keys `slopdesk-corevectors` emitted THROUGH a `SlopDeskVideoHost` face. Six of the
+// seven were already this crate's law behind an FFI door, and the seventh — the system-dialog
+// classifier — is `slopdesk_video::system_dialog` since the port. What none of them had was a
+// READER: not one Rust integration test and not one Swift suite named them, so the only thing
+// holding their bytes was regenerating them from the implementation that produced them, which pins
+// nothing. The golden gate's own module docs call that shape out by name — "looks like coverage and
+// is not" — and it is why the gate checks for a reader rather than trusting the claim.
+//
+// So each vector below is replayed against the Rust law directly. That is what lets the seven move
+// from `EMITTED_KEYS` to `FROZEN_KEYS`: the corpus keeps the bytes, and this file is the suite that
+// proves they are still the answer.
+
+/// The RTT / loss / jitter fold, twelve reports deep, every scalar pinned as a bit pattern.
+///
+/// The generator drove `fold` with FOUR arguments, so the trend pair defaults to `(0, 0)` here —
+/// the near side spelled them as Swift default parameters and the corpus predates both.
+#[test]
+fn the_network_estimate_fold_replays() {
+    let root = corpus();
+    let vectors = group_of(&root, "networkEstimateFold");
+    assert_eq!(
+        vectors.len(),
+        12,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    let mut estimate = NetworkEstimate::new();
+    for (index, vector) in vectors.iter().enumerate() {
+        // `null` is a REJECTED sample, which is a different fold path from a zero one.
+        let rtt = match &vector["rtt"] {
+            Value::Null => None,
+            value => Some(value.as_i64().expect("a round trip in millis")),
+        };
+        let u32_of = |field: &str| u32::try_from(vector[field].as_u64().expect("a count")).expect("a u32");
+        estimate.fold(rtt, u32_of("frames"), u32_of("unrec"), u32_of("jitter"), 0, 0);
+
+        let pinned = |field: &str| vector[field].as_u64().expect("a bit pattern");
+        assert_eq!(
+            estimate.smoothed_rtt_millis.to_bits(),
+            pinned("smoothedBits"),
+            "fold {index}: smoothed RTT"
+        );
+        assert_eq!(
+            estimate.min_rtt_millis.to_bits(),
+            pinned("minBits"),
+            "fold {index}: min RTT"
+        );
+        assert_eq!(
+            estimate.loss_rate.to_bits(),
+            pinned("lossRateBits"),
+            "fold {index}: loss rate"
+        );
+        assert_eq!(
+            estimate.last_loss_sample.to_bits(),
+            pinned("lastLossBits"),
+            "fold {index}: last loss sample"
+        );
+    }
+}
+
+/// The bytes-per-frame average, and the anchor that must NOT be in it.
+///
+/// The last frame the generator folded is a 500 KB keyframe marked as an anchor — an episodic
+/// several-fold outlier. A governor that folded it would fake over-budget right after every
+/// recovery keyframe and step the rate down exactly while recovering, so its exclusion is the
+/// behaviour this bit pattern pins.
+#[test]
+fn the_fps_governor_bytes_average_replays() {
+    let root = corpus();
+    let vector = &root["fpsGovernorEwma"];
+
+    let mut governor = FpsGovernor::new(60, FpsGovernorConfig::default());
+    for bytes in [
+        10_000, 20_000, 15_000, 30_000, 12_000, 18_000, 22_000, 9_000, 40_000, 11_000,
+    ] {
+        governor.note_encoded_frame(bytes, false);
+    }
+    governor.note_encoded_frame(500_000, true);
+
+    assert_eq!(
+        governor.snapshot().bytes_per_frame_avg.to_bits(),
+        vector["bytesEwmaBits"].as_u64().expect("a bit pattern"),
+        "the anchor leaked into the average, or the fold order changed"
+    );
+}
+
+/// The per-axis capture clamp, including the degenerate policies.
+///
+/// `swappedPolicy`, `nanInf`, `negative`, `zeroMin` and `negativeMin` are the cases that matter: a
+/// zero capture dimension is an invalid encoder configuration, so every one of them has to land on
+/// a real interval rather than yielding zero or trapping.
+#[test]
+fn the_capture_size_clamp_replays() {
+    let root = corpus();
+    let vectors = group_of(&root, "sizeNegotiationClamp");
+    assert_eq!(
+        vectors.len(),
+        12,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let name = vector["name"].as_str().expect("a name");
+        let bits = |field: &str| f64::from_bits(vector[field].as_u64().expect("a bit pattern"));
+        let (width, height) = session_state::clamp_capture_size(
+            VideoSize::new(bits("desWBits"), bits("desHBits")),
+            VideoSize::new(bits("minWBits"), bits("minHBits")),
+            VideoSize::new(bits("maxWBits"), bits("maxHBits")),
+        );
+        let pinned = |field: &str| u16::try_from(vector[field].as_u64().expect("a size")).expect("a u16");
+        assert_eq!(width, pinned("w"), "{name}: width");
+        assert_eq!(height, pinned("h"), "{name}: height");
+    }
+}
+
+/// The resize-epoch staleness test, wrap included.
+///
+/// `u32::MAX` against 5 is the case worth having: the rule is a plain `<=` rather than a wrapping
+/// comparison, so a client that sent a wrapped epoch is stale rather than accepted.
+#[test]
+fn the_resize_epoch_staleness_replays() {
+    let root = corpus();
+    let vectors = group_of(&root, "sizeNegotiationEpoch");
+    assert_eq!(
+        vectors.len(),
+        7,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let u32_of = |field: &str| u32::try_from(vector[field].as_u64().expect("an epoch")).expect("a u32");
+        let epoch = u32_of("epoch");
+        let last_applied = u32_of("lastApplied");
+        assert_eq!(
+            session_state::is_stale_epoch(epoch, last_applied),
+            vector["stale"].as_bool().expect("a verdict"),
+            "epoch {epoch} against {last_applied}"
+        );
+    }
+}
+
+/// The static re-encode timer, driven as a SEQUENCE rather than a table.
+///
+/// Each scenario is an ordered op list because the decision depends on two anchors the earlier ops
+/// move. Replaying only the checks would pass against a decider that never advanced either clock.
+#[test]
+fn the_static_idr_timer_replays() {
+    let root = corpus();
+    let scenarios = group_of(&root, "staticIdrDrive");
+    assert_eq!(
+        scenarios.len(),
+        2,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for scenario in &scenarios {
+        let name = scenario["name"].as_str().expect("a name");
+        let bits = |field: &str| f64::from_bits(scenario[field].as_u64().expect("a bit pattern"));
+        let mut decider = StaticIdrDecider::new(bits("heartbeatBits"), Some(bits("quietWindowBits")));
+
+        for (index, op) in scenario["ops"].as_array().expect("an op list").iter().enumerate() {
+            let now = f64::from_bits(op["tBits"].as_u64().expect("a bit pattern"));
+            match op["op"].as_str().expect("an op name") {
+                "complete" => decider.on_complete_frame(now),
+                "synthetic" => decider.record_synthetic(now),
+                "check" => {
+                    let decision = decider.should_reencode(
+                        now,
+                        op["forced"].as_bool().expect("a latch"),
+                        op["hasBuffer"].as_bool().expect("a buffer flag"),
+                    );
+                    assert_eq!(
+                        decision,
+                        op["decision"].as_bool().expect("a decision"),
+                        "{name}: op {index}"
+                    );
+                },
+                other => panic!("{name}: unknown op {other:?}"),
+            }
+        }
+    }
+}
+
+/// One window in, a dialog or nothing out.
+///
+/// The `dialog: null` cases carry as much as the positive ones: an ordinary app window, an
+/// offscreen prompt and a sub-floor window each have to answer nothing, and a classifier that
+/// surfaced any of them would put a pane over the user's screen for a window that is not a prompt.
+#[test]
+fn the_system_dialog_classifier_replays() {
+    let root = corpus();
+    let vectors = group_of(&root, "systemDialogClassify");
+    assert_eq!(
+        vectors.len(),
+        14,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let name = vector["name"].as_str().expect("a name");
+        let min_size = vector["minSize"].as_i64().expect("a floor");
+        let window = &vector["window"];
+        let snapshot = snapshot_of(window);
+        let classified = system_dialog::classify(&snapshot, min_size);
+
+        match &vector["dialog"] {
+            Value::Null => assert_eq!(classified, None, "{name}: surfaced a window that is not a dialog"),
+            expected => {
+                let dialog = classified.unwrap_or_else(|| panic!("{name}: classified nothing"));
+                assert_dialog(&dialog, expected, name);
+            },
+        }
+    }
+}
+
+/// A whole snapshot in, the dialogs to surface out, in the order given.
+///
+/// Order is the half a set comparison would miss: the window server answers front to back and the
+/// client spawns a pane per entry, so a re-ordering reshuffles panes between two polls that saw the
+/// same screen.
+#[test]
+fn the_system_dialog_detector_replays() {
+    let root = corpus();
+    let vectors = group_of(&root, "systemDialogDetect");
+    assert_eq!(
+        vectors.len(),
+        4,
+        "the corpus lost cases — vectors are added, never dropped"
+    );
+
+    for vector in &vectors {
+        let name = vector["name"].as_str().expect("a name");
+        let min_size = vector["minSize"].as_i64().expect("a floor");
+        let windows: Vec<system_dialog::WindowSnapshot<'_>> = vector["windows"]
+            .as_array()
+            .expect("a window list")
+            .iter()
+            .map(snapshot_of)
+            .collect();
+        let dialogs = system_dialog::detect(&windows, min_size);
+
+        let expected = vector["dialogs"].as_array().expect("a dialog list");
+        assert_eq!(dialogs.len(), expected.len(), "{name}: dialog count");
+        for (index, (dialog, pinned)) in dialogs.iter().zip(expected).enumerate() {
+            assert_dialog(dialog, pinned, &format!("{name}[{index}]"));
+        }
+    }
+}
+
+/// One corpus window record as the classifier reads it.
+///
+/// The frame arrives as BIT PATTERNS, which is the whole point of the vector: the classifier rounds
+/// before it gates on the size floor, so a width that prints as `59.6` has to be the same `59.6`
+/// the near side rounded.
+fn snapshot_of(window: &Value) -> system_dialog::WindowSnapshot<'_> {
+    let text = |field: &str| window[field].as_str().expect("a string field");
+    let bits = |field: &str| f64::from_bits(window[field].as_u64().expect("a bit pattern"));
+    system_dialog::WindowSnapshot {
+        window_id: u32::try_from(window["windowID"].as_u64().expect("an id")).expect("a u32"),
+        owner_name: text("ownerName"),
+        bundle_id: text("bundleID"),
+        is_on_screen: window["isOnScreen"].as_bool().expect("a visibility flag"),
+        title: text("title"),
+        width: bits("fWBits"),
+        height: bits("fHBits"),
+    }
+}
+
+/// Every field of a classified dialog against its pinned record.
+fn assert_dialog(dialog: &system_dialog::Dialog, pinned: &Value, label: &str) {
+    assert_eq!(
+        u64::from(dialog.window_id),
+        pinned["windowID"].as_u64().expect("an id"),
+        "{label}: window id"
+    );
+    assert_eq!(
+        dialog.owner,
+        pinned["owner"].as_str().expect("an owner"),
+        "{label}: owner"
+    );
+    assert_eq!(
+        dialog.title,
+        pinned["title"].as_str().expect("a title"),
+        "{label}: title"
+    );
+    assert_eq!(
+        dialog.width,
+        pinned["width"].as_i64().expect("a width"),
+        "{label}: width"
+    );
+    assert_eq!(
+        dialog.height,
+        pinned["height"].as_i64().expect("a height"),
+        "{label}: height"
+    );
+    assert_eq!(
+        dialog.is_secure,
+        pinned["isSecure"].as_bool().expect("a secure flag"),
+        "{label}: secure flag"
+    );
 }
