@@ -315,22 +315,27 @@ pub fn the_host_decides_no_capture_region(tree: &Tree) -> Report {
     report
 }
 
-/// The three frameworks stage E moved, and the ONE directory each is allowed to be named in.
+/// The frameworks the hostd port moved, and the ONE directory each is allowed to be named in.
 ///
 /// A pair per framework: the Rust file that wraps it, and the token no Rust outside
 /// `rust/slopdesk-apple-*` may spell. The token is the framework's own entry point rather than a
 /// crate name, because what this pins is not "the wrapper is depended on" — a Cargo edge already
 /// says that — but "the CALL happens in one place".
-const STAGE_E_FLOORS: &[(&str, &str)] = &[
+///
+/// Three rows arrived with stage E and the fourth with stage F. The list is keyed on the FRAMEWORK
+/// rather than on the stage for exactly that reason: a stage is when a row landed, and what the
+/// rule asserts is a property that does not expire when the next one starts.
+const AREA_FLOORS: &[(&str, &str)] = &[
     ("rust/slopdesk-apple-fsevents/src/watch.rs", r"FSEventStream[A-Z]"),
     (
         "rust/slopdesk-apple-pasteboard/src/board.rs",
         r"NSPasteboard(Type)?::|NSPasteboard\b",
     ),
     ("rust/slopdesk-apple-app/src/lib.rs", r"NSWorkspace::"),
+    ("rust/slopdesk-apple-machine/src/lib.rs", r"NSHost\b"),
 ];
 
-/// The host reaches `FSEvents`, the pasteboard and Launch Services from ONE crate each
+/// The host reaches `FSEvents`, the pasteboard, Launch Services and `NSHost` from ONE crate each
 ///
 /// `docs/60` §7 says stage E adds a row here per new crate, the way `slopdesk-apple-power` did. It
 /// is a different SHAPE from the three rules above and deliberately so: those pin that the Swift
@@ -351,17 +356,19 @@ const STAGE_E_FLOORS: &[(&str, &str)] = &[
 ///
 /// BREAK-TEST: added `let board = NSPasteboard::generalPasteboard();` to
 /// `rust/slopdesk-hostserver/src/clipsync.rs` ⇒ FAIL "reaches `NSPasteboard` directly". Separately
-/// deleted `rust/slopdesk-apple-fsevents/src/watch.rs` ⇒ FAIL "has no Rust behind it". Both
-/// restored from /tmp; PASS.
+/// added `NSHost::currentHost()` to `rust/slopdesk-hostd/src/workspacestore.rs` ⇒ FAIL, naming
+/// `slopdesk-apple-machine` as the home. Separately deleted
+/// `rust/slopdesk-apple-fsevents/src/watch.rs` ⇒ FAIL "has no Rust behind it". All restored from
+/// /tmp; PASS.
 #[must_use]
 pub fn each_apple_area_has_one_rust_home(tree: &Tree) -> Report {
     let mut report = Report::new();
-    for (home, _call) in STAGE_E_FLOORS {
+    for (home, _call) in AREA_FLOORS {
         report.fail_if(
             !tree.has(home),
             format!(
-                "{home} is gone — a framework stage E moved has no Rust behind it (docs/60 stage E, docs/57 \
-                 §2)",
+                "{home} is gone — a framework the hostd port moved has no Rust behind it (docs/60 stages E \
+                 and F, docs/57 §2)",
             ),
         );
     }
@@ -379,13 +386,13 @@ pub fn each_apple_area_has_one_rust_home(tree: &Tree) -> Report {
             continue;
         }
         read_any = true;
-        for (home, call) in STAGE_E_FLOORS {
+        for (home, call) in AREA_FLOORS {
             report.fail_if(
                 matches_line(file.code(), call),
                 format!(
                     "{text} reaches /{call}/ directly — every Apple framework area has ONE Rust home and \
                      this one's is {home}; a second caller is how the four-way CGWindowList decode drift \
-                     happened (docs/57 §2, docs/60 stage E)",
+                     happened (docs/57 §2, docs/60 stages E and F)",
                 ),
             );
         }
@@ -566,9 +573,9 @@ mod tests {
         assert!(!super::the_host_decides_no_capture_region(&fixture.tree()).is_clean());
     }
 
-    /// The three homes stage E landed, plus one ordinary Rust file for the ban to read.
+    /// Every home the port landed, plus one ordinary Rust file for the ban to read.
     fn homes(fixture: &Fixture) {
-        for (home, _call) in super::STAGE_E_FLOORS {
+        for (home, _call) in super::AREA_FLOORS {
             fixture.write(home, "pub fn f() {}\n");
         }
         fixture.write("rust/slopdesk-hostserver/src/clipsync.rs", "pub fn f() {}\n");
@@ -606,6 +613,9 @@ mod tests {
         for (name, line) in [
             ("fsevents", "fn w() { FSEventStreamCreate(); }\n"),
             ("workspace", "fn w() { NSWorkspace::sharedWorkspace(); }\n"),
+            // The stage-F row. A label is the cheapest thing in the tree to re-derive by hand,
+            // which is exactly why it needs the same floor as the expensive ones.
+            ("machine", "fn w() { NSHost::currentHost(); }\n"),
         ] {
             let fixture = Fixture::new(&format!("apple-floors-stage-e-{name}"));
             homes(&fixture);

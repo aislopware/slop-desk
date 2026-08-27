@@ -150,9 +150,9 @@ slopdesk-inspectord = { path = "../slopdesk-inspectord" }
 # The signal set the daemon parks on, and `sigwait` for the thread that parks. `DispatchSourceSignal`
 # was the Swift's answer to the same question; a dedicated thread is this one's, and it is the shape
 # `slopdesk-superd` already uses.
-# `hostname` is the third feature, and it is the workspace LABEL: a client shows the name the host
-# calls itself, and the POSIX hostname is what this daemon can answer without a SystemConfiguration
-# binding. See `src/workspacestore.rs` for the parity note.
+# `hostname` is the third feature, and it is the workspace label's SECOND rung: the name a Mac calls
+# itself is `slopdesk-apple-machine`'s, and the POSIX hostname is what answers when there is none.
+# See `src/workspacestore.rs` for the ladder.
 nix = { version = "0.31", features = ["signal", "resource", "hostname"] }
 
 # The arrangement a workspace IS, and the repair that turns an empty one into a first-run default.
@@ -163,6 +163,12 @@ slopdesk-tree = { path = "../slopdesk-tree" }
 # shape: this daemon already cannot build off macOS — the repo watch it composes is `FSEvents` — so a
 # `cfg` here would advertise a portability the binary does not have.
 slopdesk-apple-power = { path = "../slopdesk-apple-power" }
+
+# The name this Mac calls itself, for the workspace label. Ungated for the same reason its sibling
+# above is: this daemon does not build off macOS at all, so a `cfg` would advertise a portability the
+# binary has never had. The crate answers `None` off macOS anyway, which is the ladder's first rung
+# falling through rather than a compile error.
+slopdesk-apple-machine = { path = "../slopdesk-apple-machine" }
 
 # The daemon's own profile — every byte a client sees crosses this process.
 [profile.release]

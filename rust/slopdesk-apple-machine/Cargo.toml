@@ -1,0 +1,140 @@
+# `slopdesk-apple-machine` — Foundation's `NSHost`, and the ONE question it is asked.
+# Read `docs/57-apple-frameworks-in-rust.md` before changing it.
+#
+# ## What lives here
+# One thing: what this Mac calls itself. `localizedName` is the name a user set in Sharing
+# preferences and already recognises — the computed name, which Foundation reads out of the dynamic
+# store on the caller's behalf. It is a LABEL: a client prints it beside a workspace and nothing
+# anywhere decides anything from it.
+#
+# WHAT to do when there is no such name is not here. The fallback ladder — the POSIX hostname, then
+# a constant — is `slopdesk_hostd::workspacestore`'s, which is `forbid(unsafe_code)` and is where a
+# test can hold it.
+#
+# ## Why the area is `NSHost` and not `slopdesk-apple-app`'s
+# §2 gives a crate one framework AREA, and "which application owns this pid" is not "what is this
+# machine called". They are different classes in different frameworks — `NSRunningApplication` and
+# `NSWorkspace` are AppKit's, `NSHost` is Foundation's — and folding the second into the first would
+# make that crate's one reviewable question into two.
+#
+# ## `SCDynamicStoreCopyComputedName` is deliberately absent
+# The computed name lives behind it, and `docs/60`'s parity ledger said so — but the Swift never
+# called it. It called `Host.current().localizedName`, which IS `NSHost`, and `objc2-foundation`
+# generates that pair SAFE. Reaching past Foundation to SystemConfiguration would be a second
+# framework area, a hand-written `unsafe` block and a Copy-rule admission spent, all to answer the
+# same string the safe call already returns.
+#
+# ## The `unsafe` in this crate
+# NONE. `currentHost` and `localizedName` are both generated safe, and `NSString::to_string` is
+# safe, so there is no framework contract left for an `unsafe` block to name — the bar `docs/57` §3
+# sets per crate, cleared by writing none of it. Neither §2 admission is spent.
+#
+# The one opt-out it does carry is a `#[expect(deprecated, reason = …)]` on that single call. The
+# header points at Network framework, which replaces the four RESOLVING names below and answers
+# nothing at all for the label; the alternative is the `SCDynamicStore` block the section above
+# rejected. It is at the call site rather than in this file's `[lints]` on purpose — a manifest-wide
+# allow would also cover the next deprecated call nobody looked at.
+#
+# ## The names this crate does NOT expose
+# `NSHost` also answers `name`, `names`, `address` and `addresses`. Every one of those RESOLVES —
+# they go to the network and can block for as long as a lookup takes — and none of them is what the
+# Swift asked for. A daemon that parks a thread on a DNS timeout to draw a label is the bug this
+# omission prevents, so the surface is one function.
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-apple-machine"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "NSHost for slopdesk — the name this Mac calls itself, for a workspace label"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_apple_machine"
+path = "src/lib.rs"
+
+# PINNED EXACTLY, for the reason `slopdesk-apple-cgevent` gives: `objc2`'s MSRV is documented as
+# explicitly NOT policy, so a caret range would let a routine `cargo update` raise the toolchain
+# floor of a repository that builds three slices in CI.
+#
+# `default-features = false` plus the two class features is the whole dependency: `NSHost` for the
+# class, `NSString` for the string it answers with. The default set would drag in most of Foundation
+# to reach one property.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "=0.3.2", default-features = false, features = [
+  "std",
+  "NSHost",
+  "NSString",
+] }
+
+# Mirrors the other read crates': this is linked into the same archive.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The strict block every workspace carries. `unsafe_code` is `deny` rather than `forbid` because the
+# family's shape is a self-expiring `#[expect(unsafe_code, reason = …)]` per site; this crate has no
+# such site today, and the day one arrives it must be an `expect` rather than a manifest edit.
+[lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason — the same two every workspace disables, for the same two reasons.
+multiple_crate_versions = "allow"
+suboptimal_flops = "allow"
+imprecise_flops = "allow"

@@ -385,6 +385,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-apple-machine"
+version = "0.1.0"
+dependencies = [
+ "objc2-foundation",
+]
+
+[[package]]
 name = "slopdesk-apple-pasteboard"
 version = "0.1.0"
 dependencies = [
@@ -448,6 +455,7 @@ dependencies = [
  "serde_json",
  "slopdesk-agent",
  "slopdesk-androidd",
+ "slopdesk-apple-machine",
  "slopdesk-apple-power",
  "slopdesk-codeseed",
  "slopdesk-dropd",

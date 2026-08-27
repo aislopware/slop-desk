@@ -23,12 +23,12 @@
 //! topology, is moved ASIDE rather than overwritten: losing a workspace to a decode bug is
 //! survivable if the bytes are still there to look at.
 //!
-//! ## One parity gap, named rather than hidden
+//! ## The label, and the three rungs under it
 //! The Swift labelled the workspace with `Host.current().localizedName` — the name a Mac calls
-//! itself in Sharing preferences — and fell back to the POSIX hostname. This reads the POSIX
-//! hostname only: the computed name lives behind `SCDynamicStoreCopyComputedName`, which is a
-//! `SystemConfiguration` call and so belongs in a `slopdesk-apple-*` crate that does not exist yet.
-//! It is the Swift's own fallback rather than an invention, and it is a LABEL — see `docs/60` §F.2.
+//! itself in Sharing preferences — fell back to the POSIX hostname, then to a constant. All three
+//! rungs are here. The first is `slopdesk_apple_machine::localized_name`, which is that same
+//! Foundation call and nothing more; the ORDER is this file's, because which rung to take is a
+//! decision and the crate that touches the framework makes none. See `docs/60` §F.7.
 
 use core::time::Duration;
 use std::path::{Path, PathBuf};
@@ -284,8 +284,18 @@ impl WorkspaceStore for DiskWorkspace {
 
 /// What this host calls itself, so a client can label the workspace it is looking at.
 ///
-/// A workspace with no label is still a workspace, so every failure lands on a constant.
+/// Three rungs, in the Swift's own order. The name the user SET is the one they recognise, so it
+/// goes first; the POSIX hostname is what every machine has; and a workspace with no label is still
+/// a workspace, so the last rung is a constant rather than an error.
+///
+/// Each rung rejects an EMPTY answer as well as a missing one. A host whose Sharing name was
+/// cleared, or whose `gethostname` answers a zero-length string, has no label at that rung — and a
+/// blank caption is the one outcome worse than a generic one, because it reads as a bug in the
+/// client rather than as a machine nobody named.
 fn host_display_name() -> String {
+    if let Some(named) = slopdesk_apple_machine::localized_name() {
+        return named;
+    }
     let named = nix::unistd::gethostname()
         .ok()
         .and_then(|name| name.into_string().ok())

@@ -1263,12 +1263,12 @@ question — *who runs this verb* — and the Swift answered it six times.
 | verbs 18–20 | `hostserver::codeaction::CodeActions` over the stage-E `CodeServerManager`, and with it the code-server prewarm, which `main` now calls after the bind. Verb 19's path validation is `pathaction::absolute_host_path` — the Swift had that rule twice and the two copies had already drifted on `~user`. |
 | the ten `CodeServerSeams` | `hostd::services`. `CodeSeed.swift` forked `slopdesk-codeseed` six ways and parsed a JSON object off its stdout because Swift could not link it; hostd links it, so the six questions are six function calls. `AndroidServiceManager.announceMarker` was a string literal kept equal to `androidd`'s `server.rs` by a lint rule; the profile now names `slopdesk_androidd::server::ANNOUNCE_PREFIX` itself. `HostServiceProcess.locate` re-implemented a search order `toolchain::locate_tool` already owned — including a disagreement about what makes a candidate executable that no test could see. |
 
-**What F.4 leaves owed — the parity ledger the cutover is still gated on.** Nothing on this list drops
-off silently; each is a real behaviour the Swift hostd has and the Rust one does not yet.
+**What F.4 left owed — the parity ledger the cutover was gated on. ✅ EMPTY.** Nothing on this list
+dropped off silently; each was a real behaviour the Swift hostd had and the Rust one did not.
 
-| Owed | Where it goes |
+| Owed | Where it went |
 | --- | --- |
-| the host DISPLAY NAME | The workspace label. Swift read `Host.current().localizedName` — the name a Mac calls itself in Sharing preferences — and fell back to the POSIX hostname; `DiskWorkspace` reads the POSIX hostname only. The computed name is `SCDynamicStoreCopyComputedName`, a SystemConfiguration call, and so wants a `slopdesk-apple-*` crate that does not exist yet. It is the Swift's OWN fallback rather than an invention, and it is a label — which is why it is a row here and not a blocker. |
+| the host DISPLAY NAME | ~~The workspace label. Swift read `Host.current().localizedName` and fell back to the POSIX hostname; `DiskWorkspace` read the POSIX hostname only.~~ **F.7 below.** The ledger's reasoning was wrong in a way worth keeping visible: it named `SCDynamicStoreCopyComputedName` because that is where the computed name LIVES, and concluded the row wanted a SystemConfiguration crate. The Swift never called it. `Host.current().localizedName` is `NSHost`, Foundation reads the store on the caller's behalf, and the literal port cost no `unsafe` at all. |
 
 **F.5 — the two daemons hostd picks the port for, and the audit that keeps them honest. ✅ LANDED.**
 One batch, because the version audit's whole subject is the set of daemons the rest of the batch
@@ -1293,6 +1293,17 @@ between them was a line nobody had typed.
 | the candidate set, which is NARROWER than `list-panes` | `Sessions::live_panes` — attached mux panes, deduped one per pane rather than one per watching client. Not the control listing: a detached pane's shell is live but unwatched, and a standalone control pane belongs to an orchestrator that owns its input. Typing a user's command into either puts it where the user cannot see it happen. The dedupe is not tidiness either — a fanned-out pane is N members and ONE pane, and the failure it prevents is not a wrong choice but a right one made three times at the same prompt. |
 | installed BEFORE the prewarm | `prewarm()` is what starts the workbench, and the workbench's first `run` can arrive as soon as it has. The seam therefore goes in one statement earlier in `after_bind`, not after — the ordering is the fix, not a style. |
 | a host that is gone REFUSES | The runner holds the host weakly, the way the Swift's `[weak self]` did and for the same reason: the bridge server is the panel table's, not the host's, so a strong handle here would let the shutdown order decide whether the process exits. A pane that went away between the choice and the write is likewise a refusal in words, never a silent drop — the extension is waiting on that reply line to tell the user something. |
+
+**F.7 — the host's own name, and the ledger reaching zero. ✅ LANDED.** The last row of the F.4
+parity ledger, which is now empty: every behaviour the Swift hostd has, the Rust one has.
+
+| Wired | What it took |
+| --- | --- |
+| the workspace LABEL | `slopdesk-apple-machine`, a fourteenth `slopdesk-apple-*` crate holding one function, and `workspacestore::host_display_name` reading it as the first of three rungs. The Swift's order — the name the user SET, then the POSIX hostname, then a constant — is unchanged; what was missing was only its first rung. |
+| the ledger's own wrong answer, corrected | The row said the computed name is `SCDynamicStoreCopyComputedName` and so wanted a SystemConfiguration crate. That is where the name LIVES; it is not what the Swift called. `Host.current().localizedName` IS `NSHost`, `objc2-foundation` generates both halves of it SAFE, and the literal port therefore costs **zero** `unsafe` and **neither** §2 admission — where reaching past Foundation would have cost a hand-written block and a Copy-rule admission to return the same string. |
+| an EMPTY name is an ABSENT one | At every rung, and it is the one behaviour the port does not take from the Swift verbatim. A host whose Sharing name was cleared answers a zero-length string rather than nothing, and a caller that took it at face value would caption the workspace with a blank — which reads as a bug in the client rather than as a machine nobody named. The crate answers `None` for both, so the ladder has one rung to check instead of two. |
+| the four names that are NOT exposed | `NSHost` also answers `name`, `names`, `address` and `addresses`, and each of those RESOLVES — a network lookup that blocks for as long as the resolver takes. A daemon parking a thread on a DNS timeout to draw a caption is the failure the one-function surface forecloses. |
+| one `#[expect(deprecated)]`, at the call and not crate-wide | `NSHost.h` says "use Network framework instead", and for those four names it is right — resolution is `Network`'s job now. It says nothing about `localizedName`, because `Network` has no computed-name API; the only alternative is still the `SCDynamicStore` block the row above rejected. So the opt-out is a source-site `#[expect]` carrying that reason, which is what `CLAUDE.md`'s scoped-opt-outs rule requires and what makes the day a replacement ships a compile error rather than a silent staleness. |
 
 **Stage G (separate campaign, not scoped here) — the client transport.** `Sources/SlopDeskProtocol`
 and `MuxNWConnection` survive stage F because the macOS/iOS clients still speak through them. Moving
@@ -1353,4 +1364,5 @@ that empties its file, with its break test, and neither is a reason to keep the 
   not hostd's mux and keep their Swift channel.
 
 `rules/apple_floors.rs` pins injection, the window list and capture — none of the six hostd files
-above. Stage E adds a row to it per new crate, the way `slopdesk-apple-power` did.
+above. Each new crate adds a row to `AREA_FLOORS` there, the way `slopdesk-apple-power` did: three
+arrived with stage E, and `slopdesk-apple-machine` with F.7.

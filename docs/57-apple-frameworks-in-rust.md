@@ -251,6 +251,7 @@ accessor it needs, so the ownership question was answered by the binding rather 
 
 | `slopdesk-apple-pasteboard` | `NSPasteboard` (+ the `NSBitmapImageRep` transcode) | `SystemPasteboard`, `PasteboardClip`'s `AppKit` arm | **landed** (stage E) — costs **one** `unsafe` block, and **neither** §2 admission |
 | `slopdesk-apple-fsevents` | `FSEvents` | `RepoStatusWatcher`'s stream | **landed** (stage E) — costs **zero** `unsafe` blocks and **neither** admission; see the no-context-pointer note below |
+| `slopdesk-apple-machine` | `NSHost` | `HostWorkspaceStore.hostDisplayName`'s first rung | **landed** (stage F) — costs **zero** `unsafe` blocks and **neither** admission; the ledger's `SCDynamicStoreCopyComputedName` was where the name LIVES, not what the Swift called. The class is deprecated, so the crate carries the family's first `#[expect(deprecated, reason = …)]`, at the one call and not crate-wide: `Network` replaces the four RESOLVING names this crate deliberately does not expose, and answers nothing at all for the label |
 
 Each row lands on its own, with the Swift original deleted in the same change — `CLAUDE.md`'s
 one-implementation rule does not soften because the other language is a framework.
@@ -261,6 +262,12 @@ RUNNING beside their crates; deleting them would take the host down. What holds 
 is `one-rust-home-per-apple-area` in `rules/apple_floors.rs` — the Rust side has exactly one caller
 per framework area, so the drift this family exists to prevent cannot start on the Rust side while
 the Swift waits to be deleted. Stage F deletes both.
+
+**`slopdesk-apple-machine` is under that same carve-out, mid-stage-F rather than before it.**
+`HostWorkspaceStore.hostDisplayName()` still exists and still runs, because the Swift hostd it lives
+in is not deleted until the cutover at the end of the stage; it goes with `Sources/SlopDeskHost`, in
+that change and not in this one. The floor row is what holds the line meanwhile, exactly as it does
+for the two above.
 
 **`slopdesk-apple-fsevents` spends no admission because it passes no context pointer.** The Swift
 round-trips an `Unmanaged<EventBox>` through `FSEventStreamContext.info`, which in Rust is
