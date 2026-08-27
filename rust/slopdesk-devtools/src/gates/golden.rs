@@ -85,6 +85,7 @@ pub const FROZEN_KEYS: &[&str] = &[
     "fpsGovernorEwma",
     "hostOutputSniffer",
     "inputMotionCoalesce",
+    "inspectorEvents",
     "naluJoin",
     "naluSplit",
     "networkEstimateFold",
