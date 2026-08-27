@@ -5985,6 +5985,76 @@ uint8_t slopdesk_video_capture_backlog_decision(const SlopDeskVideoCaptureGates 
 // report a first frame as far faster than it was and let the pacer conclude it had headroom.
 double slopdesk_video_capture_fold_encode_ewma(double current, double sample_millis, double alpha);
 
+// ---- The four rules the capturer used to keep for itself ----------------------------------------
+//
+// Each was arithmetic over the table above with no framework call in it, living in
+// `WindowCapturer.swift` only because that is where the state it read happened to sit. The two
+// doubles lead in every record below, so the layout is the same under every C ABI this header is
+// read by.
+
+// The frame-by-frame state of the scroll-fps cap: what the caller writes back, and the verdict.
+typedef struct {
+  uint32_t motion_run;             // consecutive fast-scroll frames, after this one
+  int32_t  phase;                  // the Bresenham accumulator, after this one
+  bool     encode;                 // false drops this frame before the encode hand-off
+} SlopDeskVideoScrollDecimation;
+
+// The anchors the below-gate resolution carries between frames. The caller owns them and assigns
+// every field back from the resolution.
+typedef struct {
+  double  last_heartbeat;          // uptime of the last heartbeat-cadence anchor: any emitted keyframe
+  double  last_keyframe_emit;      // uptime of the last EMITTED keyframe — the recovery-IDR cooldown
+  int32_t frames_since_anchor;     // live frames since the last keyframe or LTR refresh
+  int32_t force_compact_counter;   // the DIAGNOSTIC compact-storm counter
+  bool    has_emitted_first_frame; // false only before the very first frame of this capturer
+} SlopDeskVideoEncodeAnchors;
+
+// One frame's below-gate inputs that are neither the table nor the anchors.
+typedef struct {
+  double  now;                     // uptime, the clock the anchors are stamped in — read ONCE per frame
+  double  heartbeat_interval;      // the periodic motion-IDR cadence, in SECONDS
+  double  self_heal_loss_rate;     // the folded loss EWMA; infinite before any report
+  int32_t heal_every;              // the self-heal K, REBASED at the governed fps
+  bool    keyframe_latched;        // the DRAINED forced-keyframe latch
+  bool    ltr_latched;             // the DRAINED LTR-refresh latch
+  bool    self_heal_eligible;      // whether client LTR acks are flowing
+} SlopDeskVideoEncodeFrame;
+
+// What the below-gate path does with one frame, and the anchors it leaves behind.
+typedef struct {
+  SlopDeskVideoEncodeAnchors anchors; // the advanced anchors — assign every field back
+  bool force_keyframe;                // encode this frame as an IDR
+  bool compact;                       // …and make it SMALL+coarse; never on the first frame
+  bool ltr_refresh;                   // encode it as a cheap ForceLTRRefresh P-frame instead
+} SlopDeskVideoEncodeResolution;
+
+// Whether the periodic motion IDR is due. The gate is half the question — an OFF table never is.
+bool   slopdesk_video_capture_heartbeat_due(const SlopDeskVideoCaptureGates *gates, double now,
+                                            double last_heartbeat, double interval);
+// The ASYMMETRIC adaptive-QP smoothing law. `has_previous` false seeds the smoother WHOLE.
+// Coarsening eases up by (raw - smoothed)/up_ramp floored at ONE QP so a step is never lost to
+// truncation; re-sharpening steps down by at most down_step per frame.
+int32_t slopdesk_video_capture_smooth_adaptive_qp(const SlopDeskVideoCaptureGates *gates,
+                                                  bool has_previous, int32_t previous,
+                                                  int32_t raw_qp);
+// The scroll-fps cap: a sustain-run debounce, then an even Bresenham decimation. `obligated` is the
+// OR of every reason this frame must be encoded regardless — a forced keyframe, a pending latch.
+SlopDeskVideoScrollDecimation
+       slopdesk_video_capture_scroll_decimation(const SlopDeskVideoCaptureGates *gates,
+                                                uint32_t motion_run, int32_t phase, int32_t base_fps,
+                                                bool measured, uint32_t change_milli, bool obligated);
+// The WHOLE below-gate resolution in one answer: first frame, heartbeat, the recovery-IDR cooldown
+// collapse, compact, LTR-refresh precedence, the self-heal cadence and the force-compact
+// diagnostic. A null table answers the anchors back unchanged with all three verdicts false.
+SlopDeskVideoEncodeResolution
+       slopdesk_video_capture_resolve_encode(const SlopDeskVideoCaptureGates *gates,
+                                             SlopDeskVideoEncodeAnchors anchors,
+                                             SlopDeskVideoEncodeFrame frame);
+// The synthetic 90 kHz PTS is a COUNTER, not a clock: exactly one tick past the last emitted.
+int64_t slopdesk_video_capture_synthetic_pts(int64_t last_ticks);
+// …and a real frame never reverses it. The high-water clamp, in ticks.
+int64_t slopdesk_video_capture_monotonic_pts(int64_t last_ticks, int64_t incoming_ticks);
+
 /* ---------------------------------------------------------------------------- *
  * The CLIENT's pointer and gesture policies. Every rule here belongs to a view that is never
  * instantiated in a test — no Metal, no VT — so each one is asked here instead.
@@ -8371,6 +8441,42 @@ typedef struct {
 size_t slopdesk_sim_route(const SlopDeskSimRoute *route, uint8_t *out,
                           size_t cap);
 
+// ---- What the simulator control server ANSWERS ------------------------------
+//
+// The block above builds the requests; these read the replies. Each is a
+// validate-then-drop decode with no framework in it, and each answers a blob in
+// `docs/55` §4's measure-then-fill shape. A NUMBER in one is 8 bytes big-endian
+// of the `f64` bit pattern, a TEXT is `[u32 BE length][UTF-8]`, a COUNT is
+// `[u16 BE]`.
+
+// `/simulators/<udid>/definition.json` → the drawable device. 0 means nothing
+// drawable came back, which a degenerate or NaN viewport also is.
+// Layout: model, bleed x/y/w/h, viewport w/h, rect x/y/w/h, clipRadius,
+// barePath, restPath, then [u16 count] × (id, left/top/width/height percent,
+// restPath, pressedPath, envelopeButton).
+size_t slopdesk_sim_chrome(const uint8_t *json, size_t json_len, uint8_t *out,
+                           size_t cap);
+// `/simulators.json` → one list, the running group first. 0 is a top level that
+// is not an object; ZERO DEVICES is a real answer, which is why the count rides
+// inside the blob rather than being the return.
+// Layout: [u16 count] × ([u8 booted], udid, name, runtime, state).
+size_t slopdesk_sim_device_list(const uint8_t *json, size_t json_len,
+                                uint8_t *out, size_t cap);
+// One typed coordinate. Always 16 bytes — latitude then longitude — or 0 for a
+// refusal, which DMS, `inf` and `NaN` all are.
+size_t slopdesk_sim_coordinate_parse(const uint8_t *text, size_t text_len,
+                                     uint8_t *out, size_t cap);
+// One degree value as the POST body carries it: six decimals, half away from
+// zero. A door for a rounding rule because the readout and the body must agree.
+double slopdesk_sim_coordinate_round(double degrees);
+// The fixed-width readout for a pinned position, "37.334886, -122.008988".
+// Never empty, so 0 can only mean the caller's buffer was measured wrong.
+size_t slopdesk_sim_coordinate_readout(double latitude, double longitude,
+                                       uint8_t *out, size_t cap);
+// The shortlist of places worth one tap.
+// Layout: [u16 count] × (name, latitude, longitude).
+size_t slopdesk_sim_places(uint8_t *out, size_t cap);
+
 // ---------------------------------------------------------------------------
 // What the two device panels SAY — `slopdesk_devicepanel::android` and
 // `::simulator`.
@@ -9649,6 +9755,42 @@ void slopdesk_virtual_display_set_terminated(const SlopDeskVirtualDisplay *handl
                                              SlopDeskVirtualDisplayTerminatedFn callback,
                                              void *context);
 void slopdesk_virtual_display_destroy(const SlopDeskVirtualDisplay *handle);
+
+// ---- The controlling terminal, and the write that finishes ---------------------------
+//
+// `slopdesk_posix::rawmode` and `::fdio`. macOS-only for a STRUCTURAL reason rather than
+// a stylistic one: `slopdesk-posix` is a `cfg(target_os = "macos")` edge of this crate,
+// so these symbols are absent from both iOS slices and a declaration outside this region
+// would be a link error on a phone.
+//
+// Two things the Swift did are deliberately not preserved. Entering raw mode TWICE used
+// to overwrite the saved attributes with the raw ones it had just written, so the restore
+// wrote raw attributes back and reported success; entry is idempotent here and keeps the
+// FIRST entry's set. And the handler's copy of the saved `termios` was a plain mutable
+// global fenced only by `pthread_sigmask`, which is per-THREAD — a signal delivered to
+// another thread of a multi-threaded client could read it mid-write. It is published
+// through an atomic now, and exactly one of the handler and the locked path performs the
+// write-back.
+
+// Puts a terminal into raw mode, saving what it looked like first. 0 on success, else the
+// positive errno — `ENOTTY` for a descriptor that is not a terminal, from an explicit
+// `isatty` check rather than from whatever `tcgetattr` happened to report.
+int32_t slopdesk_tty_enter_raw(int32_t terminal);
+// Writes the saved attributes back. Idempotent, and a no-op when raw mode was never
+// entered, so a restore on an error path costs nothing and needs no flag beside it.
+void    slopdesk_tty_restore(void);
+// Installs the SIGINT/SIGTERM/SIGQUIT/SIGHUP handlers that restore the terminal and then
+// re-raise under SIG_DFL. Call it BEFORE slopdesk_tty_enter_raw: a window in which the
+// terminal is raw and no handler is installed is a shell left unusable by one ^C.
+void    slopdesk_tty_install_restore_on_signals(void);
+// A terminal's window size as EIGHT bytes — cols, rows, pxWidth, pxHeight, each a
+// little-endian uint16. 0 is §4's None: the descriptor is not a terminal.
+size_t  slopdesk_tty_window_size(int32_t terminal, uint8_t *out, size_t cap);
+// `write(2)` until the whole `(bytes, len)` is out, retrying EINTR. 0 every byte moved ·
+// -1 the peer closed while bytes were still owed · otherwise the positive errno. The
+// count is not answered, because the REACTION stays with the caller and no caller of this
+// could resume from a partial one.
+int32_t slopdesk_fd_write_all(int32_t fd, const uint8_t *bytes, size_t len);
 
 #endif /* TARGET_OS_OSX */
 // MACOS-ONLY END
@@ -11512,6 +11654,56 @@ size_t slopdesk_android_sidebar_notices(unsigned char *out, size_t cap);
 // entry points, the argument `docs/55` makes about the constant door. An index no build wrote
 // answers 0, which no member of the family can be.
 uint64_t slopdesk_android_sidebar_measure(uint32_t index);
+
+// ---- The Android bridge's request/response grammar ----------------------------------------------
+//
+// The panel's end of the object `slopdesk_androidd::protocol` already decodes. What used to be a
+// dictionary literal and a `JSONSerialization` call per operation is one door that either builds
+// the line or answers 0, so the near side has ONE failure arm where it had seven.
+
+#define SLOPDESK_ANDROID_BRIDGE_OP_LIST 0u
+#define SLOPDESK_ANDROID_BRIDGE_OP_BOOT 1u
+#define SLOPDESK_ANDROID_BRIDGE_OP_SHUTDOWN 2u
+#define SLOPDESK_ANDROID_BRIDGE_OP_CONSOLE 3u
+#define SLOPDESK_ANDROID_BRIDGE_OP_SCREENSHOT 4u
+#define SLOPDESK_ANDROID_BRIDGE_OP_LOGCAT 5u
+#define SLOPDESK_ANDROID_BRIDGE_OP_OPEN 6u
+
+// One bridge request line, NEWLINE INCLUDED. 0 means the line could not be built at all — an
+// unknown op, or a required field that was empty — and it cannot collide with a real answer,
+// because every line this writes carries at least `{"op":…}` and a terminator.
+size_t slopdesk_android_bridge_request(uint8_t op,
+                                       const unsigned char *serial, size_t serial_len,
+                                       const unsigned char *argument, size_t argument_len,
+                                       int64_t max_size,
+                                       unsigned char *out, size_t cap);
+// Why the host refused this reply line, IN ITS OWN WORDS. 0 means the host acked, which is why an
+// `error` key present but empty reads as a refusal rather than as a blank sentence.
+size_t slopdesk_android_bridge_reply_failure(const unsigned char *line, size_t line_len,
+                                             unsigned char *out, size_t cap);
+// What one console command printed. 0 is an EMPTY answer, not an absent one.
+size_t slopdesk_android_bridge_console_output(const unsigned char *line, size_t line_len,
+                                              unsigned char *out, size_t cap);
+// How many PNG bytes follow this ack. ONE answer for all three refusals — no count, a non-positive
+// one, and one past the 16 MiB ceiling — because the near side does the same thing with each.
+size_t slopdesk_android_bridge_screenshot_bytes(const unsigned char *line, size_t line_len);
+
+typedef struct SlopDeskAndroidLogLines SlopDeskAndroidLogLines;
+
+// A console line splitter at the head of a fresh `logcat` subscription. There is no `_reset`: a
+// re-opened subscription drops the handle and builds another.
+SlopDeskAndroidLogLines *slopdesk_android_log_lines_new(void);
+// Frees a splitter. NULL is a no-op; exactly one `_free` per `_new`.
+void slopdesk_android_log_lines_free(SlopDeskAndroidLogLines *handle);
+// Folds a chunk in and PARKS the lines it completed; answers the bytes `_answer` needs. This is the
+// park-then-read shape rather than `docs/55` §4's measure-then-fill, because a push CONSUMES the
+// chunk and asking twice would double-feed it. 0 means no line completed.
+size_t slopdesk_android_log_lines_push(SlopDeskAndroidLogLines *handle,
+                                       const unsigned char *chunk, size_t chunk_len);
+// Copies the lines the last push parked: [u32 count] then count × ([u32 length][UTF-8 bytes]), all
+// big-endian. Nothing is consumed here, so a short buffer costs a call and never a line.
+size_t slopdesk_android_log_lines_answer(SlopDeskAndroidLogLines *handle,
+                                         unsigned char *out, size_t cap);
 
 // ---- The client control socket's validate-then-drop rules ---------------------------------------
 //

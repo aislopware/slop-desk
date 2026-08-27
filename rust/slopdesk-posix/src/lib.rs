@@ -32,6 +32,8 @@
 
 /// Resolving a symbol at run time, and calling it.
 pub mod dynsym;
+/// Moving every byte over a bare descriptor, EINTR and short transfers folded in.
+pub mod fdio;
 /// One-byte-plus-descriptor `recvmsg`, the receiving half of `SCM_RIGHTS`.
 pub mod fdpass;
 /// The disassembly pin on [`pty`]'s fork-to-exec window.
@@ -47,6 +49,8 @@ pub mod hoststats;
 pub mod proc;
 /// `openpty` + `fork` + `execve`, and the descriptor flags around them.
 pub mod pty;
+/// A LOCAL terminal's line discipline, restored from a signal handler.
+pub mod rawmode;
 /// Process-wide signal dispositions.
 pub mod signal;
 /// Socket options with no `nix` wrapper taking a bare descriptor.

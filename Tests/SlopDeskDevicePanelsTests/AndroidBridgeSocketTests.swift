@@ -25,12 +25,13 @@ final class AndroidBridgeSocketTests: XCTestCase {
     }
 
     private func socket(_ capture: Capture) throws -> AndroidBridgeSocket {
-        try XCTUnwrap(AndroidBridgeSocket(
-            request: ["op": "list"],
+        let request = try XCTUnwrap(AndroidBridgeRequest.list)
+        return AndroidBridgeSocket(
+            request: request,
             onReply: { capture.replies.append($0) },
             onBytes: { capture.bytes.append($0) },
             onEnd: { capture.ends.append($0) },
-        ))
+        )
     }
 
     private func line(_ object: [String: Any]) -> Data {
@@ -135,10 +136,16 @@ final class AndroidBridgeSocketTests: XCTestCase {
         XCTAssertEqual(capture.replies.count, 1)
     }
 
-    func testAnUnencodableRequestBuildsNoSocketAtAll() {
-        XCTAssertNil(AndroidBridgeSocket(
-            request: ["op": Date()], onReply: { _ in },
-        ))
+    func testARequestMissingItsRequiredFieldBuildsNoLineAtAll() {
+        // The one refusal left, and it is the daemon's own rule one hop earlier: `adb -s "" shell`
+        // is a different command from the one that was meant, so an empty field is an absent field
+        // and a request carrying one is never sent. There is no longer an "unencodable" case — the
+        // dictionary that could hold a `Date` is gone, and with it the Objective-C exception
+        // `JSONSerialization` raised rather than threw.
+        XCTAssertNil(AndroidBridgeRequest.shutdown(serial: ""))
+        XCTAssertNil(AndroidBridgeRequest.boot(avd: ""))
+        XCTAssertNil(AndroidBridgeRequest.console("rotate", serial: ""))
+        XCTAssertNotNil(AndroidBridgeRequest.list)
     }
 }
 #endif

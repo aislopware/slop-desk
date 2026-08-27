@@ -47,6 +47,16 @@
 //! they owe instead is what every untrusted decoder owes — an optional answer, and not one byte
 //! read without a bounds check.
 //!
+//! ## And what its server SAYS BACK
+//!
+//! [`sim_chrome`], [`sim_devices`] and [`sim_place`] are the same foreign wire read in the other
+//! direction: the device body `definition.json` describes, the device set `/simulators.json`
+//! answers, and the one coordinate the location route takes. They keep that group's rule — an
+//! optional answer, and a malformed ROW dropped rather than the envelope refused — and they are
+//! here rather than in a client because each is a decision that would otherwise be made twice, once
+//! per renderer: which button can be drawn, which row can be acted on, which typed string is a
+//! position at all.
+//!
 //! ## And what the two panels SAY
 //!
 //! [`android`] and [`simulator`] are the fourth, and the one place the "answers, not identities"
@@ -72,12 +82,16 @@
 //! nor the serial crosses.
 
 pub mod android;
+pub mod android_bridge;
 pub mod android_sidebar;
 pub mod geometry;
 pub mod panel_key;
 pub mod scroll;
 pub mod sections;
+pub mod sim_chrome;
+pub mod sim_devices;
 pub mod sim_input;
+pub mod sim_place;
 pub mod sim_routes;
 pub mod sim_stream;
 pub mod simulator;

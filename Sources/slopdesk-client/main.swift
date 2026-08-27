@@ -2,11 +2,11 @@
 #else
 import Glibc
 #endif
+import CSlopDeskFFI
 import Foundation
 import SlopDeskClient
 import SlopDeskTerminal
 import SlopDeskTransport
-import SlopDeskTTY
 
 // slopdesk-client — a genuinely usable interactive remote terminal over SlopDesk PATH 1.
 //
@@ -110,10 +110,29 @@ guard let args = parseArgs(CommandLine.arguments) else { usage() }
 
 // MARK: - Output writer (host → local stdout)
 
-/// Writes all of `data` to `fd`, looping over partial writes / EINTR. Used for the
-/// host→stdout path so a large burst is never truncated.
+/// Writes all of `data` to `fd`. Used for the host→stdout path so a large burst is never truncated.
+///
+/// The loop — EINTR is a retry, a short write is normal — is `slopdesk_posix::fdio::write_all`. The
+/// outcome is dropped here on purpose: stdout is the terminal the user is looking at, and a failure
+/// to reach it has nothing left to be reported ON.
 func writeAll(fd: Int32, _ data: Data) {
-    FileDescriptorWrite.all(fd: fd, data)
+    data.withUnsafeBytes { raw in
+        _ = slopdesk_fd_write_all(fd, raw.baseAddress?.assumingMemoryBound(to: UInt8.self), raw.count)
+    }
+}
+
+/// The local terminal's size, or `nil` when `fd` is not a tty.
+///
+/// `slopdesk_tty_window_size` answers eight bytes — four little-endian `UInt16`s in the order
+/// cols, rows, pxWidth, pxHeight — or nothing at all, which is the `nil`.
+func terminalWindowSize(fd: Int32) -> (cols: UInt16, rows: UInt16, pxWidth: UInt16, pxHeight: UInt16)? {
+    var out = [UInt8](repeating: 0, count: 8)
+    let needed = out.withUnsafeMutableBufferPointer { room in
+        slopdesk_tty_window_size(fd, room.baseAddress, room.count)
+    }
+    guard needed == out.count else { return nil }
+    func field(_ index: Int) -> UInt16 { UInt16(out[index * 2]) | (UInt16(out[index * 2 + 1]) << 8) }
+    return (cols: field(0), rows: field(1), pxWidth: field(2), pxHeight: field(3))
 }
 
 // MARK: - SIGWINCH (terminal resize) plumbing
@@ -202,15 +221,14 @@ let exitState = ExitState()
 // Raw mode (interactive only). Saved attrs restored on EVERY exit path: defer below,
 // signal handlers, and the explicit restore on disconnect/exit.
 if interactive {
-    do {
-        // Install the restoring handlers FIRST (they are a no-op while raw mode is not
-        // yet active), then apply raw attributes. This closes the enable-time window where
-        // a SIGTERM/SIGHUP arriving after tcsetattr(raw) took effect but before a handler
-        // existed would kill the process with the terminal left in raw mode.
-        TerminalRawMode.installRestoreOnSignals()
-        try TerminalRawMode.enableRaw(fd: STDIN_FILENO)
-    } catch {
-        stderrLine("could not enter raw mode: \(error)")
+    // Install the restoring handlers FIRST (they are a no-op while raw mode is not
+    // yet active), then apply raw attributes. This closes the enable-time window where
+    // a SIGTERM/SIGHUP arriving after tcsetattr(raw) took effect but before a handler
+    // existed would kill the process with the terminal left in raw mode.
+    slopdesk_tty_install_restore_on_signals()
+    let failure = slopdesk_tty_enter_raw(STDIN_FILENO)
+    if failure != 0 {
+        stderrLine("could not enter raw mode: \(String(cString: strerror(failure)))")
         exit(1)
     }
 }
@@ -265,7 +283,7 @@ let shutdown = Shutdown()
 /// final tty mutation and no live thread is touching stdin as the process exits.
 func finish(_ code: Int32) -> Never {
     shutdown.stopProducers()
-    TerminalRawMode.restore()
+    slopdesk_tty_restore()
     exit(code)
 }
 
@@ -303,7 +321,7 @@ Task {
     let supervisor = reconnect.start(host: args.host, port: args.port)
 
     // 3. Initial resize from the local terminal size.
-    if let ws = TerminalRawMode.windowSize(fd: STDIN_FILENO) {
+    if let ws = terminalWindowSize(fd: STDIN_FILENO) {
         try? await client.sendResize(cols: ws.cols, rows: ws.rows, pxWidth: ws.pxWidth, pxHeight: ws.pxHeight)
     }
 
@@ -409,7 +427,7 @@ Task {
     // 7. RESIZE pump: SIGWINCH → sendResize from the current terminal size.
     let resizeTask = Task {
         for await _ in resizeBridge.stream {
-            if let ws = TerminalRawMode.windowSize(fd: STDIN_FILENO) {
+            if let ws = terminalWindowSize(fd: STDIN_FILENO) {
                 try? await client.sendResize(cols: ws.cols, rows: ws.rows, pxWidth: ws.pxWidth, pxHeight: ws.pxHeight)
             }
         }

@@ -6,6 +6,12 @@
 // after that newline as a byte stream. That split lives here so `list`, `boot`, `logcat` and `open`
 // do not each re-implement the framing, and so the one subtle part of it exists exactly once.
 //
+// The two LINES are `slopdesk_devicepanel::android_bridge`'s: ``AndroidBridgeRequest`` writes the
+// request and ``AndroidBridgeReply/decode(_:)`` reads the ack. The grammar behind both is
+// `slopdesk_androidd::protocol`, which is the daemon's decoder for the same object — it was a Rust
+// decoder facing a Swift encoder, with the op names, the field names and the `{"ok":…}` envelope
+// spelled once on each side and nothing that could fail if one of them gained a field.
+//
 // The subtle part: the reply line and the first bytes of the stream arrive in the SAME receive.
 // `logcat` starts printing and the encoder starts emitting the moment the host acks, so a
 // read-until-newline that discards its remainder loses the head of the stream — for `open`, that is
@@ -20,9 +26,75 @@
 // Hang-safety: this constructs a real network object, so nothing here may be built in a unit test.
 // The framing it performs is delegated to ``consume(_:)``, which is pure and directly testable.
 
+import CSlopDeskFFI
 import Foundation
 import Network
 import SlopDeskTransport
+import SlopDeskWorkspaceModel
+
+/// The request lines the bridge accepts, written by `slopdesk_android_bridge_request`.
+///
+/// `nil` is a request that CANNOT be built, which is now one thing rather than two: a required field
+/// that is empty. `adb -s "" shell` is a different command from the one that was meant, so the
+/// daemon treats an empty field as absent, and a request it would refuse is one this side should
+/// not have sent. The old failure — a `[String: Any]` the JSON encoder could not take — is gone with
+/// the dictionary: `JSONSerialization.data(withJSONObject:)` raises an Objective-C exception rather
+/// than throwing, so `try?` never caught it and a typo in a request literal took the app down.
+package enum AndroidBridgeRequest {
+    /// Every device the host can see, running or merely defined.
+    package static var list: Data? { line(op: SLOPDESK_ANDROID_BRIDGE_OP_LIST) }
+
+    /// Start an AVD by name. The one request that names no serial — there is not one yet.
+    package static func boot(avd: String) -> Data? {
+        line(op: SLOPDESK_ANDROID_BRIDGE_OP_BOOT, argument: avd)
+    }
+
+    /// Stop a running device.
+    package static func shutdown(serial: String) -> Data? {
+        line(op: SLOPDESK_ANDROID_BRIDGE_OP_SHUTDOWN, serial: serial)
+    }
+
+    /// One emulator-console command, answered in the reply's `output`.
+    package static func console(_ command: String, serial: String) -> Data? {
+        line(op: SLOPDESK_ANDROID_BRIDGE_OP_CONSOLE, serial: serial, argument: command)
+    }
+
+    /// One PNG capture: the reply names a byte count and the bytes follow it.
+    package static func screenshot(serial: String) -> Data? {
+        line(op: SLOPDESK_ANDROID_BRIDGE_OP_SCREENSHOT, serial: serial)
+    }
+
+    /// `logcat` at a priority, streamed until the client hangs up.
+    package static func logcat(serial: String, level: AndroidLogLevel) -> Data? {
+        line(op: SLOPDESK_ANDROID_BRIDGE_OP_LOGCAT, serial: serial, argument: level.rawValue)
+    }
+
+    /// The scrcpy mirror: video down, control up, verbatim after the ack.
+    package static func open(serial: String, maxSize: Int) -> Data? {
+        line(op: SLOPDESK_ANDROID_BRIDGE_OP_OPEN, serial: serial, maxSize: maxSize)
+    }
+
+    /// One crossing per request, with docs/55 §4's retry. The line arrives with its own terminating
+    /// newline: the framing is the door's, so nothing here appends one.
+    private static func line(
+        op: some BinaryInteger, serial: String = "", argument: String = "", maxSize: Int = 0,
+    ) -> Data? {
+        let bytes = devicePanelLend(serial) { serialBytes, serialLength in
+            devicePanelLend(argument) { argumentBytes, argumentLength in
+                wsAnswerBytes { out, cap in
+                    slopdesk_android_bridge_request(
+                        UInt8(truncatingIfNeeded: op),
+                        serialBytes, serialLength,
+                        argumentBytes, argumentLength,
+                        Int64(maxSize),
+                        out, cap,
+                    )
+                }
+            }
+        }
+        return bytes.isEmpty ? nil : Data(bytes)
+    }
+}
 
 /// A bridge connection's reply, as its caller sees it.
 ///
@@ -37,6 +109,22 @@ package enum AndroidBridgeReply: Equatable {
     /// The host refused, with its own sentence. Surfaced rather than swallowed: a missing `adb`, an
     /// AVD that will not boot, a device that vanished mid-request all say so here and nowhere else.
     case failed(String)
+
+    /// One reply line, as `slopdesk_android_bridge_reply_failure` reads it.
+    ///
+    /// The door answers `0` for an ack and a SENTENCE for everything else, which is why there is no
+    /// verdict byte to pair with it: a refusal that named no reason — or named an empty one — comes
+    /// back as the panel's own "The host refused." rather than as a blank dialog, so no failure this
+    /// can answer is the empty string.
+    package static func decode(_ line: Data) -> Self {
+        let failure = devicePanelLend(line) { bytes, length in
+            wsAnswerBytes { out, cap in
+                slopdesk_android_bridge_reply_failure(bytes, length, out, cap)
+            }
+        }
+        // swiftlint:disable:next optional_data_string_conversion
+        return failure.isEmpty ? .ok(line) : .failed(String(decoding: failure, as: UTF8.self))
+    }
 }
 
 @MainActor
@@ -67,21 +155,16 @@ package final class AndroidBridgeSocket {
     /// nothing but hop to the main actor.
     private static let queue = DispatchQueue(label: "slopdesk.android.bridge")
 
-    package init?(
-        request: [String: Any],
+    /// `request` is a whole line, newline included — ``AndroidBridgeRequest`` built it, and it is
+    /// the only thing that can refuse to build one. This initializer therefore cannot fail: there
+    /// is nothing left in it that could.
+    package init(
+        request: Data,
         onReply: @escaping (AndroidBridgeReply) -> Void,
         onBytes: ((Data) -> Void)? = nil,
         onEnd: ((String?) -> Void)? = nil,
     ) {
-        // `isValidJSONObject` FIRST, and not as belt-and-braces: `data(withJSONObject:)` raises an
-        // Objective-C exception on a value it cannot encode rather than throwing a Swift error, so
-        // `try?` does not catch it and the failable initializer's nil path would be unreachable — a
-        // typo in a request dictionary would take the app down instead of failing the call.
-        guard JSONSerialization.isValidJSONObject(request),
-              var encoded = try? JSONSerialization.data(withJSONObject: request)
-        else { return nil }
-        encoded.append(UInt8(ascii: "\n"))
-        self.request = encoded
+        self.request = request
         self.onReply = onReply
         self.onBytes = onBytes
         self.onEnd = onEnd
@@ -188,15 +271,7 @@ package final class AndroidBridgeSocket {
     private func deliverReply(_ line: Data) {
         let reply = onReply
         onReply = nil
-        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else {
-            reply?(.failed("The host's reply made no sense."))
-            return
-        }
-        guard object["ok"] as? Bool == true else {
-            reply?(.failed(object["error"] as? String ?? "The host refused."))
-            return
-        }
-        reply?(.ok(line))
+        reply?(AndroidBridgeReply.decode(line))
     }
 
     /// One exit, whatever the cause. A socket that dies BEFORE the ack reports the failure through

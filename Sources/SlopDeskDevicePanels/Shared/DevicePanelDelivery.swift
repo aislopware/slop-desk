@@ -63,6 +63,17 @@ package struct DevicePanelBlob {
         Int(byte()) << 8 | Int(byte())
     }
 
+    /// A `[UInt32 big-endian]` row count, or `0` past the end.
+    ///
+    /// Wider than ``count16()`` for the one delivery whose row count is not a table's: a `logcat`
+    /// chunk is 64 KiB of a device's own output, so a chunk that is all newlines has more rows than
+    /// two bytes can name, and a truncated count would drop the console's tail without saying so.
+    package mutating func count32() -> Int {
+        var count = 0
+        for _ in 0..<4 { count = count << 8 | Int(byte()) }
+        return count
+    }
+
     /// One `[UInt32 big-endian length][UTF-8 bytes]` run, or the empty string past the end.
     package mutating func text() -> String {
         var length = 0
@@ -101,6 +112,20 @@ package func devicePanelLend<T>(
     var bytes = Array(text.utf8)
     return bytes.withUnsafeMutableBufferPointer { buffer in
         body(buffer.baseAddress, buffer.count)
+    }
+}
+
+/// The same lend for bytes that arrived as bytes — a reply line off a socket, a chunk of console
+/// output — rather than as a word this side typed.
+///
+/// An empty `Data` lends ZERO BYTES, and whether its base address is null is not contractual —
+/// `withUnsafeBytes` may hand back either. Every door already reads both spellings as the same
+/// non-answer an absent argument makes, so neither side has to know which one it got.
+package func devicePanelLend<T>(
+    _ data: Data, _ body: (UnsafePointer<UInt8>?, Int) -> T,
+) -> T {
+    data.withUnsafeBytes { bytes in
+        body(bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count)
     }
 }
 

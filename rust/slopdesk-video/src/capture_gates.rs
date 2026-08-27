@@ -80,6 +80,13 @@ pub const KEYS: [&str; 28] = [
 /// in Swift with no key, and it stays one number here.
 pub const SCROLL_MOTION_SUSTAIN_FRAMES: u32 = 2;
 
+/// Ceiling the consecutive-fast-scroll run counts to.
+///
+/// The run is only ever compared against [`SCROLL_MOTION_SUSTAIN_FRAMES`], so anything past a
+/// million is the same answer as a million; the cap is there so a scroll that never stops cannot
+/// walk the counter into an overflow. A bare `min` in Swift, and one number here.
+pub const SCROLL_MOTION_RUN_CEILING: u32 = 1_000_000;
+
 /// The loss EWMA at or above which self-heal stays armed under the clean-link loss gate.
 ///
 /// 0.5%, mirroring the session's `kf_dup_loss_threshold` — the adaptive-FEC ladder's lowest
@@ -308,11 +315,214 @@ impl CaptureGates {
     /// suppressed, which is what makes re-arming on the first lossy frame immediate.
     #[must_use]
     pub fn should_self_heal(&self, frames_since_anchor: i32, eligible: bool, loss_rate: f64) -> bool {
-        if self.self_heal_every <= 0 || frames_since_anchor < self.self_heal_every || !eligible {
+        self.should_self_heal_every(self.self_heal_every, frames_since_anchor, eligible, loss_rate)
+    }
+
+    /// [`Self::should_self_heal`] against a cadence the caller supplies rather than the table's
+    /// own.
+    ///
+    /// The below-gate path rebases K time-equivalently at a governed fps
+    /// (`slopdesk_fps_self_heal_every` — 60→6, 30→3, 20→2, 15→2) so the wall-clock heal latency
+    /// stays ≈100–133 ms, and it is THAT K the counter must be compared against. Splitting it
+    /// out keeps [`Self::should_self_heal`] — the ungoverned question — spelled once.
+    #[must_use]
+    pub fn should_self_heal_every(
+        &self,
+        heal_every: i32,
+        frames_since_anchor: i32,
+        eligible: bool,
+        loss_rate: f64,
+    ) -> bool {
+        if heal_every <= 0 || frames_since_anchor < heal_every || !eligible {
             return false;
         }
         // A clean link — skip the refresh doublet.
         !(self.self_heal_loss_gate && loss_rate < SELF_HEAL_LOSS_GATE_THRESHOLD)
+    }
+
+    /// Whether a periodic motion-heartbeat IDR is DUE.
+    ///
+    /// The heartbeat is default-OFF, so the gate is half the question and the clock is the other
+    /// half. Spelled once because it is asked twice per frame: the static-suppression decider must
+    /// not suppress a frame that owes the periodic insurance IDR, and the below-gate resolution
+    /// promotes that frame to a keyframe.
+    #[must_use]
+    pub const fn heartbeat_due(&self, now: f64, last_heartbeat: f64, interval: f64) -> bool {
+        self.motion_heartbeat && now - last_heartbeat >= interval
+    }
+
+    /// The asymmetric smoothing law for the per-frame adaptive-QP ceiling.
+    ///
+    /// `previous` is the last smoothed value, or `None` on the first measured frame — which seeds
+    /// the smoother WHOLE, exactly as the encode EWMA does.
+    ///
+    /// The two directions are deliberately unequal. Coarsening on motion ONSET eases up by
+    /// `(raw - smoothed) / up_ramp`, floored at ONE QP so a ramp wider than the gap still MOVES —
+    /// a step that rounded to zero would pin the smoother at the sharp end for the whole burst,
+    /// which is the ~80 KB-per-frame scroll start this law exists to avoid. Re-sharpening on STOP
+    /// steps down by at most `down_step` per frame, because a snap straight to the floor re-encodes
+    /// the whole settled viewport in ONE frame (the scroll-stop stutter).
+    ///
+    /// Both clamps are `at_least(…, 1, …)` in [`Self::from_env`], so the division is by a positive
+    /// number; the `max(1)` on the divisor is for a table that did not come from there — a door
+    /// takes its record from C — and lands on the same value for every table that did.
+    #[must_use]
+    #[expect(
+        clippy::integer_division,
+        reason = "QP is a whole number on the wire — the truncated step is the law, and its remainder is \
+                  carried by the next frame's gap rather than lost"
+    )]
+    pub fn smooth_adaptive_qp(&self, previous: Option<i32>, raw_qp: i32) -> i32 {
+        let Some(smoothed) = previous else { return raw_qp };
+        if raw_qp > smoothed {
+            let gap = raw_qp.saturating_sub(smoothed);
+            smoothed.saturating_add((gap / self.adaptive_qp_up_ramp.max(1)).max(1))
+        } else {
+            raw_qp.max(smoothed.saturating_sub(self.adaptive_qp_down_step))
+        }
+    }
+
+    /// The scroll-fps cap: a sustain-run debounce, then an even Bresenham decimation.
+    ///
+    /// `motion_run` and `phase` are the caller's carried state; the answer carries both back
+    /// advanced. `base_fps` is the CAPTURE rate the cap is a fraction of, `measured` and
+    /// `change_milli` are this frame's change measurement, and `obligated` says the frame owes
+    /// something — a pending forced keyframe, a pending LTR refresh, or a due heartbeat.
+    ///
+    /// Two guards, each load-bearing. The run must reach [`SCROLL_MOTION_SUSTAIN_FRAMES`] before
+    /// the cap engages at all, so a single flick frame is never decimated; and an obligated frame
+    /// always passes, so a recovery anchor cannot be dropped by a rate cap. Either guard also
+    /// RESETS the accumulator, so a burst always starts its decimation pattern from the same phase
+    /// rather than from wherever the last burst left off.
+    #[must_use]
+    pub fn scroll_decimation(
+        &self,
+        motion_run: u32,
+        phase: i32,
+        base_fps: i32,
+        measured: bool,
+        change_milli: u32,
+        obligated: bool,
+    ) -> ScrollDecimation {
+        // Slow scroll and caret motion never trigger: the changed-row fraction is the whole test
+        // for what counts as FAST, and an unmeasured frame is not fast by default.
+        let fast = self.scroll_fps > 0
+            && self.scroll_fps < base_fps
+            && measured
+            && change_milli >= self.scroll_motion_threshold_milli;
+        let run = if fast {
+            motion_run.saturating_add(1).min(SCROLL_MOTION_RUN_CEILING)
+        } else {
+            0
+        };
+        if run < SCROLL_MOTION_SUSTAIN_FRAMES || obligated {
+            return ScrollDecimation {
+                motion_run: run,
+                phase: 0,
+                encode: true,
+            };
+        }
+        let advanced = phase.saturating_add(self.scroll_fps);
+        if advanced >= base_fps {
+            ScrollDecimation {
+                motion_run: run,
+                phase: advanced.saturating_sub(base_fps),
+                encode: true,
+            }
+        } else {
+            ScrollDecimation {
+                motion_run: run,
+                phase: advanced,
+                encode: false,
+            }
+        }
+    }
+
+    /// The below-gate keyframe / compact / LTR-refresh resolution for one frame.
+    ///
+    /// The largest decision on the capture path and the highest-consequence one: a wrong verdict
+    /// here is a visible stream artefact, not a crash. It is a pure state transition — the answer
+    /// carries the advanced [`EncodeAnchors`] back, and the caller assigns them.
+    ///
+    /// The ladder, in the order the reasons compose:
+    ///
+    /// 1. The drained recovery latch proposes a keyframe.
+    /// 2. The FIRST delivered frame always forces one, and marks itself so.
+    /// 3. Otherwise a DUE motion heartbeat forces one (default OFF — the synchronous
+    ///    complete-frames call blocks the capture queue).
+    /// 4. RECOVERY-IDR STORM COLLAPSE: if the latch is the ONLY reason and a keyframe went out less
+    ///    than [`Self::min_recovery_idr_interval`] ago, ship a P-frame instead — the recent
+    ///    keyframe already re-anchored the client, and the client's 2·RTT escalation re-requests
+    ///    later, OUTSIDE the window, if that one was lost too. The dropped force is NOT re-latched,
+    ///    so it cannot deferred-storm. It never gates the first-frame or heartbeat IDR.
+    /// 5. Any ACTUALLY-emitted keyframe re-anchors BOTH clocks.
+    /// 6. A forced IDR on the live path is compact — `compact = force_keyframe && !first_frame`.
+    ///    The first frame stays full quality (one-time, no loop).
+    /// 7. An LTR refresh ships only when no keyframe does: a keyframe is a superset recovery and
+    ///    wins, so a refresh latched alongside one is simply consumed.
+    /// 8. SELF-HEAL cadence, at the caller's fps-rebased `heal_every`. The counter advances only on
+    ///    a frame that is neither a keyframe nor an already-latched refresh, and RESETS on either.
+    /// 9. The diagnostic force-compact storm, which fires only when no real obligation already did.
+    #[must_use]
+    pub fn resolve_encode(&self, anchors: EncodeAnchors, frame: EncodeFrame) -> EncodeResolution {
+        let mut next = anchors;
+        let mut force_keyframe = frame.keyframe_latched;
+        let mut is_first_frame = false;
+        let mut is_heartbeat = false;
+        if anchors.has_emitted_first_frame {
+            if self.heartbeat_due(frame.now, anchors.last_heartbeat, frame.heartbeat_interval) {
+                force_keyframe = true;
+                is_heartbeat = true;
+            }
+        } else {
+            force_keyframe = true;
+            is_first_frame = true;
+            next.has_emitted_first_frame = true;
+        }
+        if force_keyframe
+            && frame.keyframe_latched
+            && !is_first_frame
+            && !is_heartbeat
+            && self.min_recovery_idr_interval > 0.0
+            && frame.now - anchors.last_keyframe_emit < self.min_recovery_idr_interval
+        {
+            force_keyframe = false;
+        }
+        if force_keyframe {
+            next.last_heartbeat = frame.now;
+            next.last_keyframe_emit = frame.now;
+        }
+        let compact = force_keyframe && !is_first_frame;
+        let mut ltr_refresh = frame.ltr_latched && !force_keyframe;
+        // The counter keeps climbing while the clean-link loss gate suppresses (skipped, not
+        // reset), which is what makes re-arming on the first lossy frame immediate.
+        if frame.heal_every > 0 && !force_keyframe && !ltr_refresh {
+            next.frames_since_anchor = next.frames_since_anchor.saturating_add(1);
+            if self.should_self_heal_every(
+                frame.heal_every,
+                next.frames_since_anchor,
+                frame.self_heal_eligible,
+                frame.self_heal_loss_rate,
+            ) {
+                ltr_refresh = true;
+            }
+        }
+        if force_keyframe || ltr_refresh {
+            next.frames_since_anchor = 0;
+        }
+        let mut force_compact = compact;
+        if self.force_compact_every > 0 && !force_keyframe && !ltr_refresh && !compact {
+            next.force_compact_counter = next.force_compact_counter.saturating_add(1);
+            if next.force_compact_counter % self.force_compact_every == 0 {
+                force_compact = true;
+            }
+        }
+        EncodeResolution {
+            anchors: next,
+            force_keyframe,
+            compact: force_compact,
+            ltr_refresh,
+        }
     }
 
     /// What the decoupled encode backlog does with an arriving frame.
@@ -371,6 +581,92 @@ pub fn fold_encode_ewma(current: f64, sample_millis: f64, alpha: f64) -> f64 {
     } else {
         sample_millis
     }
+}
+
+/// The synthetic-PTS counter: one 90 kHz tick past the last emitted PTS.
+///
+/// A COUNTER, not a clock (Sunshine's discipline): the static-IDR timer's re-encode of a cached
+/// frame has no capture timestamp of its own, and one tick past the high-water mark is strictly
+/// monotonic and collision-free with every real frame — which the live session requires, since it
+/// encodes with frame reordering off.
+///
+/// Saturating rather than wrapping, which is `CMTimeAdd`'s own behaviour at the top of the range
+/// and unreachable either way: at 90 kHz, `i64::MAX` ticks is about three million years.
+#[must_use]
+pub const fn synthetic_pts(last_ticks: i64) -> i64 {
+    last_ticks.saturating_add(1)
+}
+
+/// The high-water clamp a REAL frame's PTS passes through before the encode hand-off.
+///
+/// Clamping the value ACTUALLY handed to the encoder — not just the tracker — is what stops a real
+/// frame from reversing a prior synthetic IDR's PTS. Both sides are 90 kHz ticks, so the comparison
+/// is exact rather than a rational one.
+#[must_use]
+pub fn monotonic_pts(last_ticks: i64, incoming_ticks: i64) -> i64 {
+    last_ticks.max(incoming_ticks)
+}
+
+/// The scroll-fps cap's verdict, and the decimator state it leaves behind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScrollDecimation {
+    /// Consecutive fast-scroll frames, after this one.
+    pub motion_run: u32,
+    /// The Bresenham accumulator, after this one.
+    pub phase: i32,
+    /// Whether this frame goes on to the encode hand-off. `false` drops it entirely — no encode,
+    /// no packetize, no send.
+    pub encode: bool,
+}
+
+/// The frameQueue-owned anchors the below-gate resolution carries between frames.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EncodeAnchors {
+    /// Uptime seconds of the last heartbeat-cadence anchor — any emitted keyframe.
+    pub last_heartbeat: f64,
+    /// Uptime seconds of the last EMITTED keyframe, which drives the recovery-IDR cooldown.
+    pub last_keyframe_emit: f64,
+    /// Live frames since the last re-anchor (keyframe or LTR refresh).
+    pub frames_since_anchor: i32,
+    /// The diagnostic force-compact counter.
+    pub force_compact_counter: i32,
+    /// Whether a frame has ever been handed to the encoder on this capturer.
+    pub has_emitted_first_frame: bool,
+}
+
+/// One below-gate frame's inputs that are neither the table nor the anchors.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EncodeFrame {
+    /// Uptime seconds, the same clock the anchors are stamped in.
+    pub now: f64,
+    /// The periodic motion-IDR cadence, in seconds.
+    pub heartbeat_interval: f64,
+    /// The freshly-folded loss EWMA the session pushes, consulted only under the loss gate. High
+    /// (infinite) before any report, so an unmeasured link never suppresses healing.
+    pub self_heal_loss_rate: f64,
+    /// The self-heal cadence for THIS frame — the table's K rebased time-equivalently at the
+    /// governed fps. Equal to the table's own K while the fps governor is inert.
+    pub heal_every: i32,
+    /// The DRAINED forced-keyframe latch (a client loss-recovery request).
+    pub keyframe_latched: bool,
+    /// The DRAINED LTR-refresh latch — the cheap recovery alternative to a forced IDR.
+    pub ltr_latched: bool,
+    /// Whether client LTR acks are flowing, which is what arms the self-heal cadence.
+    pub self_heal_eligible: bool,
+}
+
+/// What the below-gate path does with one frame, and the anchors it leaves behind.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EncodeResolution {
+    /// The advanced anchors — the caller assigns every field back.
+    pub anchors: EncodeAnchors,
+    /// Encode this frame as an IDR.
+    pub force_keyframe: bool,
+    /// Encode it SMALL+coarse. `compact ⟹ force_keyframe` for every real obligation; the
+    /// DIAGNOSTIC force-compact storm is the one path that sets it alone, on purpose.
+    pub compact: bool,
+    /// Encode it as a cheap `ForceLTRRefresh` P-frame.
+    pub ltr_refresh: bool,
 }
 
 /// What the decoupled encode backlog does with an arriving frame.
@@ -640,6 +936,383 @@ mod tests {
             freshest.backlog_decision(&[true, true], false),
             BacklogDecision::Enqueue,
         );
+    }
+
+    #[test]
+    fn the_adaptive_qp_smoother_seeds_whole_then_ramps_up_and_steps_down() {
+        let plain = gates(&[]);
+        assert_eq!(
+            plain.smooth_adaptive_qp(None, 37),
+            37,
+            "the first frame seeds whole"
+        );
+        // Default up-ramp 1 ⇒ INSTANT: a scroll's first frames are already coarse.
+        assert_eq!(plain.smooth_adaptive_qp(Some(22), 40), 40);
+        // Default down-step 4: a stop re-sharpens by at most that per frame, never straight to raw.
+        assert_eq!(plain.smooth_adaptive_qp(Some(40), 22), 36);
+        // …and the step never OVERSHOOTS past the target.
+        assert_eq!(plain.smooth_adaptive_qp(Some(24), 22), 22);
+        // Equal is not "up": it takes the down branch and lands on itself.
+        assert_eq!(plain.smooth_adaptive_qp(Some(30), 30), 30);
+
+        // The `max(1, …)` boundary: a ramp WIDER than the gap still moves one QP. `(23-22)/4 == 0`
+        // in Swift's truncating division and in Rust's, and a smoother pinned at the sharp end for
+        // a whole burst is the ~80 KB-per-frame scroll start this law exists to avoid.
+        let ramped = gates(&[("SLOPDESK_AQP_UP_RAMP", "4")]);
+        assert_eq!(ramped.smooth_adaptive_qp(Some(22), 23), 23);
+        assert_eq!(ramped.smooth_adaptive_qp(Some(22), 26), 23, "(26-22)/4 == 1");
+        assert_eq!(ramped.smooth_adaptive_qp(Some(22), 42), 27, "(42-22)/4 == 5");
+
+        // A huge down-step makes the snap-down instant again, which is the knob's documented use.
+        let snapping = gates(&[("SLOPDESK_AQP_DOWN_STEP", "51")]);
+        assert_eq!(snapping.smooth_adaptive_qp(Some(40), 22), 22);
+    }
+
+    /// The two ends of the scroll cap: the debounce, and the even Bresenham pattern.
+    #[test]
+    fn the_scroll_cap_debounces_then_decimates_evenly() {
+        let capped = gates(&[("SLOPDESK_SCROLL_FPS", "30")]);
+        let fast = capped.scroll_motion_threshold_milli;
+
+        // A single flick frame is never decimated — the run has not reached the sustain.
+        let first = capped.scroll_decimation(0, 0, 60, true, fast, false);
+        assert_eq!(first, ScrollDecimation {
+            motion_run: 1,
+            phase: 0,
+            encode: true,
+        });
+        // The second consecutive fast frame reaches the sustain, and 30/60 keeps every other one.
+        let second = capped.scroll_decimation(first.motion_run, first.phase, 60, true, fast, false);
+        assert_eq!(second, ScrollDecimation {
+            motion_run: 2,
+            phase: 30,
+            encode: false,
+        });
+        let third = capped.scroll_decimation(second.motion_run, second.phase, 60, true, fast, false);
+        assert_eq!(third, ScrollDecimation {
+            motion_run: 3,
+            phase: 0,
+            encode: true,
+        });
+
+        // An obligated frame ALWAYS passes and resets the accumulator — a rate cap must never
+        // swallow a recovery anchor.
+        let owed = capped.scroll_decimation(9, 30, 60, true, fast, true);
+        assert!(owed.encode);
+        assert_eq!(owed.phase, 0);
+        assert_eq!(owed.motion_run, 10, "the run still advances");
+
+        // Slow scroll, an unmeasured frame, and a cap that is not below the capture rate: no run.
+        assert_eq!(
+            capped
+                .scroll_decimation(9, 30, 60, true, fast - 1, false)
+                .motion_run,
+            0
+        );
+        assert_eq!(
+            capped.scroll_decimation(9, 30, 60, false, fast, false).motion_run,
+            0
+        );
+        assert_eq!(
+            capped.scroll_decimation(9, 30, 30, true, fast, false).motion_run,
+            0
+        );
+        // …and the cap OFF is the shipped default, which never counts at all.
+        assert_eq!(
+            gates(&[])
+                .scroll_decimation(9, 30, 60, true, fast, false)
+                .motion_run,
+            0
+        );
+
+        // The run saturates at its ceiling rather than walking into an overflow.
+        let pinned = capped.scroll_decimation(SCROLL_MOTION_RUN_CEILING, 0, 60, true, fast, false);
+        assert_eq!(pinned.motion_run, SCROLL_MOTION_RUN_CEILING);
+    }
+
+    /// Every anchor at rest, as a capturer that has never delivered a frame holds them.
+    const FRESH: EncodeAnchors = EncodeAnchors {
+        last_heartbeat: 0.0,
+        last_keyframe_emit: 0.0,
+        frames_since_anchor: 0,
+        force_compact_counter: 0,
+        has_emitted_first_frame: false,
+    };
+
+    /// An ordinary below-gate frame: nothing latched, healing armed at the table's own cadence.
+    const LIVE: EncodeFrame = EncodeFrame {
+        now: 100.0,
+        heartbeat_interval: 2.5,
+        self_heal_loss_rate: f64::INFINITY,
+        heal_every: 30,
+        keyframe_latched: false,
+        ltr_latched: false,
+        self_heal_eligible: true,
+    };
+
+    #[test]
+    fn the_first_frame_is_a_full_quality_idr_and_only_the_first() {
+        let plain = gates(&[]);
+        let first = plain.resolve_encode(FRESH, LIVE);
+        assert!(first.force_keyframe);
+        assert!(
+            !first.compact,
+            "the FIRST frame stays full quality — one-time, no loop",
+        );
+        assert!(!first.ltr_refresh);
+        assert!(first.anchors.has_emitted_first_frame);
+        assert_eq!(
+            first.anchors.last_keyframe_emit, LIVE.now,
+            "both clocks re-anchor"
+        );
+        assert_eq!(first.anchors.last_heartbeat, LIVE.now);
+
+        // A LATCHED recovery on a live frame is compact — that is the whole point of the conjunct.
+        let latched = plain.resolve_encode(first.anchors, EncodeFrame {
+            keyframe_latched: true,
+            ..LIVE
+        });
+        assert!(latched.force_keyframe);
+        assert!(latched.compact);
+    }
+
+    #[test]
+    fn the_recovery_cooldown_collapses_a_latch_and_nothing_else() {
+        // v1 spacing: 500 ms between SENT recovery IDRs.
+        let cooled = gates(&[("SLOPDESK_RECOVERY_IDR_V2", "0")]);
+        let anchored = EncodeAnchors {
+            last_keyframe_emit: 99.9, // 100 ms ago — inside the window
+            last_heartbeat: 99.9,
+            has_emitted_first_frame: true,
+            ..FRESH
+        };
+        let collapsed = cooled.resolve_encode(anchored, EncodeFrame {
+            keyframe_latched: true,
+            ..LIVE
+        });
+        assert!(
+            !collapsed.force_keyframe,
+            "the recent keyframe already re-anchored"
+        );
+        assert!(!collapsed.compact);
+        assert_eq!(
+            collapsed.anchors.last_keyframe_emit, 99.9,
+            "a keyframe that did not go out does not re-anchor the cooldown",
+        );
+
+        // OUTSIDE the window the same latch is honoured.
+        let honoured = cooled.resolve_encode(
+            EncodeAnchors {
+                last_keyframe_emit: 99.0,
+                ..anchored
+            },
+            EncodeFrame {
+                keyframe_latched: true,
+                ..LIVE
+            },
+        );
+        assert!(honoured.force_keyframe);
+
+        // It NEVER gates the first frame…
+        let first = cooled.resolve_encode(
+            EncodeAnchors {
+                has_emitted_first_frame: false,
+                ..anchored
+            },
+            EncodeFrame {
+                keyframe_latched: true,
+                ..LIVE
+            },
+        );
+        assert!(first.force_keyframe);
+        // …nor a due heartbeat, whose force does not come from the latch.
+        let beating = gates(&[
+            ("SLOPDESK_RECOVERY_IDR_V2", "0"),
+            ("SLOPDESK_MOTION_HEARTBEAT", "1"),
+        ]);
+        let heartbeat = beating.resolve_encode(
+            EncodeAnchors {
+                last_heartbeat: 90.0, // 10 s ago — well past the 2.5 s cadence
+                ..anchored
+            },
+            EncodeFrame {
+                keyframe_latched: true,
+                ..LIVE
+            },
+        );
+        assert!(heartbeat.force_keyframe);
+        // The shipped table leaves this gate INERT: v2 owns admission and suppresses before latching.
+        let inert = gates(&[]).resolve_encode(anchored, EncodeFrame {
+            keyframe_latched: true,
+            ..LIVE
+        });
+        assert!(inert.force_keyframe, "a granted latch is never dropped under v2");
+    }
+
+    #[test]
+    fn the_heartbeat_is_off_until_its_gate_says_otherwise() {
+        let anchored = EncodeAnchors {
+            last_heartbeat: 90.0,
+            last_keyframe_emit: 90.0,
+            has_emitted_first_frame: true,
+            ..FRESH
+        };
+        assert!(!gates(&[]).resolve_encode(anchored, LIVE).force_keyframe);
+        let beating = gates(&[("SLOPDESK_MOTION_HEARTBEAT", "1")]);
+        assert!(beating.resolve_encode(anchored, LIVE).force_keyframe);
+        assert!(beating.heartbeat_due(100.0, 97.5, 2.5), "exactly due counts");
+        assert!(!beating.heartbeat_due(100.0, 97.6, 2.5));
+        assert!(
+            !gates(&[]).heartbeat_due(100.0, 0.0, 2.5),
+            "the gate is half the question"
+        );
+    }
+
+    #[test]
+    fn a_keyframe_wins_over_a_latched_refresh_and_both_reset_the_heal_counter() {
+        let plain = gates(&[]);
+        let anchored = EncodeAnchors {
+            last_heartbeat: 100.0,
+            last_keyframe_emit: 100.0,
+            frames_since_anchor: 12,
+            has_emitted_first_frame: true,
+            ..FRESH
+        };
+        // A keyframe is a superset recovery: the refresh latched alongside it is simply consumed.
+        let both = plain.resolve_encode(anchored, EncodeFrame {
+            keyframe_latched: true,
+            ltr_latched: true,
+            ..LIVE
+        });
+        assert!(both.force_keyframe);
+        assert!(!both.ltr_refresh);
+        assert_eq!(both.anchors.frames_since_anchor, 0);
+
+        // With no keyframe, the latched refresh ships — and does NOT advance the counter first.
+        let refreshed = plain.resolve_encode(anchored, EncodeFrame {
+            ltr_latched: true,
+            ..LIVE
+        });
+        assert!(!refreshed.force_keyframe);
+        assert!(refreshed.ltr_refresh);
+        assert_eq!(refreshed.anchors.frames_since_anchor, 0);
+    }
+
+    #[test]
+    fn the_self_heal_cadence_counts_encoded_frames_at_the_rebased_k() {
+        let plain = gates(&[]);
+        let anchored = EncodeAnchors {
+            last_heartbeat: 100.0,
+            last_keyframe_emit: 100.0,
+            frames_since_anchor: 29,
+            has_emitted_first_frame: true,
+            ..FRESH
+        };
+        let healed = plain.resolve_encode(anchored, LIVE);
+        assert!(healed.ltr_refresh, "the 30th delta is the refresh");
+        assert_eq!(healed.anchors.frames_since_anchor, 0);
+        assert!(
+            !plain
+                .resolve_encode(
+                    EncodeAnchors {
+                        frames_since_anchor: 28,
+                        ..anchored
+                    },
+                    LIVE
+                )
+                .ltr_refresh
+        );
+
+        // The GOVERNED K is the one the counter is compared against — 60→15 fps rebases 30 to 7,
+        // so the heal fires four times sooner in frames and at the same wall-clock latency.
+        let rebased = plain.resolve_encode(
+            EncodeAnchors {
+                frames_since_anchor: 6,
+                ..anchored
+            },
+            EncodeFrame {
+                heal_every: 7,
+                ..LIVE
+            },
+        );
+        assert!(rebased.ltr_refresh);
+
+        // Acks not flowing: the counter still climbs, so healing starts at most one frame after
+        // eligibility arms.
+        let stalled = plain.resolve_encode(anchored, EncodeFrame {
+            self_heal_eligible: false,
+            ..LIVE
+        });
+        assert!(!stalled.ltr_refresh);
+        assert_eq!(stalled.anchors.frames_since_anchor, 30);
+
+        // K == 0 disables the cadence, and the counter is not even advanced.
+        let off = plain.resolve_encode(anchored, EncodeFrame {
+            heal_every: 0,
+            ..LIVE
+        });
+        assert!(!off.ltr_refresh);
+        assert_eq!(off.anchors.frames_since_anchor, 29);
+
+        // The clean-link gate suppresses the doublet, counter climbing, and re-arms at threshold.
+        let gated = gates(&[("SLOPDESK_SELF_HEAL_LOSS_GATE", "1")]);
+        assert!(
+            !gated
+                .resolve_encode(anchored, EncodeFrame {
+                    self_heal_loss_rate: 0.0,
+                    ..LIVE
+                })
+                .ltr_refresh
+        );
+        assert!(
+            gated
+                .resolve_encode(anchored, EncodeFrame {
+                    self_heal_loss_rate: SELF_HEAL_LOSS_GATE_THRESHOLD,
+                    ..LIVE
+                })
+                .ltr_refresh
+        );
+    }
+
+    #[test]
+    fn the_diagnostic_compact_storm_fires_only_on_an_unobliged_frame() {
+        let storming = gates(&[("SLOPDESK_FORCE_COMPACT_EVERY", "3")]);
+        let anchored = EncodeAnchors {
+            last_heartbeat: 100.0,
+            last_keyframe_emit: 100.0,
+            has_emitted_first_frame: true,
+            ..FRESH
+        };
+        let mut carried = anchored;
+        for expected in [false, false, true, false, false, true] {
+            let step = storming.resolve_encode(carried, LIVE);
+            assert_eq!(
+                step.compact, expected,
+                "counter {}",
+                step.anchors.force_compact_counter
+            );
+            assert!(!step.force_keyframe, "the diagnostic never forces an IDR");
+            carried = step.anchors;
+        }
+        // A frame that already owes something does not advance the diagnostic counter at all.
+        let owed = storming.resolve_encode(carried, EncodeFrame {
+            keyframe_latched: true,
+            ..LIVE
+        });
+        assert_eq!(owed.anchors.force_compact_counter, carried.force_compact_counter);
+        assert!(owed.compact, "the real obligation is what made it compact");
+        // Unset is off: the shipped table never sets it.
+        assert!(!gates(&[]).resolve_encode(anchored, LIVE).compact);
+    }
+
+    #[test]
+    fn the_synthetic_pts_is_a_counter_and_a_real_frame_never_reverses_it() {
+        assert_eq!(synthetic_pts(0), 1);
+        assert_eq!(synthetic_pts(90_000), 90_001);
+        assert_eq!(synthetic_pts(i64::MAX), i64::MAX, "saturating, like CMTimeAdd");
+        assert_eq!(monotonic_pts(90_001, 90_000), 90_001, "the synthetic mark holds");
+        assert_eq!(monotonic_pts(90_001, 180_000), 180_000, "a newer real frame wins");
+        assert_eq!(monotonic_pts(90_001, 90_001), 90_001);
     }
 
     #[test]

@@ -24,7 +24,8 @@ use core::ffi::c_uchar;
 
 use slopdesk_video::blob_list;
 use slopdesk_video::capture_gates::{
-    BacklogDecision, CaptureGateContext, CaptureGates, KEYS, fold_encode_ewma,
+    BacklogDecision, CaptureGateContext, CaptureGates, EncodeAnchors, EncodeFrame, KEYS, fold_encode_ewma,
+    monotonic_pts, synthetic_pts,
 };
 
 use crate::{borrow, deliver};
@@ -103,6 +104,77 @@ pub struct SlopDeskVideoCaptureGates {
     /// The loss EWMA at or above which self-heal stays armed under the clean-link gate. The crate's
     /// own constant, delivered with the table so the caller has no number of its own to drift.
     pub self_heal_loss_gate_threshold: f64,
+}
+
+/// The scroll-fps cap's verdict, and the decimator state it leaves behind.
+///
+/// Crosses by VALUE in both directions — it is three scalars, and an in-out pointer pair for three
+/// scalars would cost the caller more than the copy does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct SlopDeskVideoScrollDecimation {
+    /// Consecutive fast-scroll frames, after this one.
+    pub motion_run: u32,
+    /// The Bresenham accumulator, after this one.
+    pub phase: i32,
+    /// Whether this frame goes on to the encode hand-off. `false` drops it entirely.
+    pub encode: bool,
+}
+
+/// The frameQueue-owned anchors the below-gate resolution carries between frames.
+///
+/// The two doubles lead so the record lays out the same way under every C ABI the header is read
+/// by — the same discipline every other flat table here keeps.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(C)]
+pub struct SlopDeskVideoEncodeAnchors {
+    /// Uptime seconds of the last heartbeat-cadence anchor — any emitted keyframe.
+    pub last_heartbeat: f64,
+    /// Uptime seconds of the last EMITTED keyframe, which drives the recovery-IDR cooldown.
+    pub last_keyframe_emit: f64,
+    /// Live frames since the last re-anchor (keyframe or LTR refresh).
+    pub frames_since_anchor: i32,
+    /// The diagnostic force-compact counter.
+    pub force_compact_counter: i32,
+    /// Whether a frame has ever been handed to the encoder on this capturer.
+    pub has_emitted_first_frame: bool,
+}
+
+/// One below-gate frame's inputs that are neither the table nor the anchors.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(C)]
+pub struct SlopDeskVideoEncodeFrame {
+    /// Uptime seconds, the same clock the anchors are stamped in.
+    pub now: f64,
+    /// The periodic motion-IDR cadence, in seconds.
+    pub heartbeat_interval: f64,
+    /// The freshly-folded loss EWMA, consulted only under the clean-link gate. Infinite before any
+    /// report, so an unmeasured link never suppresses healing.
+    pub self_heal_loss_rate: f64,
+    /// The self-heal cadence for THIS frame — the table's K rebased time-equivalently at the
+    /// governed fps. Equal to the table's own K while the fps governor is inert.
+    pub heal_every: i32,
+    /// The DRAINED forced-keyframe latch (a client loss-recovery request).
+    pub keyframe_latched: bool,
+    /// The DRAINED LTR-refresh latch — the cheap recovery alternative to a forced IDR.
+    pub ltr_latched: bool,
+    /// Whether client LTR acks are flowing, which is what arms the self-heal cadence.
+    pub self_heal_eligible: bool,
+}
+
+/// What the below-gate path does with one frame, and the anchors it leaves behind.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(C)]
+pub struct SlopDeskVideoEncodeResolution {
+    /// The advanced anchors — the caller assigns every field back.
+    pub anchors: SlopDeskVideoEncodeAnchors,
+    /// Encode this frame as an IDR.
+    pub force_keyframe: bool,
+    /// Encode it SMALL+coarse. `compact ⟹ force_keyframe` for every real obligation; the
+    /// DIAGNOSTIC force-compact storm is the one path that sets it alone, on purpose.
+    pub compact: bool,
+    /// Encode it as a cheap `ForceLTRRefresh` P-frame.
+    pub ltr_refresh: bool,
 }
 
 /// The operating point as it crosses.
@@ -390,6 +462,190 @@ pub extern "C" fn slopdesk_video_capture_fold_encode_ewma(
     fold_encode_ewma(current, sample_millis, alpha)
 }
 
+/// Whether a periodic motion-heartbeat IDR is DUE, gate and clock together.
+///
+/// `false` for a null table — the heartbeat is default-OFF, so "not due" is both the inert answer
+/// and the shipped one.
+///
+/// # Safety
+/// `gates` must be null or point to one live [`SlopDeskVideoCaptureGates`] for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const unsafe extern "C" fn slopdesk_video_capture_heartbeat_due(
+    gates: *const SlopDeskVideoCaptureGates,
+    now: f64,
+    last_heartbeat: f64,
+    interval: f64,
+) -> bool {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(raw) = (unsafe { gates.as_ref() }) else {
+        return false;
+    };
+    returning(raw).heartbeat_due(now, last_heartbeat, interval)
+}
+
+/// The asymmetric smoothing law for the per-frame adaptive-QP ceiling.
+///
+/// `previous` is read only when `has_previous` is set — the first measured frame of a stream has no
+/// smoothed value and seeds the smoother whole.
+///
+/// `raw_qp` for a null table, which is the un-smoothed measurement: a capturer with no gates has
+/// neither ramp to smooth by.
+///
+/// # Safety
+/// `gates` must be null or point to one live [`SlopDeskVideoCaptureGates`] for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_video_capture_smooth_adaptive_qp(
+    gates: *const SlopDeskVideoCaptureGates,
+    has_previous: bool,
+    previous: i32,
+    raw_qp: i32,
+) -> i32 {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(raw) = (unsafe { gates.as_ref() }) else {
+        return raw_qp;
+    };
+    returning(raw).smooth_adaptive_qp(has_previous.then_some(previous), raw_qp)
+}
+
+/// The scroll-fps cap for one frame: the sustain-run debounce, then the even Bresenham decimation.
+///
+/// `motion_run` and `phase` are the caller's carried state and come back advanced in the answer.
+/// `obligated` is the frame that owes something — a pending forced keyframe, a pending LTR refresh,
+/// or a due heartbeat — and always passes.
+///
+/// A null table answers `{0, 0, encode}`: the cap is default-OFF and a rate cap that cannot read
+/// its rate must never drop a frame.
+///
+/// # Safety
+/// `gates` must be null or point to one live [`SlopDeskVideoCaptureGates`] for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_video_capture_scroll_decimation(
+    gates: *const SlopDeskVideoCaptureGates,
+    motion_run: u32,
+    phase: i32,
+    base_fps: i32,
+    measured: bool,
+    change_milli: u32,
+    obligated: bool,
+) -> SlopDeskVideoScrollDecimation {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(raw) = (unsafe { gates.as_ref() }) else {
+        return SlopDeskVideoScrollDecimation {
+            motion_run: 0,
+            phase: 0,
+            encode: true,
+        };
+    };
+    let answer =
+        returning(raw).scroll_decimation(motion_run, phase, base_fps, measured, change_milli, obligated);
+    SlopDeskVideoScrollDecimation {
+        motion_run: answer.motion_run,
+        phase: answer.phase,
+        encode: answer.encode,
+    }
+}
+
+/// The below-gate keyframe / compact / LTR-refresh resolution for one frame.
+///
+/// A pure state transition: `anchors` cross by value and come back advanced inside the answer, so
+/// the caller assigns each field rather than the door writing through a pointer. `frame.heal_every`
+/// is the self-heal cadence ALREADY rebased at the governed fps (`slopdesk_fps_self_heal_every`),
+/// because that is the K the encoded-frame counter must be compared against.
+///
+/// A null table answers "encode this frame as it is" — the anchors unchanged and every verdict
+/// false. That is unreachable for a running capturer (the table is resolved before the first
+/// frame), and it is the answer that neither forces an IDR nor advances a clock.
+///
+/// # Safety
+/// `gates` must be null or point to one live [`SlopDeskVideoCaptureGates`] for the call.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub unsafe extern "C" fn slopdesk_video_capture_resolve_encode(
+    gates: *const SlopDeskVideoCaptureGates,
+    anchors: SlopDeskVideoEncodeAnchors,
+    frame: SlopDeskVideoEncodeFrame,
+) -> SlopDeskVideoEncodeResolution {
+    // SAFETY: the caller's obligation, restated above.
+    let Some(raw) = (unsafe { gates.as_ref() }) else {
+        return SlopDeskVideoEncodeResolution {
+            anchors,
+            force_keyframe: false,
+            compact: false,
+            ltr_refresh: false,
+        };
+    };
+    let answer = returning(raw).resolve_encode(
+        EncodeAnchors {
+            last_heartbeat: anchors.last_heartbeat,
+            last_keyframe_emit: anchors.last_keyframe_emit,
+            frames_since_anchor: anchors.frames_since_anchor,
+            force_compact_counter: anchors.force_compact_counter,
+            has_emitted_first_frame: anchors.has_emitted_first_frame,
+        },
+        EncodeFrame {
+            now: frame.now,
+            heartbeat_interval: frame.heartbeat_interval,
+            self_heal_loss_rate: frame.self_heal_loss_rate,
+            heal_every: frame.heal_every,
+            keyframe_latched: frame.keyframe_latched,
+            ltr_latched: frame.ltr_latched,
+            self_heal_eligible: frame.self_heal_eligible,
+        },
+    );
+    SlopDeskVideoEncodeResolution {
+        anchors: SlopDeskVideoEncodeAnchors {
+            last_heartbeat: answer.anchors.last_heartbeat,
+            last_keyframe_emit: answer.anchors.last_keyframe_emit,
+            frames_since_anchor: answer.anchors.frames_since_anchor,
+            force_compact_counter: answer.anchors.force_compact_counter,
+            has_emitted_first_frame: answer.anchors.has_emitted_first_frame,
+        },
+        force_keyframe: answer.force_keyframe,
+        compact: answer.compact,
+        ltr_refresh: answer.ltr_refresh,
+    }
+}
+
+/// One 90 kHz tick past the last emitted PTS — the synthetic-frame counter.
+///
+/// Reads no gate: the caller hands over the high-water tick and puts the answer back into its own
+/// `CMTime`, whose timescale is the one constant that stays on that side.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub const extern "C" fn slopdesk_video_capture_synthetic_pts(last_ticks: i64) -> i64 {
+    synthetic_pts(last_ticks)
+}
+
+/// The high-water clamp a REAL frame's PTS passes through before the encode hand-off.
+///
+/// Both arguments are 90 kHz ticks, so the comparison is exact and the answer is one of them.
+#[unsafe(no_mangle)]
+#[expect(
+    unsafe_code,
+    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
+)]
+pub extern "C" fn slopdesk_video_capture_monotonic_pts(last_ticks: i64, incoming_ticks: i64) -> i64 {
+    monotonic_pts(last_ticks, incoming_ticks)
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(unsafe_code, reason = "calling the door is the only way to test the door")]
@@ -402,10 +658,14 @@ mod tests {
 
     use super::{
         CAPTURE_BACKLOG_DROP_INCOMING, CAPTURE_BACKLOG_ENQUEUE, CAPTURE_BACKLOG_EVICT_OLDEST,
-        SlopDeskVideoCaptureGates, slopdesk_video_capture_backlog_decision,
+        SlopDeskVideoCaptureGates, SlopDeskVideoEncodeAnchors, SlopDeskVideoEncodeFrame,
+        SlopDeskVideoScrollDecimation, slopdesk_video_capture_backlog_decision,
         slopdesk_video_capture_fold_encode_ewma, slopdesk_video_capture_gate_keys,
-        slopdesk_video_capture_gates, slopdesk_video_capture_needs_frame_hash,
+        slopdesk_video_capture_gates, slopdesk_video_capture_heartbeat_due,
+        slopdesk_video_capture_monotonic_pts, slopdesk_video_capture_needs_frame_hash,
+        slopdesk_video_capture_resolve_encode, slopdesk_video_capture_scroll_decimation,
         slopdesk_video_capture_should_self_heal, slopdesk_video_capture_skips_idle_frame,
+        slopdesk_video_capture_smooth_adaptive_qp, slopdesk_video_capture_synthetic_pts,
     };
 
     /// The encoder's shipped static ceiling, as the caller passes it.
@@ -626,6 +886,199 @@ mod tests {
                 "the stalest UNFORCED pending frame is the one that goes"
             );
         }
+    }
+
+    /// An ordinary below-gate frame, as the capturer hands one over.
+    const LIVE: SlopDeskVideoEncodeFrame = SlopDeskVideoEncodeFrame {
+        now: 100.0,
+        heartbeat_interval: 2.5,
+        self_heal_loss_rate: f64::INFINITY,
+        heal_every: 30,
+        keyframe_latched: false,
+        ltr_latched: false,
+        self_heal_eligible: true,
+    };
+
+    /// A capturer that has already delivered, both clocks anchored at the frame's own `now`.
+    const ANCHORED: SlopDeskVideoEncodeAnchors = SlopDeskVideoEncodeAnchors {
+        last_heartbeat: 100.0,
+        last_keyframe_emit: 100.0,
+        frames_since_anchor: 0,
+        force_compact_counter: 0,
+        has_emitted_first_frame: true,
+    };
+
+    #[test]
+    fn the_adaptive_qp_smoother_crosses_with_its_option() {
+        let plain = gates(&[]);
+        // SAFETY: the record is a live local for the call.
+        unsafe {
+            assert_eq!(
+                slopdesk_video_capture_smooth_adaptive_qp(&raw const plain, false, 99, 37),
+                37,
+                "no previous value: the first measured frame seeds the smoother whole",
+            );
+            assert_eq!(
+                slopdesk_video_capture_smooth_adaptive_qp(&raw const plain, true, 40, 22),
+                36,
+                "the default down-step is 4",
+            );
+        }
+        let ramped = gates(&[("SLOPDESK_AQP_UP_RAMP", "4")]);
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(
+                slopdesk_video_capture_smooth_adaptive_qp(&raw const ramped, true, 22, 23),
+                23,
+                "a step that rounds to zero still moves one QP",
+            );
+        }
+    }
+
+    #[test]
+    fn the_scroll_decimation_and_its_carried_state_cross() {
+        let capped = gates(&[("SLOPDESK_SCROLL_FPS", "30")]);
+        let fast = capped.scroll_motion_threshold_milli;
+        // SAFETY: the record is a live local for every call.
+        unsafe {
+            let first =
+                slopdesk_video_capture_scroll_decimation(&raw const capped, 0, 0, 60, true, fast, false);
+            assert_eq!(first, SlopDeskVideoScrollDecimation {
+                motion_run: 1,
+                phase: 0,
+                encode: true,
+            });
+            let second = slopdesk_video_capture_scroll_decimation(
+                &raw const capped,
+                first.motion_run,
+                first.phase,
+                60,
+                true,
+                fast,
+                false,
+            );
+            assert!(!second.encode, "30 of 60 keeps every other sustained frame");
+            // An obligated frame always passes, however long the run.
+            let owed = slopdesk_video_capture_scroll_decimation(
+                &raw const capped,
+                second.motion_run,
+                second.phase,
+                60,
+                true,
+                fast,
+                true,
+            );
+            assert!(owed.encode);
+            assert_eq!(owed.phase, 0);
+        }
+    }
+
+    #[test]
+    fn the_below_gate_resolution_crosses_whole() {
+        let plain = gates(&[]);
+        // SAFETY: the record is a live local for every call.
+        unsafe {
+            let first = slopdesk_video_capture_resolve_encode(
+                &raw const plain,
+                SlopDeskVideoEncodeAnchors {
+                    has_emitted_first_frame: false,
+                    ..ANCHORED
+                },
+                LIVE,
+            );
+            assert!(first.force_keyframe);
+            assert!(!first.compact, "the FIRST frame stays full quality");
+            assert!(first.anchors.has_emitted_first_frame);
+
+            let latched = slopdesk_video_capture_resolve_encode(
+                &raw const plain,
+                first.anchors,
+                SlopDeskVideoEncodeFrame {
+                    keyframe_latched: true,
+                    ..LIVE
+                },
+            );
+            assert!(latched.force_keyframe);
+            assert!(latched.compact, "a live forced IDR is compact");
+
+            let healed = slopdesk_video_capture_resolve_encode(
+                &raw const plain,
+                SlopDeskVideoEncodeAnchors {
+                    frames_since_anchor: 29,
+                    ..ANCHORED
+                },
+                LIVE,
+            );
+            assert!(healed.ltr_refresh, "the 30th delta is the self-heal refresh");
+            assert_eq!(healed.anchors.frames_since_anchor, 0);
+        }
+    }
+
+    #[test]
+    fn the_three_new_table_doors_answer_inertly_for_a_null_table() {
+        // SAFETY: null is the one pointer these doors are asked to answer for.
+        unsafe {
+            assert!(!slopdesk_video_capture_heartbeat_due(
+                core::ptr::null(),
+                100.0,
+                0.0,
+                2.5
+            ));
+            assert_eq!(
+                slopdesk_video_capture_smooth_adaptive_qp(core::ptr::null(), true, 22, 40),
+                40,
+                "the un-smoothed measurement is the inert answer",
+            );
+            assert_eq!(
+                slopdesk_video_capture_scroll_decimation(core::ptr::null(), 9, 30, 60, true, 999, false),
+                SlopDeskVideoScrollDecimation {
+                    motion_run: 0,
+                    phase: 0,
+                    encode: true,
+                },
+                "a rate cap that cannot read its rate drops nothing",
+            );
+            let refused = slopdesk_video_capture_resolve_encode(core::ptr::null(), ANCHORED, LIVE);
+            assert_eq!(refused.anchors, ANCHORED, "no clock advances");
+            assert!(!refused.force_keyframe);
+            assert!(!refused.compact);
+            assert!(!refused.ltr_refresh);
+        }
+    }
+
+    #[test]
+    fn the_heartbeat_clock_crosses_with_its_gate() {
+        let plain = gates(&[]);
+        let beating = gates(&[("SLOPDESK_MOTION_HEARTBEAT", "1")]);
+        // SAFETY: both records are live locals for the call.
+        unsafe {
+            assert!(!slopdesk_video_capture_heartbeat_due(
+                &raw const plain,
+                100.0,
+                0.0,
+                2.5
+            ));
+            assert!(slopdesk_video_capture_heartbeat_due(
+                &raw const beating,
+                100.0,
+                97.5,
+                2.5
+            ));
+            assert!(!slopdesk_video_capture_heartbeat_due(
+                &raw const beating,
+                100.0,
+                97.6,
+                2.5
+            ));
+        }
+    }
+
+    #[test]
+    fn the_pts_counter_and_its_clamp_cross() {
+        assert_eq!(slopdesk_video_capture_synthetic_pts(90_000), 90_001);
+        assert_eq!(slopdesk_video_capture_synthetic_pts(i64::MAX), i64::MAX);
+        assert_eq!(slopdesk_video_capture_monotonic_pts(90_001, 90_000), 90_001);
+        assert_eq!(slopdesk_video_capture_monotonic_pts(90_001, 180_000), 180_000);
     }
 
     #[test]

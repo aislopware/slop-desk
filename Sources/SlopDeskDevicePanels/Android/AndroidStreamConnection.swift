@@ -62,8 +62,12 @@ package final class AndroidStreamConnection: AndroidStreaming {
         disconnect()
         parser = AndroidStreamParser()
         codec = .h264
+        guard let request = AndroidBridgeRequest.open(serial: serial, maxSize: maxSize) else {
+            sink(.ended(reason: "The mirror request could not be encoded."))
+            return
+        }
         let socket = AndroidBridgeSocket(
-            request: ["op": "open", "serial": serial, "maxSize": maxSize],
+            request: request,
             onReply: { [weak self] reply in
                 switch reply {
                 case .ok: self?.sink(.opened)
@@ -73,10 +77,6 @@ package final class AndroidStreamConnection: AndroidStreaming {
             onBytes: { [weak self] data in self?.ingest(data) },
             onEnd: { [weak self] reason in self?.sink(.ended(reason: reason)) },
         )
-        guard let socket else {
-            sink(.ended(reason: "The mirror request could not be encoded."))
-            return
-        }
         self.socket = socket
         socket.connect(host: host, port: port)
     }

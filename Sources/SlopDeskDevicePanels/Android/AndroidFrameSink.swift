@@ -20,6 +20,16 @@
 // replay — it costs a round trip and a full intra frame, where the replay costs a dictionary read.)
 //
 // Hang-safety: this file touches no network and builds no decoder.
+//
+// ## Why the replay is NOT a door, audited 2026-08-27
+//
+// `docs/55` §4b's test is not how big the value is, it is whether the far side READS the part that
+// is big. Rust would only HOLD these bytes — the parameter sets and the last keyframe — and never
+// look inside one, which is `decode_admission`'s and `present_queue`'s case exactly: the law names
+// which payload to hand back, and the payload stays on the side that owns it. What is left once the
+// bytes are excluded is three lines of bookkeeping welded to a weak renderer reference and a
+// SwiftUI lifetime, neither of which crosses. A handle here would copy an IDR in and out to be told
+// which one it was.
 
 import Foundation
 

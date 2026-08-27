@@ -24,7 +24,6 @@
 
 import Darwin
 import Foundation
-import SlopDeskTTY
 import SlopDeskWorkspaceCore // ClientControlDispatcher + ClientControlBackend
 
 /// The thin `AF_UNIX` NDJSON server for the client control plane. Binds a stable socket, accepts
@@ -272,9 +271,19 @@ package final class ClientControlServer: @unchecked Sendable {
         return str + "\n"
     }
 
-    /// Same drop-on-failure contract as the host's control listener, and the same loop.
+    /// Same drop-on-failure contract as the host's control listener.
+    ///
+    /// `FileHandle` rather than the `slopdesk_fd_write_all` door `slopdesk-client`'s stdout pump
+    /// uses, and the reason is the SLICE this file compiles for: `SlopDeskClientCore` is linked by
+    /// the iOS app, while `slopdesk-posix` — and therefore that door — is a `macOS`-gated edge of
+    /// `slopdesk-ffi`, so there is no such symbol on the phone. `FileHandle.write` folds in the same
+    /// two facts (EINTR is a retry, a short write is normal) inside Foundation, which is the
+    /// platform's loop rather than a second slopdesk copy of one.
+    ///
+    /// The failure is dropped, as it always was: a control client that has gone away is not
+    /// something a listener can do anything about.
     private static func writeAll(fd: Int32, data: Data) {
-        FileDescriptorWrite.all(fd: fd, data)
+        try? FileHandle(fileDescriptor: fd, closeOnDealloc: false).write(contentsOf: data)
     }
 }
 

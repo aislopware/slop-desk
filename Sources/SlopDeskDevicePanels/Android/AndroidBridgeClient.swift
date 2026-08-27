@@ -10,8 +10,17 @@
 // The model holds one of these through ``AndroidBridging`` rather than the concrete class, so a test
 // can drive the whole panel — list, select, boot, failure — without a socket. Constructing an
 // `NWConnection` in a unit test is exactly the hang-safety rule this project keeps.
+//
+// What is left here is the CONNECTION, not the grammar. Every request line is
+// ``AndroidBridgeRequest``'s and every field read out of a reply is a door's
+// (`slopdesk_devicepanel::android_bridge`), which is where the daemon's own decoder already lived:
+// this file used to hold a second spelling of `op`, `output` and `bytes`, plus a 16 MiB ceiling
+// written on the side that does not read the claim it bounds. Nothing here touches
+// `JSONSerialization` any more.
 
+import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 /// Why a bridge request did not produce an answer, in the words the panel shows.
 ///
@@ -47,7 +56,7 @@ package final class AndroidBridgeClient: AndroidBridging {
     package init() {}
 
     package func devices() async -> Result<[AndroidDevice], AndroidBridgeFailure> {
-        switch await request(["op": "list"]) {
+        switch await request(AndroidBridgeRequest.list) {
         case let .success(line):
             guard let devices = AndroidDevice.decodeList(line) else {
                 return .failure(AndroidBridgeFailure("The device list made no sense."))
@@ -59,26 +68,31 @@ package final class AndroidBridgeClient: AndroidBridging {
     }
 
     package func boot(avd: String) async -> String? {
-        if case let .failure(failure) = await request(["op": "boot", "avd": avd]) {
+        if case let .failure(failure) = await request(AndroidBridgeRequest.boot(avd: avd)) {
             return failure.message
         }
         return nil
     }
 
     package func shutdown(serial: String) async -> String? {
-        if case let .failure(failure) = await request(["op": "shutdown", "serial": serial]) {
+        if case let .failure(failure) = await request(AndroidBridgeRequest.shutdown(serial: serial)) {
             return failure.message
         }
         return nil
     }
 
     package func console(_ command: String, serial: String) async -> Result<String, AndroidBridgeFailure> {
-        switch await request(["op": "console", "serial": serial, "command": command]) {
+        switch await request(AndroidBridgeRequest.console(command, serial: serial)) {
         case let .success(line):
-            let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
-            return .success((object?["output"] as? String) ?? "")
+            // An absent `output` and an empty one are the same answer — the console prints nothing
+            // either way — so the door folds them together and this reads one string.
+            .success(devicePanelLend(line) { bytes, length in
+                wsAnswer { out, cap in
+                    slopdesk_android_bridge_console_output(bytes, length, out, cap)
+                } ?? ""
+            })
         case let .failure(failure):
-            return .failure(failure)
+            .failure(failure)
         }
     }
 
@@ -86,10 +100,15 @@ package final class AndroidBridgeClient: AndroidBridging {
     /// this is the one request that keeps reading after the ack.
     ///
     /// A ceiling and a deadline, both because the length is the HOST's claim about what is coming: a
-    /// count that never arrives in full would otherwise hold the continuation open forever.
+    /// count that never arrives in full would otherwise hold the continuation open forever. The
+    /// ceiling is `slopdesk_android_bridge_screenshot_bytes`', so the number this panel will not
+    /// exceed is written once, on the side that reads the claim.
     package func screenshot(serial: String) async -> Result<Data, AndroidBridgeFailure> {
         guard let endpoint else {
             return .failure(AndroidBridgeFailure("The host has no Android bridge yet."))
+        }
+        guard let line = AndroidBridgeRequest.screenshot(serial: serial) else {
+            return .failure(AndroidBridgeFailure("The request could not be encoded."))
         }
         return await withCheckedContinuation { continuation in
             var box: AndroidBridgeSocket?
@@ -104,13 +123,17 @@ package final class AndroidBridgeClient: AndroidBridging {
                 continuation.resume(returning: result)
             }
             let socket = AndroidBridgeSocket(
-                request: ["op": "screenshot", "serial": serial],
+                request: line,
                 onReply: { reply in
                     switch reply {
                     case let .ok(line):
-                        let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
-                        let bytes = (object?["bytes"] as? Int) ?? 0
-                        guard bytes > 0, bytes <= Self.screenshotLimit else {
+                        // The ceiling and the "no such count" refusals are one answer: the door
+                        // reports `0` for an absent count, a non-positive one and one past the cap
+                        // alike, because this side does the same thing with each.
+                        let bytes = devicePanelLend(line) { pointer, length in
+                            slopdesk_android_bridge_screenshot_bytes(pointer, length)
+                        }
+                        guard bytes > 0 else {
                             settle(.failure(AndroidBridgeFailure("The screenshot made no sense.")))
                             return
                         }
@@ -128,31 +151,29 @@ package final class AndroidBridgeClient: AndroidBridging {
                     settle(.failure(AndroidBridgeFailure("The screenshot was cut short.")))
                 },
             )
-            guard let socket else {
-                settle(.failure(AndroidBridgeFailure("The request could not be encoded.")))
-                return
-            }
             box = socket
             inFlight[ObjectIdentifier(socket)] = socket
             socket.connect(host: endpoint.host, port: endpoint.port)
         }
     }
 
-    /// The largest capture this will accept. A 4K tablet's PNG is a few megabytes; sixteen is well
-    /// past any real screen and short of a number that could be an allocation attack.
-    package static let screenshotLimit = 16 << 20
-
     // MARK: Plumbing
 
-    private func request(_ body: [String: Any]) async -> Result<Data, AndroidBridgeFailure> {
+    /// `line` is `nil` for a request ``AndroidBridgeRequest`` refused to build — a required field
+    /// that is empty. ONE arm, where there used to be one per operation guarding a JSON encoder
+    /// that raised rather than threw.
+    private func request(_ line: Data?) async -> Result<Data, AndroidBridgeFailure> {
         guard let endpoint else {
             return .failure(AndroidBridgeFailure("The host has no Android bridge yet."))
+        }
+        guard let line else {
+            return .failure(AndroidBridgeFailure("The request could not be encoded."))
         }
         return await withCheckedContinuation { continuation in
             // The socket has to exist before its completion can retain it, and the completion has to
             // be able to find it to let it go. `box` breaks that cycle.
             var box: AndroidBridgeSocket?
-            let socket = AndroidBridgeSocket(request: body) { [weak self] reply in
+            let socket = AndroidBridgeSocket(request: line) { [weak self] reply in
                 if let box { self?.inFlight.removeValue(forKey: ObjectIdentifier(box)) }
                 box?.close()
                 switch reply {
@@ -161,12 +182,6 @@ package final class AndroidBridgeClient: AndroidBridging {
                 case let .failed(message):
                     continuation.resume(returning: .failure(AndroidBridgeFailure(message)))
                 }
-            }
-            guard let socket else {
-                continuation.resume(
-                    returning: .failure(AndroidBridgeFailure("The request could not be encoded.")),
-                )
-                return
             }
             box = socket
             inFlight[ObjectIdentifier(socket)] = socket

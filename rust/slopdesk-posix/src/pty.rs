@@ -583,8 +583,12 @@ fn adopt(raw: RawFd) -> OwnedFd {
 }
 
 /// `termios` has private padding on Darwin and no `Default`, so it is zeroed.
+///
+/// `pub(crate)` for [`crate::rawmode`], which fills one the same way from the other end of the same
+/// terminal: this module builds the attributes a CHILD is born with, that one saves the attributes
+/// a LOCAL terminal already had. Two zeroed `termios` literals would be the same line twice.
 #[expect(unsafe_code, reason = "libc::termios is a plain C struct with no Default")]
-const fn unsafe_zeroed_termios() -> libc::termios {
+pub(crate) const fn unsafe_zeroed_termios() -> libc::termios {
     // SAFETY: `termios` is a POD struct of integers; all-zero is a valid (if useless) value, and
     // every field that matters is overwritten by the caller.
     unsafe { std::mem::zeroed() }

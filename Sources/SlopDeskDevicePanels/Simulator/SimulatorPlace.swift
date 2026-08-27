@@ -1,15 +1,25 @@
-// SimulatorPlace — simulated GPS: the coordinate parse and the shortlist of places worth one tap.
+// SimulatorPlace — simulated GPS, as `slopdesk_devicepanel::sim_place` rules it: the coordinate
+// parse, the six-decimal round, the readout, and the shortlist of places worth one tap.
 //
-// Pure, and separate from the control client for the usual reason: what the server does with a
-// coordinate is plumbing, but "is this string a coordinate" is the part that is wrong silently. A
-// mis-parse pins the device somewhere plausible rather than failing, and nothing on screen says so.
+// All four are the crate's, and the parse is the reason. What the server does with a coordinate is
+// plumbing, but "is this string a coordinate" is the part that is wrong SILENTLY. A refused
+// coordinate is a disabled button and nobody is confused; a coordinate parsed WRONG pins the device
+// somewhere plausible, the panel reports success, and the only evidence is an app that thinks it is
+// in the wrong hemisphere. Hence the range checks and the refusal to guess at a separator the door
+// does not recognise — and hence one speller for them, not one per renderer.
+//
+// The shortlist crosses as a table rather than being retyped here for the same reason it is short:
+// it is a bug-catching set — a home region, both hemispheres, both sides of the prime meridian — and
+// a number mistyped in one of two copies is exactly the bug it exists to catch.
 //
 // The server also accepts a `{waypoints:[…]}` route and a bearing/speed walk. Neither is offered
 // here: both are motion over time, they want a map to draw the path on, and a sidebar column is not
 // where anyone plots a route. A single pinned position is the case a coding tool actually has —
 // "run the app as if it were in Tokyo" — and it is the whole of what this file models.
 
+import CSlopDeskFFI
 import Foundation
+import SlopDeskWorkspaceModel
 
 /// A pinned position. Degrees, in the server's own field names.
 package struct SimulatorCoordinate: Equatable {
@@ -20,59 +30,51 @@ package struct SimulatorCoordinate: Equatable {
     /// a coordinate typed into this field almost always comes from. A bare space separator works
     /// too; anything else is refused rather than guessed at.
     package static func parse(_ text: String) -> Self? {
-        let parts = text
-            .split(whereSeparator: { $0 == "," || $0 == " " })
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        guard parts.count == 2,
-              let latitude = Double(parts[0]), let longitude = Double(parts[1]),
-              (-90...90).contains(latitude), (-180...180).contains(longitude)
-        else { return nil }
-        return Self(latitude: latitude, longitude: longitude)
+        let delivery = devicePanelLend(text) { bytes, count in
+            wsAnswerBytes { out, cap in slopdesk_sim_coordinate_parse(bytes, count, out, cap) }
+        }
+        // Two numbers and nothing else. A short delivery is a layout disagreement, not a position.
+        guard delivery.count == 16 else { return nil }
+        var blob = DevicePanelBlob(delivery)
+        return Self(latitude: blob.number(), longitude: blob.number())
     }
 
     /// The POST body. Six decimals is roughly a tenth of a metre — past that the digits describe
     /// nothing a simulator can act on, and they make the readout unreadable.
     package var body: [String: Double] {
-        ["latitude": Self.rounded(latitude), "longitude": Self.rounded(longitude)]
+        [
+            "latitude": slopdesk_sim_coordinate_round(latitude),
+            "longitude": slopdesk_sim_coordinate_round(longitude),
+        ]
     }
 
-    /// What the panel echoes back after a successful send.
+    /// What the panel echoes back after a successful send. Fixed width, so the header does not
+    /// reflow on every pin.
     package var readout: String {
-        "\(Self.text(latitude)), \(Self.text(longitude))"
-    }
-
-    private static func rounded(_ value: Double) -> Double {
-        (value * 1_000_000).rounded() / 1_000_000
-    }
-
-    private static func text(_ value: Double) -> String {
-        String(format: "%.6f", rounded(value))
+        wsAnswer { out, cap in
+            slopdesk_sim_coordinate_readout(latitude, longitude, out, cap)
+        } ?? ""
     }
 }
 
-/// A named position, one tap away. Deliberately short: a picker of two hundred cities is a search
-/// problem, and the point of the list is to cover the handful of cases — a home region, the two
-/// hemispheres, a date line — that catch a location bug without anyone having to look a number up.
+/// A named position, one tap away.
 package struct SimulatorPlace: Identifiable, Equatable {
     package var name: String
     package var coordinate: SimulatorCoordinate
 
     package var id: String { name }
 
-    package static let all: [Self] = [
-        place("Apple Park", 37.334886, -122.008988),
-        place("San Francisco", 37.774929, -122.419418),
-        place("New York", 40.712776, -74.005974),
-        place("London", 51.507351, -0.127758),
-        place("Berlin", 52.520008, 13.404954),
-        place("Ho Chi Minh City", 10.762622, 106.660172),
-        place("Singapore", 1.352083, 103.819839),
-        place("Tokyo", 35.689487, 139.691711),
-        place("Sydney", -33.868820, 151.209290),
-    ]
-
-    private static func place(_ name: String, _ latitude: Double, _ longitude: Double) -> Self {
-        Self(name: name, coordinate: SimulatorCoordinate(latitude: latitude, longitude: longitude))
-    }
+    /// The shortlist, read once from the door that holds it.
+    package static let all: [Self] = {
+        var blob = DevicePanelBlob(wsAnswerBytes { out, cap in slopdesk_sim_places(out, cap) })
+        let count = blob.count16()
+        return (0..<count).map { _ in
+            Self(
+                name: blob.text(),
+                coordinate: SimulatorCoordinate(
+                    latitude: blob.number(), longitude: blob.number(),
+                ),
+            )
+        }
+    }()
 }

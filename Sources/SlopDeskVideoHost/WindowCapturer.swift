@@ -33,17 +33,6 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// `SLOPDESK_HEARTBEAT_S`, clamped [0.25, 60].
     public static let heartbeatIDRInterval: TimeInterval = slopdesk_capture_heartbeat_seconds()
 
-    /// Force a periodic heartbeat IDR on the LIVE (active-motion) path. DEFAULT OFF, because on a
-    /// never-idle window that heartbeat is a 50-135 KB IDR through `encodeCompactKeyframe`, whose two
-    /// synchronous `VTCompressionSessionCompleteFrames` calls BLOCK the capture queue ~15 ms → a dropped
-    /// capture plus a big frame every `heartbeatIDRInterval` (2.5 s) = a PERIODIC cadence hitch through a
-    /// long scroll. It buys an in-sync client nothing: DETECTED loss recovers via the recovery channel
-    /// (requestIDR), not this heartbeat; the STATIC-window timer (`onIDRTimerTick`) re-anchors with a
-    /// crisp IDR the instant motion pauses; and a late-joining / decode-failed client requests an IDR
-    /// itself. Suppressing it therefore costs no resilience on a low-loss link.
-    /// `SLOPDESK_MOTION_HEARTBEAT=1` restores the periodic motion IDR (for a genuinely lossy WAN).
-    static var motionHeartbeatEnabled: Bool { gates.motion_heartbeat }
-
     /// The whole `SLOPDESK_*` operating point of this file, resolved ONCE through
     /// ``CaptureGateTable`` — every default, every clamp and all three conjunctions are
     /// `slopdesk_video::capture_gates`'.
@@ -166,23 +155,6 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// for text that is not a number.
     private static var adaptiveQPMax: Int { Int(gates.adaptive_qp_max) }
 
-    /// How fast the smoothed QP eases UP toward a coarser target on motion onset: the per-frame step is
-    /// `(rawQP - smoothed) / N`. `N == 1` (default) ⇒ INSTANT — the QP jumps to the motion target on
-    /// the very first scroll frame, so a quick push-scroll's burst-START frames are already coarse
-    /// (small). A slow ease-up would leave the first ~6 frames sharp ⇒ ~80 KB each ⇒ a sluggish scroll.
-    /// Re-sharpen on STOP is separate (see `adaptiveQPDownStep`). A larger `N`
-    /// (`SLOPDESK_AQP_UP_RAMP=2/3`) trades responsiveness for less QP shimmer if the coarsen-snap
-    /// ever looks abrupt. Clamped ≥ 1.
-    private static var adaptiveQPUpRamp: Int { Int(gates.adaptive_qp_up_ramp) }
-
-    /// How fast the smoothed QP eases DOWN toward the sharp floor when motion STOPS: at most this many
-    /// QP per frame. A straight snap-to-floor (40→24 in one frame) re-encodes the whole settled
-    /// viewport SHARP in a single ~80 KB frame — the scroll-STOP stutter. Stepping down by a few QP
-    /// spreads that re-sharpen over a handful of small frames (no hitch) while still reaching full
-    /// sharpness within ~60-80 ms (imperceptible). `SLOPDESK_AQP_DOWN_STEP` overrides; `≥ 51` (or a
-    /// huge value) makes the snap-down instant again. Clamped ≥ 1.
-    private static var adaptiveQPDownStep: Int { Int(gates.adaptive_qp_down_step) }
-
     private static var adaptiveQPBLoMilli: UInt32 { gates.adaptive_qp_band_lo_milli }
 
     private static var adaptiveQPBHiMilli: UInt32 { gates.adaptive_qp_band_hi_milli }
@@ -220,21 +192,16 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     }()
 
     /// SCROLL-FPS CAP (default OFF, `SLOPDESK_SCROLL_FPS`=N): during sustained FAST scroll (changed-row
-    /// fraction ≥ `scrollMotionThresholdMilli`) encode only ~N of the 60 captured fps (even Bresenham
+    /// fraction ≥ `SLOPDESK_SCROLL_MOTION_MILLI`) encode only ~N of the 60 captured fps (even Bresenham
     /// decimation), so the HW encoder never overruns the 16.7 ms frame budget — the involuntary-VT-drop
     /// source at higher capture scales. Even pacing at a lower rate beats stuttery 60-with-random-drops.
     /// REQUIRES the change measurement (`SLOPDESK_ADAPTIVE_QP=1` or idle-skip). Only ordinary live
     /// frames decimate; a pending forced/recovery/heartbeat always passes. Slow scroll / caret (low
     /// `changeMilli`) NEVER triggers (no slow-scroll regression). No rebuild ⇒ no hitch. `0` ⇒ disabled.
+    ///
+    /// The cap ITSELF — the sustain debounce and the Bresenham accumulator — is
+    /// `slopdesk_video_capture_scroll_decimation`; this is the number the log line quotes.
     static var scrollFps: Int { Int(gates.scroll_fps) }
-
-    /// Changed-row fraction (milli, 0–1000) at/above which a frame counts as FAST scroll for the
-    /// scroll-fps cap. Default 120 (≈12% of rows changed) — well above caret/typing, around real scroll.
-    static var scrollMotionThresholdMilli: UInt32 { gates.scroll_motion_threshold_milli }
-
-    /// Consecutive fast-scroll frames required before decimation engages (debounce — a single flick
-    /// frame is never dropped).
-    static var scrollMotionSustainFrames: Int { Int(gates.scroll_motion_sustain_frames) }
 
     /// ENCODE DECOUPLING (DEFAULT ON; `SLOPDESK_ENCODE_OFFQUEUE=0` reverts to inline encode). The VT
     /// encode otherwise runs SYNCHRONOUSLY in the SCStream sample handler, so during heavy scroll a
@@ -257,10 +224,6 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// ``EncodeCadenceGate`` decimates metronome-regularly instead of dropping deltas raggedly — the
     /// compute-axis twin of the governor. See ``EncodeLoadPacer``.
     static var encodePacerEnabled: Bool { gates.encode_pacer }
-    /// DIAGNOSTIC: force a compact recovery IDR every Nth live frame, so the loss-driven recovery-IDR
-    /// storm reproduces deterministically on localhost (no real loss needed).
-    /// `SLOPDESK_FORCE_COMPACT_EVERY=N`; 0/unset = off.
-    static var forceCompactEvery: Int { Int(gates.force_compact_every) }
 
     private var forceCompactCounter = 0
 
@@ -606,20 +569,6 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// Uptime seconds of the last EMITTED keyframe (any reason) — drives the recovery-IDR cooldown.
     /// frameQueue-owned (set on both the live path and the timer path, both on frameQueue).
     private var lastKeyframeEmit: TimeInterval = 0
-    /// Minimum spacing (seconds) between RECOVERY-driven (latch) IDRs, to collapse a self-sustaining
-    /// recovery-IDR storm (each big IDR is a UDP burst → loss → another recovery request → another IDR).
-    /// A latch-only force within this window of the last emitted keyframe ships a P-frame instead: the
-    /// recent keyframe already re-anchored the client, and the client's 2·RTT escalation re-requests
-    /// later (OUTSIDE the window) if that one was also lost — so recovery is de-bursted, never dropped.
-    /// NEVER gates the first-frame or heartbeat IDR. 0 disables. Env `SLOPDESK_MIN_IDR_MS`.
-    ///
-    /// With `SLOPDESK_RECOVERY_IDR_V2` ON (the default) this SENT-keyed gate is INERT (0): the session
-    /// actor's ``RecoveryIDRPolicy`` (delivery-keyed + casualty bypass + token bucket) is then the single
-    /// admission authority, and it suppresses BEFORE latching, so a granted latch is never dropped here
-    /// (the forced-frame invariant). `SLOPDESK_RECOVERY_IDR_V2=0` falls back to the 500 ms sent-keyed
-    /// spacing. An EXPLICIT `SLOPDESK_MIN_IDR_MS` always wins — even with V2 on (a valid
-    /// belt-and-suspenders double-gating A/B configuration).
-    private static var minRecoveryIDRInterval: TimeInterval { gates.min_recovery_idr_interval }
 
     /// Latched when the client requests a forced IDR (loss recovery, doc 17 §3.6). The
     /// next delivered frame forces a keyframe and clears it. Guarded because the
@@ -869,7 +818,7 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// enabled — default OFF). Pure read of the heartbeat clock; the static-suppression decider must
     /// not suppress a frame that owes the periodic insurance IDR. frameQueue-owned read.
     private func peekHeartbeatDue(now: TimeInterval) -> Bool {
-        Self.motionHeartbeatEnabled && now - lastHeartbeat >= Self.heartbeatIDRInterval
+        slopdesk_video_capture_heartbeat_due(Self.gatesRef, now, lastHeartbeat, Self.heartbeatIDRInterval)
     }
 
     /// Atomically reads + clears the pending-forced-keyframe latch.
@@ -961,8 +910,17 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
 
     /// One 90 kHz tick past the last emitted PTS → strictly monotonic, collision-free with
     /// any real frame (§5). frameQueue-owned.
+    ///
+    /// The COUNTER is `slopdesk_video_capture_synthetic_pts`; the `CMTime` around it stays here,
+    /// because the timescale is the only part of this that is a Core Media fact rather than a rule.
+    /// `lastEmittedPTS.value` is already in 90 kHz ticks — the only two writers are this function
+    /// and the high-water clamp below, both of which stamp that timescale, and `.zero`'s value is 0
+    /// in every timescale there is.
     private func syntheticPTS() -> CMTime {
-        let next = CMTimeAdd(lastEmittedPTS, CMTime(value: 1, timescale: Self.ptsTimescale))
+        let next = CMTime(
+            value: slopdesk_video_capture_synthetic_pts(lastEmittedPTS.value),
+            timescale: Self.ptsTimescale,
+        )
         lastEmittedPTS = next
         return next
     }
@@ -1445,21 +1403,17 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
             changeMilli = m.changeMilli
             if Self.adaptiveQPEnabled {
                 let rawQP = m.qp
-                let smoothed: Int =
-                    if let s = adaptiveQPSmoothed {
-                        if rawQP > s {
-                            // Coarsen on motion ONSET by 1/upRamp (default 1 ⇒ INSTANT) so a scroll's
-                            // first frames are already small.
-                            s + max(1, (rawQP - s) / Self.adaptiveQPUpRamp)
-                        } else {
-                            // Re-sharpen on STOP by at most downStep QP/frame: a snap straight to the
-                            // floor re-encodes the whole settled viewport in ONE ~80 KB frame (the
-                            // scroll-stop stutter); stepping spreads it over a few small frames.
-                            max(rawQP, s - Self.adaptiveQPDownStep)
-                        }
-                    } else {
-                        rawQP
-                    }
+                // The asymmetric law itself is `slopdesk_video_capture_smooth_adaptive_qp`: coarsen
+                // on motion ONSET by 1/upRamp (default 1 ⇒ INSTANT) so a scroll's first frames are
+                // already small; re-sharpen on STOP by at most downStep QP/frame, because a snap
+                // straight to the floor re-encodes the whole settled viewport in ONE ~80 KB frame
+                // (the scroll-stop stutter). No previous value ⇒ the raw measurement seeds it whole.
+                let smoothed = Int(slopdesk_video_capture_smooth_adaptive_qp(
+                    Self.gatesRef,
+                    adaptiveQPSmoothed != nil,
+                    Int32(clamping: adaptiveQPSmoothed ?? 0),
+                    Int32(clamping: rawQP),
+                ))
                 adaptiveQPSmoothed = smoothed
                 pendingAdaptiveQP = smoothed
                 if Self.dbgGapEnabled {
@@ -1550,30 +1504,27 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
         // so the HW encoder never overruns the budget (the involuntary-VT-drop source at higher capture
         // scales). Bresenham-even decimation; only ordinary live frames drop — a pending forced/recovery/
         // heartbeat always passes — and slow scroll / caret (low changeMilli) never triggers. No rebuild.
-        if Self.scrollFps > 0, Self.scrollFps < fps,
-           measured, changeMilli >= Self.scrollMotionThresholdMilli
-        {
-            scrollMotionRun = min(scrollMotionRun + 1, 1_000_000)
-        } else {
-            scrollMotionRun = 0
-        }
-        if scrollMotionRun >= Self.scrollMotionSustainFrames,
-           !peekPendingForcedKeyframe(), !peekPendingLTRRefresh(), !peekHeartbeatDue(now: now)
-        {
-            scrollPhase += Self.scrollFps
-            if scrollPhase >= fps {
-                scrollPhase -= fps // KEEP this frame
-            } else {
-                scrollDecimatedCount += 1
-                if scrollDecimatedCount.isMultiple(of: 600) {
-                    let dropped = scrollDecimatedCount
-                    let cap = Self.scrollFps
-                    log.notice("scroll-fps: \(dropped) fast-scroll frames decimated to ~\(cap)fps")
-                }
-                return // SKIP — even-decimate this fast-scroll frame (no encode/packetize/send)
+        let decimation = slopdesk_video_capture_scroll_decimation(
+            Self.gatesRef,
+            UInt32(clamping: scrollMotionRun),
+            Int32(clamping: scrollPhase),
+            Int32(clamping: fps),
+            measured,
+            changeMilli,
+            // OBLIGATED: peeked, never drained, so a frame the cap lets through does not swallow a
+            // latch — and a frame that owes one is never decimated in the first place.
+            peekPendingForcedKeyframe() || peekPendingLTRRefresh() || peekHeartbeatDue(now: now),
+        )
+        scrollMotionRun = Int(decimation.motion_run)
+        scrollPhase = Int(decimation.phase)
+        if !decimation.encode {
+            scrollDecimatedCount += 1
+            if scrollDecimatedCount.isMultiple(of: 600) {
+                let dropped = scrollDecimatedCount
+                let cap = Self.scrollFps
+                log.notice("scroll-fps: \(dropped) fast-scroll frames decimated to ~\(cap)fps")
             }
-        } else {
-            scrollPhase = 0 // reset the accumulator when not decimating
+            return // SKIP — even-decimate this fast-scroll frame (no encode/packetize/send)
         }
 
         // STATIC-FRAME SUPPRESSION (default OFF). Hash THIS frame's locked NV12 planes (zero-copy,
@@ -1616,7 +1567,10 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
         // the tracker — so a real frame can never reverse a prior synthetic IDR's PTS (the
         // live session has AllowFrameReordering=false), and both paths feed VT a single uniform
         // 90 kHz timescale (VIDEO-HOST-1 §5).
-        lastEmittedPTS = CMTimeMaximum(lastEmittedPTS, pts90k)
+        lastEmittedPTS = CMTime(
+            value: slopdesk_video_capture_monotonic_pts(lastEmittedPTS.value, pts90k.value),
+            timescale: Self.ptsTimescale,
+        )
         let encodePTS = lastEmittedPTS
 
         // FPS-GOVERNOR cadence gate: when governed below the base fps, admit deliveries on the
@@ -1677,56 +1631,11 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
     /// cadence). frameQueue-owned.
     private func encodeBelowGate(pixelBuffer: CVPixelBuffer, encodePTS: CMTime, now: TimeInterval, governed: Int) {
         // Heartbeat IDR, plus a forced keyframe on the very first delivered frame, plus any
-        // client-requested IDR (loss recovery, doc 17 §3.6).
+        // client-requested IDR (loss recovery, doc 17 §3.6). Both latches are DRAINED here, in this
+        // order, before anything else looks at them.
         let latched = takePendingForcedKeyframe()
         // Drain the LTR-refresh latch too (always false when SLOPDESK_LTR is off).
         let ltrLatched = takePendingLTRRefresh()
-        var forceKeyframe = latched
-        var isFirstFrame = false
-        var isHeartbeat = false
-        if !hasEmittedFirstFrame {
-            forceKeyframe = true
-            isFirstFrame = true
-            hasEmittedFirstFrame = true
-        } else if Self.motionHeartbeatEnabled, now - lastHeartbeat >= Self.heartbeatIDRInterval {
-            // The periodic motion-heartbeat IDR is gated OFF by default (it is the 2.5s scroll hitch —
-            // see `motionHeartbeatEnabled`). When off, `lastHeartbeat` is anchored only by the
-            // first-frame + recovery IDRs below, and the static timer re-anchors on motion pause.
-            forceKeyframe = true
-            isHeartbeat = true
-        }
-        // Collapse a recovery-IDR storm. If the ONLY reason is the recovery latch AND a keyframe was
-        // emitted < cooldown ago, ship a P-frame instead — the recent keyframe already re-anchored the
-        // client; if it was ALSO lost, the client's 2·RTT escalation re-requests later (outside the
-        // cooldown) and is honored. Never gates the first-frame or heartbeat IDR. The dropped force is NOT
-        // re-latched (takePendingForcedKeyframe already cleared it) so it cannot deferred-storm.
-        if forceKeyframe, latched, !isFirstFrame, !isHeartbeat,
-           Self.minRecoveryIDRInterval > 0, now - lastKeyframeEmit < Self.minRecoveryIDRInterval
-        {
-            forceKeyframe = false
-        }
-        // Anchor BOTH the heartbeat cadence and the recovery cooldown on ANY actually-emitted keyframe.
-        if forceKeyframe { lastHeartbeat = now
-            lastKeyframeEmit = now
-        }
-        // COMPACT IDR: a forced IDR on the LIVE (active) path — recovery (client-requested after loss)
-        // or heartbeat — is encoded SMALL+coarse (encodeCompactKeyframe) so it survives a UDP burst
-        // instead of re-triggering the recovery-IDR loop, which shows up as a periodic motion hitch.
-        // The FIRST frame stays full quality (one-time, no loop); the static timer path stays CRISP.
-        // `compact ⟹ forceKeyframe` by construction.
-        let compact = forceKeyframe && !isFirstFrame
-        // Send a cheap LTR refresh ONLY when we are NOT already sending a keyframe — a keyframe
-        // (first/heartbeat/recovery IDR) is a superset recovery and wins, so an LTR refresh latched
-        // alongside it is simply consumed (the keyframe re-anchors the client). If `forceKeyframe`
-        // ended up false but an LTR refresh was latched, ship the small ForceLTRRefresh P-frame.
-        // Always false when SLOPDESK_LTR is off (the latch is never set) ⇒ byte-identical.
-        var ltrRefresh = ltrLatched && !forceKeyframe
-        // SELF-HEAL cadence: every `selfHealEvery`-th live delta becomes an acked-LTR-anchored
-        // refresh (see the `selfHealEvery` doc — HW-validated loss self-healing). Counted against
-        // the last RE-ANCHOR (keyframe or any refresh) so a recovery-latched refresh restarts the
-        // window. Gated on eligibility (acks flowing) — ineligible frames don't advance the
-        // counter past the threshold meaninglessly; they keep counting so healing starts at most
-        // one frame after eligibility arms.
         // FPS-GOVERNOR: the heal K is rebased TIME-equivalently at a governed fps (60→6, 30→3,
         // 20→2, 15→2) so the wall-clock heal latency stays ≈100-133 ms — fps is governed down
         // exactly when whole-frame loss is most likely. `governed == fps` ⇒ K unchanged.
@@ -1735,19 +1644,34 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
             baseFps: fps,
             governedFps: governed,
         )
-        // CLEAN-LINK LOSS-GATE (default OFF ⇒ byte-identical): with the gate on, the every-Kth refresh is
-        // suppressed while the pushed loss EWMA is below threshold — the counter keeps climbing (heal
-        // skipped, not reset) so the first lossy frame re-arms healing immediately (see `selfHealLossGate`).
-        if healEvery > 0, !forceKeyframe, !ltrRefresh {
-            framesSinceAnchor += 1
-            if slopdesk_video_capture_should_self_heal(
-                Self.gatesRef, Int32(clamping: framesSinceAnchor), selfHealIsEligible(),
-                currentSelfHealLossRate(),
-            ) {
-                ltrRefresh = true
-            }
-        }
-        if forceKeyframe || ltrRefresh { framesSinceAnchor = 0 }
+        // The whole first-frame / heartbeat / recovery-cooldown / compact / LTR / self-heal /
+        // force-compact ladder is `slopdesk_video_capture_resolve_encode` — see its doc for the nine
+        // rungs and why each composes where it does. The anchors cross by value and come back
+        // advanced, so every counter this method used to mutate in place is assigned from the answer.
+        let resolved = slopdesk_video_capture_resolve_encode(
+            Self.gatesRef,
+            SlopDeskVideoEncodeAnchors(
+                last_heartbeat: lastHeartbeat,
+                last_keyframe_emit: lastKeyframeEmit,
+                frames_since_anchor: Int32(clamping: framesSinceAnchor),
+                force_compact_counter: Int32(clamping: forceCompactCounter),
+                has_emitted_first_frame: hasEmittedFirstFrame,
+            ),
+            SlopDeskVideoEncodeFrame(
+                now: now,
+                heartbeat_interval: Self.heartbeatIDRInterval,
+                self_heal_loss_rate: currentSelfHealLossRate(),
+                heal_every: Int32(clamping: healEvery),
+                keyframe_latched: latched,
+                ltr_latched: ltrLatched,
+                self_heal_eligible: selfHealIsEligible(),
+            ),
+        )
+        lastHeartbeat = resolved.anchors.last_heartbeat
+        lastKeyframeEmit = resolved.anchors.last_keyframe_emit
+        framesSinceAnchor = Int(resolved.anchors.frames_since_anchor)
+        forceCompactCounter = Int(resolved.anchors.force_compact_counter)
+        hasEmittedFirstFrame = resolved.anchors.has_emitted_first_frame
 
         // STATIC-FRAME SUPPRESSION: record the hash of the frame we are ABOUT TO SUBMIT (only when
         // the gate is on), so the NEXT capture is compared against the last frame actually sent
@@ -1763,16 +1687,9 @@ public final class WindowCapturer: NSObject, @unchecked Sendable {
         // deadline minimumFrameInterval × (queueDepth − 1) (WWDC22 s10155).
         // A live (motion) frame is NEVER crisp — motion must stay low-latency; only the static
         // timer above upgrades to a crisp refresh.
-        // DIAGNOSTIC force-compact storm (SLOPDESK_FORCE_COMPACT_EVERY): reproduce the loss-driven
-        // recovery-IDR storm on localhost. Only when no real obligation is already set.
-        var forceCompact = compact
-        if Self.forceCompactEvery > 0, !forceKeyframe, !ltrRefresh, !compact {
-            forceCompactCounter += 1
-            if forceCompactCounter.isMultiple(of: Self.forceCompactEvery) { forceCompact = true }
-        }
         handOffToEncoder(
-            pixelBuffer, pts: encodePTS, forceKeyframe: forceKeyframe, crisp: false,
-            compact: forceCompact, ltrRefresh: ltrRefresh, perFrameMaxQP: pendingAdaptiveQP,
+            pixelBuffer, pts: encodePTS, forceKeyframe: resolved.force_keyframe, crisp: false,
+            compact: resolved.compact, ltrRefresh: resolved.ltr_refresh, perFrameMaxQP: pendingAdaptiveQP,
         )
     }
 
