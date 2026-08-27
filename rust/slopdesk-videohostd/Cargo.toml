@@ -64,6 +64,10 @@ slopdesk-terminal = { path = "../slopdesk-terminal" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# The window server's own answer to "what is shareable". This daemon is the only caller that needs
+# the whole enumeration — the two lookups by id were all the capture path ever asked for.
+slopdesk-apple-sck = { path = "../slopdesk-apple-sck" }
+
 [dev-dependencies]
 
 # The daemon's own profile — every byte a client sees crosses this process, on the frame budget.

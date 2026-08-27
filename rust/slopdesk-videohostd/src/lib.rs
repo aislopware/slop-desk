@@ -33,6 +33,9 @@
 //! | --- | --- |
 //! | [`args`] | the argv grammar and the one environment knob that overrides it |
 //! | [`env`] | `video-prefs.json` → the launch-time overlay every gate resolves through |
+//! | [`list`] | `--list`: what this host will share, in an order a person can read |
 
 pub mod args;
 pub mod env;
+pub mod list;
+pub mod shareable;

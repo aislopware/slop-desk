@@ -11,7 +11,7 @@ use std::sync::Arc;
 use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2_foundation::NSError;
-use objc2_screen_capture_kit::{SCDisplay, SCShareableContent, SCWindow};
+use objc2_screen_capture_kit::{SCDisplay, SCRunningApplication, SCShareableContent, SCWindow};
 use slopdesk_video::geometry::{VideoPoint, VideoRect};
 
 use crate::handoff::Handoff;
@@ -45,6 +45,101 @@ impl Window {
         #[expect(unsafe_code, reason = "a property read on an SCWindow this crate owns")]
         let rect = unsafe { self.inner.frame() };
         VideoRect::xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
+    }
+
+    /// The window's own title, or `None` when it has none.
+    ///
+    /// An EMPTY title and an absent one are deliberately not folded together here — "untitled" is a
+    /// presentation decision, and this crate makes none.
+    #[must_use]
+    pub fn title(&self) -> Option<String> {
+        // SAFETY: framework rule — the same property read as [`Self::id`], answering an optional
+        // `NSString` this crate copies out before returning.
+        #[expect(unsafe_code, reason = "a property read on an SCWindow this crate owns")]
+        let title = unsafe { self.inner.title() };
+        title.map(|text| text.to_string())
+    }
+
+    /// Whether the window server is currently painting this window.
+    ///
+    /// A minimised window, or one on another Space, answers `false` — and a window that is not
+    /// painted streams nothing, which is why the rescue path exists at all.
+    #[must_use]
+    pub fn is_on_screen(&self) -> bool {
+        // SAFETY: framework rule — the same property read as [`Self::id`], answering a boolean.
+        #[expect(unsafe_code, reason = "a property read on an SCWindow this crate owns")]
+        unsafe {
+            self.inner.isOnScreen()
+        }
+    }
+
+    /// The window server layer. Zero is the normal document layer; chrome sits above it.
+    #[must_use]
+    pub fn layer(&self) -> isize {
+        // SAFETY: framework rule — the same property read as [`Self::id`], answering an integer.
+        #[expect(unsafe_code, reason = "a property read on an SCWindow this crate owns")]
+        unsafe {
+            self.inner.windowLayer()
+        }
+    }
+
+    /// The owning application's display name, or `None` when the window has no owner.
+    #[must_use]
+    pub fn app_name(&self) -> Option<String> {
+        self.owner().map(|owner| {
+            // SAFETY: framework rule — a property read on an `SCRunningApplication` this call just
+            // took a strong reference to, answering a non-null `NSString`.
+            #[expect(
+                unsafe_code,
+                reason = "a property read on an SCRunningApplication this call holds"
+            )]
+            let name = unsafe { owner.applicationName() };
+            name.to_string()
+        })
+    }
+
+    /// The owning application's bundle identifier, or `None` when the window has no owner.
+    #[must_use]
+    pub fn bundle_id(&self) -> Option<String> {
+        self.owner().map(|owner| {
+            // SAFETY: framework rule — the same property read as [`Self::app_name`]'s.
+            #[expect(
+                unsafe_code,
+                reason = "a property read on an SCRunningApplication this call holds"
+            )]
+            let identifier = unsafe { owner.bundleIdentifier() };
+            identifier.to_string()
+        })
+    }
+
+    /// The owning application's process id, or `None` when the window has no owner.
+    ///
+    /// The one fact the Accessibility API needs before it can move or un-minimise this window: `AX`
+    /// is addressed per PROCESS, and a window id alone cannot reach it.
+    #[must_use]
+    pub fn owner_pid(&self) -> Option<i32> {
+        self.owner().map(|owner| {
+            // SAFETY: framework rule — the same property read as [`Self::app_name`]'s, answering a
+            // scalar.
+            #[expect(
+                unsafe_code,
+                reason = "a property read on an SCRunningApplication this call holds"
+            )]
+            unsafe {
+                owner.processID()
+            }
+        })
+    }
+
+    /// The owning application, or `None`. Every accessor above funnels through this so the optional
+    /// read happens once.
+    fn owner(&self) -> Option<Retained<SCRunningApplication>> {
+        // SAFETY: framework rule — a property read on a live `SCWindow` this crate holds a strong
+        // reference to, answering an optional object it then owns.
+        #[expect(unsafe_code, reason = "a property read on an SCWindow this crate owns")]
+        unsafe {
+            self.inner.owningApplication()
+        }
     }
 
     /// The framework object, for the filter that needs it.
@@ -153,6 +248,26 @@ impl ShareableContent {
             .into_iter()
             .map(|inner| Window { inner })
             .find(|window| window.id() == window_id)
+    }
+
+    /// Every shareable window, in the order the window server answered.
+    ///
+    /// The ORDER a caller wants is never this one — the daemon sorts by owning app then window id
+    /// for a readable listing, and `slopdesk_video::window_list` decides the streamable order — so
+    /// this hands the list over unsorted rather than picking one of them here.
+    #[must_use]
+    pub fn windows(&self) -> Vec<Window> {
+        // SAFETY: framework rule — a property read answering an `NSArray` this crate then holds.
+        #[expect(
+            unsafe_code,
+            reason = "a property read on an SCShareableContent this crate owns"
+        )]
+        let windows = unsafe { self.inner.windows() };
+        windows
+            .to_vec()
+            .into_iter()
+            .map(|inner| Window { inner })
+            .collect()
     }
 
     /// The display with this `CGDirectDisplayID`, or `None` when no such display is attached.

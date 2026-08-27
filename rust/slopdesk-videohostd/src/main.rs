@@ -14,7 +14,9 @@
 //! 2. **Parse argv.** A usage failure must cost nothing — no socket, no stream, no window server
 //!    query — so it happens before anything with an effect.
 //! 3. The one-shot modes, before the daemon proper: `--list` and `--vd-sck-probe` both answer a
-//!    question and exit, and neither should bind a port to do it.
+//!    question and exit, and neither should bind a port to do it. They go to STDERR, not stdout —
+//!    the Swift's `log` did, every diagnostic on this daemon does, and a listing that split across
+//!    two streams would be the one inconsistency an operator noticed.
 //!
 //! ⚠️ GUI + TCC ONLY — see [`slopdesk_videohostd`]'s own docs. Run from a desktop session, not SSH.
 
@@ -50,11 +52,16 @@ fn main() {
     };
 
     // Step 3. The one-shot modes. Each answers a question and exits; neither binds a port.
-    //
+    if parsed.arguments.list {
+        for line in slopdesk_videohostd::list::render(slopdesk_videohostd::shareable::rows()) {
+            say(&program, &line);
+        }
+        std::process::exit(0);
+    }
+
     // The daemon proper lands with the session that runs under it — see `docs/60` for the ladder
     // this crate is working down. Until then an invocation that asks for the daemon says so rather
     // than pretending to serve.
-    drop(parsed);
     say(&program, "the serving path is not wired up in this crate yet");
     std::process::exit(1);
 }
