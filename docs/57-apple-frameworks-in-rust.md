@@ -48,7 +48,7 @@ plus `#[repr(C)]` structs for every type that crosses. That is the shape this re
 
 | | |
 | --- | --- |
-| Version | `objc2` 0.6.4 (2026-06-24); framework crates 0.3.2 (2025-10-04) |
+| Version | pinned `=0.6.3` for `objc2`, `=0.3.2` for every framework crate — the exact pins the MSRV row below asks for, and what every `slopdesk-apple-*` manifest carries |
 | Usage | 38.9M recent downloads for `objc2`; 19.8M `objc2-app-kit`, 18.5M `objc2-core-graphics`, 18.0M `objc2-io-surface` |
 | Coverage | Every framework this tree needs has a generated crate: `screen-capture-kit`, `video-toolbox`, `core-media`, `core-video`, `io-surface`, `metal`, `core-graphics`, `app-kit`, `ui-kit`, plus `block2` and `dispatch2` |
 | Provenance | The merge of the `objc`/`block` lineage the Rust-on-Apple ecosystem already stands on — `winit`, `wgpu` and `cacao` are downstream |
