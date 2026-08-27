@@ -1155,6 +1155,53 @@ With that, stage E has no open half left. What remains before the cutover is sta
 and the host half of `Sources/SlopDeskTransport` are DELETED, with their tests ported to the crates
 that now hold the behaviour.
 
+**F.1 — the doors, and the accept loop. ✅ LANDED.** Two greps settled what F.1 actually contains,
+and the answer was not "translate `main.swift`". `git grep -ln 'slopdesk-hostnet\|slopdesk-hostserver\|slopdesk-hostpane' -- '*.toml'`
+returned only the three crates themselves: NOTHING in the tree linked them, so every trait stage D
+left open had test implementations and no production one. `rust/slopdesk-hostd` is where they meet.
+Seven doors and the loop:
+
+| module | door | the other half |
+| --- | --- | --- |
+| `peer.rs` | `Peer` | a mux connection |
+| `spawn.rs` | `Spawner` | superd's fork, and the session around its master |
+| `transcripts.rs` | `Transcripts` | superd's journal, and the chain that renders it |
+| `screen.rs` | `SnapshotPolicy`, `ScreenOracle` | screend |
+| `resolve.rs` | `ResolveExecutor` | the pane's one serial queue |
+| `keys.rs` | `KeyObserver` | the repo-watch refcounts |
+| `evict.rs` | `EvictionSeam` | `Host::evict_subscriber` |
+| `serve.rs` | — | the accept loop: `Listener` in, `Host` calls out |
+
+Three things F.1 settled that were open questions before it:
+
+- **The laggard's other end is built** (§4's F-owes note above). `Recipe::lag_bytes` is the one place
+  `SLOPDESK_SUB_LAG_BYTES` will be handed in, and the seam it pairs with resolves the circularity —
+  spawner-before-host, pane-after-session — through a `OnceLock<Weak<Host>>`. What is left is one
+  environment read at F.2's assembly and the `publish` call after `Host::assemble`; a seam whose host
+  has not landed evicts nobody, which is what `Eviction::off()` already meant.
+- **A standalone pane needs no null sub-channels.** The Swift built `MuxSubChannel.makeNull` pairs
+  for a ctl-spawned pane so its relay loops would exit and the offline gate would engage.
+  `Shared::recompute_client_online` is `member_count() > 0`, so a session with an empty roster IS
+  the offline shape: the null objects satisfied a constructor, not a behaviour.
+- **`PaneSession::seed_restored` was the missing half of the restore.** `Fresh`/`Adopted` both carry
+  a `Restored`, and nothing in `slopdesk-hostsession` could accept one — a fresh open does not
+  replay, so a ring pre-seeded before construction would have held history the attached client never
+  saw. The Swift enqueued the transcript through the ordinary FIFO; the Rust appends one chunk
+  before `start()`, which is the same ordering guarantee with the window closed by construction
+  rather than by a comment.
+
+**What F.1 leaves owed, named rather than defaulted.** `MetadataPerformer` is still
+`UnservedMetadata` on every pane: `HostMetadata::new(query, delegate)` exists and is exercised by
+`hostserver`'s suite, but `HostQuerying` has no production implementation, so the twelve crossing
+verbs are F.2's assembly work and not a door this crate can close on its own. Until it lands, a pane
+answers `UnsupportedVerb` rather than a stale or invented result.
+
+**F.2 — the daemon shell.** `main.rs`: argv through `slopdesk-hostlaunch`, the rlimit, the signal
+thread, the hook install, the `HostParts` assembly (fourteen fields, of which `WorkspaceChannels`,
+`HookRoutes`, `HostObserver`, `Survivors` and `Offload` still have only inert defaults in the tree),
+`LateHost::publish`, and the four unwired stage-E pieces — `pathaction`, `clipsync`, `repowatch`,
+`gates`. The crate ships no `[[bin]]` until it exists, which is why F.1 is a library-only commit.
+
 **Stage G (separate campaign, not scoped here) — the client transport.** `Sources/SlopDeskProtocol`
 and `MuxNWConnection` survive stage F because the macOS/iOS clients still speak through them. Moving
 those behind `CSlopDeskFFI` is a linked-library port under `CLAUDE.md`'s lifetime rule, not a socket

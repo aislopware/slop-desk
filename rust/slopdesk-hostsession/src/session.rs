@@ -444,6 +444,29 @@ impl PaneSession {
         }
     }
 
+    /// Seeds a prior life's transcript as this pane's FIRST output, before anything live.
+    ///
+    /// The restore rides the ordinary drain — one `.output` chunk, sequenced into this session's
+    /// own ring, on the wire as frames indistinguishable from the shell's. That is what makes
+    /// it a restore rather than a wire change: a client is handed history it can scroll, ack
+    /// and be replayed from, and nothing downstream needs a second code path for it.
+    ///
+    /// Call it BEFORE [`Self::start`]. The ordering guarantee is the whole point — restored history
+    /// must precede every live byte — and the read loop is what produces a live byte, so the window
+    /// closes the moment `start` opens the stream. The Swift enqueued it inside `startRelay()` for
+    /// the same reason, gated on the bounded queue already existing; here the queue exists from
+    /// construction, so the call site is simply earlier.
+    ///
+    /// The bytes are MOVED, not copied: an accepted restore is up to the journal cap in size, and a
+    /// caller that kept its own copy would pin that much for the pane's whole life. Empty is a
+    /// no-op, so the ordinary "nothing to restore" answer needs no branch at the call site.
+    pub fn seed_restored(&self, bytes: Vec<u8>) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.shared.append_chunk(bytes, Vec::new());
+    }
+
     /// Starts the pane: the drain, the read loop and the exit thread, in that order.
     ///
     /// The order is load-bearing at two points. The gate must exist before the read loop starts, or

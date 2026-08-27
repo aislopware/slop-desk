@@ -1,0 +1,195 @@
+# `slopdesk-hostd` — the daemon itself, in Rust.
+#
+# ## Why a crate rather than a `[[bin]]` in `slopdesk-hostserver`
+# `docs/60` stage D deliberately left `slopdesk-hostserver` with no `main`: the composition it holds
+# is drivable by a suite that has no PTY, no superd and no listener, and the moment a binary lives
+# beside it the temptation is to reach for the process's own environment from inside a ladder. This
+# crate is where the process's facts are allowed to be read — argv, the environment, the rlimit, the
+# signals — and it is the ONLY crate in the host family that may.
+#
+# ## What it adds that nothing else could
+# Three real implementations of doors stage D left as traits, and each is here because it is the
+# first place both halves are in scope:
+#   * `Peer` over `slopdesk-hostnet`'s connection — the composition names a client, the transport is
+#     one.
+#   * `Spawner` over `slopdesk-hostpane` + `slopdesk-hostsession` — the composition decides a pane,
+#     those two make one.
+#   * `Transcripts` over `slopdesk-superclient` + `slopdesk-sanitize` — the composition knows WHEN a
+#     transcript is wanted, those two know what it is.
+# Plus the accept loop, which is the one piece of the host that was never written in either language
+# as its own thing: it was `HostServer.start()`'s body.
+#
+# ## Its own `[workspace]`, for the reason its four siblings have one
+# `rust/Cargo.toml`'s members are the FORK-PER-EVENT programs and share a startup-tuned
+# `opt-level = "z"`. A daemon wants a daemon's profile. The cost is the one every host crate pays:
+# `cargo -p` from the root cannot reach it, and its gate is `cd rust/slopdesk-hostd && cargo test`.
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "slopdesk-hostd"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "the SlopDesk host daemon: the listener, the panes behind it, and the process around both"
+license = "MIT"
+repository = "https://github.com/aislopware/slop-desk"
+
+[lib]
+name = "slopdesk_hostd"
+path = "src/lib.rs"
+
+# No `[[bin]]` yet, and its absence is the stage boundary rather than an omission. F.1 is the
+# DOORS — the seven trait implementations and the accept loop, each gateable on its own. The daemon
+# shell that assembles them (argv, the rlimit, the signal thread, `HostParts`' fourteen fields) is
+# F.2, and landing it in the same change would have made one commit out of two things with
+# different failure modes.
+
+[dependencies]
+# The composition every event resolves against. This crate holds the process; that one holds the
+# decisions, and the split is the whole reason stage D could be tested at all.
+slopdesk-hostserver = { path = "../slopdesk-hostserver" }
+
+# The listener, the paired connection behind it, and the mux events a served connection emits. The
+# accept loop below is the only thing in the tree that drives it.
+slopdesk-hostnet = { path = "../slopdesk-hostnet" }
+
+# The PTY half of a spawn: superd's fork, the master that comes back, and the subscription to
+# superd's read of it.
+slopdesk-hostpane = { path = "../slopdesk-hostpane" }
+
+# The session built around that master — the relays, the ring, the size fold, the detection loops.
+slopdesk-hostsession = { path = "../slopdesk-hostsession" }
+
+# `Uuid` and the registry vocabulary the composition names panes with. Named here because the
+# spawner mints ids the tables will hold.
+slopdesk-muxsession = { path = "../slopdesk-muxsession" }
+
+# superd: the fork, the adopt, the journal verbs and the listener claims. Every effect this daemon
+# has on a child process goes through it.
+slopdesk-superclient = { path = "../slopdesk-superclient" }
+
+# The spawn payload that crosses to superd, and the journal policy that rides inside it.
+slopdesk-superwire = { path = "../slopdesk-superwire" }
+
+# hostd's OWN argv grammar and launch record, already Rust and already read from both sides —
+# `slopdesk-ops restart-hostd` and the `.xcframework`. Parsing argv a second time here would be the
+# second implementation the campaign exists to remove.
+slopdesk-hostlaunch = { path = "../slopdesk-hostlaunch" }
+
+# The ring a pane's session is built with, and the cap the environment sets on it. `ReplayBuffer` is
+# the caller's to construct precisely so this crate can be the one that reads the environment.
+slopdesk-wire = { path = "../slopdesk-wire" }
+
+# The restore chain a journal is rendered through: the seven passes, and the all-off input-mode
+# suffix the raw path is backstopped with. One implementation, shared with the ring's cold replay.
+slopdesk-sanitize = { path = "../slopdesk-sanitize" }
+
+# The state-transfer composer a journal is rendered with when its geometry survived — screend parses
+# the prior life's bytes into a grid and answers what it showed.
+slopdesk-screenclient = { path = "../slopdesk-screenclient" }
+
+# The agent status machine's own vocabulary: the rule-ladder verdict a screen scan answers with.
+# Named here because the SCREEN door converts one into the other, and the two `Verdict` types are
+# deliberately not the same type — see `src/screen.rs`.
+slopdesk-agent = { path = "../slopdesk-agent" }
+
+# screend's wire vocabulary, for the half of that conversion that came off the socket.
+slopdesk-screenwire = { path = "../slopdesk-screenwire" }
+
+# The pane id a session is filed under, as canonical UUID text, which is the form superd's `spawn`
+# and `adopt` verbs take.
+slopdesk-ids = { path = "../slopdesk-ids" }
+
+# The soft descriptor limit this daemon raises before it opens anything. A `getrlimit`/`setrlimit`
+# pair has no safe wrapper worth the dependency, and one of the three crates that may hand-write
+# `unsafe` already carries it.
+slopdesk-posix = { path = "../slopdesk-posix" }
+
+# The Claude Code hooks this host installs on every launch. A LIBRARY call, not a fork of the
+# sibling binary: the Swift forwarded to `slopdesk-agenthooks` because it had no other way to reach
+# the merge, and this crate can simply link it.
+slopdesk-hook = { path = "../slopdesk-hook" }
+
+# The signal set the daemon parks on, and `sigwait` for the thread that parks. `DispatchSourceSignal`
+# was the Swift's answer to the same question; a dedicated thread is this one's, and it is the shape
+# `slopdesk-superd` already uses.
+nix = { version = "0.31", features = ["signal"] }
+
+# The IOKit sleep assertion held while any agent works. Target-gated: the crate wraps a macOS
+# framework and offers no non-macOS shape, so the OBSERVER below is unconditional and only the
+# assertion behind it is macOS-only.
+[target.'cfg(target_os = "macos")'.dependencies]
+slopdesk-apple-power = { path = "../slopdesk-apple-power" }
+
+# The daemon's own profile — every byte a client sees crosses this process.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+debug = 1
+strip = "debuginfo"
+
+# ---------------------------------------------------------------------------- #
+# The maximal-strict set every sibling carries, copied rather than inherited for the same reason
+# they copy it: inheriting means membership, and membership means sharing a profile.
+[lints.rust]
+unsafe_code = "forbid"
+
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+missing_copy_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+single_use_lifetimes = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+variant_size_differences = "deny"
+elided_lifetimes_in_paths = "deny"
+let_underscore_drop = "deny"
+non_ascii_idents = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+rust_2024_compatibility = { level = "deny", priority = -1 }
+future_incompatible = { level = "deny", priority = -1 }
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+panic_in_result_fn = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+exit = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+verbose_file_reads = "deny"
+str_to_string = "deny"
+empty_structs_with_brackets = "deny"
+if_then_some_else_none = "deny"
+lossy_float_literal = "deny"
+try_err = "deny"
+
+# Disabled, with a reason: both want `f64::mul_add`, the fused multiply-add `CLAUDE.md` forbids —
+# FMA rounds once where the wire rounds twice, which moves the bit patterns the golden vectors pin.
+suboptimal_flops = "allow"
+imprecise_flops = "allow"
+
+# The transitive graph under this crate is every host crate at once, and the lint prices that graph
+# rather than this manifest — the same allow every sibling carries for the same reason.
+multiple_crate_versions = "allow"
