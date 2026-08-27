@@ -56,9 +56,6 @@ const CODE_SERVER_BIN_ENV_KEY: &str = "SLOPDESK_CODE_SERVER_BIN";
 /// The simulator server's override variable; the hardware gate points it at its own build.
 const SIMULATOR_BIN_ENV_KEY: &str = "SLOPDESK_SIMULATOR_SERVER_BIN";
 
-/// The Android bridge daemon's override variable.
-const ANDROID_BIN_ENV_KEY: &str = "SLOPDESK_ANDROIDD_BIN";
-
 /// The simulator server's program name.
 const SIMULATOR_BINARY: &str = "baguette";
 
@@ -134,6 +131,24 @@ fn locator(name: &'static str, override_key: &'static str, vendored: Option<Path
     Arc::new(move || locate(name, override_key, vendored.as_deref()))
 }
 
+/// A locator for one of THIS tree's own daemons — a different search order, and the difference is
+/// the point.
+///
+/// [`locate`] above finds somebody else's program, so it searches `PATH`. These five ship with this
+/// checkout and speak a wire pinned to it, so a same-named binary on a `PATH` must never become
+/// one: the rungs are the override, the installed copy, the directory this executable sits in, and
+/// the crate's own cargo target. That rule is `slopdesk_sidecars::paths`, which is also where the
+/// version audit resolves the binary it compares against — an audit reading a version off a path
+/// the spawn would not use is an audit about nothing.
+///
+/// Per call, for [`locator`]'s reason: a host that installs the daemon while hostd runs starts
+/// finding it on the next round.
+pub(crate) fn own_daemon_locator(tool: &'static str) -> BinaryLocator {
+    Arc::new(move || {
+        slopdesk_sidecars::paths::locate_from_env(tool).map(|found| found.to_string_lossy().into_owned())
+    })
+}
+
 // MARK: - How a child is forked
 
 /// A spawner that hands `service` to superd, so the child outlives this daemon.
@@ -142,7 +157,7 @@ fn locator(name: &'static str, override_key: &'static str, vendored: Option<Path
 /// marketplace gallery and bridge socket, while the other two inherit hostd's verbatim so that an
 /// operator's `DEVELOPER_DIR`, `ANDROID_HOME` or `SLOPDESK_ANDROID_*` reaches their locators
 /// unchanged — without this file knowing any of those names.
-fn spawner(
+pub(crate) fn spawner(
     service: &'static str,
     environment: BTreeMap<String, String>,
     supervisor: &Arc<SupervisorClient>,
@@ -167,7 +182,7 @@ fn spawner(
 }
 
 /// hostd's own environment, as the map a spawn takes.
-fn inherited_environment() -> BTreeMap<String, String> {
+pub(crate) fn inherited_environment() -> BTreeMap<String, String> {
     std::env::vars().collect()
 }
 
@@ -245,7 +260,7 @@ pub fn android_profile(
     }
     EnsureProfile {
         verb: MetadataVerb::EnsureAndroidBridge,
-        binary_locator: locator(ANDROID_BINARY, ANDROID_BIN_ENV_KEY, vendored.bin_dir.clone()),
+        binary_locator: own_daemon_locator(ANDROID_BINARY),
         spawner: spawner(ANDROID_SERVICE, inherited_environment(), supervisor, log),
         arguments,
         parse_port: Arc::new(parse_android_port),

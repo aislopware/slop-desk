@@ -140,6 +140,13 @@ slopdesk-androidd = { path = "../slopdesk-androidd" }
 # parsers whose difference is which colon wins.
 slopdesk-sidecars = { path = "../slopdesk-sidecars" }
 
+# The two daemons hostd picks the port for, linked for ONE constant each: the announce prefix their
+# own `server.rs` prints. The Swift kept a string literal equal to each of them and a lint rule
+# compared the two; linking the crate that OWNS the spelling retires the rule rather than restating
+# it, the way `slopdesk-androidd` already does for the third.
+slopdesk-dropd = { path = "../slopdesk-dropd" }
+slopdesk-inspectord = { path = "../slopdesk-inspectord" }
+
 # The signal set the daemon parks on, and `sigwait` for the thread that parks. `DispatchSourceSignal`
 # was the Swift's answer to the same question; a dedicated thread is this one's, and it is the shape
 # `slopdesk-superd` already uses.

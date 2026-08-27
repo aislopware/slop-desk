@@ -30,6 +30,7 @@
 //! and handed down as a value — which is why [`spawn::Recipe`] is a struct of facts rather than a
 //! set of lookups.
 
+pub mod audit;
 pub mod env;
 pub mod evict;
 pub mod hooks;
@@ -41,6 +42,7 @@ pub mod resolve;
 pub mod screen;
 pub mod serve;
 pub mod services;
+pub mod sidecar;
 pub mod sleep;
 pub mod spawn;
 pub mod supervisor;

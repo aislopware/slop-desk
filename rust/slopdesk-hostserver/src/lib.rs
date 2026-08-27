@@ -92,6 +92,7 @@
 pub mod adopt;
 pub mod agentaction;
 pub mod bridge;
+pub mod bridgerun;
 pub mod capture;
 pub mod channel;
 pub mod clipsync;

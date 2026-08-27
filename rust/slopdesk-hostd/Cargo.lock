@@ -409,6 +409,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "slopdesk-dropd"
+version = "0.1.0"
+
+[[package]]
 name = "slopdesk-fuzzy"
 version = "0.1.0"
 
@@ -446,6 +450,7 @@ dependencies = [
  "slopdesk-androidd",
  "slopdesk-apple-power",
  "slopdesk-codeseed",
+ "slopdesk-dropd",
  "slopdesk-hook",
  "slopdesk-hookevent",
  "slopdesk-hostlaunch",
@@ -454,6 +459,7 @@ dependencies = [
  "slopdesk-hostserver",
  "slopdesk-hostsession",
  "slopdesk-ids",
+ "slopdesk-inspectord",
  "slopdesk-muxsession",
  "slopdesk-probe",
  "slopdesk-sanitize",
@@ -548,6 +554,14 @@ name = "slopdesk-ids"
 version = "0.1.0"
 
 [[package]]
+name = "slopdesk-inspectord"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "slopdesk-muxsession"
 version = "0.1.0"
 dependencies = [
@@ -601,6 +615,7 @@ version = "0.1.0"
 dependencies = [
  "nix",
  "slopdesk-screenwire",
+ "slopdesk-sidecars",
 ]
 
 [[package]]
@@ -615,6 +630,7 @@ dependencies = [
 name = "slopdesk-sidecars"
 version = "0.1.0"
 dependencies = [
+ "nix",
  "serde_json",
 ]
 

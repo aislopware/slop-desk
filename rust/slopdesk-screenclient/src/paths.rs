@@ -12,34 +12,29 @@
 //! `TMPDIR` pointed elsewhere had a daemon binding one path and its client dialling another, with
 //! "screend appears not to be running" as the only symptom.
 //!
-//! ## The binary IS decided here
-//! [`binary`] is the whole of `RustServicePaths.locate` for one crate. It stays private to this
-//! client on purpose: there is one caller today, and lifting it into a shared crate before a second
-//! one exists would be guessing at the shape that second caller wants. Stage D brings one.
+//! ## The binary is NOT decided here any more
+//! [`binary`] WAS the whole of `RustServicePaths.locate`, kept here because there was one caller
+//! and lifting it before a second existed would have been guessing at the shape that second caller
+//! wanted. There are six now — dropd's face, inspectord's face, the bridge daemon's locator and,
+//! twice over, the version audit — and they all want a crate name and an override variable. So the
+//! rule moved to [`slopdesk_sidecars::paths`], beside the audit that asks where a binary IS, and
+//! what is left here is this crate's name and its two environment variables.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-
-use nix::unistd::{AccessFlags, access};
 
 /// Points this process at a screend other than the login session's. The test fixture uses it to run
 /// a private daemon; nothing else should.
 pub const SOCKET_ENV_KEY: &str = "SLOPDESK_SCREEND_SOCKET";
 
 /// Overrides which `slopdesk-screend` binary gets started when none is listening.
-pub const BINARY_ENV_KEY: &str = "SLOPDESK_SCREEND_BIN";
+///
+/// Re-exported rather than re-spelled: the audit needs the same variable for the same daemon, and
+/// two spellings of it is the drift the lift was for.
+pub const BINARY_ENV_KEY: &str = slopdesk_sidecars::paths::SCREEND_BIN_ENV_KEY;
 
 /// The daemon's crate name, which is also its executable name and its cargo target directory.
 const CRATE: &str = "slopdesk-screend";
-
-/// Levels walked up from the running executable before giving up.
-///
-/// A build tree is a handful of levels deep, and an unbounded walk from an executable somewhere
-/// else entirely would stat its way to `/` for nothing. It is a WALK rather than a fixed depth
-/// because `SwiftPM`'s `.build/debug` is a symlink to `.build/<triple>/debug`, so a binary found
-/// next to the test bundle sits one level deeper than `swift run`'s — and a fixed count silently
-/// resolves to nothing for one of them, which reads as "this machine has no screen engine".
-const WALK_LIMIT: usize = 6;
 
 /// screend's request socket — `slopdesk-screend.sock`, under whichever directory the rule picks.
 ///
@@ -64,80 +59,28 @@ pub fn request_socket_from_env() -> PathBuf {
 /// host.
 #[must_use]
 pub fn installed(home: &Path) -> PathBuf {
-    home.join("Library/Application Support/SlopDesk/bin").join(CRATE)
+    slopdesk_sidecars::paths::installed(home, CRATE)
 }
 
 /// Locates the `slopdesk-screend` executable, or `None` when this machine has none.
 ///
-/// Four candidates in order: the override, the installed copy, the directory the running executable
-/// sits in, then the crate's cargo target directories found by walking up from `executable`.
-///
-/// The third candidate is what makes a PACKAGED host work. A release tarball is one flat directory
-/// of binaries — the formula's `bin.install` puts hostd and every daemon side by side under
-/// `/opt/homebrew/bin` — and there is no cargo target tree within six levels of it and no
-/// `~/Library/Application Support/SlopDesk/bin` unless somebody hand-made one. It sits AFTER the
-/// installed copy so a deliberate hand-install still wins, and BEFORE the walk so a checkout's
-/// staged copy beats a stale per-crate `target/`.
-///
-/// There is deliberately no `PATH` search: screend is not a user-facing command and a stray
-/// same-named binary on someone's `PATH` should not become the screen engine. That is the line
-/// between this and `slopdesk-ffi`'s `tool_path`, which searches `PATH` because the tools it finds
-/// are somebody else's programs.
+/// Four candidates in order — the override, the installed copy, the directory the running
+/// executable sits in, then the crate's cargo target directories found by walking up. The order and
+/// every reason for it are [`slopdesk_sidecars::paths::locate`]'s; what this adds is the crate
+/// name.
 #[must_use]
 pub fn binary(
     binary_override: Option<&OsStr>,
     home: Option<&Path>,
     executable: Option<&Path>,
 ) -> Option<PathBuf> {
-    if let Some(value) = binary_override
-        && !value.is_empty()
-    {
-        return Some(PathBuf::from(value));
-    }
-    if let Some(home) = home {
-        let candidate = installed(home);
-        if is_executable(&candidate) {
-            return Some(candidate);
-        }
-    }
-    let mut directory = executable?.parent()?.to_path_buf();
-    let beside = directory.join(CRATE);
-    if is_executable(&beside) {
-        return Some(beside);
-    }
-    for _ in 0..WALK_LIMIT {
-        for profile in ["release", "debug"] {
-            let candidate = directory
-                .join("rust")
-                .join(CRATE)
-                .join("target")
-                .join(profile)
-                .join(CRATE);
-            if is_executable(&candidate) {
-                return Some(candidate);
-            }
-        }
-        let Some(parent) = directory.parent() else {
-            break;
-        };
-        if parent == directory {
-            break;
-        }
-        directory = parent.to_path_buf();
-    }
-    None
+    slopdesk_sidecars::paths::locate(CRATE, binary_override.and_then(OsStr::to_str), home, executable)
 }
 
 /// [`binary`] against this process's environment and this process's executable.
 #[must_use]
 pub fn binary_from_env() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let executable = std::env::current_exe().ok();
-    binary(
-        std::env::var_os(BINARY_ENV_KEY).as_deref(),
-        home.as_deref(),
-        executable.as_deref(),
-    )
+    slopdesk_sidecars::paths::locate_from_env(CRATE)
 }
 
 /// Where a screend this client STARTS writes its stdout and stderr.
@@ -157,17 +100,6 @@ pub fn log_file(home: Option<&Path>) -> PathBuf {
     std::env::temp_dir().join("slopdesk-screend.log")
 }
 
-/// `access(2)` with `X_OK`, which is the question `FileManager.isExecutableFile` asked and NOT the
-/// question `mode & 0o111` answers.
-///
-/// The two disagree in both directions — a file whose mode bit is set on a filesystem mounted
-/// `noexec`, a file this uid cannot traverse to — and `slopdesk-ffi/src/tool_path.rs` carries the
-/// long version of why that mattered enough to write down. The port keeps the syscall the original
-/// asked, so a machine that resolved a binary before still resolves it.
-fn is_executable(path: &Path) -> bool {
-    access(path, AccessFlags::X_OK).is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -179,7 +111,7 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
 
-    use super::{binary, installed, is_executable, log_file, request_socket};
+    use super::{binary, installed, log_file, request_socket};
 
     /// A private directory under the temp dir, named for the test that asked.
     fn scratch(name: &str) -> PathBuf {
@@ -275,16 +207,6 @@ mod tests {
             binary(None, Some(&root), Some(&root.join("slopdesk-hostd"))),
             None
         );
-    }
-
-    #[test]
-    fn a_file_without_the_bit_is_not_executable() {
-        let root = scratch("mode");
-        let plain = root.join("plain");
-        std::fs::write(&plain, b"data").unwrap();
-        assert!(!is_executable(&plain));
-        touch_executable(&plain);
-        assert!(is_executable(&plain));
     }
 
     #[test]

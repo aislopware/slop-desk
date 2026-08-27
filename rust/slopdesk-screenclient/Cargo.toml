@@ -52,6 +52,11 @@ repository = "https://github.com/aislopware/slop-desk"
 nix = { version = "0.31", features = ["fs"] }
 slopdesk-screenwire = { path = "../slopdesk-screenwire" }
 
+# Where this tree's own daemons are. `paths::binary` was the one caller of that rule when it was
+# written here; there are six now, so the rule moved to the crate the version audit already asks
+# where a binary IS, and this client calls it for its own crate name.
+slopdesk-sidecars = { path = "../slopdesk-sidecars" }
+
 # A daemon's profile: hostd is long-lived and every pane's detection tick goes through this crate.
 [profile.release]
 opt-level = 3

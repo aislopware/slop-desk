@@ -46,6 +46,7 @@
 
 pub mod line_assembler;
 pub mod manifest;
+pub mod paths;
 pub mod service_lifecycle;
 
 /// What may be done about a sidecar that is running code the install has replaced.

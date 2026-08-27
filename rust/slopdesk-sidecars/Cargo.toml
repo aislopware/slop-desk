@@ -27,3 +27,9 @@ workspace = true
 # classic place to be wrong, and its object is a `BTreeMap`, so what is re-encoded here comes back
 # key-sorted and diffable.
 serde_json = "1"
+
+# `access(2)` with `X_OK`, which is the question `FileManager.isExecutableFile` asked and the one
+# `paths` must keep asking — a mode-bit test disagrees with it in both directions. The same crate,
+# the same feature and the same reason as `slopdesk-screenclient`, whose copy of that locator this
+# module absorbed.
+nix = { version = "0.31", features = ["fs"] }

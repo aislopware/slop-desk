@@ -37,7 +37,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use nix::sys::signal::{SigSet, Signal};
-use slopdesk_hostd::LateHost;
 use slopdesk_hostd::env::Overlay;
 use slopdesk_hostd::hooks::HookTable;
 use slopdesk_hostd::keys::ProjectKeySink;
@@ -46,12 +45,14 @@ use slopdesk_hostd::repowatch::{Fanout, HostRepoWatcher, Keys};
 use slopdesk_hostd::screen::{ScreendOracle, ScreendSnapshot};
 use slopdesk_hostd::serve::Listening;
 use slopdesk_hostd::services::{self, ClaudeHooks, Vendored};
+use slopdesk_hostd::sidecar::{self, Sidecar};
 use slopdesk_hostd::sleep::KeepAwake;
 use slopdesk_hostd::spawn::{PaneSpawner, Recipe};
 use slopdesk_hostd::supervisor::DaemonObserver;
 use slopdesk_hostd::survivors::Supervised;
 use slopdesk_hostd::transcripts::DiskTranscripts;
 use slopdesk_hostd::workspacestore::DiskWorkspace;
+use slopdesk_hostd::{LateHost, audit};
 use slopdesk_hostserver::agentaction::AgentActions;
 use slopdesk_hostserver::bridge::CodeBridgeServer;
 use slopdesk_hostserver::channel::{HookRoutes, HostObserver, Offload, Threads, WorkspaceChannels};
@@ -71,7 +72,7 @@ use slopdesk_hostserver::workspace::{NoStore, WorkspaceDocument};
 use slopdesk_hostserver::wsserve::WorkspaceService;
 use slopdesk_hostserver::{
     DetachedStore, Host, HostEnv, HostParts, LetGo, NoTranscripts, Panes, SessionIds, Survivors, SystemIds,
-    Transcripts, WorkspaceStore, owner_identity,
+    Transcripts, WorkspaceStore, bridgerun, owner_identity,
 };
 use slopdesk_hostsession::{MetadataPerformer, ScreenOracle, SnapshotPolicy};
 use slopdesk_screenclient::client::ScreenClient;
@@ -384,14 +385,7 @@ fn main() {
     // The claim, not a bind: superd owns both child-facing addresses. A host that did not claim the
     // control listener is never handed one, and superd advertises `SLOPDESK_CONTROL_SOCKET` to a
     // child only while somebody has.
-    let mut claimed = vec![ListenerKind::Hook];
-    if gates.agent_control {
-        claimed.push(ListenerKind::Control);
-    }
-    match supervisor.listen(&claimed) {
-        Ok(()) => hooks.mark_serving(true),
-        Err(why) => log.say(&format!("superd refused the listener claim: {why}")),
-    }
+    claim_listeners(gates.agent_control, &supervisor, &hooks, &log);
 
     // Before the bind. A client that connected first would be offered a fresh shell for a pane that
     // is still running under superd.
@@ -407,31 +401,28 @@ fn main() {
     let bound = listening.bound_port();
     log.say(&format!("listening on 0.0.0.0:{bound} (mode=shell)"));
 
-    // Now that the REAL bound port is known — `--port 0` mints one that differs from the request.
-    // Best-effort: a host that cannot write it still serves every client.
-    if let Some(path) = slopdesk_hostlaunch::record::path() {
-        let record = slopdesk_hostlaunch::record::current(bound, env!("CARGO_PKG_VERSION"));
-        if record.write(&path) {
-            log.say(&format!(
-                "launch record at {} — `slopdesk-ops restart-hostd` restarts this exact daemon",
-                path.display()
-            ));
-        }
-    }
-
-    if let Some(ref disk) = transcripts {
-        start_journal_sweep(Arc::clone(disk));
-    }
-
-    // AFTER the bind, and never before it: the seed, the one-shot extension install and a Node cold
-    // start together take longer than a client is willing to wait, and this daemon's job is to be
-    // accepting connections. A host with no `code-server` is a silent no-op — `unavailable` is the
-    // verb's answer, not a boot failure.
-    panels.code.prewarm();
+    let sidecars = after_bind(&Standing {
+        parsed: &parsed,
+        bound,
+        supervisor: &supervisor,
+        screen: &screen,
+        host: &host,
+        panels: &panels,
+        transcripts: transcripts.as_ref(),
+        log: &log,
+    });
 
     // The one blocking call in the process. Everything above it runs on a thread of its own.
     wait_for_shutdown(signals, &log);
-    shut_down(&listening, &hooks, &host, &supervisor, &stopping, &panels);
+    shut_down(
+        &listening,
+        &hooks,
+        &host,
+        &supervisor,
+        &stopping,
+        &panels,
+        &sidecars,
+    );
     client_threads.join();
 }
 
@@ -456,6 +447,7 @@ fn shut_down(
     supervisor: &SupervisorClient,
     stopping: &Stopping,
     panels: &Panels,
+    sidecars: &Sidecars,
 ) {
     if let Some(path) = slopdesk_hostlaunch::record::path() {
         slopdesk_hostlaunch::record::remove(&path);
@@ -473,6 +465,14 @@ fn shut_down(
     // one of superd's children. It unbinds with the rest of this daemon's addresses; the surviving
     // extension host reconnects to the same pid-free path within one of its five-second ticks.
     panels.bridge.stop();
+    // The two daemons hostd picked the port for go the same way, and for the same reason: superd
+    // keeps them, so the inspector's replay window and every upload in flight outlive this process.
+    for daemon in [sidecars.drops.as_ref(), sidecars.inspector.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        daemon.relinquish();
+    }
     // Before the panes: cancelling a watch takes `slopdesk-apple-fsevents`' own registry lock from
     // inside `Drop`, and a reading that fired against a pane already being torn down would be work
     // nobody can use.
@@ -563,6 +563,162 @@ fn build_panels(hooks: &Arc<HookTable>, supervisor: &Arc<SupervisorClient>, log:
         android,
         bridge,
     }
+}
+
+/// The two daemons hostd chose the port for, or `None` for a path this host does not serve.
+///
+/// A `None` is not a failure mode with consequences elsewhere: it means the audit does not audit
+/// that daemon and the stop has nothing to relinquish. The terminal server is already bound and
+/// serving by the time either is asked for.
+struct Sidecars {
+    /// PATH 3, on `bound + 1`.
+    inspector: Option<Arc<Sidecar>>,
+    /// PATH 4, on `bound + 2`.
+    drops: Option<Arc<Sidecar>>,
+}
+
+/// Brings up the inspector and the drop daemon, each on its offset from the REAL bound port.
+///
+/// A daemon that will not start is logged LOUDLY and is non-fatal, exactly as a failed bind was: it
+/// must not tear down the terminal server that just successfully bound. That is the whole of the
+/// error handling, and it is deliberate — a host serving three paths of four is a host.
+struct Standing<'a> {
+    parsed: &'a slopdesk_hostlaunch::args::HostdArgs,
+    /// The REAL bound port. The two offsets are taken from THIS and never from `parsed.port`:
+    /// `--port 0` mints an OS-chosen port that differs from the request, and a sidecar addressed
+    /// off the request would be one nothing dials.
+    bound: u16,
+    supervisor: &'a Arc<SupervisorClient>,
+    screen: &'a Arc<ScreenClient>,
+    /// The pane tables, for the one arm of the workbench bridge that reaches back into a session.
+    host: &'a Arc<Host>,
+    panels: &'a Panels,
+    /// `None` on a host with no transcript directory, which is a host with no journal to sweep.
+    transcripts: Option<&'a Arc<DiskTranscripts>>,
+    log: &'a Arc<Stderr>,
+}
+
+/// Claims the child-facing addresses from superd, which OWNS both of them.
+///
+/// A claim, not a bind: superd advertises `SLOPDESK_CONTROL_SOCKET` to a child only while somebody
+/// has claimed it, and a host that did not claim the control listener is never handed one. A
+/// refusal is a log line — the hook routes simply stay un-served, which is what
+/// `mark_serving(false)` already means everywhere else.
+fn claim_listeners(agent_control: bool, supervisor: &SupervisorClient, hooks: &HookTable, log: &Stderr) {
+    let mut claimed = vec![ListenerKind::Hook];
+    if agent_control {
+        claimed.push(ListenerKind::Control);
+    }
+    match supervisor.listen(&claimed) {
+        Ok(()) => hooks.mark_serving(true),
+        Err(why) => log.say(&format!("superd refused the listener claim: {why}")),
+    }
+}
+
+/// Everything this daemon does once it is ACCEPTING, in the order it does it.
+///
+/// The whole block is here rather than in `main` because every step of it needs the REAL bound port
+/// or the fact that there IS one: the launch record names it, the sidecars take their offsets from
+/// it, and the workbench prewarm is only safe once a client can already connect.
+///
+/// Nothing here is fatal. A host that cannot write its launch record still serves every client, a
+/// host with no `code-server` is a silent no-op, and a sidecar that will not start is a log line —
+/// exactly as a failed bind was, and for the same reason: none of them is the terminal server.
+fn after_bind(standing: &Standing<'_>) -> Sidecars {
+    // Best-effort, and only now: `--port 0` mints a port that differs from the request, so a record
+    // written earlier would name one nothing is listening on.
+    if let Some(path) = slopdesk_hostlaunch::record::path() {
+        let record = slopdesk_hostlaunch::record::current(standing.bound, env!("CARGO_PKG_VERSION"));
+        if record.write(&path) {
+            standing.log.say(&format!(
+                "launch record at {} — `slopdesk-ops restart-hostd` restarts this exact daemon",
+                path.display()
+            ));
+        }
+    }
+    if let Some(disk) = standing.transcripts {
+        start_journal_sweep(Arc::clone(disk));
+    }
+    // Before the prewarm, and that ordering is the point: the prewarm is what starts the workbench,
+    // and the workbench's first `run` can arrive as soon as it has. A seam installed after it would
+    // refuse that request with "no terminal runner is installed" — the exact symptom this fixes.
+    standing
+        .panels
+        .bridge
+        .set_terminal_runner(Some(bridgerun::terminal_runner(standing.host)));
+    // AFTER the bind, and never before it: the seed, the one-shot extension install and a Node cold
+    // start together take longer than a client is willing to wait, and this daemon's job is to be
+    // accepting connections.
+    standing.panels.code.prewarm();
+    // PATHS 3 and 4. Neither is bound HERE — both are superd's children the client dials directly,
+    // which is what makes the inspector's replay window and an upload in flight survive
+    // `make host-restart` (`docs/53`, `docs/54`).
+    let sidecars = start_sidecars(standing.parsed, standing.bound, standing.supervisor, standing.log);
+    // Last, with every sidecar either up or accounted for: ask each what version it is RUNNING and
+    // compare it against the binary this host would spawn. See `audit` for why nothing above this
+    // point notices an upgrade.
+    let _reports = audit::run(
+        &audit::for_host(
+            standing.supervisor,
+            standing.screen,
+            sidecars.drops.as_ref(),
+            sidecars.inspector.as_ref(),
+            &standing.panels.android,
+        ),
+        standing.log,
+    );
+    sidecars
+}
+
+fn start_sidecars(
+    parsed: &slopdesk_hostlaunch::args::HostdArgs,
+    bound: u16,
+    supervisor: &Arc<SupervisorClient>,
+    log: &Arc<Stderr>,
+) -> Sidecars {
+    let mut sidecars = Sidecars {
+        inspector: None,
+        drops: None,
+    };
+    if parsed.inspector_enabled {
+        let port = bound.wrapping_add(1);
+        let inspector = Arc::new(Sidecar::inspector(
+            port,
+            parsed.transcript_path.as_deref(),
+            supervisor,
+            log,
+        ));
+        if let Some(served) = inspector.start() {
+            let subject = parsed.transcript_path.as_deref().map_or_else(
+                || "no transcript yet".to_owned(),
+                |path| format!("transcript {path}"),
+            );
+            log.say(&format!("inspector service on 0.0.0.0:{served} ({subject})"));
+            sidecars.inspector = Some(inspector);
+        } else {
+            log.say(&format!(
+                "slopdesk-inspectord did not come up on port {port} — continuing with terminal server only, \
+                 no inspector"
+            ));
+        }
+    }
+    if sidecar::file_transfer_enabled() {
+        let port = bound.wrapping_add(2);
+        let directory = sidecar::drop_directory_from_env();
+        let drops = Arc::new(Sidecar::drops(port, &directory, supervisor, log));
+        if let Some(served) = drops.start() {
+            log.say(&format!(
+                "file-drop service on 0.0.0.0:{served} (drop dir {})",
+                directory.display()
+            ));
+            sidecars.drops = Some(drops);
+        } else {
+            log.say(&format!(
+                "slopdesk-dropd did not come up on port {port} — continuing without file transfer"
+            ));
+        }
+    }
+    sidecars
 }
 
 /// Dials superd, or ends the process saying where it looked.
