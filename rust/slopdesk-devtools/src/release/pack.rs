@@ -17,7 +17,7 @@
 //! | file | what |
 //! | --- | --- |
 //! | `SlopDesk-<version>-arm64.dmg` | `SlopDesk.app` + `SlopDeskHost.app`, signed + stapled |
-//! | `slopdesk-cli-<version>-arm64.tar.gz` | the `SwiftPM` pair plus every sidecar the host resolves at runtime, signed, carrying `MANIFEST.json` |
+//! | `slopdesk-cli-<version>-arm64.tar.gz` | the CLI and the host, plus every sidecar the host resolves at runtime, signed, carrying `MANIFEST.json` |
 //! | `MANIFEST.json` | one entry per shipped binary: its OWN version, its source stamp, its SHA |
 //! | `SHA256SUMS` | what the Homebrew tap's cask + formula pin |
 //!
@@ -102,7 +102,6 @@ struct Layout {
     derived_data: PathBuf,
     stage: PathBuf,
     cli_stage: PathBuf,
-    scratch: PathBuf,
 }
 
 impl Layout {
@@ -116,26 +115,7 @@ impl Layout {
             cli_stage: stage.join(format!("slopdesk-cli-{version}-arm64")),
             stage,
             work,
-            // `--scratch-path` DICTATES where SwiftPM builds instead of leaving it to the
-            // toolchain. On the CI toolchain the default scratch dir was not `.build` at all: all
-            // three targets built, `.build` held only checkouts, and nothing named `slopdesk`
-            // existed anywhere under it. A packaging step that cannot find its own output is the
-            // one failure worth spending a flag on. `.build-release` is covered by .gitignore's
-            // `.build-*/` and survives between local runs.
-            scratch: root.join(".build-release"),
         }
-    }
-
-    /// Search roots for a `SwiftPM` product, widest last.
-    ///
-    /// Even inside a pinned scratch dir the layout differs by build backend (`<triple>/release` for
-    /// llbuild, `Products/Release` for Swift Build), so the path is found, never assumed.
-    fn search_roots(&self) -> Vec<PathBuf> {
-        let mut roots = vec![self.scratch.clone(), self.root.join(".build")];
-        if let Some(home) = env::var_os("HOME") {
-            roots.push(PathBuf::from(home).join("Library/Developer/Xcode/DerivedData"));
-        }
-        roots
     }
 }
 
@@ -160,97 +140,25 @@ fn cargo_bin_dir(root: &Path, tool: &str) -> Option<PathBuf> {
     None
 }
 
-/// True when `path` is a Mach-O executable — thin arm64 or a fat container.
+// `is_macho_executable` and `find_named` stood here until stage F. Both existed only to serve the
+// `SwiftPM` product hunt: walk a scratch tree for a NAME, then read each candidate's Mach-O magic
+// to tell the product from a `.dylib` or a `.o` of the same name. With no `SwiftPM` tool in the
+// tarball there is nothing to hunt, and a reader that answers "somewhere under here, probably" is
+// worse than none — so they went with the search rather than being kept for the next caller.
+
+/// Where the built `tool` is, or `None`.
 ///
-/// The shell asked `file -b`; reading the magic is the same question with no process and no locale.
-fn is_macho_executable(path: &Path) -> bool {
-    let Ok(header) = fs::read(path) else { return false };
-    let Some(magic) = header.get(..4) else {
-        return false;
-    };
-    // A fat container's members are executables or the linker would not have produced it.
-    if magic == [0xCA, 0xFE, 0xBA, 0xBE] || magic == [0xBE, 0xBA, 0xFE, 0xCA] {
-        return true;
-    }
-    // 64-bit Mach-O, little-endian — the only thin shape this tree builds.
-    if magic != [0xCF, 0xFA, 0xED, 0xFE] {
-        return false;
-    }
-    // `filetype` at offset 12; `MH_EXECUTE` is 2. A `.dylib` or a `.o` of the same name is not the
-    // product, and `file` could not tell them apart without being asked twice.
-    header
-        .get(12..16)
-        .is_some_and(|filetype| filetype == [2, 0, 0, 0])
-}
-
-/// Every file named `wanted` under `dir`, depth-first.
-fn find_named(dir: &Path, wanted: &str, into: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(kind) = entry.file_type() else { continue };
-        if kind.is_dir() {
-            find_named(&path, wanted, into);
-        } else if entry.file_name() == wanted {
-            into.push(path);
-        }
-    }
-}
-
-/// Where the built `tool` is, or `None` with the layout dumped for the reader.
-///
-/// A cargo tool resolves to its cargo path or to NOTHING. Falling through to the `SwiftPM` search
-/// would let a stale `.build*/release/slopdesk-ctl` — the Swift binary that one replaced — ship
-/// silently under the right name, which is the one failure the version check cannot catch.
-fn locate_tool(layout: &Layout, tool: &str, swift_bin: Option<&Path>) -> Option<PathBuf> {
-    if let Some(dir) = cargo_bin_dir(&layout.root, tool) {
-        let built = dir.join(tool);
-        return built.is_file().then_some(built);
-    }
-    if let Some(bin) = swift_bin {
-        let built = bin.join(tool);
-        if built.is_file() {
-            return Some(built);
-        }
-    }
-    for root in layout.search_roots() {
-        if !root.is_dir() {
-            continue;
-        }
-        let mut candidates = Vec::new();
-        find_named(&root, tool, &mut candidates);
-        candidates.sort();
-        for candidate in candidates {
-            // Release paths only. A stale debug build of the same name must never reach the
-            // tarball. No permission filter: a product directory created 0700 is still the product.
-            let text = candidate.to_string_lossy();
-            if !text.contains("/release/") && !text.contains("/Release/") {
-                continue;
-            }
-            if is_macho_executable(&candidate) {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-/// One failure in the search costs a five-minute rebuild to diagnose, so spend the listing up front
-/// rather than learning the layout one CI round-trip at a time.
-fn dump_build_layout(layout: &Layout) {
-    eprintln!("--- where did the products go? ---");
-    for root in layout.search_roots() {
-        eprintln!("[{}]", root.display());
-        if !root.is_dir() {
-            eprintln!("  (does not exist)");
-            continue;
-        }
-        let mut hits = Vec::new();
-        find_named(&root, "slopdesk", &mut hits);
-        for path in hits.iter().take(40) {
-            eprintln!("{}", path.display());
-        }
-    }
+/// One answer, and no search. It used to have three — the cargo path, a `--show-bin-path` hint,
+/// then a recursive hunt through every scratch directory `SwiftPM` might have chosen — because
+/// where a `SwiftPM` product lands is not a constant. Stage F left no `SwiftPM` tool in the
+/// tarball, so the hunt went with it, and that is a strict improvement rather than a tidy-up: a
+/// search that walks `.build*/` and `DerivedData` for a NAME is exactly how a stale binary from a
+/// deleted Swift target ships under the right name, which is the one substitution the version check
+/// cannot catch. A cargo tool resolves to its own `target/` path or to nothing at all.
+fn locate_tool(layout: &Layout, tool: &str) -> Option<PathBuf> {
+    let dir = cargo_bin_dir(&layout.root, tool)?;
+    let built = dir.join(tool);
+    built.is_file().then_some(built)
 }
 
 /// The first line's second field — the shape every tool in this tree answers.
@@ -278,8 +186,8 @@ pub fn run(root: &Path, settings: &Settings) -> Result<(), String> {
     let layout = Layout::new(root, &settings.version);
     preflight(&layout, settings)?;
 
-    let swift_bin = build_cli(&layout)?;
-    stage_cli(&layout, swift_bin.as_deref())?;
+    build_cli(&layout)?;
+    stage_cli(&layout)?;
     check_versions(&layout, settings)?;
     sign_cli(&layout, settings)?;
 
@@ -342,37 +250,14 @@ fn preflight(layout: &Layout, settings: &Settings) -> Result<(), String> {
     Ok(())
 }
 
-/// Build both halves of the CLI, and report where `SwiftPM` says its products landed.
-fn build_cli(layout: &Layout) -> Result<Option<PathBuf>, String> {
-    proc::step("Building CLI (swift build -c release)");
-    let scratch = layout.scratch.to_string_lossy().into_owned();
-    // `--arch arm64` keeps this honest even under Rosetta or a future universal-capable toolchain:
-    // the tarball claims arm64 and must contain only arm64.
-    //
-    // `--product`, NOT `--target`. Under the Swift 6.3 build backend `--target slopdesk-hostd`
-    // compiles the module, reports "Build of target: … complete!", and never links a binary — a
-    // green build that produces nothing to ship. `--product` links, which is why Package.swift
-    // declares the shipped executable as a product.
-    for tool in tools::SPM_TOOLS {
-        proc::run(
-            "swift",
-            &[
-                "build",
-                "-c",
-                "release",
-                "--arch",
-                "arm64",
-                "--scratch-path",
-                &scratch,
-                "--product",
-                tool,
-            ],
-            &layout.root,
-        )?;
-    }
-
-    // The cargo half. `--target` is explicit for the same reason `--arch` is above. Naming the
-    // target also fixes the output directory, so the search below is never reached for these.
+/// Build every tool in the tarball.
+///
+/// Cargo's whole set since `docs/60` stage F moved the host: the `swift build -c release --product`
+/// half above this used to build `slopdesk-hostd`, and it was the last name in it.
+fn build_cli(layout: &Layout) -> Result<(), String> {
+    // `--target` is explicit so the tarball claims arm64 and contains only arm64, under Rosetta or
+    // a universal-capable toolchain alike. Naming the target also FIXES the output directory, which
+    // is what lets `locate_tool` answer with a path instead of hunting for one.
     proc::step("Building CLI (cargo build --release)");
     for package in tools::RUST_ROOT_PACKAGES {
         proc::run(
@@ -389,38 +274,18 @@ fn build_cli(layout: &Layout) -> Result<Option<PathBuf>, String> {
         )?;
     }
 
-    // Where the Swift binaries land is NOT a constant: `--show-bin-path` does not report the newer
-    // backend's `Products/Release`. So it is a HINT, and the search is the answer.
-    Ok(proc::ask(
-        "swift",
-        &[
-            "build",
-            "-c",
-            "release",
-            "--arch",
-            "arm64",
-            "--scratch-path",
-            &scratch,
-            "--show-bin-path",
-        ],
-        &layout.root,
-    )
-    .filter(|path| !path.is_empty())
-    .map(PathBuf::from))
+    Ok(())
 }
 
-fn stage_cli(layout: &Layout, swift_bin: Option<&Path>) -> Result<(), String> {
+fn stage_cli(layout: &Layout) -> Result<(), String> {
     fs::create_dir_all(&layout.cli_stage)
         .map_err(|error| format!("{}: {error}", layout.cli_stage.display()))?;
     for tool in tools::cli_tools() {
-        let Some(built) = locate_tool(layout, tool, swift_bin) else {
-            dump_build_layout(layout);
+        let Some(built) = locate_tool(layout, tool) else {
             return Err(format!(
-                "the build reported success but no release {tool} executable exists\n  (--show-bin-path \
-                 said: {}; cargo dir: {})",
-                swift_bin.map_or_else(|| "<nothing>".to_owned(), |path| path.display().to_string()),
+                "the build reported success but no release {tool} executable exists\n  (looked in: {})",
                 cargo_bin_dir(&layout.root, tool).map_or_else(
-                    || "<not a cargo tool>".to_owned(),
+                    || "<not a cargo tool — the tool table and the build loops disagree>".to_owned(),
                     |dir| dir.display().to_string()
                 )
             ));
@@ -962,7 +827,7 @@ fn checksums(layout: &Layout, artifacts: &[&Path]) -> Result<(), String> {
 mod tests {
     use std::path::Path;
 
-    use super::{cargo_bin_dir, is_macho_executable};
+    use super::cargo_bin_dir;
 
     #[test]
     fn a_root_member_and_a_daemon_build_into_different_targets() {
@@ -988,20 +853,33 @@ mod tests {
         );
     }
 
-    /// hostd is the last `SwiftPM` binary; the product CLI beside it is cargo's and resolves to the
-    /// shared directory, which is what keeps a stale Swift `slopdesk` in `.build` from staging.
+    /// Both product binaries are cargo's since stage F, and they land in DIFFERENT directories.
+    ///
+    /// The CLI is a root workspace member and shares `rust/target/`; the host carries its own
+    /// workspace and writes to `rust/slopdesk-hostd/target/`. Staging the host out of the shared
+    /// directory would find nothing, which is the failure this pins — and there is no longer a
+    /// name-search to fall through to that could find a stale `.build/` binary instead.
     #[test]
-    fn the_swift_half_has_no_cargo_directory_and_the_cli_does() {
+    fn the_two_product_binaries_come_from_two_cargo_directories() {
         let root = Path::new("/tree");
-        assert_eq!(cargo_bin_dir(root, "slopdesk-hostd"), None);
+        assert_eq!(
+            cargo_bin_dir(root, "slopdesk-hostd").unwrap(),
+            Path::new("/tree/rust/slopdesk-hostd/target/aarch64-apple-darwin/release")
+        );
         assert_eq!(
             cargo_bin_dir(root, "slopdesk"),
             cargo_bin_dir(root, "slopdesk-ctl")
         );
+        assert_ne!(
+            cargo_bin_dir(root, "slopdesk-hostd"),
+            cargo_bin_dir(root, "slopdesk")
+        );
     }
 
+    /// A name that is in no tool table has no directory, so `locate_tool` refuses rather than
+    /// hunts.
     #[test]
-    fn a_missing_file_is_not_an_executable() {
-        assert!(!is_macho_executable(Path::new("/nonexistent/slopdesk")));
+    fn a_name_that_is_not_a_tool_has_no_directory() {
+        assert_eq!(cargo_bin_dir(Path::new("/tree"), "slopdesk-client"), None);
     }
 }

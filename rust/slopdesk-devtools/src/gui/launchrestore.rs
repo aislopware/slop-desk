@@ -79,7 +79,7 @@ use sha2::{Digest as _, Sha256};
 use super::control::{Control, Launch, Projection};
 use super::{
     Hostd, Log, Suite, alive, banner, build_app, build_cli, complain, daemon_children, dump_children,
-    kill_matching, poll, port, pty_pids, reap, say, screenshot, swift_build, work_dir,
+    kill_matching, poll, port, pty_pids, reap, say, screenshot, work_dir,
 };
 
 /// How long each phase holds its whole claim, re-reading everything each second.
@@ -806,7 +806,7 @@ pub fn run(root: &Path) -> Result<(), String> {
         "launch-restore",
         "building slopdesk-hostd + the slopdesk client CLI",
     );
-    swift_build(root, "slopdesk-hostd")?;
+    crate::hostbin::build(root, false)?;
     build_cli(root)?;
     say(
         "launch-restore",

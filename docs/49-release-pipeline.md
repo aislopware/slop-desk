@@ -462,21 +462,28 @@ The assembly writes to `$RUNNER_TEMP`, not the checkout. A scratch `changelog.md
 `CHANGELOG.md` is one case-insensitive filesystem away from the redirect truncating the file the job
 exists to read; it does precisely that on macOS, and `runs-on` is one line of config.
 
-## `--product`, never `--target`
+## `--product`, never `--target` — and why the tarball no longer needs either
 
 Under the Swift 6.3 build backend `swift build --target slopdesk` compiles the module, prints
 *Build of target: 'slopdesk' complete!* and **never links a binary** — a green build with nothing
-to ship. Only `--product` links (*Linking slopdesk*), and `--product` needs a declared product, so
-`Package.swift` exposes the two shipped SwiftPM executables — `slopdesk`, `slopdesk-hostd` — as
-`.executable` products. The other `executableTarget`s are dev/bench tools and stay product-less on
-purpose.
+to ship. Only `--product` links (*Linking slopdesk*), and `--product` needs a declared product,
+which is why the shipped SwiftPM executables were declared as `.executable` products. Kept here
+because the trap outlives the case: any future `swift build` of something meant to be RUN needs
+`--product`.
 
-Everything else in the tarball is Rust, and `slopdesk-release package` builds it with
-`cargo build --release --target aarch64-apple-darwin`. That target triple is explicit for the same
-reason `--arch arm64` is on the Swift half. `locate_tool` resolves a cargo binary to its cargo path
-or to *nothing* — deliberately never falling through to the SwiftPM search, because a stale
-`.build*/release/slopdesk-ctl` left by the deleted Swift target would otherwise ship silently under
-the right name, and that is the one substitution the `slopdesk version` check cannot catch.
+**The tarball is all cargo's as of `docs/60` stage F.** `slopdesk` went first, when the CLI process
+was ported; `slopdesk-hostd` was the last name in `SPM_TOOLS`, and that constant is now gone rather
+than empty. `slopdesk-release package` builds everything with
+`cargo build --release --target aarch64-apple-darwin` — the triple explicit so the tarball claims
+arm64 and contains only arm64, and because naming the target FIXES the output directory.
+
+That fixed directory is what let the product SEARCH be deleted with it. `locate_tool` had three
+answers — the cargo path, a `--show-bin-path` hint, then a recursive hunt through every scratch
+directory SwiftPM might have chosen — because where a SwiftPM product lands is not a constant. It
+has one now: a tool resolves to its own `target/` path or to *nothing*. A search that walks
+`.build*/` and `DerivedData` for a NAME is exactly how a stale binary from a deleted Swift target
+ships under the right name, and that is the one substitution the `slopdesk version` check cannot
+catch.
 
 ## What the tarball ships, and why the list is not shorter
 
@@ -486,12 +493,18 @@ master and hostd has no fallback path (`docs/51`; `HostServiceSupervisor.connect
 one line). The other five daemons each cost a feature outright: no screen engine, no file drop, no
 inspector, no Android panel, no profile seed.
 
-The cargo half splits along the **workspace** boundary, and so does the build:
+There is no longer a Swift half; the split that remains is along the **workspace** boundary, and so
+is the build:
 
 | Group | Binaries | Built from | Lands in |
 | --- | --- | --- | --- |
-| root workspace members | `slopdesk-ctl`, `slopdesk-probe`, `slopdesk-hook`, `slopdesk-agenthooks` | `rust/`, with `-p` | `rust/target/…` |
-| own-workspace daemons | `slopdesk-superd`, `-screend`, `-dropd`, `-inspectord`, `-androidd`, `-codeseed` | the crate's own directory | that crate's own `target/` |
+| root workspace members | `slopdesk` (from `slopdesk-cli`), `slopdesk-ctl`, `slopdesk-probe`, `slopdesk-hook`, `slopdesk-agenthooks` | `rust/`, with `-p` | `rust/target/…` |
+| own workspaces | `slopdesk-hostd`, `slopdesk-superd`, `-screend`, `-dropd`, `-inspectord`, `-androidd`, `-codeseed` | the crate's own directory | that crate's own `target/` |
+
+`slopdesk-hostd` heads the second group and is not a daemon like the six under it: it is the app's
+own process, and it is there because its crate carries its own workspace. The two **product** tools
+now sit one in each group — `slopdesk` shares `rust/target/`, the host does not — so staging the
+host out of the shared directory finds nothing, which `pack.rs` pins.
 
 `rust/Cargo.toml` `exclude`s every daemon, so `cargo build -p slopdesk-superd` from `rust/` fails —
 cargo cannot see a package it excluded. That same seam is the one `RustServicePaths` walks, which is

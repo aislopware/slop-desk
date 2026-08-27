@@ -28,12 +28,6 @@
 /// process was ported out of Swift, and its number did not move with it.
 pub const PRODUCT_TOOLS: &[&str] = &["slopdesk", "slopdesk-hostd"];
 
-/// Built by `SwiftPM`, with `--product` from the repo root.
-///
-/// One name, and the reason it is still Swift is that hostd is the app's own process. Everything
-/// else in the tarball is cargo's.
-pub const SPM_TOOLS: &[&str] = &["slopdesk-hostd"];
-
 /// `rust/Cargo.toml`'s workspace members: ONE shared `rust/target/`, built with `-p` from `rust/`.
 pub const RUST_ROOT_PACKAGES: &[&str] = &["slopdesk-cli", "slopdesk-ctl", "slopdesk-probe", "slopdesk-hook"];
 
@@ -58,7 +52,14 @@ pub const RUST_ROOT_TOOLS: &[&str] = &[
 /// Each is `exclude`d from the root workspace and carries its own, so each builds from its own
 /// directory into its own `rust/<crate>/target/` — the same seam `RustServicePaths.locate` walks.
 /// Building these with `-p` from `rust/` fails: cargo cannot see a package it excluded.
+///
+/// `slopdesk-hostd` heads the list because it is not a daemon like the others — it is the app's own
+/// process, and it was the last name in `SPM_TOOLS` until `docs/60` stage F. That constant is gone
+/// rather than empty: an empty `SwiftPM` half would have kept a `swift build` loop, a
+/// `--show-bin-path` probe and a fallback search alive in the packager for a set with nothing in
+/// it.
 pub const RUST_CRATE_TOOLS: &[&str] = &[
+    "slopdesk-hostd",
     "slopdesk-superd",
     "slopdesk-screend",
     "slopdesk-dropd",
@@ -89,12 +90,14 @@ pub fn pinned_tools() -> Vec<&'static str> {
         .collect()
 }
 
-/// Everything the CLI tarball ships, `SwiftPM` half first.
+/// Everything the CLI tarball ships.
+///
+/// One half now. It was two — `SwiftPM` first, then cargo — until stage F moved the last `SwiftPM`
+/// name; the function stays because four readers ask it what the tarball is, and folding it into
+/// [`rust_tools`] at each of them would be four places to notice a future third half.
 #[must_use]
 pub fn cli_tools() -> Vec<&'static str> {
-    let mut all = SPM_TOOLS.to_vec();
-    all.extend(rust_tools());
-    all
+    rust_tools()
 }
 
 /// True when `tool`'s version IS the product's — so it has no pin entry and no stamp.
@@ -139,7 +142,9 @@ pub fn tool_crate(tool: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PRODUCT_TOOLS, SPM_TOOLS, cli_tools, is_root_tool, pinned_tools, rust_tools, tool_crate};
+    use super::{
+        PRODUCT_TOOLS, cli_tools, is_crate_tool, is_root_tool, pinned_tools, rust_tools, tool_crate,
+    };
 
     #[test]
     fn the_hook_installer_rides_the_relays_crate() {
@@ -148,10 +153,13 @@ mod tests {
     }
 
     /// The product binary is cargo's now; the crate it comes from is not named for it.
+    ///
+    /// The host is the other way round — it IS named for its crate, because the crate came second
+    /// and took the binary's name.
     #[test]
     fn the_product_binary_rides_the_cli_crate() {
         assert_eq!(tool_crate("slopdesk"), Some("slopdesk-cli"));
-        assert_eq!(tool_crate("slopdesk-hostd"), None);
+        assert_eq!(tool_crate("slopdesk-hostd"), Some("slopdesk-hostd"));
     }
 
     /// THE seventh-site guard: a product tool never reaches the pin, whoever builds it.
@@ -166,25 +174,32 @@ mod tests {
             assert!(!pinned.contains(tool), "{tool} would be a seventh version site");
         }
         assert!(pinned.contains(&"slopdesk-ctl"));
-        assert_eq!(pinned.len(), rust_tools().len() - 1, "only `slopdesk` is both");
+        assert_eq!(
+            pinned.len(),
+            rust_tools().len() - PRODUCT_TOOLS.len(),
+            "both product tools are cargo's since stage F, and neither may be pinned"
+        );
     }
 
     /// Who builds a tool and who versions it are separate questions.
+    ///
+    /// Both product tools are cargo's now, and they still build from DIFFERENT places: the CLI is a
+    /// root workspace member, the host is its own workspace. A test that only checked "is it cargo"
+    /// would pass against a table that had lost that distinction, and the packager would then look
+    /// for the host's binary in `rust/target/`, where nothing writes it.
     #[test]
-    fn the_product_pair_is_split_across_both_build_halves() {
-        assert!(SPM_TOOLS.contains(&"slopdesk-hostd"));
-        assert!(
-            !SPM_TOOLS.contains(&"slopdesk"),
-            "the CLI is cargo's since the port"
-        );
+    fn the_product_pair_is_cargos_but_not_from_the_same_workspace() {
         assert!(is_root_tool("slopdesk"));
+        assert!(!is_crate_tool("slopdesk"));
+        assert!(is_crate_tool("slopdesk-hostd"));
+        assert!(!is_root_tool("slopdesk-hostd"));
     }
 
-    /// The tarball is the two halves and nothing else, with no name repeated.
+    /// The tarball is cargo's whole tool set and nothing else, with no name repeated.
     #[test]
-    fn the_tarball_is_the_two_halves() {
+    fn the_tarball_is_every_cargo_tool_once() {
         let all = cli_tools();
-        assert_eq!(all.len(), SPM_TOOLS.len() + rust_tools().len());
+        assert_eq!(all.len(), rust_tools().len());
         let mut sorted = all.clone();
         sorted.sort_unstable();
         sorted.dedup();

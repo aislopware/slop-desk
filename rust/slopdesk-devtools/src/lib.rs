@@ -34,6 +34,7 @@ pub mod access;
 pub mod differential;
 pub mod gates;
 pub mod gui;
+pub mod hostbin;
 pub mod manifests;
 pub mod ops;
 pub mod proc;

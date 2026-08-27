@@ -222,7 +222,7 @@ pub fn run(root: &Path, options: &Options) -> Result<(), String> {
 
     say("video", "building slopdesk-videohostd + slopdesk-hostd");
     swift_build(root, "slopdesk-videohostd")?;
-    swift_build(root, "slopdesk-hostd")?;
+    crate::hostbin::build(root, false)?;
     say("video", "generating + building the client app");
     let app = build_app(root, &work, "DD")?;
 

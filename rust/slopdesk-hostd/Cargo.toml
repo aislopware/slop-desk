@@ -31,10 +31,10 @@ resolver = "3"
 name = "slopdesk-hostd"
 # The product version, and the ONE place this daemon reads it from — `env!("CARGO_PKG_VERSION")`
 # in `main.rs`, which is what rides `TERM_PROGRAM_VERSION` into every pane and the launch record.
-# NOT yet a release site: `make release` still rewrites `HostEnvironment.buildVersion`, because the
-# Swift hostd is what `make build` produces until the stage-F cutover. At that cutover the site
-# MOVES here — `slopdesk-devtools`' `release/sites.rs` swaps the Swift entry for this one, and the
-# count of six stays six. See `docs/49` and `docs/60` §F.
+# A RELEASE SITE as of the stage-F cutover: `make release` rewrites the line below, where it used to
+# rewrite `HostEnvironment.buildVersion`. The site MOVED rather than multiplied and the count of six
+# is still six. The rewrite anchors on the first `version = ` in this file, so `[package]` must stay
+# above `[dependencies]` — never reorder the tables. See `docs/49` and `docs/60` §F.
 version = "0.4.0"
 edition = "2024"
 publish = false

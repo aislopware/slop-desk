@@ -986,10 +986,16 @@ codeseed-test: ## cargo test for the code-server profile seeder
 hostd-test: ## cargo test for the daemon's own composition (rust/slopdesk-hostd)
 	cd rust/slopdesk-hostd && cargo test
 
-# The inner loop for host work. `--product` compiles hostd and the libraries under it and NOT the
-# client app, the video host or the iOS surfaces — which is most of the package.
-host: ## Build ONLY slopdesk-hostd and its libraries
-	swift build --product slopdesk-hostd
+# The inner loop for host work. hostd is a cargo binary as of docs/60 stage F, and its crate is its
+# OWN cargo workspace, so this is a `cd` and not a `-p` — `rust/Cargo.toml` cannot reach it.
+#
+# RELEASE, where the Swift `--product` build was debug. Two reasons, and neither is taste: the
+# recorded launch this machine replays names `release` (`slopdesk-hostlaunch::record`), so a debug
+# build here would leave `host-restart` starting a binary this target never touched; and an
+# unoptimised Rust daemon is not the daemon — the pane fan-out and the row scan were measured at
+# `opt-level = 3`, and reading a debug one's latency would be reading a different program.
+host: ## Build ONLY slopdesk-hostd (release, the configuration the launch record replays)
+	cd rust/slopdesk-hostd && cargo build --release
 
 # The whole edit loop in one command, and the reason docs/51 exists: superd keeps every pane, both
 # child-facing sockets and the panel backends, so this costs a client reconnect rather than the

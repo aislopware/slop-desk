@@ -29,17 +29,20 @@ use crate::proc;
 /// A source constant carrying the product version: the file, and the assignment that anchors it.
 ///
 /// Each anchor is the KEY, so the replacement cannot wander into some other quoted string in the
-/// same file — and the rewrite takes the FIRST match, which is what the Cargo manifest below
-/// depends on: `[package]` sits above `[dependencies]`, so `version = ` is the package's before it
+/// same file — and the rewrite takes the FIRST match, which is what the Cargo manifests below
+/// depend on: `[package]` sits above `[dependencies]`, so `version = ` is the package's before it
 /// could be anyone else's. That site used to be `CLIVersion.swift` in the deleted
 /// `SlopDeskCLICore`; the CLI is Rust now and reads its own `CARGO_PKG_VERSION`, so the site MOVED
 /// rather than multiplied.
+///
+/// The second site moved the same way and for the same reason. It was
+/// `Sources/SlopDeskHost/HostEnvironment.swift`'s `buildVersion` constant; `docs/60` stage F made
+/// hostd a cargo binary that reads `env!("CARGO_PKG_VERSION")`, so the version it reports is its
+/// own manifest's. Two sites, still — a Swift constant beside a Rust manifest would have been the
+/// third place to forget.
 const CODE_SITES: [(&str, &str); 2] = [
     ("rust/slopdesk-cli/Cargo.toml", "version = "),
-    (
-        "Sources/SlopDeskHost/HostEnvironment.swift",
-        "public static let buildVersion = ",
-    ),
+    ("rust/slopdesk-hostd/Cargo.toml", "version = "),
 ];
 
 /// The xcodegen specs whose `info.properties` and build settings carry the version.

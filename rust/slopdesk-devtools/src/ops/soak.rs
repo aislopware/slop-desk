@@ -325,15 +325,28 @@ impl Soak {
     reason = "the shape IS the four properties, in the order they run"
 )]
 pub fn run(root: &Path, threshold: u64) -> Result<u32, String> {
-    let hostd_bin = root.join(".build/debug/slopdesk-hostd");
+    // Two builds, two places, and the message says which one is missing. hostd is a cargo binary
+    // as of `docs/60` stage F while the client is still a SwiftPM product, so "run `swift build`"
+    // is now the right advice for exactly one of them — and a soak that told the developer to run
+    // the wrong command would cost them the run twice.
+    //
+    // RELEASE for the daemon, where the SwiftPM one was debug. `make host` is what produces it, and
+    // the four properties this asserts — retention, eviction, head-of-line, backpressure — are
+    // TIMING. An unoptimised daemon does not fail them differently, it fails them for a reason that
+    // is not the code under test.
+    let hostd_bin = crate::hostbin::binary(root, true);
     let client_bin = root.join(".build/debug/slopdesk-client");
-    for binary in [&hostd_bin, &client_bin] {
-        if !binary.is_file() {
-            return Err(format!(
-                "build products missing under {}/.build/debug — run 'swift build' first",
-                root.display()
-            ));
-        }
+    if !hostd_bin.is_file() {
+        return Err(format!(
+            "the host daemon is not built: {} is missing — run 'make host' first",
+            hostd_bin.display()
+        ));
+    }
+    if !client_bin.is_file() {
+        return Err(format!(
+            "the client CLI is not built: {} is missing — run 'swift build' first",
+            client_bin.display()
+        ));
     }
     let (hold_lines, evict_lines) = lines_for(threshold);
 

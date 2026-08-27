@@ -38,8 +38,7 @@ use std::time::Duration;
 use super::control::{Control, Launch, Projection};
 use super::{
     DaemonChild, Hostd, Log, Suite, alive, banner, build_app, build_cli, complain, daemon_children,
-    dump_children, is_frontmost, kill_matching, poll, port, pty_pids, raise, reap, say, screenshot,
-    swift_build, work_dir,
+    dump_children, is_frontmost, kill_matching, poll, port, pty_pids, raise, reap, say, screenshot, work_dir,
 };
 
 /// How long the live-shell count must be REACHED within, in half-seconds.
@@ -173,7 +172,7 @@ pub fn run(root: &Path) -> Result<(), String> {
     let suite = Suite::for_gate("multiclient");
 
     say("multiclient", "building slopdesk-hostd + the slopdesk client CLI");
-    swift_build(root, "slopdesk-hostd")?;
+    crate::hostbin::build(root, false)?;
     build_cli(root)?;
     say(
         "multiclient",

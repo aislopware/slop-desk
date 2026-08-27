@@ -340,7 +340,7 @@ pub fn the_release_ships_every_sidecar_the_host_needs(tree: &Tree) -> Report {
     let carried = shipped(
         tree,
         &mut report,
-        "SPM_TOOLS|RUST_ROOT_TOOLS|RUST_CRATE_TOOLS",
+        "RUST_ROOT_TOOLS|RUST_CRATE_TOOLS",
         r"\b(slopdesk-[a-z]+)\b",
     );
     if carried.is_empty() {
@@ -443,7 +443,7 @@ pub fn the_formula_installs_every_binary_the_release_ships(tree: &Tree) -> Repor
     let carried = shipped(
         tree,
         &mut report,
-        "SPM_TOOLS|RUST_ROOT_TOOLS|RUST_CRATE_TOOLS",
+        "RUST_ROOT_TOOLS|RUST_CRATE_TOOLS",
         r"\b(slopdesk(?:-[a-z]+)?)\b",
     );
     if carried.is_empty() {
@@ -1265,8 +1265,8 @@ mod tests {
         let fixture = Fixture::new("formula");
         fixture.write(
             "rust/slopdesk-devtools/src/release/tools.rs",
-            "pub const SPM_TOOLS: &[&str] = &[\"slopdesk-hostd\"];\npub const RUST_ROOT_TOOLS: &[&str] = \
-             &[\"slopdesk\", \"slopdesk-ctl\"];\n",
+            "pub const RUST_ROOT_TOOLS: &[&str] = &[\"slopdesk\", \"slopdesk-ctl\"];\npub const \
+             RUST_CRATE_TOOLS: &[&str] = &[\"slopdesk-hostd\"];\n",
         );
         fixture.write(
             "packaging/homebrew/Formula/slopdesk.rb",

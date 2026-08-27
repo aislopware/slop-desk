@@ -29,7 +29,7 @@ use std::{fs, thread};
 use super::control::{Control, Launch};
 use super::{
     Hostd, Log, Suite, alive, banner, build_app, build_cli, complain, kill_matching, poll, port, raise, reap,
-    say, screenshot, swift_build, window_census_binary, window_count, work_dir,
+    say, screenshot, window_census_binary, window_count, work_dir,
 };
 use crate::ops::renderer;
 
@@ -263,7 +263,7 @@ pub fn run(root: &Path, mode: Mode) -> Result<(), String> {
             "macos",
             &format!("building + starting slopdesk-hostd on 127.0.0.1:{}", port::MACOS),
         );
-        swift_build(root, "slopdesk-hostd")?;
+        crate::hostbin::build(root, false)?;
         let daemon = Hostd::start(root, &work, port::MACOS)?;
         say("macos", &format!("hostd up (pid {})", daemon.pid()));
         let out = OutProof::mint(&work);

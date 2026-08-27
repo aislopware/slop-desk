@@ -30,7 +30,20 @@
 //! `bye`, journals flushed. And the readiness test is a real LISTENER, never the record file: a
 //! file a previous run left behind is exactly how a readiness check lies.
 //!
-//! `docs/51-process-supervision.md` §9, `docs/46-gates-env-paths.md`.
+//! ## The build step is `cargo` now, and one launch record is REFUSED
+//! `docs/60` stage F made hostd a cargo binary, so the build is `cargo build` in
+//! `rust/slopdesk-hostd` rather than `swift build --product`. The rest of the ritual is untouched,
+//! because none of it ever knew what compiled the binary — the record names an absolute path and
+//! this replays it.
+//!
+//! The one case that could not stay silent is a record naming a `.build/` artifact: a daemon
+//! started before the cutover, still running, whose launch this can no longer reproduce because the
+//! target that produced it is gone. Building the cargo binary and then replaying that record would
+//! report a fresh build and start the old daemon — the exact "running last week's code with this
+//! week's version on the box" failure `audit.rs` exists to catch. It refuses in words instead, the
+//! way an absent record does, and says which binary to start by hand once.
+//!
+//! `docs/51-process-supervision.md` §9, `docs/46-gates-env-paths.md`, `docs/60-hostd-in-rust.md`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -95,8 +108,10 @@ pub fn requested_port(arguments: &[String]) -> Option<String> {
 
 /// Which build configuration the recorded binary came from.
 ///
-/// Read off the PATH rather than guessed: `.build/release/…` is a release build and anything else
-/// is a debug one, which is what the default has always been.
+/// Read off the PATH rather than guessed: a `release/…` component is a release build and anything
+/// else is a debug one, which is what the default has always been. It reads a `cargo` target
+/// directory for the same reason it read a `SwiftPM` one — both spell the configuration as a path
+/// component — so the cutover cost this function nothing.
 #[must_use]
 pub fn configuration_of(binary: &Path) -> &'static str {
     if binary.components().any(|part| part.as_os_str() == "release") {
@@ -104,6 +119,17 @@ pub fn configuration_of(binary: &Path) -> &'static str {
     } else {
         "debug"
     }
+}
+
+/// Whether a recorded binary is the `SwiftPM` host that `docs/60` stage F deleted.
+///
+/// The `.build` component is the whole test, and it is enough: `SwiftPM` puts every artifact under
+/// it, cargo puts none there. A record naming one is not a stale path to repair — it is a daemon
+/// from before the cutover, still running, whose launch cannot be reproduced by building anything
+/// that exists now.
+#[must_use]
+pub fn is_swiftpm_artifact(binary: &Path) -> bool {
+    binary.components().any(|part| part.as_os_str() == ".build")
 }
 
 /// Where the record lives — the writer's own answer, not a second derivation of it.
@@ -284,18 +310,37 @@ pub fn run(root: &Path, plan: Plan) -> Result<(), String> {
     }
 
     if plan.build {
+        // The ONE launch this cannot rebuild: a record still naming the `SwiftPM` artifact. hostd is
+        // a cargo binary as of `docs/60` stage F, so `.build/` holds last week's daemon — and
+        // replaying that record after a `cargo build` would start the OLD one while reporting a
+        // fresh build, which is the "running last week's code" failure the version audit exists to
+        // catch. Refused in words, the way a missing record is, rather than silently substituting a
+        // path: `make host-restart` replays the recorded launch EXACTLY, and swapping the binary
+        // under it would make that sentence false.
+        if let Some(found) = record.as_ref().filter(|found| is_swiftpm_artifact(&found.binary)) {
+            return Err(format!(
+                "the launch record names the SwiftPM host ({}), which stage F deleted — stop it, start \
+                 rust/slopdesk-hostd/target/release/slopdesk-hostd once by hand, and this takes over from \
+                 the record that one writes",
+                found.binary.display()
+            ));
+        }
+        // `release` with no record, where the `SwiftPM` build defaulted to `debug`. A first launch on
+        // this machine is the release binary `make host` produces, and a debug daemon is a
+        // different program at the operating point the fan-out was measured at.
         let configuration = record
             .as_ref()
-            .map_or("debug", |found| configuration_of(&found.binary));
+            .map_or("release", |found| configuration_of(&found.binary));
+        let arguments: &[&str] = if configuration == "release" {
+            &["build", "--release"]
+        } else {
+            &["build"]
+        };
         say(
             "host-restart",
-            &format!("swift build --product slopdesk-hostd -c {configuration}"),
+            &format!("cargo build ({configuration}) in rust/slopdesk-hostd"),
         );
-        proc::run(
-            "swift",
-            &["build", "--product", "slopdesk-hostd", "-c", configuration],
-            root,
-        )?;
+        proc::run("cargo", arguments, &root.join("rust/slopdesk-hostd"))?;
     }
 
     let mut stopped_at = None;
@@ -538,6 +583,39 @@ mod tests {
             super::configuration_of(std::path::Path::new("/usr/local/bin/slopdesk-hostd")),
             "debug"
         );
+        // The cargo target directory spells the configuration the same way, which is why the
+        // cutover changed nothing here.
+        assert_eq!(
+            super::configuration_of(std::path::Path::new(
+                "/r/rust/slopdesk-hostd/target/release/slopdesk-hostd"
+            )),
+            "release"
+        );
+        assert_eq!(
+            super::configuration_of(std::path::Path::new(
+                "/r/rust/slopdesk-hostd/target/debug/slopdesk-hostd"
+            )),
+            "debug"
+        );
+    }
+
+    /// A record from before the cutover is recognised, and one from after it is not mistaken for
+    /// one.
+    ///
+    /// The pair matters more than either half. `.build` and `target` both hold a `release`
+    /// component, so a test that only checked the `SwiftPM` path would pass just as well against a
+    /// rule that refused every launch record there is.
+    #[test]
+    fn the_swiftpm_host_is_told_apart_from_the_cargo_one() {
+        assert!(super::is_swiftpm_artifact(std::path::Path::new(
+            "/r/.build/arm64-apple-macosx/release/slopdesk-hostd"
+        )));
+        assert!(!super::is_swiftpm_artifact(std::path::Path::new(
+            "/r/rust/slopdesk-hostd/target/release/slopdesk-hostd"
+        )));
+        assert!(!super::is_swiftpm_artifact(std::path::Path::new(
+            "/usr/local/bin/slopdesk-hostd"
+        )));
     }
 
     /// `--status` changes nothing, and the full plan does all three.

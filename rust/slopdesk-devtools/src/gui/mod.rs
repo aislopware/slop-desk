@@ -899,7 +899,7 @@ impl Hostd {
             .try_clone()
             .map_err(|error| format!("{}: {error}", log.path.display()))?;
 
-        let mut command = Command::new(root.join(".build/debug/slopdesk-hostd"));
+        let mut command = Command::new(crate::hostbin::binary(root, false));
         command
             .args(["--port", &port.to_string(), "--shell", "/bin/sh"])
             .env("HOME", &home)
