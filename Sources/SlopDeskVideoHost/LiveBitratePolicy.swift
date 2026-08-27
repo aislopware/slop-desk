@@ -1,5 +1,6 @@
 import CSlopDeskFFI
 import Foundation
+import SlopDeskVideoProtocol
 
 /// The Swift face of `rust/slopdesk-video`'s `live_bitrate`, reached through the door of the same name.
 ///
@@ -38,8 +39,14 @@ public enum LiveBitratePolicy {
     ///
     /// The knob is read once, and PARSED by the door: a value outside `(0, 1]` is a typo rather than
     /// an intent, so it falls back to the default instead of being clamped.
+    ///
+    /// Read through ``EnvConfig`` (ProcessInfo → settings overlay), not off `ProcessInfo` directly.
+    /// It WAS direct, which made this the one video knob a Settings write could not move: the value
+    /// reached the sidecar, folded into the overlay, and was then read past. Nothing catches that by
+    /// testing, because an empty overlay makes the two spellings byte-identical — which is exactly
+    /// how the same bug survived in six governor knobs until 2026-08-22 (`FPSGovernor.swift`).
     public static let bitsPerPixelPerFrame: Double = {
-        let raw = ProcessInfo.processInfo.environment["SLOPDESK_BPP"] ?? ""
+        let raw = EnvConfig.string("SLOPDESK_BPP") ?? ""
         return Array(raw.utf8).withUnsafeBufferPointer { bytes in
             slopdesk_live_bitrate_bits_per_pixel(bytes.baseAddress, bytes.count)
         }
