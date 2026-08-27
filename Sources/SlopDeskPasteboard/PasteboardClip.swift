@@ -26,11 +26,23 @@ import UniformTypeIdentifiers // the UTIs AppKit spells as `NSPasteboard.Pastebo
 /// refactor's to make — and it is preserved as a NAMED parameter (`skippingConcealed`) instead of two
 /// function bodies, so it is now one word at each call site rather than a difference nobody can see.
 ///
-/// Its own target because the two callers cannot see each other: `SlopDeskHost` is the daemon graph
-/// and `SlopDeskWorkspaceCore` is the client graph, and neither depends on the other. The only thing
-/// below both is `SlopDeskProtocol`, which is the WIRE and has no business importing AppKit. So this
-/// is a leaf: the platform pasteboard + the clip type, nothing else, and hostd links what it already
-/// linked.
+/// **The host end is not in this file any more, and the four rules moved with it.** `docs/60`
+/// stage F ported the daemon whole, so `HostClipboardPerformer` and the `#if canImport(AppKit)`
+/// half this file used to lend it are `rust/slopdesk-hostserver/src/clipsync.rs` over
+/// `slopdesk-apple-pasteboard`. What is left here is the CLIENT end on its two triples — the Mac
+/// app's `NSPasteboard` and the phone's `UIPasteboard` — which is why the target survives: it is
+/// the client's own board, not a shared reader for two processes.
+///
+/// Still its own target, and still for the reason below `SlopDeskProtocol`: the wire has no business
+/// importing AppKit, and both client graphs need this. So it is a leaf — the platform pasteboard +
+/// the clip type, nothing else.
+///
+/// What `sidecar_seams.rs`'s `one-pasteboard-clip` pins is this side only: no OTHER Swift file may
+/// reach for the TIFF flavour or retype the content cap — this file is the sole exemption — and
+/// `ClipboardSyncEngine` must reach both directions through it. What no rule can pin is the
+/// agreement with the HOST, which is now the wire plus the four rules restated in `clipsync.rs`'s
+/// own header. That pair is cross-language and a fifth rule added on either side is a drift no
+/// compiler sees, so a change here is a change to read that header against.
 ///
 /// **The THIRD end is the phone, and it is in this file for the reason the other two are.** The client
 /// half stopped being macOS-only when the phone stopped shipping a "Paste Recent" menu with nothing

@@ -189,13 +189,12 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // The system pasteboard ↔ `MetadataCodec.ClipboardClip` conversion, both directions. Clipboard
-        // sync has two ends — `HostClipboardPerformer` (daemon graph) and `ClipboardSyncEngine`
-        // (client graph) — and neither target can see the other, so the shared reading of the WIRE's
-        // own clip type had been written twice and had already drifted. The only thing below both is
-        // SlopDeskProtocol, which is the wire and has no business importing AppKit; hence a leaf of
-        // its own. It answers for a `UIPasteboard` too now — the phone's client runs the same engine,
-        // so the target is live on both triples rather than compiling empty on one.
+        // The system pasteboard ↔ `MetadataCodec.ClipboardClip` conversion, both directions, for the
+        // CLIENT end. The host end left this graph with `docs/60` stage F — it is
+        // `rust/slopdesk-hostserver/src/clipsync.rs` over `slopdesk-apple-pasteboard` now — so what
+        // this target answers for is the Mac app's `NSPasteboard` and the phone's `UIPasteboard`,
+        // live on both triples rather than compiling empty on one. Still a leaf below
+        // SlopDeskProtocol, which is the wire and has no business importing AppKit.
         .target(name: "SlopDeskPasteboard", dependencies: ["SlopDeskProtocol"]),
 
         // The Rust logic the Swift clients call in-process, as three arm64 static slices.
@@ -370,8 +369,9 @@ let package = Package(
                 "CSlopDeskFFI",
                 // …and the scan's arena is read through the one reader every face shares.
                 "SlopDeskArena",
-                // The pasteboard↔clip conversion the HOST's performer reads from the same file —
-                // clipboard sync's two ends agree by sharing it, not by staying in step by hand.
+                // The client's own pasteboard↔clip conversion. The host's half is Rust
+                // (`slopdesk-hostserver`'s `clipsync`), so the two ends agree by the WIRE and by
+                // `clipsync.rs`'s four restated rules — not by sharing a file any more.
                 "SlopDeskPasteboard",
                 // The store dials the inspector's event lane over the shared byte channel.
                 "SlopDeskNet",
