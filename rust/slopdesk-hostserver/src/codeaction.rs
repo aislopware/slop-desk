@@ -1,6 +1,6 @@
 //! The three embedded-workbench verbs: ensure the child, open a path in it, sync the editor font.
 //!
-//! The port of `Sources/SlopDeskHost/HostCodeServerPerformer.swift`. The manager it drives is
+//! The port of `HostCodeServerPerformer.swift`. The manager it drives is
 //! [`crate::code::CodeServerManager`], which was ported at stage E; what was left was this — the
 //! validator in front of it, and the ONE decision that is neither the manager's nor the wire's:
 //! which of two ways a path gets opened, and how the client is told which happened.

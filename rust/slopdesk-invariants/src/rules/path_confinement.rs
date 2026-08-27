@@ -14,12 +14,8 @@ use crate::tree::Tree;
 
 /// The one file that holds the rule.
 const PROBE_HOME: &str = "rust/slopdesk-probe/src/path_confine.rs";
-/// The shim that carries it to Swift.
-const FFI_HOME: &str = "rust/slopdesk-ffi/src/path_confine.rs";
-/// The header Swift links against.
-const FFI_HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
-/// The shim's own module list.
-const FFI_LIB: &str = "rust/slopdesk-ffi/src/lib.rs";
+/// The one process that enforces it — every metadata verb naming a path goes through this reducer.
+const METADATA_REDUCER: &str = "rust/slopdesk-hostserver/src/metadata.rs";
 /// The near-side rebuild that must refuse a type byte the door never accepted.
 const MUX_ENVELOPE_SWIFT: &str = "Sources/SlopDeskProtocol/Mux/MuxEnvelope.swift";
 /// The door it mirrors.
@@ -131,14 +127,17 @@ pub fn the_confinement_rule_is_lexical_and_singular(tree: &Tree) -> Report {
             all: &[],
             unless: &[],
             view: View::Code,
-            // The third entry is this crate, and it is the one exemption that is about the gate
+            // The second entry is this crate, and it is the one exemption that is about the gate
             // rather than the rule: a break-test for this ban has to SPELL the thing banned, so
             // a tree-wide `rust/` ban that did not stand aside for the fixtures would fire on
             // its own proof. Scoped to the crate directory rather than to this file, because
             // the next such ban's fixtures will live in a sibling module.
-            exempt: &[PROBE_HOME, FFI_HOME, "rust/slopdesk-invariants/"],
+            //
+            // The shim used to be exempt beside the home, because it forwarded. `docs/60` F.9
+            // deleted it: hostd was the door's only caller, and no Swift links the rule now.
+            exempt: &[PROBE_HOME, "rust/slopdesk-invariants/"],
             message: "path confinement grew a second home ({files}) — it lives in \
-                      rust/slopdesk-probe/src/path_confine.rs, and the shim only forwards",
+                      rust/slopdesk-probe/src/path_confine.rs, and every caller asks it",
         },
         Claim::Matches {
             path: PROBE_HOME,
@@ -150,25 +149,43 @@ pub fn the_confinement_rule_is_lexical_and_singular(tree: &Tree) -> Report {
     ])
 }
 
-/// The door is declared where Swift can reach it
+/// The rule is reachable from the one process that enforces it
 ///
-/// `slopdesk-gate ffi` already checks every declared symbol against every slice, so this only has
-/// to catch the case it cannot: a module that exists and is not exported, which fails as a LINK
-/// error in the app rather than in the gate. The `pub mod`/header/module trio is what drifts.
+/// This used to be about the DOOR: `slopdesk-gate ffi` checks every declared symbol against every
+/// slice, so all that was left for a rule was the case it cannot see — a module that exists and is
+/// not exported, which fails as a LINK error in the app rather than in the gate.
+///
+/// `docs/60` F.9 removed the door instead. hostd was its only caller, so the shim module, its two
+/// entries and the header block went with the daemon, and the confinement rule is now reached the
+/// way every other one is: `rust/slopdesk-hostserver/src/metadata.rs` imports
+/// `slopdesk_probe::path_confine` and every metadata verb that names a path goes through it.
+///
+/// What survives is the same question one level up. `slopdesk-gate ffi` cannot see this either: a
+/// reducer that stopped importing the module would compile the moment somebody inlined a
+/// `starts_with`, and the ban beside this rule catches the inlining only in a file that still
+/// spells `confine`. So the IMPORT is pinned — it is the evidence that the arm exists at all.
 #[must_use]
 pub fn the_confinement_door_is_reachable(tree: &Tree) -> Report {
     check_all(tree, &[
-        Claim::Mentions {
-            path: FFI_HEADER,
-            names: &["slopdesk_path_confine", "slopdesk_path_is_confinable_absolute"],
-            message: "{entry} is missing from slopdesk_ffi.h — Swift cannot link the confinement rule",
-        },
         Claim::Matches {
-            path: FFI_LIB,
-            pattern: r"^pub mod path_confine;",
-            view: View::Raw,
-            message: "the shim does not export path_confine — the header promises a symbol the library will \
-                      not carry",
+            path: METADATA_REDUCER,
+            pattern: r"use slopdesk_probe::path_confine",
+            view: View::Code,
+            message: "rust/slopdesk-hostserver/src/metadata.rs no longer imports the confinement rule — \
+                      every metadata verb that names a path goes through it, and three Swift \
+                      implementations of this predicate once compiled and passed while disagreeing with \
+                      each other",
+        },
+        // The CALL, not the import: `use slopdesk_probe::path_confine::{self, Shape}` spells
+        // `path_confine::` on its own line, so a bare-module pattern would stay green over a
+        // reducer that kept the import and inlined a `starts_with` under it.
+        Claim::Matches {
+            path: METADATA_REDUCER,
+            pattern: r"path_confine::(confine|is_confinable_absolute)\(",
+            view: View::Code,
+            message: "rust/slopdesk-hostserver/src/metadata.rs imports the confinement rule and never asks \
+                      it — a live import over an inlined `starts_with` is what the three deleted Swift \
+                      implementations each looked like from inside their own file",
         },
     ])
 }
@@ -248,20 +265,14 @@ mod tests {
         assert!(!super::no_second_path_opinion_in_swift(&fixture.tree()).is_clean());
     }
 
-    /// The one home, and the shim that forwards to it.
+    /// The one home.
     fn homes(fixture: &Fixture) {
-        fixture
-            .write(
-                super::PROBE_HOME,
-                "// `canonicalize` is NOT used: it needs the path to exist.\npub fn confine(root: &Path, \
-                 path: &Path) -> Option<PathBuf> { None }\npub fn is_confinable_absolute(path: &Path) -> \
-                 bool { true }\n",
-            )
-            .write(
-                super::FFI_HOME,
-                "pub fn confine(root: &Path, path: &Path) -> Option<PathBuf> { \
-                 slopdesk_probe::path_confine::confine(root, path) }\n",
-            );
+        fixture.write(
+            super::PROBE_HOME,
+            "// `canonicalize` is NOT used: it needs the path to exist.\npub fn confine(root: &Path, path: \
+             &Path) -> Option<PathBuf> { None }\npub fn is_confinable_absolute(path: &Path) -> bool { true \
+             }\n",
+        );
     }
 
     #[test]
@@ -297,20 +308,29 @@ mod tests {
     }
 
     #[test]
-    fn a_door_swift_cannot_link_is_red() {
-        let fixture = Fixture::new("confine-door");
-        fixture
-            .write(
-                super::FFI_HEADER,
-                "bool slopdesk_path_confine(const char *root, const char *path);\nbool \
-                 slopdesk_path_is_confinable_absolute(const char *path);\n",
-            )
-            .write(super::FFI_LIB, "pub mod path_confine;\n");
+    fn a_reducer_that_stopped_reaching_the_rule_is_red() {
+        let fixture = Fixture::new("confine-reach");
+        fixture.write(
+            super::METADATA_REDUCER,
+            "use slopdesk_probe::path_confine::{self, Shape};\nfn open(path: &str) -> Option<PathBuf> {\n \
+             path_confine::confine(&self.root, Path::new(path))\n}\n",
+        );
         assert!(super::the_confinement_door_is_reachable(&fixture.tree()).is_clean());
 
-        // A module that exists and is not exported fails as a LINK error in the app, not here —
-        // which is the one case slopdesk-gate ffi cannot catch.
-        fixture.write(super::FFI_LIB, "pub mod mux_envelope;\n");
+        // A `starts_with` inlined where the call was. The ban above sees a file that spells
+        // `confine`; this sees the file that stopped.
+        fixture.write(
+            super::METADATA_REDUCER,
+            "fn open(path: &str) -> Option<PathBuf> {\n    path.starts_with(&self.root).then(...)\n}\n",
+        );
+        assert!(!super::the_confinement_door_is_reachable(&fixture.tree()).is_clean());
+
+        // And the half a stale import would leave green: the module named, never asked.
+        fixture.write(
+            super::METADATA_REDUCER,
+            "use slopdesk_probe::path_confine::{self, Shape};\nfn open(path: &str) -> Option<PathBuf> {\n \
+             path.starts_with(&self.root).then(...)\n}\n",
+        );
         assert!(!super::the_confinement_door_is_reachable(&fixture.tree()).is_clean());
     }
 

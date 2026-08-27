@@ -1,7 +1,7 @@
 //! The two panel backends that are nothing but a lifecycle — the simulator server and the Android
 //! bridge, behind verbs 21 and 22.
 //!
-//! The port of `Sources/SlopDeskHost/SimulatorServerManager.swift`,
+//! The port of `SimulatorServerManager.swift`,
 //! `AndroidServiceManager.swift`, `HostSimulatorPerformer.swift` and `HostAndroidPerformer.swift`
 //! — four files, ~330 lines, of which the two managers differed in **five values**: the binary, the
 //! argv, the port parser, whether a version rides the same line, and what a spawn that THREW

@@ -1,12 +1,17 @@
-//! The PRODUCT version, and the six places that carry it.
+//! The PRODUCT version, and the four places that carry it.
 //!
 //! The packager has a drift gate, but it can only compare the CLI's compiled-in version against
-//! the version it was asked to build — it cannot see the other five sites, so
+//! the version it was asked to build — it cannot see the other three sites, so
 //! `CFBundleShortVersionString` sat a release behind twice without failing anything. This module is
-//! the reason that cannot happen again: one version in, six writes, and a verification pass that
+//! the reason that cannot happen again: one version in, four writes, and a verification pass that
 //! reads every site back off disk.
 //!
-//! ## The sixth site is generated AND committed
+//! It was SIX until `docs/60` F.9. The two that went were the host app's `project.yml` and its
+//! `Info.plist`: hostd is controlled entirely by CLI, so there is no bundle to carry a
+//! `CFBundleShortVersionString` and no spec to generate one. Nothing MOVED — the host's own
+//! version is `rust/slopdesk-hostd/Cargo.toml`, which was already a site.
+//!
+//! ## The fourth site is generated AND committed
 //! `Apps/*/Info.plist` is xcodegen's output from the spec's `info.properties`, and it is in git
 //! because a clean checkout has to build without running xcodegen first. Editing the spec alone
 //! leaves the plist stale, so the regeneration happens here rather than in a step someone
@@ -35,8 +40,8 @@ use crate::proc;
 /// `SlopDeskCLICore`; the CLI is Rust now and reads its own `CARGO_PKG_VERSION`, so the site MOVED
 /// rather than multiplied.
 ///
-/// The second site moved the same way and for the same reason. It was
-/// `Sources/SlopDeskHost/HostEnvironment.swift`'s `buildVersion` constant; `docs/60` stage F made
+/// The second site moved the same way and for the same reason. It was the Swift host's
+/// `HostEnvironment.swift` `buildVersion` constant; `docs/60` stage F made
 /// hostd a cargo binary that reads `env!("CARGO_PKG_VERSION")`, so the version it reports is its
 /// own manifest's. Two sites, still — a Swift constant beside a Rust manifest would have been the
 /// third place to forget.
@@ -46,13 +51,14 @@ const CODE_SITES: [(&str, &str); 2] = [
 ];
 
 /// The xcodegen specs whose `info.properties` and build settings carry the version.
-const SPECS: [&str; 2] = [
-    "Apps/ClientApp-macOS/project.yml",
-    "Apps/HostApp-macOS/project.yml",
-];
+///
+/// One, since `docs/60` F.9 deleted the menu-bar host app. The iOS shell is absent for a different
+/// reason and always was: it ships through `TestFlight` on its own cadence, not in the dmg the cut
+/// stages.
+const SPECS: [&str; 1] = ["Apps/ClientApp-macOS/project.yml"];
 
-/// The generated, committed plists — the two sites nobody edits and everybody reads.
-const PLISTS: [&str; 2] = ["Apps/ClientApp-macOS/Info.plist", "Apps/HostApp-macOS/Info.plist"];
+/// The generated, committed plists — the sites nobody edits and everybody reads.
+const PLISTS: [&str; 1] = ["Apps/ClientApp-macOS/Info.plist"];
 
 /// Every file the product version must read back from, in the order the cut stages them.
 #[must_use]
@@ -181,9 +187,9 @@ mod tests {
     use super::{all_sites, is_semver};
 
     #[test]
-    fn the_six_sites_are_six() {
+    fn the_four_sites_are_four() {
         let sites = all_sites();
-        assert_eq!(sites.len(), 6, "{sites:?}");
+        assert_eq!(sites.len(), 4, "{sites:?}");
     }
 
     #[test]

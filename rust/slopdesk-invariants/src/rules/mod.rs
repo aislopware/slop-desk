@@ -1218,6 +1218,11 @@ pub fn registry() -> Vec<Rule> {
             check: repo_invariants::an_ops_harness_that_starts_a_daemon_contains_it,
         },
         Rule {
+            name: "keepalive-guarded-exit",
+            origin: "docs/60 F.9",
+            check: repo_invariants::a_guarded_keepalive_supervises_a_daemon_that_exits_zero,
+        },
+        Rule {
             name: "green-tree-marker",
             origin: "docs/DECISIONS.md 2026-08-16",
             check: frozen_pairs::the_green_tree_marker_means_one_thing,

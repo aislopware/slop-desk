@@ -14,7 +14,8 @@
 //! it went, and a gate that could not tell a declaration from a sentence about one would teach
 //! people to delete the explanation.
 
-use crate::claim::{Claim, Corpus, Extract, SWIFT, View, check_all};
+use crate::claim::{Claim, Corpus, Extract, RUST, SWIFT, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::text;
 use crate::tree::Tree;
@@ -31,8 +32,6 @@ const DROP_CLIENT: &str = "rust/slopdesk-dropd/src/client.rs";
 const DROP_PROTOCOL: &str = "rust/slopdesk-dropd/src/protocol.rs";
 /// dropd's listener, which prints the announce line.
 const DROP_SERVER: &str = "rust/slopdesk-dropd/src/server.rs";
-/// hostd's supervisor for dropd, which parses it.
-const DROP_MANAGER: &str = "Sources/SlopDeskHost/FileDropServiceManager.swift";
 
 /// The Android panel's target — three connection types, each writing its own ops.
 const ANDROID_DIR: &str = "Sources/SlopDeskDevicePanels/Android";
@@ -42,8 +41,6 @@ const ANDROID_DEVICE: &str = "Sources/SlopDeskDevicePanels/Android/AndroidDevice
 const ANDROID_SERVER: &str = "rust/slopdesk-androidd/src/server.rs";
 /// androidd's reply encoder, where the field names are written.
 const ANDROID_PROTOCOL: &str = "rust/slopdesk-androidd/src/protocol.rs";
-/// hostd's supervisor for androidd.
-const ANDROID_MANAGER: &str = "Sources/SlopDeskHost/AndroidServiceManager.swift";
 
 /// The inspector's client door, in the shim.
 const INSPECTOR_FFI: &str = "rust/slopdesk-ffi/src/inspector.rs";
@@ -53,22 +50,21 @@ const INSPECTOR_FACE: &str = "Sources/SlopDeskInspector/InspectorWire.swift";
 const INSPECTOR_WIRE: &str = "rust/slopdesk-inspectord/src/wire.rs";
 /// inspectord's listener.
 const INSPECTOR_SERVER: &str = "rust/slopdesk-inspectord/src/server.rs";
-/// hostd's supervisor for inspectord.
-const INSPECTOR_MANAGER: &str = "Sources/SlopDeskHost/InspectorServiceManager.swift";
 
-/// The one place the announce line's VERSION parenthetical is spelled on the Swift side.
-const LIFECYCLE: &str = "Sources/SlopDeskHost/SupervisedServiceLifecycle.swift";
+/// hostd's profiles for the two survivors it ADOPTS — dropd and inspectord — where each daemon's
+/// announce constants are read off the crate that prints them.
+const HOSTD_SIDECARS: &str = "rust/slopdesk-hostd/src/sidecar.rs";
+/// hostd's metadata-verb services, where androidd's ensure profile is built for the same reason.
+const HOSTD_SERVICES: &str = "rust/slopdesk-hostd/src/services.rs";
+/// hostd's startup audit, which decides what a stale sidecar permits.
+const HOSTD_AUDIT: &str = "rust/slopdesk-hostd/src/audit.rs";
 
 /// The per-sidecar restart policy table.
 const SIDECARS: &str = "rust/slopdesk-sidecars/src/lib.rs";
 /// The manifest diff that turns two `MANIFEST.json` files into a plan.
 const SIDECARS_MANIFEST: &str = "rust/slopdesk-sidecars/src/manifest.rs";
-/// hostd's startup audit, which decodes the verdict.
-const SIDECAR_AUDIT: &str = "Sources/SlopDeskHost/SidecarVersionAudit.swift";
 /// `slopdesk sidecars`, which asks for the plan — Rust, so it calls the crate, not the door.
 const SIDECAR_CLI: &str = "rust/slopdesk-cli/src/shell/local.rs";
-/// The generated header both decoders compile against.
-const FFI_HEADER: &str = "rust/slopdesk-ffi/include/slopdesk_ffi.h";
 /// The install side, which records what it read.
 const HOMEBREW_FORMULA: &str = "packaging/homebrew/Formula/slopdesk.rb";
 
@@ -434,34 +430,73 @@ pub fn the_inspector_tags_are_one_alphabet(tree: &Tree) -> Report {
 /// respawns it on every restart; for androidd, whose port is ephemeral, the panel reports
 /// `starting` forever instead.
 ///
-/// The VERSION of the build that is running rides the same line, first in the parenthetical, for
-/// exactly that reason: it is the only channel that describes a child this hostd did not start
-/// (`docs/49`). Four spellings, one string, and a skew here is the quietest failure in the file —
-/// hostd's parser finds no marker, reports `unknown`, and goes on running last week's daemon behind
-/// this week's version number: green tests, working panel, wrong code.
+/// HALF of this rule retired in `docs/60` F.9 rather than moving. It compared a Swift manager's
+/// `announceMarker` literal against the daemon's `ANNOUNCE_PREFIX`, and a second literal in
+/// `SupervisedServiceLifecycle.swift` against its `ANNOUNCE_VERSION_PREFIX`. hostd is Rust now and
+/// IMPORTS both constants from the crate that prints the line, so the import IS the equality and
+/// the compiler is what enforces it — a rename lands on both sides or neither.
+///
+/// What no compiler can see is the two halves left here. First, that hostd still ASKS the printing
+/// crate rather than reacquiring a literal beside it: a `"dropd: listening on 0.0.0.0:"` typed into
+/// a host crate compiles, passes every test, and reintroduces exactly the drift the import removed.
+/// Second, that the line still carries a version AT ALL — `server.rs` compiles perfectly with the
+/// parenthetical dropped out of its format string.
+///
+/// The VERSION of the build that is running rides that line, first in the parenthetical, because it
+/// is the only channel that describes a child this hostd did not start (`docs/49`). A skew here is
+/// the quietest failure in the file — hostd's parser finds no marker, reports `unknown`, and goes
+/// on running last week's daemon behind this week's version number: green tests, working panel,
+/// wrong code.
 ///
 /// Each daemon announces its OWN compile-time version, never a number read back off disk. A daemon
 /// that reported the installed version would compare equal to it forever, which is the failure
 /// inverted — so `env!("CARGO_PKG_VERSION")` is pinned beside the marker.
 ///
-/// BREAK-TEST: reworded dropd's `announceMarker` on the Swift side ⇒ FAIL "is not what
-/// rust/slopdesk-dropd/src/server.rs prints". Separately changed androidd's version marker to `"v"`
-/// ⇒ FAIL against all three servers. Separately deleted `parseAnnouncedVersion` from the
-/// inspector's manager ⇒ FAIL "no longer reads the running daemon's version". All three restored
-/// from /tmp; PASS.
+/// BREAK-TEST: dropped `slopdesk_dropd::server::ANNOUNCE_PREFIX` from hostd's profile ⇒ FAIL "no
+/// longer learns dropd's announce marker from the crate that prints it". Separately changed
+/// androidd's version marker to `"v"` in hostd ⇒ FAIL "no longer reads androidd's version marker".
+/// Separately wrote the marker as a literal into a host crate ⇒ FAIL "spells a sidecar's announce
+/// marker as a literal". All three restored from /tmp; PASS.
 #[must_use]
 pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
     let mut report = Report::new();
-    for (manager, server, daemon) in [
-        (DROP_MANAGER, DROP_SERVER, "dropd"),
-        (ANDROID_MANAGER, ANDROID_SERVER, "androidd"),
-        (INSPECTOR_MANAGER, INSPECTOR_SERVER, "inspectord"),
+    report.absorb(check_all(tree, &[Claim::NoneUnder {
+        roots: HOSTD_CRATES,
+        extensions: RUST,
+        pattern: r#""(dropd|androidd|inspectord): listening on"#,
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "{files} spells a sidecar's announce marker as a literal — the crate that PRINTS the line \
+                  owns the spelling, and a copy kept equal to it by hand is the drift linking the crate \
+                  removed (docs/49, docs/51 §6.7)",
+    }]));
+    for (parser, server, daemon) in [
+        (HOSTD_SIDECARS, DROP_SERVER, "dropd"),
+        (HOSTD_SERVICES, ANDROID_SERVER, "androidd"),
+        (HOSTD_SIDECARS, INSPECTOR_SERVER, "inspectord"),
     ] {
         report.absorb(check_all(tree, &[
-            Claim::SameValue {
-                label: text::intern(format!("{daemon}'s announce marker")),
-                swift: Extract::code(manager, r#"let announceMarker = "(.*)"$"#),
-                rust: Extract::code(server, r#"ANNOUNCE_PREFIX: &str = "(.*)";$"#),
+            Claim::Matches {
+                path: parser,
+                pattern: text::intern(format!("slopdesk_{daemon}::server::ANNOUNCE_PREFIX")),
+                view: View::Code,
+                message: text::intern(format!(
+                    "{parser} no longer learns {daemon}'s announce marker from the crate that prints it — \
+                     hostd would wait out its timeout, kill a healthy service and respawn it on every \
+                     restart (docs/51 §6.7)"
+                )),
+            },
+            Claim::Matches {
+                path: parser,
+                pattern: text::intern(format!("slopdesk_{daemon}::server::ANNOUNCE_VERSION_PREFIX")),
+                view: View::Code,
+                message: text::intern(format!(
+                    "{parser} no longer reads {daemon}'s version marker off the crate that prints it — a \
+                     parse that stopped matching reads None, which the audit reports as 'unknown' rather \
+                     than failing, so it is asserted here or nowhere (docs/49)"
+                )),
             },
             Claim::Matches {
                 path: server,
@@ -483,21 +518,6 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
                      is the failure inverted (docs/49)"
                 )),
             },
-            Claim::Matches {
-                path: manager,
-                pattern: r"func parseAnnouncedVersion\(fromLogLine",
-                view: View::Code,
-                message: text::intern(format!(
-                    "{manager} no longer reads the running daemon's version off its announce line — a \
-                     manager that stopped parsing reads nil, which the audit reports as 'unknown' rather \
-                     than failing, so it is asserted here or nowhere (docs/49)"
-                )),
-            },
-            Claim::SameValue {
-                label: text::intern(format!("{daemon}'s announce version marker")),
-                swift: Extract::code(LIFECYCLE, r#"^ *static let marker = "(.*)"$"#),
-                rust: Extract::code(server, r#"ANNOUNCE_VERSION_PREFIX: &str = "(.*)";$"#),
-            },
         ]));
     }
     report
@@ -505,26 +525,29 @@ pub fn every_announce_line_is_one_string(tree: &Tree) -> Report {
 
 /// The per-sidecar version policy is one table, in Rust
 ///
-/// What may be DONE about a stale sidecar has two callers in two languages: hostd's startup audit
-/// (Swift, through the FFI door) and `slopdesk sidecars` (the CLI's Rust core, over two
-/// `MANIFEST.json` files). It is therefore the exact shape the one-implementation rule exists for,
-/// and the exact shape that skews quietly — a Swift copy and a Rust copy would disagree about
-/// screend the first time somebody changed its idle-exit and updated one of them, and every suite
-/// would stay green.
+/// What may be DONE about a stale sidecar has two callers in two BINARIES: hostd's startup audit
+/// and `slopdesk sidecars`, over two `MANIFEST.json` files. `docs/60` F.9 made both of them Rust,
+/// which took the FFI doors and the Swift decode with it — but not the rule, because nothing links
+/// hostd to the CLI. Two copies of the table would still disagree about screend the first time
+/// somebody changed its idle-exit and updated one of them, and every suite would stay green.
 ///
-/// So the table lives in `rust/slopdesk-sidecars`, the three doors carry it across, and the Swift
-/// side is a DECODE. A `switch` over tool names on the near side is the second implementation, and
-/// a case added there alone decodes to `operatorChoice` — "your call" about a daemon that should
-/// have been restarted.
+/// So the table lives in `rust/slopdesk-sidecars` and both callers ask it. A `match` over tool
+/// names on the near side is the second implementation, and an arm added there alone answers
+/// `OperatorChoice` — "your call" about a daemon that should have been restarted.
+///
+/// The ban reads a match ARM rather than the names themselves, because `audit.rs` spells every one
+/// of the five as DATA — the `tool` field of a subject, the key `MANIFEST.json` is read by — and a
+/// ban on the names would fire on the table's own callers.
 ///
 /// The install side must keep BOTH halves: the plan it prints, and the record that makes the NEXT
 /// plan about one tool rather than all twelve. A formula whose `post_install` stopped recording
 /// leaves every upgrade reading as a first install, which is a table that never says anything.
+/// Ruby has no compiler either, which is why it is asserted here.
 ///
 /// BREAK-TEST: renamed `SelfRetiring` in the crate ⇒ FAIL "no longer names". Separately wrote
-/// `case "slopdesk-dropd":` into the audit ⇒ FAIL "decides about a tool by name again". Separately
-/// dropped `--record` from the formula ⇒ FAIL "no longer records the manifest". All three restored
-/// from /tmp; PASS.
+/// `"slopdesk-dropd" => RestartPolicy::Automatic,` into the audit ⇒ FAIL "decides about a tool by
+/// NAME again". Separately dropped `--record` from the formula ⇒ FAIL "no longer records the
+/// manifest". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
     check_all(tree, &[
@@ -549,24 +572,24 @@ pub fn the_sidecar_version_policy_is_one_table(tree: &Tree) -> Report {
             view: View::Code,
             message: "rust/slopdesk-sidecars/src/manifest.rs no longer holds the manifest diff (docs/49)",
         },
-        Claim::Lacks {
-            path: SIDECAR_AUDIT,
-            pattern: r#"case "slopdesk-(dropd|screend|superd)""#,
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r#""slopdesk-[a-z]+" *=>"#,
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "SidecarVersionAudit decides about a tool by NAME again — the table is \
-                      rust/slopdesk-sidecars, and a case added here alone decodes to operatorChoice and \
-                      reports 'your call' about a daemon that should have been restarted (docs/49)",
-        },
-        Claim::Mentions {
-            path: FFI_HEADER,
-            names: &["slopdesk_sidecar_audit", "slopdesk_sidecar_version_banner"],
-            message: "{entry} is not declared in slopdesk_ffi.h — Swift cannot reach the policy (docs/55)",
+            exempt: &[],
+            message: "{files} decides about a tool by NAME again — the table is rust/slopdesk-sidecars, and \
+                      an arm added here alone answers OperatorChoice and reports 'your call' about a daemon \
+                      that should have been restarted (docs/49)",
         },
         Claim::Matches {
-            path: SIDECAR_AUDIT,
-            pattern: r"slopdesk_sidecar_audit\(",
+            path: HOSTD_AUDIT,
+            pattern: r"use slopdesk_sidecars::",
             view: View::Code,
-            message: "SidecarVersionAudit no longer asks the door for its verdict (docs/49)",
+            message: "rust/slopdesk-hostd/src/audit.rs no longer asks rust/slopdesk-sidecars for its \
+                      verdict — it would be a second table, in the one binary that acts on it (docs/49)",
         },
         Claim::Matches {
             path: SIDECAR_CLI,
@@ -604,7 +627,6 @@ mod tests {
                 super::DROP_PROTOCOL_FACE,
                 "enum Wire { static let kind = slopdesk_drop_constant(0) }\n",
             ),
-            (super::LIFECYCLE, "    static let marker = \"(v\"\n"),
             (
                 "Sources/SlopDeskDevicePanels/Android/AndroidStreamConnection.swift",
                 "let a = [\"op\": \"boot\", \"serial\": s]\nlet b = [\"op\": \"console\"]\n",
@@ -624,18 +646,12 @@ mod tests {
         for (path, prefix) in [
             (super::DROP_SERVER, DROP_LINE),
             (super::INSPECTOR_SERVER, INSPECTOR_LINE),
-            (super::DROP_MANAGER, DROP_LINE),
-            (super::INSPECTOR_MANAGER, INSPECTOR_LINE),
-            (super::ANDROID_MANAGER, ANDROID_LINE),
         ] {
-            let body = if path.starts_with("Sources") {
-                manager(prefix)
-            } else {
-                announcing(prefix)
-            };
-            fixture.write(path, &body);
+            fixture.write(path, &announcing(prefix));
         }
         fixture.write(super::ANDROID_SERVER, &android_server());
+        fixture.write(super::HOSTD_SIDECARS, &parsing(&["dropd", "inspectord"]));
+        fixture.write(super::HOSTD_SERVICES, &parsing(&["androidd"]));
     }
 
     /// The three announce prefixes, each spelled once here and read from both ends.
@@ -713,12 +729,21 @@ mod tests {
         )
     }
 
-    /// A supervisor that knows a marker and reads the version off the line.
-    fn manager(marker: &str) -> String {
-        format!(
-            "enum Manager {{\n    static let announceMarker = \"{marker}\"\n    static func \
-             parseAnnouncedVersion(fromLogLine line: String) -> String? {{ nil }}\n}}\n"
-        )
+    /// hostd's side of each announce line: the port and the version, both read off the constants
+    /// the printing crate owns rather than off a literal typed beside them.
+    fn parsing(daemons: &[&str]) -> String {
+        daemons.iter().fold(String::new(), |mut body, daemon| {
+            use std::fmt::Write as _;
+            let _ = write!(
+                body,
+                "fn parse_{daemon}_port(line: &str) -> Option<u16> {{\n    \
+                 port_directly_after(slopdesk_{daemon}::server::ANNOUNCE_PREFIX, line)\n}}\nfn \
+                 parse_{daemon}_version(line: &str) -> Option<&str> {{\n    announced_version(\n     \
+                 slopdesk_{daemon}::server::ANNOUNCE_PREFIX,\n        \
+                 slopdesk_{daemon}::server::ANNOUNCE_VERSION_PREFIX,\n        line,\n    )\n}}\n"
+            );
+            body
+        })
     }
 
     #[test]
@@ -872,19 +897,44 @@ mod tests {
         );
     }
 
+    /// hostd reacquiring the marker: the literal compiles, every test stays green, and the copy is
+    /// kept equal to `server.rs` by hand — which is the drift linking the crate removed.
     #[test]
-    fn a_reworded_announce_marker_is_red() {
-        let fixture = Fixture::new("announce-marker");
+    fn a_marker_respelled_as_a_literal_in_a_host_crate_is_red() {
+        let fixture = Fixture::new("announce-literal");
         wires(&fixture);
         assert!(super::every_announce_line_is_one_string(&fixture.tree()).is_clean());
 
-        fixture.write(super::ANDROID_MANAGER, &manager("androidd: bound to 0.0.0.0:"));
+        fixture.append(
+            super::HOSTD_SERVICES,
+            "const MARKER: &str = \"androidd: listening on 0.0.0.0:\";\n",
+        );
         let report = super::every_announce_line_is_one_string(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("androidd's announce marker")),
+                .any(|v| v.contains("announce marker as a literal")),
+            "{report:?}"
+        );
+    }
+
+    /// The other direction: hostd stops asking the printing crate at all.
+    #[test]
+    fn a_parser_that_stopped_asking_the_printing_crate_is_red() {
+        let fixture = Fixture::new("announce-marker");
+        wires(&fixture);
+        fixture.write(
+            super::HOSTD_SIDECARS,
+            &parsing(&["dropd", "inspectord"])
+                .replace("slopdesk_dropd::server::ANNOUNCE_PREFIX", "\"dropd: bound to \""),
+        );
+        let report = super::every_announce_line_is_one_string(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|v| v.contains("no longer learns dropd's announce marker")),
             "{report:?}"
         );
     }
@@ -908,35 +958,38 @@ mod tests {
         );
     }
 
+    /// A parse that stopped matching reads `None`, which the audit reports as 'unknown' rather than
+    /// failing — so the version half is asserted here or nowhere.
     #[test]
-    fn a_manager_that_stopped_parsing_the_version_is_red() {
+    fn a_parser_that_stopped_reading_the_version_marker_is_red() {
         let fixture = Fixture::new("announce-reader");
         wires(&fixture);
         fixture.write(
-            super::INSPECTOR_MANAGER,
-            "enum Manager {\n    static let announceMarker = \"inspectord: listening on 0.0.0.0:\"\n}\n",
+            super::HOSTD_SIDECARS,
+            &parsing(&["dropd", "inspectord"])
+                .replace("slopdesk_inspectord::server::ANNOUNCE_VERSION_PREFIX", "\"v\""),
         );
         let report = super::every_announce_line_is_one_string(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("no longer reads the running daemon's version")),
+                .any(|v| v.contains("no longer reads inspectord's version marker")),
             "{report:?}"
         );
     }
 
     /// The whole point of the table: a decision made by tool NAME on the near side.
     #[test]
-    fn a_swift_switch_over_tool_names_is_red() {
+    fn a_match_over_tool_names_is_red() {
         let fixture = Fixture::new("sidecar-policy");
-        policy(&fixture, AUDIT_FACE);
+        policy(&fixture, AUDIT_CALLER);
         assert!(super::the_sidecar_version_policy_is_one_table(&fixture.tree()).is_clean());
 
-        fixture.write(
-            super::SIDECAR_AUDIT,
-            "func verdict(tool: String) {\n    switch tool {\n    case \"slopdesk-dropd\":\n        return \
-             .automatic\n    default:\n        return slopdesk_sidecar_audit(tool)\n    }\n}\n",
+        fixture.append(
+            super::HOSTD_AUDIT,
+            "fn verdict(tool: &str) -> RestartPolicy {\n    match tool {\n        \"slopdesk-dropd\" => \
+             RestartPolicy::Automatic,\n        _ => slopdesk_sidecars::policy(tool),\n    }\n}\n",
         );
         let report = super::the_sidecar_version_policy_is_one_table(&fixture.tree());
         assert!(
@@ -948,10 +1001,24 @@ mod tests {
         );
     }
 
+    /// The names alone must NOT fire: the audit spells all five as data — the `tool` field of a
+    /// subject, the key `MANIFEST.json` is read by — and a ban on the names would fire on the
+    /// table's own callers.
+    #[test]
+    fn the_audits_own_subjects_are_not_caught() {
+        let fixture = Fixture::new("sidecar-subjects");
+        policy(&fixture, AUDIT_CALLER);
+        fixture.append(
+            super::HOSTD_AUDIT,
+            "let subjects = [Subject { tool: \"slopdesk-superd\" }, Subject { tool: \"slopdesk-dropd\" }];\n",
+        );
+        assert!(super::the_sidecar_version_policy_is_one_table(&fixture.tree()).is_clean());
+    }
+
     #[test]
     fn a_formula_that_stopped_recording_is_red() {
         let fixture = Fixture::new("sidecar-record");
-        policy(&fixture, AUDIT_FACE);
+        policy(&fixture, AUDIT_CALLER);
         fixture.write(
             super::HOMEBREW_FORMULA,
             "class Slopdesk < Formula\n  def post_install\n    system bin/\"slopdesk\", \"sidecars\"\n  \
@@ -967,9 +1034,10 @@ mod tests {
         );
     }
 
-    const AUDIT_FACE: &str = "func verdict(tool: String) {\n    slopdesk_sidecar_audit(tool)\n}\n";
+    const AUDIT_CALLER: &str = "use slopdesk_sidecars::{Report, parse_version_banner};\nfn verdict(tool: \
+                                &str) -> RestartPolicy {\n    slopdesk_sidecars::policy(tool)\n}\n";
 
-    /// The table, its two decoders, the header and the formula.
+    /// The table, its two callers and the formula.
     fn policy(fixture: &Fixture, audit: &str) {
         fixture
             .write(
@@ -982,15 +1050,10 @@ mod tests {
                 super::SIDECARS_MANIFEST,
                 "pub fn plan(previous: &Manifest, next: &Manifest) -> Plan {\n    Plan::default()\n}\n",
             )
-            .write(super::SIDECAR_AUDIT, audit)
+            .write(super::HOSTD_AUDIT, audit)
             .write(
                 super::SIDECAR_CLI,
                 "use slopdesk_sidecars::manifest;\nfn plan() {\n    manifest::plan(&previous,                  &next)\n}\n",
-            )
-            .write(
-                super::FFI_HEADER,
-                "size_t slopdesk_sidecar_audit(const uint8_t *t, size_t n);\nsize_t \
-                 slopdesk_sidecar_version_banner(const uint8_t *b, size_t n);\n",
             )
             .write(
                 super::HOMEBREW_FORMULA,

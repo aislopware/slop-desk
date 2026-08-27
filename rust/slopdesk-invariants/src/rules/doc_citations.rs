@@ -35,7 +35,28 @@ const DOCC_EXTERNAL: [&str; 3] = ["SwiftUICore", "CGDisplayGammaTable", "CGEvent
 /// `docs/51` §"What this deleted" is the pattern, and the whole value of that section is that it
 /// spells the name out. Each entry here is one such tombstone, and stays only as long as its
 /// sentence does.
-const PATH_TOMBSTONES: [&str; 1] = ["Sources/SlopDeskHost/PTYReadLoop.swift"];
+///
+/// The block after the first is `docs/59`'s subject in its entirety. That document records the
+/// PROJECTION — the six handles that carried `MuxChannelSession` and `HostServer` into Rust one
+/// seam at a time — and `docs/60` F.9 finished the job by deleting both, the four faces and the
+/// four `slopdesk-ffi` doors that reached them. Repointing those names at the crates that replaced
+/// them would make the document lie about what it is describing: the whole point of a projection
+/// record is which Swift file each handle was cut out of.
+const PATH_TOMBSTONES: [&str; 13] = [
+    "Sources/SlopDeskHost/PTYReadLoop.swift",
+    "Sources/SlopDeskHost/HostEnvironment.swift",
+    "Sources/SlopDeskHost/HostServer.swift",
+    "Sources/SlopDeskHost/MuxChannelSession.swift",
+    "Sources/SlopDeskHost/PaneFanout.swift",
+    "Sources/SlopDeskHost/PaneOutbox.swift",
+    "Sources/SlopDeskHost/PaneResizeFold.swift",
+    "Sources/SlopDeskHost/PaneTruths.swift",
+    "Sources/slopdesk-hostd/main.swift",
+    "rust/slopdesk-ffi/src/mux_resize.rs",
+    "rust/slopdesk-ffi/src/pane_fanout.rs",
+    "rust/slopdesk-ffi/src/pane_outbox.rs",
+    "rust/slopdesk-ffi/src/pane_truths.rs",
+];
 
 /// The docs that are read-first regardless of the table — the entry points and the design law.
 const ALWAYS_LIVE: [&str; 3] = ["docs/README.md", "docs/00-overview.md", "DESIGN.md"];

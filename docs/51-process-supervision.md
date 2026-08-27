@@ -305,7 +305,7 @@ Test code was the other holder of that habit, and it was the one that made the r
 dozen suites `poll`ed and `read` the master to assert on a shell's output. They did not fail
 loudly — they hung. `poll` said readable, the pump had already taken the bytes, and the `read`
 parked in the kernel until the child died thirty seconds later. They now read the way hostd does,
-through `PaneOutput` (`Tests/SlopDeskHostTests/SupervisedPTYSupport.swift`), which is both correct
+through `PaneOutput` (`rust/slopdesk-hostpane/src/stream.rs`), which is both correct
 and strictly stronger: matching is sequential from a cursor, so nothing is lost between two
 assertions the way it was with a raw fd. `rust/slopdesk-invariants` ratchets the absence.
 

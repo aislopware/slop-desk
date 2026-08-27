@@ -32,8 +32,8 @@ use core::ffi::c_uchar;
 use slopdesk_superwire::blockwire::{BlockMeta, ControlBlock};
 use slopdesk_superwire::protocol::{
     self, AdoptRequest, BlockOutputRequest, BlockReadRequest, BlocksRequest, ForgetTitleRequest,
-    HelloRequest, JournalRequest, JournalSpawn, ListenRequest, PaneRecord, PauseRequest, ReleaseRequest,
-    Request, ResizeRequest, SignalRequest, SpawnRequest, Status, SubscribeRequest, UnsubscribeRequest, verb,
+    HelloRequest, JournalRequest, JournalSpawn, PaneRecord, PauseRequest, ReleaseRequest, Request,
+    ResizeRequest, SignalRequest, SpawnRequest, Status, SubscribeRequest, UnsubscribeRequest, verb,
 };
 
 use crate::{borrow, deliver};
@@ -472,38 +472,10 @@ pub unsafe extern "C" fn slopdesk_supervisor_encode_resize(
     unsafe { emit(&request, out, cap) }
 }
 
-/// `listen` — claim the child-facing listeners, by kind.
-///
-/// Two bools rather than a list of strings, because there are two kinds and their names are wire
-/// values this crate already spells. A caller passing a kind by name would be re-typing a constant
-/// it can only get wrong.
-///
-/// # Safety
-/// `out` must be null, or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_supervisor_encode_listen(
-    id: u64,
-    hook: bool,
-    control: bool,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    let mut kinds = Vec::with_capacity(2);
-    if hook {
-        kinds.push(protocol::listener_kind::HOOK.to_owned());
-    }
-    if control {
-        kinds.push(protocol::listener_kind::CONTROL.to_owned());
-    }
-    let mut request = Request::new(id, verb::LISTEN);
-    request.listen = Some(ListenRequest { kinds });
-    // SAFETY: the caller's obligation.
-    unsafe { emit(&request, out, cap) }
-}
+// NOTE: there is no `listen` door. Claiming the child-facing listeners is hostd's, and hostd is
+// Rust since `docs/60` F.9 — it builds the request through `slopdesk_superwire::protocol`
+// directly, with no C entry point in between. A door here would be a second way to ask what the
+// crate already answers.
 
 /// The three journal verbs, which share one payload and differ only in which fields they read.
 ///
@@ -1417,12 +1389,12 @@ mod tests {
         SLOPDESK_SUPERVISOR_VERB_ADOPT, SLOPDESK_SUPERVISOR_VERB_BLOCK_OUTPUT,
         SLOPDESK_SUPERVISOR_VERB_JOURNAL_SWEEP, SLOPDESK_SUPERVISOR_VERB_PAUSE,
         SLOPDESK_SUPERVISOR_VERB_RELEASE, SlopDeskSupervisorPaneRow, SlopDeskSupervisorRecordRow,
-        SlopDeskSupervisorSpawnFields, slopdesk_supervisor_encode_journal, slopdesk_supervisor_encode_listen,
-        slopdesk_supervisor_encode_pane, slopdesk_supervisor_encode_pane_flag,
-        slopdesk_supervisor_encode_pane_number, slopdesk_supervisor_encode_spawn,
-        slopdesk_supervisor_reply_block_output, slopdesk_supervisor_reply_block_records,
-        slopdesk_supervisor_reply_free, slopdesk_supervisor_reply_head, slopdesk_supervisor_reply_open,
-        slopdesk_supervisor_reply_panes, slopdesk_supervisor_reply_text,
+        SlopDeskSupervisorSpawnFields, slopdesk_supervisor_encode_journal, slopdesk_supervisor_encode_pane,
+        slopdesk_supervisor_encode_pane_flag, slopdesk_supervisor_encode_pane_number,
+        slopdesk_supervisor_encode_spawn, slopdesk_supervisor_reply_block_output,
+        slopdesk_supervisor_reply_block_records, slopdesk_supervisor_reply_free,
+        slopdesk_supervisor_reply_head, slopdesk_supervisor_reply_open, slopdesk_supervisor_reply_panes,
+        slopdesk_supervisor_reply_text,
     };
 
     /// The ask-size-then-fill dance every encoding door answers to.
@@ -1635,20 +1607,6 @@ mod tests {
         })
         .unwrap();
         assert!(json.contains(r#""arguments":["ok"]"#), "{json}");
-    }
-
-    #[test]
-    fn listen_names_the_kinds_it_claims_and_omits_the_ones_it_does_not() {
-        let both = encoded(|out, cap| unsafe { slopdesk_supervisor_encode_listen(7, true, true, out, cap) })
-            .unwrap();
-        assert_eq!(
-            both,
-            r#"{"id":7,"verb":"listen","listen":{"kinds":["hook","control"]}}"#
-        );
-        let neither =
-            encoded(|out, cap| unsafe { slopdesk_supervisor_encode_listen(7, false, false, out, cap) })
-                .unwrap();
-        assert!(neither.contains(r#""kinds":[]"#), "{neither}");
     }
 
     #[test]

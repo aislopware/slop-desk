@@ -90,7 +90,7 @@ public enum WorkspaceStateFile {
     ///
     /// Three arms because the caller's answer differs across them, and the crate's own enum has had
     /// three since it was written. The Swift copy had only TWO — "these bytes are not our file at
-    /// all" reached ``HostWorkspaceStore`` as a raw `DecodingError` from Foundation, so the one
+    /// all" reached `workspace` in `rust/slopdesk-hostserver` as a raw `DecodingError` from Foundation, so the one
     /// refusal a hand-edited or truncated file most often produces was the one the taxonomy could
     /// not name. It can now.
     public enum FileError: Error, Equatable {

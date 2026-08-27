@@ -437,8 +437,8 @@ hook-test: ## cargo test for the hook relay
 # way — an agent forks it once per `read`/`wait`/`write`/`run`, so its cost IS process startup.
 # Above the fork/exec floor the Swift build spent 3.47 ms getting useful work done, this one spends
 # 0.73 ms. Same root workspace as the hook because it wants the same startup-tuned profile; staged
-# next to hostd by `build:`, which is where `slopdesk-hostd/main.swift` looks for the sibling it
-# exports as `SLOPDESK_CTL_BIN`.
+# next to hostd by `build:`, which is where `rust/slopdesk-hostd` looks for the sibling it exports
+# as `SLOPDESK_CTL_BIN`.
 ctl: ## Build the Rust agent-control CLI (rust/slopdesk-ctl)
 	cd rust && cargo build --release -p slopdesk-ctl
 

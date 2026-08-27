@@ -97,7 +97,6 @@ const RUST_PROTOCOL: &str = "rust/slopdesk-superwire/src/protocol.rs";
 pub fn deleted_host_swift(tree: &Tree) -> Report {
     let mut claims = engines_and_taps();
     claims.extend(rules_that_moved_to_rust());
-    claims.extend(terminfo_files_stay_deleted());
     claims.extend(supervisor_protocol_stays_deleted());
     claims.extend(swift_instruments_stay_deleted());
     claims.extend(pane_outbound_queue());
@@ -217,10 +216,35 @@ fn pane_truths() -> Vec<Claim> {
 /// instrument re-added under any other filename is the same failure, and
 /// `package_graph::every_source_directory_is_a_target` would then demand a `Package.swift` entry
 /// for it — so a resurrection fires two rules rather than slipping past one. Paths rather than
-/// patterns for the reason `terminfo_files_stay_deleted` gives: a command-line tool has no keyword
+/// patterns for the reason the terminfo note below gives: a command-line tool has no keyword
 /// left that a `View::Code` scan could catch.
 fn swift_instruments_stay_deleted() -> Vec<Claim> {
     vec![
+        // The three trees the whole daemon lived in. `docs/60` F.9 deleted 154 tracked Swift
+        // files across them, so this is not "a file must not come back" but "the LANGUAGE must
+        // not": one `.swift` under any of these is hostd growing a Swift half again, and the
+        // per-subject bans below would each have to be re-argued to say so.
+        Claim::Absent {
+            path: "Sources/SlopDeskHost",
+            message: "hostd's Swift target is back — hostd is a Rust daemon (docs/60), and a Swift file \
+                      here is the second implementation of whatever it holds, in the language the port was \
+                      written to leave",
+        },
+        Claim::Absent {
+            path: "Sources/slopdesk-hostd",
+            message: "hostd's Swift entry point is back — the daemon is rust/slopdesk-hostd's main.rs, and \
+                      a second one would be two processes claiming one socket",
+        },
+        Claim::Absent {
+            path: "Tests/SlopDeskHostTests",
+            message: "hostd's Swift suite is back — the behaviour it would assert is Rust's, so a Swift \
+                      test of it is the cross-language mirror fixture CLAUDE.md bans, not coverage",
+        },
+        Claim::Absent {
+            path: "Apps/HostApp-macOS",
+            message: "the host APP bundle is back — hostd is controlled entirely by CLI (docs/60), so a \
+                      bundle here is a menu bar, an Info.plist and a second version site returning together",
+        },
         Claim::Absent {
             path: "Sources/slopdesk-bench",
             message: "the CPU-codec bench is back in Swift — it timed the frame hash, the GF region \
@@ -276,37 +300,13 @@ fn swift_instruments_stay_deleted() -> Vec<Claim> {
     ]
 }
 
-/// The two files the terminfo LINK deleted, named as paths because neither has a keyword left.
-///
-/// `TerminfoResolver` was a wrapper around a FORK of `slopdesk-probe terminfo`; the wrapper's whole
-/// job — hand the probe two names, map its answer back to an enum — stopped existing when the
-/// module became a linked door, so what would come back is not a second rule but a second HOP. And
-/// the enum it mapped to, `ClaudeCodeProfile.Term`, was the closed two-case list the crate would
-/// have had to agree with; the two names live on `HostEnvironment` as strings for exactly that
-/// reason.
-///
-/// A ban on a TYPE name is the right shape when what may not come back is a second engine. Here
-/// what may not come back is a second SPELLING of a wire that is now declared once, in
-/// `slopdesk-superwire`, and reached through `slopdesk-ffi`'s doors. That is a file, not a symbol:
-/// re-adding `SupervisorProtocol.swift` with one `CodingKey` in it is the whole failure, and it has
-/// no keyword a pattern could catch. Eleven `slopdesk-invariants` claims existed to compare these
-/// files against superd's; they are gone, and these three absences are what stands in their place
-/// (`CLAUDE.md`, one implementation).
-fn terminfo_files_stay_deleted() -> Vec<Claim> {
-    vec![
-        Claim::Absent {
-            path: "Sources/SlopDeskHost/TerminfoResolver.swift",
-            message: "hostd is resolving TERM in Swift again — slopdesk-probe's terminfo module is the rule \
-                      and HostEnvironment.resolveTerm LINKS it, so there is no fork left to wrap",
-        },
-        Claim::Absent {
-            path: "Sources/SlopDeskHost/ClaudeCodeProfile.swift",
-            message: "the TERM enum is back — hostd advertises two NAMES (HostEnvironment.defaultTerm and \
-                      fallbackTerm) and the resolution takes strings, so a two-case enum is a closed list \
-                      the crate would have to agree with",
-        },
-    ]
-}
+// NOTE: `TerminfoResolver.swift` and `ClaudeCodeProfile.swift` used to be named here as two
+// path absences, because neither had a keyword a pattern could catch. They are covered by the
+// blanket `Sources/SlopDeskHost` absence above, which is the stronger claim and the one `docs/60`
+// F.9 earned: not "these two files stay deleted" but "hostd has no Swift". `TerminfoResolver` was
+// a wrapper around a FORK of `slopdesk-probe terminfo` — when the module became a linked door the
+// wrapper's whole job stopped existing — and `ClaudeCodeProfile.Term` was the closed two-case list
+// the crate would have had to agree with.
 
 /// The three files the superd-protocol fold deleted, named as paths rather than as patterns.
 fn supervisor_protocol_stays_deleted() -> Vec<Claim> {
@@ -486,7 +486,7 @@ fn pane_shape_folds() -> Vec<Claim> {
             all: &[],
             unless: &[],
             view: View::Code,
-            exempt: &["Sources/SlopDeskHost/RepoStatusWatcher.swift"],
+            exempt: &[],
             message: "a pane's project key or its logical-line split is back in {files} — \
                       rust/slopdesk-git's project_key walks it and rust/slopdesk-sanitize's lines splits \
                       it, each behind one door",
@@ -845,12 +845,12 @@ mod tests {
     fn a_revived_engine_is_red() {
         for (name, line) in REVIVALS {
             let fixture = Fixture::new(&format!("deleted-host-{name}"));
-            fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
+            fixture.write("Sources/SlopDeskSupervisor/A.swift", "let ordinary = 1\n");
             assert!(
                 deleted_host_swift(&fixture.tree()).is_clean(),
                 "{name}: an ordinary tree is not a violation"
             );
-            fixture.append("Sources/SlopDeskHost/A.swift", line);
+            fixture.append("Sources/SlopDeskSupervisor/A.swift", line);
             assert!(
                 !deleted_host_swift(&fixture.tree()).is_clean(),
                 "{name}: the ban did not fire on {line:?}"
@@ -864,7 +864,7 @@ mod tests {
     fn a_comment_naming_a_deleted_type_is_not_a_revival() {
         let fixture = Fixture::new("deleted-host-comment");
         fixture.write(
-            "Sources/SlopDeskHost/A.swift",
+            "Sources/SlopDeskSupervisor/A.swift",
             "// `final class HostOutputSniffer` used to live here; superd owns it now.\nlet x = 1\n",
         );
         assert!(deleted_host_swift(&fixture.tree()).is_clean());
@@ -880,31 +880,11 @@ mod tests {
     fn a_truth_accessor_is_not_a_latch() {
         let fixture = Fixture::new("deleted-host-truth-accessor");
         fixture.write(
-            "Sources/SlopDeskHost/A.swift",
+            "Sources/SlopDeskSupervisor/A.swift",
             "    var titleAnchorRetirements: UInt64 { door(handle) }\nvar commandRunningSince: \
              TimeInterval? { read(handle) }\n",
         );
         assert!(deleted_host_swift(&fixture.tree()).is_clean());
-    }
-
-    /// The two files the terminfo LINK deleted. Neither has a keyword left to ban — what would come
-    /// back is a HOP (a fork the port removed) and a closed two-case enum — so the ban is on the
-    /// PATH.
-    #[test]
-    fn a_revived_terminfo_file_is_red() {
-        for name in ["TerminfoResolver.swift", "ClaudeCodeProfile.swift"] {
-            let fixture = Fixture::new(&format!("revived-{name}"));
-            fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
-            assert!(deleted_host_swift(&fixture.tree()).is_clean(), "{name}");
-            fixture.write(
-                &format!("Sources/SlopDeskHost/{name}"),
-                "public enum Term: String { case ghostty }\n",
-            );
-            assert!(
-                !deleted_host_swift(&fixture.tree()).is_clean(),
-                "{name}: the ban did not fire on its return"
-            );
-        }
     }
 
     /// The nine retired instruments. Each ban is on the target DIRECTORY, so the seed is a source
@@ -923,7 +903,7 @@ mod tests {
             "slopdesk-fake-client",
         ] {
             let fixture = Fixture::new(&format!("revived-{target}"));
-            fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
+            fixture.write("Sources/SlopDeskSupervisor/A.swift", "let ordinary = 1\n");
             assert!(deleted_host_swift(&fixture.tree()).is_clean(), "{target}");
             fixture.write(&format!("Sources/{target}/main.swift"), "print(\"probing\")\n");
             assert!(
@@ -943,7 +923,7 @@ mod tests {
             "BlockEvent.swift",
         ] {
             let fixture = Fixture::new(&format!("revived-{name}"));
-            fixture.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
+            fixture.write("Sources/SlopDeskSupervisor/A.swift", "let ordinary = 1\n");
             assert!(deleted_host_swift(&fixture.tree()).is_clean(), "{name}");
             fixture.write(
                 &format!("Sources/SlopDeskSupervisor/{name}"),

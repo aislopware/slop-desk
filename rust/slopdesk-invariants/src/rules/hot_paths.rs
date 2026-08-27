@@ -5,46 +5,39 @@
 //! number in a gate rots — but the call site that earned it: the engine that does not backtrack,
 //! the ranking that happens once per query, the splitter that skips the walk it does not need.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
 use crate::report::Report;
 use crate::tree::Tree;
 
-/// The Swift face of the pane outbox — a marshaller, and the rule below says how much of one.
-const OUTBOX_FACE: &str = "Sources/SlopDeskHost/PaneOutbox.swift";
+// ---------------------------------------------------------------------------------------------
+// hostd's side of the seven `docs/59` splits, after `docs/60` F.9.
+//
+// Each of those rules used to be three claims about a Swift FACE: that the file existed, that it
+// called every door of the crate it marshalled for, and that it held no state of its own. The first
+// two are gone with the face — hostd is Rust and CALLS `slopdesk-muxsession`, so there is no
+// marshalling layer left for a door to be dropped from, and the type system is what says the call
+// happened.
+//
+// The third is not gone, and is the reason these rules survive rather than being deleted. Nothing
+// in the build graph stops `slopdesk-hostsession` from growing its own roster beside the crate's,
+// its own in-flight counter beside the crate's cap, or its own detach flag beside the crate's
+// ladder. Every one of those still compiles, still passes both suites, and still drifts — which is
+// the whole shape `docs/59` split apart. So what is ratcheted below is the "no second copy" half,
+// spelled the way Rust would write the drift.
+// ---------------------------------------------------------------------------------------------
 
-/// The Swift face of the pane's subscriber set. The same bar, for the same reason.
-const FANOUT_FACE: &str = "Sources/SlopDeskHost/PaneFanout.swift";
+/// The pane's own state — the outbox, the roster, the truths fold and the lifecycle ladder all sit
+/// behind handles this crate holds.
+const SESSION: &str = "rust/slopdesk-hostsession";
 
-/// The one file allowed to hold the `Subscriber` OBJECTS the set is keyed by, and the pane's ONE
-/// lock over its truths.
-const SESSION: &str = "Sources/SlopDeskHost/MuxChannelSession.swift";
+/// The daemon half — routing, the registry relations and the metadata verbs.
+const HOST_SERVER: &str = "rust/slopdesk-hostserver";
 
-/// The face that marshals one pane's latched truths.
-const TRUTHS_FACE: &str = "Sources/SlopDeskHost/PaneTruths.swift";
-
-/// The face that marshals where an inbound `channelOpen` goes.
-const ROUTER_FACE: &str = "Sources/SlopDeskHost/MuxOpenRouter.swift";
-
-/// The one file that reads its own maps to answer the router's questions.
-const HOST_SERVER: &str = "Sources/SlopDeskHost/HostServer.swift";
-
-/// The stream cursor that means "the live edge", on the Rust side.
-const ROUTE_RULES: &str = "rust/slopdesk-muxsession/src/open_route.rs";
-
-/// …and on the Swift side, where the subscriber reads it.
-const OUTPUT_STREAM: &str = "Sources/SlopDeskHost/PaneOutputStream.swift";
-
-/// The face that answers how much metadata work fits and who serves a verb.
-const ADMISSION_FACE: &str = "Sources/SlopDeskHost/MetadataAdmission.swift";
-
-/// The six shims that PERFORM a side-effecting verb, none of which decides whether it owns one.
-const PERFORMERS: &[&str] = &[
-    "Sources/SlopDeskHost/HostPathActionPerformer.swift",
-    "Sources/SlopDeskHost/HostAgentActionPerformer.swift",
-    "Sources/SlopDeskHost/HostClipboardPerformer.swift",
-    "Sources/SlopDeskHost/HostCodeServerPerformer.swift",
-    "Sources/SlopDeskHost/HostSimulatorPerformer.swift",
-    "Sources/SlopDeskHost/HostAndroidPerformer.swift",
+/// The three spellings of the live-edge sentinel, none of which imports another.
+const FROM_NOW_ON_SITES: &[&str] = &[
+    "rust/slopdesk-hostpane/src/stream.rs",
+    "rust/slopdesk-muxsession/src/lifecycle.rs",
+    "rust/slopdesk-muxsession/src/open_route.rs",
 ];
 
 /// The face that answers whether an arriving mux frame is admissible, and what a channel's ending
@@ -61,70 +54,6 @@ const DOORMAN_DOORS: &[&str] = &[
 /// The connection that routes frames through those verdicts and owns nothing else about them.
 const MUX_CONNECTION: &str = "Sources/SlopDeskTransport/Mux/MuxNWConnection.swift";
 
-/// The face that answers a pane's own arc: the start claim, the detach/rebind guards, the resume
-/// cursor and the two exit latches.
-const LIFECYCLE_FACE: &str = "Sources/SlopDeskHost/PaneLifecycle.swift";
-
-/// Every door that face must keep asking.
-const LIFECYCLE_DOORS: &[&str] = &[
-    "slopdesk_pane_lifecycle_new",
-    "slopdesk_pane_lifecycle_free",
-    "slopdesk_pane_lifecycle_start",
-    "slopdesk_pane_lifecycle_is_started",
-    "slopdesk_pane_lifecycle_stream_opened",
-    "slopdesk_pane_lifecycle_detach",
-    "slopdesk_pane_lifecycle_is_detached",
-    "slopdesk_pane_lifecycle_rebind",
-    "slopdesk_pane_lifecycle_record_offset",
-    "slopdesk_pane_lifecycle_offset",
-    "slopdesk_pane_lifecycle_from_now_on",
-    "slopdesk_pane_lifecycle_signal_eof",
-    "slopdesk_pane_lifecycle_is_eof",
-    "slopdesk_pane_lifecycle_signal_exit_sent",
-    "slopdesk_pane_lifecycle_is_exit_sent",
-];
-
-/// The face that holds the session objects and asks the far side every relation about them.
-const REGISTRY_FACE: &str = "Sources/SlopDeskHost/HostSessionRegistry.swift";
-
-/// Every door that face must keep asking. A face that stops asking one has re-derived it.
-const REGISTRY_DOORS: &[&str] = &[
-    "slopdesk_host_slot_mint",
-    "slopdesk_host_primary_subscriber",
-    "slopdesk_host_registry_new",
-    "slopdesk_host_registry_free",
-    "slopdesk_host_registry_attach",
-    "slopdesk_host_registry_slot",
-    "slopdesk_host_registry_member",
-    "slopdesk_host_registry_detach_key",
-    "slopdesk_host_registry_detach_key_if_slot",
-    "slopdesk_host_registry_keys_for_slot",
-    "slopdesk_host_registry_detach_slot",
-    "slopdesk_host_registry_slot_is_attached",
-    "slopdesk_host_registry_members_for_connection",
-    "slopdesk_host_registry_detach_connection",
-    "slopdesk_host_registry_members",
-    "slopdesk_host_registry_slots",
-    "slopdesk_host_registry_member_count",
-    "slopdesk_host_registry_connection_count",
-    "slopdesk_host_registry_key_for",
-    "slopdesk_host_registry_slot_elsewhere",
-    "slopdesk_host_registry_slot_for_session",
-    "slopdesk_host_registry_drain_panes",
-    "slopdesk_host_registry_attach_control",
-    "slopdesk_host_registry_control_slot",
-    "slopdesk_host_registry_detach_control",
-    "slopdesk_host_registry_control_slots",
-    "slopdesk_host_registry_drain_control",
-    "slopdesk_host_registry_register_hook",
-    "slopdesk_host_registry_hook_pane",
-    "slopdesk_host_registry_rebind_hook",
-    "slopdesk_host_registry_unregister_hook",
-    "slopdesk_host_registry_hook_count",
-    "slopdesk_host_registry_project_id",
-    "slopdesk_host_registry_project_count",
-];
-
 /// One relation, one table — and one identity to ask it about
 ///
 /// A fanned-out pane is ONE `MuxChannelSession` under N channel keys, so every event is either
@@ -135,41 +64,26 @@ const REGISTRY_DOORS: &[&str] = &[
 /// it still names THIS session, is this session attached anywhere else, does this teardown still
 /// own the hook sink — were `===` against objects a second reader could not see.
 ///
-/// The relations are `rust/slopdesk-muxsession`'s `registry` now, and this pins the three halves
-/// that keep them one implementation: the face asks every door, hostd keeps no relation of its own
-/// beside them, and a session carries the minted slot that IS its identity over there. The objects
-/// stay — a dictionary keyed by an id hostd already has is retention, not a relation.
+/// The relations are `rust/slopdesk-muxsession`'s `registry`, and `slopdesk-hostserver` holds the
+/// session OBJECTS keyed by an id it already has — which is retention, not a relation.
+///
+/// What survives F.9 is the ban. hostserver linking the crate does not stop it declaring a second
+/// `hook_pane_ids` beside the one `Registry` owns; that compiles, and the two maps that must agree
+/// are exactly the invariant nobody can state.
 #[must_use]
 pub fn one_relation_one_table(tree: &Tree) -> Report {
-    let claims = [
-        Claim::Exists {
-            path: REGISTRY_FACE,
-            message: "Sources/SlopDeskHost/HostSessionRegistry.swift is gone — which channel names which \
-                      pane is not HostServer's to re-derive (docs/59 §5, step 7)",
-        },
-        Claim::Doors {
-            path: REGISTRY_FACE,
-            entries: REGISTRY_DOORS,
-            message: "Sources/SlopDeskHost/HostSessionRegistry.swift no longer calls {entry} — a face that \
-                      drops a door is a relation growing back beside the table that owns it",
-        },
-        Claim::NoneOf {
-            paths: &[HOST_SERVER],
-            pattern: r"\[MuxSessionKey:|muxSubscriberIDs|hookPaneIDsBySession|projectObjectIDs|var controlSessions",
-            view: View::Code,
-            message: "{files} keeps its own channel→pane, subscriber, hook-sink or project-id map — two \
-                      maps that must agree is one invariant nobody can state, which is why they are one \
-                      record on the far side (docs/59 §5, step 7)",
-        },
-        Claim::Matches {
-            path: SESSION,
-            pattern: r"let registrySlot",
-            view: View::Code,
-            message: "Sources/SlopDeskHost/MuxChannelSession.swift stopped carrying its registry slot — \
-                      object identity cannot cross, so every `===` guard hostd makes is a question about \
-                      that number and a session without one cannot be asked about",
-        },
-    ];
+    let claims = [Claim::NoneUnder {
+        roots: &[HOST_SERVER],
+        extensions: RUST,
+        pattern: r"\b(hook_pane_ids|project_object_ids|control_sessions|subscriber_ids)\s*:\s*(HashMap|BTreeMap)",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "{files} keeps its own channel→pane, subscriber, hook-sink or project-id map — two maps \
+                  that must agree is one invariant nobody can state, which is why they are one record in \
+                  slopdesk-muxsession's registry (docs/59 §5, step 7)",
+    }];
     check_all(tree, &claims)
 }
 
@@ -324,34 +238,17 @@ pub fn nerd_font_run_splitter_linear(tree: &Tree) -> Report {
 /// Its one collection is a map from the slot the door minted to the payload that slot names.
 #[must_use]
 pub fn the_outbound_frame_merges_once(tree: &Tree) -> Report {
-    let claims = [
-        Claim::Exists {
-            path: OUTBOX_FACE,
-            message: "Sources/SlopDeskHost/PaneOutbox.swift is gone — the pane's outbound queue is not \
-                      MuxChannelSession's to hold again (docs/59 §4)",
-        },
-        Claim::Doors {
-            path: OUTBOX_FACE,
-            entries: &[
-                "slopdesk_pane_outbox_new",
-                "slopdesk_pane_outbox_free",
-                "slopdesk_pane_outbox_append_chunk",
-                "slopdesk_pane_outbox_append_exit",
-                "slopdesk_pane_outbox_is_empty",
-                "slopdesk_pane_outbox_take",
-            ],
-            message: "Sources/SlopDeskHost/PaneOutbox.swift no longer calls {entry} — a face that drops a \
-                      door is an implementation coming back, and here it would be a second queue beside the \
-                      one the frame verdict is computed from",
-        },
-        Claim::NoneOf {
-            paths: &[OUTBOX_FACE],
-            pattern: r"\[(OutputItem|Payload|Frame)\]|var (head|cursor|nextSlot)\b|removeFirst",
-            view: View::Code,
-            message: "{files} keeps an ORDER of its own — the face holds a slot→payload map and nothing \
-                      else, because the order, the merge and the split are the door's (docs/59 §4)",
-        },
-    ];
+    let claims = [Claim::NoneUnder {
+        roots: &[SESSION],
+        extensions: RUST,
+        pattern: r"VecDeque<(Queued|Slot|Frame)>|\bnext_slot\s*:|\bqueued\s*:\s*Vec<",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "{files} keeps an ORDER of its own — hostd holds a slot→payload map and nothing else, \
+                  because the order, the merge and the split are slopdesk-muxsession's outbox (docs/59 §4)",
+    }];
     check_all(tree, &claims)
 }
 
@@ -376,54 +273,18 @@ pub fn the_outbound_frame_merges_once(tree: &Tree) -> Report {
 /// own.
 #[must_use]
 pub fn the_subscriber_set_is_one_table(tree: &Tree) -> Report {
-    let claims = [
-        Claim::Exists {
-            path: FANOUT_FACE,
-            message: "Sources/SlopDeskHost/PaneFanout.swift is gone — the pane's roster and its cursors are \
-                      not MuxChannelSession's to hold again (docs/59 §4)",
-        },
-        Claim::Doors {
-            path: FANOUT_FACE,
-            entries: &[
-                "slopdesk_pane_fanout_new",
-                "slopdesk_pane_fanout_free",
-                "slopdesk_pane_fanout_lag_bytes",
-                "slopdesk_pane_fanout_reserve_id",
-                "slopdesk_pane_fanout_join",
-                "slopdesk_pane_fanout_leave",
-                "slopdesk_pane_fanout_count",
-                "slopdesk_pane_fanout_ids",
-                "slopdesk_pane_fanout_acknowledge",
-                "slopdesk_pane_fanout_retention_floor",
-                "slopdesk_pane_fanout_start_sender",
-                "slopdesk_pane_fanout_clear_sender",
-                "slopdesk_pane_fanout_note_sent",
-                "slopdesk_pane_fanout_frontier",
-                "slopdesk_pane_fanout_mark_exit_delivered",
-                "slopdesk_pane_fanout_exit_pending",
-                "slopdesk_pane_fanout_lagging",
-                "slopdesk_pane_fanout_evict",
-            ],
-            message: "Sources/SlopDeskHost/PaneFanout.swift no longer calls {entry} — a face that drops a \
-                      door is an implementation coming back, and here it would be a second roster beside \
-                      the one the retention floor and the producer bound are folded from",
-        },
-        Claim::NoneOf {
-            paths: &[FANOUT_FACE],
-            pattern: r"\bNSLock\b|ProcessInfo|: \[MuxSubscriberID *:|var (members|roster|nextID|nextSubscriberID)\b",
-            view: View::Code,
-            message: "{files} keeps a set of its own — the face marshals and nothing else, because the \
-                      roster, the id mint and the laggard threshold are all the door's (docs/59 §4)",
-        },
-        Claim::NoneOf {
-            paths: &[SESSION],
-            pattern: r"var evicting\b|subscribers\.(values|keys|count|isEmpty)\b",
-            view: View::Code,
-            message: "{files} folds over its own dictionary again — that dictionary holds OBJECTS, and the \
-                      population, the order and every cursor come from the door; a second walk here is the \
-                      parallel table the split exists to prevent (docs/59 §4, §8 rule 3)",
-        },
-    ];
+    let claims = [Claim::NoneUnder {
+        roots: &[SESSION],
+        extensions: RUST,
+        pattern: r"\b(last_acked|last_sent|next_subscriber_id|retention_floor)\s*:",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "{files} keeps a cursor of its own beside the roster — the id mint, both cursors and the \
+                  laggard threshold are slopdesk-muxsession's fanout, and a stale copy here pins the replay \
+                  buffer forever or wedges the read loop paused (docs/59 §4)",
+    }];
     check_all(tree, &claims)
 }
 
@@ -441,70 +302,29 @@ pub fn the_subscriber_set_is_one_table(tree: &Tree) -> Report {
 #[must_use]
 pub fn one_batch_one_pass_one_lock(tree: &Tree) -> Report {
     let claims = [
-        Claim::Exists {
-            path: TRUTHS_FACE,
-            message: "Sources/SlopDeskHost/PaneTruths.swift is gone — the title latch, the progress badge, \
-                      the command edge and the turn counter are not MuxChannelSession's to hold again \
-                      (docs/59 §4, step 4)",
-        },
-        Claim::Doors {
-            path: TRUTHS_FACE,
-            entries: &[
-                "slopdesk_pane_truths_new",
-                "slopdesk_pane_truths_free",
-                "slopdesk_pane_truths_ingest_sniffed",
-                "slopdesk_pane_truths_ingest_blocks",
-                "slopdesk_pane_truths_title",
-                "slopdesk_pane_truths_title_at",
-                "slopdesk_pane_truths_retire_title",
-                "slopdesk_pane_truths_take_title_coalescing_reset",
-                "slopdesk_pane_truths_title_anchor_retirements",
-                "slopdesk_pane_truths_progress",
-                "slopdesk_pane_truths_last_exit",
-                "slopdesk_pane_truths_last_duration",
-                "slopdesk_pane_truths_command_running_since",
-                "slopdesk_pane_truths_running_command",
-                "slopdesk_pane_truths_fold_completion",
-                "slopdesk_pane_truths_completion_epoch",
-                "slopdesk_pane_truths_fold_echo",
-                "slopdesk_pane_truths_reanchor_echo",
-                "slopdesk_pane_truths_open_cwd_gate",
-                "slopdesk_pane_truths_latch_cwd",
-                "slopdesk_pane_truths_seed_cwd",
-                "slopdesk_pane_truths_latch_project_key",
-                "slopdesk_pane_truths_cwd",
-                "slopdesk_pane_truths_project_key",
-                "slopdesk_pane_truths_project_key_matches",
-                "slopdesk_pane_truths_reestablish_head",
-                "slopdesk_pane_truths_reestablish_tail",
-            ],
-            message: "Sources/SlopDeskHost/PaneTruths.swift no longer calls {entry} — a face that drops a \
-                      door is a latch coming back beside the handle, which is the seven-lock shape the fold \
-                      replaced",
-        },
-        Claim::NoneOf {
-            paths: &[TRUTHS_FACE],
-            pattern: r"\bNSLock\b|ProcessInfo|Date\(\)|trimmingCharacters",
+        Claim::NoneUnder {
+            roots: &[SESSION],
+            extensions: RUST,
+            pattern: r"\b(title|progress|completion|command_exit|blocks|echo_detect|agent_detect|project_key)_lock\b",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "{files} decides something — the face marshals and nothing else: both clocks are the \
-                      caller's and the trim is the fold's (docs/59 §4, step 4)",
+            exempt: &[],
+            message: "{files} declares one of the eight locks again — they collapsed into one Mutex over \
+                      the fold because the fields were never the reason they were separate (docs/59 §4, \
+                      steps 4-5)",
         },
-        Claim::NoneOf {
-            paths: &[SESSION],
-            pattern: r"\b(titleLock|progressLock|completionLock|commandExitLock|blocksLock|echoDetectLock|agentDetectLock|projectKeyLock)\b",
-            view: View::Code,
-            message: "{files} declares one of the eight locks again — they collapsed into truthsLock \
-                      because the fields were never the reason they were separate (docs/59 §4, steps 4-5)",
-        },
-        Claim::NoneOf {
-            paths: &[SESSION],
-            pattern: r"messages\.append\(\.(title|cwd|projectKey|commandStatus)\b",
-            view: View::Code,
-            message: "{files} builds the reattach re-assert by hand again — the ORDER is the handle's \
-                      (`reestablish_head`, the detector, `reestablish_tail`), because a re-ordering that \
-                      puts the title before the command stamp it is judged against still compiles, still \
-                      passes every content assertion, and costs every returning client its title (docs/59 \
-                      §4, step 5)",
+        // The re-assert is an ORDER, not a set, so what is ratcheted is that hostd still ASKS for it.
+        // A ban on building the messages cannot work here: the detector legitimately pushes its own
+        // half in the middle of the ladder, which is exactly what `reestablish_head` … detector …
+        // `reestablish_tail` means. Dropping either end is the drift — it still compiles, still passes
+        // every content assertion, and costs every returning client its title.
+        Claim::MentionsUnder {
+            root: SESSION,
+            names: &["reestablish_head", "reestablish_tail"],
+            message: "no file under rust/slopdesk-hostsession asks {entry} any more — the reattach \
+                      re-assert is an ORDER the fold owns, and a hand-built one puts the title before the \
+                      command stamp it is judged against (docs/59 §4, step 5)",
         },
     ];
     check_all(tree, &claims)
@@ -524,58 +344,32 @@ pub fn one_batch_one_pass_one_lock(tree: &Tree) -> Report {
 /// implementation: the face asks every door, and hostd re-derives none of the four answers by hand.
 #[must_use]
 pub fn one_open_one_route(tree: &Tree) -> Report {
-    let claims = [
-        Claim::Exists {
-            path: ROUTER_FACE,
-            message: "Sources/SlopDeskHost/MuxOpenRouter.swift is gone — which of the seven exits a \
-                      channelOpen takes is not HostServer's to re-derive (docs/59 §5, step 6)",
-        },
-        Claim::Doors {
-            path: ROUTER_FACE,
-            entries: &[
-                "slopdesk_mux_open_route",
-                "slopdesk_mux_open_settle",
-                "slopdesk_mux_open_resume_from",
-                "slopdesk_mux_open_redraw",
-                "slopdesk_mux_open_restores_transcript",
-                "slopdesk_mux_open_survivor_resume",
-                "slopdesk_mux_open_ownership_allows_adoption",
-            ],
-            message: "Sources/SlopDeskHost/MuxOpenRouter.swift no longer calls {entry} — a face that drops \
-                      a door is a routing rule growing back beside the one that owns it",
-        },
-        Claim::NoneOf {
-            paths: &[ROUTER_FACE],
-            pattern: r"\bNSLock\b|muxSessions|\bstore\.claim\b|ProcessInfo",
-            view: View::Code,
-            message: "{files} reaches for the host's own state — the face marshals SCALARS and nothing \
-                      else, because a router that could read a map would be a second copy of the map \
-                      (docs/59 §5, step 6)",
-        },
-        Claim::NoneOf {
-            paths: &[HOST_SERVER],
-            pattern: r"min\(open\.lastReceivedSeq|open\.channelClass == MuxChannelClass|owner == supervisorOwnerIdentity|PaneOutputStream\.fromNowOn",
-            view: View::Code,
-            message: "{files} re-derives one of the router's four answers by hand — the class routing, the \
-                      resume clamp, the adoption owner test and the live-edge sentinel are all the door's, \
-                      and each of them is a rule that still compiles when it is wrong (docs/59 §5, step 6)",
-        },
+    let mut claims = vec![Claim::NoneUnder {
+        roots: &[HOST_SERVER],
+        extensions: RUST,
+        pattern: r"\.min\([^)]*last_received_seq|channel_class\s*==\s*ChannelClass|owner\s*==\s*supervisor_owner_identity",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "{files} re-derives one of the router's answers by hand — the class routing, the resume \
+                  clamp and the adoption owner test are all slopdesk-muxsession's open_route, and each of \
+                  them is a rule that still compiles when it is wrong (docs/59 §5, step 6)",
+    }];
+    // Three crates spell the live-edge sentinel and none of them imports another's, so this half is a
+    // count-spellings check rather than a face-and-door one: `hostpane` hands it to a subscriber,
+    // `lifecycle` parks a detached pane on it and `open_route` resumes a survivor from it. Two that
+    // disagree replay a whole transcript twice, and no compiler sees the third.
+    claims.extend(FROM_NOW_ON_SITES.iter().map(|path| {
         Claim::Matches {
-            path: ROUTE_RULES,
+            path,
             pattern: r"pub const FROM_NOW_ON: u64 = u64::MAX;",
             view: View::Code,
-            message: "rust/slopdesk-muxsession/src/open_route.rs stopped spelling the live-edge sentinel as \
-                      u64::MAX — it is PaneOutputStream.fromNowOn's twin, and a survivor resume that \
-                      disagrees replays a whole transcript twice",
-        },
-        Claim::Matches {
-            path: OUTPUT_STREAM,
-            pattern: r"static let fromNowOn = UInt64\.max",
-            view: View::Code,
-            message: "Sources/SlopDeskHost/PaneOutputStream.swift stopped spelling the live-edge sentinel \
-                      as UInt64.max — see open_route.rs's FROM_NOW_ON, which it must equal",
-        },
-    ];
+            message: "one of the three live-edge sentinels stopped spelling itself u64::MAX — \
+                      slopdesk-hostpane's stream, slopdesk-muxsession's lifecycle and its open_route must \
+                      agree, and nothing in the build graph makes them (docs/59 §5, step 6)",
+        }
+    }));
     check_all(tree, &claims)
 }
 
@@ -598,38 +392,31 @@ pub fn one_open_one_route(tree: &Tree) -> Report {
 #[must_use]
 pub fn one_metadata_verb_one_performer(tree: &Tree) -> Report {
     let claims = [
-        Claim::Exists {
-            path: ADMISSION_FACE,
-            message: "Sources/SlopDeskHost/MetadataAdmission.swift is gone — how much metadata work fits \
-                      and who serves a verb are not MuxChannelSession's to re-derive (docs/59 §5, step 8)",
-        },
-        Claim::Doors {
-            path: ADMISSION_FACE,
-            entries: &[
-                "slopdesk_metadata_admission_new",
-                "slopdesk_metadata_admission_free",
-                "slopdesk_metadata_admission_admit",
-                "slopdesk_metadata_admission_release",
-                "slopdesk_metadata_admission_in_flight",
-                "slopdesk_metadata_admission_cap",
-                "slopdesk_metadata_performer",
-            ],
-            message: "Sources/SlopDeskHost/MetadataAdmission.swift no longer calls {entry} — a face that \
-                      drops a door is an admission rule growing back beside the one that owns it",
-        },
-        Claim::NoneOf {
-            paths: &[SESSION],
-            pattern: r"maxMetadataInFlight|metadataInFlight\s*[+-]=",
+        Claim::NoneUnder {
+            roots: &[SESSION],
+            extensions: RUST,
+            pattern: r"max_metadata_in_flight|metadata_in_flight\s*[+-]=",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "{files} keeps its own metadata in-flight count or cap — the bound is the handle's, \
-                      and a second counter beside it is a bound that silently stops bounding (docs/59 §5, \
-                      step 8)",
+            exempt: &[],
+            message: "{files} keeps its own metadata in-flight count or cap — the bound is \
+                      slopdesk-muxsession's Admission, and a second counter beside it is a bound that \
+                      silently stops bounding (docs/59 §5, step 8)",
         },
-        Claim::NoneOf {
-            paths: PERFORMERS,
-            pattern: r"->\s*WireMessage\?",
+        // The six shims are `slopdesk-hostserver`'s modules now rather than six Swift files, and the ban
+        // reads the same: an `Option<WireMessage>` return IS the shim saying "not my verb", which is the
+        // ownership decision growing back beside `metadata_admission::performer`, the one table that
+        // answers it.
+        Claim::NoneUnder {
+            roots: &[HOST_SERVER],
+            extensions: RUST,
+            pattern: r"fn perform\b[^{]*->\s*Option<WireMessage>",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "{files} answers an OPTIONAL response — that nil IS the claim \"not my verb\", and \
+            exempt: &[],
+            message: "{files} answers an OPTIONAL response — that `None` IS the claim \"not my verb\", and \
                       which verbs a performer owns is metadata_admission::performer's answer, not a second \
                       opinion at every shim (docs/59 §5, step 8)",
         },
@@ -657,32 +444,23 @@ pub fn one_metadata_verb_one_performer(tree: &Tree) -> Report {
 #[must_use]
 pub fn one_arc_one_ladder(tree: &Tree) -> Report {
     let claims = [
-        Claim::Exists {
-            path: LIFECYCLE_FACE,
-            message: "Sources/SlopDeskHost/PaneLifecycle.swift is gone — whether a detach tears down, \
-                      whether a rebind may proceed and where it resumes are not MuxChannelSession's to \
-                      re-derive (docs/59 §5, step 5b)",
-        },
-        Claim::Doors {
-            path: LIFECYCLE_FACE,
-            entries: LIFECYCLE_DOORS,
-            message: "Sources/SlopDeskHost/PaneLifecycle.swift no longer calls {entry} — a face that drops \
-                      a door is a ladder step growing back beside the one that owns it",
-        },
-        Claim::NoneOf {
-            paths: &[SESSION],
-            pattern: r"eofLock|exitSentLock|var eofReached|var exitSent|var streamOffset|var started",
+        Claim::NoneUnder {
+            roots: &[SESSION],
+            extensions: RUST,
+            pattern: r"\b(eof_lock|exit_sent_lock)\b|\b(eof_reached|exit_sent|stream_offset)\s*:\s*(bool|u64|AtomicBool)",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "{files} keeps a lifecycle flag, cursor or latch LOCK of its own — the arc is the \
-                      handle's, and a second copy beside it is a guard that silently stops guarding \
-                      (docs/59 §5, step 5b)",
+            exempt: &[],
+            message: "{files} keeps a lifecycle flag, cursor or latch LOCK of its own — the arc is \
+                      slopdesk-muxsession's Lifecycle, and a second copy beside it is a guard that silently \
+                      stops guarding (docs/59 §5, step 5b)",
         },
-        Claim::Matches {
-            path: SESSION,
-            pattern: r"private let life = PaneLifecycle\(\)",
-            view: View::Code,
-            message: "Sources/SlopDeskHost/MuxChannelSession.swift no longer holds a PaneLifecycle — the \
-                      ladder it answers is what keeps taskLock down to the objects that cannot cross \
+        Claim::MentionsUnder {
+            root: SESSION,
+            names: &["slopdesk_muxsession::lifecycle::Lifecycle"],
+            message: "no file under rust/slopdesk-hostsession names {entry} any more — the ladder it \
+                      answers is what keeps the pane's own lock down to the objects that cannot be folded \
                       (docs/59 §5, step 5b)",
         },
     ];
@@ -743,9 +521,6 @@ pub fn one_frame_one_doorman(tree: &Tree) -> Report {
 mod tests {
     use crate::tests::Fixture;
 
-    /// The face whose doors [`super::the_outbound_frame_merges_once`] pins.
-    const OUTBOX_FACE: &str = super::OUTBOX_FACE;
-
     fn write_one_regex_engine_over_untrusted(fixture: &Fixture) {
         fixture
             .write(
@@ -786,282 +561,6 @@ mod tests {
         assert!(!super::one_regex_engine_over_untrusted(&fixture.tree()).is_clean());
     }
 
-    /// Every door the truths face must keep asking, in one string a fixture can hold.
-    const TRUTHS_DOORS: &str = concat!(
-        "slopdesk_pane_truths_new()\n",
-        "slopdesk_pane_truths_free()\n",
-        "slopdesk_pane_truths_ingest_sniffed()\n",
-        "slopdesk_pane_truths_ingest_blocks()\n",
-        "slopdesk_pane_truths_title()\n",
-        "slopdesk_pane_truths_title_at()\n",
-        "slopdesk_pane_truths_retire_title()\n",
-        "slopdesk_pane_truths_take_title_coalescing_reset()\n",
-        "slopdesk_pane_truths_title_anchor_retirements()\n",
-        "slopdesk_pane_truths_progress()\n",
-        "slopdesk_pane_truths_last_exit()\n",
-        "slopdesk_pane_truths_last_duration()\n",
-        "slopdesk_pane_truths_command_running_since()\n",
-        "slopdesk_pane_truths_running_command()\n",
-        "slopdesk_pane_truths_fold_completion()\n",
-        "slopdesk_pane_truths_completion_epoch()\n",
-        "slopdesk_pane_truths_fold_echo()\n",
-        "slopdesk_pane_truths_reanchor_echo()\n",
-        "slopdesk_pane_truths_open_cwd_gate()\n",
-        "slopdesk_pane_truths_latch_cwd()\n",
-        "slopdesk_pane_truths_seed_cwd()\n",
-        "slopdesk_pane_truths_latch_project_key()\n",
-        "slopdesk_pane_truths_cwd()\n",
-        "slopdesk_pane_truths_project_key()\n",
-        "slopdesk_pane_truths_project_key_matches()\n",
-        "slopdesk_pane_truths_reestablish_head()\n",
-        "slopdesk_pane_truths_reestablish_tail()\n",
-    );
-
-    #[test]
-    fn one_batch_one_pass_one_lock_keeps_the_eight_latches_on_one_side() {
-        let fixture = Fixture::new("one-batch-one-pass-one-lock");
-        fixture
-            .write(super::TRUTHS_FACE, TRUTHS_DOORS)
-            .write(super::SESSION, "kept so the bans have a haystack\n");
-        assert!(super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
-
-        // The face stopped asking — a latch grew back beside the handle.
-        fixture.write(super::TRUTHS_FACE, "slopdesk_pane_truths_new()\n");
-        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
-
-        // The face reads a clock the fold takes as a parameter.
-        fixture.write(super::TRUTHS_FACE, TRUTHS_DOORS);
-        fixture.append(super::TRUTHS_FACE, "        let now = Date()\n");
-        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
-
-        // The face re-spells the fold's own trim.
-        fixture.write(super::TRUTHS_FACE, TRUTHS_DOORS);
-        fixture.append(
-            super::TRUTHS_FACE,
-            "        text.trimmingCharacters(in: .whitespaces)\n",
-        );
-        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
-
-        // One of the eight locks is declared again.
-        fixture.write(super::TRUTHS_FACE, TRUTHS_DOORS);
-        fixture.append(super::SESSION, "    private let progressLock = NSLock()\n");
-        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
-
-        // The project latches come back behind their own lock.
-        fixture.write(super::SESSION, "kept so the bans have a haystack\n");
-        fixture.append(super::SESSION, "    private let projectKeyLock = NSLock()\n");
-        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
-
-        // The reattach ladder is re-ordered by hand in the session.
-        fixture.write(super::SESSION, "        messages.append(.title(title))\n");
-        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
-
-        // A bare fixture has no face at all.
-        let bare = Fixture::new("one-batch-one-pass-one-lock-bare");
-        assert!(!super::one_batch_one_pass_one_lock(&bare.tree()).is_clean());
-    }
-
-    /// Every door the router face must keep asking, in one string a fixture can hold.
-    const ROUTE_DOORS: &str = concat!(
-        "slopdesk_mux_open_route()\n",
-        "slopdesk_mux_open_settle()\n",
-        "slopdesk_mux_open_resume_from()\n",
-        "slopdesk_mux_open_redraw()\n",
-        "slopdesk_mux_open_restores_transcript()\n",
-        "slopdesk_mux_open_survivor_resume()\n",
-        "slopdesk_mux_open_ownership_allows_adoption()\n",
-    );
-
-    /// A tree where the router owns the precedence and both sentinels agree.
-    fn write_one_open_one_route(fixture: &Fixture) {
-        fixture
-            .write(super::ROUTER_FACE, ROUTE_DOORS)
-            .write(super::HOST_SERVER, "kept so the bans have a haystack\n")
-            .write(super::ROUTE_RULES, "pub const FROM_NOW_ON: u64 = u64::MAX;\n")
-            .write(
-                super::OUTPUT_STREAM,
-                "    public static let fromNowOn = UInt64.max\n",
-            );
-    }
-
-    #[test]
-    fn one_open_one_route_keeps_the_precedence_on_one_side() {
-        let fixture = Fixture::new("one-open-one-route");
-        write_one_open_one_route(&fixture);
-        assert!(super::one_open_one_route(&fixture.tree()).is_clean());
-
-        // The face stopped asking — a routing rule grew back beside the one that owns it.
-        fixture.write(super::ROUTER_FACE, "slopdesk_mux_open_route()\n");
-        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
-
-        // The face reaches for the host's own map instead of taking the shape as a scalar.
-        write_one_open_one_route(&fixture);
-        fixture.append(super::ROUTER_FACE, "        muxSessions[key]\n");
-        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
-
-        // The clamp comes back by hand — the answer that still compiles when it is wrong.
-        write_one_open_one_route(&fixture);
-        fixture.append(
-            super::HOST_SERVER,
-            "        let resumeFrom = min(open.lastReceivedSeq, session.highestAssignedSeq)\n",
-        );
-        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
-
-        // …and so does the class routing.
-        write_one_open_one_route(&fixture);
-        fixture.append(
-            super::HOST_SERVER,
-            "        if open.channelClass == MuxChannelClass.workspace.rawValue { return }\n",
-        );
-        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
-
-        // The two sentinels stop agreeing, on either side.
-        write_one_open_one_route(&fixture);
-        fixture.write(super::ROUTE_RULES, "pub const FROM_NOW_ON: u64 = 0;\n");
-        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
-        write_one_open_one_route(&fixture);
-        fixture.write(super::OUTPUT_STREAM, "    public static let fromNowOn = 0\n");
-        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
-
-        // A bare fixture has no face at all.
-        let bare = Fixture::new("one-open-one-route-bare");
-        assert!(!super::one_open_one_route(&bare.tree()).is_clean());
-    }
-
-    /// Every door the admission face must keep asking, in one string a fixture can hold.
-    const ADMISSION_DOORS: &str = concat!(
-        "slopdesk_metadata_admission_new()\n",
-        "slopdesk_metadata_admission_free()\n",
-        "slopdesk_metadata_admission_admit()\n",
-        "slopdesk_metadata_admission_release()\n",
-        "slopdesk_metadata_admission_in_flight()\n",
-        "slopdesk_metadata_admission_cap()\n",
-        "slopdesk_metadata_performer()\n",
-    );
-
-    /// A tree where the table owns the routing and every performer answers totally.
-    fn write_one_metadata_verb_one_performer(fixture: &Fixture) {
-        fixture
-            .write(super::ADMISSION_FACE, ADMISSION_DOORS)
-            .write(super::SESSION, "kept so the bans have a haystack\n");
-        for path in super::PERFORMERS {
-            fixture.write(path, "    static func response(...) -> WireMessage {\n");
-        }
-    }
-
-    /// Every door the registry face must keep asking, as a fixture body.
-    fn registry_doors() -> String {
-        let mut body = String::new();
-        for door in super::REGISTRY_DOORS {
-            body.push_str(door);
-            body.push_str("()\n");
-        }
-        body
-    }
-
-    /// A tree where the relations live on one side and the session carries its identity.
-    fn write_one_relation_one_table(fixture: &Fixture) {
-        fixture
-            .write(super::REGISTRY_FACE, &registry_doors())
-            .write(super::HOST_SERVER, "kept so the bans have a haystack\n")
-            .write(
-                super::SESSION,
-                "    let registrySlot: UInt64 = HostSessionRegistry.mintSlot()\n",
-            );
-    }
-
-    #[test]
-    fn one_relation_one_table_keeps_the_relations_on_one_side() {
-        let fixture = Fixture::new("one-relation-one-table");
-        write_one_relation_one_table(&fixture);
-        assert!(super::one_relation_one_table(&fixture.tree()).is_clean());
-
-        // The face stopped asking — a relation grew back beside the table that owns it.
-        fixture.write(super::REGISTRY_FACE, "slopdesk_host_registry_new()\n");
-        assert!(!super::one_relation_one_table(&fixture.tree()).is_clean());
-        write_one_relation_one_table(&fixture);
-
-        // Each banned map, one at a time: the pair that had to agree, and the two id maps.
-        for drift in [
-            "    private var muxSessions: [MuxSessionKey: MuxChannelSession] = [:]\n",
-            "    private var muxSubscriberIDs: [MuxSessionKey: MuxSubscriberID] = [:]\n",
-            "    private var hookPaneIDsBySession: [UUID: HookSinkRegistration] = [:]\n",
-            "    private var projectObjectIDs: [String: UUID] = [:]\n",
-            "    private var controlSessions: [UUID: MuxChannelSession] = [:]\n",
-        ] {
-            fixture.write(super::HOST_SERVER, drift);
-            assert!(
-                !super::one_relation_one_table(&fixture.tree()).is_clean(),
-                "the ban missed {drift}",
-            );
-            write_one_relation_one_table(&fixture);
-        }
-
-        // The session dropped the identity every guard is a question about.
-        fixture.write(super::SESSION, "final class MuxChannelSession {\n");
-        assert!(!super::one_relation_one_table(&fixture.tree()).is_clean());
-
-        // A bare tree has no face at all.
-        let bare = Fixture::new("one-relation-one-table-bare");
-        assert!(!super::one_relation_one_table(&bare.tree()).is_clean());
-    }
-
-    /// Every door the lifecycle face must keep asking, as a fixture body.
-    fn lifecycle_doors() -> String {
-        let mut body = String::new();
-        for door in super::LIFECYCLE_DOORS {
-            body.push_str(door);
-            body.push_str("()\n");
-        }
-        body
-    }
-
-    /// A tree where the arc lives on one side and the session holds the handle that answers it.
-    fn write_one_arc_one_ladder(fixture: &Fixture) {
-        fixture
-            .write(super::LIFECYCLE_FACE, &lifecycle_doors())
-            .write(super::SESSION, "    private let life = PaneLifecycle()\n");
-    }
-
-    #[test]
-    fn one_arc_one_ladder_keeps_the_ladder_on_one_side() {
-        let fixture = Fixture::new("one-arc-one-ladder");
-        write_one_arc_one_ladder(&fixture);
-        assert!(super::one_arc_one_ladder(&fixture.tree()).is_clean());
-
-        // The face stopped asking — a ladder step grew back beside the one that owns it.
-        fixture.write(super::LIFECYCLE_FACE, "slopdesk_pane_lifecycle_new()\n");
-        assert!(!super::one_arc_one_ladder(&fixture.tree()).is_clean());
-        write_one_arc_one_ladder(&fixture);
-
-        // Each flag, cursor and latch lock, one at a time.
-        for drift in [
-            "    private let eofLock = NSLock()\n",
-            "    private let exitSentLock = NSLock()\n",
-            "    private var eofReached = false\n",
-            "    private var exitSent = false\n",
-            "    private var streamOffset: UInt64\n",
-            "    private var started = false\n",
-        ] {
-            fixture.append(super::SESSION, drift);
-            assert!(
-                !super::one_arc_one_ladder(&fixture.tree()).is_clean(),
-                "the ban missed {drift}",
-            );
-            write_one_arc_one_ladder(&fixture);
-        }
-
-        // The session dropped the handle the whole ladder is reached through.
-        fixture.write(super::SESSION, "final class MuxChannelSession {\n");
-        assert!(!super::one_arc_one_ladder(&fixture.tree()).is_clean());
-
-        // A bare tree has no face at all.
-        let bare = Fixture::new("one-arc-one-ladder-bare");
-        assert!(!super::one_arc_one_ladder(&bare.tree()).is_clean());
-    }
-
-    /// A tree where the four guards and the two teardowns live on one side, and the connection
-    /// asks for all three verdicts.
     fn write_one_frame_one_doorman(fixture: &Fixture) {
         let mut face = String::new();
         for door in super::DOORMAN_DOORS {
@@ -1108,133 +607,175 @@ mod tests {
         assert!(!super::one_frame_one_doorman(&bare.tree()).is_clean());
     }
 
-    #[test]
-    fn one_metadata_verb_one_performer_keeps_the_table_on_one_side() {
-        let fixture = Fixture::new("one-metadata-verb-one-performer");
-        write_one_metadata_verb_one_performer(&fixture);
-        assert!(super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
+    // -----------------------------------------------------------------------------------------
+    // The seven `docs/59` splits, seeded the way Rust would write the drift.
+    //
+    // Every fixture below is `.rs` under `rust/slopdesk-host*`, snake_case, with the crate's own
+    // handle held beside it — because a Swift pattern translated by hand would match none of it and
+    // the rule would pass while guarding nothing.
+    // -----------------------------------------------------------------------------------------
 
-        // The face stopped asking — an admission rule grew back beside the one that owns it.
-        fixture.write(super::ADMISSION_FACE, "slopdesk_metadata_admission_new()\n");
-        assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
-
-        // A private counter beside the handle — a bound that silently stops bounding.
-        write_one_metadata_verb_one_performer(&fixture);
-        fixture.append(super::SESSION, "        metadataInFlight += 1\n");
-        assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
-
-        // …and so is a second copy of the cap.
-        write_one_metadata_verb_one_performer(&fixture);
-        fixture.append(
-            super::SESSION,
-            "    private static let maxMetadataInFlight = 32\n",
-        );
-        assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
-
-        // A performer answers an optional again — the "not my verb" claim, back at the shim.
-        for path in super::PERFORMERS {
-            write_one_metadata_verb_one_performer(&fixture);
-            fixture.write(path, "    static func response(...) -> WireMessage? {\n");
-            assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
-        }
-
-        // A bare fixture has no face at all.
-        let bare = Fixture::new("one-metadata-verb-one-performer-bare");
-        assert!(!super::one_metadata_verb_one_performer(&bare.tree()).is_clean());
+    /// A hostd shaped the way it is: the crate's handles held, no second copy beside any of them.
+    fn hostd(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fixture
+            .write(
+                "rust/slopdesk-hostsession/src/shared.rs",
+                "use slopdesk_muxsession::lifecycle::Lifecycle;\nstruct Shared {\n\x20   outbox: \
+                 Outbox,\n\x20   payloads: BTreeMap<Slot, Queued>,\n\x20   by_id: BTreeMap<SubscriberId, \
+                 Arc<Subscriber>>,\n\x20   fanout: Fanout,\n\x20   life: Lifecycle,\n\x20   folds: \
+                 Mutex<Folds>,\n}\n",
+            )
+            .write(
+                "rust/slopdesk-hostserver/src/route.rs",
+                "let verdict = open_route::route(&facts);\n",
+            )
+            .write(
+                "rust/slopdesk-hostsession/src/facts.rs",
+                "truths.reestablish_head().chain(truths.reestablish_tail())\n",
+            );
+        fixture
     }
 
-    /// Every door the face must keep asking, in one string a fixture can hold.
-    const OUTBOX_DOORS: &str = "slopdesk_pane_outbox_new()\nslopdesk_pane_outbox_free()\\
-                                nslopdesk_pane_outbox_append_chunk()\nslopdesk_pane_outbox_append_exit()\\
-                                nslopdesk_pane_outbox_is_empty()\nslopdesk_pane_outbox_take()\n";
+    #[test]
+    fn a_second_registry_map_in_hostserver_is_caught() {
+        let fixture = hostd("one-relation-one-table");
+        assert!(super::one_relation_one_table(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-hostserver/src/host.rs",
+            "    hook_pane_ids: HashMap<Uuid, PaneId>,\n",
+        );
+        assert!(!super::one_relation_one_table(&fixture.tree()).is_clean());
+    }
 
     #[test]
-    fn the_outbound_frame_merges_once_holds_the_face_to_its_doors() {
-        let fixture = Fixture::new("outbound-frame-merges-once");
-        fixture.write(OUTBOX_FACE, OUTBOX_DOORS);
+    fn a_second_outbound_order_in_hostsession_is_caught() {
+        let fixture = hostd("outbound-frame-merge");
         assert!(super::the_outbound_frame_merges_once(&fixture.tree()).is_clean());
 
-        // The face stopped asking — the merge grew back where the call used to be.
-        fixture.write(OUTBOX_FACE, "slopdesk_pane_outbox_new()\n");
+        fixture.write(
+            "rust/slopdesk-hostsession/src/drain.rs",
+            "    queued: Vec<Queued>,\n    next_slot: Slot,\n",
+        );
         assert!(!super::the_outbound_frame_merges_once(&fixture.tree()).is_clean());
-
-        // The face kept every door AND a second ordering beside it.
-        fixture.write(OUTBOX_FACE, OUTBOX_DOORS);
-        fixture.append(OUTBOX_FACE, "    private var queued: [Payload] = []\n");
-        assert!(!super::the_outbound_frame_merges_once(&fixture.tree()).is_clean());
-
-        // And the file itself, gone: a tree with no face at all fails on `Exists` rather than
-        // passing the way an empty corpus passes a ban.
-        let bare = Fixture::new("outbound-frame-merges-once-bare");
-        bare.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
-        assert!(!super::the_outbound_frame_merges_once(&bare.tree()).is_clean());
-    }
-
-    /// The face whose doors [`super::the_subscriber_set_is_one_table`] pins.
-    const FANOUT_FACE: &str = super::FANOUT_FACE;
-
-    /// The one file allowed to hold the members themselves.
-    const SESSION: &str = super::SESSION;
-
-    /// Every door the face must keep asking, in one string a fixture can hold.
-    const FANOUT_DOORS: &str = concat!(
-        "slopdesk_pane_fanout_new()\nslopdesk_pane_fanout_free()\n",
-        "slopdesk_pane_fanout_lag_bytes()\nslopdesk_pane_fanout_reserve_id()\n",
-        "slopdesk_pane_fanout_join()\nslopdesk_pane_fanout_leave()\n",
-        "slopdesk_pane_fanout_count()\nslopdesk_pane_fanout_ids()\n",
-        "slopdesk_pane_fanout_acknowledge()\n",
-        "slopdesk_pane_fanout_retention_floor()\n",
-        "slopdesk_pane_fanout_start_sender()\nslopdesk_pane_fanout_clear_sender()\n",
-        "slopdesk_pane_fanout_note_sent()\nslopdesk_pane_fanout_frontier()\n",
-        "slopdesk_pane_fanout_mark_exit_delivered()\n",
-        "slopdesk_pane_fanout_exit_pending()\nslopdesk_pane_fanout_lagging()\n",
-        "slopdesk_pane_fanout_evict()\n",
-    );
-
-    fn write_the_subscriber_set_is_one_table(fixture: &Fixture) {
-        fixture
-            .write(FANOUT_FACE, FANOUT_DOORS)
-            .write(SESSION, "    private let fanout = PaneFanout()\n");
     }
 
     #[test]
-    fn the_subscriber_set_is_one_table_keeps_every_member_scalar_on_one_side() {
-        let fixture = Fixture::new("subscriber-set-is-one-table");
-        write_the_subscriber_set_is_one_table(&fixture);
+    fn a_member_cursor_kept_beside_the_roster_is_caught() {
+        let fixture = hostd("subscriber-set-one-table");
         assert!(super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
 
-        // The face stopped asking — a fold grew back where the call used to be.
-        fixture.write(FANOUT_FACE, "slopdesk_pane_fanout_new()\n");
-        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
-
-        // The face kept every door AND a roster of its own beside it.
-        write_the_subscriber_set_is_one_table(&fixture);
-        fixture.append(
-            FANOUT_FACE,
-            "    private var members: [MuxSubscriberID: Cursor] = [:]\n",
+        fixture.write(
+            "rust/slopdesk-hostsession/src/subscriber.rs",
+            "    last_acked: u64,\n",
         );
         assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+    }
 
-        // And the session, walking its own dictionary again: the parallel table this rule exists
-        // for. Both halves of that — the eviction latch and every population fold.
-        write_the_subscriber_set_is_one_table(&fixture);
-        fixture.append(SESSION, "        var evicting = false\n");
-        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+    #[test]
+    fn one_of_the_eight_latch_locks_growing_back_is_caught() {
+        let fixture = hostd("one-batch-one-pass-one-lock");
+        assert!(super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
 
-        write_the_subscriber_set_is_one_table(&fixture);
-        fixture.append(SESSION, "        let emptied = subscribers.isEmpty\n");
-        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
-
-        write_the_subscriber_set_is_one_table(&fixture);
-        fixture.append(
-            SESSION,
-            "        let floor = subscribers.values.map(cursor).min()\n",
+        fixture.write(
+            "rust/slopdesk-hostsession/src/facts.rs",
+            "    title_lock: Mutex<Option<String>>,\n",
         );
-        assert!(!super::the_subscriber_set_is_one_table(&fixture.tree()).is_clean());
+        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+    }
 
-        // And the file itself, gone.
-        let bare = Fixture::new("subscriber-set-is-one-table-bare");
-        bare.write("Sources/SlopDeskHost/A.swift", "let ordinary = 1\n");
-        assert!(!super::the_subscriber_set_is_one_table(&bare.tree()).is_clean());
+    /// The re-assert ORDER is the fold's, so what is seeded is hostd DROPPING one end of the ladder
+    /// — the half that still compiles and still passes every content assertion.
+    #[test]
+    fn dropping_one_end_of_the_reassert_ladder_is_caught() {
+        let fixture = hostd("one-batch-reassert");
+        assert!(super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+
+        // The tail dropped everywhere — the head still runs, the messages still arrive, and every
+        // returning client's title is the one that goes missing.
+        fixture.write(
+            "rust/slopdesk-hostsession/src/facts.rs",
+            "for entry in truths.reestablish_head() { out.push(entry); }\n",
+        );
+        assert!(!super::one_batch_one_pass_one_lock(&fixture.tree()).is_clean());
+    }
+
+    /// A tree where all three crates spell the live-edge sentinel the same way.
+    fn sentinels(fixture: &Fixture) {
+        for path in super::FROM_NOW_ON_SITES {
+            fixture.write(path, "pub const FROM_NOW_ON: u64 = u64::MAX;\n");
+        }
+    }
+
+    #[test]
+    fn re_deriving_a_router_answer_in_hostserver_is_caught() {
+        let fixture = hostd("one-open-one-route");
+        sentinels(&fixture);
+        assert!(super::one_open_one_route(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-hostserver/src/channel.rs",
+            "let resume = offset.min(open.last_received_seq);\n",
+        );
+        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
+    }
+
+    /// The count-spellings half. Three crates, none importing another's, so a sentinel that moves
+    /// in one is invisible to every compiler in the repo.
+    #[test]
+    fn a_live_edge_sentinel_that_moved_in_one_crate_only_is_caught() {
+        let fixture = hostd("live-edge-drift");
+        sentinels(&fixture);
+        assert!(super::one_open_one_route(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-muxsession/src/lifecycle.rs",
+            "pub const FROM_NOW_ON: u64 = u64::MAX - 1;\n",
+        );
+        assert!(!super::one_open_one_route(&fixture.tree()).is_clean());
+    }
+
+    #[test]
+    fn a_second_metadata_bound_and_an_optional_performer_are_caught() {
+        let fixture = hostd("one-metadata-verb-one-performer");
+        assert!(super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-hostsession/src/metadata.rs",
+            "    max_metadata_in_flight: usize,\n",
+        );
+        assert!(!super::one_metadata_verb_one_performer(&fixture.tree()).is_clean());
+
+        // The other half: an optional return IS the shim saying "not my verb".
+        let second = hostd("optional-performer");
+        second.write(
+            "rust/slopdesk-hostserver/src/pathaction.rs",
+            "fn perform(&self, verb: Verb) -> Option<WireMessage> {\n",
+        );
+        assert!(!super::one_metadata_verb_one_performer(&second.tree()).is_clean());
+    }
+
+    #[test]
+    fn a_lifecycle_flag_kept_beside_the_ladder_is_caught() {
+        let fixture = hostd("one-arc-one-ladder");
+        assert!(super::one_arc_one_ladder(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-hostsession/src/latches.rs",
+            "    exit_sent: AtomicBool,\n",
+        );
+        assert!(!super::one_arc_one_ladder(&fixture.tree()).is_clean());
+    }
+
+    /// …and the ladder dropped outright, which is the failure the flags were a symptom of.
+    #[test]
+    fn dropping_the_lifecycle_handle_altogether_is_caught() {
+        let fixture = Fixture::new("one-arc-no-ladder");
+        fixture.write(
+            "rust/slopdesk-hostsession/src/shared.rs",
+            "struct Shared { detached: bool }\n",
+        );
+        assert!(!super::one_arc_one_ladder(&fixture.tree()).is_clean());
     }
 }

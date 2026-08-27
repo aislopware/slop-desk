@@ -90,10 +90,13 @@ let package = Package(
         .iOS(.v26),
     ],
     products: [
+        // No `SlopDeskHost` and no `CSlopDeskFFI` product. `docs/60` stage F.9 deleted the Swift
+        // host outright — `slopdesk-hostd` is `rust/slopdesk-hostd`, a cargo binary — and the only
+        // thing that ever needed the doors vended on their own was the menu-bar app that supervised
+        // it. The host is driven from the CLI now, so no Xcode target imports a Rust door directly.
         .library(name: "SlopDeskProtocol", targets: ["SlopDeskProtocol"]),
         .library(name: "SlopDeskScreen", targets: ["SlopDeskScreen"]),
         .library(name: "SlopDeskTransport", targets: ["SlopDeskTransport"]),
-        .library(name: "SlopDeskHost", targets: ["SlopDeskHost"]),
         .library(name: "SlopDeskClient", targets: ["SlopDeskClient"]),
         .library(name: "SlopDeskTerminal", targets: ["SlopDeskTerminal"]),
         .library(name: "SlopDeskTTY", targets: ["SlopDeskTTY"]),
@@ -127,16 +130,14 @@ let package = Package(
         .library(name: "SlopDeskVideoClientPhone", targets: ["SlopDeskVideoClientPhone"]),
         // PATH 4 (dedicated drag-drop file-transfer channel).
         .library(name: "SlopDeskFileTransfer", targets: ["SlopDeskFileTransfer"]),
-        // The one SHIPPED SwiftPM executable left (`slopdesk-release package`, docs/49). A product,
-        // not just a target, because `swift build --target <exe>` under the Swift 6.3 build backend
-        // compiles the module and never links a binary — the release tarball needs `--product`,
-        // which only exists for a declared product. Every other executableTarget below is a
-        // dev/bench tool and stays product-less on purpose: `swift build` still builds them,
-        // `--product` won't ship them.
-        .executable(name: "slopdesk-hostd", targets: ["slopdesk-hostd"]),
-        // No `slopdesk` and no `slopdesk-ctl` product: BOTH user-facing CLIs are Rust
-        // (`rust/slopdesk-cli`, `rust/slopdesk-ctl`), built by `make cli`/`make ctl` and shipped
-        // straight out of `rust/target/release`.
+        // NO executable product at all any more, and that is the whole shape of `docs/60` F.9.
+        // `slopdesk-hostd` was the last one — a product rather than just a target because the
+        // release tarball needs `swift build --product`, which only exists for a declared one — and
+        // the daemon is now `rust/slopdesk-hostd`, built by `make hostd` out of
+        // `rust/target/release`. `slopdesk` and `slopdesk-ctl` went the same way earlier
+        // (`rust/slopdesk-cli`, `rust/slopdesk-ctl`, built by `make cli`/`make ctl`). What is left
+        // below is executableTargets only, every one a dev or bench tool: `swift build` builds them
+        // and nothing ships them.
     ],
     // External UI deps — attach ONLY to the UI targets so the headless core + wire/codec/controller
     // targets stay dependency-free (`swift test` / golden never fetch). Trades "clean checkout builds
@@ -222,51 +223,14 @@ let package = Package(
             linkerSettings: ffiCLibraries,
         ),
 
-        // macOS host: PTY (openpty + posix_spawn createSession), session mgr, no-buffer
-        // PTY<->transport relay, TIOCSWINSZ resize. (WF-3.) Also hosts the inspector's
-        // second-connection server (InspectorServer), depending on SlopDeskInspector for the wire
-        // types + replay log — acyclic, since SlopDeskInspector depends ONLY on SlopDeskProtocol.
-        //
-        // W10 adds SlopDeskAgentDetect: the host folds foreground-process / Claude-hook signals
-        // through the pure `ClaudeStatusMachine` to decide the type-26/27 CONTROL emissions. Acyclic
-        // — SlopDeskAgentDetect depends on NOTHING (physically cannot import SlopDeskHost).
-        // W12 adds SlopDeskVideoProtocol for `EnvConfig` — the agent-detection gates
-        // (`SLOPDESK_AGENT_DETECT`/`_HOOKS`) resolve through the settings overlay so a GUI toggle
-        // reaches them (same `video-prefs.json` sidecar). Acyclic — SlopDeskVideoProtocol is the
-        // cross-platform PURE wire/settings leaf (deps only CSlopDeskFFI), never imports a host module.
-        .target(
-            name: "SlopDeskHost",
-            dependencies: [
-                "SlopDeskTransport", "SlopDeskProtocol", "SlopDeskInspector",
-                "SlopDeskAgentDetect", "SlopDeskVideoProtocol",
-                // The pasteboard↔clip conversion the client's sync engine reads from the same file.
-                "SlopDeskPasteboard",
-                // The `write(2)`-until-done loop the control listener and the mux session both
-                // used to spell. Zero-dependency leaf, so the daemon graph is unchanged.
-                "SlopDeskTTY",
-                // docs/51: `slopdesk-superd` forks the pane shells now, so the fork-to-exec window +
-                // argv/envp vectors live in the shared leaf and `PTYProcess` calls into them. This
-                // is also how hostd adopts a supervised master fd.
-                "SlopDeskSupervisor",
-                // docs/52: the VT screen engine is `slopdesk-screend`, a Rust binary over an
-                // AF_UNIX socket. This is the CLIENT end only — there is no Swift parser left.
-                "SlopDeskScreen",
-                // docs/45: the host owns the workspace document, so it needs the value model.
-                // Leaf target (Foundation + CoreGraphics), so this does NOT widen the daemon graph.
-                "SlopDeskWorkspaceModel",
-                // docs/49: the per-sidecar version policy is `rust/slopdesk-sidecars`, because the
-                // OTHER caller of that policy — `slopdesk sidecars` — is Rust, and two tables in two
-                // languages is the mirror `CLAUDE.md` bans. Named here rather than reached through
-                // one of the targets above: an import that works by transitivity works until the
-                // target it rode in on drops the dependency.
-                "CSlopDeskFFI",
-                // …and the ask-with-a-guess delivery + the length-prefixed run framing every door
-                // above is called through, which moved here when the second target needed them.
-                "SlopDeskArena",
-            ],
-
-            linkerSettings: ffiCLibraries,
-        ),
+        // NOTE: the macOS host (`SlopDeskHost`) and the `slopdesk-hostd` executableTarget are GONE
+        // from this graph. `docs/60` stage F ported the daemon whole — PTY relay, mux session,
+        // workspace document, inspector server, agent fold, the sidecar seams — into the seven
+        // `rust/slopdesk-host*` crates, and stage F.9 deleted the Swift, per `CLAUDE.md`'s
+        // one-implementation rule. What survives here is the CLIENT half of each seam and nothing
+        // else: `SlopDeskScreen` is the client end of the screend wire, `SlopDeskPasteboard` the
+        // clip conversion the sync engine reads, `SlopDeskWorkspaceModel` the value model the
+        // client mirrors the host document into.
 
         // The workspace VALUE MODEL — the Session→Tab→split tree, `PaneSpec`, the pure
         // `WorkspaceTreeOps`, the canvas value types, and (from docs/45) the host workspace-document
@@ -368,7 +332,7 @@ let package = Package(
         // DECRST 1049 + OSC 133, robust to sequences split across chunk boundaries), the input
         // dedup ring (input-box B1 echo suppression), the input-box state machine (A shell / B1
         // TUI-compose). Pure Swift, Foundation-only — builds macOS + iOS, fixture-tested. The host
-        // launch env + auth resolution live in SlopDeskHost (macOS, the WF-7 seam).
+        // launch env + auth resolution are the daemon's half of the WF-7 seam and are Rust.
         .target(name: "SlopDeskClaudeCode", dependencies: ["SlopDeskProtocol"]),
 
         // Pure, headless Claude-Code DETECTION CORE (W7): the per-pane status enum (`ClaudeStatus`),
@@ -851,11 +815,6 @@ let package = Package(
 
         // MARK: Executables
 
-        // Headless host daemon (PTY + transport). Sources under Sources/slopdesk-hostd.
-        // SlopDeskFileTransfer: the daemon stands up the PATH-4 file-transfer listener on
-        // `terminalPort &+ 2` after the terminal + inspector servers (non-fatal on bind failure).
-        .executableTarget(name: "slopdesk-hostd", dependencies: ["SlopDeskHost", "SlopDeskFileTransfer"]),
-
         // NOTE: the agent-control CLI (`slopdesk-ctl`) and its pure core (`SlopDeskCtlCore`) are
         // GONE from this graph — it is Rust now (`rust/slopdesk-ctl`, `docs/DECISIONS.md`). Its cost
         // was process startup and nothing else; the port removed 3 ms of it per agent invocation.
@@ -962,19 +921,13 @@ let package = Package(
             exclude: ["Fixtures"],
         ),
         .testTarget(name: "SlopDeskTransportTests", dependencies: ["SlopDeskTransport"]),
-        .testTarget(
-            name: "SlopDeskHostTests",
-            // W12: SlopDeskVideoProtocol for `EnvConfig` — the agent-gate reaches-consumer test sets
-            // `EnvConfig.overlay` and asserts the default-arg path (overlay → env) reaches the gate.
-            dependencies: ["SlopDeskHost", "SlopDeskInspector", "SlopDeskAgentDetect", "SlopDeskVideoProtocol"],
-        ),
-        // SlopDeskClientTests exercises the REAL PATH 1 e2e: a HostServer (SlopDeskHost) +
-        // SlopDeskClient over loopback, so it depends on SlopDeskHost + SlopDeskTTY too.
+        // (No `SlopDeskHostTests`. Every suite it held tested the Swift host `docs/60` F.9 deleted;
+        // the seven `rust/slopdesk-host*` crates carry their own, where a decision can be driven
+        // without standing up a listener.)
         .testTarget(
             name: "SlopDeskClientTests",
             dependencies: [
                 "SlopDeskClient",
-                "SlopDeskHost",
                 "SlopDeskTransport",
                 "SlopDeskTerminal",
                 "SlopDeskTTY",
@@ -988,12 +941,12 @@ let package = Package(
             name: "SlopDeskInspectorTests",
             dependencies: ["SlopDeskInspector", "SlopDeskProtocol"],
         ),
-        // WF-7 logic: env/auth (SlopDeskHost) + mode sniffer / dedup ring / input-box model
-        // (SlopDeskClaudeCode). Byte-sequence + fixture based; the sniffer tests feed the
-        // SAME stream at adversarial split boundaries and assert identical results.
+        // WF-7 logic: the mode sniffer / dedup ring / input-box model. Byte-sequence + fixture
+        // based; the sniffer tests feed the SAME stream at adversarial split boundaries and assert
+        // identical results. (The env/auth half was the Swift host's and is Rust now.)
         .testTarget(
             name: "SlopDeskClaudeCodeTests",
-            dependencies: ["SlopDeskClaudeCode", "SlopDeskHost", "SlopDeskProtocol"],
+            dependencies: ["SlopDeskClaudeCode", "SlopDeskProtocol"],
         ),
         // L0 workspace-core: the rescued PURE logic tests from the old SlopDeskClientUITests —
         // the tree-of-intent domain ops, WorkspaceStore reconcile, AppConnection/ConnectionViewModel
@@ -1018,7 +971,6 @@ let package = Package(
                 "SlopDeskWorkspaceModel",
                 "SlopDeskClient",
                 "SlopDeskTransport",
-                "SlopDeskHost",
                 "SlopDeskInspector",
                 "SlopDeskClaudeCode",
                 "SlopDeskAgentDetect",

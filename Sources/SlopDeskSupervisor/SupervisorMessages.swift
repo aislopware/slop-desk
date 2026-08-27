@@ -37,26 +37,13 @@ public enum SupervisorStatus: Sendable, Equatable {
     case unrecognised
 }
 
-/// The child-facing sockets superd binds and hostd serves.
-///
-/// superd owns the `bind` because the address has to outlive hostd's pid — a running `claude`
-/// remembers `SLOPDESK_SOCKET_PATH` from its `execve` and can never be corrected. Everything that
-/// ARRIVES on one is hostd's, and arrives as a descriptor rather than as relayed bytes, so the hook
-/// and ctl protocols still have exactly one implementation each, here.
-///
-/// **A kind hostd does not name is a kind superd will not advertise.** That is how the default-off
-/// ctl surface survives: rather than superd growing a copy of a hostd feature flag, hostd simply
-/// does not claim ``control``, and no child is told the address.
-///
-/// Two cases and no `rawValue`, because the wire spelling is `slopdesk_superwire`'s and a string
-/// here would be the second copy of it. A kind a NEWER superd binds arrives as neither case and is
-/// handled where the descriptor is — see ``SupervisorClient/onConnection``.
-public enum ListenerKind: Sendable, Equatable, CaseIterable {
-    /// The Claude-hook socket, advertised to children as `SLOPDESK_SOCKET_PATH`.
-    case hook
-    /// The agent-control socket, advertised to children as `SLOPDESK_CONTROL_SOCKET`.
-    case control
-}
+// NOTE: `ListenerKind`, the `listen` verb and the `connection` push are GONE from this target.
+// The child-facing sockets superd binds are CLAIMED by hostd, and hostd is Rust since `docs/60`
+// F.9 — `slopdesk_superwire::protocol` spells the kinds and `rust/slopdesk-hostd` claims them. A
+// Swift copy here would be the cross-language mirror the one-implementation rule bans, and it was
+// bound by nobody. A `connection` frame that still arrives at this client has its descriptor
+// closed by the read loop (see `SupervisorClient.startReader`), which is the correct answer for an
+// end that no longer exists.
 
 // MARK: - What hostd asks for
 

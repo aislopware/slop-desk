@@ -5,7 +5,8 @@
 //! a chord that cannot be typed, a config the far side drops a line of, or a search that ranks the
 //! same table two ways depending on which field asked.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -142,24 +143,38 @@ pub fn one_named_key_table_what(tree: &Tree) -> Report {
 
 /// The reset backstop is built from the set the strip pass reads
 ///
-/// `sanitizeSuffix` is appended by a restore the passes did NOT run on, which is exactly when a
-/// mode they track must still be turned off. All fourteen were spelled out on the near side, with
+/// The suffix is appended by a restore the passes did NOT run on, which is exactly when a mode
+/// they track must still be turned off. All fourteen were spelled out on the near side, with
 /// nothing connecting that literal to `TRACKED_MODES` — so a mode added to the pass would have gone
 /// missing from the backstop that exists to catch what the pass missed.
+///
+/// The near side is `rust/slopdesk-hostd`'s transcript restore since `docs/60` F.9, and it now
+/// CALLS `reset_suffix`, so the fourteen-row equality is the compiler's. What is left is the pair
+/// no import can state: that the call is still made, and that nobody re-acquires a mode by typing
+/// its escape.
 #[must_use]
 pub fn reset_backstop_built_from_set(tree: &Tree) -> Report {
+    /// hostd's transcript restore, the one caller that appends the suffix.
+    const TRANSCRIPTS: &str = "rust/slopdesk-hostd/src/transcripts.rs";
+
     let claims = [
-        Claim::Names {
-            path: "Sources/SlopDeskHost/ScrollbackTranscripts.swift",
-            needle: "slopdesk_input_mode_reset",
-            message: "Sources/SlopDeskHost/ScrollbackTranscripts.swift spells the reset again — it is built \
-                      from inputmode.rs's TRACKED_MODES",
-        },
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskHost/ScrollbackTranscripts.swift"],
-            pattern: r"\?1000l|\?2004l|\?2048l",
+        Claim::Matches {
+            path: TRANSCRIPTS,
+            pattern: r"slopdesk_sanitize::inputmode::reset_suffix\(",
             view: View::Code,
-            message: "{files} names a tracked mode in Swift — the backstop and the pass read one array",
+            message: "rust/slopdesk-hostd/src/transcripts.rs no longer builds the reset from inputmode.rs's \
+                      TRACKED_MODES — a restore that skips it leaves a mode the passes never saw turned on",
+        },
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r"\?1000l|\?2004l|\?2048l",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} names a tracked mode by its escape — the backstop and the pass read one \
+                      array, and a hand-typed mode is one the pass will never turn off",
         },
         Claim::Names {
             path: "rust/slopdesk-sanitize/src/inputmode.rs",
@@ -387,8 +402,8 @@ mod tests {
     fn write_reset_backstop_built_from_set(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskHost/ScrollbackTranscripts.swift",
-                "slopdesk_input_mode_reset\nkept so the ban has a haystack\n",
+                "rust/slopdesk-hostd/src/transcripts.rs",
+                "bytes.extend_from_slice(&slopdesk_sanitize::inputmode::reset_suffix());\n",
             )
             .write(
                 "rust/slopdesk-sanitize/src/inputmode.rs",
@@ -402,13 +417,17 @@ mod tests {
         write_reset_backstop_built_from_set(&fixture);
         assert!(super::reset_backstop_built_from_set(&fixture.tree()).is_clean());
 
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write("Sources/SlopDeskHost/ScrollbackTranscripts.swift", "");
+        // The caller stopped asking — a restore that appends nothing leaves the modes on.
+        fixture.write("rust/slopdesk-hostd/src/transcripts.rs", "");
         assert!(!super::reset_backstop_built_from_set(&fixture.tree()).is_clean());
 
-        // And the law it was banned from respelling, respelled.
+        // And the law it was banned from respelling, respelled — in any host crate, not just the
+        // one that holds the call.
         write_reset_backstop_built_from_set(&fixture);
-        fixture.append("Sources/SlopDeskHost/ScrollbackTranscripts.swift", "?1000l\n");
+        fixture.write(
+            "rust/slopdesk-hostserver/src/restore.rs",
+            "const SUFFIX: &[u8] = b\"\\x1b[?1000l\";\n",
+        );
         assert!(!super::reset_backstop_built_from_set(&fixture.tree()).is_clean());
     }
 

@@ -468,8 +468,39 @@ impl Detect {
 ///
 /// Asked of the caller by [`Truths::fold_echo`](slopdesk_muxsession::truths::Truths::fold_echo)
 /// rather than restated inside it, so the warm-up gate and the comparison stay separable.
+///
+/// `true` means emit `inputEcho(sample)` and remember `sample` as the new last-emitted; `false`
+/// means say nothing, so the caller may probe as often as it likes without chattering. That matters
+/// because the host samples the line discipline after every client keystroke plus a low-rate poll,
+/// far more often than it changes: a pane that never sees a password prompt emits nothing at all
+/// and its CONTROL stream stays byte-identical to the pre-feature one. See
+/// `docs/20-wire-protocol.md` type 31 and `docs/DECISIONS.md` (WI-6).
+///
+/// This used to live in `slopdesk-terminal`'s `echo` module as well as here, which `docs/60` F.9
+/// exposed: that crate is the CLIENT's terminal — surface, keybinds, paste, pointer — and the door
+/// hostd reached it through was the last thing keeping the second copy alive. The rule belongs with
+/// the process that samples the PTY, so the module went and this stayed.
 const fn is_edge(sample: bool, last: bool) -> bool {
     sample != last
+}
+
+#[cfg(test)]
+mod echo_edge_tests {
+    use super::is_edge;
+
+    /// The steady state is silent, in both directions.
+    #[test]
+    fn an_unchanged_sample_is_absorbed() {
+        assert!(!is_edge(true, true));
+        assert!(!is_edge(false, false));
+    }
+
+    /// Both edges are news: the prompt going up, and the prompt coming down.
+    #[test]
+    fn either_direction_is_an_edge() {
+        assert!(is_edge(false, true));
+        assert!(is_edge(true, false));
+    }
 }
 
 /// Sends whatever one fold emitted, in the order the detector chose.

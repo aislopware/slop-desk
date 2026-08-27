@@ -5,7 +5,7 @@ import Network
 ///
 /// There is exactly **one** place that builds transport parameters so the
 /// mandatory low-latency settings can never be forgotten on one side of a
-/// connection. Both ``HostTransport`` (the `NWListener`) and the client-side
+/// connection. Both `HostTransport` in `rust/slopdesk-hostnet` (the `NWListener`) and the client-side
 /// ``NWMuxByteLink`` (the `NWConnection`) use this helper.
 ///
 /// ## What it sets and why

@@ -44,7 +44,7 @@ pub const DEFAULT_KEEP_ALIVE: Duration = Duration::from_secs(15);
 
 /// The announce line's marker.
 ///
-/// Spelled identically in `Sources/SlopDeskHost/InspectorServiceManager.swift` and compared by
+/// Spelled identically in `InspectorServiceManager.swift` and compared by
 /// `rust/slopdesk-invariants` — this is how hostd re-learns the port after a restart, by
 /// replaying superd's ring from offset 0 and reading the child's own words back.
 pub const ANNOUNCE_PREFIX: &str = "inspectord: listening on 0.0.0.0:";

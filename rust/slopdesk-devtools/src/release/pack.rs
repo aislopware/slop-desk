@@ -16,7 +16,7 @@
 //! ## Artifacts, into `dist/`
 //! | file | what |
 //! | --- | --- |
-//! | `SlopDesk-<version>-arm64.dmg` | `SlopDesk.app` + `SlopDeskHost.app`, signed + stapled |
+//! | `SlopDesk-<version>-arm64.dmg` | `SlopDesk.app`, signed + stapled |
 //! | `slopdesk-cli-<version>-arm64.tar.gz` | the CLI and the host, plus every sidecar the host resolves at runtime, signed, carrying `MANIFEST.json` |
 //! | `MANIFEST.json` | one entry per shipped binary: its OWN version, its source stamp, its SHA |
 //! | `SHA256SUMS` | what the Homebrew tap's cask + formula pin |
@@ -204,6 +204,13 @@ pub fn run(root: &Path, settings: &Settings) -> Result<(), String> {
     println!("OK: {}", layout.dist.display());
     Ok(())
 }
+
+/// The one bundle a release still ships.
+///
+/// Named once because four steps hand it to four different tools — the build, the staple, the
+/// notarization staging copy and the DMG root — and `docs/60` F.9 took the second bundle away, so
+/// the loops that used to keep those four in step are straight-line code now.
+const APP: &str = "SlopDesk.app";
 
 fn preflight(layout: &Layout, settings: &Settings) -> Result<(), String> {
     proc::step("Preflight");
@@ -401,25 +408,23 @@ fn build_and_sign_apps(layout: &Layout, settings: &Settings) -> Result<(), Strin
     // binary, and shelling out to a copy of itself would only add a way for the two to disagree.
     crate::ops::renderer::enable(&layout.root, &crate::ops::renderer::MACOS)?;
 
-    for (spec, project, scheme, product, entitlements) in [
-        (
-            "Apps/ClientApp-macOS/project.yml",
-            "Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj",
-            "ClientApp-macOS",
-            "SlopDesk.app",
-            "Apps/ClientApp-macOS/ClientApp-macOS.entitlements",
-        ),
-        (
-            "Apps/HostApp-macOS/project.yml",
-            "Apps/HostApp-macOS/HostApp-macOS.xcodeproj",
-            "HostApp-macOS",
-            "SlopDeskHost.app",
-            "Apps/HostApp-macOS/HostApp-macOS.entitlements",
-        ),
-    ] {
-        build_one_app(layout, spec, project, scheme, product)?;
-        stamp_and_sign_app(layout, settings, product, entitlements)?;
-    }
+    // ONE app since `docs/60` F.9: the menu-bar host is gone and the daemon it supervised ships in
+    // the CLI tarball below, driven by `slopdesk-ops`. This used to be a loop over two bundles; what
+    // kept the four steps from being written twice was never the loop but the two helpers below, and
+    // they still do.
+    build_one_app(
+        layout,
+        "Apps/ClientApp-macOS/project.yml",
+        "Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj",
+        "ClientApp-macOS",
+        APP,
+    )?;
+    stamp_and_sign_app(
+        layout,
+        settings,
+        APP,
+        "Apps/ClientApp-macOS/ClientApp-macOS.entitlements",
+    )?;
 
     // Restore the committed placeholder spec so a CI checkout (and a developer's tree) stays clean.
     proc::run(
@@ -591,21 +596,20 @@ fn notarize_apps(layout: &Layout, settings: &Settings) -> Result<(), String> {
         fs::remove_dir_all(&apps_dir).map_err(|error| format!("{}: {error}", apps_dir.display()))?;
     }
     fs::create_dir_all(&apps_dir).map_err(|error| format!("{}: {error}", apps_dir.display()))?;
-    for app in ["SlopDesk.app", "SlopDeskHost.app"] {
-        proc::run(
-            "cp",
-            &[
-                "-R".as_ref(),
-                layout.stage.join(app).as_os_str(),
-                apps_dir.as_os_str(),
-            ],
-            &layout.root,
-        )?;
-    }
-    // `--keepParent` takes ONE source, so a directory holding both bundles is archived by its
-    // CONTENTS: the zip then has both `.app` bundles at its root, and notarytool walks the archive
-    // for bundles. `--sequesterRsrc` is Apple's documented flag for notarization zips — it keeps
-    // resource forks from corrupting the upload.
+    proc::run(
+        "cp",
+        &[
+            "-R".as_ref(),
+            layout.stage.join(APP).as_os_str(),
+            apps_dir.as_os_str(),
+        ],
+        &layout.root,
+    )?;
+    // `--keepParent` takes ONE source, so the directory is archived by its CONTENTS: the zip then
+    // has the `.app` bundle at its root, and notarytool walks the archive for bundles. The staging
+    // directory survives `docs/60` F.9 taking the second bundle away because that is the shape
+    // notarytool wants either way. `--sequesterRsrc` is Apple's documented flag for notarization
+    // zips — it keeps resource forks from corrupting the upload.
     let zip = layout
         .work
         .join(format!("slopdesk-apps-{}-arm64.zip", settings.version));
@@ -627,15 +631,11 @@ fn notarize_apps(layout: &Layout, settings: &Settings) -> Result<(), String> {
     // rather than trusting the staple's exit code: a ticket that did not attach must fail the
     // release, not ship an app that looks fine until someone launches it offline.
     proc::step("Stapling the app bundles");
-    for app in ["SlopDesk.app", "SlopDeskHost.app"] {
-        let bundle = layout.stage.join(app).to_string_lossy().into_owned();
-        proc::run("xcrun", &["stapler", "staple", &bundle], &layout.root)?;
-        proc::run("xcrun", &["stapler", "validate", &bundle], &layout.root).map_err(|_| {
-            format!(
-                "no ticket stapled to {app} — the image would ship an app that fails first launch offline"
-            )
-        })?;
-    }
+    let bundle = layout.stage.join(APP).to_string_lossy().into_owned();
+    proc::run("xcrun", &["stapler", "staple", &bundle], &layout.root)?;
+    proc::run("xcrun", &["stapler", "validate", &bundle], &layout.root).map_err(|_| {
+        format!("no ticket stapled to {APP} — the image would ship an app that fails first launch offline")
+    })?;
     Ok(())
 }
 
@@ -643,17 +643,15 @@ fn build_dmg(layout: &Layout, settings: &Settings) -> Result<PathBuf, String> {
     proc::step("Building the DMG");
     let dmg_root = layout.work.join("dmg");
     fs::create_dir_all(&dmg_root).map_err(|error| format!("{}: {error}", dmg_root.display()))?;
-    for app in ["SlopDesk.app", "SlopDeskHost.app"] {
-        proc::run(
-            "cp",
-            &[
-                "-R".as_ref(),
-                layout.stage.join(app).as_os_str(),
-                dmg_root.as_os_str(),
-            ],
-            &layout.root,
-        )?;
-    }
+    proc::run(
+        "cp",
+        &[
+            "-R".as_ref(),
+            layout.stage.join(APP).as_os_str(),
+            dmg_root.as_os_str(),
+        ],
+        &layout.root,
+    )?;
     let link = dmg_root.join("Applications");
     if !link.exists() {
         std::os::unix::fs::symlink("/Applications", &link)

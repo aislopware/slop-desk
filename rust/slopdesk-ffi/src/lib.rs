@@ -90,8 +90,6 @@ pub mod client_jitter;
 pub mod client_session;
 pub mod client_view;
 pub mod close_confirm;
-pub mod code_bridge;
-pub mod code_bridge_line;
 pub mod code_panel;
 pub mod code_surface;
 pub mod command_navigator;
@@ -116,18 +114,12 @@ pub mod decode_admission;
 // UNGATED, and the only `slopdesk-apple-*` door that is: every client decodes, so this ships on
 // every slice. Its macOS-only twin below is the asymmetry, not this. See the module.
 pub mod decoder;
-pub mod detach_retention;
-pub mod detach_take;
 pub mod device_geometry;
 pub mod device_log;
 pub mod device_panel;
 pub mod device_sections;
 pub mod drop_action;
 pub mod drop_register;
-// macOS only: a `tcgetattr` on a PTY master hostd owns. A client is TOLD the answer over the wire
-// (type 31) and has no PTY to ask. See the module.
-#[cfg(target_os = "macos")]
-pub mod echo_mode;
 // macOS only: behind it is VideoToolbox's hardware HEVC encoder. iOS HAS VideoToolbox, so an
 // ungated edge here would LINK and merely bloat every client slice with a host-only encoder — which
 // is worse than a link error, because nothing would fail. See the module.
@@ -137,36 +129,20 @@ pub mod file_transfer;
 pub mod find_bar;
 pub mod find_matches;
 pub mod folders;
-// macOS only: Darwin `proc_*` and `KERN_PROCARGS2`, asked only by hostd. See the module.
-#[cfg(target_os = "macos")]
-pub mod foreground;
 pub mod frame_decoder;
 pub mod frame_rate;
 pub mod fuzzy;
 pub mod git_line;
 pub mod global_search;
-// macOS only: behind it is a vendored `libgit2`, and only hostd asks the question. See the module.
-#[cfg(target_os = "macos")]
-pub mod git_status;
 pub mod grid_geometry;
 pub mod grid_readout;
 pub mod gui_readout;
 pub mod hid_virtual_key;
 pub mod hint_overlay;
 pub mod hint_scan;
-pub mod hook_record;
 pub mod host_gates;
 pub mod host_policy;
 pub mod host_state;
-// macOS only: Mach host statistics, `sysctl` and a `statfs` about the machine hostd runs on. A
-// client asks the HOST for this over the wire; it never asks itself. See the module.
-#[cfg(target_os = "macos")]
-pub mod host_vitals;
-// macOS only: hostd's own command line, and the record it publishes about itself. A client neither
-// parses that argv nor writes that file. The one fact here a client DOES need — the port to dial
-// when nobody said otherwise — is `listen_port`'s, which is not gated. See the module.
-#[cfg(target_os = "macos")]
-pub mod hostd_launch;
 // macOS only: behind it is CoreGraphics event synthesis, which no iOS slice has. See the module.
 #[cfg(target_os = "macos")]
 pub mod inject;
@@ -182,14 +158,12 @@ pub mod key_naming;
 pub mod key_repeat;
 pub mod keybind;
 pub mod keystroke_replay;
-pub mod line_assembler;
 pub mod link_action;
 pub mod link_detect;
 pub mod link_hit;
 pub mod list_nav;
 pub mod listen_port;
 pub mod metadata;
-pub mod metadata_admission;
 pub mod metadata_wire;
 pub mod mint_rescue;
 pub mod mirror_fold;
@@ -201,8 +175,6 @@ pub mod mux_envelope;
 pub mod mux_flow;
 pub mod mux_header;
 pub mod mux_host;
-pub mod mux_pairing;
-pub mod mux_resize;
 // macOS only: the swipe-nav history gate's accessibility read — one browser's Back/Forward
 // availability, cached per pid across beats. See the module.
 #[cfg(target_os = "macos")]
@@ -211,7 +183,6 @@ pub mod new_tab_position;
 pub mod notify;
 pub mod notify_rate_limit;
 pub mod open_quickly;
-pub mod open_route;
 pub mod outline;
 pub mod pacer_depth;
 pub mod palette_card;
@@ -220,24 +191,15 @@ pub mod pane_chooser;
 pub mod pane_drop;
 pub mod pane_empty;
 pub mod pane_facts;
-pub mod pane_fanout;
 pub mod pane_kind;
-pub mod pane_lifecycle;
-pub mod pane_outbox;
 pub mod pane_session;
 pub mod pane_switcher;
 pub mod pane_title_freshness;
-pub mod pane_truths;
-// macOS only: Darwin `proc_*` over every live pid, plus an `lsof` spawn. Only hostd asks, and only
-// about a PTY it holds. See the module.
-#[cfg(target_os = "macos")]
-pub mod pane_probe;
 pub mod panel_key;
 pub mod panel_scroll;
 pub mod panel_tabs;
 pub mod paste_menu;
 pub mod paste_safety;
-pub mod path_confine;
 pub mod peek_reply;
 pub mod phone_key;
 // macOS only: behind it is an `IOPMAssertion`, which is IOKit power management about the machine
@@ -252,18 +214,12 @@ pub mod pointer_shape;
 pub mod preference;
 pub mod present_queue;
 pub mod prompt_flash;
-// macOS only, with `git_status`: the walk is portable, but the crate it lives in vendors `libgit2`,
-// and hostd is the only caller — a phone has no pane whose directory it could key.
-#[cfg(target_os = "macos")]
-pub mod project_key;
 pub mod rail_list;
 pub mod rail_structure;
 pub mod rate_control;
 pub mod recovery;
-pub mod registry;
 pub mod remote_window;
 pub mod replay;
-pub mod repo_watch;
 pub mod responsive;
 pub mod sanitize;
 pub mod screen;
@@ -272,21 +228,15 @@ pub mod scroll_reproject;
 pub mod scroll_resample;
 pub mod search_rank;
 pub mod send_pacing;
-pub mod service_lifecycle;
 pub mod session_marks;
 pub mod session_state;
 pub mod session_template_engine;
 pub mod sidebar_row;
-pub mod sidecars;
 pub mod simulator_input;
 pub mod simulator_presentation;
 pub mod simulator_routes;
 pub mod simulator_wire;
 pub mod split_zoom;
-// macOS only: the environment a hostd pane's login shell is spawned into. There is no `posix_spawn`
-// and no login shell in an iOS slice. See the module.
-#[cfg(target_os = "macos")]
-pub mod spawn_env;
 pub mod state_scalars;
 pub mod status_pill;
 pub mod store_git_cadence;
@@ -294,7 +244,6 @@ pub mod store_rollup;
 pub mod store_seed;
 pub mod store_shape;
 pub mod store_video_slots;
-pub mod supervision;
 pub mod supervisor_batch;
 pub mod supervisor_frame;
 pub mod supervisor_paths;
@@ -305,22 +254,12 @@ pub mod supervisor_protocol;
 pub mod surface_gesture;
 pub mod swipe_nav_config;
 pub mod swipe_recognizer;
-pub mod sync_ladder;
 pub mod terminal_config;
 pub mod terminal_controls;
 pub mod terminal_mode;
-// macOS only: the search reads the HOST's terminfo database and may spawn its `infocmp`, and only
-// hostd asks — a phone advertises no `TERM` into a PTY it does not own. See the module.
-#[cfg(target_os = "macos")]
-pub mod terminfo;
 pub mod toast;
-pub mod tool_path;
 pub mod trendline;
 pub mod upload_progress;
-// macOS only, with `tool_path`: the walk that produces the vendored prefix that search order's
-// second rung consumes. A phone has no checkout. See the module.
-#[cfg(target_os = "macos")]
-pub mod vendored_tools;
 pub mod vi_hints;
 pub mod video_control;
 pub mod video_fec;
@@ -331,7 +270,6 @@ pub mod video_policy;
 pub mod video_reassemble;
 pub mod vimotion;
 pub mod virtual_display;
-pub mod wait_scan;
 pub mod watch;
 pub mod window_feed;
 pub mod window_feed_host;

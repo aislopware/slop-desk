@@ -7,7 +7,8 @@
 //! the literal rather than the answer. So the pin is on the CALL, and on the literal not growing
 //! back.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -22,7 +23,12 @@ const QP_FACE: &str = "Sources/SlopDeskVideoHost/QPController.swift";
 /// The builder whose relabelling is quadratic if asked per row.
 const RAIL: &str = "Sources/SlopDeskClientCore/Rail/RailRowsBuilder.swift";
 /// The host performer that used to hold a second `:line[:col]` splitter.
-const CODE_OPEN: &str = "Sources/SlopDeskHost/HostCodeServerPerformer.swift";
+/// The two host call sites that split an open target: the code action performer and the bridge
+/// server, which routes the same target to a code-server window.
+const CODE_OPENERS: [&str; 2] = [
+    "rust/slopdesk-hostserver/src/codeaction.rs",
+    "rust/slopdesk-hostserver/src/bridge.rs",
+];
 
 /// The three seeded names are the crate's, and Swift asks for them
 ///
@@ -161,7 +167,7 @@ pub fn a_rail_relabelling_crosses_once(tree: &Tree) -> Report {
 
 /// The open target splits once, and the crate owns where
 ///
-/// `HostCodeServerPerformer.splitLineColSuffix` used to be a second `:line[:col]` splitter beside
+/// The host's `splitLineColSuffix` used to be a second `:line[:col]` splitter beside
 /// `slopdesk-terminal`'s, and the two had already answered differently for a target that is ALL
 /// suffix (`":12"`): Swift called it a suffix with an empty path, the crate calls it no suffix at
 /// all. Three host call sites read that split — the existence check, the workbench CLI target, and
@@ -172,21 +178,30 @@ pub fn a_rail_relabelling_crosses_once(tree: &Tree) -> Report {
 /// one thing a reimplementation is free to change.
 #[must_use]
 pub fn the_open_target_splits_once(tree: &Tree) -> Report {
-    check_all(tree, &[
-        Claim::Matches {
-            path: CODE_OPEN,
-            pattern: r"slopdesk_link_line_col_suffix",
-            view: View::Code,
-            message: "the host splits a line:col suffix in Swift again — that rule is link_action.rs's",
-        },
-        Claim::Lacks {
-            path: CODE_OPEN,
-            pattern: r"isNumber|runStart|sawDigit",
-            view: View::Code,
-            message: "the host re-derives the suffix scan — the crate answers it, and the path is the \
-                      remainder",
-        },
-    ])
+    let mut claims: Vec<Claim> = CODE_OPENERS
+        .iter()
+        .map(|opener| {
+            Claim::Matches {
+                path: opener,
+                pattern: r"link_action::line_col_suffix\(|[^:]\bline_col_suffix\(",
+                view: View::Code,
+                message: "the host splits a line:col suffix itself again — that rule is link_action.rs's, \
+                          and the path the host stats and the path the extension opens can disagree by a \
+                          colon",
+            }
+        })
+        .collect();
+    claims.push(Claim::NoneUnder {
+        roots: HOSTD_CRATES,
+        extensions: RUST,
+        pattern: r"is_ascii_digit|run_start|saw_digit",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "{files} re-derives the suffix scan — the crate answers it, and the path is the remainder",
+    });
+    check_all(tree, &claims)
 }
 
 /// A ring wraps through the one ring rule
@@ -348,15 +363,28 @@ mod tests {
     #[test]
     fn a_second_line_col_splitter_is_red() {
         let fixture = Fixture::new("defaults-linecol");
-        fixture.write(
-            super::CODE_OPEN,
-            "let split = slopdesk_link_line_col_suffix(target)\n",
-        );
+        let seed = |fixture: &Fixture| {
+            for opener in super::CODE_OPENERS {
+                fixture.write(
+                    opener,
+                    "use slopdesk_terminal::link_action::line_col_suffix;\nlet suffix = \
+                     line_col_suffix(raw);\n",
+                );
+            }
+        };
+        seed(&fixture);
         assert!(super::the_open_target_splits_once(&fixture.tree()).is_clean());
 
+        // One of the two going quiet is the whole rule: a bridge that splits its own target routes
+        // a window at a path the performer never stats.
+        seed(&fixture);
+        fixture.write("rust/slopdesk-hostserver/src/bridge.rs", "");
+        assert!(!super::the_open_target_splits_once(&fixture.tree()).is_clean());
+
+        seed(&fixture);
         fixture.write(
-            super::CODE_OPEN,
-            "var runStart = target.endIndex\nwhile c.isNumber { }\n",
+            "rust/slopdesk-hostd/src/open.rs",
+            "let mut run_start = raw.len();\nwhile byte.is_ascii_digit() {}\n",
         );
         assert!(!super::the_open_target_splits_once(&fixture.tree()).is_clean());
     }

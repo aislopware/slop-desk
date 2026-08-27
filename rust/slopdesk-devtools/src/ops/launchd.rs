@@ -1,4 +1,4 @@
-//! The two `LaunchAgent`s, as ONE installer and two descriptions.
+//! The three `LaunchAgent`s, as ONE installer and three descriptions.
 //!
 //! `install-superd.sh` and `install-screend.sh` were 294 lines that differed in six things: the
 //! label, the binary, the log file, one `EnvironmentVariables` block, one `KeepAlive` shape and
@@ -7,8 +7,15 @@
 //! poll — was duplicated verbatim, and the duplication was load-bearing in the worst way: a fix
 //! to one was a fix to neither until somebody remembered the other file existed.
 //!
-//! Here they are [`SUPERD`] and [`SCREEND`], two [`Agent`] values, and the installer is one
-//! function that reads them.
+//! Here they are [`SUPERD`], [`SCREEND`] and [`HOSTD`], three [`Agent`] values, and the installer
+//! is one function that reads them.
+//!
+//! ## Why hostd is one of them now
+//! It was not, and the reason it was not is gone: a menu-bar app spawned the daemon, so a first
+//! start had a button behind it. `docs/60` deleted the app — hostd is controlled entirely by CLI —
+//! and `restart-hostd` replays a launch RECORD, which by construction cannot produce the first
+//! one. This is the rung under it: `slopdesk-ops install hostd` gives a cold machine a hostd, and
+//! `restart-hostd` takes over from there.
 //!
 //! ## The two shapes of `KeepAlive`, which are not interchangeable
 //! screend takes a bare `true`: it holds no children and no durable state, so relaunching it is
@@ -85,15 +92,49 @@ pub const SCREEND: Agent = Agent {
     socket: "$TMPDIR/slopdesk-screend.sock",
 };
 
+/// hostd itself: the daemon the clients dial (`docs/60`).
+///
+/// `SuccessfulExit: false`, for superd's reason rather than its own: hostd exits 0 on `AddrInUse`
+/// — another host is already serving the port — and a bare `KeepAlive` would respawn the loser for
+/// ever. A clean SIGTERM at logout is also an exit 0.
+///
+/// That exit-0 is what makes `make host-restart` converge under this agent rather than loop.
+/// Signal death is not a successful exit, so launchd relaunches the hostd that `restart-hostd`
+/// just `SIGTERM`ed, and that relaunch RACES the replayed one for the port. One of the two loses
+/// the bind — and because losing is an exit 0, launchd lets it stay dead instead of feeding it back
+/// into the same race. Wire that bind to `exit(1)` and this becomes an endless respawn.
+///
+/// What that convergence does NOT decide is WHICH BUILD wins. This installer copies the release
+/// binary to `~/Library/Application Support/SlopDesk/bin/`, and `restart-hostd` replays a record
+/// naming `rust/target/release` — two paths that drift apart the moment either is rebuilt without
+/// the other. So on a machine with this agent installed, a `host-restart` is a coin flip between
+/// the daemon just built and whatever was installed last, and the loser exiting 0 makes the wrong
+/// winner SILENT: the replay sees a live listener and reports success. `install hostd` is therefore
+/// for a machine that has NO hostd, not a second way to run one beside the build tree. Booting the
+/// job out before a replay is the real fix, and it belongs in `ops/hostd.rs` rather than here.
+///
+/// `EveryLivePane` even though hostd holds no PTY: superd does, and every one of them is wired to
+/// this process's fan-out. A restart costs the developer exactly what `make host-restart` costs,
+/// so it asks first for exactly the same reason.
+pub const HOSTD: Agent = Agent {
+    label: "com.slopdesk.hostd",
+    crate_name: "slopdesk-hostd",
+    cost: RestartCost::EveryLivePane,
+    environment: &[],
+    keep_alive: "    <dict>\n        <key>SuccessfulExit</key>\n        <false/>\n    </dict>",
+    socket: "tcp/7420 (slopdesk_hostlaunch::args::DEFAULT_PORT)",
+};
+
 /// The agent a verb names, or the list of the ones that exist.
 ///
 /// # Errors
-/// When the name is not one of the two.
+/// When the name is not one of the three.
 pub fn by_name(name: &str) -> Result<&'static Agent, String> {
     match name {
         "superd" => Ok(&SUPERD),
         "screend" => Ok(&SCREEND),
-        other => Err(format!("unknown agent: {other} (superd | screend)")),
+        "hostd" => Ok(&HOSTD),
+        other => Err(format!("unknown agent: {other} (superd | screend | hostd)")),
     }
 }
 
@@ -364,6 +405,32 @@ mod tests {
         );
     }
 
+    /// hostd takes superd's guarded shape for superd's reason: it exits 0 when the port is held,
+    /// and a bare `KeepAlive` respawns the loser for ever.
+    #[test]
+    fn hostd_never_restarts_a_deliberate_exit_either() {
+        let text = super::plist(
+            &super::HOSTD,
+            Path::new("/bin/slopdesk-hostd"),
+            Path::new("/tmp/hostd.log"),
+        );
+        assert!(text.contains("<key>SuccessfulExit</key>"), "the guarded shape");
+        assert!(
+            !text.contains("<key>KeepAlive</key>\n    <true/>"),
+            "never the bare one"
+        );
+        assert!(text.contains("com.slopdesk.hostd"));
+    }
+
+    /// Every agent the installer can be asked for is one it can name back.
+    #[test]
+    fn every_installable_agent_resolves_by_name() {
+        for name in ["superd", "screend", "hostd"] {
+            assert!(super::by_name(name).is_ok(), "{name}");
+        }
+        assert!(super::by_name("videohostd").is_err());
+    }
+
     /// screend's is the bare `true`, and it carries the idle-exit override superd has no use for.
     #[test]
     fn screend_keeps_alive_unconditionally_and_never_idles_out() {
@@ -416,9 +483,10 @@ mod tests {
         assert!(!super::printed_running(waiting));
     }
 
-    /// The two names the CLI accepts, and that a third is refused rather than defaulted.
+    /// Each name resolves to its OWN label, and one that does not exist is refused rather than
+    /// defaulted to whichever arm happens to be first.
     #[test]
-    fn only_the_two_agents_that_exist_resolve() {
+    fn each_agent_resolves_to_its_own_label() {
         assert_eq!(
             super::by_name("superd").expect("superd").label,
             "com.slopdesk.superd"

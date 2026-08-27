@@ -11,8 +11,6 @@ pub const SWIFT_PATHS: &str = "Sources/SlopDeskSupervisor/SupervisorPaths.swift"
 pub const SWIFT_SUPERVISOR_MESSAGES: &str = "Sources/SlopDeskSupervisor/SupervisorMessages.swift";
 /// The doors those values cross, and the only place hostd touches the protocol at all.
 pub const SWIFT_SUPERVISOR_DOORS: &str = "Sources/SlopDeskSupervisor/SupervisorDoors.swift";
-/// hostd's env curation — the allowlist a daemon-side setting has to survive.
-pub const SWIFT_HOST_ENVIRONMENT: &str = "Sources/SlopDeskHost/HostEnvironment.swift";
 
 /// superd's own path resolution.
 pub const RUST_PATHS: &str = "rust/slopdesk-superd/src/paths.rs";
@@ -33,3 +31,20 @@ pub const RUST_SHELLINT: &str = "rust/slopdesk-superd/src/shellintegration.rs";
 pub const RUST_SPAWN_ENV: &str = "rust/slopdesk-muxsession/src/spawn_env.rs";
 /// The control-socket reader on the agent's side.
 pub const RUST_CTL_LIB: &str = "rust/slopdesk-ctl/src/lib.rs";
+
+/// The crates hostd is, since `docs/60` F.9 deleted the Swift daemon.
+///
+/// Named here rather than per-rule because a dozen bans read it: every contract hostd owes a
+/// process it does not link — superd, `slopdesk-ctl`, a panel backend — is invisible to the
+/// compiler even now that both ends are Rust, so each of those bans needs the same set of roots.
+///
+/// superd is deliberately absent. It is the one process allowed to read a PTY master, and a root
+/// that swept all of `rust` would fire on the only correct reader in the repo.
+pub const HOSTD_CRATES: &[&str] = &[
+    "rust/slopdesk-hostd",
+    "rust/slopdesk-hostlaunch",
+    "rust/slopdesk-hostnet",
+    "rust/slopdesk-hostpane",
+    "rust/slopdesk-hostserver",
+    "rust/slopdesk-hostsession",
+];

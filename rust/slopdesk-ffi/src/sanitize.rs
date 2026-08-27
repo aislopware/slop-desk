@@ -13,7 +13,7 @@
 
 use core::ffi::c_uchar;
 
-use slopdesk_sanitize::{Options, inputmode, lines, plaintext, sanitize, styled, syncinput};
+use slopdesk_sanitize::{Options, plaintext, sanitize, styled, syncinput};
 
 use crate::{borrow, deliver};
 
@@ -50,29 +50,6 @@ pub unsafe extern "C" fn slopdesk_sanitize(
     unsafe { deliver(&answer, out, cap) }
 }
 
-/// PTY bytes as the plain text a pattern is matched against.
-///
-/// Not the replay transform. That one keeps a faithful terminal stream and removes only churn;
-/// this removes every sequence and every private-use glyph, because the caller is a regex and a
-/// pane's text is all it wants.
-///
-/// # Safety
-/// `bytes` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_plaintext_strip(
-    bytes: *const c_uchar,
-    len: usize,
-    out: *mut c_uchar,
-    cap: usize,
-) -> usize {
-    // SAFETY: the caller's obligations, restated above; `borrow` and `deliver` state their own.
-    unsafe { deliver(&plaintext::strip(borrow(bytes, len)), out, cap) }
-}
-
 /// The private-use ranges, as `[u32 low][u32 high]` pairs, big-endian.
 ///
 /// The strip above DROPS these codepoints; the chrome SPLICES the bundled Nerd face over exactly
@@ -102,61 +79,6 @@ pub unsafe extern "C" fn slopdesk_private_use_ranges(out: *mut c_uchar, cap: usi
     unsafe { deliver(&answer, out, cap) }
 }
 
-/// Plain text as LOGICAL lines — the `read --unwrapped` verb's answer.
-///
-/// The lines are delivered JOINED by `\n`, with their count written to `line_count`, and the caller
-/// splits on the same byte: a logical line cannot contain one by construction, so the join is
-/// exact, and the count is what tells no lines at all from one empty line — two answers a joined
-/// blob spells identically and an orchestrator asking "did anything arrive" needs apart.
-///
-/// `limit` is how many lines to keep counting from the END; `0` is all of them.
-///
-/// # Safety
-/// `text` must be null or point to `len` live bytes; `out` null or writable for `cap` bytes;
-/// `line_count` null or writable.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_logical_lines(
-    text: *const c_uchar,
-    len: usize,
-    limit: usize,
-    out: *mut c_uchar,
-    cap: usize,
-    line_count: *mut usize,
-) -> usize {
-    // SAFETY: the caller's obligation above is `borrow`'s.
-    let body = String::from_utf8_lossy(unsafe { borrow(text, len) }).into_owned();
-    let rows = lines::logical_lines(&body, Some(limit));
-    if !line_count.is_null() {
-        // SAFETY: non-null and writable by the caller's obligation above.
-        unsafe { *line_count = rows.len() };
-    }
-    // SAFETY: the caller's obligation above is `deliver`'s.
-    unsafe { deliver(rows.join("\n").as_bytes(), out, cap) }
-}
-
-/// Where a chunk's trailing INCOMPLETE sequence begins, so a caller feeding one chunk at a time can
-/// hold that tail back until its continuation arrives.
-///
-/// `len` means nothing is held. The same grammar [`slopdesk_plaintext_strip`] reads, asked the
-/// other way — the two used to be hand-rolled Swift machines whose doc comments promised each other
-/// they matched.
-///
-/// # Safety
-/// `bytes` must be null or point to `len` live bytes for the whole call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_plaintext_holdback(bytes: *const c_uchar, len: usize) -> usize {
-    // SAFETY: the caller's obligation, restated above; `borrow` states its own.
-    unsafe { plaintext::holdback_start(borrow(bytes, len)) }
-}
-
 /// An input chunk with everything a KEYBOARD did not produce removed, for the sync-input fan-out.
 ///
 /// The other direction from [`slopdesk_sanitize`]. That one reads host→client bytes and drops the
@@ -179,24 +101,6 @@ pub unsafe extern "C" fn slopdesk_sync_input_keyboard_only(
 ) -> usize {
     // SAFETY: the caller's obligations, restated above; `borrow` and `deliver` state their own.
     unsafe { deliver(&syncinput::keyboard_only(borrow(bytes, len)), out, cap) }
-}
-
-/// The bytes that put a terminal back to a known-quiet input state.
-///
-/// The backstop a restore appends when the passes did not run — a raw journal tail, or a run with
-/// the transform disabled. Built from the same array [`slopdesk_sanitize`] strips by, so a mode
-/// added there cannot be silently missing here.
-///
-/// # Safety
-/// `out` must be null or writable for `cap` bytes for the whole call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "`no_mangle` on an exported C entry point trips the lint even where the body is safe"
-)]
-pub unsafe extern "C" fn slopdesk_input_mode_reset(out: *mut c_uchar, cap: usize) -> usize {
-    // SAFETY: the caller's obligation, restated above; `deliver` states its own.
-    unsafe { deliver(&inputmode::reset_suffix(), out, cap) }
 }
 
 /// PTY bytes as the STYLED lines a person reads — the clipboard's skimmer, and the coloured one.
@@ -286,10 +190,7 @@ const fn colour(value: Option<styled::Color>) -> [u8; 4] {
               before it is read"
 )]
 mod tests {
-    use super::{
-        slopdesk_input_mode_reset, slopdesk_plaintext_holdback, slopdesk_plaintext_strip, slopdesk_sanitize,
-        slopdesk_styled_lines, slopdesk_sync_input_keyboard_only,
-    };
+    use super::{slopdesk_sanitize, slopdesk_styled_lines, slopdesk_sync_input_keyboard_only};
 
     /// The sync-input door answers under the same convention, and strips the input direction's
     /// reports rather than the output direction's queries.
@@ -351,49 +252,6 @@ mod tests {
         };
         assert!(needed > tiny.len(), "the answer outgrew the buffer");
         assert_eq!(tiny, [0xAA; 4], "and nothing was written into it");
-    }
-
-    /// The plaintext doors answer under the same convention, and the two agree about the grammar.
-    #[test]
-    fn the_plaintext_doors_measure_then_fill_and_name_the_cut() {
-        let input = b"\x1b[1mready\x1b[0m";
-        let needed =
-            unsafe { slopdesk_plaintext_strip(input.as_ptr(), input.len(), core::ptr::null_mut(), 0) };
-        assert_eq!(needed, 5, "the measure names the text without writing it");
-        let mut room = vec![0_u8; needed];
-        let written =
-            unsafe { slopdesk_plaintext_strip(input.as_ptr(), input.len(), room.as_mut_ptr(), room.len()) };
-        assert_eq!(written, needed);
-        assert_eq!(room, b"ready".to_vec());
-
-        let cut = b"ok\x1b[3";
-        assert_eq!(
-            unsafe { slopdesk_plaintext_holdback(cut.as_ptr(), cut.len()) },
-            2,
-            "an unfinished CSI waits for its final byte"
-        );
-        assert_eq!(
-            unsafe { slopdesk_plaintext_holdback(input.as_ptr(), input.len()) },
-            input.len(),
-            "and a whole buffer holds nothing back"
-        );
-    }
-
-    /// The reset the near side used to spell out, byte for byte.
-    #[test]
-    fn the_reset_backstop_is_the_bytes_the_near_side_carried() {
-        let needed = unsafe { slopdesk_input_mode_reset(core::ptr::null_mut(), 0) };
-        let mut room = vec![0_u8; needed];
-        let written = unsafe { slopdesk_input_mode_reset(room.as_mut_ptr(), room.len()) };
-        assert_eq!(written, needed);
-        assert_eq!(
-            room,
-            b"\x1b[?1049l\x1b[?1l\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1004l\
-              \x1b[?1005l\x1b[?1006l\x1b[?1015l\x1b[?1016l\x1b[?2004l\x1b[?2031l\x1b[?2048l\
-              \x1b[<32u\x1b[=0;1u\x1b[0m\x1b[?25h\r\n"
-                .to_vec(),
-            "the same resets, in the order the tracked set is written in"
-        );
     }
 
     /// One decoded run: the attribute flags, the foreground, the background, the text.

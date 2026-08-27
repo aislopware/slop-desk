@@ -82,10 +82,13 @@ const SWIFT_ROOTS: [&str; 3] = ["Sources", "Tests", "Apps"];
 /// An allowlist rather than excluding `Tests/` wholesale: a hash over a PINNED ARTIFACT is
 /// supply-chain integrity and always will be, while a hash over a credential is the thing the rule
 /// exists to stop — and both would live under `Tests/`.
-const CRYPTO_ALLOWED: [(&str, &str); 1] = [(
-    "Tests/SlopDeskHostTests/VendoredToolsTests.swift",
-    "SHA-256 of a COMMITTED jar against its tools.lock pin — integrity, not an auth path",
-)];
+///
+/// EMPTY since `docs/60` F.9, and that is the correct state rather than a gap. Its one entry was
+/// the vendored-tools SHA-256, and the tools pin is `rust/slopdesk-provision`'s now — a Rust crate
+/// this rule does not read, because the ban is on Swift reaching for a crypto framework at all.
+/// The staleness check below is what keeps an empty list honest: an entry naming a file that has
+/// gone is a hole in the ban, not a comment.
+const CRYPTO_ALLOWED: [(&str, &str); 0] = [];
 
 /// `CLAUDE.md`: "No app-layer crypto or auth — security is the `WireGuard` mesh."
 ///
@@ -857,15 +860,29 @@ const CONTAINER_VARIABLES: [&str; 4] = [
 ];
 /// A module that names a daemon and must NOT contain it, with the reason written down.
 ///
-/// One entry, and adding a second is a design decision rather than a convenience: an exemption is
-/// "this harness acts on the developer's OWN daemon on purpose", which is true of exactly one of
-/// them.
-const OPS_UNCONTAINED: [(&str, &str); 1] = [(
-    "hostd.rs",
-    "restarts the developer's own live hostd by replaying the environment that daemon RECORDED for itself. \
-     Imposing a container would move the state directories out from under the panes it is holding, which is \
-     the opposite of restarting it identically.",
-)];
+/// TWO entries, and a third is a design decision rather than a convenience: an exemption is "this
+/// harness acts on the developer's OWN daemon on purpose", which is true of exactly these.
+///
+/// The second was added by `docs/60` F.9, when the menu-bar app that gave a cold machine its first
+/// hostd was deleted and `install hostd` took its place. It is the sharper of the two: `hostd.rs`
+/// merely must not move state out from under a running daemon, while the installer writes a
+/// `LaunchAgent` that outlives the command — a container there would hand launchd a hostd
+/// permanently pointed at a scratch directory, which is the bug this rule exists to prevent,
+/// installed rather than run.
+const OPS_UNCONTAINED: [(&str, &str); 2] = [
+    (
+        "hostd.rs",
+        "restarts the developer's own live hostd by replaying the environment that daemon RECORDED for \
+         itself. Imposing a container would move the state directories out from under the panes it is \
+         holding, which is the opposite of restarting it identically.",
+    ),
+    (
+        "launchd.rs",
+        "installs the developer's REAL LaunchAgent, whose whole job is to start the daemon they will \
+         actually use. A container would be baked into a plist that outlives the command and point every \
+         later launch at a scratch directory.",
+    ),
+];
 
 /// An operator harness that STARTS a daemon gives it a container
 ///
@@ -940,9 +957,83 @@ pub fn an_ops_harness_that_starts_a_daemon_contains_it(tree: &Tree) -> Report {
     report
 }
 
+/// Where the `LaunchAgent` shapes live, and the marker that says one is the guarded kind.
+const LAUNCHD: &str = "rust/slopdesk-devtools/src/ops/launchd.rs";
+/// Any ONE of these in a daemon's `main.rs` is a deliberate exit 0 — the thing the guarded
+/// `KeepAlive` is guarding. Three spellings because the two daemons reach it differently:
+/// superd RETURNS `ExitCode::SUCCESS` when the lock is held, hostd computes its code from whether
+/// the bind error was `AddrInUse`, and a future one may just call `exit(0)`.
+const DELIBERATE_SUCCESS: [&str; 3] = ["ExitCode::SUCCESS", "AddrInUse", "exit(0)"];
+
+/// A `SuccessfulExit: false` agent supervises a daemon that CAN exit 0
+///
+/// The two halves of this contract sit in crates with no edge between them: the plist text is a
+/// string in `slopdesk-devtools`, and the exit code is a branch in the daemon's own `main`. No
+/// compiler compares them, and the failure is invisible in both directions — every test passes, the
+/// job installs, and launchd respawns the loser every ten seconds for ever.
+///
+/// `SuccessfulExit: false` says "restart this job unless it exited 0", which is only ever the right
+/// shape when losing a race is SPELLED as an exit 0. superd does it for its lock file ("exiting
+/// rather than stealing its socket") and hostd for `AddrInUse` (`docs/60` F.9) — and for hostd it
+/// is load-bearing twice, because `make host-restart` SIGTERMs a job launchd will relaunch, and
+/// that relaunch races the replayed one for the port. The loser must be allowed to stay dead.
+///
+/// Discovered from the agent list rather than a second list of daemons: the day somebody adds a
+/// fourth `Agent` with the guarded `KeepAlive`, it is asked for the exit path whether or not
+/// anybody thought to say so.
+#[must_use]
+pub fn a_guarded_keepalive_supervises_a_daemon_that_exits_zero(tree: &Tree) -> Report {
+    let mut report = Report::new();
+    let Some(source) = tree.get(LAUNCHD) else {
+        report.fail_if(true, format!("{LAUNCHD}: gone — this rule reads nothing"));
+        return report;
+    };
+    let code = source.statements();
+
+    let mut guarded = 0_usize;
+    let mut found = Vec::new();
+    for block in code.split("= Agent {").skip(1) {
+        let body = block.split("};").next().unwrap_or_default();
+        if !body.contains("SuccessfulExit") {
+            continue;
+        }
+        let Some(crate_name) = body
+            .split_once("crate_name:")
+            .and_then(|(_, rest)| rest.split('"').nth(1))
+        else {
+            continue;
+        };
+        guarded += 1;
+        let main = format!("rust/{crate_name}/src/main.rs");
+        let Some(daemon) = tree.get(&main) else {
+            found.push(format!("{main} (no such file)"));
+            continue;
+        };
+        if !DELIBERATE_SUCCESS
+            .iter()
+            .any(|marker| daemon.statements().contains(marker))
+        {
+            found.push(main);
+        }
+    }
+
+    report.fail_if(
+        guarded == 0,
+        format!("{LAUNCHD}: no agent carries `SuccessfulExit` — the discovery is broken, not the tree"),
+    );
+    sites(
+        &mut report,
+        "a `SuccessfulExit: false` agent supervises a daemon with no deliberate exit 0 — losing the race is \
+         a non-zero exit, so launchd respawns the loser for ever",
+        &found,
+    );
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
+        a_guarded_keepalive_supervises_a_daemon_that_exits_zero,
         an_ops_harness_that_starts_a_daemon_contains_it, every_injected_sink_has_someone_who_binds_it,
         live_docs_cite_files_that_exist, no_app_layer_crypto, no_fused_multiply_add,
         no_rust_module_is_written_and_then_never_called, no_swiftpm_build_plugin,
@@ -963,6 +1054,71 @@ mod tests {
     /// a test that wrote either one whole would make the live tree fail on the gate's break-test.
     const FUSED_SWIFT: &str = concat!(".adding", "Product(b, c)");
     const FUSED_RUST: &str = concat!(".mul_", "add(b, c)");
+
+    /// An `Agent` body carrying the guarded `KeepAlive`, given the daemon's crate and its `main`.
+    fn guarded_agent(crate_name: &str) -> String {
+        format!(
+            "pub const D: Agent = Agent {{\n    crate_name: \"{crate_name}\",\n    keep_alive: \
+             \"<key>SuccessfulExit</key><false/>\",\n}};\n"
+        )
+    }
+
+    /// The whole point: a guarded agent over a daemon whose every exit is a failure is a respawn
+    /// loop, and nothing else in the tree can see it.
+    #[test]
+    fn a_guarded_agent_over_a_daemon_that_never_exits_zero_is_red() {
+        let fixture = Fixture::new("keepalive-loop");
+        fixture.write(super::LAUNCHD, &guarded_agent("slopdesk-loopd"));
+        fixture.write(
+            "rust/slopdesk-loopd/src/main.rs",
+            "fn main() {\n    std::process::exit(1);\n}\n",
+        );
+        assert!(
+            !a_guarded_keepalive_supervises_a_daemon_that_exits_zero(&fixture.tree()).is_clean(),
+            "losing the race non-zero under `SuccessfulExit: false` respawns for ever"
+        );
+    }
+
+    /// The other half: the shape hostd actually ships passes, and the marker is not `exit(0)` —
+    /// hostd computes the code from the error kind, so a rule that only knew the literal would fire
+    /// on the code it was written to protect.
+    #[test]
+    fn a_daemon_that_spells_its_loss_as_addr_in_use_is_green() {
+        let fixture = Fixture::new("keepalive-addrinuse");
+        fixture.write(super::LAUNCHD, &guarded_agent("slopdesk-hostd"));
+        fixture.write(
+            "rust/slopdesk-hostd/src/main.rs",
+            "fn main() {\n    std::process::exit(i32::from(why.kind() != \
+             std::io::ErrorKind::AddrInUse));\n}\n",
+        );
+        assert!(a_guarded_keepalive_supervises_a_daemon_that_exits_zero(&fixture.tree()).is_clean());
+    }
+
+    /// An agent whose `KeepAlive` is the bare `true` makes no such promise, so it is not asked for
+    /// one — screend relaunches unconditionally on purpose.
+    #[test]
+    fn an_unguarded_agent_is_not_asked_for_an_exit_zero() {
+        let fixture = Fixture::new("keepalive-bare");
+        fixture.write(
+            super::LAUNCHD,
+            "pub const S: Agent = Agent {\n    crate_name: \"slopdesk-screend\",\n    keep_alive: \"    \
+             <true/>\",\n};\npub const D: Agent = Agent {\n    crate_name: \"slopdesk-superd\",\n    \
+             keep_alive: \"<key>SuccessfulExit</key>\",\n};\n",
+        );
+        fixture.write(
+            "rust/slopdesk-superd/src/main.rs",
+            "fn main() -> ExitCode {\n    return ExitCode::SUCCESS;\n}\n",
+        );
+        assert!(a_guarded_keepalive_supervises_a_daemon_that_exits_zero(&fixture.tree()).is_clean());
+    }
+
+    /// A launchd module that stopped carrying agents fails LOUDLY rather than passing vacuously.
+    #[test]
+    fn a_launchd_module_with_no_guarded_agent_is_red() {
+        let fixture = Fixture::new("keepalive-empty");
+        fixture.write(super::LAUNCHD, "pub const NOTHING: usize = 0;\n");
+        assert!(!a_guarded_keepalive_supervises_a_daemon_that_exits_zero(&fixture.tree()).is_clean());
+    }
 
     #[test]
     fn a_trailing_comment_does_not_hide_a_fusion() {

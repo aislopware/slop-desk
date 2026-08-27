@@ -7,12 +7,11 @@
 //! made them a defect was that they answered the same bytes differently, and the bytes came off a
 //! socket or a clipboard rather than out of a test.
 
-use crate::claim::{Claim, GATE_RULES, View, check_all};
+use crate::claim::{Claim, GATE_RULES, RUST, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
-const SWIFT_STRIPPER: &str = "Sources/SlopDeskHost/ANSIStripper.swift";
-const SWIFT_WAIT: &str = "Sources/SlopDeskHost/AgentControlListener.swift";
 const SWIFT_QUOTING: &str = "Sources/SlopDeskWorkspaceModel/Domain/ShellQuoting.swift";
 const SWIFT_SYNC_INPUT: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Store/SyncInputByteFilter.swift";
 const SWIFT_FIND: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchController.swift";
@@ -25,28 +24,44 @@ const SWIFT_FIND: &str = "Sources/SlopDeskWorkspaceCore/Terminal/TerminalSearchC
 /// other they matched, which is the drift risk stated as a promise. Both are `plaintext` now, and
 /// the terminator policy that genuinely differs between a replay pass and a render is NAMED
 /// (`Terminators`) rather than duplicated.
+///
+/// Both machines are gone with the Swift host since `docs/60` F.9 and the three renders that used
+/// to hold them — the control readouts, the ctl serve reply and the scrollback history — call
+/// `plaintext::strip` directly. The holdback half moved WITH its only user: it is
+/// `slopdesk-rowscan`'s wait scan that needs a cut point, and nothing in the host does. So what is
+/// pinned here is the three calls and a ban on the grammar reappearing beside any of them.
 #[must_use]
 pub fn one_vt_grammar_for_plain_text(tree: &Tree) -> Report {
-    let claims = [
-        Claim::Mentions {
-            path: SWIFT_STRIPPER,
-            names: &["slopdesk_plaintext_strip", "slopdesk_plaintext_holdback"],
-            message: "ANSIStripper.swift no longer asks {entry} — the VT grammar is plaintext.rs's",
-        },
-        Claim::Lacks {
-            path: SWIFT_STRIPPER,
-            pattern: "skipCSI|skipStringCommand|0x9B|0xE000|utf8Tail",
+    /// The three renders that turn pane bytes into text, each through the one grammar.
+    const RENDERS: [&str; 3] = [
+        "rust/slopdesk-hostserver/src/control.rs",
+        "rust/slopdesk-hostserver/src/ctlserve.rs",
+        "rust/slopdesk-hostsession/src/history.rs",
+    ];
+
+    let mut claims = Vec::new();
+    for render in RENDERS {
+        claims.push(Claim::Matches {
+            path: render,
+            pattern: r"slopdesk_sanitize::plaintext::strip\(",
             view: View::Code,
-            message: "ANSIStripper.swift walks the grammar again — one scanner answers both the strip and \
-                      the holdback",
-        },
-        Claim::Lacks {
-            path: SWIFT_WAIT,
-            pattern: "private static func csiEnd|private static func stringCommandEnd",
-            view: View::Code,
-            message: "AgentControlListener.swift is a second VT machine — its own comments used to say it \
-                      matched the stripper's",
-        },
+            message: "a render stopped asking slopdesk_sanitize::plaintext — the VT grammar is \
+                      plaintext.rs's, and a second machine over the same bytes is how the strip and the \
+                      holdback drifted before",
+        });
+    }
+    claims.push(Claim::NoneUnder {
+        roots: HOSTD_CRATES,
+        extensions: RUST,
+        pattern: r"0x9B|0xE000|fn csi_end|fn string_command_end|fn skip_csi|fn skip_string_command",
+        all: &[],
+        unless: &[],
+        view: View::Code,
+        exempt: &[],
+        message: "{files} walks the VT grammar again — one scanner answers the strip, and the holdback \
+                  moved to slopdesk-rowscan with the only caller that needs a cut point",
+    });
+    claims.extend([
         Claim::Names {
             path: "rust/slopdesk-sanitize/src/plaintext.rs",
             needle: "pub fn holdback_start",
@@ -59,7 +74,7 @@ pub fn one_vt_grammar_for_plain_text(tree: &Tree) -> Report {
             message: "rust/slopdesk-sanitize/src/vtscan.rs lost the lenient terminator policy — a render \
                       cannot wait for a continuation the way a replay pass can",
         },
-    ];
+    ]);
     check_all(tree, &claims)
 }
 
@@ -330,12 +345,11 @@ mod tests {
     fn the_plain_text_pass_stays_one_grammar() {
         let fixture = Fixture::new("byte-scanners-plaintext");
         let seed = |fixture: &Fixture| {
+            let call = "lossy_text(&slopdesk_sanitize::plaintext::strip(&trimmed))\n";
             fixture
-                .write(
-                    super::SWIFT_STRIPPER,
-                    "slopdesk_plaintext_strip\nslopdesk_plaintext_holdback\n",
-                )
-                .write(super::SWIFT_WAIT, "kept so the ban has a haystack\n")
+                .write("rust/slopdesk-hostserver/src/control.rs", call)
+                .write("rust/slopdesk-hostserver/src/ctlserve.rs", call)
+                .write("rust/slopdesk-hostsession/src/history.rs", call)
                 .write(
                     "rust/slopdesk-sanitize/src/plaintext.rs",
                     "pub fn holdback_start\n",
@@ -348,8 +362,17 @@ mod tests {
         fixture.write("rust/slopdesk-sanitize/src/plaintext.rs", "");
         assert!(!super::one_vt_grammar_for_plain_text(&fixture.tree()).is_clean());
 
+        // One render of the three going quiet is the whole rule — the other two staying green is
+        // exactly the drift this catches.
         seed(&fixture);
-        fixture.append(super::SWIFT_STRIPPER, "func skipCSI() {}\n");
+        fixture.write("rust/slopdesk-hostsession/src/history.rs", "");
+        assert!(!super::one_vt_grammar_for_plain_text(&fixture.tree()).is_clean());
+
+        seed(&fixture);
+        fixture.append(
+            "rust/slopdesk-hostserver/src/control.rs",
+            "fn skip_csi(bytes: &[u8]) -> usize { 0 }\n",
+        );
         assert!(!super::one_vt_grammar_for_plain_text(&fixture.tree()).is_clean());
     }
 

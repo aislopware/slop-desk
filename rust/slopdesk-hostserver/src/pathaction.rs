@@ -1,6 +1,6 @@
 //! The two side-effecting PATH verbs: open a host path in its default app, reveal it in Finder.
 //!
-//! `Sources/SlopDeskHost/HostPathActionPerformer.swift` is 97 lines of which four are `AppKit`. The
+//! `HostPathActionPerformer.swift` is 97 lines of which four are `AppKit`. The
 //! rest is a validator — expand a tilde, refuse a relative path, refuse a missing one — and it is
 //! the part that matters: a caller reaching this performer has already been routed here by
 //! [`slopdesk_muxsession::metadata_admission::performer`], so what is left to get wrong is what a

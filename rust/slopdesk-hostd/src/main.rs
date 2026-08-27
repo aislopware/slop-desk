@@ -40,7 +40,7 @@ use nix::sys::signal::{SigSet, Signal};
 use slopdesk_hostd::env::Overlay;
 use slopdesk_hostd::hooks::HookTable;
 use slopdesk_hostd::keys::ProjectKeySink;
-use slopdesk_hostd::observer::Stderr;
+use slopdesk_hostd::observer::{FAILED_PREFIX, LISTENING_PREFIX, Stderr};
 use slopdesk_hostd::repowatch::{Fanout, HostRepoWatcher, Keys};
 use slopdesk_hostd::screen::{ScreendOracle, ScreendSnapshot};
 use slopdesk_hostd::serve::Listening;
@@ -394,12 +394,19 @@ fn main() {
     let listening = match Listening::start(parsed.port, &host) {
         Ok(bound) => bound,
         Err(why) => {
-            log.say(&format!("failed to start: {why}"));
-            std::process::exit(1);
+            log.say(&format!("{FAILED_PREFIX}{why}"));
+            // `AddrInUse` is superd's lock case wearing a port: another hostd is already serving
+            // this one, and it is doing the job perfectly well. Exiting NON-zero would make
+            // launchd's `KeepAlive` — which is `SuccessfulExit: false`, see
+            // `slopdesk_devtools::ops::launchd` — respawn the loser every ten seconds for ever.
+            // It is also what makes `restart-hostd` converge: launchd relaunches the SIGTERMed
+            // job, that relaunch races the replayed one for the port, and whichever loses must
+            // lie down rather than be resurrected into the same race.
+            std::process::exit(i32::from(why.kind() != std::io::ErrorKind::AddrInUse));
         },
     };
     let bound = listening.bound_port();
-    log.say(&format!("listening on 0.0.0.0:{bound} (mode=shell)"));
+    log.say(&format!("{LISTENING_PREFIX}{bound} (mode=shell)"));
 
     let sidecars = after_bind(&Standing {
         parsed: &parsed,
@@ -746,7 +753,11 @@ fn dial_superd(
     match SupervisorClient::connect(&socket, program, observer) {
         Ok(pair) => pair,
         Err(why) => {
-            log.say(&format!("cannot reach superd at {socket}: {why}"));
+            // Through `FAILED_PREFIX`, like the bind's own refusal: this is the daemon's OTHER
+            // preflight death, and a supervisor that only recognised one of the two would render a
+            // missing superd as a bare "the host exited (exit status: 1)" — which is exactly the
+            // reason the in-process app used to be able to show and this one must not lose.
+            log.say(&format!("{FAILED_PREFIX}cannot reach superd at {socket}: {why}"));
             std::process::exit(1);
         },
     }

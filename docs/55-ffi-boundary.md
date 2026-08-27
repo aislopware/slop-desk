@@ -308,6 +308,27 @@ per frame *and* a rule kept apart from the state it reasons about, which is the 
 lets one of them be edited alone. `slopdesk_channel_table_route` moved the decision to the table,
 and the crossing went from six calls to one.
 
+`SlopDeskHostSupervisor` is GONE, and the way it went is worth the paragraph it used to have. It
+was the first handle that owned a PROCESS rather than memory or a counter: the macOS host app
+linked the Swift `SlopDeskHost` product and ran `HostServer` in-process, `docs/60` stage F deleted
+that product, and the handle existed so the app could spawn `slopdesk-hostd` and supervise it
+instead. Then the app went too — hostd is controlled entirely by CLI — and with no caller the
+handle had nothing to be a handle FOR. What supervises hostd now is `launchd`, through
+`slopdesk-ops install hostd`, which is not a boundary this document has anything to say about. The
+lesson it leaves is the one the rest of this section makes: a handle is worth its cost only while
+something on the far side of the boundary needs the thing it avoids copying.
+
+It brings the one obligation no other handle in this crate carries: a CALLBACK, fired from a thread
+the Rust side owns. Three things are the near side's, and they are stated on the door rather than
+implied — the opaque context stays valid until `_free` RETURNS; the function is callable from any
+thread, so a Swift handler hops to the main actor rather than touching UI where it lands; and it
+does not re-enter `start`/`stop` on the same handle. Reading `_status` from inside it IS supported,
+and deliberately so: the lock is released before every ring, precisely so a handler can pull the
+whole status back. The lifetime rule is the sharp one — `wait_stopped` answering means the child is
+reaped, NOT that no ring is in flight, because the thread reading the daemon's stderr outlives a
+daemon whose sidecar inherited the pipe. `HostController.swift` therefore keeps its callback context
+`passRetained` and releases it only after `_free` has come back.
+
 **A verdict flattens; a payload does not travel.** A C enum with a payload is not a thing, so
 `SlopDeskMuxRouting` carries the discriminant plus every field any verdict could want, and the
 caller reads the ones its verdict names. The frame's bytes stay on the near side — a decision says

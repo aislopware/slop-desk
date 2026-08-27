@@ -4,7 +4,8 @@
 //! Ported from the deleted `check-supervisor.sh`. Both are read by code nobody here maintains, so a
 //! second writer is a wire drift with no test on the other side of it.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -71,29 +72,45 @@ pub fn one_writer_for_scrcpy_control(tree: &Tree) -> Report {
 /// The third and worst of the untrusted-pattern sites: the pattern is an agent's, the text is
 /// whatever holds the far side of the PTY, and the match runs on the thread every pane's bytes come
 /// through. A pathological match there stalls the whole host, not one window. The carry, the
-/// overlap window and the accumulator's cap are the crate's now — a second copy of any of them in
-/// Swift is two implementations of an incremental scan, which is how the strip and the holdback
-/// drifted before. `ANSIStripper` is NOT banned here: the read/output verbs in the same file strip
-/// a finished string through the same door, which is the one implementation, not a second one.
+/// overlap window and the accumulator's cap are the crate's now — a second copy of any of them
+/// beside the listener is two implementations of an incremental scan, which is how the strip and
+/// the holdback drifted before. The plain-text strip is NOT banned here: the read/output verbs in
+/// the same file strip a finished string through the same crate, which is the one implementation,
+/// not a second one.
+///
+/// The listener is `rust/slopdesk-hostserver`'s control dispatch since `docs/60` F.9, so the three
+/// doors it used to call are one `use` the compiler checks. What no import states is that the
+/// scanner is still the CRATE's — a hand-rolled carry beside it would compile.
 #[must_use]
 pub fn wait_stream_scanned_once_off(tree: &Tree) -> Report {
+    /// hostd's control dispatch, which holds the one live `Scanner`.
+    const CONTROL: &str = "rust/slopdesk-hostserver/src/control.rs";
+
     let claims = [
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskHost/AgentControlListener.swift"],
-            pattern: r"NSRegularExpression|maxCarryBytes|overlapWindow",
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r"max_carry_bytes|overlap_window|Regex::new",
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "{files} scans the wait stream in Swift again — slopdesk-rowscan::waituntil owns the \
-                      scan",
+            exempt: &[],
+            message: "{files} scans the wait stream itself again — slopdesk-rowscan::waituntil owns the \
+                      carry, the overlap and the cap, and the match runs on every pane's read loop",
         },
-        Claim::Mentions {
-            path: "Sources/SlopDeskHost/AgentControlListener.swift",
-            names: &[
-                "slopdesk_wait_scan_new",
-                "slopdesk_wait_scan_ingest",
-                "slopdesk_wait_scan_free",
-            ],
-            message: "Sources/SlopDeskHost/AgentControlListener.swift no longer asks {entry} — the wait \
-                      scan is one implementation",
+        Claim::Matches {
+            path: CONTROL,
+            pattern: r"slopdesk_rowscan::waituntil::Scanner::new\(",
+            view: View::Code,
+            message: "rust/slopdesk-hostserver/src/control.rs no longer opens the crate's scanner — the \
+                      wait scan is one implementation",
+        },
+        Claim::Matches {
+            path: CONTROL,
+            pattern: r"slopdesk_rowscan::waituntil::WAIT_BUFFER_CAP",
+            view: View::Code,
+            message: "rust/slopdesk-hostserver/src/control.rs picked its own accumulator cap — the cap is \
+                      the crate's, or a pathological pattern grows the buffer on the read loop",
         },
         Claim::Matches {
             path: "rust/slopdesk-rowscan/Cargo.toml",
@@ -148,9 +165,9 @@ mod tests {
     fn write_wait_stream_scanned_once_off(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskHost/AgentControlListener.swift",
-                "slopdesk_wait_scan_new\nslopdesk_wait_scan_ingest\nslopdesk_wait_scan_free\nkept so the \
-                 ban has a haystack\n",
+                "rust/slopdesk-hostserver/src/control.rs",
+                "let scanner = slopdesk_rowscan::waituntil::Scanner::new(\n    pattern,\n    \
+                 slopdesk_rowscan::waituntil::WAIT_BUFFER_CAP,\n);\n",
             )
             .write(
                 "rust/slopdesk-rowscan/Cargo.toml",
@@ -164,15 +181,16 @@ mod tests {
         write_wait_stream_scanned_once_off(&fixture);
         assert!(super::wait_stream_scanned_once_off(&fixture.tree()).is_clean());
 
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write("Sources/SlopDeskHost/AgentControlListener.swift", "");
+        // The caller stopped asking — an implementation grew back where the call used to be.
+        fixture.write("rust/slopdesk-hostserver/src/control.rs", "");
         assert!(!super::wait_stream_scanned_once_off(&fixture.tree()).is_clean());
 
-        // And the law it was banned from respelling, respelled.
+        // And the law it was banned from respelling, respelled — anywhere in the host, not only in
+        // the file that holds the call.
         write_wait_stream_scanned_once_off(&fixture);
-        fixture.append(
-            "Sources/SlopDeskHost/AgentControlListener.swift",
-            "NSRegularExpression\n",
+        fixture.write(
+            "rust/slopdesk-hostd/src/wait.rs",
+            "let re = Regex::new(pattern)?;\n",
         );
         assert!(!super::wait_stream_scanned_once_off(&fixture.tree()).is_clean());
     }

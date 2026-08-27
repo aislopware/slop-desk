@@ -196,11 +196,15 @@ pub fn opaque_budget(tree: &Tree) -> Report {
     const RUST_PROBE_RUN: &str = "rust/slopdesk-probe/src/run.rs";
     const RUST_CAP: &str = r"^pub const MAX_OPAQUE_READ_BYTES: usize = (.*);$";
 
+    // Both sides are Rust since `docs/60` F.9, and `slopdesk-hostserver` DEPENDS on
+    // `slopdesk-probe` — but these are two CONSTANTS in two crates, and no compiler compares two
+    // numbers. `SameValue`'s sides are named `swift`/`rust` for the common case; here only the
+    // paths matter.
     let claims = [Claim::SameValue {
         label: "the opaque payload budget hostd will REPLY with",
         swift: Extract::code(
-            "Sources/SlopDeskHost/MetadataResponseBuilder.swift",
-            r"^ *static let defaultMaxOpaquePayloadBytes = (.*)$",
+            "rust/slopdesk-hostserver/src/metadata.rs",
+            r"^pub const MAX_OPAQUE_PAYLOAD_BYTES: usize = (.*);$",
         ),
         rust: Extract::code(RUST_PROBE_RUN, RUST_CAP),
     }];
@@ -359,8 +363,8 @@ mod tests {
         let fixture = Fixture::new("opaque-budget");
         fixture
             .write(
-                "Sources/SlopDeskHost/MetadataResponseBuilder.swift",
-                "    static let defaultMaxOpaquePayloadBytes = 15 * 1024 * 1024\n",
+                "rust/slopdesk-hostserver/src/metadata.rs",
+                "pub const MAX_OPAQUE_PAYLOAD_BYTES: usize = 15 * 1024 * 1024;\n",
             )
             .write(
                 "rust/slopdesk-probe/src/run.rs",

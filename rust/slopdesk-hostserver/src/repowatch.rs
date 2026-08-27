@@ -1,6 +1,6 @@
 //! The host's event-driven git-status source: one filesystem watch per repo with a live pane.
 //!
-//! `Sources/SlopDeskHost/RepoStatusWatcher.swift` is 316 lines of which every DECISION already
+//! `RepoStatusWatcher.swift` is 316 lines of which every DECISION already
 //! belongs to [`slopdesk_muxsession::repo_watch`] — the refcounts, the debounce generation, the
 //! one-reading-in-flight guard and its single re-arm, the dirty guard. What the Swift still held
 //! was the machinery around that fold: a serial queue, a table of live streams, a timer, and a

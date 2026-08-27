@@ -10,13 +10,13 @@ public enum PaneOutputEvent: Sendable {
     /// Always immediately before its ``bytes`` — superd writes the two frames under one hold of its
     /// wire lock, and sends this one only when a chunk actually contained something, so a receiver
     /// can never wait to find out whether one is coming. The pairing is the caller's to make, and
-    /// ``PaneOutputStream`` makes it.
+    /// `PaneOutput` in `rust/slopdesk-hostpane` makes it.
     case sniffed([SniffedEvent])
     /// What the command-block tap found in the chunk that follows THIS event.
     ///
     /// Same placement and the same guarantee as ``sniffed(_:)``: immediately before its ``bytes``,
     /// written under one hold of superd's wire lock, and sent only when a chunk actually produced a
-    /// change. ``PaneOutputStream`` makes the pairing.
+    /// change. `PaneOutput` in `rust/slopdesk-hostpane` makes the pairing.
     case blocks([BlockEvent])
     /// The master is finished — the child closed its tty, which in practice means it exited.
     ///
@@ -133,15 +133,6 @@ public final class SupervisorClient: @unchecked Sendable {
     /// whatever owns it, and last-writer-wins would silently unhook whichever registered first —
     /// which is how a code-server killed by superd's death went on reporting itself as running.
     private var disconnectObservers: [UUID: @Sendable () -> Void] = [:]
-    /// Called with each child connection superd accepted on a listener this client claimed — the
-    /// listener kind, and an owned descriptor for the accepted socket.
-    ///
-    /// **The callee owns the descriptor and must close it.** It arrives on the read-loop thread, so
-    /// the handler has to hand it straight to a worker: parking here would stop every pane's output
-    /// and every reply, and the peer is a hook binary blocking its agent. With no handler installed
-    /// the descriptor is closed rather than leaked, which is also the correct answer — a connection
-    /// arriving for a kind nobody wired up has nowhere to go.
-    public var onConnection: (@Sendable (ListenerKind, Int32) -> Void)?
     public var onLog: (@Sendable (String) -> Void)?
 
     /// Registers `handler`, to be called off the caller's thread when the connection drops.
@@ -292,23 +283,6 @@ public final class SupervisorClient: @unchecked Sendable {
     /// pane comes back re-wrapped at 80 columns after every restart.
     public func resize(paneID: String, rows: UInt16, cols: UInt16) {
         send { id in SupervisorEncoder.resize(id: id, paneID: paneID, rows: rows, cols: cols) }
-    }
-
-    /// Claims the child-facing listeners this hostd will serve.
-    ///
-    /// Until this succeeds, superd accepts connections on those sockets and closes them at once,
-    /// and — more importantly — does not advertise their paths into any spawned child's
-    /// environment. Advertising an address is a promise to be listening at it, and this call is
-    /// hostd making the promise.
-    ///
-    /// Send it once per connection, after `hello` and BEFORE the first `spawn`: a pane spawned in
-    /// between would be handed hostd's own value for `SLOPDESK_SOCKET_PATH` instead of superd's
-    /// stable one, and that snapshot can never be corrected.
-    ///
-    /// - Throws: ``ClientError/unsupported(verb:message:)`` from a superd older than protocol 1.3,
-    ///   which is recoverable — that superd binds nothing, so hostd is free to fall back.
-    public func listen(kinds: Set<ListenerKind>) throws {
-        _ = try request(verb: "listen") { id in SupervisorEncoder.listen(id: id, kinds: kinds) }
     }
 
     /// Starts receiving a pane's output.
@@ -481,7 +455,7 @@ public final class SupervisorClient: @unchecked Sendable {
     /// Stops or resumes superd's reads on a pane — the backpressure gate.
     ///
     /// Un-awaited, and that is a correctness requirement rather than a latency choice. This is
-    /// called from ``PausableQueueGate``, which runs inside the output-queue accounting — i.e. from
+    /// called from `PausableQueueGate` in `rust/slopdesk-wire`, which runs inside the output-queue accounting — i.e. from
     /// whatever thread just ingested a chunk. Waiting for a reply would mean waiting for the read
     /// loop, and if the caller IS the read loop the wait can never end.
     ///
@@ -682,33 +656,6 @@ public final class SupervisorClient: @unchecked Sendable {
         handler?(.blocks(events))
     }
 
-    /// Hands one accepted child connection to ``onConnection``, or closes it.
-    ///
-    /// Every path out of here disposes of the descriptor exactly once. A `connection` event with no
-    /// descriptor, or a kind this build cannot name, is a peer we do not understand —
-    /// validate-then-drop, the rule every untrusted decode here follows, and a leaked fd per bad
-    /// frame is the specific harm.
-    private func deliverConnection(_ kind: ListenerKind?, _ descriptor: Int32?) {
-        guard let descriptor else {
-            onLog?("supervisor: a connection event arrived with no descriptor — ignoring")
-            return
-        }
-        guard let kind else {
-            onLog?(
-                "supervisor: a connection arrived for a listener kind this build has no name for — "
-                    + "closing the descriptor; superd is newer than this hostd",
-            )
-            close(descriptor)
-            return
-        }
-        guard let handler = onConnection else {
-            onLog?("supervisor: nothing serves \(kind) connections here — closing the descriptor")
-            close(descriptor)
-            return
-        }
-        handler(kind, descriptor)
-    }
-
     private func isClosedLocked() -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -759,12 +706,12 @@ public final class SupervisorClient: @unchecked Sendable {
                     continue
                 }
                 if reply.id == SupervisorEncoder.notificationID {
-                    // The one notification that carries a descriptor. Handled before the blanket
-                    // close below, which every other event still needs.
-                    if reply.event == .connection {
-                        deliverConnection(reply.connectionKind, frame.descriptor)
-                        continue
-                    }
+                    // `.connection` stays a NAMED event even though nothing here serves one: the
+                    // close below is reached only by a frame that decoded, and an unnameable event
+                    // takes the drop path, which closes nothing. Listener claiming is hostd's, and
+                    // hostd is Rust (`docs/60` F.9) — so every descriptor that lands here is one
+                    // superd accepted for an end that no longer exists, and closing it is the
+                    // answer.
                     if let descriptor = frame.descriptor { close(descriptor) }
                     if reply.event == .exited, let notice = reply.exited {
                         lock.lock()

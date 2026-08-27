@@ -27,7 +27,7 @@
 //! attacker-shaped string at a live shell prompt.
 //!
 //! The socket, the accept loop, the per-connection read threads and the `(st_dev, st_ino)` rebind
-//! guard stay in `Sources/SlopDeskHost/CodeBridgeServer.swift`: those are descriptors and threads,
+//! guard stay in `CodeBridgeServer.swift`: those are descriptors and threads,
 //! and none of them decides anything.
 //!
 //! ## The two rules it does NOT own

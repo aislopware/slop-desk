@@ -23,12 +23,12 @@
 //!
 //! ## Each triple stamps only what IT compiles
 //! The set above is the union; a [`Scope`] narrows it to the `SwiftPM` products one app actually
-//! links, read out of the app's own spec and expanded through the package graph. `SlopDeskHost` is
-//! in no iOS app's closure, so a hostd edit no longer costs an iOS typecheck, and the phone UI is
-//! in no macOS app's, so a phone edit no longer costs two macOS builds. Anything the narrowing
-//! cannot bound — a spec it cannot open or cannot read whole, a description that will not parse, a
-//! product list nothing in the graph vends — falls back to the WHOLE source tree, because a scope
-//! that guessed low would be a green over code it never compiled.
+//! links, read out of the app's own spec and expanded through the package graph. `SlopDeskMacUI` is
+//! in no iOS app's closure, so a desktop-chrome edit no longer costs an iOS typecheck, and the
+//! phone UI is in no macOS app's, so a phone edit no longer costs a macOS build. Anything the
+//! narrowing cannot bound — a spec it cannot open or cannot read whole, a description that will not
+//! parse, a product list nothing in the graph vends — falls back to the WHOLE source tree, because
+//! a scope that guessed low would be a green over code it never compiled.
 //!
 //! ## The paths are repo-RELATIVE
 //! The shell fed `shasum` absolute paths, so the digest was a property of WHERE the tree was
@@ -87,7 +87,7 @@ pub enum Scope {
     Everything,
     /// Only what `Apps/ClientApp-iOS` links.
     Ios,
-    /// Only what the two macOS app shells link.
+    /// Only what the macOS app shell links.
     MacosApps,
 }
 
@@ -97,7 +97,7 @@ impl Scope {
         match self {
             Self::Everything => &["Apps"],
             Self::Ios => &["Apps/ClientApp-iOS", "Apps/Shared"],
-            Self::MacosApps => &["Apps/ClientApp-macOS", "Apps/HostApp-macOS", "Apps/Shared"],
+            Self::MacosApps => &["Apps/ClientApp-macOS", "Apps/Shared"],
         }
     }
 

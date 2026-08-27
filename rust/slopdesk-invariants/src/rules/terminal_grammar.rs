@@ -7,7 +7,8 @@
 //! and none of them fails a test that only ever exercised one side — which is why what is pinned
 //! here is the call, not the behaviour.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -51,19 +52,33 @@ pub fn one_motion_run_rule_answers(tree: &Tree) -> Report {
 /// list, and used to carry a second table for it. They had drifted: `C-?` was DEL on the Swift side
 /// and `C-_`'s byte in Rust, `C-Space` was NUL there and refused here, and the function and paging
 /// keys had no Rust spelling at all. One table answers both now.
+///
+/// The `write` verb is `rust/slopdesk-hostserver`'s control dispatch since `docs/60` F.9, so the
+/// resolve is a call the compiler checks. The ban is what survives: a second table is still one
+/// `match` away, and the two spellings that drifted are the ones cheapest to re-type.
 #[must_use]
 pub fn one_key_vocabulary_whichever_grammar(tree: &Tree) -> Report {
+    /// hostd's control dispatch, the one caller that resolves a `--key` token.
+    const CONTROL: &str = "rust/slopdesk-hostserver/src/control.rs";
+
     let claims = [
-        Claim::Names {
-            path: "Sources/SlopDeskHost/ControlKeyMap.swift",
-            needle: "slopdesk_ws_key_token",
-            message: "Sources/SlopDeskHost/ControlKeyMap.swift answers a key name again — the vocabulary is \
-                      send_keys.rs's",
-        },
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskHost/ControlKeyMap.swift"],
-            pattern: r#"0x1B, 0x5B|case "enter"|case "pageup"|& 0x1F"#,
+        Claim::Matches {
+            path: CONTROL,
+            pattern: r"slopdesk_workspace::send_keys::key_token\(",
             view: View::Code,
+            message: "rust/slopdesk-hostserver/src/control.rs answers a key name itself again — the \
+                      vocabulary is send_keys.rs's",
+        },
+        // The escape a paging key sends, not the CSI introducer: a test emitting `\x1b[32m` into a
+        // pane is colouring output, and banning the introducer would ban every one of them.
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r#"& 0x1[Ff]|"pageup"|"pagedown"|\\x1b\[5~|\\x1b\[6~|\\x1bO[PQRS]"#,
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
             message: "{files} spells a key sequence again — a second table is how C-? and C-Space drifted",
         },
         Claim::Names {
@@ -282,8 +297,9 @@ mod tests {
     fn write_one_key_vocabulary_whichever_grammar(fixture: &Fixture) {
         fixture
             .write(
-                "Sources/SlopDeskHost/ControlKeyMap.swift",
-                "slopdesk_ws_key_token\nkept so the ban has a haystack\n",
+                "rust/slopdesk-hostserver/src/control.rs",
+                "let Some(resolved) = slopdesk_workspace::send_keys::key_token(token) else {\n    return \
+                 Err(Rejected);\n};\n",
             )
             .write(
                 "rust/slopdesk-workspace/src/send_keys.rs",
@@ -297,13 +313,17 @@ mod tests {
         write_one_key_vocabulary_whichever_grammar(&fixture);
         assert!(super::one_key_vocabulary_whichever_grammar(&fixture.tree()).is_clean());
 
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write("Sources/SlopDeskHost/ControlKeyMap.swift", "");
+        // The caller stopped asking — an implementation grew back where the call used to be.
+        fixture.write("rust/slopdesk-hostserver/src/control.rs", "");
         assert!(!super::one_key_vocabulary_whichever_grammar(&fixture.tree()).is_clean());
 
-        // And the law it was banned from respelling, respelled.
+        // And the law it was banned from respelling, respelled. The table stays in the crate that
+        // owns it — only the host copy is red, which is what the ban is about.
         write_one_key_vocabulary_whichever_grammar(&fixture);
-        fixture.append("Sources/SlopDeskHost/ControlKeyMap.swift", "0x1B, 0x5B\n");
+        fixture.write(
+            "rust/slopdesk-hostd/src/keys.rs",
+            "\"pageup\" => ESC_BRACKET_5_TILDE,\n",
+        );
         assert!(!super::one_key_vocabulary_whichever_grammar(&fixture.tree()).is_clean());
     }
 

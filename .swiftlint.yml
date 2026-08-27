@@ -33,7 +33,6 @@ excluded:
   - rust
   - Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj
   - Apps/ClientApp-macOS/ClientApp-macOS.xcodeproj
-  - Apps/HostApp-macOS/HostApp-macOS.xcodeproj
   # Headless VT encode/decode TIMING benchmark (perf instrument, not shipped product).
   - Sources/slopdesk-perfbench
 

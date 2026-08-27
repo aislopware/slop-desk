@@ -10,9 +10,9 @@ mark blocked ↔ idle, once per press) turned out to be a whole class of problem
 
 **This is `rust/slopdesk-agent` (stage 31, 2026-08-13; the fusion followed 2026-08-17).** Every rule
 below — `kind`, `job`, `process`, `status`, `signal`, `screen`, `hold`, `input`, `machine`,
-`detector` — is a zero-dependency library with an injected clock, reached from
-`Sources/SlopDeskAgentDetect` and `Sources/SlopDeskHost` in-process over the FFI boundary
-(`docs/55`). `detector` is the layer above `machine`: not "what is the status now" but what the host
+`detector` — is a zero-dependency library with an injected clock, LINKED by
+`rust/slopdesk-hostsession` and reached from the client's `SlopDeskAgentDetect` in-process over the
+FFI boundary (`docs/55`). `detector` is the layer above `machine`: not "what is the status now" but what the host
 OWES the client after that fold — the type-26 basename edge, the type-27 dedupe anchor, the
 stickiness clock and its two absence suppressors, the block-class carry, the type-36 intent latch and
 the type-21 title ownership. It is the only thing anywhere that constructs a machine, and

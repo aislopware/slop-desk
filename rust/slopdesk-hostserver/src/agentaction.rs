@@ -1,6 +1,6 @@
 //! The three agent-hooks verbs: install, uninstall, and what the host's `settings.json` says now.
 //!
-//! The port of `Sources/SlopDeskHost/HostAgentActionPerformer.swift`, which was 97 lines of which
+//! The port of `HostAgentActionPerformer.swift`, which was 97 lines of which
 //! the interesting part was three sentences: the payload is ignored, install and uninstall answer a
 //! bare status, and status answers two flag bytes rather than one.
 //!

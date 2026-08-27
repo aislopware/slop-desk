@@ -18,15 +18,14 @@
 //! two ticks, and a shell that is about to launch one is worth re-asking sooner than one that is
 //! not.
 //!
-//! ## What is duplicated here, and what deletes it
+//! ## What was duplicated here, and what deleted it
 //!
-//! The `ProcessSnapshot` → [`ForegroundJobProcess`] mapping is also spelled in
-//! `rust/slopdesk-ffi/src/foreground.rs`, which is the door `PTYForegroundProbe.swift` calls today.
-//! It cannot be shared: `slopdesk-agent` has NO dependencies on purpose (it is the pure detector)
-//! and `slopdesk-posix` is syscalls, so the join between their two types belongs to whichever crate
-//! holds both — today that is the FFI, and after stage F it is only this one. `docs/60` §5's
-//! carve-out is what makes the overlap legal until then, and stage F is what ends it by deleting
-//! the door.
+//! The `ProcessSnapshot` → [`ForegroundJobProcess`] mapping used to be spelled TWICE: here and in
+//! the FFI's foreground door, which Swift's `PTYForegroundProbe` called. It could not be shared:
+//! `slopdesk-agent` has NO dependencies on purpose (it is the pure detector) and `slopdesk-posix`
+//! is syscalls, so the join between their two types belongs to whichever crate holds both.
+//! `docs/60` §5's carve-out made the overlap legal until stage F, and stage F ended it the way it
+//! said it would — the door is gone with the Swift that called it, and this is the one spelling.
 
 use std::sync::{Mutex, PoisonError};
 

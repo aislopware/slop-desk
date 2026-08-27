@@ -1075,7 +1075,6 @@ dependencies = [
  "slopdesk-muxsession",
  "slopdesk-panecensus",
  "slopdesk-posix",
- "slopdesk-probe",
  "slopdesk-rowscan",
  "slopdesk-sanitize",
  "slopdesk-screenwire",

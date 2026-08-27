@@ -5,8 +5,8 @@ import Foundation
 //
 // Every rule in agent detection lives in that crate: the alias table, the wrapper set, the
 // keystroke classes, the rollup order, the temporal hold and the 900-line status machine. What
-// stays in Swift is the vocabulary — `AgentKind`, `ClaudeStatus`, `AgentScreenDetection` and
-// friends are case lists a `switch` in a view can read, and they carry no decisions. A signal never
+// stays in Swift is the vocabulary — `AgentKind` and `ClaudeStatus` are case lists a `switch` in a
+// view can read, and they carry no decisions. A signal never
 // crosses as a signal any more: the pane detector calls the verb it means, one door per fold, so
 // there is no `SlopDeskAgentSignal` to build here. That split is what makes
 // "one implementation" true here rather than aspirational, and `rust/slopdesk-invariants` pins
@@ -95,29 +95,17 @@ public extension ClaudeStatus {
     }
 }
 
-extension AgentScreenState {
-    var ffiByte: UInt8 {
-        switch self {
-        case .idle: 0
-        case .working: 1
-        case .blocked: 2
-        case .unknown: 3
-        }
-    }
-}
-
-public extension AgentScreenDetection {
-    /// The compact form the temporal layer compares — the rule id and fallback reason are absent
-    /// because `hold` reads neither, and neither does the state machine below it. Public because the
-    /// host's pane detector folds a verdict through the same struct, and a second spelling of these
-    /// five fields is exactly the drift the port removes.
-    var ffiDetection: SlopDeskAgentDetection {
-        SlopDeskAgentDetection(
-            state: state.ffiByte,
-            skip_state_update: skipStateUpdate,
-            visible_idle: visibleIdle,
-            visible_blocker: visibleBlocker,
-            visible_working: visibleWorking,
-        )
-    }
-}
+// `AgentScreenState` and `AgentScreenDetection` are not in this module at all any more, and
+// `docs/60` F.9 is why. Each had a compact `repr(C)` twin here — a state byte, and the five fields
+// the temporal layer compares — because the SWIFT host folded a screend verdict and handed it back
+// to `slopdesk-agent` across the boundary. hostd is Rust and LINKS the crate, so it passes
+// `AgentScreenDetection` itself.
+//
+// That left the Swift enums with no reader, and the rule below is what decides they go rather than
+// stay: a view `switch`es on an agent's KIND and its STATUS, never on a screen verdict, so the
+// vocabulary the client speaks was always the two files beside this one. A case list nothing reads
+// is a second implementation waiting for its first caller.
+//
+// `AgentDetectionHold` went the same way, and with it `slopdesk_agent_hold_constant`. It was six
+// numbers a Swift test named so it would not type them twice; `rust/slopdesk-hostsession` reads them
+// as constants now, and a door with no caller is a claim about this side that nothing checks.

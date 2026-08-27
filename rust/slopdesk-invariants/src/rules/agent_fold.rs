@@ -9,14 +9,21 @@
 //! afterwards, constructed by nothing in `Sources/` and kept alive by a test file each: the shape
 //! `CLAUDE.md` names outright, a second implementation surviving as a test fake.
 
-use crate::claim::{Claim, Extract, View, check_all};
+use crate::claim::{Claim, Extract, RUST, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
 const SWIFT_BADGE: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Tabs/TabBadge.swift";
 const SWIFT_BADGE_KIND: &str = "Sources/SlopDeskWorkspaceModel/Reading/TabBadgeKind.swift";
-const SWIFT_DETECTOR: &str = "Sources/SlopDeskHost/ClaudePaneDetector.swift";
-const SWIFT_FOREGROUND: &str = "Sources/SlopDeskHost/ForegroundProcessProbes.swift";
+/// The pane's detection — the handle over the crate's fusion, and `ClaudePaneDetector`'s successor.
+const HOST_DETECT: &str = "rust/slopdesk-hostsession/src/detect.rs";
+/// Where the one detector per pane is CONSTRUCTED.
+const HOST_FOLDS: &str = "rust/slopdesk-hostsession/src/shared.rs";
+/// The shim half of the split — what the detection asks the OS, and nothing else.
+const HOST_PROBE: &str = "rust/slopdesk-hostsession/src/probe.rs";
+/// The hook socket's router, which turns a body into an event exactly once.
+const HOST_HOOKS: &str = "rust/slopdesk-hostd/src/hooks.rs";
 const SWIFT_REDACTOR: &str = "Sources/SlopDeskWorkspaceCore/Workspace/Domain/SecretRedactor.swift";
 const SWIFT_SECRET_PASTE: &str = "Sources/SlopDeskWorkspaceCore/Video/SecretPasteClassifier.swift";
 const SWIFT_TERMPREFS: &str = "Sources/SlopDeskVideoProtocol/Settings/TerminalPreferences.swift";
@@ -105,25 +112,25 @@ pub fn one_reading_of_a_hook_body(tree: &Tree) -> Report {
             message: "a standalone hook-body door is back ({files}) — the body crosses raw, inside \
                       slopdesk_agent_detector_hook",
         },
-        // The DETECTOR used to be named here as the one caller of that door. It is not a caller at
-        // all now: the body crosses as raw bytes and the Rust detector reads it on the far side, in
-        // the same call that folds it. So this inverts — a body read on the Swift side of the fold
-        // is a reading that has to agree with the Rust one.
-        Claim::Lacks {
-            path: SWIFT_DETECTOR,
-            pattern: "ClaudeHookBody|JSONSerialization|hook_event_name",
+        // `docs/60` F.9 put both halves of this pair in Rust and moved the reading UP rather than
+        // down: the router parses a record's body once, and the pane's fold receives the EVENT.
+        // That is the same one-reading the Swift pair kept failing at, expressed the other way
+        // round, so the two claims invert with it.
+        Claim::Matches {
+            path: HOST_HOOKS,
+            pattern: r"slopdesk_hookevent::parse\(",
             view: View::Code,
-            message: "ClaudePaneDetector.swift reads a hook body — it hands the raw bytes to \
-                      slopdesk_agent_detector_hook, which reads them once",
+            message: "rust/slopdesk-hostd/src/hooks.rs no longer reads a hook body through \
+                      rust/slopdesk-hookevent — the reading and the meaning are one crate, and a router \
+                      that re-derived either is where a payload case gains a field nothing folds",
         },
-        // The LISTENER routes now and reads nothing, so this inverts too: a body read back there is
-        // a second fold growing back, which is stronger than "it still uses the right door".
         Claim::Lacks {
-            path: "Sources/SlopDeskHost/AgentHookListener.swift",
-            pattern: "ClaudeHookBody|ClaudeStatusMachine",
+            path: HOST_DETECT,
+            pattern: r"slopdesk_hookevent::parse\(|serde_json::from_",
             view: View::Code,
-            message: "AgentHookListener.swift reads a hook body again — the listener ROUTES; the pane's \
-                      detector is what folds",
+            message: "rust/slopdesk-hostsession/src/detect.rs reads a hook body — it is handed the parsed \
+                      EVENT, and a second parse here is exactly the identity/meaning split that let the two \
+                      Swift readings drift",
         },
         Claim::Mentions {
             path: "rust/slopdesk-hookevent/src/lib.rs",
@@ -169,21 +176,30 @@ pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
             message: "a ClaudeStatusMachine is constructed in Sources/ ({files}) — the ONE per pane is \
                       rust/slopdesk-agent's PaneDetector (docs/50)",
         },
-        Claim::Names {
-            path: SWIFT_DETECTOR,
-            needle: "slopdesk_agent_detector_new(",
-            message: "ClaudePaneDetector.swift stopped opening the Rust detector — it is the handle over \
-                      the fusion, not a second one",
-        },
-        // A handle holds no fold state. Each name below WAS a field here, and each is now an anchor
-        // the crate owns; one reappearing means the Swift face started deciding again, in parallel.
-        Claim::Lacks {
-            path: SWIFT_DETECTOR,
-            pattern: "lastEmittedName|lastEmittedIntent|lastEmittedStatus \
-                      =|hookAuthority|lastNotificationKind|agentOwnsTitle|lastAuthoritativeAt",
+        Claim::Matches {
+            path: HOST_FOLDS,
+            pattern: r"PaneDetector::new\(",
             view: View::Code,
-            message: "ClaudePaneDetector.swift grew fold state back — every anchor belongs to \
-                      rust/slopdesk-agent::detector (docs/50)",
+            message: "rust/slopdesk-hostsession/src/shared.rs no longer constructs the ONE detector a pane \
+                      gets — the fold that used to be constructed per emitter is the arithmetic this rule \
+                      counts (docs/50)",
+        },
+        // A handle holds no fold state. Each name below WAS a field on the Swift detector and is now
+        // an anchor the crate owns; one reappearing means a host crate started deciding in parallel.
+        //
+        // The pattern insists on a `:` or a `=` — a FIELD or an assignment. `folds.detector
+        // .last_emitted_status()` is the crate's own anchor being READ, which is the correct shape
+        // and would be banned by the bare name.
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r"(last_emitted_[a-z_]+|hook_authority|last_notification_kind|agent_owns_title|last_authoritative_at) *[:=][^:=]",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} grew fold state back — every anchor belongs to rust/slopdesk-agent::detector, \
+                      and a second one is two machines emitting type-27 with no reconciliation (docs/50)",
         },
         Claim::Mentions {
             path: "rust/slopdesk-agent/src/detector.rs",
@@ -203,15 +219,14 @@ pub fn one_pane_detector_and_the_probes_only_probe(tree: &Tree) -> Report {
             message: "rust/slopdesk-agent/src/detector.rs lost {entry} — the fusion is one place or it is \
                       two",
         },
-        // The probe file is the shim half of that split, and it must stay a shim: the moment it
+        // The probe module is the shim half of that split, and it must stay a shim: the moment it
         // folds a signal or holds an emit anchor it has become the reducer again, under a new name.
         Claim::Lacks {
-            path: SWIFT_FOREGROUND,
-            pattern: "ClaudeStatusMachine|lastEmitted|struct Emission|mutating func sample|mutating func \
-                      tick",
+            path: HOST_PROBE,
+            pattern: r"PaneDetector|last_emitted|struct Emission|fn sample\(|fn tick\(",
             view: View::Code,
-            message: "ForegroundProcessProbes.swift decides something — the probes resolve a NAME, \
-                      ClaudePaneDetector folds it (docs/50)",
+            message: "rust/slopdesk-hostsession/src/probe.rs decides something — the probes resolve a NAME \
+                      and cache it, detect.rs folds it (docs/50)",
         },
         // And the triple stays one type. Three emitters anchor on it; a fourth spelling of the same
         // three fields is how the dedupe anchors drift into two answers for "is this a repeat".
@@ -374,10 +389,13 @@ mod tests {
     fn hook(fixture: &Fixture) {
         fixture
             .write("Sources/Generated.swift", "kept so the ban has a haystack\n")
-            .write(super::SWIFT_DETECTOR, "kept so the ban has a haystack\n")
             .write(
-                "Sources/SlopDeskHost/AgentHookListener.swift",
-                "kept so the ban has a haystack\n",
+                super::HOST_HOOKS,
+                "let Some(parsed) = slopdesk_hookevent::parse(body) else { return };\n",
+            )
+            .write(
+                super::HOST_DETECT,
+                "fold(shared, |folds| folds.detector.hook(event, kind_byte, prompt, now));\n",
             )
             .write(
                 "rust/slopdesk-hookevent/src/lib.rs",
@@ -391,24 +409,33 @@ mod tests {
         hook(&fixture);
         assert!(super::one_reading_of_a_hook_body(&fixture.tree()).is_clean());
 
-        // A Swift parser back under any path.
+        // A Swift parser back under any path — the client can still grow one.
         fixture.append("Sources/Generated.swift", "struct HookPayload {}\n");
         assert!(!super::one_reading_of_a_hook_body(&fixture.tree()).is_clean());
 
-        // The listener folding again rather than routing.
+        // The router that stopped reading through the crate that owns the meaning.
         hook(&fixture);
-        fixture.append(
-            "Sources/SlopDeskHost/AgentHookListener.swift",
-            "var machine = ClaudeStatusMachine\n",
-        );
+        fixture.write(super::HOST_HOOKS, "let parsed = json(body)?;\n");
+        assert!(!super::one_reading_of_a_hook_body(&fixture.tree()).is_clean());
+
+        // And the fold parsing a body a second time, which is the identity/meaning split itself.
+        hook(&fixture);
+        fixture.append(super::HOST_DETECT, "let raw = serde_json::from_slice(body)?;\n");
         assert!(!super::one_reading_of_a_hook_body(&fixture.tree()).is_clean());
     }
 
     fn detector(fixture: &Fixture) {
         fixture
             .write("Sources/Generated.swift", "kept so the ban has a haystack\n")
-            .write(super::SWIFT_DETECTOR, "slopdesk_agent_detector_new(\n")
-            .write(super::SWIFT_FOREGROUND, "kept so the ban has a haystack\n")
+            .write(super::HOST_FOLDS, "detector: PaneDetector::new(done_to_idle),\n")
+            .write(
+                super::HOST_DETECT,
+                "let triple = folds.detector.last_emitted_status();\n",
+            )
+            .write(
+                super::HOST_PROBE,
+                "pub fn foreground_executable(pty: &PtyProcess) -> Option<String> { None }\n",
+            )
             .write(
                 "Sources/SlopDeskAgentDetect/ClaudeStatus.swift",
                 "public struct ClaudeStatusTriple: Equatable {}\n",
@@ -430,14 +457,20 @@ mod tests {
         fixture.append("Sources/Generated.swift", "let m = ClaudeStatusMachine()\n");
         assert!(!super::one_pane_detector_and_the_probes_only_probe(&fixture.tree()).is_clean());
 
-        // The handle growing an anchor back.
+        // A host crate growing an anchor back — a FIELD, which the fixture's own READ of the
+        // crate's anchor one line above must not be confused with.
         detector(&fixture);
-        fixture.append(super::SWIFT_DETECTOR, "var lastEmittedName: String?\n");
+        fixture.append(super::HOST_DETECT, "    last_emitted_name: Option<String>,\n");
+        assert!(!super::one_pane_detector_and_the_probes_only_probe(&fixture.tree()).is_clean());
+
+        // The one detector per pane, no longer constructed.
+        detector(&fixture);
+        fixture.write(super::HOST_FOLDS, "detector: Folds::default(),\n");
         assert!(!super::one_pane_detector_and_the_probes_only_probe(&fixture.tree()).is_clean());
 
         // And the probe deciding rather than probing.
         detector(&fixture);
-        fixture.append(super::SWIFT_FOREGROUND, "mutating func tick(at: Date) {}\n");
+        fixture.append(super::HOST_PROBE, "fn tick(&mut self, now: Instant) {}\n");
         assert!(!super::one_pane_detector_and_the_probes_only_probe(&fixture.tree()).is_clean());
     }
 

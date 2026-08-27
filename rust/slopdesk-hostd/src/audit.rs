@@ -1,7 +1,7 @@
 //! Is the sidecar that is RUNNING the sidecar that is INSTALLED — the five audits, run together,
 //! once.
 //!
-//! The port of `Sources/SlopDeskHost/SidecarVersionAuditor.swift` and the half of
+//! The port of `SidecarVersionAuditor.swift` and the half of
 //! `SidecarVersionAudit.swift` that was not already Rust. [`slopdesk_sidecars`] decides about ONE
 //! sidecar from two strings; this assembles the strings for all five and carries out the one action
 //! a stale verdict permits.

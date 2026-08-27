@@ -112,16 +112,23 @@ pub fn replay_buffer(tree: &Tree) -> Report {
 
 /// Agent detection is `rust/slopdesk-agent`, and the Swift module is vocabulary plus marshalling.
 ///
-/// Three files stay as faces and must each still call the crate. The ones that used to be on that
+/// Two files stay as faces and must each still call the crate. The ones that used to be on that
 /// list are GONE rather than thin: once the fusion moved, nothing in `Sources/` had a reason to
 /// name a machine, a signal, a process matcher or an input classifier — the detector's doors take
 /// the raw input and answer the fold. A wrapper that only forwards is still a file another wrapper
 /// can be written next to, so the check for those is that they stay deleted.
 ///
-/// `AgentJobIdentifier.swift` left the list most recently, and by the same rule rather than by an
-/// exception to it: it staged a foreground job across the FFI one field at a time because Swift
-/// owned the syscalls that produced it. `rust/slopdesk-posix::proc` owns them now, so the whole
-/// question is `slopdesk_pty_foreground_agent` and there is nothing left for a face to marshal.
+/// `AgentJobIdentifier.swift` left the list by that rule rather than by an exception to it: it
+/// staged a foreground job across the FFI one field at a time because Swift owned the syscalls that
+/// produced it. `rust/slopdesk-posix::proc` owns them now, so the whole question is
+/// `slopdesk_pty_foreground_agent` and there is nothing left for a face to marshal.
+///
+/// `AgentDetectionHold.swift` and `AgentScreenDetection.swift` left most recently, and for the
+/// reason the two survivors do not: a view `switch`es on an agent's KIND and its STATUS, never on a
+/// screen verdict or a tuning interval. Those two were the HOST's vocabulary, and `docs/60` F.9
+/// deleted the Swift host — `rust/slopdesk-hostsession` links the crate and reads
+/// `AgentScreenDetection` and `AgentDetectionHold` as Rust. A case list nothing reads is a second
+/// implementation waiting for its first caller, so they are checked as absent rather than as faces.
 ///
 /// The six banned strings are the tables and the walks a re-implementation would need and a wrapper
 /// cannot have.
@@ -130,7 +137,6 @@ pub fn agent_detection(tree: &Tree) -> Report {
     const FACES: &[&str] = &[
         "Sources/SlopDeskAgentDetect/AgentKind.swift",
         "Sources/SlopDeskAgentDetect/ClaudeStatus.swift",
-        "Sources/SlopDeskAgentDetect/AgentDetectionHold.swift",
     ];
     const GHOSTS: &str = r#"case "claude-code"|wrapperBasenames|cancelOnly|pendingIdleStartedAt|private var blockLedger|func wrappedAgentName"#;
 
@@ -173,6 +179,16 @@ pub fn agent_detection(tree: &Tree) -> Report {
             path: "Sources/SlopDeskAgentDetect/AgentJobIdentifier.swift",
             message: "the Swift foreground-job identifier is back — one door answers the whole \
                       question now (rust/slopdesk-ffi::foreground, docs/55 §6)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskAgentDetect/AgentScreenDetection.swift",
+            message: "the Swift screen verdict is back — no view switches on one, and hostd reads \
+                      slopdesk_agent::AgentScreenDetection itself (docs/60 F.9)",
+        },
+        Claim::Absent {
+            path: "Sources/SlopDeskAgentDetect/AgentDetectionHold.swift",
+            message: "the Swift temporal constants are back — the six numbers are read as constants \
+                      by rust/slopdesk-hostsession, not through a door (docs/60 F.9)",
         },
     ]));
     report

@@ -1,5 +1,5 @@
 //! The host's code-server, and the four gates in front of it — the port of
-//! `Sources/SlopDeskHost/CodeServerManager.swift`.
+//! `CodeServerManager.swift`.
 //!
 //! **ONE shared instance, prewarmed.** code-server serves every folder from a single process — the
 //! workbench resolves its folder from the client's `?folder=` query, so per-project children were

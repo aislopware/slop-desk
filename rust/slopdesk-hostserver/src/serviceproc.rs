@@ -1,5 +1,5 @@
 //! A panel backend held by superd instead of by hostd — the port of
-//! `Sources/SlopDeskHost/SupervisedServiceProcess.swift`.
+//! `SupervisedServiceProcess.swift`.
 //!
 //! `code-server`, `baguette serve`. superd forks and keeps them, so a hostd rebuild no longer costs
 //! the user a multi-second workbench reboot: hostd's stop RELINQUISHES these rather than

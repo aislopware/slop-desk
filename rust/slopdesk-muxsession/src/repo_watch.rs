@@ -34,7 +34,7 @@
 //!
 //! ## What stays outside
 //! The event stream itself, the two dispatch queues, the clock the debounce is measured on and the
-//! walk that reads the status: all of that is `Sources/SlopDeskHost/RepoStatusWatcher.swift`, which
+//! walk that reads the status: all of that is `RepoStatusWatcher.swift`, which
 //! is `FSEvents` and Grand Central Dispatch and a subprocess-shaped read. This module holds no
 //! handle and starts no timer — it answers, for each edge the host reports, what the host should do
 //! next.

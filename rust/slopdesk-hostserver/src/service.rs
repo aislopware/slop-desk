@@ -1,5 +1,5 @@
 //! The two lifecycles every lazily-spawned panel backend runs on — the port of
-//! `Sources/SlopDeskHost/SupervisedServiceLifecycle.swift`.
+//! `SupervisedServiceLifecycle.swift`.
 //!
 //! Neither type decides anything. The announce parse, the probe step, the adopt verdict and the
 //! first-writer-wins rule are all `slopdesk_sidecars::service_lifecycle`'s already, and were before

@@ -13,7 +13,7 @@ import SlopDeskWorkspaceModel
 /// **A handle, not a fold-by-value.** Three sets of facts that outlive every call — the ceiling,
 /// who is decoding, who has closed but not finished letting go — plus a promotion counter that only
 /// moves on the transitions that actually free something, mutated from four contexts in the store.
-/// That is `docs/55` §4b's test for a handle, and ``PaneResizeFold`` set the shape.
+/// That is `docs/55` §4b's test for a handle, and `resize` in `rust/slopdesk-hostsession` set the shape.
 ///
 /// **What stayed on this side.** Every reading off a live pane. Whether a pane IS a video pane,
 /// whether it is decoding right now, whether an activation took — these are facts about a

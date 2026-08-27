@@ -1,5 +1,5 @@
 //! The host end of the embedded editor's command channel — the port of
-//! `Sources/SlopDeskHost/CodeBridgeServer.swift`.
+//! `CodeBridgeServer.swift`.
 //!
 //! The other end is `rust/slopdesk-codeseed/resources/bridge/extension.js`, and the message set is
 //! [`slopdesk_muxsession::bridge_router`]'s. Every DECISION on this path already lived there before

@@ -11,7 +11,7 @@
 ///
 /// **Read-only vs side-effecting.** Verbs `1...8` are PURE READS — the host runs a
 /// git/lsof/proc/FileManager lookup and returns the data, mutating nothing; they are served by the pure
-/// ``MetadataResponseBuilder``. Verbs `9` (``openPath``) and `10` (``revealPath``) are the ONLY
+/// `metadata` in `rust/slopdesk-hostserver`. Verbs `9` (``openPath``) and `10` (``revealPath``) are the ONLY
 /// SIDE-EFFECTING verbs: they actuate on the HOST's own Finder / Launch Services (the file lives on the
 /// host Mac, not the client) and return ONLY a status byte + empty payload — no host bytes ever cross the
 /// wire, so they are not an exfiltration vector and accept an absolute path WITHOUT cwd-subtree

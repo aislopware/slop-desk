@@ -2,7 +2,8 @@
 //!
 //! Ported from the deleted `check-supervisor.sh` §§4b–8.
 
-use crate::claim::{Claim, Extract, SWIFT, View, check_all};
+use crate::claim::{Claim, Extract, RUST, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -69,17 +70,23 @@ pub fn batch_bodies(tree: &Tree) -> Report {
 
 /// §5 — the PTY read chunk, a joint decision rather than a wire constant.
 ///
-/// superd alone reads with it, but the Swift copy is what the bounded-queue sizing is reasoned
-/// against. 32 KiB is half `hostQueueCapacityBytes`, so the gate's worst overshoot is capacity plus
-/// one read. Raising one without the other silently re-opens a problem that was solved once: a read
-/// larger than the bound pauses on every flood chunk.
+/// superd alone reads with it, but hostd's copy is what the bounded-queue sizing is reasoned
+/// against. 32 KiB is half `MuxFlowControl::host_queue_capacity_bytes`, so the gate's worst
+/// overshoot is capacity plus one read. Raising one without the other silently re-opens a problem
+/// that was solved once: a read larger than the bound pauses on every flood chunk.
+///
+/// This claim was Swift↔Rust until `docs/60` F.9. It did not become redundant when the Swift end
+/// died, because the constant is still written TWICE — `slopdesk-hostpane` sizes the subscription
+/// with it and `slopdesk-superd` reads with it, and neither crate depends on the other, so nothing
+/// in the build graph makes a rename in one land in the other. `SameValue`'s two sides are named
+/// `swift`/`rust` for the common case; here they are both Rust and only the PATHS matter.
 #[must_use]
 pub fn read_chunk(tree: &Tree) -> Report {
     let claims = [Claim::SameValue {
         label: "PTY read chunk",
         swift: Extract::code(
-            "Sources/SlopDeskHost/PaneOutputStream.swift",
-            r"readChunkSize = (.*)$",
+            "rust/slopdesk-hostpane/src/stream.rs",
+            r"READ_CHUNK_BYTES: usize = (.*);$",
         ),
         rust: Extract::code(
             "rust/slopdesk-superd/src/pump.rs",
@@ -109,25 +116,29 @@ pub fn read_chunk(tree: &Tree) -> Report {
 /// bridge was an in-process listener with no child to keep. It is `slopdesk-androidd` under superd
 /// now (docs/48), so it is held to the same line: a `shutdown()` here kills every live mirror on a
 /// host edit. (The DEVICES it boots stay orphaned on purpose — docs/51 §8.)
+///
+/// All three read [`HOSTD_CRATES`](crate::paths::HOSTD_CRATES) rather than `Sources` since
+/// `docs/60` F.9. Each is a contract between hostd and a process it does not link, so moving hostd
+/// to Rust moved the code without giving any compiler a way to see the rule.
 #[must_use]
 pub fn host_owes_superd(tree: &Tree) -> Report {
     let claims = [
         Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
-            pattern: r"\b(read|poll|select)\([^)]*masterFD",
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r"\b(read|poll|select)\([^)]*master",
             all: &[],
-            unless: &["readChunkSize"],
+            unless: &["READ_CHUNK_BYTES"],
             view: View::Code,
             exempt: &[],
             message: "{files} reads or polls a PTY master — superd owns the read side (CLAUDE.md, docs/51 \
                       §6.5)",
         },
         Claim::NoneUnder {
-            roots: &["Sources"],
-            extensions: SWIFT,
+            roots: HOSTD_CRATES,
+            extensions: RUST,
             pattern: r"\.sock",
-            all: &["getpid|processIdentifier"],
+            all: &[r"getpid|process::id\(\)"],
             unless: &[],
             view: View::Code,
             exempt: &[],
@@ -135,8 +146,8 @@ pub fn host_owes_superd(tree: &Tree) -> Report {
                       rebind (docs/51 §1)",
         },
         Claim::Lacks {
-            path: "Sources/SlopDeskHost/HostServer.swift",
-            pattern: r"(HostCodeServerPerformer|HostSimulatorPerformer|HostAndroidPerformer)\.sharedManager\.shutdown\(\)",
+            path: "rust/slopdesk-hostd/src/main.rs",
+            pattern: r"panels\.(code|simulator|android)\.shutdown\(\)",
             view: View::Code,
             message: "hostd's stop TERMINATES a panel backend — it must relinquish it (docs/51 §6.7)",
         },
@@ -202,40 +213,66 @@ mod tests {
         );
     }
 
+    /// A tree shaped the way hostd is now: the stop path relinquishes, and the one line that names
+    /// both a master and a read is the SIZING comment in `hostpane`, which the `unless` spares.
+    ///
+    /// Every seed below is Rust — `.rs` paths under [`HOSTD_CRATES`](crate::paths::HOSTD_CRATES),
+    /// `snake_case` fields, `std::process::id()` rather than `processIdentifier`. A mechanically
+    /// translated Swift pattern would match none of it and pass while guarding nothing.
+    fn hostd_fixture(name: &str) -> Fixture {
+        let fixture = Fixture::new(name);
+        fixture
+            .write(
+                "rust/slopdesk-hostd/src/main.rs",
+                "panels.code.relinquish();\npanels.simulator.relinquish();\npanels.android.relinquish();\n",
+            )
+            .write(
+                "rust/slopdesk-hostpane/src/stream.rs",
+                "// one read(&self.master) in superd is at most READ_CHUNK_BYTES\npub const \
+                 READ_CHUNK_BYTES: usize = 32 * 1024;\n",
+            );
+        fixture
+    }
+
     /// The invariant the whole subsystem turns on. A second reader on the master does not observe
     /// the stream, it steals from it.
     #[test]
     fn a_second_reader_on_the_master_is_caught_and_the_chunk_size_is_not() {
-        let fixture = Fixture::new("master-read");
-        fixture
-            .write("Sources/SlopDeskHost/HostServer.swift", "let x = 1\n")
-            .write(
-                "Sources/SlopDeskHost/Fine.swift",
-                "read(masterFD, buf, readChunkSize)\n",
-            );
+        let fixture = hostd_fixture("master-read");
         assert!(super::host_owes_superd(&fixture.tree()).is_clean());
 
         fixture.write(
-            "Sources/SlopDeskHost/Bad.swift",
-            "let n = read(masterFD, &buf, 4096)\n",
+            "rust/slopdesk-hostpane/src/bad.rs",
+            "let n = read(&self.master, &mut buf)?;\n",
         );
         let report = super::host_owes_superd(&fixture.tree());
         assert!(
-            report.violations().iter().any(|v| v.contains("Bad.swift")),
+            report.violations().iter().any(|v| v.contains("bad.rs")),
             "{report:?}"
         );
+    }
+
+    /// superd is the ONE process allowed to read a master, and it is outside the roots on purpose —
+    /// a rule scoped to all of `rust` would fire on the only correct reader in the repo.
+    #[test]
+    fn superds_own_read_is_not_caught() {
+        let fixture = hostd_fixture("superd-reads");
+        fixture.write(
+            "rust/slopdesk-superd/src/pump.rs",
+            "let got = read(&self.master, &mut buffer)?;\n",
+        );
+        assert!(super::host_owes_superd(&fixture.tree()).is_clean());
     }
 
     /// A pid in a socket path leaves a survivor dialling an address nobody will rebind.
     #[test]
     fn a_pid_keyed_socket_path_is_caught() {
-        let fixture = Fixture::new("pid-sock");
-        fixture.write("Sources/SlopDeskHost/HostServer.swift", "let x = 1\n");
+        let fixture = hostd_fixture("pid-sock");
         assert!(super::host_owes_superd(&fixture.tree()).is_clean());
 
         fixture.write(
-            "Sources/SlopDeskHost/Bridge.swift",
-            "let path = \"/tmp/bridge-\\(getpid()).sock\"\n",
+            "rust/slopdesk-hostserver/src/bridge.rs",
+            "let path = format!(\"/tmp/bridge-{}.sock\", std::process::id());\n",
         );
         let report = super::host_owes_superd(&fixture.tree());
         assert!(
@@ -248,21 +285,37 @@ mod tests {
     /// makes the user watch Node boot again after every host edit.
     #[test]
     fn terminating_a_panel_backend_at_stop_is_caught() {
-        let fixture = Fixture::new("relinquish");
-        fixture.write(
-            "Sources/SlopDeskHost/HostServer.swift",
-            "HostCodeServerPerformer.sharedManager.relinquish()\n",
-        );
+        let fixture = hostd_fixture("relinquish");
         assert!(super::host_owes_superd(&fixture.tree()).is_clean());
 
-        fixture.write(
-            "Sources/SlopDeskHost/HostServer.swift",
-            "HostCodeServerPerformer.sharedManager.shutdown()\n",
-        );
+        fixture.write("rust/slopdesk-hostd/src/main.rs", "panels.code.shutdown();\n");
         let report = super::host_owes_superd(&fixture.tree());
         assert!(
             report.violations().iter().any(|v| v.contains("TERMINATES")),
             "{report:?}"
         );
+    }
+
+    /// The read chunk is written twice in Rust and neither crate depends on the other, so the claim
+    /// survived F.9 rather than dying with its Swift end. Drift one and the gate says so.
+    #[test]
+    fn a_read_chunk_that_moved_in_one_crate_only_is_caught() {
+        let fixture = Fixture::new("read-chunk");
+        fixture
+            .write(
+                "rust/slopdesk-hostpane/src/stream.rs",
+                "pub const READ_CHUNK_BYTES: usize = 32 * 1024;\n",
+            )
+            .write(
+                "rust/slopdesk-superd/src/pump.rs",
+                "pub const READ_CHUNK_BYTES: usize = 32 * 1024;\n",
+            );
+        assert!(super::read_chunk(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-superd/src/pump.rs",
+            "pub const READ_CHUNK_BYTES: usize = 64 * 1024;\n",
+        );
+        assert!(!super::read_chunk(&fixture.tree()).is_clean());
     }
 }

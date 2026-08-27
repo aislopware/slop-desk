@@ -1,7 +1,7 @@
 //! The two clipboard-sync verbs: write the client's clip onto the host board, read the host's back.
 //!
-//! `Sources/SlopDeskHost/HostClipboardPerformer.swift` (129) plus the `AppKit` half of
-//! `Sources/SlopDeskPasteboard/PasteboardClip.swift` (the `#if canImport(AppKit)` arm, ~70
+//! `HostClipboardPerformer.swift` (129) plus the `AppKit` half of
+//! `PasteboardClip.swift` (the `#if canImport(AppKit)` arm, ~70
 //! lines). Neither is host work: the codec is [`slopdesk_wire::metadata::codec`] and the board is
 //! `slopdesk_apple_pasteboard`. What the Swift added is the four rules below, and they are what
 //! this module is.

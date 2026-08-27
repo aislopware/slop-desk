@@ -125,16 +125,6 @@ enum SupervisorEncoder {
         }
     }
 
-    /// Two bools rather than a list of strings: there are two kinds, and their names are wire values
-    /// the crate already spells. A kind hostd does not claim is one superd will not advertise.
-    static func listen(id: UInt64, kinds: Set<ListenerKind>) -> [UInt8] {
-        ffiAnswerBytes(capacity: 128) { out, cap in
-            slopdesk_supervisor_encode_listen(
-                id, kinds.contains(.hook), kinds.contains(.control), out, cap,
-            )
-        }
-    }
-
     static func journal(
         _ which: UInt32,
         id: UInt64,
@@ -274,17 +264,6 @@ final class SupervisorReplyReader {
         case UInt32(SLOPDESK_SUPERVISOR_EVENT_CONNECTION): .connection
         case UInt32(SLOPDESK_SUPERVISOR_EVENT_UNKNOWN): .unknown
         default: .none
-        }
-    }
-
-    /// Which listener a `connection` push was accepted on, or `nil` for a kind this build has no
-    /// name for — which is reported rather than dropped, because the descriptor still arrived and
-    /// dropping it silently would leak an accepted socket.
-    var connectionKind: ListenerKind? {
-        switch head.connection_kind {
-        case UInt32(SLOPDESK_SUPERVISOR_LISTENER_HOOK): .hook
-        case UInt32(SLOPDESK_SUPERVISOR_LISTENER_CONTROL): .control
-        default: nil
         }
     }
 

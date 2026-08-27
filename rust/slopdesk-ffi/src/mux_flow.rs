@@ -10,8 +10,7 @@
 //! convention is for state that CANNOT cross, which this is not.
 
 use slopdesk_wire::mux::{
-    BoundedQueuePolicy, ConsumeResult, FlowCreditPolicy, MuxFlowControl, PausableQueueGate,
-    ReceiveWindowAccountant,
+    BoundedQueuePolicy, ConsumeResult, FlowCreditPolicy, MuxFlowControl, ReceiveWindowAccountant,
 };
 
 /// One direction of one channel's send window.
@@ -298,168 +297,18 @@ pub extern "C" fn slopdesk_mux_flow_constant(index: u32) -> i64 {
     }
 }
 
-/// The host PTY-read backpressure gate: the bounded queue OR-ed with the replay-buffer and fan-out
-/// sources, plus a memory of what the caller last applied.
-///
-/// Crosses BY VALUE for the reason the three policies above do — five scalars, no allocation — and
-/// for one more: hostd applies the pause WHILE HOLDING the lock that guards this struct, so the
-/// state has to be somewhere that lock already covers. A handle would put it behind a pointer the
-/// lock says nothing about.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SlopDeskPausableGate {
-    /// The high-water mark, in bytes. BOTH the queue and the fan-out backlog are measured against
-    /// it, so one re-size moves both sources.
-    pub capacity: i64,
-    /// Bytes enqueued and not yet sent. Never negative.
-    pub outstanding: i64,
-    /// Bytes sequenced that not even the FASTEST subscriber has put on the wire.
-    pub fanout_backlog: i64,
-    /// The replay buffer's own verdict: retained-but-unacked bytes are at the cap, or the channel
-    /// is offline.
-    pub replay_pause: bool,
-    /// What the caller last applied. Written by every mutator below; never set by hand.
-    pub applied: bool,
-}
-
-/// What one gate mutation decided.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SlopDeskPauseVerdict {
-    /// True when the caller must act. False means the fold decided nothing new — the commonest
-    /// case by far, since most enqueues and dequeues cross no threshold.
-    pub changed: bool,
-    /// The state to apply when `changed`: pause the read loop (`true`) or resume it (`false`).
-    /// Meaningless otherwise.
-    pub paused: bool,
-}
-
-/// Builds an UNPAUSED gate over a queue of `capacity` bytes, both other sources inert.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub const extern "C" fn slopdesk_pausable_gate_new(capacity: i64) -> SlopDeskPausableGate {
-    let gate = PausableQueueGate::new(capacity);
-    SlopDeskPausableGate {
-        capacity: gate.capacity(),
-        outstanding: gate.outstanding(),
-        fanout_backlog: gate.fanout_backlog(),
-        replay_pause: gate.replay_pause(),
-        applied: gate.applied(),
-    }
-}
-
-/// Rebuilds the crate's gate from the caller's struct, applies `mutate`, and writes the new state
-/// back in place. The ONE marshalling path all five mutators below share.
-fn settle(
-    gate: &mut SlopDeskPausableGate,
-    mutate: impl FnOnce(&mut PausableQueueGate) -> Option<bool>,
-) -> SlopDeskPauseVerdict {
-    let mut inner = PausableQueueGate::restored(
-        gate.capacity,
-        gate.outstanding,
-        gate.replay_pause,
-        gate.fanout_backlog,
-        gate.applied,
-    );
-    let decided = mutate(&mut inner);
-    gate.capacity = inner.capacity();
-    gate.outstanding = inner.outstanding();
-    gate.fanout_backlog = inner.fanout_backlog();
-    gate.replay_pause = inner.replay_pause();
-    gate.applied = inner.applied();
-    SlopDeskPauseVerdict {
-        changed: decided.is_some(),
-        paused: decided.unwrap_or(false),
-    }
-}
-
-/// Accounts `bytes` enqueued and re-folds every source.
-///
-/// # Safety
-/// `gate` must point at one live [`SlopDeskPausableGate`] for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_pausable_gate_enqueue(
-    gate: *mut SlopDeskPausableGate,
-    bytes: i64,
-) -> SlopDeskPauseVerdict {
-    // SAFETY: one struct read and one write, neither outliving the call.
-    unsafe { settle(&mut *gate, |inner| inner.enqueue(bytes)) }
-}
-
-/// Accounts `bytes` dequeued (sent) and re-folds every source.
-///
-/// # Safety
-/// `gate` must point at one live [`SlopDeskPausableGate`] for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_pausable_gate_dequeue(
-    gate: *mut SlopDeskPausableGate,
-    bytes: i64,
-) -> SlopDeskPauseVerdict {
-    // SAFETY: one struct read and one write, neither outliving the call.
-    unsafe { settle(&mut *gate, |inner| inner.dequeue(bytes)) }
-}
-
-/// Sets the replay-buffer source and re-folds.
-///
-/// # Safety
-/// `gate` must point at one live [`SlopDeskPausableGate`] for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_pausable_gate_set_replay_pause(
-    gate: *mut SlopDeskPausableGate,
-    pause: bool,
-) -> SlopDeskPauseVerdict {
-    // SAFETY: one struct read and one write, neither outliving the call.
-    unsafe { settle(&mut *gate, |inner| inner.set_replay_pause(pause)) }
-}
-
-/// Sets the fan-out source — bytes nobody has shipped — and re-folds. `0` makes it inert.
-///
-/// # Safety
-/// `gate` must point at one live [`SlopDeskPausableGate`] for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_pausable_gate_set_fanout_backlog(
-    gate: *mut SlopDeskPausableGate,
-    bytes: i64,
-) -> SlopDeskPauseVerdict {
-    // SAFETY: one struct read and one write, neither outliving the call.
-    unsafe { settle(&mut *gate, |inner| inner.set_fanout_backlog(bytes)) }
-}
-
-/// Re-sizes the bound — the attached ↔ detached gate — and re-folds.
-///
-/// # Safety
-/// `gate` must point at one live [`SlopDeskPausableGate`] for the call.
-#[unsafe(no_mangle)]
-#[expect(
-    unsafe_code,
-    reason = "an exported C entry point is unsafe by definition in edition 2024"
-)]
-pub unsafe extern "C" fn slopdesk_pausable_gate_set_capacity(
-    gate: *mut SlopDeskPausableGate,
-    new_capacity: i64,
-) -> SlopDeskPauseVerdict {
-    // SAFETY: one struct read and one write, neither outliving the call.
-    unsafe { settle(&mut *gate, |inner| inner.set_capacity(new_capacity)) }
-}
+// The host PTY-read backpressure GATE has no door here, and `docs/60` F.9 is why.
+//
+// It crossed by value — five scalars naming the bounded queue's high-water mark, its outstanding
+// bytes, the fan-out backlog, the replay buffer's own verdict and what the caller last applied —
+// with five mutators over it and one shared `settle` that rebuilt `PausableQueueGate` from the
+// struct, folded, and wrote the fields back. All of that existed for ONE property: hostd applied
+// the pause while holding the lock that guarded the struct, so the state had to live somewhere that
+// lock already covered, and a handle would have put it behind a pointer the lock said nothing
+// about. A Swift host with a Rust rule has no other shape available.
+//
+// `rust/slopdesk-hostsession` holds `PausableQueueGate` itself now, under its own lock, so the
+// rebuild-fold-writeback round trip is a plain method call and there is nothing to marshal.
 
 #[cfg(test)]
 mod tests {
@@ -471,10 +320,8 @@ mod tests {
     use super::{
         slopdesk_bounded_queue_dequeue, slopdesk_bounded_queue_enqueue, slopdesk_bounded_queue_new,
         slopdesk_flow_credit_adjust, slopdesk_flow_credit_consume, slopdesk_flow_credit_new,
-        slopdesk_mux_flow_constant, slopdesk_pausable_gate_dequeue, slopdesk_pausable_gate_enqueue,
-        slopdesk_pausable_gate_new, slopdesk_pausable_gate_set_capacity,
-        slopdesk_pausable_gate_set_fanout_backlog, slopdesk_pausable_gate_set_replay_pause,
-        slopdesk_receive_window_consume, slopdesk_receive_window_new, slopdesk_receive_window_threshold,
+        slopdesk_mux_flow_constant, slopdesk_receive_window_consume, slopdesk_receive_window_new,
+        slopdesk_receive_window_threshold,
     };
 
     /// The window is all-or-nothing and a refusal must leave it untouched — the property every
@@ -534,48 +381,5 @@ mod tests {
         assert!(slopdesk_mux_flow_constant(1) <= half - 16);
         assert_eq!(slopdesk_mux_flow_constant(6), 256);
         assert_eq!(slopdesk_mux_flow_constant(99), 0);
-    }
-
-    /// The three sources OR together, and only a CHANGE is reported — the property that makes the
-    /// caller's `if verdict.changed { setPaused(verdict.paused) }` idempotent.
-    #[test]
-    fn the_gate_reports_only_the_crossings() {
-        let mut gate = slopdesk_pausable_gate_new(100);
-        assert!(!unsafe { slopdesk_pausable_gate_enqueue(&raw mut gate, 50) }.changed);
-        let paused = unsafe { slopdesk_pausable_gate_enqueue(&raw mut gate, 50) };
-        assert!(paused.changed && paused.paused);
-        assert!(!unsafe { slopdesk_pausable_gate_enqueue(&raw mut gate, 50) }.changed);
-        assert_eq!(gate.outstanding, 150);
-
-        let resumed = unsafe { slopdesk_pausable_gate_dequeue(&raw mut gate, 51) };
-        assert!(resumed.changed && !resumed.paused);
-        assert!(!gate.applied, "the struct carries what was applied");
-    }
-
-    /// A clear on one source must never resume a loop another source still holds — the lost-wakeup
-    /// that froze a pane forever, now unreachable because the fold is one value.
-    #[test]
-    fn one_source_clearing_cannot_resume_what_another_holds() {
-        let mut gate = slopdesk_pausable_gate_new(100);
-        assert!(unsafe { slopdesk_pausable_gate_set_replay_pause(&raw mut gate, true) }.paused);
-        assert!(!unsafe { slopdesk_pausable_gate_enqueue(&raw mut gate, 200) }.changed);
-        assert!(
-            !unsafe { slopdesk_pausable_gate_set_replay_pause(&raw mut gate, false) }.changed,
-            "the queue is still over bound"
-        );
-        let resumed = unsafe { slopdesk_pausable_gate_dequeue(&raw mut gate, 200) };
-        assert!(resumed.changed && !resumed.paused);
-    }
-
-    /// The fan-out source is measured against the SAME capacity, so the detached re-size moves it.
-    #[test]
-    fn re_sizing_the_bound_moves_the_fanout_source_too() {
-        let mut gate = slopdesk_pausable_gate_new(1000);
-        assert!(!unsafe { slopdesk_pausable_gate_set_fanout_backlog(&raw mut gate, 999) }.changed);
-        assert!(unsafe { slopdesk_pausable_gate_set_fanout_backlog(&raw mut gate, 1000) }.paused);
-        let raised = unsafe { slopdesk_pausable_gate_set_capacity(&raw mut gate, 4000) };
-        assert!(raised.changed && !raised.paused);
-        assert!(unsafe { slopdesk_pausable_gate_set_capacity(&raw mut gate, 500) }.paused);
-        assert_eq!(gate.capacity, 500);
     }
 }

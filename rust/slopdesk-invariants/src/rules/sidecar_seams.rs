@@ -6,7 +6,8 @@
 //! creates it — it diverges on the seventh channel, the next daemon, the one manager somebody edits
 //! alone — so the moment to catch it is while there is still only one copy.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, SWIFT, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -14,8 +15,8 @@ use crate::tree::Tree;
 const REGISTRY: &str = "rust/slopdesk-superd/src/registry.rs";
 /// The wire that carries the duplicate out.
 const FRAME: &str = "rust/slopdesk-superd/src/frame.rs";
-/// The two lifecycles the five sidecar managers share.
-const LIFECYCLE: &str = "Sources/SlopDeskHost/SupervisedServiceLifecycle.swift";
+/// The two lifecycles the five sidecar faces share.
+const LIFECYCLE: &str = "rust/slopdesk-hostserver/src/service.rs";
 /// The five-line latch with three load-bearing details in it.
 const LATCH: &str = "Sources/SlopDeskWorkspaceCore/Support/DeadlineLatch.swift";
 /// Where a pasteboard becomes a clip, both directions, once.
@@ -87,35 +88,37 @@ pub fn a_master_crosses_owned(tree: &Tree) -> Report {
 /// other two wrote it after, and the dropd/inspectord parse accepted a `:0` announce that
 /// androidd's rejected.
 ///
-/// Both lifecycles live in `SupervisedServiceLifecycle.swift` now: `ProbedPortService` (the OS
-/// picks the port, `ensure` never waits) and `AnnouncedPortService` (hostd picks it, so the
-/// announce is WAITED for and VERIFIED). What stays with each manager is what the daemons genuinely
-/// disagree about — the socket name, the announce marker, the argv, the env override, and whether a
-/// spawn that threw reads `unavailable` or `starting`.
+/// Both lifecycles live in `rust/slopdesk-hostserver/src/service.rs` since `docs/60` F.9 moved the
+/// daemon: `ProbedPortService` (the OS picks the port, `ensure` never waits) and
+/// `AnnouncedPortService` (hostd picks it, so the announce is WAITED for and VERIFIED). What stays
+/// with each face is what the daemons genuinely disagree about — the socket name, the announce
+/// marker, the argv, the env override, and whether a spawn that failed reads `unavailable` or
+/// `starting`.
 ///
-/// The last arm is not about duplication at all. Each manager keeps exactly one lock, and it is the
-/// service's: a second `NSLock` beside a `ProbedPortService` is two critical sections gating one
-/// spawn, which is how a boot gate and the instance record start disagreeing under a racing pair of
-/// metadata queues. The three managers are NAMED rather than globbed, which is the one deliberate
-/// narrowing from the shell — a glob that stops matching is a ban that stops running, and these
-/// three are the ones that hold a `ProbedPortService`.
+/// Both ends are Rust now, and the reason this rule did not retire with the language is that
+/// nothing in the build graph stops a face from writing the shape out AGAIN. It would compile, and
+/// it would drift the way the five Swift managers already had: `CodeServerManager`'s probe latch
+/// wrote its updated record inside the `if due` block where the other two wrote it after, and the
+/// dropd/inspectord parse accepted a `:0` announce that androidd's rejected.
 ///
-/// The four-shape ban reads the WHOLE target, subdirectories included, where the shell read only
-/// its top level. That is a tightening the live tree already satisfies, and the reason to take it
-/// is that a manager moved one directory down is exactly how the shape comes back unwatched.
+/// So the ban is the whole rule, and it names the latch's own vocabulary — `last_probe`,
+/// `spawn_generation`, a port scraped off a line by hand. Those three words appear in `service.rs`
+/// and NOWHERE else in the host crates, which is what makes the ban a measurement rather than a
+/// wish.
+///
+/// The Swift's third piece and its last arm both DIED in the port rather than moving.
+/// `enum AnnouncedPort` dissolved into the private `Announced` record and `Boot`, which the
+/// compiler sees inside the one crate that has them. And the "no second lock beside a
+/// `ProbedPortService`" arm was answered differently by the port on purpose:
+/// [`CodeServerManager`](slopdesk_hostserver::code::CodeServerManager) holds a `Mutex<Gates>` for
+/// its four boot gates, which are not the spawn's critical section and were only ever under the
+/// service's lock because Swift had one lock to give. Re-asserting it would ban the live code.
 #[must_use]
 pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
-    /// The three types the five managers share.
+    /// The two types the five faces share.
     const PIECES: &[&str] = &[
-        r"final class ProbedPortService",
-        r"final class AnnouncedPortService",
-        r"enum AnnouncedPort",
-    ];
-    /// The managers that hold a service, and so may not hold a second lock.
-    const MANAGERS: &[&str] = &[
-        "Sources/SlopDeskHost/AndroidServiceManager.swift",
-        "Sources/SlopDeskHost/SimulatorServerManager.swift",
-        "Sources/SlopDeskHost/CodeServerManager.swift",
+        r"pub struct ProbedPortService",
+        r"pub struct AnnouncedPortService",
     ];
 
     let mut claims: Vec<Claim> = PIECES
@@ -125,29 +128,23 @@ pub fn two_sidecar_lifecycles_five_faces(tree: &Tree) -> Report {
                 path: LIFECYCLE,
                 pattern: piece,
                 view: View::Code,
-                message: "SupervisedServiceLifecycle.swift no longer holds one of its two lifecycles — the \
-                          five managers share one of each",
+                message: "rust/slopdesk-hostserver/src/service.rs no longer holds one of its two lifecycles \
+                          — the five faces share one of each",
             }
         })
         .collect();
     claims.push(Claim::NoneUnder {
-        roots: &["Sources/SlopDeskHost/"],
-        extensions: &["swift"],
-        pattern: r"var lastProbe|spawnGeneration|func awaitAnnouncedPort|prefix\(while: \\\.isNumber\)",
+        roots: HOSTD_CRATES,
+        extensions: RUST,
+        pattern: r"last_probe|spawn_generation|parse::<u16>",
         all: &[],
         unless: &[],
         view: View::Code,
         exempt: &[LIFECYCLE],
-        message: "a sidecar manager grew its own probe latch, spawn generation or port parse back ({files})",
+        message: "a sidecar face grew its own probe latch, spawn generation or port parse back ({files}) — \
+                  the latch is ProbedPortService and the parse is slopdesk-sidecars' port_directly_after, \
+                  once",
     });
-    for manager in MANAGERS {
-        claims.push(Claim::Lacks {
-            path: manager,
-            pattern: r"let lock = NSLock\(\)",
-            view: View::Code,
-            message: "a sidecar manager took a second lock beside ProbedPortService — use its locked(_:)",
-        });
-    }
     check_all(tree, &claims)
 }
 
@@ -245,18 +242,17 @@ pub fn one_re_armable_deadline(tree: &Tree) -> Report {
 ///
 /// The two banned spellings are the ones a second conversion cannot avoid writing: the TIFF type it
 /// must ask the pasteboard for, and the byte ceiling it must clamp against.
+///
+/// Since `docs/60` F.9 the two ends are in two LANGUAGES rather than two Swift files. The client's
+/// end is still `PasteboardClip`; the host's is `rust/slopdesk-hostserver/src/clipsync.rs`, which
+/// takes the clip record and the ceiling off `slopdesk-wire`'s codec — so the host half of the
+/// equality is the compiler's, and what is left to state is that it still ASKS.
 #[must_use]
 pub fn one_pasteboard_clip(tree: &Tree) -> Report {
-    /// Each end and the direction it must still get from the shared file.
+    /// The host's end, which reads the record and the cap off the codec both ends encode through.
+    const HOST_CLIP: &str = "rust/slopdesk-hostserver/src/clipsync.rs";
+    /// The client's end and the direction it must still get from the shared Swift file.
     const SHARES: &[(&str, &str)] = &[
-        (
-            "Sources/SlopDeskHost/HostClipboardPerformer.swift",
-            r"PasteboardClip\.read",
-        ),
-        (
-            "Sources/SlopDeskHost/HostClipboardPerformer.swift",
-            r"PasteboardClip\.write",
-        ),
         (
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
             r"PasteboardClip\.read",
@@ -267,17 +263,39 @@ pub fn one_pasteboard_clip(tree: &Tree) -> Report {
         ),
     ];
 
-    let mut claims = vec![Claim::NoneUnder {
-        roots: &["Sources/"],
-        extensions: &["swift"],
-        pattern: r"forType: \.tiff|MetadataCodec\.maxClipboardContentBytes",
-        all: &[],
-        unless: &[],
-        view: View::Code,
-        exempt: &[PASTEBOARD_CLIP],
-        message: "a second pasteboard↔clip conversion grew back ({files}) — PasteboardClip reads and writes \
-                  both ends",
-    }];
+    let mut claims = vec![
+        Claim::NoneUnder {
+            roots: &["Sources/"],
+            extensions: SWIFT,
+            pattern: r"forType: \.tiff|MetadataCodec\.maxClipboardContentBytes",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[PASTEBOARD_CLIP],
+            message: "a second pasteboard↔clip conversion grew back ({files}) — PasteboardClip reads and \
+                      writes the client's end",
+        },
+        // The host may not re-type the ceiling either. The TIFF half is not banned in Rust: asking
+        // for the flavour is `slopdesk-apple-pasteboard`'s whole job, and the host reaches it
+        // through that crate rather than beside it.
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r"12 \* 1024 \* 1024",
+            all: &[],
+            unless: &[],
+            view: View::Code,
+            exempt: &[],
+            message: "{files} re-typed the clipboard ceiling — MAX_CLIPBOARD_CONTENT_BYTES is the codec's, \
+                      and a host that clamps lower ships a clip the client will accept whole",
+        },
+        Claim::Mentions {
+            path: HOST_CLIP,
+            names: &["ClipboardClip", "MAX_CLIPBOARD_CONTENT_BYTES"],
+            message: "rust/slopdesk-hostserver/src/clipsync.rs no longer takes {entry} from slopdesk-wire — \
+                      the two ends agree by sharing the codec, not by luck",
+        },
+    ];
     for (end, direction) in SHARES {
         claims.push(Claim::Matches {
             path: end,
@@ -434,46 +452,51 @@ mod tests {
         assert!(!super::a_master_crosses_owned(&fixture.tree()).is_clean());
     }
 
-    /// The two lifecycles, and three managers holding neither a latch nor a lock.
+    /// The two lifecycles, and three faces holding a service rather than a latch of their own.
     fn lifecycles(fixture: &Fixture) {
         fixture.write(
             super::LIFECYCLE,
-            "final class ProbedPortService { private let lock = NSLock()\nvar lastProbe: Instant?\nprivate \
-             var spawnGeneration = 0 }\nfinal class AnnouncedPortService { func awaitAnnouncedPort() async \
-             -> UInt16? { nil } }\nenum AnnouncedPort {}\n",
+            "pub struct ProbedPortService {\n    probe: ReadinessProbe,\n}\nstruct Instance {\n    \
+             last_probe: Option<Instant>,\n}\nstruct Live {\n    spawn_generation: u64,\n}\npub struct \
+             AnnouncedPortService {\n    deadline: Duration,\n}\n",
         );
-        for manager in [
-            "Sources/SlopDeskHost/AndroidServiceManager.swift",
-            "Sources/SlopDeskHost/SimulatorServerManager.swift",
-            "Sources/SlopDeskHost/CodeServerManager.swift",
+        for face in [
+            "rust/slopdesk-hostserver/src/ensure.rs",
+            "rust/slopdesk-hostserver/src/code.rs",
+            "rust/slopdesk-hostd/src/sidecar.rs",
         ] {
-            fixture.write(manager, "let service = ProbedPortService()\n");
+            fixture.write(
+                face,
+                "let service = Arc::new(ProbedPortService::new(probe, interval));\n",
+            );
         }
     }
 
     #[test]
-    fn a_manager_that_rewrites_the_lifecycle_is_red() {
+    fn a_face_that_rewrites_the_lifecycle_is_red() {
         let fixture = Fixture::new("seams-lifecycle");
         lifecycles(&fixture);
         assert!(super::two_sidecar_lifecycles_five_faces(&fixture.tree()).is_clean());
 
-        // The shape written out again, one directory down from where the shell looked.
+        // The latch written out again, in a face one crate over from the one that owns it.
         fixture.write(
-            "Sources/SlopDeskHost/Workspace/DropServiceManager.swift",
-            "private var spawnGeneration = 0\n",
+            "rust/slopdesk-hostd/src/sidecar.rs",
+            "struct Profile {\n    spawn_generation: u64,\n}\n",
         );
         assert!(!super::two_sidecar_lifecycles_five_faces(&fixture.tree()).is_clean());
 
-        // And a second critical section gating one spawn.
+        // And the port scraped off the line by hand, which is the half that had already drifted:
+        // the dropd/inspectord parse accepted a `:0` announce that androidd's rejected.
         lifecycles(&fixture);
         fixture.write(
-            "Sources/SlopDeskHost/Workspace/DropServiceManager.swift",
-            "// nothing of the shape\n",
+            "rust/slopdesk-hostd/src/services.rs",
+            "let port = line.rsplit(':').next()?.parse::<u16>().ok()?;\n",
         );
-        fixture.write(
-            "Sources/SlopDeskHost/CodeServerManager.swift",
-            "let service = ProbedPortService()\nprivate let lock = NSLock()\n",
-        );
+        assert!(!super::two_sidecar_lifecycles_five_faces(&fixture.tree()).is_clean());
+
+        // And the lifecycle itself, gone.
+        lifecycles(&fixture);
+        fixture.write(super::LIFECYCLE, "pub struct ProbedPortService {}\n");
         assert!(!super::two_sidecar_lifecycles_five_faces(&fixture.tree()).is_clean());
     }
 
@@ -542,7 +565,7 @@ mod tests {
         assert!(!super::one_re_armable_deadline(&fixture.tree()).is_clean());
     }
 
-    /// One conversion, called by both ends.
+    /// One conversion, called by both ends — one Swift, one Rust.
     fn clipboard(fixture: &Fixture) {
         fixture
             .write(
@@ -550,8 +573,8 @@ mod tests {
                 "board.data(forType: .tiff)\nMetadataCodec.maxClipboardContentBytes\n",
             )
             .write(
-                "Sources/SlopDeskHost/HostClipboardPerformer.swift",
-                "PasteboardClip.read(board, concealed: false)\nPasteboardClip.write(clip, to: board)\n",
+                "rust/slopdesk-hostserver/src/clipsync.rs",
+                "use slopdesk_wire::metadata::codec::{ClipboardClip, MAX_CLIPBOARD_CONTENT_BYTES};\n",
             )
             .write(
                 "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
@@ -565,14 +588,28 @@ mod tests {
         clipboard(&fixture);
         assert!(super::one_pasteboard_clip(&fixture.tree()).is_clean());
 
+        clipboard(&fixture);
         fixture.write(
-            "Sources/SlopDeskHost/HostClipboardPerformer.swift",
-            "PasteboardClip.read(board, concealed: false)\nPasteboardClip.write(clip, to: board)\nlet tiff \
-             = board.data(forType: .tiff)\n",
+            "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",
+            "PasteboardClip.read(board, concealed: true)\nPasteboardClip.write(clip, to: board)\nlet tiff = \
+             board.data(forType: .tiff)\n",
         );
         assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
 
-        // And an end that stopped sharing, which the ban above cannot see.
+        // The host re-typing the ceiling rather than importing it — the skew that is silent in the
+        // worst direction, since a host clamping lower ships a clip nobody rejects.
+        clipboard(&fixture);
+        fixture.write(
+            "rust/slopdesk-hostd/src/clip.rs",
+            "const CAP: usize = 12 * 1024 * 1024;\n",
+        );
+        assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
+
+        // And an end that stopped sharing, which the bans above cannot see.
+        clipboard(&fixture);
+        fixture.write("rust/slopdesk-hostserver/src/clipsync.rs", "");
+        assert!(!super::one_pasteboard_clip(&fixture.tree()).is_clean());
+
         clipboard(&fixture);
         fixture.write(
             "Sources/SlopDeskWorkspaceCore/Workspace/Store/ClipboardSyncEngine.swift",

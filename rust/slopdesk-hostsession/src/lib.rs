@@ -2,7 +2,7 @@
 //! transport and `slopdesk-muxsession`'s verdicts into a running pane.
 //!
 //! This is stage C.2 of `docs/60-hostd-in-rust.md`, and the shape of it is the finding that scoped
-//! the stage: almost none of `Sources/SlopDeskHost/MuxChannelSession.swift` is a DECISION. The
+//! the stage: almost none of `MuxChannelSession.swift` is a DECISION. The
 //! outbox, the fanout, the truths, the lifecycle and the resize fold are `slopdesk-muxsession`'s;
 //! the replay ring and the pause gate are `slopdesk-wire`'s; the detector and the screen engine are
 //! `slopdesk-agent`'s; the probes are `slopdesk-posix`'s. What was left in Swift was the SHELL

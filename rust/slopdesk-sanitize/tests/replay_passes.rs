@@ -10,7 +10,7 @@
 //!
 //! What did NOT come over is the WIRING: that the host's transform actually reaches these passes,
 //! in this order, with no env kill switch. Those claims are about Swift and stayed there
-//! (`Tests/SlopDeskHostTests/ScrollbackReplayTransformTests.swift`).
+//! (`ScrollbackReplayTransformTests.swift`).
 
 use slopdesk_sanitize::sanitize::{Options, sanitize};
 use slopdesk_sanitize::{altscreen, distill, inputmode, prompteol, query, syncframe};

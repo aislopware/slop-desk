@@ -11,8 +11,7 @@
 
 use crate::paths::{
     RUST_CTL_LIB, RUST_FFI_SUPERVISOR, RUST_LISTENERS, RUST_PATHS, RUST_PROTOCOL, RUST_SHELLINT,
-    RUST_SPAWN_ENV, RUST_SUPERD_SERVER, RUST_SUPERWIRE, SWIFT_HOST_ENVIRONMENT, SWIFT_PATHS,
-    SWIFT_SUPERVISOR_DOORS,
+    RUST_SPAWN_ENV, RUST_SUPERD_SERVER, RUST_SUPERWIRE, SWIFT_PATHS, SWIFT_SUPERVISOR_DOORS,
 };
 use crate::report::Report;
 use crate::text;
@@ -147,12 +146,12 @@ pub fn control_socket_export(tree: &Tree) -> Report {
     const KEY: &str = "\"SLOPDESK_CONTROL_SOCKET\"";
 
     let mut report = Report::new();
-    if let Some(env) = report.source(tree, SWIFT_HOST_ENVIRONMENT, "hostd's env export lives there") {
+    if let Some(env) = report.source(tree, RUST_SPAWN_ENV, "hostd's env export lives there") {
         report.fail_if(
             !env.text.contains(KEY),
             format!(
-                "{SWIFT_HOST_ENVIRONMENT} no longer exports SLOPDESK_CONTROL_SOCKET — slopdesk-ctl would \
-                 find no host (docs/51 §1)",
+                "{RUST_SPAWN_ENV} no longer exports SLOPDESK_CONTROL_SOCKET — slopdesk-ctl would find no \
+                 host (docs/51 §1)",
             ),
         );
     }
@@ -792,12 +791,14 @@ fn build(overrides: &mut Map) {
 }
 "#;
 
-    /// hostd's export of the ctl socket — the anchor `control_socket_export` reads. Still Swift:
-    /// the KEY is hostd's own dictionary entry, written beside the pane id it tags.
-    const HOST_ENV_OK: &str = r#"
-enum HostEnvironment {
-    static let agentControlSocketEnvKey = "SLOPDESK_CONTROL_SOCKET"
-}
+    /// hostd's export of the ctl socket — the anchor `control_socket_export` reads.
+    ///
+    /// It moved with the daemon in `docs/60` F.9: the key is written beside the rest of the child's
+    /// curated environment, which is `slopdesk-muxsession`'s `spawn_env`. Both ends are Rust now
+    /// and the rule still holds, because `slopdesk-ctl` is a SEPARATE BINARY an agent shells
+    /// out to — nothing links the two, so no compiler compares the strings.
+    const CTL_EXPORT_OK: &str = r#"
+pub const AGENT_CONTROL_SOCKET_KEY: &str = "SLOPDESK_CONTROL_SOCKET";
 "#;
 
     const SPAWN_ENV_OK: &str = r#"
@@ -866,7 +867,7 @@ pub const SHELL_INTEGRATION_KEYS: &[&str] = &[
     #[test]
     fn dropping_the_control_socket_export_is_caught() {
         let fixture = shellint_fixture("ctl-export");
-        fixture.write("Sources/SlopDeskHost/HostEnvironment.swift", HOST_ENV_OK);
+        fixture.append("rust/slopdesk-muxsession/src/spawn_env.rs", CTL_EXPORT_OK);
         fixture.write(
             "rust/slopdesk-ctl/src/lib.rs",
             "let key = \"SLOPDESK_CONTROL_SOCKET\";\n",
@@ -874,8 +875,8 @@ pub const SHELL_INTEGRATION_KEYS: &[&str] = &[
         assert!(super::control_socket_export(&fixture.tree()).is_clean());
 
         fixture.write(
-            "Sources/SlopDeskHost/HostEnvironment.swift",
-            &HOST_ENV_OK.replace("\"SLOPDESK_CONTROL_SOCKET\"", "\"SLOPDESK_CTL\""),
+            "rust/slopdesk-muxsession/src/spawn_env.rs",
+            &CTL_EXPORT_OK.replace("\"SLOPDESK_CONTROL_SOCKET\"", "\"SLOPDESK_CTL\""),
         );
         let report = super::control_socket_export(&fixture.tree());
         assert!(

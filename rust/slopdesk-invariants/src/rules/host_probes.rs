@@ -5,7 +5,8 @@
 //! probe is a SUPPORTED call that costs the whole answer twice, so both calls agree, every result
 //! is correct, and the only trace is a git line that lands a beat late.
 
-use crate::claim::{Claim, View, check_all};
+use crate::claim::{Claim, RUST, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
@@ -17,31 +18,37 @@ use crate::tree::Tree;
 #[must_use]
 pub fn one_vocabulary_for_foreground_process(tree: &Tree) -> Report {
     let claims = [
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskHost/ForegroundProcessProbes.swift"],
-            pattern: r#"split\(separator: "/"\)|isVersionShaped|"versions""#,
+        // hostd asked the vocabulary through `slopdesk_pty_foreground_*` until `docs/60` F.9; it links
+        // `slopdesk-agent` directly now, so the doors and the face they crossed are both gone. The BAN
+        // is what survives, because nothing in the build graph stops a host crate from reducing a
+        // process name a second way — and one name read three ways must reduce the same each time.
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r#"is_version_shaped|"versions""#,
+            all: &[],
+            unless: &[],
             view: View::Code,
+            exempt: &[],
             message: "{files} reduces a process name again — slopdesk-agent::process owns the basename and \
                       the version walk",
-        },
-        Claim::Mentions {
-            path: "Sources/SlopDeskHost/ForegroundProcessProbes.swift",
-            names: &["slopdesk_pty_foreground_name", "slopdesk_pty_foreground_agent"],
-            message: "Sources/SlopDeskHost/ForegroundProcessProbes.swift stopped asking {entry} — it is a \
-                      face over the probe, not a second one",
         },
         Claim::NoneOf {
             paths: &["rust/slopdesk-ffi/include/slopdesk_ffi.h"],
             pattern: r"slopdesk_agent_job_new|slopdesk_agent_job_push_process|slopdesk_agent_resolve_fn",
             view: View::Code,
-            message: "{files} — the foreground job staging handle is back; slopdesk_pty_foreground_agent \
-                      asks it in one call",
+            message: "{files} — the foreground job staging handle is back; the vocabulary is one module",
         },
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskHost/AgentControlListener.swift"],
-            pattern: r#"sensitiveBasenames|"sshpass"|"doas""#,
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r#"sensitive_basenames|"sshpass"|"doas""#,
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "{files} lists the sensitive commands in Swift — the set is SENSITIVE_BASENAMES in Rust",
+            exempt: &[],
+            message: "{files} lists the sensitive commands itself — the set is SENSITIVE_BASENAMES in \
+                      slopdesk-agent, and an eleven-name list written twice diverges in one direction only",
         },
         Claim::Names {
             path: "Sources/SlopDeskAgentDetect/ForegroundProcessName.swift",
@@ -101,38 +108,38 @@ pub fn hostd_finds_program_by_one(tree: &Tree) -> Report {
             message: "{files} asks an expensive door for a length with a null output — that runs its whole \
                       rule and throws the answer away. Guess, then retry (docs/55 §4)",
         },
-        Claim::Mentions {
-            path: "Sources/SlopDeskHost/HostGitStatus.swift",
-            names: &["firstGuess"],
-            message: "Sources/SlopDeskHost/HostGitStatus.swift no longer spells '{entry}' — the \
-                      guess-then-retry that halved this path is gone (docs/55 §4, §6)",
-        },
-        Claim::Mentions {
-            path: "Sources/SlopDeskHost/ANSIStripper.swift",
-            names: &["needed > room.count"],
-            message: "Sources/SlopDeskHost/ANSIStripper.swift no longer spells '{entry}' — the \
-                      guess-then-retry that halved this path is gone (docs/55 §4, §6)",
-        },
+        // Two of the four expensive doors — `git_status` and `plaintext_strip` — had hostd as their
+        // ONLY caller, so `docs/60` F.9 took the doors, the faces and the guess-then-retry with them:
+        // hostd calls `slopdesk_git` and `slopdesk_sanitize` as crates now and there is no length to
+        // probe for. What is left of this half is the Annex-B pair, whose caller is the device panel
+        // and is still Swift.
         Claim::Mentions {
             path: "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift",
             names: &["avccSlack", "spanFloor"],
             message: "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift no longer spells \
                       '{entry}' — the guess-then-retry that halved this path is gone (docs/55 §4, §6)",
         },
-        Claim::Names {
-            path: "Sources/SlopDeskHost/HostServiceProcess.swift",
-            needle: "slopdesk_host_service_binary(",
-            message: "Sources/SlopDeskHost/HostServiceProcess.swift no longer calls \
-                      slopdesk_host_service_binary — hostd's search order is \
-                      rust/slopdesk-androidd/src/toolchain.rs",
+        Claim::MentionsUnder {
+            root: "rust/slopdesk-hostd",
+            names: &["locate_tool"],
+            message: "no file under rust/slopdesk-hostd asks {entry} any more — hostd's search order is \
+                      rust/slopdesk-androidd/src/toolchain.rs, once",
         },
-        Claim::NoneOf {
-            paths: &["Sources/SlopDeskHost/HostServiceProcess.swift"],
-            pattern: r"/opt/homebrew/bin|/usr/local/bin|\.local/bin|isExecutableFile",
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            // The trailing quote is what separates a bin DIRECTORY from a fully-qualified binary: a
+            // test that seeds a fake locator with `/usr/local/bin/slopdesk-inspectord` is naming one
+            // program, not re-deriving the order, and banning it would be a ban on the fixtures of
+            // the code this protects.
+            pattern: r#"(/opt/homebrew/bin|/usr/local/bin|\.local/bin)""#,
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "Sources/SlopDeskHost/HostServiceProcess.swift spells a bin directory or an \
-                      executability test again — the whole order is locate_tool, and a second copy of it \
-                      drifts silently (docs/46, vendored runtime deps)",
+            exempt: &[],
+            message: "{files} spells a bin directory again — the whole order is locate_tool, and a second \
+                      copy of it drifts silently: the pair had already stopped agreeing on what makes a \
+                      candidate executable (docs/46, vendored runtime deps)",
         },
     ];
     check_all(tree, &claims)
@@ -140,22 +147,22 @@ pub fn hostd_finds_program_by_one(tree: &Tree) -> Report {
 
 #[cfg(test)]
 mod tests {
+    //! Every seed here is Rust under [`HOSTD_CRATES`](crate::paths::HOSTD_CRATES), because that is
+    //! where the drift can be written now: a Swift pattern translated by hand would match none of
+    //! the tree and the rule would pass while guarding nothing.
+
     use crate::tests::Fixture;
 
+    /// A tree where the vocabulary lives in one module and hostd asks rather than re-derives.
     fn write_one_vocabulary_for_foreground_process(fixture: &Fixture) {
         fixture
-            .write(
-                "Sources/SlopDeskHost/ForegroundProcessProbes.swift",
-                "slopdesk_pty_foreground_name\nslopdesk_pty_foreground_agent\nkept so the ban has a \
-                 haystack\n",
-            )
             .write(
                 "rust/slopdesk-ffi/include/slopdesk_ffi.h",
                 "kept so the ban has a haystack\n",
             )
             .write(
-                "Sources/SlopDeskHost/AgentControlListener.swift",
-                "kept so the ban has a haystack\n",
+                "rust/slopdesk-hostsession/src/detect.rs",
+                "let name = process::canonical_name(raw);\n",
             )
             .write(
                 "Sources/SlopDeskAgentDetect/ForegroundProcessName.swift",
@@ -173,68 +180,73 @@ mod tests {
     }
 
     #[test]
-    fn one_vocabulary_for_foreground_process_holds_its_faces_to_their_doors() {
+    fn one_vocabulary_for_foreground_process_holds_hostd_to_the_one_module() {
         let fixture = Fixture::new("one-vocabulary-for-foreground-process");
         write_one_vocabulary_for_foreground_process(&fixture);
         assert!(super::one_vocabulary_for_foreground_process(&fixture.tree()).is_clean());
 
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write("Sources/SlopDeskHost/ForegroundProcessProbes.swift", "");
+        // The version walk, respelled in a host crate. One name read three ways must reduce the same.
+        fixture.append(
+            "rust/slopdesk-hostsession/src/detect.rs",
+            "if segment == \"versions\" { continue; }\n",
+        );
         assert!(!super::one_vocabulary_for_foreground_process(&fixture.tree()).is_clean());
 
-        // And the law it was banned from respelling, respelled.
+        // And the eleven-name set, which had no second copy anywhere until somebody wrote one.
         write_one_vocabulary_for_foreground_process(&fixture);
         fixture.append(
-            "Sources/SlopDeskHost/ForegroundProcessProbes.swift",
-            "split(separator: \"/\")\n",
+            "rust/slopdesk-hostsession/src/detect.rs",
+            "const SENSITIVE: &[&str] = &[\"sshpass\", \"doas\"];\n",
         );
+        assert!(!super::one_vocabulary_for_foreground_process(&fixture.tree()).is_clean());
+
+        // The module that owns it, gone.
+        write_one_vocabulary_for_foreground_process(&fixture);
+        fixture.write("rust/slopdesk-agent/src/process.rs", "");
         assert!(!super::one_vocabulary_for_foreground_process(&fixture.tree()).is_clean());
     }
 
+    /// A tree where the search order is asked for, and the Annex-B caller still guesses first.
     fn write_hostd_finds_program_by_one(fixture: &Fixture) {
         fixture
             .write("Sources/Generated.swift", "kept so the ban has a haystack\n")
-            .write(
-                "Sources/SlopDeskHost/HostGitStatus.swift",
-                "firstGuess\nkept so the ban has a haystack\n",
-            )
-            .write(
-                "Sources/SlopDeskHost/ANSIStripper.swift",
-                "needed > room.count\nkept so the ban has a haystack\n",
-            )
             .write(
                 "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift",
                 "avccSlack\nspanFloor\nkept so the ban has a haystack\n",
             )
             .write(
-                "Sources/SlopDeskHost/HostServiceProcess.swift",
-                "slopdesk_host_service_binary(\nkept so the ban has a haystack\n",
+                "rust/slopdesk-hostd/src/services.rs",
+                "slopdesk_androidd::toolchain::locate_tool(&name, &roots)\n",
             );
     }
 
     #[test]
-    fn hostd_finds_program_by_one_holds_its_faces_to_their_doors() {
+    fn hostd_finds_program_by_one_holds_the_order_on_one_side() {
         let fixture = Fixture::new("hostd-finds-program-by-one");
         write_hostd_finds_program_by_one(&fixture);
         assert!(super::hostd_finds_program_by_one(&fixture.tree()).is_clean());
 
-        // The face stopped asking — an implementation grew back where the call used to be.
-        fixture.write("Sources/SlopDeskHost/HostGitStatus.swift", "");
+        // hostd stopped asking — the order grew back where the call used to be.
+        fixture.write(
+            "rust/slopdesk-hostd/src/services.rs",
+            "let bin = search(&name);\n",
+        );
         assert!(!super::hostd_finds_program_by_one(&fixture.tree()).is_clean());
 
-        // And the law it was banned from respelling, respelled.
+        // And a bin directory respelled, which is that order forking in two.
         write_hostd_finds_program_by_one(&fixture);
         fixture.append(
-            "Sources/SlopDeskHost/HostServiceProcess.swift",
-            "/opt/homebrew/bin\n",
+            "rust/slopdesk-hostserver/src/ensure.rs",
+            "let candidate = Path::new(\"/opt/homebrew/bin\").join(name);\n",
         );
         assert!(!super::hostd_finds_program_by_one(&fixture.tree()).is_clean());
 
         // The half no other claim covers: a call that is CORRECT and costs its whole rule twice.
+        // Only the Annex-B pair can still be asked this way — hostd calls its crates directly.
         write_hostd_finds_program_by_one(&fixture);
         fixture.append(
-            "Sources/SlopDeskHost/HostGitStatus.swift",
-            "let needed = slopdesk_git_status(input.baseAddress, input.count, nil, 0)\n",
+            "Sources/SlopDeskDevicePanels/Android/AndroidStreamProtocol.swift",
+            "let needed = slopdesk_annexb_to_avcc(input.baseAddress, input.count, nil, 0)\n",
         );
         assert!(!super::hostd_finds_program_by_one(&fixture.tree()).is_clean());
     }

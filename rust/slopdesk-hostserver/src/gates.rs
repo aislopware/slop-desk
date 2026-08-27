@@ -1,6 +1,6 @@
 //! hostd's own `SLOPDESK_*` gates, resolved ONCE, plus the two `TERM` names it advertises.
 //!
-//! `Sources/SlopDeskHost/HostEnvironment.swift` is 350 lines of which almost everything is already
+//! `HostEnvironment.swift` is 350 lines of which almost everything is already
 //! Rust: the curated allowlist and the two login-shell answers are
 //! [`slopdesk_muxsession::spawn_env`]'s, the terminfo search order is `slopdesk-probe`'s, and the
 //! five keys hostd EXPORTS into a spawned pane are named in `spawn_env` too

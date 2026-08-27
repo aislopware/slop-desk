@@ -51,10 +51,11 @@ const MACOS_STAMP: &str = ".build/check-macos-apps.sha256";
 const IOS_SPEC: &str = "Apps/ClientApp-iOS/project.yml";
 const IOS_PROJECT: &str = "Apps/ClientApp-iOS/ClientApp-iOS.xcodeproj";
 
-/// The two macOS shells. Not each other's subset: the client links `SlopDeskMacUI` and the video
-/// carve's `AppKit` half, the host links the daemon graph, and neither closure contains the
-/// other's.
-const MACOS_APPS: &[&str] = &["ClientApp-macOS", "HostApp-macOS"];
+/// The macOS shells. One, since `docs/60` F.9 deleted the menu-bar host app: the host is driven
+/// from the CLI and has no shell to build. A slice rather than a scalar because the gate's shape —
+/// generate each spec, build each project — is the same for one as for two, and a second client
+/// shell is a plausible thing to add.
+const MACOS_APPS: &[&str] = &["ClientApp-macOS"];
 
 /// Refuse early and by name rather than ten minutes into a build.
 fn need_xcodegen() -> Result<(), String> {

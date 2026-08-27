@@ -1,36 +1,50 @@
-//! The four sidecars hostd FORKS, and the two tables it links instead.
+//! The one sidecar hostd still TALKS to as a program, and the four tables it links instead.
 //!
 //! Ported from the deleted `check-supervisor.sh` §§13–16c. `slopdesk-ctl`, `slopdesk-codeseed`,
-//! `slopdesk-agenthooks` and `slopdesk-probe` are contracts six through nine, and they share the
+//! `slopdesk-agenthooks` and `slopdesk-probe` were contracts six through nine, and they shared the
 //! failure that makes them worth a gate at all: NOTHING ERRORS. A renamed verb is a clean
-//! `unknown method` or a `usage()` and a non-zero exit, which every caller here reads as an
-//! ordinary "no", and both suites stay green while the feature is simply gone.
+//! `unknown method` or a `usage()` and a non-zero exit, which every caller reads as an ordinary
+//! "no", and both suites stay green while the feature is simply gone.
 //!
-//! So the verb sets are compared as SETS, from the two switches themselves — never as a list
-//! maintained here, which would go stale in exactly the direction that hides the drift.
+//! `docs/60` F.9 retired THREE of the four as contracts. hostd was Swift, so the only way it could
+//! reach Rust that was already written was to fork a binary and parse its stdout; it is Rust now
+//! and CALLS `slopdesk_codeseed`, `slopdesk_hook::install` and `slopdesk_probe` at the level each
+//! `main.rs` dispatches to. A renamed function is a build error, so the set comparison it replaced
+//! would be a rule about nothing. Each of the three binaries still SHIPS — a user types them, and
+//! the formula installs them — but nothing in this tree forks one, so what is left of each rule is
+//! the half that was never about the fork: that the capability has one implementation, and that the
+//! client did not grow a second.
 //!
-//! §§16b–16c are the two tables that stopped being forked at all: the git status is linked through
-//! `slopdesk_git_status`, and the pointer tables cross as a raw `int32_t`. Both were ports whose
-//! whole point is invisible to a test — the ANSWER is identical, only the cost and the number of
+//! `slopdesk-ctl` is the one that stays whole, because its far end is a program a USER types. Its
+//! verbs are still compared as SETS, from the two switches themselves — never as a list maintained
+//! here, which would go stale in exactly the direction that hides the drift.
+//!
+//! §§16b–16c are the tables that stopped being forked first: the git status is linked through
+//! `slopdesk-git`, and the pointer tables cross as a raw `int32_t`. Both were ports whose whole
+//! point is invisible to a test — the ANSWER is identical, only the cost and the number of
 //! declaration orders changed — so the ratchet is here or nowhere.
 
-use crate::claim::{Claim, Extract, SWIFT, View, check_all};
+use crate::claim::{Claim, Extract, RUST, SWIFT, View, check_all};
+use crate::paths::HOSTD_CRATES;
 use crate::report::Report;
 use crate::tree::Tree;
 
-/// hostd's agent-control listener, whose switch is the accepted verb set.
-const CTL_LISTENER: &str = "Sources/SlopDeskHost/AgentControlListener.swift";
+/// hostd's agent-control dispatch, whose match is the accepted verb set.
+const CTL_DISPATCH: &str = "rust/slopdesk-hostserver/src/control.rs";
+/// The connection loop, which intercepts the streaming verb BEFORE that match.
+const CTL_SERVE: &str = "rust/slopdesk-hostserver/src/ctlserve.rs";
 /// The CLI's subcommands, each of which sends one verb.
 const CTL_COMMANDS: &str = "rust/slopdesk-ctl/src/commands.rs";
 
-/// hostd's face over the profile seeder.
-const CODESEED_FACE: &str = "Sources/SlopDeskHost/CodeSeed.swift";
-/// The seeder's own switch.
+/// hostd's code-server seams, which call the seeder's crate and the installer's.
+const HOSTD_SERVICES: &str = "rust/slopdesk-hostd/src/services.rs";
+/// hostd's metadata reducer, which calls the probe's crate and git's.
+const HOSTD_METADATA: &str = "rust/slopdesk-hostserver/src/metadata.rs";
+
+/// The seeder's own switch, still reached by a user typing `slopdesk-codeseed`.
 const CODESEED_MAIN: &str = "rust/slopdesk-codeseed/src/main.rs";
 
-/// hostd's face over the hooks installer.
-const AGENTHOOKS_FACE: &str = "Sources/SlopDeskHost/AgentHooks.swift";
-/// The installer's own switch.
+/// Where the marker and the installed basename are one constant.
 const AGENTHOOKS_MAIN: &str = "rust/slopdesk-hook/src/bin/agenthooks.rs";
 /// Where the marker and the installed basename are one constant.
 const HOOK_INSTALL: &str = "rust/slopdesk-hook/src/install.rs";
@@ -41,14 +55,10 @@ const HOOK_INSTALL: &str = "rust/slopdesk-hook/src/install.rs";
 /// which is the entire failure this pins.
 const HOOK_PATH: (&str, &str) = (r"^pub fn hook_path\(", r"^\}$");
 
-/// hostd's face over the metadata probe.
-const PROBE_FACE: &str = "Sources/SlopDeskHost/HostProbe.swift";
-/// The probe's own switch.
+/// The probe's own switch, still reached by a user typing `slopdesk-probe`.
 const PROBE_MAIN: &str = "rust/slopdesk-probe/src/main.rs";
 
-/// The Swift face over the linked git status.
-const GIT_FACE: &str = "Sources/SlopDeskHost/HostGitStatus.swift";
-/// The engine behind it.
+/// The engine behind the git line.
 const GIT_STATUS: &str = "rust/slopdesk-git/src/status.rs";
 /// The one crate that reads porcelain off libgit2's bitflags.
 const GIT_PORCELAIN: &str = "rust/slopdesk-git/src/porcelain.rs";
@@ -62,23 +72,28 @@ const POINTER_DOOR: &str = "rust/slopdesk-ffi/src/pointer_shape.rs";
 
 /// The agent-control verb sets are one alphabet
 ///
-/// The SIXTH two-ended contract, and the only one whose far end is a program a USER types. hostd
-/// answers an unknown method with `{"ok":false,"error":"unknown method: X"}` — a CLEAN error, and a
-/// clean error is exactly what makes this drift silent in the way that matters: the agent that ran
-/// `slopdesk-ctl read` sees a failed command, not a broken build, and both suites stay green.
+/// The SIXTH two-ended contract, and the one `docs/60` F.9 left whole, because its far end is a
+/// program a USER types: two binaries, nothing linking them, no compiler comparing the strings.
+/// hostd answers an unknown method with `{"ok":false,"error":"unknown method: X"}` — a CLEAN error,
+/// and a clean error is exactly what makes this drift silent in the way that matters: the agent
+/// that ran `slopdesk-ctl read` sees a failed command, not a broken build, and both suites stay
+/// green.
+///
+/// `SameValue`'s two sides are named `swift`/`rust` for the common case; here they are both Rust
+/// and only the PATHS matter.
 ///
 /// `subscribe` is spelled apart from the rest on both sides — the host handles it BEFORE the
-/// request switch, because it hijacks the connection into a stream, and the CLI sends it from
-/// `Control::stream`, reached by both the `subscribe` and `events` subcommands. The shell added the
-/// string to both extracted sets by hand, which covered nothing: adding one member to both sides of
-/// an equality cannot fail. Here each side is asserted to still SPELL it, which is what the note in
-/// the shell was reaching for.
+/// request match, in the connection loop, because it hijacks the connection into a stream, and the
+/// CLI sends it from `Control::stream`, reached by both the `subscribe` and `events` subcommands.
+/// The shell added the string to both extracted sets by hand, which covered nothing: adding one
+/// member to both sides of an equality cannot fail. Here each side is asserted to still SPELL it,
+/// which is what the note in the shell was reaching for.
 ///
 /// The CLI side is read as a whole-file pattern rather than line-wise: rustfmt wraps a long call so
 /// the method literal lands on the NEXT line, and a plain line pattern for a bare quoted string
 /// would also swallow every string literal in the tests.
 ///
-/// BREAK-TEST: renamed `case "resize":` to `case "reshape":` in the listener ⇒ FAIL "ctl verbs".
+/// BREAK-TEST: renamed `"resize" =>` to `"reshape" =>` in the dispatch ⇒ FAIL "ctl verbs".
 /// Separately deleted the CLI's `subscribe` spelling ⇒ FAIL "no longer sends the streaming verb".
 /// Separately created `Sources/SlopDeskCtlCore` ⇒ FAIL "is back". All three restored from /tmp;
 /// PASS.
@@ -87,16 +102,16 @@ pub fn the_ctl_verb_sets_are_one_alphabet(tree: &Tree) -> Report {
     check_all(tree, &[
         Claim::SameSet {
             label: "ctl verbs",
-            swift: Extract::code(CTL_LISTENER, r#"^        case "([a-z-]+)":$"#),
+            swift: Extract::code(CTL_DISPATCH, r#"^        "([a-z-]+)" =>"#),
             rust: Extract::code(CTL_COMMANDS, r#"ctl\.call\(\s*"([a-z-]+)""#),
         },
         Claim::Matches {
-            path: CTL_LISTENER,
-            pattern: r#""subscribe""#,
+            path: CTL_SERVE,
+            pattern: r#"request\.method == "subscribe""#,
             view: View::Code,
-            message: "AgentControlListener no longer answers the streaming verb — `subscribe` is handled \
-                      BEFORE the request switch, so the verb-set comparison cannot see it and it is \
-                      asserted here or nowhere (docs/50)",
+            message: "rust/slopdesk-hostserver/src/ctlserve.rs no longer intercepts the streaming verb — \
+                      `subscribe` is handled BEFORE the request match, so the verb-set comparison cannot \
+                      see it and it is asserted here or nowhere (docs/50)",
         },
         Claim::Matches {
             path: CTL_COMMANDS,
@@ -132,32 +147,49 @@ pub fn the_ctl_verb_sets_are_one_alphabet(tree: &Tree) -> Report {
     ])
 }
 
-/// The profile seeder's subcommands are one alphabet
+/// The profile seeder is one implementation, and hostd calls it
 ///
-/// The SEVENTH contract, and the only one that is not a socket: hostd asks it by FORKING it, one
-/// subcommand per question, and reads one JSON object back. Which makes the drift quieter than any
-/// wire's — a renamed subcommand is `usage()` on stdout and a non-zero exit, `CodeSeed.ask`
-/// answering `nil`, and, for `launch-args`, the code panel reporting itself UNAVAILABLE. Nothing is
-/// logged, because an unavailable panel is exactly what a host with no seeder is supposed to
-/// report.
+/// The SEVENTH contract, and the only one that was never a socket: `CodeSeed.swift` asked it by
+/// FORKING it, one subcommand per question, and read one JSON object back. That made the drift
+/// quieter than any wire's — a renamed subcommand was `usage()` on stdout and a non-zero exit,
+/// `CodeSeed.ask` answering `nil`, and, for `launch-args`, the code panel reporting itself
+/// UNAVAILABLE, logging nothing, because an unavailable panel is exactly what a host with no seeder
+/// is supposed to report.
 ///
-/// `sync-font` is spelled across lines on the Swift side — its three flags follow it in the array —
-/// so the extraction reads `ask([` and the first quoted string after it, wherever the wrap put it.
+/// The fork is gone. `docs/60` F.9 made hostd Rust, so it calls `slopdesk_codeseed`'s functions —
+/// `seed_profile`, `extensions::missing_bundled_extensions_at`, `settings::sync_editor_font`,
+/// `launch::arguments` — and a renamed one is a build error. The set comparison it replaced would
+/// be a rule about nothing. What is pinned instead is that hostd still ASKS the crate: a
+/// `Command::new("slopdesk-codeseed")` typed back into a host crate would compile, pass every test,
+/// and reinstate every failure above.
+///
+/// The binary still ships and a user still types it, so its switch is pinned as EXISTING — but its
+/// spelling is its own concern now that nothing in this tree types the subcommands.
 ///
 /// The resources are the seeder's INPUT, and a second copy under the Swift target is a second
 /// answer to "what does a pristine settings file say".
 ///
-/// BREAK-TEST: renamed `"missing-extensions"` in the seeder's switch ⇒ FAIL "codeseed
-/// subcommands". Separately restored `static let seededUserSettings` under Sources/ ⇒ FAIL "a Swift
-/// profile seeder is back". Separately added `.copy("Resources")` to Package.swift ⇒ FAIL "bundles
-/// a Resources directory again". All three restored from /tmp; PASS.
+/// BREAK-TEST: dropped `slopdesk_codeseed::` from hostd's seams ⇒ FAIL "no longer asks
+/// rust/slopdesk-codeseed". Separately restored `static let seededUserSettings` under Sources/ ⇒
+/// FAIL "a Swift profile seeder is back". Separately added `.copy("Resources")` to Package.swift ⇒
+/// FAIL "bundles a Resources directory again". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_codeseed_subcommands_are_one_alphabet(tree: &Tree) -> Report {
     check_all(tree, &[
-        Claim::SameSet {
-            label: "codeseed subcommands",
-            swift: Extract::code(CODESEED_FACE, r#"ask\(\[\s*"([a-z-]+)""#),
-            rust: Extract::code(CODESEED_MAIN, r#"^        "([a-z-]+)" =>"#),
+        Claim::Matches {
+            path: HOSTD_SERVICES,
+            pattern: r"slopdesk_codeseed::",
+            view: View::Code,
+            message: "rust/slopdesk-hostd/src/services.rs no longer asks rust/slopdesk-codeseed for the \
+                      workbench profile — a fork back would compile, pass, and turn every renamed \
+                      subcommand into an UNAVAILABLE panel that logs nothing (docs/DECISIONS.md, stage 22)",
+        },
+        Claim::Matches {
+            path: CODESEED_MAIN,
+            pattern: r#"^        "[a-z-]+" =>"#,
+            view: View::Code,
+            message: "rust/slopdesk-codeseed's binary lost its subcommand switch — it still ships, and a \
+                      user still types it (docs/DECISIONS.md, stage 22)",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -190,12 +222,17 @@ pub fn the_codeseed_subcommands_are_one_alphabet(tree: &Tree) -> Report {
     ])
 }
 
-/// The hooks installer's subcommands are one alphabet, and the relay stays empty-handed
+/// The hooks installer is one implementation, and the relay stays empty-handed
 ///
 /// The EIGHTH contract, forked like the seeder rather than dialled, and drifting in two ways at
-/// once. A renamed subcommand is `usage()` and a non-zero exit, which `AgentHooks.ask` reads as
-/// "not installed" — the Settings row then shows a green offer to install something that fails.
-/// Nothing logs.
+/// once. A renamed subcommand was `usage()` and a non-zero exit, which `AgentHooks.ask` read as
+/// "not installed" — the Settings row then showed a green offer to install something that fails.
+/// Nothing logged.
+///
+/// The fork went the same way the seeder's did in `docs/60` F.9: hostd calls
+/// `slopdesk_hook::install`'s `install`, `uninstall`, `is_installed`, `hook_path` and `RELAY_NAME`
+/// directly, so a rename is a build error. The two halves below are the ones a compiler still
+/// cannot see, and neither was ever about the fork.
 ///
 /// The MARKER is the installed basename. `hook_path` joins `HOOK_MARKER` rather than spelling
 /// `slopdesk-agent` a second time, so the two cannot drift; what is pinned is that the CONSTRUCTION
@@ -208,17 +245,28 @@ pub fn the_codeseed_subcommands_are_one_alphabet(tree: &Tree) -> Report {
 /// it would just make every tool call slower, which is the one regression this tree has no other
 /// way to notice.
 ///
-/// BREAK-TEST: renamed `"uninstall"` in the installer's switch ⇒ FAIL "agenthooks subcommands".
-/// Separately rewrote `hook_path` to join the literal ⇒ FAIL "no longer builds the installed name
-/// from `HOOK_MARKER`". Separately added `use serde_json;` to the relay's `main.rs` ⇒ FAIL "reaches
-/// a dependency". All three restored from /tmp; PASS.
+/// BREAK-TEST: dropped `slopdesk_hook::install::` from hostd's seams ⇒ FAIL "no longer asks
+/// rust/slopdesk-hook". Separately rewrote `hook_path` to join the literal ⇒ FAIL "no longer builds
+/// the installed name from `HOOK_MARKER`". Separately added `use serde_json;` to the relay's
+/// `main.rs` ⇒ FAIL "reaches a dependency". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
     check_all(tree, &[
-        Claim::SameSet {
-            label: "agenthooks subcommands",
-            swift: Extract::code(AGENTHOOKS_FACE, r#"(?:ask|answer)\(\["([a-z]+)"\]\)"#),
-            rust: Extract::code(AGENTHOOKS_MAIN, r#"^        "([a-z]+)" =>"#),
+        Claim::Matches {
+            path: HOSTD_SERVICES,
+            pattern: r"slopdesk_hook::install::",
+            view: View::Code,
+            message: "rust/slopdesk-hostd/src/services.rs no longer asks rust/slopdesk-hook to install the \
+                      relay — a fork back would compile, and a renamed subcommand would read as 'not \
+                      installed', showing a green offer to install something that fails (docs/DECISIONS.md, \
+                      stage 23)",
+        },
+        Claim::Matches {
+            path: AGENTHOOKS_MAIN,
+            pattern: r#"^        "[a-z]+" =>"#,
+            view: View::Code,
+            message: "rust/slopdesk-agenthooks lost its subcommand switch — it still ships, and a user \
+                      still types it (docs/DECISIONS.md, stage 23)",
         },
         Claim::Within {
             path: HOOK_INSTALL,
@@ -274,40 +322,53 @@ pub fn the_hooks_installer_is_one_alphabet(tree: &Tree) -> Report {
     ])
 }
 
-/// The probe's subcommands are one alphabet, and emptiness is an answer
+/// The probe is one implementation, called at the level its own switch dispatches to
 ///
 /// The NINTH contract. Same fork-per-question shape as the seeder and the installer, with one
-/// wrinkle neither has: two subcommands answer in RAW BYTES, so their "nothing there" cannot be an
-/// empty answer and has to be the exit code.
+/// wrinkle neither had: two subcommands answered in RAW BYTES, so their "nothing there" could not
+/// be an empty answer and had to be the exit code. `askBytes` had to branch on the STATUS and never
+/// on the byte count, because the tidy-up that writes `data.isEmpty ? nil : data` turns every
+/// unchanged file into a `.notFound` without failing a build, a test or a lint.
 ///
-/// An unchanged file has an empty diff and exits 0; a file that is not there exits non-zero.
-/// `askBytes` must therefore branch on the STATUS and never on the byte count — the tidy-up that
-/// writes `data.isEmpty ? nil : data` turns every unchanged file into a `.notFound`, and does it
-/// without failing a build, a test or a lint.
+/// `docs/60` F.9 deleted that whole hazard rather than moving it. hostd's metadata reducer calls
+/// `git::diff`, `files::list_directory`, `files::list_sessions` and `files::read_session` — the
+/// SAME level `main.rs` dispatches to, which is what makes the substitution honest: every rule
+/// inside those functions travels with the call, and `read_session`'s second confinement of the id
+/// against the host's session roots would be silently dropped by reaching one level below them.
+/// There is no exit code left to misread, and an empty `Vec` is an empty `Vec`.
 ///
-/// `lsof` is the one subprocess left on the Swift side; a `git` or an `infocmp` next to it is a
+/// So the pinned half is the LEVEL. A `slopdesk_probe::files::read_session_at` or a hand-rolled
+/// walk beside it would compile and answer correctly for every path that is inside the roots.
+///
+/// `lsof` is the one subprocess left on the client side; a `git` or an `infocmp` next to it is a
 /// ported path coming back — for git, the four-spawns-per-request one.
 ///
-/// BREAK-TEST: renamed `"list-dir"` in the probe's switch ⇒ FAIL "probe subcommands". Separately
-/// wrote `data.isEmpty ? nil : data` into `HostProbe` ⇒ FAIL "folds an empty answer into a missing
-/// one". Separately restored `static let claudeProjectSlug` under Sources/ ⇒ FAIL "a Swift
+/// BREAK-TEST: dropped `slopdesk_probe::files::read_session` from the reducer ⇒ FAIL "no longer
+/// asks {entry}". Separately restored `static let claudeProjectSlug` under Sources/ ⇒ FAIL "a Swift
 /// git/session/terminfo parser is back". Separately wrote `"/usr/bin/git"` into a Swift file ⇒ FAIL
-/// "Swift spawns git or infocmp again". All four restored from /tmp; PASS.
+/// "Swift spawns git or infocmp again". All three restored from /tmp; PASS.
 #[must_use]
 pub fn the_probe_subcommands_are_one_alphabet(tree: &Tree) -> Report {
     check_all(tree, &[
-        Claim::SameSet {
-            label: "probe subcommands",
-            swift: Extract::code(PROBE_FACE, r#"(?:ask|askBytes)\(\["([a-z-]+)""#),
-            rust: Extract::code(PROBE_MAIN, r#"^        "([a-z-]+)" =>"#),
+        Claim::Mentions {
+            path: HOSTD_METADATA,
+            names: &[
+                "slopdesk_probe::git::diff",
+                "slopdesk_probe::files::list_directory",
+                "slopdesk_probe::files::list_sessions",
+                "slopdesk_probe::files::read_session",
+            ],
+            message: "rust/slopdesk-hostserver/src/metadata.rs no longer asks {entry} — the probe is called \
+                      at the level its own switch dispatches to, and one level below it drops the rules \
+                      inside, starting with read_session's second confinement of the id (docs/DECISIONS.md, \
+                      stages 24 and 25)",
         },
-        Claim::Lacks {
-            path: PROBE_FACE,
-            pattern: r"\bdata\b[A-Za-z0-9_.]*\.isEmpty|\.isEmpty *\? *nil",
+        Claim::Matches {
+            path: PROBE_MAIN,
+            pattern: r#"^        "[a-z-]+" =>"#,
             view: View::Code,
-            message: "HostProbe folds an empty answer into a missing one — emptiness is the probe's exit \
-                      code's job, and branching on the byte count turns every unchanged file into a \
-                      .notFound without failing a build, a test or a lint (docs/DECISIONS.md, stage 24)",
+            message: "rust/slopdesk-probe's binary lost its subcommand switch — it still ships, and a user \
+                      still types it (docs/DECISIONS.md, stage 24)",
         },
         Claim::NoneUnder {
             roots: &["Sources"],
@@ -338,17 +399,17 @@ pub fn the_probe_subcommands_are_one_alphabet(tree: &Tree) -> Report {
 /// The git status is linked, not forked, and it is asked in exactly one place
 ///
 /// `gitStatus` left the probe entirely: `rust/slopdesk-git` opens the repository once and answers
-/// from libgit2, linked into hostd through `slopdesk_git_status`. What that removed was FIVE
-/// process spawns per debounced `FSEvents` tick per watched repo — four `git` runs inside one fork
-/// of the probe — so a `git status` reappearing anywhere on this path is not a style question, it
-/// is the cost coming back.
+/// from libgit2, called by hostd as a crate. What that removed was FIVE process spawns per
+/// debounced `FSEvents` tick per watched repo — four `git` runs inside one fork of the probe — so a
+/// `git status` reappearing anywhere on this path is not a style question, it is the cost coming
+/// back.
 ///
-/// Three things are pinned, because the port has three ways to be undone quietly. The face could be
-/// rewritten around a `Process` and every test would still pass, the answer being identical and
-/// only the spawns differing. A face that grew a fallback parser would be the two-implementations
-/// shape CLAUDE.md forbids, and would only show up under an unusual repo. And the verb-set rule
-/// above compares hostd's asks with the probe's arms, so a revived `git-status` arm passes it the
-/// moment somebody adds the Swift side back — this names the arm itself.
+/// Three things are pinned, because the port has three ways to be undone quietly. A host crate
+/// could be rewritten around a `Command` and every test would still pass, the answer being
+/// identical and only the spawns differing. A fallback parser beside it would be the
+/// two-implementations shape CLAUDE.md forbids, and would only show up under an unusual repo. And
+/// nothing links hostd to `slopdesk-probe`'s binary, so a revived `git-status` arm there is
+/// invisible to the compiler — this names the arm itself.
 ///
 /// The porcelain PAIR is spelled once, in the crate that reads it off libgit2's bitflags. The shell
 /// banned two names that no longer exist anywhere: both functions were renamed when they moved into
@@ -357,21 +418,32 @@ pub fn the_probe_subcommands_are_one_alphabet(tree: &Tree) -> Report {
 /// outside the crate. The signature rather than the bare name, because `fn pack(` is too common a
 /// spelling to ban across every crate in the tree.
 ///
-/// BREAK-TEST: rewrote `HostGitStatus` around `Process` ⇒ FAIL "no longer calls
-/// `slopdesk_git_status`".
-/// Separately added a `"git-status"` arm to the probe ⇒ FAIL "answers git-status again". Separately
-/// copied `nibble(character: char) -> u8` into another crate ⇒ FAIL "the porcelain nibble table is
-/// back outside". All three restored from /tmp; PASS.
+/// BREAK-TEST: dropped `slopdesk_git::status::of_path` from the repo watcher ⇒ FAIL "no longer
+/// asks {entry}". Separately wrote `Command::new("git")` into a host crate ⇒ FAIL "spawns git
+/// again". Separately added a `"git-status"` arm to the probe ⇒ FAIL "answers git-status again".
+/// Separately copied `nibble(character: char) -> u8` into another crate ⇒ FAIL "the porcelain
+/// nibble table is back outside". All four restored from /tmp; PASS.
 #[must_use]
 pub fn the_git_status_is_linked_and_asked_once(tree: &Tree) -> Report {
     check_all(tree, &[
-        Claim::Matches {
-            path: GIT_FACE,
-            pattern: r"slopdesk_git_status",
+        Claim::MentionsUnder {
+            root: "rust/slopdesk-hostserver",
+            names: &["slopdesk_git::status::of_path"],
+            message: "no file under rust/slopdesk-hostserver asks {entry} any more — the git line is back \
+                      on a subprocess, which is five spawns per debounced FSEvents tick per watched repo \
+                      and identical output (docs/55)",
+        },
+        Claim::NoneUnder {
+            roots: HOSTD_CRATES,
+            extensions: RUST,
+            pattern: r#"Command::new\("[a-z/]*git"\)|"/usr/bin/git""#,
+            all: &[],
+            unless: &[],
             view: View::Code,
-            message: "HostGitStatus no longer calls slopdesk_git_status — the git line is back on a \
-                      subprocess, which is five spawns per debounced FSEvents tick per watched repo and \
-                      identical output (docs/55)",
+            exempt: &[],
+            message: "{files} spawns git again — rust/slopdesk-git opens the repository ONCE and answers \
+                      from libgit2, and the identical answer is exactly what makes the cost invisible to \
+                      every test (docs/55)",
         },
         Claim::Matches {
             path: GIT_STATUS,
@@ -499,18 +571,21 @@ mod tests {
     /// A tree where every rule in this module passes.
     fn clis(fixture: &Fixture) {
         for (path, body) in [
-            (super::CTL_LISTENER, CTL_LISTENER_BODY),
+            (super::CTL_DISPATCH, CTL_DISPATCH_BODY),
+            (super::CTL_SERVE, CTL_SERVE_BODY),
             (super::CTL_COMMANDS, CTL_COMMANDS_BODY),
-            (super::CODESEED_FACE, CODESEED_FACE_BODY),
+            (super::HOSTD_SERVICES, HOSTD_SERVICES_BODY),
+            (super::HOSTD_METADATA, HOSTD_METADATA_BODY),
             (super::CODESEED_MAIN, CODESEED_MAIN_BODY),
-            (super::AGENTHOOKS_FACE, AGENTHOOKS_FACE_BODY),
             (super::AGENTHOOKS_MAIN, AGENTHOOKS_MAIN_BODY),
             (super::HOOK_INSTALL, HOOK_INSTALL_BODY),
             ("rust/slopdesk-hook/src/main.rs", "fn main() {}\n"),
             ("rust/slopdesk-hook/src/lib.rs", "pub fn relay() {}\n"),
-            (super::PROBE_FACE, PROBE_FACE_BODY),
             (super::PROBE_MAIN, PROBE_MAIN_BODY),
-            (super::GIT_FACE, "let n = slopdesk_git_status(p, l, o, c)\n"),
+            (
+                "rust/slopdesk-hostserver/src/repowatch.rs",
+                "let payload = slopdesk_git::status::of_path(repo);\n",
+            ),
             (super::GIT_STATUS, "pub fn of_path(path: &str) -> Payload {}\n"),
             (super::GIT_PORCELAIN, PORCELAIN_BODY),
             (super::POINTER_SHAPE, POINTER_SHAPE_BODY),
@@ -528,22 +603,30 @@ mod tests {
         }
     }
 
-    const CTL_LISTENER_BODY: &str = "func handle(_ method: String) {\n    if method == \"subscribe\" { \
-                                     return stream() }\n    switch method {\n        case \"read\":\n        \
-                                     case \"write\":\n        case \"resize\":\n    }\n}\n";
+    const CTL_DISPATCH_BODY: &str = "fn dispatch(method: &str) -> Reply {\n    match method {\n        \
+                                     \"read\" => read_pane(),\n        \"write\" => write_pane(),\n        \
+                                     \"resize\" => resize_pane(),\n        _ => unknown(),\n    }\n}\n";
+    const CTL_SERVE_BODY: &str =
+        "fn serve(request: &Request) {\n    if request.method == \"subscribe\" {\n        return \
+         stream();\n    }\n    dispatch(&request.method);\n}\n";
+
+    /// hostd's side of the three retired forks: it CALLS each crate.
+    const HOSTD_SERVICES_BODY: &str = "fn seams() {\n    let dir = \
+                                       slopdesk_codeseed::paths::data_dir_in(&environment);\n    let home = \
+                                       slopdesk_hook::install::home_in(&environment);\n}\n";
+    const HOSTD_METADATA_BODY: &str = "fn reduce() {\n    slopdesk_probe::git::diff(cwd, file);\n    \
+                                       slopdesk_probe::files::list_directory(absolute);\n    \
+                                       slopdesk_probe::files::list_sessions(&self.home, project);\n    \
+                                       slopdesk_probe::files::read_session(&self.home, id);\n}\n";
     const CTL_COMMANDS_BODY: &str =
         "fn read(ctl: &Ctl) {\n    let obj = ctl.call(\"read\", p())?;\n}\nfn write(ctl: &Ctl) {\n    let \
          obj = ctl.call(\n        \"write\",\n        p(),\n    )?;\n}\nfn resize(ctl: &Ctl) {\n    let obj \
          = ctl.call(\"resize\", p())?;\n}\nfn stream(ctl: &Ctl) {\n    ctl.stream(\"subscribe\")\n}\n";
 
-    const CODESEED_FACE_BODY: &str = "func seed() {\n    ask([\"seed\"])\n    ask([\"paths\"])\n    \
-                                      ask([\n        \"sync-font\",\n        \"--size\",\n    ])\n}\n";
     const CODESEED_MAIN_BODY: &str = "fn main() {\n    match verb {\n        \"seed\" => a(),\n        \
                                       \"paths\" => b(),\n        \"sync-font\" => c(),\n        _ => \
                                       usage(),\n    }\n}\n";
 
-    const AGENTHOOKS_FACE_BODY: &str =
-        "func status() {\n    ask([\"status\"])\n    answer([\"install\"])\n    answer([\"uninstall\"])\n}\n";
     const AGENTHOOKS_MAIN_BODY: &str = "fn main() {\n    match verb {\n        \"status\" => a(),\n        \
                                         \"install\" => b(),\n        \"uninstall\" => c(),\n        _ => \
                                         usage(),\n    }\n}\n";
@@ -551,8 +634,6 @@ mod tests {
                                      hook_path(home: &Path) -> PathBuf {\n    \
                                      config_base(home).join(\"hooks\").join(HOOK_MARKER)\n}\n";
 
-    const PROBE_FACE_BODY: &str =
-        "func probe() {\n    ask([\"list-dir\", path])\n    askBytes([\"git-diff\", path])\n}\n";
     const PROBE_MAIN_BODY: &str = "fn main() {\n    match verb {\n        \"list-dir\" => a(),\n        \
                                    \"git-diff\" => b(),\n        _ => usage(),\n    }\n}\n";
 
@@ -570,8 +651,8 @@ mod tests {
         assert!(super::the_ctl_verb_sets_are_one_alphabet(&fixture.tree()).is_clean());
 
         fixture.write(
-            super::CTL_LISTENER,
-            &CTL_LISTENER_BODY.replace("case \"resize\":", "case \"reshape\":"),
+            super::CTL_DISPATCH,
+            &CTL_DISPATCH_BODY.replace("\"resize\" =>", "\"reshape\" =>"),
         );
         let report = super::the_ctl_verb_sets_are_one_alphabet(&fixture.tree());
         assert!(
@@ -599,23 +680,25 @@ mod tests {
         );
     }
 
-    /// The wrapped `ask([` is the shape a line-wise extraction drops.
+    /// A fork back would compile and pass, and turn every renamed subcommand into a silent
+    /// UNAVAILABLE panel — which is the failure linking the crate removed.
     #[test]
-    fn a_wrapped_subcommand_is_still_read() {
-        let fixture = Fixture::new("codeseed-wrap");
+    fn a_host_that_stopped_asking_the_seeder_crate_is_red() {
+        let fixture = Fixture::new("codeseed-linked");
         clis(&fixture);
         assert!(super::the_codeseed_subcommands_are_one_alphabet(&fixture.tree()).is_clean());
 
         fixture.write(
-            super::CODESEED_MAIN,
-            &CODESEED_MAIN_BODY.replace("\"sync-font\" => c(),", "\"font-sync\" => c(),"),
+            super::HOSTD_SERVICES,
+            "fn seams() {\n    Command::new(\"slopdesk-codeseed\").arg(\"paths\").output();\n    let home = \
+             slopdesk_hook::install::home_in(&environment);\n}\n",
         );
         let report = super::the_codeseed_subcommands_are_one_alphabet(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("codeseed subcommands")),
+                .any(|v| v.contains("no longer asks rust/slopdesk-codeseed")),
             "{report:?}"
         );
     }
@@ -657,24 +740,27 @@ mod tests {
         );
     }
 
-    /// Emptiness is the exit code's job; folding it in turns every unchanged file into `.notFound`.
+    /// One level below `read_session` answers correctly for every path INSIDE the roots, and
+    /// silently drops the second confinement for every path outside them.
     #[test]
-    fn a_face_that_folds_empty_into_missing_is_red() {
-        let fixture = Fixture::new("probe-empty");
+    fn a_reducer_that_reaches_below_the_probes_own_level_is_red() {
+        let fixture = Fixture::new("probe-level");
         clis(&fixture);
         assert!(super::the_probe_subcommands_are_one_alphabet(&fixture.tree()).is_clean());
 
         fixture.write(
-            super::PROBE_FACE,
-            "func probe() {\n    ask([\"list-dir\", path])\n    let data = askBytes([\"git-diff\", \
-             path])\n    return data.isEmpty ? nil : data\n}\n",
+            super::HOSTD_METADATA,
+            &HOSTD_METADATA_BODY.replace(
+                "slopdesk_probe::files::read_session(&self.home, id);",
+                "read_jsonl(&self.home.join(id));",
+            ),
         );
         let report = super::the_probe_subcommands_are_one_alphabet(&fixture.tree());
         assert!(
             report
                 .violations()
                 .iter()
-                .any(|v| v.contains("folds an empty answer")),
+                .any(|v| v.contains("slopdesk_probe::files::read_session")),
             "{report:?}"
         );
     }
@@ -699,6 +785,26 @@ mod tests {
                 .violations()
                 .iter()
                 .any(|v| v.contains("answers git-status again")),
+            "{report:?}"
+        );
+    }
+
+    /// The answer is IDENTICAL and only the spawns differ, which is what makes this invisible to
+    /// every test in the tree.
+    #[test]
+    fn a_host_crate_that_spawns_git_is_red() {
+        let fixture = Fixture::new("git-spawn");
+        clis(&fixture);
+        assert!(super::the_git_status_is_linked_and_asked_once(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-hostserver/src/repowatch.rs",
+            "let payload = slopdesk_git::status::of_path(repo);\nlet out = \
+             Command::new(\"git\").arg(\"status\").output();\n",
+        );
+        let report = super::the_git_status_is_linked_and_asked_once(&fixture.tree());
+        assert!(
+            report.violations().iter().any(|v| v.contains("spawns git again")),
             "{report:?}"
         );
     }

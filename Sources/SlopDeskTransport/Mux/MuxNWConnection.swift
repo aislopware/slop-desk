@@ -36,7 +36,7 @@ public actor MuxNWConnection {
     public typealias Role = MuxEnd
 
     /// Stable per-connection identity (the wire `connectionID` that paired the CONTROL+DATA
-    /// sockets — see ``HostTransport/associateMux``). The host namespaces its per-channel sessions
+    /// sockets — see `HostTransport.associateMux` in `rust/slopdesk-hostnet`). The host namespaces its per-channel sessions
     /// by `(connectionID, channelID)` so two DISTINCT client connections — each allocating
     /// `channelID` 1 for their first pane — never collide in a channelID-only map (which let one
     /// connection's close-hook resolve a DIFFERENT connection's session, overwriting/orphaning it

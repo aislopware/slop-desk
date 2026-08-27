@@ -295,7 +295,7 @@ its own rule rather than a table cell):
 
 `MuxChannelOpen.channelClass: UInt8` is already encoded, decoded, and golden-pinned at values 0 and
 255 (`Sources/slopdesk-corevectors/main.swift:1281,1291`) — and read **nowhere** in
-`Sources/SlopDeskHost`. The seam is entirely free.
+`rust/slopdesk-hostserver`. The seam is entirely free.
 
 ```
 0 = .pane          today's PTY channel                 (unchanged)
@@ -1340,10 +1340,9 @@ are needed, and both deploy together (already the convention).
 
 | File | Change |
 |---|---|
-| `Sources/SlopDeskHost/MuxChannelSession.swift` | `reestablishActivityOnReattach()` (`:1120`) appends `.title(_currentTitle)` when non-empty, **after** the `commandStatusForReattach()` append. Comment says the ordering is load-bearing **and dies in Phase 4**. |
-| `Sources/SlopDeskHost/MuxChannelSession.swift` | Delete the now-false comment at `:1300-1304`. |
-| `Sources/SlopDeskHost/DetachedSessionStore.swift` | New production `allSessions() -> [MuxChannelSession]`. |
-| `Sources/SlopDeskHost/HostServer.swift` | `listPanesForControl()` (`:1237`) includes `detachedStore.allSessions()`. |
+| `rust/slopdesk-hostsession/src/session.rs` | the reattach re-assert appends the current title when non-empty, **after** the command-status append. The ordering is load-bearing **and dies in Phase 4**. |
+| `rust/slopdesk-hostserver/src/detached.rs` | the detached store answers every session it holds. |
+| `rust/slopdesk-hostserver/src/panes.rs` | the control `list` includes the detached store's sessions. |
 | `.../WorkspaceStore+Completion.swift` | **Relax `programTitle(for:)`**: a title with a `paneTitleAt` stamp but **no** `paneCommandStartedAt` is TRUSTED — the hookless-shell case, expressed client-side until the host byte ships. Safe because the host only re-asserts a title it **currently holds**; `_currentTitle` is cleared to `""` on retirement (`:1027`). |
 | `docs/20-wire-protocol.md` | Add type **21** to the reattach re-assert enumeration at `:105-108`. |
 | `docs/DECISIONS.md` | Delete the `:733` aside; write the Phase-1 entry. |
@@ -1355,14 +1354,14 @@ default install; with the shell-controlled-title toggle off it is a no-op on tha
 
 **Tests (fail-first, all headless)**
 
-- `Tests/SlopDeskHostTests/MuxChannelSessionActivityReattachTests.swift`
-  - `testReattachReassertsCurrentTitle` — **prove it fails first**
-  - `testReattachDoesNotResurrectRetiredTitle` — pins the `_currentTitle = ""` clear at `:1027`
-  - `testTitleIsEnqueuedAfterCommandStatus` — pins the load-bearing ordering
+- `rust/slopdesk-hostsession/tests/session.rs`
+  - the reattach re-asserts the current title — **prove it fails first**
+  - a retired title is not resurrected — pins the clear-to-empty on retirement
+  - the title is enqueued AFTER the command status — pins the load-bearing ordering
 - The title-trust cases moved with the sniffer: `rust/slopdesk-superd/tests/golden_sniffer.rs`
   (they were the Swift cases testTitleWithNoCommandStartIsTrusted
   and testTitlePredatingCommandStartIsStillRejected in WorkspaceStoreProgramTitleTests)
-- `Tests/SlopDeskHostTests/HostServerListPanesTests.swift` — `testDetachedPaneIsListed`
+- `rust/slopdesk-hostserver/tests/panes.rs` — a detached pane is listed
 - `rust/slopdesk-superd/tests/golden_sniffer.rs` — closes the frozen-key blind spot (§5.7)
 
 This repairs the **live detach/reattach** case, which is the common one. `_currentTitle` lives in
@@ -1467,14 +1466,14 @@ one the moment Phase 5b projected the tree — the sinks carry per-pane FACTS, n
 **Wire / golden / docs:** all of §5.7 except the topology entries.
 
 **Tests**
-- `Tests/SlopDeskHostTests/WorkspaceChannelLoopbackTests.swift` over the existing `LoopbackByteChannel`
-  seam (the one `InspectorServer` tests use) — subscribe → snapshot → diff → epoch change → mis-based
+- `rust/slopdesk-hostserver/tests/workspace.rs` over the existing loopback channel seam (the one
+  `rust/slopdesk-hostserver/tests/service.rs` uses) — subscribe → snapshot → diff → epoch change → mis-based
   diff → resubscribe; a **new-epoch-converges-in-ONE-frame** case; a **shed-proof** case that floods
   `controlOut` past 1024 and asserts the snapshot still lands.
 - `Tests/SlopDeskWorkspaceCoreTests/Workspace/WorkspaceMirrorFastPathTests.swift` — fast-path-write a key, then
   deliver a diff with a **different** value for that key; assert the projection follows the diff and a
   later empty diff does **not** resurrect the fast-path value.
-- `Tests/SlopDeskHostTests/WorkspacePresenceTests.swift` — clock ordering (older clock ignored), TTL
+- `rust/slopdesk-hostserver/tests/workspace.rs` — clock ordering (older clock ignored), TTL
   expiry, null-broadcast on clean close, two connections from one device yielding two identities, a
   stale reconnecting clock not resurrecting a dead viewer.
 - **Gate includes `slopdesk-gate ios`** (`clientKind` branching).

@@ -5,7 +5,7 @@ import XCTest
 /// Lifecycle tests for ``MuxNWConnection`` host-side teardown: the host
 /// open/close/link-down handlers must NOT keep a connection alive forever, and a hard link drop must
 /// fire the connection-death hook so the host can reap the connection (free its 2 sockets + 2 receive
-/// loops). These prove the primitives the ``HostServer`` retention-map fix is built on, headlessly
+/// loops). These prove the primitives the `rust/slopdesk-hostserver`'s retention-map fix is built on, headlessly
 /// (in-memory links, no socket / HostServer).
 @MainActor
 final class MuxConnectionLifecycleTests: XCTestCase {

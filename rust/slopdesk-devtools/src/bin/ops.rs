@@ -20,8 +20,9 @@ usage: slopdesk-ops [--repo-root DIR] <verb> [options]
 
   restart-hostd [--no-build] [--stop] [--status]
                                         rebuild, stop and restart the recorded hostd
-  install <superd|screend> [--force] [--uninstall]
-                                        the LaunchAgent for a sidecar daemon
+  install <superd|screend|hostd> [--force] [--uninstall]
+                                        the LaunchAgent for a daemon — hostd included, which is
+                                        the only way to give a cold machine its first host
   enable-renderer <macos|ios>           wire the ghostty renderer into a client spec
   regenerate <macos|ios>                regenerate a spec's .xcodeproj (the restore half)
   monokai-sync [--latest]               re-sync the code panel's themes from the marketplace
@@ -127,10 +128,10 @@ fn restart_hostd(root: &Path, arguments: &[String]) -> ExitCode {
     finish(hostd::run(root, plan))
 }
 
-/// `install <superd|screend> [--force] [--uninstall]`.
+/// `install <superd|screend|hostd> [--force] [--uninstall]`.
 fn install(root: &Path, arguments: &[String]) -> ExitCode {
     let Some(name) = arguments.first() else {
-        eprintln!("slopdesk-ops: install needs a daemon name (superd or screend)");
+        eprintln!("slopdesk-ops: install needs a daemon name (superd, screend or hostd)");
         return ExitCode::from(2);
     };
     let agent = match launchd::by_name(name) {

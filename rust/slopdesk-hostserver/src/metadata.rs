@@ -1,7 +1,7 @@
 //! The metadata performer: one pure reducer, one query door, and a delegate for what is still
 //! Swift.
 //!
-//! `Sources/SlopDeskHost/MetadataResponseBuilder.swift` is 389 lines of which almost none is host
+//! `MetadataResponseBuilder.swift` is 389 lines of which almost none is host
 //! work. It decodes an argument, confines a path, calls a query and encodes the answer — and every
 //! one of those four was already Rust before this stage started: `PathConfinement` is
 //! [`slopdesk_probe::path_confine`], the encoders are [`slopdesk_wire::metadata::codec`], and the

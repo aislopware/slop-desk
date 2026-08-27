@@ -1023,19 +1023,21 @@ pub fn every_allowlist_entry_is_alive(tree: &Tree) -> Report {
 /// out.
 ///
 /// `slopdesk-probe`'s `MAX_OPAQUE_READ_BYTES` is how much of a `git diff` (or any opaque payload)
-/// it will read off the wire; `MetadataResponseBuilder.defaultMaxOpaquePayloadBytes` is the ceiling
-/// the host trims to. The trim only fires if the builder is HANDED more than its cap, so the probe
-/// must read at least that much for `cappedOpaque()` to see `count > max`, trim, and set its
-/// "was truncated" flag.
+/// it will read off the wire; `slopdesk-hostserver`'s `MAX_OPAQUE_PAYLOAD_BYTES` is the ceiling the
+/// reducer trims to. The trim only fires if the reducer is HANDED more than its cap, so the probe
+/// must read at least that much for the trim to see `len > max`, cut, and set its "was truncated"
+/// flag.
 ///
 /// Lower the Rust number alone and the builder never sees an over-long payload, so it never trims
 /// and never flags — the client renders a SILENTLY SHORT `git diff` as if it were the whole thing.
 /// Raise it alone and a pathological diff spikes per-request memory before any cap applies. Neither
 /// is a crash and neither is visible from one side.
 ///
-/// A door is the wrong instrument here, and that is worth saying: hostd FORKS the probe, so this
-/// crosses a PROCESS boundary rather than the FFI. `docs/DECISIONS.md` recorded the arrangement as
-/// Swift-only, before the probe was Rust — the record went stale rather than the design going
+/// Both sides are Rust since `docs/60` F.9, and `slopdesk-hostserver` LINKS `slopdesk-probe` — so
+/// the usual discriminator would retire this rule. It does not, because the contract is not "is
+/// this the same value" but "is this one at least that one", and no compiler compares two
+/// constants that never meet in an expression. `docs/DECISIONS.md` recorded the arrangement as
+/// Swift-only, before either side was Rust — the record went stale rather than the design going
 /// wrong.
 ///
 /// There used to be a THIRD spelling, `HostMetadataProbe.maxCaptureBytes`, deliberately outside
@@ -1052,9 +1054,9 @@ pub fn the_opaque_cap_carries_its_inequality(tree: &Tree) -> Report {
         r"MAX_OPAQUE_READ_BYTES: usize = ([0-9 *+]+);",
     );
     /// Where the host declares what it trims to.
-    const BUILDER: (&str, &str) = (
-        "Sources/SlopDeskHost/MetadataResponseBuilder.swift",
-        r"defaultMaxOpaquePayloadBytes = ([0-9 *+]+)",
+    const REDUCER: (&str, &str) = (
+        "rust/slopdesk-hostserver/src/metadata.rs",
+        r"MAX_OPAQUE_PAYLOAD_BYTES: usize = ([0-9 *+]+);",
     );
 
     let mut report = Report::new();
@@ -1067,8 +1069,8 @@ pub fn the_opaque_cap_carries_its_inequality(tree: &Tree) -> Report {
             .and_then(|written| numeric(&written).map(|value| (written, value)))
     };
     let probe = read(PROBE, &mut report);
-    let builder = read(BUILDER, &mut report);
-    let (Some((probe_written, probe_value)), Some((builder_written, builder_value))) = (probe, builder)
+    let reducer = read(REDUCER, &mut report);
+    let (Some((probe_written, probe_value)), Some((builder_written, builder_value))) = (probe, reducer)
     else {
         report.fail(
             "the opaque cap could not be read from both sides — this rule stopped checking anything \
@@ -1081,7 +1083,7 @@ pub fn the_opaque_cap_carries_its_inequality(tree: &Tree) -> Report {
     report.fail_if(
         probe_value < builder_value,
         format!(
-            "slopdesk-probe reads {probe_written} ({}) but MetadataResponseBuilder caps at \
+            "slopdesk-probe reads {probe_written} ({}) but slopdesk-hostserver's metadata reducer caps at \
              {builder_written} ({}) — the probe must read at least the cap, or the truncation flag never \
              fires and the client renders a silently short payload as the whole thing (docs/55 §8)",
             shown(probe_value),
@@ -1093,6 +1095,65 @@ pub fn the_opaque_cap_carries_its_inequality(tree: &Tree) -> Report {
 #[cfg(test)]
 mod tests {
     use super::{Declaration, declarations, discriminants, numeric, ordinal_shims, shown};
+    use crate::tests::Fixture;
+
+    /// The inequality is DIRECTIONAL, so the break-test has to seed the skew that is silent rather
+    /// than any skew: the reducer's cap raised above what the probe will ever hand it, which stops
+    /// the trim from ever seeing an over-long payload and so stops the truncation flag from firing.
+    #[test]
+    fn a_reducer_capping_above_what_the_probe_reads_is_red() {
+        let fixture = Fixture::new("opaque-cap-inequality");
+        fixture
+            .write(
+                "rust/slopdesk-probe/src/run.rs",
+                "pub const MAX_OPAQUE_READ_BYTES: usize = 15 * 1024 * 1024;\n",
+            )
+            .write(
+                "rust/slopdesk-hostserver/src/metadata.rs",
+                "pub const MAX_OPAQUE_PAYLOAD_BYTES: usize = 15 * 1024 * 1024;\n",
+            );
+        assert!(super::the_opaque_cap_carries_its_inequality(&fixture.tree()).is_clean());
+
+        // Reading MORE than the cap is the safe direction and stays green — the trim fires, which
+        // is the whole point of the slack.
+        fixture.write(
+            "rust/slopdesk-probe/src/run.rs",
+            "pub const MAX_OPAQUE_READ_BYTES: usize = 32 * 1024 * 1024;\n",
+        );
+        assert!(super::the_opaque_cap_carries_its_inequality(&fixture.tree()).is_clean());
+
+        fixture.write(
+            "rust/slopdesk-hostserver/src/metadata.rs",
+            "pub const MAX_OPAQUE_PAYLOAD_BYTES: usize = 64 * 1024 * 1024;\n",
+        );
+        let report = super::the_opaque_cap_carries_its_inequality(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("must read at least the cap")),
+            "{report:?}"
+        );
+    }
+
+    /// A side that stops being readable must FAIL, not pass vacuously — the failure mode of every
+    /// gate keyed to a path is that the path moves and the comparison quietly stops happening.
+    #[test]
+    fn a_cap_that_cannot_be_read_from_both_sides_is_red() {
+        let fixture = Fixture::new("opaque-cap-unreadable");
+        fixture.write(
+            "rust/slopdesk-probe/src/run.rs",
+            "pub const MAX_OPAQUE_READ_BYTES: usize = 15 * 1024 * 1024;\n",
+        );
+        let report = super::the_opaque_cap_carries_its_inequality(&fixture.tree());
+        assert!(
+            report
+                .violations()
+                .iter()
+                .any(|violation| violation.contains("stopped checking anything")),
+            "{report:?}"
+        );
+    }
 
     /// The one judgement in the evaluator: `<<` mixed with arithmetic means two different numbers
     /// in the two languages, so it means none here.

@@ -1,7 +1,7 @@
 //! The state one pane's threads share, and the locks that order it.
 //!
 //! Seven locks, and each one is the lock those fields already lived under in
-//! `Sources/SlopDeskHost/MuxChannelSession.swift`. That is deliberate and it is the whole design
+//! `MuxChannelSession.swift`. That is deliberate and it is the whole design
 //! rule: a port that re-partitions the locking is not a port, it is a concurrency change wearing
 //! one's clothes, and the two failures it would introduce — a lock-order inversion and a
 //! contention move — are exactly the two that fail no build and no test.

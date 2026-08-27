@@ -1,7 +1,7 @@
 //! The two daemons hostd CHOOSES the port for: the inspector on `bound + 1`, file drops on
 //! `bound + 2`.
 //!
-//! The port of `Sources/SlopDeskHost/InspectorServiceManager.swift` and
+//! The port of `InspectorServiceManager.swift` and
 //! `FileDropServiceManager.swift` — two files that were the same lifecycle written out twice, down
 //! to the blank lines, differing in FOUR values: the socket's name, its announce marker, its argv
 //! and the variable that overrides its binary. The lifecycle itself was ported at stage E and lives

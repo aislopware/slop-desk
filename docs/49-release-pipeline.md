@@ -199,10 +199,12 @@ the app the user installed. A sidecar is versioned separately — see the next s
 | File | Key | Why it is separate |
 |---|---|---|
 | `rust/slopdesk-cli/Cargo.toml` | `[package] version` | what `slopdesk version` prints, via `CARGO_PKG_VERSION` |
-| `Sources/SlopDeskHost/HostEnvironment.swift` | `buildVersion` | advertised to the child shell as `TERM_PROGRAM_VERSION` |
+| `rust/slopdesk-hostd/Cargo.toml` | `[package] version` | advertised to the child shell as `TERM_PROGRAM_VERSION`, via `CARGO_PKG_VERSION` |
 | `Apps/ClientApp-macOS/project.yml` | `MARKETING_VERSION` **and** `info.properties.CFBundleShortVersionString` | `GENERATE_INFOPLIST_FILE: NO`, so the literal in `info.properties` is what lands in Info.plist — `MARKETING_VERSION` does **not** reach it |
-| `Apps/HostApp-macOS/project.yml` | same two | same reason |
-| `Apps/ClientApp-macOS/Info.plist`, `Apps/HostApp-macOS/Info.plist` | `CFBundleShortVersionString` | xcodegen output that is nevertheless committed, so a clean checkout builds without running xcodegen first — which is exactly why it goes stale silently |
+| `Apps/ClientApp-macOS/Info.plist` | `CFBundleShortVersionString` | xcodegen output that is nevertheless committed, so a clean checkout builds without running xcodegen first — which is exactly why it goes stale silently |
+
+There is no host **app** row any more: hostd is a Rust binary (`docs/60`), so its version is its
+crate's and there is no bundle, no `project.yml` and no Info.plist to drift from it.
 
 `slopdesk-release package` asks the built **CLI binary** for its version and **refuses to package** on
 drift. That gate covers the CLI crate's own version only — it never opens either Info.plist and never
