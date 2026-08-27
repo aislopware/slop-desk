@@ -110,10 +110,15 @@ impl Announces for Fanout {
             .set_project(project, &status.repo_root, wire_body(status));
     }
 
+    /// Is anyone there to tell — asked of the LINKS, not of the panes.
+    ///
+    /// [`Host::peer_count`] rather than `Sessions::connection_count`: a client that has subscribed
+    /// to a workspace and taken no channel yet holds no pane, and it is precisely the client the
+    /// retained `project/gitSummary` cell exists for. Counting panes here would leave a fresh
+    /// attach with a blank git line until some OTHER client's pane happened to make the watch
+    /// probe.
     fn has_audience(&self) -> bool {
-        self.late
-            .resolve()
-            .is_some_and(|host| host.sessions().connection_count() > 0)
+        self.late.resolve().is_some_and(|host| host.peer_count() > 0)
     }
 }
 

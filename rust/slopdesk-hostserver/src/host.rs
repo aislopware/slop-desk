@@ -566,6 +566,18 @@ impl Host {
             .map(Arc::clone)
     }
 
+    /// How many links are open, whether or not any of them holds a pane.
+    ///
+    /// Deliberately NOT [`Sessions::connection_count`], which counts the connections holding at
+    /// least one pane and is the "N client(s) connected" line. This is the audience question — is
+    /// there anyone at all to tell — and a client that has just subscribed to a workspace and taken
+    /// no channel yet is an audience: it is exactly the client the retained document cell exists
+    /// for.
+    #[must_use]
+    pub fn peer_count(&self) -> usize {
+        self.peers.lock().unwrap_or_else(PoisonError::into_inner).len()
+    }
+
     /// Removes and returns every filed connection — the stop's last step.
     #[must_use]
     pub fn drain_peers(&self) -> Vec<Arc<dyn Peer>> {

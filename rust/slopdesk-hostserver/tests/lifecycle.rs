@@ -364,6 +364,40 @@ mod suite {
     }
 
     #[test]
+    fn the_audience_is_counted_in_links_rather_than_in_panes() {
+        let bench = bench();
+        let link = Link::on(2);
+        bench.host.note_peer(&as_peer(&link));
+
+        assert_eq!(
+            bench.host.peer_count(),
+            1,
+            "an accepted link is an audience the moment it is filed…",
+        );
+        assert_eq!(
+            bench.host.sessions().connection_count(),
+            0,
+            "…which is BEFORE it holds any pane, and the two counts are different questions",
+        );
+
+        let pane = Ghost::numbered(1);
+        bench.place(key(2, 7), &pane, 1);
+        assert_eq!(
+            bench.host.peer_count(),
+            1,
+            "taking a channel does not make one link into two",
+        );
+        assert_eq!(bench.host.sessions().connection_count(), 1);
+
+        let _closed = bench.host.forget_connection(link.connection);
+        assert_eq!(
+            bench.host.peer_count(),
+            0,
+            "and forgetting the connection ends the audience even with the pane still filed",
+        );
+    }
+
+    #[test]
     fn an_evicted_member_is_told_the_pane_is_still_there_rather_than_retired() {
         let bench = bench();
         let link = Link::on(2);
